@@ -19,6 +19,7 @@ public class BesOtaProgressEvent {
     private long totalBytes;
     private String errorMessage;
     private String currentStep; // e.g., "Verifying", "Sending data", "Applying"
+    private String otaSessionId;
     
     public BesOtaProgressEvent(OtaStatus status) {
         this.status = status;
@@ -27,6 +28,7 @@ public class BesOtaProgressEvent {
         this.totalBytes = 0;
         this.errorMessage = null;
         this.currentStep = "";
+        this.otaSessionId = null;
     }
     
     public BesOtaProgressEvent(OtaStatus status, int progress, long bytesSent, long totalBytes) {
@@ -36,6 +38,7 @@ public class BesOtaProgressEvent {
         this.totalBytes = totalBytes;
         this.errorMessage = null;
         this.currentStep = "";
+        this.otaSessionId = null;
     }
     
     public BesOtaProgressEvent(OtaStatus status, String errorMessage) {
@@ -45,6 +48,7 @@ public class BesOtaProgressEvent {
         this.totalBytes = 0;
         this.errorMessage = errorMessage;
         this.currentStep = "";
+        this.otaSessionId = null;
     }
     
     public BesOtaProgressEvent(OtaStatus status, int progress, long bytesSent, long totalBytes, String currentStep) {
@@ -54,6 +58,7 @@ public class BesOtaProgressEvent {
         this.totalBytes = totalBytes;
         this.errorMessage = null;
         this.currentStep = currentStep;
+        this.otaSessionId = null;
     }
     
     // Static factory methods
@@ -65,12 +70,16 @@ public class BesOtaProgressEvent {
         return new BesOtaProgressEvent(OtaStatus.PROGRESS, progress, bytesSent, totalBytes, step);
     }
     
-    public static BesOtaProgressEvent createFinished() {
-        return new BesOtaProgressEvent(OtaStatus.FINISHED);
+    public static BesOtaProgressEvent createFinished(String otaSessionId) {
+        BesOtaProgressEvent event = new BesOtaProgressEvent(OtaStatus.FINISHED);
+        event.otaSessionId = otaSessionId;
+        return event;
     }
     
-    public static BesOtaProgressEvent createFailed(String errorMessage) {
-        return new BesOtaProgressEvent(OtaStatus.FAILED, errorMessage);
+    public static BesOtaProgressEvent createFailed(String otaSessionId, String errorMessage) {
+        BesOtaProgressEvent event = new BesOtaProgressEvent(OtaStatus.FAILED, errorMessage);
+        event.otaSessionId = otaSessionId;
+        return event;
     }
     
     // Getters
@@ -97,6 +106,11 @@ public class BesOtaProgressEvent {
     public String getCurrentStep() {
         return currentStep;
     }
+
+    /** OTA session that owns this terminal event, or {@code null} for nonterminal progress. */
+    public String getOtaSessionId() {
+        return otaSessionId;
+    }
     
     @Override
     public String toString() {
@@ -106,8 +120,8 @@ public class BesOtaProgressEvent {
                 ", bytesSent=" + bytesSent +
                 ", totalBytes=" + totalBytes +
                 ", currentStep='" + currentStep + '\'' +
+                ", otaSessionId='" + otaSessionId + '\'' +
                 ", errorMessage='" + errorMessage + '\'' +
                 '}';
     }
 }
-

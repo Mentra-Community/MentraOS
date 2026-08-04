@@ -136,6 +136,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
         if (authorizationGate.isPostApplyVerificationPendingForCurrentBoot()) {
             awaitingPostApplyVerification = true;
             expectedTargetVersion = authorizationGate.getExpectedTargetVersion();
+            expectedOtaSessionId = authorizationGate.getOtaSessionId();
             isBesOtaInProgress = true;
             armPostApplyVerificationTimeoutLocked();
         }
@@ -328,14 +329,14 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
                 Log.e(TAG, "BES OTA is already active");
                 return false;
             }
+            String owner = otaSessionId == null ? "" : otaSessionId.trim();
+            expectedOtaSessionId = owner.isEmpty() ? "standalone-" + UUID.randomUUID() : owner;
             String target = BesOtaAuthorizationGate.canonicalExactTargetVersion(expectedVersion);
             if (target == null) {
                 postFailure("BES OTA requires an exact target version for reboot verification");
                 return false;
             }
             expectedTargetVersion = target;
-            String owner = otaSessionId == null ? "" : otaSessionId.trim();
-            expectedOtaSessionId = owner.isEmpty() ? "standalone-" + UUID.randomUUID() : owner;
             return startFirmwareUpdateLocked(filePath);
         }
     }
@@ -345,15 +346,13 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
 
         if (authorizationGate.isRetryBlockedThisBoot()) {
             Log.e(TAG, "BES OTA retry blocked until the glasses reboot and UART is proven again");
-            EventBus.getDefault()
-                    .post(
-                            BesOtaProgressEvent.createFailed(
-                                    "BES OTA retry blocked until glasses reboot"));
+            postFailure("BES OTA retry blocked until glasses reboot");
             return false;
         }
 
         if (!init(filePath)) {
             Log.e(TAG, "Failed to initialize firmware update");
+            postFailure("Failed to initialize BES firmware update");
             return false;
         }
 
@@ -418,16 +417,12 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
                 return true;
             }
             Log.e(TAG, "Failed to queue BES OTA authorization request");
-            EventBus.getDefault()
-                    .post(
-                            BesOtaProgressEvent.createFailed(
-                                    "Failed to send BES OTA authorization request"));
+            postFailure("Failed to send BES OTA authorization request");
             cleanup();
             return false;
         } else {
             Log.e(TAG, "K900 Bluetooth manager unavailable - cannot send authorization request");
-            EventBus.getDefault()
-                    .post(BesOtaProgressEvent.createFailed("K900 Bluetooth manager not available"));
+            postFailure("K900 Bluetooth manager not available");
             cleanup();
             return false;
         }
@@ -448,7 +443,17 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
 
     /** Preserve detailed diagnostics; the terminal wire encoder reduces them to install_failed. */
     private void postFailure(String diagnostic) {
-        EventBus.getDefault().post(BesOtaProgressEvent.createFailed(diagnostic));
+        String owner = expectedOtaSessionId;
+        if (owner == null || owner.trim().isEmpty()) {
+            Log.e(TAG, "Cannot publish BES failure without an owning OTA session");
+            return;
+        }
+        if (!new BesOtaHandoffStore(mContext).persistFailure(owner, diagnostic)) {
+            // The owner still travels with the live event, so OtaService can safely attempt a
+            // current-session fallback without confusing it with a delayed prior-session failure.
+            Log.e(TAG, "Could not durably persist BES failure for OTA session " + owner);
+        }
+        EventBus.getDefault().post(BesOtaProgressEvent.createFailed(owner, diagnostic));
     }
 
     void onAuthorizationWriteComplete(boolean attempted, boolean success) {
@@ -1143,9 +1148,14 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
                 Log.i(TAG, "Accepting BES version verification recovered during manager startup");
                 awaitingPostApplyVerification = true;
             }
+            String durableOwner = authorizationGate.getOtaSessionId();
+            if (durableOwner != null && !durableOwner.trim().isEmpty()) {
+                expectedOtaSessionId = durableOwner;
+            }
             if (success) {
                 Log.i(TAG, "BES firmware update verified after reboot: " + actualVersion);
-                EventBus.getDefault().post(BesOtaProgressEvent.createFinished());
+                EventBus.getDefault()
+                        .post(BesOtaProgressEvent.createFinished(expectedOtaSessionId));
             } else {
                 Log.e(
                         TAG,

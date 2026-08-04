@@ -69,8 +69,12 @@ public class OtaSessionManager {
     }
 
     public OtaSessionManager(Context context) {
+        this(context, new BesOtaHandoffStore(context));
+    }
+
+    OtaSessionManager(Context context, BesOtaHandoffStore besOtaHandoffStore) {
         mPrefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-        mBesOtaHandoffStore = new BesOtaHandoffStore(context);
+        mBesOtaHandoffStore = besOtaHandoffStore;
         load();
     }
 
@@ -104,6 +108,9 @@ public class OtaSessionManager {
                 // Service startup can temporarily create more than one manager instance. Reload
                 // under the process-wide transition lock before admitting a new generation.
                 load();
+                if (!retireMismatchedTerminalLocked()) {
+                    return SessionAdmission.REJECTED;
+                }
                 if (("in_progress".equals(mStatus) || "step_complete".equals(mStatus))
                         && hasActiveSession()) {
                     return allowContinuation && Objects.equals(versionJsonUrl, mVersionJsonUrl)
@@ -146,12 +153,10 @@ public class OtaSessionManager {
 
                 // The committed id is the generation boundary. Clear an older terminal only after
                 // that boundary exists; owner mismatch keeps replay harmless if cleanup fails.
-                BesOtaHandoffStore.TerminalOutcome previous =
-                        mBesOtaHandoffStore.getPendingTerminalOutcome();
-                if (previous != null
-                        && !mSessionId.equals(previous.getSessionId())
-                        && !mBesOtaHandoffStore.clearTerminalOutcome()) {
-                    Log.e(TAG, "Could not clear superseded BES terminal handoff");
+                if (!retireMismatchedTerminalLocked()) {
+                    // The new session id is already durable, but no download or hardware mutation
+                    // has started. Refuse this attempt until the prior generation can be retired.
+                    return SessionAdmission.REJECTED;
                 }
                 Log.i(TAG, "Created session " + mSessionId + " with " + mTotalSteps + " steps");
                 return SessionAdmission.CREATED;
@@ -200,6 +205,16 @@ public class OtaSessionManager {
 
     public synchronized String getSessionId() {
         return mSessionId;
+    }
+
+    /** True only when an internal OTA event belongs to the current durable session generation. */
+    public boolean isCurrentSession(String sessionId) {
+        synchronized (OTA_TRANSITION_LOCK) {
+            synchronized (this) {
+                load();
+                return sessionId != null && sessionId.equals(mSessionId);
+            }
+        }
     }
 
     /**
@@ -375,6 +390,24 @@ public class OtaSessionManager {
         return persist(true);
     }
 
+    private boolean retireMismatchedTerminalLocked() {
+        BesOtaHandoffStore.TerminalOutcome outcome =
+                mBesOtaHandoffStore.getPendingTerminalOutcome();
+        if (outcome == null || Objects.equals(mSessionId, outcome.getSessionId())) {
+            return true;
+        }
+        if (mBesOtaHandoffStore.clearTerminalOutcome()) {
+            return true;
+        }
+        Log.e(TAG,
+                "Cannot admit OTA session "
+                        + mSessionId
+                        + " while terminal handoff for "
+                        + outcome.getSessionId()
+                        + " remains durable");
+        return false;
+    }
+
     /**
      * Atomically reconcile and enqueue one session-bound terminal handoff.
      *
@@ -384,9 +417,18 @@ public class OtaSessionManager {
      */
     public BesTerminalReconciliation reconcilePendingBesTerminal(
             BesTerminalDelivery delivery) {
+        return reconcilePendingBesTerminal(null, delivery);
+    }
+
+    /** Reconcile only if the triggering internal event still owns the current session. */
+    public BesTerminalReconciliation reconcilePendingBesTerminal(
+            String expectedSessionId, BesTerminalDelivery delivery) {
         synchronized (OTA_TRANSITION_LOCK) {
             synchronized (this) {
                 load();
+                if (expectedSessionId != null && !expectedSessionId.equals(mSessionId)) {
+                    return BesTerminalReconciliation.SESSION_MISMATCH;
+                }
                 BesOtaHandoffStore.TerminalOutcome outcome =
                         mBesOtaHandoffStore.getPendingTerminalOutcome();
                 if (outcome == null) {
@@ -420,13 +462,14 @@ public class OtaSessionManager {
         }
     }
 
-    /** Persist a direct BES failure with the current session as its immutable owner. */
-    public boolean persistBesFailureForCurrentSession(String errorMessage) {
+    /** Persist a direct BES failure only while its immutable owner is still current. */
+    public boolean persistBesFailureForSession(String sessionId, String errorMessage) {
         synchronized (OTA_TRANSITION_LOCK) {
             synchronized (this) {
                 load();
-                return mSessionId != null
-                        && mBesOtaHandoffStore.persistFailure(mSessionId, errorMessage);
+                return sessionId != null
+                        && sessionId.equals(mSessionId)
+                        && mBesOtaHandoffStore.persistFailure(sessionId, errorMessage);
             }
         }
     }

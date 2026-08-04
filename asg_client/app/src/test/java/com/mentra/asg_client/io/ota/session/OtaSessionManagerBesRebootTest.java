@@ -1,11 +1,16 @@
 package com.mentra.asg_client.io.ota.session;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import android.app.Application;
 import android.content.SharedPreferences;
 import androidx.test.core.app.ApplicationProvider;
 import com.mentra.asg_client.AsgConstants;
+import com.mentra.asg_client.io.bes.BesOtaHandoffStore;
 import org.json.JSONObject;
 import org.junit.After;
 import org.junit.Before;
@@ -99,6 +104,35 @@ public class OtaSessionManagerBesRebootTest {
         assertThat(state).isNotNull();
         assertThat(state.optString("status")).isEqualTo("failed");
         assertThat(state.optString("err")).isEqualTo("install_failed");
+    }
+
+    @Test
+    public void newSessionCannotContinueUntilOlderTerminalHandoffIsRetired() {
+        OtaSessionManager firstManager = new OtaSessionManager(context);
+        assertThat(firstManager.createSession(
+                        new String[] {"bes"}, "https://example.test/a.json"))
+                .isTrue();
+        String firstSessionId = firstManager.getSessionId();
+        firstManager.setComplete();
+
+        BesOtaHandoffStore handoffStore = mock(BesOtaHandoffStore.class);
+        BesOtaHandoffStore.TerminalOutcome oldOutcome =
+                mock(BesOtaHandoffStore.TerminalOutcome.class);
+        when(oldOutcome.getSessionId()).thenReturn(firstSessionId);
+        when(handoffStore.getPendingTerminalOutcome()).thenReturn(oldOutcome);
+        when(handoffStore.clearTerminalOutcome()).thenReturn(false);
+
+        OtaSessionManager manager = new OtaSessionManager(context, handoffStore);
+        assertThat(manager.admitOrContinueSession(
+                        new String[] {"bes"}, "https://example.test/b.json"))
+                .isEqualTo(OtaSessionManager.SessionAdmission.REJECTED);
+        assertThat(manager.getSessionId()).isNotEqualTo(firstSessionId);
+
+        // The durable B record cannot bypass the orphan guard on a retry.
+        assertThat(manager.admitOrContinueSession(
+                        new String[] {"bes"}, "https://example.test/b.json"))
+                .isEqualTo(OtaSessionManager.SessionAdmission.REJECTED);
+        verify(handoffStore, times(2)).clearTerminalOutcome();
     }
 
     private void emulateElapsedRealtimeReset() throws Exception {

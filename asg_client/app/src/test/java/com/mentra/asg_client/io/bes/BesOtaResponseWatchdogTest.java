@@ -45,8 +45,9 @@ public class BesOtaResponseWatchdogTest {
     }
 
     @Before
-    public void setUp() {
+    public void setUp() throws Exception {
         manager = new BesOtaManager(null, null, ApplicationProvider.getApplicationContext());
+        setField("expectedOtaSessionId", "ota-session-a");
         BesOtaManager.isBesOtaInProgress = false;
         events.clear();
         EventBus.getDefault().register(this);
@@ -149,8 +150,12 @@ public class BesOtaResponseWatchdogTest {
     }
 
     private void setBooleanField(String name, boolean value) throws Exception {
+        setField(name, value);
+    }
+
+    private void setField(String name, Object value) throws Exception {
         Field field = BesOtaManager.class.getDeclaredField(name);
         field.setAccessible(true);
-        field.setBoolean(manager, value);
+        field.set(manager, value);
     }
 }

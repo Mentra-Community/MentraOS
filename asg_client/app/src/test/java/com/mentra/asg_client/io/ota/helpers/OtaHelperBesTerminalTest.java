@@ -1,6 +1,9 @@
 package com.mentra.asg_client.io.ota.helpers;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.verify;
 
 import android.app.Application;
 import androidx.test.core.app.ApplicationProvider;
@@ -106,6 +109,49 @@ public class OtaHelperBesTerminalTest {
         assertThat(helper.getSessionManager().getSessionId()).isEqualTo(secondSessionId);
         assertThat(helper.getSessionManager().getStatus()).isEqualTo("in_progress");
         assertThat(phone.statuses).hasSize(1);
+    }
+
+    @Test
+    public void sessionOwnedFailureIgnoresStaleEventAndSupersedesOrphanedHandoff() {
+        helper = spy(helper);
+        assertThat(
+                        helper.getSessionManager()
+                                .createSession(new String[] {"bes"}, "https://example.test/a.json"))
+                .isTrue();
+        String firstSessionId = helper.getSessionManager().getSessionId();
+        helper.getSessionManager().setComplete();
+
+        assertThat(
+                        helper.getSessionManager()
+                                .createSession(new String[] {"bes"}, "https://example.test/b.json"))
+                .isTrue();
+        String secondSessionId = helper.getSessionManager().getSessionId();
+        RecordingPhone phone = new RecordingPhone();
+        helper.setPhoneConnectionProvider(phone);
+
+        // Simulate a cleanup failure leaving A's handoff visible after B became current.
+        context.getSharedPreferences(AsgConstants.BES_OTA_AUTH_GATE_PREFS, 0)
+                .edit()
+                .putString(AsgConstants.BES_OTA_HANDOFF_SESSION_ID_KEY, firstSessionId)
+                .putString(AsgConstants.BES_OTA_HANDOFF_TERMINAL_STATUS_KEY, "FAILED")
+                .commit();
+
+        helper.handleBesTerminalEvent(
+                firstSessionId, "FAILED", 0, "delayed session A failure");
+
+        assertThat(helper.getSessionManager().getSessionId()).isEqualTo(secondSessionId);
+        assertThat(helper.getSessionManager().getStatus()).isEqualTo("in_progress");
+        assertThat(phone.statuses).isEmpty();
+        verify(helper, never()).deleteDownloadedArtifactForType("bes");
+
+        helper.handleBesTerminalEvent(
+                secondSessionId, "FAILED", 0, "current session B failure");
+
+        assertThat(helper.getSessionManager().getStatus()).isEqualTo("failed");
+        assertThat(phone.statuses).isNotEmpty();
+        assertThat(phone.statuses.get(phone.statuses.size() - 1).optString("status"))
+                .isEqualTo("failed");
+        verify(helper).deleteDownloadedArtifactForType("bes");
     }
 
     private static final class EmptyBesRegistry implements IBesOtaRegistry {

@@ -322,10 +322,8 @@ public class OtaService extends Service {
                 if (otaHelper != null) {
                     // The boot-B verifier persisted this outcome before consuming its one proof.
                     // EventBus only wakes a live service; startup replay covers the opposite order.
-                    if (!otaHelper.replayPendingBesTerminalOutcome("verified BES event")) {
-                        Log.e(TAG, "Verified BES success event had no durable terminal handoff");
-                    }
-                    otaHelper.deleteDownloadedArtifactForType("bes");
+                    otaHelper.handleBesTerminalEvent(
+                            event.getOtaSessionId(), "FINISHED", 100, null);
                 }
                 break;
             case FAILED:
@@ -334,12 +332,8 @@ public class OtaService extends Service {
                 // Persist and retry the terminal snapshot: mismatch can race baud negotiation,
                 // while timeout deliberately quarantines UART until the user reboots.
                 if (otaHelper != null) {
-                    if (!otaHelper.replayPendingBesTerminalOutcome("failed BES event")) {
-                        // Pre-apply failures have no post-reboot handoff and remain direct events.
-                        otaHelper.sendBesInstallProgressToPhone(
-                                "FAILED", 0, event.getErrorMessage());
-                    }
-                    otaHelper.deleteDownloadedArtifactForType("bes");
+                    otaHelper.handleBesTerminalEvent(
+                            event.getOtaSessionId(), "FAILED", 0, event.getErrorMessage());
                 }
                 break;
         }

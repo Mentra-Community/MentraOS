@@ -2937,6 +2937,31 @@ public class OtaHelper {
     }
 
     /**
+     * Reconciles a terminal BES event and deletes its artifact as one session-owned transition.
+     * Holding the admission lock across both operations prevents a delayed event from session A
+     * from deleting the artifact after session B has become current.
+     */
+    public void handleBesTerminalEvent(
+            String otaSessionId, String status, int progress, String message) {
+        if (sessionManager == null
+                || !sessionManager.runIfCurrentSession(
+                        otaSessionId,
+                        () -> {
+                            if (sendBesInstallProgressToPhone(
+                                    otaSessionId, status, progress, message)) {
+                                deleteDownloadedArtifactForType(UPDATE_TYPE_BES);
+                            }
+                        })) {
+            Log.w(TAG,
+                    "Ignoring terminal BES event for superseded session "
+                            + otaSessionId
+                            + " (current="
+                            + (sessionManager == null ? null : sessionManager.getSessionId())
+                            + ")");
+        }
+    }
+
+    /**
      * Send BES installation progress to phone.
      * Note: During BES OTA, UART is busy so this will likely fail for PROGRESS messages.
      * BES install progress is sent via sr_adota from BES chip directly via BLE.
@@ -2946,7 +2971,8 @@ public class OtaHelper {
      * @param progress Progress percentage (0-100)
      * @param message Optional message
      */
-    public void sendBesInstallProgressToPhone(String status, int progress, String message) {
+    private boolean sendBesInstallProgressToPhone(
+            String otaSessionId, String status, int progress, String message) {
         currentUpdateType = "bes";
         boolean terminal = "FINISHED".equals(status) || "FAILED".equals(status);
         if (!terminal) {
@@ -2957,35 +2983,46 @@ public class OtaHelper {
                     0,
                     status,
                     "FAILED".equals(status) ? message : null);
-            return;
+            return true;
+        }
+
+        if (sessionManager == null || !sessionManager.isCurrentSession(otaSessionId)) {
+            Log.w(TAG,
+                    "Ignoring terminal BES event for superseded session "
+                            + otaSessionId
+                            + " (current="
+                            + (sessionManager == null ? null : sessionManager.getSessionId())
+                            + ")");
+            return false;
         }
 
         boolean success = "FINISHED".equals(status);
         if (!success
-                && sessionManager != null
                 && !sessionManager.isBesTerminalDeliveryPending()
-                && !sessionManager.persistBesFailureForCurrentSession(message)) {
+                && !sessionManager.persistBesFailureForSession(otaSessionId, message)) {
             Log.e(TAG, "Could not durably record direct BES failure for reconnect delivery");
         }
-        if (replayPendingBesTerminalOutcome("direct BES " + status)) {
-            return;
+        OtaSessionManager.BesTerminalReconciliation reconciliation =
+                reconcilePendingBesTerminalOutcome("direct BES " + status, otaSessionId);
+        if (reconciliation == OtaSessionManager.BesTerminalReconciliation.DELIVERED
+                || reconciliation == OtaSessionManager.BesTerminalReconciliation.DELIVERY_FAILURE) {
+            return true;
         }
         if (success) {
             // Never turn a bare in-process event into success. Verified success must arrive through
             // the session-bound durable gate handoff so restart/order races cannot forge completion.
             Log.e(TAG, "Refusing BES success without a session-bound durable handoff");
-            return;
+            return false;
         }
 
         // Last-resort live failure delivery when durable storage itself failed. It remains bound to
         // the current session and can never be applied to a later generation.
-        String sessionId = sessionManager == null ? null : sessionManager.getSessionId();
-        if (sessionId == null
-                || !sessionManager.applyBesTerminalOutcome(sessionId, false, message)) {
+        if (!sessionManager.applyBesTerminalOutcome(otaSessionId, false, message)) {
             Log.e(TAG, "Could not attach direct BES failure to the current OTA session");
-            return;
+            return false;
         }
-        enqueueBesTerminalStatus(sessionId, "FAILED", message);
+        enqueueBesTerminalStatus(otaSessionId, "FAILED", message);
+        return true;
     }
 
     /**
@@ -2994,11 +3031,18 @@ public class OtaHelper {
      * @return true when a durable terminal handoff was present
      */
     public boolean replayPendingBesTerminalOutcome(String reason) {
+        return reconcilePendingBesTerminalOutcome(reason, null)
+                != OtaSessionManager.BesTerminalReconciliation.NONE;
+    }
+
+    private OtaSessionManager.BesTerminalReconciliation reconcilePendingBesTerminalOutcome(
+            String reason, String expectedSessionId) {
         if (sessionManager == null) {
-            return false;
+            return OtaSessionManager.BesTerminalReconciliation.NONE;
         }
         OtaSessionManager.BesTerminalReconciliation result =
                 sessionManager.reconcilePendingBesTerminal(
+                        expectedSessionId,
                         outcome -> {
                             Log.i(TAG, "Replaying durable BES terminal outcome after " + reason);
                             enqueueBesTerminalStatus(
@@ -3012,7 +3056,7 @@ public class OtaHelper {
         }
         // A mismatched handoff belongs to an older generation and is intentionally suppressed; it
         // is still "handled" so an old EventBus failure cannot fall through onto the new session.
-        return result != OtaSessionManager.BesTerminalReconciliation.NONE;
+        return result;
     }
 
     private void enqueueBesTerminalStatus(String sessionId, String status, String message) {

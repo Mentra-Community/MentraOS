@@ -173,6 +173,13 @@ public final class BesOtaAuthorizationGate implements BesUartTransportCoordinato
         }
     }
 
+    /** Return the phone OTA session that owns the current gate or terminal handoff. */
+    String getOtaSessionId() {
+        synchronized (RESERVATION_LOCK) {
+            return preferences.getString(AsgConstants.BES_OTA_HANDOFF_SESSION_ID_KEY, null);
+        }
+    }
+
     /**
      * Atomically replace one post-reboot version proof with its durable terminal handoff.
      *

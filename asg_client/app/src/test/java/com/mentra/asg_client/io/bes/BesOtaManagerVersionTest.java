@@ -7,6 +7,7 @@ import android.content.Context;
 
 import androidx.test.core.app.ApplicationProvider;
 
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
 import com.mentra.asg_client.io.ota.interfaces.IBesOtaController;
 
@@ -27,11 +28,16 @@ import org.robolectric.annotation.Config;
 public class BesOtaManagerVersionTest {
 
     private IBesOtaController controller;
+    private Context context;
     private boolean previousInProgressFlag;
 
     @Before
     public void setUp() {
-        Context context = ApplicationProvider.getApplicationContext();
+        context = ApplicationProvider.getApplicationContext();
+        context.getSharedPreferences(AsgConstants.BES_OTA_AUTH_GATE_PREFS, 0)
+                .edit()
+                .clear()
+                .commit();
         controller = new BesOtaManager(null, mock(K900BluetoothManager.class), context);
         previousInProgressFlag = BesOtaManager.isBesOtaInProgress;
     }
@@ -40,6 +46,10 @@ public class BesOtaManagerVersionTest {
     public void tearDown() {
         // The in-progress flag is static — restore it so state never leaks across tests.
         BesOtaManager.isBesOtaInProgress = previousInProgressFlag;
+        context.getSharedPreferences(AsgConstants.BES_OTA_AUTH_GATE_PREFS, 0)
+                .edit()
+                .clear()
+                .commit();
     }
 
     @Test
@@ -103,5 +113,20 @@ public class BesOtaManagerVersionTest {
 
         BesOtaManager.isBesOtaInProgress = true;
         assertThat(controller.isBesOtaInProgress()).isTrue();
+    }
+
+    @Test
+    public void rejectedStartPersistsFailureWithTheRequestingSessionOwner() {
+        BesOtaManager.isBesOtaInProgress = false;
+
+        assertThat(controller.startFirmwareUpdate(
+                        "/does/not/matter.bin", null, "session-b"))
+                .isFalse();
+
+        BesOtaHandoffStore.TerminalOutcome outcome =
+                new BesOtaHandoffStore(context).getPendingTerminalOutcome();
+        assertThat(outcome).isNotNull();
+        assertThat(outcome.getSessionId()).isEqualTo("session-b");
+        assertThat(outcome.getStatus()).isEqualTo("FAILED");
     }
 }

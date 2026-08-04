@@ -35,7 +35,7 @@ public class BesOtaPostApplyVerificationTest {
     }
 
     @Before
-    public void setUp() {
+    public void setUp() throws Exception {
         context = ApplicationProvider.getApplicationContext();
         context.getSharedPreferences(AsgConstants.BES_OTA_AUTH_GATE_PREFS, 0)
                 .edit()
@@ -46,6 +46,7 @@ public class BesOtaPostApplyVerificationTest {
         manager =
                 new BesOtaManager(
                         null, null, context, new BesOtaAuthorizationGate(context, bootId::get));
+        field("expectedOtaSessionId").set(manager, "ota-session-a");
         EventBus.getDefault().register(this);
     }
 
