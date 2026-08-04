@@ -2831,6 +2831,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         stopMicElapsedTimer()
         stopMicPlayback()
         hotspotEnabled = false
+        wifiAdbEnabled = false
         galleryConnectionGeneration += 1
         if let pendingHotspotConnection {
             glassesHotspotConnector.disconnect(ssid: pendingHotspotConnection.ssid)

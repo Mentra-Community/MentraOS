@@ -314,12 +314,12 @@ fun SystemScreen(controller: MentraExampleController) {
                         )
                     }
                 }
-                Spacer(modifier.height(12.dp))
+                Spacer(Modifier.height(12.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     HotspotActionChip("Enable", enabled = connected) { controller.setWifiAdbState(true) }
                     HotspotActionChip("Disable", enabled = connected) { controller.setWifiAdbState(false) }
                 }
-                Spacer(modifier.height(8.dp))
+                Spacer(Modifier.height(8.dp))
                 Text(
                     "Mentra Live only · watch Console if nothing changes",
                     color = AppColor.muted,

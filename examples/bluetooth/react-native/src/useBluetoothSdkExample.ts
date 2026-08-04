@@ -778,6 +778,11 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   glassesWifiConnectedRef.current = glassesWifiConnected;
   galleryServerReachableRef.current = galleryServerReachable;
 
+  // Optimistic Wi-Fi ADB UI only — reset on disconnect / device change (no glasses telemetry).
+  useEffect(() => {
+    setWifiAdbEnabled(false);
+  }, [connectedDeviceKey]);
+
   useEffect(() => {
     let cancelled = false;
     void loadPersistedCloudUrls().then((persisted) => {
