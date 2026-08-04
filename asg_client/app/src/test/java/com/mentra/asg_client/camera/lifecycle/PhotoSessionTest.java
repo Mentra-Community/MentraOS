@@ -15,6 +15,7 @@ import static org.mockito.Mockito.when;
 import android.hardware.camera2.CameraCaptureSession;
 import android.hardware.camera2.CameraDevice;
 import android.hardware.camera2.CaptureRequest;
+import android.media.ImageReader;
 import android.os.Handler;
 import com.mentra.asg_client.camera.CameraNeoService;
 import com.mentra.asg_client.camera.CameraSettings;
@@ -24,6 +25,7 @@ import com.mentra.asg_client.camera.model.PhotoCaptureSettings;
 import com.mentra.asg_client.camera.model.QueuedPhotoRequest;
 import com.mentra.asg_client.camera.model.QueuedPhotoRequestQueue;
 import com.mentra.asg_client.camera.policy.AeStateMachine;
+import com.mentra.asg_client.camera.request.HdrBurstBuilder;
 import com.mentra.asg_client.camera.request.StillCaptureBuilder;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -270,6 +272,30 @@ public class PhotoSessionTest {
     }
 
     @Test
+    public void notifyHostPhotoError_signalsFailureBeforeAsyncErrorDelivery() throws Exception {
+        PhotoSession.Hooks hooks = mockConfiguredCameraHooks();
+        AtomicReference<Runnable> pendingError = new AtomicReference<>();
+        when(hooks.executor()).thenReturn(pendingError::set);
+        CameraNeoService.PhotoCaptureCallback callback =
+                mock(CameraNeoService.PhotoCaptureCallback.class);
+        PhotoSession session = new PhotoSession(hooks);
+        activateQueuedRequest(
+                session,
+                new QueuedPhotoRequest(
+                        "/tmp/failed.jpg", "large", false, true, null, callback));
+        CameraOperationError error = CameraOperationError.captureFailed("capture failed");
+
+        session.notifyHostPhotoError(error);
+
+        verify(callback).onPhotoFailureDetected();
+        verify(callback, never()).onPhotoError(error);
+        assertThat(pendingError.get()).isNotNull();
+
+        pendingError.get().run();
+        verify(callback).onPhotoError(error);
+    }
+
+    @Test
     public void willReuseConfiguredCamera_matchesWarmUpZslMfnrBaseline() throws Exception {
         // Warm-up stores resolved zsl/mfnr in configuredCameraConfig; a later take_photo with the
         // same size/SDK/exposure must reuse even when still-side MFNR toggles (preview buffer stays).
@@ -425,6 +451,34 @@ public class PhotoSessionTest {
         verify(callback)
                 .onPhotoCaptured(
                         eq("/tmp/second.jpg"), (JSONObject) isNull(), (CapturedPhoto) isNull());
+    }
+
+    @Test
+    public void notifyPhotoExposureStarted_staleGenerationDoesNotReachNextPhoto() throws Exception {
+        PhotoSession session = new PhotoSession(mockConfiguredCameraHooks());
+        CameraNeoService.PhotoCaptureCallback firstCallback =
+                mock(CameraNeoService.PhotoCaptureCallback.class);
+        activateQueuedRequest(
+                session,
+                new QueuedPhotoRequest(
+                        "/tmp/first.jpg", "large", false, true, null, firstCallback));
+        long staleGeneration = captureMetadataGeneration(session);
+
+        CameraNeoService.PhotoCaptureCallback secondCallback =
+                mock(CameraNeoService.PhotoCaptureCallback.class);
+        activateQueuedRequest(
+                session,
+                new QueuedPhotoRequest(
+                        "/tmp/second.jpg", "large", false, true, null, secondCallback));
+        session.notifyPhotoExposureStartedForCapture(
+                staleGeneration, firstCallback, 123L, 456L);
+
+        verify(firstCallback, never()).onPhotoExposureStarted(123L, 456L);
+        verify(secondCallback, never()).onPhotoExposureStarted(123L, 456L);
+
+        session.notifyPhotoExposureStartedForCapture(
+                captureMetadataGeneration(session), secondCallback, 123L, 456L);
+        verify(secondCallback).onPhotoExposureStarted(123L, 456L);
     }
 
     @Test
@@ -759,6 +813,56 @@ public class PhotoSessionTest {
     }
 
     @Test
+    public void shouldNotifyPhotoFrameAvailable_normalStillAllowsFrame() {
+        PhotoSession session = new PhotoSession(mockConfiguredCameraHooks());
+
+        assertThat(session.shouldNotifyPhotoFrameAvailable()).isTrue();
+    }
+
+    @Test
+    public void shouldNotifyPhotoFrameAvailable_failedHdrSuppressesLateFrame() throws Exception {
+        PhotoSession session = new PhotoSession(mockConfiguredCameraHooks());
+        setBooleanField(session, "mCurrentShotUsesHdrBurst", true);
+
+        assertThat(session.shouldNotifyPhotoFrameAvailable()).isFalse();
+    }
+
+    @Test
+    public void shouldNotifyPhotoFrameAvailable_finalActiveHdrFrameAllowsFrame() throws Exception {
+        PhotoSession session = new PhotoSession(mockConfiguredCameraHooks());
+        setBooleanField(session, "mCurrentShotUsesHdrBurst", true);
+        HdrBurstCapture hdrCapture = getField(session, "hdrBurstCapture", HdrBurstCapture.class);
+        setBooleanField(hdrCapture, "active", true);
+        setIntField(hdrCapture, "framesReceived", HdrBurstBuilder.HDR_BURST_COUNT - 1);
+
+        assertThat(session.shouldNotifyPhotoFrameAvailable()).isTrue();
+    }
+
+    @Test
+    public void acquireStillImage_activeHdrPreservesNextBracket() throws Exception {
+        PhotoSession session = new PhotoSession(mockConfiguredCameraHooks());
+        HdrBurstCapture hdrCapture = getField(session, "hdrBurstCapture", HdrBurstCapture.class);
+        setBooleanField(hdrCapture, "active", true);
+        ImageReader reader = mock(ImageReader.class);
+
+        session.acquireStillImage(reader);
+
+        verify(reader).acquireNextImage();
+        verify(reader, never()).acquireLatestImage();
+    }
+
+    @Test
+    public void acquireStillImage_normalStillDropsStaleFrames() {
+        PhotoSession session = new PhotoSession(mockConfiguredCameraHooks());
+        ImageReader reader = mock(ImageReader.class);
+
+        session.acquireStillImage(reader);
+
+        verify(reader).acquireLatestImage();
+        verify(reader, never()).acquireNextImage();
+    }
+
+    @Test
     public void onCameraClosed_quitsStillCaptureCallbackThread() throws Exception {
         PhotoSession session = new PhotoSession(mockConfiguredCameraHooks());
         Method handlerMethod =
@@ -782,5 +886,26 @@ public class PhotoSessionTest {
         assertThat(handlerField.get(session)).isNull();
         thread.join(2000);
         assertThat(thread.isAlive()).isFalse();
+    }
+
+    private static void setBooleanField(Object target, String name, boolean value)
+            throws ReflectiveOperationException {
+        Field field = target.getClass().getDeclaredField(name);
+        field.setAccessible(true);
+        field.setBoolean(target, value);
+    }
+
+    private static void setIntField(Object target, String name, int value)
+            throws ReflectiveOperationException {
+        Field field = target.getClass().getDeclaredField(name);
+        field.setAccessible(true);
+        field.setInt(target, value);
+    }
+
+    private static <T> T getField(Object target, String name, Class<T> type)
+            throws ReflectiveOperationException {
+        Field field = target.getClass().getDeclaredField(name);
+        field.setAccessible(true);
+        return type.cast(field.get(target));
     }
 }

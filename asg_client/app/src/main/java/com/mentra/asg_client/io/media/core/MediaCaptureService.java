@@ -13,6 +13,7 @@ import androidx.annotation.Nullable;
 import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.audio.AudioAssets;
 import com.mentra.asg_client.camera.CameraNeoService;
+import com.mentra.asg_client.camera.feedback.PhotoFeedbackController;
 import com.mentra.asg_client.camera.lifecycle.PhotoExifMetadataWriter;
 import com.mentra.asg_client.camera.model.CameraOperationError;
 import com.mentra.asg_client.camera.model.CapturedPhoto;
@@ -27,6 +28,7 @@ import com.mentra.asg_client.io.media.core.textdetect.MlKitTextRoiDetector;
 import com.mentra.asg_client.io.media.interfaces.ServiceCallbackInterface;
 import com.mentra.asg_client.io.media.managers.MediaUploadQueueManager;
 import com.mentra.asg_client.io.media.upload.MediaUploadService;
+import com.mentra.asg_client.io.media.utils.VideoThumbnailWriter;
 import com.mentra.asg_client.io.storage.StorageManager;
 import com.mentra.asg_client.io.streaming.services.RtmpStreamingService;
 import com.mentra.asg_client.io.streaming.services.SrtStreamingService;
@@ -65,6 +67,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -88,6 +91,7 @@ public class MediaCaptureService {
     private MediaCaptureListener mMediaCaptureListener;
     private ServiceCallbackInterface mServiceCallback;
     private final IHardwareManager hardwareManager;
+    private final PhotoFeedbackController photoFeedbackController;
     private final MlKitTextRoiDetector textRoiDetector;
 
     // Track current video recording
@@ -145,6 +149,64 @@ public class MediaCaptureService {
         UploadTarget(String webhookUrl, String authToken) {
             this.webhookUrl = webhookUrl;
             this.authToken = authToken;
+        }
+    }
+
+    private final class VideoThumbnailTask
+            implements Runnable, VideoThumbnailWriter.SidecarCommitter {
+        private final File videoFile;
+        private final Object commitLock = new Object();
+        private volatile Future<?> execution;
+        private boolean discarded;
+
+        VideoThumbnailTask(String filePath) {
+            videoFile = new File(filePath);
+        }
+
+        void setExecution(Future<?> execution) {
+            this.execution = execution;
+        }
+
+        @Override
+        public void run() {
+            try {
+                VideoThumbnailWriter.writeSidecar(videoFile, this);
+            } finally {
+                videoThumbnailTasks.remove(videoFile.getAbsolutePath(), this);
+            }
+        }
+
+        @Override
+        public boolean commit(File partial, File sidecar) {
+            synchronized (commitLock) {
+                return !discarded && videoFile.isFile() && partial.renameTo(sidecar);
+            }
+        }
+
+        boolean discardAndDeleteVideo() {
+            synchronized (commitLock) {
+                discarded = true;
+                Future<?> currentExecution = execution;
+                if (currentExecution != null) {
+                    currentExecution.cancel(true);
+                }
+                boolean deleted = !videoFile.exists() || videoFile.delete();
+                if (deleted) {
+                    VideoThumbnailWriter.deleteSidecar(videoFile);
+                }
+                // Even if deletion fails, discarded prevents this task from committing late.
+                return deleted;
+            }
+        }
+
+        void cancelThumbnailWrite() {
+            synchronized (commitLock) {
+                discarded = true;
+                Future<?> currentExecution = execution;
+                if (currentExecution != null) {
+                    currentExecution.cancel(true);
+                }
+            }
         }
     }
 
@@ -616,6 +678,19 @@ public class MediaCaptureService {
                         return t;
                     });
 
+    /** Keeps best-effort thumbnail decoding from delaying integrity callbacks or uploads. */
+    private final ExecutorService videoThumbnailExecutor =
+            Executors.newSingleThreadExecutor(
+                    r -> {
+                        Thread t = new Thread(r, "VideoThumbnailWriter");
+                        t.setPriority(Thread.NORM_PRIORITY - 1);
+                        t.setDaemon(true);
+                        return t;
+                    });
+    private final ConcurrentHashMap<String, VideoThumbnailTask> videoThumbnailTasks =
+            new ConcurrentHashMap<>();
+    private final Object videoThumbnailLifecycleLock = new Object();
+
     /**
      * Keeps ML Kit and final-crop persistence off CameraNeo's shared callback executor. A single
      * worker preserves burst ordering and avoids running multiple memory-heavy full-resolution
@@ -628,6 +703,7 @@ public class MediaCaptureService {
                         t.setPriority(Thread.NORM_PRIORITY - 1);
                         return t;
                     });
+
     // Safety timeout covers the full job (capture + upload/BLE-handoff). Sized to outlast a
     // slow webhook upload on flaky WiFi so we don't prematurely free the flag while the upload
     // is still grinding. Force-resets isPhotoJobInFlight if no terminal callback fires.
@@ -638,6 +714,7 @@ public class MediaCaptureService {
 
     // Per-request timing instrumentation (gated by AsgConstants.ENABLE_PHOTO_TIMING_LOGS)
     private final Map<String, Map<String, Long>> photoTimings = new ConcurrentHashMap<>();
+
     /** Optional per-step detail strings shown in PHASE BREAKDOWN (exposure/ISO/size/etc.). */
     private final Map<String, Map<String, String>> photoTimingDetails = new ConcurrentHashMap<>();
 
@@ -718,6 +795,7 @@ public class MediaCaptureService {
 
         // Initialize hardware manager
         hardwareManager = HardwareManagerFactory.getInstance(context);
+        photoFeedbackController = new PhotoFeedbackController(hardwareManager, mainHandler);
         Log.d(TAG, "Hardware manager initialized: " + hardwareManager.getDeviceModel());
     }
 
@@ -789,43 +867,16 @@ public class MediaCaptureService {
         return CameraRestartCooldown.isActive();
     }
 
-    /**
-     * Plays the photo feedback sound, choosing a short "hot" clip when the upcoming capture will
-     * reuse the already-running camera and a long "cold" clip when it will pay the 1–2s camera/ISP
-     * startup on Mentra Live. The decision is made synchronously here, at button-press time and
-     * before the request is enqueued, so it predicts whether THIS capture is fast or slow. The
-     * upcoming-capture parameters must match those passed to {@code enqueuePhotoRequest} so the
-     * warmth prediction lines up with the path the request actually takes.
-     *
-     * @param size requested photo size for the upcoming capture (nullable)
-     * @param isFromSdk whether the upcoming capture is an SDK request (vs. a button photo)
-     * @param exposureTimeNs requested manual exposure for the upcoming capture, or null for auto
-     * @param captureSettings per-request tuning (including resolved {@code zsl}/{@code mfnr}) for warmth
-     */
-    private void playShutterSound(
+    @Nullable
+    private PhotoFeedbackController.Token startPhotoFeedback(
+            String requestId,
             String size,
             boolean isFromSdk,
             Long exposureTimeNs,
             @Nullable PhotoCaptureSettings captureSettings) {
-        if (hardwareManager == null) {
-            Log.w(TAG, "⚠️ hardwareManager is null, cannot play shutter sound");
-            return;
-        }
-
-        if (!hardwareManager.supportsAudioPlayback()) {
-            Log.w(TAG, "⚠️ hardwareManager does not support audio playback");
-            return;
-        }
-
-        // A warm capture reuses the open camera (including queuing behind an in-flight shot), so a
-        // short "hot" sound matches the quick capture. A cold capture needs a longer "cold" sound
-        // that spans the camera/ISP warmup so the user keeps still until the photo actually lands.
         boolean cameraWarm =
                 CameraNeoService.isCameraWarm(size, isFromSdk, exposureTimeNs, captureSettings);
-        String shutterAsset =
-                cameraWarm ? AudioAssets.TAKE_PHOTO_HOT : AudioAssets.TAKE_PHOTO_COLD;
-        Log.d(TAG, "📸 Playing " + (cameraWarm ? "HOT (short)" : "COLD (long)") + " shutter sound");
-        hardwareManager.playAudioAsset(shutterAsset);
+        return photoFeedbackController.start(requestId, cameraWarm);
     }
 
     /** Flash privacy LED synchronized with shutter sound for photo capture */
@@ -1406,6 +1457,9 @@ public class MediaCaptureService {
                                                 final boolean ok =
                                                         RecordedVideoIntegrityChecker.verify(
                                                                 filePath);
+                                                if (ok) {
+                                                    scheduleVideoThumbnail(filePath);
+                                                }
                                                 mainHandler.post(
                                                         () -> {
                                                             videoCaptureIdsPendingIntegrityCheck
@@ -1994,21 +2048,25 @@ public class MediaCaptureService {
         PhotoCaptureTestHooks.addFakeDelay("CAMERA_INIT");
 
         // Skip sound and flash during camera HAL restart cooldown (e.g. after FOV change)
+        PhotoFeedbackController.Token feedbackToken = null;
         if (!shouldSuppressPhotoFeedback()) {
             // RGB LED always flashes for photos (user visibility indicator)
             triggerPhotoFlashLed();
             if (effectiveSound) {
                 // Button photo: isFromSdk=false, auto exposure (null) — matches the
                 // enqueuePhotoRequest call below so the warm/cold prediction lines up.
-                playShutterSound(size, false, null, captureSettings);
+                feedbackToken =
+                        startPhotoFeedback(requestId, size, false, null, captureSettings);
             }
             if (enableFlash) {
                 flashPrivacyLedForPhoto(); // Flash privacy LED
             }
         }
+        final PhotoFeedbackController.Token captureFeedbackToken = feedbackToken;
 
         // TESTING: Check for fake camera capture failure
         if (PhotoCaptureTestHooks.shouldFail("CAMERA_CAPTURE")) {
+            photoFeedbackController.stopForFailure(captureFeedbackToken);
             Log.e(TAG, "TESTING: Simulating camera capture failure");
             sendPhotoErrorResponse(
                     requestId,
@@ -2022,7 +2080,8 @@ public class MediaCaptureService {
 
         // Use the new enqueuePhotoRequest for thread-safe rapid capture
         // isFromSdk=false because this is a button-triggered photo (local storage, high quality)
-        CameraNeoService.enqueuePhotoRequest(
+        try {
+            CameraNeoService.enqueuePhotoRequest(
                 mContext,
                 photoFilePath,
                 size,
@@ -2058,12 +2117,30 @@ public class MediaCaptureService {
                     }
 
                     @Override
+                    public void onPhotoExposureStarted(
+                            long sensorTimestampNs, long estimatedExposureDurationNs) {
+                        photoFeedbackController.onExposureStarted(
+                                captureFeedbackToken,
+                                sensorTimestampNs,
+                                estimatedExposureDurationNs);
+                    }
+
+                    @Override
+                    public void onPhotoFrameAvailable(long sensorTimestampNs) {
+                        photoFeedbackController.playSnap(
+                                captureFeedbackToken, "JPEG frame available");
+                    }
+
+                    @Override
                     public void onPhotoCaptured(String filePath) {
                         onPhotoCaptured(filePath, null);
                     }
 
                     @Override
                     public void onPhotoCaptured(String filePath, JSONObject captureMetadata) {
+                        photoFeedbackController.playSnap(
+                                captureFeedbackToken, "photo completion fallback");
+
                         // Calculate end-to-end timing from request to capture
                         long totalElapsedMs = System.currentTimeMillis() - requestStartTimeMs;
                         if (AsgConstants.ENABLE_PHOTO_TIMING_LOGS) {
@@ -2097,12 +2174,18 @@ public class MediaCaptureService {
                     }
 
                     @Override
+                    public void onPhotoFailureDetected() {
+                        photoFeedbackController.stopForFailure(captureFeedbackToken);
+                    }
+
+                    @Override
                     public void onPhotoError(String errorMessage) {
                         onPhotoError(CameraOperationError.captureFailed(errorMessage));
                     }
 
                     @Override
                     public void onPhotoError(CameraOperationError error) {
+                        photoFeedbackController.stopForFailure(captureFeedbackToken);
                         Log.e(TAG, "Failed to capture offline photo: " + error.message());
                         sendPhotoStatus(requestId, "failed", null, error.code(), error.message());
 
@@ -2117,6 +2200,22 @@ public class MediaCaptureService {
                         }
                     }
                 });
+        } catch (Exception e) {
+            photoFeedbackController.stopForFailure(captureFeedbackToken);
+            Log.e(TAG, "Failed to enqueue button photo", e);
+            sendPhotoStatus(
+                    requestId,
+                    "failed",
+                    null,
+                    "CAMERA_ERROR",
+                    "Failed to start photo capture");
+            if (mMediaCaptureListener != null) {
+                mMediaCaptureListener.onMediaError(
+                        requestId,
+                        "Failed to start photo capture",
+                        MediaUploadQueueManager.MEDIA_TYPE_PHOTO);
+            }
+        }
     }
 
     /**
@@ -2171,8 +2270,7 @@ public class MediaCaptureService {
 
         if (textModeRequested && !acquirePhotoJob(requestId)) {
             Log.w(TAG, "Text-mode local-save job already in flight: " + requestId);
-            sendPhotoErrorResponse(
-                    requestId, "CAMERA_BUSY", "Another photo job is in progress");
+            sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Another photo job is in progress");
             return false;
         }
         if (textModeRequested) {
@@ -2198,16 +2296,24 @@ public class MediaCaptureService {
         File captureDirFile = new File(photoFilePath).getParentFile();
         final String captureId = captureDirFile != null ? captureDirFile.getName() : "";
 
+        PhotoFeedbackController.Token feedbackToken = null;
         if (!shouldSuppressPhotoFeedback()) {
             triggerPhotoFlashLed();
             if (enableSound) {
                 // Local-save SDK photo: isFromSdk=true, matching the enqueue below.
-                playShutterSound(captureSize, true, exposureTimeNs, captureSettings);
+                feedbackToken =
+                        startPhotoFeedback(
+                                requestId,
+                                captureSize,
+                                true,
+                                exposureTimeNs,
+                                captureSettings);
             }
             if (enableFlash) {
                 flashPrivacyLedForPhoto();
             }
         }
+        final PhotoFeedbackController.Token captureFeedbackToken = feedbackToken;
 
         try {
             CameraNeoService.enqueuePhotoRequest(
@@ -2247,6 +2353,21 @@ public class MediaCaptureService {
                         }
 
                         @Override
+                        public void onPhotoExposureStarted(
+                                long sensorTimestampNs, long estimatedExposureDurationNs) {
+                            photoFeedbackController.onExposureStarted(
+                                    captureFeedbackToken,
+                                    sensorTimestampNs,
+                                    estimatedExposureDurationNs);
+                        }
+
+                        @Override
+                        public void onPhotoFrameAvailable(long sensorTimestampNs) {
+                            photoFeedbackController.playSnap(
+                                    captureFeedbackToken, "JPEG frame available");
+                        }
+
+                        @Override
                         public void onPhotoCaptured(String filePath) {
                             onPhotoCaptured(filePath, null);
                         }
@@ -2261,6 +2382,8 @@ public class MediaCaptureService {
                                 String filePath,
                                 JSONObject captureMetadata,
                                 CapturedPhoto capturedPhoto) {
+                            photoFeedbackController.playSnap(
+                                    captureFeedbackToken, "photo completion fallback");
                             if (textModeRequested) {
                                 if (capturedPhoto == null) {
                                     try {
@@ -2304,13 +2427,14 @@ public class MediaCaptureService {
                                                     Log.e(
                                                             TAG,
                                                             "Local text-mode processing failed for "
-                                                            + requestId,
+                                                                    + requestId,
                                                             processingError);
                                                     clearPhotoTracking(requestId);
                                                     sendPhotoErrorResponse(
                                                             requestId,
                                                             "PHOTO_SAVE_FAILED",
-                                                            "Could not save final text-mode output");
+                                                            "Could not save final text-mode"
+                                                                    + " output");
                                                 } finally {
                                                     releasePhotoJob(requestId);
                                                 }
@@ -2329,8 +2453,12 @@ public class MediaCaptureService {
                                 }
                                 return;
                             }
-                            finishLocalSavePhoto(
-                                    requestId, captureId, filePath, captureMetadata);
+                            finishLocalSavePhoto(requestId, captureId, filePath, captureMetadata);
+                        }
+
+                        @Override
+                        public void onPhotoFailureDetected() {
+                            photoFeedbackController.stopForFailure(captureFeedbackToken);
                         }
 
                         @Override
@@ -2340,6 +2468,7 @@ public class MediaCaptureService {
 
                         @Override
                         public void onPhotoError(CameraOperationError error) {
+                            photoFeedbackController.stopForFailure(captureFeedbackToken);
                             try {
                                 Log.e(
                                         TAG,
@@ -2362,6 +2491,7 @@ public class MediaCaptureService {
                     });
             return true;
         } catch (Exception e) {
+            photoFeedbackController.stopForFailure(captureFeedbackToken);
             try {
                 Log.e(TAG, "Error taking local-save photo", e);
                 sendPhotoErrorResponse(
@@ -2382,15 +2512,7 @@ public class MediaCaptureService {
             String requestId, String captureId, String filePath, JSONObject captureMetadata) {
         try {
             Log.d(TAG, "Local-save photo captured: " + filePath);
-            sendPhotoStatus(
-                    requestId,
-                    "captured",
-                    null,
-                    null,
-                    null,
-                    null,
-                    null,
-                    captureMetadata);
+            sendPhotoStatus(requestId, "captured", null, null, null, null, null, captureMetadata);
 
             if (mMediaCaptureListener != null) {
                 mMediaCaptureListener.onPhotoCaptured(requestId, filePath);
@@ -2577,6 +2699,7 @@ public class MediaCaptureService {
         // TESTING: Add fake delay for camera capture
         PhotoCaptureTestHooks.addFakeDelay("CAMERA_CAPTURE");
 
+        PhotoFeedbackController.Token feedbackToken = null;
         try {
             // Skip sound and flash during camera HAL restart cooldown (e.g. after FOV change)
             if (!shouldSuppressPhotoFeedback()) {
@@ -2584,12 +2707,19 @@ public class MediaCaptureService {
                 if (enableSound) {
                     // SDK photo: isFromSdk=true; size and exposure match the enqueuePhotoRequest
                     // call below so the warm/cold prediction lines up.
-                    playShutterSound(captureSize, true, exposureTimeNs, captureSettings);
+                    feedbackToken =
+                            startPhotoFeedback(
+                                    requestId,
+                                    captureSize,
+                                    true,
+                                    exposureTimeNs,
+                                    captureSettings);
                 }
                 if (enableFlash) {
                     flashPrivacyLedForPhoto();
                 }
             }
+            final PhotoFeedbackController.Token captureFeedbackToken = feedbackToken;
 
             // Use the new enqueuePhotoRequest for thread-safe rapid capture
             // isFromSdk=true because this is an SDK-requested photo (take_photo command)
@@ -2621,8 +2751,7 @@ public class MediaCaptureService {
                             logBlePhotoStep(
                                     requestId,
                                     "capture_configured",
-                                    summarizeCaptureTimingDetail(
-                                            "resolved", resolvedConfig, null));
+                                    summarizeCaptureTimingDetail("resolved", resolvedConfig, null));
                             sendPhotoStatus(
                                     requestId,
                                     "configuring",
@@ -2644,9 +2773,7 @@ public class MediaCaptureService {
                                     requestId,
                                     "capture_started",
                                     summarizeCaptureTimingDetail(
-                                            "requested",
-                                            requestedCaptureConfig,
-                                            meteredPreview));
+                                            "requested", requestedCaptureConfig, meteredPreview));
                             sendPhotoStatus(
                                     requestId,
                                     "capturing",
@@ -2656,6 +2783,21 @@ public class MediaCaptureService {
                                     requestedCaptureConfig,
                                     meteredPreview,
                                     null);
+                        }
+
+                        @Override
+                        public void onPhotoExposureStarted(
+                                long sensorTimestampNs, long estimatedExposureDurationNs) {
+                            photoFeedbackController.onExposureStarted(
+                                    captureFeedbackToken,
+                                    sensorTimestampNs,
+                                    estimatedExposureDurationNs);
+                        }
+
+                        @Override
+                        public void onPhotoFrameAvailable(long sensorTimestampNs) {
+                            photoFeedbackController.playSnap(
+                                    captureFeedbackToken, "JPEG frame available");
                         }
 
                         @Override
@@ -2724,6 +2866,8 @@ public class MediaCaptureService {
                                 String filePath,
                                 JSONObject captureMetadata,
                                 CapturedPhoto capturedPhoto) {
+                            photoFeedbackController.playSnap(
+                                    captureFeedbackToken, "photo completion fallback");
                             if (!textModeRequested) {
                                 onPhotoCaptured(filePath, captureMetadata);
                                 return;
@@ -2801,12 +2945,18 @@ public class MediaCaptureService {
                         }
 
                         @Override
+                        public void onPhotoFailureDetected() {
+                            photoFeedbackController.stopForFailure(captureFeedbackToken);
+                        }
+
+                        @Override
                         public void onPhotoError(String errorMessage) {
                             onPhotoError(CameraOperationError.captureFailed(errorMessage));
                         }
 
                         @Override
                         public void onPhotoError(CameraOperationError error) {
+                            photoFeedbackController.stopForFailure(captureFeedbackToken);
                             cleanupPhotoArtifacts(requestId, photoFilePath, false);
                             clearPhotoTracking(requestId);
                             releasePhotoJob(requestId);
@@ -2829,6 +2979,7 @@ public class MediaCaptureService {
                     });
             return true;
         } catch (Exception e) {
+            photoFeedbackController.stopForFailure(feedbackToken);
             cleanupPhotoArtifacts(requestId, photoFilePath, false);
             clearPhotoTracking(requestId);
             releasePhotoJob(requestId);
@@ -2901,6 +3052,7 @@ public class MediaCaptureService {
                                 captureSafetyTimeoutRequestId = null;
                             }
                         }
+                        photoFeedbackController.stopForTimeout(requestId);
                         Log.e(
                                 TAG,
                                 "⚠️ SAFETY TIMEOUT: isPhotoJobInFlight force-reset after "
@@ -2969,8 +3121,7 @@ public class MediaCaptureService {
         long encodeTotalMs = bleEncodeTotalMs.getOrDefault(requestId, 0L);
         long originalBytes = bleOriginalBytes.getOrDefault(requestId, 0L);
         long compressedBytes = bleCompressedBytes.getOrDefault(requestId, 0L);
-        BlePhotoTimingLog.PayloadReductionStats reduction =
-                blePayloadReductionStats.get(requestId);
+        BlePhotoTimingLog.PayloadReductionStats reduction = blePayloadReductionStats.get(requestId);
         BlePhotoTimingLog.CaptureSessionStats captureSession =
                 bleCaptureSessionStats.get(requestId);
         BlePhotoTimingLog.UartTransferStats uart = BlePhotoTimingLog.takeUartTransfer(bleImgId);
@@ -3027,9 +3178,7 @@ public class MediaCaptureService {
      * exposure, ISO, ZSL, metered preview).
      */
     private static String summarizeCaptureTimingDetail(
-            String kind,
-            @Nullable JSONObject captureConfig,
-            @Nullable JSONObject meteredPreview) {
+            String kind, @Nullable JSONObject captureConfig, @Nullable JSONObject meteredPreview) {
         StringBuilder sb = new StringBuilder(kind);
         if (captureConfig != null) {
             int width = captureConfig.optInt("width", -1);
@@ -3078,8 +3227,7 @@ public class MediaCaptureService {
         logBlePhotoStepAt(requestId, step, detail, System.currentTimeMillis());
     }
 
-    private void logBlePhotoStepAt(
-            String requestId, String step, String detail, long wallTimeMs) {
+    private void logBlePhotoStepAt(String requestId, String step, String detail, long wallTimeMs) {
         if (!AsgConstants.ENABLE_PHOTO_TIMING_LOGS || requestId == null || requestId.isEmpty()) {
             return;
         }
@@ -3231,8 +3379,8 @@ public class MediaCaptureService {
      * Debug-only ground truth for the crop tradeoff report: re-runs the exact no-crop BLE pipeline
      * (subsampled decode → aspect-fit resize → sharpen → JPEG encode at the same quality) on the
      * full captured frame and records the measured payload size and processing time on {@code
-     * stats}. Runs on a background thread while the (smaller) cropped payload is already in
-     * flight, so it never delays the real transfer.
+     * stats}. Runs on a background thread while the (smaller) cropped payload is already in flight,
+     * so it never delays the real transfer.
      */
     private void measureNoCropBleBaseline(
             @Nullable byte[] jpegBytes,
@@ -4366,7 +4514,7 @@ public class MediaCaptureService {
 
                                     if (!save) {
                                         try {
-                                            if (videoFile.delete()) {
+                                            if (discardThumbnailAndDeleteVideo(videoFile)) {
                                                 Log.d(
                                                         TAG,
                                                         "🗑️ Deleted video file after successful"
@@ -4940,17 +5088,25 @@ public class MediaCaptureService {
         PhotoCaptureTestHooks.addFakeDelay("CAMERA_CAPTURE");
 
         // Skip sound and flash during camera HAL restart cooldown (e.g. after FOV change)
+        PhotoFeedbackController.Token feedbackToken = null;
         if (!shouldSuppressPhotoFeedback()) {
             triggerPhotoFlashLed();
             if (enableSound) {
                 // BLE-transfer SDK photo: isFromSdk=true; size and exposure match the
                 // enqueuePhotoRequest call below so the warm/cold prediction lines up.
-                playShutterSound(captureSize, true, exposureTimeNs, captureSettings);
+                feedbackToken =
+                        startPhotoFeedback(
+                                requestId,
+                                captureSize,
+                                true,
+                                exposureTimeNs,
+                                captureSettings);
             }
             if (enableFlash) {
                 flashPrivacyLedForPhoto();
             }
         }
+        final PhotoFeedbackController.Token captureFeedbackToken = feedbackToken;
 
         try {
             // Use CameraNeoService for photo capture
@@ -4969,8 +5125,7 @@ public class MediaCaptureService {
                         }
 
                         @Override
-                        public void onCaptureSession(
-                                BlePhotoTimingLog.CaptureSessionStats stats) {
+                        public void onCaptureSession(BlePhotoTimingLog.CaptureSessionStats stats) {
                             bleCaptureSessionStats.put(requestId, stats);
                         }
                     };
@@ -4995,8 +5150,7 @@ public class MediaCaptureService {
                             logBlePhotoStep(
                                     requestId,
                                     "capture_configured",
-                                    summarizeCaptureTimingDetail(
-                                            "resolved", resolvedConfig, null));
+                                    summarizeCaptureTimingDetail("resolved", resolvedConfig, null));
                             sendPhotoStatus(
                                     requestId,
                                     "configuring",
@@ -5012,9 +5166,7 @@ public class MediaCaptureService {
                                     requestId,
                                     "capture_started",
                                     summarizeCaptureTimingDetail(
-                                            "requested",
-                                            requestedCaptureConfig,
-                                            meteredPreview));
+                                            "requested", requestedCaptureConfig, meteredPreview));
                             sendPhotoStatus(
                                     requestId,
                                     "capturing",
@@ -5024,6 +5176,21 @@ public class MediaCaptureService {
                                     requestedCaptureConfig,
                                     meteredPreview,
                                     null);
+                        }
+
+                        @Override
+                        public void onPhotoExposureStarted(
+                                long sensorTimestampNs, long estimatedExposureDurationNs) {
+                            photoFeedbackController.onExposureStarted(
+                                    captureFeedbackToken,
+                                    sensorTimestampNs,
+                                    estimatedExposureDurationNs);
+                        }
+
+                        @Override
+                        public void onPhotoFrameAvailable(long sensorTimestampNs) {
+                            photoFeedbackController.playSnap(
+                                    captureFeedbackToken, "JPEG frame available");
                         }
 
                         @Override
@@ -5041,6 +5208,8 @@ public class MediaCaptureService {
                                 String filePath,
                                 JSONObject captureMetadata,
                                 CapturedPhoto capturedPhoto) {
+                            photoFeedbackController.playSnap(
+                                    captureFeedbackToken, "photo completion fallback");
                             // NOTE: do NOT clear isPhotoJobInFlight here — the job continues
                             // through BLE compression + handoff. Flag is cleared in
                             // compressAndSendViaBle's finally block.
@@ -5095,12 +5264,18 @@ public class MediaCaptureService {
                         }
 
                         @Override
+                        public void onPhotoFailureDetected() {
+                            photoFeedbackController.stopForFailure(captureFeedbackToken);
+                        }
+
+                        @Override
                         public void onPhotoError(String errorMessage) {
                             onPhotoError(CameraOperationError.captureFailed(errorMessage));
                         }
 
                         @Override
                         public void onPhotoError(CameraOperationError error) {
+                            photoFeedbackController.stopForFailure(captureFeedbackToken);
                             BlePhotoTimingLog.unbindPhaseSink(capturePhaseSink);
                             cleanupPhotoArtifacts(requestId, photoFilePath, false);
                             clearPhotoTracking(requestId);
@@ -5124,6 +5299,7 @@ public class MediaCaptureService {
                     });
             return true;
         } catch (Exception e) {
+            photoFeedbackController.stopForFailure(captureFeedbackToken);
             BlePhotoTimingLog.unbindPhaseSink(null);
             cleanupPhotoArtifacts(requestId, photoFilePath, false);
             clearPhotoTracking(requestId);
@@ -5308,8 +5484,7 @@ public class MediaCaptureService {
                                 android.graphics.Rect roi = null;
                                 long cropPhaseStartMs = 0L;
                                 long cropPhaseEndMs = 0L;
-                                boolean cropAttempted =
-                                        shouldCrop && !textSelectionAlreadyPrepared;
+                                boolean cropAttempted = shouldCrop && !textSelectionAlreadyPrepared;
                                 if (cropAttempted) {
                                     stage.start("text-region detection");
                                     cropPhaseStartMs = System.currentTimeMillis();
@@ -5489,9 +5664,13 @@ public class MediaCaptureService {
                                     // before any COMPRESS steps (resize/sharpen/encode).
                                     stage.start("input decode");
                                     String decodeStepStart =
-                                            cropAttempted ? "crop_decode_start" : "input_decode_start";
+                                            cropAttempted
+                                                    ? "crop_decode_start"
+                                                    : "input_decode_start";
                                     String decodeStepDone =
-                                            cropAttempted ? "crop_decode_done" : "input_decode_done";
+                                            cropAttempted
+                                                    ? "crop_decode_done"
+                                                    : "input_decode_done";
                                     logBlePhotoStep(
                                             requestId,
                                             decodeStepStart,
@@ -5874,9 +6053,7 @@ public class MediaCaptureService {
                                     // while the BLE transfer runs, so the crop tradeoff report
                                     // compares against real bytes instead of an area estimate.
                                     final byte[] baselineJpeg =
-                                            capturedPhoto != null
-                                                    ? capturedPhoto.jpegBytes
-                                                    : null;
+                                            capturedPhoto != null ? capturedPhoto.jpegBytes : null;
                                     final String baselinePath = originalPath;
                                     final int baselineTargetW = bleParams.targetWidth;
                                     final int baselineTargetH = bleParams.targetHeight;
@@ -5899,9 +6076,7 @@ public class MediaCaptureService {
                                         BlePhotoTimingLog.estimateFullFrameBlePayloadBytes(
                                                 compressedData.length, reductionStats);
                                 long cropSavedVsFullBleBytes =
-                                        Math.max(
-                                                0L,
-                                                estFullFrameBleBytes - compressedData.length);
+                                        Math.max(0L, estFullFrameBleBytes - compressedData.length);
                                 long sensorToPayloadSavedBytes =
                                         Math.max(0L, originalSizeBytes - compressedData.length);
                                 logBlePhotoStep(
@@ -5993,7 +6168,8 @@ public class MediaCaptureService {
 
                                 // 5. A requested gallery save is part of this operation's success
                                 // contract. Resolve it before notifying the phone that BLE transfer
-                                // has started, so one request can never report both transfer success
+                                // has started, so one request can never report both transfer
+                                // success
                                 // and a later save failure.
                                 boolean savePhotoRequested =
                                         Boolean.TRUE.equals(photoSaveFlags.get(requestId));
@@ -6401,8 +6577,7 @@ public class MediaCaptureService {
 
                     @Override
                     public long getDurationMs() {
-                        return Math.min(
-                                durationMs, AsgConstants.CAMERA_WARM_UP_MAX_DURATION_MS);
+                        return Math.min(durationMs, AsgConstants.CAMERA_WARM_UP_MAX_DURATION_MS);
                     }
                 });
         warmUpDispatching.set(false);
@@ -6771,6 +6946,41 @@ public class MediaCaptureService {
         }
     }
 
+    private void scheduleVideoThumbnail(String filePath) {
+        String taskKey = new File(filePath).getAbsolutePath();
+        VideoThumbnailTask task = new VideoThumbnailTask(taskKey);
+        synchronized (videoThumbnailLifecycleLock) {
+            // Cleanup blocks new integrity checks first, then lets checks already in flight enqueue
+            // their sidecars before closing this executor.
+            if (videoThumbnailExecutor.isShutdown()) {
+                return;
+            }
+            if (videoThumbnailTasks.putIfAbsent(taskKey, task) != null) {
+                return;
+            }
+            try {
+                task.setExecution(videoThumbnailExecutor.submit(task));
+            } catch (RejectedExecutionException e) {
+                videoThumbnailTasks.remove(taskKey, task);
+                Log.d(TAG, "Skipping video thumbnail during cleanup");
+            }
+        }
+    }
+
+    private boolean discardThumbnailAndDeleteVideo(File videoFile) {
+        VideoThumbnailTask task = videoThumbnailTasks.get(videoFile.getAbsolutePath());
+        if (task != null) {
+            boolean deleted = task.discardAndDeleteVideo();
+            videoThumbnailTasks.remove(videoFile.getAbsolutePath(), task);
+            return deleted;
+        }
+        boolean deleted = !videoFile.exists() || videoFile.delete();
+        if (deleted) {
+            VideoThumbnailWriter.deleteSidecar(videoFile);
+        }
+        return deleted;
+    }
+
     /**
      * Cleanup resources and stop all monitoring. MUST be called before service is destroyed to
      * prevent leaks.
@@ -6781,6 +6991,8 @@ public class MediaCaptureService {
         isCleaningUp.set(true);
 
         try {
+            photoFeedbackController.cleanup();
+
             // Stop battery monitoring
             stopBatteryMonitoring();
 
@@ -6796,6 +7008,9 @@ public class MediaCaptureService {
                 mBatteryMonitorHandler = null;
             }
 
+            // isCleaningUp prevents new integrity submissions. Let checks already in flight enqueue
+            // their thumbnails before closing thumbnail submission; existing thumbnail work still
+            // drains in parallel with this wait.
             videoIntegrityExecutor.shutdown();
             try {
                 if (!videoIntegrityExecutor.awaitTermination(3, TimeUnit.SECONDS)) {
@@ -6805,6 +7020,26 @@ public class MediaCaptureService {
                 videoIntegrityExecutor.shutdownNow();
                 Thread.currentThread().interrupt();
             }
+            synchronized (videoThumbnailLifecycleLock) {
+                videoThumbnailExecutor.shutdown();
+            }
+            try {
+                if (!videoThumbnailExecutor.awaitTermination(
+                        AsgConstants.VIDEO_THUMBNAIL_SHUTDOWN_TIMEOUT_MS,
+                        TimeUnit.MILLISECONDS)) {
+                    videoThumbnailTasks
+                            .values()
+                            .forEach(VideoThumbnailTask::cancelThumbnailWrite);
+                    videoThumbnailExecutor.shutdownNow();
+                }
+            } catch (InterruptedException e) {
+                videoThumbnailTasks.values().forEach(VideoThumbnailTask::cancelThumbnailWrite);
+                videoThumbnailExecutor.shutdownNow();
+                Thread.currentThread().interrupt();
+            } finally {
+                VideoThumbnailWriter.shutdownFrameExtraction();
+            }
+            videoThumbnailTasks.clear();
             textModeProcessingExecutor.shutdown();
             try {
                 if (!textModeProcessingExecutor.awaitTermination(3, TimeUnit.SECONDS)) {

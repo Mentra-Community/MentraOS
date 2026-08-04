@@ -52,6 +52,12 @@ public class AsgConstants {
 
     public static final long CAMERA_WARM_UP_MAX_DURATION_MS = 60_000L;
 
+    /** Cadence for the short hold-still click while a cold photo spins up the camera. */
+    public static final long CAMERA_PREP_CLICK_INTERVAL_MS = 900L;
+
+    /** Target lead before the estimated end of sensor exposure for starting the camera snap. */
+    public static final long CAMERA_SNAP_TARGET_LEAD_MS = 100L;
+
     /** Safety lease for a miniapp-owned transient FOV override. */
     public static final long CAMERA_FOV_OVERRIDE_DEFAULT_TTL_MS = 300_000L;
 
@@ -363,6 +369,33 @@ public class AsgConstants {
      * only).
      */
     public static final int FILE_TRANSFER_PROGRESS_LOG_INTERVAL = 10;
+
+    // Video capture thumbnails
+    // -------------------------------------------------------------------------
+
+    /** JPEG sidecar written next to a finalized video for direct-filesystem consumers. */
+    public static final String VIDEO_THUMBNAIL_SIDECAR_NAME = "thumb.jpg";
+
+    /** Transient thumbnail filename; the .partial suffix keeps it out of gallery listings. */
+    public static final String VIDEO_THUMBNAIL_PARTIAL_NAME = "thumb.jpg.partial";
+
+    /** Longest edge of generated video thumbnails, in pixels. */
+    public static final int VIDEO_THUMBNAIL_MAX_DIMENSION = 480;
+
+    /** JPEG compression quality for video thumbnail sidecars. */
+    public static final int VIDEO_THUMBNAIL_JPEG_QUALITY = 80;
+
+    /** Frame position sampled for video thumbnails, in microseconds. */
+    public static final long VIDEO_THUMBNAIL_FRAME_TIME_US = 1_000_000L;
+
+    /** Maximum time allowed for platform video-frame extraction. */
+    public static final long VIDEO_THUMBNAIL_EXTRACTION_TIMEOUT_MS = 10_000L;
+
+    /** Final main-thread wait after thumbnail work has drained during other cleanup steps. */
+    public static final long VIDEO_THUMBNAIL_SHUTDOWN_TIMEOUT_MS = 250L;
+
+    /** Maximum abandoned native decoder workers retained after timeout. */
+    public static final int VIDEO_THUMBNAIL_MAX_RETIRED_DECODERS = 2;
 
     /**
      * Max wait for the deferred background photo write ({@code CapturedPhoto.persistence}) when a
