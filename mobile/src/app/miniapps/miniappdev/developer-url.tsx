@@ -122,10 +122,12 @@ export default function MiniappDeveloperUrlScreen() {
     const existing = engine.miniapps.list().find((app) => app.packageName === packageName)
     if (existing?.running) await engine.miniapps.stop(packageName)
     const resolvedUrl = launchResult.resolvedUrl || entry.url
+    const iconUrl =
+      resolveIconUrl(resolvedUrl, launchResult.manifest.icon) ?? entry.iconUrl ?? `${resolvedUrl}/icon.png`
     await registerDevApp({
       packageName,
       name: appName,
-      iconUrl: resolveIconUrl(resolvedUrl, launchResult.manifest.icon) ?? entry.iconUrl ?? `${resolvedUrl}/icon.png`,
+      iconUrl,
       // Persist the host that answered — not the stale QR/recent-list IP.
       devUrl: resolvedUrl,
       devPort: deriveDevPort(resolvedUrl),
@@ -134,6 +136,20 @@ export default function MiniappDeveloperUrlScreen() {
       hardwareRequirements: launchResult.manifest.hardwareRequirements as DevAppRecord["hardwareRequirements"],
       actions: launchResult.manifest.actions as DevAppRecord["actions"],
     })
+
+    // Rewrite the recent-list row onto the working URL so the next tap does not
+    // probe the dead IP again before failover.
+    const updatedEntry: RecentDevApp = {
+      packageName,
+      name: appName,
+      url: resolvedUrl,
+      iconUrl,
+      timestamp: Date.now(),
+    }
+    const withoutStale = recent.filter(
+      (r) => r.url !== entry.url && r.url !== resolvedUrl && r.packageName !== packageName,
+    )
+    saveRecent([updatedEntry, ...withoutStale].slice(0, MAX_RECENT))
 
     await engine.miniapps.refresh()
     await engine.miniapps.setForeground(packageName)
