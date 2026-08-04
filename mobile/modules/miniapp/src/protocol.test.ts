@@ -23,6 +23,8 @@ describe("MiniappRequestType wire values", () => {
   test("STORAGE_DELETE", () => expect(MiniappRequestType.STORAGE_DELETE).toBe("miniapp_storage_delete"))
   test("STORAGE_LIST", () => expect(MiniappRequestType.STORAGE_LIST).toBe("miniapp_storage_list"))
   test("CAMERA_FOV", () => expect(MiniappRequestType.CAMERA_FOV).toBe("miniapp_camera_fov"))
+  test("SET_WIFI_ADB_STATE", () =>
+    expect(MiniappRequestType.SET_WIFI_ADB_STATE).toBe("miniapp_set_wifi_adb_state"))
   test("PING", () => expect(MiniappRequestType.PING).toBe("miniapp_ping"))
   test("DASHBOARD_CONTENT_UPDATE", () =>
     expect(MiniappRequestType.DASHBOARD_CONTENT_UPDATE).toBe("miniapp_dashboard_content_update"))

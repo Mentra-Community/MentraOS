@@ -290,6 +290,12 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             }
         }
 
+        AsyncFunction("setWifiAdbState") { (enabled: Bool) in
+            await MainActor.run {
+                self.bluetoothSdk().setWifiAdbState(enabled: enabled)
+            }
+        }
+
         AsyncFunction("setSystemTime") { (timestampMs: Double) in
             let maxTimestamp = Double(Int64.max).nextDown
             guard timestampMs.isFinite,

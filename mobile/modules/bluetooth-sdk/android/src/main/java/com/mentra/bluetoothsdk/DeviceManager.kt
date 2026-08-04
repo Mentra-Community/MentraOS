@@ -1252,6 +1252,11 @@ class DeviceManager {
         sgc?.sendHotspotState(enabled)
     }
 
+    fun setWifiAdbState(enabled: Boolean) {
+        Bridge.log("MAN: Setting glasses Wi-Fi ADB state: $enabled")
+        sgc?.sendWifiAdbState(enabled)
+    }
+
     fun setSystemTime(timestampMs: Long) {
         Bridge.log("MAN: Setting glasses system time: $timestampMs")
         sgc?.sendSetSystemTime(timestampMs)

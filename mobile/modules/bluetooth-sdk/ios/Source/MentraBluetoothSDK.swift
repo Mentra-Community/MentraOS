@@ -375,6 +375,10 @@ public final class MentraBluetoothSDK {
         DeviceManager.shared.setHotspotState(enabled)
     }
 
+    public func setWifiAdbState(enabled: Bool) {
+        DeviceManager.shared.setWifiAdbState(enabled)
+    }
+
     func setSystemTime(timestampMs: Int64) {
         DeviceManager.shared.setSystemTime(timestampMs)
     }

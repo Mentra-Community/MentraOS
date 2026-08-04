@@ -208,6 +208,18 @@ public class SysControl {
         sendBroadcast(context, nn);
     }
 
+    /**
+     * Enable or disable Wi-Fi ADB (wireless debugging) via SystemUI.
+     * Mentra Live defaults this off for security; phone/SDK can re-enable for debugging.
+     */
+    public static void setWifiAdb(Context context, boolean enable) {
+        Log.d(TAG, "Setting Wi-Fi ADB to: " + (enable ? "ENABLED" : "DISABLED"));
+        Intent nn = new Intent();
+        nn.putExtra("cmd", "wifiadb");
+        nn.putExtra("enable", enable);
+        sendBroadcast(context, nn);
+    }
+
     public static void connectToWifi(Context context, String ssid, String password) {
         if (ssid == null || ssid.isEmpty()) {
             Log.e(TAG, "Cannot connect to WiFi with empty SSID");

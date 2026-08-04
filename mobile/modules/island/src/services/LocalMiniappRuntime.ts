@@ -562,6 +562,9 @@ class LocalMiniappRuntime {
       case MiniappRequestType.CAMERA_FOV:
         this.handleCameraFov(packageName, payload, requestId)
         break
+      case MiniappRequestType.SET_WIFI_ADB_STATE:
+        void this.handleSetWifiAdbState(packageName, payload, requestId)
+        break
       case MiniappRequestType.PING:
         // SDK should handle this itself; reply PONG just in case
         this.sendToMiniapp(packageName, {type: MiniappResponseType.PONG}, requestId)
@@ -1117,6 +1120,29 @@ class LocalMiniappRuntime {
       this.sendResult(packageName, requestId, false, undefined, {
         code: MiniappErrorCode.INTERNAL,
         message: err instanceof Error ? err.message : "Storage error",
+      })
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Wi-Fi ADB
+  // ---------------------------------------------------------------------------
+
+  private async handleSetWifiAdbState(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    try {
+      const enabled = Boolean(payload.enabled)
+      console.log(`${LOG_TAG}: set_wifi_adb_state enabled=${enabled} from ${packageName}`)
+      await BluetoothSdk.setWifiAdbState(enabled)
+      this.sendResult(packageName, requestId, true)
+    } catch (err) {
+      console.error(`${LOG_TAG}: set_wifi_adb_state error:`, err)
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "Wi-Fi ADB error",
       })
     }
   }

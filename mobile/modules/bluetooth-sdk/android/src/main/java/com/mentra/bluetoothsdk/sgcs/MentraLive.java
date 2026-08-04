@@ -5861,6 +5861,20 @@ public class MentraLive extends SGCManager {
     }
 
     @Override
+    public void sendWifiAdbState(boolean enabled) {
+        Bridge.log("LIVE: 🔧 Sending Wi-Fi ADB state to glasses - enabled: " + enabled);
+        try {
+            JSONObject command = new JSONObject();
+            command.put("type", "set_wifi_adb_state");
+            command.put("enabled", enabled);
+            sendJson(command, true);
+            Bridge.log("LIVE: 🔧 ✅ Wi-Fi ADB state command sent successfully");
+        } catch (JSONException e) {
+            Log.e(TAG, "🔧 💥 Error creating Wi-Fi ADB state JSON", e);
+        }
+    }
+
+    @Override
     public void sendSetSystemTime(long timestampMs) {
         Bridge.log("LIVE: ⏰ Sending set_system_time to glasses: " + timestampMs);
         try {

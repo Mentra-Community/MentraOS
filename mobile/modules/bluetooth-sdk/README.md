@@ -234,6 +234,7 @@ await BluetoothSdk.requestWifiScan()
 await BluetoothSdk.sendWifiCredentials('Office WiFi', 'secret')
 await BluetoothSdk.forgetWifiNetwork('Office WiFi')
 await BluetoothSdk.setHotspotState(true)
+await BluetoothSdk.setWifiAdbState(true) // Mentra Live Wi-Fi ADB (wireless debugging)
 
 await BluetoothSdk.setGalleryModeEnabled(true)
 await BluetoothSdk.setGalleryModeEnabled(false)

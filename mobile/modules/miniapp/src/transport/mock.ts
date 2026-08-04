@@ -200,6 +200,7 @@ function syntheticDataFor(requestType: string): unknown {
     case MiniappRequestType.OPEN_URL:
     case MiniappRequestType.COPY_CLIPBOARD:
     case MiniappRequestType.DOWNLOAD:
+    case MiniappRequestType.SET_WIFI_ADB_STATE:
       return {ok: true}
 
     default:

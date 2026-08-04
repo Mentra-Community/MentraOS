@@ -1095,6 +1095,11 @@ struct ViewState {
         sgc?.sendHotspotState(enabled)
     }
 
+    func setWifiAdbState(_ enabled: Bool) {
+        Bridge.log("MAN: 🔧 Setting glasses Wi-Fi ADB state: \(enabled)")
+        sgc?.sendWifiAdbState(enabled)
+    }
+
     func setSystemTime(_ timestampMs: Int64) {
         Bridge.log("MAN: Setting glasses system time: \(timestampMs)")
         sgc?.sendSetSystemTime(timestampMs)

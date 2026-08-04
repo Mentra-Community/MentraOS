@@ -6,7 +6,7 @@
  * + connection events on `session.phone`.
  */
 
-import {MiniappStreamType} from "../protocol"
+import {MiniappRequestType, MiniappStreamType} from "../protocol"
 import {MiniappSession} from "../session"
 import type {BatteryData, ConnectionData, UnsubscribeFn} from "./events"
 
@@ -19,5 +19,16 @@ export class GlassesModule {
 
   onConnection(handler: (data: ConnectionData) => void): UnsubscribeFn {
     return this.session._subscribe(MiniappStreamType.GLASSES_CONNECTION, handler as (data: unknown) => void)
+  }
+
+  /**
+   * Enable or disable Wi-Fi ADB (wireless debugging) on Mentra Live.
+   * Persisted on the glasses; boot applies the saved preference (default off).
+   */
+  async setWifiAdbState(enabled: boolean): Promise<void> {
+    await this.session.sendRequest<void>({
+      type: MiniappRequestType.SET_WIFI_ADB_STATE,
+      enabled,
+    })
   }
 }

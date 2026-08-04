@@ -106,6 +106,11 @@ abstract class SGCManager {
         Bridge.log("SGC: sendSetSystemTime not supported on $type")
     }
 
+    /** Enable/disable Wi-Fi ADB on Mentra Live (no-op on other devices). */
+    open fun sendWifiAdbState(enabled: Boolean) {
+        Bridge.log("SGC: sendWifiAdbState not supported on $type")
+    }
+
     // User Context (for crash reporting)
     abstract fun sendUserEmailToGlasses(email: String)
 

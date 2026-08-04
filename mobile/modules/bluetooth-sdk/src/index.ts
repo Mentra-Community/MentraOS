@@ -71,6 +71,7 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
   sendWifiCredentials: PrivateBluetoothSdkModule.sendWifiCredentials.bind(PrivateBluetoothSdkModule),
   forgetWifiNetwork: PrivateBluetoothSdkModule.forgetWifiNetwork.bind(PrivateBluetoothSdkModule),
   setHotspotState: PrivateBluetoothSdkModule.setHotspotState.bind(PrivateBluetoothSdkModule),
+  setWifiAdbState: PrivateBluetoothSdkModule.setWifiAdbState.bind(PrivateBluetoothSdkModule),
   setGalleryModeEnabled: PrivateBluetoothSdkModule.setGalleryModeEnabled.bind(PrivateBluetoothSdkModule),
   setVoiceActivityDetectionEnabled: PrivateBluetoothSdkModule.setVoiceActivityDetectionEnabled.bind(PrivateBluetoothSdkModule),
   setButtonPhotoSettings: PrivateBluetoothSdkModule.setButtonPhotoSettings.bind(PrivateBluetoothSdkModule),

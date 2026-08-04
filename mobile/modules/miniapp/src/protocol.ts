@@ -48,6 +48,9 @@ export enum MiniappRequestType {
   /** Write camera FOV settings. */
   CAMERA_FOV = "miniapp_camera_fov",
 
+  /** Enable or disable Wi-Fi ADB (wireless debugging) on Mentra Live. */
+  SET_WIFI_ADB_STATE = "miniapp_set_wifi_adb_state",
+
   /** Share content via the OS share sheet. */
   SHARE = "miniapp_share",
   /** Open a URL in the system browser. */
