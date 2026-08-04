@@ -13,12 +13,11 @@ import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 
 /**
- * Regression test for incident rep_01KY6BJ0B7A4RBMQ7VN39KAE5E: v1 ck chunks were sized
- * against MTU_TARGET (509) but a v1 string frame must survive the phone leg as a single
- * BLE notification (~253-byte ATT payload). The OTA completion ota_status packed to
- * 256-263-byte chunk frames, every one was truncated on the wire, and the phone failed a
- * successful update. Every packed v1 ck chunk must stay within
- * {@link MessageChunker#MAX_PACKED_STRING_CHUNK_SIZE}.
+ * Regression test for incident rep_01KY6BJ0B7A4RBMQ7VN39KAE5E: v1 ck chunks were sized against
+ * MTU_TARGET (509) but a v1 string frame must survive the phone leg as a single BLE notification
+ * (~253-byte ATT payload). The OTA completion ota_status packed to 256-263-byte chunk frames, every
+ * one was truncated on the wire, and the phone failed a successful update. Every packed v1 ck chunk
+ * must stay within {@link MessageChunker#MAX_PACKED_STRING_CHUNK_SIZE}.
  */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 33)
@@ -37,7 +36,10 @@ public class StringChunkBudgetTest {
         MessageChunker.resetStringChunkBudget();
     }
 
-    /** The 251-byte ota_status completion shape from the incident, quote-dense like the real payload. */
+    /**
+     * The 251-byte ota_status completion shape from the incident, quote-dense like the real
+     * payload.
+     */
     private static String incidentShapedOtaStatus() {
         return "{\"sid\":\"d017b9b1\",\"ts\":1,\"cs\":1,\"st\":\"apk\",\"sq\":[\"apk\"],"
                 + "\"phase\":\"install\",\"sp\":100,\"op\":100,\"status\":\"complete\","
@@ -67,7 +69,8 @@ public class StringChunkBudgetTest {
             // measure the packed frame exactly as the send path produces it.
             byte[] packed = BesWireFormat.formatMessageForTransmission(chunk.toString());
             assertThat(packed).isNotNull();
-            assertThat(packed.length).isLessThanOrEqualTo(MessageChunker.maxPackedStringChunkSize());
+            assertThat(packed.length)
+                    .isLessThanOrEqualTo(MessageChunker.maxPackedStringChunkSize());
 
             reassembled =
                     reassembler.addChunk(
@@ -94,7 +97,7 @@ public class StringChunkBudgetTest {
         assertAllPackedChunksFitAndRoundTrip(largeQuoteDenseJson(500));
     }
 
-    // ---- negotiated notify_cap budget (BES firmware >= 17.26.7.23) ----
+    // ---- Release A fixed envelope: notify_cap is advisory only ----
 
     @Test
     public void budgetDefaultsToTheConservativeFallback() {
@@ -104,39 +107,20 @@ public class StringChunkBudgetTest {
     }
 
     @Test
-    public void advertisedNotifyCapRaisesTheBudgetByTheSameMargin() {
+    public void advertisedNotifyCapCannotRaiseTheBudget() {
         MessageChunker.setStringChunkBudgetFromNotifyCap(509);
-        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(509 - 13);
+        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(240);
 
         MessageChunker.setStringChunkBudgetFromNotifyCap(253);
-        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(253 - 13);
+        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(240);
     }
 
     @Test
-    public void notifyCapAboveTheContractCeilingIsClampedToTheCeiling() {
-        // The BES contract is max(253, min(ATT MTU - 3, 509)); an oversized advertisement must
-        // not size chunks beyond what the transport carries.
+    public void malformedNotifyCapsCannotChangeTheBudget() {
         MessageChunker.setStringChunkBudgetFromNotifyCap(1000);
-
-        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(509 - 13);
-    }
-
-    @Test
-    public void notifyCapContractBoundariesAreAcceptedExactly() {
-        MessageChunker.setStringChunkBudgetFromNotifyCap(253);
-        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(253 - 13);
-
-        MessageChunker.setStringChunkBudgetFromNotifyCap(509);
-        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(509 - 13);
-    }
-
-    @Test
-    public void notifyCapBelowTheContractFloorIsIgnored() {
-        MessageChunker.setStringChunkBudgetFromNotifyCap(509);
         MessageChunker.setStringChunkBudgetFromNotifyCap(200);
-
-        // The malformed advertisement must not shrink the budget below the validated fallback.
-        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(509 - 13);
+        MessageChunker.setStringChunkBudgetFromNotifyCap(-1);
+        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(240);
     }
 
     @Test
@@ -149,7 +133,7 @@ public class StringChunkBudgetTest {
     }
 
     @Test
-    public void chunksStillFitAndRoundTripUnderARaisedBudget() throws Exception {
+    public void chunksStillFitAndRoundTripAfterLargeAdvertisement() throws Exception {
         MessageChunker.setStringChunkBudgetFromNotifyCap(509);
         assertAllPackedChunksFitAndRoundTrip(largeQuoteDenseJson(500));
     }
@@ -163,11 +147,11 @@ public class StringChunkBudgetTest {
         machine.srSyvrParsed(
                 new LinkStateMachine.BesCaps(
                         false, false, false, false, BesWireFormat.PROTOCOL_VERSION_V1, 509));
-        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(509 - 13);
+        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(240);
 
         // A discontinuity (baud reopen) keeps the negotiated caps — and the budget with them.
         machine.streamDiscontinuity();
-        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(509 - 13);
+        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(240);
 
         // EVERY close path (onSerialClose, failed onSerialOpen, reopen failures) funnels
         // through the machine's serialClosed transition: caps cleared MUST mean fallback
@@ -184,9 +168,7 @@ public class StringChunkBudgetTest {
 
     @Test
     public void budgetFollowsThePhoneSessionLifecycle() {
-        // notify_cap derives from the phone BLE session's negotiated ATT MTU, so the budget
-        // must not outlive that session: a reconnecting phone can negotiate a SMALLER MTU, and
-        // the old 496 budget would silently truncate its notifications.
+        // Session changes and advertisements must not alter the fixed release-A envelope.
         LinkStateMachine machine = new LinkStateMachine();
         MessageChunker.followLinkState(machine);
         machine.serialReady();
@@ -194,7 +176,7 @@ public class StringChunkBudgetTest {
         machine.srSyvrParsed(
                 new LinkStateMachine.BesCaps(
                         false, false, false, false, BesWireFormat.PROTOCOL_VERSION_V1, 509));
-        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(509 - 13);
+        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(240);
 
         // Phone disconnects: back to the fallback.
         machine.phonePresenceReported(false);
@@ -204,11 +186,11 @@ public class StringChunkBudgetTest {
         machine.phonePresenceReported(true);
         assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(240);
 
-        // A fresh advertisement (measured for the new session's MTU) re-arms the budget.
+        // A fresh advertisement remains advisory.
         machine.srSyvrParsed(
                 new LinkStateMachine.BesCaps(
                         false, false, false, false, BesWireFormat.PROTOCOL_VERSION_V1, 260));
-        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(260 - 13);
+        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(240);
     }
 
     @Test
@@ -221,7 +203,7 @@ public class StringChunkBudgetTest {
         machine.srSyvrParsed(
                 new LinkStateMachine.BesCaps(
                         false, false, false, false, BesWireFormat.PROTOCOL_VERSION_V1, 509));
-        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(509 - 13);
+        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(240);
 
         // onBesOtaApplied drives exactly these two machine transitions.
         machine.streamDiscontinuity();

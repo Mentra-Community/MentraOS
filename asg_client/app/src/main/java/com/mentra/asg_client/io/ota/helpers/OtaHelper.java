@@ -18,12 +18,13 @@ import org.greenrobot.eventbus.Subscribe;
 import org.greenrobot.eventbus.ThreadMode;
 import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.events.BatteryStatusEvent;
-import com.mentra.asg_client.di.hilt.AsgClientEntryPoint;
 import com.mentra.asg_client.io.ota.events.DownloadProgressEvent;
 import com.mentra.asg_client.io.ota.events.InstallationProgressEvent;
 import com.mentra.asg_client.io.ota.events.MtkOtaProgressEvent;
 import com.mentra.asg_client.io.ota.interfaces.IBesOtaController;
 import com.mentra.asg_client.io.ota.interfaces.IBesOtaRegistry;
+import com.mentra.asg_client.io.ota.utils.BesFirmwareArtifactValidator;
+import com.mentra.asg_client.io.ota.utils.BesFirmwareArtifactValidator.ValidatedBesArtifact;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
@@ -233,6 +234,9 @@ public class OtaHelper {
      *   "complete"      → shows "Update installed"
      */
     public void onPhoneConnected() {
+        // Durable BES truth is read at delivery time; EventBus and process-local retry timers are
+        // only wake-ups and never become a second terminal store.
+        sendAuthoritativeBesStatusToPhone();
         if (sessionManager == null || phoneConnectionProvider == null) return;
         String pendingStatus = sessionManager.consumePendingApkStatus();
         if (pendingStatus == null) return;
@@ -247,6 +251,10 @@ public class OtaHelper {
 
     public JSONObject getOtaSessionState() {
         try {
+            JSONObject besStatus = getAuthoritativeBesStatus();
+            if (besStatus != null) {
+                return besStatus;
+            }
             // Phone bridge (MentraLive.java) reads all fields from the top level, so we flatten
             // the session state directly into the message rather than nesting under "data".
             JSONObject sessionState = sessionManager != null ? sessionManager.getSessionState() : null;
@@ -268,6 +276,19 @@ public class OtaHelper {
         } catch (JSONException e) {
             return null;
         }
+    }
+
+    private JSONObject getAuthoritativeBesStatus() {
+        IBesOtaController controller = getOtaController();
+        return controller != null ? controller.getAuthoritativeStatus() : null;
+    }
+
+    public void sendAuthoritativeBesStatusToPhone() {
+        JSONObject status = getAuthoritativeBesStatus();
+        if (status == null || phoneConnectionProvider == null || !isPhoneConnected()) {
+            return;
+        }
+        phoneConnectionProvider.sendOtaStatus(status);
     }
 
     public OtaSessionManager getSessionManager() {
@@ -427,6 +448,13 @@ public class OtaHelper {
 
         // Immediately acknowledge receipt so the phone cancels its retry timer.
         sendOtaStartAck();
+
+        IBesOtaController besController = getOtaController();
+        if (besController != null && !besController.prepareForNewOtaSession()) {
+            Log.w(TAG, "BES durable state blocks a new OTA session");
+            sendAuthoritativeBesStatusToPhone();
+            return;
+        }
 
         // If OTA already in progress, do not start a parallel pipeline. The phone
         // will receive the current status and can keep retrying/querying normally.
@@ -2117,14 +2145,24 @@ public class OtaHelper {
             Log.i(TAG, "BES firmware ready - starting install phase");
             IBesOtaController manager = besOtaRegistry.getInstance();
             if (manager != null) {
-                Log.i(TAG, "Starting BES firmware update from: " + OtaConstants.BES_FIRMWARE_PATH);
-                boolean started = manager.startFirmwareUpdate(OtaConstants.BES_FIRMWARE_PATH);
+                File firmwareFile = new File(OtaConstants.BES_FIRMWARE_PATH);
+                ValidatedBesArtifact artifact =
+                        BesFirmwareArtifactValidator.validate(firmwareFile, firmwareInfo);
+                JSONObject sessionState = sessionManager != null ? sessionManager.getSessionState() : null;
+                String ownerSessionId =
+                        sessionState != null ? sessionState.optString("sid", "").trim() : "";
+                if (ownerSessionId.isEmpty()) {
+                    Log.e(TAG, "BES OTA has no owning top-level session");
+                    return false;
+                }
+                Log.i(TAG, "Starting validated BES firmware update artifact="
+                        + artifact.getArtifactId() + " target=" + artifact.getTargetVersion());
+                boolean started = manager.startFirmwareUpdate(artifact, ownerSessionId);
                 if (started) {
                     Log.i(TAG, "BES firmware update initiated successfully");
                     return true;
                 } else {
                     Log.e(TAG, "Failed to start BES firmware update");
-                    File firmwareFile = new File(OtaConstants.BES_FIRMWARE_PATH);
                     if (firmwareFile.exists() && !firmwareFile.delete()) {
                         Log.w(TAG, "Failed deleting BES firmware after install start failure");
                     }
@@ -2818,8 +2856,11 @@ public class OtaHelper {
     }
 
     private void sendOtaStatus() {
-        if (phoneConnectionProvider == null || !isPhoneConnected() || sessionManager == null) return;
-        JSONObject sessionState = sessionManager.getSessionState();
+        if (phoneConnectionProvider == null || !isPhoneConnected()) return;
+        JSONObject sessionState = getAuthoritativeBesStatus();
+        if (sessionState == null && sessionManager != null) {
+            sessionState = sessionManager.getSessionState();
+        }
         if (sessionState == null) {
             sessionState = buildMinimalOtaStatusJson();
             if (sessionState == null) {
@@ -3063,50 +3104,9 @@ public class OtaHelper {
      * @return true if install started successfully
      */
     public static boolean debugInstallBesFirmware(Context context) {
-        try {
-            IBesOtaRegistry registry =
-                    dagger.hilt.android.EntryPointAccessors.fromApplication(
-                                    context.getApplicationContext(), AsgClientEntryPoint.class)
-                            .besOtaRegistry();
-            // Check if BES OTA is already in progress - don't interrupt it!
-            IBesOtaController activeController = registry.getInstance();
-            if (activeController != null && activeController.isBesOtaInProgress()) {
-                Log.w(TAG, "DEBUG: BES OTA already in progress - skipping to avoid interruption");
-                return false;
-            }
-
-            File firmwareFile = new File(OtaConstants.BES_FIRMWARE_PATH);
-
-            if (!firmwareFile.exists()) {
-                Log.e(TAG, "DEBUG: BES firmware file not found at: " + OtaConstants.BES_FIRMWARE_PATH);
-                return false;
-            }
-
-            Log.w(TAG, "⚠️ DEBUG: Force installing BES firmware from: " + OtaConstants.BES_FIRMWARE_PATH);
-            Log.w(TAG, "⚠️ DEBUG: File size: " + firmwareFile.length() + " bytes");
-            Log.w(TAG, "⚠️ DEBUG: Skipping all checks - version, mutual exclusion, SHA256");
-
-            // Get the active BES OTA controller
-            IBesOtaController manager = registry.getInstance();
-            if (manager == null) {
-                Log.e(TAG, "DEBUG: BES OTA controller not available - is this a K900 device?");
-                return false;
-            }
-
-            Log.i(TAG, "DEBUG: Starting BES firmware update via BES OTA controller");
-            boolean started = manager.startFirmwareUpdate(OtaConstants.BES_FIRMWARE_PATH);
-
-            if (started) {
-                Log.i(TAG, "DEBUG: BES firmware install initiated - monitor BesOtaProgressEvent for progress");
-                return true;
-            } else {
-                Log.e(TAG, "DEBUG: BesOtaManager.startFirmwareUpdate() returned false");
-                return false;
-            }
-
-        } catch (Exception e) {
-            Log.e(TAG, "DEBUG: Failed to install BES firmware", e);
-            return false;
-        }
+        // The release-A safety contract requires manifest validation, durable ownership, and
+        // pre-authorization state persistence. A raw-file debug entry point bypasses all three.
+        Log.e(TAG, "DEBUG BES install is disabled; use the phone-started validated OTA flow");
+        return false;
     }
 }

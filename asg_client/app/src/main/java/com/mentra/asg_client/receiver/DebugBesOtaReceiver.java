@@ -39,7 +39,8 @@ public class DebugBesOtaReceiver extends BroadcastReceiver {
             Log.e(TAG, "❌ Firmware file not found at: " + OtaConstants.BES_FIRMWARE_PATH);
             Log.e(
                     TAG,
-                    "Push file first: adb push firmware.bin /storage/emulated/0/asg/bes_firmware.bin");
+                    "Push file first: adb push firmware.bin"
+                            + " /storage/emulated/0/asg/bes_firmware.bin");
             return;
         }
 
@@ -61,14 +62,8 @@ public class DebugBesOtaReceiver extends BroadcastReceiver {
             return;
         }
 
-        // Start the update
-        Log.i(TAG, "🚀 Starting BES firmware update...");
-        boolean started = manager.startFirmwareUpdate(OtaConstants.BES_FIRMWARE_PATH);
-
-        if (started) {
-            Log.i(TAG, "✅ BES OTA started - monitor logcat for progress");
-        } else {
-            Log.e(TAG, "❌ BES OTA failed to start");
-        }
+        // Raw-path starts bypass release metadata, artifact identity, and durable session
+        // ownership. Use the phone-driven staging OTA flow so the same safety gate is exercised.
+        Log.e(TAG, "❌ Direct BES OTA broadcast is disabled; use a validated staging manifest");
     }
 }

@@ -64,6 +64,11 @@ public class OtaService extends Service {
             EventBus.getDefault().register(this);
         }
 
+        // Startup may follow the BES-triggered reboot, before any EventBus subscriber existed.
+        // The durable store is truth, so replay its current projection rather than relying on the
+        // event that originally committed it.
+        otaHelper.sendAuthoritativeBesStatusToPhone();
+
         Log.i(TAG, "OTA service initialized - waiting for phone-initiated ota_start");
     }
 
@@ -230,7 +235,8 @@ public class OtaService extends Service {
                 // whether a BES update follows), NOT from session state — so it is correct on both
                 // the session path and the legacy/no-session path below. consume*() clears the flag
                 // so a duplicate/late SUCCESS event can't schedule a second reboot.
-                boolean shouldRebootAfterMtk = otaHelper != null && otaHelper.consumeRebootAfterMtkInstall();
+                boolean shouldRebootAfterMtk =
+                        otaHelper != null && otaHelper.consumeRebootAfterMtkInstall();
 
                 if (otaHelper != null) {
                     otaHelper.sendMtkInstallProgressToPhone("FINISHED", 100, null);
@@ -242,7 +248,8 @@ public class OtaService extends Service {
                         // can decide whether to start another round.
                         Log.i(
                                 TAG,
-                                "📱 MTK complete (no session) - notifying phone via legacy broadcast");
+                                "📱 MTK complete (no session) - notifying phone via legacy"
+                                        + " broadcast");
                         sendMtkUpdateCompleteMessage();
                     }
                 } else {
@@ -277,20 +284,26 @@ public class OtaService extends Service {
     /**
      * Reboot the device to apply a staged MTK-only firmware update.
      *
-     * MTK A/B updates do not change ro.custom.ota.version until the device reboots. When MTK is
+     * <p>MTK A/B updates do not change ro.custom.ota.version until the device reboots. When MTK is
      * bundled with a BES update the BES install power-cycles the device for us; for an MTK-only
      * update nothing else triggers the reboot, so the device would otherwise keep re-offering the
      * same patch (current firmware still matches the patch's start_firmware) in a loop.
      *
-     * Delayed so the phone receives the BLE "complete" status before the connection drops.
+     * <p>Delayed so the phone receives the BLE "complete" status before the connection drops.
      */
     private void scheduleMtkRebootToApplyUpdate() {
-        Log.i(TAG, "🔄 MTK was the final OTA step (no BES update) - rebooting in "
-                + (MTK_REBOOT_DELAY_MS / 1000) + "s to apply staged firmware");
-        new Handler(Looper.getMainLooper()).postDelayed(() -> {
-            Log.i(TAG, "🔄 Rebooting now to apply staged MTK firmware update");
-            SystemControllerFactory.get(this).reboot();
-        }, MTK_REBOOT_DELAY_MS);
+        Log.i(
+                TAG,
+                "🔄 MTK was the final OTA step (no BES update) - rebooting in "
+                        + (MTK_REBOOT_DELAY_MS / 1000)
+                        + "s to apply staged firmware");
+        new Handler(Looper.getMainLooper())
+                .postDelayed(
+                        () -> {
+                            Log.i(TAG, "🔄 Rebooting now to apply staged MTK firmware update");
+                            SystemControllerFactory.get(this).reboot();
+                        },
+                        MTK_REBOOT_DELAY_MS);
     }
 
     @Subscribe(threadMode = ThreadMode.MAIN)
@@ -313,14 +326,17 @@ public class OtaService extends Service {
             case FINISHED:
                 Log.i(TAG, "BES firmware update finished successfully");
                 updateNotification("BES firmware updated successfully");
-                // Note: BES chip will send sr_adota with progress=100 or type=success
+                if (otaHelper != null) {
+                    otaHelper.sendAuthoritativeBesStatusToPhone();
+                    otaHelper.deleteDownloadedArtifactForType("bes");
+                }
                 break;
             case FAILED:
                 Log.e(TAG, "BES firmware update failed: " + event.getErrorMessage());
                 updateNotification("BES firmware update failed: " + event.getErrorMessage());
                 // Try to notify phone of failure (might work if UART recovers)
                 if (otaHelper != null) {
-                    otaHelper.sendBesInstallProgressToPhone("FAILED", 0, event.getErrorMessage());
+                    otaHelper.sendAuthoritativeBesStatusToPhone();
                     otaHelper.deleteDownloadedArtifactForType("bes");
                 }
                 break;
@@ -375,14 +391,15 @@ public class OtaService extends Service {
                 if (isApkInstallRestart) {
                     Log.i(
                             TAG,
-                            "📱 Active APK install session found without restart guard — resuming next step");
+                            "📱 Active APK install session found without restart guard — resuming"
+                                    + " next step");
                     resumeFromSession(sessionManager);
                     return;
                 }
                 Log.i(
                         TAG,
-                        "📱 Active OTA session found without restart guard but not APK install restart "
-                                + "(step="
+                        "📱 Active OTA session found without restart guard but not APK install"
+                                + " restart (step="
                                 + currentStepIndex
                                 + " type="
                                 + currentStepType
