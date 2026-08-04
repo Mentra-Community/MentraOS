@@ -153,8 +153,8 @@ public class AsgConstants {
      * rep_01KY6BJ0B7A4RBMQ7VN39KAE5E: OTA completion ck chunks packed to 256-263 bytes and none
      * survived). 240 = 253 - {@link #K900_STRING_CHUNK_BUDGET_MARGIN_BYTES}. BES firmware >=
      * 17.26.7.23 advertises {@code wire_caps.notify_cap} (the measured single-notification payload
-     * cap) and the budget becomes notify_cap minus the same margin — see Legacy v1 string frames
-     * never grow from negotiated notify capacity.
+     * cap) and the budget becomes notify_cap minus the same margin: legacy v1 string frames never
+     * grow from negotiated notify capacity.
      */
     public static final int K900_STRING_CHUNK_MAX_FRAME_BYTES = 240;
 

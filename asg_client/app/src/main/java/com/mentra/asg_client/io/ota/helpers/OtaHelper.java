@@ -2136,7 +2136,12 @@ public class OtaHelper {
             String firmwareUrl = firmwareInfo.optString("url", firmwareInfo.optString("firmwareUrl", ""));
             if (firmwareUrl.isEmpty()) {
                 Log.e(TAG, "BES firmware URL missing in JSON (expected 'url' or 'firmwareUrl')");
-                sendProgressToPhone("install", 0, 0, 0, "FAILED", "install_failed");
+                // This is a deterministic manifest-admission failure: no BES command has been
+                // queued, so it must not enter the install/reboot-required recovery branch.
+                if (isPhoneInitiatedOta) {
+                    sendProgressToPhone(
+                            "download", 0, 0, 0, "FAILED", "firmware_verify_failed");
+                }
                 return false;
             }
 
