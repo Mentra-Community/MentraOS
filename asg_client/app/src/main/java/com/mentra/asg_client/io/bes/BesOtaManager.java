@@ -37,6 +37,8 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
     // longer, treat the transfer as failed rather than extending the operation timeout.
     private static final long BES_TOTAL_TIMEOUT_MS = 300000;
     private static final long BES_AUTH_TIMEOUT_MS = 30000; // 30 seconds authorization timeout
+    private static final long BES_AUTH_RECOVERY_PROBE_INTERVAL_MS = 1000;
+    private static final int BES_AUTH_RECOVERY_PROBE_MAX_ATTEMPTS = 3;
     private Context mContext;
 
     private long operationStartTime = 0;
@@ -78,6 +80,10 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
     private boolean bWait4Confirm = false;
     private volatile boolean isWaitingForAuthorization = false;
     private boolean authorizationAttempted = false;
+    private boolean authorizationRecoveryProbePending = false;
+    private int authorizationRecoveryProbeAttempts = 0;
+    private android.os.Handler authorizationRecoveryProbeHandler;
+    private Runnable authorizationRecoveryProbeRunnable;
 
     private final Runnable otaAppliedCallback;
     private final BesOtaAuthorizationGate authorizationGate;
@@ -395,9 +401,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
      */
     private void postFailure(String diagnostic) {
         String phoneError =
-                authorizationAttempted
-                        ? AsgConstants.BES_OTA_REBOOT_REQUIRED_ERROR
-                        : diagnostic;
+                authorizationAttempted ? AsgConstants.BES_OTA_REBOOT_REQUIRED_ERROR : diagnostic;
         if (!phoneError.equals(diagnostic)) {
             Log.e(TAG, diagnostic + "; phone recovery=" + phoneError);
         }
@@ -434,12 +438,92 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
                                     "BES OTA authorization timeout after "
                                             + BES_AUTH_TIMEOUT_MS
                                             + "ms");
-                            postFailure("BES chip did not respond to authorization request");
-                            cleanupLocked();
+                            authTimeoutHandler = null;
+                            authTimeoutRunnable = null;
+                            beginAuthorizationRecoveryProbeLocked();
                         }
                     };
             authTimeoutHandler.postDelayed(authTimeoutRunnable, BES_AUTH_TIMEOUT_MS);
         }
+    }
+
+    /**
+     * Reconcile a missing framed {@code hm_ota} without repeating the mode-changing {@code mh_ota}.
+     * The raw 0x99 query is read-only and idempotent in OTA mode. In normal K900 mode its five
+     * bytes contain no frame marker, so the framed parser discards them as junk and remains usable.
+     */
+    private void beginAuthorizationRecoveryProbeLocked() {
+        if (transportCoordinator == null
+                || !transportCoordinator.promoteOtaAuthorizationToTransfer(transportLease)) {
+            Log.e(TAG, "Could not promote UART for BES OTA state reconciliation");
+            postFailure("BES chip did not respond to authorization request");
+            cleanupLocked();
+            return;
+        }
+
+        Log.w(TAG, "hm_ota missing; probing the read-only raw OTA protocol before aborting");
+        isWaitingForAuthorization = false;
+        authorizationRecoveryProbePending = true;
+        authorizationRecoveryProbeAttempts = 0;
+        sendNextAuthorizationRecoveryProbeLocked();
+    }
+
+    private void sendNextAuthorizationRecoveryProbeLocked() {
+        if (!authorizationRecoveryProbePending) {
+            return;
+        }
+        if (authorizationRecoveryProbeAttempts >= BES_AUTH_RECOVERY_PROBE_MAX_ATTEMPTS) {
+            Log.e(
+                    TAG,
+                    "BES did not answer "
+                            + BES_AUTH_RECOVERY_PROBE_MAX_ATTEMPTS
+                            + " raw OTA state probes");
+            // Reaching this branch means BOTH state indicators were silent: no framed hm_ota
+            // acknowledging the mode switch, and no raw 0x9A proving that the switch nevertheless
+            // happened. If 0x9A had arrived, entering OTA mode was the desired outcome and the
+            // transfer would already be continuing with SetUser. With neither reply, ASG cannot
+            // know which parser BES currently owns. Sending framed JSON could feed the raw OTA
+            // decoder; sending firmware commands could feed the normal K900 parser. Abort without
+            // sending either form and require a full glasses reboot, the only operation that
+            // provably resets BES to the framed parser before another authorization attempt.
+            postFailure("BES OTA state could not be reconciled");
+            cleanupLocked();
+            return;
+        }
+
+        authorizationRecoveryProbeAttempts++;
+        byte[] probe = SCmd_GetProtocolVersion();
+        boolean sent = send(probe);
+        Log.w(
+                TAG,
+                "BES raw OTA state probe "
+                        + authorizationRecoveryProbeAttempts
+                        + "/"
+                        + BES_AUTH_RECOVERY_PROBE_MAX_ATTEMPTS
+                        + " writeResult="
+                        + sent);
+
+        authorizationRecoveryProbeHandler =
+                new android.os.Handler(android.os.Looper.getMainLooper());
+        authorizationRecoveryProbeRunnable =
+                () -> {
+                    synchronized (mTransferGate) {
+                        sendNextAuthorizationRecoveryProbeLocked();
+                    }
+                };
+        authorizationRecoveryProbeHandler.postDelayed(
+                authorizationRecoveryProbeRunnable, BES_AUTH_RECOVERY_PROBE_INTERVAL_MS);
+    }
+
+    private void cancelAuthorizationRecoveryProbeLocked() {
+        if (authorizationRecoveryProbeHandler != null
+                && authorizationRecoveryProbeRunnable != null) {
+            authorizationRecoveryProbeHandler.removeCallbacks(authorizationRecoveryProbeRunnable);
+        }
+        authorizationRecoveryProbeHandler = null;
+        authorizationRecoveryProbeRunnable = null;
+        authorizationRecoveryProbePending = false;
+        authorizationRecoveryProbeAttempts = 0;
     }
 
     /**
@@ -473,6 +557,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
             authTimeoutHandler = null;
             authTimeoutRunnable = null;
         }
+        cancelAuthorizationRecoveryProbeLocked();
 
         // Cancel the response watchdog; cleanup is the single funnel for every terminal
         // path (apply success, CRC failure, watchdog abort), so no timer outlives the run.
@@ -532,6 +617,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
 
             Log.i(TAG, "BES OTA authorization GRANTED - starting protocol");
             isWaitingForAuthorization = false;
+            cancelAuthorizationRecoveryProbeLocked();
             rearmResponseWatchdog();
 
             // Cancel authorization timeout
@@ -1026,6 +1112,10 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
         }
 
         if (msg.cmd == BesProtocolConstants.RCMD_GET_PROTOCOL_VERSION) {
+            if (authorizationRecoveryProbePending) {
+                Log.i(TAG, "Raw 0x9A response proves BES is already in OTA mode; continuing");
+                cancelAuthorizationRecoveryProbeLocked();
+            }
             byte[] data = SCmd_SetUser();
             Log.d(
                     TAG,

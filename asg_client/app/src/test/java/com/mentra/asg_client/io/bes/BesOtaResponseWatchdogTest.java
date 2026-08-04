@@ -147,8 +147,7 @@ public class BesOtaResponseWatchdogTest {
 
         assertThat(BesOtaManager.isBesOtaInProgress).isFalse();
         assertThat(events).hasSize(1);
-        assertThat(events.get(0).getErrorMessage())
-                .isEqualTo("BES chip denied OTA authorization");
+        assertThat(events.get(0).getErrorMessage()).isEqualTo("BES chip denied OTA authorization");
     }
 
     private void setBooleanField(String name, boolean value) throws Exception {
