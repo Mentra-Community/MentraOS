@@ -39,6 +39,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
     private static final long BES_AUTH_TIMEOUT_MS = 30000; // 30 seconds authorization timeout
     private static final long BES_AUTH_RECOVERY_PROBE_INTERVAL_MS = 1000;
     private static final int BES_AUTH_RECOVERY_PROBE_MAX_ATTEMPTS = 3;
+    private static final long BES_AUTH_NORMAL_PROBE_TIMEOUT_MS = 3000;
     private Context mContext;
 
     private long operationStartTime = 0;
@@ -84,6 +85,10 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
     private int authorizationRecoveryProbeAttempts = 0;
     private android.os.Handler authorizationRecoveryProbeHandler;
     private Runnable authorizationRecoveryProbeRunnable;
+    private boolean authorizationNormalProbePending = false;
+    private boolean authorizationResendUsed = false;
+    private android.os.Handler authorizationNormalProbeHandler;
+    private Runnable authorizationNormalProbeRunnable;
 
     private final Runnable otaAppliedCallback;
     private final BesOtaAuthorizationGate authorizationGate;
@@ -395,6 +400,19 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
         }
     }
 
+    private byte[] buildNormalModeProbeRequest() {
+        try {
+            JSONObject command = new JSONObject();
+            command.put("C", "cs_syvr");
+            command.put("V", 1);
+            command.put("B", "");
+            return command.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to build BES normal-mode probe", e);
+            return null;
+        }
+    }
+
     /**
      * Preserve detailed diagnostics locally while exposing one stable recovery contract to the
      * phone after {@code mh_ota} may have switched BES into its raw parser.
@@ -478,16 +496,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
                     "BES did not answer "
                             + BES_AUTH_RECOVERY_PROBE_MAX_ATTEMPTS
                             + " raw OTA state probes");
-            // Reaching this branch means BOTH state indicators were silent: no framed hm_ota
-            // acknowledging the mode switch, and no raw 0x9A proving that the switch nevertheless
-            // happened. If 0x9A had arrived, entering OTA mode was the desired outcome and the
-            // transfer would already be continuing with SetUser. With neither reply, ASG cannot
-            // know which parser BES currently owns. Sending framed JSON could feed the raw OTA
-            // decoder; sending firmware commands could feed the normal K900 parser. Abort without
-            // sending either form and require a full glasses reboot, the only operation that
-            // provably resets BES to the framed parser before another authorization attempt.
-            postFailure("BES OTA state could not be reconciled");
-            cleanupLocked();
+            beginNormalModeProbeLocked();
             return;
         }
 
@@ -526,6 +535,59 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
         authorizationRecoveryProbeAttempts = 0;
     }
 
+    private void beginNormalModeProbeLocked() {
+        cancelAuthorizationRecoveryProbeLocked();
+        if (transportCoordinator == null
+                || !transportCoordinator.returnOtaTransferToAuthorization(transportLease)) {
+            Log.e(TAG, "Could not return UART to normal routing for BES state reconciliation");
+            postFailure("BES OTA state could not be reconciled");
+            cleanupLocked();
+            return;
+        }
+
+        // K900 framing starts with 0x23 ('#'), which is not a BES OTA opcode. If BES actually is
+        // in raw OTA mode, the deployed TLV decoder rejects this probe without applying firmware
+        // state; if BES is normal, sr_syvr proves both its parser state and the UART return path.
+        byte[] probe = buildNormalModeProbeRequest();
+        authorizationNormalProbePending = true;
+        boolean sent =
+                probe != null
+                        && k900BluetoothManager != null
+                        && k900BluetoothManager.writeBesOtaAuthorizationMessage(
+                                transportLease, probe);
+        Log.w(TAG, "Probing framed BES normal mode after silent raw probes; writeResult=" + sent);
+
+        authorizationNormalProbeHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+        authorizationNormalProbeRunnable =
+                () -> {
+                    synchronized (mTransferGate) {
+                        if (!authorizationNormalProbePending) {
+                            return;
+                        }
+                        // We only abort after testing both reachable states. A raw 0x9A would prove
+                        // that mh_ota succeeded and continue the desired transfer. A framed sr_syvr
+                        // would prove that mh_ota did not take effect and make one resend safe. If
+                        // neither reply returns, the BES parser and UART return path are unknown;
+                        // sending another mode-changing command could strand the chip. A full
+                        // glasses reboot is the only operation that provably restores normal mode.
+                        Log.e(TAG, "Neither raw OTA nor framed normal-mode probe received a reply");
+                        postFailure("BES OTA state could not be reconciled");
+                        cleanupLocked();
+                    }
+                };
+        authorizationNormalProbeHandler.postDelayed(
+                authorizationNormalProbeRunnable, BES_AUTH_NORMAL_PROBE_TIMEOUT_MS);
+    }
+
+    private void cancelAuthorizationNormalProbeLocked() {
+        if (authorizationNormalProbeHandler != null && authorizationNormalProbeRunnable != null) {
+            authorizationNormalProbeHandler.removeCallbacks(authorizationNormalProbeRunnable);
+        }
+        authorizationNormalProbeHandler = null;
+        authorizationNormalProbeRunnable = null;
+        authorizationNormalProbePending = false;
+    }
+
     /**
      * Abort any in-flight BES OTA and release its resources (wakelock, UART fast mode, state). Safe
      * to call when no update is running. Used during service teardown so a dropped manager handle
@@ -558,6 +620,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
             authTimeoutRunnable = null;
         }
         cancelAuthorizationRecoveryProbeLocked();
+        cancelAuthorizationNormalProbeLocked();
 
         // Cancel the response watchdog; cleanup is the single funnel for every terminal
         // path (apply success, CRC failure, watchdog abort), so no timer outlives the run.
@@ -590,6 +653,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
         }
         transportLease = null;
         authorizationAttempted = false;
+        authorizationResendUsed = false;
         bInit = false;
         fileData = null;
         sentPos = 0;
@@ -999,6 +1063,42 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
             } else {
                 Log.e(TAG, "Received error in OTA message");
             }
+        }
+    }
+
+    @Override
+    public void onBesNormalModeProven() {
+        synchronized (mTransferGate) {
+            if (!authorizationNormalProbePending) {
+                return;
+            }
+            cancelAuthorizationNormalProbeLocked();
+
+            if (authorizationResendUsed) {
+                // A second normal reply proves the bounded resend also did not switch modes. This
+                // is a known-safe normal state, so release the lease and permit a fresh phone retry
+                // instead of incorrectly demanding a reboot.
+                Log.e(TAG, "BES remained in normal mode after the single mh_ota resend");
+                authorizationGate.clear();
+                authorizationAttempted = false;
+                postFailure("BES chip did not enter OTA mode");
+                cleanupLocked();
+                return;
+            }
+
+            Log.w(
+                    TAG,
+                    "Framed sr_syvr proves BES stayed in normal mode and UART return works; "
+                            + "resending mh_ota once");
+            authorizationResendUsed = true;
+            isWaitingForAuthorization = true;
+            byte[] request = buildAuthorizationRequest();
+            boolean sent =
+                    request != null
+                            && k900BluetoothManager != null
+                            && k900BluetoothManager.writeBesOtaAuthorizationMessage(
+                                    transportLease, request);
+            onAuthorizationWriteComplete(true, sent);
         }
     }
 

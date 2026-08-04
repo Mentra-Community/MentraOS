@@ -1156,6 +1156,18 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                 });
     }
 
+    /** Write a framed BES command while retaining an already-acquired OTA authorization lease. */
+    public boolean writeBesOtaAuthorizationMessage(
+            BesUartTransportCoordinator.OperationLease lease, byte[] data) {
+        if (lease == null || data == null || data.length == 0) {
+            return false;
+        }
+        byte[] payload = Arrays.copyOf(data, data.length);
+        publishOutboundMessage(payload, true);
+        return transportCoordinator.runOtaAuthorizationWrite(
+                lease, () -> sendMessageInternalLocked(payload));
+    }
+
     /**
      * Handle sr_syvr response from BES chipset. This is called early in the serial read pipeline to
      * avoid timing issues with CommandProcessor initialization.
@@ -1203,6 +1215,11 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
             cacheBesBaudSwitchVersion(bData);
             cacheBesVersionFromSyvrBField(bData);
+
+            BesOtaUartListener otaListener = besOtaUartListener;
+            if (otaListener != null) {
+                otaListener.onBesNormalModeProven();
+            }
 
             if (result == BesUartTransportCoordinator.SystemVersionResult.READY) {
                 linkState.srSyvrParsed(null);

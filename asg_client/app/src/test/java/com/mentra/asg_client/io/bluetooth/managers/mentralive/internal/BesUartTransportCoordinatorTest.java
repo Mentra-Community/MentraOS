@@ -382,6 +382,39 @@ public class BesUartTransportCoordinatorTest {
     }
 
     @Test
+    public void otaTransfer_returnsToNormalRoutingWithoutReleasingLease() throws Exception {
+        coordinator.onSerialReady(host.session);
+        assertThat(systemVersion("17.26.7.4"))
+                .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
+
+        BesUartTransportCoordinator.OperationLease otaLease = coordinator.beginOtaAuthorization();
+        assertThat(otaLease).isNotNull();
+        assertThat(coordinator.promoteOtaAuthorizationToTransfer(otaLease)).isTrue();
+        assertThat(coordinator.returnOtaTransferToAuthorization(otaLease)).isTrue();
+
+        assertThat(coordinator.inboundRoute(host.session))
+                .isEqualTo(BesUartTransportCoordinator.InboundRoute.NORMAL);
+        assertThat(host.fastReceive).isFalse();
+        assertThat(host.parserResets).isEqualTo(1);
+        assertThat(coordinator.getOperation())
+                .isEqualTo(BesUartTransportCoordinator.Operation.OTA_AUTHORIZATION);
+        assertThat(coordinator.runOtaAuthorizationWrite(otaLease, () -> true)).isTrue();
+        assertThat(coordinator.beginFileTransfer()).isNull();
+
+        ExecutorService caller = Executors.newSingleThreadExecutor();
+        Future<Boolean> normalWrite = caller.submit(() -> coordinator.runNormalWrite(() -> true));
+        try {
+            awaitDeferredNormalWriteCount(1);
+            assertThat(normalWrite.isDone()).isFalse();
+            coordinator.endOta(otaLease);
+            assertThat(normalWrite.get(1, TimeUnit.SECONDS)).isTrue();
+        } finally {
+            coordinator.endOta(otaLease);
+            caller.shutdownNow();
+        }
+    }
+
+    @Test
     public void failedAuthorizationWriteDoesNotImplicitlyReleaseTheOtaLease() {
         coordinator.onSerialReady(host.session);
         assertThat(systemVersion("17.26.7.4"))
@@ -750,6 +783,7 @@ public class BesUartTransportCoordinatorTest {
         volatile boolean failBaudWrites;
         volatile int openFailuresRemaining;
         volatile int invalidations;
+        volatile int parserResets;
         volatile boolean deferOutboundDrains;
         volatile long nextSessionId = 1;
         volatile SerialSession session = new SerialSession(1, "/dev/ttyS1", baud);
@@ -801,7 +835,9 @@ public class BesUartTransportCoordinatorTest {
         }
 
         @Override
-        public void resetParser() {}
+        public void resetParser() {
+            parserResets++;
+        }
 
         @Override
         public boolean writeControlCommand(byte[] json) {

@@ -1,11 +1,7 @@
 package com.mentra.asg_client.io.bluetooth.managers.mentralive.internal;
 
 import android.util.Log;
-
 import com.mentra.asg_client.AsgConstants;
-
-import org.json.JSONObject;
-
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.concurrent.CancellationException;
@@ -16,6 +12,7 @@ import java.util.concurrent.FutureTask;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import org.json.JSONObject;
 
 /**
  * Single policy owner for the ASG-to-BES UART.
@@ -554,6 +551,40 @@ public final class BesUartTransportCoordinator {
             otaRawRouting = true;
             host.setFastReceive(true);
             Log.i(TAG, "BES OTA authorization promoted to raw transfer routing");
+            return true;
+        }
+    }
+
+    /**
+     * Return an OTA authorization lease to normal framing without releasing exclusivity.
+     *
+     * <p>This is used only to reconcile a missing {@code hm_ota}: accepted raw writes drain before
+     * the parser changes, and unrelated normal writes remain deferred behind the same lease.
+     */
+    public boolean returnOtaTransferToAuthorization(OperationLease lease) {
+        Future<?> barrier;
+        synchronized (monitor) {
+            if (!isReadyLocked() || !ownsLeaseLocked(lease, Operation.OTA_TRANSFER)) {
+                return false;
+            }
+            // Close raw writes before placing the barrier. Inbound bytes remain routed to the raw
+            // parser until every accepted raw probe has physically completed.
+            operation = Operation.OTA_AUTHORIZATION;
+            barrier = ioLane.submit(() -> {});
+        }
+
+        if (!awaitBarrier(barrier, "OTA normal-probe barrier")) {
+            return false;
+        }
+
+        synchronized (monitor) {
+            if (!isReadyLocked() || !ownsLeaseLocked(lease, Operation.OTA_AUTHORIZATION)) {
+                return false;
+            }
+            host.resetParser();
+            otaRawRouting = false;
+            host.setFastReceive(false);
+            Log.i(TAG, "BES OTA lease returned to normal routing for state reconciliation");
             return true;
         }
     }
