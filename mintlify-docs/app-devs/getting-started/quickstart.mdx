@@ -4,6 +4,7 @@ description: Scaffold a Mentra miniapp and run it on your phone in a few minutes
 ---
 
 import LegacyCloudNote from '/snippets/legacy-cloud-note.mdx'
+import BetaNote from '/snippets/beta-note.mdx'
 
 This Quickstart goes from zero to a miniapp running on your glasses. You need a
 phone, [Bun](https://bun.sh/docs/installation), and basic TypeScript. You can do
@@ -13,6 +14,8 @@ the whole thing **without glasses**: the display just won't have anywhere to dra
 Building a mobile app that connects directly to glasses over Bluetooth? Use the
 [Bluetooth SDK Quickstart](/mentra-live/quickstart) instead.
 </Info>
+
+<BetaNote />
 
 <LegacyCloudNote />
 
@@ -53,8 +56,11 @@ save and forwards the miniapp's console logs back to your terminal.
 
 ### Step 4: Load it on your phone
 
-In the Mentra App, go to **Settings → Developer settings → Mini App Development
-→ Scan Mini App QR Code** and scan the QR from your terminal.
+In the Mentra App, go to **Settings → Miniapp Developer Settings → Scan Miniapp
+QR Code** and scan the QR from your terminal. If Miniapp Developer Settings is
+hidden, open **Settings → Debug Settings**, enable **Miniapp Developer
+Settings**, then return to Settings. If Debug Settings is hidden, tap the
+version number at the bottom of Settings ten times to reveal it.
 
 <Info>
 Your phone and your laptop must be on the **same Wi-Fi network**. `bun dev`
