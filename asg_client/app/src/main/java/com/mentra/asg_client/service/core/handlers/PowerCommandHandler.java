@@ -7,6 +7,7 @@ import com.mentra.asg_client.service.legacy.interfaces.ICommandHandler;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import com.mentra.asg_client.service.system.core.SystemControllerFactory;
 import com.mentra.asg_client.service.utils.ServiceConstants;
+import com.mentra.asg_client.settings.AsgSettings;
 import java.util.Set;
 import org.json.JSONObject;
 
@@ -121,8 +122,11 @@ public class PowerCommandHandler implements ICommandHandler {
         boolean enabled = data != null && data.optBoolean("enabled", false);
         Log.i(TAG, "🔧 Setting Wi-Fi ADB state from phone: " + enabled);
         try {
-            if (serviceManager != null && serviceManager.getAsgSettings() != null) {
-                serviceManager.getAsgSettings().setWifiAdbEnabled(enabled);
+            if (serviceManager != null) {
+                AsgSettings settings = serviceManager.getAsgSettings();
+                if (settings != null) {
+                    settings.setWifiAdbEnabled(enabled);
+                }
             }
             SystemControllerFactory.get(context).setWifiAdb(enabled);
             return true;
