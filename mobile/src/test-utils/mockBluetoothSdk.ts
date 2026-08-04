@@ -144,6 +144,7 @@ export const bluetoothSdkMock = {
         : {type: "hotspot_status_change", state: "disabled"},
     ),
   ),
+  setWifiAdbState: jest.fn(() => Promise.resolve()),
   setSystemTime: jest.fn(() => Promise.resolve()),
   logCurrentWifiFrequency: jest.fn(() => Promise.resolve()),
   queryGalleryStatus: jest.fn(() => Promise.resolve()),

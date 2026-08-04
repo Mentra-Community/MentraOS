@@ -303,6 +303,8 @@ console.log(forgetStatus.state)
 const hotspotStatus = await BluetoothSdk.setHotspotState(true)
 console.log(hotspotStatus.state)
 
+await BluetoothSdk.setWifiAdbState(true) // Mentra Live Wi-Fi ADB (wireless debugging)
+
 const galleryAck = await BluetoothSdk.setGalleryModeEnabled(true)
 console.log(galleryAck.status)
 await BluetoothSdk.setGalleryModeEnabled(false)

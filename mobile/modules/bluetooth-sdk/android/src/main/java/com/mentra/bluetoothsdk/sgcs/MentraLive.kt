@@ -8124,6 +8124,19 @@ class MentraLive : SGCManager() {
         }
     }
 
+    override fun sendWifiAdbState(enabled: Boolean) {
+        Bridge.log("LIVE: 🔧 Sending Wi-Fi ADB state to glasses - enabled: " + enabled)
+        try {
+            val command = JSONObject()
+            command.put("type", "set_wifi_adb_state")
+            command.put("enabled", enabled)
+            sendJson(command, true)
+            Bridge.log("LIVE: 🔧 ✅ Wi-Fi ADB state command sent successfully")
+        } catch (e: JSONException) {
+            Log.e(TAG, "🔧 💥 Error creating Wi-Fi ADB state JSON", e)
+        }
+    }
+
     override fun sendSetSystemTime(timestampMs: Long) {
         Bridge.log("LIVE: ⏰ Sending set_system_time to glasses: " + timestampMs)
         try {
