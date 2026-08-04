@@ -19,7 +19,7 @@
  * the next launch doesn't need a re-scan.
  */
 
-import {getConfigValues} from "../runtime/bootstrap"
+import {configuredDevHost} from "./configuredDevHost"
 import {storage} from "./storage/storage"
 
 const REACHABILITY_TIMEOUT_MS = 1500
@@ -109,17 +109,7 @@ function collectAlternateHosts(packageName: string, extra?: string[]): string[] 
     if (v && !hosts.includes(v)) hosts.push(v)
   }
 
-  // Explicit escape hatch (same contract as AppRegistry.configuredDevHost).
-  const explicit = process.env.EXPO_PUBLIC_LOCAL_MINIAPP_HOST
-  if (explicit) {
-    try {
-      push(new URL(explicit).hostname)
-    } catch {
-      if (/^[\w.-]+$/.test(explicit)) push(explicit)
-    }
-  }
-
-  push(getConfigValues().devServerHost?.())
+  push(configuredDevHost())
 
   if (packageName) {
     const mdns = storage.load<string>(`${packageName}_dev_mdns`)

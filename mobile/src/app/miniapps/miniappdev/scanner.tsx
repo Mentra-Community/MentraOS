@@ -102,7 +102,10 @@ export default function MiniappDeveloperScannerScreen() {
       })
 
       const manifest = launchResult.manifest
-      packageName = manifest?.packageName || packageName || "com.dev.unknown"
+      // Keep an explicit identity separate from the offline-screen display
+      // fallback — never persist routing keys under the shared `com.dev.unknown`.
+      const knownPackageName = (manifest?.packageName || packageName)?.trim() || undefined
+      packageName = knownPackageName || "com.dev.unknown"
       name = manifest?.name || name || "Dev Miniapp"
       const iconPath = manifest?.icon as string | undefined
       const manifestPermissions: AppletPermission[] = Array.isArray(manifest?.permissions)
@@ -122,35 +125,45 @@ export default function MiniappDeveloperScannerScreen() {
       // Persist a package-keyed home tile and routing record so this dev
       // miniapp remains independently launchable without rescanning. Its icon
       // is copied locally while the server is reachable.
-      if (manifest) {
+      if (manifest && knownPackageName) {
         // A fetched manifest means a real dev app loaded — latch the per-account
         // "this user is a developer" signal (idempotent). Gated on the manifest
         // so a failed/unreachable scan (decision "offline", no manifest) can't
         // flip the flag, matching the URL loader's behavior.
         markMiniappDevMode()
 
-        const existing = engine.miniapps.list().find((app) => app.packageName === packageName)
-        if (existing?.running) await engine.miniapps.stop(packageName)
+        const existing = engine.miniapps.list().find((app) => app.packageName === knownPackageName)
+        if (existing?.running) await engine.miniapps.stop(knownPackageName)
         await registerDevApp({
-          packageName,
-          name: name ?? packageName,
+          packageName: knownPackageName,
+          name: name ?? knownPackageName,
           iconUrl: iconUrl ?? `${resolvedBase}/icon.png`,
           // Prefer the host that actually answered (may be mDNS / Metro failover).
           devUrl: launchResult.resolvedUrl || devUrl,
+          // Explicit empty clears a prior QR's sidecar port / mDNS for this package.
           devPort: Number.isFinite(portNum) ? portNum : undefined,
-          mdnsHost,
+          mdnsHost: mdnsHost ?? "",
           devAttestation,
           type: manifest.type as DevAppRecord["type"],
           permissions: manifest.permissions as DevAppRecord["permissions"],
           hardwareRequirements: manifest.hardwareRequirements as DevAppRecord["hardwareRequirements"],
           actions: manifest.actions as DevAppRecord["actions"],
         })
-      } else if (packageName) {
+      } else if (knownPackageName) {
         // Reachability failed — still stash URL + mDNS so "Try again" can recover
-        // after a laptop Wi-Fi IP change without forcing a re-scan.
-        storage.save(`${packageName}_dev_url`, devUrl)
-        if (mdnsHost) storage.save(`${packageName}_dev_mdns`, mdnsHost)
-        if (Number.isFinite(portNum)) storage.save(`${packageName}_dev_port`, portNum)
+        // after a laptop Wi-Fi IP change without forcing a re-scan. Only when the
+        // QR (or a prior identity) named a real package — never `com.dev.unknown`.
+        storage.save(`${knownPackageName}_dev_url`, devUrl)
+        if (mdnsHost) {
+          storage.save(`${knownPackageName}_dev_mdns`, mdnsHost)
+        } else {
+          storage.remove(`${knownPackageName}_dev_mdns`)
+        }
+        if (Number.isFinite(portNum)) {
+          storage.save(`${knownPackageName}_dev_port`, portNum)
+        } else {
+          storage.remove(`${knownPackageName}_dev_port`)
+        }
       }
 
       if (launchResult.decision === "offline") {

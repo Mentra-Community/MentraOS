@@ -93,7 +93,14 @@ export function scoreLanIface(iface: LanIface): number {
   else score += 5 // public / unusual — last resort
 
   if (PREFERRED_NAMES.has(iface.name)) score += 40
-  else if (/^en\d+$/i.test(iface.name) || /^eth\d+$/i.test(iface.name) || /^wlan\d+$/i.test(iface.name)) {
+  else if (
+    /^en\d+$/i.test(iface.name) ||
+    /^eth\d+$/i.test(iface.name) ||
+    /^wlan\d+$/i.test(iface.name) ||
+    // Predictable NetworkManager names on modern Linux (wlp3s0, enp0s3, …).
+    /^wlp\w+/i.test(iface.name) ||
+    /^enp\w+/i.test(iface.name)
+  ) {
     score += 25
   }
 
@@ -141,10 +148,13 @@ export function getLanIp(): string | null {
 export function getMdnsHostname(): string | null {
   const host = String(os.hostname() || "").trim()
   if (!host) return null
-  const base = host.replace(/\.local$/i, "")
+  // Bonjour advertises the first DNS label as `Label.local`. Machines whose
+  // hostname includes a corporate DNS suffix (e.g. `mba.corp.example.com`)
+  // must not become `mba.corp.example.com.local`.
+  const base = host.replace(/\.local$/i, "").split(".")[0] ?? ""
   if (!base || base.toLowerCase() === "localhost") return null
   // Reject names that would make a broken URL host.
-  if (!/^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/.test(base)) {
+  if (!/^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/.test(base)) {
     return null
   }
   return `${base}.local`

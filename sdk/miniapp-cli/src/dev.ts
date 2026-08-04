@@ -296,15 +296,19 @@ export async function dev(options: DevOptions = {}): Promise<void> {
     ipCheckInFlight = true;
     void (async () => {
       try {
-        const previous = lanIp;
-        lanIp = newIp;
-        console.log(`\n📶 LAN IP changed: ${previous} → ${newIp}`);
+        console.log(`\n📶 LAN IP changed: ${lanIp} → ${newIp}`);
         console.log('Rebuilding so baked-in LAN URLs (e.g. signing endpoints) stay current…');
         try {
           await runBuild(cwd);
         } catch (err) {
+          // Leave lanIp on the previous value so the next poll retries this IP.
+          // Committing early would leave dist/ stale while skipping further rebuilds.
           console.error('Rebuild after LAN IP change failed:', (err as Error).message);
+          return;
         }
+        const previous = lanIp;
+        lanIp = newIp;
+        console.log(`LAN IP committed: ${previous} → ${newIp}`);
         console.log('New QR (re-scan if the Mentra App still has the old IP):');
         printBanner();
         if (mdnsHost) {

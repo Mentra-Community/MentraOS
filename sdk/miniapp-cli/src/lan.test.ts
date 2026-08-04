@@ -1,7 +1,8 @@
 /// <reference types="bun-types" />
 
 import {describe, expect, test} from "bun:test"
-import {pickLanIp, scoreLanIface, type LanIface} from "./lan.js"
+import {getMdnsHostname, pickLanIp, scoreLanIface, type LanIface} from "./lan.js"
+import os from "os"
 
 function iface(partial: Partial<LanIface> & Pick<LanIface, "name" | "address">): LanIface {
   return {
@@ -58,5 +59,26 @@ describe("pickLanIp", () => {
         lo0: [iface({name: "lo0", address: "127.0.0.1", internal: true})],
       }),
     ).toBeNull()
+  })
+})
+
+describe("getMdnsHostname first label", () => {
+  test("strips DNS suffixes before appending .local", () => {
+    const original = os.hostname
+    ;(os as {hostname: () => string}).hostname = () => "mba.corp.example.com"
+    try {
+      expect(getMdnsHostname()).toBe("mba.local")
+    } finally {
+      ;(os as {hostname: typeof original}).hostname = original
+    }
+  })
+})
+
+describe("scoreLanIface Linux predictable names", () => {
+  test("ranks wlp*/enp* as real adapters", () => {
+    const wifi = scoreLanIface(iface({name: "wlp3s0", address: "192.168.1.40"}))
+    const eth = scoreLanIface(iface({name: "enp0s3", address: "192.168.1.41"}))
+    expect(wifi).toBeGreaterThan(50)
+    expect(eth).toBeGreaterThan(50)
   })
 })

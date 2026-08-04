@@ -121,12 +121,14 @@ export default function MiniappDeveloperUrlScreen() {
     // dev packages remain registered and independently launchable.
     const existing = engine.miniapps.list().find((app) => app.packageName === packageName)
     if (existing?.running) await engine.miniapps.stop(packageName)
+    const resolvedUrl = launchResult.resolvedUrl || entry.url
     await registerDevApp({
       packageName,
       name: appName,
-      iconUrl: resolveIconUrl(entry.url, launchResult.manifest.icon) ?? entry.iconUrl ?? `${entry.url}/icon.png`,
-      devUrl: entry.url,
-      devPort: deriveDevPort(entry.url),
+      iconUrl: resolveIconUrl(resolvedUrl, launchResult.manifest.icon) ?? entry.iconUrl ?? `${resolvedUrl}/icon.png`,
+      // Persist the host that answered — not the stale QR/recent-list IP.
+      devUrl: resolvedUrl,
+      devPort: deriveDevPort(resolvedUrl),
       type: launchResult.manifest.type as DevAppRecord["type"],
       permissions: launchResult.manifest.permissions as DevAppRecord["permissions"],
       hardwareRequirements: launchResult.manifest.hardwareRequirements as DevAppRecord["hardwareRequirements"],

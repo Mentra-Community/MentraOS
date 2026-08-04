@@ -24,7 +24,7 @@ import {AsyncResult, Result, result as Res} from "typesafe-ts"
 
 import type {AppletPermission, AppPermissionType, AppletType, ClientApp} from "../types/applet"
 import {HardwareRequirement, HardwareRequirementLevel, HardwareType} from "../types"
-import {getConfigValues} from "../runtime/bootstrap"
+import {configuredDevHost} from "../utils/configuredDevHost"
 import {storage} from "../utils/storage/storage"
 import {printDirectory} from "../utils/storage/zip"
 import {checkManifestVersions} from "./manifestVersionGate"
@@ -964,22 +964,6 @@ export interface DevAppRecord {
 const DEV_APPS_INDEX_KEY = "dev_apps_index"
 const DEV_APP_ICONS_DIR = "dev-miniapp-icons"
 
-function configuredDevHost(): string | undefined {
-  // Explicit escape hatch first; otherwise the host-injected Metro host (the
-  // address this dev bundle was served from — always current for the network
-  // the phone is on). Deliberately NOT the EXPO_PUBLIC_CLOUD_* URLs: those are
-  // cloud endpoints, a different machine entirely from the laptop running the
-  // miniapp dev server, and rewriting a dev URL to a cloud host would break it.
-  const explicit = process.env.EXPO_PUBLIC_LOCAL_MINIAPP_HOST
-  if (explicit) {
-    try {
-      return new URL(explicit).hostname
-    } catch {
-      if (/^[\w.-]+$/.test(explicit)) return explicit
-    }
-  }
-  return getConfigValues().devServerHost?.()
-}
 
 function isPrivateLanHost(hostname: string): boolean {
   return (
@@ -1108,6 +1092,11 @@ function migrateLegacyDevSlot(): void {
   if (!targetPort.is_ok()) {
     const port = migrated.devPort ?? (legacyPort.is_ok() ? legacyPort.value : undefined)
     if (typeof port === "number" && Number.isFinite(port)) storage.save(`${targetPackage}_dev_port`, port)
+  }
+  const legacyMdns = storage.load<string>(`${DEV_APP_PACKAGE_NAME}_dev_mdns`)
+  const targetMdns = storage.load<string>(`${targetPackage}_dev_mdns`)
+  if (!targetMdns.is_ok() && legacyMdns.is_ok() && legacyMdns.value.trim()) {
+    storage.save(`${targetPackage}_dev_mdns`, legacyMdns.value.trim())
   }
 
   storage.remove(`${DEV_APP_PACKAGE_NAME}_dev_meta`)
