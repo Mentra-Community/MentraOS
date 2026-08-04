@@ -33,7 +33,8 @@ public final class BesUartTransportCoordinator {
         WAITING_FAST_REOPEN,
         VERIFYING_FAST,
         READY_FAST,
-        RECOVERING
+        RECOVERING,
+        QUARANTINED
     }
 
     /** Long-lived operation currently preventing transport reconfiguration. */
@@ -120,12 +121,23 @@ public final class BesUartTransportCoordinator {
         boolean queueAfterOutboundWrites(Runnable action);
     }
 
+    /** Durable safety state consulted before any UART discovery or write is allowed. */
+    @FunctionalInterface
+    public interface OtaSafetyState {
+        boolean isQuarantinedForCurrentBoot();
+
+        default boolean isPostApplyVerificationPendingForCurrentBoot() {
+            return false;
+        }
+    }
+
     private static final int[] RECOVERY_BAUDS = {
         AsgConstants.UART_FAST_BAUD, AsgConstants.UART_RENDEZVOUS_BAUD
     };
 
     private final Object monitor = new Object();
     private final Host host;
+    private final OtaSafetyState otaSafetyState;
     private final BesUartIoLane ioLane = new BesUartIoLane();
     private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
     private final ArrayDeque<FutureTask<Boolean>> deferredNormalWrites = new ArrayDeque<>();
@@ -152,10 +164,18 @@ public final class BesUartTransportCoordinator {
     private ScheduledFuture<?> healthTimeout;
 
     public BesUartTransportCoordinator(Host host) {
+        this(host, () -> false);
+    }
+
+    public BesUartTransportCoordinator(Host host, OtaSafetyState otaSafetyState) {
         if (host == null) {
             throw new IllegalArgumentException("host is required");
         }
+        if (otaSafetyState == null) {
+            throw new IllegalArgumentException("otaSafetyState is required");
+        }
         this.host = host;
+        this.otaSafetyState = otaSafetyState;
     }
 
     public State getState() {
@@ -185,7 +205,9 @@ public final class BesUartTransportCoordinator {
     /** Route bytes only when they belong to the descriptor currently owned by this coordinator. */
     public InboundRoute inboundRoute(SerialSession session) {
         synchronized (monitor) {
-            if (!isCurrentSerialSessionLocked(session) || state == State.CLOSED) {
+            if (!isCurrentSerialSessionLocked(session)
+                    || state == State.CLOSED
+                    || state == State.QUARANTINED) {
                 return InboundRoute.REJECTED;
             }
             return otaRawRouting ? InboundRoute.OTA : InboundRoute.NORMAL;
@@ -237,18 +259,32 @@ public final class BesUartTransportCoordinator {
             versionProbeDeferred = false;
             cancelOutboundDrainLocked();
             serialSession = session;
+            boolean postApplyVerification =
+                    otaSafetyState.isPostApplyVerificationPendingForCurrentBoot();
+            if (otaSafetyState.isQuarantinedForCurrentBoot() && !postApplyVerification) {
+                state = State.QUARANTINED;
+                phaseGeneration++;
+                Log.e(TAG, "UART quarantined until a full glasses reboot after ambiguous BES OTA");
+                return;
+            }
             long phase = ++phaseGeneration;
-            Log.i(TAG, "Serial ready; discovering BES at rendezvous baud");
+            long initialProbeDelay =
+                    postApplyVerification ? AsgConstants.BES_OTA_RECONNECT_DELAY_MS : 0;
+            Log.i(
+                    TAG,
+                    postApplyVerification
+                            ? "Serial ready; waiting for BES apply reboot before version discovery"
+                            : "Serial ready; discovering BES at rendezvous baud");
             scheduleProbeBurstLocked(
                     phase,
                     AsgConstants.UART_RENDEZVOUS_BAUD,
-                    0,
+                    initialProbeDelay,
                     AsgConstants.UART_RECOVERY_PROBES_PER_BURST,
                     AsgConstants.UART_RECOVERY_PROBE_SPACING_MS);
             phaseTimeout =
                     executor.schedule(
                             () -> startRecoveryIfCurrent(phase, "startup_discovery_timeout"),
-                            AsgConstants.UART_BOOT_RECOVERY_INITIAL_DELAY_MS,
+                            initialProbeDelay + AsgConstants.UART_BOOT_RECOVERY_INITIAL_DELAY_MS,
                             TimeUnit.MILLISECONDS);
         }
     }
@@ -283,6 +319,7 @@ public final class BesUartTransportCoordinator {
         synchronized (monitor) {
             if (!isCurrentSerialSessionLocked(receiveSession)
                     || state == State.CLOSED
+                    || state == State.QUARANTINED
                     || state == State.SWITCH_REQUESTED
                     || state == State.WAITING_FAST_REOPEN
                     || !host.isSerialOpen()) {
@@ -358,6 +395,11 @@ public final class BesUartTransportCoordinator {
     public void onValidFrame(SerialSession receiveSession) {
         synchronized (monitor) {
             if (!isCurrentSerialSessionLocked(receiveSession)) {
+                return;
+            }
+            if (otaSafetyState.isPostApplyVerificationPendingForCurrentBoot()) {
+                // After apply, only sr_syvr is strong enough to prove both normal parser state and
+                // the installed target version. Other well-formed frames must not open the UART.
                 return;
             }
             discardedBytes = 0;
@@ -555,40 +597,6 @@ public final class BesUartTransportCoordinator {
         }
     }
 
-    /**
-     * Return an OTA authorization lease to normal framing without releasing exclusivity.
-     *
-     * <p>This is used only to reconcile a missing {@code hm_ota}: accepted raw writes drain before
-     * the parser changes, and unrelated normal writes remain deferred behind the same lease.
-     */
-    public boolean returnOtaTransferToAuthorization(OperationLease lease) {
-        Future<?> barrier;
-        synchronized (monitor) {
-            if (!isReadyLocked() || !ownsLeaseLocked(lease, Operation.OTA_TRANSFER)) {
-                return false;
-            }
-            // Close raw writes before placing the barrier. Inbound bytes remain routed to the raw
-            // parser until every accepted raw probe has physically completed.
-            operation = Operation.OTA_AUTHORIZATION;
-            barrier = ioLane.submit(() -> {});
-        }
-
-        if (!awaitBarrier(barrier, "OTA normal-probe barrier")) {
-            return false;
-        }
-
-        synchronized (monitor) {
-            if (!isReadyLocked() || !ownsLeaseLocked(lease, Operation.OTA_AUTHORIZATION)) {
-                return false;
-            }
-            host.resetParser();
-            otaRawRouting = false;
-            host.setFastReceive(false);
-            Log.i(TAG, "BES OTA lease returned to normal routing for state reconciliation");
-            return true;
-        }
-    }
-
     public void endOta(OperationLease lease) {
         synchronized (monitor) {
             if (operationLease != lease
@@ -602,6 +610,50 @@ public final class BesUartTransportCoordinator {
             operationLease = null;
             flushDeferredNormalWritesLocked();
             resumeAfterOutboundDrainLocked();
+        }
+    }
+
+    /**
+     * Fail closed after {@code mh_ota} was written but BES mode could not be proven.
+     *
+     * <p>This transition is deliberately one-way for the current glasses boot. It rejects both
+     * parsers and all writes, rather than guessing whether BES is speaking framed K900 or raw OTA.
+     * The persisted authorization marker restores the same state after a serial or ASG restart.
+     */
+    public boolean quarantineOta(OperationLease lease) {
+        synchronized (monitor) {
+            if (operationLease != lease
+                    || (operation != Operation.OTA_AUTHORIZATION
+                            && operation != Operation.OTA_TRANSFER)) {
+                return false;
+            }
+            cancelAllTimersLocked();
+            cancelDeferredNormalWritesLocked("ambiguous BES OTA authorization");
+            cancelOutboundDrainLocked();
+            phaseGeneration++;
+            otaRawRouting = false;
+            host.setFastReceive(false);
+            operation = Operation.NONE;
+            operationLease = null;
+            state = State.QUARANTINED;
+            Log.e(TAG, "UART quarantined until a full glasses reboot after ambiguous BES OTA");
+            return true;
+        }
+    }
+
+    /** Fail closed from post-apply discovery when durable version verification cannot complete. */
+    public void quarantineCurrentSession() {
+        synchronized (monitor) {
+            cancelAllTimersLocked();
+            cancelDeferredNormalWritesLocked("BES OTA verification could not complete");
+            cancelOutboundDrainLocked();
+            phaseGeneration++;
+            otaRawRouting = false;
+            host.setFastReceive(false);
+            operation = Operation.NONE;
+            operationLease = null;
+            state = State.QUARANTINED;
+            Log.e(TAG, "UART quarantined because BES post-apply verification failed closed");
         }
     }
 

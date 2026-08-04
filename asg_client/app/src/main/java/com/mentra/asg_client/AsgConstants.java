@@ -169,6 +169,12 @@ public class AsgConstants {
     /** Android boot id in which {@code mh_ota} was last attempted. */
     public static final String BES_OTA_AUTH_GATE_BOOT_ID_KEY = "attempted_boot_id";
 
+    /** Target version durably bound to the one authorization reservation. */
+    public static final String BES_OTA_AUTH_GATE_TARGET_VERSION_KEY = "target_version";
+
+    /** True after BES accepts apply and until a rebooted {@code sr_syvr} proves the target. */
+    public static final String BES_OTA_AUTH_GATE_APPLY_PENDING_KEY = "apply_pending";
+
     /** Rendezvous baud shared by every ASG and BES firmware generation. */
     public static final int UART_RENDEZVOUS_BAUD = 460800;
 

@@ -2,7 +2,6 @@ package com.mentra.asg_client.io.bes;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
@@ -17,7 +16,6 @@ import com.mentra.asg_client.io.bes.events.BesOtaProgressEvent;
 import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.BesUartTransportCoordinator;
 import java.lang.reflect.Field;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -53,15 +51,14 @@ public class BesOtaAuthorizationRecoveryProbeTest {
         lease = mock(BesUartTransportCoordinator.OperationLease.class);
         when(k900.getTransportCoordinator()).thenReturn(coordinator);
         when(coordinator.promoteOtaAuthorizationToTransfer(lease)).thenReturn(true);
-        when(coordinator.returnOtaTransferToAuthorization(lease)).thenReturn(true);
         when(coordinator.writeOta(eq(lease), any(byte[].class))).thenReturn(true);
-        when(k900.writeBesOtaAuthorizationMessage(eq(lease), any(byte[].class))).thenReturn(true);
+        when(coordinator.quarantineOta(lease)).thenReturn(true);
 
         manager = new BesOtaManager(null, k900, ApplicationProvider.getApplicationContext());
         setField("transportLease", lease);
-        setBooleanField("bInit", true);
-        setBooleanField("isWaitingForAuthorization", true);
-        setBooleanField("authorizationAttempted", true);
+        setField("bInit", true);
+        setField("isWaitingForAuthorization", true);
+        setField("authorizationAttempted", true);
         BesOtaManager.isBesOtaInProgress = true;
         events.clear();
         EventBus.getDefault().register(this);
@@ -96,71 +93,18 @@ public class BesOtaAuthorizationRecoveryProbeTest {
     }
 
     @Test
-    public void missingHmOta_silentRawAndNormalProbesRequireReboot() {
+    public void missingHmOta_silentRawProbesQuarantineUntilReboot() {
         manager.onAuthorizationWriteComplete(true, true);
 
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(40));
 
         verify(coordinator).promoteOtaAuthorizationToTransfer(lease);
         verify(coordinator, times(3)).writeOta(eq(lease), eq(new byte[] {(byte) 0x99, 0, 0, 0, 0}));
-        verify(coordinator).returnOtaTransferToAuthorization(lease);
-        verify(k900)
-                .writeBesOtaAuthorizationMessage(
-                        eq(lease),
-                        argThat(
-                                data ->
-                                        new String(data, StandardCharsets.UTF_8)
-                                                .contains("\"C\":\"cs_syvr\"")));
+        verify(coordinator).quarantineOta(lease);
         assertThat(events).hasSize(1);
         assertThat(events.get(0).getErrorMessage())
-                .isEqualTo("BES OTA state could not be reconciled");
+                .isEqualTo("BES OTA state could not be reconciled; reboot glasses before retrying");
         assertThat(BesOtaManager.isBesOtaInProgress).isFalse();
-    }
-
-    @Test
-    public void missingHmOta_normalReplyProvesSafeSingleAuthorizationResend() {
-        manager.onAuthorizationWriteComplete(true, true);
-
-        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(34));
-        assertThat(events).isEmpty();
-
-        manager.onBesNormalModeProven();
-
-        verify(k900)
-                .writeBesOtaAuthorizationMessage(
-                        eq(lease),
-                        argThat(
-                                data ->
-                                        new String(data, StandardCharsets.UTF_8)
-                                                .contains("\"C\":\"mh_ota\"")));
-        assertThat(events).isEmpty();
-        assertThat(BesOtaManager.isBesOtaInProgress).isTrue();
-    }
-
-    @Test
-    public void authorizationResendStillNormal_failsRetryablyWithoutAnotherResend() {
-        manager.onAuthorizationWriteComplete(true, true);
-
-        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(34));
-        manager.onBesNormalModeProven();
-        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(34));
-        manager.onBesNormalModeProven();
-
-        verify(k900, times(1))
-                .writeBesOtaAuthorizationMessage(
-                        eq(lease),
-                        argThat(
-                                data ->
-                                        new String(data, StandardCharsets.UTF_8)
-                                                .contains("\"C\":\"mh_ota\"")));
-        verify(coordinator).endOta(lease);
-        assertThat(events).hasSize(1);
-        assertThat(events.get(0).getErrorMessage()).isEqualTo("BES chip did not enter OTA mode");
-        assertThat(BesOtaManager.isBesOtaInProgress).isFalse();
-    }
-
-    private void setBooleanField(String name, boolean value) throws Exception {
-        setField(name, value);
     }
 
     private void setField(String name, Object value) throws Exception {

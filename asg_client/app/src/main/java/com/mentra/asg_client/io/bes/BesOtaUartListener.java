@@ -13,6 +13,7 @@ public interface BesOtaUartListener {
      */
     void onOtaRecv(byte[] data, int size);
 
-    /** Called after a framed system-version reply proves BES is still in normal K900 mode. */
-    default void onBesNormalModeProven() {}
+    /** Terminal result after BES reboot and an exact target-version readback. */
+    default void onBesPostApplyVerification(
+            boolean success, String expectedVersion, String actualVersion, String diagnostic) {}
 }

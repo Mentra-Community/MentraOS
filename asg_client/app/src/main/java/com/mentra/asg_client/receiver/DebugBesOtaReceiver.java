@@ -14,7 +14,8 @@ import java.io.File;
  * Debug receiver for testing BES firmware updates directly via adb.
  *
  * <p>Usage: 1. Push firmware file: adb push firmware.bin /storage/emulated/0/asg/bes_firmware.bin
- * 2. Trigger update: adb shell am broadcast -a com.mentra.DEBUG_BES_OTA
+ * 2. Trigger update: adb shell am broadcast -a com.mentra.DEBUG_BES_OTA --es target_version
+ * 17.26.7.24
  *
  * <p>This bypasses all cloud/phone logic and directly triggers BesOtaManager. FOR
  * DEVELOPMENT/TESTING ONLY.
@@ -22,6 +23,7 @@ import java.io.File;
 public class DebugBesOtaReceiver extends BroadcastReceiver {
     private static final String TAG = "DebugBesOtaReceiver";
     public static final String ACTION_DEBUG_BES_OTA = "com.mentra.DEBUG_BES_OTA";
+    public static final String EXTRA_TARGET_VERSION = "target_version";
 
     @Override
     public void onReceive(Context context, Intent intent) {
@@ -44,6 +46,11 @@ public class DebugBesOtaReceiver extends BroadcastReceiver {
         }
 
         Log.i(TAG, "✅ Firmware file found: " + firmwareFile.length() + " bytes");
+        String targetVersion = intent.getStringExtra(EXTRA_TARGET_VERSION);
+        if (targetVersion == null || targetVersion.trim().isEmpty()) {
+            Log.e(TAG, "❌ Missing --es target_version required for post-reboot verification");
+            return;
+        }
 
         // Get the active BES OTA controller
         IBesOtaController manager =
@@ -63,7 +70,8 @@ public class DebugBesOtaReceiver extends BroadcastReceiver {
 
         // Start the update
         Log.i(TAG, "🚀 Starting BES firmware update...");
-        boolean started = manager.startFirmwareUpdate(OtaConstants.BES_FIRMWARE_PATH);
+        boolean started =
+                manager.startFirmwareUpdate(OtaConstants.BES_FIRMWARE_PATH, targetVersion.trim());
 
         if (started) {
             Log.i(TAG, "✅ BES OTA started - monitor logcat for progress");

@@ -2119,7 +2119,9 @@ public class OtaHelper {
             IBesOtaController manager = besOtaRegistry.getInstance();
             if (manager != null) {
                 Log.i(TAG, "Starting BES firmware update from: " + OtaConstants.BES_FIRMWARE_PATH);
-                boolean started = manager.startFirmwareUpdate(OtaConstants.BES_FIRMWARE_PATH);
+                boolean started =
+                        manager.startFirmwareUpdate(
+                                OtaConstants.BES_FIRMWARE_PATH, manifestVersion);
                 if (started) {
                     Log.i(TAG, "BES firmware update initiated successfully");
                     return true;

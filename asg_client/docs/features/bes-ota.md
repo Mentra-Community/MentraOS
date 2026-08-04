@@ -36,7 +36,7 @@ UART transport is owned by `ComManager` (the K900 UART driver). When BES OTA is 
 1. **Version check.** `OtaHelper` polls the server's `version.json`.
 2. **Download.** New `.bin` lands at `/storage/emulated/0/asg/bes_firmware.bin`.
 3. **Admit artifact.** Before authorization, ASG requires immutable release metadata and verifies the compressed bytes, complete LZMA-chunk container, embedded CRC32, decompressed bytes, hard flash-size limit, product marker, and embedded target version. Any mismatch deletes the file and aborts without sending `mh_ota`.
-4. **Authorize once per boot and reconcile.** ASG first proves a stable UART session, freezes baud reconfiguration, persists the glasses boot identity, and sends `mh_ota`. It never sends that authorization twice in one glasses boot. A reported write failure is treated as ambiguous: ASG keeps exclusive ownership and waits for `hm_ota`. If that framed reply is missing, ASG sends up to three read-only raw `0x99` probes. A `0x9a` response proves BES entered OTA mode and the transfer continues; only silence from both protocols falls back to reboot-required quarantine.
+4. **Authorize once per boot and reconcile.** ASG first proves a stable UART session, freezes baud reconfiguration, atomically persists the glasses boot identity plus exact target version, and sends `mh_ota`. It never sends that authorization twice in one glasses boot. A reported write failure is treated as ambiguous: ASG keeps exclusive ownership and waits for `hm_ota`. If that framed reply is missing, ASG makes one one-way transition to raw routing and sends up to three read-only `0x99` probes. A `0x9a` response proves BES entered OTA mode and the transfer continues. If the probes are silent, ASG does not switch back to framed K900, send `cs_syvr`, or resend `mh_ota`; it durably quarantines all BES UART traffic until a full glasses reboot.
 5. **Protocol handshake** — 11-step BES OTA exchange after authorization is confirmed by `hm_ota` or a recovered raw `0x9a` response:
 
    | Step                         | Outbound (cmd) | Inbound |
@@ -53,7 +53,8 @@ UART transport is owned by `ComManager` (the K900 UART driver). When BES OTA is 
    | Send finish                  | `0x88`         | `0x84`  |
    | Apply (BES reboots)          | `0x92`         | `0x93`  |
 
-6. **Progress events.** `BesOtaProgressEvent`s fire on EventBus throughout (`STARTED`, `PROGRESS`, `FINISHED`, `FAILED`).
+6. **Verify after reboot.** The `0x93` apply acknowledgement is not success. ASG persists a post-apply phase, reopens BES at the rendezvous baud, and accepts `FINISHED` only after a fresh `sr_syvr` exactly matches the target version bound to the admitted artifact. The pending verification survives an ASG process restart. A mismatch, timeout, or durable-state write failure reports `FAILED`; it never reports a false success.
+7. **Progress events.** `BesOtaProgressEvent`s fire on EventBus throughout (`STARTED`, `PROGRESS`, `FINISHED`, `FAILED`).
 
 ## Wire-format constants
 
@@ -138,12 +139,13 @@ Manual procedure:
 ## Troubleshooting
 
 - **Update never starts** — confirm BES OTA path is initialized (`BesOtaManager` log line at startup). Check WiFi, battery (≥ 5%), and that no APK update is currently running.
-- **Stall or ambiguous authorization** — after a missing `hm_ota`, ASG tries three read-only raw `0x99` protocol probes. Those bytes are a valid idempotent query in OTA mode and contain no `##` marker in normal K900 mode. A raw `0x9a` response resumes the update. If all probes are silent, ASG quarantines the UART; reboot the glasses and wait for fresh version discovery before retrying.
+- **Stall or ambiguous authorization** — after a missing `hm_ota`, ASG tries three read-only raw `0x99` protocol probes. Those bytes are a valid idempotent query in OTA mode and contain no `##` marker in normal K900 mode. A raw `0x9a` response resumes the update. If all probes are silent, ASG quarantines the UART across serial and ASG process restarts; fully reboot the glasses before retrying.
 - **Stall mid-transfer** — a dead-man watchdog reports failure after 30 seconds without a BES response. Because BES parser state is not provable after authorization, recovery requires rebooting the glasses before retrying the whole OTA. Check `BesOtaUartListener` logs and the Infinity Cable if this repeats.
 - **Mentra App shows restart required** — the wire protocol reuses the existing compact `install_failed` terminal code. The Mentra App conservatively requires a glasses restart for any failed or timed-out BES install, removes Retry, and keeps detailed failure distinctions in ASG logs. This can request an unnecessary restart for a failure that happened before `mh_ota`, but it never offers an unsafe retry and requires no BES-specific phone error code.
 - **`File too big`** — the compressed artifact exceeds the download cap or its declared/decompressed raw image reaches the `0x1E0000`-byte bootloader limit.
 - **`SHA-256 mismatch`** — the downloaded `.bin` doesn't match `version.json`. The file is deleted; verify your hash and re-upload.
 - **Stuck in OTA mode** — after authorization uncertainty this is a deliberate safety quarantine. Restart the glasses, not only the app; the persisted same-boot gate prevents an app restart from resending `mh_ota`.
+- **Apply acknowledged but update failed** — ASG did not read the exact target version back from rebooted BES within the verification window. Treat the installed version as unproven and reboot the glasses before another attempt.
 
 ## Logcat tags
 

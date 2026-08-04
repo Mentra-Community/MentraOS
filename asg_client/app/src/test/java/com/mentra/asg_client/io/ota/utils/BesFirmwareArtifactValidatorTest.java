@@ -106,6 +106,31 @@ public class BesFirmwareArtifactValidatorTest {
     }
 
     @Test
+    public void overflowingChunkLengthFailsAsTruncatedContainer() throws Exception {
+        TestArtifact artifact = createArtifact();
+        byte[] corrupt = {
+            (byte) 0xFF,
+            (byte) 0xFF,
+            (byte) 0xFF,
+            (byte) 0xFF,
+            0x7F,
+            (byte) 0xFF,
+            (byte) 0xFF,
+            (byte) 0xFF
+        };
+        write(artifact.file, corrupt);
+        artifact.metadata.put("compressed_size", corrupt.length);
+        artifact.metadata.put("sha256", sha256(corrupt));
+
+        assertThatThrownBy(
+                        () ->
+                                BesFirmwareArtifactValidator.validate(
+                                        artifact.file, artifact.metadata))
+                .isInstanceOf(BesFirmwareArtifactValidator.ValidationException.class)
+                .hasMessageContaining("Invalid or truncated BES OTA LZMA chunk");
+    }
+
+    @Test
     public void wrongEmbeddedProductOrVersionFailsClosed() throws Exception {
         TestArtifact artifact = createArtifact();
         artifact.metadata.put("product", "different_product");

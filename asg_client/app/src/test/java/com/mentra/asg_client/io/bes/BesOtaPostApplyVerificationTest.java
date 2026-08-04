@@ -1,0 +1,117 @@
+package com.mentra.asg_client.io.bes;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import android.app.Application;
+import androidx.test.core.app.ApplicationProvider;
+import com.mentra.asg_client.AsgConstants;
+import com.mentra.asg_client.io.bes.events.BesOtaProgressEvent;
+import com.mentra.asg_client.io.bes.protocol.BesProtocolConstants;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.List;
+import org.greenrobot.eventbus.EventBus;
+import org.greenrobot.eventbus.Subscribe;
+import org.junit.After;
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.robolectric.RobolectricTestRunner;
+import org.robolectric.annotation.Config;
+
+@RunWith(RobolectricTestRunner.class)
+@Config(application = Application.class, sdk = 33)
+public class BesOtaPostApplyVerificationTest {
+    private final List<BesOtaProgressEvent> events = new ArrayList<>();
+    private Application context;
+    private BesOtaManager manager;
+
+    @Subscribe
+    public void onEvent(BesOtaProgressEvent event) {
+        events.add(event);
+    }
+
+    @Before
+    public void setUp() {
+        context = ApplicationProvider.getApplicationContext();
+        context.getSharedPreferences(AsgConstants.BES_OTA_AUTH_GATE_PREFS, 0)
+                .edit()
+                .clear()
+                .commit();
+        manager =
+                new BesOtaManager(
+                        null,
+                        null,
+                        context,
+                        new BesOtaAuthorizationGate(context, () -> "linux:test-boot"));
+        EventBus.getDefault().register(this);
+    }
+
+    @After
+    public void tearDown() {
+        manager.abortIfInProgress();
+        EventBus.getDefault().unregister(this);
+        BesOtaManager.isBesOtaInProgress = false;
+        context.getSharedPreferences(AsgConstants.BES_OTA_AUTH_GATE_PREFS, 0)
+                .edit()
+                .clear()
+                .commit();
+    }
+
+    @Test
+    public void applyAckDoesNotFinishUntilRebootedTargetVersionIsReadBack() throws Exception {
+        BesOtaAuthorizationGate gate = authorizationGate();
+        assertThat(gate.tryReserveCurrentBoot("17.26.7.24")).isTrue();
+        setField("expectedTargetVersion", "17.26.7.24");
+        setField("authorizationAttempted", true);
+        BesOtaManager.isBesOtaInProgress = true;
+
+        BesOtaMessage apply = new BesOtaMessage();
+        apply.cmd = BesProtocolConstants.RCMD_APPLY;
+        apply.len = 1;
+        apply.body = new byte[] {1};
+        Method deal = BesOtaManager.class.getDeclaredMethod("dealOtaRecvCmd", BesOtaMessage.class);
+        deal.setAccessible(true);
+        deal.invoke(manager, apply);
+
+        assertThat(events).isEmpty();
+        assertThat(gate.isPostApplyVerificationPendingForCurrentBoot()).isTrue();
+        assertThat(BesOtaManager.isBesOtaInProgress).isTrue();
+
+        assertThat(gate.verifyPostApplyVersion("17.26.7.24"))
+                .isEqualTo(BesOtaAuthorizationGate.PostApplyVerification.VERIFIED);
+        manager.onBesPostApplyVerification(
+                true, "17.26.7.24", "17.26.7.24", "BES target version verified");
+
+        assertThat(events).hasSize(1);
+        assertThat(events.get(0).getStatus()).isEqualTo(BesOtaProgressEvent.OtaStatus.FINISHED);
+        assertThat(BesOtaManager.isBesOtaInProgress).isFalse();
+    }
+
+    @Test
+    public void recoveredVersionMismatchReportsFailureNotSuccess() {
+        manager.onBesPostApplyVerification(
+                false,
+                "17.26.7.24",
+                "17.26.7.23",
+                "BES rebooted with an unexpected firmware version");
+
+        assertThat(events).hasSize(1);
+        assertThat(events.get(0).getStatus()).isEqualTo(BesOtaProgressEvent.OtaStatus.FAILED);
+        assertThat(events.get(0).getErrorMessage())
+                .isEqualTo("BES rebooted with an unexpected firmware version");
+    }
+
+    private BesOtaAuthorizationGate authorizationGate() throws Exception {
+        Field field = BesOtaManager.class.getDeclaredField("authorizationGate");
+        field.setAccessible(true);
+        return (BesOtaAuthorizationGate) field.get(manager);
+    }
+
+    private void setField(String name, Object value) throws Exception {
+        Field field = BesOtaManager.class.getDeclaredField(name);
+        field.setAccessible(true);
+        field.set(manager, value);
+    }
+}

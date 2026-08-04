@@ -382,7 +382,7 @@ public class BesUartTransportCoordinatorTest {
     }
 
     @Test
-    public void otaTransfer_returnsToNormalRoutingWithoutReleasingLease() throws Exception {
+    public void ambiguousOtaAuthorization_quarantinesAllTrafficUntilReboot() throws Exception {
         coordinator.onSerialReady(host.session);
         assertThat(systemVersion("17.26.7.4"))
                 .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
@@ -390,28 +390,67 @@ public class BesUartTransportCoordinatorTest {
         BesUartTransportCoordinator.OperationLease otaLease = coordinator.beginOtaAuthorization();
         assertThat(otaLease).isNotNull();
         assertThat(coordinator.promoteOtaAuthorizationToTransfer(otaLease)).isTrue();
-        assertThat(coordinator.returnOtaTransferToAuthorization(otaLease)).isTrue();
+        assertThat(coordinator.quarantineOta(otaLease)).isTrue();
 
         assertThat(coordinator.inboundRoute(host.session))
-                .isEqualTo(BesUartTransportCoordinator.InboundRoute.NORMAL);
+                .isEqualTo(BesUartTransportCoordinator.InboundRoute.REJECTED);
         assertThat(host.fastReceive).isFalse();
-        assertThat(host.parserResets).isEqualTo(1);
+        assertThat(coordinator.getState()).isEqualTo(BesUartTransportCoordinator.State.QUARANTINED);
         assertThat(coordinator.getOperation())
-                .isEqualTo(BesUartTransportCoordinator.Operation.OTA_AUTHORIZATION);
-        assertThat(coordinator.runOtaAuthorizationWrite(otaLease, () -> true)).isTrue();
+                .isEqualTo(BesUartTransportCoordinator.Operation.NONE);
+        assertThat(coordinator.runOtaAuthorizationWrite(otaLease, () -> true)).isFalse();
+        assertThat(coordinator.writeOta(otaLease, new byte[] {1})).isFalse();
+        assertThat(coordinator.runNormalWrite(() -> true)).isFalse();
         assertThat(coordinator.beginFileTransfer()).isNull();
+    }
 
-        ExecutorService caller = Executors.newSingleThreadExecutor();
-        Future<Boolean> normalWrite = caller.submit(() -> coordinator.runNormalWrite(() -> true));
-        try {
-            awaitDeferredNormalWriteCount(1);
-            assertThat(normalWrite.isDone()).isFalse();
-            coordinator.endOta(otaLease);
-            assertThat(normalWrite.get(1, TimeUnit.SECONDS)).isTrue();
-        } finally {
-            coordinator.endOta(otaLease);
-            caller.shutdownNow();
-        }
+    @Test
+    public void persistedQuarantine_survivesSerialCloseAndReopen() {
+        coordinator.shutdown();
+        coordinator = new BesUartTransportCoordinator(host, () -> true);
+
+        coordinator.onSerialReady(host.session);
+        assertThat(coordinator.getState()).isEqualTo(BesUartTransportCoordinator.State.QUARANTINED);
+        assertThat(host.controlCommands).isEmpty();
+
+        coordinator.onSerialClosed();
+        host.session = new SerialSession(++host.nextSessionId, "/dev/ttyS1", host.baud);
+        coordinator.onSerialReady(host.session);
+
+        assertThat(coordinator.getState()).isEqualTo(BesUartTransportCoordinator.State.QUARANTINED);
+        assertThat(coordinator.inboundRoute(host.session))
+                .isEqualTo(BesUartTransportCoordinator.InboundRoute.REJECTED);
+        assertThat(host.controlCommands).isEmpty();
+    }
+
+    @Test
+    public void postApplyRestart_waitsForSystemVersionInsteadOfOpeningOnAnyFrame() {
+        coordinator.shutdown();
+        coordinator =
+                new BesUartTransportCoordinator(
+                        host,
+                        new BesUartTransportCoordinator.OtaSafetyState() {
+                            @Override
+                            public boolean isQuarantinedForCurrentBoot() {
+                                return true;
+                            }
+
+                            @Override
+                            public boolean isPostApplyVerificationPendingForCurrentBoot() {
+                                return true;
+                            }
+                        });
+
+        coordinator.onSerialReady(host.session);
+        assertThat(coordinator.getState())
+                .isEqualTo(BesUartTransportCoordinator.State.DISCOVERING);
+        assertThat(host.controlCommands).isEmpty();
+
+        coordinator.onValidFrame(host.session);
+        assertThat(coordinator.isReady()).isFalse();
+
+        assertThat(systemVersion("17.26.7.24"))
+                .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.TRANSITIONING);
     }
 
     @Test

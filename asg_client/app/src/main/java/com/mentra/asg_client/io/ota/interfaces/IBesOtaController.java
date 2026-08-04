@@ -40,12 +40,18 @@ public interface IBesOtaController {
     boolean isNewerVersion(byte[] v1, byte[] v2);
 
     /**
-     * Begin a firmware update.
+     * Begin a firmware update whose terminal success requires exact post-reboot version readback.
      *
      * @param filePath path to the firmware binary
+     * @param expectedVersion exact dotted target version bound to the validated artifact
      * @return true if the update was started successfully
      */
-    boolean startFirmwareUpdate(String filePath);
+    boolean startFirmwareUpdate(String filePath, String expectedVersion);
+
+    /** Debug-only compatibility entrypoint; production callers must supply the target version. */
+    default boolean startFirmwareUpdate(String filePath) {
+        return startFirmwareUpdate(filePath, null);
+    }
 
     /** Called by the MCU event subscriber when BES authorizes the update. */
     void onAuthorizationGranted();

@@ -39,7 +39,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
     private static final long BES_AUTH_TIMEOUT_MS = 30000; // 30 seconds authorization timeout
     private static final long BES_AUTH_RECOVERY_PROBE_INTERVAL_MS = 1000;
     private static final int BES_AUTH_RECOVERY_PROBE_MAX_ATTEMPTS = 3;
-    private static final long BES_AUTH_NORMAL_PROBE_TIMEOUT_MS = 3000;
+    private static final long BES_POST_APPLY_VERIFICATION_TIMEOUT_MS = 60_000;
     private Context mContext;
 
     private long operationStartTime = 0;
@@ -85,10 +85,10 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
     private int authorizationRecoveryProbeAttempts = 0;
     private android.os.Handler authorizationRecoveryProbeHandler;
     private Runnable authorizationRecoveryProbeRunnable;
-    private boolean authorizationNormalProbePending = false;
-    private boolean authorizationResendUsed = false;
-    private android.os.Handler authorizationNormalProbeHandler;
-    private Runnable authorizationNormalProbeRunnable;
+    private android.os.Handler postApplyVerificationHandler;
+    private Runnable postApplyVerificationRunnable;
+    private boolean awaitingPostApplyVerification = false;
+    private String expectedTargetVersion = "";
 
     private final Runnable otaAppliedCallback;
     private final BesOtaAuthorizationGate authorizationGate;
@@ -106,6 +106,14 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
             Runnable otaAppliedCallback,
             K900BluetoothManager k900BluetoothManager,
             Context context) {
+        this(otaAppliedCallback, k900BluetoothManager, context, null);
+    }
+
+    BesOtaManager(
+            Runnable otaAppliedCallback,
+            K900BluetoothManager k900BluetoothManager,
+            Context context,
+            BesOtaAuthorizationGate authorizationGateOverride) {
         this.otaAppliedCallback = otaAppliedCallback;
         this.k900BluetoothManager = k900BluetoothManager;
         this.transportCoordinator =
@@ -113,7 +121,22 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
                         ? k900BluetoothManager.getTransportCoordinator()
                         : null;
         this.mContext = context.getApplicationContext();
-        this.authorizationGate = new BesOtaAuthorizationGate(this.mContext);
+        BesOtaAuthorizationGate sharedGate =
+                k900BluetoothManager != null
+                        ? k900BluetoothManager.getBesOtaAuthorizationGate()
+                        : null;
+        this.authorizationGate =
+                authorizationGateOverride != null
+                        ? authorizationGateOverride
+                        : sharedGate != null
+                                ? sharedGate
+                                : new BesOtaAuthorizationGate(this.mContext);
+        if (authorizationGate.isPostApplyVerificationPendingForCurrentBoot()) {
+            awaitingPostApplyVerification = true;
+            expectedTargetVersion = authorizationGate.getExpectedTargetVersion();
+            isBesOtaInProgress = true;
+            armPostApplyVerificationTimeoutLocked();
+        }
     }
 
     /**
@@ -296,7 +319,23 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
      * @return true if started successfully
      */
     @Override
-    public boolean startFirmwareUpdate(String filePath) {
+    public boolean startFirmwareUpdate(String filePath, String expectedVersion) {
+        synchronized (mTransferGate) {
+            if (isBesOtaInProgress || isWaitingForAuthorization) {
+                Log.e(TAG, "BES OTA is already active");
+                return false;
+            }
+            String target = expectedVersion == null ? "" : expectedVersion.trim();
+            if (!target.matches("\\d{1,3}(?:\\.\\d{1,3}){3}")) {
+                postFailure("BES OTA requires an exact target version for reboot verification");
+                return false;
+            }
+            expectedTargetVersion = target;
+            return startFirmwareUpdateLocked(filePath);
+        }
+    }
+
+    private boolean startFirmwareUpdateLocked(String filePath) {
         Log.i(TAG, "startFirmwareUpdate: " + filePath);
 
         if (authorizationGate.isRetryBlockedThisBoot()) {
@@ -357,7 +396,8 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
                                                 }
                                                 transportLease = lease;
                                                 authorizationAttempted =
-                                                        authorizationGate.markAttemptedThisBoot();
+                                                        authorizationGate.tryReserveCurrentBoot(
+                                                                expectedTargetVersion);
                                                 return authorizationAttempted;
                                             }
                                         }
@@ -396,19 +436,6 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
             return command.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
         } catch (Exception e) {
             Log.e(TAG, "Failed to build BES OTA authorization request", e);
-            return null;
-        }
-    }
-
-    private byte[] buildNormalModeProbeRequest() {
-        try {
-            JSONObject command = new JSONObject();
-            command.put("C", "cs_syvr");
-            command.put("V", 1);
-            command.put("B", "");
-            return command.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to build BES normal-mode probe", e);
             return null;
         }
     }
@@ -488,7 +515,12 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
                     "BES did not answer "
                             + BES_AUTH_RECOVERY_PROBE_MAX_ATTEMPTS
                             + " raw OTA state probes");
-            beginNormalModeProbeLocked();
+            // mh_ota is mode-changing and has no transaction id. It may have been accepted even
+            // though neither its framed acknowledgement nor a raw reply returned. Switching
+            // parsers again or resending mh_ota would be a guess that can write framed bytes into
+            // BES OTA mode. A full glasses reboot is the only deterministic recovery.
+            postFailure("BES OTA state could not be reconciled; reboot glasses before retrying");
+            cleanupLocked();
             return;
         }
 
@@ -527,57 +559,68 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
         authorizationRecoveryProbeAttempts = 0;
     }
 
-    private void beginNormalModeProbeLocked() {
-        cancelAuthorizationRecoveryProbeLocked();
-        if (transportCoordinator == null
-                || !transportCoordinator.returnOtaTransferToAuthorization(transportLease)) {
-            Log.e(TAG, "Could not return UART to normal routing for BES state reconciliation");
-            postFailure("BES OTA state could not be reconciled");
-            cleanupLocked();
-            return;
+    private void armPostApplyVerificationTimeoutLocked() {
+        if (postApplyVerificationHandler != null && postApplyVerificationRunnable != null) {
+            postApplyVerificationHandler.removeCallbacks(postApplyVerificationRunnable);
         }
-
-        // K900 framing starts with 0x23 ('#'), which is not a BES OTA opcode. If BES actually is
-        // in raw OTA mode, the deployed TLV decoder rejects this probe without applying firmware
-        // state; if BES is normal, sr_syvr proves both its parser state and the UART return path.
-        byte[] probe = buildNormalModeProbeRequest();
-        authorizationNormalProbePending = true;
-        boolean sent =
-                probe != null
-                        && k900BluetoothManager != null
-                        && k900BluetoothManager.writeBesOtaAuthorizationMessage(
-                                transportLease, probe);
-        Log.w(TAG, "Probing framed BES normal mode after silent raw probes; writeResult=" + sent);
-
-        authorizationNormalProbeHandler = new android.os.Handler(android.os.Looper.getMainLooper());
-        authorizationNormalProbeRunnable =
+        postApplyVerificationHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+        postApplyVerificationRunnable =
                 () -> {
                     synchronized (mTransferGate) {
-                        if (!authorizationNormalProbePending) {
+                        if (!awaitingPostApplyVerification) {
                             return;
                         }
-                        // We only abort after testing both reachable states. A raw 0x9A would prove
-                        // that mh_ota succeeded and continue the desired transfer. A framed sr_syvr
-                        // would prove that mh_ota did not take effect and make one resend safe. If
-                        // neither reply returns, the BES parser and UART return path are unknown;
-                        // sending another mode-changing command could strand the chip. A full
-                        // glasses reboot is the only operation that provably restores normal mode.
-                        Log.e(TAG, "Neither raw OTA nor framed normal-mode probe received a reply");
-                        postFailure("BES OTA state could not be reconciled");
-                        cleanupLocked();
+                        Log.e(TAG, "Timed out waiting for BES post-reboot target-version readback");
+                        authorizationGate.abandonPostApplyVerification();
+                        if (transportCoordinator != null) {
+                            transportCoordinator.quarantineCurrentSession();
+                        }
+                        postFailure(
+                                "BES rebooted but target version could not be verified; reboot glasses");
+                        finishPostApplyVerificationLocked();
                     }
                 };
-        authorizationNormalProbeHandler.postDelayed(
-                authorizationNormalProbeRunnable, BES_AUTH_NORMAL_PROBE_TIMEOUT_MS);
+        postApplyVerificationHandler.postDelayed(
+                postApplyVerificationRunnable, BES_POST_APPLY_VERIFICATION_TIMEOUT_MS);
     }
 
-    private void cancelAuthorizationNormalProbeLocked() {
-        if (authorizationNormalProbeHandler != null && authorizationNormalProbeRunnable != null) {
-            authorizationNormalProbeHandler.removeCallbacks(authorizationNormalProbeRunnable);
+    private void beginPostApplyVerificationLocked() {
+        awaitingPostApplyVerification = true;
+        isWaitingForAuthorization = false;
+        cancelAuthorizationRecoveryProbeLocked();
+        if (responseWatchdogHandler != null && responseWatchdogRunnable != null) {
+            responseWatchdogHandler.removeCallbacks(responseWatchdogRunnable);
+            responseWatchdogRunnable = null;
         }
-        authorizationNormalProbeHandler = null;
-        authorizationNormalProbeRunnable = null;
-        authorizationNormalProbePending = false;
+        responseWatchdogDeadlineMs = 0;
+        operationStartTime = 0;
+        synchronized (mLeaseGate) {
+            WakeLockManager.release(WakeLockManager.WakeOwner.BES_OTA);
+        }
+        bInit = false;
+        fileData = null;
+        sentPos = 0;
+        confirmTimes = 0;
+        transportLease = null;
+        armPostApplyVerificationTimeoutLocked();
+        if (otaAppliedCallback != null) {
+            otaAppliedCallback.run();
+        }
+    }
+
+    private void finishPostApplyVerificationLocked() {
+        if (postApplyVerificationHandler != null && postApplyVerificationRunnable != null) {
+            postApplyVerificationHandler.removeCallbacks(postApplyVerificationRunnable);
+        }
+        postApplyVerificationHandler = null;
+        postApplyVerificationRunnable = null;
+        awaitingPostApplyVerification = false;
+        authorizationAttempted = false;
+        expectedTargetVersion = "";
+        synchronized (mLeaseGate) {
+            isBesOtaInProgress = false;
+            WakeLockManager.release(WakeLockManager.WakeOwner.BES_OTA);
+        }
     }
 
     /**
@@ -612,7 +655,11 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
             authTimeoutRunnable = null;
         }
         cancelAuthorizationRecoveryProbeLocked();
-        cancelAuthorizationNormalProbeLocked();
+        if (postApplyVerificationHandler != null && postApplyVerificationRunnable != null) {
+            postApplyVerificationHandler.removeCallbacks(postApplyVerificationRunnable);
+            postApplyVerificationHandler = null;
+            postApplyVerificationRunnable = null;
+        }
 
         // Cancel the response watchdog; cleanup is the single funnel for every terminal
         // path (apply success, CRC failure, watchdog abort), so no timer outlives the run.
@@ -634,22 +681,21 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
         isWaitingForAuthorization = false;
         if (transportCoordinator != null) {
             if (authorizationAttempted) {
-                // Legacy BES may still be consuming raw OTA bytes. Keep the operation lease so no
-                // deferred JSON is flushed into that parser. A glasses reboot destroys this
-                // coordinator; the persisted boot gate prevents a same-boot retry after an app
-                // restart.
                 Log.w(TAG, "Quarantining BES UART until glasses reboot after OTA failure");
+                if (!transportCoordinator.quarantineOta(transportLease)) {
+                    Log.e(TAG, "Failed to apply in-memory BES UART quarantine");
+                }
             } else {
                 transportCoordinator.endOta(transportLease);
             }
         }
         transportLease = null;
         authorizationAttempted = false;
-        authorizationResendUsed = false;
         bInit = false;
         fileData = null;
         sentPos = 0;
         confirmTimes = 0;
+        expectedTargetVersion = "";
     }
 
     /**
@@ -710,8 +756,11 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
                 authTimeoutHandler = null;
                 authTimeoutRunnable = null;
             }
-            authorizationGate.clear();
-            authorizationAttempted = false;
+            if (authorizationGate.clear()) {
+                authorizationAttempted = false;
+            } else {
+                Log.e(TAG, "Could not durably clear the BES OTA authorization reservation");
+            }
             postFailure("BES chip denied OTA authorization");
             cleanupLocked();
         }
@@ -1059,38 +1108,30 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
     }
 
     @Override
-    public void onBesNormalModeProven() {
+    public void onBesPostApplyVerification(
+            boolean success, String expectedVersion, String actualVersion, String diagnostic) {
         synchronized (mTransferGate) {
-            if (!authorizationNormalProbePending) {
-                return;
+            if (!awaitingPostApplyVerification) {
+                // K900 starts its serial reader before this listener is registered. After an ASG
+                // process restart it can therefore verify and durably clear the pending target,
+                // then deliver this one-shot result during registration. Accept that result even
+                // though this manager never observed the apply acknowledgement itself.
+                Log.i(TAG, "Accepting BES version verification recovered during manager startup");
+                awaitingPostApplyVerification = true;
             }
-            cancelAuthorizationNormalProbeLocked();
-
-            if (authorizationResendUsed) {
-                // A second normal reply proves the bounded resend also did not switch modes. This
-                // is a known-safe normal state, so release the lease and permit a fresh phone retry
-                // instead of incorrectly demanding a reboot.
-                Log.e(TAG, "BES remained in normal mode after the single mh_ota resend");
-                authorizationGate.clear();
-                authorizationAttempted = false;
-                postFailure("BES chip did not enter OTA mode");
-                cleanupLocked();
-                return;
+            if (success) {
+                Log.i(TAG, "BES firmware update verified after reboot: " + actualVersion);
+                EventBus.getDefault().post(BesOtaProgressEvent.createFinished());
+            } else {
+                Log.e(
+                        TAG,
+                        "BES post-apply verification failed expected="
+                                + expectedVersion
+                                + " actual="
+                                + actualVersion);
+                postFailure(diagnostic);
             }
-
-            Log.w(
-                    TAG,
-                    "Framed sr_syvr proves BES stayed in normal mode and UART return works; "
-                            + "resending mh_ota once");
-            authorizationResendUsed = true;
-            isWaitingForAuthorization = true;
-            byte[] request = buildAuthorizationRequest();
-            boolean sent =
-                    request != null
-                            && k900BluetoothManager != null
-                            && k900BluetoothManager.writeBesOtaAuthorizationMessage(
-                                    transportLease, request);
-            onAuthorizationWriteComplete(true, sent);
+            finishPostApplyVerificationLocked();
         }
     }
 
@@ -1429,18 +1470,17 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
             }
         } else if (msg.cmd == BesProtocolConstants.RCMD_APPLY) {
             if (msg.len == 1 && msg.body != null && msg.body[0] == 1) {
-                Log.i(TAG, "BES firmware update SUCCESS! BES will reboot.");
-                authorizationGate.clear();
-                authorizationAttempted = false;
-                EventBus.getDefault().post(BesOtaProgressEvent.createFinished());
-                if (otaAppliedCallback != null) {
-                    otaAppliedCallback.run();
+                Log.i(TAG, "BES accepted firmware apply; waiting for rebooted version readback");
+                if (authorizationGate.markApplyPending()) {
+                    beginPostApplyVerificationLocked();
+                    return;
                 }
+                Log.e(TAG, "Could not durably enter BES post-apply verification phase");
+                postFailure("Could not safely verify BES after apply; reboot glasses");
             } else {
                 Log.e(TAG, "Apply firmware error");
                 postFailure("Failed to apply firmware");
             }
-            // Cleanup regardless
             cleanup();
         }
     }

@@ -122,7 +122,7 @@ public final class BesFirmwareArtifactValidator {
             }
             int chunkSize = readBigEndianInt(data, position);
             position += 4;
-            if (chunkSize < LZMA_ALONE_HEADER_LENGTH || position + chunkSize > data.length) {
+            if (chunkSize < LZMA_ALONE_HEADER_LENGTH || (long) position + chunkSize > data.length) {
                 throw new ValidationException("Invalid or truncated BES OTA LZMA chunk");
             }
 
