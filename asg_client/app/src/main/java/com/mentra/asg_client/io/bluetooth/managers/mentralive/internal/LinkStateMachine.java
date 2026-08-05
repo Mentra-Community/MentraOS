@@ -111,15 +111,10 @@ public final class LinkStateMachine {
         public final int proto;
 
         /**
-         * Max single-notification payload the BES delivers to the phone (wire_caps.notify_cap =
-         * max(253, min(negotiated ATT MTU - 3, 509))). 0 when the firmware predates the
-         * advertisement or the cached value was invalidated.
-         *
-         * <p>Unlike the other caps, notify_cap derives from the PHONE BLE session's negotiated ATT
-         * MTU, so its validity is the intersection of the UART session, the phone BLE session, and
-         * the BES firmware generation: the machine clears it on serial close, on every
-         * phone-presence edge (a new session renegotiates the MTU), and on BES OTA — it re-arms
-         * only from a fresh wire_caps advertisement.
+         * Maximum complete notification payload the BES guarantees across every bearer it may
+         * select. 0 means the firmware did not advertise the capability or the cached value was
+         * invalidated. The value remains phone-session-scoped for compatibility with older BES
+         * firmware that derived it from the current ATT MTU.
          */
         public final int notifyCap;
 

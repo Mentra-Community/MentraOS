@@ -20,12 +20,14 @@ public class BinaryMessageChunkerTest {
     @Before
     public void setUp() {
         BesWireFormat.setBinaryProtocolActive(true);
+        MessageChunker.resetFrameBudget();
     }
 
     @After
     public void tearDown() {
         BesWireFormat.resetBinaryProtocol();
         BesWireFormat.resetFilePackSize();
+        MessageChunker.resetFrameBudget();
     }
 
     @Test
@@ -34,7 +36,8 @@ public class BinaryMessageChunkerTest {
         List<byte[]> frames = MessageChunker.createBinaryFragments(json, 7);
 
         assertThat(frames).hasSize(1);
-        assertThat(frames.get(0).length).isLessThanOrEqualTo(MessageChunker.MAX_PACKED_CHUNK_SIZE);
+        assertThat(frames.get(0).length)
+                .isLessThanOrEqualTo(MessageChunker.maxPackedFrameSize());
 
         BesWireFormat.BinaryHeader header = BesWireFormat.parseBinaryHeader(frames.get(0));
         assertThat(header.valid).isTrue();
@@ -60,7 +63,8 @@ public class BinaryMessageChunkerTest {
 
         int totalPayload = 0;
         for (int i = 0; i < frames.size(); i++) {
-            assertThat(frames.get(i).length).isLessThanOrEqualTo(MessageChunker.MAX_PACKED_CHUNK_SIZE);
+            assertThat(frames.get(i).length)
+                    .isLessThanOrEqualTo(MessageChunker.maxPackedFrameSize());
             BesWireFormat.BinaryHeader header = BesWireFormat.parseBinaryHeader(frames.get(i));
             assertThat(header.valid).isTrue();
             assertThat(header.msgId).isEqualTo(99);
@@ -74,15 +78,31 @@ public class BinaryMessageChunkerTest {
     }
 
     @Test
-    public void needsChunking_usesHigherThresholdWhenBinaryActive() {
+    public void needsChunking_usesBinaryPayloadBudgetWhenBinaryActive() {
         String small = "{\"type\":\"ping\"}";
         String large =
                 "{\"type\":\"stream_status\",\"d\":\""
-                        + "a".repeat(BesWireFormat.MAX_FRAGMENT_PAYLOAD + 1)
+                        + "a".repeat(MessageChunker.maxBinaryFragmentPayload() + 1)
                         + "\"}";
 
         assertThat(MessageChunker.needsChunking(small)).isFalse();
         assertThat(MessageChunker.needsChunking(large)).isTrue();
+    }
+
+    @Test
+    public void notifyCapConstrainsEveryBinaryFrame() throws Exception {
+        MessageChunker.setFrameBudgetFromNotifyCap(200);
+        assertThat(MessageChunker.maxPackedFrameSize()).isEqualTo(187);
+        assertThat(MessageChunker.maxBinaryFragmentPayload()).isEqualTo(173);
+
+        String json =
+                "{\"type\":\"stream_status\",\"d\":\"" + "x".repeat(600) + "\"}";
+        List<byte[]> frames = MessageChunker.createBinaryFragments(json, 123);
+
+        assertThat(frames.size()).isGreaterThan(1);
+        for (byte[] frame : frames) {
+            assertThat(frame.length).isLessThanOrEqualTo(187);
+        }
     }
 
     @Test

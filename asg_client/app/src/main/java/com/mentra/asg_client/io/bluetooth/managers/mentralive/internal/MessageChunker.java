@@ -10,6 +10,7 @@ import org.json.JSONObject;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -25,24 +26,69 @@ public class MessageChunker {
     private static final int INITIAL_CHUNK_DATA_SIZE = 80;
     private static final int MIN_CHUNK_DATA_SIZE = 4;
 
-    /** Budget for v2 binary fragments — these are reassembled phone-side, so MTU_TARGET holds. */
-    public static final int MAX_PACKED_CHUNK_SIZE = BesWireFormat.MAX_PACKED_FRAME_SIZE;
+    /** Local ceiling for every complete K900 control frame, regardless of wire version. */
+    public static final int MAX_PACKED_CHUNK_SIZE =
+            AsgConstants.K900_CONTROL_MAX_PACKED_FRAME_BYTES;
+
+    private static final int BINARY_FRAME_OVERHEAD =
+            BesWireFormat.LENGTH_CMD_MIN_SIZE + BesWireFormat.BINARY_HEADER_SIZE;
+
+    /**
+     * Session budget for a complete packed frame. An advertised notify_cap may make it smaller,
+     * but never larger than the hardware-proven local ceiling. This makes old BES advertisements
+     * that described only a high-capacity bearer harmless during an ASG-first upgrade.
+     */
+    private static final AtomicInteger PACKED_FRAME_BUDGET =
+            new AtomicInteger(MAX_PACKED_CHUNK_SIZE);
 
     private static final AtomicLong CHUNK_SEQUENCE = new AtomicLong();
 
-    /** Current maximum packed frame size for a v1 STRING ck chunk. */
-    public static int maxPackedStringChunkSize() {
-        return AsgConstants.K900_STRING_CHUNK_MAX_FRAME_BYTES;
+    /** Current maximum size of a complete packed frame for both v1 and v2. */
+    public static int maxPackedFrameSize() {
+        return PACKED_FRAME_BUDGET.get();
     }
 
-    /** Compatibility no-op: {@code notify_cap} cannot raise the legacy v1 ceiling. */
-    public static void setStringChunkBudgetFromNotifyCap(int notifyCap) {}
+    /** Current maximum packed frame size for a v1 STRING ck chunk. */
+    public static int maxPackedStringChunkSize() {
+        return maxPackedFrameSize();
+    }
 
-    /** Compatibility no-op: the legacy v1 budget is always the conservative fixed ceiling. */
-    public static void resetStringChunkBudget() {}
+    /** Current maximum v2 message payload after the 14-byte K900 binary framing overhead. */
+    public static int maxBinaryFragmentPayload() {
+        return Math.max(0, maxPackedFrameSize() - BINARY_FRAME_OVERHEAD);
+    }
 
-    /** Compatibility no-op for old callers; production no longer subscribes to link caps. */
-    public static void followLinkState(LinkStateMachine linkState) {}
+    /**
+     * Apply the BES notification guarantee to the shared v1/v2 frame budget. Keep the proven
+     * 13-byte margin and never allow an advertisement to raise the local 240-byte ceiling.
+     */
+    public static void setFrameBudgetFromNotifyCap(int notifyCap) {
+        if (notifyCap <= 0) {
+            resetFrameBudget();
+            return;
+        }
+        int advertisedBudget =
+                Math.max(0, notifyCap - AsgConstants.K900_CONTROL_FRAME_SAFETY_MARGIN_BYTES);
+        PACKED_FRAME_BUDGET.set(Math.min(MAX_PACKED_CHUNK_SIZE, advertisedBudget));
+    }
+
+    /** Restore the conservative budget when the negotiated capability is no longer valid. */
+    public static void resetFrameBudget() {
+        PACKED_FRAME_BUDGET.set(MAX_PACKED_CHUNK_SIZE);
+    }
+
+    /** Keep the shared frame budget aligned with the negotiated capability lifecycle. */
+    public static void followLinkState(LinkStateMachine linkState) {
+        linkState.addListener(
+                (state, provenCaps, phonePresence) -> {
+                    int notifyCap = linkState.getNegotiatedCaps().notifyCap;
+                    if (notifyCap > 0) {
+                        setFrameBudgetFromNotifyCap(notifyCap);
+                    } else {
+                        resetFrameBudget();
+                    }
+                });
+    }
 
     public static boolean needsChunking(String message) {
         if (message == null) {
@@ -50,10 +96,15 @@ public class MessageChunker {
         }
 
         int messageBytes = message.getBytes(StandardCharsets.UTF_8).length;
-        int threshold =
-                BesWireFormat.isBinaryProtocolActive()
-                        ? BesWireFormat.MAX_FRAGMENT_PAYLOAD
-                        : MESSAGE_SIZE_THRESHOLD_V1;
+        int threshold = MESSAGE_SIZE_THRESHOLD_V1;
+        if (BesWireFormat.isBinaryProtocolActive()) {
+            try {
+                messageBytes = BesWireFormat.buildOutboundPayloadBytes(message).length;
+            } catch (JSONException e) {
+                return true;
+            }
+            threshold = maxBinaryFragmentPayload();
+        }
         boolean needsChunking = messageBytes > threshold;
         if (needsChunking) {
             Log.d(
@@ -117,8 +168,14 @@ public class MessageChunker {
         }
 
         byte[] messageBytes = BesWireFormat.buildOutboundPayloadBytes(originalJson);
-        List<byte[]> payloadChunks =
-                splitUtf8Bytes(messageBytes, BesWireFormat.MAX_FRAGMENT_PAYLOAD);
+        int payloadBudget = maxBinaryFragmentPayload();
+        if (payloadBudget <= 0) {
+            throw new JSONException(
+                    "notify_cap leaves no room for the "
+                            + BINARY_FRAME_OVERHEAD
+                            + "-byte binary frame overhead");
+        }
+        List<byte[]> payloadChunks = splitUtf8Bytes(messageBytes, payloadBudget);
         int totalFragments = payloadChunks.size();
         List<byte[]> frames = new ArrayList<>(totalFragments);
 
@@ -133,12 +190,13 @@ public class MessageChunker {
             byte[] frame =
                     BesWireFormat.packBinaryFragment(
                             flags, msgId, i, totalFragments, payloadChunks.get(i));
-            if (frame == null || frame.length > MAX_PACKED_CHUNK_SIZE) {
+            int frameBudget = maxPackedFrameSize();
+            if (frame == null || frame.length > frameBudget) {
                 throw new JSONException(
                         "Binary fragment "
                                 + i
                                 + " exceeds "
-                                + MAX_PACKED_CHUNK_SIZE
+                                + frameBudget
                                 + " bytes ("
                                 + (frame != null ? frame.length : 0)
                                 + ")");
