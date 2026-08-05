@@ -1,4 +1,5 @@
 import {describe, expect, test} from "bun:test"
+import type {MiniappSession, RenderElement} from "@mentra/miniapp"
 
 import {DisplayManager} from "../background/managers/DisplayManager"
 
@@ -14,5 +15,33 @@ describe("navigation display layout", () => {
     const availableTextWidth = DisplayManager.HUD.clock.w - G2_NATIVE_HORIZONTAL_PADDING_PX
 
     expect(availableTextWidth).toBeGreaterThanOrEqual(widestClockWidth)
+  })
+
+  test("keeps the maneuver instruction inside G1's five-line text budget", () => {
+    const frames: RenderElement[][] = []
+    const session = {
+      display: {
+        render: (elements: RenderElement[]) => {
+          frames.push(elements)
+        },
+      },
+    } as unknown as MiniappSession
+    const display = new DisplayManager(session)
+
+    // Prime the positioning-only slots. The compact frame must drop them so
+    // scene degradation cannot consume G1's line budget before the instruction.
+    display.showBitmap("map-bitmap")
+    display.showNavMessage("Starting…", "10:51")
+    display.showCompactNavHud("→\n56 m\nTurn right onto Gough Street", "1.2 km · 14 min")
+
+    expect(frames.at(-1)).toEqual([
+      {
+        type: "text",
+        id: "message",
+        box: DisplayManager.HUD.message,
+        text: "→\n56 m\nTurn right onto Gough Street\n\n1.2 km · 14 min",
+      },
+    ])
+    expect((frames.at(-1)?.[0] as {text: string}).text.split("\n")).toHaveLength(5)
   })
 })

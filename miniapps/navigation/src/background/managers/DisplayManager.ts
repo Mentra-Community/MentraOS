@@ -101,6 +101,22 @@ export class DisplayManager {
     this.pushFrame()
   }
 
+  /**
+   * Navigation frame for non-positioning displays such as Even Realities G1.
+   * Keep the maneuver first and emit one text element: host-side scene
+   * degradation otherwise inserts blank lines between the positioned clock,
+   * stats, and maneuver elements, pushing the instruction past G1's five-line
+   * limit. Images and clock are deliberately cleared because these displays
+   * cannot render them through the scene API.
+   */
+  showCompactNavHud(maneuver: string, stats: string | null): void {
+    this.mode = "message"
+    this.message = [maneuver, stats].filter(Boolean).join("\n\n")
+    this.clock = null
+    this.mapBmp = null
+    this.pushFrame()
+  }
+
   // ── Display sends ────────────────────────────────────────────────────
   // Sends are INSTANT — each show fires immediately, no spacing/throttle.
   // (We previously serialized text through a 200ms queue, but that's removed:
