@@ -148,6 +148,16 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: false,
     persist: true,
   },
+  // When on, notifications are ALSO pushed into the G2's own notification centre,
+  // alongside the normal MentraOS card + speech rather than replacing it. Android +
+  // G2 only. Local-only (saveOnServer: false), and OFF by default.
+  g2_native_notifications: {
+    key: "g2_native_notifications",
+    defaultValue: () => false,
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+  },
   china_deployment: {
     key: "china_deployment",
     defaultValue: () => (process.env.EXPO_PUBLIC_DEPLOYMENT_REGION === "china" ? true : false),

@@ -1619,6 +1619,13 @@ class DeviceManager {
         sgc?.sendIncidentId(incidentId, apiBaseUrl)
     }
 
+    /** Push a notification into the glasses' own notification centre; no-op outside G2. */
+    fun sendPhoneNotification(notification: Map<String, Any>) {
+        // Package only - never the notification text.
+        Bridge.log("MAN: sendPhoneNotification from ${notification["packageName"]}")
+        sgc?.sendPhoneNotification(notification)
+    }
+
     fun sendWifiCredentials(ssid: String, password: String) {
         Bridge.log("MAN: Sending wifi credentials: $ssid")
         sgc?.sendWifiCredentials(ssid, password)

@@ -555,6 +555,14 @@ class BluetoothSdkModule : Module() {
             sdk?.sendIncidentId(incidentId, apiBaseUrl)
         }
 
+        // MARK: - Native Notification Centre (internal, G2 only)
+
+        // Via deviceManager, not the MentraBluetoothSdk facade: internal surface (like
+        // dbg1/ping), not public SDK API.
+        AsyncFunction("sendPhoneNotification") { notification: Map<String, Any> ->
+            deviceManager?.sendPhoneNotification(notification)
+        }
+
         // MARK: - WiFi Commands
 
         SdkCoroutineFunction("requestWifiScan") { -> requireSdk().requestWifiScan().map { it.toMap() } }

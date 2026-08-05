@@ -26,6 +26,7 @@ import {
   GalleryStatusEvent,
   HotspotStatusChangeEvent,
   MicPreference,
+  NativePhoneNotification,
   ObservableStoreCategory,
   OtaQueryResult,
   OtaStartAckEvent,
@@ -250,6 +251,13 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
     speed: number,
   ): Promise<boolean>
 
+  /**
+   * Push a phone notification into the glasses' OWN notification centre - parallel to 
+   * the normal flow (miniapp forwarding + a locally drawn card).
+   * Implemented only by Android G2 driver; every other driver inherits a no-op.
+   */
+  sendPhoneNotification(notification: NativePhoneNotification): Promise<void>
+
   // Helper methods for type-safe observable store access
   updateGlasses(values: Partial<GlassesStatus>): Promise<void>
   updateBluetoothSettings(values: BluetoothSettingsUpdate): Promise<void>
@@ -267,7 +275,7 @@ export type BluetoothSdkInternalModule = BluetoothSdkNativeModule
 const NativeBluetoothSdkModule = requireNativeModule<BluetoothSdkNativeModule>("BluetoothSdk")
 
 const DEFAULT_CONNECT_OPTIONS: Required<ConnectOptions> = {
-  saveAsDefault: true,
+  saveAsDefault: true,  
   cancelExistingConnectionAttempt: true,
 }
 
@@ -293,7 +301,7 @@ const CAMERA_ROI_POSITION_VALUES: Record<CameraRoiPosition, CameraFovSetting["ro
 }
 
 // Named presets are a convenience layer over the numeric {fov, roiPosition} API.
-// The default is the full sensor; "standard" preserves the historical 102° crop.
+// The default is the full sensor; "standard" preserves the historical 102ï¿½ crop.
 const CAMERA_FOV_PRESETS: Record<CameraFovPreset, CameraFovSetting> = {
   narrow: {fov: 82, roiPosition: 0},
   standard: {fov: 102, roiPosition: 0},

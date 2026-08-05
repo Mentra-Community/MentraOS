@@ -950,6 +950,29 @@ export interface PhoneNotificationDismissedEvent {
   timestamp: number
 }
 
+/**
+ * Outbound payload for `sendPhoneNotification` — a notification pushed INTO the glasses' own
+ * notification centre. The inverse of {@link PhoneNotificationEvent}, which reports
+ * notifications the glasses relayed TO the phone (iOS/ANCS). Drivers map these keys onto
+ * whatever their firmware expects.
+ */
+export interface NativePhoneNotification {
+  /** Stable id from the phone's notification listener; parsed to an int where firmware needs one. */
+  notificationId: string
+  /** Reverse-DNS package id of the originating app. */
+  packageName: string
+  /** Human app name (e.g. "Messages"). */
+  appName: string
+  title: string
+  /** Android `android.subText`. Empty when the listener didn't capture one. */
+  subtitle: string
+  body: string
+  /** Unix ms post time. */
+  timestampMs: number
+  /** 0 = posted. Non-zero is reserved for the removal path. */
+  action: number
+}
+
 export type PublicGlassesStatus = Omit<
   GlassesStatus,
   "otaUpdateAvailable" | "otaProgress" | "otaInProgress" | "otaVersionUrl"
