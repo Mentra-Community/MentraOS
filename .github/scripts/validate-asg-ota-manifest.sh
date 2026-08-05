@@ -11,6 +11,15 @@ if [[ "$check_apk" != "" && "$check_apk" != "--check-apk" ]]; then
 fi
 
 jq -e '
+  def canonical_bes_version:
+    if type != "string" then false
+    else split(".") as $parts
+      | ($parts | length == 4)
+        and all($parts[];
+          test("^(0|[1-9][0-9]{0,2})$")
+          and (tonumber <= 255))
+    end;
+
   .apps["com.mentra.asg_client"] as $app
   | .bes_firmware as $bes
   | ($app | type == "object")
@@ -21,17 +30,11 @@ jq -e '
     and ($app.sha256 | type == "string" and test("^[0-9a-fA-F]{64}$"))
     and (.mtk_patches | type == "array" and length > 0)
     and ($bes | type == "object")
-    and ($bes.version | type == "string" and test("^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$"))
-    and ($bes.url | type == "string" and test("^https://[^?#[:space:]]+$"))
+    and ($bes.version | canonical_bes_version)
+    and ($bes.url
+      | type == "string"
+        and test("^https://[^/?#[:space:]]+(?:/[^/?#[:space:]]*)*/[A-Za-z0-9._-]{1,128}$"))
     and ($bes.sha256 | type == "string" and test("^[0-9a-fA-F]{64}$"))
-    and ($bes.format == "bes-lzma-chunks-v1")
-    and ($bes.product == "best1502x_ibrt_bpone")
-    and ($bes.artifact_id | type == "string" and test("^[A-Za-z0-9._-]{1,128}$"))
-    and ($bes.url | endswith("/" + $bes.artifact_id))
-    and ($bes.compressed_size | type == "number" and . > 0)
-    and ($bes.decompressed_size | type == "number" and . > 0 and . < 1966080)
-    and ($bes.decompressed_sha256 | type == "string" and test("^[0-9a-fA-F]{64}$"))
-    and ($bes.version_offset | type == "number" and . >= 0)
 ' "$manifest_path" >/dev/null
 
 if [[ "$check_apk" == "--check-apk" ]]; then

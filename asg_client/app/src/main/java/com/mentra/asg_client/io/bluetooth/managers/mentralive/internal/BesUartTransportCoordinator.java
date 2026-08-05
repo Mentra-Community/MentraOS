@@ -169,7 +169,7 @@ public final class BesUartTransportCoordinator {
     private int recoveryRetryAttempt = 0;
     private String firmwareVersion = "";
     // Target owned by the one in-flight cs_baud transaction. Fast-baud promotion and the
-    // mandatory pre-OTA return to rendezvous use the same acknowledged transition machinery.
+    // mandatory pre-OTA return to rendezvous use the same request-and-prove machinery.
     private int baudTransitionTarget;
     private long discardedBytes = 0;
     private int discardEvents = 0;
@@ -1138,6 +1138,10 @@ public final class BesUartTransportCoordinator {
                             () -> reopenBaudAndVerifyIfCurrent(phase, "sr_baud_timeout"),
                             AsgConstants.UART_BAUD_ACK_TIMEOUT_MS,
                             TimeUnit.MILLISECONDS);
+            // sr_baud lets us reopen sooner, but it is not the safety proof: BES may switch before
+            // its old-baud acknowledgement reaches ASG. A fresh sr_syvr requested and received
+            // after reopening at targetBaud proves both the switch and the return UART path. If
+            // that proof fails, recovery scans both known baud rates and OTA remains blocked.
             Log.i(TAG, "Requested UART baud " + baudTransitionTarget);
         }
     }

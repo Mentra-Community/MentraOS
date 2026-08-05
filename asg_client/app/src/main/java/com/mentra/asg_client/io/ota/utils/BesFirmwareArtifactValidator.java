@@ -2,6 +2,7 @@ package com.mentra.asg_client.io.ota.utils;
 
 import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.bes.BesOtaStateStore;
+import com.mentra.asg_client.io.bes.util.BesOtaUtil;
 
 import org.json.JSONObject;
 import org.tukaani.xz.LZMAInputStream;
@@ -33,9 +34,8 @@ public final class BesFirmwareArtifactValidator {
     private BesFirmwareArtifactValidator() {}
 
     /**
-     * Validate artifact identity, compressed bytes, complete container structure, decompressed
-     * bytes, product, and target version. Every metadata field is mandatory; legacy manifests fail
-     * closed before {@code mh_ota} can be sent.
+     * Validate the existing manifest contract plus every safety property that can be proven from
+     * the downloaded artifact itself. Validation completes before {@code mh_ota} can be sent.
      */
     public static ValidatedBesArtifact validate(File artifact, JSONObject metadata)
             throws ValidationException {
@@ -47,64 +47,28 @@ public final class BesFirmwareArtifactValidator {
                 throw new ValidationException("BES OTA release metadata is missing");
             }
 
-            String format = requiredString(metadata, "format");
-            if (!AsgConstants.BES_OTA_ARTIFACT_FORMAT.equals(format)) {
-                throw new ValidationException("Unsupported BES OTA artifact format: " + format);
-            }
-
-            String product = requiredString(metadata, "product");
-            if (!AsgConstants.BES_OTA_PRODUCT.equals(product)) {
-                throw new ValidationException("Wrong BES OTA product: " + product);
-            }
-
-            String artifactId = requiredString(metadata, "artifact_id");
-            validateImmutableUrl(metadata, artifactId);
-
-            long compressedSize = requiredPositiveLong(metadata, "compressed_size");
-            if (compressedSize != artifact.length()) {
-                throw new ValidationException(
-                        "Compressed size mismatch: expected "
-                                + compressedSize
-                                + ", got "
-                                + artifact.length());
-            }
+            String artifactId = artifactIdFromUrl(metadata);
+            long compressedSize = artifact.length();
 
             byte[] container = readArtifact(artifact);
             String compressedSha256 = requiredSha256(metadata, "sha256");
             assertSha256(container, compressedSha256, "compressed");
 
-            long expectedRawSize = requiredPositiveLong(metadata, "decompressed_size");
-            if (expectedRawSize >= AsgConstants.BES_OTA_MAX_DECOMPRESSED_IMAGE_BYTES) {
-                throw new ValidationException(
-                        "Decompressed BES image is not OTA-safe: " + expectedRawSize + " bytes");
-            }
-
             byte[] raw = unpackAndValidateContainer(container);
-            if (raw.length != expectedRawSize) {
-                throw new ValidationException(
-                        "Decompressed size mismatch: expected "
-                                + expectedRawSize
-                                + ", got "
-                                + raw.length);
-            }
-            String decompressedSha256 = requiredSha256(metadata, "decompressed_sha256");
-            assertSha256(raw, decompressedSha256, "decompressed");
-            assertProduct(raw, product);
+            assertProduct(raw, AsgConstants.BES_OTA_PRODUCT);
             String targetVersion = requiredString(metadata, "version");
             String canonicalTarget = BesOtaStateStore.canonicalVersion(targetVersion);
             if (canonicalTarget == null || !canonicalTarget.equals(targetVersion)) {
                 throw new ValidationException(
                         "BES target version must be canonical major.minor.patch.build");
             }
-            assertVersion(raw, targetVersion, metadata.getLong("version_offset"));
             return new ValidatedBesArtifact(
                     artifact,
                     artifactId,
                     compressedSha256,
-                    decompressedSha256,
                     targetVersion,
                     compressedSize,
-                    expectedRawSize);
+                    raw.length);
         } catch (ValidationException e) {
             throw e;
         } catch (Exception e) {
@@ -113,7 +77,7 @@ public final class BesFirmwareArtifactValidator {
     }
 
     private static byte[] readArtifact(File artifact) throws IOException, ValidationException {
-        if (artifact.length() <= 0 || artifact.length() > Integer.MAX_VALUE) {
+        if (artifact.length() <= 0 || artifact.length() > BesOtaUtil.MAX_FILE_SIZE) {
             throw new ValidationException("Invalid BES OTA artifact size: " + artifact.length());
         }
         byte[] bytes = new byte[(int) artifact.length()];
@@ -227,32 +191,7 @@ public final class BesFirmwareArtifactValidator {
                 "Decompressed image does not identify the Mentra Live BES product");
     }
 
-    private static void assertVersion(byte[] raw, String version, long offsetLong)
-            throws ValidationException {
-        String[] parts = version.split("\\.", -1);
-        if (parts.length != 4 || offsetLong < 0 || offsetLong > raw.length - 4L) {
-            throw new ValidationException("Invalid BES target version metadata");
-        }
-        int offset = (int) offsetLong;
-        for (int i = 0; i < parts.length; i++) {
-            int component;
-            try {
-                component = Integer.parseInt(parts[i]);
-            } catch (NumberFormatException e) {
-                throw new ValidationException("Invalid BES target version: " + version);
-            }
-            if (component < 0 || component > 255 || (raw[offset + i] & 0xFF) != component) {
-                throw new ValidationException(
-                        "Decompressed image target version does not match " + version);
-            }
-        }
-    }
-
-    private static void validateImmutableUrl(JSONObject metadata, String artifactId)
-            throws Exception {
-        if (!artifactId.matches("[A-Za-z0-9._-]{1,128}")) {
-            throw new ValidationException("Invalid BES OTA artifact_id");
-        }
+    private static String artifactIdFromUrl(JSONObject metadata) throws Exception {
         String urlValue = metadata.optString("url", metadata.optString("firmwareUrl", "")).trim();
         URI uri = new URI(urlValue);
         if (!"https".equalsIgnoreCase(uri.getScheme())
@@ -260,10 +199,15 @@ public final class BesFirmwareArtifactValidator {
                 || uri.getRawQuery() != null
                 || uri.getRawFragment() != null
                 || uri.getPath() == null
-                || !uri.getPath().endsWith("/" + artifactId)) {
+                || uri.getPath().endsWith("/")) {
             throw new ValidationException(
-                    "BES OTA URL must be immutable HTTPS and end with artifact_id");
+                    "BES OTA URL must identify an HTTPS artifact without query or fragment");
         }
+        String artifactId = uri.getPath().substring(uri.getPath().lastIndexOf('/') + 1);
+        if (!artifactId.matches("[A-Za-z0-9._-]{1,128}")) {
+            throw new ValidationException("BES OTA URL has an invalid artifact name");
+        }
+        return artifactId;
     }
 
     private static String requiredString(JSONObject metadata, String key)
@@ -271,18 +215,6 @@ public final class BesFirmwareArtifactValidator {
         String value = metadata.optString(key, "").trim();
         if (value.isEmpty()) {
             throw new ValidationException("Missing BES OTA metadata: " + key);
-        }
-        return value;
-    }
-
-    private static long requiredPositiveLong(JSONObject metadata, String key)
-            throws ValidationException {
-        if (!metadata.has(key)) {
-            throw new ValidationException("Missing BES OTA metadata: " + key);
-        }
-        long value = metadata.optLong(key, -1);
-        if (value <= 0) {
-            throw new ValidationException("Invalid BES OTA metadata: " + key);
         }
         return value;
     }
@@ -347,7 +279,6 @@ public final class BesFirmwareArtifactValidator {
         private final File file;
         private final String artifactId;
         private final String compressedSha256;
-        private final String decompressedSha256;
         private final String targetVersion;
         private final long compressedSize;
         private final long decompressedSize;
@@ -356,14 +287,12 @@ public final class BesFirmwareArtifactValidator {
                 File file,
                 String artifactId,
                 String compressedSha256,
-                String decompressedSha256,
                 String targetVersion,
                 long compressedSize,
                 long decompressedSize) {
             this.file = file;
             this.artifactId = artifactId;
             this.compressedSha256 = compressedSha256;
-            this.decompressedSha256 = decompressedSha256;
             this.targetVersion = targetVersion;
             this.compressedSize = compressedSize;
             this.decompressedSize = decompressedSize;
@@ -393,10 +322,6 @@ public final class BesFirmwareArtifactValidator {
 
         public String getCompressedSha256() {
             return compressedSha256;
-        }
-
-        public String getDecompressedSha256() {
-            return decompressedSha256;
         }
 
         public String getTargetVersion() {

@@ -73,8 +73,8 @@ firmware. Therefore every manifest admitted for an ASG bootstrap must be valid f
 client that starts it and the new client that resumes it.
 
 The staging workflow builds `staging_live_version.json` from the ASG artifact plus
-`ota_manifests/firmware_live.json`. The BES block is a release-artifact identity contract, not only a
-download URL and compressed hash:
+`ota_manifests/firmware_live.json`. Keep the established BES block limited to its target version,
+download URL, and compressed hash:
 
 ```json
 {
@@ -87,26 +87,31 @@ download URL and compressed hash:
       "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
     }
   },
+  "mtk_patches": [
+    {
+      "start_firmware": "MentraLive_20260113",
+      "end_firmware": "MentraLive_20260709",
+      "url": "https://example.com/mtk_ota_update.zip",
+      "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    }
+  ],
   "bes_firmware": {
     "version": "26.7.30.4",
     "url": "https://firmware.example.com/bes_firmware_26.7.30.4.bin",
-    "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-    "format": "bes-lzma-chunks-v1",
-    "product": "best1502x_ibrt_bpone",
-    "artifact_id": "bes_firmware_26.7.30.4.bin",
-    "compressed_size": 1137045,
-    "decompressed_size": 1955836,
-    "decompressed_sha256": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
-    "version_offset": 1813248
+    "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
   }
 }
 ```
 
-The immutable HTTPS URL must end with `artifact_id`. `sha256` and `compressed_size` describe the
-downloaded release container. `format`, `product`, `decompressed_size`, `decompressed_sha256`, and
-`version_offset` prove that its complete decompressed image is the intended Mentra Live image and
-target version. The decompressed image must be strictly smaller than the BES bootloader limit
-(`1966080` bytes). Missing or inconsistent fields fail before UART is reserved or `mh_ota` is sent.
+Before reserving UART or sending `mh_ota`, ASG checks the manifest's canonical four-byte target
+version, HTTPS artifact URL without a query or fragment, and SHA-256. It then inspects the downloaded
+bytes directly:
+the release container must have valid chunk structure and CRC, bounded LZMA decoder requirements,
+a decompressed image strictly smaller than the BES bootloader limit (`1966080` bytes), and the
+Mentra Live product marker. This keeps release authoring simple while still rejecting malformed,
+oversized, or wrong-product artifacts before BES sees them. The manifest version remains the target
+used for eligibility and the required post-reboot version readback; the image format has no stable,
+documented version offset, so ASG does not guess one.
 
 Validate a locally composed manifest with:
 
@@ -139,7 +144,7 @@ Stored under `/storage/emulated/0/asg/`:
 Do not use `scripts/test-bes-ota.sh`: its direct ADB broadcast entry point is intentionally disabled
 and it bypasses the phone-owned session contract this flow needs to exercise.
 
-1. Land the candidate ASG and strict `firmware_live.json` metadata on `staging` so the staging
+1. Land the candidate ASG and `firmware_live.json` on `staging` so the staging
    workflow publishes one combined, immutable-per-run manifest and embeds its URL in that run's
    Mentra App artifact.
 2. Install that staging Mentra App on the phone. Begin with glasses on ASG 39 and the oldest BES
@@ -169,9 +174,9 @@ version name after the fact.
 
 - **Update never starts** — confirm BES OTA path is initialized (`BesOtaManager` log line at startup). Check WiFi, battery (≥ 5%), and that no APK update is currently running.
 - **Stall mid-transfer** — UART instability or BES not responding. The transfer is response-driven, so a lost response no longer stalls silently: a dead-man watchdog aborts the transfer after 30 seconds without any BES response (`AsgConstants.BES_OTA_RESPONSE_TIMEOUT_MS`), runs the normal cleanup (OTA mode exited, wake leases released), posts a failure the phone surfaces as "Update failed", and emits a `bes_ota_response_timeout` lifecycle trace with the transfer position (`sentPos`, `confirmedSegments`). The BES stays on its current firmware — the recovery is simply retrying the whole OTA from the phone. If aborts recur, look for `BesOtaUartListener` logs and check the Infinity Cable; loose connections kill UART traffic.
-- **Artifact admission failure** — the combined manifest or downloaded release artifact does not
-  satisfy the strict identity contract. BES has not seen `mh_ota`; correct the manifest/artifact and
-  Retry is safe.
+- **Artifact admission failure** — the combined manifest is invalid, or direct inspection found a
+  corrupt, oversized, or wrong-product release artifact. BES has not seen `mh_ota`; correct the
+  manifest/artifact and Retry is safe.
 - **Install-phase failure** — ASG may have queued `mh_ota`, so local write failure or silence is
   ambiguous. Do not resend it in the same boot. The UI requires a glasses restart before another
   attempt so BES and ASG return to a known framed UART state.
