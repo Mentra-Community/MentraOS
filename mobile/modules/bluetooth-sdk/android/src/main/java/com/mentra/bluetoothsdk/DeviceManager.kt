@@ -948,15 +948,20 @@ class DeviceManager {
 
         when (currentViewState.layoutType) {
             "text_wall" -> {
-                sgc?.sendTextWall(currentViewState.text)
+                sgc?.sendTextWall(parsePlaceholders(currentViewState.text))
             }
 
             "double_text_wall" -> {
-                sgc?.sendDoubleTextWall(currentViewState.topText, currentViewState.bottomText)
+                sgc?.sendDoubleTextWall(
+                    parsePlaceholders(currentViewState.topText),
+                    parsePlaceholders(currentViewState.bottomText)
+                )
             }
 
             "reference_card" -> {
-                sgc?.sendTextWall("${currentViewState.title}\n\n${currentViewState.text}")
+                val title = parsePlaceholders(currentViewState.title)
+                val text = parsePlaceholders(currentViewState.text)
+                sgc?.sendTextWall("$title\n\n$text")
             }
 
             "bitmap_view" -> {
@@ -973,7 +978,7 @@ class DeviceManager {
 
             "positioned_text" -> {
                 sgc?.sendPositionedText(
-                    currentViewState.text,
+                    parsePlaceholders(currentViewState.text),
                     currentViewState.bmpX ?: 0,
                     currentViewState.bmpY ?: 0,
                     currentViewState.bmpWidth ?: 576,
