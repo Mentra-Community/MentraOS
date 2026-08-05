@@ -161,16 +161,27 @@ public interface IHardwareManager {
     // ============================================
 
     /**
-     * Get the current battery level. On K900 devices, this may briefly query BES if the cache is
-     * stale (>2 min). On standard Android devices, uses BatteryManager API directly.
+     * Get the current battery level without waiting for external hardware. K900 implementations
+     * may trigger an asynchronous cache refresh when stale. Standard Android devices use
+     * BatteryManager directly.
      *
      * @return Battery level percentage (0-100), or -1 if unknown
      */
     int getBatteryLevel();
 
     /**
-     * Get the current charging status. On K900 devices, this may briefly query BES if the cache is
-     * stale (>2 min). On standard Android devices, uses BatteryManager API directly.
+     * Actively refresh and return the battery level. Implementations that query external hardware
+     * may block, so callers must use a worker thread. Implementations without an external battery
+     * source fall back to {@link #getBatteryLevel()}.
+     */
+    default int queryBatteryLevel() {
+        return getBatteryLevel();
+    }
+
+    /**
+     * Get the current charging status without waiting for external hardware. K900 implementations
+     * may trigger an asynchronous cache refresh when stale. Standard Android devices use
+     * BatteryManager directly.
      *
      * @return true if charging, false if not charging or unknown
      */

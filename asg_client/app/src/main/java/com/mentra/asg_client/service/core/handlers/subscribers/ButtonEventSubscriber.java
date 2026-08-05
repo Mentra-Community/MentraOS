@@ -64,8 +64,8 @@ public final class ButtonEventSubscriber implements IPeripheralBus.McuEventListe
                 handleConfigurableButtonPress(true); // true = long press
                 break;
             case POWER_SHORT_PRESS:
-                // UART callbacks are synchronous. A cold battery read sends mh_batv and waits for
-                // hm_batv, so it must run away from the one reader that delivers that response.
+                // UART callbacks are synchronous. The explicit cold battery query sends mh_batv
+                // and waits for hm_batv, so it must run away from the reader that delivers it.
                 try {
                     batteryAnnouncementExecutor.execute(this::handlePowerButtonShortPress);
                 } catch (RejectedExecutionException e) {
@@ -280,7 +280,7 @@ public final class ButtonEventSubscriber implements IPeripheralBus.McuEventListe
         }
 
         // Use hardwareManager to get battery level - this will query BES if cache is stale
-        int batteryLevel = hardwareManager.getBatteryLevel();
+        int batteryLevel = hardwareManager.queryBatteryLevel();
         if (Thread.currentThread().isInterrupted()) {
             Log.d(TAG, "Battery announcement cancelled after battery query");
             return;

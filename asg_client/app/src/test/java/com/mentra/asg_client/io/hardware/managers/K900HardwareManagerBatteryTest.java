@@ -49,7 +49,7 @@ public class K900HardwareManagerBatteryTest {
         manager.setTransport(transport);
 
         try {
-            assertThat(manager.getBatteryLevel()).isEqualTo(82);
+            assertThat(manager.queryBatteryLevel()).isEqualTo(82);
             verify(transport)
                     .sendMessage(
                             any(byte[].class),
@@ -97,7 +97,7 @@ public class K900HardwareManagerBatteryTest {
         manager.setTransport(transport);
 
         try {
-            assertThat(manager.getBatteryLevel()).isEqualTo(64);
+            assertThat(manager.queryBatteryLevel()).isEqualTo(64);
         } finally {
             Thread thread = responseThread.get();
             if (thread != null) {
@@ -105,5 +105,22 @@ public class K900HardwareManagerBatteryTest {
                 assertThat(thread.isAlive()).isFalse();
             }
         }
+    }
+
+    @Test
+    public void coldCachedGetter_queuesRefreshWithoutWaitingForSendCompletion() {
+        K900HardwareManager manager =
+                new K900HardwareManager(RuntimeEnvironment.getApplication());
+        K900BluetoothManager transport = mock(K900BluetoothManager.class);
+        when(transport.isConnected()).thenReturn(true);
+        when(transport.sendMessage(
+                        any(byte[].class), any(IBluetoothManager.SendMessageCallback.class)))
+                .thenReturn(true);
+        manager.setTransport(transport);
+
+        assertThat(manager.getBatteryLevel()).isEqualTo(-1);
+        verify(transport)
+                .sendMessage(
+                        any(byte[].class), any(IBluetoothManager.SendMessageCallback.class));
     }
 }

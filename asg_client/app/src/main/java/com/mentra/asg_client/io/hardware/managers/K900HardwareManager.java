@@ -30,6 +30,7 @@ public class K900HardwareManager extends BaseHardwareManager {
 
     // Battery cache settings
     private static final long BATTERY_CACHE_DURATION_MS = 2 * 60 * 1000; // 2 minutes
+    private static final long BATTERY_REFRESH_RETRY_MS = 1000;
     private static final long BATTERY_QUERY_SEND_TIMEOUT_MS = 1000;
     private static final long BATTERY_QUERY_TIMEOUT_MS = 250;
 
@@ -42,6 +43,8 @@ public class K900HardwareManager extends BaseHardwareManager {
     private int cachedBatteryLevel = -1;
     private boolean cachedChargingStatus = false;
     private long lastBatteryQueryTime = 0;
+    private long lastBatteryRefreshRequestTime = 0;
+    private boolean batteryRefreshQueued = false;
     private CountDownLatch batteryResponseLatch;
     private final Object batteryLock = new Object();
     private final Object batteryQueryLock = new Object();
@@ -402,6 +405,22 @@ public class K900HardwareManager extends BaseHardwareManager {
 
     @Override
     public int getBatteryLevel() {
+        int batteryLevel;
+        boolean refresh;
+        synchronized (batteryLock) {
+            batteryLevel = cachedBatteryLevel;
+            refresh = !isBatteryCacheFreshLocked();
+        }
+        if (refresh) {
+            requestBatteryRefresh();
+        } else {
+            Log.d(TAG, "🔋 Returning cached battery level: " + batteryLevel + "%");
+        }
+        return batteryLevel;
+    }
+
+    @Override
+    public int queryBatteryLevel() {
         synchronized (batteryQueryLock) {
             synchronized (batteryLock) {
                 if (isBatteryCacheFreshLocked()) {
@@ -409,7 +428,6 @@ public class K900HardwareManager extends BaseHardwareManager {
                     return cachedBatteryLevel;
                 }
             }
-
             if (!queryBatteryFromBes()) {
                 Log.w(TAG, "🔋 Battery query failed; returning the last cached value");
             }
@@ -421,26 +439,81 @@ public class K900HardwareManager extends BaseHardwareManager {
 
     @Override
     public boolean getChargingStatus() {
-        synchronized (batteryQueryLock) {
-            synchronized (batteryLock) {
-                if (isBatteryCacheFreshLocked()) {
-                    Log.d(TAG, "🔋 Returning cached charging status: " + cachedChargingStatus);
-                    return cachedChargingStatus;
-                }
-            }
-
-            if (!queryBatteryFromBes()) {
-                Log.w(TAG, "🔋 Battery query failed; returning the last cached charging status");
-            }
-            synchronized (batteryLock) {
-                return cachedChargingStatus;
-            }
+        boolean charging;
+        boolean refresh;
+        synchronized (batteryLock) {
+            charging = cachedChargingStatus;
+            refresh = !isBatteryCacheFreshLocked();
         }
+        if (refresh) {
+            requestBatteryRefresh();
+        } else {
+            Log.d(TAG, "🔋 Returning cached charging status: " + charging);
+        }
+        return charging;
     }
 
     private boolean isBatteryCacheFreshLocked() {
         return cachedBatteryLevel >= 0
                 && (System.currentTimeMillis() - lastBatteryQueryTime) < BATTERY_CACHE_DURATION_MS;
+    }
+
+    /** Queue at most one best-effort refresh without blocking a getter caller. */
+    private void requestBatteryRefresh() {
+        if (bluetoothManager == null || !bluetoothManager.isConnected()) {
+            return;
+        }
+
+        long now = System.currentTimeMillis();
+        synchronized (batteryLock) {
+            if (isBatteryCacheFreshLocked()
+                    || batteryRefreshQueued
+                    || batteryResponseLatch != null
+                    || (now - lastBatteryRefreshRequestTime) < BATTERY_REFRESH_RETRY_MS) {
+                return;
+            }
+            batteryRefreshQueued = true;
+            lastBatteryRefreshRequestTime = now;
+        }
+
+        byte[] command;
+        try {
+            command = buildBatteryQueryCommand();
+        } catch (JSONException e) {
+            Log.e(TAG, "🔋 Error building asynchronous battery query command", e);
+            finishBatteryRefresh(false);
+            return;
+        }
+
+        boolean accepted =
+                bluetoothManager.sendMessage(
+                        command,
+                        success -> {
+                            finishBatteryRefresh(success);
+                            if (!success) {
+                                Log.w(TAG, "🔋 Asynchronous battery refresh send failed");
+                            }
+                        });
+        if (!accepted) {
+            finishBatteryRefresh(false);
+        }
+    }
+
+    private void finishBatteryRefresh(boolean sent) {
+        synchronized (batteryLock) {
+            batteryRefreshQueued = false;
+            if (!sent) {
+                lastBatteryRefreshRequestTime = 0;
+            }
+        }
+    }
+
+    private static byte[] buildBatteryQueryCommand() throws JSONException {
+        JSONObject k900Command = new JSONObject();
+        k900Command.put("C", "mh_batv");
+        k900Command.put("V", 1);
+        k900Command.put("B", "");
+        return k900Command.toString().getBytes(StandardCharsets.UTF_8);
     }
 
     /**
@@ -463,20 +536,15 @@ public class K900HardwareManager extends BaseHardwareManager {
                 batteryResponseLatch = responseLatch;
             }
 
-            // Build K900 protocol command for battery query
-            JSONObject k900Command = new JSONObject();
-            k900Command.put("C", "mh_batv");
-            k900Command.put("V", 1);
-            k900Command.put("B", "");
-
-            String commandStr = k900Command.toString();
+            byte[] command = buildBatteryQueryCommand();
+            String commandStr = new String(command, StandardCharsets.UTF_8);
             Log.d(TAG, "🔋 Querying battery from BES: " + commandStr);
 
             // sendMessage queues work. Wait for its completion callback before starting the BES
             // response budget so unrelated outbound traffic cannot consume that entire budget.
             boolean accepted =
                     bluetoothManager.sendMessage(
-                            commandStr.getBytes(StandardCharsets.UTF_8),
+                            command,
                             success -> {
                                 sendSucceeded.set(success);
                                 sendLatch.countDown();
@@ -544,6 +612,7 @@ public class K900HardwareManager extends BaseHardwareManager {
             cachedBatteryLevel = batteryLevel;
             cachedChargingStatus = batteryVoltage > 3900;
             lastBatteryQueryTime = System.currentTimeMillis();
+            batteryRefreshQueued = false;
 
             Log.d(
                     TAG,

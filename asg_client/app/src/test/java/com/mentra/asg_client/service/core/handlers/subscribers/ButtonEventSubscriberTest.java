@@ -82,11 +82,11 @@ public class ButtonEventSubscriberTest {
     @Test
     public void powerPress_releasesUartCallbackBeforeQueryingBattery() {
         when(hardwareManager.supportsAudioPlayback()).thenReturn(true);
-        when(hardwareManager.getBatteryLevel()).thenReturn(100);
+        when(hardwareManager.queryBatteryLevel()).thenReturn(100);
 
         powerShortPress();
 
-        verify(hardwareManager, never()).getBatteryLevel();
+        verify(hardwareManager, never()).queryBatteryLevel();
         assertThat(batteryTasks).hasSize(1);
 
         batteryTasks.remove().run();
@@ -96,7 +96,7 @@ public class ButtonEventSubscriberTest {
     @Test
     public void interruptedBatteryQuery_doesNotStartAudioDuringShutdown() {
         when(hardwareManager.supportsAudioPlayback()).thenReturn(true);
-        when(hardwareManager.getBatteryLevel())
+        when(hardwareManager.queryBatteryLevel())
                 .thenAnswer(
                         invocation -> {
                             Thread.currentThread().interrupt();
