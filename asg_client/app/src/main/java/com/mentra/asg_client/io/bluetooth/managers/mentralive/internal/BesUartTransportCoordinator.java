@@ -149,6 +149,8 @@ public final class BesUartTransportCoordinator {
     private final Object monitor = new Object();
     private final Host host;
     private final SafetyState safetyState;
+    private final long idleHealthProbeMs;
+    private final long healthProbeTimeoutMs;
     private final BesUartIoLane ioLane = new BesUartIoLane();
     private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
     private final ArrayDeque<FutureTask<Boolean>> deferredNormalWrites = new ArrayDeque<>();
@@ -178,6 +180,10 @@ public final class BesUartTransportCoordinator {
     private boolean versionProbeDeferred = false;
     private boolean outboundDrainPending = false;
     private long outboundDrainGeneration = 0;
+    // A state-machine phase can remain unchanged across many READY_FAST health-timer rearms.
+    // Give every arm its own identity so a callback that already started before cancel(false)
+    // cannot clear a replacement timer or recover a link that a newer valid frame just proved.
+    private long healthTimerGeneration = 0;
 
     private ScheduledFuture<?> phaseTimeout;
     private ScheduledFuture<?> healthTimeout;
@@ -190,14 +196,28 @@ public final class BesUartTransportCoordinator {
     }
 
     public BesUartTransportCoordinator(Host host, SafetyState safetyState) {
+        this(
+                host,
+                safetyState,
+                AsgConstants.UART_HIGH_BAUD_IDLE_PROBE_MS,
+                AsgConstants.UART_BAUD_PROBE_TIMEOUT_MS);
+    }
+
+    BesUartTransportCoordinator(
+            Host host, SafetyState safetyState, long idleHealthProbeMs, long healthProbeTimeoutMs) {
         if (host == null) {
             throw new IllegalArgumentException("host is required");
         }
         if (safetyState == null) {
             throw new IllegalArgumentException("safetyState is required");
         }
+        if (idleHealthProbeMs <= 0 || healthProbeTimeoutMs <= 0) {
+            throw new IllegalArgumentException("health probe timings must be positive");
+        }
         this.host = host;
         this.safetyState = safetyState;
+        this.idleHealthProbeMs = idleHealthProbeMs;
+        this.healthProbeTimeoutMs = healthProbeTimeoutMs;
     }
 
     public State getState() {
@@ -1453,16 +1473,20 @@ public final class BesUartTransportCoordinator {
         cancelHealthTimeoutLocked();
         if (state == State.READY_FAST && !executor.isShutdown()) {
             long phase = phaseGeneration;
+            long healthTimer = ++healthTimerGeneration;
             healthTimeout =
                     executor.schedule(
-                            () -> onHealthTimeout(phase),
-                            AsgConstants.UART_HIGH_BAUD_IDLE_PROBE_MS,
+                            () -> onHealthTimeout(phase, healthTimer),
+                            idleHealthProbeMs,
                             TimeUnit.MILLISECONDS);
         }
     }
 
-    private void onHealthTimeout(long phase) {
+    private void onHealthTimeout(long phase, long healthTimer) {
         synchronized (monitor) {
+            if (healthTimer != healthTimerGeneration) {
+                return;
+            }
             healthTimeout = null;
             if (phase != phaseGeneration || state != State.READY_FAST) {
                 return;
@@ -1471,7 +1495,32 @@ public final class BesUartTransportCoordinator {
                 scheduleHealthCheckLocked();
                 return;
             }
-            startRecoveryLocked("idle_health_probe");
+            int baud = host.currentBaud();
+            scheduleProbeBurstLocked(phase, baud, 0, 1, 0);
+            long healthProbeTimer = ++healthTimerGeneration;
+            healthTimeout =
+                    executor.schedule(
+                            () -> onHealthProbeTimeout(phase, healthProbeTimer),
+                            healthProbeTimeoutMs,
+                            TimeUnit.MILLISECONDS);
+            Log.d(TAG, "Probing idle fast UART session at " + baud);
+        }
+    }
+
+    private void onHealthProbeTimeout(long phase, long healthTimer) {
+        synchronized (monitor) {
+            if (healthTimer != healthTimerGeneration) {
+                return;
+            }
+            healthTimeout = null;
+            if (phase != phaseGeneration || state != State.READY_FAST) {
+                return;
+            }
+            if (operation != Operation.NONE) {
+                scheduleHealthCheckLocked();
+                return;
+            }
+            startRecoveryLocked("idle_health_probe_timeout");
         }
     }
 
@@ -1551,6 +1600,7 @@ public final class BesUartTransportCoordinator {
     }
 
     private void cancelHealthTimeoutLocked() {
+        healthTimerGeneration++;
         if (healthTimeout != null) {
             healthTimeout.cancel(false);
             healthTimeout = null;
