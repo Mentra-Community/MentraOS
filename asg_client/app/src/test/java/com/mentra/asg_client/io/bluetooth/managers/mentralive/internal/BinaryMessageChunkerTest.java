@@ -76,18 +76,6 @@ public class BinaryMessageChunkerTest {
     }
 
     @Test
-    public void needsChunking_usesBinaryPayloadBudgetWhenBinaryActive() {
-        String small = "{\"type\":\"ping\"}";
-        String large =
-                "{\"type\":\"stream_status\",\"d\":\""
-                        + "a".repeat(MessageChunker.maxBinaryFragmentPayload() + 1)
-                        + "\"}";
-
-        assertThat(MessageChunker.needsChunking(small)).isFalse();
-        assertThat(MessageChunker.needsChunking(large)).isTrue();
-    }
-
-    @Test
     public void buildOutboundPayloadBytes_skipsWrapperForNonCameraMessages() throws Exception {
         String json = "{\"type\":\"photo_status\",\"status\":\"captured\"}";
         byte[] payload = BesWireFormat.buildOutboundPayloadBytes(json);

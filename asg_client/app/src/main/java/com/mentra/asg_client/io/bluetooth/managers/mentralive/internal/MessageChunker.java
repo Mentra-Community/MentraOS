@@ -31,6 +31,8 @@ public class MessageChunker {
 
     private static final int BINARY_FRAME_OVERHEAD =
             BesWireFormat.LENGTH_CMD_MIN_SIZE + BesWireFormat.BINARY_HEADER_SIZE;
+    private static final int MAX_BINARY_FRAGMENT_PAYLOAD =
+            MAX_PACKED_CHUNK_SIZE - BINARY_FRAME_OVERHEAD;
 
     private static final AtomicLong CHUNK_SEQUENCE = new AtomicLong();
 
@@ -46,7 +48,7 @@ public class MessageChunker {
 
     /** Current maximum v2 message payload after the 14-byte K900 binary framing overhead. */
     public static int maxBinaryFragmentPayload() {
-        return Math.max(0, maxPackedFrameSize() - BINARY_FRAME_OVERHEAD);
+        return MAX_BINARY_FRAGMENT_PAYLOAD;
     }
 
     public static boolean needsChunking(String message) {
@@ -56,14 +58,6 @@ public class MessageChunker {
 
         int messageBytes = message.getBytes(StandardCharsets.UTF_8).length;
         int threshold = MESSAGE_SIZE_THRESHOLD_V1;
-        if (BesWireFormat.isBinaryProtocolActive()) {
-            try {
-                messageBytes = BesWireFormat.buildOutboundPayloadBytes(message).length;
-            } catch (JSONException e) {
-                return true;
-            }
-            threshold = maxBinaryFragmentPayload();
-        }
         boolean needsChunking = messageBytes > threshold;
         if (needsChunking) {
             Log.d(
@@ -127,14 +121,7 @@ public class MessageChunker {
         }
 
         byte[] messageBytes = BesWireFormat.buildOutboundPayloadBytes(originalJson);
-        int payloadBudget = maxBinaryFragmentPayload();
-        if (payloadBudget <= 0) {
-            throw new JSONException(
-                    "notify_cap leaves no room for the "
-                            + BINARY_FRAME_OVERHEAD
-                            + "-byte binary frame overhead");
-        }
-        List<byte[]> payloadChunks = splitUtf8Bytes(messageBytes, payloadBudget);
+        List<byte[]> payloadChunks = splitUtf8Bytes(messageBytes, MAX_BINARY_FRAGMENT_PAYLOAD);
         int totalFragments = payloadChunks.size();
         List<byte[]> frames = new ArrayList<>(totalFragments);
 
@@ -149,13 +136,12 @@ public class MessageChunker {
             byte[] frame =
                     BesWireFormat.packBinaryFragment(
                             flags, msgId, i, totalFragments, payloadChunks.get(i));
-            int frameBudget = maxPackedFrameSize();
-            if (frame == null || frame.length > frameBudget) {
+            if (frame == null || frame.length > MAX_PACKED_CHUNK_SIZE) {
                 throw new JSONException(
                         "Binary fragment "
                                 + i
                                 + " exceeds "
-                                + frameBudget
+                                + MAX_PACKED_CHUNK_SIZE
                                 + " bytes ("
                                 + (frame != null ? frame.length : 0)
                                 + ")");
