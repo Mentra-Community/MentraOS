@@ -8,6 +8,7 @@ import {DisplayManager} from "../background/managers/DisplayManager"
 const G2_DIGIT_WIDTH_PX = 12
 const G2_COLON_WIDTH_PX = 4
 const G2_NATIVE_HORIZONTAL_PADDING_PX = 8
+const G2_LINE_HEIGHT_PX = 40
 
 describe("navigation display layout", () => {
   test("keeps every 24-hour clock value on one G2 text line", () => {
@@ -15,6 +16,20 @@ describe("navigation display layout", () => {
     const availableTextWidth = DisplayManager.HUD.clock.w - G2_NATIVE_HORIZONTAL_PADDING_PX
 
     expect(availableTextWidth).toBeGreaterThanOrEqual(widestClockWidth)
+    expect(DisplayManager.HUD.clock.h).toBeGreaterThanOrEqual(G2_LINE_HEIGHT_PX)
+  })
+
+  test("reserves complete G2 lines for wrapped stats and maneuver instructions", () => {
+    const {maneuver, map, stats} = DisplayManager.HUD
+
+    expect(stats.w).toBeGreaterThanOrEqual(200)
+    expect(stats.h).toBeGreaterThanOrEqual(G2_LINE_HEIGHT_PX * 2)
+    expect(stats.y + stats.h).toBeLessThanOrEqual(map.y)
+
+    // One distance line plus up to two wrapped instruction lines.
+    expect(maneuver.h).toBeGreaterThanOrEqual(G2_LINE_HEIGHT_PX * 3)
+    expect(maneuver.y + maneuver.h).toBeLessThanOrEqual(220)
+    expect(maneuver.x + maneuver.w).toBeLessThanOrEqual(map.x)
   })
 
   test("keeps the maneuver instruction inside G1's five-line text budget", () => {
