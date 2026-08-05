@@ -2907,6 +2907,15 @@ class LocalMiniappRuntime {
     payload: Record<string, unknown>,
     requestId?: string,
   ): Promise<void> {
+    // Wi-Fi ADB expands the device attack surface — SYSTEM miniapps only.
+    if (!this.isSystemPackage(packageName)) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.NOT_PERMITTED,
+        message: "setWifiAdbState is restricted to system apps",
+      })
+      return
+    }
+
     if (typeof payload.enabled !== "boolean") {
       this.sendResult(packageName, requestId, false, undefined, {
         code: MiniappErrorCode.INVALID_ARGUMENT,
