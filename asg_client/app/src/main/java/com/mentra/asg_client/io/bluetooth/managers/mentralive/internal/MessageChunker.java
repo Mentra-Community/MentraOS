@@ -25,24 +25,31 @@ public class MessageChunker {
     private static final int INITIAL_CHUNK_DATA_SIZE = 80;
     private static final int MIN_CHUNK_DATA_SIZE = 4;
 
-    /** Budget for v2 binary fragments — these are reassembled phone-side, so MTU_TARGET holds. */
-    public static final int MAX_PACKED_CHUNK_SIZE = BesWireFormat.MAX_PACKED_FRAME_SIZE;
+    /** Local ceiling for every complete K900 control frame, regardless of wire version. */
+    public static final int MAX_PACKED_CHUNK_SIZE =
+            AsgConstants.K900_CONTROL_MAX_PACKED_FRAME_BYTES;
+
+    private static final int BINARY_FRAME_OVERHEAD =
+            BesWireFormat.LENGTH_CMD_MIN_SIZE + BesWireFormat.BINARY_HEADER_SIZE;
+    private static final int MAX_BINARY_FRAGMENT_PAYLOAD =
+            MAX_PACKED_CHUNK_SIZE - BINARY_FRAME_OVERHEAD;
 
     private static final AtomicLong CHUNK_SEQUENCE = new AtomicLong();
 
-    /** Current maximum packed frame size for a v1 STRING ck chunk. */
-    public static int maxPackedStringChunkSize() {
-        return AsgConstants.K900_STRING_CHUNK_MAX_FRAME_BYTES;
+    /** Current maximum size of a complete packed frame for both v1 and v2. */
+    public static int maxPackedFrameSize() {
+        return MAX_PACKED_CHUNK_SIZE;
     }
 
-    /** Compatibility no-op: {@code notify_cap} cannot raise the legacy v1 ceiling. */
-    public static void setStringChunkBudgetFromNotifyCap(int notifyCap) {}
+    /** Current maximum packed frame size for a v1 STRING ck chunk. */
+    public static int maxPackedStringChunkSize() {
+        return maxPackedFrameSize();
+    }
 
-    /** Compatibility no-op: the legacy v1 budget is always the conservative fixed ceiling. */
-    public static void resetStringChunkBudget() {}
-
-    /** Compatibility no-op for old callers; production no longer subscribes to link caps. */
-    public static void followLinkState(LinkStateMachine linkState) {}
+    /** Current maximum v2 message payload after the 14-byte K900 binary framing overhead. */
+    public static int maxBinaryFragmentPayload() {
+        return MAX_BINARY_FRAGMENT_PAYLOAD;
+    }
 
     public static boolean needsChunking(String message) {
         if (message == null) {
@@ -50,10 +57,7 @@ public class MessageChunker {
         }
 
         int messageBytes = message.getBytes(StandardCharsets.UTF_8).length;
-        int threshold =
-                BesWireFormat.isBinaryProtocolActive()
-                        ? BesWireFormat.MAX_FRAGMENT_PAYLOAD
-                        : MESSAGE_SIZE_THRESHOLD_V1;
+        int threshold = MESSAGE_SIZE_THRESHOLD_V1;
         boolean needsChunking = messageBytes > threshold;
         if (needsChunking) {
             Log.d(
@@ -117,8 +121,7 @@ public class MessageChunker {
         }
 
         byte[] messageBytes = BesWireFormat.buildOutboundPayloadBytes(originalJson);
-        List<byte[]> payloadChunks =
-                splitUtf8Bytes(messageBytes, BesWireFormat.MAX_FRAGMENT_PAYLOAD);
+        List<byte[]> payloadChunks = splitUtf8Bytes(messageBytes, MAX_BINARY_FRAGMENT_PAYLOAD);
         int totalFragments = payloadChunks.size();
         List<byte[]> frames = new ArrayList<>(totalFragments);
 

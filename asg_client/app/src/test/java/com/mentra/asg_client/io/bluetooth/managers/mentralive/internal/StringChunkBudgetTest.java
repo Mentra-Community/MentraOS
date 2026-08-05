@@ -5,7 +5,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.mentra.asg_client.service.core.processors.ChunkReassembler;
 import java.util.List;
 import org.json.JSONObject;
-import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -13,11 +12,10 @@ import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 
 /**
- * Regression test for incident rep_01KY6BJ0B7A4RBMQ7VN39KAE5E: v1 ck chunks were sized against
- * MTU_TARGET (509) but a v1 string frame must survive the phone leg as a single BLE notification
- * (~253-byte ATT payload). The OTA completion ota_status packed to 256-263-byte chunk frames, every
- * one was truncated on the wire, and the phone failed a successful update. Every packed v1 ck chunk
- * must stay within {@link MessageChunker#MAX_PACKED_STRING_CHUNK_SIZE}.
+ * Regression test for incident rep_01KY6BJ0B7A4RBMQ7VN39KAE5E: complete K900 frames must survive
+ * the BES-to-phone leg as one BLE notification. The OTA completion ota_status packed to
+ * 256-263-byte v1 chunks, every one was truncated, and the phone failed a successful update. The
+ * same packed-frame ceiling also applies to v2 fragments before phone-side reassembly.
  */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 33)
@@ -27,13 +25,6 @@ public class StringChunkBudgetTest {
     public void setUp() {
         // v1 string mode — the post-APK-restart steady state until a BLE reconnect.
         BesWireFormat.resetBinaryProtocol();
-        MessageChunker.resetStringChunkBudget();
-    }
-
-    @After
-    public void tearDown() {
-        BesWireFormat.resetBinaryProtocol();
-        MessageChunker.resetStringChunkBudget();
     }
 
     /**
@@ -97,118 +88,13 @@ public class StringChunkBudgetTest {
         assertAllPackedChunksFitAndRoundTrip(largeQuoteDenseJson(500));
     }
 
-    // ---- Release A fixed envelope: notify_cap is advisory only ----
+    // ---- Shared immutable v1/v2 envelope ----
 
     @Test
-    public void budgetDefaultsToTheConservativeFallback() {
+    public void budgetUsesTheConservativePackedFrameCeiling() {
         assertThat(MessageChunker.maxPackedStringChunkSize())
-                .isEqualTo(com.mentra.asg_client.AsgConstants.K900_STRING_CHUNK_MAX_FRAME_BYTES)
+                .isEqualTo(com.mentra.asg_client.AsgConstants.K900_CONTROL_MAX_PACKED_FRAME_BYTES)
                 .isEqualTo(240);
-    }
-
-    @Test
-    public void advertisedNotifyCapCannotRaiseTheBudget() {
-        MessageChunker.setStringChunkBudgetFromNotifyCap(509);
-        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(240);
-
-        MessageChunker.setStringChunkBudgetFromNotifyCap(253);
-        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(240);
-    }
-
-    @Test
-    public void malformedNotifyCapsCannotChangeTheBudget() {
-        MessageChunker.setStringChunkBudgetFromNotifyCap(1000);
-        MessageChunker.setStringChunkBudgetFromNotifyCap(200);
-        MessageChunker.setStringChunkBudgetFromNotifyCap(-1);
-        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(240);
-    }
-
-    @Test
-    public void resetRestoresTheFallbackBudget() {
-        MessageChunker.setStringChunkBudgetFromNotifyCap(509);
-
-        MessageChunker.resetStringChunkBudget();
-
-        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(240);
-    }
-
-    @Test
-    public void chunksStillFitAndRoundTripAfterLargeAdvertisement() throws Exception {
-        MessageChunker.setStringChunkBudgetFromNotifyCap(509);
-        assertAllPackedChunksFitAndRoundTrip(largeQuoteDenseJson(500));
-    }
-
-    @Test
-    public void budgetFollowsTheCapsLifecycleThroughTheLinkStateMachine() {
-        LinkStateMachine machine = new LinkStateMachine();
-        MessageChunker.followLinkState(machine);
-
-        machine.serialReady();
-        machine.srSyvrParsed(
-                new LinkStateMachine.BesCaps(
-                        false, false, false, false, BesWireFormat.PROTOCOL_VERSION_V1, 509));
-        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(240);
-
-        // A discontinuity (baud reopen) keeps the negotiated caps — and the budget with them.
-        machine.streamDiscontinuity();
-        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(240);
-
-        // EVERY close path (onSerialClose, failed onSerialOpen, reopen failures) funnels
-        // through the machine's serialClosed transition: caps cleared MUST mean fallback
-        // budget, or a later session against firmware without notify_cap would inherit a
-        // stale oversized budget and silently truncate notifications again.
-        machine.serialClosed();
-        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(240);
-
-        // Reconnect to old firmware (sr_syvr without wire_caps): the fallback must hold.
-        machine.serialReady();
-        machine.srSyvrParsed(null);
-        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(240);
-    }
-
-    @Test
-    public void budgetFollowsThePhoneSessionLifecycle() {
-        // Session changes and advertisements must not alter the fixed release-A envelope.
-        LinkStateMachine machine = new LinkStateMachine();
-        MessageChunker.followLinkState(machine);
-        machine.serialReady();
-        machine.phonePresenceReported(true);
-        machine.srSyvrParsed(
-                new LinkStateMachine.BesCaps(
-                        false, false, false, false, BesWireFormat.PROTOCOL_VERSION_V1, 509));
-        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(240);
-
-        // Phone disconnects: back to the fallback.
-        machine.phonePresenceReported(false);
-        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(240);
-
-        // Phone reconnects WITHOUT a fresh advertisement: the fallback must hold.
-        machine.phonePresenceReported(true);
-        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(240);
-
-        // A fresh advertisement remains advisory.
-        machine.srSyvrParsed(
-                new LinkStateMachine.BesCaps(
-                        false, false, false, false, BesWireFormat.PROTOCOL_VERSION_V1, 260));
-        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(240);
-    }
-
-    @Test
-    public void budgetFallsBackOnBesOta() {
-        // A BES OTA is a firmware-generation boundary AND kills the phone session: the new
-        // firmware may advertise a different notify_cap or none at all.
-        LinkStateMachine machine = new LinkStateMachine();
-        MessageChunker.followLinkState(machine);
-        machine.serialReady();
-        machine.srSyvrParsed(
-                new LinkStateMachine.BesCaps(
-                        false, false, false, false, BesWireFormat.PROTOCOL_VERSION_V1, 509));
-        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(240);
-
-        // onBesOtaApplied drives exactly these two machine transitions.
-        machine.streamDiscontinuity();
-        machine.phonePresenceInvalidated();
-
-        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(240);
+        assertThat(MessageChunker.maxBinaryFragmentPayload()).isEqualTo(226);
     }
 }

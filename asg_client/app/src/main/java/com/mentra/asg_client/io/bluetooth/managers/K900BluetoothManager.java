@@ -411,11 +411,10 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                     Log.d(TAG, "📡 📦 JSON DATA BEFORE C-WRAPPING: " + originalData);
 
                     if (BesWireFormat.isBinaryProtocolActive()) {
-                        if (MessageChunker.needsChunking(originalData)) {
-                            return sendBinaryFragmentedJson(originalData);
-                        }
-                        data = BesWireFormat.formatBinaryMessageForTransmission(originalData);
-                        logOutboundWireMetrics(originalData, data, 1);
+                        // Use one exact framing path for both one-frame and fragmented v2
+                        // messages. Every complete frame must fit the same BES notification
+                        // budget; phone-side reassembly does not make an oversized fragment safe.
+                        return sendBinaryFragmentedJson(originalData);
                     } else {
                         String wrappedJson =
                                 BesWireFormat.createTransmissionWrapperJson(originalData);
@@ -1382,8 +1381,8 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             Log.i(TAG, "📦 BES wire_caps advertised negotiated file payloads");
         }
         if (advertised != null && advertised.notifyCap > 0) {
-            // Diagnostic only. Legacy v1 strings stay at the fixed conservative ceiling;
-            // negotiated capacity is used only by the higher-capacity protocol.
+            // Diagnostic contract. ASG control frames use a stricter immutable 240-byte ceiling
+            // for both v1 and v2, so old bearer-specific advertisements cannot make them larger.
             Log.i(TAG, "📏 BES wire_caps advertised notify_cap=" + advertised.notifyCap);
         }
         return advertised;
