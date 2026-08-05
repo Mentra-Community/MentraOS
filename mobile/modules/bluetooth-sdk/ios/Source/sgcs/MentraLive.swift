@@ -3011,51 +3011,23 @@ class MentraLive: NSObject, SGCManager {
                     "LIVE: 📱 BES OTA progress via sr_adota - type: \(type), raw: \(rawProgress)%, rounded: \(progress)%"
                 )
 
-                // Determine status and error message based on type
-                var besOtaStatus: String
                 var besOtaProgressVal: Int
                 var besOtaErrorMessage: String? = nil
 
-                // Order matters here: check completion (rawProgress >= 100 OR success) BEFORE
-                // type=="update", because some BES firmware emits the final 100% tick with
-                // type=="update" rather than type=="success". Treating that as PROGRESS would
-                // leave the UI stuck at 100% forever.
-                if type == "success" || rawProgress >= 100 {
-                    besOtaStatus = "FINISHED"
-                    besOtaProgressVal = 100
-                    lastBesOtaProgress = -1 // Reset for next OTA
-                } else if type == "error" || type == "fail" {
-                    besOtaStatus = "FAILED"
+                let failed = type == "error" || type == "fail"
+                if failed {
                     besOtaProgressVal = progress
                     besOtaErrorMessage = bodyObj["message"] as? String ?? "BES update failed"
                     lastBesOtaProgress = -1 // Reset for next OTA
-                } else if type == "update" {
-                    besOtaStatus = "PROGRESS"
-                    besOtaProgressVal = progress
                 } else {
-                    // Unknown type, treat as progress
-                    besOtaStatus = "PROGRESS"
-                    besOtaProgressVal = progress
+                    // BES success/100 proves transfer/apply acceptance, not which image booted.
+                    // ASG sends the existing terminal ota_status only after a fresh sr_syvr
+                    // exactly matches the target version after reboot.
+                    besOtaProgressVal = (type == "success" || rawProgress >= 100) ? 100 : progress
+                    lastBesOtaProgress = besOtaProgressVal
                 }
 
-                let syntheticStatus: String
-                if besOtaStatus == "FINISHED" {
-                    // The glasses power-cycle right after the final BES tick, so a session
-                    // whose BES step is the LAST step never gets a follow-up ota_status from
-                    // the glasses — consumers mapping on this synthetic status would otherwise
-                    // never see a terminal state. Emit "complete" for the final step;
-                    // mid-session BES steps keep "step_complete" so session-level trackers
-                    // advance normally. Unknown sessions (cachedOtaTotalSteps == 0, e.g.
-                    // legacy glasses that never sent an ota_status) conservatively keep
-                    // "step_complete".
-                    syntheticStatus = (cachedOtaTotalSteps > 0 && cachedOtaCurrentStep >= cachedOtaTotalSteps)
-                        ? "complete"
-                        : "step_complete"
-                } else if besOtaStatus == "FAILED" {
-                    syntheticStatus = "failed"
-                } else {
-                    syntheticStatus = "in_progress"
-                }
+                let syntheticStatus = failed ? "failed" : "in_progress"
                 let sid = cachedOtaSessionId ?? ""
                 let totalSteps = cachedOtaTotalSteps > 0 ? cachedOtaTotalSteps : 1
                 let currentStep = cachedOtaCurrentStep > 0 ? cachedOtaCurrentStep : 1

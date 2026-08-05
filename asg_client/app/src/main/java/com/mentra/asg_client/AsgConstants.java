@@ -153,10 +153,23 @@ public class AsgConstants {
      * rep_01KY6BJ0B7A4RBMQ7VN39KAE5E: OTA completion ck chunks packed to 256-263 bytes and none
      * survived). 240 = 253 - {@link #K900_STRING_CHUNK_BUDGET_MARGIN_BYTES}. BES firmware >=
      * 17.26.7.23 advertises {@code wire_caps.notify_cap} (the measured single-notification payload
-     * cap) and the budget becomes notify_cap minus the same margin — see
-     * MessageChunker.setStringChunkBudgetFromNotifyCap.
+     * cap) and the budget becomes notify_cap minus the same margin: legacy v1 string frames never
+     * grow from negotiated notify capacity.
      */
     public static final int K900_STRING_CHUNK_MAX_FRAME_BYTES = 240;
+
+    /** Exact BES release artifact container accepted by the ASG OTA validator. */
+    public static final String BES_OTA_ARTIFACT_FORMAT = "bes-lzma-chunks-v1";
+
+    /** Mentra Live BES build target required in release metadata and the image payload. */
+    public static final String BES_OTA_PRODUCT = "best1502x_ibrt_bpone";
+
+    /**
+     * Exclusive decompressed destination limit in the deployed ota_copy bootloader:
+     * NEW_IMAGE_FLASH_OFFSET (0x200000) - OTA_CODE_OFFSET (0x20000). Images at or above this size
+     * overwrite the adjacent staging region and must never be sent to BES.
+     */
+    public static final int BES_OTA_MAX_DECOMPRESSED_IMAGE_BYTES = 0x1E0000;
 
     /**
      * Safety margin subtracted from the BLE notification payload cap when sizing packed v1 STRING

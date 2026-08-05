@@ -28,12 +28,14 @@ import java.util.concurrent.TimeUnit;
 @Config(application = Application.class, sdk = 33)
 public class BesUartTransportCoordinatorTest {
     private FakeHost host;
+    private FakeSafetyState safety;
     private BesUartTransportCoordinator coordinator;
 
     @Before
     public void setUp() {
         host = new FakeHost();
-        coordinator = new BesUartTransportCoordinator(host);
+        safety = new FakeSafetyState();
+        coordinator = new BesUartTransportCoordinator(host, safety);
     }
 
     @After
@@ -385,6 +387,83 @@ public class BesUartTransportCoordinatorTest {
     }
 
     @Test
+    public void durableRecovery_rawReplyQuarantinesWithoutFramedProbe() throws Exception {
+        safety.policy = BesUartTransportCoordinator.SafetyPolicy.RECOVERY_PROBE_ONLY;
+        coordinator.onSerialReady(host.session);
+
+        assertThat(coordinator.getState())
+                .isEqualTo(BesUartTransportCoordinator.State.SAFETY_RECOVERING);
+        assertThat(coordinator.inboundRoute(host.session))
+                .isEqualTo(BesUartTransportCoordinator.InboundRoute.OTA);
+
+        coordinator.startSafetyRecovery();
+        awaitRawWriteCount(1);
+        assertThat(coordinator.onSafetyRawProtocolResponse((byte) 0x9A)).isTrue();
+
+        assertThat(safety.rawModeProven).isTrue();
+        assertThat(coordinator.getState()).isEqualTo(BesUartTransportCoordinator.State.QUARANTINED);
+        assertThat(countControlCommands("cs_syvr")).isZero();
+    }
+
+    @Test
+    public void durableRecovery_listenerBeforeSerialStillStartsRawProbes() throws Exception {
+        safety.policy = BesUartTransportCoordinator.SafetyPolicy.RECOVERY_PROBE_ONLY;
+
+        coordinator.startSafetyRecovery();
+        coordinator.onSerialReady(host.session);
+
+        awaitRawWriteCount(1);
+        assertThat(coordinator.getState())
+                .isEqualTo(BesUartTransportCoordinator.State.SAFETY_RECOVERING);
+        assertThat(coordinator.inboundRoute(host.session))
+                .isEqualTo(BesUartTransportCoordinator.InboundRoute.OTA);
+    }
+
+    @Test
+    public void durableRecovery_rawSilenceAllowsOneFreshFramedProof() throws Exception {
+        safety.policy = BesUartTransportCoordinator.SafetyPolicy.VERSION_PROBE_ONLY;
+        coordinator.onSerialReady(host.session);
+        coordinator.startSafetyRecovery();
+
+        awaitRawWriteCount(3);
+        awaitControlCommandCount("cs_syvr", 1, 5_000);
+        assertThat(host.rawWrites)
+                .allMatch(
+                        bytes ->
+                                java.util.Arrays.equals(
+                                        bytes, new byte[] {(byte) 0x99, 0, 0, 0, 0}));
+        assertThat(countControlCommands("cs_syvr")).isEqualTo(1);
+
+        assertThat(
+                        coordinator.onSystemVersion(
+                                "17.26.7.4",
+                                coordinator.getSerialSession(),
+                                () ->
+                                        safety.policy =
+                                                BesUartTransportCoordinator.SafetyPolicy.NORMAL))
+                .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
+        assertThat(coordinator.getState())
+                .isEqualTo(BesUartTransportCoordinator.State.READY_RENDEZVOUS);
+    }
+
+    @Test
+    public void durableRecovery_totalSilenceFailsClosed() throws Exception {
+        safety.policy = BesUartTransportCoordinator.SafetyPolicy.VERSION_PROBE_ONLY;
+        coordinator.onSerialReady(host.session);
+        coordinator.startSafetyRecovery();
+
+        long deadline =
+                System.currentTimeMillis() + AsgConstants.UART_BAUD_PROBE_TIMEOUT_MS + 5_000;
+        while (System.currentTimeMillis() < deadline && !safety.recoveryFailed) {
+            Thread.sleep(10);
+        }
+
+        assertThat(safety.recoveryFailed).isTrue();
+        assertThat(coordinator.getState()).isEqualTo(BesUartTransportCoordinator.State.QUARANTINED);
+        assertThat(countControlCommands("cs_syvr")).isEqualTo(1);
+    }
+
+    @Test
     public void otaPromotion_drainsAuthorizationWriteBeforeRawRouting() throws Exception {
         coordinator.onSerialReady(host.session);
         assertThat(systemVersion("17.26.7.4"))
@@ -478,7 +557,7 @@ public class BesUartTransportCoordinatorTest {
     }
 
     @Test
-    public void recoveryAtRendezvous_canNegotiateFastAgain() throws Exception {
+    public void failedFastLink_recoversAtRendezvousWithoutNegotiatingAgain() throws Exception {
         establishFastLink();
 
         coordinator.onDiscardedBytes(
@@ -487,11 +566,11 @@ public class BesUartTransportCoordinatorTest {
         assertThat(coordinator.getState()).isEqualTo(BesUartTransportCoordinator.State.RECOVERING);
 
         assertThat(systemVersion("17.26.7.23"))
-                .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.TRANSITIONING);
+                .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
         assertThat(coordinator.getState())
-                .isEqualTo(BesUartTransportCoordinator.State.SWITCH_REQUESTED);
-        awaitControlCommandCount("cs_baud", 2);
-        assertThat(countControlCommands("cs_baud")).isEqualTo(2);
+                .isEqualTo(BesUartTransportCoordinator.State.READY_RENDEZVOUS);
+        assertThat(coordinator.runNormalWrite(() -> true)).isTrue();
+        assertThat(countControlCommands("cs_baud")).isEqualTo(1);
     }
 
     @Test
@@ -534,8 +613,10 @@ public class BesUartTransportCoordinatorTest {
                 .isEqualTo(BesUartTransportCoordinator.State.READY_RENDEZVOUS);
         awaitControlCommandCount("cs_syvr", AsgConstants.UART_RUNTIME_RECOVERY_PROBES_PER_BAUD);
         assertThat(systemVersion("17.26.7.23"))
-                .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.TRANSITIONING);
-        awaitControlCommandCount("cs_baud", 1);
+                .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
+        assertThat(coordinator.getState())
+                .isEqualTo(BesUartTransportCoordinator.State.READY_RENDEZVOUS);
+        assertThat(countControlCommands("cs_baud")).isZero();
     }
 
     @Test
@@ -694,11 +775,24 @@ public class BesUartTransportCoordinatorTest {
     }
 
     private void awaitControlCommandCount(String command, int expected) throws Exception {
-        long deadline = System.currentTimeMillis() + 1_000;
+        awaitControlCommandCount(command, expected, 1_000);
+    }
+
+    private void awaitControlCommandCount(String command, int expected, long timeoutMs)
+            throws Exception {
+        long deadline = System.currentTimeMillis() + timeoutMs;
         while (System.currentTimeMillis() < deadline && countControlCommands(command) < expected) {
             Thread.sleep(10);
         }
         assertThat(countControlCommands(command)).isGreaterThanOrEqualTo(expected);
+    }
+
+    private void awaitRawWriteCount(int expected) throws Exception {
+        long deadline = System.currentTimeMillis() + 5_000;
+        while (System.currentTimeMillis() < deadline && host.rawWrites.size() < expected) {
+            Thread.sleep(10);
+        }
+        assertThat(host.rawWrites.size()).isGreaterThanOrEqualTo(expected);
     }
 
     private void awaitOpenAttemptCount(int baud, int expected) throws Exception {
@@ -825,6 +919,28 @@ public class BesUartTransportCoordinatorTest {
 
         void runNextOutboundDrain() {
             outboundDrains.remove().run();
+        }
+    }
+
+    private static final class FakeSafetyState implements BesUartTransportCoordinator.SafetyState {
+        volatile BesUartTransportCoordinator.SafetyPolicy policy =
+                BesUartTransportCoordinator.SafetyPolicy.NORMAL;
+        volatile boolean rawModeProven;
+        volatile boolean recoveryFailed;
+
+        @Override
+        public BesUartTransportCoordinator.SafetyPolicy currentPolicy() {
+            return policy;
+        }
+
+        @Override
+        public void onRawOtaModeProven() {
+            rawModeProven = true;
+        }
+
+        @Override
+        public void onRecoveryFailed() {
+            recoveryFailed = true;
         }
     }
 }

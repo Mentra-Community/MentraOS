@@ -4,7 +4,9 @@ import android.content.Context;
 import android.util.Log;
 
 import com.mentra.asg_client.AsgConstants;
+import com.mentra.asg_client.io.bes.BesOtaStateStore;
 import com.mentra.asg_client.io.bes.BesOtaUartListener;
+import com.mentra.asg_client.io.bes.events.BesOtaProgressEvent;
 import com.mentra.asg_client.io.bluetooth.core.BaseBluetoothManager;
 import com.mentra.asg_client.io.bluetooth.interfaces.SerialListener;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.BesMessageParser;
@@ -27,6 +29,7 @@ import com.mentra.asg_client.service.utils.SysProp;
 import com.mentra.asg_client.settings.AsgSettings;
 import com.mentra.asg_client.utils.WakeLockManager;
 
+import org.greenrobot.eventbus.EventBus;
 import org.json.JSONObject;
 
 import java.io.File;
@@ -51,14 +54,18 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
     private final SerialPortBridge comManager;
     private final BesUartTransportCoordinator transportCoordinator;
+    private final BesOtaStateStore besOtaStateStore;
+    private final String currentBootId;
+    private volatile String liveBesOtaOwner = "";
+    private volatile boolean framedPathProven;
     private volatile BesOtaUartListener besOtaUartListener;
 
     public interface BesOtaAuthorizationCallback {
         /** Called on the outbound worker before the authorization request is written. */
         boolean onLeaseAcquired(BesUartTransportCoordinator.OperationLease lease);
 
-        /** Called after the authorization request write attempt finishes. */
-        void onWriteComplete(boolean success);
+        /** Reports whether submission was attempted separately from the local write result. */
+        void onWriteComplete(boolean attempted, boolean success);
     }
 
     // Single owner of the transport-side link facts (serial open, link proven at current baud,
@@ -238,6 +245,12 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     public K900BluetoothManager(Context context) {
         super(context);
 
+        besOtaStateStore = new BesOtaStateStore(context);
+        currentBootId = besOtaStateStore.currentBootId();
+        BesOtaStateStore.StartupDecision startupDecision =
+                besOtaStateStore.reconcileStartup(currentBootId);
+        Log.i(TAG, "BES OTA startup reconciliation: " + startupDecision);
+
         // Create the notification manager
         notificationManager = new DebugNotificationManager(context);
         notificationManager.showDeviceTypeNotification(true);
@@ -246,14 +259,27 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         messageParser = new BesMessageParser();
         fileTransferExecutor = Executors.newSingleThreadScheduledExecutor();
 
-        // Couple the v1 string chunk budget to the caps lifecycle before any transition can
-        // fire: every path that clears the caps (including reopen failures that never reach the
-        // serial callbacks) then also restores the fallback budget.
-        MessageChunker.followLinkState(linkState);
-
         // Create the communication manager
         comManager = new SerialPortBridge(context);
-        transportCoordinator = new BesUartTransportCoordinator(new UartCoordinatorHost());
+        transportCoordinator =
+                new BesUartTransportCoordinator(
+                        new UartCoordinatorHost(),
+                        new BesUartTransportCoordinator.SafetyState() {
+                            @Override
+                            public BesUartTransportCoordinator.SafetyPolicy currentPolicy() {
+                                return currentBesOtaSafetyPolicy();
+                            }
+
+                            @Override
+                            public void onRawOtaModeProven() {
+                                onBesRawOtaModeProvenAfterRestart();
+                            }
+
+                            @Override
+                            public void onRecoveryFailed() {
+                                onBesRecoveryFailed();
+                            }
+                        });
         comManager.registerListener(this);
         comManager.start();
     }
@@ -298,6 +324,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
         @Override
         public void invalidateLinkProof() {
+            framedPathProven = false;
             linkState.streamDiscontinuity();
         }
 
@@ -1117,11 +1144,64 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     /** Register the raw BES OTA parser; routing remains owned by the transport coordinator. */
     public void registerBesOtaListener(BesOtaUartListener listener) {
         besOtaUartListener = listener;
+        if (listener != null) {
+            transportCoordinator.startSafetyRecovery();
+        }
     }
 
     /** Coordinator that owns every UART transition and long-lived transport operation. */
     public BesUartTransportCoordinator getTransportCoordinator() {
         return transportCoordinator;
+    }
+
+    public BesOtaStateStore getBesOtaStateStore() {
+        return besOtaStateStore;
+    }
+
+    public void setLiveBesOtaOwner(String ownerSessionId) {
+        liveBesOtaOwner = ownerSessionId == null ? "" : ownerSessionId.trim();
+    }
+
+    public boolean isFramedPathProven() {
+        return framedPathProven;
+    }
+
+    private BesUartTransportCoordinator.SafetyPolicy currentBesOtaSafetyPolicy() {
+        BesOtaStateStore.UartPolicy policy =
+                besOtaStateStore.uartPolicy(currentBootId, framedPathProven, liveBesOtaOwner);
+        switch (policy) {
+            case NORMAL:
+                return BesUartTransportCoordinator.SafetyPolicy.NORMAL;
+            case OTA_OWNER_ONLY:
+                return BesUartTransportCoordinator.SafetyPolicy.OTA_OWNER_ONLY;
+            case RECOVERY_PROBE_ONLY:
+                return BesUartTransportCoordinator.SafetyPolicy.RECOVERY_PROBE_ONLY;
+            case VERSION_PROBE_ONLY:
+                return BesUartTransportCoordinator.SafetyPolicy.VERSION_PROBE_ONLY;
+            case QUARANTINED:
+            default:
+                return BesUartTransportCoordinator.SafetyPolicy.QUARANTINED;
+        }
+    }
+
+    private void onBesRawOtaModeProvenAfterRestart() {
+        BesOtaStateStore.Snapshot snapshot = besOtaStateStore.read();
+        if (snapshot.isValid() && snapshot.getState() != BesOtaStateStore.State.TERMINAL) {
+            BesOtaStateStore.TransitionResult result =
+                    besOtaStateStore.fail(snapshot.getOwnerSessionId(), "raw_mode_after_restart");
+            Log.e(TAG, "BES raw-mode recovery result: " + result);
+        }
+        EventBus.getDefault().post(BesOtaProgressEvent.createFailed("raw_mode_after_restart"));
+    }
+
+    private void onBesRecoveryFailed() {
+        BesOtaStateStore.Snapshot snapshot = besOtaStateStore.read();
+        if (snapshot.isValid() && snapshot.getState() == BesOtaStateStore.State.APPLY_PENDING) {
+            BesOtaStateStore.TransitionResult result =
+                    besOtaStateStore.fail(snapshot.getOwnerSessionId(), "verification_timeout");
+            Log.e(TAG, "BES post-apply recovery timed out: " + result);
+            EventBus.getDefault().post(BesOtaProgressEvent.createFailed("verification_timeout"));
+        }
     }
 
     /**
@@ -1138,23 +1218,24 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                     BesUartTransportCoordinator.OperationLease lease =
                             transportCoordinator.beginOtaAuthorization();
                     if (lease == null) {
-                        callback.onWriteComplete(false);
+                        callback.onWriteComplete(false, false);
                         return;
                     }
                     if (!callback.onLeaseAcquired(lease)) {
                         transportCoordinator.endOta(lease);
-                        callback.onWriteComplete(false);
+                        callback.onWriteComplete(false, false);
                         return;
                     }
 
                     publishOutboundMessage(payload, true);
+                    boolean attempted = true;
                     boolean sent =
                             transportCoordinator.runOtaAuthorizationWrite(
                                     lease, () -> sendMessageInternalLocked(payload));
-                    if (!sent) {
-                        transportCoordinator.endOta(lease);
-                    }
-                    callback.onWriteComplete(sent);
+                    // Once the durable reservation exists, a false local result is ambiguous and
+                    // the lease must remain exclusive while the manager waits for hm_ota/raw
+                    // reconciliation. Never release it here and never resend mh_ota.
+                    callback.onWriteComplete(attempted, sent);
                 });
     }
 
@@ -1191,6 +1272,8 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                             extractBaudSwitchVersion(bData),
                             receiveSession,
                             () -> {
+                                framedPathProven = true;
+                                reconcileBesOtaVersionProof(extractDisplayBesVersion(bData));
                                 // Presence must precede caps: the edge invalidates the previous
                                 // phone session's notify_cap, then this reply installs the current
                                 // session's measured value. The coordinator session check makes
@@ -1299,8 +1382,8 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             Log.i(TAG, "📦 BES wire_caps advertised negotiated file payloads");
         }
         if (advertised != null && advertised.notifyCap > 0) {
-            // The string chunk budget follows the caps automatically: the MessageChunker
-            // subscription (followLinkState in the constructor) re-derives it on this transition.
+            // Diagnostic only. Legacy v1 strings stay at the fixed conservative ceiling;
+            // negotiated capacity is used only by the higher-capacity protocol.
             Log.i(TAG, "📏 BES wire_caps advertised notify_cap=" + advertised.notifyCap);
         }
         return advertised;
@@ -1448,6 +1531,51 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         }
         if (!v.isEmpty()) {
             cacheBesFirmwareVersion(v);
+        }
+    }
+
+    private static String extractDisplayBesVersion(JSONObject bData) {
+        if (bData == null) {
+            return "";
+        }
+        String version = bData.optString("version", "").trim();
+        return version.isEmpty() ? bData.optString("dpj", "").trim() : version;
+    }
+
+    private void reconcileBesOtaVersionProof(String actualVersion) {
+        BesOtaStateStore.Snapshot snapshot = besOtaStateStore.read();
+        if (!snapshot.isValid()
+                || snapshot.getState() != BesOtaStateStore.State.APPLY_PENDING
+                || currentBootId == null
+                || currentBootId.equals(snapshot.getAuthorizationBootId())) {
+            return;
+        }
+        BesOtaStateStore.VerificationDecision verification =
+                besOtaStateStore.claimOrResumeVerificationBoot(currentBootId);
+        if (verification != BesOtaStateStore.VerificationDecision.CLAIMED
+                && verification != BesOtaStateStore.VerificationDecision.RESUME) {
+            Log.e(TAG, "BES post-apply verification boot rejected: " + verification);
+            return;
+        }
+        BesOtaStateStore.TransitionResult completed =
+                besOtaStateStore.completeVerified(
+                        snapshot.getOwnerSessionId(), currentBootId, actualVersion);
+        if (completed != BesOtaStateStore.TransitionResult.APPLIED) {
+            Log.e(TAG, "Could not commit BES post-apply version proof: " + completed);
+            return;
+        }
+        BesOtaStateStore.Snapshot terminal = besOtaStateStore.read();
+        if (terminal.getTerminalStatus() == BesOtaStateStore.TerminalStatus.SUCCESS) {
+            Log.i(TAG, "BES target version verified after reboot: " + actualVersion);
+            EventBus.getDefault().post(BesOtaProgressEvent.createFinished());
+        } else {
+            Log.e(
+                    TAG,
+                    "BES version mismatch after reboot expected="
+                            + terminal.getTargetVersion()
+                            + " actual="
+                            + actualVersion);
+            EventBus.getDefault().post(BesOtaProgressEvent.createFailed("version_mismatch"));
         }
     }
 
@@ -1640,6 +1768,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
         // Close transport state before releasing the file lease so cleanup cannot resume a
         // deferred baud transition on a port that is already going down.
+        framedPathProven = false;
         linkState.serialClosed();
         transportCoordinator.onSerialClosed();
         if (currentFileTransfer != null && currentFileTransfer.isActive) {
@@ -1856,6 +1985,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         Log.d(TAG, "🔌 =========================================");
         Log.d(TAG, "🔌 Serial path: " + serialPath);
 
+        // A proof belongs to one exact SerialSession. Never let an sr_syvr from the
+        // previous file descriptor authorize traffic on a newly adopted session.
+        framedPathProven = false;
         linkState.serialReady();
         transportCoordinator.onSerialReady(session);
         Log.d(TAG, "🔌 ✅ Serial port marked as open");
@@ -1891,6 +2023,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         if (bSucc) {
             linkState.serialReady();
         } else {
+            framedPathProven = false;
             linkState.serialClosed();
             transportCoordinator.onSerialClosed();
         }
