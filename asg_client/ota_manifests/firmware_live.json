@@ -46,6 +46,13 @@
   "bes_firmware": {
     "version": "26.7.30.4",
     "url": "https://firmwarecdn.mentraglass.com/bes_firmware_26.7.30.4.bin",
-    "sha256": "9e8d127033d41c4bafad3d9e70a871fe24351c7b315fb341ff97f2e46c00b29c"
+    "sha256": "9e8d127033d41c4bafad3d9e70a871fe24351c7b315fb341ff97f2e46c00b29c",
+    "format": "bes-lzma-chunks-v1",
+    "product": "best1502x_ibrt_bpone",
+    "artifact_id": "bes_firmware_26.7.30.4.bin",
+    "compressed_size": 1137045,
+    "decompressed_size": 1955836,
+    "decompressed_sha256": "5924a0da5ab3c545b210dab26bc9552eef56a273652c32bad64bfb3912d0810a",
+    "version_offset": 1813248
   }
 }
