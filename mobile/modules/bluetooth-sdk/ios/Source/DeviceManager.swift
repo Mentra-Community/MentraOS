@@ -756,6 +756,8 @@ struct ViewState {
     }
 
     func parsePlaceholders(_ text: String) -> String {
+        guard text.contains("$") else { return text }
+
         let dateFormatter = DateFormatter()
         dateFormatter.dateFormat = "M/dd, h:mm"
         let formattedDate = dateFormatter.string(from: Date())

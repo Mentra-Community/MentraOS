@@ -999,6 +999,8 @@ class DeviceManager {
     }
 
     private fun parsePlaceholders(text: String): String {
+        if (!text.contains('$')) return text
+
         val dateFormatter = SimpleDateFormat("M/dd, h:mm", Locale.getDefault())
         val formattedDate = dateFormatter.format(Date())
 
