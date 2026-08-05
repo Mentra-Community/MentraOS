@@ -10,13 +10,13 @@ import com.mentra.asg_client.io.bes.BesOtaStateStore.TerminalStatus;
 import com.mentra.asg_client.io.bes.BesOtaStateStore.TransitionResult;
 import com.mentra.asg_client.io.bes.BesOtaStateStore.UartPolicy;
 import com.mentra.asg_client.io.bes.BesOtaStateStore.VerificationDecision;
-
 import org.json.JSONObject;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
+import org.robolectric.shadows.ShadowLog;
 
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 33)
@@ -169,16 +169,21 @@ public class BesOtaStateStoreTest {
 
         assertThat(store.prepareForNewSession(BOOT_B, false))
                 .isEqualTo(StartDecision.PATH_PROOF_REQUIRED);
+        ShadowLog.clear();
         assertThat(store.prepareForNewSession(BOOT_B, true)).isEqualTo(StartDecision.ADMIT);
         assertThat(store.read().isIdle()).isTrue();
+        assertThat(logsContain("op=retire_failure_after_path_proof", "after={state=IDLE}"))
+                .isTrue();
     }
 
     @Test
     public void successfulTerminalCanRetireWithoutAnotherBoot() {
         completeSuccessfully();
 
+        ShadowLog.clear();
         assertThat(store.prepareForNewSession(BOOT_B, false)).isEqualTo(StartDecision.ADMIT);
         assertThat(store.read().isIdle()).isTrue();
+        assertThat(logsContain("op=retire_success", "after={state=IDLE}")).isTrue();
     }
 
     @Test
@@ -269,6 +274,26 @@ public class BesOtaStateStoreTest {
     }
 
     @Test
+    public void successfulCommitWithStaleImmediateReadbackIsDiagnosed() {
+        reserve();
+        ShadowLog.clear();
+        storage.dropNextSuccessfulPut = true;
+
+        assertThat(store.markApplyPending(OWNER)).isEqualTo(TransitionResult.APPLIED);
+        assertThat(store.read().getState()).isEqualTo(State.AUTH_ATTEMPTED);
+        assertThat(logsContain("op=mark_apply_pending", "readback_match=false")).isTrue();
+    }
+
+    @Test
+    public void diagnosticStateSummaryOmitsArtifactIdentityAndDigest() {
+        reserve();
+
+        String summary = store.read().toDiagnosticString();
+        assertThat(summary).contains("state=AUTH_ATTEMPTED", "target=" + TARGET);
+        assertThat(summary).doesNotContain(ARTIFACT, SHA);
+    }
+
+    @Test
     public void versionCanonicalizationIsExactAndBounded() {
         assertThat(BesOtaStateStore.canonicalVersion("026.007.030.004")).isEqualTo("26.7.30.4");
         assertThat(BesOtaStateStore.canonicalVersion("26.7.30")).isNull();
@@ -293,10 +318,20 @@ public class BesOtaStateStoreTest {
                 .isEqualTo(TransitionResult.APPLIED);
     }
 
+    private static boolean logsContain(String first, String second) {
+        for (ShadowLog.LogItem item : ShadowLog.getLogsForTag("BesOtaStateStore")) {
+            if (item.msg.contains(first) && item.msg.contains(second)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static final class FakeStorage implements BesOtaStateStore.Storage {
         String raw;
         boolean failNextPut;
         boolean failNextRemove;
+        boolean dropNextSuccessfulPut;
 
         @Override
         public String get() {
@@ -308,6 +343,10 @@ public class BesOtaStateStoreTest {
             if (failNextPut) {
                 failNextPut = false;
                 return false;
+            }
+            if (dropNextSuccessfulPut) {
+                dropNextSuccessfulPut = false;
+                return true;
             }
             raw = value;
             return true;

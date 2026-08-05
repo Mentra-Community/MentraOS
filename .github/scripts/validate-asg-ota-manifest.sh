@@ -11,12 +11,12 @@ if [[ "$check_apk" != "" && "$check_apk" != "--check-apk" ]]; then
 fi
 
 jq -e '
-  def canonical_bes_version:
+  def valid_bes_version:
     if type != "string" then false
     else split(".") as $parts
       | ($parts | length == 4)
         and all($parts[];
-          test("^(0|[1-9][0-9]{0,2})$")
+          test("^[0-9]{1,3}$")
           and (tonumber <= 255))
     end;
 
@@ -30,7 +30,7 @@ jq -e '
     and ($app.sha256 | type == "string" and test("^[0-9a-fA-F]{64}$"))
     and (.mtk_patches | type == "array" and length > 0)
     and ($bes | type == "object")
-    and ($bes.version | canonical_bes_version)
+    and ($bes.version | valid_bes_version)
     and ($bes.url
       | type == "string"
         and test("^https://[^/?#[:space:]]+(?:/[^/?#[:space:]]*)*/[A-Za-z0-9._-]{1,128}$"))

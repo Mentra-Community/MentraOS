@@ -58,15 +58,15 @@ public final class BesFirmwareArtifactValidator {
             assertProduct(raw, AsgConstants.BES_OTA_PRODUCT);
             String targetVersion = requiredString(metadata, "version");
             String canonicalTarget = BesOtaStateStore.canonicalVersion(targetVersion);
-            if (canonicalTarget == null || !canonicalTarget.equals(targetVersion)) {
+            if (canonicalTarget == null) {
                 throw new ValidationException(
-                        "BES target version must be canonical major.minor.patch.build");
+                        "BES target version must contain four numeric byte components");
             }
             return new ValidatedBesArtifact(
                     artifact,
                     artifactId,
                     compressedSha256,
-                    targetVersion,
+                    canonicalTarget,
                     compressedSize,
                     raw.length);
         } catch (ValidationException e) {

@@ -143,6 +143,8 @@ public final class BesUartTransportCoordinator {
     private static final int[] RECOVERY_BAUDS = {
         AsgConstants.UART_FAST_BAUD, AsgConstants.UART_RENDEZVOUS_BAUD
     };
+    private static final int SAFETY_REOPEN_MAX_ATTEMPTS = 2;
+    private static final long SAFETY_REOPEN_RETRY_DELAY_MS = 200;
 
     private final Object monitor = new Object();
     private final Host host;
@@ -181,6 +183,7 @@ public final class BesUartTransportCoordinator {
     private ScheduledFuture<?> healthTimeout;
     private int safetyRawProbeAttempts;
     private boolean safetyRecoveryListenerReady;
+    private boolean safetyAlternateBaudAttempted;
 
     public BesUartTransportCoordinator(Host host) {
         this(host, () -> SafetyPolicy.NORMAL);
@@ -324,6 +327,7 @@ public final class BesUartTransportCoordinator {
                 state = State.SAFETY_RECOVERING;
                 otaRawRouting = true;
                 safetyRawProbeAttempts = 0;
+                safetyAlternateBaudAttempted = false;
                 phaseGeneration++;
                 if (safetyRecoveryListenerReady) {
                     Log.w(TAG, "Starting raw-first BES OTA recovery probe: " + policy);
@@ -360,6 +364,7 @@ public final class BesUartTransportCoordinator {
             baudTransitionTarget = 0;
             firmwareVersion = "";
             versionProbeDeferred = false;
+            safetyAlternateBaudAttempted = false;
             cancelOutboundDrainLocked();
             state = State.CLOSED;
             operation = Operation.NONE;
@@ -402,28 +407,102 @@ public final class BesUartTransportCoordinator {
             if (phase != phaseGeneration || state != State.SAFETY_RECOVERING) {
                 return;
             }
-            // Raw silence is not proof of framed mode. Release A sends exactly one source-audited
-            // cs_syvr and accepts only its current-session sr_syvr. Physical compatibility remains
-            // a mandatory internal-staging rollout gate before production promotion.
+            // Raw silence is not proof of framed mode. Send exactly one source-audited cs_syvr and
+            // accept only its current-session sr_syvr. A restarted ASG process cannot know whether
+            // BES was left at rendezvous or fast baud, so a timeout advances to the one alternate
+            // physical baud and repeats this raw-first proof before failing closed.
             otaRawRouting = false;
             host.resetParser();
             state = State.DISCOVERING;
             long framedPhase = ++phaseGeneration;
-            scheduleProbeBurstLocked(framedPhase, AsgConstants.UART_RENDEZVOUS_BAUD, 0, 1, 0);
+            scheduleProbeBurstLocked(framedPhase, host.currentBaud(), 0, 1, 0);
             phaseTimeout =
                     executor.schedule(
-                            () -> quarantineSafetyRecoveryIfCurrent(framedPhase),
+                            () -> continueSafetyRecoveryIfCurrent(framedPhase),
                             AsgConstants.UART_BAUD_PROBE_TIMEOUT_MS,
                             TimeUnit.MILLISECONDS);
         }
     }
 
-    private void quarantineSafetyRecoveryIfCurrent(long phase) {
+    private void continueSafetyRecoveryIfCurrent(long phase) {
+        int alternateBaud;
         synchronized (monitor) {
-            if (phase == phaseGeneration && state == State.DISCOVERING) {
+            if (phase != phaseGeneration || state != State.DISCOVERING) {
+                return;
+            }
+            if (safetyAlternateBaudAttempted) {
                 safetyState.onRecoveryFailed();
                 quarantineCurrentSessionLocked();
+                return;
             }
+            safetyAlternateBaudAttempted = true;
+            alternateBaud =
+                    host.currentBaud() == AsgConstants.UART_FAST_BAUD
+                            ? AsgConstants.UART_RENDEZVOUS_BAUD
+                            : AsgConstants.UART_FAST_BAUD;
+            host.invalidateLinkProof();
+            serialSession = null;
+            versionSession = null;
+            state = State.SAFETY_RECOVERING;
+            otaRawRouting = true;
+            long reopenPhase = ++phaseGeneration;
+            Log.w(TAG, "Safety recovery trying alternate UART baud " + alternateBaud);
+            ioLane.submit(() -> performSafetyRecoveryReopen(reopenPhase, alternateBaud, 1));
+        }
+    }
+
+    private void performSafetyRecoveryReopen(long reopenPhase, int baud, int attempt) {
+        synchronized (monitor) {
+            if (reopenPhase != phaseGeneration || state != State.SAFETY_RECOVERING) {
+                return;
+            }
+        }
+
+        SerialSession opened = replacePhysicalSession(baud);
+        boolean closeOpened = false;
+        boolean retry = false;
+        synchronized (monitor) {
+            if (reopenPhase != phaseGeneration || state != State.SAFETY_RECOVERING) {
+                closeOpened = opened != null;
+            } else if (!adoptAndStartSessionLocked(opened)) {
+                closeOpened = opened != null;
+                if (attempt < SAFETY_REOPEN_MAX_ATTEMPTS) {
+                    retry = true;
+                    Log.w(
+                            TAG,
+                            "Safety UART reopen attempt "
+                                    + attempt
+                                    + "/"
+                                    + SAFETY_REOPEN_MAX_ATTEMPTS
+                                    + " failed at "
+                                    + baud
+                                    + "; retrying local descriptor only");
+                } else {
+                    safetyState.onRecoveryFailed();
+                    quarantineCurrentSessionLocked();
+                }
+            } else {
+                armSafetyRecoveryProbesLocked();
+                Log.w(
+                        TAG,
+                        "Safety recovery reopened UART at alternate baud "
+                                + baud
+                                + " on attempt "
+                                + attempt);
+            }
+        }
+        if (closeOpened) {
+            host.closeSession(opened);
+        }
+        if (retry && !executor.isShutdown()) {
+            executor.schedule(
+                    () ->
+                            ioLane.submit(
+                                    () ->
+                                            performSafetyRecoveryReopen(
+                                                    reopenPhase, baud, attempt + 1)),
+                    SAFETY_REOPEN_RETRY_DELAY_MS,
+                    TimeUnit.MILLISECONDS);
         }
     }
 

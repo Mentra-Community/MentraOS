@@ -1,5 +1,6 @@
 package com.mentra.asg_client.io.ota.utils;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.mentra.asg_client.AsgConstants;
@@ -165,16 +166,27 @@ public class BesFirmwareArtifactValidatorTest {
     }
 
     @Test
-    public void nonCanonicalTargetVersionFailsBeforeAuthorization() throws Exception {
+    public void zeroPaddedTargetVersionIsNormalizedForVerification() throws Exception {
         TestArtifact artifact = createArtifact();
         artifact.metadata.put("version", "017.26.7.24");
+
+        BesFirmwareArtifactValidator.ValidatedBesArtifact validated =
+                BesFirmwareArtifactValidator.validate(artifact.file, artifact.metadata);
+
+        assertThat(validated.getTargetVersion()).isEqualTo("17.26.7.24");
+    }
+
+    @Test
+    public void nonNumericTargetVersionFailsBeforeAuthorization() throws Exception {
+        TestArtifact artifact = createArtifact();
+        artifact.metadata.put("version", "17.26.7.24-fix1");
 
         assertThatThrownBy(
                         () ->
                                 BesFirmwareArtifactValidator.validate(
                                         artifact.file, artifact.metadata))
                 .isInstanceOf(BesFirmwareArtifactValidator.ValidationException.class)
-                .hasMessageContaining("canonical");
+                .hasMessageContaining("four numeric byte components");
     }
 
     @Test
