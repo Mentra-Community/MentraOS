@@ -246,6 +246,7 @@ export class NavigationController {
   private capabilities: GlassesCapabilitySnapshot = {
     modelName: null,
     hasDisplay: false,
+    canPosition: false,
     hasSpeaker: false,
     hasButton: false,
   }
@@ -302,9 +303,14 @@ export class NavigationController {
 
   private readCapabilities(capabilities: MiniappSession["capabilities"]): GlassesCapabilitySnapshot {
     const record = (capabilities ?? {}) as Record<string, unknown>
+    const display =
+      record.display && typeof record.display === "object" ? (record.display as Record<string, unknown>) : null
     return {
       modelName: typeof record.modelName === "string" ? record.modelName : null,
       hasDisplay: record.hasDisplay === true || !!record.display,
+      // G1/Z100 advertise canPosition:false and need a compact text wall.
+      // Treat an absent field as false so older hosts get the safe fallback.
+      canPosition: display?.canPosition === true,
       hasSpeaker: record.hasSpeaker === true,
       hasButton: record.hasButton === true,
     }
@@ -328,6 +334,17 @@ export class NavigationController {
       this.lastMinimapPng = null
     } else if (!previous.hasDisplay && this.trip.running) {
       this.startMinimapWatchdog()
+      this.lastHudKey = ""
+      this.refreshHUD()
+    } else if (previous.canPosition !== this.capabilities.canPosition && this.trip.running) {
+      // A glasses swap can change the HUD from a compact text wall to a
+      // positioned scene (or vice versa) without changing hasDisplay.
+      if (this.capabilities.canPosition) {
+        this.startMinimapWatchdog()
+      } else {
+        this.stopMinimapWatchdog()
+        this.lastMinimapPng = null
+      }
       this.lastHudKey = ""
       this.refreshHUD()
     }
@@ -1524,9 +1541,10 @@ export class NavigationController {
 
     if (!this.capabilities.hasDisplay || this.largeMapShown) return
 
-    // Minimap runs first so heading-only updates still refresh the map
-    // even when the text line below is unchanged (and short-circuits).
-    this.refreshMinimap()
+    // Minimap runs first so heading-only updates still refresh the map even
+    // when the text line below is unchanged (and short-circuits). G1/Z100
+    // cannot position or display scene images, so skip the work entirely.
+    if (this.capabilities.canPosition) this.refreshMinimap()
 
     let next: string | null = null
     let durationMs: number | undefined
@@ -1686,7 +1704,7 @@ export class NavigationController {
     // The minimap (right) was pushed by refreshMinimap() above. Special states
     // (welcome/rerouting/arrived/off-route) have no arrow/stats split and fall
     // through to the single-container text frame below.
-    if (maneuverBody != null && running) {
+    if (maneuverBody != null && running && this.capabilities.canPosition) {
       const key = `hud|${maneuverArrow}|${maneuverBody}|${stats ?? ""}|${clock}`
       const nowHud = Date.now()
       const unchanged = key === this.lastHudKey
@@ -1719,7 +1737,12 @@ export class NavigationController {
 
     // Coalesce on the combined frame so we don't re-push identical content.
     // Prefixed "msg|" so a message frame never collides with a "hud|" key.
-    const key = `msg|${combined}${durationMs ?? 0}|${clock}`
+    // Non-positioning displays have a five-line text wall. Omitting the clock
+    // leaves room for the direction (arrow + distance + instruction) before
+    // optional trip stats; the old degraded positioned scene put clock/stats
+    // first and clipped the instruction off the bottom on G1.
+    const displayClock = this.capabilities.canPosition ? clock : null
+    const key = `msg|${combined}${durationMs ?? 0}|${displayClock ?? ""}`
     // Re-push every ~3s even when unchanged: the G2 frequently tears down our
     // EvenHub page (system_exit / dashboard), swallowing a one-time send.
     const nowHud = Date.now()
@@ -1730,7 +1753,11 @@ export class NavigationController {
     // Render as the "message" frame (positioned at the arrow's left x). The
     // frame replaces turn-by-turn entirely; returning to turn-by-turn replaces
     // it back. Nothing lingers — render() is the whole screen.
-    this.display.showNavMessage(combined, clock)
+    if (this.capabilities.canPosition) {
+      this.display.showNavMessage(combined, displayClock)
+    } else {
+      this.display.showCompactNavHud(next, stats)
+    }
   }
 
   /**
@@ -1813,7 +1840,7 @@ export class NavigationController {
   private readonly MINIMAP_MIN_INTERVAL_MS = 300
 
   private refreshMinimap(): void {
-    if (!this.capabilities.hasDisplay) return
+    if (!this.capabilities.hasDisplay || !this.capabilities.canPosition) return
     if (this.largeMapShown) return // large map owns the screen; don't overdraw
     if (!this.showMinimap) return
     if (!this.trip.running || !this.coords) return
@@ -1979,7 +2006,7 @@ export class NavigationController {
 
   /** Start the recurring minimap watchdog (no-op if already running). */
   private startMinimapWatchdog(): void {
-    if (!this.capabilities.hasDisplay) return
+    if (!this.capabilities.hasDisplay || !this.capabilities.canPosition) return
     if (this.minimapWatchdogTimer != null) return
     console.log(
       `[MINIMAP-WATCHDOG] started (every ${this.MINIMAP_WATCHDOG_INTERVAL_MS}ms, idle threshold ${this.MINIMAP_WATCHDOG_IDLE_MS}ms)`,

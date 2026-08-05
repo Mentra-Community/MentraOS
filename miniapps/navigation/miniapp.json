@@ -1,7 +1,7 @@
 {
   "$schema": "./node_modules/@mentra/miniapp-cli/schema/miniapp.schema.json",
   "packageName": "com.mentra.navigation",
-  "version": "1.1.26",
+  "version": "1.1.28",
   "name": "Mentra Maps",
   "description": "Turn-by-turn navigation with visual or spoken directions.",
   "icon": "icon.png",

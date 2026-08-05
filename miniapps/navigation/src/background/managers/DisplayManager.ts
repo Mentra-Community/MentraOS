@@ -19,24 +19,24 @@ export class DisplayManager {
   // rounded frame itself, so we only send these content slots. `message` shares
   // the arrow's left x and spans the content area (staying clear of the map).
   static readonly HUD = {
-    // Map dropped below the top row so the top-right stats slot clears it
-    // (the mockup stacks time+ETA across the top with the map underneath).
-    map: {x: 330, y: 70, w: 150, h: 150},
+    // Keep the map below the two-line stats region. Both regions meet at y=80
+    // without overlapping and still fit the 220px-tall HUD canvas exactly.
+    map: {x: 340, y: 80, w: 140, h: 140},
     arrow: {x: 0, y: 182, w: 38, h: 38},
     // Wall-clock current time, top-LEFT (the phone's clock, sent each refresh).
     // The widest 24-hour clock is 52px in the G2 font, and native adds 4px of
     // padding on each side. Keep a little extra headroom so it never wraps into
     // a clipped second line.
-    clock: {x: 0, y: 0, w: 64, h: 26},
-    // Trip stats (distance remaining + ETA), top-RIGHT — mirrors the clock.
-    // No text alignment primitive exists, so the box is positioned right and
-    // the (short) text left-aligns within it. One firmware text line tall — the
-    // fw font line is ~30px+, so a 28px box always overflowed (suspected trigger
-    // of the firmware's scroll-indicator tick). 40px fits one line with headroom.
-    stats: {x: 359, y: 0, w: 121, h: 28},
-    // Two full 40px G2 lines (lineHeightPx calibration clips to floor(h/40)
-    // lines — 64px was silently clipping the street name to one line).
-    maneuver: {x: 40, y: 168, w: 270, h: 52},
+    clock: {x: 0, y: 0, w: 64, h: 40},
+    // Long distance + ETA strings can wrap. Give the top-right stats region
+    // two full calibrated G2 lines instead of letting a second line overflow a
+    // 28px box. The wider box also keeps the common case on one line.
+    stats: {x: 280, y: 0, w: 200, h: 80},
+    // The body contains a distance line plus an instruction that may itself
+    // wrap (for example, "Turn right onto Gough Street"). G2 clips by
+    // floor(height / 40px), so reserve three complete lines; the old 52px box
+    // admitted only the distance and silently removed the instruction.
+    maneuver: {x: 40, y: 100, w: 270, h: 120},
     message: {x: 12, y: 54, w: 310, h: 156},
   }
 
@@ -98,6 +98,22 @@ export class DisplayManager {
     this.mode = "message"
     this.message = text
     if (clock !== undefined) this.clock = clock
+    this.pushFrame()
+  }
+
+  /**
+   * Navigation frame for non-positioning displays such as Even Realities G1.
+   * Keep the maneuver first and emit one text element: host-side scene
+   * degradation otherwise inserts blank lines between the positioned clock,
+   * stats, and maneuver elements, pushing the instruction past G1's five-line
+   * limit. Images and clock are deliberately cleared because these displays
+   * cannot render them through the scene API.
+   */
+  showCompactNavHud(maneuver: string, stats: string | null): void {
+    this.mode = "message"
+    this.message = [maneuver, stats].filter(Boolean).join("\n\n")
+    this.clock = null
+    this.mapBmp = null
     this.pushFrame()
   }
 
