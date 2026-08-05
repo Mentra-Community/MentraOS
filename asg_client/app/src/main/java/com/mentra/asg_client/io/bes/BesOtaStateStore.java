@@ -2,16 +2,15 @@ package com.mentra.asg_client.io.bes;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.os.Process;
+import android.os.SystemClock;
 import android.util.Log;
-
 import com.mentra.asg_client.io.ota.utils.BesFirmwareArtifactValidator.ValidatedBesArtifact;
-
-import org.json.JSONException;
-import org.json.JSONObject;
-
 import java.io.BufferedReader;
 import java.io.FileReader;
 import java.util.Locale;
+import org.json.JSONException;
+import org.json.JSONObject;
 
 /**
  * Single durable authority for legacy BES OTA admission, apply, verification, and terminal state.
@@ -146,6 +145,13 @@ public final class BesOtaStateStore {
             String currentBootId, boolean framedPathProvenForCurrentSession) {
         synchronized (TRANSITION_LOCK) {
             Snapshot snapshot = readLocked();
+            logDecision(
+                    "prepare_start",
+                    "requested_boot="
+                            + diagnosticValue(canonicalBootId(currentBootId))
+                            + " framed_path="
+                            + framedPathProvenForCurrentSession,
+                    snapshot);
             if (snapshot.isCorrupt()) {
                 return StartDecision.CORRUPT;
             }
@@ -156,7 +162,9 @@ public final class BesOtaStateStore {
                 return StartDecision.ACTIVE;
             }
             if (snapshot.terminalStatus == TerminalStatus.SUCCESS) {
-                return removeLocked() ? StartDecision.ADMIT : StartDecision.PERSISTENCE_FAILURE;
+                return removeLocked("retire_success", snapshot)
+                        ? StartDecision.ADMIT
+                        : StartDecision.PERSISTENCE_FAILURE;
             }
             String boot = canonicalBootId(currentBootId);
             if (boot == null || boot.equals(snapshot.authorizationBootId)) {
@@ -165,7 +173,9 @@ public final class BesOtaStateStore {
             if (!framedPathProvenForCurrentSession) {
                 return StartDecision.PATH_PROOF_REQUIRED;
             }
-            return removeLocked() ? StartDecision.ADMIT : StartDecision.PERSISTENCE_FAILURE;
+            return removeLocked("retire_failure_after_path_proof", snapshot)
+                    ? StartDecision.ADMIT
+                    : StartDecision.PERSISTENCE_FAILURE;
         }
     }
 
@@ -190,7 +200,9 @@ public final class BesOtaStateStore {
             String artifactId,
             String artifactSha256) {
         synchronized (TRANSITION_LOCK) {
-            if (!readLocked().isIdle()) {
+            Snapshot current = readLocked();
+            if (!current.isIdle()) {
+                logDecision("reserve_rejected", "reason=state_not_idle", current);
                 return TransitionResult.REJECTED;
             }
             String owner = canonicalNonempty(ownerSessionId);
@@ -204,6 +216,15 @@ public final class BesOtaStateStore {
                     || identity == null
                     || digest == null
                     || !digest.matches("[0-9a-f]{64}")) {
+                logDecision(
+                        "reserve_rejected",
+                        "reason=invalid_input requested_owner="
+                                + diagnosticValue(owner)
+                                + " requested_boot="
+                                + diagnosticValue(boot)
+                                + " requested_target="
+                                + diagnosticValue(target),
+                        current);
                 return TransitionResult.REJECTED;
             }
             Snapshot reserved =
@@ -218,7 +239,7 @@ public final class BesOtaStateStore {
                             null,
                             null,
                             System.currentTimeMillis());
-            return putLocked(reserved)
+            return putLocked("reserve_authorization", current, reserved)
                     ? TransitionResult.APPLIED
                     : TransitionResult.PERSISTENCE_FAILURE;
         }
@@ -228,10 +249,14 @@ public final class BesOtaStateStore {
         synchronized (TRANSITION_LOCK) {
             Snapshot current = readLocked();
             if (!current.isOwnedActive(State.AUTH_ATTEMPTED, ownerSessionId)) {
+                logDecision(
+                        "mark_apply_rejected",
+                        "requested_owner=" + diagnosticValue(canonicalNonempty(ownerSessionId)),
+                        current);
                 return terminalOrRejected(current);
             }
             Snapshot next = current.withState(State.APPLY_PENDING, null);
-            return putLocked(next)
+            return putLocked("mark_apply_pending", current, next)
                     ? TransitionResult.APPLIED
                     : TransitionResult.PERSISTENCE_FAILURE;
         }
@@ -242,27 +267,31 @@ public final class BesOtaStateStore {
         synchronized (TRANSITION_LOCK) {
             Snapshot current = readLocked();
             if (!current.isValid() || current.state != State.APPLY_PENDING) {
+                logDecision("verification_not_pending", "", current);
                 return VerificationDecision.NOT_PENDING;
             }
             String boot = canonicalBootId(currentBootId);
             if (boot == null) {
+                logDecision("verification_rejected", "reason=invalid_boot", current);
                 return VerificationDecision.PERSISTENCE_FAILURE;
             }
             if (boot.equals(current.authorizationBootId)) {
+                logDecision("verification_wait", "requested_boot=" + boot, current);
                 return VerificationDecision.WAIT_FOR_REBOOT;
             }
             if (current.verificationBootId == null) {
                 Snapshot claimed = current.withVerificationBoot(boot);
-                return putLocked(claimed)
+                return putLocked("claim_verification_boot", current, claimed)
                         ? VerificationDecision.CLAIMED
                         : VerificationDecision.PERSISTENCE_FAILURE;
             }
             if (boot.equals(current.verificationBootId)) {
+                logDecision("verification_resume", "requested_boot=" + boot, current);
                 return VerificationDecision.RESUME;
             }
             Snapshot failed =
                     current.asTerminal(TerminalStatus.FAILURE, "verification_boot_changed");
-            return putLocked(failed)
+            return putLocked("fail_verification_boot_changed", current, failed)
                     ? VerificationDecision.SECOND_BOOT_FAILED
                     : VerificationDecision.PERSISTENCE_FAILURE;
         }
@@ -274,6 +303,15 @@ public final class BesOtaStateStore {
         synchronized (TRANSITION_LOCK) {
             Snapshot current = readLocked();
             if (!current.isOwnedActive(State.APPLY_PENDING, ownerSessionId)) {
+                logDecision(
+                        "version_proof_rejected",
+                        "reason=owner_or_state requested_owner="
+                                + diagnosticValue(canonicalNonempty(ownerSessionId))
+                                + " requested_boot="
+                                + diagnosticValue(canonicalBootId(currentBootId))
+                                + " actual="
+                                + diagnosticValue(canonicalVersion(actualVersion)),
+                        current);
                 return terminalOrRejected(current);
             }
             String boot = canonicalBootId(currentBootId);
@@ -281,6 +319,13 @@ public final class BesOtaStateStore {
             if (boot == null
                     || current.verificationBootId == null
                     || !boot.equals(current.verificationBootId)) {
+                logDecision(
+                        "version_proof_rejected",
+                        "reason=verification_boot requested_boot="
+                                + diagnosticValue(boot)
+                                + " actual="
+                                + diagnosticValue(actual),
+                        current);
                 return TransitionResult.REJECTED;
             }
             boolean matches = current.targetVersion.equals(actual);
@@ -288,7 +333,10 @@ public final class BesOtaStateStore {
                     current.asTerminal(
                             matches ? TerminalStatus.SUCCESS : TerminalStatus.FAILURE,
                             matches ? "verified" : "version_mismatch");
-            return putLocked(terminal)
+            return putLocked(
+                            matches ? "complete_verified" : "fail_version_mismatch",
+                            current,
+                            terminal)
                     ? TransitionResult.APPLIED
                     : TransitionResult.PERSISTENCE_FAILURE;
         }
@@ -299,21 +347,40 @@ public final class BesOtaStateStore {
         synchronized (TRANSITION_LOCK) {
             Snapshot current = readLocked();
             if (current.isCorrupt() || current.isIdle()) {
+                logDecision(
+                        "failure_rejected",
+                        "reason=no_active_state requested_code="
+                                + diagnosticValue(canonicalCode(stableCode)),
+                        current);
                 return TransitionResult.REJECTED;
             }
             if (current.state == State.TERMINAL) {
+                logDecision(
+                        "failure_ignored_terminal",
+                        "requested_owner="
+                                + diagnosticValue(canonicalNonempty(ownerSessionId))
+                                + " requested_code="
+                                + diagnosticValue(canonicalCode(stableCode)),
+                        current);
                 return current.ownerSessionId.equals(canonicalNonempty(ownerSessionId))
                         ? TransitionResult.ALREADY_TERMINAL
                         : TransitionResult.REJECTED;
             }
             if (!current.ownerSessionId.equals(canonicalNonempty(ownerSessionId))) {
+                logDecision(
+                        "failure_rejected",
+                        "reason=owner_mismatch requested_owner="
+                                + diagnosticValue(canonicalNonempty(ownerSessionId))
+                                + " requested_code="
+                                + diagnosticValue(canonicalCode(stableCode)),
+                        current);
                 return TransitionResult.REJECTED;
             }
             String code = canonicalCode(stableCode);
             Snapshot terminal =
                     current.asTerminal(
                             TerminalStatus.FAILURE, code != null ? code : "install_failed");
-            return putLocked(terminal)
+            return putLocked("fail_" + terminal.terminalCode, current, terminal)
                     ? TransitionResult.APPLIED
                     : TransitionResult.PERSISTENCE_FAILURE;
         }
@@ -324,6 +391,7 @@ public final class BesOtaStateStore {
         synchronized (TRANSITION_LOCK) {
             String boot = canonicalBootId(currentBootId);
             Snapshot current = readLocked();
+            logDecision("startup_snapshot", "requested_boot=" + diagnosticValue(boot), current);
             if (current.isCorrupt()) {
                 if (boot == null) {
                     return StartupDecision.PERSISTENCE_FAILURE;
@@ -340,7 +408,7 @@ public final class BesOtaStateStore {
                                 TerminalStatus.FAILURE,
                                 "corrupt_state",
                                 System.currentTimeMillis());
-                return putLocked(repaired)
+                return putLocked("repair_corrupt_startup", current, repaired)
                         ? StartupDecision.QUARANTINED
                         : StartupDecision.PERSISTENCE_FAILURE;
             }
@@ -352,7 +420,7 @@ public final class BesOtaStateStore {
             }
             if (current.state == State.AUTH_ATTEMPTED) {
                 Snapshot failed = current.asTerminal(TerminalStatus.FAILURE, "interrupted");
-                if (!putLocked(failed)) {
+                if (!putLocked("fail_interrupted_on_startup", current, failed)) {
                     return StartupDecision.PERSISTENCE_FAILURE;
                 }
                 return boot.equals(current.authorizationBootId)
@@ -444,34 +512,87 @@ public final class BesOtaStateStore {
         }
     }
 
-    private boolean putLocked(Snapshot snapshot) {
-        boolean committed = storage.put(snapshot.toJson().toString());
+    private boolean putLocked(String operation, Snapshot before, Snapshot snapshot) {
+        String encoded = snapshot.toJson().toString();
+        boolean committed = storage.put(encoded);
+        String readback = storage.get();
+        boolean readbackMatches = encoded.equals(readback);
+        logMutation(operation, before, snapshot, committed, readbackMatches);
         if (!committed) {
             persistenceUncertain = true;
             Log.e(TAG, "BES OTA state commit failed; remaining fail-closed for this process");
-        } else {
-            Log.i(
+        } else if (!readbackMatches) {
+            Log.w(
                     TAG,
-                    "Committed BES OTA state="
-                            + snapshot.state
-                            + " owner="
-                            + snapshot.ownerSessionId
-                            + " target="
-                            + snapshot.targetVersion
-                            + (snapshot.terminalCode != null
-                                    ? " terminal=" + snapshot.terminalCode
-                                    : ""));
+                    diagnosticPrefix(operation)
+                            + " durable state readback differs immediately after successful commit");
         }
         return committed;
     }
 
-    private boolean removeLocked() {
+    private boolean removeLocked(String operation, Snapshot before) {
         boolean committed = storage.remove();
+        boolean readbackRemoved = storage.get() == null;
+        Log.i(
+                TAG,
+                diagnosticPrefix(operation)
+                        + " before={"
+                        + before.toDiagnosticString()
+                        + "} committed="
+                        + committed
+                        + " readback_removed="
+                        + readbackRemoved);
         if (!committed) {
             persistenceUncertain = true;
             Log.e(TAG, "BES OTA state retirement failed; remaining fail-closed");
         }
         return committed;
+    }
+
+    private void logMutation(
+            String operation,
+            Snapshot before,
+            Snapshot after,
+            boolean committed,
+            boolean readbackMatches) {
+        Log.i(
+                TAG,
+                diagnosticPrefix(operation)
+                        + " before={"
+                        + before.toDiagnosticString()
+                        + "} after={"
+                        + after.toDiagnosticString()
+                        + "} committed="
+                        + committed
+                        + " readback_match="
+                        + readbackMatches);
+    }
+
+    private void logDecision(String operation, String details, Snapshot snapshot) {
+        Log.i(
+                TAG,
+                diagnosticPrefix(operation)
+                        + (details == null || details.isEmpty() ? "" : " " + details)
+                        + " snapshot={"
+                        + snapshot.toDiagnosticString()
+                        + "}");
+    }
+
+    private String diagnosticPrefix(String operation) {
+        return "BES_OTA_DIAG op="
+                + operation
+                + " pid="
+                + Process.myPid()
+                + " thread="
+                + Thread.currentThread().getName()
+                + " elapsed_ms="
+                + SystemClock.elapsedRealtime()
+                + " live_boot="
+                + diagnosticValue(currentBootId());
+    }
+
+    private static String diagnosticValue(String value) {
+        return value == null ? "-" : value;
     }
 
     private static TransitionResult terminalOrRejected(Snapshot snapshot) {
@@ -801,6 +922,32 @@ public final class BesOtaStateStore {
 
         public String getTerminalCode() {
             return terminalCode;
+        }
+
+        /** Stable, non-secret summary for correlating OTA transitions across process and boot. */
+        public String toDiagnosticString() {
+            if (isIdle()) {
+                return "state=IDLE";
+            }
+            if (isCorrupt()) {
+                return "state=CORRUPT reason=" + diagnosticValue(corruption);
+            }
+            return "state="
+                    + state
+                    + " owner="
+                    + diagnosticValue(ownerSessionId)
+                    + " auth_boot="
+                    + diagnosticValue(authorizationBootId)
+                    + " verify_boot="
+                    + diagnosticValue(verificationBootId)
+                    + " target="
+                    + diagnosticValue(targetVersion)
+                    + " terminal_status="
+                    + diagnosticValue(terminalStatus == null ? null : terminalStatus.name())
+                    + " terminal_code="
+                    + diagnosticValue(terminalCode)
+                    + " updated_at_ms="
+                    + updatedAtMs;
         }
     }
 }

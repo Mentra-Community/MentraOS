@@ -1500,6 +1500,13 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
             }
         } else if (msg.cmd == BesProtocolConstants.RCMD_SEND_FINISH) {
             if (msg.len == 1 && msg.body != null && msg.body[0] == 1) {
+                Log.i(
+                        TAG,
+                        "BES_OTA_DIAG apply_boundary=before_persist owner="
+                                + activeOwnerSessionId
+                                + " snapshot={"
+                                + stateStore.read().toDiagnosticString()
+                                + "}");
                 BesOtaStateStore.TransitionResult applyPending =
                         stateStore.markApplyPending(activeOwnerSessionId);
                 if (applyPending != BesOtaStateStore.TransitionResult.APPLIED) {
@@ -1509,6 +1516,15 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
                     return;
                 }
                 byte[] data = SCmd_OtaApply();
+                Log.i(
+                        TAG,
+                        "BES_OTA_DIAG apply_boundary=before_uart_write owner="
+                                + activeOwnerSessionId
+                                + " persist_result="
+                                + applyPending
+                                + " snapshot={"
+                                + stateStore.read().toDiagnosticString()
+                                + "}");
                 Log.d(
                         TAG,
                         "Sending OtaApply command, data="
@@ -1517,6 +1533,15 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
                                         : "null"));
                 armApplyWaitLocked();
                 boolean sent = send(data);
+                Log.i(
+                        TAG,
+                        "BES_OTA_DIAG apply_boundary=after_uart_write owner="
+                                + activeOwnerSessionId
+                                + " write_accepted="
+                                + sent
+                                + " snapshot={"
+                                + stateStore.read().toDiagnosticString()
+                                + "}");
                 if (!sent) {
                     // APPLY_PENDING was committed first. A local write failure is ambiguous, so
                     // retrying 0x92 could apply twice; retain the record and wait for reboot.
@@ -1553,6 +1578,15 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
                 cleanup();
             }
         } else if (msg.cmd == BesProtocolConstants.RCMD_APPLY) {
+            Log.i(
+                    TAG,
+                    "BES_OTA_DIAG apply_ack len="
+                            + msg.len
+                            + " accepted="
+                            + (msg.len == 1 && msg.body != null && msg.body[0] == 1)
+                            + " snapshot={"
+                            + stateStore.read().toDiagnosticString()
+                            + "}");
             if (msg.len == 1 && msg.body != null && msg.body[0] == 1) {
                 Log.i(TAG, "BES accepted apply; awaiting reboot and exact version verification");
                 releaseAfterApplyAcknowledgedLocked();

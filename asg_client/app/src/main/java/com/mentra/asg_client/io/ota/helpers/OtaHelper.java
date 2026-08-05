@@ -291,9 +291,17 @@ public class OtaHelper {
     public boolean sendAuthoritativeBesStatusToPhone() {
         JSONObject status = getAuthoritativeBesStatus();
         if (status == null) {
+            Log.i(TAG, "BES_OTA_DIAG phone_projection=absent");
             return false;
         }
-        if (phoneConnectionProvider != null && isPhoneConnected()) {
+        boolean connected = phoneConnectionProvider != null && isPhoneConnected();
+        Log.i(
+                TAG,
+                "BES_OTA_DIAG phone_projection=durable connected="
+                        + connected
+                        + " status="
+                        + status);
+        if (connected) {
             phoneConnectionProvider.sendOtaStatus(status);
         }
         return true;

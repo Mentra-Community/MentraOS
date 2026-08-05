@@ -2,7 +2,6 @@ package com.mentra.asg_client.io.bluetooth.managers;
 
 import android.content.Context;
 import android.util.Log;
-
 import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.bes.BesOtaStateStore;
 import com.mentra.asg_client.io.bes.BesOtaUartListener;
@@ -28,10 +27,6 @@ import com.mentra.asg_client.service.core.processors.ChunkedMessageProtocolStrat
 import com.mentra.asg_client.service.utils.SysProp;
 import com.mentra.asg_client.settings.AsgSettings;
 import com.mentra.asg_client.utils.WakeLockManager;
-
-import org.greenrobot.eventbus.EventBus;
-import org.json.JSONObject;
-
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -44,6 +39,8 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import org.greenrobot.eventbus.EventBus;
+import org.json.JSONObject;
 
 /**
  * Implementation of IBluetoothManager for K900 devices. Uses the K900's serial port to communicate
@@ -249,7 +246,15 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         currentBootId = besOtaStateStore.currentBootId();
         BesOtaStateStore.StartupDecision startupDecision =
                 besOtaStateStore.reconcileStartup(currentBootId);
-        Log.i(TAG, "BES OTA startup reconciliation: " + startupDecision);
+        Log.i(
+                TAG,
+                "BES_OTA_DIAG startup_result="
+                        + startupDecision
+                        + " current_boot="
+                        + currentBootId
+                        + " snapshot={"
+                        + besOtaStateStore.read().toDiagnosticString()
+                        + "}");
 
         // Create the notification manager
         notificationManager = new DebugNotificationManager(context);
@@ -1185,6 +1190,11 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
     private void onBesRawOtaModeProvenAfterRestart() {
         BesOtaStateStore.Snapshot snapshot = besOtaStateStore.read();
+        Log.e(
+                TAG,
+                "BES_OTA_DIAG recovery_result=raw_mode_proven snapshot={"
+                        + snapshot.toDiagnosticString()
+                        + "}");
         if (snapshot.isValid() && snapshot.getState() != BesOtaStateStore.State.TERMINAL) {
             BesOtaStateStore.TransitionResult result =
                     besOtaStateStore.fail(snapshot.getOwnerSessionId(), "raw_mode_after_restart");
@@ -1195,6 +1205,15 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
     private void onBesRecoveryFailed() {
         BesOtaStateStore.Snapshot snapshot = besOtaStateStore.read();
+        Log.e(
+                TAG,
+                "BES_OTA_DIAG recovery_result=timeout current_boot="
+                        + currentBootId
+                        + " framed_path="
+                        + framedPathProven
+                        + " snapshot={"
+                        + snapshot.toDiagnosticString()
+                        + "}");
         if (snapshot.isValid() && snapshot.getState() == BesOtaStateStore.State.APPLY_PENDING) {
             BesOtaStateStore.TransitionResult result =
                     besOtaStateStore.fail(snapshot.getOwnerSessionId(), "verification_timeout");
@@ -1543,14 +1562,42 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
     private void reconcileBesOtaVersionProof(String actualVersion) {
         BesOtaStateStore.Snapshot snapshot = besOtaStateStore.read();
-        if (!snapshot.isValid()
-                || snapshot.getState() != BesOtaStateStore.State.APPLY_PENDING
-                || currentBootId == null
-                || currentBootId.equals(snapshot.getAuthorizationBootId())) {
+        String skipReason = null;
+        if (!snapshot.isValid()) {
+            skipReason = "invalid_or_idle_state";
+        } else if (snapshot.getState() != BesOtaStateStore.State.APPLY_PENDING) {
+            skipReason = "state_not_apply_pending";
+        } else if (currentBootId == null) {
+            skipReason = "missing_current_boot";
+        } else if (currentBootId.equals(snapshot.getAuthorizationBootId())) {
+            skipReason = "still_authorization_boot";
+        }
+        Log.i(
+                TAG,
+                "BES_OTA_DIAG version_proof actual="
+                        + actualVersion
+                        + " current_boot="
+                        + currentBootId
+                        + " disposition="
+                        + (skipReason == null ? "candidate" : "ignored")
+                        + (skipReason == null ? "" : " reason=" + skipReason)
+                        + " snapshot={"
+                        + snapshot.toDiagnosticString()
+                        + "}");
+        if (skipReason != null) {
             return;
         }
         BesOtaStateStore.VerificationDecision verification =
                 besOtaStateStore.claimOrResumeVerificationBoot(currentBootId);
+        Log.i(
+                TAG,
+                "BES_OTA_DIAG version_proof_claim result="
+                        + verification
+                        + " actual="
+                        + actualVersion
+                        + " snapshot={"
+                        + besOtaStateStore.read().toDiagnosticString()
+                        + "}");
         if (verification != BesOtaStateStore.VerificationDecision.CLAIMED
                 && verification != BesOtaStateStore.VerificationDecision.RESUME) {
             Log.e(TAG, "BES post-apply verification boot rejected: " + verification);
@@ -1559,6 +1606,15 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         BesOtaStateStore.TransitionResult completed =
                 besOtaStateStore.completeVerified(
                         snapshot.getOwnerSessionId(), currentBootId, actualVersion);
+        Log.i(
+                TAG,
+                "BES_OTA_DIAG version_proof_complete result="
+                        + completed
+                        + " actual="
+                        + actualVersion
+                        + " snapshot={"
+                        + besOtaStateStore.read().toDiagnosticString()
+                        + "}");
         if (completed != BesOtaStateStore.TransitionResult.APPLIED) {
             Log.e(TAG, "Could not commit BES post-apply version proof: " + completed);
             return;
