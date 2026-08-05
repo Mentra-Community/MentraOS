@@ -677,6 +677,42 @@ public class BesUartTransportCoordinatorTest {
     }
 
     @Test
+    public void validFrameRearm_rejectsAlreadyRunningHealthProbeTimeout() throws Exception {
+        replaceCoordinatorWithHealthTimings(200, 50);
+        establishFastLink();
+        host.controlCommands.clear();
+        host.openAttempts.clear();
+
+        awaitControlCommandCount("cs_syvr", 1, 500);
+        SerialSession session = coordinator.getSerialSession();
+
+        assertThat(
+                        coordinator.runForCurrentSerialSession(
+                                session,
+                                () -> {
+                                    try {
+                                        // Let the probe timeout start and block on the coordinator
+                                        // monitor. onValidFrame is reentrant here, so it can rearm
+                                        // health before that already-running callback gets the
+                                        // lock.
+                                        Thread.sleep(100);
+                                    } catch (InterruptedException e) {
+                                        Thread.currentThread().interrupt();
+                                        throw new AssertionError(e);
+                                    }
+                                    coordinator.onValidFrame(session);
+                                }))
+                .isTrue();
+
+        // The stale callback runs first on the single scheduled executor. The newly armed idle
+        // timer is still 200 ms away, leaving this assertion specific to the stale callback.
+        Thread.sleep(50);
+        assertThat(coordinator.getState()).isEqualTo(BesUartTransportCoordinator.State.READY_FAST);
+        assertThat(host.openAttempts).isEmpty();
+        assertThat(coordinator.getSerialSession()).isSameAs(session);
+    }
+
+    @Test
     public void idleFastLink_silenceStartsPhysicalRecoveryAfterProbe() throws Exception {
         replaceCoordinatorWithHealthTimings(20, 50);
         establishFastLink();
