@@ -29,6 +29,8 @@ import {compareVersions} from "./OtaUpdateCheckService"
 import {deriveDisplayState, type DisplayState} from "./otaDisplayState"
 import {
   BES_CONTINUE_LOCKOUT_MS,
+  BES_VERSION_VERIFY_INTERVAL_MS,
+  BES_VERSION_VERIFY_MAX_ATTEMPTS,
   DOWNLOAD_STUCK_TIMEOUT_MS,
   GLOBAL_OTA_TIMEOUT_MS,
   LEGACY_APK_COMPLETION_SETTLE_MS,
@@ -209,6 +211,8 @@ class OtaInstallCoordinator {
   private progressTimeout: ReturnType<typeof setTimeout> | null = null
   private pingInterval: ReturnType<typeof setInterval> | null = null
   private queryReplyTimeout: ReturnType<typeof setTimeout> | null = null
+  private besVersionVerificationTimer: ReturnType<typeof setTimeout> | null = null
+  private besVersionVerificationAttempts = 0
   private continueLockoutTimer: ReturnType<typeof setTimeout> | null = null
   private legacyApkSettleTimer: ReturnType<typeof setTimeout> | null = null
   private mtkStallDetectTimer: ReturnType<typeof setTimeout> | null = null
@@ -490,6 +494,7 @@ class OtaInstallCoordinator {
 
   /** Reset only the reboot lifecycle that belongs to one install attempt. */
   private resetBesRestartAttempt(): void {
+    this.clearBesVersionVerificationTimer()
     this.besRestartExpected = false
     this.besRestartDisconnectObserved = false
     this.besRestartRecovery = null
@@ -944,9 +949,7 @@ class OtaInstallCoordinator {
     if (this.besRestartDisconnectObserved) {
       console.log(`[OTA_PROGRESS] ${label}: BES reboot reconnect observed — no ota_query_status`)
       if (this.besRestartRecovery === "awaiting") {
-        void BluetoothSdk.requestVersionInfo().catch((error) => {
-          console.warn("[OTA_PROGRESS] BES reconnect version request failed", error)
-        })
+        this.startBesVersionVerification()
       }
       return true
     }
@@ -1128,6 +1131,45 @@ class OtaInstallCoordinator {
     this.setErrorMsg("")
     this.besRestartRecovery = "complete"
     this.emitInternalChange()
+  }
+
+  /**
+   * Ask for fresh version_info immediately after the BES reboot, then every five
+   * seconds for at most one minute. A resolved request only confirms delivery;
+   * reconciliation still waits for the store to receive the target BES version.
+   */
+  private startBesVersionVerification(): void {
+    if (this.errorMsg || this.besRestartRecovery !== "awaiting" || this.besVersionVerificationTimer) return
+    this.besVersionVerificationAttempts = 0
+    this.runBesVersionVerificationAttempt()
+  }
+
+  private runBesVersionVerificationAttempt(): void {
+    if (this.besRestartRecovery !== "awaiting") {
+      this.clearBesVersionVerificationTimer()
+      return
+    }
+
+    if (this.besVersionVerificationAttempts >= BES_VERSION_VERIFY_MAX_ATTEMPTS) {
+      console.log(
+        `[OTA_PROGRESS] BES version still unverified after ${BES_VERSION_VERIFY_MAX_ATTEMPTS} attempts, failing`,
+      )
+      this.clearBesVersionVerificationTimer()
+      this.setErrorMsg(OtaProgressMessages.besVersionVerificationFailed)
+      return
+    }
+
+    this.besVersionVerificationAttempts += 1
+    if (isGlassesConnected(useGlassesStore.getState().connection)) {
+      void BluetoothSdk.requestVersionInfo().catch((error) => {
+        console.warn("[OTA_PROGRESS] BES reconnect version request failed; retrying", error)
+      })
+    }
+
+    this.besVersionVerificationTimer = setTimeout(() => {
+      this.besVersionVerificationTimer = null
+      this.runBesVersionVerificationAttempt()
+    }, BES_VERSION_VERIFY_INTERVAL_MS)
   }
 
   /**
@@ -1460,6 +1502,14 @@ class OtaInstallCoordinator {
     }
   }
 
+  private clearBesVersionVerificationTimer(): void {
+    if (this.besVersionVerificationTimer) {
+      clearTimeout(this.besVersionVerificationTimer)
+      this.besVersionVerificationTimer = null
+    }
+    this.besVersionVerificationAttempts = 0
+  }
+
   private clearContinueLockoutTimer(): void {
     if (this.continueLockoutTimer) {
       clearTimeout(this.continueLockoutTimer)
@@ -1497,6 +1547,7 @@ class OtaInstallCoordinator {
     this.clearStuckTimeout()
     this.clearProgressTimeout()
     this.clearQueryReplyTimeout()
+    this.clearBesVersionVerificationTimer()
   }
 
   private clearAllOtaTimers(): void {
