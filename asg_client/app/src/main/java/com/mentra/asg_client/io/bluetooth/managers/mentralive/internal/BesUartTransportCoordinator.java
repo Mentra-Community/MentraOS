@@ -143,6 +143,8 @@ public final class BesUartTransportCoordinator {
     private static final int[] RECOVERY_BAUDS = {
         AsgConstants.UART_FAST_BAUD, AsgConstants.UART_RENDEZVOUS_BAUD
     };
+    private static final int SAFETY_REOPEN_MAX_ATTEMPTS = 2;
+    private static final long SAFETY_REOPEN_RETRY_DELAY_MS = 200;
 
     private final Object monitor = new Object();
     private final Host host;
@@ -445,11 +447,11 @@ public final class BesUartTransportCoordinator {
             otaRawRouting = true;
             long reopenPhase = ++phaseGeneration;
             Log.w(TAG, "Safety recovery trying alternate UART baud " + alternateBaud);
-            ioLane.submit(() -> performSafetyRecoveryReopen(reopenPhase, alternateBaud));
+            ioLane.submit(() -> performSafetyRecoveryReopen(reopenPhase, alternateBaud, 1));
         }
     }
 
-    private void performSafetyRecoveryReopen(long reopenPhase, int baud) {
+    private void performSafetyRecoveryReopen(long reopenPhase, int baud, int attempt) {
         synchronized (monitor) {
             if (reopenPhase != phaseGeneration || state != State.SAFETY_RECOVERING) {
                 return;
@@ -458,20 +460,49 @@ public final class BesUartTransportCoordinator {
 
         SerialSession opened = replacePhysicalSession(baud);
         boolean closeOpened = false;
+        boolean retry = false;
         synchronized (monitor) {
             if (reopenPhase != phaseGeneration || state != State.SAFETY_RECOVERING) {
                 closeOpened = opened != null;
             } else if (!adoptAndStartSessionLocked(opened)) {
                 closeOpened = opened != null;
-                safetyState.onRecoveryFailed();
-                quarantineCurrentSessionLocked();
+                if (attempt < SAFETY_REOPEN_MAX_ATTEMPTS) {
+                    retry = true;
+                    Log.w(
+                            TAG,
+                            "Safety UART reopen attempt "
+                                    + attempt
+                                    + "/"
+                                    + SAFETY_REOPEN_MAX_ATTEMPTS
+                                    + " failed at "
+                                    + baud
+                                    + "; retrying local descriptor only");
+                } else {
+                    safetyState.onRecoveryFailed();
+                    quarantineCurrentSessionLocked();
+                }
             } else {
                 armSafetyRecoveryProbesLocked();
-                Log.w(TAG, "Safety recovery reopened UART at alternate baud " + baud);
+                Log.w(
+                        TAG,
+                        "Safety recovery reopened UART at alternate baud "
+                                + baud
+                                + " on attempt "
+                                + attempt);
             }
         }
         if (closeOpened) {
             host.closeSession(opened);
+        }
+        if (retry && !executor.isShutdown()) {
+            executor.schedule(
+                    () ->
+                            ioLane.submit(
+                                    () ->
+                                            performSafetyRecoveryReopen(
+                                                    reopenPhase, baud, attempt + 1)),
+                    SAFETY_REOPEN_RETRY_DELAY_MS,
+                    TimeUnit.MILLISECONDS);
         }
     }
 
