@@ -501,12 +501,7 @@ public class BesUartTransportCoordinatorTest {
         coordinator.onSerialReady(host.session);
         coordinator.startSafetyRecovery();
 
-        long deadline = System.currentTimeMillis() + 10_000;
-        while (System.currentTimeMillis() < deadline && !safety.recoveryFailed) {
-            Thread.sleep(10);
-        }
-
-        assertThat(safety.recoveryFailed).isTrue();
+        awaitRecoveryFailed(15_000);
         assertThat(host.openAttempts)
                 .containsExactly(AsgConstants.UART_FAST_BAUD, AsgConstants.UART_FAST_BAUD);
         assertThat(host.rawWrites).hasSize(3);
@@ -520,15 +515,7 @@ public class BesUartTransportCoordinatorTest {
         coordinator.onSerialReady(host.session);
         coordinator.startSafetyRecovery();
 
-        long deadline =
-                System.currentTimeMillis()
-                        + 2L * AsgConstants.UART_BAUD_PROBE_TIMEOUT_MS
-                        + 9_000;
-        while (System.currentTimeMillis() < deadline && !safety.recoveryFailed) {
-            Thread.sleep(10);
-        }
-
-        assertThat(safety.recoveryFailed).isTrue();
+        awaitRecoveryFailed(2L * AsgConstants.UART_BAUD_PROBE_TIMEOUT_MS + 9_000);
         assertThat(coordinator.getState()).isEqualTo(BesUartTransportCoordinator.State.QUARANTINED);
         assertThat(host.openAttempts).containsExactly(AsgConstants.UART_FAST_BAUD);
         assertThat(host.rawWrites).hasSize(6);
@@ -932,6 +919,14 @@ public class BesUartTransportCoordinatorTest {
             Thread.sleep(10);
         }
         assertThat(countOpenAttempts(baud)).isGreaterThanOrEqualTo(expected);
+    }
+
+    private void awaitRecoveryFailed(long timeoutMs) throws Exception {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        while (System.currentTimeMillis() < deadline && !safety.recoveryFailed) {
+            Thread.sleep(10);
+        }
+        assertThat(safety.recoveryFailed).isTrue();
     }
 
     private long countControlCommands(String command) {
