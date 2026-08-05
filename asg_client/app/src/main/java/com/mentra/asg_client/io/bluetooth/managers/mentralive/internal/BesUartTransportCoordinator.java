@@ -497,10 +497,12 @@ public final class BesUartTransportCoordinator {
             int requestedBaud = baudTransitionTarget;
             if (status != 0 || requestedBaud == 0 || acknowledgedBaud != requestedBaud) {
                 fastBaudSuppressed = true;
-                state =
-                        host.currentBaud() == AsgConstants.UART_FAST_BAUD
-                                ? State.READY_FAST
-                                : State.READY_RENDEZVOUS;
+                if (host.currentBaud() == AsgConstants.UART_FAST_BAUD) {
+                    state = State.READY_FAST;
+                    scheduleHealthCheckLocked();
+                } else {
+                    state = State.READY_RENDEZVOUS;
+                }
                 baudTransitionTarget = 0;
                 monitor.notifyAll();
                 Log.w(

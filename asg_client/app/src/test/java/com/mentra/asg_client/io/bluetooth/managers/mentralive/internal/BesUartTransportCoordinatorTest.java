@@ -817,6 +817,7 @@ public class BesUartTransportCoordinatorTest {
                                 0, AsgConstants.UART_FAST_BAUD, coordinator.getSerialSession()))
                 .isTrue();
         awaitState(BesUartTransportCoordinator.State.VERIFYING_FAST);
+        awaitSerialSessionAtBaud(AsgConstants.UART_FAST_BAUD);
         assertThat(systemVersion("17.26.7.23"))
                 .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
     }
