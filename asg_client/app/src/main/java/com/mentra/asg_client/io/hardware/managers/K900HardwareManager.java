@@ -29,7 +29,7 @@ public class K900HardwareManager extends BaseHardwareManager {
 
     // Battery cache settings
     private static final long BATTERY_CACHE_DURATION_MS = 2 * 60 * 1000; // 2 minutes
-    private static final long BATTERY_QUERY_TIMEOUT_MS = 50; // 50ms timeout
+    private static final long BATTERY_QUERY_TIMEOUT_MS = 250;
 
     private K900LedController ledController;
     private K900RgbLedController rgbLedController;
@@ -42,6 +42,7 @@ public class K900HardwareManager extends BaseHardwareManager {
     private long lastBatteryQueryTime = 0;
     private CountDownLatch batteryResponseLatch;
     private final Object batteryLock = new Object();
+    private final Object batteryQueryLock = new Object();
 
     /**
      * Create a new K900HardwareManager
@@ -399,56 +400,50 @@ public class K900HardwareManager extends BaseHardwareManager {
 
     @Override
     public int getBatteryLevel() {
-        synchronized (batteryLock) {
-            long now = System.currentTimeMillis();
-
-            // Return cached value if still fresh
-            if (cachedBatteryLevel >= 0
-                    && (now - lastBatteryQueryTime) < BATTERY_CACHE_DURATION_MS) {
-                Log.d(TAG, "🔋 Returning cached battery level: " + cachedBatteryLevel + "%");
-                return cachedBatteryLevel;
+        synchronized (batteryQueryLock) {
+            synchronized (batteryLock) {
+                if (isBatteryCacheFreshLocked()) {
+                    Log.d(TAG, "🔋 Returning cached battery level: " + cachedBatteryLevel + "%");
+                    return cachedBatteryLevel;
+                }
             }
 
-            // Query BES for fresh battery status
             if (!queryBatteryFromBes()) {
-                Log.w(
-                        TAG,
-                        "🔋 Battery query failed, returning cached value: " + cachedBatteryLevel);
+                Log.w(TAG, "🔋 Battery query failed; returning the last cached value");
+            }
+            synchronized (batteryLock) {
                 return cachedBatteryLevel;
             }
-
-            return cachedBatteryLevel;
         }
     }
 
     @Override
     public boolean getChargingStatus() {
-        synchronized (batteryLock) {
-            long now = System.currentTimeMillis();
-
-            // Return cached value if still fresh
-            if (cachedBatteryLevel >= 0
-                    && (now - lastBatteryQueryTime) < BATTERY_CACHE_DURATION_MS) {
-                Log.d(TAG, "🔋 Returning cached charging status: " + cachedChargingStatus);
-                return cachedChargingStatus;
+        synchronized (batteryQueryLock) {
+            synchronized (batteryLock) {
+                if (isBatteryCacheFreshLocked()) {
+                    Log.d(TAG, "🔋 Returning cached charging status: " + cachedChargingStatus);
+                    return cachedChargingStatus;
+                }
             }
 
-            // Query BES for fresh battery status
             if (!queryBatteryFromBes()) {
-                Log.w(
-                        TAG,
-                        "🔋 Battery query failed, returning cached charging status: "
-                                + cachedChargingStatus);
+                Log.w(TAG, "🔋 Battery query failed; returning the last cached charging status");
+            }
+            synchronized (batteryLock) {
                 return cachedChargingStatus;
             }
-
-            return cachedChargingStatus;
         }
     }
 
+    private boolean isBatteryCacheFreshLocked() {
+        return cachedBatteryLevel >= 0
+                && (System.currentTimeMillis() - lastBatteryQueryTime) < BATTERY_CACHE_DURATION_MS;
+    }
+
     /**
-     * Query battery status from BES chipset. Sends mh_batv command and waits up to 50ms for hm_batv
-     * response.
+     * Query battery status from BES chipset. The caller must not be the UART reader: that reader
+     * has to remain free to deliver the matching hm_batv response.
      *
      * @return true if query succeeded and cache was updated, false otherwise
      */
@@ -458,9 +453,11 @@ public class K900HardwareManager extends BaseHardwareManager {
             return false;
         }
 
+        CountDownLatch responseLatch = new CountDownLatch(1);
         try {
-            // Create latch for waiting on response
-            batteryResponseLatch = new CountDownLatch(1);
+            synchronized (batteryLock) {
+                batteryResponseLatch = responseLatch;
+            }
 
             // Build K900 protocol command for battery query
             JSONObject k900Command = new JSONObject();
@@ -480,8 +477,7 @@ public class K900HardwareManager extends BaseHardwareManager {
             }
 
             // Wait for response with timeout
-            boolean received =
-                    batteryResponseLatch.await(BATTERY_QUERY_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+            boolean received = responseLatch.await(BATTERY_QUERY_TIMEOUT_MS, TimeUnit.MILLISECONDS);
             if (received) {
                 Log.d(TAG, "🔋 Battery query response received within timeout");
                 return true;
@@ -497,6 +493,12 @@ public class K900HardwareManager extends BaseHardwareManager {
             Log.e(TAG, "🔋 Battery query interrupted", e);
             Thread.currentThread().interrupt();
             return false;
+        } finally {
+            synchronized (batteryLock) {
+                if (batteryResponseLatch == responseLatch) {
+                    batteryResponseLatch = null;
+                }
+            }
         }
     }
 

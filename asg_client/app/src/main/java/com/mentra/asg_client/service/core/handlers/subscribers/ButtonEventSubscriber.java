@@ -17,6 +17,8 @@ import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
 import com.mentra.asg_client.settings.VideoSettings;
 import com.mentra.asg_client.utils.WakeLockManager;
+import java.util.concurrent.Executor;
+import java.util.concurrent.RejectedExecutionException;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -33,14 +35,17 @@ public final class ButtonEventSubscriber implements IPeripheralBus.McuEventListe
     private final AsgClientServiceManager serviceManager;
     private final IHardwareManager hardwareManager;
     private final IStateManager stateManager;
+    private final Executor batteryAnnouncementExecutor;
 
     public ButtonEventSubscriber(
             AsgClientServiceManager serviceManager,
             IHardwareManager hardwareManager,
-            IStateManager stateManager) {
+            IStateManager stateManager,
+            Executor batteryAnnouncementExecutor) {
         this.serviceManager = serviceManager;
         this.hardwareManager = hardwareManager;
         this.stateManager = stateManager;
+        this.batteryAnnouncementExecutor = batteryAnnouncementExecutor;
     }
 
     @Override
@@ -59,7 +64,13 @@ public final class ButtonEventSubscriber implements IPeripheralBus.McuEventListe
                 handleConfigurableButtonPress(true); // true = long press
                 break;
             case POWER_SHORT_PRESS:
-                handlePowerButtonShortPress();
+                // UART callbacks are synchronous. A cold battery read sends mh_batv and waits for
+                // hm_batv, so it must run away from the one reader that delivers that response.
+                try {
+                    batteryAnnouncementExecutor.execute(this::handlePowerButtonShortPress);
+                } catch (RejectedExecutionException e) {
+                    Log.w(TAG, "Battery announcement ignored during service shutdown");
+                }
                 break;
             default:
                 break;

@@ -42,6 +42,8 @@ import com.mentra.asg_client.service.system.managers.ConfigurationManager;
 import com.mentra.asg_client.service.system.managers.ServiceLifecycleManager;
 import com.mentra.asg_client.service.system.managers.StateManager;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /** Wires core service components (replaces the former {@link ServiceContainer}). */
 public final class ServiceInitializer {
@@ -57,6 +59,7 @@ public final class ServiceInitializer {
     private final CommandProcessor commandProcessor;
     private final AsgNotificationManager notificationManager;
     private final IResponseBuilder responseBuilder;
+    private final ExecutorService batteryAnnouncementExecutor;
 
     public ServiceInitializer(
             @NonNull AsgClientService service,
@@ -84,6 +87,9 @@ public final class ServiceInitializer {
         serviceManager.setStateManager(this.stateManager);
 
         this.streamingManager = new MediaManager(context, serviceManager);
+        this.batteryAnnouncementExecutor =
+                Executors.newSingleThreadExecutor(
+                        runnable -> new Thread(runnable, "battery-announcement"));
 
         RgbLedCommandHandler rgbLedHandler =
                 new RgbLedCommandHandler(serviceManager, hardwareManager);
@@ -100,7 +106,11 @@ public final class ServiceInitializer {
         peripheralBus.subscribe(
                 new BatteryEventSubscriber(hardwareManager, stateManager, serviceManager));
         peripheralBus.subscribe(
-                new ButtonEventSubscriber(serviceManager, hardwareManager, stateManager));
+                new ButtonEventSubscriber(
+                        serviceManager,
+                        hardwareManager,
+                        stateManager,
+                        batteryAnnouncementExecutor));
         peripheralBus.subscribe(new ShutdownEventSubscriber(serviceManager, context));
         peripheralBus.subscribe(new FactoryResetEventSubscriber(serviceManager, context, otaHelper));
         peripheralBus.subscribe(new BesVersionEventSubscriber(serviceManager));
@@ -141,6 +151,7 @@ public final class ServiceInitializer {
 
     public void cleanup() {
         Log.d(TAG, "Cleaning up service graph");
+        batteryAnnouncementExecutor.shutdownNow();
         streamingManager.cleanup();
         lifecycleManager.cleanup();
         Log.d(TAG, "Service graph cleanup completed");

@@ -628,6 +628,36 @@ public class BesUartTransportCoordinatorTest {
     }
 
     @Test
+    public void idleFastLink_probesCurrentSessionWithoutReopening() throws Exception {
+        replaceCoordinatorWithHealthTimings(200, 100);
+        establishFastLink();
+        host.controlCommands.clear();
+        host.openAttempts.clear();
+
+        awaitControlCommandCount("cs_syvr", 1, 500);
+
+        assertThat(host.openAttempts).isEmpty();
+        assertThat(systemVersion("17.26.7.23"))
+                .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
+        Thread.sleep(150);
+        assertThat(host.openAttempts).isEmpty();
+    }
+
+    @Test
+    public void idleFastLink_silenceStartsPhysicalRecoveryAfterProbe() throws Exception {
+        replaceCoordinatorWithHealthTimings(20, 50);
+        establishFastLink();
+        host.controlCommands.clear();
+        host.openAttempts.clear();
+
+        awaitControlCommandCount("cs_syvr", 1, 500);
+        assertThat(host.openAttempts).isEmpty();
+
+        awaitOpenAttemptCount(AsgConstants.UART_FAST_BAUD, 1);
+        assertThat(coordinator.getState()).isEqualTo(BesUartTransportCoordinator.State.RECOVERING);
+    }
+
+    @Test
     public void validFrame_provesBaudWithoutCancellingVersionDiscovery() throws Exception {
         coordinator.onSerialReady(host.session);
 
@@ -907,6 +937,11 @@ public class BesUartTransportCoordinatorTest {
 
     private BesUartTransportCoordinator.SystemVersionResult systemVersion(String version) {
         return coordinator.onSystemVersion(version, coordinator.getSerialSession(), null);
+    }
+
+    private void replaceCoordinatorWithHealthTimings(long idleMs, long timeoutMs) {
+        coordinator.shutdown();
+        coordinator = new BesUartTransportCoordinator(host, safety, idleMs, timeoutMs);
     }
 
     private static final class FakeHost implements BesUartTransportCoordinator.Host {

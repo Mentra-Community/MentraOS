@@ -1,5 +1,6 @@
 package com.mentra.asg_client.service.core.handlers.subscribers;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
@@ -7,6 +8,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.mentra.asg_client.audio.AudioAssets;
 import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
 import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.LinkStateMachine;
@@ -16,6 +18,8 @@ import com.mentra.asg_client.io.peripheral.events.ButtonEvent;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
 import com.mentra.asg_client.settings.AsgSettings;
+import java.util.ArrayDeque;
+import java.util.Queue;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -35,6 +39,8 @@ public class ButtonEventSubscriberTest {
     private MediaCaptureService captureService;
     private K900BluetoothManager bluetoothManager;
     private LinkStateMachine linkState;
+    private IHardwareManager hardwareManager;
+    private Queue<Runnable> batteryTasks;
     private ButtonEventSubscriber subscriber;
 
     @Before
@@ -42,6 +48,8 @@ public class ButtonEventSubscriberTest {
         serviceManager = mock(AsgClientServiceManager.class);
         captureService = mock(MediaCaptureService.class);
         bluetoothManager = mock(K900BluetoothManager.class);
+        hardwareManager = mock(IHardwareManager.class);
+        batteryTasks = new ArrayDeque<>();
         AsgSettings asgSettings = mock(AsgSettings.class);
         linkState = new LinkStateMachine();
 
@@ -57,11 +65,32 @@ public class ButtonEventSubscriberTest {
 
         subscriber =
                 new ButtonEventSubscriber(
-                        serviceManager, mock(IHardwareManager.class), mock(IStateManager.class));
+                        serviceManager,
+                        hardwareManager,
+                        mock(IStateManager.class),
+                        batteryTasks::add);
     }
 
     private void shortPress() {
         subscriber.onMcuEvent(new ButtonEvent(ButtonEvent.Type.CAMERA_SHORT_PRESS));
+    }
+
+    private void powerShortPress() {
+        subscriber.onMcuEvent(new ButtonEvent(ButtonEvent.Type.POWER_SHORT_PRESS));
+    }
+
+    @Test
+    public void powerPress_releasesUartCallbackBeforeQueryingBattery() {
+        when(hardwareManager.supportsAudioPlayback()).thenReturn(true);
+        when(hardwareManager.getBatteryLevel()).thenReturn(100);
+
+        powerShortPress();
+
+        verify(hardwareManager, never()).getBatteryLevel();
+        assertThat(batteryTasks).hasSize(1);
+
+        batteryTasks.remove().run();
+        verify(hardwareManager).playAudioAsset(AudioAssets.getBatteryLevelAsset(100));
     }
 
     @Test

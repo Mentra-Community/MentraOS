@@ -147,6 +147,8 @@ public final class BesUartTransportCoordinator {
     private final Object monitor = new Object();
     private final Host host;
     private final SafetyState safetyState;
+    private final long idleHealthProbeMs;
+    private final long healthProbeTimeoutMs;
     private final BesUartIoLane ioLane = new BesUartIoLane();
     private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
     private final ArrayDeque<FutureTask<Boolean>> deferredNormalWrites = new ArrayDeque<>();
@@ -188,14 +190,28 @@ public final class BesUartTransportCoordinator {
     }
 
     public BesUartTransportCoordinator(Host host, SafetyState safetyState) {
+        this(
+                host,
+                safetyState,
+                AsgConstants.UART_HIGH_BAUD_IDLE_PROBE_MS,
+                AsgConstants.UART_BAUD_PROBE_TIMEOUT_MS);
+    }
+
+    BesUartTransportCoordinator(
+            Host host, SafetyState safetyState, long idleHealthProbeMs, long healthProbeTimeoutMs) {
         if (host == null) {
             throw new IllegalArgumentException("host is required");
         }
         if (safetyState == null) {
             throw new IllegalArgumentException("safetyState is required");
         }
+        if (idleHealthProbeMs <= 0 || healthProbeTimeoutMs <= 0) {
+            throw new IllegalArgumentException("health probe timings must be positive");
+        }
         this.host = host;
         this.safetyState = safetyState;
+        this.idleHealthProbeMs = idleHealthProbeMs;
+        this.healthProbeTimeoutMs = healthProbeTimeoutMs;
     }
 
     public State getState() {
@@ -1425,7 +1441,7 @@ public final class BesUartTransportCoordinator {
             healthTimeout =
                     executor.schedule(
                             () -> onHealthTimeout(phase),
-                            AsgConstants.UART_HIGH_BAUD_IDLE_PROBE_MS,
+                            idleHealthProbeMs,
                             TimeUnit.MILLISECONDS);
         }
     }
@@ -1440,7 +1456,28 @@ public final class BesUartTransportCoordinator {
                 scheduleHealthCheckLocked();
                 return;
             }
-            startRecoveryLocked("idle_health_probe");
+            int baud = host.currentBaud();
+            scheduleProbeBurstLocked(phase, baud, 0, 1, 0);
+            healthTimeout =
+                    executor.schedule(
+                            () -> onHealthProbeTimeout(phase),
+                            healthProbeTimeoutMs,
+                            TimeUnit.MILLISECONDS);
+            Log.d(TAG, "Probing idle fast UART session at " + baud);
+        }
+    }
+
+    private void onHealthProbeTimeout(long phase) {
+        synchronized (monitor) {
+            healthTimeout = null;
+            if (phase != phaseGeneration || state != State.READY_FAST) {
+                return;
+            }
+            if (operation != Operation.NONE) {
+                scheduleHealthCheckLocked();
+                return;
+            }
+            startRecoveryLocked("idle_health_probe_timeout");
         }
     }
 
