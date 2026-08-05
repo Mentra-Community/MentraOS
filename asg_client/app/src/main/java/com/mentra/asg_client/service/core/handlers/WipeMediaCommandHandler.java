@@ -28,14 +28,6 @@ import java.util.Set;
  *
  * <p>{@code pairing_finalize} / {@code pairing_abort}: clear the ASG capture barrier so the new
  * (or restored) owner can capture immediately. Ownership-state results remain BES-owned.
- *
- * <p><b>Privacy note:</b> {@link AsgConstants#ENABLE_PAIRING_MEDIA_WIPE} currently defaults to
- * {@code false}, which means ownership-transfer pairing does NOT actually delete the previous
- * owner's gallery media on the glasses. As a direct consequence, a new owner who completes
- * pairing takeover can see the previous owner's photos and videos until a real wipe is
- * performed. This is a deliberate, temporary product state; flipping
- * {@code ENABLE_PAIRING_MEDIA_WIPE} to {@code true} for a production release requires explicit
- * release/privacy signoff, since it changes real on-device deletion behavior for user media.
  */
 public class WipeMediaCommandHandler implements ICommandHandler {
     private static final String TAG = "WipeMediaCommandHandler";
@@ -80,14 +72,6 @@ public class WipeMediaCommandHandler implements ICommandHandler {
 
         try {
             if (!AsgConstants.ENABLE_PAIRING_MEDIA_WIPE) {
-                // PRIVACY NOTE (requires release signoff before shipping ownership transfer):
-                // With ENABLE_PAIRING_MEDIA_WIPE=false, this branch intentionally reports
-                // wipe_media as successful WITHOUT deleting the previous owner's gallery. The
-                // new owner completing pairing takeover is therefore able to see the previous
-                // owner's photos/videos in the gallery/app until a real wipe is performed. Do
-                // not flip this flag to true for a production rollout without an explicit
-                // release/privacy signoff, since doing so changes actual on-device deletion
-                // behavior for user media during ownership transfer.
                 // Keep wipe implementation below; pairing temporarily skips gallery delete.
                 Log.i(TAG, "wipe_media skipped (ENABLE_PAIRING_MEDIA_WIPE=false)"
                         + " transfer_id=" + transferId + " request_id=" + requestId);
