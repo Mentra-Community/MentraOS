@@ -169,16 +169,21 @@ public class BesOtaStateStoreTest {
 
         assertThat(store.prepareForNewSession(BOOT_B, false))
                 .isEqualTo(StartDecision.PATH_PROOF_REQUIRED);
+        ShadowLog.clear();
         assertThat(store.prepareForNewSession(BOOT_B, true)).isEqualTo(StartDecision.ADMIT);
         assertThat(store.read().isIdle()).isTrue();
+        assertThat(logsContain("op=retire_failure_after_path_proof", "after={state=IDLE}"))
+                .isTrue();
     }
 
     @Test
     public void successfulTerminalCanRetireWithoutAnotherBoot() {
         completeSuccessfully();
 
+        ShadowLog.clear();
         assertThat(store.prepareForNewSession(BOOT_B, false)).isEqualTo(StartDecision.ADMIT);
         assertThat(store.read().isIdle()).isTrue();
+        assertThat(logsContain("op=retire_success", "after={state=IDLE}")).isTrue();
     }
 
     @Test

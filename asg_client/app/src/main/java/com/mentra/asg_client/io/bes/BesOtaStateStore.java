@@ -538,6 +538,8 @@ public final class BesOtaStateStore {
                 diagnosticPrefix(operation)
                         + " before={"
                         + before.toDiagnosticString()
+                        + "} after={"
+                        + Snapshot.idle().toDiagnosticString()
                         + "} committed="
                         + committed
                         + " readback_removed="

@@ -1561,6 +1561,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     }
 
     private void reconcileBesOtaVersionProof(String actualVersion) {
+        String canonicalActualVersion = BesOtaStateStore.canonicalVersion(actualVersion);
+        String diagnosticActualVersion =
+                canonicalActualVersion == null ? "invalid" : canonicalActualVersion;
         BesOtaStateStore.Snapshot snapshot = besOtaStateStore.read();
         String skipReason = null;
         if (!snapshot.isValid()) {
@@ -1575,7 +1578,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         Log.i(
                 TAG,
                 "BES_OTA_DIAG version_proof actual="
-                        + actualVersion
+                        + diagnosticActualVersion
                         + " current_boot="
                         + currentBootId
                         + " disposition="
@@ -1594,7 +1597,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                 "BES_OTA_DIAG version_proof_claim result="
                         + verification
                         + " actual="
-                        + actualVersion
+                        + diagnosticActualVersion
                         + " snapshot={"
                         + besOtaStateStore.read().toDiagnosticString()
                         + "}");
@@ -1611,7 +1614,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                 "BES_OTA_DIAG version_proof_complete result="
                         + completed
                         + " actual="
-                        + actualVersion
+                        + diagnosticActualVersion
                         + " snapshot={"
                         + besOtaStateStore.read().toDiagnosticString()
                         + "}");
