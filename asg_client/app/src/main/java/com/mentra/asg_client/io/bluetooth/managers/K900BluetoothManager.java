@@ -1658,9 +1658,8 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
     /**
      * Compare two dotted version strings numerically, component by component. Missing components
-     * count as 0. Each component is read as its leading numeric prefix so hotfix-suffixed firmware
-     * strings (e.g. "17.26.7.5-fix1") compare as their base version instead of throwing and
-     * silently disabling the transport feature gates.
+     * count as 0. This legacy capability gate reads each component's leading numeric prefix, but it
+     * does not define the BES firmware version format; BES OTA identity remains four numeric bytes.
      *
      * @return negative if a &lt; b, 0 if equal, positive if a &gt; b
      */
@@ -1678,7 +1677,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         return 0;
     }
 
-    /** Numeric prefix of a version component ("5-fix1" -> 5); 0 if there is none. */
+    /** Numeric prefix of a version component; 0 if there is none. */
     private static int leadingInt(String component) {
         String s = component.trim();
         int end = 0;
