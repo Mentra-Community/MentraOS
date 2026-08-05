@@ -25,6 +25,7 @@ import type {OtaProgress, OtaStatus} from "@mentra/bluetooth-sdk/internal"
 import GlobalEventEmitter from "../utils/GlobalEventEmitter"
 import {isGlassesConnected, useGlassesStore} from "../stores/glasses"
 import {resolveOtaManifestUrl} from "./otaManifestUrl"
+import {compareVersions} from "./OtaUpdateCheckService"
 import {deriveDisplayState, type DisplayState} from "./otaDisplayState"
 import {
   BES_CONTINUE_LOCKOUT_MS,
@@ -326,11 +327,14 @@ class OtaInstallCoordinator {
       this.clearPerStepTimers()
       this.clearLegacyApkSettleTimer()
       this.clearMtkSimulationTimers()
+      this.clearContinueLockoutTimer()
       this.retryCount = 0
       this.hasFirstActivity = false
       this.hasReceivedAck = false
+      this.resetBesRestartAttempt()
       this.setSawReconnectEdge(false)
       this.setErrorMsg("")
+      this.setContinueButtonDisabled(false)
       this.setApkCompletedViaBuildIncrease(false)
       this.setLegacyApkSettleHold(false)
       this.setMtkSimulatedPercent(null)
@@ -392,7 +396,10 @@ class OtaInstallCoordinator {
         versionChangeSession: this.versionChangeSession,
       }),
       errorMsg: this.errorMsg,
-      continueButtonDisabled: this.continueButtonDisabled,
+      // A timed post-restart lockout may expire while version_info is still
+      // missing or mismatched. Verification is a stronger gate: the user must
+      // not clear the session until the installed BES target is confirmed.
+      continueButtonDisabled: this.continueButtonDisabled || this.besRestartRecovery === "awaiting",
       connected,
       // Copies: the snapshot must not hand callers mutable references into the store.
       otaStatus: otaStatus ? {...otaStatus} : null,
@@ -456,9 +463,7 @@ class OtaInstallCoordinator {
     this.apkExpectedInSession = false
     this.apkCompletedViaBuildIncrease = false
     this.protocolProfile = null
-    this.besRestartExpected = false
-    this.besRestartDisconnectObserved = false
-    this.besRestartRecovery = null
+    this.resetBesRestartAttempt()
     this.besTargetVersion = null
     this.versionChangeSession = false
     this.versionChangeTarget = null
@@ -481,6 +486,13 @@ class OtaInstallCoordinator {
     this.lastDisplayState = null
     this.lastStallSig = ""
     this.reactQueued = false
+  }
+
+  /** Reset only the reboot lifecycle that belongs to one install attempt. */
+  private resetBesRestartAttempt(): void {
+    this.besRestartExpected = false
+    this.besRestartDisconnectObserved = false
+    this.besRestartRecovery = null
   }
 
   /** Notify snapshot subscribers of a coordinator-internal state change. */
@@ -1103,7 +1115,7 @@ class OtaInstallCoordinator {
     if (!this.besRestartDisconnectObserved || this.besRestartRecovery !== "awaiting") return
     const current = currentVersion.trim()
     if (this.besTargetVersion) {
-      if (current !== this.besTargetVersion) return
+      if (compareVersions(current, this.besTargetVersion) !== 0) return
       console.log(
         `[OTA_PROGRESS] BES restart verified by version_info (${current}) — completing despite stale OTA progress`,
       )
