@@ -87,8 +87,35 @@ export async function saveState(
   issueNumber: number,
   state: PrAgentState,
   commentId?: number,
-): Promise<void> {
-  const body = formatStateComment(state);
+): Promise<{ wrote: boolean; revision: number }> {
+  const localRevision = state.revision ?? 0;
+
+  if (commentId) {
+    // Compare-and-swap: refuse to overwrite a newer revision written by a
+    // concurrent orchestrator run (the #3465 lost-update failure mode).
+    try {
+      const { data } = await octokit.issues.getComment({
+        owner,
+        repo,
+        comment_id: commentId,
+      });
+      const remote = data.body ? parseStateFromComment(data.body) : null;
+      const remoteRevision = remote?.revision ?? 0;
+      if (remote && remoteRevision > localRevision) {
+        console.log(
+          `Skipping stale state write: local revision ${localRevision} < remote ${remoteRevision}`,
+        );
+        return { wrote: false, revision: remoteRevision };
+      }
+    } catch (err) {
+      console.warn('saveState: failed to re-read state comment before write', err);
+    }
+  }
+
+  const nextRevision = localRevision + 1;
+  const nextState: PrAgentState = { ...state, revision: nextRevision };
+  const body = formatStateComment(nextState);
+
   if (commentId) {
     await octokit.issues.updateComment({
       owner,
@@ -96,7 +123,7 @@ export async function saveState(
       comment_id: commentId,
       body,
     });
-    return;
+    return { wrote: true, revision: nextRevision };
   }
   await octokit.issues.createComment({
     owner,
@@ -104,6 +131,7 @@ export async function saveState(
     issue_number: issueNumber,
     body,
   });
+  return { wrote: true, revision: nextRevision };
 }
 
 export async function upsertMarkerComment(

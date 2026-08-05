@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "cli": "tsx src/cli.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
   },
   "dependencies": {
     "@connectrpc/connect-node": "^1.6.1",

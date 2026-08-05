@@ -2,11 +2,13 @@ package com.mentra.asg_client.service.core.handlers;
 
 import android.content.Context;
 import android.util.Log;
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.media.core.MediaCaptureService;
 import com.mentra.asg_client.service.legacy.interfaces.ICommandHandler;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import com.mentra.asg_client.service.system.core.SystemControllerFactory;
 import com.mentra.asg_client.service.utils.ServiceConstants;
+import com.mentra.asg_client.settings.AsgSettings;
 import java.util.Set;
 import org.json.JSONObject;
 
@@ -33,7 +35,8 @@ public class PowerCommandHandler implements ICommandHandler {
 
     @Override
     public Set<String> getSupportedCommandTypes() {
-        return Set.of(CMD_SHUTDOWN, CMD_REBOOT, CMD_SET_SYSTEM_TIME);
+        return Set.of(
+                CMD_SHUTDOWN, CMD_REBOOT, CMD_SET_SYSTEM_TIME, AsgConstants.COMMAND_SET_WIFI_ADB_STATE);
     }
 
     @Override
@@ -46,6 +49,8 @@ public class PowerCommandHandler implements ICommandHandler {
                     return handleReboot();
                 case CMD_SET_SYSTEM_TIME:
                     return handleSetSystemTime(data);
+                case AsgConstants.COMMAND_SET_WIFI_ADB_STATE:
+                    return handleSetWifiAdbState(data);
                 default:
                     Log.e(TAG, "Unsupported power command: " + commandType);
                     return false;
@@ -106,6 +111,28 @@ public class PowerCommandHandler implements ICommandHandler {
             return true;
         } catch (Exception e) {
             Log.e(TAG, "❌ Error setting system time", e);
+            return false;
+        }
+    }
+
+    /**
+     * Enable or disable Wi-Fi ADB on Mentra Live. Persists preference so boot applies the same state.
+     * Command format: {"type": "set_wifi_adb_state", "enabled": true}
+     */
+    private boolean handleSetWifiAdbState(JSONObject data) {
+        boolean enabled = data != null && data.optBoolean("enabled", false);
+        Log.i(TAG, "🔧 Setting Wi-Fi ADB state from phone: " + enabled);
+        try {
+            if (serviceManager != null) {
+                AsgSettings settings = serviceManager.getAsgSettings();
+                if (settings != null) {
+                    settings.setWifiAdbEnabled(enabled);
+                }
+            }
+            SystemControllerFactory.get(context).setWifiAdb(enabled);
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "❌ Error setting Wi-Fi ADB state", e);
             return false;
         }
     }

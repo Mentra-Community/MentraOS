@@ -3325,6 +3325,17 @@ class MentraLive: NSObject, SGCManager {
         sendJson(json, wakeUp: true)
     }
 
+    func sendWifiAdbState(_ enabled: Bool) {
+        Bridge.log("LIVE: 🔧 Sending Wi-Fi ADB state: \(enabled)")
+
+        let json: [String: Any] = [
+            "type": "set_wifi_adb_state",
+            "enabled": enabled,
+        ]
+
+        sendJson(json, wakeUp: true)
+    }
+
     func sendSetSystemTime(_ timestampMs: Int64) {
         Bridge.log("LIVE: ⏰ Sending set_system_time: \(timestampMs)")
 

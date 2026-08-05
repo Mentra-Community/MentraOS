@@ -105,6 +105,15 @@ public class MentraLiveSystemController implements ISystemController {
     }
 
     @Override
+    public void setWifiAdb(boolean enable) {
+        Log.d(TAG, "Setting Wi-Fi ADB to: " + (enable ? "ENABLED" : "DISABLED"));
+        Intent nn = new Intent();
+        nn.putExtra("cmd", "wifiadb");
+        nn.putExtra("enable", enable);
+        sendBroadcast(nn);
+    }
+
+    @Override
     public void connectToWifiWithCredentialRefresh(String ssid, String password) {
         if (ssid == null || ssid.isEmpty()) {
             Log.e(TAG, "Cannot connect to WiFi with empty SSID");

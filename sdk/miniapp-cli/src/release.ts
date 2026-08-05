@@ -28,6 +28,7 @@ import {resolve, join} from 'path'
 import {buildProduction} from './build.js'
 import {pack} from './pack.js'
 import {printQR, writeQRPng} from './qr.js'
+import {getLanIp} from './lan.js'
 import {validateManifest} from './manifest.js'
 
 const DEFAULT_PORT_START = 6789
@@ -194,18 +195,6 @@ export async function release(opts: ReleaseOptions = {}): Promise<void> {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function getLanIp(): string | null {
-  const interfaces = os.networkInterfaces()
-  for (const name of Object.keys(interfaces)) {
-    for (const iface of interfaces[name] ?? []) {
-      if (iface.family === 'IPv4' && !iface.internal) {
-        return iface.address
-      }
-    }
-  }
-  return null
-}
 
 async function pickPort(start: number, limit: number): Promise<number> {
   for (let i = 0; i < limit; i++) {
