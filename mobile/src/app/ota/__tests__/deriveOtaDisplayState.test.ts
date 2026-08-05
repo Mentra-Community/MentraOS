@@ -135,6 +135,16 @@ describe("deriveDisplayState", () => {
       {errorMsg: "boom", otaStatus: besComplete, connected: true, sawReconnectEdge: true},
       "failed",
     ],
+    [
+      "BES reboot verification stays restarting despite stale in-progress status",
+      {otaStatus: besInProgress, besRestartRecovery: "awaiting"},
+      "restarting",
+    ],
+    [
+      "BES reboot verification completes despite stale in-progress status",
+      {otaStatus: besInProgress, besRestartRecovery: "complete"},
+      "complete",
+    ],
     ["Rule 2: BES step_complete + edge -> complete", {otaStatus: besStepComplete, sawReconnectEdge: true}, "complete"],
     ["Rule 2: BES complete (1-step) + edge -> complete", {otaStatus: besComplete, sawReconnectEdge: true}, "complete"],
     ["Rule 3: BES terminal, no edge -> restarting", {otaStatus: besStepComplete}, "restarting"],

@@ -31,6 +31,10 @@ export const PING_INTERVAL_MS = 10_000
 export const QUERY_REPLY_TIMEOUT_MS = 6000
 /** 15s lockout on the Continue button after a BES restart, to prevent an accidental tap. */
 export const BES_CONTINUE_LOCKOUT_MS = 15_000
+/** Retry version_info while confirming the BES firmware that booted after OTA. */
+export const BES_VERSION_VERIFY_INTERVAL_MS = 5000
+/** One minute total: an immediate request plus eleven fixed-interval retries. */
+export const BES_VERSION_VERIFY_MAX_ATTEMPTS = 12
 
 // --- Legacy old-build (< MINIMUM_OTA_STATUS_BUILD) OTA policy (WP 8C) ---
 //
@@ -69,6 +73,8 @@ export const LEGACY_MTK_STALL_ZONE_MAX_PERCENT = 55
 export const LEGACY_MTK_SIM_FLOOR_PERCENT = 51
 export const LEGACY_MTK_SIM_CAP_PERCENT = 60
 
+export type OtaProtocolProfile = "legacy" | "unified"
+
 /**
  * Legacy-shaped ota_status: old (< 37) ASG builds send `ota_progress`, which the SDK
  * (Android MentraLive.kt / iOS MentraLive.swift) maps to a unified ota_status with
@@ -96,9 +102,30 @@ export function isLegacyShapedOtaSession(
   return Number.isFinite(build) && build > 0 && build < MINIMUM_OTA_STATUS_BUILD
 }
 
+/**
+ * Select the compatibility profile once at install-screen attach. The old split
+ * routes made this decision from the pre-update build and kept it for the whole
+ * mounted flow, even when an APK step restarted into a newer ASG build. Returning
+ * null leaves the coordinator undecided until the first meaningful OTA event.
+ */
+export function selectOtaProtocolProfile(
+  otaStatus: OtaStatus | null,
+  otaProgress: OtaProgress | null,
+  buildNumber: string | null | undefined,
+): OtaProtocolProfile | null {
+  const build = Number.parseInt(buildNumber ?? "", 10)
+  if (Number.isFinite(build) && build > 0) {
+    return build < MINIMUM_OTA_STATUS_BUILD ? "legacy" : "unified"
+  }
+  if (otaStatus) return isLegacyShapedOtaStatus(otaStatus) ? "legacy" : "unified"
+  if (otaProgress) return "legacy"
+  return null
+}
+
 export const OtaProgressMessages = {
   noAckResponse: "Unable to start update. Glasses did not respond.",
   stalledOrStuck: "Update may have failed. Ensure glasses have internet access and try again.",
   globalTimeout: "Update took too long. Please try again.",
   sendOtaStartFailed: "Failed to communicate with glasses.",
+  besVersionVerificationFailed: "Glasses restarted, but the updated firmware could not be verified. Please try again.",
 } as const
