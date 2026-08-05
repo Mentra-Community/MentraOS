@@ -252,6 +252,11 @@ public final class ButtonEventSubscriber implements IPeripheralBus.McuEventListe
     private void handlePowerButtonShortPress() {
         Log.d(TAG, "🔘 Key event - power button short press");
 
+        if (Thread.currentThread().isInterrupted()) {
+            Log.d(TAG, "Battery announcement cancelled during service shutdown");
+            return;
+        }
+
         if (!hardwareManager.supportsAudioPlayback()) {
             Log.w(TAG, "⚠️ Hardware does not support audio playback");
             return;
@@ -276,6 +281,10 @@ public final class ButtonEventSubscriber implements IPeripheralBus.McuEventListe
 
         // Use hardwareManager to get battery level - this will query BES if cache is stale
         int batteryLevel = hardwareManager.getBatteryLevel();
+        if (Thread.currentThread().isInterrupted()) {
+            Log.d(TAG, "Battery announcement cancelled after battery query");
+            return;
+        }
         if (batteryLevel >= 0) {
             String asset = AudioAssets.getBatteryLevelAsset(batteryLevel);
             Log.i(TAG, "🔋 Announcing battery level: " + batteryLevel + "% -> " + asset);

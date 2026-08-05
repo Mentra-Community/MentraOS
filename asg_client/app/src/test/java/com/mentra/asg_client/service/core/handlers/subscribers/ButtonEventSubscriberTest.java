@@ -94,6 +94,25 @@ public class ButtonEventSubscriberTest {
     }
 
     @Test
+    public void interruptedBatteryQuery_doesNotStartAudioDuringShutdown() {
+        when(hardwareManager.supportsAudioPlayback()).thenReturn(true);
+        when(hardwareManager.getBatteryLevel())
+                .thenAnswer(
+                        invocation -> {
+                            Thread.currentThread().interrupt();
+                            return 100;
+                        });
+
+        powerShortPress();
+        try {
+            batteryTasks.remove().run();
+            verify(hardwareManager, never()).playAudioAsset(anyString());
+        } finally {
+            Thread.interrupted();
+        }
+    }
+
+    @Test
     public void phonePresent_skipsLocalCapture() {
         linkState.serialReady();
         linkState.phonePresenceReported(true);

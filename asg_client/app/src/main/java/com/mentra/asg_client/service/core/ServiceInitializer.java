@@ -44,11 +44,13 @@ import com.mentra.asg_client.service.system.managers.StateManager;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 /** Wires core service components (replaces the former {@link ServiceContainer}). */
 public final class ServiceInitializer {
 
     private static final String TAG = "ServiceInitializer";
+    private static final long BATTERY_ANNOUNCEMENT_SHUTDOWN_TIMEOUT_MS = 1000;
 
     private final IServiceLifecycle lifecycleManager;
     private final ICommunicationManager communicationManager;
@@ -152,6 +154,15 @@ public final class ServiceInitializer {
     public void cleanup() {
         Log.d(TAG, "Cleaning up service graph");
         batteryAnnouncementExecutor.shutdownNow();
+        try {
+            if (!batteryAnnouncementExecutor.awaitTermination(
+                    BATTERY_ANNOUNCEMENT_SHUTDOWN_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+                Log.w(TAG, "Battery announcement worker did not stop before service teardown");
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            Log.w(TAG, "Interrupted while stopping battery announcement worker");
+        }
         streamingManager.cleanup();
         lifecycleManager.cleanup();
         Log.d(TAG, "Service graph cleanup completed");

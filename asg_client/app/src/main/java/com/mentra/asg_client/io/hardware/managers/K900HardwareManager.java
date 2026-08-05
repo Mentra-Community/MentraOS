@@ -19,6 +19,7 @@ import java.util.EnumSet;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Implementation of IHardwareManager for K900 devices. Uses K900-specific hardware APIs including
@@ -29,6 +30,7 @@ public class K900HardwareManager extends BaseHardwareManager {
 
     // Battery cache settings
     private static final long BATTERY_CACHE_DURATION_MS = 2 * 60 * 1000; // 2 minutes
+    private static final long BATTERY_QUERY_SEND_TIMEOUT_MS = 1000;
     private static final long BATTERY_QUERY_TIMEOUT_MS = 250;
 
     private K900LedController ledController;
@@ -454,6 +456,8 @@ public class K900HardwareManager extends BaseHardwareManager {
         }
 
         CountDownLatch responseLatch = new CountDownLatch(1);
+        CountDownLatch sendLatch = new CountDownLatch(1);
+        AtomicBoolean sendSucceeded = new AtomicBoolean(false);
         try {
             synchronized (batteryLock) {
                 batteryResponseLatch = responseLatch;
@@ -468,10 +472,28 @@ public class K900HardwareManager extends BaseHardwareManager {
             String commandStr = k900Command.toString();
             Log.d(TAG, "🔋 Querying battery from BES: " + commandStr);
 
-            // Send command to BES
-            boolean sent =
-                    bluetoothManager.sendMessage(commandStr.getBytes(StandardCharsets.UTF_8));
-            if (!sent) {
+            // sendMessage queues work. Wait for its completion callback before starting the BES
+            // response budget so unrelated outbound traffic cannot consume that entire budget.
+            boolean accepted =
+                    bluetoothManager.sendMessage(
+                            commandStr.getBytes(StandardCharsets.UTF_8),
+                            success -> {
+                                sendSucceeded.set(success);
+                                sendLatch.countDown();
+                            });
+            if (!accepted) {
+                Log.e(TAG, "🔋 Failed to queue battery query command");
+                return false;
+            }
+            if (!sendLatch.await(BATTERY_QUERY_SEND_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+                Log.w(
+                        TAG,
+                        "🔋 Battery query send timed out after "
+                                + BATTERY_QUERY_SEND_TIMEOUT_MS
+                                + "ms");
+                return false;
+            }
+            if (!sendSucceeded.get()) {
                 Log.e(TAG, "🔋 Failed to send battery query command");
                 return false;
             }
@@ -530,6 +552,9 @@ public class K900HardwareManager extends BaseHardwareManager {
                             + "%, charging="
                             + cachedChargingStatus);
 
+            // hm_batv has no request ID. Every reply is therefore a valid battery state sample;
+            // a delayed reply may satisfy the current serialized reader rather than being
+            // discarded using correlation information the protocol does not provide.
             if (batteryResponseLatch != null) {
                 batteryResponseLatch.countDown();
             }
