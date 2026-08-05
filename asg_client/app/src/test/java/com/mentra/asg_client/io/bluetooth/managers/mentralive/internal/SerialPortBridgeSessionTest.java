@@ -155,6 +155,7 @@ public class SerialPortBridgeSessionTest {
 
         // Once the native read really exits, the retained reader handle permits a safe retry.
         stuckInput.release();
+        assertThat(stuckInput.awaitReadExit()).isTrue();
         SerialSession replacement = bridge.openAtBaud(921600);
         assertThat(replacement).isNotNull();
         assertThat(driver.openBauds).containsExactly(SerialPortBridge.DEFAULT_BAUDRATE, 921600);
