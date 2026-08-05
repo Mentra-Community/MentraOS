@@ -1297,6 +1297,7 @@ class MentraLive: NSObject, SGCManager {
         // a previous pairing into the next one (would otherwise surface as wrong overall_percent
         // or stale lastBesOtaProgress on the next OTA).
         if state == ConnTypes.DISCONNECTED {
+            resetPendingAckState(reason: "BLE session ended")
             resetWireNegotiationState()
             resetAncsRelayState()
             // Queued writes are session-bound: transmitting them into the NEXT session
@@ -1940,6 +1941,18 @@ class MentraLive: NSObject, SGCManager {
 
     private var pending: PendingMessage?
     private var pendingMessageTimer: Timer?
+
+    /// ACK state belongs to the BLE session that sent the message. If the link drops while an ACK
+    /// is outstanding, keeping `pending` set permanently blocks the command queue because the
+    /// timeout timer is stopped during disconnect. Release both together before reconnecting.
+    private func resetPendingAckState(reason: String) {
+        pendingMessageTimer?.invalidate()
+        pendingMessageTimer = nil
+
+        guard let pendingMessage = pending else { return }
+        pending = nil
+        Bridge.log("LIVE: Cleared pending ACK mId \(pendingMessage.id) because \(reason)")
+    }
 
     actor CommandQueue {
         private var commands: [PendingMessage] = []
@@ -5153,8 +5166,7 @@ class MentraLive: NSObject, SGCManager {
         stopReadinessCheckLoop()
         stopConnectionTimeout()
         stopMicBeat() // Stop LC3 audio micbeat
-        pendingMessageTimer?.invalidate()
-        pendingMessageTimer = nil
+        resetPendingAckState(reason: "transport timers stopped")
         reconnectionWorkItem?.cancel()
         reconnectionWorkItem = nil
     }
