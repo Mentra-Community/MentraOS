@@ -53,6 +53,8 @@ import {
   RETRY_INTERVAL_MS,
   isLegacyShapedOtaSession,
   isLegacyShapedOtaStatus,
+  selectOtaProtocolProfile,
+  type OtaProtocolProfile,
 } from "./otaInstallPolicy"
 
 function isTerminalForWatchdog(d: DisplayState): boolean {
@@ -167,6 +169,18 @@ class OtaInstallCoordinator {
   private apkExpectedInSession = false
   // Latched when the legacy build-number completion fires; projected as "complete".
   private apkCompletedViaBuildIncrease = false
+  // The split routes selected legacy/unified behavior before navigation. Keep
+  // that choice sticky while an APK step upgrades ASG mid-flow.
+  private protocolProfile: OtaProtocolProfile | null = null
+
+  // BES reboot recovery. Old ASG/BES combinations can reboot after reporting
+  // install 100% without ever delivering a terminal ota_status. Preserve the
+  // observed install -> disconnect -> reconnect lifecycle independently of the
+  // stale status left in the store.
+  private besRestartExpected = false
+  private besRestartDisconnectObserved = false
+  private besRestartRecovery: "awaiting" | "complete" | null = null
+  private besTargetVersion: string | null = null
 
   // Downgrade detour (version-change mode). Captured at attach from the selected
   // update: the pinned target is a LOWER build, executed by the recovery worker via
@@ -240,7 +254,14 @@ class OtaInstallCoordinator {
     if (this.attached) return
     this.attached = true
     this.resetSessionState()
-    const selected = useGlassesStore.getState().otaUpdateAvailable
+    const initialState = useGlassesStore.getState()
+    this.protocolProfile = selectOtaProtocolProfile(
+      initialState.otaStatus,
+      initialState.otaProgress,
+      initialState.buildNumber,
+    )
+    const selected = initialState.otaUpdateAvailable
+    this.besTargetVersion = selected?.besVersion?.trim() || null
     if (selected?.isDowngrade && typeof selected.versionCode === "number" && selected.versionCode > 0) {
       this.versionChangeSession = true
       this.versionChangeTarget = selected.versionCode
@@ -366,6 +387,7 @@ class OtaInstallCoordinator {
         sawReconnectEdge: this.sawReconnectEdge,
         legacyApkSettleHold: this.legacyApkSettleHold,
         apkCompletedViaBuildIncrease: this.apkCompletedViaBuildIncrease,
+        besRestartRecovery: this.besRestartRecovery,
         versionChangeConverged: this.versionChangeConverged,
         versionChangeSession: this.versionChangeSession,
       }),
@@ -433,6 +455,11 @@ class OtaInstallCoordinator {
     this.initialBuildNumber = null
     this.apkExpectedInSession = false
     this.apkCompletedViaBuildIncrease = false
+    this.protocolProfile = null
+    this.besRestartExpected = false
+    this.besRestartDisconnectObserved = false
+    this.besRestartRecovery = null
+    this.besTargetVersion = null
     this.versionChangeSession = false
     this.versionChangeTarget = null
     this.versionChangeInstallStarted = false
@@ -505,14 +532,21 @@ class OtaInstallCoordinator {
     this.emitInternalChange()
   }
 
-  /**
-   * Legacy-session shape (WP 8C): event shape wins once events exist; before any event
-   * only the session-start build number can tell (falls back to the live build number
-   * until it is captured). Old builds get the LEGACY_* padded policy durations.
-   */
+  /** Legacy/unified policy is selected once, matching the old sticky route choice. */
   private isLegacySessionShapeNow(): boolean {
+    if (this.protocolProfile) return this.protocolProfile === "legacy"
     const state = useGlassesStore.getState()
-    return isLegacyShapedOtaSession(state.otaStatus, state.otaProgress, this.initialBuildNumber || state.buildNumber)
+    const selected = selectOtaProtocolProfile(
+      state.otaStatus,
+      state.otaProgress,
+      this.initialBuildNumber || state.buildNumber,
+    )
+    if (selected) {
+      this.protocolProfile = selected
+      console.log(`[OTA_PROGRESS] protocol profile selected: ${selected}`)
+      return selected === "legacy"
+    }
+    return isLegacyShapedOtaSession(state.otaStatus, state.otaProgress, state.buildNumber)
   }
 
   private react(): void {
@@ -565,6 +599,21 @@ class OtaInstallCoordinator {
 
     const legacySession = this.isLegacySessionShapeNow()
 
+    if (this.isBesRestartExpected(otaStatus, otaProgress)) {
+      this.besRestartExpected = true
+    }
+
+    // Port the legacy route's actual reboot invariant before deriving display
+    // state, so reconnecting with stale BES in_progress@100 never renders updating.
+    if (connectedChanged && !connected && this.besRestartExpected && this.besRestartRecovery === null) {
+      this.besRestartDisconnectObserved = true
+      this.besRestartRecovery = "awaiting"
+      console.log("[OTA_PROGRESS] BES restart disconnect observed — awaiting reconnect verification")
+    }
+    if (this.besRestartRecovery === "awaiting" && connected) {
+      this.reconcileBesRestart(state.besFirmwareVersion, legacySession)
+    }
+
     // Derived UI state — the glasses data IS the source of truth.
     const displayState = deriveDisplayState({
       otaStatus,
@@ -574,6 +623,7 @@ class OtaInstallCoordinator {
       sawReconnectEdge: this.sawReconnectEdge,
       legacyApkSettleHold: this.legacyApkSettleHold,
       apkCompletedViaBuildIncrease: this.apkCompletedViaBuildIncrease,
+      besRestartRecovery: this.besRestartRecovery,
       versionChangeConverged: this.versionChangeConverged,
       versionChangeSession: this.versionChangeSession,
     })
@@ -879,6 +929,16 @@ class OtaInstallCoordinator {
     this.clearQueryReplyTimeout()
     this.setSawReconnectEdge(true)
 
+    if (this.besRestartDisconnectObserved) {
+      console.log(`[OTA_PROGRESS] ${label}: BES reboot reconnect observed — no ota_query_status`)
+      if (this.besRestartRecovery === "awaiting") {
+        void BluetoothSdk.requestVersionInfo().catch((error) => {
+          console.warn("[OTA_PROGRESS] BES reconnect version request failed", error)
+        })
+      }
+      return true
+    }
+
     // Legacy apk settle window (WP 8C): the glasses restarting into the new build is
     // the EXPECTED reconnect here — the legacy screen took no action on it. Skip the
     // query/fallback; the settle timer (or the build-number increase) completes.
@@ -1018,6 +1078,46 @@ class OtaInstallCoordinator {
     }
   }
 
+  private isBesRestartExpected(otaStatus: OtaStatus | null, otaProgress: OtaProgress | null): boolean {
+    const statusReadyToRestart =
+      otaStatus?.stepType === "bes" &&
+      otaStatus.phase === "install" &&
+      (otaStatus.status === "step_complete" ||
+        otaStatus.status === "complete" ||
+        otaStatus.stepPercent >= 100 ||
+        otaStatus.overallPercent >= 100)
+    const progressReadyToRestart =
+      otaProgress?.currentUpdate === "bes" &&
+      otaProgress.stage === "install" &&
+      (otaProgress.status === "FINISHED" || otaProgress.progress >= 100)
+    return statusReadyToRestart || progressReadyToRestart
+  }
+
+  /**
+   * Complete a phone-observed BES reboot when fresh version_info matches the
+   * manifest target. Frozen legacy manifests did not always expose that target
+   * through the mobile read model, so truly legacy flows retain the old route's
+   * disconnect/reconnect completion fallback.
+   */
+  private reconcileBesRestart(currentVersion: string, legacySession: boolean): void {
+    if (!this.besRestartDisconnectObserved || this.besRestartRecovery !== "awaiting") return
+    const current = currentVersion.trim()
+    if (this.besTargetVersion) {
+      if (current !== this.besTargetVersion) return
+      console.log(
+        `[OTA_PROGRESS] BES restart verified by version_info (${current}) — completing despite stale OTA progress`,
+      )
+    } else if (legacySession) {
+      console.log("[OTA_PROGRESS] legacy BES restart reconnected without target metadata — completing by reboot edge")
+    } else {
+      return
+    }
+    this.clearPerStepTimers()
+    this.setErrorMsg("")
+    this.besRestartRecovery = "complete"
+    this.emitInternalChange()
+  }
+
   /**
    * Legacy MTK install stall simulation (WP 8C-e), ported verbatim: the MTK system
    * install typically stalls around 49-50%. Every real event restarts stall detection;
@@ -1093,6 +1193,7 @@ class OtaInstallCoordinator {
       sawReconnectEdge: this.sawReconnectEdge,
       legacyApkSettleHold: this.legacyApkSettleHold,
       apkCompletedViaBuildIncrease: this.apkCompletedViaBuildIncrease,
+      besRestartRecovery: this.besRestartRecovery,
       versionChangeConverged: this.versionChangeConverged,
       versionChangeSession: this.versionChangeSession,
     })
@@ -1287,11 +1388,7 @@ class OtaInstallCoordinator {
       // whatever legacy-shaped status/progress sits in the store is a pre-query
       // leftover, not a reply — a NEW legacy event would have cleared this timer
       // through the reaction pass. Only a unified reply suppresses the fallback.
-      const legacySession = isLegacyShapedOtaSession(
-        state.otaStatus,
-        state.otaProgress,
-        this.initialBuildNumber || state.buildNumber,
-      )
+      const legacySession = this.isLegacySessionShapeNow()
       if (!legacySession && hasRecoveringOtaReply(state.otaStatus, state.otaProgress)) return
       // Don't fire if we've left the active phase (e.g. user backed out, error overlay).
       if (isTerminalForWatchdog(this.computeDisplayStateNow())) return

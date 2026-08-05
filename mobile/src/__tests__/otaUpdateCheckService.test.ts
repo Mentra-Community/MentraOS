@@ -271,6 +271,7 @@ describe("OtaUpdateCheckService", () => {
         versionCode: 11,
         versionName: "11",
         updates: ["apk", "mtk", "bes"],
+        besVersion: "17.26.1.15",
       }),
     )
   })

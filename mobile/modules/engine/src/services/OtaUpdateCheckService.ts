@@ -512,6 +512,7 @@ export async function checkCurrentGlassesForUpdate(
         versionName: result.latestVersionInfo?.versionName || "",
         updates: filteredUpdates,
         totalSize: 0,
+        ...(filteredUpdates.includes("bes") && result.besVersion ? {besVersion: result.besVersion} : {}),
         isDowngrade: isApkDowngrade,
       }
     : null
