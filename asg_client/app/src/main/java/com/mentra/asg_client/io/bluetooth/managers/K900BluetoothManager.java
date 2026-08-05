@@ -258,6 +258,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         // Initialize every callback dependency before the serial receive thread starts.
         messageParser = new BesMessageParser();
         fileTransferExecutor = Executors.newSingleThreadScheduledExecutor();
+        MessageChunker.followLinkState(linkState);
 
         // Create the communication manager
         comManager = new SerialPortBridge(context);
