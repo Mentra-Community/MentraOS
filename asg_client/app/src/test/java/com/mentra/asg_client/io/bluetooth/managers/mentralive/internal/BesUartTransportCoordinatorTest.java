@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import android.app.Application;
 import com.mentra.asg_client.AsgConstants;
+import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Queue;
@@ -13,7 +14,9 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -678,12 +681,22 @@ public class BesUartTransportCoordinatorTest {
 
     @Test
     public void validFrameRearm_rejectsAlreadyRunningHealthProbeTimeout() throws Exception {
-        replaceCoordinatorWithHealthTimings(200, 50);
+        replaceCoordinatorWithHealthTimings(500, 500);
         establishFastLink();
         host.controlCommands.clear();
         host.openAttempts.clear();
 
-        awaitControlCommandCount("cs_syvr", 1, 500);
+        ScheduledExecutorService healthExecutor = coordinatorExecutor();
+        AtomicReference<Thread> healthWorker = new AtomicReference<>();
+        CountDownLatch healthWorkerCaptured = new CountDownLatch(1);
+        healthExecutor.execute(
+                () -> {
+                    healthWorker.set(Thread.currentThread());
+                    healthWorkerCaptured.countDown();
+                });
+        assertThat(healthWorkerCaptured.await(1, TimeUnit.SECONDS)).isTrue();
+
+        awaitControlCommandCount("cs_syvr", 1, 1_000);
         SerialSession session = coordinator.getSerialSession();
 
         assertThat(
@@ -691,11 +704,18 @@ public class BesUartTransportCoordinatorTest {
                                 session,
                                 () -> {
                                     try {
-                                        // Let the probe timeout start and block on the coordinator
-                                        // monitor. onValidFrame is reentrant here, so it can rearm
-                                        // health before that already-running callback gets the
-                                        // lock.
-                                        Thread.sleep(100);
+                                        // Wait until the already-running probe timeout is blocked
+                                        // on this monitor. onValidFrame is reentrant here, so it
+                                        // deterministically rearms health before that callback can
+                                        // inspect its token.
+                                        long deadline = System.currentTimeMillis() + 2_000;
+                                        while (System.currentTimeMillis() < deadline
+                                                && healthWorker.get().getState()
+                                                        != Thread.State.BLOCKED) {
+                                            Thread.sleep(1);
+                                        }
+                                        assertThat(healthWorker.get().getState())
+                                                .isEqualTo(Thread.State.BLOCKED);
                                     } catch (InterruptedException e) {
                                         Thread.currentThread().interrupt();
                                         throw new AssertionError(e);
@@ -704,9 +724,11 @@ public class BesUartTransportCoordinatorTest {
                                 }))
                 .isTrue();
 
-        // The stale callback runs first on the single scheduled executor. The newly armed idle
-        // timer is still 200 ms away, leaving this assertion specific to the stale callback.
-        Thread.sleep(50);
+        // A FIFO barrier on the same single-thread executor proves that the stale callback has
+        // returned. The newly armed idle timer is still in the future.
+        CountDownLatch staleCallbackDrained = new CountDownLatch(1);
+        healthExecutor.execute(staleCallbackDrained::countDown);
+        assertThat(staleCallbackDrained.await(1, TimeUnit.SECONDS)).isTrue();
         assertThat(coordinator.getState()).isEqualTo(BesUartTransportCoordinator.State.READY_FAST);
         assertThat(host.openAttempts).isEmpty();
         assertThat(coordinator.getSerialSession()).isSameAs(session);
@@ -1019,6 +1041,12 @@ public class BesUartTransportCoordinatorTest {
     private void replaceCoordinatorWithHealthTimings(long idleMs, long timeoutMs) {
         coordinator.shutdown();
         coordinator = new BesUartTransportCoordinator(host, safety, idleMs, timeoutMs);
+    }
+
+    private ScheduledExecutorService coordinatorExecutor() throws Exception {
+        Field field = BesUartTransportCoordinator.class.getDeclaredField("executor");
+        field.setAccessible(true);
+        return (ScheduledExecutorService) field.get(coordinator);
     }
 
     private static final class FakeHost implements BesUartTransportCoordinator.Host {
