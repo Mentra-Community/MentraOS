@@ -24,8 +24,6 @@ import java.util.zip.CRC32;
 public class BesFirmwareArtifactValidatorTest {
     private static final byte[] CRC_PREFIX =
             "CRC32_OF_IMAGE=0x".getBytes(StandardCharsets.US_ASCII);
-    private static final int VERSION_OFFSET = 64;
-
     @Rule public final TemporaryFolder temporaryFolder = new TemporaryFolder();
 
     @Test
@@ -36,59 +34,46 @@ public class BesFirmwareArtifactValidatorTest {
     }
 
     @Test
-    public void externalReleaseArtifactCanBeCheckedAgainstItsRawBuildOutput() throws Exception {
+    public void externalReleaseArtifactCanBeValidated() throws Exception {
         String artifactPath = System.getenv("BES_RELEASE_ARTIFACT");
-        String rawPath = System.getenv("BES_RELEASE_RAW");
         String version = System.getenv("BES_RELEASE_VERSION");
-        String versionOffset = System.getenv("BES_RELEASE_VERSION_OFFSET");
-        Assume.assumeTrue(
-                artifactPath != null
-                        && rawPath != null
-                        && version != null
-                        && versionOffset != null);
+        Assume.assumeTrue(artifactPath != null && version != null);
 
         File artifact = new File(artifactPath);
         byte[] container = Files.readAllBytes(artifact.toPath());
-        byte[] raw = Files.readAllBytes(new File(rawPath).toPath());
         JSONObject metadata = new JSONObject();
-        metadata.put("format", AsgConstants.BES_OTA_ARTIFACT_FORMAT);
-        metadata.put("product", AsgConstants.BES_OTA_PRODUCT);
-        metadata.put("artifact_id", artifact.getName());
         metadata.put("url", "https://releases.example.invalid/" + artifact.getName());
-        metadata.put("compressed_size", container.length);
         metadata.put("sha256", sha256(container));
-        metadata.put("decompressed_size", raw.length);
-        metadata.put("decompressed_sha256", sha256(raw));
         metadata.put("version", version);
-        metadata.put("version_offset", Long.parseLong(versionOffset));
 
         BesFirmwareArtifactValidator.validate(artifact, metadata);
     }
 
     @Test
-    public void legacyManifestWithoutAdmissionMetadataFailsClosed() throws Exception {
+    public void existingManifestShapePasses() throws Exception {
         TestArtifact artifact = createArtifact();
-        JSONObject legacy = new JSONObject();
-        legacy.put("url", artifact.metadata.getString("url"));
-        legacy.put("sha256", artifact.metadata.getString("sha256"));
+        JSONObject existing = new JSONObject();
+        existing.put("version", artifact.metadata.getString("version"));
+        existing.put("url", artifact.metadata.getString("url"));
+        existing.put("sha256", artifact.metadata.getString("sha256"));
 
-        assertThatThrownBy(() -> BesFirmwareArtifactValidator.validate(artifact.file, legacy))
-                .isInstanceOf(BesFirmwareArtifactValidator.ValidationException.class)
-                .hasMessageContaining("format");
+        BesFirmwareArtifactValidator.validate(artifact.file, existing);
     }
 
     @Test
     public void decompressedImageAtBootloaderLimitFailsBeforeAuthorization() throws Exception {
-        TestArtifact artifact = createArtifact();
-        artifact.metadata.put(
-                "decompressed_size", AsgConstants.BES_OTA_MAX_DECOMPRESSED_IMAGE_BYTES);
+        TestArtifact artifact =
+                createArtifact(
+                        createRaw(
+                                AsgConstants.BES_OTA_MAX_DECOMPRESSED_IMAGE_BYTES,
+                                "release-a:" + AsgConstants.BES_OTA_PRODUCT));
 
         assertThatThrownBy(
                         () ->
                                 BesFirmwareArtifactValidator.validate(
                                         artifact.file, artifact.metadata))
                 .isInstanceOf(BesFirmwareArtifactValidator.ValidationException.class)
-                .hasMessageContaining("not OTA-safe");
+                .hasMessageContaining("bootloader limit");
     }
 
     @Test
@@ -121,7 +106,6 @@ public class BesFirmwareArtifactValidatorTest {
             (byte) 0xFF
         };
         write(artifact.file, corrupt);
-        artifact.metadata.put("compressed_size", corrupt.length);
         artifact.metadata.put("sha256", sha256(corrupt));
 
         assertThatThrownBy(
@@ -169,25 +153,15 @@ public class BesFirmwareArtifactValidatorTest {
     }
 
     @Test
-    public void wrongEmbeddedProductOrVersionFailsClosed() throws Exception {
-        TestArtifact artifact = createArtifact();
-        artifact.metadata.put("product", "different_product");
+    public void wrongEmbeddedProductFailsClosed() throws Exception {
+        TestArtifact artifact = createArtifact(createRaw("release-a:different_product"));
 
         assertThatThrownBy(
                         () ->
                                 BesFirmwareArtifactValidator.validate(
                                         artifact.file, artifact.metadata))
                 .isInstanceOf(BesFirmwareArtifactValidator.ValidationException.class)
-                .hasMessageContaining("Wrong BES OTA product");
-
-        artifact.metadata.put("product", AsgConstants.BES_OTA_PRODUCT);
-        artifact.metadata.put("version", "17.26.7.25");
-        assertThatThrownBy(
-                        () ->
-                                BesFirmwareArtifactValidator.validate(
-                                        artifact.file, artifact.metadata))
-                .isInstanceOf(BesFirmwareArtifactValidator.ValidationException.class)
-                .hasMessageContaining("target version");
+                .hasMessageContaining("does not identify");
     }
 
     @Test
@@ -222,14 +196,14 @@ public class BesFirmwareArtifactValidatorTest {
     }
 
     private byte[] createRaw(String revisionValue) {
-        byte[] raw = new byte[512];
+        return createRaw(512, revisionValue);
+    }
+
+    private byte[] createRaw(int size, String revisionValue) {
+        byte[] raw = new byte[size];
         for (int i = 0; i < raw.length; i++) {
             raw[i] = (byte) (i * 31);
         }
-        raw[VERSION_OFFSET] = 17;
-        raw[VERSION_OFFSET + 1] = 26;
-        raw[VERSION_OFFSET + 2] = 7;
-        raw[VERSION_OFFSET + 3] = 24;
         byte[] revision = ("REV_INFO=" + revisionValue).getBytes(StandardCharsets.US_ASCII);
         System.arraycopy(revision, 0, raw, 192, revision.length);
         raw[192 + revision.length] = 0;
@@ -263,16 +237,9 @@ public class BesFirmwareArtifactValidatorTest {
         write(file, container);
 
         JSONObject metadata = new JSONObject();
-        metadata.put("format", AsgConstants.BES_OTA_ARTIFACT_FORMAT);
-        metadata.put("product", AsgConstants.BES_OTA_PRODUCT);
-        metadata.put("artifact_id", artifactId);
         metadata.put("url", "https://releases.example.invalid/" + artifactId);
-        metadata.put("compressed_size", container.length);
         metadata.put("sha256", sha256(container));
-        metadata.put("decompressed_size", raw.length);
-        metadata.put("decompressed_sha256", sha256(raw));
         metadata.put("version", "17.26.7.24");
-        metadata.put("version_offset", VERSION_OFFSET);
         return new TestArtifact(file, metadata);
     }
 

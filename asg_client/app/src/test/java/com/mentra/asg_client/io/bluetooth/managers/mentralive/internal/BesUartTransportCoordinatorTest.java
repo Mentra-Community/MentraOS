@@ -3,16 +3,7 @@ package com.mentra.asg_client.io.bluetooth.managers.mentralive.internal;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import android.app.Application;
-
 import com.mentra.asg_client.AsgConstants;
-
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.robolectric.RobolectricTestRunner;
-import org.robolectric.annotation.Config;
-
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Queue;
@@ -23,6 +14,12 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import org.junit.After;
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.robolectric.RobolectricTestRunner;
+import org.robolectric.annotation.Config;
 
 @RunWith(RobolectricTestRunner.class)
 @Config(application = Application.class, sdk = 33)
@@ -511,6 +508,64 @@ public class BesUartTransportCoordinatorTest {
     }
 
     @Test
+    public void otaAuthorization_returnsFastLinkToProvenRendezvousBeforeLease() throws Exception {
+        establishFastLink();
+
+        ExecutorService caller = Executors.newSingleThreadExecutor();
+        Future<BesUartTransportCoordinator.OperationLease> leaseFuture =
+                caller.submit(coordinator::beginOtaAuthorization);
+        try {
+            awaitControlCommandCount("cs_baud", 2);
+            String downshift = host.controlCommands.get(host.controlCommands.size() - 1);
+            assertThat(downshift).contains("cs_baud").contains("460800");
+
+            SerialSession fastSession = coordinator.getSerialSession();
+            assertThat(
+                            coordinator.onBaudResponse(
+                                    0, AsgConstants.UART_RENDEZVOUS_BAUD, fastSession))
+                    .isTrue();
+            awaitSerialSessionAtBaud(AsgConstants.UART_RENDEZVOUS_BAUD);
+            assertThat(systemVersion("17.26.7.23"))
+                    .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
+
+            BesUartTransportCoordinator.OperationLease lease = leaseFuture.get(2, TimeUnit.SECONDS);
+            assertThat(lease).isNotNull();
+            assertThat(coordinator.getState())
+                    .isEqualTo(BesUartTransportCoordinator.State.READY_RENDEZVOUS);
+            assertThat(host.currentBaud()).isEqualTo(AsgConstants.UART_RENDEZVOUS_BAUD);
+            coordinator.endOta(lease);
+        } finally {
+            caller.shutdownNow();
+        }
+    }
+
+    @Test
+    public void otaAuthorization_rejectedRendezvousTransitionFailsClosed() throws Exception {
+        establishFastLink();
+
+        ExecutorService caller = Executors.newSingleThreadExecutor();
+        Future<BesUartTransportCoordinator.OperationLease> leaseFuture =
+                caller.submit(coordinator::beginOtaAuthorization);
+        try {
+            awaitControlCommandCount("cs_baud", 2);
+            assertThat(
+                            coordinator.onBaudResponse(
+                                    1,
+                                    AsgConstants.UART_RENDEZVOUS_BAUD,
+                                    coordinator.getSerialSession()))
+                    .isTrue();
+
+            assertThat(leaseFuture.get(2, TimeUnit.SECONDS)).isNull();
+            assertThat(coordinator.getOperation())
+                    .isEqualTo(BesUartTransportCoordinator.Operation.NONE);
+            assertThat(coordinator.getState())
+                    .isEqualTo(BesUartTransportCoordinator.State.READY_FAST);
+        } finally {
+            caller.shutdownNow();
+        }
+    }
+
+    @Test
     public void parserRecovery_reopensAndRejectsRetiredReader() throws Exception {
         host.baud = AsgConstants.UART_FAST_BAUD;
         coordinator.onSerialReady(host.session);
@@ -762,6 +817,7 @@ public class BesUartTransportCoordinatorTest {
                                 0, AsgConstants.UART_FAST_BAUD, coordinator.getSerialSession()))
                 .isTrue();
         awaitState(BesUartTransportCoordinator.State.VERIFYING_FAST);
+        awaitSerialSessionAtBaud(AsgConstants.UART_FAST_BAUD);
         assertThat(systemVersion("17.26.7.23"))
                 .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
     }

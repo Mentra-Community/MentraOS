@@ -64,40 +64,60 @@ UART transport is owned by `ComManager` (the K900 UART driver). When BES OTA is 
 - **UART:** `/dev/ttyS1` at 460800 baud
 - **Pacing:** fast-mode, ~5 ms sleep between packets
 
-## Server-side `version.json`
+## Combined OTA manifest
 
-Add a `bes_firmware` block alongside the existing `apps` block:
+The phone sends one manifest URL in `ota_start`. ASG 39 and newer persist that URL before doing
+any installation. If the manifest contains a newer ASG APK, the old client installs the APK and
+stops; after restart, the new client resumes the same top-level session and only then considers BES
+firmware. Therefore every manifest admitted for an ASG bootstrap must be valid for both the old
+client that starts it and the new client that resumes it.
+
+The staging workflow builds `staging_live_version.json` from the ASG artifact plus
+`ota_manifests/firmware_live.json`. Keep the established BES block limited to its target version,
+download URL, and compressed hash:
 
 ```json
 {
   "apps": {
     "com.mentra.asg_client": {
-      "versionCode": 1000,
-      "versionName": "1.0.0",
-      "apkUrl": "https://example.com/asg_client_v1.0.0.apk",
-      "sha256": "abc123...",
-      "releaseNotes": "ASG Client updates"
+      "versionCode": 123,
+      "versionName": "1.2.3",
+      "apkUrl": "https://example.com/asg_client_v1.2.3.apk",
+      "apkSize": 12345678,
+      "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
     }
   },
+  "mtk_patches": [
+    {
+      "start_firmware": "MentraLive_20260113",
+      "end_firmware": "MentraLive_20260709",
+      "url": "https://example.com/mtk_ota_update.zip",
+      "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    }
+  ],
   "bes_firmware": {
-    "versionCode": 10203,
-    "versionName": "1.2.3",
-    "firmwareUrl": "https://example.com/bes_firmware_v1.2.3.bin",
-    "sha256": "abc123def456...",
-    "fileSize": 1048576,
-    "releaseNotes": "BES firmware bug fixes and improvements"
+    "version": "26.7.30.4",
+    "url": "https://firmware.example.com/bes_firmware_26.7.30.4.bin",
+    "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
   }
 }
 ```
 
-| Field          | Description                                        |
-| -------------- | -------------------------------------------------- |
-| `versionCode`  | Integer for comparison                             |
-| `versionName`  | Human-readable string                              |
-| `firmwareUrl`  | Direct `.bin` URL                                  |
-| `sha256`       | Hex SHA-256 of the `.bin`                          |
-| `fileSize`     | Bytes; must be ≤ `BesOtaUtil.MAX_FILE_SIZE` (2 MB) |
-| `releaseNotes` | Free text                                          |
+Before reserving UART or sending `mh_ota`, ASG checks the manifest's canonical four-byte target
+version, HTTPS artifact URL without a query or fragment, and SHA-256. It then inspects the downloaded
+bytes directly:
+the release container must have valid chunk structure and CRC, bounded LZMA decoder requirements,
+a decompressed image strictly smaller than the BES bootloader limit (`1966080` bytes), and the
+Mentra Live product marker. This keeps release authoring simple while still rejecting malformed,
+oversized, or wrong-product artifacts before BES sees them. The manifest version remains the target
+used for eligibility and the required post-reboot version readback; the image format has no stable,
+documented version offset, so ASG does not guess one.
+
+Validate a locally composed manifest with:
+
+```bash
+.github/scripts/validate-asg-ota-manifest.sh path/to/staging_live_version.json
+```
 
 ## EventBus integration
 
@@ -119,30 +139,50 @@ Stored under `/storage/emulated/0/asg/`:
 
 - `bes_firmware.bin` — currently downloaded firmware
 
-## Testing
+## Internal staging test
 
-A test script ships with the repo:
+Do not use `scripts/test-bes-ota.sh`: its direct ADB broadcast entry point is intentionally disabled
+and it bypasses the phone-owned session contract this flow needs to exercise.
 
-```bash
-./scripts/test-bes-ota.sh path/to/firmware.bin
-```
+1. Land the candidate ASG and `firmware_live.json` on `staging` so the staging
+   workflow publishes one combined, immutable-per-run manifest and embeds its URL in that run's
+   Mentra App artifact.
+2. Install that staging Mentra App on the phone. Begin with glasses on ASG 39 and the oldest BES
+   version admitted by the rollout. ASG 39 is the bootstrap boundary that honors the manifest URL
+   carried by `ota_start`.
+3. Start the update from the Mentra App. Confirm ASG 39 persists the session and manifest URL,
+   installs the newer ASG APK first, and does not start BES in the old process.
+4. After the ASG restart, confirm the new client resumes the same session and manifest, proves the
+   old BES UART path, explicitly returns BES from negotiated fast baud to 460800, validates the BES
+   artifact, and only then sends one `mh_ota`.
+5. Follow logs with an explicit device selector:
 
-Manual procedure:
+   ```bash
+   adb -s 0123456789ABCDEF logcat \
+     -s OtaHelper BesOtaManager BesOtaUartListener K900BluetoothManager BesUartTransport
+   ```
 
-1. Upload `firmware.bin` to a server.
-2. Update `version.json` with the new metadata, including a fresh sha256.
-3. `sha256sum bes_firmware.bin` to compute the hash.
-4. Wait for the 30-minute auto-check or restart the app to trigger an immediate check.
-5. `adb logcat | grep BesOtaManager` to watch progress.
-6. Confirm BES reboots after `Apply` and the new version is reported on next `request_version`.
+6. Confirm the BES transfer reaches Apply, the glasses reconnect, and a fresh version reply reports
+   the target. Repeat from both supported deployed BES baselines and include power loss/restart at
+   every persisted boundary in the release matrix.
+
+The rolling `staging_live_version.json` is useful for discovery, but record and test the immutable
+per-run manifest URL embedded in the phone artifact. Never infer the tested manifest from the ASG
+version name after the fact.
 
 ## Troubleshooting
 
 - **Update never starts** — confirm BES OTA path is initialized (`BesOtaManager` log line at startup). Check WiFi, battery (≥ 5%), and that no APK update is currently running.
 - **Stall mid-transfer** — UART instability or BES not responding. The transfer is response-driven, so a lost response no longer stalls silently: a dead-man watchdog aborts the transfer after 30 seconds without any BES response (`AsgConstants.BES_OTA_RESPONSE_TIMEOUT_MS`), runs the normal cleanup (OTA mode exited, wake leases released), posts a failure the phone surfaces as "Update failed", and emits a `bes_ota_response_timeout` lifecycle trace with the transfer position (`sentPos`, `confirmedSegments`). The BES stays on its current firmware — the recovery is simply retrying the whole OTA from the phone. If aborts recur, look for `BesOtaUartListener` logs and check the Infinity Cable; loose connections kill UART traffic.
-- **`File too big`** — firmware exceeds 2 MB.
-- **`SHA-256 mismatch`** — the downloaded `.bin` doesn't match `version.json`. The file is deleted; verify your hash and re-upload.
-- **Stuck in OTA mode** — if `mbOtaUpdating` doesn't get cleared (rare), normal BLE traffic stays blocked. The response watchdog's cleanup clears it on any stalled transfer; if it somehow persists outside a transfer, restart the app.
+- **Artifact admission failure** — the combined manifest is invalid, or direct inspection found a
+  corrupt, oversized, or wrong-product release artifact. BES has not seen `mh_ota`; correct the
+  manifest/artifact and Retry is safe.
+- **Install-phase failure** — ASG may have queued `mh_ota`, so local write failure or silence is
+  ambiguous. Do not resend it in the same boot. The UI requires a glasses restart before another
+  attempt so BES and ASG return to a known framed UART state.
+- **Stuck in OTA mode** — a persisted nonterminal BES session deliberately owns/quarantines UART
+  until raw-versus-framed recovery resolves. A raw `0x9a` proves BES is still in OTA mode; only the
+  exact fresh `sr_syvr` requested by the audited framed probe can prove normal mode.
 
 ## Logcat tags
 

@@ -158,10 +158,7 @@ public class AsgConstants {
      */
     public static final int K900_STRING_CHUNK_MAX_FRAME_BYTES = 240;
 
-    /** Exact BES release artifact container accepted by the ASG OTA validator. */
-    public static final String BES_OTA_ARTIFACT_FORMAT = "bes-lzma-chunks-v1";
-
-    /** Mentra Live BES build target required in release metadata and the image payload. */
+    /** Mentra Live BES build target required in the decompressed image payload. */
     public static final String BES_OTA_PRODUCT = "best1502x_ibrt_bpone";
 
     /**
