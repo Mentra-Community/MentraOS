@@ -444,20 +444,49 @@ public class BesUartTransportCoordinatorTest {
     }
 
     @Test
+    public void durableRecovery_processRestartFindsBesAtFastBaud() throws Exception {
+        safety.policy = BesUartTransportCoordinator.SafetyPolicy.VERSION_PROBE_ONLY;
+        coordinator.onSerialReady(host.session);
+        coordinator.startSafetyRecovery();
+
+        awaitControlCommandCount("cs_syvr", 2, 12_000);
+
+        assertThat(host.openAttempts).containsExactly(AsgConstants.UART_FAST_BAUD);
+        assertThat(host.currentBaud()).isEqualTo(AsgConstants.UART_FAST_BAUD);
+        assertThat(host.rawWrites).hasSize(6);
+        assertThat(countControlCommands("cs_syvr")).isEqualTo(2);
+        assertThat(
+                        coordinator.onSystemVersion(
+                                "26.8.5.0",
+                                coordinator.getSerialSession(),
+                                () ->
+                                        safety.policy =
+                                                BesUartTransportCoordinator.SafetyPolicy.NORMAL))
+                .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
+        assertThat(safety.recoveryFailed).isFalse();
+        assertThat(coordinator.getState())
+                .isEqualTo(BesUartTransportCoordinator.State.READY_FAST);
+    }
+
+    @Test
     public void durableRecovery_totalSilenceFailsClosed() throws Exception {
         safety.policy = BesUartTransportCoordinator.SafetyPolicy.VERSION_PROBE_ONLY;
         coordinator.onSerialReady(host.session);
         coordinator.startSafetyRecovery();
 
         long deadline =
-                System.currentTimeMillis() + AsgConstants.UART_BAUD_PROBE_TIMEOUT_MS + 5_000;
+                System.currentTimeMillis()
+                        + 2L * AsgConstants.UART_BAUD_PROBE_TIMEOUT_MS
+                        + 9_000;
         while (System.currentTimeMillis() < deadline && !safety.recoveryFailed) {
             Thread.sleep(10);
         }
 
         assertThat(safety.recoveryFailed).isTrue();
         assertThat(coordinator.getState()).isEqualTo(BesUartTransportCoordinator.State.QUARANTINED);
-        assertThat(countControlCommands("cs_syvr")).isEqualTo(1);
+        assertThat(host.openAttempts).containsExactly(AsgConstants.UART_FAST_BAUD);
+        assertThat(host.rawWrites).hasSize(6);
+        assertThat(countControlCommands("cs_syvr")).isEqualTo(2);
     }
 
     @Test
