@@ -10,7 +10,6 @@ import org.json.JSONObject;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -33,19 +32,11 @@ public class MessageChunker {
     private static final int BINARY_FRAME_OVERHEAD =
             BesWireFormat.LENGTH_CMD_MIN_SIZE + BesWireFormat.BINARY_HEADER_SIZE;
 
-    /**
-     * Session budget for a complete packed frame. An advertised notify_cap may make it smaller,
-     * but never larger than the hardware-proven local ceiling. This makes old BES advertisements
-     * that described only a high-capacity bearer harmless during an ASG-first upgrade.
-     */
-    private static final AtomicInteger PACKED_FRAME_BUDGET =
-            new AtomicInteger(MAX_PACKED_CHUNK_SIZE);
-
     private static final AtomicLong CHUNK_SEQUENCE = new AtomicLong();
 
     /** Current maximum size of a complete packed frame for both v1 and v2. */
     public static int maxPackedFrameSize() {
-        return PACKED_FRAME_BUDGET.get();
+        return MAX_PACKED_CHUNK_SIZE;
     }
 
     /** Current maximum packed frame size for a v1 STRING ck chunk. */
@@ -56,38 +47,6 @@ public class MessageChunker {
     /** Current maximum v2 message payload after the 14-byte K900 binary framing overhead. */
     public static int maxBinaryFragmentPayload() {
         return Math.max(0, maxPackedFrameSize() - BINARY_FRAME_OVERHEAD);
-    }
-
-    /**
-     * Apply the BES notification guarantee to the shared v1/v2 frame budget. Keep the proven
-     * 13-byte margin and never allow an advertisement to raise the local 240-byte ceiling.
-     */
-    public static void setFrameBudgetFromNotifyCap(int notifyCap) {
-        if (notifyCap <= 0) {
-            resetFrameBudget();
-            return;
-        }
-        int advertisedBudget =
-                Math.max(0, notifyCap - AsgConstants.K900_CONTROL_FRAME_SAFETY_MARGIN_BYTES);
-        PACKED_FRAME_BUDGET.set(Math.min(MAX_PACKED_CHUNK_SIZE, advertisedBudget));
-    }
-
-    /** Restore the conservative budget when the negotiated capability is no longer valid. */
-    public static void resetFrameBudget() {
-        PACKED_FRAME_BUDGET.set(MAX_PACKED_CHUNK_SIZE);
-    }
-
-    /** Keep the shared frame budget aligned with the negotiated capability lifecycle. */
-    public static void followLinkState(LinkStateMachine linkState) {
-        linkState.addListener(
-                (state, provenCaps, phonePresence) -> {
-                    int notifyCap = linkState.getNegotiatedCaps().notifyCap;
-                    if (notifyCap > 0) {
-                        setFrameBudgetFromNotifyCap(notifyCap);
-                    } else {
-                        resetFrameBudget();
-                    }
-                });
     }
 
     public static boolean needsChunking(String message) {

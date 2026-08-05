@@ -5,7 +5,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.mentra.asg_client.service.core.processors.ChunkReassembler;
 import java.util.List;
 import org.json.JSONObject;
-import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -26,13 +25,6 @@ public class StringChunkBudgetTest {
     public void setUp() {
         // v1 string mode — the post-APK-restart steady state until a BLE reconnect.
         BesWireFormat.resetBinaryProtocol();
-        MessageChunker.resetFrameBudget();
-    }
-
-    @After
-    public void tearDown() {
-        BesWireFormat.resetBinaryProtocol();
-        MessageChunker.resetFrameBudget();
     }
 
     /**
@@ -96,117 +88,13 @@ public class StringChunkBudgetTest {
         assertAllPackedChunksFitAndRoundTrip(largeQuoteDenseJson(500));
     }
 
-    // ---- Shared v1/v2 envelope: notify_cap may lower but never raise the proven ceiling ----
+    // ---- Shared immutable v1/v2 envelope ----
 
     @Test
-    public void budgetDefaultsToTheConservativeFallback() {
+    public void budgetUsesTheConservativePackedFrameCeiling() {
         assertThat(MessageChunker.maxPackedStringChunkSize())
                 .isEqualTo(com.mentra.asg_client.AsgConstants.K900_CONTROL_MAX_PACKED_FRAME_BYTES)
                 .isEqualTo(240);
-    }
-
-    @Test
-    public void advertisedNotifyCapCannotRaiseTheBudget() {
-        MessageChunker.setFrameBudgetFromNotifyCap(509);
-        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(240);
-
-        MessageChunker.setFrameBudgetFromNotifyCap(253);
-        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(240);
-    }
-
-    @Test
-    public void smallerNotifyCapLowersTheBudgetWithSafetyMargin() {
-        MessageChunker.setFrameBudgetFromNotifyCap(1000);
-        MessageChunker.setFrameBudgetFromNotifyCap(200);
-        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(187);
-    }
-
-    @Test
-    public void resetRestoresTheFallbackBudget() {
-        MessageChunker.setFrameBudgetFromNotifyCap(509);
-
-        MessageChunker.resetFrameBudget();
-
-        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(240);
-    }
-
-    @Test
-    public void chunksStillFitAndRoundTripAfterLargeAdvertisement() throws Exception {
-        MessageChunker.setFrameBudgetFromNotifyCap(509);
-        assertAllPackedChunksFitAndRoundTrip(largeQuoteDenseJson(500));
-    }
-
-    @Test
-    public void budgetFollowsTheCapsLifecycleThroughTheLinkStateMachine() {
-        LinkStateMachine machine = new LinkStateMachine();
-        MessageChunker.followLinkState(machine);
-
-        machine.serialReady();
-        machine.srSyvrParsed(
-                new LinkStateMachine.BesCaps(
-                        false, false, false, false, BesWireFormat.PROTOCOL_VERSION_V1, 509));
-        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(240);
-
-        // A discontinuity (baud reopen) keeps the negotiated caps — and the budget with them.
-        machine.streamDiscontinuity();
-        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(240);
-
-        // EVERY close path (onSerialClose, failed onSerialOpen, reopen failures) funnels
-        // through the machine's serialClosed transition: caps cleared MUST mean fallback
-        // budget, or a later session against firmware without notify_cap would inherit a
-        // stale oversized budget and silently truncate notifications again.
-        machine.serialClosed();
-        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(240);
-
-        // Reconnect to old firmware (sr_syvr without wire_caps): the fallback must hold.
-        machine.serialReady();
-        machine.srSyvrParsed(null);
-        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(240);
-    }
-
-    @Test
-    public void budgetFollowsThePhoneSessionLifecycle() {
-        // An old large advertisement cannot raise the proven local envelope.
-        LinkStateMachine machine = new LinkStateMachine();
-        MessageChunker.followLinkState(machine);
-        machine.serialReady();
-        machine.phonePresenceReported(true);
-        machine.srSyvrParsed(
-                new LinkStateMachine.BesCaps(
-                        false, false, false, false, BesWireFormat.PROTOCOL_VERSION_V1, 509));
-        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(240);
-
-        // Phone disconnects: back to the fallback.
-        machine.phonePresenceReported(false);
-        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(240);
-
-        // Phone reconnects WITHOUT a fresh advertisement: the fallback must hold.
-        machine.phonePresenceReported(true);
-        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(240);
-
-        // A smaller fresh guarantee lowers the shared frame budget.
-        machine.srSyvrParsed(
-                new LinkStateMachine.BesCaps(
-                        false, false, false, false, BesWireFormat.PROTOCOL_VERSION_V1, 200));
-        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(187);
-    }
-
-    @Test
-    public void budgetFallsBackOnBesOta() {
-        // A BES OTA is a firmware-generation boundary AND kills the phone session: the new
-        // firmware may advertise a different notify_cap or none at all.
-        LinkStateMachine machine = new LinkStateMachine();
-        MessageChunker.followLinkState(machine);
-        machine.serialReady();
-        machine.srSyvrParsed(
-                new LinkStateMachine.BesCaps(
-                        false, false, false, false, BesWireFormat.PROTOCOL_VERSION_V1, 509));
-        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(240);
-
-        // onBesOtaApplied drives exactly these two machine transitions.
-        machine.streamDiscontinuity();
-        machine.phonePresenceInvalidated();
-
-        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(240);
+        assertThat(MessageChunker.maxBinaryFragmentPayload()).isEqualTo(226);
     }
 }

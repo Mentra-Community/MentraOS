@@ -258,7 +258,6 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         // Initialize every callback dependency before the serial receive thread starts.
         messageParser = new BesMessageParser();
         fileTransferExecutor = Executors.newSingleThreadScheduledExecutor();
-        MessageChunker.followLinkState(linkState);
 
         // Create the communication manager
         comManager = new SerialPortBridge(context);
@@ -1382,8 +1381,8 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             Log.i(TAG, "📦 BES wire_caps advertised negotiated file payloads");
         }
         if (advertised != null && advertised.notifyCap > 0) {
-            // MessageChunker's link-state listener applies this guarantee to both v1 and v2
-            // complete frames without allowing old advertisements to raise the proven ceiling.
+            // Diagnostic contract. ASG control frames use a stricter immutable 240-byte ceiling
+            // for both v1 and v2, so old bearer-specific advertisements cannot make them larger.
             Log.i(TAG, "📏 BES wire_caps advertised notify_cap=" + advertised.notifyCap);
         }
         return advertised;

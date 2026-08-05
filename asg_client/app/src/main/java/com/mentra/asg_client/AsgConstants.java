@@ -163,9 +163,6 @@ public class AsgConstants {
      */
     public static final int BES_OTA_MAX_DECOMPRESSED_IMAGE_BYTES = 0x1E0000;
 
-    /** Safety margin retained below the BES-advertised notification payload limit. */
-    public static final int K900_CONTROL_FRAME_SAFETY_MARGIN_BYTES = 13;
-
     /** Rendezvous baud shared by every ASG and BES firmware generation. */
     public static final int UART_RENDEZVOUS_BAUD = 460800;
 
