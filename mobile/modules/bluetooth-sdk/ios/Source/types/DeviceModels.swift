@@ -158,7 +158,10 @@ public struct Device: Identifiable, Equatable, CustomStringConvertible {
             identifier: identifier,
             projectName: projectName,
             rssi: rssi,
-            id: stringValue(values, "id")
+            id: stringValue(values, "id"),
+            pairingMode: boolValue(values, "pairingMode"),
+            pairingCode: stringValue(values, "pairingCode").flatMap { $0.isEmpty ? nil : $0 },
+            securePairingCapable: boolValue(values, "securePairingCapable")
         )
     }
 }

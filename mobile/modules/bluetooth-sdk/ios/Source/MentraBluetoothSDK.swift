@@ -170,9 +170,47 @@ private final class PendingResponse<T> {
     }
 }
 
+/// Correlates an in-flight wipe-media request to the response that should resolve it.
+/// A nil `transferId` matches any response (legacy firmware that omits transfer_id).
+private struct PendingWipeMedia {
+    let transferId: String?
+    let pending: PendingResponse<WipeMediaResultEvent>
+
+    func matches(_ event: WipeMediaResultEvent) -> Bool {
+        transferId == nil || transferId == event.transferId
+    }
+}
+
+/// Correlates an in-flight finalize/abort call to the response that should resolve it, so a
+/// stale, wrong-transfer, or opposite-operation acknowledgment cannot complete it.
+private struct PendingPairingTransfer {
+    let operation: String
+    let transferId: String?
+    let pending: PendingResponse<PairingTransferResultEvent>
+
+    func matches(_ event: PairingTransferResultEvent) -> Bool {
+        operation == event.operation && (transferId == nil || transferId == event.transferId)
+    }
+}
+
+/// Correlates an in-flight status query to the response that should resolve it.
+/// A nil `transferId` matches any response (no transfer id known yet).
+private struct PendingPairingTransferStatus {
+    let transferId: String?
+    let pending: PendingResponse<PairingTransferStatusEvent>
+
+    func matches(_ event: PairingTransferStatusEvent) -> Bool {
+        transferId == nil || transferId == event.transferId
+    }
+}
+
 @MainActor
 public final class MentraBluetoothSDK {
     private static let wifiScanTimeoutMs = 20_000
+    // Secure pairing finalize/abort round-trips through a credential-binding handshake
+    // (CTKD, keystore commit, etc.) on the glasses and can legitimately take longer than the
+    // generic command deadline. Do not fold this into the default request timeout.
+    private static let pairingTransferTimeoutMs = 60_000
     // A photo response is terminal only after capture, encoding, transport, and upload.
     // Max-quality BLE fallback can legitimately exceed the generic command deadline.
     private static let photoRequestTimeoutMs = 30_000
@@ -209,8 +247,9 @@ public final class MentraBluetoothSDK {
     // start with a lower seq reached the glasses' FIFO before this stop.
     private var pendingStreamStop: (streamId: String?, seq: Int, pending: PendingResponse<StreamStatusEvent>)?
     private var pendingGalleryStatus: PendingResponse<GalleryStatusEvent>?
-    private var pendingWipeMedia: PendingResponse<WipeMediaResultEvent>?
-    private var pendingPairingTransfer: PendingResponse<PairingTransferResultEvent>?
+    private var pendingWipeMedia: PendingWipeMedia?
+    private var pendingPairingTransfer: PendingPairingTransfer?
+    private var pendingPairingTransferStatus: PendingPairingTransferStatus?
     private var activePairingTransferId: String?
     private var pendingOtaQuery: PendingResponse<OtaQueryResult>?
     private var pendingOtaStart: PendingResponse<OtaStartAckEvent>?
@@ -996,16 +1035,17 @@ public final class MentraBluetoothSDK {
             )
         }
         let pending = PendingResponse<WipeMediaResultEvent>(operation: "wipe media for pairing")
-        pendingWipeMedia = pending
-        DeviceManager.shared.sendWipeMediaForPairing(transferId: activePairingTransferId)
+        let entry = PendingWipeMedia(transferId: activePairingTransferId, pending: pending)
+        pendingWipeMedia = entry
+        DeviceManager.shared.sendWipeMediaForPairing(transferId: entry.transferId)
         do {
             let event = try await pending.wait()
-            if pendingWipeMedia === pending {
+            if pendingWipeMedia?.pending === pending {
                 pendingWipeMedia = nil
             }
             return event
         } catch {
-            if pendingWipeMedia === pending {
+            if pendingWipeMedia?.pending === pending {
                 pendingWipeMedia = nil
             }
             throw error
@@ -1023,14 +1063,19 @@ public final class MentraBluetoothSDK {
             )
         }
         let pending = PendingResponse<PairingTransferResultEvent>(operation: "finalize pairing transfer")
-        pendingPairingTransfer = pending
-        DeviceManager.shared.sendPairingFinalize(transferId: activePairingTransferId)
+        let entry = PendingPairingTransfer(operation: "finalize", transferId: activePairingTransferId, pending: pending)
+        pendingPairingTransfer = entry
+        DeviceManager.shared.sendPairingFinalize(transferId: entry.transferId)
         do {
-            let event = try await pending.wait()
-            if pendingPairingTransfer === pending { pendingPairingTransfer = nil }
+            // Finalize timing out does not mean the operation failed — the glasses may still
+            // commit or have already committed the transfer. Callers must not auto-abort on
+            // this timeout; instead they should query getPairingTransferStatus() and/or retry
+            // the same finalize call.
+            let event = try await pending.wait(timeoutMs: Self.pairingTransferTimeoutMs)
+            if pendingPairingTransfer?.pending === pending { pendingPairingTransfer = nil }
             return event
         } catch {
-            if pendingPairingTransfer === pending { pendingPairingTransfer = nil }
+            if pendingPairingTransfer?.pending === pending { pendingPairingTransfer = nil }
             throw error
         }
     }
@@ -1046,14 +1091,43 @@ public final class MentraBluetoothSDK {
             )
         }
         let pending = PendingResponse<PairingTransferResultEvent>(operation: "abort pairing transfer")
-        pendingPairingTransfer = pending
-        DeviceManager.shared.sendPairingAbort(transferId: activePairingTransferId)
+        let entry = PendingPairingTransfer(operation: "abort", transferId: activePairingTransferId, pending: pending)
+        pendingPairingTransfer = entry
+        DeviceManager.shared.sendPairingAbort(transferId: entry.transferId)
         do {
-            let event = try await pending.wait()
-            if pendingPairingTransfer === pending { pendingPairingTransfer = nil }
+            let event = try await pending.wait(timeoutMs: Self.pairingTransferTimeoutMs)
+            if pendingPairingTransfer?.pending === pending { pendingPairingTransfer = nil }
             return event
         } catch {
-            if pendingPairingTransfer === pending { pendingPairingTransfer = nil }
+            if pendingPairingTransfer?.pending === pending { pendingPairingTransfer = nil }
+            throw error
+        }
+    }
+
+    /// Query the current state of a secure pairing transfer without finalizing or aborting it.
+    /// Used to recover after finalize/abort times out — the caller can determine whether the
+    /// glasses already committed/aborted the transfer instead of guessing.
+    public func getPairingTransferStatus(transferId: String? = nil) async throws -> PairingTransferStatusEvent {
+        guard DeviceManager.shared.sgc is MentraLive else {
+            throw BluetoothSdkError(code: "unsupported_device", message: "Pairing transfer requires Mentra Live glasses")
+        }
+        if pendingPairingTransferStatus != nil {
+            throw BluetoothSdkError(
+                code: "request_in_flight",
+                message: "A pairing transfer status query is already waiting for a glasses response."
+            )
+        }
+        let effectiveTransferId = transferId ?? activePairingTransferId
+        let pending = PendingResponse<PairingTransferStatusEvent>(operation: "pairing transfer status query")
+        let entry = PendingPairingTransferStatus(transferId: effectiveTransferId, pending: pending)
+        pendingPairingTransferStatus = entry
+        DeviceManager.shared.sendPairingTransferStatus(transferId: entry.transferId)
+        do {
+            let event = try await pending.wait(timeoutMs: Self.pairingTransferTimeoutMs)
+            if pendingPairingTransferStatus?.pending === pending { pendingPairingTransferStatus = nil }
+            return event
+        } catch {
+            if pendingPairingTransferStatus?.pending === pending { pendingPairingTransferStatus = nil }
             throw error
         }
     }
@@ -2190,11 +2264,32 @@ private func dispatchDiscoveredDevices(_ rawSearchResults: Any?) {
             delegate?.mentraBluetoothSDK(self, didReceive: .raw(name: "pairing_info", values: data))
         case "pairing_transfer_result":
             let transferEvent = PairingTransferResultEvent(values: data)
-            pendingPairingTransfer?.resolve(transferEvent)
+            if let current = pendingPairingTransfer, current.matches(transferEvent) {
+                current.pending.resolve(transferEvent)
+                pendingPairingTransfer = nil
+            }
+            // A pairing_transfer_result is always a terminal outcome (committed or aborted)
+            // for that transfer id — it no longer refers to an active, resumable transfer.
+            // This is intentionally NOT cleared on disconnect, so a finalize/abort that times
+            // out mid-flight can still be recovered/retried against the same transfer id
+            // after reconnecting.
+            if activePairingTransferId == nil || activePairingTransferId == transferEvent.transferId {
+                activePairingTransferId = nil
+            }
             delegate?.mentraBluetoothSDK(self, didReceive: .raw(name: "pairing_transfer_result", values: data))
+        case "pairing_transfer_status_result":
+            let statusEvent = PairingTransferStatusEvent(values: data)
+            if let current = pendingPairingTransferStatus, current.matches(statusEvent) {
+                current.pending.resolve(statusEvent)
+                pendingPairingTransferStatus = nil
+            }
+            delegate?.mentraBluetoothSDK(self, didReceive: .raw(name: "pairing_transfer_status_result", values: data))
         case "wipe_media_result":
             let event = WipeMediaResultEvent(values: data)
-            pendingWipeMedia?.resolve(event)
+            if let current = pendingWipeMedia, current.matches(event) {
+                current.pending.resolve(event)
+                pendingWipeMedia = nil
+            }
             delegate?.mentraBluetoothSDK(self, didReceive: .raw(name: "wipe_media_result", values: data))
         case "photo_response":
             let event = PhotoResponseEvent(values: data)

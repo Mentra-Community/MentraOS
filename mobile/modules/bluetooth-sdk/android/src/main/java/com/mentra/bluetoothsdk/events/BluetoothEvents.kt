@@ -129,6 +129,23 @@ data class PairingTransferResultEvent(
 ) {
     val state: Int? get() = (values["state"] as? Number)?.toInt()
     val error: String? get() = values["error"] as? String
+    val binding: String? get() = values["binding"] as? String
+}
+
+/**
+ * Response to a `pairing_transfer_status` query — the current state of an in-flight or
+ * completed secure pairing transfer, queried without finalizing or aborting it. Used to
+ * recover after finalize/abort times out on the phone side.
+ */
+data class PairingTransferStatusEvent(
+    val transferId: String,
+    val state: String,
+    val values: Map<String, Any>,
+) {
+    val terminalOperation: String? get() = values["terminal_operation"] as? String
+    val binding: String? get() = values["binding"] as? String
+    val credentialCleanupPending: Boolean? get() = values["credential_cleanup_pending"] as? Boolean
+    val protocolVersion: Int? get() = (values["protocol_version"] as? Number)?.toInt()
 }
 
 interface MentraBluetoothSdkListener {

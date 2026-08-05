@@ -656,6 +656,8 @@ export type PairingInfoEvent = {
   classic_bond_ready?: boolean
   secure_pairing_capable?: boolean
   protocol_version?: number
+  /** Credential binding mode negotiated for this transfer, when reported by the glasses. */
+  binding?: "ctkd" | "temporal" | "none" | string
 }
 
 export type WipeMediaResultEvent = {
@@ -671,6 +673,16 @@ export type PairingTransferResultEvent = {
   success: boolean
   state?: number
   error?: string
+  /** Credential binding mode negotiated for this transfer, when reported by the glasses. */
+  binding?: string
+}
+
+export type PairingTransferStatusEvent = {
+  transfer_id: string
+  state: "active" | "committed" | "aborted" | "expired" | "unknown" | string
+  terminal_operation?: "finalize" | "abort" | null | string
+  binding?: "ctkd" | "temporal" | "none" | string
+  credential_cleanup_pending?: boolean
   protocol_version?: number
 }
 
@@ -924,6 +936,7 @@ export type BluetoothSdkModuleEvents = {
   pairing_info: (event: PairingInfoEvent) => void
   wipe_media_result: (event: WipeMediaResultEvent) => void
   pairing_transfer_result: (event: PairingTransferResultEvent) => void
+  pairing_transfer_status_result: (event: PairingTransferStatusEvent) => void
   audio_pairing_needed: (event: AudioPairingNeededEvent) => void
   audio_connected: (event: AudioConnectedEvent) => void
   audio_disconnected: (event: AudioDisconnectedEvent) => void
@@ -1031,6 +1044,7 @@ export type BluetoothSdkEventMap = {
   pairing_info: PairingInfoEvent
   wipe_media_result: WipeMediaResultEvent
   pairing_transfer_result: PairingTransferResultEvent
+  pairing_transfer_status_result: PairingTransferStatusEvent
   audio_pairing_needed: AudioPairingNeededEvent
   audio_connected: AudioConnectedEvent
   audio_disconnected: AudioDisconnectedEvent
@@ -1177,6 +1191,7 @@ export interface BluetoothSdkPublicModule {
   wipeMediaForPairing(): Promise<WipeMediaResultEvent>
   finalizePairingTransfer(): Promise<PairingTransferResultEvent>
   abortPairingTransfer(): Promise<PairingTransferResultEvent>
+  getPairingTransferStatus(transferId?: string): Promise<PairingTransferStatusEvent>
 
   // // stt commands (MOVE TO CRUST)
   // setSttModelDetails(path: string, languageCode: string): Promise<void>

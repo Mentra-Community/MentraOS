@@ -3,6 +3,7 @@ package com.mentra.asg_client.service.core.handlers;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -12,6 +13,7 @@ import com.mentra.asg_client.io.media.core.MediaCaptureService;
 import com.mentra.asg_client.io.media.managers.MediaUploadQueueManager;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
+import com.mentra.asg_client.service.pairing.PairingTransferCaptureGate;
 import java.io.File;
 import org.json.JSONObject;
 import org.junit.Before;
@@ -62,7 +64,8 @@ public class WipeMediaCommandHandlerTest {
     }
 
     @Test
-    public void wipeMedia_deletesGalleryAndArmsBarrier() throws Exception {
+    public void wipeMedia_disabledSkipsDeleteAndReportsSuccess() throws Exception {
+        // ENABLE_PAIRING_MEDIA_WIPE is currently false — wipe code retained but inactive.
         File photo = new File(mediaDir, "IMG_test/base.jpg");
         assertThat(photo.getParentFile().mkdirs()).isTrue();
         assertThat(photo.createNewFile()).isTrue();
@@ -73,8 +76,8 @@ public class WipeMediaCommandHandlerTest {
 
         boolean handled = handler.handleCommand("wipe_media", command);
         assertThat(handled).isTrue();
-        assertThat(photo.exists()).isFalse();
-        assertThat(WipeMediaCommandHandler.isCaptureBarrierActive(context)).isTrue();
+        assertThat(photo.exists()).isTrue();
+        assertThat(WipeMediaCommandHandler.isCaptureBarrierActive(context)).isFalse();
 
         ArgumentCaptor<JSONObject> captor = ArgumentCaptor.forClass(JSONObject.class);
         verify(communicationManager).sendBluetoothResponse(captor.capture());
@@ -82,16 +85,39 @@ public class WipeMediaCommandHandlerTest {
         assertThat(response.getBoolean("success")).isTrue();
         assertThat(response.getString("transfer_id")).isEqualTo("ABCDEF0123456789");
         assertThat(response.getString("request_id")).isEqualTo("req-1");
-        verify(queueManager).clearQueue();
     }
 
     @Test
-    public void wipeMedia_stopsActiveRecording() throws Exception {
+    public void wipeMedia_disabledDoesNotStopRecording() throws Exception {
         when(captureService.isRecordingVideo()).thenReturn(true);
 
         JSONObject command = new JSONObject().put("transfer_id", "1122334455667788");
         assertThat(handler.handleCommand("wipe_media", command)).isTrue();
-        verify(captureService).stopVideoRecording();
+        verify(captureService, never()).cancelInFlightCapturesForPairingWipe();
+        verify(captureService, never()).stopVideoRecording();
+    }
+
+    @Test
+    public void pairingFinalize_clearsCaptureBarrier() throws Exception {
+        PairingTransferCaptureGate.arm(context, "ABCDEF0123456789");
+        assertThat(WipeMediaCommandHandler.isCaptureBarrierActive(context)).isTrue();
+
+        assertThat(handler.handleCommand(
+                        "pairing_finalize", new JSONObject().put("transfer_id", "ABCDEF0123456789")))
+                .isTrue();
+        assertThat(WipeMediaCommandHandler.isCaptureBarrierActive(context)).isFalse();
+        verify(communicationManager, never()).sendBluetoothResponse(any(JSONObject.class));
+    }
+
+    @Test
+    public void pairingAbort_clearsCaptureBarrier() throws Exception {
+        PairingTransferCaptureGate.arm(context, "1122334455667788");
+        assertThat(WipeMediaCommandHandler.isCaptureBarrierActive(context)).isTrue();
+
+        assertThat(handler.handleCommand(
+                        "pairing_abort", new JSONObject().put("transfer_id", "1122334455667788")))
+                .isTrue();
+        assertThat(WipeMediaCommandHandler.isCaptureBarrierActive(context)).isFalse();
     }
 
     @Test

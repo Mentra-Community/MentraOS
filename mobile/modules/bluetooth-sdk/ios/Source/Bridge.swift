@@ -104,7 +104,8 @@ class Bridge {
         pairingCode: String? = nil,
         classicBondReady: Bool = false,
         securePairingCapable: Bool = true,
-        protocolVersion: Int = 1
+        protocolVersion: Int = 1,
+        binding: String? = nil
     ) {
         var body: [String: Any] = [
             "had_previous_bond": hadPreviousBond,
@@ -114,6 +115,7 @@ class Bridge {
         ]
         if let transferId { body["transfer_id"] = transferId }
         if let pairingCode { body["pairing_code"] = pairingCode }
+        if let binding { body["binding"] = binding }
         Bridge.sendTypedMessage("pairing_info", body: body)
     }
 
@@ -135,7 +137,8 @@ class Bridge {
         operation: String,
         success: Bool,
         state: Int? = nil,
-        error: String? = nil
+        error: String? = nil,
+        binding: String? = nil
     ) {
         var body: [String: Any] = [
             "transfer_id": transferId,
@@ -144,7 +147,29 @@ class Bridge {
         ]
         if let state { body["state"] = state }
         if let error { body["error"] = error }
+        if let binding { body["binding"] = binding }
         Bridge.sendTypedMessage("pairing_transfer_result", body: body)
+    }
+
+    /// Send the result of a `pairing_transfer_status` query — the current state of an
+    /// in-flight or completed secure pairing transfer, without finalizing or aborting it.
+    static func sendPairingTransferStatus(
+        transferId: String,
+        state: String,
+        terminalOperation: String? = nil,
+        binding: String? = nil,
+        credentialCleanupPending: Bool? = nil,
+        protocolVersion: Int? = nil
+    ) {
+        var body: [String: Any] = [
+            "transfer_id": transferId,
+            "state": state,
+        ]
+        if let terminalOperation { body["terminal_operation"] = terminalOperation }
+        if let binding { body["binding"] = binding }
+        if let credentialCleanupPending { body["credential_cleanup_pending"] = credentialCleanupPending }
+        if let protocolVersion { body["protocol_version"] = protocolVersion }
+        Bridge.sendTypedMessage("pairing_transfer_status_result", body: body)
     }
 
     @MainActor

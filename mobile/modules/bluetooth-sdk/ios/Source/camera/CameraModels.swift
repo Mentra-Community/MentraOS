@@ -890,6 +890,7 @@ public struct PairingTransferResultEvent: CustomStringConvertible {
     public let success: Bool
     public let state: Int?
     public let error: String?
+    public let binding: String?
     public let values: [String: Any]
 
     public init(values: [String: Any]) {
@@ -899,10 +900,38 @@ public struct PairingTransferResultEvent: CustomStringConvertible {
         self.success = values["success"] as? Bool ?? false
         self.state = values["state"] as? Int
         self.error = values["error"] as? String
+        self.binding = values["binding"] as? String
     }
 
     public var description: String {
         "PairingTransferResultEvent(op: \(operation), success: \(success))"
+    }
+}
+
+/// Response to a `pairing_transfer_status` query — the current state of an in-flight or
+/// completed secure pairing transfer, queried without finalizing or aborting it. Used to
+/// recover after finalize/abort times out on the phone side.
+public struct PairingTransferStatusEvent: CustomStringConvertible {
+    public let transferId: String
+    public let state: String
+    public let terminalOperation: String?
+    public let binding: String?
+    public let credentialCleanupPending: Bool?
+    public let protocolVersion: Int?
+    public let values: [String: Any]
+
+    public init(values: [String: Any]) {
+        self.values = values
+        self.transferId = values["transfer_id"] as? String ?? ""
+        self.state = values["state"] as? String ?? "unknown"
+        self.terminalOperation = values["terminal_operation"] as? String
+        self.binding = values["binding"] as? String
+        self.credentialCleanupPending = values["credential_cleanup_pending"] as? Bool
+        self.protocolVersion = values["protocol_version"] as? Int
+    }
+
+    public var description: String {
+        "PairingTransferStatusEvent(state: \(state))"
     }
 }
 

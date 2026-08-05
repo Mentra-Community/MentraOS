@@ -889,7 +889,7 @@ extension MentraLive: CBCentralManagerDelegate {
                 rssi: rssi?.intValue,
                 pairingMode: trailer.pairingMode || isPairingDiscoverable(advertisementData),
                 pairingCode: trailer.pairingCode,
-                securePairingCapable: trailer.secureCapable || advertisesPairingFlag(advertisementData)
+                securePairingCapable: trailer.secureCapable
             )
 
             // Check if this is the device we want to connect to
@@ -1305,23 +1305,36 @@ class MentraLive: NSObject, SGCManager {
     private let advManufCompanyIdLength = 2
     private let advPairingDiscoverable: UInt8 = 0x01
 
+    // Field firmware does not advertise the Mentra manufacturer pairing flag. Its absence means
+    // "legacy firmware, discoverability unknown", which must NOT hide the unit — the OS-1615
+    // rollout cannot require new firmware just to be able to pair. Only advertisements carrying
+    // the Mentra company id can assert "not in pairing mode" and be filtered out. CoreBluetooth
+    // returns manufacturer data prefixed with the 2-byte company id (little-endian) and does NOT
+    // filter by company id itself (unlike Android's getManufacturerSpecificData(companyId)), so
+    // every reader of this data must verify the company id before trusting any flag/trailer byte
+    // — otherwise a non-Mentra advertiser could spoof the pairing flag or secure-capability bit.
+    private func mentraManufacturerData(_ advertisementData: [String: Any]) -> Data? {
+        guard let manufData = advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data,
+              manufData.count >= advManufCompanyIdLength
+        else {
+            return nil
+        }
+        let companyId = UInt16(manufData[0]) | (UInt16(manufData[1]) << 8)
+        guard companyId == mentraManufacturerId else {
+            return nil
+        }
+        return manufData
+    }
+
     private func isPairingDiscoverable(_ advertisementData: [String: Any]) -> Bool {
         let flagIndex = advManufCompanyIdLength + advManufPairingFlagOffset
-        guard let manufData = advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data,
+        guard let manufData = mentraManufacturerData(advertisementData),
               manufData.count > flagIndex
         else {
             return false
         }
         return manufData[flagIndex] == advPairingDiscoverable
     }
-
-    // Field firmware does not advertise the Mentra manufacturer pairing flag. Its absence means
-    // "legacy firmware, discoverability unknown", which must NOT hide the unit — the OS-1615
-    // rollout cannot require new firmware just to be able to pair. Only advertisements carrying
-    // the Mentra company id can assert "not in pairing mode" and be filtered out. CoreBluetooth
-    // returns manufacturer data prefixed with the 2-byte company id (little-endian), so verify it
-    // matches before trusting the flag byte — otherwise unrelated manufacturer data would wrongly
-    // hide a legacy unit.
 
     private struct SecurePairingTrailer {
         let pairingMode: Bool
@@ -1332,7 +1345,7 @@ class MentraLive: NSObject, SGCManager {
     /// Trailer immediately after pairing flag: version | capability | code_lo | code_hi
     private func parseSecurePairingTrailer(_ advertisementData: [String: Any]) -> SecurePairingTrailer {
         let flagIndex = advManufCompanyIdLength + advManufPairingFlagOffset
-        guard let manufData = advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data,
+        guard let manufData = mentraManufacturerData(advertisementData),
               manufData.count > flagIndex
         else {
             return SecurePairingTrailer(pairingMode: false, pairingCode: nil, secureCapable: false)
@@ -1353,13 +1366,10 @@ class MentraLive: NSObject, SGCManager {
 
     private func advertisesPairingFlag(_ advertisementData: [String: Any]) -> Bool {
         let flagIndex = advManufCompanyIdLength + advManufPairingFlagOffset
-        guard let manufData = advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data,
-              manufData.count > flagIndex
-        else {
+        guard let manufData = mentraManufacturerData(advertisementData) else {
             return false
         }
-        let companyId = UInt16(manufData[0]) | (UInt16(manufData[1]) << 8)
-        return companyId == mentraManufacturerId
+        return manufData.count > flagIndex
     }
 
     var connectionState: String = ConnTypes.DISCONNECTED
@@ -2696,8 +2706,10 @@ class MentraLive: NSObject, SGCManager {
                 transferId: json["transfer_id"] as? String,
                 pairingCode: json["pairing_code"] as? String,
                 classicBondReady: json["classic_bond_ready"] as? Bool ?? false,
-                securePairingCapable: json["secure_pairing_capable"] as? Bool ?? true,
-                protocolVersion: json["protocol_version"] as? Int ?? 1
+                // Legacy firmware that omits this field is not secure-capable.
+                securePairingCapable: json["secure_pairing_capable"] as? Bool ?? false,
+                protocolVersion: json["protocol_version"] as? Int ?? 1,
+                binding: json["binding"] as? String
             )
 
         case "wipe_media_result":
@@ -2714,7 +2726,18 @@ class MentraLive: NSObject, SGCManager {
                 operation: json["operation"] as? String ?? "",
                 success: json["success"] as? Bool ?? false,
                 state: json["state"] as? Int,
-                error: json["error"] as? String
+                error: json["error"] as? String,
+                binding: json["binding"] as? String
+            )
+
+        case "pairing_transfer_status_result":
+            Bridge.sendPairingTransferStatus(
+                transferId: json["transfer_id"] as? String ?? "",
+                state: json["state"] as? String ?? "unknown",
+                terminalOperation: json["terminal_operation"] as? String,
+                binding: json["binding"] as? String,
+                credentialCleanupPending: json["credential_cleanup_pending"] as? Bool,
+                protocolVersion: json["protocol_version"] as? Int
             )
 
         case "imu_response", "imu_stream_response", "imu_gesture_response",
@@ -3485,6 +3508,16 @@ class MentraLive: NSObject, SGCManager {
 
     func sendPairingAbort(transferId: String? = nil) {
         var json: [String: Any] = ["type": "pairing_abort"]
+        if let transferId { json["transfer_id"] = transferId }
+        sendJson(json, wakeUp: true)
+    }
+
+    /// Query the current state of a secure pairing transfer without finalizing or aborting it.
+    /// Glasses respond with `pairing_transfer_status_result`. Used to recover after a
+    /// finalize/abort request times out on the phone side so the outcome of the in-flight
+    /// operation can be determined rather than blindly retried or assumed failed.
+    func sendPairingTransferStatus(transferId: String? = nil) {
+        var json: [String: Any] = ["type": "pairing_transfer_status"]
         if let transferId { json["transfer_id"] = transferId }
         sendJson(json, wakeUp: true)
     }

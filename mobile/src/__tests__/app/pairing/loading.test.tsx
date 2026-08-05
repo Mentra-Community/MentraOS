@@ -238,19 +238,40 @@ describe("pairing loading screen", () => {
     })
   })
 
-  it("always prompts wipe when had_previous_bond is true (including empty gallery)", async () => {
-    const showAlert = require("@/utils/AlertUtils").default as jest.Mock
-    showAlert.mockImplementation((_title: string, _msg: string, buttons: Array<{text?: string; onPress?: () => void}>) => {
-      // Auto-confirm wipe
-      const confirm = buttons.find((b) => b.text === "pairing:wipeMediaConfirm" || (b as any).tx === "pairing:wipeMediaConfirm")
-      // i18n is mocked to return keys; showAlert receives translated title keys from translate()
+  it("does not fall through to success on the legacy timeout when the scan result already reported secure-capable firmware", async () => {
+    ;(useRoute as jest.Mock).mockReturnValue({
+      params: {deviceModel: "Mentra Live", deviceName: "MENTRA_LIVE_BLE_001", securePairingCapable: true},
     })
-    // Force translate to return keys so wipe button match works via onPress index
-    showAlert.mockImplementation((_t: string, _m: string, buttons: Array<{onPress?: () => void}>) => {
-      // second button is confirm
-      buttons[1]?.onPress?.()
+    render(<GlassesPairingLoadingScreen />)
+
+    act(() => {
+      useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
     })
 
+    // pairing_info is merely delayed, not absent — known-secure firmware must keep waiting for
+    // it rather than let the legacy timeout mark pairing successful underneath it.
+    act(() => {
+      jest.advanceTimersByTime(5_000)
+    })
+    act(() => {
+      jest.advanceTimersByTime(1_000)
+    })
+    expect(replace).not.toHaveBeenCalled()
+
+    act(() => {
+      emitBluetoothSdkEvent("pairing_info", {had_previous_bond: false, secure_pairing_capable: true})
+    })
+    act(() => {
+      jest.advanceTimersByTime(1_000)
+    })
+
+    await waitFor(() => {
+      expect(replace).toHaveBeenCalledWith("/pairing/success", {deviceModel: "Mentra Live"})
+    })
+  })
+
+  it("finalizes ownership without wipe when media wipe is disabled", async () => {
+    const showAlert = require("@/utils/AlertUtils").default as jest.Mock
     const {bluetoothSdkMock} = require("@/test-utils/mockBluetoothSdk")
     bluetoothSdkMock.wipeMediaForPairing = jest.fn(() => Promise.resolve({success: true}))
     bluetoothSdkMock.finalizePairingTransfer = jest.fn(() =>
@@ -272,11 +293,9 @@ describe("pairing loading screen", () => {
     })
 
     await waitFor(() => {
-      expect(showAlert).toHaveBeenCalled()
-      expect(bluetoothSdkMock.wipeMediaForPairing).toHaveBeenCalled()
-    })
-    await waitFor(() => {
       expect(bluetoothSdkMock.finalizePairingTransfer).toHaveBeenCalled()
     })
+    expect(bluetoothSdkMock.wipeMediaForPairing).not.toHaveBeenCalled()
+    expect(showAlert).not.toHaveBeenCalled()
   })
 })

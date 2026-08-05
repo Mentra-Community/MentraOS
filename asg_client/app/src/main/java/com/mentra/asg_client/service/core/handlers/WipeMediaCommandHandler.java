@@ -1,9 +1,9 @@
 package com.mentra.asg_client.service.core.handlers;
 
 import android.content.Context;
-import android.content.SharedPreferences;
 import android.util.Log;
 
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.file.core.FileManager;
 import com.mentra.asg_client.io.file.managers.ThumbnailManager;
 import com.mentra.asg_client.io.media.core.MediaCaptureService;
@@ -12,6 +12,7 @@ import com.mentra.asg_client.io.media.utils.MediaUtils;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
 import com.mentra.asg_client.service.legacy.interfaces.ICommandHandler;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
+import com.mentra.asg_client.service.pairing.PairingTransferCaptureGate;
 
 import org.json.JSONObject;
 
@@ -19,19 +20,25 @@ import java.io.File;
 import java.util.Set;
 
 /**
- * Wipes all gallery media during ownership-transfer pairing.
+ * Ownership-transfer pairing commands for Mentra Live.
  *
- * <p>Verified wipe: success requires empty gallery (no residual primary media). Captures are
- * gated by transfer id until clear (finalize window / explicit clear). Media deleted mid-transfer
- * is not restored on abort.
+ * <p>{@code wipe_media}: verified wipe (success requires empty gallery). Captures are gated by
+ * transfer id until finalize/abort clears the barrier. Media deleted mid-transfer is not restored
+ * on abort.
+ *
+ * <p>{@code pairing_finalize} / {@code pairing_abort}: clear the ASG capture barrier so the new
+ * (or restored) owner can capture immediately. Ownership-state results remain BES-owned.
+ *
+ * <p><b>Privacy note:</b> {@link AsgConstants#ENABLE_PAIRING_MEDIA_WIPE} currently defaults to
+ * {@code false}, which means ownership-transfer pairing does NOT actually delete the previous
+ * owner's gallery media on the glasses. As a direct consequence, a new owner who completes
+ * pairing takeover can see the previous owner's photos and videos until a real wipe is
+ * performed. This is a deliberate, temporary product state; flipping
+ * {@code ENABLE_PAIRING_MEDIA_WIPE} to {@code true} for a production release requires explicit
+ * release/privacy signoff, since it changes real on-device deletion behavior for user media.
  */
 public class WipeMediaCommandHandler implements ICommandHandler {
     private static final String TAG = "WipeMediaCommandHandler";
-    private static final String PREFS = "pairing_transfer_capture_gate";
-    private static final String KEY_TRANSFER_ID = "transfer_id";
-    private static final String KEY_UNTIL_MS = "until_ms";
-    /** Matches BES ownership-transfer window (5 minutes). */
-    private static final long TRANSFER_WINDOW_MS = 5 * 60 * 1000L;
 
     private final ICommunicationManager communicationManager;
     private final AsgClientServiceManager serviceManager;
@@ -54,11 +61,14 @@ public class WipeMediaCommandHandler implements ICommandHandler {
 
     @Override
     public Set<String> getSupportedCommandTypes() {
-        return Set.of("wipe_media");
+        return Set.of("wipe_media", "pairing_finalize", "pairing_abort");
     }
 
     @Override
     public boolean handleCommand(String commandType, JSONObject data) {
+        if ("pairing_finalize".equals(commandType) || "pairing_abort".equals(commandType)) {
+            return handleTransferEnd(commandType, data);
+        }
         if (!"wipe_media".equals(commandType)) {
             return false;
         }
@@ -69,27 +79,45 @@ public class WipeMediaCommandHandler implements ICommandHandler {
         boolean success = false;
 
         try {
-            pauseAndCancelCapture();
+            if (!AsgConstants.ENABLE_PAIRING_MEDIA_WIPE) {
+                // PRIVACY NOTE (requires release signoff before shipping ownership transfer):
+                // With ENABLE_PAIRING_MEDIA_WIPE=false, this branch intentionally reports
+                // wipe_media as successful WITHOUT deleting the previous owner's gallery. The
+                // new owner completing pairing takeover is therefore able to see the previous
+                // owner's photos/videos in the gallery/app until a real wipe is performed. Do
+                // not flip this flag to true for a production rollout without an explicit
+                // release/privacy signoff, since doing so changes actual on-device deletion
+                // behavior for user media during ownership transfer.
+                // Keep wipe implementation below; pairing temporarily skips gallery delete.
+                Log.i(TAG, "wipe_media skipped (ENABLE_PAIRING_MEDIA_WIPE=false)"
+                        + " transfer_id=" + transferId + " request_id=" + requestId);
+                success = true;
+            } else {
+                pauseAndCancelCapture();
 
-            MediaUploadQueueManager queueManager = serviceManager != null
-                    ? serviceManager.getMediaQueueManager()
-                    : null;
-            if (queueManager != null) {
-                queueManager.clearQueue();
-            }
+                boolean deleted = wipeAllMediaRoots();
+                boolean empty = verifyGalleryEmpty();
+                success = deleted && empty;
+                if (!success && error == null) {
+                    error = empty ? "delete_incomplete" : "gallery_not_empty";
+                }
 
-            boolean deleted = wipeAllMediaRoots();
-            boolean empty = verifyGalleryEmpty();
-            success = deleted && empty;
-            if (!success && error == null) {
-                error = empty ? "delete_incomplete" : "gallery_not_empty";
+                // Only clear upload queue after a verified empty gallery so a failed wipe does
+                // not leave the previous owner with a wiped queue and partial files.
+                if (success) {
+                    MediaUploadQueueManager queueManager = serviceManager != null
+                            ? serviceManager.getMediaQueueManager()
+                            : null;
+                    if (queueManager != null) {
+                        queueManager.clearQueue();
+                    }
+                    if (transferId != null && !transferId.isEmpty()) {
+                        armCaptureBarrier(transferId);
+                    }
+                }
+                Log.i(TAG, "wipe_media success=" + success + " transfer_id=" + transferId
+                        + " request_id=" + requestId);
             }
-
-            if (success && transferId != null && !transferId.isEmpty()) {
-                armCaptureBarrier(transferId);
-            }
-            Log.i(TAG, "wipe_media success=" + success + " transfer_id=" + transferId
-                    + " request_id=" + requestId);
         } catch (Exception e) {
             Log.e(TAG, "wipe_media failed", e);
             success = false;
@@ -116,6 +144,19 @@ public class WipeMediaCommandHandler implements ICommandHandler {
         }
     }
 
+    /**
+     * Clear the ASG-side capture barrier when ownership transfer ends. Does not emit
+     * {@code pairing_transfer_result} — BES owns that acknowledgment.
+     */
+    private boolean handleTransferEnd(String commandType, JSONObject data) {
+        final String transferId = data != null ? data.optString("transfer_id", "") : "";
+        clearCaptureBarrier(appContext);
+        Log.i(TAG, commandType + " cleared capture barrier transfer_id=" + transferId);
+        // Return true so CommandProcessor treats the command as handled on ASG. BES may also
+        // process ownership state on its own path; ASG only releases the media gate here.
+        return true;
+    }
+
     private void pauseAndCancelCapture() {
         if (serviceManager == null) {
             return;
@@ -125,12 +166,9 @@ public class WipeMediaCommandHandler implements ICommandHandler {
             return;
         }
         try {
-            if (capture.isRecordingVideo()) {
-                Log.i(TAG, "Stopping active video recording before wipe");
-                capture.stopVideoRecording();
-            }
+            capture.cancelInFlightCapturesForPairingWipe();
         } catch (Exception e) {
-            Log.w(TAG, "Failed to stop active recording before wipe", e);
+            Log.w(TAG, "Failed to cancel in-flight captures before wipe", e);
         }
     }
 
@@ -203,39 +241,16 @@ public class WipeMediaCommandHandler implements ICommandHandler {
     }
 
     private void armCaptureBarrier(String transferId) {
-        if (appContext == null) {
-            return;
-        }
-        SharedPreferences prefs = appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-        prefs.edit()
-                .putString(KEY_TRANSFER_ID, transferId)
-                .putLong(KEY_UNTIL_MS, System.currentTimeMillis() + TRANSFER_WINDOW_MS)
-                .apply();
+        PairingTransferCaptureGate.arm(appContext, transferId);
     }
 
     /** True while an ownership-transfer capture barrier is active for any transfer. */
     public static boolean isCaptureBarrierActive(Context context) {
-        if (context == null) {
-            return false;
-        }
-        SharedPreferences prefs =
-                context.getApplicationContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-        long until = prefs.getLong(KEY_UNTIL_MS, 0L);
-        if (until <= 0L) {
-            return false;
-        }
-        if (System.currentTimeMillis() > until) {
-            prefs.edit().clear().apply();
-            return false;
-        }
-        return prefs.getString(KEY_TRANSFER_ID, null) != null;
+        return PairingTransferCaptureGate.isActive(context);
     }
 
     public static void clearCaptureBarrier(Context context) {
-        if (context == null) {
-            return;
-        }
-        context.getApplicationContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().clear().apply();
+        PairingTransferCaptureGate.clear(context);
     }
 
     private boolean deleteDirectoryContents(File directory) {

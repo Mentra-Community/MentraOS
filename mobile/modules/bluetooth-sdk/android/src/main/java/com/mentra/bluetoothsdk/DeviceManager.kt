@@ -1863,6 +1863,10 @@ class DeviceManager {
         requireMentraLiveForPairing().sendPairingAbort(transferId)
     }
 
+    fun sendPairingTransferStatus(transferId: String? = null) {
+        requireMentraLiveForPairing().sendPairingTransferStatus(transferId)
+    }
+
     /** Send shutdown command to glasses. This will initiate a graceful shutdown of the device. */
     fun sendShutdown() {
         Bridge.log("MAN: 🔌 Sending shutdown command to glasses")

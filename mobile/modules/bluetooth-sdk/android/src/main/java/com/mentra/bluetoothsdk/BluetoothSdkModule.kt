@@ -665,6 +665,7 @@ class BluetoothSdkModule : Module() {
                 put("success", result.success)
                 result.state?.let { put("state", it) }
                 result.error?.let { put("error", it) }
+                result.binding?.let { put("binding", it) }
             }
         }
 
@@ -676,6 +677,19 @@ class BluetoothSdkModule : Module() {
                 put("success", result.success)
                 result.state?.let { put("state", it) }
                 result.error?.let { put("error", it) }
+                result.binding?.let { put("binding", it) }
+            }
+        }
+
+        SdkCoroutineFunction("getPairingTransferStatus") { transferId: String? ->
+            val result = requireSdk().getPairingTransferStatus(transferId)
+            buildMap {
+                put("transfer_id", result.transferId)
+                put("state", result.state)
+                result.terminalOperation?.let { put("terminal_operation", it) }
+                result.binding?.let { put("binding", it) }
+                result.credentialCleanupPending?.let { put("credential_cleanup_pending", it) }
+                result.protocolVersion?.let { put("protocol_version", it) }
             }
         }
 

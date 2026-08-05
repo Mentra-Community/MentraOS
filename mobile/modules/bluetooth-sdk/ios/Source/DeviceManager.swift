@@ -1359,6 +1359,10 @@ struct ViewState {
         try? requireMentraLiveForPairing().sendPairingAbort(transferId: transferId)
     }
 
+    func sendPairingTransferStatus(transferId: String? = nil) {
+        try? requireMentraLiveForPairing().sendPairingTransferStatus(transferId: transferId)
+    }
+
     /// Send OTA start command to glasses.
     /// Called when user approves an update (onboarding or background mode).
     /// Triggers glasses to begin download and installation.

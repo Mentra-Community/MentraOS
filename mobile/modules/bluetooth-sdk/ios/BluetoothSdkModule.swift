@@ -435,6 +435,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             ]
             if let state = result.state { body["state"] = state }
             if let error = result.error { body["error"] = error }
+            if let binding = result.binding { body["binding"] = binding }
             return body
         }
 
@@ -448,6 +449,23 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             ]
             if let state = result.state { body["state"] = state }
             if let error = result.error { body["error"] = error }
+            if let binding = result.binding { body["binding"] = binding }
+            return body
+        }
+
+        AsyncFunction("getPairingTransferStatus") { (transferId: String?) in
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            let result = try await sdk.getPairingTransferStatus(transferId: transferId)
+            var body: [String: Any] = [
+                "transfer_id": result.transferId,
+                "state": result.state,
+            ]
+            if let terminalOperation = result.terminalOperation { body["terminal_operation"] = terminalOperation }
+            if let binding = result.binding { body["binding"] = binding }
+            if let credentialCleanupPending = result.credentialCleanupPending {
+                body["credential_cleanup_pending"] = credentialCleanupPending
+            }
+            if let protocolVersion = result.protocolVersion { body["protocol_version"] = protocolVersion }
             return body
         }
 

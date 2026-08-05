@@ -199,12 +199,22 @@ export default function SelectGlassesBluetoothScreen() {
           routePairingKickoffFailure(device.model)
         })
       }, 2000)
-      push("/pairing/loading", {deviceModel: device.model, deviceName: device.name, ar99ProjectName: resolvedProjectName})
+      push("/pairing/loading", {
+        deviceModel: device.model,
+        deviceName: device.name,
+        ar99ProjectName: resolvedProjectName,
+        securePairingCapable: device.securePairingCapable,
+      })
       return
     }
 
     replace("/pairing/btclassic", {device: JSON.stringify(device)})
-    pushUnder("/pairing/loading", {deviceModel: device.model, deviceName: device.name, ar99ProjectName: resolvedProjectName})
+    pushUnder("/pairing/loading", {
+      deviceModel: device.model,
+      deviceName: device.name,
+      ar99ProjectName: resolvedProjectName,
+      securePairingCapable: device.securePairingCapable,
+    })
   }
 
   const filterDeviceName = (deviceName: string) => {

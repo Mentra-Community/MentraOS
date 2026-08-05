@@ -342,7 +342,7 @@ describe("pairing scan screen", () => {
       })
     })
   })
-  it("still times out when Mentra Live auto-connect is blocked by a denied permission", async () => {
+  it("does not show no-glasses-found timeout when an eligible device blocks auto-connect", async () => {
     jest.useFakeTimers()
     try {
       setPlatformOS("android")

@@ -72,6 +72,9 @@ data class Device(
             val projectName = stringValue(values, "projectName")?.takeIf { it.isNotBlank() }
             val rssi = numberValue(values, "rssi")
             val id = stringValue(values, "id")?.takeIf { it.isNotBlank() } ?: address ?: "${model}:$name"
+            val pairingMode = boolValue(values, "pairingMode")
+            val pairingCode = stringValue(values, "pairingCode")?.takeIf { it.isNotBlank() }
+            val securePairingCapable = boolValue(values, "securePairingCapable")
             return Device(
                 model = DeviceModel.fromDeviceType(model),
                 name = name,
@@ -79,6 +82,9 @@ data class Device(
                 projectName = projectName,
                 rssi = rssi,
                 id = id,
+                pairingMode = pairingMode,
+                pairingCode = pairingCode,
+                securePairingCapable = securePairingCapable,
             )
         }
     }

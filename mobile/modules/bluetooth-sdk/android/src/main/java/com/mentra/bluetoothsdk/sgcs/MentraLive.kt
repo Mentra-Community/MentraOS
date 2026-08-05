@@ -1118,8 +1118,13 @@ class MentraLive : SGCManager() {
                                     deviceName.startsWith("MENTRA_LIVE_BT") ||
                                     deviceName.lowercase().startsWith("mentra_live")
                     ) {
+                        // A device is only treated as the "reconnect target" during an actual
+                        // reconnect scan (isReconnecting == true). During a pairing scan a
+                        // spoofed advertiser that happens to match savedDeviceName must not
+                        // bypass the pairing-discoverable requirement below — otherwise an
+                        // attacker could clone the saved device name to sneak past the filter.
                         val isReconnectTarget =
-                                savedDeviceName != null && savedDeviceName == deviceName
+                                isReconnecting && savedDeviceName != null && savedDeviceName == deviceName
                         if (!isReconnectTarget &&
                                         advertisesPairingFlag(result) &&
                                         !isPairingDiscoverable(result)
@@ -1141,12 +1146,13 @@ class MentraLive : SGCManager() {
                                 result.rssi,
                                 pairingMode = pairingMode || isPairingDiscoverable(result),
                                 pairingCode = pairingCode,
-                                securePairingCapable = secureCapable || advertisesPairingFlag(result),
+                                securePairingCapable = secureCapable,
                         )
 
                         // If this is the specific device we want to connect to by name, connect to
-                        // it
-                        if (savedDeviceName != null && savedDeviceName == deviceName) {
+                        // it — only during an actual reconnect scan. A pairing scan must not
+                        // auto-connect on a bare name match (see isReconnectTarget above).
+                        if (isReconnectTarget) {
                             Log.i(
                                     TAG,
                                     "🔌 🎯 RECONNECT TARGET FOUND - Device: " +
@@ -3209,8 +3215,10 @@ class MentraLive : SGCManager() {
                             jsonNullableString(json, "transfer_id"),
                             jsonNullableString(json, "pairing_code"),
                             json.optBoolean("classic_bond_ready", false),
-                            json.optBoolean("secure_pairing_capable", true),
+                            // Legacy firmware that omits this field is not secure-capable.
+                            json.optBoolean("secure_pairing_capable", false),
                             json.optInt("protocol_version", 1),
+                            jsonNullableString(json, "binding"),
                     )
             "wipe_media_result" ->
                     Bridge.sendWipeMediaResult(
@@ -3226,6 +3234,20 @@ class MentraLive : SGCManager() {
                             json.optBoolean("success", false),
                             if (json.has("state")) json.optInt("state") else null,
                             jsonNullableString(json, "error"),
+                            jsonNullableString(json, "binding"),
+                    )
+            "pairing_transfer_status_result" ->
+                    Bridge.sendPairingTransferStatus(
+                            json.optString("transfer_id", ""),
+                            json.optString("state", "unknown"),
+                            jsonNullableString(json, "terminal_operation"),
+                            jsonNullableString(json, "binding"),
+                            if (json.has("credential_cleanup_pending")) {
+                                json.optBoolean("credential_cleanup_pending")
+                            } else {
+                                null
+                            },
+                            if (json.has("protocol_version")) json.optInt("protocol_version") else null,
                     )
             "imu_response",
             "imu_stream_response",
@@ -5072,6 +5094,23 @@ class MentraLive : SGCManager() {
         }
     }
 
+    /**
+     * Query the current state of a secure pairing transfer without finalizing or aborting it.
+     * Glasses respond with `pairing_transfer_status_result`. Used to recover after a
+     * finalize/abort request times out on the phone side so the outcome of the in-flight
+     * operation can be determined rather than blindly retried or assumed failed.
+     */
+    fun sendPairingTransferStatus(transferId: String? = null) {
+        try {
+            val json = JSONObject()
+            json.put("type", "pairing_transfer_status")
+            if (transferId != null) json.put("transfer_id", transferId)
+            sendJson(json, true)
+        } catch (e: JSONException) {
+            Log.e(TAG, "Error creating pairing_transfer_status command", e)
+        }
+    }
+
 
     /**
      * Request version info from glasses. Glasses will respond with version_info message containing
@@ -5381,10 +5420,9 @@ class MentraLive : SGCManager() {
     override fun forget() {
         Bridge.log("LIVE: Forgetting Mentra Live glasses")
 
-        // Clear saved device name to prevent reconnection to this device
-        // SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-        // prefs.edit().remove(PREF_DEVICE_NAME).apply();
-        // Bridge.log("LIVE: Cleared saved device name");
+        // Clear saved device name so isReconnectTarget can't bypass the pairing-mode
+        // discovery filter for this unit on a subsequent rescan (parity with iOS forget()).
+        savedDeviceName = ""
 
         // Reset reconnection state
         reconnectAttempts = 0
