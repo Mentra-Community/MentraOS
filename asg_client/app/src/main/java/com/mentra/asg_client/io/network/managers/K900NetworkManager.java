@@ -37,7 +37,6 @@ public class K900NetworkManager extends BaseNetworkManager {
     private static final String K900_SYSTEM_UI_PACKAGE = "com.android.systemui";
     private static final String K900_VENDOR_HOTSPOT_SSID_SETTING = "xy_ssid";
     private static final String K900_VENDOR_HOTSPOT_PASSWORD_SETTING = "xy_pwd";
-    private static final String K900_VENDOR_HOTSPOT_PASSWORD = "00001111";
 
     private final WifiManager wifiManager;
     private final DebugNotificationManager notificationManager;
@@ -370,10 +369,7 @@ public class K900NetworkManager extends BaseNetworkManager {
     private void checkVendorHotspotReadiness(int generation) {
         String gatewayIp = findLocalHotspotGatewayIp();
         String ssid = readVendorHotspotSetting(K900_VENDOR_HOTSPOT_SSID_SETTING, "");
-        String password =
-                readVendorHotspotSetting(
-                        K900_VENDOR_HOTSPOT_PASSWORD_SETTING,
-                        K900_VENDOR_HOTSPOT_PASSWORD);
+        String password = readVendorHotspotSetting(K900_VENDOR_HOTSPOT_PASSWORD_SETTING, "");
         synchronized (localHotspotLock) {
             pendingLocalHotspotReadiness = null;
             if (generation != localHotspotGeneration
