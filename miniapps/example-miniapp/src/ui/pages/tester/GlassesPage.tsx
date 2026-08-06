@@ -45,14 +45,15 @@ export default function GlassesPage() {
 
         <div className="mt-4 rounded-xl border border-border bg-card p-4">
           <div className="mb-2 text-[12px] font-semibold uppercase tracking-wider text-muted-foreground">
-            Wi-Fi ADB
+            Wi-Fi ADB (SYSTEM-only)
           </div>
-          {!isMentraLive && (
-            <div className="mb-3 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-[12px] text-amber-500">
-              Wi-Fi ADB is only supported on Mentra Live. Calls still send but other devices will
-              no-op.
-            </div>
-          )}
+          <div className="mb-3 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-[12px] text-amber-500">
+            Restricted to system miniapps. This example package gets{" "}
+            <code>NOT_PERMITTED</code> unless running as miniapp-dev. Prefer{" "}
+            <code>BluetoothSdk.setWifiAdbState</code> from the Mentra App for
+            debugging.
+            {!isMentraLive && " Mentra Live only — other devices no-op."}
+          </div>
           <p className="mb-3 text-[13px] text-muted-foreground">
             Toggle wireless debugging on the glasses. Off by default for security.
           </p>

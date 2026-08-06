@@ -52,6 +52,7 @@ import {phoneVideoCoordinator} from "./PhoneVideoCoordinator"
 import {runSentenceTtsPipeline} from "./SentenceTtsPipeline"
 import {summarizeTranscriptionRoutes, transcriptionDeliveryRoute} from "./TranscriptionRouting"
 import {prepareTtsSentences} from "./TtsTextSanitizer"
+import {handleWifiAdbRequest} from "./WifiAdbRequest"
 import {cloudClientService} from "./CloudClientService"
 import {miniappLauncher} from "./MiniappLauncher"
 import {
@@ -2907,26 +2908,25 @@ class LocalMiniappRuntime {
     payload: Record<string, unknown>,
     requestId?: string,
   ): Promise<void> {
-    if (typeof payload.enabled !== "boolean") {
-      this.sendResult(packageName, requestId, false, undefined, {
-        code: MiniappErrorCode.INVALID_ARGUMENT,
-        message: "enabled must be a boolean",
-      })
+    const result = await handleWifiAdbRequest(packageName, payload, {
+      isSystemPackage: (candidate) => this.isSystemPackage(candidate),
+      setWifiAdbState: async (enabled) => {
+        console.log(`${LOG_TAG}: set_wifi_adb_state enabled=${enabled} from ${packageName}`)
+        try {
+          await BluetoothSdk.setWifiAdbState(enabled)
+        } catch (error) {
+          console.error(`${LOG_TAG}: set_wifi_adb_state error:`, error)
+          throw error
+        }
+      },
+    })
+
+    if (result.ok) {
+      this.sendResult(packageName, requestId, true)
       return
     }
 
-    try {
-      const enabled = payload.enabled
-      console.log(`${LOG_TAG}: set_wifi_adb_state enabled=${enabled} from ${packageName}`)
-      await BluetoothSdk.setWifiAdbState(enabled)
-      this.sendResult(packageName, requestId, true)
-    } catch (err) {
-      console.error(`${LOG_TAG}: set_wifi_adb_state error:`, err)
-      this.sendResult(packageName, requestId, false, undefined, {
-        code: MiniappErrorCode.INTERNAL,
-        message: err instanceof Error ? err.message : "Wi-Fi ADB error",
-      })
-    }
+    this.sendResult(packageName, requestId, false, undefined, result.error)
   }
 
   // ---------------------------------------------------------------------------
