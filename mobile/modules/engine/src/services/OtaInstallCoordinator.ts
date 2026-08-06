@@ -213,6 +213,8 @@ class OtaInstallCoordinator {
   private queryReplyTimeout: ReturnType<typeof setTimeout> | null = null
   private besVersionVerificationTimer: ReturnType<typeof setTimeout> | null = null
   private besVersionVerificationAttempts = 0
+  private besVersionResponseObserved = false
+  private besVersionVerificationGeneration = 0
   private continueLockoutTimer: ReturnType<typeof setTimeout> | null = null
   private legacyApkSettleTimer: ReturnType<typeof setTimeout> | null = null
   private mtkStallDetectTimer: ReturnType<typeof setTimeout> | null = null
@@ -1135,18 +1137,34 @@ class OtaInstallCoordinator {
 
   /**
    * Ask for fresh version_info immediately after the BES reboot, then every five
-   * seconds for at most one minute. A resolved request only confirms delivery;
-   * reconciliation still waits for the store to receive the target BES version.
+   * seconds for at most one minute. A resolved request confirms the restarted ASG
+   * is responsive, but version_info_1 resolves before version_info_3 lands. Give
+   * the remaining chunks one interval to arrive before treating an empty BES
+   * version as an old-client capability gap and completing from the verified
+   * install -> disconnect -> reconnect lifecycle. A non-empty mismatch still
+   * retries for the full minute and fails closed.
    */
   private startBesVersionVerification(): void {
     if (this.errorMsg || this.besRestartRecovery !== "awaiting" || this.besVersionVerificationTimer) return
     this.besVersionVerificationAttempts = 0
+    this.besVersionResponseObserved = false
+    this.besVersionVerificationGeneration += 1
     this.runBesVersionVerificationAttempt()
   }
 
   private runBesVersionVerificationAttempt(): void {
     if (this.besRestartRecovery !== "awaiting") {
       this.clearBesVersionVerificationTimer()
+      return
+    }
+
+    const currentVersion = useGlassesStore.getState().besFirmwareVersion.trim()
+    if (this.besVersionResponseObserved && !currentVersion) {
+      console.log("[OTA_PROGRESS] BES reconnect version_info omitted BES version — completing by verified reboot edge")
+      this.clearPerStepTimers()
+      this.setErrorMsg("")
+      this.besRestartRecovery = "complete"
+      this.emitInternalChange()
       return
     }
 
@@ -1161,9 +1179,19 @@ class OtaInstallCoordinator {
 
     this.besVersionVerificationAttempts += 1
     if (isGlassesConnected(useGlassesStore.getState().connection)) {
-      void BluetoothSdk.requestVersionInfo().catch((error) => {
-        console.warn("[OTA_PROGRESS] BES reconnect version request failed; retrying", error)
-      })
+      const verificationGeneration = this.besVersionVerificationGeneration
+      void BluetoothSdk.requestVersionInfo()
+        .then(() => {
+          if (
+            this.besRestartRecovery === "awaiting" &&
+            verificationGeneration === this.besVersionVerificationGeneration
+          ) {
+            this.besVersionResponseObserved = true
+          }
+        })
+        .catch((error) => {
+          console.warn("[OTA_PROGRESS] BES reconnect version request failed; retrying", error)
+        })
     }
 
     this.besVersionVerificationTimer = setTimeout(() => {
@@ -1508,6 +1536,8 @@ class OtaInstallCoordinator {
       this.besVersionVerificationTimer = null
     }
     this.besVersionVerificationAttempts = 0
+    this.besVersionResponseObserved = false
+    this.besVersionVerificationGeneration += 1
   }
 
   private clearContinueLockoutTimer(): void {
