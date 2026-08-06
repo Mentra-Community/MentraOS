@@ -25,12 +25,9 @@ import type {OtaProgress, OtaStatus} from "@mentra/bluetooth-sdk/internal"
 import GlobalEventEmitter from "../utils/GlobalEventEmitter"
 import {isGlassesConnected, useGlassesStore} from "../stores/glasses"
 import {resolveOtaManifestUrl} from "./otaManifestUrl"
-import {compareVersions} from "./OtaUpdateCheckService"
 import {deriveDisplayState, type DisplayState} from "./otaDisplayState"
 import {
   BES_CONTINUE_LOCKOUT_MS,
-  BES_VERSION_VERIFY_INTERVAL_MS,
-  BES_VERSION_VERIFY_MAX_ATTEMPTS,
   DOWNLOAD_STUCK_TIMEOUT_MS,
   GLOBAL_OTA_TIMEOUT_MS,
   LEGACY_APK_COMPLETION_SETTLE_MS,
@@ -183,7 +180,6 @@ class OtaInstallCoordinator {
   private besRestartExpected = false
   private besRestartDisconnectObserved = false
   private besRestartRecovery: "awaiting" | "complete" | null = null
-  private besTargetVersion: string | null = null
 
   // Downgrade detour (version-change mode). Captured at attach from the selected
   // update: the pinned target is a LOWER build, executed by the recovery worker via
@@ -211,10 +207,6 @@ class OtaInstallCoordinator {
   private progressTimeout: ReturnType<typeof setTimeout> | null = null
   private pingInterval: ReturnType<typeof setInterval> | null = null
   private queryReplyTimeout: ReturnType<typeof setTimeout> | null = null
-  private besVersionVerificationTimer: ReturnType<typeof setTimeout> | null = null
-  private besVersionVerificationAttempts = 0
-  private besVersionResponseObserved = false
-  private besVersionVerificationGeneration = 0
   private continueLockoutTimer: ReturnType<typeof setTimeout> | null = null
   private legacyApkSettleTimer: ReturnType<typeof setTimeout> | null = null
   private mtkStallDetectTimer: ReturnType<typeof setTimeout> | null = null
@@ -268,7 +260,6 @@ class OtaInstallCoordinator {
       initialState.buildNumber,
     )
     const selected = initialState.otaUpdateAvailable
-    this.besTargetVersion = selected?.besVersion?.trim() || null
     if (selected?.isDowngrade && typeof selected.versionCode === "number" && selected.versionCode > 0) {
       this.versionChangeSession = true
       this.versionChangeTarget = selected.versionCode
@@ -470,7 +461,6 @@ class OtaInstallCoordinator {
     this.apkCompletedViaBuildIncrease = false
     this.protocolProfile = null
     this.resetBesRestartAttempt()
-    this.besTargetVersion = null
     this.versionChangeSession = false
     this.versionChangeTarget = null
     this.versionChangeInstallStarted = false
@@ -496,7 +486,6 @@ class OtaInstallCoordinator {
 
   /** Reset only the reboot lifecycle that belongs to one install attempt. */
   private resetBesRestartAttempt(): void {
-    this.clearBesVersionVerificationTimer()
     this.besRestartExpected = false
     this.besRestartDisconnectObserved = false
     this.besRestartRecovery = null
@@ -629,9 +618,7 @@ class OtaInstallCoordinator {
       this.besRestartRecovery = "awaiting"
       console.log("[OTA_PROGRESS] BES restart disconnect observed — awaiting reconnect verification")
     }
-    if (this.besRestartRecovery === "awaiting" && connected) {
-      this.reconcileBesRestart(state.besFirmwareVersion, legacySession)
-    }
+    if (this.besRestartRecovery === "awaiting" && connected) this.completeBesRestartRecovery()
 
     // Derived UI state — the glasses data IS the source of truth.
     const displayState = deriveDisplayState({
@@ -896,16 +883,14 @@ class OtaInstallCoordinator {
 
     // Lockout on Continue button after BES restart to prevent accidental tap
     // (15s unified, 35s for legacy-shaped sessions — WP 8C-f).
-    if (displayStateChanged) {
+    if (displayStateChanged && displayState === "restarting") {
       this.clearContinueLockoutTimer()
-      if (displayState === "restarting") {
-        const lockoutMs = legacySession ? LEGACY_BES_CONTINUE_LOCKOUT_MS : BES_CONTINUE_LOCKOUT_MS
-        this.setContinueButtonDisabled(true)
-        this.continueLockoutTimer = setTimeout(() => {
-          this.continueLockoutTimer = null
-          this.setContinueButtonDisabled(false)
-        }, lockoutMs)
-      }
+      const lockoutMs = legacySession ? LEGACY_BES_CONTINUE_LOCKOUT_MS : BES_CONTINUE_LOCKOUT_MS
+      this.setContinueButtonDisabled(true)
+      this.continueLockoutTimer = setTimeout(() => {
+        this.continueLockoutTimer = null
+        this.setContinueButtonDisabled(false)
+      }, lockoutMs)
     }
 
     if (displayStateChanged && displayState === "failed") {
@@ -950,9 +935,7 @@ class OtaInstallCoordinator {
 
     if (this.besRestartDisconnectObserved) {
       console.log(`[OTA_PROGRESS] ${label}: BES reboot reconnect observed — no ota_query_status`)
-      if (this.besRestartRecovery === "awaiting") {
-        this.startBesVersionVerification()
-      }
+      this.completeBesRestartRecovery()
       return true
     }
 
@@ -1110,94 +1093,14 @@ class OtaInstallCoordinator {
     return statusReadyToRestart || progressReadyToRestart
   }
 
-  /**
-   * Complete a phone-observed BES reboot when fresh version_info matches the
-   * manifest target. Frozen legacy manifests did not always expose that target
-   * through the mobile read model, so truly legacy flows retain the old route's
-   * disconnect/reconnect completion fallback.
-   */
-  private reconcileBesRestart(currentVersion: string, legacySession: boolean): void {
+  /** Complete from the same install -> disconnect -> reconnect invariant as the legacy screen. */
+  private completeBesRestartRecovery(): void {
     if (!this.besRestartDisconnectObserved || this.besRestartRecovery !== "awaiting") return
-    const current = currentVersion.trim()
-    if (this.besTargetVersion) {
-      if (compareVersions(current, this.besTargetVersion) !== 0) return
-      console.log(
-        `[OTA_PROGRESS] BES restart verified by version_info (${current}) — completing despite stale OTA progress`,
-      )
-    } else if (legacySession) {
-      console.log("[OTA_PROGRESS] legacy BES restart reconnected without target metadata — completing by reboot edge")
-    } else {
-      return
-    }
+    console.log("[OTA_PROGRESS] BES restart reconnected — completing by reboot edge")
     this.clearPerStepTimers()
     this.setErrorMsg("")
     this.besRestartRecovery = "complete"
     this.emitInternalChange()
-  }
-
-  /**
-   * Ask for fresh version_info immediately after the BES reboot, then every five
-   * seconds for at most one minute. A resolved request confirms the restarted ASG
-   * is responsive, but version_info_1 resolves before version_info_3 lands. Give
-   * the remaining chunks one interval to arrive before treating an empty BES
-   * version as an old-client capability gap and completing from the verified
-   * install -> disconnect -> reconnect lifecycle. A non-empty mismatch still
-   * retries for the full minute and fails closed.
-   */
-  private startBesVersionVerification(): void {
-    if (this.errorMsg || this.besRestartRecovery !== "awaiting" || this.besVersionVerificationTimer) return
-    this.besVersionVerificationAttempts = 0
-    this.besVersionResponseObserved = false
-    this.besVersionVerificationGeneration += 1
-    this.runBesVersionVerificationAttempt()
-  }
-
-  private runBesVersionVerificationAttempt(): void {
-    if (this.besRestartRecovery !== "awaiting") {
-      this.clearBesVersionVerificationTimer()
-      return
-    }
-
-    const currentVersion = useGlassesStore.getState().besFirmwareVersion.trim()
-    if (this.besVersionResponseObserved && !currentVersion) {
-      console.log("[OTA_PROGRESS] BES reconnect version_info omitted BES version — completing by verified reboot edge")
-      this.clearPerStepTimers()
-      this.setErrorMsg("")
-      this.besRestartRecovery = "complete"
-      this.emitInternalChange()
-      return
-    }
-
-    if (this.besVersionVerificationAttempts >= BES_VERSION_VERIFY_MAX_ATTEMPTS) {
-      console.log(
-        `[OTA_PROGRESS] BES version still unverified after ${BES_VERSION_VERIFY_MAX_ATTEMPTS} attempts, failing`,
-      )
-      this.clearBesVersionVerificationTimer()
-      this.setErrorMsg(OtaProgressMessages.besVersionVerificationFailed)
-      return
-    }
-
-    this.besVersionVerificationAttempts += 1
-    if (isGlassesConnected(useGlassesStore.getState().connection)) {
-      const verificationGeneration = this.besVersionVerificationGeneration
-      void BluetoothSdk.requestVersionInfo()
-        .then(() => {
-          if (
-            this.besRestartRecovery === "awaiting" &&
-            verificationGeneration === this.besVersionVerificationGeneration
-          ) {
-            this.besVersionResponseObserved = true
-          }
-        })
-        .catch((error) => {
-          console.warn("[OTA_PROGRESS] BES reconnect version request failed; retrying", error)
-        })
-    }
-
-    this.besVersionVerificationTimer = setTimeout(() => {
-      this.besVersionVerificationTimer = null
-      this.runBesVersionVerificationAttempt()
-    }, BES_VERSION_VERIFY_INTERVAL_MS)
   }
 
   /**
@@ -1530,16 +1433,6 @@ class OtaInstallCoordinator {
     }
   }
 
-  private clearBesVersionVerificationTimer(): void {
-    if (this.besVersionVerificationTimer) {
-      clearTimeout(this.besVersionVerificationTimer)
-      this.besVersionVerificationTimer = null
-    }
-    this.besVersionVerificationAttempts = 0
-    this.besVersionResponseObserved = false
-    this.besVersionVerificationGeneration += 1
-  }
-
   private clearContinueLockoutTimer(): void {
     if (this.continueLockoutTimer) {
       clearTimeout(this.continueLockoutTimer)
@@ -1577,7 +1470,6 @@ class OtaInstallCoordinator {
     this.clearStuckTimeout()
     this.clearProgressTimeout()
     this.clearQueryReplyTimeout()
-    this.clearBesVersionVerificationTimer()
   }
 
   private clearAllOtaTimers(): void {

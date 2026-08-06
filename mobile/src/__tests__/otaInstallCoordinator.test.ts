@@ -13,8 +13,6 @@ import type {OtaStatus} from "@mentra/bluetooth-sdk-internal"
 import {otaInstallCoordinator} from "../../modules/engine/src/services/OtaInstallCoordinator"
 import {
   BES_CONTINUE_LOCKOUT_MS,
-  BES_VERSION_VERIFY_INTERVAL_MS,
-  BES_VERSION_VERIFY_MAX_ATTEMPTS,
   DOWNLOAD_STUCK_TIMEOUT_MS,
   GLOBAL_OTA_TIMEOUT_MS,
   LEGACY_APK_COMPLETION_SETTLE_MS,
@@ -670,20 +668,6 @@ describe("OtaInstallCoordinator BES reboot recovery", () => {
     )
   }
 
-  function enterBesVersionVerification() {
-    useGlassesStore.getState().setGlassesInfo({
-      connection: {state: "connected", fullyBooted: true},
-      buildNumber: "39",
-      besFirmwareVersion: "17.26.1.1",
-    })
-    seedBesUpdate("17.26.7.9")
-    otaInstallCoordinator.attach()
-    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
-    emitUnifiedBesAt100()
-    useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
-    setGlassesConnected()
-  }
-
   it("keeps the day-one legacy policy sticky after ASG upgrades and completes the BES reboot edge", () => {
     setLegacyGlassesConnected("27")
     seedBesUpdate()
@@ -705,14 +689,12 @@ describe("OtaInstallCoordinator BES reboot recovery", () => {
     expect(bluetoothSdkMock.requestVersionInfo).not.toHaveBeenCalled()
   })
 
-  it("holds stale BES 100% and Continue until a semantically equivalent target version arrives", async () => {
+  it("completes immediately on the reboot edge without gating on BES version metadata", async () => {
     useGlassesStore.getState().setGlassesInfo({
       connection: {state: "connected", fullyBooted: true},
       buildNumber: "39",
       besFirmwareVersion: "17.26.1.1",
     })
-    // The production manifest pads components, while version_info from the
-    // real glasses does not: 17.26.07.09 and 17.26.7.9 are the same release.
     seedBesUpdate("17.26.07.09")
     otaInstallCoordinator.attach()
     GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
@@ -720,168 +702,40 @@ describe("OtaInstallCoordinator BES reboot recovery", () => {
     bluetoothSdkMock.sendOtaQueryStatus.mockClear()
 
     useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
-    setGlassesConnected()
-
-    expect(otaInstallCoordinator.snapshot().displayState).toBe("restarting")
-    expect(otaInstallCoordinator.snapshot().continueButtonDisabled).toBe(true)
-    expect(bluetoothSdkMock.sendOtaQueryStatus).not.toHaveBeenCalled()
-    expect(bluetoothSdkMock.requestVersionInfo).toHaveBeenCalledTimes(1)
-
-    // The ordinary post-restart lockout expiring must not let the user clear a
-    // session whose target version is still unverified.
-    await jest.advanceTimersByTimeAsync(BES_CONTINUE_LOCKOUT_MS * 2)
-    expect(otaInstallCoordinator.snapshot().continueButtonDisabled).toBe(true)
-
-    useGlassesStore.getState().setGlassesInfo({besFirmwareVersion: "17.26.7.9"})
-    expect(otaInstallCoordinator.snapshot().displayState).toBe("complete")
-    expect(otaInstallCoordinator.snapshot().continueButtonDisabled).toBe(false)
-  })
-
-  it("accepts an empty BES version after a fresh post-reboot version response", async () => {
-    useGlassesStore.getState().setGlassesInfo({
-      connection: {state: "connected", fullyBooted: true},
-      buildNumber: "39",
-      besFirmwareVersion: "17.26.1.13",
-    })
-    seedBesUpdate("17.26.07.09")
-    otaInstallCoordinator.attach()
-    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
-    emitUnifiedBesAt100()
-
-    useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
-    // Mentra Live clears session-scoped version fields before the restarted ASG
-    // publishes its fresh version_info chunks. Old ASG builds leave BES empty.
+    // Old ASG builds either retain the stale pre-update value or publish an
+    // empty BES version after reboot. Neither is a reliable completion gate.
     useGlassesStore.getState().setGlassesInfo({besFirmwareVersion: ""})
     setGlassesConnected()
 
-    expect(otaInstallCoordinator.snapshot().displayState).toBe("restarting")
-    expect(otaInstallCoordinator.snapshot().continueButtonDisabled).toBe(true)
-    expect(bluetoothSdkMock.requestVersionInfo).toHaveBeenCalledTimes(1)
-
-    await jest.advanceTimersByTimeAsync(BES_VERSION_VERIFY_INTERVAL_MS)
-
     expect(otaInstallCoordinator.snapshot().displayState).toBe("complete")
-    // The ordinary 15s accidental-tap lockout remains independent of the
-    // compatibility fallback.
     expect(otaInstallCoordinator.snapshot().continueButtonDisabled).toBe(true)
+    expect(bluetoothSdkMock.sendOtaQueryStatus).not.toHaveBeenCalled()
+    expect(bluetoothSdkMock.requestVersionInfo).not.toHaveBeenCalled()
 
-    await jest.advanceTimersByTimeAsync(BES_CONTINUE_LOCKOUT_MS - BES_VERSION_VERIFY_INTERVAL_MS)
+    await jest.advanceTimersByTimeAsync(BES_CONTINUE_LOCKOUT_MS)
     expect(otaInstallCoordinator.snapshot().continueButtonDisabled).toBe(false)
   })
 
-  it("does not accept an empty BES version until a fresh version request succeeds", async () => {
-    bluetoothSdkMock.requestVersionInfo.mockRejectedValueOnce(new Error("transient BLE failure"))
+  it("does not fail a completed reboot edge when a stale non-empty BES version remains", async () => {
     useGlassesStore.getState().setGlassesInfo({
       connection: {state: "connected", fullyBooted: true},
       buildNumber: "39",
-      besFirmwareVersion: "",
+      besFirmwareVersion: "17.26.1.1",
     })
     seedBesUpdate("17.26.07.09")
     otaInstallCoordinator.attach()
     GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
     emitUnifiedBesAt100()
+
     useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
     setGlassesConnected()
 
-    await jest.advanceTimersByTimeAsync(BES_VERSION_VERIFY_INTERVAL_MS)
-    expect(otaInstallCoordinator.snapshot().displayState).toBe("restarting")
-    expect(bluetoothSdkMock.requestVersionInfo).toHaveBeenCalledTimes(2)
-
-    await jest.advanceTimersByTimeAsync(BES_VERSION_VERIFY_INTERVAL_MS)
     expect(otaInstallCoordinator.snapshot().displayState).toBe("complete")
-  })
+    expect(otaInstallCoordinator.snapshot().errorMsg).toBe("")
+    expect(bluetoothSdkMock.requestVersionInfo).not.toHaveBeenCalled()
 
-  it("ignores a version response from a detached verification session", async () => {
-    let resolveDetachedRequest!: () => void
-    bluetoothSdkMock.requestVersionInfo.mockImplementationOnce(
-      () =>
-        new Promise<Awaited<ReturnType<typeof bluetoothSdkMock.requestVersionInfo>>>((resolve) => {
-          resolveDetachedRequest = () =>
-            resolve({
-              androidVersion: "",
-              firmwareVersion: "",
-              besFirmwareVersion: "",
-              mtkFirmwareVersion: "",
-              buildNumber: "39",
-              otaVersionUrl: "",
-              appVersion: "",
-            })
-        }),
-    )
-    enterBesVersionVerification()
-
-    otaInstallCoordinator.detach()
-    useGlassesStore.getState().reset()
-    bluetoothSdkMock.requestVersionInfo.mockImplementationOnce(
-      () => new Promise<Awaited<ReturnType<typeof bluetoothSdkMock.requestVersionInfo>>>(() => {}),
-    )
-    useGlassesStore.getState().setGlassesInfo({
-      connection: {state: "connected", fullyBooted: true},
-      buildNumber: "39",
-      besFirmwareVersion: "",
-    })
-    seedBesUpdate("17.26.07.09")
-    otaInstallCoordinator.attach()
-    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
-    emitUnifiedBesAt100()
-    useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
-    setGlassesConnected()
-
-    resolveDetachedRequest()
-    await Promise.resolve()
-    await jest.advanceTimersByTimeAsync(BES_VERSION_VERIFY_INTERVAL_MS)
-
-    expect(otaInstallCoordinator.snapshot().displayState).toBe("restarting")
-    expect(bluetoothSdkMock.requestVersionInfo).toHaveBeenCalledTimes(3)
-  })
-
-  it("retries a rejected version request every five seconds and stops after the target arrives", async () => {
-    bluetoothSdkMock.requestVersionInfo.mockRejectedValueOnce(new Error("transient BLE failure"))
-    enterBesVersionVerification()
-
-    expect(bluetoothSdkMock.requestVersionInfo).toHaveBeenCalledTimes(1)
-    expect(otaInstallCoordinator.snapshot().displayState).toBe("restarting")
-
-    await jest.advanceTimersByTimeAsync(BES_VERSION_VERIFY_INTERVAL_MS)
-    expect(bluetoothSdkMock.requestVersionInfo).toHaveBeenCalledTimes(2)
-
-    useGlassesStore.getState().setGlassesInfo({besFirmwareVersion: "17.26.7.9"})
+    await jest.advanceTimersByTimeAsync(PROGRESS_TIMEOUT_MS * 2)
     expect(otaInstallCoordinator.snapshot().displayState).toBe("complete")
-
-    await jest.advanceTimersByTimeAsync(BES_VERSION_VERIFY_INTERVAL_MS * BES_VERSION_VERIFY_MAX_ATTEMPTS)
-    expect(bluetoothSdkMock.requestVersionInfo).toHaveBeenCalledTimes(2)
-  })
-
-  it("fails with Retry after one minute with a non-empty mismatched version and clears the retry loop", async () => {
-    enterBesVersionVerification()
-
-    await jest.advanceTimersByTimeAsync(BES_VERSION_VERIFY_INTERVAL_MS * BES_VERSION_VERIFY_MAX_ATTEMPTS)
-
-    expect(bluetoothSdkMock.requestVersionInfo).toHaveBeenCalledTimes(BES_VERSION_VERIFY_MAX_ATTEMPTS)
-    expect(otaInstallCoordinator.snapshot()).toMatchObject({
-      displayState: "failed",
-      errorMsg: OtaProgressMessages.besVersionVerificationFailed,
-    })
-
-    useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
-    setGlassesConnected()
-    await jest.advanceTimersByTimeAsync(BES_VERSION_VERIFY_INTERVAL_MS)
-    expect(bluetoothSdkMock.requestVersionInfo).toHaveBeenCalledTimes(BES_VERSION_VERIFY_MAX_ATTEMPTS)
-
-    otaInstallCoordinator.retry()
-    expect(otaInstallCoordinator.snapshot().displayState).toBe("starting")
-    await jest.advanceTimersByTimeAsync(BES_VERSION_VERIFY_INTERVAL_MS * 2)
-    expect(bluetoothSdkMock.requestVersionInfo).toHaveBeenCalledTimes(BES_VERSION_VERIFY_MAX_ATTEMPTS)
-  })
-
-  it("clears pending BES version retries when the coordinator detaches", async () => {
-    enterBesVersionVerification()
-    expect(bluetoothSdkMock.requestVersionInfo).toHaveBeenCalledTimes(1)
-
-    otaInstallCoordinator.detach()
-    await jest.advanceTimersByTimeAsync(BES_VERSION_VERIFY_INTERVAL_MS * BES_VERSION_VERIFY_MAX_ATTEMPTS)
-
-    expect(bluetoothSdkMock.requestVersionInfo).toHaveBeenCalledTimes(1)
   })
 
   it("retry clears stale BES reboot latches before a new install attempt", async () => {
@@ -913,7 +767,7 @@ describe("OtaInstallCoordinator BES reboot recovery", () => {
     expect(bluetoothSdkMock.requestVersionInfo).not.toHaveBeenCalled()
   })
 
-  it("completes immediately when the target BES version arrived before the reconnect edge", () => {
+  it("keeps completed reboot recovery complete across later link noise", () => {
     useGlassesStore.getState().setGlassesInfo({
       connection: {state: "connected", fullyBooted: true},
       buildNumber: "39",
