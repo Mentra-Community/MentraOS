@@ -122,7 +122,10 @@ export enum MiniappRequestType {
   /** Explicitly enable/disable the center-mic loudness gate ("Barrier"). */
   MIC_SET_LOUDNESS_GATE_ENABLED = "miniapp_mic_set_loudness_gate_enabled",
 
-  /** Enable or disable Wi-Fi ADB (wireless debugging) on Mentra Live. */
+  /**
+   * Enable or disable Wi-Fi ADB (wireless debugging) on Mentra Live.
+   * SYSTEM-only — host rejects with NOT_PERMITTED for non-system callers.
+   */
   SET_WIFI_ADB_STATE = "miniapp_set_wifi_adb_state",
 
   /** Share content via the OS share sheet. */
@@ -351,7 +354,10 @@ export enum MiniappErrorCode {
   NOT_CONNECTED = "NOT_CONNECTED",
 
   // ----- Inter-miniapp interop -----
-  /** Caller is not a system app — interop APIs (list/start/stop/invoke) are SYSTEM-only. */
+  /**
+   * Caller is not a system app — SYSTEM-only APIs (interop list/start/stop/invoke,
+   * setWifiAdbState) reject with this code.
+   */
   NOT_PERMITTED = "NOT_PERMITTED",
   /** Target miniapp is not installed. */
   APP_NOT_FOUND = "APP_NOT_FOUND",

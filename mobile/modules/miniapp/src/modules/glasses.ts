@@ -45,6 +45,9 @@ export class GlassesModule {
   /**
    * Enable or disable Wi-Fi ADB (wireless debugging) on Mentra Live.
    * Persisted on the glasses; boot applies the saved preference (default off).
+   *
+   * SYSTEM-only — rejects with `NOT_PERMITTED` unless this miniapp is a system
+   * app. Third-party miniapps must not expose wireless debugging controls.
    */
   async setWifiAdbState(enabled: boolean): Promise<void> {
     await this.session.sendRequest<void>({
