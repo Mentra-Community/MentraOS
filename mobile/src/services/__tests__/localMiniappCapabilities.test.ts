@@ -30,12 +30,7 @@ describe("LocalMiniappRuntime capability updates", () => {
   })
 
   it("refreshes a handshook session when pairing promotes a different wearable", async () => {
-    const connected = localMiniappRuntime.waitForConnect(packageName, 1_000)
-    localMiniappRuntime.handleRawMessage(
-      packageName,
-      serializeEnvelope({payload: {type: MiniappRequestType.CONNECT}, requestId: "connect-1"}),
-    )
-    await connected
+    await connect("connect-1")
 
     const ack = payloads().find((payload) => payload.type === MiniappResponseType.CONNECT_ACK)
     expect((ack?.capabilities as {modelName?: string})?.modelName).toBe(DeviceTypes.SIMULATED)
@@ -50,6 +45,68 @@ describe("LocalMiniappRuntime capability updates", () => {
       display: {canPosition: true},
     })
   })
+
+  it("uses the latest wearable in CONNECT_ACK when pairing changes during auth", async () => {
+    let finishAuth!: (value: null) => void
+    jest
+      .mocked(cloudClientService.getMiniappAuthToken)
+      .mockReturnValueOnce(new Promise<null>((resolve) => (finishAuth = resolve)) as never)
+
+    const connected = connect("connect-during-auth")
+    setDefaultWearable(DeviceTypes.G2)
+    finishAuth(null)
+    await connected
+
+    const ack = payloads().find((payload) => payload.type === MiniappResponseType.CONNECT_ACK)
+    expect(ack?.capabilities).toMatchObject({
+      modelName: DeviceTypes.G2,
+      hasDisplay: true,
+      display: {canPosition: true},
+    })
+  })
+
+  it("ignores a stale CONNECT completion after the app is replaced", async () => {
+    let finishOldAuth!: (value: null) => void
+    jest
+      .mocked(cloudClientService.getMiniappAuthToken)
+      .mockReturnValueOnce(new Promise<null>((resolve) => (finishOldAuth = resolve)) as never)
+
+    localMiniappRuntime.handleRawMessage(
+      packageName,
+      serializeEnvelope({payload: {type: MiniappRequestType.CONNECT}, requestId: "old-connect"}),
+    )
+
+    const replacementSent: string[] = []
+    localMiniappRuntime.registerApp(packageName, (raw) => replacementSent.push(raw))
+    finishOldAuth(null)
+    await expect(localMiniappRuntime.waitForConnect(packageName, 25)).rejects.toThrow("did not connect")
+    expect(replacementSent).toEqual([])
+
+    await connect("replacement-connect")
+  })
+
+  it("reports a display-less wearable and stops updates after the last app unregisters", async () => {
+    await connect("display-less-connect")
+    sent.length = 0
+
+    setDefaultWearable(DeviceTypes.NONE)
+    const update = payloads().find((payload) => payload.type === MiniappResponseType.CAPABILITIES_UPDATE)
+    expect(update?.capabilities).toMatchObject({modelName: DeviceTypes.NONE, hasDisplay: false})
+
+    sent.length = 0
+    localMiniappRuntime.unregisterApp(packageName)
+    setDefaultWearable(DeviceTypes.G2)
+    expect(sent).toEqual([])
+  })
+
+  async function connect(requestId: string): Promise<void> {
+    const connected = localMiniappRuntime.waitForConnect(packageName, 1_000)
+    localMiniappRuntime.handleRawMessage(
+      packageName,
+      serializeEnvelope({payload: {type: MiniappRequestType.CONNECT}, requestId}),
+    )
+    await connected
+  }
 
   function payloads(): Array<Record<string, unknown>> {
     return sent

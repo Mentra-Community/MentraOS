@@ -1385,6 +1385,16 @@ class LocalMiniappRuntime {
     this.clearMiniappAuthDeliveryRetry(packageName)
     const authPromise = this.requestMiniappAuth(packageName)
     const initialAuth = await withTimeout(authPromise, 1_500)
+
+    // CONNECT is asynchronous because auth minting may take up to 1.5s. A
+    // crash-respawn can replace this package's ConnectedMiniapp during that
+    // window; never let the stale handshake send into or mark the replacement
+    // context as connected.
+    if (this.connectedApps.get(packageName) !== existing) {
+      console.log(`${LOG_TAG}: ignoring stale CONNECT completion for replaced app ${packageName}`)
+      return
+    }
+
     const userId = initialAuth?.mentraUserId ?? ""
     if (initialAuth) {
       existing.authDelivered = true
