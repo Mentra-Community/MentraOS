@@ -108,4 +108,22 @@ public class K900NetworkManagerGatewayTest {
                                 new IllegalStateException("WiFi unavailable")))
                 .isFalse();
     }
+
+    @Test
+    public void fallsBackToVendorHotspotAfterIncompatibleModeRetryIsExhausted() {
+        assertThat(
+                        K900NetworkManager.shouldFallbackToVendorHotspot(
+                                WifiManager.LocalOnlyHotspotCallback.ERROR_INCOMPATIBLE_MODE,
+                                true))
+                .isTrue();
+        assertThat(
+                        K900NetworkManager.shouldFallbackToVendorHotspot(
+                                WifiManager.LocalOnlyHotspotCallback.ERROR_INCOMPATIBLE_MODE,
+                                false))
+                .isFalse();
+        assertThat(
+                        K900NetworkManager.shouldFallbackToVendorHotspot(
+                                WifiManager.LocalOnlyHotspotCallback.ERROR_NO_CHANNEL, true))
+                .isFalse();
+    }
 }

@@ -445,17 +445,29 @@ public class K900NetworkManager extends BaseNetworkManager {
 
     private void handleLocalHotspotFailure(int generation, int reason) {
         boolean retryAfterDisconnect;
+        boolean fallbackToVendorHotspot;
         synchronized (localHotspotLock) {
             if (generation != localHotspotGeneration || !localHotspotStarting) {
                 Log.d(TAG, "🔥 Ignoring failure from a stale hotspot generation");
                 return;
             }
+            fallbackToVendorHotspot =
+                    shouldFallbackToVendorHotspot(
+                            reason, localHotspotIncompatibleModeRetried);
             retryAfterDisconnect =
                     shouldRetryLocalHotspotAfterDisconnect(
                             reason, localHotspotIncompatibleModeRetried);
             if (retryAfterDisconnect) {
                 localHotspotIncompatibleModeRetried = true;
             }
+        }
+
+        if (fallbackToVendorHotspot) {
+            Log.w(
+                    TAG,
+                    "🔥 LocalOnlyHotspot remains incompatible after WiFi disconnect; using vendor AP");
+            startVendorHotspot(generation);
+            return;
         }
 
         if (!retryAfterDisconnect) {
@@ -491,6 +503,11 @@ public class K900NetworkManager extends BaseNetworkManager {
     static boolean shouldRetryLocalHotspotAfterDisconnect(int reason, boolean alreadyRetried) {
         return reason == WifiManager.LocalOnlyHotspotCallback.ERROR_INCOMPATIBLE_MODE
                 && !alreadyRetried;
+    }
+
+    static boolean shouldFallbackToVendorHotspot(int reason, boolean alreadyRetried) {
+        return reason == WifiManager.LocalOnlyHotspotCallback.ERROR_INCOMPATIBLE_MODE
+                && alreadyRetried;
     }
 
     private void handleLocalHotspotStarted(
