@@ -33,4 +33,11 @@ public class WifiCommandHandlerHotspotTest {
         assertThat(WifiCommandHandler.shouldReportCancelledHotspotStart(false, false, false))
                 .isFalse();
     }
+
+    @Test
+    public void sendsCancellationStatusOnlyIfHotspotRemainsDisabledAfterStop() {
+        assertThat(WifiCommandHandler.shouldSendCancelledHotspotStatus(true, false)).isTrue();
+        assertThat(WifiCommandHandler.shouldSendCancelledHotspotStatus(true, true)).isFalse();
+        assertThat(WifiCommandHandler.shouldSendCancelledHotspotStatus(false, false)).isFalse();
+    }
 }

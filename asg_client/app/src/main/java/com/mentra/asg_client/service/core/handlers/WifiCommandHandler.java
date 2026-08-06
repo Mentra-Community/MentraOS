@@ -8,6 +8,7 @@ import android.net.wifi.WifiManager;
 import android.util.Log;
 import com.mentra.asg_client.io.network.interfaces.INetworkManager;
 import com.mentra.asg_client.io.network.interfaces.IWifiScanCallback;
+import com.mentra.asg_client.io.network.models.HotspotState;
 import com.mentra.asg_client.io.network.models.NetworkInfo;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
 import com.mentra.asg_client.service.legacy.interfaces.ICommandHandler;
@@ -388,8 +389,9 @@ public class WifiCommandHandler implements ICommandHandler {
                 return false;
             }
 
-            boolean currentState = networkManager.isHotspotEnabled();
-            boolean transitioning = networkManager.isHotspotTransitioning();
+            HotspotState hotspotState = networkManager.getHotspotState();
+            boolean currentState = hotspotState.isEnabled();
+            boolean transitioning = hotspotState.isTransitioning();
             boolean reportCancelledStart =
                     shouldReportCancelledHotspotStart(
                             currentState, requestedState, transitioning);
@@ -403,7 +405,7 @@ public class WifiCommandHandler implements ICommandHandler {
                         "), sending current status");
 
                 // Send current status immediately since there won't be a state change broadcast
-                sendHotspotStatusToPhone(networkManager);
+                sendHotspotStatusToPhone(hotspotState);
             } else {
                 // State needs to change
                 if (requestedState) {
@@ -411,10 +413,12 @@ public class WifiCommandHandler implements ICommandHandler {
                     Log.d(TAG, "🔥 Hotspot start requested - status will be sent via broadcast receiver");
                 } else {
                     networkManager.stopHotspot();
-                    if (reportCancelledStart) {
+                    HotspotState stoppedState = networkManager.getHotspotState();
+                    if (shouldSendCancelledHotspotStatus(
+                            reportCancelledStart, stoppedState.isEnabled())) {
                         // Public state was already disabled, so BaseNetworkManager has no
                         // enabled-to-disabled listener edge to publish for this cancellation.
-                        sendHotspotStatusToPhone(networkManager, false);
+                        sendHotspotStatusToPhone(stoppedState);
                         Log.d(TAG, "🔥 Hotspot startup cancelled - disabled status sent");
                     } else {
                         Log.d(TAG, "🔥 Hotspot stop requested - status will be sent via broadcast receiver");
@@ -438,6 +442,11 @@ public class WifiCommandHandler implements ICommandHandler {
     static boolean shouldReportCancelledHotspotStart(
             boolean currentState, boolean requestedState, boolean transitioning) {
         return !currentState && !requestedState && transitioning;
+    }
+
+    static boolean shouldSendCancelledHotspotStatus(
+            boolean reportCancelledStart, boolean postStopEnabled) {
+        return reportCancelledStart && !postStopEnabled;
     }
 
     /**
@@ -491,21 +500,16 @@ public class WifiCommandHandler implements ICommandHandler {
     /**
      * Send hotspot status to phone via BLE
      */
-    private void sendHotspotStatusToPhone(INetworkManager networkManager) {
-        sendHotspotStatusToPhone(networkManager, networkManager.isHotspotEnabled());
-    }
-
-    private void sendHotspotStatusToPhone(
-            INetworkManager networkManager, boolean hotspotEnabled) {
+    private void sendHotspotStatusToPhone(HotspotState hotspotState) {
         try {
             JSONObject hotspotStatus = new JSONObject();
             hotspotStatus.put("type", "hotspot_status_update");
-            hotspotStatus.put("hotspot_enabled", hotspotEnabled);
+            hotspotStatus.put("hotspot_enabled", hotspotState.isEnabled());
 
-            if (hotspotEnabled) {
-                hotspotStatus.put("hotspot_ssid", networkManager.getHotspotSsid());
-                hotspotStatus.put("hotspot_password", networkManager.getHotspotPassword());
-                hotspotStatus.put("hotspot_gateway_ip", networkManager.getHotspotGatewayIp());
+            if (hotspotState.isEnabled()) {
+                hotspotStatus.put("hotspot_ssid", hotspotState.getSsid());
+                hotspotStatus.put("hotspot_password", hotspotState.getPassword());
+                hotspotStatus.put("hotspot_gateway_ip", hotspotState.getGatewayIp());
             }
 
             boolean sent = communicationManager.sendBluetoothResponse(hotspotStatus);
@@ -516,7 +520,7 @@ public class WifiCommandHandler implements ICommandHandler {
                                     ? "✅ Hotspot status sent successfully"
                                     : "❌ Failed to send hotspot status")
                             + ", enabled="
-                            + hotspotEnabled);
+                            + hotspotState.isEnabled());
         } catch (Exception e) {
             Log.e(TAG, "Error sending hotspot status to phone", e);
         }

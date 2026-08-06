@@ -1,5 +1,6 @@
 package com.mentra.asg_client.io.network.interfaces;
 
+import com.mentra.asg_client.io.network.models.HotspotState;
 import java.util.List;
 
 /**
@@ -110,6 +111,21 @@ public interface INetworkManager {
      */
     default boolean isHotspotTransitioning() {
         return false;
+    }
+
+    /**
+     * Capture the public hotspot state used to answer a phone command.
+     *
+     * <p>Managers with asynchronous lifecycle state should override this method and capture all
+     * fields under their transition lock.
+     */
+    default HotspotState getHotspotState() {
+        return new HotspotState(
+                isHotspotEnabled(),
+                isHotspotTransitioning(),
+                getHotspotSsid(),
+                getHotspotPassword(),
+                getHotspotGatewayIp());
     }
     
     /**

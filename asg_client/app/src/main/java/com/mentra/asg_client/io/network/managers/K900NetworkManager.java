@@ -13,9 +13,10 @@ import android.provider.Settings;
 import android.util.Log;
 import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.network.core.BaseNetworkManager;
-import com.mentra.asg_client.io.network.utils.WifiSecurityChooser;
 import com.mentra.asg_client.io.network.interfaces.IWifiScanCallback;
+import com.mentra.asg_client.io.network.models.HotspotState;
 import com.mentra.asg_client.io.network.utils.DebugNotificationManager;
+import com.mentra.asg_client.io.network.utils.WifiSecurityChooser;
 import com.mentra.asg_client.service.system.core.SystemControllerFactory;
 import java.util.ArrayList;
 import java.net.Inet4Address;
@@ -242,6 +243,22 @@ public class K900NetworkManager extends BaseNetworkManager {
                     localHotspotClosing,
                     localHotspotReservation != null,
                     isHotspotEnabled);
+        }
+    }
+
+    @Override
+    public HotspotState getHotspotState() {
+        synchronized (localHotspotLock) {
+            return new HotspotState(
+                    isHotspotEnabled,
+                    isLocalHotspotTransitioning(
+                            localHotspotStarting,
+                            localHotspotClosing,
+                            localHotspotReservation != null,
+                            isHotspotEnabled),
+                    currentHotspotSsid,
+                    currentHotspotPassword,
+                    currentHotspotGatewayIp);
         }
     }
 
