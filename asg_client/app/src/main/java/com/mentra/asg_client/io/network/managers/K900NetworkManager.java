@@ -212,7 +212,7 @@ public class K900NetworkManager extends BaseNetworkManager {
                 Log.i(TAG, "🔥 Queued hotspot restart until current AP stops");
                 return;
             }
-            if (isHotspotEnabled || localHotspotStarting) {
+            if (isHotspotEnabled() || localHotspotStarting) {
                 Log.d(TAG, "🔥 Local-only hotspot is already active or starting");
                 return;
             }
@@ -237,27 +237,25 @@ public class K900NetworkManager extends BaseNetworkManager {
     @Override
     public boolean isHotspotTransitioning() {
         synchronized (localHotspotLock) {
+            boolean publicEnabled = isHotspotEnabled();
             return isLocalHotspotTransitioning(
                     localHotspotStarting,
                     localHotspotClosing,
                     localHotspotReservation != null,
-                    isHotspotEnabled);
+                    publicEnabled);
         }
     }
 
     @Override
     public HotspotState getHotspotState() {
         synchronized (localHotspotLock) {
-            return new HotspotState(
-                    isHotspotEnabled,
+            boolean publicEnabled = isHotspotEnabled();
+            return captureHotspotState(
                     isLocalHotspotTransitioning(
                             localHotspotStarting,
                             localHotspotClosing,
                             localHotspotReservation != null,
-                            isHotspotEnabled),
-                    currentHotspotSsid,
-                    currentHotspotPassword,
-                    currentHotspotGatewayIp);
+                            publicEnabled));
         }
     }
 
@@ -344,33 +342,32 @@ public class K900NetworkManager extends BaseNetworkManager {
     }
 
     private void startVendorHotspot(int generation) {
-        if (isConnectedToWifi()) {
-            try {
-                if (!wifiManager.disconnect()) {
-                    failLocalHotspotStartup(
-                            generation, "Failed to disconnect WiFi before vendor hotspot");
+        boolean stationWifiDisconnected = false;
+        try {
+            synchronized (localHotspotLock) {
+                if (generation != localHotspotGeneration || !localHotspotStarting) {
                     return;
                 }
-            } catch (Exception e) {
-                Log.e(TAG, "🔥 Error disconnecting WiFi before vendor hotspot", e);
-                failLocalHotspotStartup(
-                        generation,
-                        "Failed to disconnect WiFi before vendor hotspot: " + e.getMessage());
-                return;
-            }
-
-            boolean staleGeneration;
-            synchronized (localHotspotLock) {
-                staleGeneration =
-                        generation != localHotspotGeneration || !localHotspotStarting;
-                if (!staleGeneration) {
+                if (isConnectedToWifi()) {
+                    // Validate and disconnect while holding the lifecycle lock so a canceled
+                    // generation cannot briefly disrupt a newly restored station connection.
+                    if (!wifiManager.disconnect()) {
+                        throw new IllegalStateException(
+                                "Failed to disconnect WiFi before vendor hotspot");
+                    }
                     localHotspotDisconnectedStationWifi = true;
+                    stationWifiDisconnected = true;
                 }
             }
-            if (staleGeneration) {
-                reconnectStationWifi();
-                return;
-            }
+        } catch (Exception e) {
+            Log.e(TAG, "🔥 Error disconnecting WiFi before vendor hotspot", e);
+            failLocalHotspotStartup(
+                    generation,
+                    "Failed to disconnect WiFi before vendor hotspot: " + e.getMessage());
+            return;
+        }
+
+        if (stationWifiDisconnected) {
             localHotspotHandler.postDelayed(
                     () -> requestVendorHotspot(generation),
                     AsgConstants.LOCAL_HOTSPOT_WIFI_DISCONNECT_DELAY_MS);

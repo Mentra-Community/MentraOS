@@ -113,20 +113,8 @@ public interface INetworkManager {
         return false;
     }
 
-    /**
-     * Capture the public hotspot state used to answer a phone command.
-     *
-     * <p>Managers with asynchronous lifecycle state should override this method and capture all
-     * fields under their transition lock.
-     */
-    default HotspotState getHotspotState() {
-        return new HotspotState(
-                isHotspotEnabled(),
-                isHotspotTransitioning(),
-                getHotspotSsid(),
-                getHotspotPassword(),
-                getHotspotGatewayIp());
-    }
+    /** Capture public hotspot state and credentials atomically for a phone command. */
+    HotspotState getHotspotState();
     
     /**
      * Get the SSID of the currently running hotspot

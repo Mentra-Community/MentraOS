@@ -19,6 +19,7 @@ import com.mentra.asg_client.NetworkUtils;
 import com.mentra.asg_client.io.network.interfaces.INetworkController;
 import com.mentra.asg_client.io.network.interfaces.IWifiScanCallback;
 import com.mentra.asg_client.io.network.interfaces.NetworkStateListener;
+import com.mentra.asg_client.io.network.models.HotspotState;
 import com.mentra.asg_client.io.network.models.NetworkInfo;
 import java.util.ArrayList;
 import java.util.List;
@@ -44,10 +45,11 @@ public abstract class BaseNetworkManager implements INetworkController {
     protected final List<NetworkStateListener> listeners = new ArrayList<>();
 
     // Hotspot state tracking - shared across all network manager implementations
-    protected boolean isHotspotEnabled = false;
-    protected String currentHotspotSsid = "";
-    protected String currentHotspotPassword = "";
-    protected String currentHotspotGatewayIp = AsgConstants.DEFAULT_HOTSPOT_GATEWAY_IP;
+    private boolean isHotspotEnabled = false;
+    private String currentHotspotSsid = "";
+    private String currentHotspotPassword = "";
+    private String currentHotspotGatewayIp = AsgConstants.DEFAULT_HOTSPOT_GATEWAY_IP;
+    private final Object hotspotStateLock = new Object();
 
     // Device-persistent hotspot credentials
     private String deviceHotspotSsid = null;
@@ -179,7 +181,9 @@ public abstract class BaseNetworkManager implements INetworkController {
      */
     protected void notifyHotspotStateChanged(boolean isEnabled) {
         Log.d(TAG, "Hotspot state changed: " + (isEnabled ? "enabled" : "disabled"));
-        this.isHotspotEnabled = isEnabled;
+        synchronized (hotspotStateLock) {
+            this.isHotspotEnabled = isEnabled;
+        }
         for (NetworkStateListener listener : listeners) {
             try {
                 listener.onHotspotStateChanged(isEnabled);
@@ -779,17 +783,23 @@ public abstract class BaseNetworkManager implements INetworkController {
     // Hotspot state management methods - shared across all implementations
     @Override
     public boolean isHotspotEnabled() {
-        return isHotspotEnabled;
+        synchronized (hotspotStateLock) {
+            return isHotspotEnabled;
+        }
     }
 
     @Override
     public String getHotspotSsid() {
-        return currentHotspotSsid;
+        synchronized (hotspotStateLock) {
+            return currentHotspotSsid;
+        }
     }
 
     @Override
     public String getHotspotPassword() {
-        return currentHotspotPassword;
+        synchronized (hotspotStateLock) {
+            return currentHotspotPassword;
+        }
     }
 
     /**
@@ -799,7 +809,26 @@ public abstract class BaseNetworkManager implements INetworkController {
      */
     @Override
     public String getHotspotGatewayIp() {
-        return currentHotspotGatewayIp;
+        synchronized (hotspotStateLock) {
+            return currentHotspotGatewayIp;
+        }
+    }
+
+    @Override
+    public HotspotState getHotspotState() {
+        return captureHotspotState(false);
+    }
+
+    /** Capture public hotspot fields under their shared lock. */
+    protected final HotspotState captureHotspotState(boolean transitioning) {
+        synchronized (hotspotStateLock) {
+            return new HotspotState(
+                    isHotspotEnabled,
+                    transitioning,
+                    currentHotspotSsid,
+                    currentHotspotPassword,
+                    currentHotspotGatewayIp);
+        }
     }
 
     /** Update hotspot state - to be called by subclasses when hotspot state changes */
@@ -810,13 +839,15 @@ public abstract class BaseNetworkManager implements INetworkController {
     /** Update hotspot state including the gateway advertised to the paired phone. */
     protected void updateHotspotState(
             boolean enabled, String ssid, String password, String gatewayIp) {
-        this.isHotspotEnabled = enabled;
-        this.currentHotspotSsid = ssid != null ? ssid : "";
-        this.currentHotspotPassword = password != null ? password : "";
-        this.currentHotspotGatewayIp =
-                gatewayIp != null && !gatewayIp.isEmpty()
-                        ? gatewayIp
-                        : AsgConstants.DEFAULT_HOTSPOT_GATEWAY_IP;
+        synchronized (hotspotStateLock) {
+            this.isHotspotEnabled = enabled;
+            this.currentHotspotSsid = ssid != null ? ssid : "";
+            this.currentHotspotPassword = password != null ? password : "";
+            this.currentHotspotGatewayIp =
+                    gatewayIp != null && !gatewayIp.isEmpty()
+                            ? gatewayIp
+                            : AsgConstants.DEFAULT_HOTSPOT_GATEWAY_IP;
+        }
 
         Log.d(TAG, "Hotspot state updated: enabled=" + enabled + ", ssid=" + ssid);
     }
@@ -828,7 +859,7 @@ public abstract class BaseNetworkManager implements INetworkController {
 
     /** Mark a hotspot ready and begin the shared idle policy. */
     protected final void onHotspotStarted(String ssid, String password, String gatewayIp) {
-        boolean wasEnabled = isHotspotEnabled;
+        boolean wasEnabled = isHotspotEnabled();
         updateHotspotState(true, ssid, password, gatewayIp);
         startInactivityMonitoring();
         if (!wasEnabled) {
@@ -838,7 +869,7 @@ public abstract class BaseNetworkManager implements INetworkController {
 
     /** Mark a hotspot stopped and cancel the shared idle policy. */
     protected final void onHotspotStopped() {
-        boolean wasEnabled = isHotspotEnabled;
+        boolean wasEnabled = isHotspotEnabled();
         stopInactivityMonitoring();
         clearHotspotState();
         if (wasEnabled) {
@@ -876,7 +907,7 @@ public abstract class BaseNetworkManager implements INetworkController {
         // Check if WiFi tethering is active
         boolean isTetheringActive = isWifiTetheringActive();
 
-        if (isTetheringActive != isHotspotEnabled) {
+        if (isTetheringActive != isHotspotEnabled()) {
             Log.d(TAG, "🔥 Hotspot state changed: " + (isTetheringActive ? "ENABLED" : "DISABLED"));
 
             if (isTetheringActive) {
@@ -953,7 +984,7 @@ public abstract class BaseNetworkManager implements INetworkController {
                 new Runnable() {
                     @Override
                     public void run() {
-                        if (!isHotspotEnabled) {
+                        if (!isHotspotEnabled()) {
                             return; // Hotspot already disabled
                         }
 
