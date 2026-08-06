@@ -17,7 +17,7 @@ public class AsgConstants {
     public static final long LOCAL_HOTSPOT_READINESS_TIMEOUT_MS = 12_000L;
 
     /** Overall startup deadline matching the phone's hotspot request timeout. */
-    public static final long LOCAL_HOTSPOT_STARTUP_TIMEOUT_MS = 15_000L;
+    public static final long LOCAL_HOTSPOT_STARTUP_TIMEOUT_MS = 30_000L;
 
     /** Time reserved to publish hotspot readiness to the phone before its request expires. */
     public static final long LOCAL_HOTSPOT_RESPONSE_MARGIN_MS = 1_000L;
@@ -27,6 +27,9 @@ public class AsgConstants {
 
     /** Delay after releasing a WiFi station connection before retrying LocalOnlyHotspot. */
     public static final long LOCAL_HOTSPOT_WIFI_DISCONNECT_DELAY_MS = 500L;
+
+    /** Delay for Android to release a closed LocalOnlyHotspot reservation before restart. */
+    public static final long LOCAL_HOTSPOT_TEARDOWN_DELAY_MS = 500L;
 
     /** Current Mentra Live Android hotspot gateway when interface discovery is unavailable. */
     public static final String DEFAULT_HOTSPOT_GATEWAY_IP = "192.168.43.1";

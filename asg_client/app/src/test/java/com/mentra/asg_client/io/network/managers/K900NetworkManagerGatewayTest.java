@@ -39,9 +39,9 @@ public class K900NetworkManagerGatewayTest {
 
     @Test
     public void reservesTimeToPublishReadinessBeforeThePhoneDeadline() {
-        assertThat(K900NetworkManager.calculateLocalHotspotReadinessDeadline(15_000L, 3_000L))
-                .isEqualTo(14_000L);
-        assertThat(K900NetworkManager.calculateLocalHotspotReadinessDeadline(20_000L, 3_000L))
+        assertThat(K900NetworkManager.calculateLocalHotspotReadinessDeadline(30_000L, 20_000L))
+                .isEqualTo(29_000L);
+        assertThat(K900NetworkManager.calculateLocalHotspotReadinessDeadline(40_000L, 3_000L))
                 .isEqualTo(15_000L);
     }
 
@@ -57,25 +57,27 @@ public class K900NetworkManagerGatewayTest {
 
     @Test
     public void restoresStationWifiAfterActiveReservationReportsStopped() {
-        assertThat(K900NetworkManager.shouldReconnectStationWifiImmediately(true, true))
+        assertThat(K900NetworkManager.shouldReconnectStationWifiImmediately(true, false, true))
                 .isFalse();
-        assertThat(K900NetworkManager.shouldReconnectStationWifiImmediately(false, true))
+        assertThat(K900NetworkManager.shouldReconnectStationWifiImmediately(false, true, true))
+                .isFalse();
+        assertThat(K900NetworkManager.shouldReconnectStationWifiImmediately(false, false, true))
                 .isTrue();
-        assertThat(K900NetworkManager.shouldReconnectStationWifiImmediately(false, false))
+        assertThat(K900NetworkManager.shouldReconnectStationWifiImmediately(false, false, false))
                 .isFalse();
     }
 
     @Test
-    public void queuesRestartOnlyWhileAnActiveReservationIsClosing() {
-        assertThat(K900NetworkManager.shouldQueueLocalHotspotRestart(true, true)).isTrue();
-        assertThat(K900NetworkManager.shouldQueueLocalHotspotRestart(true, false)).isFalse();
-        assertThat(K900NetworkManager.shouldQueueLocalHotspotRestart(false, true)).isFalse();
+    public void queuesRestartDuringTheExplicitCloseWindow() {
+        assertThat(K900NetworkManager.shouldQueueLocalHotspotRestart(true)).isTrue();
+        assertThat(K900NetworkManager.shouldQueueLocalHotspotRestart(false)).isFalse();
     }
 
     @Test
-    public void reportsStoppedOnlyAfterAnActiveReservationConfirmsTeardown() {
-        assertThat(K900NetworkManager.shouldReportLocalHotspotStoppedImmediately(true)).isFalse();
-        assertThat(K900NetworkManager.shouldReportLocalHotspotStoppedImmediately(false)).isTrue();
+    public void defersStoppedStateWhileAReservationIsClosing() {
+        assertThat(K900NetworkManager.shouldDeferLocalHotspotStopped(true, false)).isTrue();
+        assertThat(K900NetworkManager.shouldDeferLocalHotspotStopped(false, true)).isTrue();
+        assertThat(K900NetworkManager.shouldDeferLocalHotspotStopped(false, false)).isFalse();
     }
 
     @Test

@@ -43,6 +43,7 @@ public class K900NetworkManager extends BaseNetworkManager {
     private final Object localHotspotLock = new Object();
     private WifiManager.LocalOnlyHotspotReservation localHotspotReservation;
     private Runnable pendingLocalHotspotReadiness;
+    private Runnable pendingLocalHotspotCloseCompletion;
     private boolean localHotspotStarting;
     private boolean localHotspotIncompatibleModeRetried;
     private boolean localHotspotDisconnectedStationWifi;
@@ -201,14 +202,13 @@ public class K900NetworkManager extends BaseNetworkManager {
 
         final int generation;
         synchronized (localHotspotLock) {
-            if (isHotspotEnabled || localHotspotStarting) {
-                Log.d(TAG, "🔥 Local-only hotspot is already active or starting");
-                return;
-            }
-            if (shouldQueueLocalHotspotRestart(
-                    localHotspotReservation != null, localHotspotClosing)) {
+            if (shouldQueueLocalHotspotRestart(localHotspotClosing)) {
                 localHotspotRestartRequested = true;
                 Log.i(TAG, "🔥 Queued hotspot restart until current AP stops");
+                return;
+            }
+            if (isHotspotEnabled || localHotspotStarting) {
+                Log.d(TAG, "🔥 Local-only hotspot is already active or starting");
                 return;
             }
             if (localHotspotReservation != null) {
@@ -418,17 +418,19 @@ public class K900NetworkManager extends BaseNetworkManager {
     }
 
     static boolean shouldReconnectStationWifiImmediately(
-            boolean reservationActive, boolean stationWifiDisconnected) {
-        return !reservationActive && stationWifiDisconnected;
+            boolean reservationActive,
+            boolean hotspotClosing,
+            boolean stationWifiDisconnected) {
+        return !reservationActive && !hotspotClosing && stationWifiDisconnected;
     }
 
-    static boolean shouldQueueLocalHotspotRestart(
+    static boolean shouldQueueLocalHotspotRestart(boolean hotspotClosing) {
+        return hotspotClosing;
+    }
+
+    static boolean shouldDeferLocalHotspotStopped(
             boolean reservationActive, boolean hotspotClosing) {
-        return reservationActive && hotspotClosing;
-    }
-
-    static boolean shouldReportLocalHotspotStoppedImmediately(boolean reservationActive) {
-        return !reservationActive;
+        return reservationActive || hotspotClosing;
     }
 
     private String findLocalHotspotGatewayIp() {
@@ -487,6 +489,7 @@ public class K900NetworkManager extends BaseNetworkManager {
         Log.e(TAG, "🔥 " + errorMessage);
         WifiManager.LocalOnlyHotspotReservation reservation;
         boolean reconnectStationWifi;
+        boolean scheduleCloseCompletion;
         synchronized (localHotspotLock) {
             if (generation != localHotspotGeneration) {
                 Log.d(TAG, "🔥 Ignoring failure from a stale hotspot generation");
@@ -495,16 +498,26 @@ public class K900NetworkManager extends BaseNetworkManager {
             localHotspotStarting = false;
             cancelLocalHotspotReadinessLocked();
             reservation = localHotspotReservation;
-            localHotspotClosing = reservation != null;
+            scheduleCloseCompletion = reservation != null;
+            if (scheduleCloseCompletion) {
+                localHotspotReservation = null;
+                localHotspotClosing = true;
+            }
             reconnectStationWifi =
                     shouldReconnectStationWifiImmediately(
-                            reservation != null, localHotspotDisconnectedStationWifi);
+                            reservation != null,
+                            localHotspotClosing,
+                            localHotspotDisconnectedStationWifi);
             if (reservation == null) {
                 localHotspotDisconnectedStationWifi = false;
             }
         }
         if (reservation != null) {
-            reservation.close();
+            try {
+                reservation.close();
+            } finally {
+                scheduleLocalHotspotCloseCompletion(generation);
+            }
         }
         if (reconnectStationWifi) {
             reconnectStationWifi();
@@ -526,6 +539,7 @@ public class K900NetworkManager extends BaseNetworkManager {
             localHotspotClosing = false;
             localHotspotReservation = null;
             cancelLocalHotspotReadinessLocked();
+            cancelLocalHotspotCloseCompletionLocked();
             restartHotspot = localHotspotRestartRequested;
             localHotspotRestartRequested = false;
             reconnectStationWifi =
@@ -545,10 +559,56 @@ public class K900NetworkManager extends BaseNetworkManager {
         }
     }
 
+    private void scheduleLocalHotspotCloseCompletion(int generation) {
+        synchronized (localHotspotLock) {
+            cancelLocalHotspotCloseCompletionLocked();
+            pendingLocalHotspotCloseCompletion =
+                    () -> finishLocalHotspotClose(generation);
+            localHotspotHandler.postDelayed(
+                    pendingLocalHotspotCloseCompletion,
+                    AsgConstants.LOCAL_HOTSPOT_TEARDOWN_DELAY_MS);
+        }
+    }
+
+    private void finishLocalHotspotClose(int generation) {
+        boolean reconnectStationWifi;
+        boolean restartHotspot;
+        synchronized (localHotspotLock) {
+            pendingLocalHotspotCloseCompletion = null;
+            if (generation != localHotspotGeneration || !localHotspotClosing) {
+                return;
+            }
+            localHotspotClosing = false;
+            restartHotspot = localHotspotRestartRequested;
+            localHotspotRestartRequested = false;
+            reconnectStationWifi =
+                    localHotspotDisconnectedStationWifi && !restartHotspot;
+            if (reconnectStationWifi) {
+                localHotspotDisconnectedStationWifi = false;
+            }
+        }
+        if (reconnectStationWifi) {
+            reconnectStationWifi();
+        }
+        onHotspotStopped();
+        notificationManager.showHotspotStateNotification(false);
+        Log.i(TAG, "🔥 Local-only hotspot close completed");
+        if (restartHotspot) {
+            startHotspot();
+        }
+    }
+
     private void cancelLocalHotspotReadinessLocked() {
         if (pendingLocalHotspotReadiness != null) {
             localHotspotHandler.removeCallbacks(pendingLocalHotspotReadiness);
             pendingLocalHotspotReadiness = null;
+        }
+    }
+
+    private void cancelLocalHotspotCloseCompletionLocked() {
+        if (pendingLocalHotspotCloseCompletion != null) {
+            localHotspotHandler.removeCallbacks(pendingLocalHotspotCloseCompletion);
+            pendingLocalHotspotCloseCompletion = null;
         }
     }
 
@@ -582,25 +642,39 @@ public class K900NetworkManager extends BaseNetworkManager {
         boolean reconnectStationWifi;
         boolean closeReservation;
         boolean reportStoppedImmediately;
+        int generation;
         synchronized (localHotspotLock) {
+            boolean wasClosing = localHotspotClosing;
+            generation = localHotspotGeneration;
             localHotspotStarting = false;
             localHotspotRestartRequested = false;
             cancelLocalHotspotReadinessLocked();
             reservation = localHotspotReservation;
-            closeReservation = reservation != null && !localHotspotClosing;
-            localHotspotClosing = reservation != null;
+            closeReservation = reservation != null;
+            if (closeReservation) {
+                localHotspotReservation = null;
+                localHotspotClosing = true;
+            }
             reportStoppedImmediately =
-                    shouldReportLocalHotspotStoppedImmediately(reservation != null);
+                    !shouldDeferLocalHotspotStopped(reservation != null, wasClosing);
             reconnectStationWifi =
                     shouldReconnectStationWifiImmediately(
-                            reservation != null, localHotspotDisconnectedStationWifi);
-            if (reservation == null) {
+                            reservation != null,
+                            localHotspotClosing,
+                            localHotspotDisconnectedStationWifi);
+            if (reservation == null && !wasClosing) {
                 localHotspotGeneration++;
                 localHotspotDisconnectedStationWifi = false;
             }
         }
         if (closeReservation) {
-            reservation.close();
+            try {
+                // Android does not invoke LocalOnlyHotspotCallback.onStopped() when the
+                // reservation owner closes it, so complete our state transition locally.
+                reservation.close();
+            } finally {
+                scheduleLocalHotspotCloseCompletion(generation);
+            }
         }
         if (reconnectStationWifi) {
             reconnectStationWifi();
