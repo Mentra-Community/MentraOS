@@ -52,6 +52,7 @@ import {phoneVideoCoordinator} from "./PhoneVideoCoordinator"
 import {runSentenceTtsPipeline} from "./SentenceTtsPipeline"
 import {summarizeTranscriptionRoutes, transcriptionDeliveryRoute} from "./TranscriptionRouting"
 import {prepareTtsSentences} from "./TtsTextSanitizer"
+import {handleWifiAdbRequest} from "./WifiAdbRequest"
 import {cloudClientService} from "./CloudClientService"
 import {miniappLauncher} from "./MiniappLauncher"
 import {
@@ -2907,35 +2908,25 @@ class LocalMiniappRuntime {
     payload: Record<string, unknown>,
     requestId?: string,
   ): Promise<void> {
-    // Wi-Fi ADB expands the device attack surface — SYSTEM miniapps only.
-    if (!this.isSystemPackage(packageName)) {
-      this.sendResult(packageName, requestId, false, undefined, {
-        code: MiniappErrorCode.NOT_PERMITTED,
-        message: "setWifiAdbState is restricted to system apps",
-      })
-      return
-    }
+    const result = await handleWifiAdbRequest(packageName, payload, {
+      isSystemPackage: (candidate) => this.isSystemPackage(candidate),
+      setWifiAdbState: async (enabled) => {
+        console.log(`${LOG_TAG}: set_wifi_adb_state enabled=${enabled} from ${packageName}`)
+        try {
+          await BluetoothSdk.setWifiAdbState(enabled)
+        } catch (error) {
+          console.error(`${LOG_TAG}: set_wifi_adb_state error:`, error)
+          throw error
+        }
+      },
+    })
 
-    if (typeof payload.enabled !== "boolean") {
-      this.sendResult(packageName, requestId, false, undefined, {
-        code: MiniappErrorCode.INVALID_ARGUMENT,
-        message: "enabled must be a boolean",
-      })
-      return
-    }
-
-    try {
-      const enabled = payload.enabled
-      console.log(`${LOG_TAG}: set_wifi_adb_state enabled=${enabled} from ${packageName}`)
-      await BluetoothSdk.setWifiAdbState(enabled)
+    if (result.ok) {
       this.sendResult(packageName, requestId, true)
-    } catch (err) {
-      console.error(`${LOG_TAG}: set_wifi_adb_state error:`, err)
-      this.sendResult(packageName, requestId, false, undefined, {
-        code: MiniappErrorCode.INTERNAL,
-        message: err instanceof Error ? err.message : "Wi-Fi ADB error",
-      })
+      return
     }
+
+    this.sendResult(packageName, requestId, false, undefined, result.error)
   }
 
   // ---------------------------------------------------------------------------
