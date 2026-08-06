@@ -96,4 +96,16 @@ public class K900NetworkManagerGatewayTest {
                                 WifiManager.LocalOnlyHotspotCallback.ERROR_NO_CHANNEL, false))
                 .isFalse();
     }
+
+    @Test
+    public void fallsBackToVendorHotspotWhenFirmwareRejectsLocalOnlyApi() {
+        assertThat(
+                        K900NetworkManager.shouldFallbackToVendorHotspot(
+                                new SecurityException("WRITE_SECURE_SETTINGS")))
+                .isTrue();
+        assertThat(
+                        K900NetworkManager.shouldFallbackToVendorHotspot(
+                                new IllegalStateException("WiFi unavailable")))
+                .isFalse();
+    }
 }

@@ -9,6 +9,7 @@ import android.net.wifi.WifiManager;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
+import android.provider.Settings;
 import android.util.Log;
 import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.network.core.BaseNetworkManager;
@@ -33,6 +34,9 @@ public class K900NetworkManager extends BaseNetworkManager {
     // K900-specific constants
     private static final String K900_BROADCAST_ACTION = "com.xy.xsetting.action";
     private static final String K900_SYSTEM_UI_PACKAGE = "com.android.systemui";
+    private static final String K900_VENDOR_HOTSPOT_SSID_SETTING = "xy_ssid";
+    private static final String K900_VENDOR_HOTSPOT_PASSWORD_SETTING = "xy_pwd";
+    private static final String K900_VENDOR_HOTSPOT_PASSWORD = "00001111";
 
     private final WifiManager wifiManager;
     private final DebugNotificationManager notificationManager;
@@ -49,6 +53,7 @@ public class K900NetworkManager extends BaseNetworkManager {
     private boolean localHotspotDisconnectedStationWifi;
     private boolean localHotspotClosing;
     private boolean localHotspotRestartRequested;
+    private boolean vendorHotspotActive;
     private int localHotspotGeneration;
     private long localHotspotStartupDeadlineMs;
     private long localHotspotReadinessDeadlineMs;
@@ -305,9 +310,120 @@ public class K900NetworkManager extends BaseNetworkManager {
                     localHotspotHandler);
             Log.i(TAG, "🔥 Local-only hotspot start requested");
         } catch (Exception e) {
+            if (shouldFallbackToVendorHotspot(e)) {
+                Log.w(
+                        TAG,
+                        "🔥 LocalOnlyHotspot is unavailable on this firmware; using vendor AP",
+                        e);
+                startVendorHotspot(generation);
+                return;
+            }
             Log.e(TAG, "🔥 Error requesting local-only hotspot", e);
             failLocalHotspotStartup(generation, "Failed to start: " + e.getMessage());
         }
+    }
+
+    static boolean shouldFallbackToVendorHotspot(Throwable error) {
+        return error instanceof SecurityException;
+    }
+
+    private void startVendorHotspot(int generation) {
+        boolean restoreStationWifi = isConnectedToWifi();
+        try {
+            synchronized (localHotspotLock) {
+                if (generation != localHotspotGeneration || !localHotspotStarting) {
+                    return;
+                }
+                vendorHotspotActive = true;
+                localHotspotDisconnectedStationWifi |= restoreStationWifi;
+                localHotspotReadinessDeadlineMs =
+                        calculateLocalHotspotReadinessDeadline(
+                                localHotspotStartupDeadlineMs, SystemClock.elapsedRealtime());
+                // Keep the vendor start ordered with stopHotspot(). If stop wins the lock,
+                // this generation is invalidated; if start wins, stop sends disable afterward.
+                sendVendorHotspotState(true);
+            }
+            checkVendorHotspotReadiness(generation);
+        } catch (Exception e) {
+            Log.e(TAG, "🔥 Error starting vendor hotspot fallback", e);
+            failVendorHotspotStartup(generation, "Vendor hotspot failed: " + e.getMessage());
+        }
+    }
+
+    private void checkVendorHotspotReadiness(int generation) {
+        String gatewayIp = findLocalHotspotGatewayIp();
+        String ssid = readVendorHotspotSetting(K900_VENDOR_HOTSPOT_SSID_SETTING, "");
+        String password =
+                readVendorHotspotSetting(
+                        K900_VENDOR_HOTSPOT_PASSWORD_SETTING,
+                        K900_VENDOR_HOTSPOT_PASSWORD);
+        synchronized (localHotspotLock) {
+            pendingLocalHotspotReadiness = null;
+            if (generation != localHotspotGeneration
+                    || !localHotspotStarting
+                    || !vendorHotspotActive) {
+                return;
+            }
+            long nowMs = SystemClock.elapsedRealtime();
+            boolean credentialsReady = !ssid.isEmpty() && !password.isEmpty();
+            if (canPublishLocalHotspotReady(
+                    !gatewayIp.isEmpty() && credentialsReady,
+                    nowMs,
+                    localHotspotReadinessDeadlineMs)) {
+                localHotspotStarting = false;
+                onHotspotStarted(ssid, password, gatewayIp);
+                notificationManager.showHotspotStateNotification(true);
+                notificationManager.showDebugNotification(
+                        "Mentra Live Hotspot Active", ssid);
+                Log.i(TAG, "🔥 Vendor hotspot ready: " + ssid + " gateway=" + gatewayIp);
+                return;
+            }
+            if (nowMs >= localHotspotReadinessDeadlineMs) {
+                failVendorHotspotStartup(
+                        generation, "Vendor hotspot gateway did not become ready");
+                return;
+            }
+            pendingLocalHotspotReadiness = () -> checkVendorHotspotReadiness(generation);
+            localHotspotHandler.postDelayed(
+                    pendingLocalHotspotReadiness,
+                    AsgConstants.LOCAL_HOTSPOT_READINESS_POLL_MS);
+        }
+    }
+
+    private String readVendorHotspotSetting(String key, String fallback) {
+        try {
+            String value = Settings.Global.getString(context.getContentResolver(), key);
+            return value == null || value.isEmpty() ? fallback : value;
+        } catch (Exception e) {
+            Log.w(TAG, "🔥 Could not read vendor hotspot setting " + key, e);
+            return fallback;
+        }
+    }
+
+    private void failVendorHotspotStartup(int generation, String errorMessage) {
+        synchronized (localHotspotLock) {
+            if (generation != localHotspotGeneration || !vendorHotspotActive) {
+                return;
+            }
+            // Claim teardown before sending the broadcast so a stale failure cannot
+            // disable a vendor hotspot belonging to a newer generation.
+            vendorHotspotActive = false;
+        }
+        try {
+            sendVendorHotspotState(false);
+        } catch (Exception e) {
+            Log.e(TAG, "🔥 Error stopping failed vendor hotspot", e);
+        }
+        failLocalHotspotStartup(generation, errorMessage);
+    }
+
+    private void sendVendorHotspotState(boolean enabled) {
+        Intent intent = new Intent(K900_BROADCAST_ACTION);
+        intent.setPackage(K900_SYSTEM_UI_PACKAGE);
+        intent.putExtra("cmd", "ap_start");
+        intent.putExtra("enable", enabled);
+        context.sendBroadcast(intent);
+        Log.i(TAG, "🔥 Vendor hotspot " + (enabled ? "start" : "stop") + " requested");
     }
 
     private void handleLocalHotspotFailure(int generation, int reason) {
@@ -668,6 +784,7 @@ public class K900NetworkManager extends BaseNetworkManager {
         WifiManager.LocalOnlyHotspotReservation reservation;
         boolean reconnectStationWifi;
         boolean closeReservation;
+        boolean stopVendorHotspot;
         boolean reportStoppedImmediately;
         int generation;
         synchronized (localHotspotLock) {
@@ -678,23 +795,37 @@ public class K900NetworkManager extends BaseNetworkManager {
             cancelLocalHotspotReadinessLocked();
             reservation = localHotspotReservation;
             closeReservation = reservation != null;
+            stopVendorHotspot = vendorHotspotActive;
             if (closeReservation) {
                 localHotspotReservation = null;
                 localHotspotClosing = true;
             }
+            if (stopVendorHotspot) {
+                vendorHotspotActive = false;
+                localHotspotClosing = true;
+            }
+            boolean teardownInProgress = closeReservation || stopVendorHotspot;
             reportStoppedImmediately =
-                    !shouldDeferLocalHotspotStopped(reservation != null, wasClosing);
+                    !shouldDeferLocalHotspotStopped(teardownInProgress, wasClosing);
             reconnectStationWifi =
                     shouldReconnectStationWifiImmediately(
-                            reservation != null,
+                            teardownInProgress,
                             localHotspotClosing,
                             localHotspotDisconnectedStationWifi);
-            if (reservation == null && !wasClosing) {
+            if (!teardownInProgress && !wasClosing) {
                 localHotspotGeneration++;
                 localHotspotDisconnectedStationWifi = false;
             }
         }
-        if (closeReservation) {
+        if (stopVendorHotspot) {
+            try {
+                sendVendorHotspotState(false);
+            } catch (Exception e) {
+                Log.e(TAG, "🔥 Error stopping vendor hotspot", e);
+            } finally {
+                scheduleLocalHotspotCloseCompletion(generation);
+            }
+        } else if (closeReservation) {
             try {
                 // Android does not invoke LocalOnlyHotspotCallback.onStopped() when the
                 // reservation owner closes it, so complete our state transition locally.
