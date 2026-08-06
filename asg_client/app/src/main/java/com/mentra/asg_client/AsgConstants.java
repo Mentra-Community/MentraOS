@@ -156,6 +156,19 @@ public class AsgConstants {
     /** Mentra Live BES build target required in the decompressed image payload. */
     public static final String BES_OTA_PRODUCT = "best1502x_ibrt_bpone";
 
+    /** Prefix for hash-addressed ADB-only artifacts, separate from phone-owned BES OTA data. */
+    public static final String DEBUG_BES_OTA_ARTIFACT_PREFIX =
+            "/storage/emulated/0/asg/debug_bes_";
+
+    /** Debug BES intent extra carrying the exact post-reboot firmware version. */
+    public static final String DEBUG_BES_OTA_TARGET_VERSION_EXTRA = "target_version";
+
+    /** Debug BES intent extra carrying the staged artifact SHA-256. */
+    public static final String DEBUG_BES_OTA_SHA256_EXTRA = "sha256";
+
+    /** Debug BES intent extra carrying a stable identifier for durable state. */
+    public static final String DEBUG_BES_OTA_ARTIFACT_ID_EXTRA = "artifact_id";
+
     /**
      * Exclusive decompressed destination limit in the deployed ota_copy bootloader:
      * NEW_IMAGE_FLASH_OFFSET (0x200000) - OTA_CODE_OFFSET (0x20000). Images at or above this size

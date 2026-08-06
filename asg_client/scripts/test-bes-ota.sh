@@ -1,27 +1,21 @@
 #!/bin/bash
 #
 # Test BES firmware OTA update
-# Usage: ./scripts/test-bes-ota.sh [path-to-update_ota.bin]
+# Usage: ./scripts/test-bes-ota.sh <path-to-update_ota.bin> <target-version>
 #
-# If no path is provided, uses update_ota.bin in the same directory as this script.
+# The artifact must be the release-packaged OTA container, never raw BES build output.
+# Set ANDROID_SERIAL when more than one Android device may be attached.
 #
 
-set -e
+set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-DEFAULT_FIRMWARE="$SCRIPT_DIR/update_ota.bin"
+FIRMWARE_PATH="${1:-}"
+TARGET_VERSION="${2:-}"
 
-if [ -z "$1" ]; then
-    if [ -f "$DEFAULT_FIRMWARE" ]; then
-        FIRMWARE_PATH="$DEFAULT_FIRMWARE"
-        echo "Using default firmware: $FIRMWARE_PATH"
-    else
-        echo "Usage: ./scripts/test-bes-ota.sh [path-to-update_ota.bin]"
-        echo "Or place the release-packaged update_ota.bin next to this script."
-        exit 1
-    fi
-else
-    FIRMWARE_PATH="$1"
+if [ -z "$FIRMWARE_PATH" ] || [ -z "$TARGET_VERSION" ]; then
+    echo "Usage: ./scripts/test-bes-ota.sh <path-to-update_ota.bin> <target-version>"
+    echo "Example: ANDROID_SERIAL=0123456789ABCDEF $0 ./update_ota.bin 17.26.7.9"
+    exit 1
 fi
 
 if [ ! -f "$FIRMWARE_PATH" ]; then
@@ -29,29 +23,52 @@ if [ ! -f "$FIRMWARE_PATH" ]; then
     exit 1
 fi
 
-if [ "$(basename "$FIRMWARE_PATH")" != "update_ota.bin" ]; then
-    echo "❌ Refusing non-OTA payload: $FIRMWARE_PATH"
-    echo "Use the release-packaged update_ota.bin, never raw BES build output."
+if ! [[ "$TARGET_VERSION" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
+    echo "❌ Target version must have four numeric components: $TARGET_VERSION"
     exit 1
 fi
+
+ADB=(adb)
+if [ -n "${ANDROID_SERIAL:-}" ]; then
+    ADB+=( -s "$ANDROID_SERIAL" )
+fi
+
+"${ADB[@]}" get-state >/dev/null
+
+FIRMWARE_SHA256="$(shasum -a 256 "$FIRMWARE_PATH" | awk '{print $1}')"
+ARTIFACT_ID="adb-${FIRMWARE_SHA256}.bin"
+REMOTE_PATH="/storage/emulated/0/asg/debug_bes_${FIRMWARE_SHA256}.bin"
 
 echo "=========================================="
 echo "🔧 BES OTA Test"
 echo "=========================================="
 echo "Firmware: $FIRMWARE_PATH"
+echo "Target: $TARGET_VERSION"
 echo "Size: $(ls -lh "$FIRMWARE_PATH" | awk '{print $5}')"
-echo "SHA-256: $(shasum -a 256 "$FIRMWARE_PATH" | awk '{print $1}')"
+echo "SHA-256: $FIRMWARE_SHA256"
 echo ""
 
 echo "📤 Pushing firmware to glasses..."
-adb push "$FIRMWARE_PATH" /storage/emulated/0/asg/bes_firmware.bin
+"${ADB[@]}" push "$FIRMWARE_PATH" "$REMOTE_PATH"
+
+REMOTE_SHA256="$("${ADB[@]}" shell sha256sum "$REMOTE_PATH" | awk '{print $1}' | tr -d '\r')"
+if [ "$REMOTE_SHA256" != "$FIRMWARE_SHA256" ]; then
+    echo "❌ Device SHA-256 mismatch after push"
+    "${ADB[@]}" shell rm -f "$REMOTE_PATH"
+    exit 1
+fi
 
 echo ""
 echo "🚀 Triggering BES OTA..."
-adb logcat -c
-adb shell am broadcast -a com.mentra.DEBUG_BES_OTA -n com.mentra.asg_client/.receiver.DebugBesOtaReceiver
+"${ADB[@]}" logcat -c
+"${ADB[@]}" shell am broadcast \
+    -a com.mentra.DEBUG_BES_OTA \
+    --es target_version "$TARGET_VERSION" \
+    --es sha256 "$FIRMWARE_SHA256" \
+    --es artifact_id "$ARTIFACT_ID" \
+    -n com.mentra.asg_client/.receiver.DebugBesOtaReceiver
 
 echo ""
 echo "📋 Monitoring logs (Ctrl+C to exit)..."
 echo "=========================================="
-adb logcat | grep --line-buffered -E "(BES-UART|BesOta|DebugBesOta|mh_ota|hm_ota|sr_syvr|cs_baud)"
+"${ADB[@]}" logcat | grep --line-buffered -E "(BES-UART|BES_OTA_DIAG|BesOta|DebugBesOta|mh_ota|hm_ota|sr_syvr|cs_baud)"

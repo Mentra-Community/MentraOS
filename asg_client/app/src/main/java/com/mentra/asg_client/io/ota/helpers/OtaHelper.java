@@ -3079,6 +3079,78 @@ public class OtaHelper {
     // ========== DEBUG METHODS ==========
 
     /**
+     * Start an explicit ADB-requested BES version change through the release-A safety boundary.
+     *
+     * <p>Unlike the retired raw-file entry point, this validates the release container and
+     * immutable identity, observes APK/MTK/BES mutual exclusion, and assigns a durable owner before
+     * the manager can reserve {@code mh_ota}. Direction is intentionally not compared: selecting an
+     * older target is the supported internal downgrade use case for this privileged debug path.
+     *
+     * @param firmwareFile locally staged release-packaged BES OTA container
+     * @param targetVersion exact four-component version expected after the BES reboot
+     * @param expectedSha256 SHA-256 of the staged container
+     * @param artifactId stable artifact identifier stored with the durable transaction
+     * @return true when the validated transaction was accepted by the BES OTA manager
+     */
+    public boolean startValidatedDebugBesFirmware(
+            File firmwareFile,
+            String targetVersion,
+            String expectedSha256,
+            String artifactId) {
+        if (isUpdating) {
+            Log.e(TAG, "DEBUG BES install blocked - APK update in progress");
+            return false;
+        }
+        if (isMtkOtaInProgress) {
+            Log.e(TAG, "DEBUG BES install blocked - MTK update in progress");
+            return false;
+        }
+        if (!isBatterySufficientForUpdates()) {
+            Log.e(TAG, "DEBUG BES install blocked - battery is insufficient");
+            return false;
+        }
+
+        IBesOtaController manager = getOtaController();
+        if (manager == null) {
+            Log.e(TAG, "DEBUG BES install blocked - BES OTA controller is unavailable");
+            return false;
+        }
+        if (manager.isBesOtaInProgress()) {
+            Log.e(TAG, "DEBUG BES install blocked - BES transaction already active");
+            return false;
+        }
+
+        try {
+            ValidatedBesArtifact artifact =
+                    BesFirmwareArtifactValidator.validateLocal(
+                            firmwareFile, artifactId, expectedSha256, targetVersion);
+            if (!manager.prepareForNewOtaSession()) {
+                Log.e(TAG, "DEBUG BES install blocked - durable state refused a new session");
+                return false;
+            }
+
+            String ownerSessionId =
+                    "adb-bes-" + java.util.UUID.randomUUID().toString().replace("-", "");
+            Log.w(
+                    TAG,
+                    "DEBUG: starting validated BES version change artifact="
+                            + artifact.getArtifactId()
+                            + " target="
+                            + artifact.getTargetVersion()
+                            + " owner="
+                            + ownerSessionId);
+            boolean started = manager.startFirmwareUpdate(artifact, ownerSessionId);
+            if (!started) {
+                Log.e(TAG, "DEBUG BES install was refused by the BES OTA manager");
+            }
+            return started;
+        } catch (BesFirmwareArtifactValidator.ValidationException e) {
+            Log.e(TAG, "DEBUG BES artifact validation failed: " + e.getMessage(), e);
+            return false;
+        }
+    }
+
+    /**
      * DEBUG: Force install MTK firmware from local zip file without any checks
      * Skips version checking, downloading, and mutual exclusion
      * Use for testing only!

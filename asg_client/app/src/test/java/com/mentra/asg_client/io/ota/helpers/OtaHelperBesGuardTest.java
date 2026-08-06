@@ -3,12 +3,15 @@ package com.mentra.asg_client.io.ota.helpers;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import android.content.Context;
 import androidx.test.core.app.ApplicationProvider;
 import com.mentra.asg_client.io.ota.interfaces.IBesOtaController;
 import com.mentra.asg_client.io.ota.interfaces.IBesOtaRegistry;
+import java.io.File;
 import org.junit.After;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -103,5 +106,30 @@ public class OtaHelperBesGuardTest {
         IBesOtaRegistry registry = new StubRegistry();
 
         assertThat(registry.getInstance()).isNull();
+    }
+
+    @Test
+    public void debugBesInstallWithoutControllerFailsClosed() {
+        OtaHelper helper = newHelper(new StubRegistry());
+
+        assertThat(
+                        helper.startValidatedDebugBesFirmware(
+                                new File("missing.bin"), "17.26.7.9", "0".repeat(64), "adb.bin"))
+                .isFalse();
+    }
+
+    @Test
+    public void debugBesInstallDoesNotSupersedeActiveTransaction() {
+        StubRegistry registry = new StubRegistry();
+        IBesOtaController controller = mock(IBesOtaController.class);
+        when(controller.isBesOtaInProgress()).thenReturn(true);
+        registry.setInstance(controller);
+        OtaHelper helper = newHelper(registry);
+
+        assertThat(
+                        helper.startValidatedDebugBesFirmware(
+                                new File("missing.bin"), "17.26.7.9", "0".repeat(64), "adb.bin"))
+                .isFalse();
+        verify(controller, never()).prepareForNewOtaSession();
     }
 }

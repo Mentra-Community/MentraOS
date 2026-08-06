@@ -40,40 +40,72 @@ public final class BesFirmwareArtifactValidator {
     public static ValidatedBesArtifact validate(File artifact, JSONObject metadata)
             throws ValidationException {
         try {
-            if (artifact == null || !artifact.isFile()) {
-                throw new ValidationException("BES OTA artifact is missing");
-            }
             if (metadata == null) {
                 throw new ValidationException("BES OTA release metadata is missing");
             }
 
             String artifactId = artifactIdFromUrl(metadata);
-            long compressedSize = artifact.length();
-
-            byte[] container = readArtifact(artifact);
             String compressedSha256 = requiredSha256(metadata, "sha256");
-            assertSha256(container, compressedSha256, "compressed");
-
-            byte[] raw = unpackAndValidateContainer(container);
-            assertProduct(raw, AsgConstants.BES_OTA_PRODUCT);
             String targetVersion = requiredString(metadata, "version");
-            String canonicalTarget = BesOtaStateStore.canonicalVersion(targetVersion);
-            if (canonicalTarget == null) {
-                throw new ValidationException(
-                        "BES target version must contain four numeric byte components");
-            }
-            return new ValidatedBesArtifact(
-                    artifact,
-                    artifactId,
-                    compressedSha256,
-                    canonicalTarget,
-                    compressedSize,
-                    raw.length);
+            return validateKnownIdentity(
+                    artifact, artifactId, compressedSha256, targetVersion);
         } catch (ValidationException e) {
             throw e;
         } catch (Exception e) {
             throw new ValidationException("Invalid BES OTA artifact: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * Validate an ADB-staged release container with explicit immutable identity metadata.
+     *
+     * <p>This performs the same byte, digest, product, size, and target validation as the
+     * phone-owned manifest path. It exists so the privileged debug receiver can exercise the
+     * production BES state machine without inventing an HTTPS URL for a local artifact.
+     */
+    public static ValidatedBesArtifact validateLocal(
+            File artifact, String artifactId, String expectedSha256, String targetVersion)
+            throws ValidationException {
+        try {
+            String canonicalArtifactId = artifactId == null ? "" : artifactId.trim();
+            if (!canonicalArtifactId.matches("[A-Za-z0-9._-]{1,128}")) {
+                throw new ValidationException("BES OTA artifact has an invalid identifier");
+            }
+            String canonicalSha256 = canonicalSha256(expectedSha256);
+            return validateKnownIdentity(
+                    artifact, canonicalArtifactId, canonicalSha256, targetVersion);
+        } catch (ValidationException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new ValidationException("Invalid BES OTA artifact: " + e.getMessage(), e);
+        }
+    }
+
+    private static ValidatedBesArtifact validateKnownIdentity(
+            File artifact, String artifactId, String compressedSha256, String targetVersion)
+            throws Exception {
+        if (artifact == null || !artifact.isFile()) {
+            throw new ValidationException("BES OTA artifact is missing");
+        }
+
+        long compressedSize = artifact.length();
+        byte[] container = readArtifact(artifact);
+        assertSha256(container, compressedSha256, "compressed");
+
+        byte[] raw = unpackAndValidateContainer(container);
+        assertProduct(raw, AsgConstants.BES_OTA_PRODUCT);
+        String canonicalTarget = BesOtaStateStore.canonicalVersion(targetVersion);
+        if (canonicalTarget == null) {
+            throw new ValidationException(
+                    "BES target version must contain four numeric byte components");
+        }
+        return new ValidatedBesArtifact(
+                artifact,
+                artifactId,
+                compressedSha256,
+                canonicalTarget,
+                compressedSize,
+                raw.length);
     }
 
     private static byte[] readArtifact(File artifact) throws IOException, ValidationException {
@@ -221,9 +253,18 @@ public final class BesFirmwareArtifactValidator {
 
     private static String requiredSha256(JSONObject metadata, String key)
             throws ValidationException {
-        String value = requiredString(metadata, key).toLowerCase(Locale.US);
+        String value = requiredString(metadata, key);
+        value = value.trim().toLowerCase(Locale.US);
         if (!value.matches("[0-9a-f]{64}")) {
             throw new ValidationException("Invalid BES OTA SHA-256 metadata: " + key);
+        }
+        return value;
+    }
+
+    private static String canonicalSha256(String value) throws ValidationException {
+        value = value == null ? "" : value.trim().toLowerCase(Locale.US);
+        if (!value.matches("[0-9a-f]{64}")) {
+            throw new ValidationException("Invalid BES OTA SHA-256 metadata");
         }
         return value;
     }
