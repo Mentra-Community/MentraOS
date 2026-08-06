@@ -390,6 +390,9 @@ public class WifiCommandHandler implements ICommandHandler {
 
             boolean currentState = networkManager.isHotspotEnabled();
             boolean transitioning = networkManager.isHotspotTransitioning();
+            boolean reportCancelledStart =
+                    shouldReportCancelledHotspotStart(
+                            currentState, requestedState, transitioning);
 
             // A matching public state is not terminal while K900 is still starting or
             // closing. Route the command through the manager so it can cancel or queue
@@ -408,7 +411,14 @@ public class WifiCommandHandler implements ICommandHandler {
                     Log.d(TAG, "🔥 Hotspot start requested - status will be sent via broadcast receiver");
                 } else {
                     networkManager.stopHotspot();
-                    Log.d(TAG, "🔥 Hotspot stop requested - status will be sent via broadcast receiver");
+                    if (reportCancelledStart) {
+                        // Public state was already disabled, so BaseNetworkManager has no
+                        // enabled-to-disabled listener edge to publish for this cancellation.
+                        sendHotspotStatusToPhone(networkManager, false);
+                        Log.d(TAG, "🔥 Hotspot startup cancelled - disabled status sent");
+                    } else {
+                        Log.d(TAG, "🔥 Hotspot stop requested - status will be sent via broadcast receiver");
+                    }
                 }
                 // Broadcast receiver will handle sending the status when state actually changes
             }
@@ -423,6 +433,11 @@ public class WifiCommandHandler implements ICommandHandler {
     static boolean shouldApplyHotspotState(
             boolean currentState, boolean requestedState, boolean transitioning) {
         return currentState != requestedState || transitioning;
+    }
+
+    static boolean shouldReportCancelledHotspotStart(
+            boolean currentState, boolean requestedState, boolean transitioning) {
+        return !currentState && !requestedState && transitioning;
     }
 
     /**
@@ -477,19 +492,31 @@ public class WifiCommandHandler implements ICommandHandler {
      * Send hotspot status to phone via BLE
      */
     private void sendHotspotStatusToPhone(INetworkManager networkManager) {
+        sendHotspotStatusToPhone(networkManager, networkManager.isHotspotEnabled());
+    }
+
+    private void sendHotspotStatusToPhone(
+            INetworkManager networkManager, boolean hotspotEnabled) {
         try {
             JSONObject hotspotStatus = new JSONObject();
             hotspotStatus.put("type", "hotspot_status_update");
-            hotspotStatus.put("hotspot_enabled", networkManager.isHotspotEnabled());
+            hotspotStatus.put("hotspot_enabled", hotspotEnabled);
 
-            if (networkManager.isHotspotEnabled()) {
+            if (hotspotEnabled) {
                 hotspotStatus.put("hotspot_ssid", networkManager.getHotspotSsid());
                 hotspotStatus.put("hotspot_password", networkManager.getHotspotPassword());
                 hotspotStatus.put("hotspot_gateway_ip", networkManager.getHotspotGatewayIp());
             }
 
             boolean sent = communicationManager.sendBluetoothResponse(hotspotStatus);
-            Log.d(TAG, "🔥 " + (sent ? "✅ Hotspot status sent successfully" : "❌ Failed to send hotspot status") + ", enabled=" + networkManager.isHotspotEnabled());
+            Log.d(
+                    TAG,
+                    "🔥 "
+                            + (sent
+                                    ? "✅ Hotspot status sent successfully"
+                                    : "❌ Failed to send hotspot status")
+                            + ", enabled="
+                            + hotspotEnabled);
         } catch (Exception e) {
             Log.e(TAG, "Error sending hotspot status to phone", e);
         }

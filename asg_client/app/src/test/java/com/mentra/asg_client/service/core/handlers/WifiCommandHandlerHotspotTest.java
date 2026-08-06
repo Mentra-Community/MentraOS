@@ -23,4 +23,14 @@ public class WifiCommandHandlerHotspotTest {
         assertThat(WifiCommandHandler.shouldApplyHotspotState(true, false, false)).isTrue();
         assertThat(WifiCommandHandler.shouldApplyHotspotState(false, true, false)).isTrue();
     }
+
+    @Test
+    public void reportsDisabledWhenCancellingAnInProgressStart() {
+        assertThat(WifiCommandHandler.shouldReportCancelledHotspotStart(false, false, true))
+                .isTrue();
+        assertThat(WifiCommandHandler.shouldReportCancelledHotspotStart(true, false, true))
+                .isFalse();
+        assertThat(WifiCommandHandler.shouldReportCancelledHotspotStart(false, false, false))
+                .isFalse();
+    }
 }
