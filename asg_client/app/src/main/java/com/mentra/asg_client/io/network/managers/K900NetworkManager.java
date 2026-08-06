@@ -215,15 +215,18 @@ public class K900NetworkManager extends BaseNetworkManager {
                 Log.d(TAG, "🔥 Local-only hotspot is awaiting readiness");
                 return;
             }
-            localHotspotStarting = true;
-            localHotspotIncompatibleModeRetried = false;
-            localHotspotStartupDeadlineMs =
-                    SystemClock.elapsedRealtime()
-                            + AsgConstants.LOCAL_HOTSPOT_STARTUP_TIMEOUT_MS;
-            generation = ++localHotspotGeneration;
+            generation = beginLocalHotspotStartLocked();
         }
 
         requestLocalOnlyHotspot(generation);
+    }
+
+    private int beginLocalHotspotStartLocked() {
+        localHotspotStarting = true;
+        localHotspotIncompatibleModeRetried = false;
+        localHotspotStartupDeadlineMs =
+                SystemClock.elapsedRealtime() + AsgConstants.LOCAL_HOTSPOT_STARTUP_TIMEOUT_MS;
+        return ++localHotspotGeneration;
     }
 
     @Override
@@ -398,7 +401,7 @@ public class K900NetworkManager extends BaseNetworkManager {
             }
             long nowMs = SystemClock.elapsedRealtime();
             if (canPublishLocalHotspotReady(
-                    !gatewayIp.isEmpty(), nowMs, localHotspotStartupDeadlineMs)) {
+                    !gatewayIp.isEmpty(), nowMs, localHotspotReadinessDeadlineMs)) {
                 onHotspotStarted(
                         pendingLocalHotspotSsid, pendingLocalHotspotPassword, gatewayIp);
                 notificationManager.showHotspotStateNotification(true);
@@ -432,8 +435,8 @@ public class K900NetworkManager extends BaseNetworkManager {
     }
 
     static boolean canPublishLocalHotspotReady(
-            boolean gatewayReady, long nowMs, long startupDeadlineMs) {
-        return gatewayReady && nowMs < startupDeadlineMs;
+            boolean gatewayReady, long nowMs, long publishDeadlineMs) {
+        return gatewayReady && nowMs < publishDeadlineMs;
     }
 
     static boolean shouldReconnectStationWifiImmediately(
@@ -541,41 +544,31 @@ public class K900NetworkManager extends BaseNetworkManager {
         if (reconnectStationWifi) {
             reconnectStationWifi();
         }
-        onHotspotStopped();
+        if (!scheduleCloseCompletion) {
+            onHotspotStopped();
+        }
         notifyHotspotError(errorMessage);
         notificationManager.showDebugNotification("Hotspot Failed", errorMessage);
     }
 
     private void handleLocalHotspotStopped(int generation) {
-        boolean reconnectStationWifi;
-        boolean restartHotspot;
         synchronized (localHotspotLock) {
             if (generation != localHotspotGeneration) {
                 Log.d(TAG, "🔥 Ignoring stop callback from a stale hotspot generation");
                 return;
             }
             localHotspotStarting = false;
-            localHotspotClosing = false;
+            // Keep commands routed through the transition path until the stopped
+            // state is published and the restart decision is committed.
+            localHotspotClosing = true;
             localHotspotReservation = null;
             cancelLocalHotspotReadinessLocked();
             cancelLocalHotspotCloseCompletionLocked();
-            restartHotspot = localHotspotRestartRequested;
-            localHotspotRestartRequested = false;
-            reconnectStationWifi =
-                    localHotspotDisconnectedStationWifi && !restartHotspot;
-            if (reconnectStationWifi) {
-                localHotspotDisconnectedStationWifi = false;
-            }
-        }
-        if (reconnectStationWifi) {
-            reconnectStationWifi();
         }
         onHotspotStopped();
         notificationManager.showHotspotStateNotification(false);
         Log.i(TAG, "🔥 Local-only hotspot stopped");
-        if (restartHotspot) {
-            startHotspot();
-        }
+        finishLocalHotspotStopTransition(generation);
     }
 
     private void scheduleLocalHotspotCloseCompletion(int generation) {
@@ -590,30 +583,45 @@ public class K900NetworkManager extends BaseNetworkManager {
     }
 
     private void finishLocalHotspotClose(int generation) {
-        boolean reconnectStationWifi;
-        boolean restartHotspot;
         synchronized (localHotspotLock) {
             pendingLocalHotspotCloseCompletion = null;
             if (generation != localHotspotGeneration || !localHotspotClosing) {
                 return;
             }
-            localHotspotClosing = false;
-            restartHotspot = localHotspotRestartRequested;
+        }
+        onHotspotStopped();
+        notificationManager.showHotspotStateNotification(false);
+        Log.i(TAG, "🔥 Local-only hotspot close completed");
+        finishLocalHotspotStopTransition(generation);
+    }
+
+    private void finishLocalHotspotStopTransition(int generation) {
+        boolean reconnectStationWifi;
+        int restartGeneration = -1;
+        synchronized (localHotspotLock) {
+            if (generation != localHotspotGeneration || !localHotspotClosing) {
+                return;
+            }
+            boolean restartHotspot = localHotspotRestartRequested;
             localHotspotRestartRequested = false;
+            localHotspotClosing = false;
             reconnectStationWifi =
                     localHotspotDisconnectedStationWifi && !restartHotspot;
             if (reconnectStationWifi) {
                 localHotspotDisconnectedStationWifi = false;
             }
+            if (restartHotspot) {
+                // Commit the next generation while holding the same lock that stopHotspot()
+                // uses to cancel startup. A newer stop can now invalidate this generation
+                // before requestLocalOnlyHotspot() reaches Android.
+                restartGeneration = beginLocalHotspotStartLocked();
+            }
         }
         if (reconnectStationWifi) {
             reconnectStationWifi();
         }
-        onHotspotStopped();
-        notificationManager.showHotspotStateNotification(false);
-        Log.i(TAG, "🔥 Local-only hotspot close completed");
-        if (restartHotspot) {
-            startHotspot();
+        if (restartGeneration >= 0) {
+            requestLocalOnlyHotspot(restartGeneration);
         }
     }
 
