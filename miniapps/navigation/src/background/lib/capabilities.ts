@@ -14,11 +14,15 @@ export function readGlassesCapabilities(capabilities: unknown): GlassesCapabilit
   const display =
     record.display && typeof record.display === "object" ? (record.display as Record<string, unknown>) : null
   const modelName = typeof record.modelName === "string" ? record.modelName : null
+  // Respect an explicit top-level false. Some legacy profiles retain a display
+  // descriptor for shape/documentation even when no display is currently
+  // available; the descriptor alone must not turn the display back on.
+  const hasDisplay = typeof record.hasDisplay === "boolean" ? record.hasDisplay : display != null
 
   return {
     modelName,
-    hasDisplay: record.hasDisplay === true || !!display,
-    canPosition: display != null && display.canPosition !== false,
+    hasDisplay,
+    canPosition: hasDisplay && display != null && display.canPosition !== false,
     hasSpeaker: record.hasSpeaker === true,
     hasButton: record.hasButton === true,
   }

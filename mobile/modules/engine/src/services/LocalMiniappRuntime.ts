@@ -400,6 +400,8 @@ class LocalMiniappRuntime {
   private cloudResultsWired = false
   private cloudStatusWired = false
   private cloudAudioSubscriptionSync = new CloudAudioSubscriptionSync()
+  /** Pushes a fresh capability profile when pairing promotes a new wearable. */
+  private capabilityUpdatesUnsubscribe: (() => void) | null = null
 
   /**
    * Per-miniapp language hints from TRANSCRIPTION_CONFIG (issue 021 WP3).
@@ -776,6 +778,7 @@ class LocalMiniappRuntime {
     // The WebView will re-SUBSCRIBE shortly and the rate will reappear.
     this.recomputeLocationTier()
     this.ensureCloudStatusWired()
+    this.ensureCapabilityUpdatesWired()
     this.ensurePingLoop()
 
     // Show the system boot message ("Starting <name>…") on the glasses for the
@@ -998,6 +1001,7 @@ class LocalMiniappRuntime {
 
     if (this.connectedApps.size === 0) {
       this.stopPingLoop()
+      this.stopCapabilityUpdates()
     }
   }
 
@@ -1368,12 +1372,6 @@ class LocalMiniappRuntime {
     existing.lastPongAt = Date.now()
     existing.unansweredPingRounds = 0
 
-    // Read current glasses capabilities from the settings store
-    const defaultWearable = useSettingsStore.getState().getSetting(ISLAND_SETTINGS_KEYS.defaultWearable) as
-      | DeviceTypes
-      | undefined
-    const capabilities = getModelCapabilities(defaultWearable || DeviceTypes.NONE)
-
     // Build the declared-permission record for the SDK's session.permissions
     // module. Lower-cased to match v3's PermissionType union (microphone,
     // camera, location, notifications, calendar). Missing permissions default
@@ -1399,7 +1397,9 @@ class LocalMiniappRuntime {
         type: MiniappResponseType.CONNECT_ACK,
         userId,
         packageName,
-        capabilities,
+        // Resolve after the async auth mint. Pairing may promote the wearable
+        // while CONNECT is waiting, and the ACK must carry the newest profile.
+        capabilities: this.currentCapabilities(),
         permissions: declaredPermissions,
         ...(initialAuth ? {auth: initialAuth} : {}),
       },
@@ -3753,6 +3753,43 @@ class LocalMiniappRuntime {
     )
   }
 
+  private currentCapabilities() {
+    const defaultWearable = useSettingsStore.getState().getSetting(ISLAND_SETTINGS_KEYS.defaultWearable) as
+      | DeviceTypes
+      | undefined
+    return getModelCapabilities(defaultWearable || DeviceTypes.NONE)
+  }
+
+  /**
+   * Keep already-connected MiniappSession capability snapshots synchronized
+   * with pairing identity. CONNECT_ACK is only an initial snapshot; a wearable
+   * can be promoted after a miniapp starts (the normal pairing-success race),
+   * so every completed handshake also needs CAPABILITIES_UPDATE.
+   */
+  private ensureCapabilityUpdatesWired(): void {
+    if (this.capabilityUpdatesUnsubscribe) return
+    this.capabilityUpdatesUnsubscribe = useSettingsStore.subscribe(
+      (state) => state.getSetting(ISLAND_SETTINGS_KEYS.defaultWearable) as DeviceTypes | undefined,
+      (defaultWearable) => {
+        const capabilities = getModelCapabilities(defaultWearable || DeviceTypes.NONE)
+        console.log(
+          `${LOG_TAG}: wearable capabilities changed to ${capabilities.modelName}; notifying ${this.handshookApps.size} miniapp(s)`,
+        )
+        for (const packageName of this.handshookApps) {
+          this.sendToMiniapp(packageName, {
+            type: MiniappResponseType.CAPABILITIES_UPDATE,
+            capabilities,
+          })
+        }
+      },
+    )
+  }
+
+  private stopCapabilityUpdates(): void {
+    this.capabilityUpdatesUnsubscribe?.()
+    this.capabilityUpdatesUnsubscribe = null
+  }
+
   private currentCloudStatus(): CloudClientStatusSnapshot {
     const base = cloudClientService.getStatus()
     const fallbackActive =
@@ -4557,6 +4594,7 @@ class LocalMiniappRuntime {
   public cleanup(): void {
     console.log(`${LOG_TAG}: cleanup()`)
     this.stopPingLoop()
+    this.stopCapabilityUpdates()
 
     // Copy keys since unregisterApp mutates the map
     const packageNames = [...this.connectedApps.keys()]
