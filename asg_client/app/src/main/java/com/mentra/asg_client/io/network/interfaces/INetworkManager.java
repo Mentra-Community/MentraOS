@@ -102,6 +102,15 @@ public interface INetworkManager {
      * @return true if hotspot is active, false otherwise
      */
     boolean isHotspotEnabled();
+
+    /**
+     * Check whether a hotspot start or stop operation is still in progress.
+     *
+     * <p>Implementations without asynchronous transitions can use the default value.
+     */
+    default boolean isHotspotTransitioning() {
+        return false;
+    }
     
     /**
      * Get the SSID of the currently running hotspot

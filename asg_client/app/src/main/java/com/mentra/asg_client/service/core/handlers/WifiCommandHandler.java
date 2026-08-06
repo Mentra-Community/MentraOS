@@ -389,9 +389,12 @@ public class WifiCommandHandler implements ICommandHandler {
             }
 
             boolean currentState = networkManager.isHotspotEnabled();
+            boolean transitioning = networkManager.isHotspotTransitioning();
 
-            // Check if already in requested state
-            if (currentState == requestedState) {
+            // A matching public state is not terminal while K900 is still starting or
+            // closing. Route the command through the manager so it can cancel or queue
+            // the requested transition instead of returning stale credentials/status.
+            if (!shouldApplyHotspotState(currentState, requestedState, transitioning)) {
                 Log.d(TAG, "🔥 Hotspot already in requested state (" +
                         (requestedState ? "ENABLED" : "DISABLED") +
                         "), sending current status");
@@ -415,6 +418,11 @@ public class WifiCommandHandler implements ICommandHandler {
             Log.e(TAG, "Error handling hotspot state command", e);
             return false;
         }
+    }
+
+    static boolean shouldApplyHotspotState(
+            boolean currentState, boolean requestedState, boolean transitioning) {
+        return currentState != requestedState || transitioning;
     }
 
     /**

@@ -226,6 +226,25 @@ public class K900NetworkManager extends BaseNetworkManager {
         requestLocalOnlyHotspot(generation);
     }
 
+    @Override
+    public boolean isHotspotTransitioning() {
+        synchronized (localHotspotLock) {
+            return isLocalHotspotTransitioning(
+                    localHotspotStarting,
+                    localHotspotClosing,
+                    localHotspotReservation != null,
+                    isHotspotEnabled);
+        }
+    }
+
+    static boolean isLocalHotspotTransitioning(
+            boolean starting, boolean closing, boolean reservationActive, boolean enabled) {
+        // onStarted() arrives before the gateway interface is ready and before
+        // onHotspotStarted() publishes enabled state. That readiness window is
+        // still cancellable and must not look like a stable disabled hotspot.
+        return starting || closing || (reservationActive && !enabled);
+    }
+
     private void requestLocalOnlyHotspot(int generation) {
         synchronized (localHotspotLock) {
             if (generation != localHotspotGeneration || !localHotspotStarting) {

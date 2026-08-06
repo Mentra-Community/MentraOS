@@ -39,6 +39,7 @@ public class K900NetworkManagerGatewayTest {
 
     @Test
     public void reservesTimeToPublishReadinessBeforeThePhoneDeadline() {
+        assertThat(AsgConstants.LOCAL_HOTSPOT_STARTUP_TIMEOUT_MS).isEqualTo(28_000L);
         assertThat(K900NetworkManager.calculateLocalHotspotReadinessDeadline(30_000L, 20_000L))
                 .isEqualTo(29_000L);
         assertThat(K900NetworkManager.calculateLocalHotspotReadinessDeadline(40_000L, 3_000L))
@@ -71,6 +72,14 @@ public class K900NetworkManagerGatewayTest {
     public void queuesRestartDuringTheExplicitCloseWindow() {
         assertThat(K900NetworkManager.shouldQueueLocalHotspotRestart(true)).isTrue();
         assertThat(K900NetworkManager.shouldQueueLocalHotspotRestart(false)).isFalse();
+    }
+
+    @Test
+    public void treatsGatewayReadinessAsAnInProgressHotspotStart() {
+        assertThat(K900NetworkManager.isLocalHotspotTransitioning(false, false, true, false))
+                .isTrue();
+        assertThat(K900NetworkManager.isLocalHotspotTransitioning(false, false, true, true))
+                .isFalse();
     }
 
     @Test

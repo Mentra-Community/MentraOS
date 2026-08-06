@@ -173,6 +173,9 @@ private final class PendingResponse<T> {
 @MainActor
 public final class MentraBluetoothSDK {
     private static let wifiScanTimeoutMs = 20_000
+    // Local-only hotspot startup may need to disconnect station WiFi and retry.
+    // Keep this aligned with the gallery sync request window.
+    private static let hotspotRequestTimeoutMs = 30_000
     // A photo response is terminal only after capture, encoding, transport, and upload.
     // Max-quality BLE fallback can legitimately exceed the generic command deadline.
     private static let photoRequestTimeoutMs = 30_000
@@ -877,7 +880,7 @@ public final class MentraBluetoothSDK {
         pendingHotspotStatus = PendingHotspotStatusRequest(enabled: enabled, pending: pending)
         DeviceManager.shared.setHotspotState(enabled)
         do {
-            let event = try await pending.wait()
+            let event = try await pending.wait(timeoutMs: MentraBluetoothSDK.hotspotRequestTimeoutMs)
             if pendingHotspotStatus?.pending === pending {
                 pendingHotspotStatus = nil
             }
@@ -2171,7 +2174,5 @@ private func dispatchDiscoveredDevices(_ rawSearchResults: Any?) {
         }
     }
 }
-
-
 
 

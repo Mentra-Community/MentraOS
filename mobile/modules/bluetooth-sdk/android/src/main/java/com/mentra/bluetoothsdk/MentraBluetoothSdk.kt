@@ -76,6 +76,9 @@ class MentraBluetoothSdk private constructor(
         // Max-quality BLE fallback can legitimately exceed the generic command deadline.
         private const val PHOTO_REQUEST_TIMEOUT_MS = 30_000L
         private const val WIFI_SCAN_TIMEOUT_MS = 20_000L
+        // Local-only hotspot startup may need to disconnect station WiFi and retry.
+        // Keep this aligned with the gallery sync request window.
+        private const val HOTSPOT_REQUEST_TIMEOUT_MS = 30_000L
         private const val VIDEO_UPLOAD_STOP_TIMEOUT_MS = 10 * 60 * 1000L
         private const val STREAM_START_TIMEOUT_MS = 30_000L
         private const val STREAM_STOP_TIMEOUT_MS = 15_000L
@@ -846,7 +849,7 @@ class MentraBluetoothSdk private constructor(
         }
         try {
             deviceManager.setHotspotState(enabled)
-            return pending.await()
+            return pending.await(HOTSPOT_REQUEST_TIMEOUT_MS)
         } finally {
             synchronized(oneShotLock) {
                 if (pendingHotspotStatus?.pending === pending) {
@@ -2160,7 +2163,6 @@ class MentraBluetoothSdk private constructor(
         }
     }
 }
-
 
 
 
