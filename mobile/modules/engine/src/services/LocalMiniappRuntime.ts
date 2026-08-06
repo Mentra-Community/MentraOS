@@ -1429,7 +1429,7 @@ class LocalMiniappRuntime {
       // trying to mint (and re-drive on cloud-connect) so the app authenticates
       // to its backend on its own, instead of staying dead until a full manual
       // Cloud V2 reconnect re-runs the whole handshake.
-      this.deliverInitialMiniappAuth(packageName, authPromise, 0)
+      this.deliverInitialMiniappAuth(packageName, existing, handshakeGeneration, authPromise, 0)
     }
     this.sendCloudStatusToMiniapp(packageName)
 
@@ -1526,43 +1526,51 @@ class LocalMiniappRuntime {
    */
   private deliverInitialMiniappAuth(
     packageName: string,
+    app: ConnectedMiniapp,
+    handshakeGeneration: number,
     inFlight: Promise<MiniappAuthToken | null> | undefined,
     attempt: number,
   ): void {
-    const app = this.connectedApps.get(packageName)
-    if (!app || app.authDelivered) return
+    if (!this.isCurrentHandshake(packageName, app, handshakeGeneration) || app.authDelivered) return
     const mint = inFlight ?? this.requestMiniappAuth(packageName)
     void mint
       .then((auth) => {
-        const current = this.connectedApps.get(packageName)
-        if (!current || current.authDelivered) return
+        if (!this.isCurrentHandshake(packageName, app, handshakeGeneration) || app.authDelivered) return
         if (!auth) return // no auth hook — permanent, don't spin
-        current.authDelivered = true
+        app.authDelivered = true
         this.clearMiniappAuthDeliveryRetry(packageName)
         this.scheduleMiniappAuthRefresh(packageName, auth)
         this.sendToMiniapp(packageName, {type: MiniappResponseType.AUTH_UPDATE, auth})
       })
       .catch((err) => {
+        if (!this.isCurrentHandshake(packageName, app, handshakeGeneration)) return
         console.warn(
           `${LOG_TAG}: miniapp auth mint failed for ${packageName} (attempt ${attempt}): ${
             (err as Error)?.message ?? err
           }`,
         )
-        this.scheduleInitialMiniappAuthRetry(packageName, attempt)
+        this.scheduleInitialMiniappAuthRetry(packageName, app, handshakeGeneration, attempt)
       })
   }
 
-  private scheduleInitialMiniappAuthRetry(packageName: string, attempt: number): void {
-    const app = this.connectedApps.get(packageName)
-    if (!app || app.authDelivered) return
+  private scheduleInitialMiniappAuthRetry(
+    packageName: string,
+    app: ConnectedMiniapp,
+    handshakeGeneration: number,
+    attempt: number,
+  ): void {
+    if (!this.isCurrentHandshake(packageName, app, handshakeGeneration) || app.authDelivered) return
     this.clearMiniappAuthDeliveryRetry(packageName)
     const delay = Math.min(MINIAPP_AUTH_RETRY_MAX_MS, MINIAPP_AUTH_RETRY_BASE_MS * 2 ** attempt)
     app.authRetryTimerId = BgTimer.setTimeout(() => {
-      const current = this.connectedApps.get(packageName)
-      if (!current) return
-      current.authRetryTimerId = null
-      this.deliverInitialMiniappAuth(packageName, undefined, attempt + 1)
+      if (!this.isCurrentHandshake(packageName, app, handshakeGeneration)) return
+      app.authRetryTimerId = null
+      this.deliverInitialMiniappAuth(packageName, app, handshakeGeneration, undefined, attempt + 1)
     }, delay)
+  }
+
+  private isCurrentHandshake(packageName: string, app: ConnectedMiniapp, handshakeGeneration: number): boolean {
+    return this.connectedApps.get(packageName) === app && app.handshakeGeneration === handshakeGeneration
   }
 
   private clearMiniappAuthDeliveryRetry(packageName: string): void {
@@ -1586,7 +1594,7 @@ class LocalMiniappRuntime {
       // state; skip anything still mid-handshake (handleConnect owns that).
       if (!this.handshookApps.has(packageName)) continue
       this.clearMiniappAuthDeliveryRetry(packageName)
-      this.deliverInitialMiniappAuth(packageName, undefined, 0)
+      this.deliverInitialMiniappAuth(packageName, app, app.handshakeGeneration, undefined, 0)
     }
   }
 

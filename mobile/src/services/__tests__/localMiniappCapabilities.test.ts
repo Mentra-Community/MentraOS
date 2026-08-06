@@ -4,7 +4,7 @@ import {MiniappRequestType, MiniappResponseType, parseEnvelope, serializeEnvelop
 jest.mock("react-native-share", () => ({__esModule: true, default: {open: jest.fn()}}))
 jest.unmock("../../../modules/engine/src/services/LocalMiniappRuntime")
 
-import {ISLAND_SETTINGS_KEYS} from "../../../modules/engine/src/runtime/config"
+import {ISLAND_SETTINGS_KEYS, type MiniappAuthToken} from "../../../modules/engine/src/runtime/config"
 import {cloudClientService} from "../../../modules/engine/src/services/CloudClientService"
 import localMiniappRuntime from "../../../modules/engine/src/services/LocalMiniappRuntime"
 import {useSettingsStore} from "../../../modules/engine/src/stores/settings"
@@ -101,6 +101,25 @@ describe("LocalMiniappRuntime capability updates", () => {
     finishOldAuth(null)
     await expect(replacementWait).rejects.toThrow("did not connect")
     expect(payloads().find((payload) => payload.type === MiniappResponseType.CONNECT_ACK)).toBeUndefined()
+
+    sent.length = 0
+    await connect("post-reset-connect")
+    expect(payloads().find((payload) => payload.type === MiniappResponseType.CONNECT_ACK)).toBeDefined()
+  })
+
+  it("drops a late initial auth mint after the handshake is reset", async () => {
+    let finishAuth!: (value: MiniappAuthToken) => void
+    jest
+      .mocked(cloudClientService.getMiniappAuthToken)
+      .mockReturnValueOnce(new Promise<MiniappAuthToken>((resolve) => (finishAuth = resolve)))
+
+    await connect("auth-timeout-connect", 2_500)
+    localMiniappRuntime.resetHandshake(packageName)
+    sent.length = 0
+
+    finishAuth({mentraUserId: "user-1", token: "late-token", expiresAt: Date.now() + 60_000})
+    await Promise.resolve()
+    expect(payloads().find((payload) => payload.type === MiniappResponseType.AUTH_UPDATE)).toBeUndefined()
   })
 
   it("reports a display-less wearable and stops updates after the last app unregisters", async () => {
@@ -117,8 +136,8 @@ describe("LocalMiniappRuntime capability updates", () => {
     expect(sent).toEqual([])
   })
 
-  async function connect(requestId: string): Promise<void> {
-    const connected = localMiniappRuntime.waitForConnect(packageName, 1_000)
+  async function connect(requestId: string, timeoutMs = 1_000): Promise<void> {
+    const connected = localMiniappRuntime.waitForConnect(packageName, timeoutMs)
     localMiniappRuntime.handleRawMessage(
       packageName,
       serializeEnvelope({payload: {type: MiniappRequestType.CONNECT}, requestId}),
