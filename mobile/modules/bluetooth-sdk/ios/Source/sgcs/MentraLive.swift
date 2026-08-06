@@ -3013,34 +3013,33 @@ class MentraLive: NSObject, SGCManager {
                 var progress = ((rawProgress + 2) / 5) * 5
                 if progress > 100 { progress = 100 }
 
-                // Only send if progress changed to a new 5% increment
                 let isTerminalStatus = type == "success" || type == "error" || type == "fail"
-                if progress == lastBesOtaProgress && !isTerminalStatus {
-                    break // Skip duplicate progress
-                }
-                lastBesOtaProgress = progress
-
-                Bridge.log(
-                    "LIVE: 📱 BES OTA progress via sr_adota - type: \(type), raw: \(rawProgress)%, rounded: \(progress)%"
-                )
-
                 var besOtaProgressVal: Int
                 var besOtaErrorMessage: String? = nil
 
                 let failed = type == "error" || type == "fail"
-                if failed {
+                let succeeded = type == "success"
+                if succeeded {
+                    besOtaProgressVal = 100
+                } else if failed {
                     besOtaProgressVal = progress
                     besOtaErrorMessage = bodyObj["message"] as? String ?? "BES update failed"
-                    lastBesOtaProgress = -1 // Reset for next OTA
                 } else {
-                    // BES success/100 proves transfer/apply acceptance, not which image booted.
-                    // ASG sends the existing terminal ota_status only after a fresh sr_syvr
-                    // exactly matches the target version after reboot.
-                    besOtaProgressVal = (type == "success" || rawProgress >= 100) ? 100 : progress
-                    lastBesOtaProgress = besOtaProgressVal
+                    // A raw update:100 precedes whole-image CRC/apply and is not terminal.
+                    besOtaProgressVal = min(progress, 95)
                 }
 
-                let syntheticStatus = failed ? "failed" : "in_progress"
+                // Only send if nonterminal display progress changed to a new 5% increment.
+                if besOtaProgressVal == lastBesOtaProgress && !isTerminalStatus {
+                    break
+                }
+                lastBesOtaProgress = isTerminalStatus ? -1 : besOtaProgressVal
+
+                Bridge.log(
+                    "LIVE: 📱 BES OTA progress via sr_adota - type: \(type), raw: \(rawProgress)%, rounded: \(progress)%, display: \(besOtaProgressVal)%"
+                )
+
+                let syntheticStatus = succeeded ? "step_complete" : (failed ? "failed" : "in_progress")
                 let sid = cachedOtaSessionId ?? ""
                 let totalSteps = cachedOtaTotalSteps > 0 ? cachedOtaTotalSteps : 1
                 let currentStep = cachedOtaCurrentStep > 0 ? cachedOtaCurrentStep : 1

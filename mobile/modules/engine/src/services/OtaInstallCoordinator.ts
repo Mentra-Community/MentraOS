@@ -393,9 +393,7 @@ class OtaInstallCoordinator {
         versionChangeSession: this.versionChangeSession,
       }),
       errorMsg: this.errorMsg,
-      // A timed post-restart lockout may expire while version_info is still
-      // missing or mismatched. Verification is a stronger gate: the user must
-      // not clear the session until the installed BES target is confirmed.
+      // Keep Continue disabled while the expected BES reboot is still in flight.
       continueButtonDisabled: this.continueButtonDisabled || this.besRestartRecovery === "awaiting",
       connected,
       // Copies: the snapshot must not hand callers mutable references into the store.
@@ -607,7 +605,7 @@ class OtaInstallCoordinator {
 
     const legacySession = this.isLegacySessionShapeNow()
 
-    if (this.isBesRestartExpected(otaStatus, otaProgress)) {
+    if (this.isBesRestartExpected(otaStatus, otaProgress, legacySession)) {
       this.besRestartExpected = true
     }
 
@@ -734,7 +732,9 @@ class OtaInstallCoordinator {
         otaStatus.error === "downgrade_handoff_failed" ||
         otaStatus.error === "downgrade_transaction_stalled")
     ) {
-      console.log(`[OTA_PROGRESS] version-change: no transaction owns the detour (${otaStatus.error}) — releasing latch`)
+      console.log(
+        `[OTA_PROGRESS] version-change: no transaction owns the detour (${otaStatus.error}) — releasing latch`,
+      )
       this.versionChangeInstallStarted = false
       this.emitInternalChange()
     }
@@ -826,9 +826,7 @@ class OtaInstallCoordinator {
     if (connectedChanged || displayStateChanged) {
       this.clearPingInterval()
       const active =
-        connected &&
-        (displayState === "starting" || displayState === "updating") &&
-        !this.isInVersionChangeDetour()
+        connected && (displayState === "starting" || displayState === "updating") && !this.isInVersionChangeDetour()
       if (active) {
         void BluetoothSdk.ping().catch(() => {})
         const pingIntervalMs = legacySession ? LEGACY_PING_INTERVAL_MS : PING_INTERVAL_MS
@@ -1078,22 +1076,31 @@ class OtaInstallCoordinator {
     }
   }
 
-  private isBesRestartExpected(otaStatus: OtaStatus | null, otaProgress: OtaProgress | null): boolean {
+  private isBesRestartExpected(
+    otaStatus: OtaStatus | null,
+    otaProgress: OtaProgress | null,
+    legacySession: boolean,
+  ): boolean {
     const statusReadyToRestart =
       otaStatus?.stepType === "bes" &&
       otaStatus.phase === "install" &&
-      (otaStatus.status === "step_complete" ||
-        otaStatus.status === "complete" ||
-        otaStatus.stepPercent >= 100 ||
-        otaStatus.overallPercent >= 100)
+      (otaStatus.status === "step_complete" || otaStatus.status === "complete")
     const progressReadyToRestart =
-      otaProgress?.currentUpdate === "bes" &&
-      otaProgress.stage === "install" &&
-      (otaProgress.status === "FINISHED" || otaProgress.progress >= 100)
-    return statusReadyToRestart || progressReadyToRestart
+      otaProgress?.currentUpdate === "bes" && otaProgress.stage === "install" && otaProgress.status === "FINISHED"
+
+    // progress-legacy treated a BES disconnect during active installation as the
+    // expected power cycle even when its terminal FINISHED event was lost. Keep
+    // that fallback only for the sticky pre-37 profile selected when the flow began.
+    const legacyInstallInProgress =
+      legacySession &&
+      ((otaStatus?.stepType === "bes" && otaStatus.phase === "install" && otaStatus.status === "in_progress") ||
+        (otaProgress?.currentUpdate === "bes" &&
+          otaProgress.stage === "install" &&
+          (otaProgress.status === "STARTED" || otaProgress.status === "PROGRESS")))
+    return statusReadyToRestart || progressReadyToRestart || legacyInstallInProgress
   }
 
-  /** Complete from the same install -> disconnect -> reconnect invariant as the legacy screen. */
+  /** Complete only after a protocol-authorized BES restart traverses disconnect -> reconnect. */
   private completeBesRestartRecovery(): void {
     if (!this.besRestartDisconnectObserved || this.besRestartRecovery !== "awaiting") return
     console.log("[OTA_PROGRESS] BES restart reconnected — completing by reboot edge")
@@ -1246,9 +1253,7 @@ class OtaInstallCoordinator {
     // ota_start send (WP 8C-b): old builds get the padded legacy cap for the whole
     // session; a session that starts unified keeps the unified cap.
     const globalTimeoutMs =
-      this.versionChangeSession || this.isLegacySessionShapeNow()
-        ? LEGACY_GLOBAL_OTA_TIMEOUT_MS
-        : GLOBAL_OTA_TIMEOUT_MS
+      this.versionChangeSession || this.isLegacySessionShapeNow() ? LEGACY_GLOBAL_OTA_TIMEOUT_MS : GLOBAL_OTA_TIMEOUT_MS
     this.globalTimeout = setTimeout(() => {
       this.globalTimeout = null
       this.globalTimeoutStarted = false

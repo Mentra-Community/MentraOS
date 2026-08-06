@@ -259,9 +259,7 @@ describe("OtaInstallCoordinator version-change detour retry gate", () => {
       useGlassesStore.getState().setOtaStatus(inProgressStatus({phase: "install", stepPercent: 100}))
       expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
 
-      useGlassesStore
-        .getState()
-        .setOtaStatus(inProgressStatus({phase: "install", status: "failed", error: errorCode}))
+      useGlassesStore.getState().setOtaStatus(inProgressStatus({phase: "install", status: "failed", error: errorCode}))
       expect(otaInstallCoordinator.snapshot().displayState).toBe("failed")
       otaInstallCoordinator.retry()
       expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(2)
@@ -305,7 +303,9 @@ describe("OtaInstallCoordinator version-change detour retry gate", () => {
     // The invariant backstop must refuse the send and log loudly (it firing in production
     // means a missed site gate exists — the failure degrades to cosmetic, not corrupting).
     const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {})
-    await (otaInstallCoordinator as unknown as {sendOtaStartWithWatchdogs: () => Promise<void>}).sendOtaStartWithWatchdogs()
+    await (
+      otaInstallCoordinator as unknown as {sendOtaStartWithWatchdogs: () => Promise<void>}
+    ).sendOtaStartWithWatchdogs()
     expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("BACKSTOP"))
     errorSpy.mockRestore()
@@ -585,6 +585,19 @@ describe("OtaInstallCoordinator legacy ota_progress normalization (WP 8C-a)", ()
     expect(otaInstallCoordinator.snapshot().displayState).toBe("complete")
   })
 
+  it("keeps the pre-37 BES install disconnect fallback when FINISHED is lost", () => {
+    setLegacyGlassesConnected()
+    otaInstallCoordinator.attach()
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+    emitLegacyOtaProgress({stage: "install", status: "PROGRESS", progress: 50, currentUpdate: "bes"})
+
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("restarting")
+    setLegacyGlassesConnected()
+
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("complete")
+  })
+
   it("legacy mtk install FINISHED completes and marks MTK updated this session", () => {
     setLegacyGlassesConnected()
     otaInstallCoordinator.attach()
@@ -654,7 +667,7 @@ describe("OtaInstallCoordinator BES reboot recovery", () => {
     })
   }
 
-  function emitUnifiedBesAt100() {
+  function emitUnifiedBesSuccess() {
     useGlassesStore.getState().setOtaStatus(
       inProgressStatus({
         sessionId: "modern-after-apk",
@@ -664,6 +677,7 @@ describe("OtaInstallCoordinator BES reboot recovery", () => {
         phase: "install",
         stepPercent: 100,
         overallPercent: 100,
+        status: "step_complete",
       }),
     )
   }
@@ -677,7 +691,7 @@ describe("OtaInstallCoordinator BES reboot recovery", () => {
     // The same mounted flow has now upgraded ASG and receives unified-shaped
     // events. The old split route would still be progress-legacy.tsx.
     useGlassesStore.getState().setGlassesInfo({buildNumber: "39"})
-    emitUnifiedBesAt100()
+    emitUnifiedBesSuccess()
     bluetoothSdkMock.sendOtaQueryStatus.mockClear()
 
     useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
@@ -698,7 +712,7 @@ describe("OtaInstallCoordinator BES reboot recovery", () => {
     seedBesUpdate("17.26.07.09")
     otaInstallCoordinator.attach()
     GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
-    emitUnifiedBesAt100()
+    emitUnifiedBesSuccess()
     bluetoothSdkMock.sendOtaQueryStatus.mockClear()
 
     useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
@@ -725,7 +739,7 @@ describe("OtaInstallCoordinator BES reboot recovery", () => {
     seedBesUpdate("17.26.07.09")
     otaInstallCoordinator.attach()
     GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
-    emitUnifiedBesAt100()
+    emitUnifiedBesSuccess()
 
     useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
     setGlassesConnected()
@@ -738,7 +752,7 @@ describe("OtaInstallCoordinator BES reboot recovery", () => {
     expect(otaInstallCoordinator.snapshot().displayState).toBe("complete")
   })
 
-  it("retry clears stale BES reboot latches before a new install attempt", async () => {
+  it("retry clears stale BES reboot latches before a new install attempt", () => {
     useGlassesStore.getState().setGlassesInfo({
       connection: {state: "connected", fullyBooted: true},
       buildNumber: "39",
@@ -747,10 +761,13 @@ describe("OtaInstallCoordinator BES reboot recovery", () => {
     seedBesUpdate("17.26.07.09")
     otaInstallCoordinator.attach()
     GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
-    emitUnifiedBesAt100()
+    emitUnifiedBesSuccess()
 
-    // Fail before the expected reboot edge, then begin a new attempt.
-    await jest.advanceTimersByTimeAsync(PROGRESS_TIMEOUT_MS)
+    // An explicit failure supersedes the terminal event before the expected
+    // reboot edge. Retrying must clear the success/reboot latch.
+    useGlassesStore
+      .getState()
+      .setOtaStatus(inProgressStatus({stepType: "bes", phase: "install", status: "failed", error: "apply_failed"}))
     expect(otaInstallCoordinator.snapshot().displayState).toBe("failed")
     otaInstallCoordinator.retry()
     expect(otaInstallCoordinator.snapshot().displayState).toBe("starting")
@@ -760,8 +777,8 @@ describe("OtaInstallCoordinator BES reboot recovery", () => {
     useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
     setGlassesConnected()
 
-    // This link edge happened before the retried attempt reached BES 100%, so
-    // it follows ordinary reconnect arbitration instead of BES verification.
+    // This link edge happened before the retried attempt received BES success,
+    // so it follows ordinary reconnect arbitration.
     expect(otaInstallCoordinator.snapshot().displayState).toBe("starting")
     expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalledTimes(1)
     expect(bluetoothSdkMock.requestVersionInfo).not.toHaveBeenCalled()
@@ -776,7 +793,7 @@ describe("OtaInstallCoordinator BES reboot recovery", () => {
     seedBesUpdate("17.26.7.9")
     otaInstallCoordinator.attach()
     GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
-    emitUnifiedBesAt100()
+    emitUnifiedBesSuccess()
 
     useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
     useGlassesStore.getState().setGlassesInfo({besFirmwareVersion: "17.26.7.9"})
@@ -793,7 +810,7 @@ describe("OtaInstallCoordinator BES reboot recovery", () => {
     expect(bluetoothSdkMock.requestVersionInfo).not.toHaveBeenCalled()
   })
 
-  it("does not treat an early BES-install link drop as the expected reboot", () => {
+  it("does not treat rounded or raw 100% in-progress as the expected reboot", () => {
     useGlassesStore.getState().setGlassesInfo({
       connection: {state: "connected", fullyBooted: true},
       buildNumber: "39",
@@ -807,8 +824,10 @@ describe("OtaInstallCoordinator BES reboot recovery", () => {
         sessionId: "bes-before-reboot",
         stepType: "bes",
         phase: "install",
-        stepPercent: 50,
-        overallPercent: 50,
+        // Native used to round raw 98-99 to this shape; raw update:100 has the
+        // same nonterminal protocol meaning because CRC/apply happen afterward.
+        stepPercent: 100,
+        overallPercent: 100,
       }),
     )
     bluetoothSdkMock.sendOtaQueryStatus.mockClear()

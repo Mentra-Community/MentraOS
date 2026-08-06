@@ -4568,15 +4568,20 @@ class MentraLive : SGCManager() {
                         var progress = ((rawProgress + 2) / 5) * 5
                         if (progress > 100) progress = 100
 
-                        // Only send if progress changed to a new 5% increment
-                        if (progress == lastBesOtaProgress &&
-                                        "success" != type &&
-                                        "error" != type &&
-                                        "fail" != type
-                        ) {
-                            return // Skip duplicate progress
+                        val mapping =
+                            mapBesOtaProgress(
+                                type,
+                                rawProgress,
+                                bodyObj.optString("message", "BES update failed"),
+                            )
+                        val besOtaStatus = mapping.status
+                        val besOtaProgressVal = mapping.progress
+                        val besOtaErrorMessage = mapping.errorMessage
+
+                        // Only send if nonterminal display progress changed to a new 5% increment.
+                        if ("PROGRESS" == besOtaStatus && besOtaProgressVal == lastBesOtaProgress) {
+                            return
                         }
-                        lastBesOtaProgress = progress
 
                         Bridge.log(
                                 "LIVE: 📱 BES OTA progress via sr_adota - type: " +
@@ -4585,31 +4590,21 @@ class MentraLive : SGCManager() {
                                         rawProgress +
                                         "%, rounded: " +
                                         progress +
+                                        "%, display: " +
+                                        besOtaProgressVal +
                                         "%"
                         )
 
-                        val mapping =
-                            mapBesOtaProgress(
-                                type,
-                                rawProgress,
-                                progress,
-                                bodyObj.optString("message", "BES update failed"),
-                            )
-                        val besOtaStatus = mapping.status
-                        val besOtaProgressVal = mapping.progress
-                        val besOtaErrorMessage = mapping.errorMessage
-                        if ("FAILED" == besOtaStatus) {
+                        if ("FINISHED" == besOtaStatus || "FAILED" == besOtaStatus) {
                             lastBesOtaProgress = -1 // Reset for next OTA
                         } else {
                             lastBesOtaProgress = besOtaProgressVal
                         }
 
-                        val syntheticStatus = if ("FAILED" == besOtaStatus) {
-                            "failed"
-                        } else {
-                            // success/100 means apply was accepted, not that the target booted.
-                            // ASG sends the existing terminal ota_status after fresh sr_syvr proof.
-                            "in_progress"
+                        val syntheticStatus = when (besOtaStatus) {
+                            "FINISHED" -> "step_complete"
+                            "FAILED" -> "failed"
+                            else -> "in_progress"
                         }
                         val sid = if (cachedOtaSessionId != null) cachedOtaSessionId!! else ""
                         val totalSteps = if (cachedOtaTotalSteps > 0) cachedOtaTotalSteps else 1
