@@ -32,7 +32,23 @@ import type {
 import {deriveManeuverDisplay, liveDistanceToNextTurn} from "../shared/maneuverDisplay"
 
 import {getSavedAddresses, setSavedAddress} from "./actions/savedAddressActions"
+import {renderManeuverArrowBmp} from "./lib/ArrowRenderer"
+import {borderTestImageBase64} from "./lib/bmp"
+import {readGlassesCapabilities} from "./lib/capabilities"
+import {formatDistance, formatDuration} from "./lib/formatDistance"
+import {
+  bearingDeg,
+  distanceToPolylineMeters,
+  haversineMeters,
+  nextSegmentBearing,
+  remainingRouteMeters,
+  remainingRoutePoints,
+  sideOfFinalSegment,
+  type LatLng,
+} from "./lib/geometry"
+import {buildOsmLineMap, fetchOsmRoads, renderOsmLineMap} from "./lib/OsmLineMapRenderer"
 import type {PlaceDetails} from "./lib/places"
+import {TEST_BITMAP_288_B64} from "./lib/testBitmap"
 import {AudioGuidanceManager, selectAudioGuidanceDistance} from "./managers/AudioGuidanceManager"
 import {CompassManager} from "./managers/CompassManager"
 import {DisplayManager} from "./managers/DisplayManager"
@@ -40,21 +56,6 @@ import {LocationManager} from "./managers/LocationManager"
 import {NavigationManager} from "./managers/NavigationManager"
 import {PlacesManager} from "./managers/PlacesManager"
 import {SimpleStorageManager} from "./managers/SimpleStorageManager"
-import {renderManeuverArrowBmp} from "./lib/ArrowRenderer"
-import {formatDistance, formatDuration} from "./lib/formatDistance"
-import {
-  bearingDeg,
-  distanceToPolylineMeters,
-  haversineMeters,
-  nextSegmentBearing,
-  remainingRoutePoints,
-  remainingRouteMeters,
-  sideOfFinalSegment,
-  type LatLng,
-} from "./lib/geometry"
-import {TEST_BITMAP_288_B64} from "./lib/testBitmap"
-import {borderTestImageBase64} from "./lib/bmp"
-import {buildOsmLineMap, fetchOsmRoads, renderOsmLineMap} from "./lib/OsmLineMapRenderer"
 
 export class NavigationController {
   private readonly ui: UIModule<Channels>
@@ -301,21 +302,6 @@ export class NavigationController {
     this.session.onBeforeDisconnect(() => this.dispose())
   }
 
-  private readCapabilities(capabilities: MiniappSession["capabilities"]): GlassesCapabilitySnapshot {
-    const record = (capabilities ?? {}) as Record<string, unknown>
-    const display =
-      record.display && typeof record.display === "object" ? (record.display as Record<string, unknown>) : null
-    return {
-      modelName: typeof record.modelName === "string" ? record.modelName : null,
-      hasDisplay: record.hasDisplay === true || !!record.display,
-      // G1/Z100 advertise canPosition:false and need a compact text wall.
-      // Treat an absent field as false so older hosts get the safe fallback.
-      canPosition: display?.canPosition === true,
-      hasSpeaker: record.hasSpeaker === true,
-      hasButton: record.hasButton === true,
-    }
-  }
-
   private defaultVoiceGuidanceMode(capabilities = this.capabilities): VoiceGuidanceMode {
     if (!capabilities.hasSpeaker) return "off"
     return capabilities.hasDisplay ? "essential" : "full"
@@ -323,7 +309,7 @@ export class NavigationController {
 
   private applyCapabilities(raw: MiniappSession["capabilities"]): void {
     const previous = this.capabilities
-    this.capabilities = this.readCapabilities(raw)
+    this.capabilities = readGlassesCapabilities(raw)
     this.audioGuidance.setAvailable(this.capabilities.hasSpeaker)
     if (!this.voiceGuidancePreferenceExplicit) {
       this.voiceGuidanceMode = this.defaultVoiceGuidanceMode()
