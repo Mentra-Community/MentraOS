@@ -3,7 +3,7 @@ import {describe, expect, test} from "bun:test"
 import {readGlassesCapabilities} from "../background/lib/capabilities"
 
 describe("navigation glasses capabilities", () => {
-  test("keeps G2 on the positioned HUD when an older host omits canPosition", () => {
+  test("preserves the positioned HUD when the host omits canPosition", () => {
     expect(
       readGlassesCapabilities({
         modelName: "Even Realities G2",
@@ -13,17 +13,17 @@ describe("navigation glasses capabilities", () => {
     ).toBe(true)
   })
 
-  test("treats the G2 model profile as authoritative over a stale false flag", () => {
+  test("does not infer positioning support from a device model", () => {
     expect(
       readGlassesCapabilities({
         modelName: "Even Realities G2",
         hasDisplay: true,
         display: {canPosition: false},
       }).canPosition,
-    ).toBe(true)
+    ).toBe(false)
   })
 
-  test("keeps G1 on the compact text HUD", () => {
+  test("uses the compact text HUD only when positioning is explicitly unsupported", () => {
     expect(
       readGlassesCapabilities({
         modelName: "Even Realities G1",
@@ -33,7 +33,7 @@ describe("navigation glasses capabilities", () => {
     ).toBe(false)
   })
 
-  test("honors positioned-scene support for other models", () => {
+  test("honors explicit positioned-scene support", () => {
     expect(
       readGlassesCapabilities({
         modelName: "Mentra Display",
@@ -41,5 +41,9 @@ describe("navigation glasses capabilities", () => {
         display: {canPosition: true},
       }).canPosition,
     ).toBe(true)
+  })
+
+  test("does not claim positioning support without a display", () => {
+    expect(readGlassesCapabilities({modelName: "Mentra Live", hasDisplay: false}).canPosition).toBe(false)
   })
 })
