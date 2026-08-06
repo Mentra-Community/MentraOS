@@ -344,14 +344,49 @@ public class K900NetworkManager extends BaseNetworkManager {
     }
 
     private void startVendorHotspot(int generation) {
-        boolean restoreStationWifi = isConnectedToWifi();
+        if (isConnectedToWifi()) {
+            try {
+                if (!wifiManager.disconnect()) {
+                    failLocalHotspotStartup(
+                            generation, "Failed to disconnect WiFi before vendor hotspot");
+                    return;
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "🔥 Error disconnecting WiFi before vendor hotspot", e);
+                failLocalHotspotStartup(
+                        generation,
+                        "Failed to disconnect WiFi before vendor hotspot: " + e.getMessage());
+                return;
+            }
+
+            boolean staleGeneration;
+            synchronized (localHotspotLock) {
+                staleGeneration =
+                        generation != localHotspotGeneration || !localHotspotStarting;
+                if (!staleGeneration) {
+                    localHotspotDisconnectedStationWifi = true;
+                }
+            }
+            if (staleGeneration) {
+                reconnectStationWifi();
+                return;
+            }
+            localHotspotHandler.postDelayed(
+                    () -> requestVendorHotspot(generation),
+                    AsgConstants.LOCAL_HOTSPOT_WIFI_DISCONNECT_DELAY_MS);
+            return;
+        }
+
+        requestVendorHotspot(generation);
+    }
+
+    private void requestVendorHotspot(int generation) {
         try {
             synchronized (localHotspotLock) {
                 if (generation != localHotspotGeneration || !localHotspotStarting) {
                     return;
                 }
                 vendorHotspotActive = true;
-                localHotspotDisconnectedStationWifi |= restoreStationWifi;
                 localHotspotReadinessDeadlineMs =
                         calculateLocalHotspotReadinessDeadline(
                                 localHotspotStartupDeadlineMs, SystemClock.elapsedRealtime());
@@ -421,13 +456,17 @@ public class K900NetworkManager extends BaseNetworkManager {
             // Claim teardown before sending the broadcast so a stale failure cannot
             // disable a vendor hotspot belonging to a newer generation.
             vendorHotspotActive = false;
+            localHotspotStarting = false;
+            localHotspotClosing = true;
+            cancelLocalHotspotReadinessLocked();
         }
         try {
             sendVendorHotspotState(false);
         } catch (Exception e) {
             Log.e(TAG, "🔥 Error stopping failed vendor hotspot", e);
         }
-        failLocalHotspotStartup(generation, errorMessage);
+        notifyHotspotStartupFailure(errorMessage);
+        scheduleLocalHotspotCloseCompletion(generation);
     }
 
     private void sendVendorHotspotState(boolean enabled) {
@@ -693,6 +732,10 @@ public class K900NetworkManager extends BaseNetworkManager {
         if (!scheduleCloseCompletion) {
             onHotspotStopped();
         }
+        notifyHotspotStartupFailure(errorMessage);
+    }
+
+    private void notifyHotspotStartupFailure(String errorMessage) {
         notifyHotspotError(errorMessage);
         notificationManager.showDebugNotification("Hotspot Failed", errorMessage);
     }
