@@ -102,6 +102,8 @@ type SpeakerStateValue = "idle" | "loading" | "playing" | "stopped" | "error"
 
 interface ConnectedMiniapp {
   subscriptions: Set<string>
+  /** Invalidates async CONNECT completions when this context is reset. */
+  handshakeGeneration: number
   /** Transcription streams this app explicitly requires to stay on-device. */
   forceLocalTranscriptionStreams: Set<string>
   /** Transcription streams with at least one listener using the default/cloud route. */
@@ -761,6 +763,7 @@ class LocalMiniappRuntime {
     }
     this.connectedApps.set(packageName, {
       subscriptions: new Set(),
+      handshakeGeneration: 0,
       forceLocalTranscriptionStreams: new Set(),
       cloudTranscriptionStreams: new Set(),
       sendMessage: sendFn,
@@ -837,6 +840,8 @@ class LocalMiniappRuntime {
    * are failed so a wake mid-respawn retries rather than hanging.
    */
   public resetHandshake(packageName: string): void {
+    const app = this.connectedApps.get(packageName)
+    if (app) app.handshakeGeneration += 1
     this.handshookApps.delete(packageName)
     this.flushConnectWaiters(packageName, new Error(`${packageName} respawning`))
   }
@@ -1367,6 +1372,7 @@ class LocalMiniappRuntime {
       console.warn(`${LOG_TAG}: CONNECT from unregistered app ${packageName}, ignoring`)
       return
     }
+    const handshakeGeneration = ++existing.handshakeGeneration
 
     // Update lastPongAt so it doesn't time out right away
     existing.lastPongAt = Date.now()
@@ -1390,7 +1396,7 @@ class LocalMiniappRuntime {
     // crash-respawn can replace this package's ConnectedMiniapp during that
     // window; never let the stale handshake send into or mark the replacement
     // context as connected.
-    if (this.connectedApps.get(packageName) !== existing) {
+    if (this.connectedApps.get(packageName) !== existing || existing.handshakeGeneration !== handshakeGeneration) {
       console.log(`${LOG_TAG}: ignoring stale CONNECT completion for replaced app ${packageName}`)
       return
     }
