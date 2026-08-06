@@ -73,6 +73,12 @@ public class K900NetworkManagerGatewayTest {
     }
 
     @Test
+    public void reportsStoppedOnlyAfterAnActiveReservationConfirmsTeardown() {
+        assertThat(K900NetworkManager.shouldReportLocalHotspotStoppedImmediately(true)).isFalse();
+        assertThat(K900NetworkManager.shouldReportLocalHotspotStoppedImmediately(false)).isTrue();
+    }
+
+    @Test
     public void doesNotRetryUnrelatedHotspotFailures() {
         assertThat(
                         K900NetworkManager.shouldRetryLocalHotspotAfterDisconnect(

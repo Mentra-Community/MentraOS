@@ -427,6 +427,10 @@ public class K900NetworkManager extends BaseNetworkManager {
         return reservationActive && hotspotClosing;
     }
 
+    static boolean shouldReportLocalHotspotStoppedImmediately(boolean reservationActive) {
+        return !reservationActive;
+    }
+
     private String findLocalHotspotGatewayIp() {
         try {
             NetworkInterface interfaceInfo = NetworkInterface.getByName("ap0");
@@ -576,12 +580,17 @@ public class K900NetworkManager extends BaseNetworkManager {
 
         WifiManager.LocalOnlyHotspotReservation reservation;
         boolean reconnectStationWifi;
+        boolean closeReservation;
+        boolean reportStoppedImmediately;
         synchronized (localHotspotLock) {
             localHotspotStarting = false;
             localHotspotRestartRequested = false;
             cancelLocalHotspotReadinessLocked();
             reservation = localHotspotReservation;
+            closeReservation = reservation != null && !localHotspotClosing;
             localHotspotClosing = reservation != null;
+            reportStoppedImmediately =
+                    shouldReportLocalHotspotStoppedImmediately(reservation != null);
             reconnectStationWifi =
                     shouldReconnectStationWifiImmediately(
                             reservation != null, localHotspotDisconnectedStationWifi);
@@ -590,14 +599,16 @@ public class K900NetworkManager extends BaseNetworkManager {
                 localHotspotDisconnectedStationWifi = false;
             }
         }
-        if (reservation != null) {
+        if (closeReservation) {
             reservation.close();
         }
         if (reconnectStationWifi) {
             reconnectStationWifi();
         }
-        onHotspotStopped();
-        notificationManager.showHotspotStateNotification(false);
+        if (reportStoppedImmediately) {
+            onHotspotStopped();
+            notificationManager.showHotspotStateNotification(false);
+        }
     }
 
     @Override
