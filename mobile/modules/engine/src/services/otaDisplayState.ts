@@ -18,10 +18,9 @@ export type DisplayState = "starting" | "updating" | "complete" | "failed" | "di
  *
  * Priority-ordered rules (first match wins):
  *   1. errorMsg !== ""                                          -> "failed"
- *   2. BES reboot recovery verified                             -> "complete"
- *   3. BES reboot recovery awaiting verification               -> "restarting"
- *   4. BES terminal + connected + sawReconnectEdge             -> "complete"
- *   5. BES terminal (any connection state)                     -> "restarting"
+ *   2. BES reboot recovery complete                             -> "complete"
+ *   3. BES reboot recovery awaiting reconnect                  -> "restarting"
+ *   4. BES terminal (any connection state)                     -> "restarting"
  *      (legacy-shaped BES "complete" counts only in install phase)
  *   6. apkCompletedViaBuildIncrease (legacy build-number port) -> "complete"
  *   7. otaStatus.status === "failed"                           -> "failed"
@@ -39,6 +38,10 @@ export function deriveDisplayState(args: {
   otaProgress: OtaProgress | null
   connected: boolean
   errorMsg: string
+  /**
+   * Retained for host API compatibility. A session-wide reconnect edge is not
+   * sufficient for BES completion because it may belong to an earlier APK step.
+   */
   sawReconnectEdge: boolean
   /** Coordinator is holding a legacy apk install "complete" for the settle window (WP 8C). */
   legacyApkSettleHold?: boolean
@@ -56,7 +59,6 @@ export function deriveDisplayState(args: {
     otaProgress,
     connected,
     errorMsg,
-    sawReconnectEdge,
     legacyApkSettleHold,
     apkCompletedViaBuildIncrease,
     besRestartRecovery,
@@ -90,7 +92,6 @@ export function deriveDisplayState(args: {
   }
 
   const besTerminal = isBesTerminal(otaStatus, otaProgress)
-  if (besTerminal && connected && sawReconnectEdge) return "complete"
   if (besTerminal) return "restarting"
 
   // Legacy build-number APK completion: the coordinator clears errorMsg when it fires,
@@ -126,8 +127,7 @@ export function deriveDisplayState(args: {
     // has not started); the legacy screen treated that drop as a plain disconnect.
     const besStatusInFlight =
       otaStatus?.stepType === "bes" && !(isLegacyShapedOtaStatus(otaStatus) && otaStatus.phase === "download")
-    const besInFlight =
-      besStatusInFlight || (otaProgress?.currentUpdate === "bes" && otaProgress?.stage === "install")
+    const besInFlight = besStatusInFlight || (otaProgress?.currentUpdate === "bes" && otaProgress?.stage === "install")
     if (besInFlight) return "restarting"
 
     return "disconnected"

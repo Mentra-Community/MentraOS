@@ -703,6 +703,30 @@ describe("OtaInstallCoordinator BES reboot recovery", () => {
     expect(bluetoothSdkMock.requestVersionInfo).not.toHaveBeenCalled()
   })
 
+  it("does not reuse the APK reconnect edge to complete BES before its own reboot", () => {
+    setGlassesConnected()
+    seedBesUpdate()
+    otaInstallCoordinator.attach()
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+    useGlassesStore
+      .getState()
+      .setOtaStatus(
+        inProgressStatus({stepType: "apk", phase: "install", status: "step_complete", totalSteps: 2, currentStep: 1}),
+      )
+
+    // APK restarts the ASG process without a physical BLE disconnect. This is
+    // a session reconnect, but it is not the later BES power-cycle edge.
+    GlobalEventEmitter.emit("glasses_session_changed", {previousSid: "apk-old", sid: "apk-new"})
+    emitUnifiedBesSuccess()
+
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("restarting")
+    expect(otaInstallCoordinator.snapshot().continueButtonDisabled).toBe(true)
+
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+    setGlassesConnected()
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("complete")
+  })
+
   it("completes immediately on the reboot edge without gating on BES version metadata", async () => {
     useGlassesStore.getState().setGlassesInfo({
       connection: {state: "connected", fullyBooted: true},

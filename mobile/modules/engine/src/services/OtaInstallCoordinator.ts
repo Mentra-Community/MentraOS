@@ -173,10 +173,10 @@ class OtaInstallCoordinator {
   // that choice sticky while an APK step upgrades ASG mid-flow.
   private protocolProfile: OtaProtocolProfile | null = null
 
-  // BES reboot recovery. Old ASG/BES combinations can reboot after reporting
-  // install 100% without ever delivering a terminal ota_status. Preserve the
-  // observed install -> disconnect -> reconnect lifecycle independently of the
-  // stale status left in the store.
+  // BES reboot recovery. Native bridges normalize explicit BES success to a
+  // terminal status; pre-37 flows additionally retain the legacy screen's
+  // lost-FINISHED fallback. Completion still requires a BES-specific observed
+  // disconnect -> reconnect lifecycle, never the generic session reconnect flag.
   private besRestartExpected = false
   private besRestartDisconnectObserved = false
   private besRestartRecovery: "awaiting" | "complete" | null = null
