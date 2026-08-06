@@ -1563,8 +1563,8 @@ class LocalMiniappRuntime {
     this.clearMiniappAuthDeliveryRetry(packageName)
     const delay = Math.min(MINIAPP_AUTH_RETRY_MAX_MS, MINIAPP_AUTH_RETRY_BASE_MS * 2 ** attempt)
     app.authRetryTimerId = BgTimer.setTimeout(() => {
-      if (!this.isCurrentHandshake(packageName, app, handshakeGeneration)) return
       app.authRetryTimerId = null
+      if (!this.isCurrentHandshake(packageName, app, handshakeGeneration)) return
       this.deliverInitialMiniappAuth(packageName, app, handshakeGeneration, undefined, attempt + 1)
     }, delay)
   }
