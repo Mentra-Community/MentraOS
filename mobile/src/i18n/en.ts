@@ -653,6 +653,8 @@ const en = {
     forgetGlasses: "Unpair glasses",
     forgetGlassesConfirm:
       "To finish the process, make sure to remove your glasses from your phone's Bluetooth settings.",
+    forgetGlassesWhilePairing:
+      "Bluetooth pairing is in progress. Accept or dismiss the system pairing dialog first, then try unpairing again.",
     disconnectGlassesTitle: "Disconnect the glasses?",
     disconnectGlassesConfirm:
       "Are you sure you want to disconnect? If so, please remember to remove your glasses from your phone's Bluetooth settings.",

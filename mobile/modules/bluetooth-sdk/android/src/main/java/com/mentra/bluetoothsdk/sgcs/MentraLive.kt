@@ -297,6 +297,11 @@ class MentraLive : SGCManager() {
 
     private var reconnectAttempts = 0
     private var isReconnecting = false // Track if we're in reconnection mode
+    // Set by connectById() so a post-disconnect name scan actually GATT-connects.
+    // Discovery-only scans (findCompatibleDevices) leave this false so a leftover
+    // savedDeviceName cannot auto-connect a spoofed advertiser (iOS parity: iOS
+    // connects on saved-name match because connectById writes that name first).
+    private var explicitConnectByName = false
     /**
      * Timestamp when sr_shut (K900 shutdown) was last received; used to delay first reconnect scan
      * so glasses can reboot.
@@ -1118,14 +1123,14 @@ class MentraLive : SGCManager() {
                                     deviceName.startsWith("MENTRA_LIVE_BT") ||
                                     deviceName.lowercase().startsWith("mentra_live")
                     ) {
-                        // A device is only treated as the "reconnect target" during an actual
-                        // reconnect scan (isReconnecting == true). During a pairing scan a
-                        // spoofed advertiser that happens to match savedDeviceName must not
-                        // bypass the pairing-discoverable requirement below — otherwise an
-                        // attacker could clone the saved device name to sneak past the filter.
-                        val isReconnectTarget =
-                                isReconnecting && savedDeviceName != null && savedDeviceName == deviceName
-                        if (!isReconnectTarget &&
+                        // Connect-by-name only when reconnecting OR connectById() asked for
+                        // this name. A discovery-only pairing scan must not auto-connect just
+                        // because savedDeviceName still matches (spoof risk).
+                        val isNamedConnectTarget =
+                                savedDeviceName.isNotEmpty() &&
+                                        savedDeviceName == deviceName &&
+                                        (isReconnecting || explicitConnectByName)
+                        if (!isNamedConnectTarget &&
                                         advertisesPairingFlag(result) &&
                                         !isPairingDiscoverable(result)
                         ) {
@@ -1149,24 +1154,25 @@ class MentraLive : SGCManager() {
                                 securePairingCapable = secureCapable,
                         )
 
-                        // If this is the specific device we want to connect to by name, connect to
-                        // it — only during an actual reconnect scan. A pairing scan must not
-                        // auto-connect on a bare name match (see isReconnectTarget above).
-                        if (isReconnectTarget) {
+                        // connectById / reconnect: user (or reconnect) asked for this name —
+                        // GATT-connect. Discovery-only scans never set explicitConnectByName.
+                        if (isNamedConnectTarget) {
                             Log.i(
                                     TAG,
-                                    "🔌 🎯 RECONNECT TARGET FOUND - Device: " +
+                                    "🔌 🎯 NAMED CONNECT TARGET FOUND - Device: " +
                                             deviceName +
                                             " (Attempt #" +
                                             reconnectAttempts +
                                             ")"
                             )
                             Bridge.log(
-                                    "LIVE: 🔌 🎯 Found our remembered device by name, connecting: " +
+                                    "LIVE: 🔌 🎯 Found target device by name, connecting: " +
                                             deviceName +
-                                            " (Reconnect attempt #" +
-                                            reconnectAttempts +
-                                            ")"
+                                            (if (isReconnecting)
+                                                    " (Reconnect attempt #" +
+                                                            reconnectAttempts +
+                                                            ")"
+                                            else " (connectById)")
                             )
                             synchronized(connectionLock) {
                                 if (isConnected || isConnecting) {
@@ -1177,6 +1183,7 @@ class MentraLive : SGCManager() {
                             stopScan()
                             emitStopScanEvent()
                             isReconnecting = false
+                            explicitConnectByName = false
                             connectToDevice(device)
                         }
                     }
@@ -5389,6 +5396,8 @@ class MentraLive : SGCManager() {
 
         // Clear reconnection mode when user manually scans
         isReconnecting = false
+        // Discovery-only: do not treat leftover savedDeviceName as a connect target.
+        explicitConnectByName = false
 
         if (bluetoothAdapter == null) {
             Log.e(TAG, "Bluetooth not available")
@@ -5407,32 +5416,47 @@ class MentraLive : SGCManager() {
     override fun connectById(id: String) {
         Bridge.log("LIVE: Connecting to Mentra Live glasses by ID: " + id)
         savedDeviceName = id
-        // // Persist immediately so reconnection logic can find it in case this connection fails
-        // SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-        // prefs.edit().putString(PREF_DEVICE_NAME, id).apply();
-        // Log.i(TAG, "🔌 💾 Saved device name for future reconnection: " +
-        // connectedDevice.getName());
-        // Bridge.log("LIVE: Saved device name for future reconnection: " +
-        // connectedDevice.getName());
+        // Without this, connectToSmartGlasses() falls back to a name scan with
+        // isReconnecting=false and never GATT-connects (loading screen hangs).
+        explicitConnectByName = true
         connectToSmartGlasses()
+    }
+
+    /**
+     * True while Android is showing (or about to show) the system pairing dialog for
+     * CTKD Classic bonding. Calling [removeBond] / tearing down the SGC here aborts that
+     * dialog and forces a full re-pair.
+     */
+    fun isCtkdBondingInProgress(): Boolean {
+        val device = connectedDevice ?: return false
+        return device.bondState == BluetoothDevice.BOND_BONDING
     }
 
     override fun forget() {
         Bridge.log("LIVE: Forgetting Mentra Live glasses")
 
-        // Clear saved device name so isReconnectTarget can't bypass the pairing-mode
+        // Clear saved device name so a leftover name can't bypass the pairing-mode
         // discovery filter for this unit on a subsequent rescan (parity with iOS forget()).
         savedDeviceName = ""
 
         // Reset reconnection state
         reconnectAttempts = 0
         isReconnecting = false
+        explicitConnectByName = false
 
         // Remove BT Classic bond - this is the ONLY place where we unbond,
-        // ensuring bond is only removed when user explicitly unpairs
+        // ensuring bond is only removed when user explicitly unpairs.
+        // Never removeBond during BOND_BONDING: that aborts the system pairing dialog
+        // (DeviceManager refuses forget() in that state; this is defense in depth).
         if (connectedDevice != null) {
-            Bridge.log("LIVE: CTKD: Removing BT bond on explicit unpair")
-            removeBond(connectedDevice!!)
+            if (isCtkdBondingInProgress()) {
+                Bridge.log(
+                        "LIVE: CTKD: Skipping removeBond during active bonding (would abort system pairing dialog)"
+                )
+            } else {
+                Bridge.log("LIVE: CTKD: Removing BT bond on explicit unpair")
+                removeBond(connectedDevice!!)
+            }
         }
 
         if (isScanning) {
@@ -6346,6 +6370,7 @@ class MentraLive : SGCManager() {
 
         // Mark as killed to prevent reconnection attempts
         isKilled = true
+        explicitConnectByName = false
 
         // Stop scanning if in progress
         if (isScanning) {

@@ -103,8 +103,24 @@ export function DeviceSettingsSection() {
       buttons: [{text: translate("common:cancel"), style: "cancel"}, {text: translate("connection:unpair")}],
       options: {allowDismiss: false},
     })
-    if (result === 1) {
-      engine.glasses.forget()
+    if (result !== 1) {
+      return
+    }
+    try {
+      await engine.glasses.forget()
+    } catch (error) {
+      const code =
+        error && typeof error === "object" && "code" in error ? String((error as {code?: unknown}).code) : ""
+      // Native refuses forget() while Mentra Live CTKD is waiting on the system pairing dialog.
+      if (code === "ctkd_bonding_in_progress") {
+        await showAlert({
+          title: translate("settings:forgetGlasses"),
+          message: translate("settings:forgetGlassesWhilePairing"),
+          buttons: [{text: translate("common:ok")}],
+        })
+        return
+      }
+      console.warn("Failed to forget glasses:", error)
     }
   }
 

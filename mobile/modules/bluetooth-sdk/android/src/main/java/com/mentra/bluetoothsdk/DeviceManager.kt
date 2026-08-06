@@ -2105,6 +2105,20 @@ class DeviceManager {
     }
 
     fun forget() {
+        // Mentra Live CTKD: refuse while the OS pairing dialog is in-flight.
+        // forget() → removeBond/disconnect mid-BOND_BONDING aborts that dialog and
+        // leaves the user waiting ~30s for "Pairing dialog canceled" before retry.
+        val live = sgc as? MentraLive
+        if (live?.isCtkdBondingInProgress() == true) {
+            Bridge.log(
+                    "MAN: Refusing forget during CTKD bonding — finish the system pairing dialog first"
+            )
+            throw BluetoothSdkException(
+                    "ctkd_bonding_in_progress",
+                    "Bluetooth Classic pairing is in progress. Accept or cancel the system pairing dialog first, then unpair.",
+            )
+        }
+
         Bridge.log("MAN: Forgetting smart glasses")
 
         // Call forget first to stop timers/handlers/reconnect logic
