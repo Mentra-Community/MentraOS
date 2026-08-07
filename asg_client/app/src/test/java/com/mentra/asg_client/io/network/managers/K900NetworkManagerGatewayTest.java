@@ -103,6 +103,14 @@ public class K900NetworkManagerGatewayTest {
     }
 
     @Test
+    public void keepsTheStartupWatchdogArmedThroughGatewayReadiness() {
+        assertThat(K900NetworkManager.isLocalHotspotStartupPending(true, false, false)).isTrue();
+        assertThat(K900NetworkManager.isLocalHotspotStartupPending(false, true, false)).isTrue();
+        assertThat(K900NetworkManager.isLocalHotspotStartupPending(false, false, true)).isTrue();
+        assertThat(K900NetworkManager.isLocalHotspotStartupPending(false, false, false)).isFalse();
+    }
+
+    @Test
     public void defersStoppedStateWhileAReservationIsClosing() {
         assertThat(K900NetworkManager.shouldDeferLocalHotspotStopped(true, false)).isTrue();
         assertThat(K900NetworkManager.shouldDeferLocalHotspotStopped(false, true)).isTrue();
