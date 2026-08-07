@@ -519,10 +519,12 @@ public class OtaHelper {
                     TAG,
                     "📱 Phone-initiated OTA: starting version check (download STARTED deferred)");
 
-            startVersionCheckWithReservedAdmission(context, resolvedVersionJsonUrl);
+            startVersionCheckWithReservedAdmission(context, resolvedVersionJsonUrl, true);
             handedToWorker = true;
         } finally {
             if (!handedToWorker) {
+                isPhoneInitiatedOta = false;
+                WakeLockManager.release(WakeLockManager.WakeOwner.MTK_OTA);
                 otaAdmissionPermit.release();
             }
         }
@@ -540,25 +542,42 @@ public class OtaHelper {
      * Used by DebugApkOtaReceiver to test OTA with a local/custom URL.
      * @param context Application context
      * @param versionJsonUrl URL to fetch the version JSON from (http, https)
+     * @return true when admission was reserved and the worker was dispatched
      */
-    public void startVersionCheckWithUrl(Context context, String versionJsonUrl) {
-        startVersionCheckWithUrl(context, versionJsonUrl, false);
-    }
-
-    private void startVersionCheckWithReservedAdmission(Context context, String versionJsonUrl) {
-        startVersionCheckWithUrl(context, versionJsonUrl, true);
-    }
-
-    private void startVersionCheckWithUrl(
-            Context context, String versionJsonUrl, boolean admissionReserved) {
+    public boolean startVersionCheckWithUrl(Context context, String versionJsonUrl) {
         String resolvedVersionJsonUrl = requireVersionJsonUrl(versionJsonUrl);
         if (resolvedVersionJsonUrl == null) {
             Log.e(TAG, "Refusing OTA version check without a manifest URL");
-            if (admissionReserved) {
-                otaAdmissionPermit.release();
-            }
-            return;
+            return false;
         }
+        if (!otaAdmissionPermit.tryAcquire()) {
+            Log.w(TAG, "Version check admission is busy; refusing before worker dispatch");
+            return false;
+        }
+        if (isUpdating || isMtkOtaInProgress || isBesOtaInProgress()) {
+            Log.w(TAG, "Version check admission blocked by an active OTA install");
+            otaAdmissionPermit.release();
+            return false;
+        }
+
+        isPhoneInitiatedOta = true;
+        try {
+            startVersionCheckWithReservedAdmission(context, resolvedVersionJsonUrl, false);
+            return true;
+        } catch (RuntimeException dispatchFailure) {
+            Log.e(TAG, "Could not dispatch admitted OTA version check", dispatchFailure);
+            isPhoneInitiatedOta = false;
+            otaAdmissionPermit.release();
+            return false;
+        } catch (Error fatalDispatchFailure) {
+            isPhoneInitiatedOta = false;
+            otaAdmissionPermit.release();
+            throw fatalDispatchFailure;
+        }
+    }
+
+    private void startVersionCheckWithReservedAdmission(
+            Context context, String resolvedVersionJsonUrl, boolean releaseWakeOnAdmissionAbort) {
         Log.d(TAG, "Check OTA update method init");
         Log.i(TAG, "OTA check trigger -> phoneInitiated=" + isPhoneInitiatedOta
                 + ", admissionHeld=" + (otaAdmissionPermit.availablePermits() == 0)
@@ -573,25 +592,20 @@ public class OtaHelper {
         // }
 
         new Thread(() -> {
-            // Phone ota_start can reserve admission before dispatch. Other callers acquire here.
-            if (!admissionReserved && !otaAdmissionPermit.tryAcquire()) {
-                Log.d(TAG, "Version check already in progress, skipping this request");
-                return;
-            }
             Log.d(TAG, "OTA admission permit acquired");
 
-            // Store the URL under the lock so a concurrent caller can't overwrite it
+            // Store the URL under admission so a concurrent caller can't overwrite it
             // before this check finishes.
             lastVersionJsonUrl = resolvedVersionJsonUrl;
 
             // Check if update is in progress (separate from version check)
             if (isUpdating) {
                 Log.d(TAG, "Update already in progress, skipping version check");
-                if (admissionReserved) {
-                    isPhoneInitiatedOta = false;
+                isPhoneInitiatedOta = false;
+                if (releaseWakeOnAdmissionAbort) {
                     WakeLockManager.release(WakeLockManager.WakeOwner.MTK_OTA);
-                    sendOtaStatus();
                 }
+                sendOtaStatus();
                 otaAdmissionPermit.release();
                 return;
             }
@@ -2920,9 +2934,8 @@ public class OtaHelper {
         Log.i(TAG, "continueSessionAfterStepComplete: auto-advancing from step "
                 + currentIndex + " to step " + nextStep + " type=" + nextType);
 
-        // Advance the session record so the phone sees the new current step immediately.
+        // Advance the durable session before dispatch so the admitted worker sees the next step.
         sessionManager.advanceStep(nextStep, "download");
-        sendOtaStatus();
 
         // Kick off the next step's download/install cycle. Sessions always carry the
         // phone-supplied manifest URL; a session without one is unrecoverable by design
@@ -2933,8 +2946,14 @@ public class OtaHelper {
             sendOtaStatus();
             return false;
         }
-        setPhoneInitiatedOta(true);
-        startVersionCheckWithUrl(context, versionJsonUrl);
+        if (!startVersionCheckWithUrl(context, versionJsonUrl)) {
+            Log.e(TAG, "Next OTA step lost admission before worker dispatch");
+            sessionManager.setFailed("OTA admission busy before next step");
+            sendOtaStatus();
+            // The active session handled the failure; suppress the caller's legacy completion path.
+            return true;
+        }
+        sendOtaStatus();
         return true;
     }
 

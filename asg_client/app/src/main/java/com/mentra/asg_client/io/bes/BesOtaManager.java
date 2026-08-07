@@ -128,6 +128,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
     public boolean isBesOtaInProgress() {
         BesOtaStateStore.Snapshot snapshot = stateStore.read();
         return isBesOtaInProgress
+                || snapshot.isCorrupt()
                 || (snapshot.isValid() && snapshot.getState() != BesOtaStateStore.State.TERMINAL);
     }
 

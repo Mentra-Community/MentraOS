@@ -4,10 +4,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -257,8 +257,7 @@ public class OtaHelperBesGuardTest {
                 mock(OtaHelper.PhoneConnectionProvider.class);
         when(provider.isPhoneConnected()).thenReturn(true);
         helper.setPhoneConnectionProvider(provider);
-        reset(provider);
-        when(provider.isPhoneConnected()).thenReturn(true);
+        clearInvocations(provider);
         helper.setPhoneInitiatedOta(false);
         WakeLockManager.release(WakeLockManager.WakeOwner.MTK_OTA);
         PowerManager.WakeLock previousWakeLock = ShadowPowerManager.getLatestWakeLock();
@@ -276,6 +275,41 @@ public class OtaHelperBesGuardTest {
         verify(controller, never()).prepareForNewOtaSession();
         assertThat(phoneInitiatedOta()).isFalse();
         assertThat(ShadowPowerManager.getLatestWakeLock()).isSameAs(previousWakeLock);
+    }
+
+    @Test
+    public void continuedPhoneSessionFailsDurablyWhenDebugOwnsAdmissionPermit()
+            throws Exception {
+        StubRegistry registry = new StubRegistry();
+        registry.setInstance(mock(IBesOtaController.class));
+        OtaHelper helper = newHelper(registry);
+        OtaHelper.PhoneConnectionProvider provider =
+                mock(OtaHelper.PhoneConnectionProvider.class);
+        when(provider.isPhoneConnected()).thenReturn(true);
+        helper.setPhoneConnectionProvider(provider);
+        clearInvocations(provider);
+        assertThat(
+                        helper.getSessionManager()
+                                .createSession(
+                                        new String[] {"mtk", "bes"},
+                                        "https://updates.example.invalid/version.json"))
+                .isTrue();
+
+        Semaphore permit = admissionPermit();
+        assertThat(permit.tryAcquire()).isTrue();
+        boolean handled;
+        try {
+            handled = helper.continueSessionAfterStepComplete(
+                    ApplicationProvider.getApplicationContext());
+        } finally {
+            permit.release();
+        }
+
+        assertThat(handled).isTrue();
+        assertThat(helper.getSessionManager().getStatus()).isEqualTo("failed");
+        assertThat(helper.getSessionManager().getCurrentStepIndex()).isEqualTo(1);
+        assertThat(phoneInitiatedOta()).isFalse();
+        verify(provider).sendOtaStatus(any(JSONObject.class));
     }
 
     private static Semaphore admissionPermit() throws Exception {
