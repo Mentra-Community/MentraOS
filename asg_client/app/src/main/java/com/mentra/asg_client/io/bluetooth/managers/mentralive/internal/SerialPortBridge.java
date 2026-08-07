@@ -2,11 +2,9 @@ package com.mentra.asg_client.io.bluetooth.managers.mentralive.internal;
 
 import android.content.Context;
 import android.util.Log;
-
 import com.lhs.serialport.api.SerialManager;
 import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.bluetooth.interfaces.SerialListener;
-
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InterruptedIOException;
@@ -15,6 +13,9 @@ import java.io.OutputStream;
 /** Manager for serial communication with the BES2700 Bluetooth module in K900 devices. */
 public class SerialPortBridge {
     private static final String TAG = "SerialPortBridge";
+
+    /** Maximum time to wait for a closed descriptor's reader to terminate. */
+    private static final long READER_STOP_TIMEOUT_MS = 1000;
 
     // Serial port configuration - matches the K900 SDK
     private static final String COM_PATH = "/dev/ttyS1";
@@ -39,6 +40,11 @@ public class SerialPortBridge {
     private volatile boolean mbRequestFast = false;
     private long nextSessionId = 0;
     private volatile SerialSession currentSession;
+    private final SerialDriver serialDriver;
+    private final long readerStopTimeoutMs;
+
+    /** True only when no native descriptor from the previous session can be reused by a reader. */
+    private boolean lastCloseSafe = true;
 
     /** Baud rate the port is currently open at (DEFAULT_BAUDRATE until a reopen succeeds). */
     private volatile int mCurrentBaud = DEFAULT_BAUDRATE;
@@ -49,7 +55,13 @@ public class SerialPortBridge {
      * @param context The application context
      */
     public SerialPortBridge(Context context) {
+        this(context, new LhsSerialDriver(), READER_STOP_TIMEOUT_MS);
+    }
+
+    SerialPortBridge(Context context, SerialDriver serialDriver, long readerStopTimeoutMs) {
         mContext = context;
+        this.serialDriver = serialDriver;
+        this.readerStopTimeoutMs = readerStopTimeoutMs;
     }
 
     /**
@@ -68,20 +80,22 @@ public class SerialPortBridge {
      */
     public synchronized boolean start() {
         if (mbStart) return true;
-        if (mRecvThread != null) {
-            closeCurrentPort();
+        if (!prepareForOpen()) {
+            Log.e(TAG, "Refusing to start serial port while the previous reader is alive");
+            return false;
         }
 
-        boolean bSucc = SerialManager.getInstance().openSerial(COM_PATH, COM_BAUDRATE);
+        boolean bSucc = serialDriver.open(COM_PATH, COM_BAUDRATE);
         Log.d(TAG, "openSerial dev=" + COM_PATH + ", bSucc=" + bSucc);
 
         if (mListener != null) mListener.onSerialOpen(bSucc, 0, COM_PATH, "");
 
         if (bSucc) {
             mbStart = true;
+            lastCloseSafe = false;
             mCurrentBaud = COM_BAUDRATE;
-            mIS = SerialManager.getInstance().getInputStream(COM_PATH);
-            mOS = SerialManager.getInstance().getOutputStream(COM_PATH);
+            mIS = serialDriver.getInputStream(COM_PATH);
+            mOS = serialDriver.getOutputStream(COM_PATH);
 
             SerialSession session = newSession(COM_BAUDRATE);
             currentSession = session;
@@ -149,8 +163,15 @@ public class SerialPortBridge {
                         + mCurrentBaud
                         + ")");
 
-        if (mbStart || mRecvThread != null) {
-            closeCurrentPort();
+        if (!prepareForOpen()) {
+            Log.e(
+                    BAUD_TAG,
+                    "Refusing to open "
+                            + COM_PATH
+                            + " at "
+                            + baud
+                            + " while the previous reader is alive");
+            return null;
         }
 
         if (!openDriverAtBaud(baud)) {
@@ -159,9 +180,10 @@ public class SerialPortBridge {
         }
 
         mCurrentBaud = baud;
-        mIS = SerialManager.getInstance().getInputStream(COM_PATH);
-        mOS = SerialManager.getInstance().getOutputStream(COM_PATH);
+        mIS = serialDriver.getInputStream(COM_PATH);
+        mOS = serialDriver.getOutputStream(COM_PATH);
         mbStart = true;
+        lastCloseSafe = false;
 
         SerialSession session = newSession(baud);
         currentSession = session;
@@ -199,8 +221,24 @@ public class SerialPortBridge {
         return new SerialSession(++nextSessionId, COM_PATH, baud);
     }
 
-    /** Close the descriptor and retire its reader before another stream is published. */
-    private void closeCurrentPort() {
+    /** Ensure no prior descriptor or reader remains before opening a new physical session. */
+    private boolean prepareForOpen() {
+        if (!mbStart && mRecvThread == null && lastCloseSafe) {
+            return true;
+        }
+        return closeCurrentPort();
+    }
+
+    /**
+     * Close the descriptor, then wait for its reader to terminate before allowing another open.
+     *
+     * <p>{@code liblhsserial} indexes streams by path. Reopening {@code /dev/ttyS1} while an old
+     * {@link InputStream#read(byte[])} is still blocked can attach that old reader to the new
+     * native descriptor. Interrupting a Java thread is not sufficient to unblock that native read.
+     * The replacement must therefore fail closed unless descriptor close plus interruption actually
+     * terminates the reader.
+     */
+    private boolean closeCurrentPort() {
         RecvThread oldThread = mRecvThread;
         if (oldThread != null) {
             oldThread.setStop();
@@ -214,25 +252,56 @@ public class SerialPortBridge {
         mIS = null;
         mOS = null;
 
+        boolean driverClosed = true;
         try {
-            SerialManager.getInstance().closeSerial(COM_PATH);
+            serialDriver.close(COM_PATH);
         } catch (Exception e) {
+            driverClosed = false;
             Log.e(BAUD_TAG, "Error closing serial port", e);
         }
 
-        // The session retirement above waits for an already-entered listener callback. The old
-        // reader therefore cannot cross the descriptor replacement, and stop prevents another
-        // completed native read from being delivered or another read from starting.
+        boolean readerStopped = true;
         if (oldThread != null) {
             oldThread.interrupt();
+            if (Thread.currentThread() == oldThread) {
+                readerStopped = false;
+                Log.e(BAUD_TAG, "Serial reader attempted to replace its own descriptor");
+            } else {
+                try {
+                    oldThread.join(readerStopTimeoutMs);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    readerStopped = false;
+                    Log.e(BAUD_TAG, "Interrupted while waiting for serial reader to stop", e);
+                }
+                if (oldThread.isAlive()) {
+                    readerStopped = false;
+                    Log.e(
+                            BAUD_TAG,
+                            "Serial reader did not exit within "
+                                    + readerStopTimeoutMs
+                                    + "ms; replacement is blocked for "
+                                    + oldThread.session);
+                }
+            }
         }
-        mRecvThread = null;
+
+        if (readerStopped) {
+            mRecvThread = null;
+        } else {
+            // Retain ownership of the live reader so every later open attempt must close and wait
+            // again. Never lose the only handle to a thread that can consume the next descriptor.
+            mRecvThread = oldThread;
+        }
+
+        lastCloseSafe = driverClosed && readerStopped;
+        return lastCloseSafe;
     }
 
     /** Open COM_PATH at the given baud, catching any exception. */
     private boolean openDriverAtBaud(int baud) {
         try {
-            boolean bSucc = SerialManager.getInstance().openSerial(COM_PATH, baud);
+            boolean bSucc = serialDriver.open(COM_PATH, baud);
             Log.d(BAUD_TAG, "openSerial dev=" + COM_PATH + " baud=" + baud + " bSucc=" + bSucc);
             return bSucc;
         } catch (Exception | LinkageError e) {
@@ -357,6 +426,8 @@ public class SerialPortBridge {
         public void run() {
             int readSize;
 
+            Log.i(BAUD_TAG, "Serial reader started for " + session);
+
             while (!mbStop) {
                 if (input != null) {
                     try {
@@ -394,7 +465,39 @@ public class SerialPortBridge {
                 }
             }
 
-            Log.d(TAG, "RecvThread exiting");
+            Log.i(BAUD_TAG, "Serial reader exited for " + session);
+        }
+    }
+
+    interface SerialDriver {
+        boolean open(String path, int baud);
+
+        InputStream getInputStream(String path);
+
+        OutputStream getOutputStream(String path);
+
+        void close(String path);
+    }
+
+    private static final class LhsSerialDriver implements SerialDriver {
+        @Override
+        public boolean open(String path, int baud) {
+            return SerialManager.getInstance().openSerial(path, baud);
+        }
+
+        @Override
+        public InputStream getInputStream(String path) {
+            return SerialManager.getInstance().getInputStream(path);
+        }
+
+        @Override
+        public OutputStream getOutputStream(String path) {
+            return SerialManager.getInstance().getOutputStream(path);
+        }
+
+        @Override
+        public void close(String path) {
+            SerialManager.getInstance().closeSerial(path);
         }
     }
 }

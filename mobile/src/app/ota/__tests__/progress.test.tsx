@@ -9,6 +9,7 @@ import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 
 import OtaProgressScreen from "@/app/ota/progress"
 import {MINIMUM_OTA_STATUS_BUILD, OtaProgressMessages} from "@mentra/engine"
+import {BES_INSTALL_RESTART_MESSAGE} from "@/utils/otaErrorMapping"
 
 const mockReplace = jest.fn()
 
@@ -213,6 +214,29 @@ describe("progress.tsx display states", () => {
     expect(getByText("Retry")).toBeDefined()
   })
 
+  it("requires a glasses restart for the existing generic BES install failure", () => {
+    setGlassesConnected()
+    const {getByText, queryByText} = render(<OtaProgressScreen />)
+
+    act(() => {
+      useGlassesStore.getState().setOtaStatus({
+        sessionId: "s1",
+        totalSteps: 1,
+        currentStep: 1,
+        stepType: "bes",
+        phase: "install",
+        stepPercent: 0,
+        overallPercent: 0,
+        status: "failed",
+        error: "install_failed",
+      })
+    })
+
+    expect(getByText(BES_INSTALL_RESTART_MESSAGE)).toBeDefined()
+    expect(getByText("Done")).toBeDefined()
+    expect(queryByText("Retry")).toBeNull()
+  })
+
   it("shows disconnected state when not connected and not terminal", () => {
     setGlassesDisconnected()
     const {getByText} = render(<OtaProgressScreen />)
@@ -371,7 +395,7 @@ describe("progress.tsx watchdog timers", () => {
 
   it("fails progress stall after PROGRESS_TIMEOUT_MS with frozen ota_status", async () => {
     setGlassesConnected()
-    const {getByText} = render(<OtaProgressScreen />)
+    const {getByText, queryByText} = render(<OtaProgressScreen />)
 
     act(() => {
       useGlassesStore.getState().setOtaStatus({
@@ -391,7 +415,9 @@ describe("progress.tsx watchdog timers", () => {
     })
 
     expect(getByText("Update Failed")).toBeDefined()
-    expect(getByText(OtaProgressMessages.stalledOrStuck)).toBeDefined()
+    expect(getByText(BES_INSTALL_RESTART_MESSAGE)).toBeDefined()
+    expect(getByText("Done")).toBeDefined()
+    expect(queryByText("Retry")).toBeNull()
   })
 
   it("queries the resumed session without starting a second OTA after a multi-step APK reconnect", async () => {
