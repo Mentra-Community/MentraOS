@@ -10,7 +10,7 @@ import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import OtaProgressScreen from "@/app/ota/progress"
 import {MINIMUM_OTA_STATUS_BUILD, OtaProgressMessages} from "@mentra/engine"
 import {BES_INSTALL_RESTART_MESSAGE} from "@/utils/otaErrorMapping"
-import {beginOtaAutoChain, stopOtaAutoChain} from "@/services/otaAutoChain"
+import {beginOtaAutoChain, isOtaAutoChainActive, stopOtaAutoChain} from "@/services/otaAutoChain"
 
 const mockReplace = jest.fn()
 
@@ -254,6 +254,29 @@ describe("progress.tsx display states", () => {
     })
     expect(replaceSpy).toHaveBeenCalledWith("/ota/check-for-updates")
     replaceSpy.mockRestore()
+  })
+
+  it("stops automatic chaining when Continue bypasses BES reboot verification", () => {
+    setGlassesConnected()
+    beginOtaAutoChain("initial-offer", false)
+    const {getByText} = render(<OtaProgressScreen />)
+
+    act(() => {
+      useGlassesStore.getState().setOtaStatus({
+        sessionId: "s1",
+        totalSteps: 1,
+        currentStep: 1,
+        stepType: "bes",
+        phase: "install",
+        stepPercent: 100,
+        overallPercent: 100,
+        status: "step_complete",
+      })
+    })
+
+    fireEvent.press(getByText("Continue"))
+
+    expect(isOtaAutoChainActive()).toBe(false)
   })
 
   it("transitions to failed on failed ota_status with error", () => {

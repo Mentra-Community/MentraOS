@@ -88,6 +88,9 @@ export default function OtaProgressScreen() {
   }, [connected, displayState, replace])
 
   const handleContinue = () => {
+    // This is the explicit BES recovery escape hatch shown before reboot
+    // verification completes. Returning early must not preserve automation.
+    stopOtaAutoChain()
     engine.ota.installSession.finish()
     replace("/ota/check-for-updates")
   }
