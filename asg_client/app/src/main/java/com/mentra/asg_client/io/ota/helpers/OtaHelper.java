@@ -41,8 +41,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.concurrent.Semaphore;
 import java.util.stream.Collectors;
-import java.util.concurrent.locks.ReentrantLock;
 
 import com.mentra.asg_client.io.ota.session.OtaSessionManager;
 import com.mentra.asg_client.io.ota.utils.DowngradeGate;
@@ -82,7 +82,10 @@ public class OtaHelper {
         void sendOtaStatus(JSONObject status);
     }
     private static final String TAG = OtaConstants.TAG;
-    private static final ReentrantLock versionCheckLock = new ReentrantLock();
+    // A permit, rather than a ReentrantLock, lets the phone command thread reserve OTA admission
+    // synchronously and hand ownership to its worker. This closes the acknowledged-but-dropped
+    // window without changing the existing single-worker pipeline.
+    private static final Semaphore otaAdmissionPermit = new Semaphore(1);
     private static volatile boolean isUpdating = false;  // Tracks download/install in progress
 
     // Downgrade handoff verdict plumbing: the watchdog must be cancellable because recovery
@@ -464,35 +467,67 @@ public class OtaHelper {
 
         // Immediately acknowledge receipt so the phone cancels its retry timer.
         sendOtaStartAck();
-
-        IBesOtaController besController = getOtaController();
-        if (besController != null && !besController.prepareForNewOtaSession()) {
-            Log.w(TAG, "BES durable state blocks a new OTA session");
-            sendAuthoritativeBesStatusToPhone();
-            return;
-        }
-
-        // If OTA already in progress, do not start a parallel pipeline. The phone
-        // will receive the current status and can keep retrying/querying normally.
-        if (versionCheckLock.isLocked()) {
-            Log.i(TAG, "📱 OTA already in progress - acknowledging ota_start and sending current status");
+        String resolvedVersionJsonUrl = requireVersionJsonUrl(requestedVersionJsonUrl);
+        if (resolvedVersionJsonUrl == null) {
+            Log.e(TAG, "Refusing phone OTA start without a manifest URL");
             sendOtaStatus();
             return;
         }
 
-        // Acquire wakelock to prevent CPU sleep during OTA download/install
-        WakeLockManager.acquireCpu(context, WakeLockManager.WakeOwner.MTK_OTA, OTA_WAKELOCK_TIMEOUT_MS);
-        Log.i(TAG, "📱 OTA wakelock acquired for " + (OTA_WAKELOCK_TIMEOUT_MS / 1000) + " seconds");
+        // Reserve admission before arming phone state or the wake lease. Semaphore ownership can
+        // cross threads, so the worker can release the reservation when the pipeline finishes.
+        if (!otaAdmissionPermit.tryAcquire()) {
+            Log.i(
+                    TAG,
+                    "📱 OTA already in progress - acknowledging ota_start and sending current"
+                            + " status");
+            sendOtaStatus();
+            return;
+        }
 
-        isPhoneInitiatedOta = true;
+        boolean handedToWorker = false;
+        try {
+            if (isUpdating || isMtkOtaInProgress || isBesOtaInProgress()) {
+                Log.i(TAG, "📱 OTA install already active - sending current status");
+                sendOtaStatus();
+                return;
+            }
 
-        // Reset progress tracking
-        lastProgressSentTime = 0;
-        lastProgressSentPercent = 0;
+            IBesOtaController besController = getOtaController();
+            if (besController != null && !besController.prepareForNewOtaSession()) {
+                Log.w(TAG, "BES durable state blocks a new OTA session");
+                sendAuthoritativeBesStatusToPhone();
+                return;
+            }
 
-        Log.i(TAG, "📱 Phone-initiated OTA: starting version check (download STARTED deferred)");
+            // Acquire wakelock to prevent CPU sleep during OTA download/install
+            WakeLockManager.acquireCpu(
+                    context, WakeLockManager.WakeOwner.MTK_OTA, OTA_WAKELOCK_TIMEOUT_MS);
+            Log.i(
+                    TAG,
+                    "📱 OTA wakelock acquired for "
+                            + (OTA_WAKELOCK_TIMEOUT_MS / 1000)
+                            + " seconds");
 
-        startVersionCheckWithUrl(context, requestedVersionJsonUrl);
+            isPhoneInitiatedOta = true;
+
+            // Reset progress tracking
+            lastProgressSentTime = 0;
+            lastProgressSentPercent = 0;
+
+            Log.i(
+                    TAG,
+                    "📱 Phone-initiated OTA: starting version check (download STARTED deferred)");
+
+            startVersionCheckWithReservedAdmission(context, resolvedVersionJsonUrl, true);
+            handedToWorker = true;
+        } finally {
+            if (!handedToWorker) {
+                isPhoneInitiatedOta = false;
+                WakeLockManager.release(WakeLockManager.WakeOwner.MTK_OTA);
+                otaAdmissionPermit.release();
+            }
+        }
     }
 
     private String requireVersionJsonUrl(String versionJsonUrl) {
@@ -507,16 +542,45 @@ public class OtaHelper {
      * Used by DebugApkOtaReceiver to test OTA with a local/custom URL.
      * @param context Application context
      * @param versionJsonUrl URL to fetch the version JSON from (http, https)
+     * @return true when admission was reserved and the worker was dispatched
      */
-    public void startVersionCheckWithUrl(Context context, String versionJsonUrl) {
+    public boolean startVersionCheckWithUrl(Context context, String versionJsonUrl) {
         String resolvedVersionJsonUrl = requireVersionJsonUrl(versionJsonUrl);
         if (resolvedVersionJsonUrl == null) {
             Log.e(TAG, "Refusing OTA version check without a manifest URL");
-            return;
+            return false;
         }
+        if (!otaAdmissionPermit.tryAcquire()) {
+            Log.w(TAG, "Version check admission is busy; refusing before worker dispatch");
+            return false;
+        }
+        if (isUpdating || isMtkOtaInProgress || isBesOtaInProgress()) {
+            Log.w(TAG, "Version check admission blocked by an active OTA install");
+            otaAdmissionPermit.release();
+            return false;
+        }
+
+        isPhoneInitiatedOta = true;
+        try {
+            startVersionCheckWithReservedAdmission(context, resolvedVersionJsonUrl, false);
+            return true;
+        } catch (RuntimeException dispatchFailure) {
+            Log.e(TAG, "Could not dispatch admitted OTA version check", dispatchFailure);
+            isPhoneInitiatedOta = false;
+            otaAdmissionPermit.release();
+            return false;
+        } catch (Error fatalDispatchFailure) {
+            isPhoneInitiatedOta = false;
+            otaAdmissionPermit.release();
+            throw fatalDispatchFailure;
+        }
+    }
+
+    private void startVersionCheckWithReservedAdmission(
+            Context context, String resolvedVersionJsonUrl, boolean releaseWakeOnAdmissionAbort) {
         Log.d(TAG, "Check OTA update method init");
         Log.i(TAG, "OTA check trigger -> phoneInitiated=" + isPhoneInitiatedOta
-                + ", lockHeld=" + versionCheckLock.isLocked()
+                + ", admissionHeld=" + (otaAdmissionPermit.availablePermits() == 0)
                 + ", isUpdating=" + isUpdating
                 + ", mtkInProgress=" + isMtkOtaInProgress
                 + ", besInProgress=" + isBesOtaInProgress()
@@ -528,21 +592,21 @@ public class OtaHelper {
         // }
 
         new Thread(() -> {
-            // Try to acquire lock - if already held, another check is in progress
-            if (!versionCheckLock.tryLock()) {
-                Log.d(TAG, "Version check already in progress, skipping this request");
-                return;
-            }
-            Log.d(TAG, "Version check lock acquired");
+            Log.d(TAG, "OTA admission permit acquired");
 
-            // Store the URL under the lock so a concurrent caller can't overwrite it
+            // Store the URL under admission so a concurrent caller can't overwrite it
             // before this check finishes.
             lastVersionJsonUrl = resolvedVersionJsonUrl;
 
             // Check if update is in progress (separate from version check)
             if (isUpdating) {
                 Log.d(TAG, "Update already in progress, skipping version check");
-                versionCheckLock.unlock();
+                isPhoneInitiatedOta = false;
+                if (releaseWakeOnAdmissionAbort) {
+                    WakeLockManager.release(WakeLockManager.WakeOwner.MTK_OTA);
+                }
+                sendOtaStatus();
+                otaAdmissionPermit.release();
                 return;
             }
 
@@ -604,9 +668,14 @@ public class OtaHelper {
                 }
             } finally {
                 isPhoneInitiatedOta = false;
-                versionCheckLock.unlock();
-                Log.d(TAG, "Version check thread finished (reachedSuccessLog=" + otaCheckReachedSuccessLog[0]
-                        + ", lastStage=" + stage[0] + "), lock released, ready for next check");
+                otaAdmissionPermit.release();
+                Log.d(
+                        TAG,
+                        "Version check thread finished (reachedSuccessLog="
+                                + otaCheckReachedSuccessLog[0]
+                                + ", lastStage="
+                                + stage[0]
+                                + "), admission released, ready for next check");
             }
         }).start();
     }
@@ -2865,9 +2934,8 @@ public class OtaHelper {
         Log.i(TAG, "continueSessionAfterStepComplete: auto-advancing from step "
                 + currentIndex + " to step " + nextStep + " type=" + nextType);
 
-        // Advance the session record so the phone sees the new current step immediately.
+        // Advance the durable session before dispatch so the admitted worker sees the next step.
         sessionManager.advanceStep(nextStep, "download");
-        sendOtaStatus();
 
         // Kick off the next step's download/install cycle. Sessions always carry the
         // phone-supplied manifest URL; a session without one is unrecoverable by design
@@ -2878,8 +2946,14 @@ public class OtaHelper {
             sendOtaStatus();
             return false;
         }
-        setPhoneInitiatedOta(true);
-        startVersionCheckWithUrl(context, versionJsonUrl);
+        if (!startVersionCheckWithUrl(context, versionJsonUrl)) {
+            Log.e(TAG, "Next OTA step lost admission before worker dispatch");
+            sessionManager.setFailed("OTA admission busy before next step");
+            sendOtaStatus();
+            // The active session handled the failure; suppress the caller's legacy completion path.
+            return true;
+        }
+        sendOtaStatus();
         return true;
     }
 
@@ -3077,6 +3151,132 @@ public class OtaHelper {
     }
 
     // ========== DEBUG METHODS ==========
+
+    /**
+     * Start an explicit ADB-requested BES version change through the release-A safety boundary.
+     *
+     * <p>Unlike the retired raw-file entry point, this validates the release container and
+     * immutable identity, observes APK/MTK/BES mutual exclusion, and assigns a durable owner before
+     * the manager can reserve {@code mh_ota}. Direction is intentionally not compared: selecting an
+     * older target is the supported internal downgrade use case for this privileged debug path.
+     *
+     * @param firmwareFile locally staged release-packaged BES OTA container
+     * @param targetVersion exact four-component version expected after the BES reboot
+     * @param expectedSha256 SHA-256 of the staged container
+     * @param artifactId stable artifact identifier stored with the durable transaction
+     * @return true when the validated transaction was accepted by the BES OTA manager
+     */
+    public boolean startValidatedDebugBesFirmware(
+            File firmwareFile,
+            String targetVersion,
+            String expectedSha256,
+            String artifactId) {
+        if (!otaAdmissionPermit.tryAcquire()) {
+            Log.e(TAG, "DEBUG BES install blocked - phone OTA admission is active");
+            return false;
+        }
+
+        boolean deleteRefusedArtifact = false;
+        boolean started = false;
+        try {
+            IBesOtaController manager = getOtaController();
+            if (manager == null) {
+                Log.e(TAG, "DEBUG BES install blocked - BES OTA controller is unavailable");
+                return false;
+            }
+            if (manager.isBesOtaInProgress()) {
+                Log.e(TAG, "DEBUG BES install blocked - BES transaction already active");
+                return false;
+            }
+
+            // Shared admission plus an inactive manager proves that this request's path is not
+            // owned by a live BES transaction. Every refusal below may safely delete it.
+            deleteRefusedArtifact = true;
+            if (isUpdating) {
+                Log.e(TAG, "DEBUG BES install blocked - APK update in progress");
+                return false;
+            }
+            if (isMtkOtaInProgress) {
+                Log.e(TAG, "DEBUG BES install blocked - MTK update in progress");
+                return false;
+            }
+            if (!isBatterySufficientForUpdates()) {
+                Log.e(TAG, "DEBUG BES install blocked - battery is insufficient");
+                return false;
+            }
+
+            ValidatedBesArtifact artifact =
+                    BesFirmwareArtifactValidator.validateLocal(
+                            firmwareFile, artifactId, expectedSha256, targetVersion);
+            if (!manager.prepareForNewOtaSession()) {
+                Log.e(TAG, "DEBUG BES install blocked - durable state refused a new session");
+                return false;
+            }
+
+            String ownerSessionId =
+                    "adb-bes-" + java.util.UUID.randomUUID().toString().replace("-", "");
+            Log.w(
+                    TAG,
+                    "DEBUG: starting validated BES version change artifact="
+                            + artifact.getArtifactId()
+                            + " target="
+                            + artifact.getTargetVersion()
+                            + " owner="
+                            + ownerSessionId);
+            started = manager.startFirmwareUpdate(artifact, ownerSessionId);
+            if (!started) {
+                Log.e(TAG, "DEBUG BES install was refused by the BES OTA manager");
+            } else {
+                deleteRefusedArtifact = false;
+                // The manager now owns this validated artifact. No sibling debug artifact belongs
+                // to the admitted transaction, so interrupted-run leftovers can be removed without
+                // endangering the active source.
+                pruneAbandonedDebugBesArtifacts(firmwareFile);
+            }
+            return started;
+        } catch (BesFirmwareArtifactValidator.ValidationException e) {
+            Log.e(TAG, "DEBUG BES artifact validation failed: " + e.getMessage(), e);
+            return false;
+        } finally {
+            if (deleteRefusedArtifact && !started) {
+                deleteRefusedDebugBesArtifact(firmwareFile);
+            }
+            otaAdmissionPermit.release();
+        }
+    }
+
+    private void deleteRefusedDebugBesArtifact(File artifact) {
+        if (artifact != null && artifact.exists() && !artifact.delete()) {
+            Log.w(TAG, "Could not delete refused debug BES artifact " + artifact);
+        }
+    }
+
+    private void pruneAbandonedDebugBesArtifacts(File currentArtifact) {
+        if (currentArtifact == null) {
+            return;
+        }
+        File parent = currentArtifact.getParentFile();
+        if (parent == null || !parent.isDirectory()) {
+            return;
+        }
+        String debugPrefix = new File(AsgConstants.DEBUG_BES_OTA_ARTIFACT_PREFIX).getName();
+        String currentPath = currentArtifact.getAbsolutePath();
+        File[] abandonedArtifacts =
+                parent.listFiles(
+                        (directory, name) ->
+                                name.startsWith(debugPrefix) && name.endsWith(".bin"));
+        if (abandonedArtifacts == null) {
+            return;
+        }
+        for (File abandonedArtifact : abandonedArtifacts) {
+            if (abandonedArtifact.getAbsolutePath().equals(currentPath)) {
+                continue;
+            }
+            if (!abandonedArtifact.delete()) {
+                Log.w(TAG, "Could not delete abandoned debug BES artifact " + abandonedArtifact);
+            }
+        }
+    }
 
     /**
      * DEBUG: Force install MTK firmware from local zip file without any checks

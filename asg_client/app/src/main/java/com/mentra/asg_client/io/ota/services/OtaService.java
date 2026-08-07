@@ -507,8 +507,12 @@ public class OtaService extends Service {
                 return;
             }
 
-            otaHelper.setPhoneInitiatedOta(true);
-            otaHelper.startVersionCheckWithUrl(this, versionJsonUrl);
+            if (!otaHelper.startVersionCheckWithUrl(this, versionJsonUrl)) {
+                Log.e(TAG, "OTA admission busy - failing resumed session before worker dispatch");
+                sessionManager.consumePendingApkStatus();
+                sessionManager.setFailed("OTA admission busy after APK restart");
+                otaHelper.sendCompletionToPhone(sessionManager);
+            }
         } catch (Exception e) {
             Log.e(TAG, "Error resuming OTA from session", e);
             sessionManager.setFailed("Resume error: " + e.getMessage());

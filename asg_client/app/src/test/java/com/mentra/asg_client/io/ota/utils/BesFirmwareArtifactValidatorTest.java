@@ -35,6 +35,75 @@ public class BesFirmwareArtifactValidatorTest {
     }
 
     @Test
+    public void localReleasePackagedArtifactWithExplicitIdentityPasses() throws Exception {
+        TestArtifact artifact = createArtifact();
+
+        BesFirmwareArtifactValidator.ValidatedBesArtifact validated =
+                BesFirmwareArtifactValidator.validateLocal(
+                        artifact.file,
+                        "adb-17.26.7.24.bin",
+                        artifact.metadata.getString("sha256"),
+                        "17.26.7.24");
+
+        assertThat(validated.getArtifactId()).isEqualTo("adb-17.26.7.24.bin");
+        assertThat(validated.getTargetVersion()).isEqualTo("17.26.7.24");
+    }
+
+    @Test
+    public void localArtifactSupportsEphemeralCleanup() throws Exception {
+        TestArtifact artifact = createArtifact();
+        BesFirmwareArtifactValidator.ValidatedBesArtifact validated =
+                BesFirmwareArtifactValidator.validateLocal(
+                        artifact.file,
+                        "adb-17.26.7.24.bin",
+                        artifact.metadata.getString("sha256"),
+                        "17.26.7.24");
+
+        assertThat(validated.deleteSourceIfEphemeral()).isTrue();
+        assertThat(artifact.file).doesNotExist();
+    }
+
+    @Test
+    public void manifestArtifactIgnoresEphemeralCleanup() throws Exception {
+        TestArtifact artifact = createArtifact();
+        BesFirmwareArtifactValidator.ValidatedBesArtifact validated =
+                BesFirmwareArtifactValidator.validate(artifact.file, artifact.metadata);
+
+        assertThat(validated.deleteSourceIfEphemeral()).isTrue();
+        assertThat(artifact.file).exists();
+    }
+
+    @Test
+    public void localArtifactRejectsUnsafeIdentity() throws Exception {
+        TestArtifact artifact = createArtifact();
+
+        assertThatThrownBy(
+                        () ->
+                                BesFirmwareArtifactValidator.validateLocal(
+                                        artifact.file,
+                                        "../../update_ota.bin",
+                                        artifact.metadata.getString("sha256"),
+                                        "17.26.7.24"))
+                .isInstanceOf(BesFirmwareArtifactValidator.ValidationException.class)
+                .hasMessageContaining("identifier");
+    }
+
+    @Test
+    public void localArtifactRejectsIncorrectDigest() throws Exception {
+        TestArtifact artifact = createArtifact();
+
+        assertThatThrownBy(
+                        () ->
+                                BesFirmwareArtifactValidator.validateLocal(
+                                        artifact.file,
+                                        "adb-17.26.7.24.bin",
+                                        "0".repeat(64),
+                                        "17.26.7.24"))
+                .isInstanceOf(BesFirmwareArtifactValidator.ValidationException.class)
+                .hasMessageContaining("SHA-256 mismatch");
+    }
+
+    @Test
     public void externalReleaseArtifactCanBeValidated() throws Exception {
         String artifactPath = System.getenv("BES_RELEASE_ARTIFACT");
         String version = System.getenv("BES_RELEASE_VERSION");

@@ -128,6 +128,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
     public boolean isBesOtaInProgress() {
         BesOtaStateStore.Snapshot snapshot = stateStore.read();
         return isBesOtaInProgress
+                || snapshot.isCorrupt()
                 || (snapshot.isValid() && snapshot.getState() != BesOtaStateStore.State.TERMINAL);
     }
 
@@ -704,6 +705,9 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
         }
         isWaitingForAuthorization = false;
         transportLease = null;
+        // SetStartInfo and SetConfig reopen the source file while negotiating the transfer.
+        // BES has now accepted apply, so no remaining protocol command needs those bytes on disk.
+        deleteEphemeralArtifactLocked("after BES accepted apply");
         bInit = false;
         fileData = null;
         sentPos = 0;
@@ -795,9 +799,21 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
     }
 
     private void clearRunIdentityLocked() {
+        deleteEphemeralArtifactLocked("while clearing BES run identity");
         authorizationReserved = false;
         activeOwnerSessionId = "";
         activeArtifact = null;
+    }
+
+    private void deleteEphemeralArtifactLocked(String reason) {
+        if (activeArtifact != null && !activeArtifact.deleteSourceIfEphemeral()) {
+            Log.w(
+                    TAG,
+                    "Could not delete ephemeral BES artifact "
+                            + activeArtifact.getFile()
+                            + " "
+                            + reason);
+        }
     }
 
     /**

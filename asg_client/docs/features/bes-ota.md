@@ -141,8 +141,26 @@ Stored under `/storage/emulated/0/asg/`:
 
 ## Internal staging test
 
-Do not use `scripts/test-bes-ota.sh`: its direct ADB broadcast entry point is intentionally disabled
-and it bypasses the phone-owned session contract this flow needs to exercise.
+The ADB script is available for explicit internal BES upgrades and downgrades. It does not exercise
+the phone UI, but it does use the release artifact validator, durable transaction owner, UART
+quarantine, reboot reconciliation, and exact-version proof used by the production path. The
+receiver requires Android's privileged `DUMP` permission, so ordinary apps cannot trigger it.
+
+Use only release-packaged `update_ota.bin`, never raw BES build output, and state the exact version
+the glasses must report after reboot:
+
+```bash
+ANDROID_SERIAL=0123456789ABCDEF \
+  ./scripts/test-bes-ota.sh /path/to/update_ota.bin 17.26.7.9
+```
+
+The script computes and verifies the local/device SHA-256 before sending the protected intent.
+Selecting an older target is allowed for bench recovery and compatibility testing. A wrong target
+does not create false success: durable reconciliation fails unless post-reboot `sr_syvr` reports the
+exact supplied version.
+
+Use the phone-driven procedure below for release qualification because it additionally exercises
+the immutable manifest pin, Mentra App progress UI, and BLE reconnect behavior.
 
 1. Land the candidate ASG and `firmware_live.json` on `staging` so the staging
    workflow publishes one combined, immutable-per-run manifest and embeds its URL in that run's
