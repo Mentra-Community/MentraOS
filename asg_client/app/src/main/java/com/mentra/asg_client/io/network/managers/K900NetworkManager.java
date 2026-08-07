@@ -234,7 +234,13 @@ public class K900NetworkManager extends BaseNetworkManager {
                         AsgConstants.LOCAL_HOTSPOT_WIFI_ENABLE_DELAY_MS);
                 return;
             }
-            sendVendorHotspotState(true);
+            synchronized (mHotspotLock) {
+                if (generation != mHotspotGeneration || !mHotspotStarting) {
+                    Log.d(TAG, "🔥 Hotspot start was cancelled before the vendor command");
+                    return;
+                }
+                sendVendorHotspotState(true);
+            }
             checkVendorHotspotReadiness(generation);
             Log.i(TAG, "🔥 K900 vendor hotspot start requested");
         } catch (Exception e) {
@@ -346,11 +352,11 @@ public class K900NetworkManager extends BaseNetworkManager {
             mHotspotStarting = false;
             mHotspotGeneration++;
             cancelHotspotReadinessLocked();
-        }
-        try {
-            sendVendorHotspotState(false);
-        } catch (Exception e) {
-            Log.e(TAG, "🔥 Error cleaning up failed K900 hotspot", e);
+            try {
+                sendVendorHotspotState(false);
+            } catch (Exception e) {
+                Log.e(TAG, "🔥 Error cleaning up failed K900 hotspot", e);
+            }
         }
         onHotspotStopped();
         notifyHotspotError(errorMessage);
@@ -358,10 +364,8 @@ public class K900NetworkManager extends BaseNetworkManager {
     }
 
     private void cancelHotspotReadinessLocked() {
-        if (mPendingHotspotReadiness != null) {
-            mHotspotHandler.removeCallbacks(mPendingHotspotReadiness);
-            mPendingHotspotReadiness = null;
-        }
+        mHotspotHandler.removeCallbacksAndMessages(null);
+        mPendingHotspotReadiness = null;
     }
 
     private void sendVendorHotspotState(boolean enabled) {
@@ -378,11 +382,11 @@ public class K900NetworkManager extends BaseNetworkManager {
             mHotspotStarting = false;
             mHotspotGeneration++;
             cancelHotspotReadinessLocked();
-        }
-        try {
-            sendVendorHotspotState(false);
-        } catch (Exception e) {
-            Log.e(TAG, "🔥 Error stopping K900 vendor hotspot", e);
+            try {
+                sendVendorHotspotState(false);
+            } catch (Exception e) {
+                Log.e(TAG, "🔥 Error stopping K900 vendor hotspot", e);
+            }
         }
         onHotspotStopped();
         notificationManager.showHotspotStateNotification(false);
