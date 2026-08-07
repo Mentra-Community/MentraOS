@@ -3,7 +3,9 @@ package com.mentra.asg_client.io.ota.helpers;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verify;
@@ -12,8 +14,11 @@ import static org.mockito.Mockito.when;
 import android.content.Context;
 import android.os.PowerManager;
 import androidx.test.core.app.ApplicationProvider;
+import com.mentra.asg_client.events.BatteryStatusEvent;
 import com.mentra.asg_client.io.ota.interfaces.IBesOtaController;
 import com.mentra.asg_client.io.ota.interfaces.IBesOtaRegistry;
+import com.mentra.asg_client.io.ota.utils.BesFirmwareArtifactValidator;
+import com.mentra.asg_client.io.ota.utils.BesFirmwareArtifactValidator.ValidatedBesArtifact;
 import com.mentra.asg_client.utils.WakeLockManager;
 import java.io.File;
 import java.lang.reflect.Field;
@@ -24,6 +29,7 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 import org.junit.runner.RunWith;
+import org.mockito.MockedStatic;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 import org.robolectric.shadows.ShadowPowerManager;
@@ -148,6 +154,69 @@ public class OtaHelperBesGuardTest {
                 .isFalse();
         verify(controller, never()).prepareForNewOtaSession();
         assertThat(activeArtifact).exists();
+    }
+
+    @Test
+    public void debugBesEarlyRefusalDeletesArtifactProvenUnowned() throws Exception {
+        StubRegistry registry = new StubRegistry();
+        IBesOtaController controller = mock(IBesOtaController.class);
+        when(controller.isBesOtaInProgress()).thenReturn(false);
+        registry.setInstance(controller);
+        OtaHelper helper = newHelper(registry);
+        helper.onBatteryStatusEvent(new BatteryStatusEvent(1, false, System.currentTimeMillis()));
+        File refusedArtifact = temporaryFolder.newFile("debug_bes_low_battery.bin");
+
+        assertThat(
+                        helper.startValidatedDebugBesFirmware(
+                                refusedArtifact,
+                                "17.26.7.9",
+                                "0".repeat(64),
+                                "adb-low-battery.bin"))
+                .isFalse();
+
+        verify(controller, never()).prepareForNewOtaSession();
+        assertThat(refusedArtifact).doesNotExist();
+    }
+
+    @Test
+    public void admittedDebugBesInstallPrunesOnlyAbandonedSiblingArtifacts() throws Exception {
+        StubRegistry registry = new StubRegistry();
+        IBesOtaController controller = mock(IBesOtaController.class);
+        when(controller.isBesOtaInProgress()).thenReturn(false);
+        when(controller.prepareForNewOtaSession()).thenReturn(true);
+        when(controller.startFirmwareUpdate(any(), anyString())).thenReturn(true);
+        registry.setInstance(controller);
+        OtaHelper helper = newHelper(registry);
+        File currentArtifact = temporaryFolder.newFile("debug_bes_current.bin");
+        File abandonedArtifact = temporaryFolder.newFile("debug_bes_abandoned.bin");
+        File unrelatedArtifact = temporaryFolder.newFile("keep_this.bin");
+        ValidatedBesArtifact validatedArtifact = mock(ValidatedBesArtifact.class);
+
+        try (MockedStatic<BesFirmwareArtifactValidator> validator =
+                mockStatic(BesFirmwareArtifactValidator.class)) {
+            validator.when(
+                            () ->
+                                    BesFirmwareArtifactValidator.validateLocal(
+                                            currentArtifact,
+                                            "adb-current.bin",
+                                            "0".repeat(64),
+                                            "17.26.7.9"))
+                    .thenReturn(validatedArtifact);
+
+            assertThat(
+                            helper.startValidatedDebugBesFirmware(
+                                    currentArtifact,
+                                    "17.26.7.9",
+                                    "0".repeat(64),
+                                    "adb-current.bin"))
+                    .isTrue();
+        }
+
+        assertThat(currentArtifact).exists();
+        assertThat(abandonedArtifact).doesNotExist();
+        assertThat(unrelatedArtifact).exists();
+        verify(controller).prepareForNewOtaSession();
+        verify(controller).startFirmwareUpdate(any(), anyString());
     }
 
     @Test

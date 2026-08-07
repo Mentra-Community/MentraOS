@@ -3160,6 +3160,19 @@ public class OtaHelper {
         boolean deleteRefusedArtifact = false;
         boolean started = false;
         try {
+            IBesOtaController manager = getOtaController();
+            if (manager == null) {
+                Log.e(TAG, "DEBUG BES install blocked - BES OTA controller is unavailable");
+                return false;
+            }
+            if (manager.isBesOtaInProgress()) {
+                Log.e(TAG, "DEBUG BES install blocked - BES transaction already active");
+                return false;
+            }
+
+            // Shared admission plus an inactive manager proves that this request's path is not
+            // owned by a live BES transaction. Every refusal below may safely delete it.
+            deleteRefusedArtifact = true;
             if (isUpdating) {
                 Log.e(TAG, "DEBUG BES install blocked - APK update in progress");
                 return false;
@@ -3173,19 +3186,6 @@ public class OtaHelper {
                 return false;
             }
 
-            IBesOtaController manager = getOtaController();
-            if (manager == null) {
-                Log.e(TAG, "DEBUG BES install blocked - BES OTA controller is unavailable");
-                return false;
-            }
-            if (manager.isBesOtaInProgress()) {
-                Log.e(TAG, "DEBUG BES install blocked - BES transaction already active");
-                return false;
-            }
-
-            // From this point the shared admission permit and inactive manager prove that no
-            // transaction owns this path. A refusal may therefore clean up only this request.
-            deleteRefusedArtifact = true;
             ValidatedBesArtifact artifact =
                     BesFirmwareArtifactValidator.validateLocal(
                             firmwareFile, artifactId, expectedSha256, targetVersion);
@@ -3209,6 +3209,10 @@ public class OtaHelper {
                 Log.e(TAG, "DEBUG BES install was refused by the BES OTA manager");
             } else {
                 deleteRefusedArtifact = false;
+                // The manager now owns this validated artifact. No sibling debug artifact belongs
+                // to the admitted transaction, so interrupted-run leftovers can be removed without
+                // endangering the active source.
+                pruneAbandonedDebugBesArtifacts(firmwareFile);
             }
             return started;
         } catch (BesFirmwareArtifactValidator.ValidationException e) {
@@ -3225,6 +3229,33 @@ public class OtaHelper {
     private void deleteRefusedDebugBesArtifact(File artifact) {
         if (artifact != null && artifact.exists() && !artifact.delete()) {
             Log.w(TAG, "Could not delete refused debug BES artifact " + artifact);
+        }
+    }
+
+    private void pruneAbandonedDebugBesArtifacts(File currentArtifact) {
+        if (currentArtifact == null) {
+            return;
+        }
+        File parent = currentArtifact.getParentFile();
+        if (parent == null || !parent.isDirectory()) {
+            return;
+        }
+        String debugPrefix = new File(AsgConstants.DEBUG_BES_OTA_ARTIFACT_PREFIX).getName();
+        String currentPath = currentArtifact.getAbsolutePath();
+        File[] abandonedArtifacts =
+                parent.listFiles(
+                        (directory, name) ->
+                                name.startsWith(debugPrefix) && name.endsWith(".bin"));
+        if (abandonedArtifacts == null) {
+            return;
+        }
+        for (File abandonedArtifact : abandonedArtifacts) {
+            if (abandonedArtifact.getAbsolutePath().equals(currentPath)) {
+                continue;
+            }
+            if (!abandonedArtifact.delete()) {
+                Log.w(TAG, "Could not delete abandoned debug BES artifact " + abandonedArtifact);
+            }
         }
     }
 
