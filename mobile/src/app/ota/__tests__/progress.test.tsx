@@ -198,62 +198,64 @@ describe("progress.tsx display states", () => {
     setGlassesConnected()
     beginOtaAutoChain("initial-offer", false)
     const replaceSpy = jest.spyOn(useNavigationStore.getState(), "replace")
-    render(<OtaProgressScreen />)
+    try {
+      render(<OtaProgressScreen />)
 
-    act(() => {
-      useGlassesStore.getState().setOtaStatus({
-        sessionId: "s1",
-        totalSteps: 1,
-        currentStep: 1,
-        stepType: "apk",
-        phase: "install",
-        stepPercent: 100,
-        overallPercent: 100,
-        status: "complete",
+      act(() => {
+        useGlassesStore.getState().setOtaStatus({
+          sessionId: "s1",
+          totalSteps: 1,
+          currentStep: 1,
+          stepType: "apk",
+          phase: "install",
+          stepPercent: 100,
+          overallPercent: 100,
+          status: "complete",
+        })
       })
-    })
 
-    expect(replaceSpy).not.toHaveBeenCalledWith("/ota/check-for-updates")
-    await act(async () => {
-      await jest.advanceTimersByTimeAsync(750)
-    })
-    expect(replaceSpy).toHaveBeenCalledWith("/ota/check-for-updates")
-    replaceSpy.mockRestore()
+      expect(replaceSpy).not.toHaveBeenCalledWith("/ota/check-for-updates")
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(750)
+      })
+      expect(replaceSpy).toHaveBeenCalledWith("/ota/check-for-updates")
+    } finally {
+      replaceSpy.mockRestore()
+    }
   })
 
   it("waits for a rebooting chained pass to reconnect before checking again", async () => {
-    setGlassesConnected()
+    setGlassesDisconnected()
     beginOtaAutoChain("initial-offer", false)
+    useGlassesStore.getState().setOtaStatus({
+      sessionId: "s1",
+      totalSteps: 1,
+      currentStep: 1,
+      stepType: "apk",
+      phase: "install",
+      stepPercent: 100,
+      overallPercent: 100,
+      status: "complete",
+    })
     const replaceSpy = jest.spyOn(useNavigationStore.getState(), "replace")
-    render(<OtaProgressScreen />)
+    try {
+      render(<OtaProgressScreen />)
 
-    act(() => {
-      useGlassesStore.getState().setOtaStatus({
-        sessionId: "s1",
-        totalSteps: 1,
-        currentStep: 1,
-        stepType: "apk",
-        phase: "install",
-        stepPercent: 100,
-        overallPercent: 100,
-        status: "complete",
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(750)
       })
-      setGlassesDisconnected()
-    })
+      expect(replaceSpy).not.toHaveBeenCalledWith("/ota/check-for-updates")
 
-    await act(async () => {
-      await jest.advanceTimersByTimeAsync(750)
-    })
-    expect(replaceSpy).not.toHaveBeenCalledWith("/ota/check-for-updates")
-
-    act(() => {
-      setGlassesConnected()
-    })
-    await act(async () => {
-      await jest.advanceTimersByTimeAsync(750)
-    })
-    expect(replaceSpy).toHaveBeenCalledWith("/ota/check-for-updates")
-    replaceSpy.mockRestore()
+      act(() => {
+        setGlassesConnected()
+      })
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(750)
+      })
+      expect(replaceSpy).toHaveBeenCalledWith("/ota/check-for-updates")
+    } finally {
+      replaceSpy.mockRestore()
+    }
   })
 
   it("stops automatic chaining when Continue bypasses BES reboot verification", () => {
