@@ -117,6 +117,13 @@ public class K900NetworkManager extends BaseNetworkManager {
             notificationManager.showWifiStateNotification(false);
             // Auto-enable WiFi if not connected
             enableWifi();
+            synchronized (localHotspotLock) {
+                // A previous manager may have shut down while its fallback AP was still
+                // releasing. The replacement owns restoration and retries until the radio
+                // accepts a saved-network reconnect request.
+                markStationWifiDisconnectedLocked();
+            }
+            reconnectStationWifi();
         }
 
         Log.d(TAG, "🌐 ✅ K900 Network Manager initialization complete");
