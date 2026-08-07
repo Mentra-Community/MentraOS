@@ -458,6 +458,8 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
                                                 if (authorizationReserved) {
                                                     k900BluetoothManager.setLiveBesOtaOwner(
                                                             activeOwnerSessionId);
+                                                    deleteEphemeralArtifactLocked(
+                                                            "after durable reservation");
                                                 } else {
                                                     Log.e(
                                                             TAG,
@@ -795,9 +797,21 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
     }
 
     private void clearRunIdentityLocked() {
+        deleteEphemeralArtifactLocked("while clearing BES run identity");
         authorizationReserved = false;
         activeOwnerSessionId = "";
         activeArtifact = null;
+    }
+
+    private void deleteEphemeralArtifactLocked(String reason) {
+        if (activeArtifact != null && !activeArtifact.deleteSourceIfEphemeral()) {
+            Log.w(
+                    TAG,
+                    "Could not delete ephemeral BES artifact "
+                            + activeArtifact.getFile()
+                            + " "
+                            + reason);
+        }
     }
 
     /**

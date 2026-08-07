@@ -54,18 +54,19 @@ public class DebugBesOtaReceiver extends BroadcastReceiver {
         PendingResult pendingResult = goAsync();
         new Thread(
                         () -> {
+                            File artifact =
+                                    new File(
+                                            AsgConstants.DEBUG_BES_OTA_ARTIFACT_PREFIX
+                                                    + normalizedSha256
+                                                    + ".bin");
+                            boolean started = false;
                             try {
                                 OtaHelper helper =
                                         EntryPointAccessors.fromApplication(
                                                         applicationContext,
                                                         AsgClientEntryPoint.class)
                                                 .otaHelper();
-                                File artifact =
-                                        new File(
-                                                AsgConstants.DEBUG_BES_OTA_ARTIFACT_PREFIX
-                                                        + normalizedSha256
-                                                        + ".bin");
-                                boolean started =
+                                started =
                                         helper.startValidatedDebugBesFirmware(
                                                 artifact,
                                                 targetVersion,
@@ -82,6 +83,9 @@ public class DebugBesOtaReceiver extends BroadcastReceiver {
                             } catch (Exception e) {
                                 Log.e(TAG, "❌ Debug BES OTA dispatch failed", e);
                             } finally {
+                                if (!started && artifact.exists() && !artifact.delete()) {
+                                    Log.w(TAG, "Could not delete refused debug BES artifact " + artifact);
+                                }
                                 pendingResult.finish();
                             }
                         },

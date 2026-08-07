@@ -3097,30 +3097,36 @@ public class OtaHelper {
             String targetVersion,
             String expectedSha256,
             String artifactId) {
-        if (isUpdating) {
-            Log.e(TAG, "DEBUG BES install blocked - APK update in progress");
-            return false;
-        }
-        if (isMtkOtaInProgress) {
-            Log.e(TAG, "DEBUG BES install blocked - MTK update in progress");
-            return false;
-        }
-        if (!isBatterySufficientForUpdates()) {
-            Log.e(TAG, "DEBUG BES install blocked - battery is insufficient");
-            return false;
-        }
-
-        IBesOtaController manager = getOtaController();
-        if (manager == null) {
-            Log.e(TAG, "DEBUG BES install blocked - BES OTA controller is unavailable");
-            return false;
-        }
-        if (manager.isBesOtaInProgress()) {
-            Log.e(TAG, "DEBUG BES install blocked - BES transaction already active");
+        if (!versionCheckLock.tryLock()) {
+            Log.e(TAG, "DEBUG BES install blocked - phone OTA admission is active");
             return false;
         }
 
         try {
+            if (isUpdating) {
+                Log.e(TAG, "DEBUG BES install blocked - APK update in progress");
+                return false;
+            }
+            if (isMtkOtaInProgress) {
+                Log.e(TAG, "DEBUG BES install blocked - MTK update in progress");
+                return false;
+            }
+            if (!isBatterySufficientForUpdates()) {
+                Log.e(TAG, "DEBUG BES install blocked - battery is insufficient");
+                return false;
+            }
+
+            IBesOtaController manager = getOtaController();
+            if (manager == null) {
+                Log.e(TAG, "DEBUG BES install blocked - BES OTA controller is unavailable");
+                return false;
+            }
+            if (manager.isBesOtaInProgress()) {
+                Log.e(TAG, "DEBUG BES install blocked - BES transaction already active");
+                return false;
+            }
+
+            pruneStaleDebugBesArtifacts(firmwareFile);
             ValidatedBesArtifact artifact =
                     BesFirmwareArtifactValidator.validateLocal(
                             firmwareFile, artifactId, expectedSha256, targetVersion);
@@ -3147,6 +3153,33 @@ public class OtaHelper {
         } catch (BesFirmwareArtifactValidator.ValidationException e) {
             Log.e(TAG, "DEBUG BES artifact validation failed: " + e.getMessage(), e);
             return false;
+        } finally {
+            versionCheckLock.unlock();
+        }
+    }
+
+    /** Remove abandoned hash-addressed debug artifacts while preserving this request's bytes. */
+    private void pruneStaleDebugBesArtifacts(File currentArtifact) {
+        File prefix = new File(AsgConstants.DEBUG_BES_OTA_ARTIFACT_PREFIX);
+        File parent = prefix.getParentFile();
+        if (parent == null || !parent.isDirectory()) {
+            return;
+        }
+        String currentPath = currentArtifact == null ? "" : currentArtifact.getAbsolutePath();
+        File[] staleArtifacts =
+                parent.listFiles(
+                        (directory, name) ->
+                                name.startsWith(prefix.getName()) && name.endsWith(".bin"));
+        if (staleArtifacts == null) {
+            return;
+        }
+        for (File staleArtifact : staleArtifacts) {
+            if (staleArtifact.getAbsolutePath().equals(currentPath)) {
+                continue;
+            }
+            if (!staleArtifact.delete()) {
+                Log.w(TAG, "Could not delete stale debug BES artifact " + staleArtifact);
+            }
         }
     }
 

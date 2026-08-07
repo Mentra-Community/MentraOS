@@ -12,6 +12,10 @@ import androidx.test.core.app.ApplicationProvider;
 import com.mentra.asg_client.io.ota.interfaces.IBesOtaController;
 import com.mentra.asg_client.io.ota.interfaces.IBesOtaRegistry;
 import java.io.File;
+import java.lang.reflect.Field;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
 import org.junit.After;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -131,5 +135,51 @@ public class OtaHelperBesGuardTest {
                                 new File("missing.bin"), "17.26.7.9", "0".repeat(64), "adb.bin"))
                 .isFalse();
         verify(controller, never()).prepareForNewOtaSession();
+    }
+
+    @Test
+    public void debugBesInstallIsRejectedWhilePhoneOtaOwnsAdmissionLock() throws Exception {
+        StubRegistry registry = new StubRegistry();
+        IBesOtaController controller = mock(IBesOtaController.class);
+        registry.setInstance(controller);
+        OtaHelper helper = newHelper(registry);
+
+        Field field = OtaHelper.class.getDeclaredField("versionCheckLock");
+        field.setAccessible(true);
+        ReentrantLock admissionLock = (ReentrantLock) field.get(null);
+        CountDownLatch lockHeld = new CountDownLatch(1);
+        CountDownLatch releaseLock = new CountDownLatch(1);
+        Thread phoneOta =
+                new Thread(
+                        () -> {
+                            admissionLock.lock();
+                            try {
+                                lockHeld.countDown();
+                                releaseLock.await(5, TimeUnit.SECONDS);
+                            } catch (InterruptedException e) {
+                                Thread.currentThread().interrupt();
+                            } finally {
+                                admissionLock.unlock();
+                            }
+                        },
+                        "phone-ota-admission-test");
+        phoneOta.start();
+        assertThat(lockHeld.await(5, TimeUnit.SECONDS)).isTrue();
+
+        try {
+            assertThat(
+                            helper.startValidatedDebugBesFirmware(
+                                    new File("missing.bin"),
+                                    "17.26.7.9",
+                                    "0".repeat(64),
+                                    "adb.bin"))
+                    .isFalse();
+            verify(controller, never()).isBesOtaInProgress();
+            verify(controller, never()).prepareForNewOtaSession();
+        } finally {
+            releaseLock.countDown();
+            phoneOta.join(5000);
+        }
+        assertThat(phoneOta.isAlive()).isFalse();
     }
 }

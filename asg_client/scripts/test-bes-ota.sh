@@ -27,6 +27,13 @@ if ! [[ "$TARGET_VERSION" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
     echo "❌ Target version must have four numeric components: $TARGET_VERSION"
     exit 1
 fi
+IFS=. read -r -a VERSION_COMPONENTS <<< "$TARGET_VERSION"
+for component in "${VERSION_COMPONENTS[@]}"; do
+    if ((10#$component > 255)); then
+        echo "❌ Target version components must be in the 0-255 range: $TARGET_VERSION"
+        exit 1
+    fi
+done
 
 ADB=(adb)
 if [ -n "${ANDROID_SERIAL:-}" ]; then
@@ -35,7 +42,14 @@ fi
 
 "${ADB[@]}" get-state >/dev/null
 
-FIRMWARE_SHA256="$(shasum -a 256 "$FIRMWARE_PATH" | awk '{print $1}')"
+if command -v shasum >/dev/null 2>&1; then
+    FIRMWARE_SHA256="$(shasum -a 256 "$FIRMWARE_PATH" | awk '{print $1}')"
+elif command -v sha256sum >/dev/null 2>&1; then
+    FIRMWARE_SHA256="$(sha256sum "$FIRMWARE_PATH" | awk '{print $1}')"
+else
+    echo "❌ No SHA-256 tool found (need shasum or sha256sum)"
+    exit 1
+fi
 ARTIFACT_ID="adb-${FIRMWARE_SHA256}.bin"
 REMOTE_PATH="/storage/emulated/0/asg/debug_bes_${FIRMWARE_SHA256}.bin"
 

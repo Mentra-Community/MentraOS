@@ -48,7 +48,7 @@ public final class BesFirmwareArtifactValidator {
             String compressedSha256 = requiredSha256(metadata, "sha256");
             String targetVersion = requiredString(metadata, "version");
             return validateKnownIdentity(
-                    artifact, artifactId, compressedSha256, targetVersion);
+                    artifact, artifactId, compressedSha256, targetVersion, false);
         } catch (ValidationException e) {
             throw e;
         } catch (Exception e) {
@@ -71,9 +71,9 @@ public final class BesFirmwareArtifactValidator {
             if (!canonicalArtifactId.matches("[A-Za-z0-9._-]{1,128}")) {
                 throw new ValidationException("BES OTA artifact has an invalid identifier");
             }
-            String canonicalSha256 = canonicalSha256(expectedSha256);
+            String canonicalSha256 = normalizeSha256(expectedSha256, null);
             return validateKnownIdentity(
-                    artifact, canonicalArtifactId, canonicalSha256, targetVersion);
+                    artifact, canonicalArtifactId, canonicalSha256, targetVersion, true);
         } catch (ValidationException e) {
             throw e;
         } catch (Exception e) {
@@ -82,7 +82,11 @@ public final class BesFirmwareArtifactValidator {
     }
 
     private static ValidatedBesArtifact validateKnownIdentity(
-            File artifact, String artifactId, String compressedSha256, String targetVersion)
+            File artifact,
+            String artifactId,
+            String compressedSha256,
+            String targetVersion,
+            boolean ephemeralSource)
             throws Exception {
         if (artifact == null || !artifact.isFile()) {
             throw new ValidationException("BES OTA artifact is missing");
@@ -105,7 +109,8 @@ public final class BesFirmwareArtifactValidator {
                 compressedSha256,
                 canonicalTarget,
                 compressedSize,
-                raw.length);
+                raw.length,
+                ephemeralSource);
     }
 
     private static byte[] readArtifact(File artifact) throws IOException, ValidationException {
@@ -253,18 +258,14 @@ public final class BesFirmwareArtifactValidator {
 
     private static String requiredSha256(JSONObject metadata, String key)
             throws ValidationException {
-        String value = requiredString(metadata, key);
-        value = value.trim().toLowerCase(Locale.US);
-        if (!value.matches("[0-9a-f]{64}")) {
-            throw new ValidationException("Invalid BES OTA SHA-256 metadata: " + key);
-        }
-        return value;
+        return normalizeSha256(requiredString(metadata, key), key);
     }
 
-    private static String canonicalSha256(String value) throws ValidationException {
+    private static String normalizeSha256(String value, String key) throws ValidationException {
         value = value == null ? "" : value.trim().toLowerCase(Locale.US);
         if (!value.matches("[0-9a-f]{64}")) {
-            throw new ValidationException("Invalid BES OTA SHA-256 metadata");
+            throw new ValidationException(
+                    "Invalid BES OTA SHA-256 metadata" + (key == null ? "" : ": " + key));
         }
         return value;
     }
@@ -323,6 +324,7 @@ public final class BesFirmwareArtifactValidator {
         private final String targetVersion;
         private final long compressedSize;
         private final long decompressedSize;
+        private final boolean ephemeralSource;
 
         private ValidatedBesArtifact(
                 File file,
@@ -330,13 +332,15 @@ public final class BesFirmwareArtifactValidator {
                 String compressedSha256,
                 String targetVersion,
                 long compressedSize,
-                long decompressedSize) {
+                long decompressedSize,
+                boolean ephemeralSource) {
             this.file = file;
             this.artifactId = artifactId;
             this.compressedSha256 = compressedSha256;
             this.targetVersion = targetVersion;
             this.compressedSize = compressedSize;
             this.decompressedSize = decompressedSize;
+            this.ephemeralSource = ephemeralSource;
         }
 
         /** Close the validation-to-use race before authorization is reserved. */
@@ -375,6 +379,11 @@ public final class BesFirmwareArtifactValidator {
 
         public long getDecompressedSize() {
             return decompressedSize;
+        }
+
+        /** Delete ADB-staged bytes while preserving artifacts owned by the phone manifest. */
+        public boolean deleteSourceIfEphemeral() {
+            return !ephemeralSource || !file.exists() || file.delete();
         }
     }
 

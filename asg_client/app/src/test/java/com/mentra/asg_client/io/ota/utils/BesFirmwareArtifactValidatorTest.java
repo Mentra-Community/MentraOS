@@ -50,6 +50,30 @@ public class BesFirmwareArtifactValidatorTest {
     }
 
     @Test
+    public void localArtifactIsDeletedAfterDurableReservation() throws Exception {
+        TestArtifact artifact = createArtifact();
+        BesFirmwareArtifactValidator.ValidatedBesArtifact validated =
+                BesFirmwareArtifactValidator.validateLocal(
+                        artifact.file,
+                        "adb-17.26.7.24.bin",
+                        artifact.metadata.getString("sha256"),
+                        "17.26.7.24");
+
+        assertThat(validated.deleteSourceIfEphemeral()).isTrue();
+        assertThat(artifact.file).doesNotExist();
+    }
+
+    @Test
+    public void manifestArtifactRemainsAfterReservationCleanupHook() throws Exception {
+        TestArtifact artifact = createArtifact();
+        BesFirmwareArtifactValidator.ValidatedBesArtifact validated =
+                BesFirmwareArtifactValidator.validate(artifact.file, artifact.metadata);
+
+        assertThat(validated.deleteSourceIfEphemeral()).isTrue();
+        assertThat(artifact.file).exists();
+    }
+
+    @Test
     public void localArtifactRejectsUnsafeIdentity() throws Exception {
         TestArtifact artifact = createArtifact();
 
