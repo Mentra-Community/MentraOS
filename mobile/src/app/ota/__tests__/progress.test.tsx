@@ -10,6 +10,7 @@ import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import OtaProgressScreen from "@/app/ota/progress"
 import {MINIMUM_OTA_STATUS_BUILD, OtaProgressMessages} from "@mentra/engine"
 import {BES_INSTALL_RESTART_MESSAGE} from "@/utils/otaErrorMapping"
+import {beginOtaAutoChain, stopOtaAutoChain} from "@/services/otaAutoChain"
 
 const mockReplace = jest.fn()
 
@@ -87,9 +88,11 @@ beforeEach(() => {
   mockReplace.mockClear()
   BluetoothSdk.sendOtaQueryStatus.mockClear()
   BluetoothSdk.startOtaUpdate.mockClear()
+  stopOtaAutoChain()
 })
 
 afterEach(() => {
+  stopOtaAutoChain()
   jest.useRealTimers()
 })
 
@@ -189,6 +192,33 @@ describe("progress.tsx display states", () => {
 
     expect(getByText("Update complete!")).toBeDefined()
     expect(getByText("Done")).toBeDefined()
+  })
+
+  it("automatically returns to update checking after a chained pass completes", async () => {
+    setGlassesConnected()
+    beginOtaAutoChain("initial-offer", false)
+    const replaceSpy = jest.spyOn(useNavigationStore.getState(), "replace")
+    render(<OtaProgressScreen />)
+
+    act(() => {
+      useGlassesStore.getState().setOtaStatus({
+        sessionId: "s1",
+        totalSteps: 1,
+        currentStep: 1,
+        stepType: "apk",
+        phase: "install",
+        stepPercent: 100,
+        overallPercent: 100,
+        status: "complete",
+      })
+    })
+
+    expect(replaceSpy).not.toHaveBeenCalledWith("/ota/check-for-updates")
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(750)
+    })
+    expect(replaceSpy).toHaveBeenCalledWith("/ota/check-for-updates")
+    replaceSpy.mockRestore()
   })
 
   it("transitions to failed on failed ota_status with error", () => {

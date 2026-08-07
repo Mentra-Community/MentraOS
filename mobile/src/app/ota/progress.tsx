@@ -1,5 +1,5 @@
 import {engine, SETTINGS, useSetting} from "@mentra/engine"
-import {useCallback, useEffect} from "react"
+import {useCallback, useEffect, useRef} from "react"
 import {View, ActivityIndicator} from "react-native"
 
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
@@ -15,6 +15,9 @@ import {
   shouldShowChangeWifiForOtaDownloadFailure,
 } from "@/utils/otaErrorMapping"
 import {useNavigationStore} from "@/stores/navigation"
+import {isOtaAutoChainActive, stopOtaAutoChain} from "@/services/otaAutoChain"
+
+const AUTO_CHAIN_COMPLETE_DELAY_MS = 750
 
 /**
  * Pure renderer over the island OTA install state machine
@@ -39,6 +42,7 @@ export default function OtaProgressScreen() {
     versionChangeConverged,
     versionChangePhase,
   } = install
+  const autoChainAdvancedRef = useRef(false)
 
   focusEffectPreventBack()
 
@@ -68,6 +72,21 @@ export default function OtaProgressScreen() {
     }
   }, [])
 
+  // A verified completion is the safe boundary between manifest generations.
+  // Keep the success state visible briefly, then re-enter the existing checker;
+  // it either starts the next admitted pass or presents the final up-to-date UI.
+  useEffect(() => {
+    if (displayState !== "complete" || !isOtaAutoChainActive() || autoChainAdvancedRef.current) return
+
+    autoChainAdvancedRef.current = true
+    const timeout = setTimeout(() => {
+      engine.ota.installSession.finish()
+      replace("/ota/check-for-updates")
+    }, AUTO_CHAIN_COMPLETE_DELAY_MS)
+
+    return () => clearTimeout(timeout)
+  }, [displayState, replace])
+
   const handleContinue = () => {
     engine.ota.installSession.finish()
     replace("/ota/check-for-updates")
@@ -87,9 +106,15 @@ export default function OtaProgressScreen() {
   }, [push])
 
   const handleSkipSuper = useCallback(() => {
+    stopOtaAutoChain()
     engine.ota.installSession.discard()
     replace("/ota/check-for-updates")
   }, [replace])
+
+  const handleFailureDone = () => {
+    stopOtaAutoChain()
+    handleDone()
+  }
 
   const renderContent = () => {
     // Downgrade detour: the recovery worker owns the transaction while ASG is being
@@ -143,10 +168,10 @@ export default function OtaProgressScreen() {
       const isApkOnlyInstalling = otaStatus?.stepType === "apk" && otaStatus?.phase === "install" && totalSteps === 1
 
       const rawPercent = isDownload
-        ? otaStatus?.stepPercent ?? 0
+        ? (otaStatus?.stepPercent ?? 0)
         : totalSteps >= 2
-        ? otaStatus?.overallPercent ?? 0
-        : otaStatus?.stepPercent ?? 0
+          ? (otaStatus?.overallPercent ?? 0)
+          : (otaStatus?.stepPercent ?? 0)
       // Legacy (< 37) MTK install stall simulation (WP 8C-e): the coordinator projects a
       // display-only percent while the MTK system install goes quiet; render whichever is
       // further along. Null for unified sessions and outside legacy MTK installs.
@@ -279,9 +304,9 @@ export default function OtaProgressScreen() {
           </View>
           <View className="gap-3">
             {requiresGlassesReboot ? (
-              <Button preset="primary" text="Done" flexContainer onPress={handleDone} />
+              <Button preset="primary" text="Done" flexContainer onPress={handleFailureDone} />
             ) : (
-            <Button preset="primary" text="Retry" flexContainer onPress={handleRetry} />
+              <Button preset="primary" text="Retry" flexContainer onPress={handleRetry} />
             )}
             {showChangeWifi ? (
               <Button preset="secondary" text="Change WiFi" flexContainer onPress={handleChangeWifi} />
