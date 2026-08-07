@@ -10,17 +10,23 @@ public class AsgConstants {
     /** Maximum interval between activity updates while a response body is streaming. */
     public static final long HTTP_ACTIVITY_STREAM_UPDATE_INTERVAL_MS = 5_000L;
 
-    /** How often Mentra Live checks for the LocalOnlyHotspot gateway interface. */
+    /** How often Mentra Live checks for its hotspot gateway and credentials. */
     public static final long LOCAL_HOTSPOT_READINESS_POLL_MS = 200L;
 
-    /** Maximum wait for the LocalOnlyHotspot gateway interface to become ready. */
+    /** Maximum wait for the Mentra Live hotspot to become ready. */
     public static final long LOCAL_HOTSPOT_READINESS_TIMEOUT_MS = 12_000L;
 
-    /** Delay after enabling the WiFi radio before requesting a LocalOnlyHotspot. */
+    /** Delay after enabling the WiFi radio before requesting the Mentra Live hotspot. */
     public static final long LOCAL_HOTSPOT_WIFI_ENABLE_DELAY_MS = 500L;
 
     /** Current Mentra Live Android hotspot gateway when interface discovery is unavailable. */
     public static final String DEFAULT_HOTSPOT_GATEWAY_IP = "192.168.43.1";
+
+    /** SmartXY setting containing the Mentra Live hotspot SSID. */
+    public static final String K900_VENDOR_HOTSPOT_SSID_SETTING = "xy_ssid";
+
+    /** SmartXY setting containing the Mentra Live hotspot password. */
+    public static final String K900_VENDOR_HOTSPOT_PASSWORD_SETTING = "xy_pwd";
 
     /** Canonical camera crop defaults shared with the phone and Bluetooth SDK. */
     public static final int CAMERA_FOV_DEFAULT = 118;

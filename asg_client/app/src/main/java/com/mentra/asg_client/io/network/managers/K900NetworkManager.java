@@ -4,11 +4,11 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.net.wifi.WifiConfiguration;
 import android.net.wifi.WifiManager;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
+import android.provider.Settings;
 import android.util.Log;
 import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.network.core.BaseNetworkManager;
@@ -39,15 +39,12 @@ public class K900NetworkManager extends BaseNetworkManager {
     private BroadcastReceiver wifiStateReceiver;
     private final boolean isSystemApp;
 
-    private final Handler localHotspotHandler = new Handler(Looper.getMainLooper());
-    private final Object localHotspotLock = new Object();
-    private WifiManager.LocalOnlyHotspotReservation localHotspotReservation;
-    private Runnable pendingLocalHotspotReadiness;
-    private boolean localHotspotStarting;
-    private int localHotspotGeneration;
-    private long localHotspotReadinessDeadlineMs;
-    private String pendingLocalHotspotSsid = "";
-    private String pendingLocalHotspotPassword = "";
+    private final Handler mHotspotHandler = new Handler(Looper.getMainLooper());
+    private final Object mHotspotLock = new Object();
+    private Runnable mPendingHotspotReadiness;
+    private boolean mHotspotStarting;
+    private int mHotspotGeneration;
+    private long mHotspotReadinessDeadlineMs;
 
     /**
      * Create a new K900NetworkManager
@@ -113,8 +110,8 @@ public class K900NetworkManager extends BaseNetworkManager {
 
     @Override
     protected boolean shouldMonitorTetheringBroadcasts() {
-        // LocalOnlyHotspot owns its lifecycle through LocalOnlyHotspotCallback. Treating its
-        // interface as a tethered AP can publish static credentials before the LOHS callback.
+        // The K900 vendor intent owns readiness. A framework tethering echo can arrive before
+        // ap0 and the SmartXY credentials are ready, so do not publish from that broadcast.
         return false;
     }
 
@@ -190,26 +187,25 @@ public class K900NetworkManager extends BaseNetworkManager {
 
     @Override
     public void startHotspot() {
-        Log.d(TAG, "🔥 =========================================");
-        Log.d(TAG, "🔥 START K900 LOCAL-ONLY HOTSPOT");
-        Log.d(TAG, "🔥 =========================================");
-
         final int generation;
-        synchronized (localHotspotLock) {
-            if (isHotspotEnabled || localHotspotStarting || localHotspotReservation != null) {
-                Log.d(TAG, "🔥 Local-only hotspot is already active or starting");
+        synchronized (mHotspotLock) {
+            if (isHotspotEnabled || mHotspotStarting) {
+                Log.d(TAG, "🔥 K900 vendor hotspot is already active or starting");
                 return;
             }
-            localHotspotStarting = true;
-            generation = ++localHotspotGeneration;
+            mHotspotStarting = true;
+            generation = ++mHotspotGeneration;
+            mHotspotReadinessDeadlineMs =
+                    SystemClock.elapsedRealtime()
+                            + AsgConstants.LOCAL_HOTSPOT_READINESS_TIMEOUT_MS;
         }
 
-        requestLocalOnlyHotspot(generation);
+        requestVendorHotspot(generation);
     }
 
-    private void requestLocalOnlyHotspot(int generation) {
-        synchronized (localHotspotLock) {
-            if (generation != localHotspotGeneration || !localHotspotStarting) {
+    private void requestVendorHotspot(int generation) {
+        synchronized (mHotspotLock) {
+            if (generation != mHotspotGeneration || !mHotspotStarting) {
                 Log.d(TAG, "🔥 Ignoring hotspot request from a stale generation");
                 return;
             }
@@ -217,116 +213,74 @@ public class K900NetworkManager extends BaseNetworkManager {
 
         try {
             if (wifiManager == null) {
-                failLocalHotspotStartup(generation, "WifiManager is unavailable");
+                failVendorHotspotStartup(generation, "WifiManager is unavailable");
                 return;
             }
             if (!wifiManager.isWifiEnabled()) {
-                Log.i(TAG, "🔥 WiFi radio is off; enabling it before LocalOnlyHotspot startup");
+                Log.i(TAG, "🔥 WiFi radio is off; enabling it before K900 hotspot startup");
                 if (!wifiManager.setWifiEnabled(true)) {
-                    failLocalHotspotStartup(generation, "Failed to enable WiFi for local hotspot");
+                    failVendorHotspotStartup(generation, "Failed to enable WiFi for hotspot");
                     return;
                 }
-                localHotspotHandler.postDelayed(
+                mHotspotHandler.postDelayed(
                         () -> {
                             if (!wifiManager.isWifiEnabled()) {
-                                failLocalHotspotStartup(
-                                        generation, "WiFi did not become ready for local hotspot");
+                                failVendorHotspotStartup(
+                                        generation, "WiFi did not become ready for hotspot");
                                 return;
                             }
-                            requestLocalOnlyHotspot(generation);
+                            requestVendorHotspot(generation);
                         },
                         AsgConstants.LOCAL_HOTSPOT_WIFI_ENABLE_DELAY_MS);
                 return;
             }
-            wifiManager.startLocalOnlyHotspot(
-                    new WifiManager.LocalOnlyHotspotCallback() {
-                        @Override
-                        public void onStarted(
-                                WifiManager.LocalOnlyHotspotReservation reservation) {
-                            handleLocalHotspotStarted(generation, reservation);
-                        }
-
-                        @Override
-                        public void onStopped() {
-                            handleLocalHotspotStopped(generation);
-                        }
-
-                        @Override
-                        public void onFailed(int reason) {
-                            failLocalHotspotStartup(
-                                    generation,
-                                    "Local-only hotspot failed with reason " + reason);
-                        }
-                    },
-                    localHotspotHandler);
-            Log.i(TAG, "🔥 Local-only hotspot start requested");
+            sendVendorHotspotState(true);
+            checkVendorHotspotReadiness(generation);
+            Log.i(TAG, "🔥 K900 vendor hotspot start requested");
         } catch (Exception e) {
-            Log.e(TAG, "🔥 Error requesting local-only hotspot", e);
-            failLocalHotspotStartup(generation, "Failed to start: " + e.getMessage());
+            Log.e(TAG, "🔥 Error requesting K900 vendor hotspot", e);
+            failVendorHotspotStartup(generation, "Failed to start: " + e.getMessage());
         }
     }
 
-    private void handleLocalHotspotStarted(
-            int generation, WifiManager.LocalOnlyHotspotReservation reservation) {
-        synchronized (localHotspotLock) {
-            if (generation != localHotspotGeneration || !localHotspotStarting) {
-                Log.d(TAG, "🔥 Closing hotspot that completed after a stop request");
-                reservation.close();
-                return;
-            }
-            localHotspotStarting = false;
-            localHotspotReservation = reservation;
-        }
-
-        WifiConfiguration configuration = reservation.getWifiConfiguration();
-        String ssid = configuration != null ? unquote(configuration.SSID) : "";
-        String password = configuration != null ? unquote(configuration.preSharedKey) : "";
-        if (ssid.isEmpty() || password.isEmpty()) {
-            failLocalHotspotStartup(
-                    generation, "Local-only hotspot returned invalid credentials");
-            return;
-        }
-
-        synchronized (localHotspotLock) {
-            pendingLocalHotspotSsid = ssid;
-            pendingLocalHotspotPassword = password;
-            localHotspotReadinessDeadlineMs =
-                    SystemClock.elapsedRealtime()
-                            + AsgConstants.LOCAL_HOTSPOT_READINESS_TIMEOUT_MS;
-        }
-        checkLocalHotspotReadiness(generation);
-    }
-
-    private void checkLocalHotspotReadiness(int generation) {
+    private void checkVendorHotspotReadiness(int generation) {
         String gatewayIp = findLocalHotspotGatewayIp();
-        synchronized (localHotspotLock) {
-            pendingLocalHotspotReadiness = null;
-            if (generation != localHotspotGeneration || localHotspotReservation == null) {
+        String ssid =
+                readVendorHotspotSetting(AsgConstants.K900_VENDOR_HOTSPOT_SSID_SETTING);
+        String password =
+                readVendorHotspotSetting(AsgConstants.K900_VENDOR_HOTSPOT_PASSWORD_SETTING);
+        synchronized (mHotspotLock) {
+            mPendingHotspotReadiness = null;
+            if (generation != mHotspotGeneration || !mHotspotStarting) {
                 return;
             }
-            if (!gatewayIp.isEmpty()) {
-                onHotspotStarted(
-                        pendingLocalHotspotSsid, pendingLocalHotspotPassword, gatewayIp);
+            if (!gatewayIp.isEmpty() && !ssid.isEmpty() && !password.isEmpty()) {
+                mHotspotStarting = false;
+                onHotspotStarted(ssid, password, gatewayIp);
                 notificationManager.showHotspotStateNotification(true);
                 notificationManager.showDebugNotification(
-                        "Mentra Live Hotspot Active", pendingLocalHotspotSsid);
-                Log.i(
-                        TAG,
-                        "🔥 Local-only hotspot ready: "
-                                + pendingLocalHotspotSsid
-                                + " gateway="
-                                + gatewayIp);
+                        "Mentra Live Hotspot Active", ssid);
+                Log.i(TAG, "🔥 K900 vendor hotspot ready: " + ssid + " gateway=" + gatewayIp);
                 return;
             }
-            if (SystemClock.elapsedRealtime() >= localHotspotReadinessDeadlineMs) {
-                failLocalHotspotStartup(
-                        generation, "Local-only hotspot gateway did not become ready");
+            if (SystemClock.elapsedRealtime() >= mHotspotReadinessDeadlineMs) {
+                failVendorHotspotStartup(generation, "K900 vendor hotspot did not become ready");
                 return;
             }
-            pendingLocalHotspotReadiness = () -> checkLocalHotspotReadiness(generation);
-            localHotspotHandler.postDelayed(
-                    pendingLocalHotspotReadiness,
+            mPendingHotspotReadiness = () -> checkVendorHotspotReadiness(generation);
+            mHotspotHandler.postDelayed(
+                    mPendingHotspotReadiness,
                     AsgConstants.LOCAL_HOTSPOT_READINESS_POLL_MS);
+        }
+    }
+
+    private String readVendorHotspotSetting(String key) {
+        try {
+            String value = Settings.Global.getString(context.getContentResolver(), key);
+            return value != null ? value : "";
+        } catch (Exception e) {
+            Log.w(TAG, "🔥 Could not read K900 hotspot setting " + key, e);
+            return "";
         }
     }
 
@@ -382,78 +336,57 @@ public class K900NetworkManager extends BaseNetworkManager {
                 || AsgConstants.DEFAULT_HOTSPOT_GATEWAY_IP.equals(address);
     }
 
-    private void failLocalHotspotStartup(int generation, String errorMessage) {
+    private void failVendorHotspotStartup(int generation, String errorMessage) {
         Log.e(TAG, "🔥 " + errorMessage);
-        WifiManager.LocalOnlyHotspotReservation reservation;
-        synchronized (localHotspotLock) {
-            if (generation != localHotspotGeneration) {
+        synchronized (mHotspotLock) {
+            if (generation != mHotspotGeneration) {
                 Log.d(TAG, "🔥 Ignoring failure from a stale hotspot generation");
                 return;
             }
-            localHotspotStarting = false;
-            cancelLocalHotspotReadinessLocked();
-            reservation = localHotspotReservation;
-            localHotspotReservation = null;
+            mHotspotStarting = false;
+            mHotspotGeneration++;
+            cancelHotspotReadinessLocked();
         }
-        if (reservation != null) {
-            reservation.close();
+        try {
+            sendVendorHotspotState(false);
+        } catch (Exception e) {
+            Log.e(TAG, "🔥 Error cleaning up failed K900 hotspot", e);
         }
         onHotspotStopped();
         notifyHotspotError(errorMessage);
         notificationManager.showDebugNotification("Hotspot Failed", errorMessage);
     }
 
-    private void handleLocalHotspotStopped(int generation) {
-        synchronized (localHotspotLock) {
-            if (generation != localHotspotGeneration) {
-                Log.d(TAG, "🔥 Ignoring stop callback from a stale hotspot generation");
-                return;
-            }
-            localHotspotStarting = false;
-            localHotspotReservation = null;
-            cancelLocalHotspotReadinessLocked();
-        }
-        onHotspotStopped();
-        notificationManager.showHotspotStateNotification(false);
-        Log.i(TAG, "🔥 Local-only hotspot stopped");
-    }
-
-    private void cancelLocalHotspotReadinessLocked() {
-        if (pendingLocalHotspotReadiness != null) {
-            localHotspotHandler.removeCallbacks(pendingLocalHotspotReadiness);
-            pendingLocalHotspotReadiness = null;
+    private void cancelHotspotReadinessLocked() {
+        if (mPendingHotspotReadiness != null) {
+            mHotspotHandler.removeCallbacks(mPendingHotspotReadiness);
+            mPendingHotspotReadiness = null;
         }
     }
 
-    private String unquote(String value) {
-        if (value == null) {
-            return "";
-        }
-        if (value.length() >= 2 && value.startsWith("\"") && value.endsWith("\"")) {
-            return value.substring(1, value.length() - 1);
-        }
-        return value;
+    private void sendVendorHotspotState(boolean enabled) {
+        Intent intent = new Intent(K900_BROADCAST_ACTION);
+        intent.setPackage(K900_SYSTEM_UI_PACKAGE);
+        intent.putExtra("cmd", "ap_start");
+        intent.putExtra("enable", enabled);
+        context.sendBroadcast(intent);
     }
 
     @Override
     public void stopHotspot() {
-        Log.d(TAG, "🔥 =========================================");
-        Log.d(TAG, "🔥 STOP K900 LOCAL-ONLY HOTSPOT");
-        Log.d(TAG, "🔥 =========================================");
-
-        WifiManager.LocalOnlyHotspotReservation reservation;
-        synchronized (localHotspotLock) {
-            localHotspotStarting = false;
-            localHotspotGeneration++;
-            cancelLocalHotspotReadinessLocked();
-            reservation = localHotspotReservation;
-            localHotspotReservation = null;
+        synchronized (mHotspotLock) {
+            mHotspotStarting = false;
+            mHotspotGeneration++;
+            cancelHotspotReadinessLocked();
         }
-        if (reservation != null) {
-            reservation.close();
+        try {
+            sendVendorHotspotState(false);
+        } catch (Exception e) {
+            Log.e(TAG, "🔥 Error stopping K900 vendor hotspot", e);
         }
         onHotspotStopped();
         notificationManager.showHotspotStateNotification(false);
+        Log.i(TAG, "🔥 K900 vendor hotspot stop requested");
     }
 
     @Override
