@@ -863,6 +863,41 @@ describe("OtaInstallCoordinator BES reboot recovery", () => {
     expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalledTimes(1)
     expect(bluetoothSdkMock.requestVersionInfo).not.toHaveBeenCalled()
   })
+
+  it("does not authorize a modern BES reboot from stale legacy FINISHED progress", () => {
+    useGlassesStore.getState().setGlassesInfo({
+      connection: {state: "connected", fullyBooted: true},
+      buildNumber: "39",
+    })
+    seedBesUpdate("17.26.7.9")
+    useGlassesStore.getState().setOtaStatus(
+      inProgressStatus({
+        sessionId: "modern-bes-in-progress",
+        stepType: "bes",
+        phase: "install",
+        stepPercent: 95,
+        overallPercent: 97,
+      }),
+    )
+    // otaProgress is only a compatibility projection in a unified session. A
+    // stale terminal value must not outrank the current nonterminal ota_status.
+    useGlassesStore.getState().setOtaProgress({
+      stage: "install",
+      status: "FINISHED",
+      progress: 100,
+      bytesDownloaded: 0,
+      totalBytes: 0,
+      currentUpdate: "bes",
+    })
+    otaInstallCoordinator.attach()
+    bluetoothSdkMock.sendOtaQueryStatus.mockClear()
+
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+    setGlassesConnected()
+
+    expect(otaInstallCoordinator.snapshot().displayState).not.toBe("complete")
+    expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe("OtaInstallCoordinator APK completion by build-number increase (WP 8C-c)", () => {

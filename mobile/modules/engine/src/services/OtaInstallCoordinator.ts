@@ -1086,7 +1086,10 @@ class OtaInstallCoordinator {
       otaStatus.phase === "install" &&
       (otaStatus.status === "step_complete" || otaStatus.status === "complete")
     const progressReadyToRestart =
-      otaProgress?.currentUpdate === "bes" && otaProgress.stage === "install" && otaProgress.status === "FINISHED"
+      legacySession &&
+      otaProgress?.currentUpdate === "bes" &&
+      otaProgress.stage === "install" &&
+      otaProgress.status === "FINISHED"
 
     // progress-legacy treated a BES disconnect during active installation as the
     // expected power cycle even when its terminal FINISHED event was lost. Keep
