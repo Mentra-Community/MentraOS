@@ -458,8 +458,6 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
                                                 if (authorizationReserved) {
                                                     k900BluetoothManager.setLiveBesOtaOwner(
                                                             activeOwnerSessionId);
-                                                    deleteEphemeralArtifactLocked(
-                                                            "after durable reservation");
                                                 } else {
                                                     Log.e(
                                                             TAG,
@@ -706,6 +704,9 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
         }
         isWaitingForAuthorization = false;
         transportLease = null;
+        // SetStartInfo and SetConfig reopen the source file while negotiating the transfer.
+        // BES has now accepted apply, so no remaining protocol command needs those bytes on disk.
+        deleteEphemeralArtifactLocked("after BES accepted apply");
         bInit = false;
         fileData = null;
         sentPos = 0;

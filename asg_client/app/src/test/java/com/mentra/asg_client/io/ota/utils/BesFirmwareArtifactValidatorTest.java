@@ -50,7 +50,7 @@ public class BesFirmwareArtifactValidatorTest {
     }
 
     @Test
-    public void localArtifactIsDeletedAfterDurableReservation() throws Exception {
+    public void localArtifactSupportsEphemeralCleanup() throws Exception {
         TestArtifact artifact = createArtifact();
         BesFirmwareArtifactValidator.ValidatedBesArtifact validated =
                 BesFirmwareArtifactValidator.validateLocal(
@@ -64,7 +64,7 @@ public class BesFirmwareArtifactValidatorTest {
     }
 
     @Test
-    public void manifestArtifactRemainsAfterReservationCleanupHook() throws Exception {
+    public void manifestArtifactIgnoresEphemeralCleanup() throws Exception {
         TestArtifact artifact = createArtifact();
         BesFirmwareArtifactValidator.ValidatedBesArtifact validated =
                 BesFirmwareArtifactValidator.validate(artifact.file, artifact.metadata);
