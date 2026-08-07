@@ -48,6 +48,7 @@ public class K900NetworkManager extends BaseNetworkManager {
     private WifiManager.LocalOnlyHotspotReservation localHotspotReservation;
     private Runnable pendingLocalHotspotReadiness;
     private Runnable pendingLocalHotspotCloseCompletion;
+    private Runnable pendingStationWifiReconnect;
     private boolean localHotspotStarting;
     private boolean localHotspotIncompatibleModeRetried;
     private boolean localHotspotDisconnectedStationWifi;
@@ -55,6 +56,7 @@ public class K900NetworkManager extends BaseNetworkManager {
     private boolean localHotspotRestartRequested;
     private boolean vendorHotspotActive;
     private int localHotspotGeneration;
+    private int stationWifiReconnectAttempts;
     private long localHotspotStartupDeadlineMs;
     private long localHotspotReadinessDeadlineMs;
     private String pendingLocalHotspotSsid = "";
@@ -227,6 +229,8 @@ public class K900NetworkManager extends BaseNetworkManager {
     }
 
     private int beginLocalHotspotStartLocked() {
+        cancelStationWifiReconnectLocked();
+        stationWifiReconnectAttempts = 0;
         localHotspotStarting = true;
         localHotspotIncompatibleModeRetried = false;
         localHotspotStartupDeadlineMs =
@@ -355,7 +359,7 @@ public class K900NetworkManager extends BaseNetworkManager {
                         throw new IllegalStateException(
                                 "Failed to disconnect WiFi before vendor hotspot");
                     }
-                    localHotspotDisconnectedStationWifi = true;
+                    markStationWifiDisconnectedLocked();
                     stationWifiDisconnected = true;
                 }
             }
@@ -510,17 +514,15 @@ public class K900NetworkManager extends BaseNetworkManager {
 
         Log.w(TAG, "🔥 WiFi station mode blocked the hotspot; disconnecting and retrying once");
         try {
-            if (!wifiManager.disconnect()) {
-                failLocalHotspotStartup(
-                        generation, "Failed to disconnect WiFi before hotspot retry");
-                return;
-            }
             synchronized (localHotspotLock) {
                 if (generation != localHotspotGeneration || !localHotspotStarting) {
-                    reconnectStationWifi();
                     return;
                 }
-                localHotspotDisconnectedStationWifi = true;
+                if (!wifiManager.disconnect()) {
+                    throw new IllegalStateException(
+                            "Failed to disconnect WiFi before hotspot retry");
+                }
+                markStationWifiDisconnectedLocked();
             }
             localHotspotHandler.postDelayed(
                     () -> requestLocalOnlyHotspot(generation),
@@ -712,9 +714,6 @@ public class K900NetworkManager extends BaseNetworkManager {
                             reservation != null,
                             localHotspotClosing,
                             localHotspotDisconnectedStationWifi);
-            if (reservation == null) {
-                localHotspotDisconnectedStationWifi = false;
-            }
         }
         if (reservation != null) {
             try {
@@ -793,9 +792,6 @@ public class K900NetworkManager extends BaseNetworkManager {
             localHotspotClosing = false;
             reconnectStationWifi =
                     localHotspotDisconnectedStationWifi && !restartHotspot;
-            if (reconnectStationWifi) {
-                localHotspotDisconnectedStationWifi = false;
-            }
             if (restartHotspot) {
                 // Commit the next generation while holding the same lock that stopHotspot()
                 // uses to cancel startup. A newer stop can now invalidate this generation
@@ -825,6 +821,19 @@ public class K900NetworkManager extends BaseNetworkManager {
         }
     }
 
+    private void markStationWifiDisconnectedLocked() {
+        cancelStationWifiReconnectLocked();
+        localHotspotDisconnectedStationWifi = true;
+        stationWifiReconnectAttempts = 0;
+    }
+
+    private void cancelStationWifiReconnectLocked() {
+        if (pendingStationWifiReconnect != null) {
+            localHotspotHandler.removeCallbacks(pendingStationWifiReconnect);
+            pendingStationWifiReconnect = null;
+        }
+    }
+
     private String unquote(String value) {
         if (value == null) {
             return "";
@@ -836,13 +845,53 @@ public class K900NetworkManager extends BaseNetworkManager {
     }
 
     private void reconnectStationWifi() {
-        try {
-            if (!wifiManager.reconnect()) {
-                Log.w(TAG, "📶 Failed to request WiFi reconnection after local hotspot");
+        synchronized (localHotspotLock) {
+            cancelStationWifiReconnectLocked();
+            if (!localHotspotDisconnectedStationWifi) {
+                return;
             }
-        } catch (Exception e) {
-            Log.e(TAG, "📶 Error reconnecting WiFi after local hotspot", e);
+            if (localHotspotStarting
+                    || localHotspotClosing
+                    || localHotspotReservation != null
+                    || vendorHotspotActive
+                    || localHotspotRestartRequested) {
+                Log.d(TAG, "📶 Deferring station WiFi restoration during hotspot transition");
+                return;
+            }
+
+            stationWifiReconnectAttempts++;
+            boolean reconnectRequested = false;
+            try {
+                reconnectRequested = wifiManager.reconnect();
+            } catch (Exception e) {
+                Log.e(TAG, "📶 Error reconnecting WiFi after local hotspot", e);
+            }
+
+            if (reconnectRequested) {
+                localHotspotDisconnectedStationWifi = false;
+                stationWifiReconnectAttempts = 0;
+                Log.i(TAG, "📶 Station WiFi reconnection requested after local hotspot");
+                return;
+            }
+
+            Log.w(
+                    TAG,
+                    "📶 Failed to request WiFi reconnection after local hotspot (attempt "
+                            + stationWifiReconnectAttempts
+                            + ")");
+            if (shouldRetryStationWifiReconnect(stationWifiReconnectAttempts)) {
+                pendingStationWifiReconnect = this::reconnectStationWifi;
+                localHotspotHandler.postDelayed(
+                        pendingStationWifiReconnect,
+                        AsgConstants.LOCAL_HOTSPOT_WIFI_RECONNECT_RETRY_MS);
+            } else {
+                Log.e(TAG, "📶 Station WiFi restoration retries exhausted");
+            }
         }
+    }
+
+    static boolean shouldRetryStationWifiReconnect(int attempts) {
+        return attempts < AsgConstants.LOCAL_HOTSPOT_WIFI_RECONNECT_MAX_ATTEMPTS;
     }
 
     @Override
@@ -884,7 +933,6 @@ public class K900NetworkManager extends BaseNetworkManager {
                             localHotspotDisconnectedStationWifi);
             if (!teardownInProgress && !wasClosing) {
                 localHotspotGeneration++;
-                localHotspotDisconnectedStationWifi = false;
             }
         }
         if (stopVendorHotspot) {

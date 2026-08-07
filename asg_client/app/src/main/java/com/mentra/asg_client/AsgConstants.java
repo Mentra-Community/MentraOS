@@ -28,6 +28,12 @@ public class AsgConstants {
     /** Delay after releasing a WiFi station connection before retrying LocalOnlyHotspot. */
     public static final long LOCAL_HOTSPOT_WIFI_DISCONNECT_DELAY_MS = 500L;
 
+    /** Delay between attempts to restore station WiFi after a local hotspot stops. */
+    public static final long LOCAL_HOTSPOT_WIFI_RECONNECT_RETRY_MS = 1_000L;
+
+    /** Maximum attempts to initiate station WiFi restoration after a local hotspot stops. */
+    public static final int LOCAL_HOTSPOT_WIFI_RECONNECT_MAX_ATTEMPTS = 4;
+
     /** Delay for Android to release a closed LocalOnlyHotspot reservation before restart. */
     public static final long LOCAL_HOTSPOT_TEARDOWN_DELAY_MS = 500L;
 

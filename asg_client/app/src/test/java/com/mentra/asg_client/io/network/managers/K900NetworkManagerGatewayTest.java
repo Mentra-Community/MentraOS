@@ -69,6 +69,19 @@ public class K900NetworkManagerGatewayTest {
     }
 
     @Test
+    public void boundsStationWifiRestorationRetries() {
+        assertThat(K900NetworkManager.shouldRetryStationWifiReconnect(1)).isTrue();
+        assertThat(
+                        K900NetworkManager.shouldRetryStationWifiReconnect(
+                                AsgConstants.LOCAL_HOTSPOT_WIFI_RECONNECT_MAX_ATTEMPTS - 1))
+                .isTrue();
+        assertThat(
+                        K900NetworkManager.shouldRetryStationWifiReconnect(
+                                AsgConstants.LOCAL_HOTSPOT_WIFI_RECONNECT_MAX_ATTEMPTS))
+                .isFalse();
+    }
+
+    @Test
     public void queuesRestartDuringTheExplicitCloseWindow() {
         assertThat(K900NetworkManager.shouldQueueLocalHotspotRestart(true)).isTrue();
         assertThat(K900NetworkManager.shouldQueueLocalHotspotRestart(false)).isFalse();
