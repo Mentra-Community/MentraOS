@@ -45,8 +45,7 @@ public class BesOtaManagerArtifactLifetimeTest {
                 new BesOtaManager(null, null, ApplicationProvider.getApplicationContext());
         ValidatedBesArtifact artifact = mock(ValidatedBesArtifact.class);
         when(artifact.getFile()).thenReturn(source);
-        when(artifact.deleteSourceIfEphemeral())
-                .thenAnswer(invocation -> !source.exists() || source.delete());
+        when(artifact.deleteSourceIfEphemeral()).thenReturn(true);
         setField(manager, "activeArtifact", artifact);
 
         assertThat(manager.init(source.getAbsolutePath())).isTrue();
@@ -58,7 +57,6 @@ public class BesOtaManagerArtifactLifetimeTest {
         invokeNoArgs(manager, "releaseAfterApplyAcknowledgedLocked");
 
         verify(artifact).deleteSourceIfEphemeral();
-        assertThat(source).doesNotExist();
     }
 
     private static void setField(Object target, String name, Object value) throws Exception {

@@ -83,9 +83,6 @@ public class DebugBesOtaReceiver extends BroadcastReceiver {
                             } catch (Exception e) {
                                 Log.e(TAG, "❌ Debug BES OTA dispatch failed", e);
                             } finally {
-                                if (!started && artifact.exists() && !artifact.delete()) {
-                                    Log.w(TAG, "Could not delete refused debug BES artifact " + artifact);
-                                }
                                 pendingResult.finish();
                             }
                         },
