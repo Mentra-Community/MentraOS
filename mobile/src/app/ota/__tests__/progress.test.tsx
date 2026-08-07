@@ -258,6 +258,48 @@ describe("progress.tsx display states", () => {
     }
   })
 
+  it("reschedules chained navigation when a reboot starts during the success delay", async () => {
+    setGlassesConnected()
+    beginOtaAutoChain("initial-offer", false)
+    const replaceSpy = jest.spyOn(useNavigationStore.getState(), "replace")
+    try {
+      render(<OtaProgressScreen />)
+      act(() => {
+        useGlassesStore.getState().setOtaStatus({
+          sessionId: "s1",
+          totalSteps: 1,
+          currentStep: 1,
+          stepType: "apk",
+          phase: "install",
+          stepPercent: 100,
+          overallPercent: 100,
+          status: "complete",
+        })
+      })
+
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(300)
+      })
+      act(() => {
+        setGlassesDisconnected()
+      })
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(750)
+      })
+      expect(replaceSpy).not.toHaveBeenCalledWith("/ota/check-for-updates")
+
+      act(() => {
+        setGlassesConnected()
+      })
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(750)
+      })
+      expect(replaceSpy).toHaveBeenCalledWith("/ota/check-for-updates")
+    } finally {
+      replaceSpy.mockRestore()
+    }
+  })
+
   it("stops automatic chaining when Continue bypasses BES reboot verification", () => {
     setGlassesConnected()
     beginOtaAutoChain("initial-offer", false)

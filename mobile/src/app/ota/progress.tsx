@@ -78,8 +78,9 @@ export default function OtaProgressScreen() {
   useEffect(() => {
     if (displayState !== "complete" || !connected || !isOtaAutoChainActive() || autoChainAdvancedRef.current) return
 
-    autoChainAdvancedRef.current = true
     const timeout = setTimeout(() => {
+      if (!isOtaAutoChainActive()) return
+      autoChainAdvancedRef.current = true
       engine.ota.installSession.finish()
       replace("/ota/check-for-updates")
     }, AUTO_CHAIN_COMPLETE_DELAY_MS)
