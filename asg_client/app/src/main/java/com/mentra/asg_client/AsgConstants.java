@@ -40,6 +40,12 @@ public class AsgConstants {
     /** Current Mentra Live Android hotspot gateway when interface discovery is unavailable. */
     public static final String DEFAULT_HOTSPOT_GATEWAY_IP = "192.168.43.1";
 
+    /** Mentra Live firmware setting containing the vendor hotspot SSID. */
+    public static final String K900_VENDOR_HOTSPOT_SSID_SETTING = "xy_ssid";
+
+    /** Mentra Live firmware setting containing the vendor hotspot password. */
+    public static final String K900_VENDOR_HOTSPOT_PASSWORD_SETTING = "xy_pwd";
+
     /** Canonical camera crop defaults shared with the phone and Bluetooth SDK. */
     public static final int CAMERA_FOV_DEFAULT = 118;
 

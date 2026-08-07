@@ -35,8 +35,6 @@ public class K900NetworkManager extends BaseNetworkManager {
     // K900-specific constants
     private static final String K900_BROADCAST_ACTION = "com.xy.xsetting.action";
     private static final String K900_SYSTEM_UI_PACKAGE = "com.android.systemui";
-    private static final String K900_VENDOR_HOTSPOT_SSID_SETTING = "xy_ssid";
-    private static final String K900_VENDOR_HOTSPOT_PASSWORD_SETTING = "xy_pwd";
 
     private final WifiManager wifiManager;
     private final DebugNotificationManager notificationManager;
@@ -404,8 +402,11 @@ public class K900NetworkManager extends BaseNetworkManager {
 
     private void checkVendorHotspotReadiness(int generation) {
         String gatewayIp = findLocalHotspotGatewayIp();
-        String ssid = readVendorHotspotSetting(K900_VENDOR_HOTSPOT_SSID_SETTING, "");
-        String password = readVendorHotspotSetting(K900_VENDOR_HOTSPOT_PASSWORD_SETTING, "");
+        String ssid =
+                readVendorHotspotSetting(AsgConstants.K900_VENDOR_HOTSPOT_SSID_SETTING, "");
+        String password =
+                readVendorHotspotSetting(
+                        AsgConstants.K900_VENDOR_HOTSPOT_PASSWORD_SETTING, "");
         synchronized (localHotspotLock) {
             pendingLocalHotspotReadiness = null;
             if (generation != localHotspotGeneration
@@ -518,11 +519,13 @@ public class K900NetworkManager extends BaseNetworkManager {
                 if (generation != localHotspotGeneration || !localHotspotStarting) {
                     return;
                 }
-                if (!wifiManager.disconnect()) {
-                    throw new IllegalStateException(
-                            "Failed to disconnect WiFi before hotspot retry");
+                if (isConnectedToWifi()) {
+                    if (!wifiManager.disconnect()) {
+                        throw new IllegalStateException(
+                                "Failed to disconnect WiFi before hotspot retry");
+                    }
+                    markStationWifiDisconnectedLocked();
                 }
-                markStationWifiDisconnectedLocked();
             }
             localHotspotHandler.postDelayed(
                     () -> requestLocalOnlyHotspot(generation),
@@ -832,6 +835,23 @@ public class K900NetworkManager extends BaseNetworkManager {
             localHotspotHandler.removeCallbacks(pendingStationWifiReconnect);
             pendingStationWifiReconnect = null;
         }
+    }
+
+    private void invalidateLocalHotspotLifecycleLocked() {
+        localHotspotGeneration++;
+        localHotspotStarting = false;
+        localHotspotClosing = false;
+        localHotspotRestartRequested = false;
+        localHotspotReservation = null;
+        vendorHotspotActive = false;
+        localHotspotDisconnectedStationWifi = false;
+        stationWifiReconnectAttempts = 0;
+        pendingLocalHotspotSsid = "";
+        pendingLocalHotspotPassword = "";
+        cancelLocalHotspotReadinessLocked();
+        cancelLocalHotspotCloseCompletionLocked();
+        cancelStationWifiReconnectLocked();
+        localHotspotHandler.removeCallbacksAndMessages(null);
     }
 
     private String unquote(String value) {
@@ -1270,6 +1290,11 @@ public class K900NetworkManager extends BaseNetworkManager {
     public void shutdown() {
         Log.d(TAG, "Shutting down K900NetworkManager");
         stopHotspot();
+        synchronized (localHotspotLock) {
+            // The manager is no longer allowed to restore WiFi or complete an old hotspot
+            // generation after a replacement manager has taken ownership.
+            invalidateLocalHotspotLifecycleLocked();
+        }
         unregisterWifiStateReceiver();
         super.shutdown();
     }
