@@ -2,9 +2,12 @@ import type {OtaCheckCurrentGlassesResult} from "@mentra/engine"
 
 import {
   beginOtaAutoChain,
+  clearOtaAutoChainReconnectWait,
   isOtaAutoChainActive,
   MAX_OTA_AUTO_CHAIN_PASSES,
+  OTA_AUTO_CHAIN_RECONNECT_TIMEOUT_MS,
   otaAutoChainFingerprint,
+  otaAutoChainReconnectWaitRemaining,
   stopOtaAutoChain,
   tryAdvanceOtaAutoChain,
 } from "@/services/otaAutoChain"
@@ -86,4 +89,21 @@ it("bounds the number of automatic passes", () => {
 
   expect(tryAdvanceOtaAutoChain("one-too-many", false)).toEqual({advance: false, reason: "max_passes"})
   expect(isOtaAutoChainActive()).toBe(false)
+})
+
+it("bounds a reboot reconnect wait without extending it on subsequent renders", () => {
+  beginOtaAutoChain("pass-1", false)
+
+  expect(otaAutoChainReconnectWaitRemaining(1_000)).toBe(OTA_AUTO_CHAIN_RECONNECT_TIMEOUT_MS)
+  expect(otaAutoChainReconnectWaitRemaining(2_000)).toBe(OTA_AUTO_CHAIN_RECONNECT_TIMEOUT_MS - 1_000)
+  expect(otaAutoChainReconnectWaitRemaining(1_000 + OTA_AUTO_CHAIN_RECONNECT_TIMEOUT_MS)).toBe(0)
+})
+
+it("starts a fresh bounded wait after a successful reconnect", () => {
+  beginOtaAutoChain("pass-1", false)
+  expect(otaAutoChainReconnectWaitRemaining(1_000)).toBe(OTA_AUTO_CHAIN_RECONNECT_TIMEOUT_MS)
+
+  clearOtaAutoChainReconnectWait()
+
+  expect(otaAutoChainReconnectWaitRemaining(10_000)).toBe(OTA_AUTO_CHAIN_RECONNECT_TIMEOUT_MS)
 })

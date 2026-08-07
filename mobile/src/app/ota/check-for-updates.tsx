@@ -12,7 +12,9 @@ import {translate} from "@/i18n/translate"
 import {useNavigationStore} from "@/stores/navigation"
 import {
   beginOtaAutoChain,
+  clearOtaAutoChainReconnectWait,
   isOtaAutoChainActive,
+  otaAutoChainReconnectWaitRemaining,
   otaAutoChainFingerprint,
   stopOtaAutoChain,
   tryAdvanceOtaAutoChain,
@@ -91,6 +93,7 @@ export default function OtaCheckForUpdatesScreen() {
 
     const myGen = ++performCheckGenerationRef.current
     let cancelled = false
+    let reconnectTimeout: ReturnType<typeof setTimeout> | null = null
 
     const performCheck = async () => {
       if (checkCompletedRef.current) {
@@ -98,15 +101,23 @@ export default function OtaCheckForUpdatesScreen() {
       }
 
       if (!glassesConnected) {
-        if (checkStartedRef.current) {
-          console.log("OTA: Glasses disconnected after OTA check started - setting error state")
-          stopOtaAutoChain()
-          checkCompletedRef.current = true
-          setCheckState("error")
+        if (isOtaAutoChainActive()) {
+          const remainingMs = otaAutoChainReconnectWaitRemaining()
+          if (remainingMs === null) return
+
+          console.log(`OTA: Waiting up to ${remainingMs}ms for glasses to reconnect between chained passes`)
+          reconnectTimeout = setTimeout(() => {
+            if (cancelled || myGen !== performCheckGenerationRef.current || engine.ota.snapshot().connected) return
+
+            console.log("OTA: Timed out waiting for glasses to reconnect during automatic update chain")
+            stopOtaAutoChain()
+            checkCompletedRef.current = true
+            setCheckState("error")
+          }, remainingMs)
           return
         }
-        if (isOtaAutoChainActive()) {
-          console.log("OTA: Glasses disconnected during automatic update chain - stopping chain")
+        if (checkStartedRef.current) {
+          console.log("OTA: Glasses disconnected after OTA check started - setting error state")
           stopOtaAutoChain()
           checkCompletedRef.current = true
           setCheckState("error")
@@ -118,6 +129,7 @@ export default function OtaCheckForUpdatesScreen() {
         return
       }
 
+      clearOtaAutoChainReconnectWait()
       checkStartedRef.current = true
       const startTime = Date.now()
 
@@ -239,6 +251,7 @@ export default function OtaCheckForUpdatesScreen() {
     // Cleanup timeouts on unmount or when dependencies change
     return () => {
       cancelled = true
+      if (reconnectTimeout) clearTimeout(reconnectTimeout)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [checkKey, currentBuildNumber, mtkFirmwareVersion, besFirmwareVersion, glassesConnected, navigateToProgress])

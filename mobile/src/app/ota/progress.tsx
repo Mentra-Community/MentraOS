@@ -73,10 +73,10 @@ export default function OtaProgressScreen() {
   }, [])
 
   // A verified completion is the safe boundary between manifest generations.
-  // Keep the success state visible briefly, then re-enter the existing checker;
-  // it either starts the next admitted pass or presents the final up-to-date UI.
+  // Wait through any final reboot, keep success visible briefly, then re-enter
+  // the checker; it either starts the next pass or presents the final state.
   useEffect(() => {
-    if (displayState !== "complete" || !isOtaAutoChainActive() || autoChainAdvancedRef.current) return
+    if (displayState !== "complete" || !connected || !isOtaAutoChainActive() || autoChainAdvancedRef.current) return
 
     autoChainAdvancedRef.current = true
     const timeout = setTimeout(() => {
@@ -85,7 +85,7 @@ export default function OtaProgressScreen() {
     }, AUTO_CHAIN_COMPLETE_DELAY_MS)
 
     return () => clearTimeout(timeout)
-  }, [displayState, replace])
+  }, [connected, displayState, replace])
 
   const handleContinue = () => {
     engine.ota.installSession.finish()

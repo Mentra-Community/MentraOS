@@ -221,6 +221,41 @@ describe("progress.tsx display states", () => {
     replaceSpy.mockRestore()
   })
 
+  it("waits for a rebooting chained pass to reconnect before checking again", async () => {
+    setGlassesConnected()
+    beginOtaAutoChain("initial-offer", false)
+    const replaceSpy = jest.spyOn(useNavigationStore.getState(), "replace")
+    render(<OtaProgressScreen />)
+
+    act(() => {
+      useGlassesStore.getState().setOtaStatus({
+        sessionId: "s1",
+        totalSteps: 1,
+        currentStep: 1,
+        stepType: "apk",
+        phase: "install",
+        stepPercent: 100,
+        overallPercent: 100,
+        status: "complete",
+      })
+      setGlassesDisconnected()
+    })
+
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(750)
+    })
+    expect(replaceSpy).not.toHaveBeenCalledWith("/ota/check-for-updates")
+
+    act(() => {
+      setGlassesConnected()
+    })
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(750)
+    })
+    expect(replaceSpy).toHaveBeenCalledWith("/ota/check-for-updates")
+    replaceSpy.mockRestore()
+  })
+
   it("transitions to failed on failed ota_status with error", () => {
     setGlassesConnected()
     const {getByText} = render(<OtaProgressScreen />)

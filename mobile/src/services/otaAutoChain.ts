@@ -1,10 +1,12 @@
 import type {OtaCheckCurrentGlassesResult} from "@mentra/engine"
 
 export const MAX_OTA_AUTO_CHAIN_PASSES = 8
+export const OTA_AUTO_CHAIN_RECONNECT_TIMEOUT_MS = 120_000
 
 type OtaAutoChainSession = {
   approvedDowngrade: boolean
   passCount: number
+  reconnectDeadline: number | null
   seenFingerprints: Set<string>
 }
 
@@ -44,6 +46,7 @@ export function beginOtaAutoChain(initialFingerprint: string, approvedDowngrade:
   session = {
     approvedDowngrade,
     passCount: 1,
+    reconnectDeadline: null,
     seenFingerprints: new Set([initialFingerprint]),
   }
 }
@@ -55,6 +58,22 @@ export function isOtaAutoChainActive(): boolean {
 /** End the current chain. Safe to call when no chain is active. */
 export function stopOtaAutoChain(): void {
   session = null
+}
+
+/**
+ * Start (or continue) the bounded wait for glasses that are rebooting between
+ * passes. Re-renders must not extend the original deadline indefinitely.
+ */
+export function otaAutoChainReconnectWaitRemaining(now = Date.now()): number | null {
+  if (!session) return null
+
+  session.reconnectDeadline ??= now + OTA_AUTO_CHAIN_RECONNECT_TIMEOUT_MS
+  return Math.max(0, session.reconnectDeadline - now)
+}
+
+/** A successful reconnect allows a future pass to establish a fresh wait. */
+export function clearOtaAutoChainReconnectWait(): void {
+  if (session) session.reconnectDeadline = null
 }
 
 /**
