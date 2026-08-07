@@ -2,7 +2,6 @@ package com.mentra.asg_client.io.bes;
 
 import android.content.Context;
 import android.util.Log;
-
 import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.bes.events.BesOtaProgressEvent;
 import com.mentra.asg_client.io.bes.protocol.*;
@@ -11,16 +10,16 @@ import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.BesUartTransportCoordinator;
 import com.mentra.asg_client.io.bluetooth.utils.ByteUtil;
 import com.mentra.asg_client.io.ota.interfaces.IBesOtaController;
+import com.mentra.asg_client.io.ota.utils.BesFirmwareArtifactValidator.ValidatedBesArtifact;
+import com.mentra.asg_client.io.ota.utils.BesFirmwareArtifactValidator.ValidationException;
 import com.mentra.asg_client.logging.BleTraceLogger;
 import com.mentra.asg_client.utils.WakeLockManager;
-
-import org.greenrobot.eventbus.EventBus;
-import org.json.JSONObject;
-
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import org.greenrobot.eventbus.EventBus;
+import org.json.JSONObject;
 
 /**
  * Manages BES2700 firmware OTA updates Handles file loading, packet transmission, state tracking,
@@ -40,6 +39,9 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
     // longer, treat the transfer as failed rather than extending the operation timeout.
     private static final long BES_TOTAL_TIMEOUT_MS = 300000;
     private static final long BES_AUTH_TIMEOUT_MS = 30000; // 30 seconds authorization timeout
+    private static final long BES_AUTH_RECOVERY_PROBE_INTERVAL_MS = 1000;
+    private static final int BES_AUTH_RECOVERY_PROBE_MAX_ATTEMPTS = 3;
+    private static final long BES_APPLY_WAIT_TIMEOUT_MS = 60_000;
     private Context mContext;
 
     private long operationStartTime = 0;
@@ -80,8 +82,18 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
     private int confirmSentPos = 0;
     private boolean bWait4Confirm = false;
     private volatile boolean isWaitingForAuthorization = false;
+    private boolean authorizationReserved = false;
+    private boolean authorizationRecoveryProbePending = false;
+    private int authorizationRecoveryProbeAttempts = 0;
+    private android.os.Handler authorizationRecoveryProbeHandler;
+    private Runnable authorizationRecoveryProbeRunnable;
+    private android.os.Handler applyWaitHandler;
+    private Runnable applyWaitRunnable;
+    private String activeOwnerSessionId = "";
+    private ValidatedBesArtifact activeArtifact;
 
     private final Runnable otaAppliedCallback;
+    private final BesOtaStateStore stateStore;
     private final BesUartTransportCoordinator transportCoordinator;
     private BesUartTransportCoordinator.OperationLease transportLease;
     private BesOtaCommandListener mListener;
@@ -103,6 +115,10 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
                         ? k900BluetoothManager.getTransportCoordinator()
                         : null;
         this.mContext = context.getApplicationContext();
+        BesOtaStateStore sharedStore =
+                k900BluetoothManager != null ? k900BluetoothManager.getBesOtaStateStore() : null;
+        this.stateStore = sharedStore != null ? sharedStore : new BesOtaStateStore(this.mContext);
+        resumeDurableApplyWaitIfNeeded();
     }
 
     /**
@@ -110,7 +126,10 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
      */
     @Override
     public boolean isBesOtaInProgress() {
-        return isBesOtaInProgress;
+        BesOtaStateStore.Snapshot snapshot = stateStore.read();
+        return isBesOtaInProgress
+                || snapshot.isCorrupt()
+                || (snapshot.isValid() && snapshot.getState() != BesOtaStateStore.State.TERMINAL);
     }
 
     /**
@@ -281,15 +300,95 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
     /**
      * Start firmware update process
      *
-     * @param filePath Path to firmware .bin file
+     * @param artifact fully validated release artifact
+     * @param ownerSessionId top-level OTA session owner
      * @return true if started successfully
      */
     @Override
-    public boolean startFirmwareUpdate(String filePath) {
-        Log.i(TAG, "startFirmwareUpdate: " + filePath);
+    public boolean startFirmwareUpdate(ValidatedBesArtifact artifact, String ownerSessionId) {
+        synchronized (mTransferGate) {
+            if (isBesOtaInProgress || isWaitingForAuthorization || activeArtifact != null) {
+                Log.e(TAG, "BES OTA is already active");
+                return false;
+            }
+            String owner = ownerSessionId == null ? "" : ownerSessionId.trim();
+            if (artifact == null || owner.isEmpty()) {
+                Log.e(TAG, "BES OTA requires a validated artifact and owning session");
+                return false;
+            }
+            activeArtifact = artifact;
+            activeOwnerSessionId = owner;
+            return startFirmwareUpdateLocked();
+        }
+    }
+
+    @Override
+    public JSONObject getAuthoritativeStatus() {
+        BesOtaStateStore.Snapshot snapshot = stateStore.read();
+        if (snapshot.isIdle()) {
+            return null;
+        }
+        try {
+            JSONObject status = new JSONObject();
+            status.put("type", "ota_status");
+            if (snapshot.isCorrupt()) {
+                status.put(
+                        "sid",
+                        activeOwnerSessionId.isEmpty()
+                                ? "bes-state-uncertain"
+                                : activeOwnerSessionId);
+                status.put("st", "bes");
+                status.put("phase", "install");
+                status.put("status", "failed");
+                status.put("err", "install_failed");
+                return status;
+            }
+            status.put("sid", snapshot.getOwnerSessionId());
+            status.put("st", "bes");
+            status.put("phase", "install");
+            if (snapshot.getState() == BesOtaStateStore.State.TERMINAL) {
+                boolean success =
+                        snapshot.getTerminalStatus() == BesOtaStateStore.TerminalStatus.SUCCESS;
+                status.put("status", success ? "complete" : "failed");
+                if (success) {
+                    status.put("op", 100);
+                } else {
+                    status.put("err", "install_failed");
+                }
+            } else {
+                status.put("status", "in_progress");
+                status.put(
+                        "op", snapshot.getState() == BesOtaStateStore.State.APPLY_PENDING ? 99 : 0);
+            }
+            return status;
+        } catch (Exception e) {
+            Log.e(TAG, "Could not project authoritative BES OTA status", e);
+            return null;
+        }
+    }
+
+    @Override
+    public boolean prepareForNewOtaSession() {
+        boolean framedProof =
+                k900BluetoothManager != null && k900BluetoothManager.isFramedPathProven();
+        BesOtaStateStore.StartDecision decision =
+                stateStore.prepareForNewSession(stateStore.currentBootId(), framedProof);
+        Log.i(TAG, "BES OTA new-session decision: " + decision);
+        return decision == BesOtaStateStore.StartDecision.ADMIT;
+    }
+
+    private boolean startFirmwareUpdateLocked() {
+        String filePath = activeArtifact.getFile().getAbsolutePath();
+        Log.i(
+                TAG,
+                "startFirmwareUpdate artifact="
+                        + activeArtifact.getArtifactId()
+                        + " target="
+                        + activeArtifact.getTargetVersion());
 
         if (!init(filePath)) {
             Log.e(TAG, "Failed to initialize firmware update");
+            clearRunIdentityLocked();
             return false;
         }
 
@@ -332,17 +431,48 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
                                         public boolean onLeaseAcquired(
                                                 BesUartTransportCoordinator.OperationLease lease) {
                                             synchronized (mTransferGate) {
-                                                if (!isWaitingForAuthorization) {
+                                                if (!isWaitingForAuthorization
+                                                        || activeArtifact == null
+                                                        || activeOwnerSessionId.isEmpty()) {
                                                     return false;
                                                 }
                                                 transportLease = lease;
-                                                return true;
+                                                try {
+                                                    activeArtifact.revalidateFileDigest();
+                                                } catch (ValidationException e) {
+                                                    Log.e(
+                                                            TAG,
+                                                            "BES artifact changed before"
+                                                                    + " authorization",
+                                                            e);
+                                                    return false;
+                                                }
+                                                BesOtaStateStore.TransitionResult reserved =
+                                                        stateStore.reserveAuthorization(
+                                                                activeOwnerSessionId,
+                                                                stateStore.currentBootId(),
+                                                                activeArtifact);
+                                                authorizationReserved =
+                                                        reserved
+                                                                == BesOtaStateStore.TransitionResult
+                                                                        .APPLIED;
+                                                if (authorizationReserved) {
+                                                    k900BluetoothManager.setLiveBesOtaOwner(
+                                                            activeOwnerSessionId);
+                                                } else {
+                                                    Log.e(
+                                                            TAG,
+                                                            "Could not reserve BES authorization: "
+                                                                    + reserved);
+                                                }
+                                                return authorizationReserved;
                                             }
                                         }
 
                                         @Override
-                                        public void onWriteComplete(boolean success) {
-                                            onAuthorizationWriteComplete(success);
+                                        public void onWriteComplete(
+                                                boolean attempted, boolean success) {
+                                            onAuthorizationWriteComplete(attempted, success);
                                         }
                                     });
             if (queued) {
@@ -377,18 +507,33 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
         }
     }
 
-    private void onAuthorizationWriteComplete(boolean success) {
+    private void onAuthorizationWriteComplete(boolean attempted, boolean success) {
         synchronized (mTransferGate) {
             if (!isWaitingForAuthorization) {
                 return;
             }
-            if (!success) {
+            if (!authorizationReserved) {
                 EventBus.getDefault()
                         .post(
                                 BesOtaProgressEvent.createFailed(
-                                        "Failed to write BES OTA authorization request"));
+                                        "BES OTA authorization could not be reserved"));
                 cleanupLocked();
                 return;
+            }
+            if (!attempted) {
+                Log.e(TAG, "mh_ota was reserved but could not be submitted");
+                failDurablyLocked("authorization_not_attempted");
+                cleanupLocked();
+                return;
+            }
+            if (!success) {
+                // sendMessageInternalLocked can report false after a partial UART write. Because
+                // mh_ota is mode-changing and uncorrelated, local failure does not prove BES did
+                // not receive it. Keep the one reservation and wait for hm_ota exactly as on a
+                // locally successful write; retrying mh_ota in this boot is forbidden.
+                Log.w(
+                        TAG,
+                        "mh_ota write result is ambiguous; waiting for hm_ota without resending");
             }
 
             authTimeoutHandler = new android.os.Handler(android.os.Looper.getMainLooper());
@@ -403,16 +548,171 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
                                     "BES OTA authorization timeout after "
                                             + BES_AUTH_TIMEOUT_MS
                                             + "ms");
-                            EventBus.getDefault()
-                                    .post(
-                                            BesOtaProgressEvent.createFailed(
-                                                    "BES chip did not respond to authorization"
-                                                            + " request"));
-                            cleanupLocked();
+                            authTimeoutHandler = null;
+                            authTimeoutRunnable = null;
+                            beginAuthorizationRecoveryProbeLocked();
                         }
                     };
             authTimeoutHandler.postDelayed(authTimeoutRunnable, BES_AUTH_TIMEOUT_MS);
         }
+    }
+
+    /**
+     * Reconcile a missing framed hm_ota without repeating the mode-changing request. The 0x99 query
+     * is read-only in raw OTA mode and contains no framed K900 marker in normal mode.
+     */
+    private void beginAuthorizationRecoveryProbeLocked() {
+        if (transportCoordinator == null
+                || !transportCoordinator.promoteOtaAuthorizationToTransfer(transportLease)) {
+            failDurablyLocked("authorization_unreconciled");
+            cleanupLocked();
+            return;
+        }
+        Log.w(TAG, "hm_ota missing; probing raw OTA protocol without resending mh_ota");
+        isWaitingForAuthorization = false;
+        authorizationRecoveryProbePending = true;
+        authorizationRecoveryProbeAttempts = 0;
+        sendNextAuthorizationRecoveryProbeLocked();
+    }
+
+    private void sendNextAuthorizationRecoveryProbeLocked() {
+        if (!authorizationRecoveryProbePending) {
+            return;
+        }
+        if (authorizationRecoveryProbeAttempts >= BES_AUTH_RECOVERY_PROBE_MAX_ATTEMPTS) {
+            failDurablyLocked("authorization_unreconciled");
+            cleanupLocked();
+            return;
+        }
+        authorizationRecoveryProbeAttempts++;
+        boolean sent = send(SCmd_GetProtocolVersion());
+        Log.w(
+                TAG,
+                "Raw BES OTA state probe "
+                        + authorizationRecoveryProbeAttempts
+                        + "/"
+                        + BES_AUTH_RECOVERY_PROBE_MAX_ATTEMPTS
+                        + " writeResult="
+                        + sent);
+        authorizationRecoveryProbeHandler =
+                new android.os.Handler(android.os.Looper.getMainLooper());
+        String expectedOwner = activeOwnerSessionId;
+        authorizationRecoveryProbeRunnable =
+                () -> {
+                    synchronized (mTransferGate) {
+                        if (!expectedOwner.equals(activeOwnerSessionId)) {
+                            return;
+                        }
+                        sendNextAuthorizationRecoveryProbeLocked();
+                    }
+                };
+        authorizationRecoveryProbeHandler.postDelayed(
+                authorizationRecoveryProbeRunnable, BES_AUTH_RECOVERY_PROBE_INTERVAL_MS);
+    }
+
+    private void cancelAuthorizationRecoveryProbeLocked() {
+        if (authorizationRecoveryProbeHandler != null
+                && authorizationRecoveryProbeRunnable != null) {
+            authorizationRecoveryProbeHandler.removeCallbacks(authorizationRecoveryProbeRunnable);
+        }
+        authorizationRecoveryProbeHandler = null;
+        authorizationRecoveryProbeRunnable = null;
+        authorizationRecoveryProbePending = false;
+        authorizationRecoveryProbeAttempts = 0;
+    }
+
+    private void failDurablyLocked(String code) {
+        if (authorizationReserved && !activeOwnerSessionId.isEmpty()) {
+            BesOtaStateStore.TransitionResult result = stateStore.fail(activeOwnerSessionId, code);
+            if (result != BesOtaStateStore.TransitionResult.APPLIED
+                    && result != BesOtaStateStore.TransitionResult.ALREADY_TERMINAL) {
+                Log.e(TAG, "Could not persist BES OTA failure " + code + ": " + result);
+            }
+        }
+        EventBus.getDefault().post(BesOtaProgressEvent.createFailed(code));
+    }
+
+    private void resumeDurableApplyWaitIfNeeded() {
+        synchronized (mTransferGate) {
+            BesOtaStateStore.Snapshot snapshot = stateStore.read();
+            String bootId = stateStore.currentBootId();
+            if (!snapshot.isValid()
+                    || snapshot.getState() != BesOtaStateStore.State.APPLY_PENDING
+                    || bootId == null
+                    || !bootId.equals(snapshot.getAuthorizationBootId())) {
+                return;
+            }
+            activeOwnerSessionId = snapshot.getOwnerSessionId();
+            authorizationReserved = true;
+            isBesOtaInProgress = true;
+            if (k900BluetoothManager != null) {
+                k900BluetoothManager.setLiveBesOtaOwner(activeOwnerSessionId);
+            }
+            armApplyWaitLocked();
+        }
+    }
+
+    private void armApplyWaitLocked() {
+        cancelApplyWaitLocked();
+        applyWaitHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+        String expectedOwner = activeOwnerSessionId;
+        applyWaitRunnable =
+                () -> {
+                    synchronized (mTransferGate) {
+                        BesOtaStateStore.Snapshot snapshot = stateStore.read();
+                        String bootId = stateStore.currentBootId();
+                        if (!expectedOwner.equals(activeOwnerSessionId)
+                                || !snapshot.isValid()
+                                || snapshot.getState() != BesOtaStateStore.State.APPLY_PENDING
+                                || !expectedOwner.equals(snapshot.getOwnerSessionId())
+                                || bootId == null
+                                || !bootId.equals(snapshot.getAuthorizationBootId())) {
+                            return;
+                        }
+                        Log.e(TAG, "BES did not leave the authorization boot after apply");
+                        failDurablyLocked("apply_reboot_timeout");
+                        if (transportCoordinator != null) {
+                            transportCoordinator.quarantineCurrentSession();
+                        }
+                        isBesOtaInProgress = false;
+                        if (k900BluetoothManager != null) {
+                            k900BluetoothManager.setLiveBesOtaOwner("");
+                        }
+                        clearRunIdentityLocked();
+                    }
+                };
+        applyWaitHandler.postDelayed(applyWaitRunnable, BES_APPLY_WAIT_TIMEOUT_MS);
+    }
+
+    private void cancelApplyWaitLocked() {
+        if (applyWaitHandler != null && applyWaitRunnable != null) {
+            applyWaitHandler.removeCallbacks(applyWaitRunnable);
+        }
+        applyWaitHandler = null;
+        applyWaitRunnable = null;
+    }
+
+    private void releaseAfterApplyAcknowledgedLocked() {
+        cancelAuthorizationRecoveryProbeLocked();
+        if (responseWatchdogHandler != null && responseWatchdogRunnable != null) {
+            responseWatchdogHandler.removeCallbacks(responseWatchdogRunnable);
+            responseWatchdogRunnable = null;
+        }
+        responseWatchdogDeadlineMs = 0;
+        operationStartTime = 0;
+        synchronized (mLeaseGate) {
+            WakeLockManager.release(WakeLockManager.WakeOwner.BES_OTA);
+        }
+        isWaitingForAuthorization = false;
+        transportLease = null;
+        // SetStartInfo and SetConfig reopen the source file while negotiating the transfer.
+        // BES has now accepted apply, so no remaining protocol command needs those bytes on disk.
+        deleteEphemeralArtifactLocked("after BES accepted apply");
+        bInit = false;
+        fileData = null;
+        sentPos = 0;
+        confirmTimes = 0;
+        armApplyWaitLocked();
     }
 
     /**
@@ -440,12 +740,25 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
     }
 
     private void cleanupLocked() {
+        if (authorizationReserved && !activeOwnerSessionId.isEmpty()) {
+            BesOtaStateStore.Snapshot current = stateStore.read();
+            if (current.isValid() && current.getState() == BesOtaStateStore.State.AUTH_ATTEMPTED) {
+                BesOtaStateStore.TransitionResult result =
+                        stateStore.fail(activeOwnerSessionId, "install_failed");
+                if (result != BesOtaStateStore.TransitionResult.APPLIED
+                        && result != BesOtaStateStore.TransitionResult.ALREADY_TERMINAL) {
+                    Log.e(TAG, "Could not persist fallback BES OTA failure: " + result);
+                }
+            }
+        }
         // Cancel authorization timeout if pending
         if (authTimeoutHandler != null && authTimeoutRunnable != null) {
             authTimeoutHandler.removeCallbacks(authTimeoutRunnable);
             authTimeoutHandler = null;
             authTimeoutRunnable = null;
         }
+        cancelAuthorizationRecoveryProbeLocked();
+        cancelApplyWaitLocked();
 
         // Cancel the response watchdog; cleanup is the single funnel for every terminal
         // path (apply success, CRC failure, watchdog abort), so no timer outlives the run.
@@ -466,13 +779,41 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
         Log.i(TAG, "BES OTA wakelock released");
         isWaitingForAuthorization = false;
         if (transportCoordinator != null) {
-            transportCoordinator.endOta(transportLease);
+            BesOtaStateStore.UartPolicy policy =
+                    stateStore.uartPolicy(stateStore.currentBootId(), false, activeOwnerSessionId);
+            if (authorizationReserved && policy != BesOtaStateStore.UartPolicy.NORMAL) {
+                transportCoordinator.quarantineOta(transportLease);
+            } else {
+                transportCoordinator.endOta(transportLease);
+            }
         }
         transportLease = null;
         bInit = false;
         fileData = null;
         sentPos = 0;
         confirmTimes = 0;
+        if (k900BluetoothManager != null) {
+            k900BluetoothManager.setLiveBesOtaOwner("");
+        }
+        clearRunIdentityLocked();
+    }
+
+    private void clearRunIdentityLocked() {
+        deleteEphemeralArtifactLocked("while clearing BES run identity");
+        authorizationReserved = false;
+        activeOwnerSessionId = "";
+        activeArtifact = null;
+    }
+
+    private void deleteEphemeralArtifactLocked(String reason) {
+        if (activeArtifact != null && !activeArtifact.deleteSourceIfEphemeral()) {
+            Log.w(
+                    TAG,
+                    "Could not delete ephemeral BES artifact "
+                            + activeArtifact.getFile()
+                            + " "
+                            + reason);
+        }
     }
 
     /**
@@ -489,8 +830,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
 
             if (!transportCoordinator.promoteOtaAuthorizationToTransfer(transportLease)) {
                 Log.e(TAG, "Could not promote UART to BES OTA transfer mode");
-                EventBus.getDefault()
-                        .post(BesOtaProgressEvent.createFailed("BES UART is no longer ready"));
+                failDurablyLocked("uart_not_ready");
                 cleanupLocked();
                 return;
             }
@@ -517,8 +857,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
                 Log.i(TAG, "BES OTA protocol started successfully");
             } else {
                 Log.e(TAG, "Failed to send first protocol command");
-                EventBus.getDefault()
-                        .post(BesOtaProgressEvent.createFailed("Failed to start protocol"));
+                failDurablyLocked("protocol_start_failed");
                 cleanupLocked();
             }
         }
@@ -534,8 +873,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
                 authTimeoutHandler = null;
                 authTimeoutRunnable = null;
             }
-            EventBus.getDefault()
-                    .post(BesOtaProgressEvent.createFailed("BES chip denied OTA authorization"));
+            failDurablyLocked("authorization_denied");
             cleanupLocked();
         }
     }
@@ -874,6 +1212,10 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
         BesOtaMessage otaMsg = parseRecv(data, 0, size);
         if (otaMsg != null) {
             if (!otaMsg.error) {
+                if (transportCoordinator != null
+                        && transportCoordinator.onSafetyRawProtocolResponse(otaMsg.cmd)) {
+                    return;
+                }
                 dealOtaRecvCmd(otaMsg);
             } else {
                 Log.e(TAG, "Received error in OTA message");
@@ -940,13 +1282,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
                         } catch (Exception ignored) {
                             // Trace logging must never affect the abort itself.
                         }
-                        EventBus.getDefault()
-                                .post(
-                                        BesOtaProgressEvent.createFailed(
-                                                "No response from BES for "
-                                                        + (AsgConstants.BES_OTA_RESPONSE_TIMEOUT_MS
-                                                                / 1000)
-                                                        + "s"));
+                        failDurablyLocked("response_timeout");
                         cleanup();
                     }
                 };
@@ -978,10 +1314,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
                     "BES firmware update timeout — chip may be unresponsive (elapsed: "
                             + (android.os.SystemClock.elapsedRealtime() - operationStartTime)
                             + "ms)");
-            EventBus.getDefault()
-                    .post(
-                            BesOtaProgressEvent.createFailed(
-                                    "BES firmware update timeout — chip may be unresponsive"));
+            failDurablyLocked("total_timeout");
             cleanup();
             return;
         }
@@ -997,6 +1330,11 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
         }
 
         if (msg.cmd == BesProtocolConstants.RCMD_GET_PROTOCOL_VERSION) {
+            if (authorizationRecoveryProbePending) {
+                Log.i(TAG, "Raw BES OTA mode proven after missing hm_ota");
+                cancelAuthorizationRecoveryProbeLocked();
+                rearmResponseWatchdog();
+            }
             byte[] data = SCmd_SetUser();
             Log.d(
                     TAG,
@@ -1173,20 +1511,58 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
                 }
             } else {
                 Log.e(TAG, "Segment verify error");
-                EventBus.getDefault()
-                        .post(BesOtaProgressEvent.createFailed("Segment verification failed"));
+                failDurablyLocked("segment_verify_failed");
                 cleanup();
             }
         } else if (msg.cmd == BesProtocolConstants.RCMD_SEND_FINISH) {
             if (msg.len == 1 && msg.body != null && msg.body[0] == 1) {
+                Log.i(
+                        TAG,
+                        "BES_OTA_DIAG apply_boundary=before_persist owner="
+                                + activeOwnerSessionId
+                                + " snapshot={"
+                                + stateStore.read().toDiagnosticString()
+                                + "}");
+                BesOtaStateStore.TransitionResult applyPending =
+                        stateStore.markApplyPending(activeOwnerSessionId);
+                if (applyPending != BesOtaStateStore.TransitionResult.APPLIED) {
+                    Log.e(TAG, "Refusing BES apply because durable commit failed: " + applyPending);
+                    failDurablyLocked("apply_persistence_failed");
+                    cleanup();
+                    return;
+                }
                 byte[] data = SCmd_OtaApply();
+                Log.i(
+                        TAG,
+                        "BES_OTA_DIAG apply_boundary=before_uart_write owner="
+                                + activeOwnerSessionId
+                                + " persist_result="
+                                + applyPending
+                                + " snapshot={"
+                                + stateStore.read().toDiagnosticString()
+                                + "}");
                 Log.d(
                         TAG,
                         "Sending OtaApply command, data="
                                 + (data != null
                                         ? ByteUtil.outputHexString(data, 0, data.length)
                                         : "null"));
-                send(data);
+                armApplyWaitLocked();
+                boolean sent = send(data);
+                Log.i(
+                        TAG,
+                        "BES_OTA_DIAG apply_boundary=after_uart_write owner="
+                                + activeOwnerSessionId
+                                + " write_accepted="
+                                + sent
+                                + " snapshot={"
+                                + stateStore.read().toDiagnosticString()
+                                + "}");
+                if (!sent) {
+                    // APPLY_PENDING was committed first. A local write failure is ambiguous, so
+                    // retrying 0x92 could apply twice; retain the record and wait for reboot.
+                    Log.w(TAG, "OtaApply write result is ambiguous; not retrying 0x92");
+                }
             } else {
                 Log.e(TAG, "❌ ========== WHOLE CRC32 CHECK FAILED ==========");
                 Log.e(
@@ -1214,26 +1590,30 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
                     Log.e(TAG, "❌ SIZE MISMATCH! sentPos=" + sentPos + " != fileLen=" + fileLen);
                 }
                 Log.e(TAG, "❌ =============================================");
-                EventBus.getDefault()
-                        .post(
-                                BesOtaProgressEvent.createFailed(
-                                        "Whole CRC32 check failed - data corruption?"));
+                failDurablyLocked("whole_image_verify_failed");
                 cleanup();
             }
         } else if (msg.cmd == BesProtocolConstants.RCMD_APPLY) {
+            Log.i(
+                    TAG,
+                    "BES_OTA_DIAG apply_ack len="
+                            + msg.len
+                            + " accepted="
+                            + (msg.len == 1 && msg.body != null && msg.body[0] == 1)
+                            + " snapshot={"
+                            + stateStore.read().toDiagnosticString()
+                            + "}");
             if (msg.len == 1 && msg.body != null && msg.body[0] == 1) {
-                Log.i(TAG, "BES firmware update SUCCESS! BES will reboot.");
-                EventBus.getDefault().post(BesOtaProgressEvent.createFinished());
+                Log.i(TAG, "BES accepted apply; awaiting reboot and exact version verification");
+                releaseAfterApplyAcknowledgedLocked();
                 if (otaAppliedCallback != null) {
                     otaAppliedCallback.run();
                 }
             } else {
                 Log.e(TAG, "Apply firmware error");
-                EventBus.getDefault()
-                        .post(BesOtaProgressEvent.createFailed("Failed to apply firmware"));
+                failDurablyLocked("apply_rejected");
+                cleanup();
             }
-            // Cleanup regardless
-            cleanup();
         }
     }
 
@@ -1259,8 +1639,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
             addSentSize(payloadSize);
         } else {
             Log.e(TAG, "❌ Failed to send file data packet at sentPos=" + sentPos);
-            EventBus.getDefault()
-                    .post(BesOtaProgressEvent.createFailed("Failed to send firmware data"));
+            failDurablyLocked("data_send_failed");
             cleanup();
         }
     }

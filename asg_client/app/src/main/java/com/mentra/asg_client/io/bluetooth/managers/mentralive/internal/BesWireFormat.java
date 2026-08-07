@@ -39,9 +39,6 @@ public class BesWireFormat {
 
     public static final int BINARY_HEADER_SIZE = 7;
     public static final int LENGTH_CMD_MIN_SIZE = 7; // ## + type + innerLen(2) + $$
-    public static final int MTU_TARGET = 509;
-    public static final int MAX_FRAGMENT_PAYLOAD = 480;
-    public static final int MAX_PACKED_FRAME_SIZE = MTU_TARGET;
     public static final int PROTOCOL_VERSION_V1 = 1;
     public static final int PROTOCOL_VERSION_V2 = 2;
     public static final String HANDSHAKE_PAYLOAD_V2 = "v2";

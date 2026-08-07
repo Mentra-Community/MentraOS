@@ -34,7 +34,8 @@ public class BinaryMessageChunkerTest {
         List<byte[]> frames = MessageChunker.createBinaryFragments(json, 7);
 
         assertThat(frames).hasSize(1);
-        assertThat(frames.get(0).length).isLessThanOrEqualTo(MessageChunker.MAX_PACKED_CHUNK_SIZE);
+        assertThat(frames.get(0).length)
+                .isLessThanOrEqualTo(MessageChunker.maxPackedFrameSize());
 
         BesWireFormat.BinaryHeader header = BesWireFormat.parseBinaryHeader(frames.get(0));
         assertThat(header.valid).isTrue();
@@ -60,7 +61,8 @@ public class BinaryMessageChunkerTest {
 
         int totalPayload = 0;
         for (int i = 0; i < frames.size(); i++) {
-            assertThat(frames.get(i).length).isLessThanOrEqualTo(MessageChunker.MAX_PACKED_CHUNK_SIZE);
+            assertThat(frames.get(i).length)
+                    .isLessThanOrEqualTo(MessageChunker.maxPackedFrameSize());
             BesWireFormat.BinaryHeader header = BesWireFormat.parseBinaryHeader(frames.get(i));
             assertThat(header.valid).isTrue();
             assertThat(header.msgId).isEqualTo(99);
@@ -71,18 +73,6 @@ public class BinaryMessageChunkerTest {
 
         byte[] outbound = BesWireFormat.buildOutboundPayloadBytes(json);
         assertThat(totalPayload).isEqualTo(outbound.length);
-    }
-
-    @Test
-    public void needsChunking_usesHigherThresholdWhenBinaryActive() {
-        String small = "{\"type\":\"ping\"}";
-        String large =
-                "{\"type\":\"stream_status\",\"d\":\""
-                        + "a".repeat(BesWireFormat.MAX_FRAGMENT_PAYLOAD + 1)
-                        + "\"}";
-
-        assertThat(MessageChunker.needsChunking(small)).isFalse();
-        assertThat(MessageChunker.needsChunking(large)).isTrue();
     }
 
     @Test

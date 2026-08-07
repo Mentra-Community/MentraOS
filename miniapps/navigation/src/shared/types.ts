@@ -22,6 +22,8 @@ export type VoiceGuidanceMode = "off" | "essential" | "full"
 export type GlassesCapabilitySnapshot = {
   modelName: string | null
   hasDisplay: boolean
+  /** True when the glasses can render positioned scene elements. */
+  canPosition: boolean
   hasSpeaker: boolean
   hasButton: boolean
 }

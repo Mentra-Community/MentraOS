@@ -310,7 +310,11 @@ class MentraLive : SGCManager() {
             val queuedAtMs: Long
     )
 
-    private data class QueuedBleWrite(val data: ByteArray, val trace: BleWriteTrace?)
+    private data class QueuedBleWrite(
+            val data: ByteArray,
+            val trace: BleWriteTrace?,
+            val sessionGeneration: Long
+    )
 
     private var sendQueue = ConcurrentLinkedQueue<QueuedBleWrite>()
     private val bleWriteTraceSequence = AtomicLong(1)
@@ -612,6 +616,7 @@ class MentraLive : SGCManager() {
     // Message tracking for reliable delivery
     private val pendingMessages = ConcurrentHashMap<Long, PendingMessage>()
     private val messageIdCounter = AtomicLong(1)
+    private val bleSessionGeneration = AtomicLong(0)
 
     // Esoteric message ID generation
     private val secureRandom = SecureRandom()
@@ -637,7 +642,8 @@ class MentraLive : SGCManager() {
             val messageData: String,
             val timestamp: Long,
             val retryCount: Int,
-            val retryRunnable: Runnable
+            val retryRunnable: Runnable,
+            val sessionGeneration: Long
     )
 
     private var lc3AudioFileStream: FileOutputStream? = null
@@ -807,6 +813,7 @@ class MentraLive : SGCManager() {
         if (isEqual) {
             if (state == ConnTypes.DISCONNECTED) {
                 resetWireNegotiationState()
+                resetPendingAckState()
                 // Queued writes are session-bound: transmitting them into the NEXT session
                 // (e.g. a stale handshake whose reply activates v2 before the new session
                 // negotiated) is the bug class this clear removes. Higher layers re-send
@@ -854,6 +861,7 @@ class MentraLive : SGCManager() {
             DeviceStore.apply("glasses", "signalStrength", -1)
             DeviceStore.apply("glasses", "signalStrengthUpdatedAt", 0L)
             resetWireNegotiationState()
+            resetPendingAckState()
             sendQueue.clear() // see the disconnect reset above: stale writes die with the session
 
             // Drop OTA caches when fully disconnected — avoids leaking session/step state
@@ -1174,6 +1182,26 @@ class MentraLive : SGCManager() {
         } catch (e: Exception) {
             Log.w(TAG, "🔌 closeGattQuietly: close threw " + e)
         }
+    }
+
+    /**
+     * Reject callbacks delivered by a GATT object from an earlier connection attempt. Without
+     * this identity check, a late disconnect can tear down the active connection and clear its
+     * session-bound send state.
+     */
+    private fun isCurrentGattCallback(gatt: BluetoothGatt): Boolean {
+        if (gatt === bluetoothGatt) {
+            return true
+        }
+
+        Log.w(TAG, "🔌 Ignoring callback from stale BluetoothGatt")
+        Bridge.log("LIVE: 🔌 Ignoring callback from stale BluetoothGatt session")
+        try {
+            gatt.close()
+        } catch (e: Exception) {
+            Log.w(TAG, "🔌 Failed to close stale BluetoothGatt: " + e)
+        }
+        return false
     }
 
     /** Connect to a specific BLE device */
@@ -1498,6 +1526,10 @@ class MentraLive : SGCManager() {
                         status: Int,
                         newState: Int
                 ) {
+                    if (!isCurrentGattCallback(gatt)) {
+                        return
+                    }
+
                     // Cancel the connection timeout
                     if (connectionTimeoutRunnable != null) {
                         connectionTimeoutHandler.removeCallbacks(connectionTimeoutRunnable!!)
@@ -2310,8 +2342,20 @@ class MentraLive : SGCManager() {
             return
         }
 
-        // Send the next item from the queue
-        val queuedWrite = sendQueue.poll()
+        // Send the next item from this BLE session. A retry can race disconnect teardown and land
+        // after sendQueue.clear(); the generation check is the deterministic backstop.
+        var queuedWrite = sendQueue.poll()
+        val currentGeneration = bleSessionGeneration.get()
+        while (queuedWrite != null && queuedWrite.sessionGeneration != currentGeneration) {
+            Bridge.log(
+                    "LIVE: Dropping stale queued write from BLE session " +
+                            queuedWrite.sessionGeneration +
+                            " (current: " +
+                            currentGeneration +
+                            ")"
+            )
+            queuedWrite = sendQueue.poll()
+        }
         if (queuedWrite != null) {
             // Update last send time before sending
             lastSendTimeMs = currentTimeMs
@@ -2338,25 +2382,35 @@ class MentraLive : SGCManager() {
 
     /** Send data through BLE */
     private fun sendDataInternal(write: QueuedBleWrite?) {
-        if (!isConnected || bluetoothGatt == null || txCharacteristic == null || write == null) {
+        if (!isConnected || write == null) {
+            return
+        }
+        if (write.sessionGeneration != bleSessionGeneration.get()) {
+            Bridge.log("LIVE: Dropping stale BLE write before GATT transmission")
+            return
+        }
+
+        val gatt = bluetoothGatt
+        val characteristic = txCharacteristic
+        if (gatt == null || characteristic == null) {
             return
         }
 
         try {
             val writeStartedAtMs = System.currentTimeMillis()
-            txCharacteristic!!.value = write.data
+            characteristic.value = write.data
             inFlightBleWriteTrace = write.trace
             inFlightBleWriteStartedAtMs = writeStartedAtMs
-            val writeAccepted = bluetoothGatt!!.writeCharacteristic(txCharacteristic)
+            val writeAccepted = gatt.writeCharacteristic(characteristic)
             logBleWriteTrace(
                     "write_call",
                     write.trace,
                     mapOf(
                             "writeAccepted" to writeAccepted,
                             "currentMtu" to currentMtu,
-                            "writeType" to txCharacteristic!!.writeType,
+                            "writeType" to characteristic.writeType,
                             "queueSize" to sendQueue.size,
-                            "characteristicUuid" to txCharacteristic!!.uuid.toString()
+                            "characteristicUuid" to characteristic.uuid.toString()
                     )
             )
             if (!writeAccepted) {
@@ -2379,7 +2433,11 @@ class MentraLive : SGCManager() {
     }
 
     /** Queue data to be sent */
-    private fun queueData(data: ByteArray?, trace: BleWriteTrace? = null) {
+    private fun queueData(
+            data: ByteArray?,
+            trace: BleWriteTrace? = null,
+            sessionGeneration: Long = bleSessionGeneration.get()
+    ) {
         if (data != null) {
             val queuedTrace =
                     trace?.copy(
@@ -2388,7 +2446,7 @@ class MentraLive : SGCManager() {
                                             trace.queuedAtMs
                                     else System.currentTimeMillis()
                     )
-            sendQueue.add(QueuedBleWrite(data, queuedTrace))
+            sendQueue.add(QueuedBleWrite(data, queuedTrace, sessionGeneration))
             logBleChunkTrace(
                     "queued",
                     queuedTrace,
@@ -2432,6 +2490,7 @@ class MentraLive : SGCManager() {
     private fun sendJson(json: JSONObject?, wakeup: Boolean) {
         if (json != null) {
             try {
+                val sessionGeneration = bleSessionGeneration.get()
                 if (buildNumberInt < 5) {
                     val jsonStr = json.toString()
                     // Bridge.log("LIVE: 📤 Sending JSON with esoteric message ID: " + jsonStr);
@@ -2447,7 +2506,7 @@ class MentraLive : SGCManager() {
                             json,
                             jsonStr.length
                     )
-                    sendDataToGlasses(jsonStr, wakeup)
+                    sendDataToGlasses(jsonStr, wakeup, sessionGeneration)
                 } else {
                     // Add esoteric message ID to the JSON
                     val messageId = generateEsotericMessageId()
@@ -2489,7 +2548,7 @@ class MentraLive : SGCManager() {
                     }
 
                     // Track the message for ACK with appropriate timeout
-                    trackMessageForAck(messageId, jsonStr, ackTimeout)
+                    trackMessageForAck(messageId, jsonStr, ackTimeout, sessionGeneration)
 
                     // Send the data
                     if ("take_photo" == json.optString("type", "")) {
@@ -2508,7 +2567,7 @@ class MentraLive : SGCManager() {
                             json,
                             jsonStr.length
                     )
-                    sendDataToGlasses(jsonStr, wakeup)
+                    sendDataToGlasses(jsonStr, wakeup, sessionGeneration)
                 }
             } catch (e: JSONException) {
                 Log.e(TAG, "Error adding message ID to JSON", e)
@@ -2528,14 +2587,14 @@ class MentraLive : SGCManager() {
         return list
     }
 
-    /** Track a message for ACK response */
-    private fun trackMessageForAck(messageId: Long, messageData: String) {
-        trackMessageForAck(messageId, messageData, ACK_TIMEOUT_MS)
-    }
-
     /** Track a message for ACK response with custom timeout */
-    private fun trackMessageForAck(messageId: Long, messageData: String, timeoutMs: Long) {
-        if (!isConnected) {
+    private fun trackMessageForAck(
+            messageId: Long,
+            messageData: String,
+            timeoutMs: Long,
+            sessionGeneration: Long
+    ) {
+        if (!isConnected || sessionGeneration != bleSessionGeneration.get()) {
             Bridge.log("LIVE: Not connected, skipping ACK tracking for message " + messageId)
             return
         }
@@ -2552,25 +2611,50 @@ class MentraLive : SGCManager() {
         }
 
         // Create retry runnable
-        val retryRunnable = Runnable { retryMessage(messageId) }
+        val retryRunnable = Runnable { retryMessage(messageId, sessionGeneration) }
 
         // Create pending message
         val pendingMessage =
-                PendingMessage(messageData, System.currentTimeMillis(), 0, retryRunnable)
+                PendingMessage(
+                        messageData,
+                        System.currentTimeMillis(),
+                        0,
+                        retryRunnable,
+                        sessionGeneration
+                )
         pendingMessages[messageId] = pendingMessage
 
         // Schedule ACK timeout with custom timeout
-        handler.postDelayed({ checkMessageAck(messageId) }, timeoutMs)
+        handler.postDelayed({ checkMessageAck(messageId, sessionGeneration) }, timeoutMs)
 
         Bridge.log(
                 "LIVE: 📋 Tracking message " + messageId + " for ACK (timeout: " + timeoutMs + "ms)"
         )
     }
 
+    /**
+     * Ends the current BLE send session before clearing its ACK state. Scheduled callbacks capture
+     * the old generation, and queued retries retain it, so a retry racing this clear cannot become
+     * valid in the next session.
+     */
+    private fun resetPendingAckState() {
+        val nextGeneration = bleSessionGeneration.incrementAndGet()
+        val pendingCount = pendingMessages.size
+        pendingMessages.clear()
+        if (pendingCount > 0) {
+            Bridge.log(
+                    "LIVE: Cleared $pendingCount pending ACK message(s); BLE session is now $nextGeneration"
+            )
+        }
+    }
+
     /** Check if a message has been acknowledged */
-    private fun checkMessageAck(messageId: Long) {
+    private fun checkMessageAck(messageId: Long, sessionGeneration: Long) {
         val pendingMessage = pendingMessages[messageId]
-        if (pendingMessage != null) {
+        if (pendingMessage != null &&
+                        pendingMessage.sessionGeneration == sessionGeneration &&
+                        sessionGeneration == bleSessionGeneration.get()
+        ) {
             Log.w(
                     TAG,
                     "⏰ ACK timeout for message " +
@@ -2591,7 +2675,7 @@ class MentraLive : SGCManager() {
                                 MAX_RETRY_ATTEMPTS +
                                 ")"
                 )
-                retryMessage(messageId)
+                retryMessage(messageId, sessionGeneration)
             } else {
                 // Max retries reached
                 Log.e(
@@ -2602,22 +2686,31 @@ class MentraLive : SGCManager() {
                                 MAX_RETRY_ATTEMPTS +
                                 " attempts"
                 )
-                pendingMessages.remove(messageId)
+                pendingMessages.remove(messageId, pendingMessage)
             }
+        } else if (pendingMessage != null && pendingMessage.sessionGeneration == sessionGeneration) {
+            pendingMessages.remove(messageId, pendingMessage)
         }
     }
 
     /** Retry a message */
-    private fun retryMessage(messageId: Long) {
+    private fun retryMessage(messageId: Long, sessionGeneration: Long) {
         val pendingMessage = pendingMessages[messageId]
         if (pendingMessage == null) {
             Log.w(TAG, "Message " + messageId + " no longer tracked for retry")
             return
         }
+        if (pendingMessage.sessionGeneration != sessionGeneration ||
+                        sessionGeneration != bleSessionGeneration.get()
+        ) {
+            pendingMessages.remove(messageId, pendingMessage)
+            Bridge.log("LIVE: Dropping stale ACK retry for message $messageId")
+            return
+        }
 
         if (pendingMessage.retryCount >= MAX_RETRY_ATTEMPTS) {
             Log.e(TAG, "Max retries reached for message " + messageId)
-            pendingMessages.remove(messageId)
+            pendingMessages.remove(messageId, pendingMessage)
             return
         }
 
@@ -2627,11 +2720,18 @@ class MentraLive : SGCManager() {
                         pendingMessage.messageData,
                         System.currentTimeMillis(),
                         pendingMessage.retryCount + 1,
-                        pendingMessage.retryRunnable
+                        pendingMessage.retryRunnable,
+                        sessionGeneration
                 )
 
-        // Update the tracked message
-        pendingMessages[messageId] = retryMessage
+        // Replace only the entry inspected above. An ACK or disconnect may have removed it.
+        if (!pendingMessages.replace(messageId, pendingMessage, retryMessage)) {
+            return
+        }
+        if (sessionGeneration != bleSessionGeneration.get()) {
+            pendingMessages.remove(messageId, retryMessage)
+            return
+        }
 
         // Send the message again
         Bridge.log(
@@ -2641,10 +2741,10 @@ class MentraLive : SGCManager() {
                         retryMessage.retryCount +
                         ")"
         )
-        sendDataToGlasses(pendingMessage.messageData, false)
+        sendDataToGlasses(pendingMessage.messageData, false, sessionGeneration)
 
         // Schedule next ACK check
-        handler.postDelayed({ checkMessageAck(messageId) }, ACK_TIMEOUT_MS)
+        handler.postDelayed({ checkMessageAck(messageId, sessionGeneration) }, ACK_TIMEOUT_MS)
     }
 
     /** Process ACK response from glasses */
@@ -4468,15 +4568,20 @@ class MentraLive : SGCManager() {
                         var progress = ((rawProgress + 2) / 5) * 5
                         if (progress > 100) progress = 100
 
-                        // Only send if progress changed to a new 5% increment
-                        if (progress == lastBesOtaProgress &&
-                                        "success" != type &&
-                                        "error" != type &&
-                                        "fail" != type
-                        ) {
-                            return // Skip duplicate progress
+                        val mapping =
+                            mapBesOtaProgress(
+                                type,
+                                rawProgress,
+                                bodyObj.optString("message", "BES update failed"),
+                            )
+                        val besOtaStatus = mapping.status
+                        val besOtaProgressVal = mapping.progress
+                        val besOtaErrorMessage = mapping.errorMessage
+
+                        // Only send if nonterminal display progress changed to a new 5% increment.
+                        if ("PROGRESS" == besOtaStatus && besOtaProgressVal == lastBesOtaProgress) {
+                            return
                         }
-                        lastBesOtaProgress = progress
 
                         Bridge.log(
                                 "LIVE: 📱 BES OTA progress via sr_adota - type: " +
@@ -4485,58 +4590,21 @@ class MentraLive : SGCManager() {
                                         rawProgress +
                                         "%, rounded: " +
                                         progress +
+                                        "%, display: " +
+                                        besOtaProgressVal +
                                         "%"
                         )
 
-                        // Determine status and error message based on type
-                        val besOtaStatus: String
-                        val besOtaProgressVal: Int
-                        var besOtaErrorMessage: String? = null
-
-                        // Order matters here: check completion (rawProgress >= 100 OR success)
-                        // BEFORE
-                        // type=="update", because some BES firmware emits the final 100% tick with
-                        // type=="update" rather than type=="success". Treating that as PROGRESS
-                        // would
-                        // leave the UI stuck at 100% forever.
-                        if ("success" == type || rawProgress >= 100) {
-                            besOtaStatus = "FINISHED"
-                            besOtaProgressVal = 100
+                        if ("FINISHED" == besOtaStatus || "FAILED" == besOtaStatus) {
                             lastBesOtaProgress = -1 // Reset for next OTA
-                        } else if ("error" == type || "fail" == type) {
-                            besOtaStatus = "FAILED"
-                            besOtaProgressVal = progress
-                            besOtaErrorMessage = bodyObj.optString("message", "BES update failed")
-                            lastBesOtaProgress = -1 // Reset for next OTA
-                        } else if ("update" == type) {
-                            besOtaStatus = "PROGRESS"
-                            besOtaProgressVal = progress
                         } else {
-                            // Unknown type, treat as progress
-                            besOtaStatus = "PROGRESS"
-                            besOtaProgressVal = progress
+                            lastBesOtaProgress = besOtaProgressVal
                         }
 
-                        val syntheticStatus: String
-                        if ("FINISHED" == besOtaStatus) {
-                            // The glasses power-cycle right after the final BES tick, so a
-                            // session whose BES step is the LAST step never gets a follow-up
-                            // ota_status from the glasses — consumers mapping on this synthetic
-                            // status would otherwise never see a terminal state. Emit "complete"
-                            // for the final step; mid-session BES steps keep "step_complete" so
-                            // session-level trackers advance normally. Unknown sessions
-                            // (cachedOtaTotalSteps == 0, e.g. legacy glasses that never sent an
-                            // ota_status) conservatively keep "step_complete".
-                            syntheticStatus =
-                                    if (cachedOtaTotalSteps > 0 &&
-                                                    cachedOtaCurrentStep >= cachedOtaTotalSteps
-                                    )
-                                            "complete"
-                                    else "step_complete"
-                        } else if ("FAILED" == besOtaStatus) {
-                            syntheticStatus = "failed"
-                        } else {
-                            syntheticStatus = "in_progress"
+                        val syntheticStatus = when (besOtaStatus) {
+                            "FINISHED" -> "step_complete"
+                            "FAILED" -> "failed"
+                            else -> "in_progress"
                         }
                         val sid = if (cachedOtaSessionId != null) cachedOtaSessionId!! else ""
                         val totalSteps = if (cachedOtaTotalSteps > 0) cachedOtaTotalSteps else 1
@@ -7570,8 +7638,20 @@ class MentraLive : SGCManager() {
      * @param data The string data to be sent to the glasses
      */
     fun sendDataToGlasses(data: String?, wakeup: Boolean) {
+        sendDataToGlasses(data, wakeup, bleSessionGeneration.get())
+    }
+
+    private fun sendDataToGlasses(
+            data: String?,
+            wakeup: Boolean,
+            sessionGeneration: Long
+    ) {
         if (data == null || data.isEmpty()) {
             Log.e(TAG, "Cannot send empty data to glasses")
+            return
+        }
+        if (sessionGeneration != bleSessionGeneration.get()) {
+            Bridge.log("LIVE: Dropping send request from stale BLE session $sessionGeneration")
             return
         }
 
@@ -7600,7 +7680,13 @@ class MentraLive : SGCManager() {
             }
 
             if (useBinaryWireProtocol && buildNumberInt >= 5) {
-                sendDataToGlassesBinary(wireData, wakeup, commandTraceInfo, isPhotoRequest)
+                sendDataToGlassesBinary(
+                        wireData,
+                        wakeup,
+                        commandTraceInfo,
+                        isPhotoRequest,
+                        sessionGeneration
+                )
                 return
             }
 
@@ -7679,7 +7765,7 @@ class MentraLive : SGCManager() {
                     )
 
                     // Queue the chunk for sending
-                    queueData(packedData, trace)
+                    queueData(packedData, trace, sessionGeneration)
 
                     // Add small delay between chunks to avoid overwhelming the connection
                     if (i < chunks.size - 1) {
@@ -7720,7 +7806,7 @@ class MentraLive : SGCManager() {
                 )
 
                 // Queue the data for sending
-                queueData(packedData, trace)
+                queueData(packedData, trace, sessionGeneration)
                 if (isPhotoRequest) {
                     Bridge.log(
                             "LIVE: PHOTO PIPELINE BLE handoff — packedLen=" +
@@ -7738,7 +7824,8 @@ class MentraLive : SGCManager() {
             data: String,
             wakeup: Boolean,
             commandTraceInfo: OutgoingBleCommandTraceInfo,
-            isPhotoRequest: Boolean
+            isPhotoRequest: Boolean,
+            sessionGeneration: Long
     ) {
         val payloadBytes = data.toByteArray(StandardCharsets.UTF_8)
         var messageId = 0
@@ -7790,7 +7877,7 @@ class MentraLive : SGCManager() {
                             "wireProtocol" to "v2"
                     )
             )
-            queueData(packedData, trace)
+            queueData(packedData, trace, sessionGeneration)
 
             if (i < fragments.size - 1) {
                 try {

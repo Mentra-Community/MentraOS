@@ -259,7 +259,7 @@ export function checkBesUpdate(besFirmware: BesFirmware | undefined, currentVers
   return compareVersions(besFirmware.version, currentVersion) > 0
 }
 
-function compareVersions(version1: string, version2: string): number {
+export function compareVersions(version1: string, version2: string): number {
   if (version1.includes(".") && version2.includes(".")) {
     const parts1 = version1.split(".")
     const parts2 = version2.split(".")
@@ -512,6 +512,7 @@ export async function checkCurrentGlassesForUpdate(
         versionName: result.latestVersionInfo?.versionName || "",
         updates: filteredUpdates,
         totalSize: 0,
+        ...(filteredUpdates.includes("bes") && result.besVersion ? {besVersion: result.besVersion} : {}),
         isDowngrade: isApkDowngrade,
       }
     : null

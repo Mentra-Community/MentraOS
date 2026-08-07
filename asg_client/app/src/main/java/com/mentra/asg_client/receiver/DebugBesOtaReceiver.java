@@ -4,20 +4,20 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.util.Log;
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.di.hilt.AsgClientEntryPoint;
-import com.mentra.asg_client.io.ota.interfaces.IBesOtaController;
-import com.mentra.asg_client.io.ota.utils.OtaConstants;
+import com.mentra.asg_client.io.ota.helpers.OtaHelper;
 import dagger.hilt.android.EntryPointAccessors;
 import java.io.File;
+import java.util.Locale;
 
 /**
- * Debug receiver for testing BES firmware updates directly via adb.
+ * Privileged receiver for testing validated BES firmware version changes through ADB.
  *
- * <p>Usage: 1. Push firmware file: adb push firmware.bin /storage/emulated/0/asg/bes_firmware.bin
- * 2. Trigger update: adb shell am broadcast -a com.mentra.DEBUG_BES_OTA
- *
- * <p>This bypasses all cloud/phone logic and directly triggers BesOtaManager. FOR
- * DEVELOPMENT/TESTING ONLY.
+ * <p>The manifest requires {@code android.permission.DUMP}, which is available to ADB shell but not
+ * ordinary applications. The caller supplies immutable identity metadata for the staged release
+ * container; {@link OtaHelper} then uses the same validator and durable BES manager as the
+ * phone-owned flow. This path intentionally permits explicit internal downgrades.
  */
 public class DebugBesOtaReceiver extends BroadcastReceiver {
     private static final String TAG = "DebugBesOtaReceiver";
@@ -33,42 +33,64 @@ public class DebugBesOtaReceiver extends BroadcastReceiver {
         Log.w(TAG, "⚠️ DEBUG BES OTA TRIGGERED VIA ADB ⚠️");
         Log.w(TAG, "========================================");
 
-        // Check if file exists
-        File firmwareFile = new File(OtaConstants.BES_FIRMWARE_PATH);
-        if (!firmwareFile.exists()) {
-            Log.e(TAG, "❌ Firmware file not found at: " + OtaConstants.BES_FIRMWARE_PATH);
+        String targetVersion =
+                intent.getStringExtra(AsgConstants.DEBUG_BES_OTA_TARGET_VERSION_EXTRA);
+        String expectedSha256 = intent.getStringExtra(AsgConstants.DEBUG_BES_OTA_SHA256_EXTRA);
+        String artifactId = intent.getStringExtra(AsgConstants.DEBUG_BES_OTA_ARTIFACT_ID_EXTRA);
+        if (isBlank(targetVersion) || isBlank(expectedSha256) || isBlank(artifactId)) {
             Log.e(
                     TAG,
-                    "Push file first: adb push firmware.bin /storage/emulated/0/asg/bes_firmware.bin");
+                    "❌ Missing required target_version, sha256, or artifact_id intent extra;"
+                            + " use scripts/test-bes-ota.sh");
+            return;
+        }
+        String normalizedSha256 = expectedSha256.trim().toLowerCase(Locale.US);
+        if (!normalizedSha256.matches("[0-9a-f]{64}")) {
+            Log.e(TAG, "❌ Invalid sha256 intent extra; use scripts/test-bes-ota.sh");
             return;
         }
 
-        Log.i(TAG, "✅ Firmware file found: " + firmwareFile.length() + " bytes");
+        Context applicationContext = context.getApplicationContext();
+        PendingResult pendingResult = goAsync();
+        new Thread(
+                        () -> {
+                            File artifact =
+                                    new File(
+                                            AsgConstants.DEBUG_BES_OTA_ARTIFACT_PREFIX
+                                                    + normalizedSha256
+                                                    + ".bin");
+                            boolean started = false;
+                            try {
+                                OtaHelper helper =
+                                        EntryPointAccessors.fromApplication(
+                                                        applicationContext,
+                                                        AsgClientEntryPoint.class)
+                                                .otaHelper();
+                                started =
+                                        helper.startValidatedDebugBesFirmware(
+                                                artifact,
+                                                targetVersion,
+                                                normalizedSha256,
+                                                artifactId);
+                                if (started) {
+                                    Log.i(
+                                            TAG,
+                                            "✅ Validated BES OTA started; monitor durable state"
+                                                    + " through reboot");
+                                } else {
+                                    Log.e(TAG, "❌ Validated BES OTA was refused");
+                                }
+                            } catch (Exception e) {
+                                Log.e(TAG, "❌ Debug BES OTA dispatch failed", e);
+                            } finally {
+                                pendingResult.finish();
+                            }
+                        },
+                        "debug-bes-ota")
+                .start();
+    }
 
-        // Get the active BES OTA controller
-        IBesOtaController manager =
-                EntryPointAccessors.fromApplication(context, AsgClientEntryPoint.class)
-                        .besOtaRegistry()
-                        .getInstance();
-        if (manager == null) {
-            Log.e(TAG, "❌ BES OTA controller not initialized - is AsgClientService running?");
-            return;
-        }
-
-        // Check if already in progress
-        if (manager.isBesOtaInProgress()) {
-            Log.w(TAG, "⚠️ BES OTA already in progress - skipping");
-            return;
-        }
-
-        // Start the update
-        Log.i(TAG, "🚀 Starting BES firmware update...");
-        boolean started = manager.startFirmwareUpdate(OtaConstants.BES_FIRMWARE_PATH);
-
-        if (started) {
-            Log.i(TAG, "✅ BES OTA started - monitor logcat for progress");
-        } else {
-            Log.e(TAG, "❌ BES OTA failed to start");
-        }
+    private static boolean isBlank(String value) {
+        return value == null || value.trim().isEmpty();
     }
 }

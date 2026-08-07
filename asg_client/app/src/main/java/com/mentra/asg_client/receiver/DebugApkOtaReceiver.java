@@ -54,8 +54,10 @@ public class DebugApkOtaReceiver extends BroadcastReceiver {
         }
 
         Log.i(TAG, "🚀 Starting APK OTA check with custom URL...");
-        helper.setPhoneInitiatedOta(true);
-        helper.startVersionCheckWithUrl(context, url);
-        Log.i(TAG, "✅ APK OTA check triggered - monitor logcat for progress");
+        if (helper.startVersionCheckWithUrl(context, url)) {
+            Log.i(TAG, "✅ APK OTA check triggered - monitor logcat for progress");
+        } else {
+            Log.e(TAG, "❌ APK OTA check refused because OTA admission is busy");
+        }
     }
 }
