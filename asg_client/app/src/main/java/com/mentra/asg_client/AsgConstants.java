@@ -46,6 +46,13 @@ public class AsgConstants {
     /** Mentra Live firmware setting containing the vendor hotspot password. */
     public static final String K900_VENDOR_HOTSPOT_PASSWORD_SETTING = "xy_pwd";
 
+    /** Preferences file used for Mentra Live network-manager lifecycle handoff. */
+    public static final String K900_NETWORK_MANAGER_PREFERENCES = "k900_network_manager";
+
+    /** Persisted marker indicating that hotspot teardown still owes a station reconnect. */
+    public static final String K900_STATION_WIFI_RESTORE_PENDING_KEY =
+            "station_wifi_restore_pending";
+
     /** Canonical camera crop defaults shared with the phone and Bluetooth SDK. */
     public static final int CAMERA_FOV_DEFAULT = 118;
 

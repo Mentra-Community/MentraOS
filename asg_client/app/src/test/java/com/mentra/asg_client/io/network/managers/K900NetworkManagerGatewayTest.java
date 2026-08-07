@@ -82,6 +82,13 @@ public class K900NetworkManagerGatewayTest {
     }
 
     @Test
+    public void adoptsOnlyAnExplicitDisconnectedRestorationHandoff() {
+        assertThat(K900NetworkManager.shouldAdoptStationWifiRestoration(false, true)).isTrue();
+        assertThat(K900NetworkManager.shouldAdoptStationWifiRestoration(false, false)).isFalse();
+        assertThat(K900NetworkManager.shouldAdoptStationWifiRestoration(true, true)).isFalse();
+    }
+
+    @Test
     public void queuesRestartDuringTheExplicitCloseWindow() {
         assertThat(K900NetworkManager.shouldQueueLocalHotspotRestart(true)).isTrue();
         assertThat(K900NetworkManager.shouldQueueLocalHotspotRestart(false)).isFalse();
