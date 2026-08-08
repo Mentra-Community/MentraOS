@@ -7,6 +7,7 @@ import {
   fetchWorkflowStatuses,
   getChangedFiles,
   getPrHeadSha,
+  isCiFailed,
   isCiGreen,
   pollCiUntilSettled,
   requiredWorkflowsForPaths,
@@ -26,7 +27,7 @@ import {
   saveState,
   upsertMarkerComment,
 } from './state.js';
-import { MARKER_REVIEW, type ReviewSlot } from './types.js';
+import { MARKER_HANDOFF, MARKER_REVIEW, type ReviewSlot } from './types.js';
 
 const repoRoot = process.env.GITHUB_WORKSPACE ?? process.cwd();
 const owner = process.env.GITHUB_REPOSITORY_OWNER!;
@@ -178,16 +179,17 @@ async function cmdFinalize() {
   await saveState(octokit, owner, repo, prNumber, finalState, commentId);
 
   const body = buildHandoffComment(reason, finalState, ciChecks);
-  await octokit.issues.createComment({
-    owner,
-    repo,
-    issue_number: prNumber,
-    body,
-  });
+  // Upsert so late CI re-triggers edit one handoff comment instead of spamming.
+  await upsertMarkerComment(octokit, owner, repo, prNumber, MARKER_HANDOFF, body);
 
   await ensureLabel(octokit, owner, repo, prNumber, 'ready-for-human-review');
   if (reason !== 'human_handoff') {
     await ensureLabel(octokit, owner, repo, prNumber, 'agent-needs-human');
+  }
+  if (isCiFailed(ciChecks)) {
+    await ensureLabel(octokit, owner, repo, prNumber, 'agent-ci-failing');
+  } else {
+    await removeLabel(octokit, owner, repo, prNumber, 'agent-ci-failing');
   }
   await removeLabel(octokit, owner, repo, prNumber, 'agent-in-progress');
 }

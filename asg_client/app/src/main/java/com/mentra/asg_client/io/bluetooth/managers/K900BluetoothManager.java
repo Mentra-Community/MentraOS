@@ -2,9 +2,10 @@ package com.mentra.asg_client.io.bluetooth.managers;
 
 import android.content.Context;
 import android.util.Log;
-
 import com.mentra.asg_client.AsgConstants;
+import com.mentra.asg_client.io.bes.BesOtaStateStore;
 import com.mentra.asg_client.io.bes.BesOtaUartListener;
+import com.mentra.asg_client.io.bes.events.BesOtaProgressEvent;
 import com.mentra.asg_client.io.bluetooth.core.BaseBluetoothManager;
 import com.mentra.asg_client.io.bluetooth.interfaces.SerialListener;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.BesMessageParser;
@@ -26,9 +27,6 @@ import com.mentra.asg_client.service.core.processors.ChunkedMessageProtocolStrat
 import com.mentra.asg_client.service.utils.SysProp;
 import com.mentra.asg_client.settings.AsgSettings;
 import com.mentra.asg_client.utils.WakeLockManager;
-
-import org.json.JSONObject;
-
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -41,6 +39,8 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import org.greenrobot.eventbus.EventBus;
+import org.json.JSONObject;
 
 /**
  * Implementation of IBluetoothManager for K900 devices. Uses the K900's serial port to communicate
@@ -51,14 +51,18 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
     private final SerialPortBridge comManager;
     private final BesUartTransportCoordinator transportCoordinator;
+    private final BesOtaStateStore besOtaStateStore;
+    private final String currentBootId;
+    private volatile String liveBesOtaOwner = "";
+    private volatile boolean framedPathProven;
     private volatile BesOtaUartListener besOtaUartListener;
 
     public interface BesOtaAuthorizationCallback {
         /** Called on the outbound worker before the authorization request is written. */
         boolean onLeaseAcquired(BesUartTransportCoordinator.OperationLease lease);
 
-        /** Called after the authorization request write attempt finishes. */
-        void onWriteComplete(boolean success);
+        /** Reports whether submission was attempted separately from the local write result. */
+        void onWriteComplete(boolean attempted, boolean success);
     }
 
     // Single owner of the transport-side link facts (serial open, link proven at current baud,
@@ -238,6 +242,20 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     public K900BluetoothManager(Context context) {
         super(context);
 
+        besOtaStateStore = new BesOtaStateStore(context);
+        currentBootId = besOtaStateStore.currentBootId();
+        BesOtaStateStore.StartupDecision startupDecision =
+                besOtaStateStore.reconcileStartup(currentBootId);
+        Log.i(
+                TAG,
+                "BES_OTA_DIAG startup_result="
+                        + startupDecision
+                        + " current_boot="
+                        + currentBootId
+                        + " snapshot={"
+                        + besOtaStateStore.read().toDiagnosticString()
+                        + "}");
+
         // Create the notification manager
         notificationManager = new DebugNotificationManager(context);
         notificationManager.showDeviceTypeNotification(true);
@@ -246,14 +264,27 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         messageParser = new BesMessageParser();
         fileTransferExecutor = Executors.newSingleThreadScheduledExecutor();
 
-        // Couple the v1 string chunk budget to the caps lifecycle before any transition can
-        // fire: every path that clears the caps (including reopen failures that never reach the
-        // serial callbacks) then also restores the fallback budget.
-        MessageChunker.followLinkState(linkState);
-
         // Create the communication manager
         comManager = new SerialPortBridge(context);
-        transportCoordinator = new BesUartTransportCoordinator(new UartCoordinatorHost());
+        transportCoordinator =
+                new BesUartTransportCoordinator(
+                        new UartCoordinatorHost(),
+                        new BesUartTransportCoordinator.SafetyState() {
+                            @Override
+                            public BesUartTransportCoordinator.SafetyPolicy currentPolicy() {
+                                return currentBesOtaSafetyPolicy();
+                            }
+
+                            @Override
+                            public void onRawOtaModeProven() {
+                                onBesRawOtaModeProvenAfterRestart();
+                            }
+
+                            @Override
+                            public void onRecoveryFailed() {
+                                onBesRecoveryFailed();
+                            }
+                        });
         comManager.registerListener(this);
         comManager.start();
     }
@@ -298,6 +329,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
         @Override
         public void invalidateLinkProof() {
+            framedPathProven = false;
             linkState.streamDiscontinuity();
         }
 
@@ -384,11 +416,10 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                     Log.d(TAG, "📡 📦 JSON DATA BEFORE C-WRAPPING: " + originalData);
 
                     if (BesWireFormat.isBinaryProtocolActive()) {
-                        if (MessageChunker.needsChunking(originalData)) {
-                            return sendBinaryFragmentedJson(originalData);
-                        }
-                        data = BesWireFormat.formatBinaryMessageForTransmission(originalData);
-                        logOutboundWireMetrics(originalData, data, 1);
+                        // Use one exact framing path for both one-frame and fragmented v2
+                        // messages. Every complete frame must fit the same BES notification
+                        // budget; phone-side reassembly does not make an oversized fragment safe.
+                        return sendBinaryFragmentedJson(originalData);
                     } else {
                         String wrappedJson =
                                 BesWireFormat.createTransmissionWrapperJson(originalData);
@@ -1117,11 +1148,84 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     /** Register the raw BES OTA parser; routing remains owned by the transport coordinator. */
     public void registerBesOtaListener(BesOtaUartListener listener) {
         besOtaUartListener = listener;
+        if (listener != null) {
+            transportCoordinator.startSafetyRecovery();
+        }
     }
 
     /** Coordinator that owns every UART transition and long-lived transport operation. */
     public BesUartTransportCoordinator getTransportCoordinator() {
         return transportCoordinator;
+    }
+
+    public BesOtaStateStore getBesOtaStateStore() {
+        return besOtaStateStore;
+    }
+
+    public void setLiveBesOtaOwner(String ownerSessionId) {
+        liveBesOtaOwner = ownerSessionId == null ? "" : ownerSessionId.trim();
+    }
+
+    public boolean isFramedPathProven() {
+        return framedPathProven;
+    }
+
+    private BesUartTransportCoordinator.SafetyPolicy currentBesOtaSafetyPolicy() {
+        BesOtaStateStore.UartPolicy policy =
+                besOtaStateStore.uartPolicy(currentBootId, framedPathProven, liveBesOtaOwner);
+        switch (policy) {
+            case NORMAL:
+                return BesUartTransportCoordinator.SafetyPolicy.NORMAL;
+            case OTA_OWNER_ONLY:
+                return BesUartTransportCoordinator.SafetyPolicy.OTA_OWNER_ONLY;
+            case RECOVERY_PROBE_ONLY:
+                return BesUartTransportCoordinator.SafetyPolicy.RECOVERY_PROBE_ONLY;
+            case VERSION_PROBE_ONLY:
+                return BesUartTransportCoordinator.SafetyPolicy.VERSION_PROBE_ONLY;
+            case QUARANTINED:
+            default:
+                return BesUartTransportCoordinator.SafetyPolicy.QUARANTINED;
+        }
+    }
+
+    private void onBesRawOtaModeProvenAfterRestart() {
+        BesOtaStateStore.Snapshot snapshot = besOtaStateStore.read();
+        Log.e(
+                TAG,
+                "BES_OTA_DIAG recovery_result=raw_mode_proven snapshot={"
+                        + snapshot.toDiagnosticString()
+                        + "}");
+        if (snapshot.isValid() && snapshot.getState() != BesOtaStateStore.State.TERMINAL) {
+            BesOtaStateStore.TransitionResult result =
+                    besOtaStateStore.fail(snapshot.getOwnerSessionId(), "raw_mode_after_restart");
+            Log.e(TAG, "BES raw-mode recovery result: " + result);
+        }
+        EventBus.getDefault().post(BesOtaProgressEvent.createFailed("raw_mode_after_restart"));
+    }
+
+    private void onBesRecoveryFailed() {
+        BesOtaStateStore.Snapshot snapshot = besOtaStateStore.read();
+        Log.e(
+                TAG,
+                "BES_OTA_DIAG recovery_result=timeout current_boot="
+                        + currentBootId
+                        + " framed_path="
+                        + framedPathProven
+                        + " snapshot={"
+                        + snapshot.toDiagnosticString()
+                        + "}");
+        if (snapshot.isValid()
+                && (snapshot.getState() == BesOtaStateStore.State.APPLY_PENDING
+                        || snapshot.getState() == BesOtaStateStore.State.AUTH_ATTEMPTED)) {
+            String timeoutCode =
+                    snapshot.getState() == BesOtaStateStore.State.APPLY_PENDING
+                            ? "verification_timeout"
+                            : "recovery_timeout";
+            BesOtaStateStore.TransitionResult result =
+                    besOtaStateStore.fail(snapshot.getOwnerSessionId(), timeoutCode);
+            Log.e(TAG, "BES OTA restart recovery timed out: " + result);
+            EventBus.getDefault().post(BesOtaProgressEvent.createFailed(timeoutCode));
+        }
     }
 
     /**
@@ -1138,23 +1242,24 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                     BesUartTransportCoordinator.OperationLease lease =
                             transportCoordinator.beginOtaAuthorization();
                     if (lease == null) {
-                        callback.onWriteComplete(false);
+                        callback.onWriteComplete(false, false);
                         return;
                     }
                     if (!callback.onLeaseAcquired(lease)) {
                         transportCoordinator.endOta(lease);
-                        callback.onWriteComplete(false);
+                        callback.onWriteComplete(false, false);
                         return;
                     }
 
                     publishOutboundMessage(payload, true);
+                    boolean attempted = true;
                     boolean sent =
                             transportCoordinator.runOtaAuthorizationWrite(
                                     lease, () -> sendMessageInternalLocked(payload));
-                    if (!sent) {
-                        transportCoordinator.endOta(lease);
-                    }
-                    callback.onWriteComplete(sent);
+                    // Once the durable reservation exists, a false local result is ambiguous and
+                    // the lease must remain exclusive while the manager waits for hm_ota/raw
+                    // reconciliation. Never release it here and never resend mh_ota.
+                    callback.onWriteComplete(attempted, sent);
                 });
     }
 
@@ -1191,6 +1296,8 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                             extractBaudSwitchVersion(bData),
                             receiveSession,
                             () -> {
+                                framedPathProven = true;
+                                reconcileBesOtaVersionProof(extractDisplayBesVersion(bData));
                                 // Presence must precede caps: the edge invalidates the previous
                                 // phone session's notify_cap, then this reply installs the current
                                 // session's measured value. The coordinator session check makes
@@ -1299,8 +1406,8 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             Log.i(TAG, "📦 BES wire_caps advertised negotiated file payloads");
         }
         if (advertised != null && advertised.notifyCap > 0) {
-            // The string chunk budget follows the caps automatically: the MessageChunker
-            // subscription (followLinkState in the constructor) re-derives it on this transition.
+            // Diagnostic contract. ASG control frames use a stricter immutable 240-byte ceiling
+            // for both v1 and v2, so old bearer-specific advertisements cannot make them larger.
             Log.i(TAG, "📏 BES wire_caps advertised notify_cap=" + advertised.notifyCap);
         }
         return advertised;
@@ -1451,6 +1558,102 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         }
     }
 
+    private static String extractDisplayBesVersion(JSONObject bData) {
+        if (bData == null) {
+            return "";
+        }
+        String version = bData.optString("version", "").trim();
+        return version.isEmpty() ? bData.optString("dpj", "").trim() : version;
+    }
+
+    private void reconcileBesOtaVersionProof(String actualVersion) {
+        String canonicalActualVersion = BesOtaStateStore.canonicalVersion(actualVersion);
+        String diagnosticActualVersion =
+                canonicalActualVersion == null ? "invalid" : canonicalActualVersion;
+        BesOtaStateStore.Snapshot snapshot = besOtaStateStore.read();
+        String skipReason = null;
+        if (!snapshot.isValid()) {
+            skipReason = "invalid_or_idle_state";
+        } else if (snapshot.getState() != BesOtaStateStore.State.APPLY_PENDING
+                && snapshot.getState() != BesOtaStateStore.State.AUTH_ATTEMPTED) {
+            skipReason = "state_not_recoverable";
+        } else if (currentBootId == null) {
+            skipReason = "missing_current_boot";
+        } else if (currentBootId.equals(snapshot.getAuthorizationBootId())) {
+            skipReason = "still_authorization_boot";
+        }
+        Log.i(
+                TAG,
+                "BES_OTA_DIAG version_proof actual="
+                        + diagnosticActualVersion
+                        + " current_boot="
+                        + currentBootId
+                        + " disposition="
+                        + (skipReason == null ? "candidate" : "ignored")
+                        + (skipReason == null ? "" : " reason=" + skipReason)
+                        + " snapshot={"
+                        + snapshot.toDiagnosticString()
+                        + "}");
+        if (skipReason != null) {
+            return;
+        }
+        BesOtaStateStore.TransitionResult completed;
+        if (snapshot.getState() == BesOtaStateStore.State.APPLY_PENDING) {
+            BesOtaStateStore.VerificationDecision verification =
+                    besOtaStateStore.claimOrResumeVerificationBoot(currentBootId);
+            Log.i(
+                    TAG,
+                    "BES_OTA_DIAG version_proof_claim result="
+                            + verification
+                            + " actual="
+                            + diagnosticActualVersion
+                            + " snapshot={"
+                            + besOtaStateStore.read().toDiagnosticString()
+                            + "}");
+            if (verification != BesOtaStateStore.VerificationDecision.CLAIMED
+                    && verification != BesOtaStateStore.VerificationDecision.RESUME) {
+                Log.e(TAG, "BES post-apply verification boot rejected: " + verification);
+                return;
+            }
+            completed =
+                    besOtaStateStore.completeVerified(
+                            snapshot.getOwnerSessionId(), currentBootId, actualVersion);
+        } else {
+            completed =
+                    besOtaStateStore.completeRecoveredAfterRestart(
+                            snapshot.getOwnerSessionId(), currentBootId, actualVersion);
+        }
+        Log.i(
+                TAG,
+                "BES_OTA_DIAG version_proof_complete result="
+                        + completed
+                        + " actual="
+                        + diagnosticActualVersion
+                        + " snapshot={"
+                        + besOtaStateStore.read().toDiagnosticString()
+                        + "}");
+        if (completed != BesOtaStateStore.TransitionResult.APPLIED) {
+            Log.e(TAG, "Could not commit BES post-apply version proof: " + completed);
+            return;
+        }
+        BesOtaStateStore.Snapshot terminal = besOtaStateStore.read();
+        if (terminal.getTerminalStatus() == BesOtaStateStore.TerminalStatus.SUCCESS) {
+            Log.i(TAG, "BES target version verified after reboot: " + actualVersion);
+            EventBus.getDefault().post(BesOtaProgressEvent.createFinished());
+        } else {
+            String failureCode = terminal.getTerminalCode();
+            Log.e(
+                    TAG,
+                    "BES version proof failed after reboot code="
+                            + failureCode
+                            + " expected="
+                            + terminal.getTargetVersion()
+                            + " actual="
+                            + actualVersion);
+            EventBus.getDefault().post(BesOtaProgressEvent.createFailed(failureCode));
+        }
+    }
+
     private void cacheBesBaudSwitchVersion(JSONObject bData) {
         String version = extractBaudSwitchVersion(bData);
         if (!version.isEmpty()) {
@@ -1472,9 +1675,8 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
     /**
      * Compare two dotted version strings numerically, component by component. Missing components
-     * count as 0. Each component is read as its leading numeric prefix so hotfix-suffixed firmware
-     * strings (e.g. "17.26.7.5-fix1") compare as their base version instead of throwing and
-     * silently disabling the transport feature gates.
+     * count as 0. This legacy capability gate reads each component's leading numeric prefix, but it
+     * does not define the BES firmware version format; BES OTA identity remains four numeric bytes.
      *
      * @return negative if a &lt; b, 0 if equal, positive if a &gt; b
      */
@@ -1492,7 +1694,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         return 0;
     }
 
-    /** Numeric prefix of a version component ("5-fix1" -> 5); 0 if there is none. */
+    /** Numeric prefix of a version component; 0 if there is none. */
     private static int leadingInt(String component) {
         String s = component.trim();
         int end = 0;
@@ -1640,6 +1842,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
         // Close transport state before releasing the file lease so cleanup cannot resume a
         // deferred baud transition on a port that is already going down.
+        framedPathProven = false;
         linkState.serialClosed();
         transportCoordinator.onSerialClosed();
         if (currentFileTransfer != null && currentFileTransfer.isActive) {
@@ -1856,6 +2059,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         Log.d(TAG, "🔌 =========================================");
         Log.d(TAG, "🔌 Serial path: " + serialPath);
 
+        // A proof belongs to one exact SerialSession. Never let an sr_syvr from the
+        // previous file descriptor authorize traffic on a newly adopted session.
+        framedPathProven = false;
         linkState.serialReady();
         transportCoordinator.onSerialReady(session);
         Log.d(TAG, "🔌 ✅ Serial port marked as open");
@@ -1891,6 +2097,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         if (bSucc) {
             linkState.serialReady();
         } else {
+            framedPathProven = false;
             linkState.serialClosed();
             transportCoordinator.onSerialClosed();
         }

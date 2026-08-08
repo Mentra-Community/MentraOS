@@ -69,6 +69,8 @@ export const LEGACY_MTK_STALL_ZONE_MAX_PERCENT = 55
 export const LEGACY_MTK_SIM_FLOOR_PERCENT = 51
 export const LEGACY_MTK_SIM_CAP_PERCENT = 60
 
+export type OtaProtocolProfile = "legacy" | "unified"
+
 /**
  * Legacy-shaped ota_status: old (< 37) ASG builds send `ota_progress`, which the SDK
  * (Android MentraLive.kt / iOS MentraLive.swift) maps to a unified ota_status with
@@ -94,6 +96,26 @@ export function isLegacyShapedOtaSession(
   if (otaProgress) return true
   const build = Number.parseInt(buildNumber ?? "", 10)
   return Number.isFinite(build) && build > 0 && build < MINIMUM_OTA_STATUS_BUILD
+}
+
+/**
+ * Select the compatibility profile once at install-screen attach. The old split
+ * routes made this decision from the pre-update build and kept it for the whole
+ * mounted flow, even when an APK step restarted into a newer ASG build. Returning
+ * null leaves the coordinator undecided until the first meaningful OTA event.
+ */
+export function selectOtaProtocolProfile(
+  otaStatus: OtaStatus | null,
+  otaProgress: OtaProgress | null,
+  buildNumber: string | null | undefined,
+): OtaProtocolProfile | null {
+  const build = Number.parseInt(buildNumber ?? "", 10)
+  if (Number.isFinite(build) && build > 0) {
+    return build < MINIMUM_OTA_STATUS_BUILD ? "legacy" : "unified"
+  }
+  if (otaStatus) return isLegacyShapedOtaStatus(otaStatus) ? "legacy" : "unified"
+  if (otaProgress) return "legacy"
+  return null
 }
 
 export const OtaProgressMessages = {
