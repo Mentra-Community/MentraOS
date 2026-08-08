@@ -479,7 +479,7 @@ public final class BesOtaStateStore {
                 if (!putLocked("fail_interrupted_on_startup", current, failed)) {
                     return StartupDecision.PERSISTENCE_FAILURE;
                 }
-                return StartupDecision.QUARANTINED;
+                return StartupDecision.RECOVERY_PROBE_ONLY;
             }
             if (current.state == State.APPLY_PENDING) {
                 if (boot.equals(current.authorizationBootId)) {
@@ -497,9 +497,7 @@ public final class BesOtaStateStore {
             if (current.terminalStatus == TerminalStatus.SUCCESS) {
                 return StartupDecision.TERMINAL_AVAILABLE;
             }
-            return boot.equals(current.authorizationBootId)
-                    ? StartupDecision.QUARANTINED
-                    : StartupDecision.RECOVERY_PROBE_ONLY;
+            return StartupDecision.RECOVERY_PROBE_ONLY;
         }
     }
 
@@ -537,9 +535,6 @@ public final class BesOtaStateStore {
             }
             if (current.terminalStatus == TerminalStatus.SUCCESS) {
                 return UartPolicy.NORMAL;
-            }
-            if (boot.equals(current.authorizationBootId)) {
-                return UartPolicy.QUARANTINED;
             }
             return framedPathProvenForCurrentSession
                     ? UartPolicy.NORMAL
