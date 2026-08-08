@@ -84,9 +84,9 @@ public class OtaHelper {
         /**
          * Send a non-terminal OTA status and wait for its queued transport write to finish.
          *
-         * @return true only when the transport reports a successful write before the timeout
+         * @return true only when the transport reports a successful write
          */
-        boolean sendOtaStatusAndWaitForTransport(JSONObject status, long timeoutMs);
+        boolean sendOtaStatusAndWaitForTransport(JSONObject status);
     }
     private static final String TAG = OtaConstants.TAG;
     // A permit, rather than a ReentrantLock, lets the phone command thread reserve OTA admission
@@ -150,8 +150,6 @@ public class OtaHelper {
     private int lastProgressSentPercent = 0;
     private static final long PROGRESS_MIN_INTERVAL_MS = 2000; // 2 seconds
     private static final int PROGRESS_MIN_CHANGE_PERCENT = 5;   // 5%
-    private static final long BES_INSTALL_GUARD_SEND_TIMEOUT_MS = 5_000;
-
     // Current update stage for progress reporting
     private String currentUpdateStage = "download"; // "download" or "install"
     private String currentUpdateType = "apk"; // "apk", "mtk", or "bes"
@@ -2437,9 +2435,7 @@ public class OtaHelper {
         lastOtaPhoneError = null;
 
         JSONObject status = buildOtaStatusForPhone();
-        return status != null
-                && phoneConnectionProvider.sendOtaStatusAndWaitForTransport(
-                        status, BES_INSTALL_GUARD_SEND_TIMEOUT_MS);
+        return status != null && phoneConnectionProvider.sendOtaStatusAndWaitForTransport(status);
     }
 
     /**

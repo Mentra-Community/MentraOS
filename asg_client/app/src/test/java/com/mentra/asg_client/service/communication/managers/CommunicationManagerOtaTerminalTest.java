@@ -12,6 +12,8 @@ import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.BesWireFo
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.MessageChunker;
 import com.mentra.asg_client.io.network.interfaces.INetworkManager;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.LockSupport;
 import org.json.JSONObject;
 import org.junit.After;
 import org.junit.Before;
@@ -82,13 +84,19 @@ public class CommunicationManagerOtaTerminalTest {
     }
 
     @Test
-    public void guardStatusSucceedsOnlyAfterTransportCallbackSucceeds() throws Exception {
+    public void guardStatusWaitsForDelayedSuccessfulTransportCallback() throws Exception {
         ICompanionTransport transport = connectedTransport();
         doAnswer(
                         invocation -> {
                             IBluetoothManager.SendMessageCallback callback =
                                     invocation.getArgument(1);
-                            callback.onSendComplete(true);
+                            new Thread(
+                                            () -> {
+                                                LockSupport.parkNanos(
+                                                        TimeUnit.MILLISECONDS.toNanos(50));
+                                                callback.onSendComplete(true);
+                                            })
+                                    .start();
                             return true;
                         })
                 .when(transport)
@@ -97,7 +105,7 @@ public class CommunicationManagerOtaTerminalTest {
         CommunicationManager manager =
                 new CommunicationManager(transport, mock(INetworkManager.class));
 
-        assertThat(manager.sendOtaStatusAndWaitForTransport(installStatus(), 1_000)).isTrue();
+        assertThat(manager.sendOtaStatusAndWaitForTransport(installStatus())).isTrue();
     }
 
     @Test
@@ -109,7 +117,7 @@ public class CommunicationManagerOtaTerminalTest {
         CommunicationManager manager =
                 new CommunicationManager(transport, mock(INetworkManager.class));
 
-        assertThat(manager.sendOtaStatusAndWaitForTransport(installStatus(), 1_000)).isFalse();
+        assertThat(manager.sendOtaStatusAndWaitForTransport(installStatus())).isFalse();
     }
 
     @Test
@@ -128,7 +136,7 @@ public class CommunicationManagerOtaTerminalTest {
         CommunicationManager manager =
                 new CommunicationManager(transport, mock(INetworkManager.class));
 
-        assertThat(manager.sendOtaStatusAndWaitForTransport(installStatus(), 1_000)).isFalse();
+        assertThat(manager.sendOtaStatusAndWaitForTransport(installStatus())).isFalse();
     }
 
     private static ICompanionTransport connectedTransport() {

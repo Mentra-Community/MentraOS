@@ -20,7 +20,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -680,8 +679,8 @@ public class CommunicationManager
     }
 
     @Override
-    public boolean sendOtaStatusAndWaitForTransport(JSONObject status, long timeoutMs) {
-        if (!isPhoneConnected() || timeoutMs <= 0) {
+    public boolean sendOtaStatusAndWaitForTransport(JSONObject status) {
+        if (!isPhoneConnected()) {
             return false;
         }
 
@@ -700,10 +699,7 @@ public class CommunicationManager
                 Log.e(TAG, "📱 OTA guard status was rejected by the outbound transport");
                 return false;
             }
-            if (!completed.await(timeoutMs, TimeUnit.MILLISECONDS)) {
-                Log.e(TAG, "📱 OTA guard status transport write timed out");
-                return false;
-            }
+            completed.await();
             if (!successful.get()) {
                 Log.e(TAG, "📱 OTA guard status transport write failed");
                 return false;

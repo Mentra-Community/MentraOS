@@ -3,7 +3,6 @@ package com.mentra.asg_client.io.ota.helpers;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.clearInvocations;
@@ -234,7 +233,7 @@ public class OtaHelperBesGuardTest {
         OtaHelper.PhoneConnectionProvider provider =
                 mock(OtaHelper.PhoneConnectionProvider.class);
         when(provider.isPhoneConnected()).thenReturn(true);
-        when(provider.sendOtaStatusAndWaitForTransport(any(JSONObject.class), anyLong()))
+        when(provider.sendOtaStatusAndWaitForTransport(any(JSONObject.class)))
                 .thenReturn(true);
         helper.setPhoneConnectionProvider(provider);
         clearInvocations(provider, controller);
@@ -249,8 +248,7 @@ public class OtaHelperBesGuardTest {
                                         "bes".equals(status.optString("step_type"))
                                                 && "install".equals(status.optString("phase"))
                                                 && "in_progress".equals(
-                                                        status.optString("status"))),
-                        anyLong());
+                                                        status.optString("status"))));
         ordered.verify(controller).startFirmwareUpdate(artifact, "ota-owner");
     }
 
@@ -264,7 +262,7 @@ public class OtaHelperBesGuardTest {
         OtaHelper.PhoneConnectionProvider provider =
                 mock(OtaHelper.PhoneConnectionProvider.class);
         when(provider.isPhoneConnected()).thenReturn(true);
-        when(provider.sendOtaStatusAndWaitForTransport(any(JSONObject.class), anyLong()))
+        when(provider.sendOtaStatusAndWaitForTransport(any(JSONObject.class)))
                 .thenReturn(false);
         helper.setPhoneConnectionProvider(provider);
         clearInvocations(provider, controller);
