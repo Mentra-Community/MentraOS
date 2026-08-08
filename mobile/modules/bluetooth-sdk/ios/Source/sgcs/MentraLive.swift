@@ -1453,6 +1453,7 @@ class MentraLive: NSObject, SGCManager {
     private let KEEP_ALIVE_INTERVAL_MS: UInt64 = 5_000_000_000 // 5 seconds
     private let CONNECTION_TIMEOUT_MS: UInt64 = 100_000_000_000 // 100 seconds
     private let HEARTBEAT_INTERVAL_MS: TimeInterval = 30.0 // 30 seconds
+    private let BES_OTA_HEARTBEAT_LEASE_SEC: TimeInterval = 120.0
     private let BATTERY_REQUEST_EVERY_N_HEARTBEATS = 10
     private let SIGNAL_STRENGTH_READ_INTERVAL_MS: TimeInterval = 10.0
     private let MIN_SEND_DELAY_MS: UInt64 = 160_000_000 // 160ms in nanoseconds
@@ -1547,6 +1548,7 @@ class MentraLive: NSObject, SGCManager {
 
     /// BES OTA progress tracking - only send to UI on 5% increments
     private var lastBesOtaProgress = -1
+    private var besOtaHeartbeatSuppressedUntil: TimeInterval = 0
 
     // Cached OTA session context from last ota_status — used to fill in session fields for sr_adota
     private var cachedOtaSessionId: String?
@@ -2682,6 +2684,7 @@ class MentraLive: NSObject, SGCManager {
             if let seq = json["sq"] as? [String] ?? json["step_sequence"] as? [String], !seq.isEmpty {
                 cachedOtaStepSequence = seq
             }
+            updateBesOtaHeartbeatGuard(stepType: osStepType, phase: osPhase, status: osStatus)
 
             Bridge.log("LIVE: 📱 OTA status - step \(osCurrentStep)/\(osTotalSteps) \(osPhase) \(osStatus) \(osOverallPercent)%")
 
@@ -2842,6 +2845,18 @@ class MentraLive: NSObject, SGCManager {
         cachedOtaCurrentStep = 0
         cachedOtaStepSequence = nil
         lastBesOtaProgress = -1
+        besOtaHeartbeatSuppressedUntil = 0
+    }
+
+    private func updateBesOtaHeartbeatGuard(stepType: String, phase: String, status: String) {
+        guard stepType.lowercased() == "bes", phase.lowercased() == "install" else { return }
+        switch status.lowercased() {
+        case "failed", "complete", "step_complete", "finished", "success":
+            besOtaHeartbeatSuppressedUntil = 0
+        default:
+            besOtaHeartbeatSuppressedUntil =
+                ProcessInfo.processInfo.systemUptime + BES_OTA_HEARTBEAT_LEASE_SEC
+        }
     }
 
     /// Falls back to raw besProgress when step sequence is unavailable.
@@ -3019,6 +3034,14 @@ class MentraLive: NSObject, SGCManager {
 
                 let failed = type == "error" || type == "fail"
                 let succeeded = type == "success"
+                if isTerminalStatus {
+                    besOtaHeartbeatSuppressedUntil = 0
+                } else {
+                    // Refresh before progress de-duplication: raw progress proves the BES
+                    // transfer is active even when the rounded UI value is unchanged.
+                    besOtaHeartbeatSuppressedUntil =
+                        ProcessInfo.processInfo.systemUptime + BES_OTA_HEARTBEAT_LEASE_SEC
+                }
                 if succeeded {
                     besOtaProgressVal = 100
                 } else if failed {
@@ -5050,6 +5073,10 @@ class MentraLive: NSObject, SGCManager {
     private func sendHeartbeat() {
         guard fullyBooted, connectionState == ConnTypes.CONNECTED else {
             Bridge.log("LIVE: Skipping heartbeat - glasses not fully booted or not connected")
+            return
+        }
+        if ProcessInfo.processInfo.systemUptime < besOtaHeartbeatSuppressedUntil {
+            Bridge.log("LIVE: Skipping heartbeat while BES OTA owns the UART")
             return
         }
 

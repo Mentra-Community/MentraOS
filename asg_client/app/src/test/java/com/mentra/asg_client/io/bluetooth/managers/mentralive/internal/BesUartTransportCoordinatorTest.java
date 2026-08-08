@@ -359,6 +359,7 @@ public class BesUartTransportCoordinatorTest {
         assertThat(coordinator.beginFileTransfer()).isNull();
         assertThat(coordinator.runOtaAuthorizationWrite(otaLease, () -> true)).isTrue();
         assertThat(coordinator.promoteOtaAuthorizationToTransfer(otaLease)).isTrue();
+        assertThat(host.invalidations).isEqualTo(1);
         assertThat(coordinator.inboundRoute(host.session))
                 .isEqualTo(BesUartTransportCoordinator.InboundRoute.OTA);
         assertThat(host.fastReceive).isTrue();
@@ -384,6 +385,26 @@ public class BesUartTransportCoordinatorTest {
         assertThat(host.fastReceive).isFalse();
         assertThat(coordinator.getOperation())
                 .isEqualTo(BesUartTransportCoordinator.Operation.NONE);
+    }
+
+    @Test
+    public void failedOtaEndsInRawFirstRecoveryInsteadOfPermanentQuarantine() throws Exception {
+        coordinator.onSerialReady(host.session);
+        assertThat(systemVersion("17.26.7.4"))
+                .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
+        BesUartTransportCoordinator.OperationLease otaLease = coordinator.beginOtaAuthorization();
+        assertThat(otaLease).isNotNull();
+        assertThat(coordinator.promoteOtaAuthorizationToTransfer(otaLease)).isTrue();
+        coordinator.startSafetyRecovery();
+        safety.policy = BesUartTransportCoordinator.SafetyPolicy.RECOVERY_PROBE_ONLY;
+
+        coordinator.endOta(otaLease);
+
+        assertThat(coordinator.getState())
+                .isEqualTo(BesUartTransportCoordinator.State.SAFETY_RECOVERING);
+        assertThat(coordinator.inboundRoute(host.session))
+                .isEqualTo(BesUartTransportCoordinator.InboundRoute.OTA);
+        awaitRawWriteCount(1);
     }
 
     @Test
@@ -523,6 +544,13 @@ public class BesUartTransportCoordinatorTest {
         assertThat(host.openAttempts).containsExactly(AsgConstants.UART_FAST_BAUD);
         assertThat(host.rawWrites).hasSize(6);
         assertThat(countControlCommands("cs_syvr")).isEqualTo(2);
+
+        SerialSession currentSession = coordinator.getSerialSession();
+        assertThat(coordinator.inboundRoute(currentSession))
+                .isEqualTo(BesUartTransportCoordinator.InboundRoute.OTA);
+        assertThat(coordinator.getState())
+                .isEqualTo(BesUartTransportCoordinator.State.SAFETY_RECOVERING);
+        awaitRawWriteCount(7);
     }
 
     @Test

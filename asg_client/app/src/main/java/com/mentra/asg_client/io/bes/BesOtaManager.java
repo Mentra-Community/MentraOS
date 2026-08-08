@@ -781,7 +781,9 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
         if (transportCoordinator != null) {
             BesOtaStateStore.UartPolicy policy =
                     stateStore.uartPolicy(stateStore.currentBootId(), false, activeOwnerSessionId);
-            if (authorizationReserved && policy != BesOtaStateStore.UartPolicy.NORMAL) {
+            if (authorizationReserved
+                    && (policy == BesOtaStateStore.UartPolicy.QUARANTINED
+                            || policy == BesOtaStateStore.UartPolicy.OTA_OWNER_ONLY)) {
                 transportCoordinator.quarantineOta(transportLease);
             } else {
                 transportCoordinator.endOta(transportLease);

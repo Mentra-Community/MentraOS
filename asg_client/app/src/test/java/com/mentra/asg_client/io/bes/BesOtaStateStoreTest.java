@@ -195,13 +195,29 @@ public class BesOtaStateStoreTest {
     }
 
     @Test
-    public void sameBootProcessRestartRecordsFailureAndQuarantines() {
+    public void sameBootProcessRestartRecordsFailureAndRequiresFramedRecoveryProof() {
         reserve();
 
-        assertThat(store.reconcileStartup(BOOT_A)).isEqualTo(StartupDecision.QUARANTINED);
+        assertThat(store.reconcileStartup(BOOT_A)).isEqualTo(StartupDecision.RECOVERY_PROBE_ONLY);
         assertThat(store.read().getState()).isEqualTo(State.TERMINAL);
         assertThat(store.read().getTerminalCode()).isEqualTo("interrupted");
-        assertThat(store.uartPolicy(BOOT_A, false, null)).isEqualTo(UartPolicy.QUARANTINED);
+        assertThat(store.uartPolicy(BOOT_A, false, null))
+                .isEqualTo(UartPolicy.RECOVERY_PROBE_ONLY);
+        assertThat(store.uartPolicy(BOOT_A, true, null)).isEqualTo(UartPolicy.NORMAL);
+        assertThat(store.prepareForNewSession(BOOT_A, true))
+                .isEqualTo(StartDecision.RESTART_REQUIRED);
+    }
+
+    @Test
+    public void sameBootTerminalFailureAllowsOnlyOrdinaryUartAfterFramedProof() {
+        reserve();
+        assertThat(store.fail(OWNER, "response_timeout")).isEqualTo(TransitionResult.APPLIED);
+
+        assertThat(store.uartPolicy(BOOT_A, false, null))
+                .isEqualTo(UartPolicy.RECOVERY_PROBE_ONLY);
+        assertThat(store.uartPolicy(BOOT_A, true, null)).isEqualTo(UartPolicy.NORMAL);
+        assertThat(store.prepareForNewSession(BOOT_A, true))
+                .isEqualTo(StartDecision.RESTART_REQUIRED);
     }
 
     @Test
