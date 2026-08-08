@@ -10,6 +10,7 @@ import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import OtaProgressScreen from "@/app/ota/progress"
 import {MINIMUM_OTA_STATUS_BUILD, OtaProgressMessages} from "@mentra/engine"
 import {BES_INSTALL_RESTART_MESSAGE} from "@/utils/otaErrorMapping"
+import {beginOtaAutoChain, isOtaAutoChainActive, stopOtaAutoChain} from "@/services/otaAutoChain"
 
 const mockReplace = jest.fn()
 
@@ -87,9 +88,11 @@ beforeEach(() => {
   mockReplace.mockClear()
   BluetoothSdk.sendOtaQueryStatus.mockClear()
   BluetoothSdk.startOtaUpdate.mockClear()
+  stopOtaAutoChain()
 })
 
 afterEach(() => {
+  stopOtaAutoChain()
   jest.useRealTimers()
 })
 
@@ -191,6 +194,135 @@ describe("progress.tsx display states", () => {
     expect(getByText("Done")).toBeDefined()
   })
 
+  it("automatically returns to update checking after a chained pass completes", async () => {
+    setGlassesConnected()
+    beginOtaAutoChain("initial-offer", false)
+    const replaceSpy = jest.spyOn(useNavigationStore.getState(), "replace")
+    try {
+      render(<OtaProgressScreen />)
+
+      act(() => {
+        useGlassesStore.getState().setOtaStatus({
+          sessionId: "s1",
+          totalSteps: 1,
+          currentStep: 1,
+          stepType: "apk",
+          phase: "install",
+          stepPercent: 100,
+          overallPercent: 100,
+          status: "complete",
+        })
+      })
+
+      expect(replaceSpy).not.toHaveBeenCalledWith("/ota/check-for-updates")
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(750)
+      })
+      expect(replaceSpy).toHaveBeenCalledWith("/ota/check-for-updates")
+    } finally {
+      replaceSpy.mockRestore()
+    }
+  })
+
+  it("waits for a rebooting chained pass to reconnect before checking again", async () => {
+    setGlassesDisconnected()
+    beginOtaAutoChain("initial-offer", false)
+    useGlassesStore.getState().setOtaStatus({
+      sessionId: "s1",
+      totalSteps: 1,
+      currentStep: 1,
+      stepType: "apk",
+      phase: "install",
+      stepPercent: 100,
+      overallPercent: 100,
+      status: "complete",
+    })
+    const replaceSpy = jest.spyOn(useNavigationStore.getState(), "replace")
+    try {
+      render(<OtaProgressScreen />)
+
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(750)
+      })
+      expect(replaceSpy).not.toHaveBeenCalledWith("/ota/check-for-updates")
+
+      act(() => {
+        setGlassesConnected()
+      })
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(750)
+      })
+      expect(replaceSpy).toHaveBeenCalledWith("/ota/check-for-updates")
+    } finally {
+      replaceSpy.mockRestore()
+    }
+  })
+
+  it("reschedules chained navigation when a reboot starts during the success delay", async () => {
+    setGlassesConnected()
+    beginOtaAutoChain("initial-offer", false)
+    const replaceSpy = jest.spyOn(useNavigationStore.getState(), "replace")
+    try {
+      render(<OtaProgressScreen />)
+      act(() => {
+        useGlassesStore.getState().setOtaStatus({
+          sessionId: "s1",
+          totalSteps: 1,
+          currentStep: 1,
+          stepType: "apk",
+          phase: "install",
+          stepPercent: 100,
+          overallPercent: 100,
+          status: "complete",
+        })
+      })
+
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(300)
+      })
+      act(() => {
+        setGlassesDisconnected()
+      })
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(750)
+      })
+      expect(replaceSpy).not.toHaveBeenCalledWith("/ota/check-for-updates")
+
+      act(() => {
+        setGlassesConnected()
+      })
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(750)
+      })
+      expect(replaceSpy).toHaveBeenCalledWith("/ota/check-for-updates")
+    } finally {
+      replaceSpy.mockRestore()
+    }
+  })
+
+  it("stops automatic chaining when Continue bypasses BES reboot verification", () => {
+    setGlassesConnected()
+    beginOtaAutoChain("initial-offer", false)
+    const {getByText} = render(<OtaProgressScreen />)
+
+    act(() => {
+      useGlassesStore.getState().setOtaStatus({
+        sessionId: "s1",
+        totalSteps: 1,
+        currentStep: 1,
+        stepType: "bes",
+        phase: "install",
+        stepPercent: 100,
+        overallPercent: 100,
+        status: "step_complete",
+      })
+    })
+
+    fireEvent.press(getByText("Continue"))
+
+    expect(isOtaAutoChainActive()).toBe(false)
+  })
+
   it("transitions to failed on failed ota_status with error", () => {
     setGlassesConnected()
     const {getByText} = render(<OtaProgressScreen />)
@@ -212,6 +344,30 @@ describe("progress.tsx display states", () => {
     expect(getByText("Update Failed")).toBeDefined()
     expect(getByText("Glasses WiFi has no internet connection")).toBeDefined()
     expect(getByText("Retry")).toBeDefined()
+  })
+
+  it("stops automatic chaining when leaving a failed pass to change WiFi", () => {
+    setGlassesConnected()
+    beginOtaAutoChain("initial-offer", false)
+    const {getByText} = render(<OtaProgressScreen />)
+
+    act(() => {
+      useGlassesStore.getState().setOtaStatus({
+        sessionId: "s1",
+        totalSteps: 1,
+        currentStep: 1,
+        stepType: "apk",
+        phase: "download",
+        stepPercent: 0,
+        overallPercent: 0,
+        status: "failed",
+        error: "no_internet",
+      })
+    })
+
+    fireEvent.press(getByText("Change WiFi"))
+
+    expect(isOtaAutoChainActive()).toBe(false)
   })
 
   it("requires a glasses restart for the existing generic BES install failure", () => {
