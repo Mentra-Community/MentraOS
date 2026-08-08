@@ -80,6 +80,13 @@ public class OtaHelper {
          * Send unified OTA status (session steps, phase, percent). Terminal events use reliable delivery.
          */
         void sendOtaStatus(JSONObject status);
+
+        /**
+         * Send a non-terminal OTA status and wait for its queued transport write to finish.
+         *
+         * @return true only when the transport reports a successful write before the timeout
+         */
+        boolean sendOtaStatusAndWaitForTransport(JSONObject status, long timeoutMs);
     }
     private static final String TAG = OtaConstants.TAG;
     // A permit, rather than a ReentrantLock, lets the phone command thread reserve OTA admission
@@ -143,6 +150,7 @@ public class OtaHelper {
     private int lastProgressSentPercent = 0;
     private static final long PROGRESS_MIN_INTERVAL_MS = 2000; // 2 seconds
     private static final int PROGRESS_MIN_CHANGE_PERCENT = 5;   // 5%
+    private static final long BES_INSTALL_GUARD_SEND_TIMEOUT_MS = 5_000;
 
     // Current update stage for progress reporting
     private String currentUpdateStage = "download"; // "download" or "install"
@@ -2408,8 +2416,30 @@ public class OtaHelper {
             ValidatedBesArtifact artifact,
             String ownerSessionId) {
         currentUpdateType = "bes";
-        sendProgressToPhone("install", 0, 0, 0, "STARTED", null);
+        if (!sendBesInstallStartToPhoneAndWait()) {
+            Log.e(TAG, "BES install blocked - phone guard status did not reach the transport");
+            return false;
+        }
         return manager.startFirmwareUpdate(artifact, ownerSessionId);
+    }
+
+    private boolean sendBesInstallStartToPhoneAndWait() {
+        updateSessionFromProgress("install", 0, "STARTED", null);
+        if (phoneConnectionProvider == null || !isPhoneConnected()) {
+            return false;
+        }
+
+        lastProgressSentTime = System.currentTimeMillis();
+        lastProgressSentPercent = 0;
+        lastOtaPhoneStage = "install";
+        lastOtaPhoneProgress = 0;
+        lastOtaPhoneEventStatus = "STARTED";
+        lastOtaPhoneError = null;
+
+        JSONObject status = buildOtaStatusForPhone();
+        return status != null
+                && phoneConnectionProvider.sendOtaStatusAndWaitForTransport(
+                        status, BES_INSTALL_GUARD_SEND_TIMEOUT_MS);
     }
 
     /**
@@ -2973,8 +3003,7 @@ public class OtaHelper {
         return true;
     }
 
-    private void sendOtaStatus() {
-        if (phoneConnectionProvider == null || !isPhoneConnected()) return;
+    private JSONObject buildOtaStatusForPhone() {
         JSONObject sessionState = getAuthoritativeBesStatus();
         if (sessionState == null && sessionManager != null) {
             sessionState = sessionManager.getSessionState();
@@ -2983,7 +3012,7 @@ public class OtaHelper {
             sessionState = buildMinimalOtaStatusJson();
             if (sessionState == null) {
                 Log.w(TAG, "No OTA session and cannot build minimal ota_status — phone will not see progress");
-                return;
+                return null;
             }
             Log.w(TAG, "No OTA session state — sending minimal ota_status so the phone UI can update");
         }
@@ -2995,9 +3024,18 @@ public class OtaHelper {
             if ("failed".equals(sessionState.optString("status"))) {
                 sessionState.put("glasses_time_ms", System.currentTimeMillis());
             }
-            phoneConnectionProvider.sendOtaStatus(sessionState);
+            return sessionState;
         } catch (JSONException e) {
             Log.e(TAG, "Failed to send OTA status", e);
+            return null;
+        }
+    }
+
+    private void sendOtaStatus() {
+        if (phoneConnectionProvider == null || !isPhoneConnected()) return;
+        JSONObject sessionState = buildOtaStatusForPhone();
+        if (sessionState != null) {
+            phoneConnectionProvider.sendOtaStatus(sessionState);
         }
     }
 

@@ -19,6 +19,9 @@ import org.json.JSONObject;
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Manages all communication operations (Bluetooth, WiFi status, etc.). Follows Single
@@ -673,6 +676,47 @@ public class CommunicationManager
             }
         } catch (Exception e) {
             Log.e(TAG, "📱 Error sending OTA status", e);
+        }
+    }
+
+    @Override
+    public boolean sendOtaStatusAndWaitForTransport(JSONObject status, long timeoutMs) {
+        if (!isPhoneConnected() || timeoutMs <= 0) {
+            return false;
+        }
+
+        try {
+            byte[] payload = status.toString().getBytes(StandardCharsets.UTF_8);
+            CountDownLatch completed = new CountDownLatch(1);
+            AtomicBoolean successful = new AtomicBoolean(false);
+            boolean queued =
+                    transport.sendMessage(
+                            payload,
+                            success -> {
+                                successful.set(success);
+                                completed.countDown();
+                            });
+            if (!queued) {
+                Log.e(TAG, "📱 OTA guard status was rejected by the outbound transport");
+                return false;
+            }
+            if (!completed.await(timeoutMs, TimeUnit.MILLISECONDS)) {
+                Log.e(TAG, "📱 OTA guard status transport write timed out");
+                return false;
+            }
+            if (!successful.get()) {
+                Log.e(TAG, "📱 OTA guard status transport write failed");
+                return false;
+            }
+            Log.d(TAG, "📱 OTA guard status transport write completed");
+            return true;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            Log.e(TAG, "📱 OTA guard status wait interrupted", e);
+            return false;
+        } catch (Exception e) {
+            Log.e(TAG, "📱 Error sending synchronous OTA guard status", e);
+            return false;
         }
     }
 
