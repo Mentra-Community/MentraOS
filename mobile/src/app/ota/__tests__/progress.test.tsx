@@ -346,6 +346,30 @@ describe("progress.tsx display states", () => {
     expect(getByText("Retry")).toBeDefined()
   })
 
+  it("stops automatic chaining when leaving a failed pass to change WiFi", () => {
+    setGlassesConnected()
+    beginOtaAutoChain("initial-offer", false)
+    const {getByText} = render(<OtaProgressScreen />)
+
+    act(() => {
+      useGlassesStore.getState().setOtaStatus({
+        sessionId: "s1",
+        totalSteps: 1,
+        currentStep: 1,
+        stepType: "apk",
+        phase: "download",
+        stepPercent: 0,
+        overallPercent: 0,
+        status: "failed",
+        error: "no_internet",
+      })
+    })
+
+    fireEvent.press(getByText("Change WiFi"))
+
+    expect(isOtaAutoChainActive()).toBe(false)
+  })
+
   it("requires a glasses restart for the existing generic BES install failure", () => {
     setGlassesConnected()
     const {getByText, queryByText} = render(<OtaProgressScreen />)

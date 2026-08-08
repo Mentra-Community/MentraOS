@@ -64,7 +64,7 @@ export function stopOtaAutoChain(): void {
  * Start (or continue) the bounded wait for glasses that are rebooting between
  * passes. Re-renders must not extend the original deadline indefinitely.
  */
-export function otaAutoChainReconnectWaitRemaining(now = Date.now()): number | null {
+export function otaAutoChainReconnectWaitRemaining(now = performance.now()): number | null {
   if (!session) return null
 
   session.reconnectDeadline ??= now + OTA_AUTO_CHAIN_RECONNECT_TIMEOUT_MS

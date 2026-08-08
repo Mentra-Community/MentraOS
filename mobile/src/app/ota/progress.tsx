@@ -106,6 +106,7 @@ export default function OtaProgressScreen() {
   }
 
   const handleChangeWifi = useCallback(() => {
+    stopOtaAutoChain()
     push("/wifi/scan")
   }, [push])
 
