@@ -68,6 +68,21 @@ export enum AppErrorCode {
 // Errors about one request rather than the connection. Reported to the App without closing the socket.
 const NON_FATAL_ERROR_CODES: ReadonlySet<AppErrorCode> = new Set([AppErrorCode.WIFI_NOT_CONNECTED]);
 
+/**
+ * Map a thrown streaming error to the code sent to the App.
+ *
+ * The streaming extensions tag WiFi failures from ConnectionValidator with
+ * `.code = WIFI_NOT_CONNECTED`. Reporting those as INTERNAL_ERROR would close
+ * the socket, so every stream handler must classify through here.
+ */
+export function streamErrorCode(e: unknown): AppErrorCode {
+  const message = (e as Error)?.message;
+  const code = (e as { code?: string })?.code;
+  return code === AppErrorCode.WIFI_NOT_CONNECTED || message === "no_wifi_connection"
+    ? AppErrorCode.WIFI_NOT_CONNECTED
+    : AppErrorCode.INTERNAL_ERROR;
+}
+
 // Debouncing for subscription changes to prevent rapid stream recreation
 const subscriptionChangeTimers = new Map<string, NodeJS.Timeout>();
 const SUBSCRIPTION_DEBOUNCE_MS = 500;
@@ -453,16 +468,7 @@ async function handleStreamRequest(
   } catch (e) {
     logger.error({ e, packageName: message.packageName }, "Error starting stream");
 
-    const errorMessage = (e as Error).message || "Failed to start stream.";
-    const errorCode = (e as any).code;
-    const isWifiError = errorCode === "WIFI_NOT_CONNECTED" || errorMessage === "no_wifi_connection";
-
-    sendError(
-      appWebsocket,
-      isWifiError ? AppErrorCode.WIFI_NOT_CONNECTED : AppErrorCode.INTERNAL_ERROR,
-      errorMessage,
-      logger,
-    );
+    sendError(appWebsocket, streamErrorCode(e), (e as Error).message || "Failed to start stream.", logger);
   }
 }
 
@@ -637,12 +643,7 @@ async function handleManagedStreamRequest(
     logger.info({ streamId, packageName: message.packageName }, "Managed stream request processed");
   } catch (e) {
     logger.error({ e, packageName: message.packageName }, "Error starting managed stream");
-    sendError(
-      appWebsocket,
-      AppErrorCode.INTERNAL_ERROR,
-      (e as Error).message || "Failed to start managed stream",
-      logger,
-    );
+    sendError(appWebsocket, streamErrorCode(e), (e as Error).message || "Failed to start managed stream", logger);
   }
 }
 
@@ -660,12 +661,7 @@ async function handleManagedStreamStop(
     logger.info({ packageName: message.packageName }, "Managed stream stop processed");
   } catch (e) {
     logger.error({ e, packageName: message.packageName }, "Error stopping managed stream");
-    sendError(
-      appWebsocket,
-      AppErrorCode.INTERNAL_ERROR,
-      (e as Error).message || "Failed to stop managed stream",
-      logger,
-    );
+    sendError(appWebsocket, streamErrorCode(e), (e as Error).message || "Failed to stop managed stream", logger);
   }
 }
 
