@@ -58,6 +58,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     private volatile BesOtaUartListener besOtaUartListener;
 
     public interface BesOtaAuthorizationCallback {
+        /** Called when the optional phone guard cannot be written before authorization. */
+        void onInstallGuardWriteFailed();
+
         /** Called on the outbound worker before the authorization request is written. */
         boolean onLeaseAcquired(BesUartTransportCoordinator.OperationLease lease);
 
@@ -1233,12 +1236,36 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
      * drain before the lease is acquired; later messages cannot enter the exclusive OTA lifetime.
      */
     public boolean queueBesOtaAuthorization(byte[] data, BesOtaAuthorizationCallback callback) {
+        return queueBesOtaAuthorization(null, data, callback);
+    }
+
+    /**
+     * Queue the phone guard and BES authorization as one outbound FIFO action. The guard is a
+     * normal framed write; only its actual UART success permits the exclusive OTA lease and mh_ota.
+     */
+    public boolean queueBesOtaAuthorization(
+            byte[] installGuard, byte[] data, BesOtaAuthorizationCallback callback) {
         if (data == null || data.length == 0 || callback == null) {
             return false;
         }
+        byte[] guard =
+                installGuard == null || installGuard.length == 0
+                        ? null
+                        : Arrays.copyOf(installGuard, installGuard.length);
         byte[] payload = Arrays.copyOf(data, data.length);
         return queueOutboundAction(
                 () -> {
+                    if (guard != null) {
+                        publishOutboundMessage(guard, true);
+                        boolean guardSent =
+                                transportCoordinator.runNormalWrite(
+                                        () -> sendMessageInternalLocked(guard));
+                        if (!guardSent) {
+                            callback.onInstallGuardWriteFailed();
+                            return;
+                        }
+                    }
+
                     BesUartTransportCoordinator.OperationLease lease =
                             transportCoordinator.beginOtaAuthorization();
                     if (lease == null) {

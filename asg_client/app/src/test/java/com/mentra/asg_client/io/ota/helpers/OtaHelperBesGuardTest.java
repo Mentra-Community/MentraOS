@@ -5,12 +5,13 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.clearInvocations;
-import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import android.content.Context;
@@ -31,7 +32,6 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 import org.junit.runner.RunWith;
-import org.mockito.InOrder;
 import org.mockito.MockedStatic;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
@@ -223,53 +223,52 @@ public class OtaHelperBesGuardTest {
     }
 
     @Test
-    public void phoneBesInstallPublishesGuardStatusBeforeControllerStarts() {
+    public void phoneBesInstallPassesGuardToControllerWithoutPhonePresenceGate() {
         StubRegistry registry = new StubRegistry();
         IBesOtaController controller = mock(IBesOtaController.class);
         ValidatedBesArtifact artifact = mock(ValidatedBesArtifact.class);
-        when(controller.startFirmwareUpdate(artifact, "ota-owner")).thenReturn(true);
+        when(controller.startFirmwareUpdateWithInstallGuard(
+                        any(), anyString(), any(JSONObject.class)))
+                .thenReturn(true);
         registry.setInstance(controller);
         OtaHelper helper = newHelper(registry);
         OtaHelper.PhoneConnectionProvider provider =
                 mock(OtaHelper.PhoneConnectionProvider.class);
-        when(provider.isPhoneConnected()).thenReturn(true);
-        when(provider.sendOtaStatusAndWaitForTransport(any(JSONObject.class)))
-                .thenReturn(true);
         helper.setPhoneConnectionProvider(provider);
         clearInvocations(provider, controller);
 
         assertThat(helper.startBesFirmwareInstall(controller, artifact, "ota-owner")).isTrue();
 
-        InOrder ordered = inOrder(provider, controller);
-        ordered.verify(provider)
-                .sendOtaStatusAndWaitForTransport(
+        verify(controller)
+                .startFirmwareUpdateWithInstallGuard(
+                        eq(artifact),
+                        eq("ota-owner"),
                         argThat(
                                 status ->
                                         "bes".equals(status.optString("step_type"))
                                                 && "install".equals(status.optString("phase"))
                                                 && "in_progress".equals(
                                                         status.optString("status"))));
-        ordered.verify(controller).startFirmwareUpdate(artifact, "ota-owner");
+        verifyNoInteractions(provider);
     }
 
     @Test
-    public void phoneBesInstallRefusesWhenGuardStatusTransportFails() {
+    public void phoneBesInstallReturnsControllerQueueFailure() {
         StubRegistry registry = new StubRegistry();
         IBesOtaController controller = mock(IBesOtaController.class);
         ValidatedBesArtifact artifact = mock(ValidatedBesArtifact.class);
         registry.setInstance(controller);
         OtaHelper helper = newHelper(registry);
-        OtaHelper.PhoneConnectionProvider provider =
-                mock(OtaHelper.PhoneConnectionProvider.class);
-        when(provider.isPhoneConnected()).thenReturn(true);
-        when(provider.sendOtaStatusAndWaitForTransport(any(JSONObject.class)))
+        when(controller.startFirmwareUpdateWithInstallGuard(
+                        any(), anyString(), any(JSONObject.class)))
                 .thenReturn(false);
-        helper.setPhoneConnectionProvider(provider);
-        clearInvocations(provider, controller);
+        clearInvocations(controller);
 
         assertThat(helper.startBesFirmwareInstall(controller, artifact, "ota-owner")).isFalse();
 
-        verify(controller, never()).startFirmwareUpdate(any(), anyString());
+        verify(controller)
+                .startFirmwareUpdateWithInstallGuard(
+                        eq(artifact), eq("ota-owner"), any(JSONObject.class));
     }
 
     @Test

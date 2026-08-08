@@ -80,13 +80,6 @@ public class OtaHelper {
          * Send unified OTA status (session steps, phase, percent). Terminal events use reliable delivery.
          */
         void sendOtaStatus(JSONObject status);
-
-        /**
-         * Send a non-terminal OTA status and wait for its queued transport write to finish.
-         *
-         * @return true only when the transport reports a successful write
-         */
-        boolean sendOtaStatusAndWaitForTransport(JSONObject status);
     }
     private static final String TAG = OtaConstants.TAG;
     // A permit, rather than a ReentrantLock, lets the phone command thread reserve OTA admission
@@ -2403,39 +2396,30 @@ public class OtaHelper {
         }
     }
 
-    /**
-     * Publishes the BES install phase before the controller can reserve the UART for raw OTA.
-     * PhoneConnectionProvider preserves write order, and the UART coordinator drains accepted
-     * writes before raw routing begins, so the phone can suppress heartbeats before BES owns the
-     * transport.
-     */
+    /** Build the phone guard and let the BES controller order it immediately before mh_ota. */
     boolean startBesFirmwareInstall(
             IBesOtaController manager,
             ValidatedBesArtifact artifact,
             String ownerSessionId) {
         currentUpdateType = "bes";
-        if (!sendBesInstallStartToPhoneAndWait()) {
-            Log.e(TAG, "BES install blocked - phone guard status did not reach the transport");
+        JSONObject installGuard = buildBesInstallStartStatus();
+        if (installGuard == null) {
+            Log.e(TAG, "BES install blocked - could not build phone guard status");
             return false;
         }
-        return manager.startFirmwareUpdate(artifact, ownerSessionId);
+        return manager.startFirmwareUpdateWithInstallGuard(
+                artifact, ownerSessionId, installGuard);
     }
 
-    private boolean sendBesInstallStartToPhoneAndWait() {
+    private JSONObject buildBesInstallStartStatus() {
         updateSessionFromProgress("install", 0, "STARTED", null);
-        if (phoneConnectionProvider == null || !isPhoneConnected()) {
-            return false;
-        }
-
         lastProgressSentTime = System.currentTimeMillis();
         lastProgressSentPercent = 0;
         lastOtaPhoneStage = "install";
         lastOtaPhoneProgress = 0;
         lastOtaPhoneEventStatus = "STARTED";
         lastOtaPhoneError = null;
-
-        JSONObject status = buildOtaStatusForPhone();
-        return status != null && phoneConnectionProvider.sendOtaStatusAndWaitForTransport(status);
+        return buildOtaStatusForPhone();
     }
 
     /**
