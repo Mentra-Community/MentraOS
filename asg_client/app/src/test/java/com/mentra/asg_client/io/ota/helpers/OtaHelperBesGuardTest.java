@@ -4,7 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
@@ -29,6 +31,7 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 import org.junit.runner.RunWith;
+import org.mockito.InOrder;
 import org.mockito.MockedStatic;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
@@ -217,6 +220,34 @@ public class OtaHelperBesGuardTest {
         assertThat(unrelatedArtifact).exists();
         verify(controller).prepareForNewOtaSession();
         verify(controller).startFirmwareUpdate(any(), anyString());
+    }
+
+    @Test
+    public void phoneBesInstallPublishesGuardStatusBeforeControllerStarts() {
+        StubRegistry registry = new StubRegistry();
+        IBesOtaController controller = mock(IBesOtaController.class);
+        ValidatedBesArtifact artifact = mock(ValidatedBesArtifact.class);
+        when(controller.startFirmwareUpdate(artifact, "ota-owner")).thenReturn(true);
+        registry.setInstance(controller);
+        OtaHelper helper = newHelper(registry);
+        OtaHelper.PhoneConnectionProvider provider =
+                mock(OtaHelper.PhoneConnectionProvider.class);
+        when(provider.isPhoneConnected()).thenReturn(true);
+        helper.setPhoneConnectionProvider(provider);
+        clearInvocations(provider, controller);
+
+        assertThat(helper.startBesFirmwareInstall(controller, artifact, "ota-owner")).isTrue();
+
+        InOrder ordered = inOrder(provider, controller);
+        ordered.verify(provider)
+                .sendOtaStatus(
+                        argThat(
+                                status ->
+                                        "bes".equals(status.optString("step_type"))
+                                                && "install".equals(status.optString("phase"))
+                                                && "in_progress".equals(
+                                                        status.optString("status"))));
+        ordered.verify(controller).startFirmwareUpdate(artifact, "ota-owner");
     }
 
     @Test

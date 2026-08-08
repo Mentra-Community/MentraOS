@@ -2718,6 +2718,7 @@ class MentraLive: NSObject, SGCManager {
             } else {
                 unified = "in_progress"
             }
+            updateBesOtaHeartbeatGuard(stepType: currentUpdate, phase: legacyPhase, status: unified)
             Bridge.log(
                 "LIVE: 📱 Legacy ota_progress → ota_status: \(legacyStage) \(legacyStatus) \(legacyProgress)%"
             )
@@ -2845,7 +2846,8 @@ class MentraLive: NSObject, SGCManager {
         cachedOtaCurrentStep = 0
         cachedOtaStepSequence = nil
         lastBesOtaProgress = -1
-        besOtaHeartbeatSuppressedUntil = 0
+        // The bounded UART-ownership lease is transport state, not session-cache state. Keep it
+        // through a BLE reconnect so heartbeats cannot resume while BES still owns the UART.
     }
 
     private func updateBesOtaHeartbeatGuard(stepType: String, phase: String, status: String) {

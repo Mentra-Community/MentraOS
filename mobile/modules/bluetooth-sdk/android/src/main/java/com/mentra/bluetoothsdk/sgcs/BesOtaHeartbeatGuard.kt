@@ -1,5 +1,7 @@
 package com.mentra.bluetoothsdk.sgcs
 
+import java.util.Locale
+
 /**
  * Temporarily suppresses phone heartbeats while BES OTA owns the ASG-to-BES UART.
  *
@@ -24,6 +26,19 @@ internal class BesOtaHeartbeatGuard(
 
     fun clear() {
         suppressionDeadlineMs = 0L
+    }
+
+    fun observeOtaStatus(stepType: String, phase: String, status: String, nowMs: Long) {
+        if (!stepType.equals("bes", ignoreCase = true) ||
+            !phase.equals("install", ignoreCase = true)
+        ) {
+            return
+        }
+
+        when (status.lowercase(Locale.US)) {
+            "failed", "complete", "step_complete", "finished", "success" -> clear()
+            else -> refresh(nowMs)
+        }
     }
 
     fun shouldSuppress(nowMs: Long): Boolean = nowMs < suppressionDeadlineMs

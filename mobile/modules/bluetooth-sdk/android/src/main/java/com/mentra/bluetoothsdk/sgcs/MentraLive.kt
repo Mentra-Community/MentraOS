@@ -884,18 +884,17 @@ class MentraLive : SGCManager() {
         cachedOtaCurrentStep = 0
         cachedOtaStepSequence = null
         lastBesOtaProgress = -1
-        besOtaHeartbeatGuard.clear()
+        // The bounded UART-ownership lease is transport state, not session-cache state. Keep it
+        // through a BLE reconnect so heartbeats cannot resume while BES still owns the UART.
     }
 
     private fun updateBesOtaHeartbeatGuard(stepType: String, phase: String, status: String) {
-        if (stepType.lowercase(Locale.US) != "bes" || phase.lowercase(Locale.US) != "install") {
-            return
-        }
-        when (status.lowercase(Locale.US)) {
-            "failed", "complete", "step_complete", "finished", "success" ->
-                besOtaHeartbeatGuard.clear()
-            else -> besOtaHeartbeatGuard.refresh(SystemClock.elapsedRealtime())
-        }
+        besOtaHeartbeatGuard.observeOtaStatus(
+            stepType,
+            phase,
+            status,
+            SystemClock.elapsedRealtime(),
+        )
     }
 
     protected fun setFontSizes() {
@@ -3493,6 +3492,7 @@ class MentraLive : SGCManager() {
                     } else {
                         unified = "in_progress"
                     }
+                    updateBesOtaHeartbeatGuard(currentUpdate, legacyPhase, unified)
                     Bridge.log(
                             "LIVE: 📱 Legacy ota_progress → ota_status: " +
                                     legacyStage +

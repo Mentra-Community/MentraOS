@@ -1878,7 +1878,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                     transportCoordinator.inboundRoute(receiveSession);
             if (route == BesUartTransportCoordinator.InboundRoute.REJECTED) {
                 if (transportCoordinator.isCurrentSerialSession(receiveSession)) {
-                    Log.w(TAG, "Ignoring data from current UART session while quarantined");
+                    Log.w(TAG, "Ignoring data from current UART session while closed/quarantined");
                 } else {
                     Log.w(TAG, "Ignoring data from retired UART session " + receiveSession);
                 }

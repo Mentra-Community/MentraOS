@@ -2249,7 +2249,8 @@ public class OtaHelper {
                 }
                 Log.i(TAG, "Starting validated BES firmware update artifact="
                         + artifact.getArtifactId() + " target=" + artifact.getTargetVersion());
-                boolean started = manager.startFirmwareUpdate(artifact, ownerSessionId);
+                boolean started =
+                        startBesFirmwareInstall(manager, artifact, ownerSessionId);
                 if (started) {
                     Log.i(TAG, "BES firmware update initiated successfully");
                     return true;
@@ -2394,6 +2395,21 @@ public class OtaHelper {
                 "BES firmware sha256 verification failed"
             );
         }
+    }
+
+    /**
+     * Publishes the BES install phase before the controller can reserve the UART for raw OTA.
+     * PhoneConnectionProvider preserves write order, and the UART coordinator drains accepted
+     * writes before raw routing begins, so the phone can suppress heartbeats before BES owns the
+     * transport.
+     */
+    boolean startBesFirmwareInstall(
+            IBesOtaController manager,
+            ValidatedBesArtifact artifact,
+            String ownerSessionId) {
+        currentUpdateType = "bes";
+        sendProgressToPhone("install", 0, 0, 0, "STARTED", null);
+        return manager.startFirmwareUpdate(artifact, ownerSessionId);
     }
 
     /**

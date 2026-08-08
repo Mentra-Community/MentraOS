@@ -32,4 +32,42 @@ class BesOtaHeartbeatGuardTest {
 
         assertFalse(guard.shouldSuppress(1_001))
     }
+
+    @Test
+    fun besInstallStatusArmsLease() {
+        val guard = BesOtaHeartbeatGuard(120_000)
+
+        guard.observeOtaStatus("BES", "INSTALL", "in_progress", 1_000)
+
+        assertTrue(guard.shouldSuppress(120_999))
+    }
+
+    @Test
+    fun legacyBesInstallStatusUsesSameLease() {
+        val guard = BesOtaHeartbeatGuard(120_000)
+
+        guard.observeOtaStatus("bes", "install", "in_progress", 5_000)
+
+        assertTrue(guard.shouldSuppress(124_999))
+    }
+
+    @Test
+    fun unrelatedStatusDoesNotClearActiveLease() {
+        val guard = BesOtaHeartbeatGuard(120_000)
+        guard.observeOtaStatus("bes", "install", "in_progress", 1_000)
+
+        guard.observeOtaStatus("apk", "install", "complete", 2_000)
+
+        assertTrue(guard.shouldSuppress(120_999))
+    }
+
+    @Test
+    fun besStepCompleteClearsLease() {
+        val guard = BesOtaHeartbeatGuard(120_000)
+        guard.observeOtaStatus("bes", "install", "in_progress", 1_000)
+
+        guard.observeOtaStatus("bes", "install", "step_complete", 2_000)
+
+        assertFalse(guard.shouldSuppress(2_001))
+    }
 }
