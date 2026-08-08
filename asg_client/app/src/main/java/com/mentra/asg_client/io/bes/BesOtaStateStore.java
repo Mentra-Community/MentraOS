@@ -342,6 +342,56 @@ public final class BesOtaStateStore {
         }
     }
 
+    /**
+     * Resolve an authorization record recovered on a later Linux boot.
+     *
+     * <p>An abrupt MTK reboot can restore the last filesystem-persisted record even when a newer
+     * SharedPreferences value was committed and read back before BES apply. In that case the
+     * durable record is still {@link State#AUTH_ATTEMPTED}, so only a fresh, source-audited framed
+     * version reply from the later boot may decide whether the target was installed.
+     */
+    public TransitionResult completeRecoveredAfterRestart(
+            String ownerSessionId, String currentBootId, String actualVersion) {
+        synchronized (TRANSITION_LOCK) {
+            Snapshot current = readLocked();
+            String owner = canonicalNonempty(ownerSessionId);
+            String boot = canonicalBootId(currentBootId);
+            String actual = canonicalVersion(actualVersion);
+            if (!current.isOwnedActive(State.AUTH_ATTEMPTED, owner)
+                    || boot == null
+                    || boot.equals(current.authorizationBootId)) {
+                logDecision(
+                        "recovered_version_proof_rejected",
+                        "reason=owner_state_or_boot requested_owner="
+                                + diagnosticValue(owner)
+                                + " requested_boot="
+                                + diagnosticValue(boot)
+                                + " actual="
+                                + diagnosticValue(actual),
+                        current);
+                return terminalOrRejected(current);
+            }
+            boolean matches = current.targetVersion.equals(actual);
+            Snapshot terminal =
+                    current.withVerificationBoot(boot)
+                            .asTerminal(
+                                    matches ? TerminalStatus.SUCCESS : TerminalStatus.FAILURE,
+                                    matches
+                                            ? "verified"
+                                            : (actual == null
+                                                    ? "invalid_version_proof"
+                                                    : "version_mismatch"));
+            return putLocked(
+                            matches
+                                    ? "complete_recovered_after_restart"
+                                    : "fail_recovered_" + terminal.terminalCode,
+                            current,
+                            terminal)
+                    ? TransitionResult.APPLIED
+                    : TransitionResult.PERSISTENCE_FAILURE;
+        }
+    }
+
     /** Monotonic owner-checked failure transition. Failure never erases authorization history. */
     public TransitionResult fail(String ownerSessionId, String stableCode) {
         synchronized (TRANSITION_LOCK) {
@@ -419,13 +469,17 @@ public final class BesOtaStateStore {
                 return StartupDecision.QUARANTINED;
             }
             if (current.state == State.AUTH_ATTEMPTED) {
+                if (!boot.equals(current.authorizationBootId)) {
+                    // A hard reboot can expose an older, otherwise valid filesystem record. Keep
+                    // the target and owner active until raw OTA mode, a fresh framed version
+                    // reply, or the bounded recovery timeout resolves the hardware state.
+                    return StartupDecision.RECOVERY_PROBE_ONLY;
+                }
                 Snapshot failed = current.asTerminal(TerminalStatus.FAILURE, "interrupted");
                 if (!putLocked("fail_interrupted_on_startup", current, failed)) {
                     return StartupDecision.PERSISTENCE_FAILURE;
                 }
-                return boot.equals(current.authorizationBootId)
-                        ? StartupDecision.QUARANTINED
-                        : StartupDecision.RECOVERY_PROBE_ONLY;
+                return StartupDecision.QUARANTINED;
             }
             if (current.state == State.APPLY_PENDING) {
                 if (boot.equals(current.authorizationBootId)) {
