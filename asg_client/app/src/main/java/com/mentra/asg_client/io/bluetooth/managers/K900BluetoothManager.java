@@ -1214,11 +1214,17 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                         + " snapshot={"
                         + snapshot.toDiagnosticString()
                         + "}");
-        if (snapshot.isValid() && snapshot.getState() == BesOtaStateStore.State.APPLY_PENDING) {
+        if (snapshot.isValid()
+                && (snapshot.getState() == BesOtaStateStore.State.APPLY_PENDING
+                        || snapshot.getState() == BesOtaStateStore.State.AUTH_ATTEMPTED)) {
+            String timeoutCode =
+                    snapshot.getState() == BesOtaStateStore.State.APPLY_PENDING
+                            ? "verification_timeout"
+                            : "recovery_timeout";
             BesOtaStateStore.TransitionResult result =
-                    besOtaStateStore.fail(snapshot.getOwnerSessionId(), "verification_timeout");
-            Log.e(TAG, "BES post-apply recovery timed out: " + result);
-            EventBus.getDefault().post(BesOtaProgressEvent.createFailed("verification_timeout"));
+                    besOtaStateStore.fail(snapshot.getOwnerSessionId(), timeoutCode);
+            Log.e(TAG, "BES OTA restart recovery timed out: " + result);
+            EventBus.getDefault().post(BesOtaProgressEvent.createFailed(timeoutCode));
         }
     }
 
@@ -1568,8 +1574,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         String skipReason = null;
         if (!snapshot.isValid()) {
             skipReason = "invalid_or_idle_state";
-        } else if (snapshot.getState() != BesOtaStateStore.State.APPLY_PENDING) {
-            skipReason = "state_not_apply_pending";
+        } else if (snapshot.getState() != BesOtaStateStore.State.APPLY_PENDING
+                && snapshot.getState() != BesOtaStateStore.State.AUTH_ATTEMPTED) {
+            skipReason = "state_not_recoverable";
         } else if (currentBootId == null) {
             skipReason = "missing_current_boot";
         } else if (currentBootId.equals(snapshot.getAuthorizationBootId())) {
@@ -1590,25 +1597,32 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         if (skipReason != null) {
             return;
         }
-        BesOtaStateStore.VerificationDecision verification =
-                besOtaStateStore.claimOrResumeVerificationBoot(currentBootId);
-        Log.i(
-                TAG,
-                "BES_OTA_DIAG version_proof_claim result="
-                        + verification
-                        + " actual="
-                        + diagnosticActualVersion
-                        + " snapshot={"
-                        + besOtaStateStore.read().toDiagnosticString()
-                        + "}");
-        if (verification != BesOtaStateStore.VerificationDecision.CLAIMED
-                && verification != BesOtaStateStore.VerificationDecision.RESUME) {
-            Log.e(TAG, "BES post-apply verification boot rejected: " + verification);
-            return;
+        BesOtaStateStore.TransitionResult completed;
+        if (snapshot.getState() == BesOtaStateStore.State.APPLY_PENDING) {
+            BesOtaStateStore.VerificationDecision verification =
+                    besOtaStateStore.claimOrResumeVerificationBoot(currentBootId);
+            Log.i(
+                    TAG,
+                    "BES_OTA_DIAG version_proof_claim result="
+                            + verification
+                            + " actual="
+                            + diagnosticActualVersion
+                            + " snapshot={"
+                            + besOtaStateStore.read().toDiagnosticString()
+                            + "}");
+            if (verification != BesOtaStateStore.VerificationDecision.CLAIMED
+                    && verification != BesOtaStateStore.VerificationDecision.RESUME) {
+                Log.e(TAG, "BES post-apply verification boot rejected: " + verification);
+                return;
+            }
+            completed =
+                    besOtaStateStore.completeVerified(
+                            snapshot.getOwnerSessionId(), currentBootId, actualVersion);
+        } else {
+            completed =
+                    besOtaStateStore.completeRecoveredAfterRestart(
+                            snapshot.getOwnerSessionId(), currentBootId, actualVersion);
         }
-        BesOtaStateStore.TransitionResult completed =
-                besOtaStateStore.completeVerified(
-                        snapshot.getOwnerSessionId(), currentBootId, actualVersion);
         Log.i(
                 TAG,
                 "BES_OTA_DIAG version_proof_complete result="
@@ -1627,13 +1641,16 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             Log.i(TAG, "BES target version verified after reboot: " + actualVersion);
             EventBus.getDefault().post(BesOtaProgressEvent.createFinished());
         } else {
+            String failureCode = terminal.getTerminalCode();
             Log.e(
                     TAG,
-                    "BES version mismatch after reboot expected="
+                    "BES version proof failed after reboot code="
+                            + failureCode
+                            + " expected="
                             + terminal.getTargetVersion()
                             + " actual="
                             + actualVersion);
-            EventBus.getDefault().post(BesOtaProgressEvent.createFailed("version_mismatch"));
+            EventBus.getDefault().post(BesOtaProgressEvent.createFailed(failureCode));
         }
     }
 

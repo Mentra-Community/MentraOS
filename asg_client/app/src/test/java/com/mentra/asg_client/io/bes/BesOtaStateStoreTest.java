@@ -209,8 +209,54 @@ public class BesOtaStateStoreTest {
         reserve();
 
         assertThat(store.reconcileStartup(BOOT_B)).isEqualTo(StartupDecision.RECOVERY_PROBE_ONLY);
+        assertThat(store.read().getState()).isEqualTo(State.AUTH_ATTEMPTED);
         assertThat(store.uartPolicy(BOOT_B, false, null)).isEqualTo(UartPolicy.RECOVERY_PROBE_ONLY);
+        assertThat(store.uartPolicy(BOOT_B, true, null)).isEqualTo(UartPolicy.RECOVERY_PROBE_ONLY);
+    }
+
+    @Test
+    public void exactVersionResolvesLaterBootAuthorizationAsSuccess() {
+        reserve();
+        assertThat(store.reconcileStartup(BOOT_B)).isEqualTo(StartupDecision.RECOVERY_PROBE_ONLY);
+
+        assertThat(store.completeRecoveredAfterRestart(OWNER, BOOT_B, TARGET))
+                .isEqualTo(TransitionResult.APPLIED);
+        assertThat(store.read().getState()).isEqualTo(State.TERMINAL);
+        assertThat(store.read().getTerminalStatus()).isEqualTo(TerminalStatus.SUCCESS);
+        assertThat(store.read().getTerminalCode()).isEqualTo("verified");
+        assertThat(store.read().getVerificationBootId()).isEqualTo(BOOT_B);
         assertThat(store.uartPolicy(BOOT_B, true, null)).isEqualTo(UartPolicy.NORMAL);
+    }
+
+    @Test
+    public void differentVersionResolvesLaterBootAuthorizationAsFailure() {
+        reserve();
+
+        assertThat(store.completeRecoveredAfterRestart(OWNER, BOOT_B, "26.7.30.3"))
+                .isEqualTo(TransitionResult.APPLIED);
+        assertThat(store.read().getTerminalStatus()).isEqualTo(TerminalStatus.FAILURE);
+        assertThat(store.read().getTerminalCode()).isEqualTo("version_mismatch");
+    }
+
+    @Test
+    public void invalidVersionProofResolvesLaterBootAuthorizationAsFailure() {
+        reserve();
+
+        assertThat(store.completeRecoveredAfterRestart(OWNER, BOOT_B, "unknown"))
+                .isEqualTo(TransitionResult.APPLIED);
+        assertThat(store.read().getTerminalStatus()).isEqualTo(TerminalStatus.FAILURE);
+        assertThat(store.read().getTerminalCode()).isEqualTo("invalid_version_proof");
+    }
+
+    @Test
+    public void recoveredVersionProofRequiresOwnerAndLaterBoot() {
+        reserve();
+
+        assertThat(store.completeRecoveredAfterRestart(OTHER_OWNER, BOOT_B, TARGET))
+                .isEqualTo(TransitionResult.REJECTED);
+        assertThat(store.completeRecoveredAfterRestart(OWNER, BOOT_A, TARGET))
+                .isEqualTo(TransitionResult.REJECTED);
+        assertThat(store.read().getState()).isEqualTo(State.AUTH_ATTEMPTED);
     }
 
     @Test

@@ -201,6 +201,11 @@ version name after the fact.
 - **Stuck in OTA mode** — a persisted nonterminal BES session deliberately owns/quarantines UART
   until raw-versus-framed recovery resolves. A raw `0x9a` proves BES is still in OTA mode; only the
   exact fresh `sr_syvr` requested by the audited framed probe can prove normal mode.
+- **Hard reboot after apply** — Android filesystem persistence can expose the earlier authorization
+  record even when apply was committed and acknowledged immediately before power loss. On a later
+  Linux boot, ASG keeps that record quarantined while bounded raw-first recovery runs: raw `0x9a`
+  fails the update, an exact target `sr_syvr` completes it, and a mismatch or timeout fails it. A
+  process restart in the original Linux boot remains an immediate failure.
 
 ## Logcat tags
 
