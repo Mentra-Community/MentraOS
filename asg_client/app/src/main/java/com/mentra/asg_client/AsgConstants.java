@@ -10,17 +10,23 @@ public class AsgConstants {
     /** Maximum interval between activity updates while a response body is streaming. */
     public static final long HTTP_ACTIVITY_STREAM_UPDATE_INTERVAL_MS = 5_000L;
 
-    /** How often Mentra Live checks for the LocalOnlyHotspot gateway interface. */
+    /** How often Mentra Live checks for its hotspot gateway and credentials. */
     public static final long LOCAL_HOTSPOT_READINESS_POLL_MS = 200L;
 
-    /** Maximum wait for the LocalOnlyHotspot gateway interface to become ready. */
+    /** Maximum wait for the Mentra Live hotspot to become ready. */
     public static final long LOCAL_HOTSPOT_READINESS_TIMEOUT_MS = 12_000L;
 
-    /** Delay after enabling the WiFi radio before requesting a LocalOnlyHotspot. */
+    /** Delay after enabling the WiFi radio before requesting the Mentra Live hotspot. */
     public static final long LOCAL_HOTSPOT_WIFI_ENABLE_DELAY_MS = 500L;
 
     /** Current Mentra Live Android hotspot gateway when interface discovery is unavailable. */
     public static final String DEFAULT_HOTSPOT_GATEWAY_IP = "192.168.43.1";
+
+    /** SmartXY setting containing the Mentra Live hotspot SSID. */
+    public static final String K900_VENDOR_HOTSPOT_SSID_SETTING = "xy_ssid";
+
+    /** SmartXY setting containing the Mentra Live hotspot password. */
+    public static final String K900_VENDOR_HOTSPOT_PASSWORD_SETTING = "xy_pwd";
 
     /** Canonical camera crop defaults shared with the phone and Bluetooth SDK. */
     public static final int CAMERA_FOV_DEFAULT = 118;
@@ -145,42 +151,36 @@ public class AsgConstants {
     public static final int OTA_COMPLETION_RESEND_ATTEMPTS = 15;
 
     /**
-     * FALLBACK maximum packed frame size for a v1 K900 STRING ck chunk, used until the BES
-     * advertises its true notification cap. The BES relays v1 string frames to the phone in a
-     * single unfragmented BLE notification, and the worst-case ATT payload on that link is 253
-     * bytes (ATT MTU 256) regardless of the MTU the phone requested — a packed chunk over that cap
-     * is silently truncated on the wire and the phone drops it as unparseable (incident
-     * rep_01KY6BJ0B7A4RBMQ7VN39KAE5E: OTA completion ck chunks packed to 256-263 bytes and none
-     * survived). 240 = 253 - {@link #K900_STRING_CHUNK_BUDGET_MARGIN_BYTES}. BES firmware >=
-     * 17.26.7.23 advertises {@code wire_caps.notify_cap} (the measured single-notification payload
-     * cap) and the budget becomes notify_cap minus the same margin — see
-     * MessageChunker.setStringChunkBudgetFromNotifyCap.
+     * Maximum packed K900 control-message frame relayed in one BLE notification. This applies to
+     * both v1 JSON chunks and v2 binary fragments: phone-side v2 reassembly cannot recover a frame
+     * that BES could not deliver atomically. The 240-byte ceiling is the hardware-proven envelope
+     * from incident rep_01KY6BJ0B7A4RBMQ7VN39KAE5E and remains a local upper bound even when old
+     * firmware advertises a larger, bearer-specific {@code wire_caps.notify_cap}.
      */
-    public static final int K900_STRING_CHUNK_MAX_FRAME_BYTES = 240;
+    public static final int K900_CONTROL_MAX_PACKED_FRAME_BYTES = 240;
+
+    /** Mentra Live BES build target required in the decompressed image payload. */
+    public static final String BES_OTA_PRODUCT = "best1502x_ibrt_bpone";
+
+    /** Prefix for hash-addressed ADB-only artifacts, separate from phone-owned BES OTA data. */
+    public static final String DEBUG_BES_OTA_ARTIFACT_PREFIX =
+            "/storage/emulated/0/asg/debug_bes_";
+
+    /** Debug BES intent extra carrying the exact post-reboot firmware version. */
+    public static final String DEBUG_BES_OTA_TARGET_VERSION_EXTRA = "target_version";
+
+    /** Debug BES intent extra carrying the staged artifact SHA-256. */
+    public static final String DEBUG_BES_OTA_SHA256_EXTRA = "sha256";
+
+    /** Debug BES intent extra carrying a stable identifier for durable state. */
+    public static final String DEBUG_BES_OTA_ARTIFACT_ID_EXTRA = "artifact_id";
 
     /**
-     * Safety margin subtracted from the BLE notification payload cap when sizing packed v1 STRING
-     * ck chunks, absorbing BES re-framing variance between the UART frame we send and the
-     * notification the BES actually emits (240 = 253 - 13 was the hardware-validated budget for the
-     * worst-case 253-byte cap).
+     * Exclusive decompressed destination limit in the deployed ota_copy bootloader:
+     * NEW_IMAGE_FLASH_OFFSET (0x200000) - OTA_CODE_OFFSET (0x20000). Images at or above this size
+     * overwrite the adjacent staging region and must never be sent to BES.
      */
-    public static final int K900_STRING_CHUNK_BUDGET_MARGIN_BYTES = 13;
-
-    /**
-     * Contract floor of {@code wire_caps.notify_cap} (BES firmware >= 17.26.7.23 computes max(253,
-     * min(ATT MTU - 3, 509))). An advertised value below this is malformed and is ignored in favor
-     * of the fallback budget.
-     */
-    public static final int K900_BLE_NOTIFY_CAP_FLOOR_BYTES = 253;
-
-    /**
-     * Contract ceiling of {@code wire_caps.notify_cap} (see {@link
-     * #K900_BLE_NOTIFY_CAP_FLOOR_BYTES}: the BES computes max(253, min(ATT MTU - 3, 509))). An
-     * advertised value above this is malformed; it is clamped down so a buggy advertisement can
-     * never size chunks beyond what the transport carries — the exact silent truncation class the
-     * notification budget exists to prevent.
-     */
-    public static final int K900_BLE_NOTIFY_CAP_CEILING_BYTES = 509;
+    public static final int BES_OTA_MAX_DECOMPRESSED_IMAGE_BYTES = 0x1E0000;
 
     /** Rendezvous baud shared by every ASG and BES firmware generation. */
     public static final int UART_RENDEZVOUS_BAUD = 460800;
@@ -413,4 +413,10 @@ public class AsgConstants {
     public static final int BLE_PHOTO_HIGH_TARGET_PX = 1600;
     public static final int BLE_PHOTO_HIGH_AVIF_QUALITY = 48;
     public static final int BLE_PHOTO_MAX_TARGET_PX = 1920;
+
+    /**
+     * Phone → glasses JSON command type to enable or disable Wi-Fi ADB (Mentra Live).
+     * Persisted via AsgSettings and applied at boot (default off).
+     */
+    public static final String COMMAND_SET_WIFI_ADB_STATE = "set_wifi_adb_state";
 }

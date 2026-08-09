@@ -40,6 +40,12 @@ public interface ISystemController {
 
     void setHotspot5GEnabled(boolean enable);
 
+    /**
+     * Enable or disable Wi-Fi ADB (wireless debugging) via SystemUI. Mentra Live defaults this off
+     * for security; phone/SDK can re-enable for debugging.
+     */
+    void setWifiAdb(boolean enable);
+
     void connectToWifiWithCredentialRefresh(String ssid, String password);
 
     void disconnectFromWifi();

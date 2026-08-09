@@ -152,7 +152,12 @@ export {
 } from "./stores/apps"
 
 // Pure dev-miniapp launch-route decision (registration itself is internal).
-export {decideDevLaunchRoute, type DevLaunchResult, type DevManifest} from "./utils/devMiniappLaunch"
+export {
+  decideDevLaunchRoute,
+  type DecideDevLaunchOptions,
+  type DevLaunchResult,
+  type DevManifest,
+} from "./utils/devMiniappLaunch"
 export {HardwareCompatibility, type CompatibilityResult} from "./utils/hardware"
 export {BgTimer, throttle, debounce} from "./utils/timers"
 

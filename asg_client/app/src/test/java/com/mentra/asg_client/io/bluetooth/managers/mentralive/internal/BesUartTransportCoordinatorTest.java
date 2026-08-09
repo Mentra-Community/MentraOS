@@ -3,16 +3,8 @@ package com.mentra.asg_client.io.bluetooth.managers.mentralive.internal;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import android.app.Application;
-
 import com.mentra.asg_client.AsgConstants;
-
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.robolectric.RobolectricTestRunner;
-import org.robolectric.annotation.Config;
-
+import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Queue;
@@ -22,18 +14,28 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
+import org.junit.After;
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.robolectric.RobolectricTestRunner;
+import org.robolectric.annotation.Config;
 
 @RunWith(RobolectricTestRunner.class)
 @Config(application = Application.class, sdk = 33)
 public class BesUartTransportCoordinatorTest {
     private FakeHost host;
+    private FakeSafetyState safety;
     private BesUartTransportCoordinator coordinator;
 
     @Before
     public void setUp() {
         host = new FakeHost();
-        coordinator = new BesUartTransportCoordinator(host);
+        safety = new FakeSafetyState();
+        coordinator = new BesUartTransportCoordinator(host, safety);
     }
 
     @After
@@ -385,6 +387,145 @@ public class BesUartTransportCoordinatorTest {
     }
 
     @Test
+    public void durableRecovery_rawReplyQuarantinesWithoutFramedProbe() throws Exception {
+        safety.policy = BesUartTransportCoordinator.SafetyPolicy.RECOVERY_PROBE_ONLY;
+        coordinator.onSerialReady(host.session);
+
+        assertThat(coordinator.getState())
+                .isEqualTo(BesUartTransportCoordinator.State.SAFETY_RECOVERING);
+        assertThat(coordinator.inboundRoute(host.session))
+                .isEqualTo(BesUartTransportCoordinator.InboundRoute.OTA);
+
+        coordinator.startSafetyRecovery();
+        awaitRawWriteCount(1);
+        assertThat(coordinator.onSafetyRawProtocolResponse((byte) 0x9A)).isTrue();
+
+        assertThat(safety.rawModeProven).isTrue();
+        assertThat(coordinator.getState()).isEqualTo(BesUartTransportCoordinator.State.QUARANTINED);
+        assertThat(countControlCommands("cs_syvr")).isZero();
+    }
+
+    @Test
+    public void durableRecovery_listenerBeforeSerialStillStartsRawProbes() throws Exception {
+        safety.policy = BesUartTransportCoordinator.SafetyPolicy.RECOVERY_PROBE_ONLY;
+
+        coordinator.startSafetyRecovery();
+        coordinator.onSerialReady(host.session);
+
+        awaitRawWriteCount(1);
+        assertThat(coordinator.getState())
+                .isEqualTo(BesUartTransportCoordinator.State.SAFETY_RECOVERING);
+        assertThat(coordinator.inboundRoute(host.session))
+                .isEqualTo(BesUartTransportCoordinator.InboundRoute.OTA);
+    }
+
+    @Test
+    public void durableRecovery_rawSilenceAllowsOneFreshFramedProof() throws Exception {
+        safety.policy = BesUartTransportCoordinator.SafetyPolicy.VERSION_PROBE_ONLY;
+        coordinator.onSerialReady(host.session);
+        coordinator.startSafetyRecovery();
+
+        awaitRawWriteCount(3);
+        awaitControlCommandCount("cs_syvr", 1, 5_000);
+        assertThat(host.rawWrites)
+                .allMatch(
+                        bytes ->
+                                java.util.Arrays.equals(
+                                        bytes, new byte[] {(byte) 0x99, 0, 0, 0, 0}));
+        assertThat(countControlCommands("cs_syvr")).isEqualTo(1);
+
+        assertThat(
+                        coordinator.onSystemVersion(
+                                "17.26.7.4",
+                                coordinator.getSerialSession(),
+                                () ->
+                                        safety.policy =
+                                                BesUartTransportCoordinator.SafetyPolicy.NORMAL))
+                .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
+        assertThat(coordinator.getState())
+                .isEqualTo(BesUartTransportCoordinator.State.READY_RENDEZVOUS);
+    }
+
+    @Test
+    public void durableRecovery_processRestartFindsBesAtFastBaud() throws Exception {
+        safety.policy = BesUartTransportCoordinator.SafetyPolicy.VERSION_PROBE_ONLY;
+        coordinator.onSerialReady(host.session);
+        coordinator.startSafetyRecovery();
+
+        awaitControlCommandCount("cs_syvr", 2, 12_000);
+
+        assertThat(host.openAttempts).containsExactly(AsgConstants.UART_FAST_BAUD);
+        assertThat(host.currentBaud()).isEqualTo(AsgConstants.UART_FAST_BAUD);
+        assertThat(host.rawWrites).hasSize(6);
+        assertThat(countControlCommands("cs_syvr")).isEqualTo(2);
+        assertThat(
+                        coordinator.onSystemVersion(
+                                "26.8.5.0",
+                                coordinator.getSerialSession(),
+                                () ->
+                                        safety.policy =
+                                                BesUartTransportCoordinator.SafetyPolicy.NORMAL))
+                .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
+        assertThat(safety.recoveryFailed).isFalse();
+        assertThat(coordinator.getState())
+                .isEqualTo(BesUartTransportCoordinator.State.READY_FAST);
+    }
+
+    @Test
+    public void durableRecovery_transientAlternateReopenFailureRetriesLocally() throws Exception {
+        safety.policy = BesUartTransportCoordinator.SafetyPolicy.VERSION_PROBE_ONLY;
+        host.openFailuresRemaining = 1;
+        coordinator.onSerialReady(host.session);
+        coordinator.startSafetyRecovery();
+
+        awaitControlCommandCount("cs_syvr", 2, 12_000);
+
+        assertThat(host.openAttempts)
+                .containsExactly(AsgConstants.UART_FAST_BAUD, AsgConstants.UART_FAST_BAUD);
+        assertThat(host.currentBaud()).isEqualTo(AsgConstants.UART_FAST_BAUD);
+        assertThat(host.rawWrites).hasSize(6);
+        assertThat(
+                        coordinator.onSystemVersion(
+                                "26.8.5.0",
+                                coordinator.getSerialSession(),
+                                () ->
+                                        safety.policy =
+                                                BesUartTransportCoordinator.SafetyPolicy.NORMAL))
+                .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
+        assertThat(safety.recoveryFailed).isFalse();
+        assertThat(coordinator.getState())
+                .isEqualTo(BesUartTransportCoordinator.State.READY_FAST);
+    }
+
+    @Test
+    public void durableRecovery_repeatedAlternateReopenFailureFailsClosed() throws Exception {
+        safety.policy = BesUartTransportCoordinator.SafetyPolicy.VERSION_PROBE_ONLY;
+        host.openFailuresRemaining = 2;
+        coordinator.onSerialReady(host.session);
+        coordinator.startSafetyRecovery();
+
+        awaitRecoveryFailed(15_000);
+        assertThat(host.openAttempts)
+                .containsExactly(AsgConstants.UART_FAST_BAUD, AsgConstants.UART_FAST_BAUD);
+        assertThat(host.rawWrites).hasSize(3);
+        assertThat(countControlCommands("cs_syvr")).isEqualTo(1);
+        assertThat(coordinator.getState()).isEqualTo(BesUartTransportCoordinator.State.QUARANTINED);
+    }
+
+    @Test
+    public void durableRecovery_totalSilenceFailsClosed() throws Exception {
+        safety.policy = BesUartTransportCoordinator.SafetyPolicy.VERSION_PROBE_ONLY;
+        coordinator.onSerialReady(host.session);
+        coordinator.startSafetyRecovery();
+
+        awaitRecoveryFailed(2L * AsgConstants.UART_BAUD_PROBE_TIMEOUT_MS + 9_000);
+        assertThat(coordinator.getState()).isEqualTo(BesUartTransportCoordinator.State.QUARANTINED);
+        assertThat(host.openAttempts).containsExactly(AsgConstants.UART_FAST_BAUD);
+        assertThat(host.rawWrites).hasSize(6);
+        assertThat(countControlCommands("cs_syvr")).isEqualTo(2);
+    }
+
+    @Test
     public void otaPromotion_drainsAuthorizationWriteBeforeRawRouting() throws Exception {
         coordinator.onSerialReady(host.session);
         assertThat(systemVersion("17.26.7.4"))
@@ -432,6 +573,64 @@ public class BesUartTransportCoordinatorTest {
     }
 
     @Test
+    public void otaAuthorization_returnsFastLinkToProvenRendezvousBeforeLease() throws Exception {
+        establishFastLink();
+
+        ExecutorService caller = Executors.newSingleThreadExecutor();
+        Future<BesUartTransportCoordinator.OperationLease> leaseFuture =
+                caller.submit(coordinator::beginOtaAuthorization);
+        try {
+            awaitControlCommandCount("cs_baud", 2);
+            String downshift = host.controlCommands.get(host.controlCommands.size() - 1);
+            assertThat(downshift).contains("cs_baud").contains("460800");
+
+            SerialSession fastSession = coordinator.getSerialSession();
+            assertThat(
+                            coordinator.onBaudResponse(
+                                    0, AsgConstants.UART_RENDEZVOUS_BAUD, fastSession))
+                    .isTrue();
+            awaitSerialSessionAtBaud(AsgConstants.UART_RENDEZVOUS_BAUD);
+            assertThat(systemVersion("17.26.7.23"))
+                    .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
+
+            BesUartTransportCoordinator.OperationLease lease = leaseFuture.get(2, TimeUnit.SECONDS);
+            assertThat(lease).isNotNull();
+            assertThat(coordinator.getState())
+                    .isEqualTo(BesUartTransportCoordinator.State.READY_RENDEZVOUS);
+            assertThat(host.currentBaud()).isEqualTo(AsgConstants.UART_RENDEZVOUS_BAUD);
+            coordinator.endOta(lease);
+        } finally {
+            caller.shutdownNow();
+        }
+    }
+
+    @Test
+    public void otaAuthorization_rejectedRendezvousTransitionFailsClosed() throws Exception {
+        establishFastLink();
+
+        ExecutorService caller = Executors.newSingleThreadExecutor();
+        Future<BesUartTransportCoordinator.OperationLease> leaseFuture =
+                caller.submit(coordinator::beginOtaAuthorization);
+        try {
+            awaitControlCommandCount("cs_baud", 2);
+            assertThat(
+                            coordinator.onBaudResponse(
+                                    1,
+                                    AsgConstants.UART_RENDEZVOUS_BAUD,
+                                    coordinator.getSerialSession()))
+                    .isTrue();
+
+            assertThat(leaseFuture.get(2, TimeUnit.SECONDS)).isNull();
+            assertThat(coordinator.getOperation())
+                    .isEqualTo(BesUartTransportCoordinator.Operation.NONE);
+            assertThat(coordinator.getState())
+                    .isEqualTo(BesUartTransportCoordinator.State.READY_FAST);
+        } finally {
+            caller.shutdownNow();
+        }
+    }
+
+    @Test
     public void parserRecovery_reopensAndRejectsRetiredReader() throws Exception {
         host.baud = AsgConstants.UART_FAST_BAUD;
         coordinator.onSerialReady(host.session);
@@ -465,6 +664,91 @@ public class BesUartTransportCoordinatorTest {
     }
 
     @Test
+    public void idleFastLink_probesCurrentSessionWithoutReopening() throws Exception {
+        replaceCoordinatorWithHealthTimings(200, 100);
+        establishFastLink();
+        host.controlCommands.clear();
+        host.openAttempts.clear();
+
+        awaitControlCommandCount("cs_syvr", 1, 500);
+
+        assertThat(host.openAttempts).isEmpty();
+        assertThat(systemVersion("17.26.7.23"))
+                .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
+        Thread.sleep(150);
+        assertThat(host.openAttempts).isEmpty();
+    }
+
+    @Test
+    public void validFrameRearm_rejectsAlreadyRunningHealthProbeTimeout() throws Exception {
+        replaceCoordinatorWithHealthTimings(500, 500);
+        establishFastLink();
+        host.controlCommands.clear();
+        host.openAttempts.clear();
+
+        ScheduledExecutorService healthExecutor = coordinatorExecutor();
+        AtomicReference<Thread> healthWorker = new AtomicReference<>();
+        CountDownLatch healthWorkerCaptured = new CountDownLatch(1);
+        healthExecutor.execute(
+                () -> {
+                    healthWorker.set(Thread.currentThread());
+                    healthWorkerCaptured.countDown();
+                });
+        assertThat(healthWorkerCaptured.await(1, TimeUnit.SECONDS)).isTrue();
+
+        awaitControlCommandCount("cs_syvr", 1, 1_000);
+        SerialSession session = coordinator.getSerialSession();
+
+        assertThat(
+                        coordinator.runForCurrentSerialSession(
+                                session,
+                                () -> {
+                                    try {
+                                        // Wait until the already-running probe timeout is blocked
+                                        // on this monitor. onValidFrame is reentrant here, so it
+                                        // deterministically rearms health before that callback can
+                                        // inspect its token.
+                                        long deadline = System.currentTimeMillis() + 2_000;
+                                        while (System.currentTimeMillis() < deadline
+                                                && healthWorker.get().getState()
+                                                        != Thread.State.BLOCKED) {
+                                            Thread.sleep(1);
+                                        }
+                                        assertThat(healthWorker.get().getState())
+                                                .isEqualTo(Thread.State.BLOCKED);
+                                    } catch (InterruptedException e) {
+                                        Thread.currentThread().interrupt();
+                                        throw new AssertionError(e);
+                                    }
+                                    coordinator.onValidFrame(session);
+                                }))
+                .isTrue();
+
+        // A FIFO barrier on the same single-thread executor proves that the stale callback has
+        // returned. The newly armed idle timer is still in the future.
+        CountDownLatch staleCallbackDrained = new CountDownLatch(1);
+        healthExecutor.execute(staleCallbackDrained::countDown);
+        assertThat(staleCallbackDrained.await(1, TimeUnit.SECONDS)).isTrue();
+        assertThat(coordinator.getState()).isEqualTo(BesUartTransportCoordinator.State.READY_FAST);
+        assertThat(host.openAttempts).isEmpty();
+        assertThat(coordinator.getSerialSession()).isSameAs(session);
+    }
+
+    @Test
+    public void idleFastLink_silenceStartsPhysicalRecoveryAfterProbe() throws Exception {
+        replaceCoordinatorWithHealthTimings(20, 50);
+        establishFastLink();
+        host.controlCommands.clear();
+        host.openAttempts.clear();
+
+        awaitControlCommandCount("cs_syvr", 1, 500);
+        assertThat(host.openAttempts).isEmpty();
+
+        awaitOpenAttemptCount(AsgConstants.UART_FAST_BAUD, 1);
+        assertThat(coordinator.getState()).isEqualTo(BesUartTransportCoordinator.State.RECOVERING);
+    }
+
+    @Test
     public void validFrame_provesBaudWithoutCancellingVersionDiscovery() throws Exception {
         coordinator.onSerialReady(host.session);
 
@@ -478,7 +762,7 @@ public class BesUartTransportCoordinatorTest {
     }
 
     @Test
-    public void recoveryAtRendezvous_canNegotiateFastAgain() throws Exception {
+    public void failedFastLink_recoversAtRendezvousWithoutNegotiatingAgain() throws Exception {
         establishFastLink();
 
         coordinator.onDiscardedBytes(
@@ -487,11 +771,11 @@ public class BesUartTransportCoordinatorTest {
         assertThat(coordinator.getState()).isEqualTo(BesUartTransportCoordinator.State.RECOVERING);
 
         assertThat(systemVersion("17.26.7.23"))
-                .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.TRANSITIONING);
+                .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
         assertThat(coordinator.getState())
-                .isEqualTo(BesUartTransportCoordinator.State.SWITCH_REQUESTED);
-        awaitControlCommandCount("cs_baud", 2);
-        assertThat(countControlCommands("cs_baud")).isEqualTo(2);
+                .isEqualTo(BesUartTransportCoordinator.State.READY_RENDEZVOUS);
+        assertThat(coordinator.runNormalWrite(() -> true)).isTrue();
+        assertThat(countControlCommands("cs_baud")).isEqualTo(1);
     }
 
     @Test
@@ -534,8 +818,10 @@ public class BesUartTransportCoordinatorTest {
                 .isEqualTo(BesUartTransportCoordinator.State.READY_RENDEZVOUS);
         awaitControlCommandCount("cs_syvr", AsgConstants.UART_RUNTIME_RECOVERY_PROBES_PER_BAUD);
         assertThat(systemVersion("17.26.7.23"))
-                .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.TRANSITIONING);
-        awaitControlCommandCount("cs_baud", 1);
+                .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
+        assertThat(coordinator.getState())
+                .isEqualTo(BesUartTransportCoordinator.State.READY_RENDEZVOUS);
+        assertThat(countControlCommands("cs_baud")).isZero();
     }
 
     @Test
@@ -681,6 +967,7 @@ public class BesUartTransportCoordinatorTest {
                                 0, AsgConstants.UART_FAST_BAUD, coordinator.getSerialSession()))
                 .isTrue();
         awaitState(BesUartTransportCoordinator.State.VERIFYING_FAST);
+        awaitSerialSessionAtBaud(AsgConstants.UART_FAST_BAUD);
         assertThat(systemVersion("17.26.7.23"))
                 .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
     }
@@ -694,11 +981,24 @@ public class BesUartTransportCoordinatorTest {
     }
 
     private void awaitControlCommandCount(String command, int expected) throws Exception {
-        long deadline = System.currentTimeMillis() + 1_000;
+        awaitControlCommandCount(command, expected, 1_000);
+    }
+
+    private void awaitControlCommandCount(String command, int expected, long timeoutMs)
+            throws Exception {
+        long deadline = System.currentTimeMillis() + timeoutMs;
         while (System.currentTimeMillis() < deadline && countControlCommands(command) < expected) {
             Thread.sleep(10);
         }
         assertThat(countControlCommands(command)).isGreaterThanOrEqualTo(expected);
+    }
+
+    private void awaitRawWriteCount(int expected) throws Exception {
+        long deadline = System.currentTimeMillis() + 5_000;
+        while (System.currentTimeMillis() < deadline && host.rawWrites.size() < expected) {
+            Thread.sleep(10);
+        }
+        assertThat(host.rawWrites.size()).isGreaterThanOrEqualTo(expected);
     }
 
     private void awaitOpenAttemptCount(int baud, int expected) throws Exception {
@@ -707,6 +1007,14 @@ public class BesUartTransportCoordinatorTest {
             Thread.sleep(10);
         }
         assertThat(countOpenAttempts(baud)).isGreaterThanOrEqualTo(expected);
+    }
+
+    private void awaitRecoveryFailed(long timeoutMs) throws Exception {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        while (System.currentTimeMillis() < deadline && !safety.recoveryFailed) {
+            Thread.sleep(10);
+        }
+        assertThat(safety.recoveryFailed).isTrue();
     }
 
     private long countControlCommands(String command) {
@@ -728,6 +1036,17 @@ public class BesUartTransportCoordinatorTest {
 
     private BesUartTransportCoordinator.SystemVersionResult systemVersion(String version) {
         return coordinator.onSystemVersion(version, coordinator.getSerialSession(), null);
+    }
+
+    private void replaceCoordinatorWithHealthTimings(long idleMs, long timeoutMs) {
+        coordinator.shutdown();
+        coordinator = new BesUartTransportCoordinator(host, safety, idleMs, timeoutMs);
+    }
+
+    private ScheduledExecutorService coordinatorExecutor() throws Exception {
+        Field field = BesUartTransportCoordinator.class.getDeclaredField("executor");
+        field.setAccessible(true);
+        return (ScheduledExecutorService) field.get(coordinator);
     }
 
     private static final class FakeHost implements BesUartTransportCoordinator.Host {
@@ -825,6 +1144,28 @@ public class BesUartTransportCoordinatorTest {
 
         void runNextOutboundDrain() {
             outboundDrains.remove().run();
+        }
+    }
+
+    private static final class FakeSafetyState implements BesUartTransportCoordinator.SafetyState {
+        volatile BesUartTransportCoordinator.SafetyPolicy policy =
+                BesUartTransportCoordinator.SafetyPolicy.NORMAL;
+        volatile boolean rawModeProven;
+        volatile boolean recoveryFailed;
+
+        @Override
+        public BesUartTransportCoordinator.SafetyPolicy currentPolicy() {
+            return policy;
+        }
+
+        @Override
+        public void onRawOtaModeProven() {
+            rawModeProven = true;
+        }
+
+        @Override
+        public void onRecoveryFailed() {
+            recoveryFailed = true;
         }
     }
 }

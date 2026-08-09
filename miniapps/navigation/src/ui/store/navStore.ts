@@ -58,7 +58,7 @@ const initialSnapshot: NavSnapshot = {
   },
   unitSystem: "metric",
   voiceGuidanceMode: "off",
-  capabilities: {modelName: null, hasDisplay: false, hasSpeaker: false, hasButton: false},
+  capabilities: {modelName: null, hasDisplay: false, canPosition: false, hasSpeaker: false, hasButton: false},
 }
 
 export const useNavStore = create<NavStore>((set) => ({

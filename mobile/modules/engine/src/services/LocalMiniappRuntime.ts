@@ -52,6 +52,7 @@ import {phoneVideoCoordinator} from "./PhoneVideoCoordinator"
 import {runSentenceTtsPipeline} from "./SentenceTtsPipeline"
 import {summarizeTranscriptionRoutes, transcriptionDeliveryRoute} from "./TranscriptionRouting"
 import {prepareTtsSentences} from "./TtsTextSanitizer"
+import {handleWifiAdbRequest} from "./WifiAdbRequest"
 import {cloudClientService} from "./CloudClientService"
 import {miniappLauncher} from "./MiniappLauncher"
 import {
@@ -1166,6 +1167,9 @@ class LocalMiniappRuntime {
         break
       case MiniappRequestType.CAMERA_FOV:
         void this.handleCameraFov(packageName, payload, requestId)
+        break
+      case MiniappRequestType.SET_WIFI_ADB_STATE:
+        void this.handleSetWifiAdbState(packageName, payload, requestId)
         break
       case MiniappRequestType.IMU_SET_ENABLED:
         this.handleImuSetEnabled(packageName, payload, requestId)
@@ -2893,6 +2897,36 @@ class LocalMiniappRuntime {
         message: err instanceof Error ? err.message : "Storage error",
       })
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Wi-Fi ADB
+  // ---------------------------------------------------------------------------
+
+  private async handleSetWifiAdbState(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    const result = await handleWifiAdbRequest(packageName, payload, {
+      isSystemPackage: (candidate) => this.isSystemPackage(candidate),
+      setWifiAdbState: async (enabled) => {
+        console.log(`${LOG_TAG}: set_wifi_adb_state enabled=${enabled} from ${packageName}`)
+        try {
+          await BluetoothSdk.setWifiAdbState(enabled)
+        } catch (error) {
+          console.error(`${LOG_TAG}: set_wifi_adb_state error:`, error)
+          throw error
+        }
+      },
+    })
+
+    if (result.ok) {
+      this.sendResult(packageName, requestId, true)
+      return
+    }
+
+    this.sendResult(packageName, requestId, false, undefined, result.error)
   }
 
   // ---------------------------------------------------------------------------

@@ -34,6 +34,15 @@ on:
         required: false
         default: "false"
         type: boolean
+      cloud_env:
+        description: "Cloud backend to bake in. Defaults to prod because this lane's binary is promoted to the stores unchanged; pick staging only for a build you will NOT promote."
+        required: false
+        default: "prod"
+        type: choice
+        options:
+          - prod
+          - staging
+          - dev
 
 permissions:
   contents: write
@@ -170,6 +179,66 @@ jobs:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN_MOBILE_STG }}
         run: |
           cp .env.example .env
+          # Pin which cloud this binary talks to (OS-1875).
+          #
+          # This lane is the only one that uploads to TestFlight and Play internal,
+          # and that binary is promoted to the stores unchanged. It must therefore
+          # carry production URLs: a promoted build cannot learn it was promoted.
+          # Build a staging-cloud variant deliberately with the cloud_env input, and
+          # do not promote that one.
+          #
+          # .env.example ships dev URLs so a local checkout builds with no setup.
+          # A lane that produces a distributable must not inherit that silently.
+          # Fatal on release-producing events, warning on pull_request, matching the
+          # Sentry DSN rule (OS-1827).
+          CLOUD_ENV="${{ inputs.cloud_env }}"
+          [ -n "$CLOUD_ENV" ] || CLOUD_ENV="prod"
+          case "$CLOUD_ENV" in
+            dev)
+              CLOUD_CORE="https://core.dev.us-west-2.mentraglass.com"
+              CLOUD_RT="https://runtime.dev.us-west-2.mentraglass.com"
+              ;;
+            staging)
+              CLOUD_CORE="https://core.staging.us-west-2.mentraglass.com"
+              CLOUD_RT="https://runtime.staging.us-west-2.mentraglass.com"
+              ;;
+            prod)
+              CLOUD_CORE="https://core.us-west-2.mentraglass.com"
+              CLOUD_RT="https://runtime.us-west-2.mentraglass.com"
+              ;;
+            *)
+              CLOUD_CORE=""
+              CLOUD_RT=""
+              ;;
+          esac
+          if [ -n "$CLOUD_CORE" ]; then
+            sed -e "s|^EXPO_PUBLIC_BUILD_ENV=.*|EXPO_PUBLIC_BUILD_ENV=$CLOUD_ENV|" \
+                -e "s|^EXPO_PUBLIC_CLOUD_CORE_URL=.*|EXPO_PUBLIC_CLOUD_CORE_URL=$CLOUD_CORE|" \
+                -e "s|^EXPO_PUBLIC_CLOUD_RUNTIME_URL=.*|EXPO_PUBLIC_CLOUD_RUNTIME_URL=$CLOUD_RT|" \
+                .env > .env.tmp && mv .env.tmp .env
+            # Make the pin authoritative for every later step. release:android /
+            # release:ios call setBuildEnv(), which keeps any value already
+            # present in the environment over the .env file (standard dotenv
+            # precedence, deliberately relied on for the signing credentials).
+            # These jobs run on persistent self-hosted runners, so a stale
+            # runner-level EXPO_PUBLIC_CLOUD_* or EXPO_PUBLIC_BUILD_ENV would
+            # otherwise outrank the values written above, Expo would bundle the
+            # inherited endpoint, and validateReleaseArchive() would compare the
+            # bundle against that same inherited process env and pass. GITHUB_ENV
+            # takes precedence over the runner's inherited environment, so the
+            # three keys agree from here on.
+            {
+              echo "EXPO_PUBLIC_BUILD_ENV=$CLOUD_ENV"
+              echo "EXPO_PUBLIC_CLOUD_CORE_URL=$CLOUD_CORE"
+              echo "EXPO_PUBLIC_CLOUD_RUNTIME_URL=$CLOUD_RT"
+            } >> "$GITHUB_ENV"
+            echo "Cloud backend pinned to $CLOUD_ENV ($CLOUD_CORE)"
+          elif [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "::warning::Unrecognised cloud env '$CLOUD_ENV'; this PR build keeps the dev backend (OS-1875)."
+          else
+            echo "::error::Unrecognised cloud env '$CLOUD_ENV'. A distributable build must pin its backend (OS-1875)."
+            exit 1
+          fi
           if [ -n "$MAPBOX_PUBLIC_TOKEN" ]; then
             # Replace the whole line so the ci-dummy value can't leak through.
             sed -i '' "s|^EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN=.*|EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN=$MAPBOX_PUBLIC_TOKEN|" .env
@@ -462,6 +531,66 @@ jobs:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN_MOBILE_STG }}
         run: |
           cp .env.example .env
+          # Pin which cloud this binary talks to (OS-1875).
+          #
+          # This lane is the only one that uploads to TestFlight and Play internal,
+          # and that binary is promoted to the stores unchanged. It must therefore
+          # carry production URLs: a promoted build cannot learn it was promoted.
+          # Build a staging-cloud variant deliberately with the cloud_env input, and
+          # do not promote that one.
+          #
+          # .env.example ships dev URLs so a local checkout builds with no setup.
+          # A lane that produces a distributable must not inherit that silently.
+          # Fatal on release-producing events, warning on pull_request, matching the
+          # Sentry DSN rule (OS-1827).
+          CLOUD_ENV="${{ inputs.cloud_env }}"
+          [ -n "$CLOUD_ENV" ] || CLOUD_ENV="prod"
+          case "$CLOUD_ENV" in
+            dev)
+              CLOUD_CORE="https://core.dev.us-west-2.mentraglass.com"
+              CLOUD_RT="https://runtime.dev.us-west-2.mentraglass.com"
+              ;;
+            staging)
+              CLOUD_CORE="https://core.staging.us-west-2.mentraglass.com"
+              CLOUD_RT="https://runtime.staging.us-west-2.mentraglass.com"
+              ;;
+            prod)
+              CLOUD_CORE="https://core.us-west-2.mentraglass.com"
+              CLOUD_RT="https://runtime.us-west-2.mentraglass.com"
+              ;;
+            *)
+              CLOUD_CORE=""
+              CLOUD_RT=""
+              ;;
+          esac
+          if [ -n "$CLOUD_CORE" ]; then
+            sed -e "s|^EXPO_PUBLIC_BUILD_ENV=.*|EXPO_PUBLIC_BUILD_ENV=$CLOUD_ENV|" \
+                -e "s|^EXPO_PUBLIC_CLOUD_CORE_URL=.*|EXPO_PUBLIC_CLOUD_CORE_URL=$CLOUD_CORE|" \
+                -e "s|^EXPO_PUBLIC_CLOUD_RUNTIME_URL=.*|EXPO_PUBLIC_CLOUD_RUNTIME_URL=$CLOUD_RT|" \
+                .env > .env.tmp && mv .env.tmp .env
+            # Make the pin authoritative for every later step. release:android /
+            # release:ios call setBuildEnv(), which keeps any value already
+            # present in the environment over the .env file (standard dotenv
+            # precedence, deliberately relied on for the signing credentials).
+            # These jobs run on persistent self-hosted runners, so a stale
+            # runner-level EXPO_PUBLIC_CLOUD_* or EXPO_PUBLIC_BUILD_ENV would
+            # otherwise outrank the values written above, Expo would bundle the
+            # inherited endpoint, and validateReleaseArchive() would compare the
+            # bundle against that same inherited process env and pass. GITHUB_ENV
+            # takes precedence over the runner's inherited environment, so the
+            # three keys agree from here on.
+            {
+              echo "EXPO_PUBLIC_BUILD_ENV=$CLOUD_ENV"
+              echo "EXPO_PUBLIC_CLOUD_CORE_URL=$CLOUD_CORE"
+              echo "EXPO_PUBLIC_CLOUD_RUNTIME_URL=$CLOUD_RT"
+            } >> "$GITHUB_ENV"
+            echo "Cloud backend pinned to $CLOUD_ENV ($CLOUD_CORE)"
+          elif [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "::warning::Unrecognised cloud env '$CLOUD_ENV'; this PR build keeps the dev backend (OS-1875)."
+          else
+            echo "::error::Unrecognised cloud env '$CLOUD_ENV'. A distributable build must pin its backend (OS-1875)."
+            exit 1
+          fi
           if [ -n "$MAPBOX_PUBLIC_TOKEN" ]; then
             sed -i '' "s|^EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN=.*|EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN=$MAPBOX_PUBLIC_TOKEN|" .env
           else

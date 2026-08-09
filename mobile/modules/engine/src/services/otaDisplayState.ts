@@ -18,30 +18,37 @@ export type DisplayState = "starting" | "updating" | "complete" | "failed" | "di
  *
  * Priority-ordered rules (first match wins):
  *   1. errorMsg !== ""                                          -> "failed"
- *   2. BES terminal + connected + sawReconnectEdge             -> "complete"
- *   3. BES terminal (any connection state)                     -> "restarting"
+ *   2. BES reboot recovery complete                             -> "complete"
+ *   3. BES reboot recovery awaiting reconnect                  -> "restarting"
+ *   4. BES terminal (any connection state)                     -> "restarting"
  *      (legacy-shaped BES "complete" counts only in install phase)
- *   4. apkCompletedViaBuildIncrease (legacy build-number port) -> "complete"
- *   5. otaStatus.status === "failed"                           -> "failed"
- *   6. otaStatus.status === "complete" (non-BES)               -> "complete"
+ *   6. apkCompletedViaBuildIncrease (legacy build-number port) -> "complete"
+ *   7. otaStatus.status === "failed"                           -> "failed"
+ *   8. otaStatus.status === "complete" (non-BES)               -> "complete"
  *      (unless legacy-shaped download-complete or held apk settle -> in flight)
- *   7. !connected + legacy in-flight complete (held apk)       -> "updating"
- *   8. !connected + APK step_complete with totalSteps > 1      -> "starting"   (expected reboot)
- *   9. !connected + BES in flight                              -> "restarting" (defensive)
- *   10. !connected                                             -> "disconnected"
- *   11. connected + in_progress | step_complete | legacy in-flight complete -> "updating"
- *   12. fallback                                               -> "starting"
+ *   9. !connected + legacy in-flight complete (held apk)       -> "updating"
+ *   10. !connected + APK step_complete with totalSteps > 1     -> "starting"   (expected reboot)
+ *   11. !connected + BES in flight                             -> "restarting" (defensive)
+ *   12. !connected                                             -> "disconnected"
+ *   13. connected + in_progress | step_complete | legacy in-flight complete -> "updating"
+ *   14. fallback                                               -> "starting"
  */
 export function deriveDisplayState(args: {
   otaStatus: OtaStatus | null
   otaProgress: OtaProgress | null
   connected: boolean
   errorMsg: string
+  /**
+   * Retained for host API compatibility. A session-wide reconnect edge is not
+   * sufficient for BES completion because it may belong to an earlier APK step.
+   */
   sawReconnectEdge: boolean
   /** Coordinator is holding a legacy apk install "complete" for the settle window (WP 8C). */
   legacyApkSettleHold?: boolean
   /** Legacy APK completion detected by build-number increase (WP 8C). */
   apkCompletedViaBuildIncrease?: boolean
+  /** Phone-observed BES disconnect/reconnect recovery, independent of stale OTA progress. */
+  besRestartRecovery?: "awaiting" | "complete" | null
   /** Downgrade detour: the reconnected glasses reported exactly the pinned target version. */
   versionChangeConverged?: boolean
   /** True for the whole downgrade (version-change) session. */
@@ -52,9 +59,9 @@ export function deriveDisplayState(args: {
     otaProgress,
     connected,
     errorMsg,
-    sawReconnectEdge,
     legacyApkSettleHold,
     apkCompletedViaBuildIncrease,
+    besRestartRecovery,
     versionChangeConverged,
     versionChangeSession,
   } = args
@@ -66,6 +73,12 @@ export function deriveDisplayState(args: {
   // a LOWER build so no build-number increase fires). Outranks the stale install
   // status still sitting in the store from before the handoff.
   if (versionChangeConverged) return "complete"
+
+  // A BES reboot destroys or strands the glasses-side OTA session on older
+  // clients. Once the phone observed that reboot, stale pre-reboot progress must
+  // not move the UI from restarting back to updating.
+  if (besRestartRecovery === "complete") return "complete"
+  if (besRestartRecovery === "awaiting") return "restarting"
 
   // In a version-change session, convergence (above) is the ONLY completion for the ASG
   // downgrade. A bare non-firmware "complete" before convergence — the glasses refusing
@@ -79,7 +92,6 @@ export function deriveDisplayState(args: {
   }
 
   const besTerminal = isBesTerminal(otaStatus, otaProgress)
-  if (besTerminal && connected && sawReconnectEdge) return "complete"
   if (besTerminal) return "restarting"
 
   // Legacy build-number APK completion: the coordinator clears errorMsg when it fires,
@@ -115,8 +127,7 @@ export function deriveDisplayState(args: {
     // has not started); the legacy screen treated that drop as a plain disconnect.
     const besStatusInFlight =
       otaStatus?.stepType === "bes" && !(isLegacyShapedOtaStatus(otaStatus) && otaStatus.phase === "download")
-    const besInFlight =
-      besStatusInFlight || (otaProgress?.currentUpdate === "bes" && otaProgress?.stage === "install")
+    const besInFlight = besStatusInFlight || (otaProgress?.currentUpdate === "bes" && otaProgress?.stage === "install")
     if (besInFlight) return "restarting"
 
     return "disconnected"

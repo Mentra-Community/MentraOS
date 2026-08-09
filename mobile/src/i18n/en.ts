@@ -398,7 +398,8 @@ const en = {
     updateLater: "Later",
     upToDate: "Up to Date",
     devBuild: "Development Build",
-    devBuildNoOta: "These glasses run a development build, so automatic updates are disabled. Use the developer settings manifest override to update them manually.",
+    devBuildNoOta:
+      "This mobile app is a development build, so automatic glasses updates are disabled. Use the developer settings manifest override to update them manually.",
     noUpdatesAvailable: "Your glasses are running the latest version.",
     checkFailed: "Check Failed",
     checkFailedMessage: "Couldn't check for updates. Please check your connection and try again.",

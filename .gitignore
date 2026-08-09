@@ -406,6 +406,9 @@ MEMORY.md
 .mcp.json
 .codex/
 
+# Graphify knowledge graph output (local AST extract)
+graphify-out/
+
 # Local Cursor/agent skills
 mobile/agents/
 

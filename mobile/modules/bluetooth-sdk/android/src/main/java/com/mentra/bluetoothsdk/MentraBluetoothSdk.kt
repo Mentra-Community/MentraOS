@@ -856,6 +856,10 @@ class MentraBluetoothSdk private constructor(
         }
     }
 
+    fun setWifiAdbState(enabled: Boolean) {
+        deviceManager.setWifiAdbState(enabled)
+    }
+
     fun setSystemTime(timestampMs: Long) {
         deviceManager.setSystemTime(timestampMs)
     }

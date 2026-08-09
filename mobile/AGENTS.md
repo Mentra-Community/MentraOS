@@ -37,6 +37,10 @@ The user-facing app version (`CFBundleShortVersionString` on iOS,
 - The build number (`CFBundleVersion` / `versionCode`) is derived at
   build time from wall-clock seconds — see `mobile/scripts/build-number.mjs`.
   Nothing to bump manually; just don't downgrade `EXPO_PUBLIC_MENTRAOS_VERSION`.
+- Automatic glasses OTA is enabled only when the mobile bundle contains an
+  `EXPO_PUBLIC_ASG_OTA_VERSION_URL` release pin. Local and compile-only builds
+  without a pin fail closed; a Super Mode manifest override remains available
+  for deliberate local OTA testing.
 
 ### Testing
 

@@ -195,6 +195,7 @@ protocol SGCManager {
     func sendWifiCredentials(_ ssid: String, _ password: String)
     func forgetWifiNetwork(_ ssid: String)
     func sendHotspotState(_ enabled: Bool)
+    func sendWifiAdbState(_ enabled: Bool)
     func sendOtaStart(otaVersionUrl: String?)
     func sendOtaQueryStatus()
     func sendSetSystemTime(_ timestampMs: Int64)
@@ -386,6 +387,11 @@ extension SGCManager {
     /// Default no-op; Mentra Live and G2 override to handle phone-detected clock skew.
     func sendSetSystemTime(_: Int64) {
         Bridge.log("SGC: sendSetSystemTime not supported")
+    }
+
+    /// Default no-op; Mentra Live overrides to enable/disable Wi-Fi ADB.
+    func sendWifiAdbState(_: Bool) {
+        Bridge.log("SGC: sendWifiAdbState not supported")
     }
 
     // MARK: - Default DeviceStore-backed property implementations

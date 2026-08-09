@@ -579,6 +579,10 @@ class BluetoothSdkModule : Module() {
             requireSdk().setHotspotState(enabled).values
         }
 
+        SdkAsyncFunction("setWifiAdbState") { enabled: Boolean ->
+            sdk?.setWifiAdbState(enabled)
+        }
+
         SdkAsyncFunction("setSystemTime") { timestampMs: Double ->
             sdk?.setSystemTime(timestampMs.toLong())
         }

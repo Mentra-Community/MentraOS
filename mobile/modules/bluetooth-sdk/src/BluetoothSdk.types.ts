@@ -1079,6 +1079,8 @@ export interface BluetoothSdkPublicModule {
   sendWifiCredentials(ssid: string, password: string): Promise<WifiStatusChangeEvent>
   forgetWifiNetwork(ssid: string): Promise<WifiStatusChangeEvent>
   setHotspotState(enabled: boolean): Promise<HotspotStatusChangeEvent>
+  /** Enable or disable Wi-Fi ADB on Mentra Live (no-op on other devices). */
+  setWifiAdbState(enabled: boolean): Promise<void>
 
   setGalleryModeEnabled(enabled: boolean): Promise<SettingsAckSuccessEvent>
   setVoiceActivityDetectionEnabled(enabled: boolean): Promise<void>
@@ -1224,6 +1226,8 @@ export interface OtaUpdateInfo {
   updates: string[] // ["apk", "mtk", "bes"]
   totalSize: number
   cacheReady?: boolean
+  /** Exact BES target selected from the OTA manifest, when a BES step is pending. */
+  besVersion?: string
   /** True when the APK step installs an older build than the glasses currently run (exact-pin manifests only). */
   isDowngrade?: boolean
 }

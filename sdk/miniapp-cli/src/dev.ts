@@ -1,12 +1,15 @@
 import os from 'os';
-import { readFileSync, existsSync, statSync } from 'fs';
+import { readFileSync, existsSync, statSync, unlinkSync } from 'fs';
 import { join, resolve } from 'path';
-import { printQR } from './qr.js';
+import { printQR, writeQRPng } from './qr.js';
 import { validateManifest } from './manifest.js';
 import { startDevSidecar } from './dev-server.js';
+import { getLanIp, getMdnsHostname } from './lan.js';
 
 const DEFAULT_DEV_PORT = 3000;
 const DEV_PORT_SCAN_LIMIT = 50;
+/** How often to re-check Wi-Fi / LAN IP while `mentra-miniapp dev` is running. */
+const LAN_IP_POLL_MS = 2_000;
 
 export interface DevAttestationInput {
   packageName: string;
@@ -15,19 +18,10 @@ export interface DevAttestationInput {
 
 export interface DevOptions {
   cwd?: string;
-  signDevAttestation?: (input: DevAttestationInput) => string | Promise<string | null | undefined> | null | undefined;
-}
-
-function getLanIp(): string | null {
-  const interfaces = os.networkInterfaces();
-  for (const name of Object.keys(interfaces)) {
-    for (const iface of interfaces[name] ?? []) {
-      if (iface.family === 'IPv4' && !iface.internal) {
-        return iface.address;
-      }
-    }
-  }
-  return null;
+  qrOutput?: string;
+  signDevAttestation?: (
+    input: DevAttestationInput,
+  ) => string | Promise<string | null | undefined> | null | undefined;
 }
 
 function contentTypeFor(path: string): string {
@@ -227,19 +221,24 @@ export async function dev(options: DevOptions = {}): Promise<void> {
     );
   }
 
+  const mdnsHost = getMdnsHostname();
+
   const buildDevUrl = async (ip: string): Promise<string> => {
     const devServerUrl = `http://${ip}:${port}`;
     const base = `miniapp://dev?url=${encodeURIComponent(devServerUrl)}&name=${encodeURIComponent(name)}&package=${encodeURIComponent(packageName)}`;
     const withDevPort = sidecarPort ? `${base}&dev=${sidecarPort}` : base;
-    if (!options.signDevAttestation) return withDevPort;
+    // mDNS hint lets the phone retry via ComputerName.local when the raw IP
+    // goes stale after a Wi-Fi/DHCP change — same QR, new address under the hood.
+    const withMdns = mdnsHost ? `${withDevPort}&mdns=${encodeURIComponent(mdnsHost)}` : withDevPort;
+    if (!options.signDevAttestation) return withMdns;
 
     try {
       const attestation = await options.signDevAttestation({ packageName, devServerUrl });
-      if (!attestation) return withDevPort;
-      return `${withDevPort}&attestation=${encodeURIComponent(attestation)}`;
+      if (!attestation) return withMdns;
+      return `${withMdns}&attestation=${encodeURIComponent(attestation)}`;
     } catch (error) {
       console.warn(`Warning: could not sign dev URL (${(error as Error).message}). Miniapp auto-auth will be unavailable.`);
-      return withDevPort;
+      return withMdns;
     }
   };
 
@@ -264,26 +263,75 @@ export async function dev(options: DevOptions = {}): Promise<void> {
     console.log('╚══════════════════════════════════════════════════════════════╝\n');
   };
 
-  printBanner();
-  const devUrl = await buildDevUrl(lanIp);
-  await printQR(devUrl);
-  console.log(`\n${devUrl}\n`);
+  const defaultQrPath = join(os.tmpdir(), `mentra-dev-qr-${packageName}-${port}.png`);
+  const qrOutputPath = resolve(options.qrOutput ?? defaultQrPath);
+  const cleanupQrOnExit = !options.qrOutput;
 
-  // Monitor for LAN IP changes (e.g., WiFi switch).
-  const ipCheckInterval = setInterval(async () => {
-    const newIp = getLanIp();
-    if (newIp && newIp !== lanIp) {
-      lanIp = newIp;
-      console.log(`\nLAN IP changed to ${newIp}. New QR:`);
-      printBanner();
-      const newDevUrl = await buildDevUrl(newIp);
-      await printQR(newDevUrl);
-      console.log(`\n${newDevUrl}\n`);
+  const emitQR = async (url: string): Promise<void> => {
+    await printQR(url);
+    const wrote = await writeQRPng(url, qrOutputPath);
+    console.log(`\n${url}`);
+    if (wrote) {
+      console.log(`PNG QR: ${qrOutputPath}\n`);
+    } else {
+      console.log(`PNG QR: (not written — see warning above)\n`);
     }
-  }, 10_000);
+  };
+
+  printBanner();
+  if (mdnsHost) {
+    console.log(`mDNS: ${mdnsHost} (phone can keep using this name across Wi-Fi IP changes)\n`);
+  }
+  const devUrl = await buildDevUrl(lanIp);
+  await emitQR(devUrl);
+
+  // Monitor for LAN IP changes (e.g., Wi-Fi switch / DHCP renew).
+  // Re-score interfaces — a VPN coming up must not steal the QR off Wi-Fi,
+  // and a Wi-Fi roam must mint a new QR within a couple seconds.
+  let ipCheckInFlight = false;
+  const ipCheckInterval = setInterval(() => {
+    if (ipCheckInFlight) return;
+    const newIp = getLanIp();
+    if (!newIp || newIp === lanIp) return;
+    ipCheckInFlight = true;
+    void (async () => {
+      try {
+        console.log(`\n📶 LAN IP changed: ${lanIp} → ${newIp}`);
+        console.log('Rebuilding so baked-in LAN URLs (e.g. signing endpoints) stay current…');
+        try {
+          await runBuild(cwd);
+        } catch (err) {
+          // Leave lanIp on the previous value so the next poll retries this IP.
+          // Committing early would leave dist/ stale while skipping further rebuilds.
+          console.error('Rebuild after LAN IP change failed:', (err as Error).message);
+          return;
+        }
+        const previous = lanIp;
+        lanIp = newIp;
+        console.log(`LAN IP committed: ${previous} → ${newIp}`);
+        console.log('New QR (re-scan if the Mentra App still has the old IP):');
+        printBanner();
+        if (mdnsHost) {
+          console.log(`mDNS: ${mdnsHost}\n`);
+        }
+        const newDevUrl = await buildDevUrl(newIp);
+        await emitQR(newDevUrl);
+      } finally {
+        ipCheckInFlight = false;
+      }
+    })();
+  }, LAN_IP_POLL_MS);
 
   const shutdown = () => {
     clearInterval(ipCheckInterval);
+    // Only remove the auto temp path — keep an explicit --qr-output artifact.
+    if (cleanupQrOnExit) {
+      try {
+        unlinkSync(qrOutputPath);
+      } catch {
+        // best-effort cleanup of temp PNG
+      }
+    }
     sidecar?.stop();
     userServer.stop(true);
     process.exit(0);

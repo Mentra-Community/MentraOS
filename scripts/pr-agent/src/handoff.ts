@@ -1,4 +1,4 @@
-import type { CiCheckStatus } from './ci-gates.js';
+import { isCiFailed, type CiCheckStatus } from './ci-gates.js';
 import { openBlocking } from './findings.js';
 import type { Finding, PrAgentState } from './types.js';
 import { MARKER_HANDOFF } from './types.js';
@@ -9,12 +9,21 @@ export function buildHandoffComment(
   ciChecks: CiCheckStatus[],
 ): string {
   const open = openBlocking(state.openFindings);
-  const reasonText =
+  const ciFailed = isCiFailed(ciChecks);
+
+  let reasonText =
     reason === 'human_handoff'
       ? 'Clean handoff — CI green, no blocking findings, models have no further reviews.'
       : reason === 'budget_exhausted'
         ? 'Budget exhausted — fix or review cycle cap reached.'
         : 'Diverging — stagnation or review churn detected.';
+
+  if (ciFailed) {
+    reasonText =
+      reason === 'human_handoff'
+        ? 'Handoff with failing CI — path-scoped checks are red; do not merge until CI is green.'
+        : `${reasonText} Path-scoped CI is failing — do not merge until CI is green.`;
+  }
 
   const ciTable =
     ciChecks.length === 0
@@ -40,6 +49,10 @@ export function buildHandoffComment(
           .slice(0, 20)
           .map((f) => `- (\`${f.file}\`) ${f.message}`)
           .join('\n');
+
+  const footer = ciFailed
+    ? '**CI is failing.** Do not merge until path-scoped checks are green. Label `agent-resume` after pushing fixes to re-run the loop.'
+    : '**Humans merge when ready.** Agents do not auto-merge. Label `agent-resume` to re-run the loop after new commits.';
 
   return `${MARKER_HANDOFF}
 ## PR Agent Handoff
@@ -68,6 +81,6 @@ ${nits}
 
 ---
 
-**Humans merge when ready.** Agents do not auto-merge. Label \`agent-resume\` to re-run the loop after new commits.
+${footer}
 `;
 }

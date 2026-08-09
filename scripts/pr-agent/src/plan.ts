@@ -9,7 +9,13 @@ import {
   removeLabel,
   saveState,
 } from './state.js';
-import { getChangedFiles } from './ci-gates.js';
+import {
+  fetchWorkflowStatuses,
+  getChangedFiles,
+  getPrHeadSha,
+  isCiFailed,
+  requiredWorkflowsForPaths,
+} from './ci-gates.js';
 import type { PlanOutput } from './types.js';
 
 export async function runPlan(repoRoot: string): Promise<PlanOutput> {
@@ -88,6 +94,7 @@ export async function runPlan(repoRoot: string): Promise<PlanOutput> {
     await removeLabel(octokit, owner, repo, prNumber, 'agent-resume');
     await removeLabel(octokit, owner, repo, prNumber, 'ready-for-human-review');
     await removeLabel(octokit, owner, repo, prNumber, 'agent-needs-human');
+    await removeLabel(octokit, owner, repo, prNumber, 'agent-ci-failing');
     await saveState(octokit, owner, repo, prNumber, state, commentId);
   }
 
@@ -144,6 +151,38 @@ export async function runPlan(repoRoot: string): Promise<PlanOutput> {
   }
 
   if (state.cycle >= config.limits.maxOrchestratorCycles) {
+    // Mirror aggregate: when CI is red and the fixer still has rounds left,
+    // do not force budget_exhausted — continue with reviews skipped so
+    // aggregate can set shouldFix and the fixer can react to the CI failure.
+    let ciFailed = process.env.CI_TRIGGER_FAILED === 'true';
+    if (!ciFailed && state.fixRound < config.limits.maxFixRounds) {
+      try {
+        const ref = await getPrHeadSha(octokit, owner, repo, prNumber);
+        const changedFiles = await getChangedFiles(octokit, owner, repo, prNumber);
+        const required = requiredWorkflowsForPaths(changedFiles, repoRoot);
+        const ciChecks = await fetchWorkflowStatuses(octokit, owner, repo, ref, required);
+        ciFailed = isCiFailed(ciChecks);
+      } catch (err) {
+        console.warn('plan: failed to fetch CI status for cycle-cap deferral', err);
+      }
+    }
+
+    if (ciFailed && state.fixRound < config.limits.maxFixRounds) {
+      console.log(
+        `Cycle cap reached (${state.cycle}) but CI failed with fixRound=${state.fixRound}; deferring handoff for fixer`,
+      );
+      await saveState(octokit, owner, repo, prNumber, state, commentId);
+      return {
+        runBugbot: false,
+        runStandards: false,
+        runDepth: false,
+        activePair: [],
+        state,
+        shouldSkip: false,
+        skipReason: 'max cycles deferred for CI fix',
+      };
+    }
+
     const exhausted = { ...state, status: 'budget_exhausted' as const };
     await saveState(octokit, owner, repo, prNumber, exhausted, commentId);
     return {

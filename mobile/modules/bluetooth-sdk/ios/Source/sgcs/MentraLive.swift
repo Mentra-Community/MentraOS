@@ -1297,6 +1297,7 @@ class MentraLive: NSObject, SGCManager {
         // a previous pairing into the next one (would otherwise surface as wrong overall_percent
         // or stale lastBesOtaProgress on the next OTA).
         if state == ConnTypes.DISCONNECTED {
+            resetPendingAckState(reason: "BLE session ended")
             resetWireNegotiationState()
             resetAncsRelayState()
             // Queued writes are session-bound: transmitting them into the NEXT session
@@ -1940,6 +1941,18 @@ class MentraLive: NSObject, SGCManager {
 
     private var pending: PendingMessage?
     private var pendingMessageTimer: Timer?
+
+    /// ACK state belongs to the BLE session that sent the message. If the link drops while an ACK
+    /// is outstanding, keeping `pending` set permanently blocks the command queue because the
+    /// timeout timer is stopped during disconnect. Release both together before reconnecting.
+    private func resetPendingAckState(reason: String) {
+        pendingMessageTimer?.invalidate()
+        pendingMessageTimer = nil
+
+        guard let pendingMessage = pending else { return }
+        pending = nil
+        Bridge.log("LIVE: Cleared pending ACK mId \(pendingMessage.id) because \(reason)")
+    }
 
     actor CommandQueue {
         private var commands: [PendingMessage] = []
@@ -3000,62 +3013,33 @@ class MentraLive: NSObject, SGCManager {
                 var progress = ((rawProgress + 2) / 5) * 5
                 if progress > 100 { progress = 100 }
 
-                // Only send if progress changed to a new 5% increment
                 let isTerminalStatus = type == "success" || type == "error" || type == "fail"
-                if progress == lastBesOtaProgress && !isTerminalStatus {
-                    break // Skip duplicate progress
-                }
-                lastBesOtaProgress = progress
-
-                Bridge.log(
-                    "LIVE: 📱 BES OTA progress via sr_adota - type: \(type), raw: \(rawProgress)%, rounded: \(progress)%"
-                )
-
-                // Determine status and error message based on type
-                var besOtaStatus: String
                 var besOtaProgressVal: Int
                 var besOtaErrorMessage: String? = nil
 
-                // Order matters here: check completion (rawProgress >= 100 OR success) BEFORE
-                // type=="update", because some BES firmware emits the final 100% tick with
-                // type=="update" rather than type=="success". Treating that as PROGRESS would
-                // leave the UI stuck at 100% forever.
-                if type == "success" || rawProgress >= 100 {
-                    besOtaStatus = "FINISHED"
+                let failed = type == "error" || type == "fail"
+                let succeeded = type == "success"
+                if succeeded {
                     besOtaProgressVal = 100
-                    lastBesOtaProgress = -1 // Reset for next OTA
-                } else if type == "error" || type == "fail" {
-                    besOtaStatus = "FAILED"
+                } else if failed {
                     besOtaProgressVal = progress
                     besOtaErrorMessage = bodyObj["message"] as? String ?? "BES update failed"
-                    lastBesOtaProgress = -1 // Reset for next OTA
-                } else if type == "update" {
-                    besOtaStatus = "PROGRESS"
-                    besOtaProgressVal = progress
                 } else {
-                    // Unknown type, treat as progress
-                    besOtaStatus = "PROGRESS"
-                    besOtaProgressVal = progress
+                    // A raw update:100 precedes whole-image CRC/apply and is not terminal.
+                    besOtaProgressVal = min(progress, 95)
                 }
 
-                let syntheticStatus: String
-                if besOtaStatus == "FINISHED" {
-                    // The glasses power-cycle right after the final BES tick, so a session
-                    // whose BES step is the LAST step never gets a follow-up ota_status from
-                    // the glasses — consumers mapping on this synthetic status would otherwise
-                    // never see a terminal state. Emit "complete" for the final step;
-                    // mid-session BES steps keep "step_complete" so session-level trackers
-                    // advance normally. Unknown sessions (cachedOtaTotalSteps == 0, e.g.
-                    // legacy glasses that never sent an ota_status) conservatively keep
-                    // "step_complete".
-                    syntheticStatus = (cachedOtaTotalSteps > 0 && cachedOtaCurrentStep >= cachedOtaTotalSteps)
-                        ? "complete"
-                        : "step_complete"
-                } else if besOtaStatus == "FAILED" {
-                    syntheticStatus = "failed"
-                } else {
-                    syntheticStatus = "in_progress"
+                // Only send if nonterminal display progress changed to a new 5% increment.
+                if besOtaProgressVal == lastBesOtaProgress && !isTerminalStatus {
+                    break
                 }
+                lastBesOtaProgress = isTerminalStatus ? -1 : besOtaProgressVal
+
+                Bridge.log(
+                    "LIVE: 📱 BES OTA progress via sr_adota - type: \(type), raw: \(rawProgress)%, rounded: \(progress)%, display: \(besOtaProgressVal)%"
+                )
+
+                let syntheticStatus = succeeded ? "step_complete" : (failed ? "failed" : "in_progress")
                 let sid = cachedOtaSessionId ?? ""
                 let totalSteps = cachedOtaTotalSteps > 0 ? cachedOtaTotalSteps : 1
                 let currentStep = cachedOtaCurrentStep > 0 ? cachedOtaCurrentStep : 1
@@ -3204,6 +3188,17 @@ class MentraLive: NSObject, SGCManager {
 
         let json: [String: Any] = [
             "type": "set_hotspot_state",
+            "enabled": enabled,
+        ]
+
+        sendJson(json, wakeUp: true)
+    }
+
+    func sendWifiAdbState(_ enabled: Bool) {
+        Bridge.log("LIVE: 🔧 Sending Wi-Fi ADB state: \(enabled)")
+
+        let json: [String: Any] = [
+            "type": "set_wifi_adb_state",
             "enabled": enabled,
         ]
 
@@ -5181,8 +5176,7 @@ class MentraLive: NSObject, SGCManager {
         stopReadinessCheckLoop()
         stopConnectionTimeout()
         stopMicBeat() // Stop LC3 audio micbeat
-        pendingMessageTimer?.invalidate()
-        pendingMessageTimer = nil
+        resetPendingAckState(reason: "transport timers stopped")
         reconnectionWorkItem?.cancel()
         reconnectionWorkItem = nil
     }

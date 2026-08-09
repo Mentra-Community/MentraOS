@@ -118,6 +118,8 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   sendWifiCredentials(ssid: string, password: string): Promise<WifiStatusChangeEvent>
   forgetWifiNetwork(ssid: string): Promise<WifiStatusChangeEvent>
   setHotspotState(enabled: boolean): Promise<HotspotStatusChangeEvent>
+  /** Enable or disable Wi-Fi ADB on Mentra Live (no-op on other devices). */
+  setWifiAdbState(enabled: boolean): Promise<void>
   /** Set the glasses system clock when phone detects clock skew (Mentra Live and G2). */
   setSystemTime(timestampMs: number): Promise<void>
   /** Logs current WiFi frequency (MHz) and 5 GHz band to Android logcat. */
