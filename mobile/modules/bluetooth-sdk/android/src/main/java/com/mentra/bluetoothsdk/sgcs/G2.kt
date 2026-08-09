@@ -4160,11 +4160,14 @@ class G2 : SGCManager() {
         }
 
         if (!notificationCentreArmed) {
+            // Set before the writes go out: a refusal can only arrive after its write, so the
+            // clear-on-reject always lands after this set. Set after the pin instead, a refusal
+            // arriving inside the pin's inter-write gap would be overwritten.
+            notificationCentreArmed = true
             // whitelistDisable=1 turns off the on-glass per-app filter, which otherwise drops
             // every notification absent from the stored whitelist. We push no whitelist:
             // per-app filtering already happens phone-side in the notification listener.
             pinControlPlane(notifEnable = 1, whitelistDisable = 1)
-            notificationCentreArmed = true
             Bridge.log("G2/NOTIF: centre armed (on-glass filtering disabled)")
         }
 
