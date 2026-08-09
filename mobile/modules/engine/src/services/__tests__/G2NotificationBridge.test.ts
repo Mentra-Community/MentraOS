@@ -43,7 +43,8 @@ mock.module("../../stores/glasses", () => ({
 const {startG2NotificationBridge, stopG2NotificationBridge} = require("../G2NotificationBridge")
 
 const NOTIFICATION = {
-  notificationId: "1237",
+  // Real shape from the native listener: "$packageName-${sbn.key}" — never a plain int.
+  notificationId: "com.snapchat.android-0|com.snapchat.android|1237|null|10203",
   app: "Snapchat",
   title: "Sarah",
   content: "is typing...",
@@ -68,7 +69,7 @@ describe("G2NotificationBridge", () => {
     capturedHandler?.(NOTIFICATION)
 
     expect(mockSendPhoneNotification).toHaveBeenCalledWith({
-      notificationId: "1237",
+      notificationId: "com.snapchat.android-0|com.snapchat.android|1237|null|10203",
       packageName: "com.snapchat.android",
       appName: "Snapchat",
       title: "Sarah",

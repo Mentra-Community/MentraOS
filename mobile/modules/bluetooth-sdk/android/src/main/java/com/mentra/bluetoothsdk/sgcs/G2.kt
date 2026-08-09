@@ -4169,8 +4169,7 @@ class G2 : SGCManager() {
         // JS numbers cross the bridge as Double - `as? Long`/`as? Int` would silently null out.
         val timestampMs = (notification["timestampMs"] as? Number)?.toLong() ?: System.currentTimeMillis()
         val action = (notification["action"] as? Number)?.toInt() ?: 0
-        // Normally StatusBarNotification.getId(), already an int; the fallback covers made-up ids.
-        val msgId = (notification["notificationId"] as? String)?.toIntOrNull() ?: nextSyntheticMsgId()
+        val msgId = msgIdFor(notification["notificationId"] as? String ?: "")
 
         val bytes = NotificationJson.androidNotification(
             msgId = msgId,
@@ -4191,8 +4190,27 @@ class G2 : SGCManager() {
     }
 
     /**
-     * Fallback `msg_id` when the id isn't numeric. Four digits like the captured ones — a wider
-     * field costs payload budget, and the firmware has only been seen handling short ids.
+     * The glasses key notification cards on a numeric `msg_id`; the phone id is a string
+     * ("$packageName-${sbn.key}"), so ids are minted here. The same phone id keeps the same
+     * msg_id while it stays in the LRU: a notification re-posts under its id on update, and
+     * reusing the msg_id makes the glasses replace the card in place rather than stack a
+     * duplicate. Numeric phone ids pass straight through; an empty id gets a fresh mint, since
+     * there is nothing to correlate on. Only touched from [notificationQueue]'s single consumer.
+     */
+    private val msgIdsByPhoneId =
+        object : LinkedHashMap<String, Int>(32, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Int>) = size > 512
+        }
+
+    private fun msgIdFor(notificationId: String): Int {
+        notificationId.toIntOrNull()?.let { return it }
+        if (notificationId.isEmpty()) return nextSyntheticMsgId()
+        return msgIdsByPhoneId.getOrPut(notificationId) { nextSyntheticMsgId() }
+    }
+
+    /**
+     * Four digits like the captured ones — a wider field costs payload budget, and the firmware
+     * has only been seen handling short ids.
      */
     private var syntheticMsgId = 2000
 
