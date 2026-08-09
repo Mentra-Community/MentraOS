@@ -277,7 +277,7 @@ export type BluetoothSdkInternalModule = BluetoothSdkNativeModule
 const NativeBluetoothSdkModule = requireNativeModule<BluetoothSdkNativeModule>("BluetoothSdk")
 
 const DEFAULT_CONNECT_OPTIONS: Required<ConnectOptions> = {
-  saveAsDefault: true,  
+  saveAsDefault: true,
   cancelExistingConnectionAttempt: true,
 }
 

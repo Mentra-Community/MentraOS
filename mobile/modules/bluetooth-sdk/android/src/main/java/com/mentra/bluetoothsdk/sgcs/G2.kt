@@ -1947,6 +1947,12 @@ class G2 : SGCManager() {
      */
     private suspend fun sendFile(fileType: Int, filename: String, bytes: ByteArray): Int? =
         fileTransferMutex.withLock {
+            if (rightFileWriteChar == null) {
+                // Checked before arming: an armed ack with nothing transmitted holds the caller
+                // on a wait that can only time out.
+                Bridge.log("G2/FILE: no FILE WRITE characteristic bound — cannot send")
+                return@withLock null
+            }
             val crc32 = evenCrc32(bytes)
             Bridge.log(
                 "G2/FILE: START type=$fileType len=${bytes.size} crc32=0x${
@@ -4111,7 +4117,8 @@ class G2 : SGCManager() {
     /**
      * Whether THIS connection has had its notification centre switched on. Armed lazily on the
      * first push, so a user who never enables the feature never has these settings written;
-     * cleared on disconnect, since the glasses don't persist it and re-arming is two writes.
+     * cleared on disconnect and on a refused pin, since the glasses don't persist it and
+     * re-arming is two writes.
      */
     @Volatile private var notificationCentreArmed = false
 
@@ -4204,15 +4211,25 @@ class G2 : SGCManager() {
 
     private fun msgIdFor(notificationId: String): Int {
         notificationId.toIntOrNull()?.let { return it }
-        if (notificationId.isEmpty()) return nextSyntheticMsgId()
-        return msgIdsByPhoneId.getOrPut(notificationId) { nextSyntheticMsgId() }
+        if (notificationId.isEmpty()) return mintMsgId()
+        return msgIdsByPhoneId.getOrPut(notificationId) { mintMsgId() }
     }
 
     /**
      * Four digits like the captured ones — a wider field costs payload budget, and the firmware
-     * has only been seen handling short ids.
+     * has only been seen handling short ids. Minting skips ids still mapped to a phone id: the
+     * counter wraps after 8000 mints while up to 512 mappings stay live, and a reused id would
+     * make the glasses replace the wrong card. Any 513 consecutive candidates contain a free id.
      */
     private var syntheticMsgId = 2000
+
+    private fun mintMsgId(): Int {
+        repeat(msgIdsByPhoneId.size + 1) {
+            val candidate = nextSyntheticMsgId()
+            if (!msgIdsByPhoneId.containsValue(candidate)) return candidate
+        }
+        return nextSyntheticMsgId()
+    }
 
     private fun nextSyntheticMsgId(): Int {
         syntheticMsgId = if (syntheticMsgId >= 9999) 2000 else syntheticMsgId + 1
@@ -4918,6 +4935,13 @@ class G2 : SGCManager() {
                 " REJECTED cmd=${failedCmd?.let { NotificationProto.cmdName(it) } ?: "?"}" +
                     " errorCode=$errorCode" +
                     (if (errorCode == 8) " (NOT_SUPPORT)" else "")
+            // A refused pin means the centre is NOT armed, whatever the flag says; dropping the
+            // latch makes the next push re-pin instead of pushing into a disabled centre forever.
+            if (failedCmd == NotificationProto.CMD_CTRL ||
+                failedCmd == NotificationProto.CMD_WHITELIST_CTRL
+            ) {
+                notificationCentreArmed = false
+            }
         }
 
         Bridge.log(
