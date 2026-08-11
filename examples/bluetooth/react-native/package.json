@@ -10,6 +10,7 @@
     "ios:setup": "bash ./modules/mentra-video-stream-receiver/scripts/setup-gstreamer-ios.sh",
     "android": "node ./scripts/android-run.mjs",
     "android:dev": "node ./scripts/android-dev.mjs",
+    "test": "bun test",
     "web": "expo start --web"
   },
   "dependencies": {
@@ -32,6 +33,7 @@
     "react-native-webview": "13.16.0"
   },
   "devDependencies": {
+    "@types/bun": "^1.3.14",
     "@types/react": "^19.1.0",
     "typescript": "~5.9.2",
     "ws": "^8.20.1"
