@@ -60,6 +60,12 @@ import {
   isGlassesWifiConnected,
   supportsDisplay,
 } from './sdkFormat';
+import {
+  buildStalledOtaFailure,
+  isOtaProgressActive,
+  otaProgressFingerprint,
+  OTA_PROGRESS_TIMEOUT_MS,
+} from './otaProgressPolicy';
 
 export type ExampleTabKey = 'device' | 'camera' | 'stream' | 'system' | 'console';
 export type BluetoothSdkExampleOptions = {
@@ -90,9 +96,7 @@ function isDisplayableOtaStatus(payload: OtaStatusEvent) {
   return payload.status !== 'idle' || Boolean(payload.error_message);
 }
 
-function isOtaEventInProgress(payload: OtaStatusEvent | null) {
-  return payload?.status === 'in_progress' || payload?.status === 'step_complete';
-}
+const isOtaEventInProgress = isOtaProgressActive;
 
 function otaVersionSignature(glasses: GlassesRuntimeState) {
   if (!glasses.connected) {
@@ -763,6 +767,9 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     ? `${connectedDeviceKey}|${latestVersionInfoSignature ?? otaVersionSignature(glasses)}`
     : null;
   const otaInProgress = isOtaEventInProgress(otaStatus);
+  const otaProgressKey = otaStatus && otaInProgress
+    ? otaProgressFingerprint(otaStatus)
+    : null;
   const phone = bluetooth.sdk;
   const scanActive = bluetooth.scan.active;
   const galleryModeEnabled = phone.galleryMode.enabled;
@@ -882,6 +889,23 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       await bluetooth.connectDefault();
     });
   }, [defaultDevice, glassesConnected]);
+
+  useEffect(() => {
+    if (!otaProgressKey || !otaStatus) {
+      return;
+    }
+
+    let cancelled = false;
+    const stalledStatus = otaStatus;
+    const timer = setTimeout(() => {
+      void reconcileStalledOta(stalledStatus, otaProgressKey, () => cancelled);
+    }, OTA_PROGRESS_TIMEOUT_MS);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [otaProgressKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!glassesConnected) {
@@ -1367,6 +1391,83 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   function clearOtaDisplayProgress() {
     otaDisplayProgressRef.current = null;
     setOtaDisplayPercent(null);
+  }
+
+  function isCurrentStalledOta(fingerprint: string, cancelled: () => boolean) {
+    const current = otaStatusRef.current;
+    return (
+      !cancelled() &&
+      glassesConnectedRef.current &&
+      current != null &&
+      isOtaProgressActive(current) &&
+      otaProgressFingerprint(current) === fingerprint
+    );
+  }
+
+  async function reconcileStalledOta(
+    stalledStatus: OtaStatusEvent,
+    fingerprint: string,
+    cancelled: () => boolean,
+  ) {
+    if (!isCurrentStalledOta(fingerprint, cancelled)) {
+      return;
+    }
+
+    addEvent('LIVE', 'OTA progress stalled; reconciling glasses versions and manifest');
+    try {
+      const versionInfo = await BluetoothSdk.requestVersionInfo();
+      if (!isCurrentStalledOta(fingerprint, cancelled)) {
+        return;
+      }
+      applyVersionInfo(versionInfo);
+    } catch (error) {
+      addEvent('TX', `OTA stall version refresh failed: ${formatError(error)}`);
+    }
+
+    if (!isCurrentStalledOta(fingerprint, cancelled)) {
+      return;
+    }
+
+    try {
+      const updateAvailable = await BluetoothSdk.checkForOtaUpdate();
+      if (!isCurrentStalledOta(fingerprint, cancelled)) {
+        return;
+      }
+      if (!updateAvailable) {
+        otaStatusRef.current = null;
+        otaStartingAppIdentityRef.current = null;
+        setOtaStatus(null);
+        clearOtaDisplayProgress();
+        setOtaStatusMessage('Glasses firmware is up to date');
+        setOtaUpdateAvailable(false);
+        showOtaNoUpdateCard();
+        addEvent('LIVE', 'OTA stall reconciled: no update remains');
+        return;
+      }
+
+      failStalledOta(
+        stalledStatus,
+        'The OTA manifest still reports that an update is required. Reconnect the glasses and retry.',
+      );
+    } catch (error) {
+      if (!isCurrentStalledOta(fingerprint, cancelled)) {
+        return;
+      }
+      failStalledOta(
+        stalledStatus,
+        `Current firmware could not be verified: ${formatError(error)}`,
+      );
+    }
+  }
+
+  function failStalledOta(status: OtaStatusEvent, detail: string) {
+    const failedStatus = buildStalledOtaFailure(status, detail);
+    otaStatusRef.current = failedStatus;
+    otaStartingAppIdentityRef.current = null;
+    setOtaStatus(failedStatus);
+    setOtaStatusMessage(null);
+    setOtaUpdateAvailable(false);
+    addEvent('LIVE', `OTA failed after progress timeout: ${detail}`);
   }
 
   function setOtaPendingActionValue(action: OtaPendingAction) {
