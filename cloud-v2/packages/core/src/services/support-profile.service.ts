@@ -52,6 +52,8 @@ type PendingTelemetry = {
   properties: Record<string, unknown>
 }
 
+type NormalizedPendingTelemetry = PendingTelemetry & {legacy: boolean}
+
 export class SupportProfileAccountDeletedError extends Error {
   constructor() {
     super("account is deleted")
@@ -352,9 +354,9 @@ export function appendPendingTelemetry(
   existing: PendingTelemetry | PendingTelemetry[] | null | undefined,
   incoming: PendingTelemetry | null,
 ): PendingTelemetry[] {
-  return [...normalizePendingTelemetry(existing), ...(incoming ? [incoming] : [])].slice(
-    -SUPPORT_PENDING_TELEMETRY_LIMIT,
-  )
+  return [...normalizePendingTelemetry(existing), ...(incoming ? [{...incoming, legacy: false}] : [])]
+    .slice(-SUPPORT_PENDING_TELEMETRY_LIMIT)
+    .map(({legacy: _legacy, ...entry}) => entry)
 }
 
 async function flushPendingTelemetry(profile: {
@@ -366,15 +368,20 @@ async function flushPendingTelemetry(profile: {
       for (const event of pending.events) {
         await enqueueSupportTelemetry({
           mentraUserId: profile.mentraUserId,
-          transitionKey: `${profile.mentraUserId}:${pending.transitionId}:${event}`,
+          transitionKey: pending.legacy
+            ? `${profile.mentraUserId}:${pending.fingerprint}:${event}`
+            : `${profile.mentraUserId}:${pending.transitionId}:${event}`,
           event,
           eventAt: new Date(pending.eventAt),
           properties: pending.properties,
         })
       }
+      const pullSelector = pending.legacy
+        ? {transitionId: {$exists: false}, fingerprint: pending.fingerprint, eventAt: pending.eventAt}
+        : {transitionId: pending.transitionId}
       await SupportProfileModel.updateOne(
         {mentraUserId: profile.mentraUserId},
-        {$pull: {pendingTelemetry: {transitionId: pending.transitionId}}},
+        {$pull: {pendingTelemetry: pullSelector}},
       )
     } catch (error) {
       logger.warn(
@@ -388,15 +395,19 @@ async function flushPendingTelemetry(profile: {
 
 function normalizePendingTelemetry(
   value: PendingTelemetry | PendingTelemetry[] | null | undefined,
-): PendingTelemetry[] {
+): NormalizedPendingTelemetry[] {
   if (!value) return []
   const entries = Array.isArray(value) ? value : [value]
-  return entries.map((entry) => ({
-    ...entry,
-    // Compatibility for profiles written during staged rollout before the
-    // per-transition identity was introduced.
-    transitionId: entry.transitionId || `${entry.eventAt}:${entry.fingerprint}`,
-  }))
+  return entries.map((entry) => {
+    const legacy = !entry.transitionId
+    return {
+      ...entry,
+      // Compatibility for staged-rollout profiles. Flush keeps their original
+      // fingerprint key; the next canonical write persists this migration.
+      transitionId: entry.transitionId || `${entry.eventAt}:${entry.fingerprint}`,
+      legacy,
+    }
+  })
 }
 
 async function assertActiveOrCleanup(mentraUserId: string): Promise<void> {

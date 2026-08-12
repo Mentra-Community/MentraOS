@@ -106,6 +106,28 @@ describe("support profile privacy and transitions", () => {
     expect(pending[0]?.transitionId).toBe("revision-5")
     expect(pending.at(-1)?.transitionId).toBe(`revision-${SUPPORT_PENDING_TELEMETRY_LIMIT + 4}`)
   })
+
+  test("migrates staged pending transitions on the next canonical write", () => {
+    const migrated = appendPendingTelemetry(
+      {
+        fingerprint: "legacy-fingerprint",
+        events: ["support_profile_created"],
+        eventAt: "2026-08-11T12:00:00.000Z",
+        properties: {},
+      } as any,
+      null,
+    )
+
+    expect(migrated).toEqual([
+      {
+        transitionId: "2026-08-11T12:00:00.000Z:legacy-fingerprint",
+        fingerprint: "legacy-fingerprint",
+        events: ["support_profile_created"],
+        eventAt: "2026-08-11T12:00:00.000Z",
+        properties: {},
+      },
+    ])
+  })
 })
 
 function input(device: {hardwareId: string}): SupportStateInput {
