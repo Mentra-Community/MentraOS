@@ -1,11 +1,7 @@
 package com.mentra.asg_client.io.bluetooth.managers.mentralive.internal;
 
 import android.util.Log;
-
 import com.mentra.asg_client.AsgConstants;
-
-import org.json.JSONObject;
-
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.concurrent.CancellationException;
@@ -16,6 +12,7 @@ import java.util.concurrent.FutureTask;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import org.json.JSONObject;
 
 /**
  * Single policy owner for the ASG-to-BES UART.
@@ -36,7 +33,9 @@ public final class BesUartTransportCoordinator {
         WAITING_FAST_REOPEN,
         VERIFYING_FAST,
         READY_FAST,
-        RECOVERING
+        RECOVERING,
+        SAFETY_RECOVERING,
+        QUARANTINED
     }
 
     /** Long-lived operation currently preventing transport reconfiguration. */
@@ -75,6 +74,24 @@ public final class BesUartTransportCoordinator {
         REJECTED,
         NORMAL,
         OTA
+    }
+
+    /** Durable BES OTA policy projected by the one authoritative state store. */
+    public enum SafetyPolicy {
+        NORMAL,
+        OTA_OWNER_ONLY,
+        RECOVERY_PROBE_ONLY,
+        VERSION_PROBE_ONLY,
+        QUARANTINED
+    }
+
+    @FunctionalInterface
+    public interface SafetyState {
+        SafetyPolicy currentPolicy();
+
+        default void onRawOtaModeProven() {}
+
+        default void onRecoveryFailed() {}
     }
 
     /** A physical write performed on the FIFO UART lane without holding the state monitor. */
@@ -126,9 +143,14 @@ public final class BesUartTransportCoordinator {
     private static final int[] RECOVERY_BAUDS = {
         AsgConstants.UART_FAST_BAUD, AsgConstants.UART_RENDEZVOUS_BAUD
     };
+    private static final int SAFETY_REOPEN_MAX_ATTEMPTS = 2;
+    private static final long SAFETY_REOPEN_RETRY_DELAY_MS = 200;
 
     private final Object monitor = new Object();
     private final Host host;
+    private final SafetyState safetyState;
+    private final long idleHealthProbeMs;
+    private final long healthProbeTimeoutMs;
     private final BesUartIoLane ioLane = new BesUartIoLane();
     private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
     private final ArrayDeque<FutureTask<Boolean>> deferredNormalWrites = new ArrayDeque<>();
@@ -142,23 +164,60 @@ public final class BesUartTransportCoordinator {
     private long phaseGeneration = 0;
     private SerialSession versionSession;
     private SerialSession fastSwitchAttemptSession;
+    // Fast baud is an optional optimization. Once its negotiation or runtime proof fails, keep
+    // this coordinator at the universally supported 460800 rendezvous baud for the rest of the
+    // process. Serial recovery creates a new SerialSession, so a per-session attempt marker alone
+    // would immediately retry cs_baud and can starve every ordinary K900 command in a loop.
+    private boolean fastBaudSuppressed;
     private int recoveryIndex = 0;
     private int recoveryRetryAttempt = 0;
     private String firmwareVersion = "";
+    // Target owned by the one in-flight cs_baud transaction. Fast-baud promotion and the
+    // mandatory pre-OTA return to rendezvous use the same request-and-prove machinery.
+    private int baudTransitionTarget;
     private long discardedBytes = 0;
     private int discardEvents = 0;
     private boolean versionProbeDeferred = false;
     private boolean outboundDrainPending = false;
     private long outboundDrainGeneration = 0;
+    // A state-machine phase can remain unchanged across many READY_FAST health-timer rearms.
+    // Give every arm its own identity so a callback that already started before cancel(false)
+    // cannot clear a replacement timer or recover a link that a newer valid frame just proved.
+    private long healthTimerGeneration = 0;
 
     private ScheduledFuture<?> phaseTimeout;
     private ScheduledFuture<?> healthTimeout;
+    private int safetyRawProbeAttempts;
+    private boolean safetyRecoveryListenerReady;
+    private boolean safetyAlternateBaudAttempted;
 
     public BesUartTransportCoordinator(Host host) {
+        this(host, () -> SafetyPolicy.NORMAL);
+    }
+
+    public BesUartTransportCoordinator(Host host, SafetyState safetyState) {
+        this(
+                host,
+                safetyState,
+                AsgConstants.UART_HIGH_BAUD_IDLE_PROBE_MS,
+                AsgConstants.UART_BAUD_PROBE_TIMEOUT_MS);
+    }
+
+    BesUartTransportCoordinator(
+            Host host, SafetyState safetyState, long idleHealthProbeMs, long healthProbeTimeoutMs) {
         if (host == null) {
             throw new IllegalArgumentException("host is required");
         }
+        if (safetyState == null) {
+            throw new IllegalArgumentException("safetyState is required");
+        }
+        if (idleHealthProbeMs <= 0 || healthProbeTimeoutMs <= 0) {
+            throw new IllegalArgumentException("health probe timings must be positive");
+        }
         this.host = host;
+        this.safetyState = safetyState;
+        this.idleHealthProbeMs = idleHealthProbeMs;
+        this.healthProbeTimeoutMs = healthProbeTimeoutMs;
     }
 
     public State getState() {
@@ -188,7 +247,9 @@ public final class BesUartTransportCoordinator {
     /** Route bytes only when they belong to the descriptor currently owned by this coordinator. */
     public InboundRoute inboundRoute(SerialSession session) {
         synchronized (monitor) {
-            if (!isCurrentSerialSessionLocked(session) || state == State.CLOSED) {
+            if (!isCurrentSerialSessionLocked(session)
+                    || state == State.CLOSED
+                    || state == State.QUARANTINED) {
                 return InboundRoute.REJECTED;
             }
             return otaRawRouting ? InboundRoute.OTA : InboundRoute.NORMAL;
@@ -205,6 +266,39 @@ public final class BesUartTransportCoordinator {
     public boolean isCurrentSerialSession(SerialSession session) {
         synchronized (monitor) {
             return isCurrentSerialSessionLocked(session);
+        }
+    }
+
+    /** Begin bounded raw-first recovery after the raw parser listener is registered. */
+    public void startSafetyRecovery() {
+        synchronized (monitor) {
+            // Listener registration and serial readiness can arrive in either order. Remember the
+            // registration so a later onSerialReady transition cannot strand the state machine in
+            // SAFETY_RECOVERING without ever sending its bounded probes.
+            safetyRecoveryListenerReady = true;
+            if (state != State.SAFETY_RECOVERING || !otaRawRouting) {
+                return;
+            }
+            armSafetyRecoveryProbesLocked();
+        }
+    }
+
+    private void armSafetyRecoveryProbesLocked() {
+        safetyRawProbeAttempts = 0;
+        long phase = ++phaseGeneration;
+        scheduleNextSafetyRawProbeLocked(phase);
+    }
+
+    /** Consume only a complete raw protocol-version response during bounded recovery. */
+    public boolean onSafetyRawProtocolResponse(byte command) {
+        synchronized (monitor) {
+            if (state != State.SAFETY_RECOVERING || command != (byte) 0x9A) {
+                return false;
+            }
+            Log.e(TAG, "BES still answers the raw OTA parser after restart");
+            safetyState.onRawOtaModeProven();
+            quarantineCurrentSessionLocked();
+            return true;
         }
     }
 
@@ -234,12 +328,35 @@ public final class BesUartTransportCoordinator {
             state = State.DISCOVERING;
             versionSession = null;
             fastSwitchAttemptSession = null;
+            baudTransitionTarget = 0;
             firmwareVersion = "";
             discardedBytes = 0;
             discardEvents = 0;
             versionProbeDeferred = false;
             cancelOutboundDrainLocked();
             serialSession = session;
+            SafetyPolicy policy = safetyState.currentPolicy();
+            if (policy == SafetyPolicy.QUARANTINED || policy == SafetyPolicy.OTA_OWNER_ONLY) {
+                state = State.QUARANTINED;
+                phaseGeneration++;
+                Log.e(TAG, "UART quarantined by durable BES OTA state: " + policy);
+                return;
+            }
+            if (policy == SafetyPolicy.RECOVERY_PROBE_ONLY
+                    || policy == SafetyPolicy.VERSION_PROBE_ONLY) {
+                state = State.SAFETY_RECOVERING;
+                otaRawRouting = true;
+                safetyRawProbeAttempts = 0;
+                safetyAlternateBaudAttempted = false;
+                phaseGeneration++;
+                if (safetyRecoveryListenerReady) {
+                    Log.w(TAG, "Starting raw-first BES OTA recovery probe: " + policy);
+                    armSafetyRecoveryProbesLocked();
+                } else {
+                    Log.w(TAG, "Awaiting raw parser listener before BES OTA recovery: " + policy);
+                }
+                return;
+            }
             long phase = ++phaseGeneration;
             Log.i(TAG, "Serial ready; discovering BES at rendezvous baud");
             scheduleProbeBurstLocked(
@@ -264,8 +381,10 @@ public final class BesUartTransportCoordinator {
             serialSession = null;
             versionSession = null;
             fastSwitchAttemptSession = null;
+            baudTransitionTarget = 0;
             firmwareVersion = "";
             versionProbeDeferred = false;
+            safetyAlternateBaudAttempted = false;
             cancelOutboundDrainLocked();
             state = State.CLOSED;
             operation = Operation.NONE;
@@ -273,6 +392,137 @@ public final class BesUartTransportCoordinator {
             otaRawRouting = false;
             host.setFastReceive(false);
             Log.i(TAG, "Serial closed");
+        }
+    }
+
+    private void scheduleNextSafetyRawProbeLocked(long phase) {
+        if (phase != phaseGeneration || state != State.SAFETY_RECOVERING) {
+            return;
+        }
+        if (safetyRawProbeAttempts >= 3) {
+            phaseTimeout =
+                    executor.schedule(() -> finishSafetyRawSilence(phase), 1, TimeUnit.SECONDS);
+            return;
+        }
+        safetyRawProbeAttempts++;
+        int attempt = safetyRawProbeAttempts;
+        ioLane.submit(
+                () -> {
+                    boolean sent = host.writeRawBytes(new byte[] {(byte) 0x99, 0, 0, 0, 0});
+                    Log.w(TAG, "Safety raw 0x99 probe " + attempt + "/3 sent=" + sent);
+                });
+        phaseTimeout =
+                executor.schedule(
+                        () -> {
+                            synchronized (monitor) {
+                                scheduleNextSafetyRawProbeLocked(phase);
+                            }
+                        },
+                        1,
+                        TimeUnit.SECONDS);
+    }
+
+    private void finishSafetyRawSilence(long phase) {
+        synchronized (monitor) {
+            if (phase != phaseGeneration || state != State.SAFETY_RECOVERING) {
+                return;
+            }
+            // Raw silence is not proof of framed mode. Send exactly one source-audited cs_syvr and
+            // accept only its current-session sr_syvr. A restarted ASG process cannot know whether
+            // BES was left at rendezvous or fast baud, so a timeout advances to the one alternate
+            // physical baud and repeats this raw-first proof before failing closed.
+            otaRawRouting = false;
+            host.resetParser();
+            state = State.DISCOVERING;
+            long framedPhase = ++phaseGeneration;
+            scheduleProbeBurstLocked(framedPhase, host.currentBaud(), 0, 1, 0);
+            phaseTimeout =
+                    executor.schedule(
+                            () -> continueSafetyRecoveryIfCurrent(framedPhase),
+                            AsgConstants.UART_BAUD_PROBE_TIMEOUT_MS,
+                            TimeUnit.MILLISECONDS);
+        }
+    }
+
+    private void continueSafetyRecoveryIfCurrent(long phase) {
+        int alternateBaud;
+        synchronized (monitor) {
+            if (phase != phaseGeneration || state != State.DISCOVERING) {
+                return;
+            }
+            if (safetyAlternateBaudAttempted) {
+                safetyState.onRecoveryFailed();
+                quarantineCurrentSessionLocked();
+                return;
+            }
+            safetyAlternateBaudAttempted = true;
+            alternateBaud =
+                    host.currentBaud() == AsgConstants.UART_FAST_BAUD
+                            ? AsgConstants.UART_RENDEZVOUS_BAUD
+                            : AsgConstants.UART_FAST_BAUD;
+            host.invalidateLinkProof();
+            serialSession = null;
+            versionSession = null;
+            state = State.SAFETY_RECOVERING;
+            otaRawRouting = true;
+            long reopenPhase = ++phaseGeneration;
+            Log.w(TAG, "Safety recovery trying alternate UART baud " + alternateBaud);
+            ioLane.submit(() -> performSafetyRecoveryReopen(reopenPhase, alternateBaud, 1));
+        }
+    }
+
+    private void performSafetyRecoveryReopen(long reopenPhase, int baud, int attempt) {
+        synchronized (monitor) {
+            if (reopenPhase != phaseGeneration || state != State.SAFETY_RECOVERING) {
+                return;
+            }
+        }
+
+        SerialSession opened = replacePhysicalSession(baud);
+        boolean closeOpened = false;
+        boolean retry = false;
+        synchronized (monitor) {
+            if (reopenPhase != phaseGeneration || state != State.SAFETY_RECOVERING) {
+                closeOpened = opened != null;
+            } else if (!adoptAndStartSessionLocked(opened)) {
+                closeOpened = opened != null;
+                if (attempt < SAFETY_REOPEN_MAX_ATTEMPTS) {
+                    retry = true;
+                    Log.w(
+                            TAG,
+                            "Safety UART reopen attempt "
+                                    + attempt
+                                    + "/"
+                                    + SAFETY_REOPEN_MAX_ATTEMPTS
+                                    + " failed at "
+                                    + baud
+                                    + "; retrying local descriptor only");
+                } else {
+                    safetyState.onRecoveryFailed();
+                    quarantineCurrentSessionLocked();
+                }
+            } else {
+                armSafetyRecoveryProbesLocked();
+                Log.w(
+                        TAG,
+                        "Safety recovery reopened UART at alternate baud "
+                                + baud
+                                + " on attempt "
+                                + attempt);
+            }
+        }
+        if (closeOpened) {
+            host.closeSession(opened);
+        }
+        if (retry && !executor.isShutdown()) {
+            executor.schedule(
+                    () ->
+                            ioLane.submit(
+                                    () ->
+                                            performSafetyRecoveryReopen(
+                                                    reopenPhase, baud, attempt + 1)),
+                    SAFETY_REOPEN_RETRY_DELAY_MS,
+                    TimeUnit.MILLISECONDS);
         }
     }
 
@@ -286,6 +536,7 @@ public final class BesUartTransportCoordinator {
         synchronized (monitor) {
             if (!isCurrentSerialSessionLocked(receiveSession)
                     || state == State.CLOSED
+                    || state == State.QUARANTINED
                     || state == State.SWITCH_REQUESTED
                     || state == State.WAITING_FAST_REOPEN
                     || !host.isSerialOpen()) {
@@ -293,6 +544,12 @@ public final class BesUartTransportCoordinator {
             }
             if (beforeTransition != null) {
                 beforeTransition.run();
+            }
+            SafetyPolicy policy = safetyState.currentPolicy();
+            if (policy != SafetyPolicy.NORMAL) {
+                state = State.QUARANTINED;
+                Log.e(TAG, "sr_syvr did not resolve durable BES OTA policy: " + policy);
+                return SystemVersionResult.IGNORED;
             }
             firmwareVersion = version == null ? "" : version.trim();
             versionSession = serialSession;
@@ -304,9 +561,11 @@ public final class BesUartTransportCoordinator {
             recoveryRetryAttempt = 0;
 
             int baud = host.currentBaud();
+            baudTransitionTarget = 0;
             if (baud == AsgConstants.UART_FAST_BAUD) {
                 state = State.READY_FAST;
                 scheduleHealthCheckLocked();
+                monitor.notifyAll();
                 Log.i(TAG, "UART link ready at fast baud " + baud);
                 return SystemVersionResult.READY;
             }
@@ -317,6 +576,7 @@ public final class BesUartTransportCoordinator {
             }
 
             advanceLocked();
+            monitor.notifyAll();
             if (isReadyLocked()) {
                 Log.i(TAG, "UART link ready at rendezvous baud " + baud);
                 return SystemVersionResult.READY;
@@ -333,14 +593,25 @@ public final class BesUartTransportCoordinator {
                 return false;
             }
             cancelPhaseTimeoutLocked();
-            if (status != 0 || acknowledgedBaud != AsgConstants.UART_FAST_BAUD) {
-                state = State.READY_RENDEZVOUS;
+            int requestedBaud = baudTransitionTarget;
+            if (status != 0 || requestedBaud == 0 || acknowledgedBaud != requestedBaud) {
+                fastBaudSuppressed = true;
+                if (host.currentBaud() == AsgConstants.UART_FAST_BAUD) {
+                    state = State.READY_FAST;
+                    scheduleHealthCheckLocked();
+                } else {
+                    state = State.READY_RENDEZVOUS;
+                }
+                baudTransitionTarget = 0;
+                monitor.notifyAll();
                 Log.w(
                         TAG,
-                        "Fast-baud request rejected status="
+                        "Baud request rejected status="
                                 + status
-                                + " baud="
-                                + acknowledgedBaud);
+                                + " acknowledged="
+                                + acknowledgedBaud
+                                + " requested="
+                                + requestedBaud);
                 return true;
             }
 
@@ -349,10 +620,12 @@ public final class BesUartTransportCoordinator {
             long phase = ++phaseGeneration;
             phaseTimeout =
                     executor.schedule(
-                            () -> reopenFastAndVerifyIfCurrent(phase, "sr_baud"),
+                            () -> reopenBaudAndVerifyIfCurrent(phase, "sr_baud"),
                             AsgConstants.UART_BAUD_REOPEN_DELAY_MS,
                             TimeUnit.MILLISECONDS);
-            Log.i(TAG, "Fast-baud request accepted; waiting to reopen ASG UART");
+            Log.i(
+                    TAG,
+                    "Baud request accepted for " + requestedBaud + "; waiting to reopen ASG UART");
             return true;
         }
     }
@@ -361,6 +634,13 @@ public final class BesUartTransportCoordinator {
     public void onValidFrame(SerialSession receiveSession) {
         synchronized (monitor) {
             if (!isCurrentSerialSessionLocked(receiveSession)) {
+                return;
+            }
+            SafetyPolicy policy = safetyState.currentPolicy();
+            if (policy == SafetyPolicy.RECOVERY_PROBE_ONLY
+                    || policy == SafetyPolicy.VERSION_PROBE_ONLY) {
+                // During durable recovery, only the exact fresh sr_syvr requested after raw
+                // silence proves framed mode. Arbitrary valid traffic cannot reopen the UART.
                 return;
             }
             discardedBytes = 0;
@@ -407,7 +687,14 @@ public final class BesUartTransportCoordinator {
     public boolean runNormalWrite(WriteAction action) {
         Future<Boolean> write;
         synchronized (monitor) {
-            if (!isReadyLocked() || action == null) {
+            SafetyPolicy policy = safetyState.currentPolicy();
+            boolean otaOwnedDeferral =
+                    policy == SafetyPolicy.OTA_OWNER_ONLY
+                            && (operation == Operation.OTA_AUTHORIZATION
+                                    || operation == Operation.OTA_TRANSFER);
+            if (!isReadyLocked()
+                    || action == null
+                    || (policy != SafetyPolicy.NORMAL && !otaOwnedDeferral)) {
                 Log.w(TAG, "Rejecting normal write state=" + state + " operation=" + operation);
                 return false;
             }
@@ -504,11 +791,70 @@ public final class BesUartTransportCoordinator {
     }
 
     public OperationLease beginOtaAuthorization() {
+        if (!ensureRendezvousForOta()) {
+            return null;
+        }
         OperationLease lease = beginOperation(Operation.OTA_AUTHORIZATION, false);
         if (lease != null) {
             Log.i(TAG, "BES OTA authorization owns stable UART");
         }
         return lease;
+    }
+
+    /**
+     * BES OTA deliberately uses the one universally supported baud. If ordinary traffic had
+     * negotiated the optional fast baud, reopen at 460800 and require a fresh sr_syvr before the
+     * authorization lease can be acquired. This wait runs on the ordered outbound worker; the
+     * serial reader remains free to deliver the proof.
+     */
+    private boolean ensureRendezvousForOta() {
+        synchronized (monitor) {
+            if (safetyState.currentPolicy() != SafetyPolicy.NORMAL
+                    || operation != Operation.NONE
+                    || state == State.CLOSED
+                    || state == State.QUARANTINED) {
+                return false;
+            }
+            fastBaudSuppressed = true;
+            if (state == State.READY_RENDEZVOUS
+                    && versionSession == serialSession
+                    && host.currentBaud() == AsgConstants.UART_RENDEZVOUS_BAUD) {
+                return true;
+            }
+
+            long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            boolean rendezvousSwitchAttempted = false;
+            while (true) {
+                if (state == State.CLOSED
+                        || state == State.QUARANTINED
+                        || safetyState.currentPolicy() != SafetyPolicy.NORMAL) {
+                    return false;
+                }
+                if (state == State.READY_RENDEZVOUS) {
+                    return versionSession == serialSession
+                            && host.currentBaud() == AsgConstants.UART_RENDEZVOUS_BAUD;
+                }
+                if (state == State.READY_FAST) {
+                    if (rendezvousSwitchAttempted) {
+                        Log.e(TAG, "BES rejected or failed the pre-OTA rendezvous transition");
+                        return false;
+                    }
+                    rendezvousSwitchAttempted = true;
+                    beginBaudSwitchLocked(AsgConstants.UART_RENDEZVOUS_BAUD);
+                }
+                long remainingNanos = deadlineNanos - System.nanoTime();
+                if (remainingNanos <= 0) {
+                    Log.e(TAG, "Timed out proving 460800 UART before BES OTA");
+                    return false;
+                }
+                try {
+                    TimeUnit.NANOSECONDS.timedWait(monitor, remainingNanos);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return false;
+                }
+            }
+        }
     }
 
     /** Write the single normal-framed request owned by the OTA authorization lease. */
@@ -569,9 +915,48 @@ public final class BesUartTransportCoordinator {
             host.setFastReceive(false);
             operation = Operation.NONE;
             operationLease = null;
-            flushDeferredNormalWritesLocked();
-            resumeAfterOutboundDrainLocked();
+            if (safetyState.currentPolicy() == SafetyPolicy.NORMAL) {
+                flushDeferredNormalWritesLocked();
+                resumeAfterOutboundDrainLocked();
+            } else {
+                cancelDeferredNormalWritesLocked("durable BES OTA quarantine");
+                state = State.QUARANTINED;
+            }
         }
+    }
+
+    /** One-way same-boot quarantine after an authorization reservation existed. */
+    public boolean quarantineOta(OperationLease lease) {
+        synchronized (monitor) {
+            if (operationLease != lease
+                    || (operation != Operation.OTA_AUTHORIZATION
+                            && operation != Operation.OTA_TRANSFER)) {
+                quarantineCurrentSessionLocked();
+                return false;
+            }
+            quarantineCurrentSessionLocked();
+            return true;
+        }
+    }
+
+    public void quarantineCurrentSession() {
+        synchronized (monitor) {
+            quarantineCurrentSessionLocked();
+        }
+    }
+
+    private void quarantineCurrentSessionLocked() {
+        cancelAllTimersLocked();
+        cancelDeferredNormalWritesLocked("BES OTA state is ambiguous");
+        cancelOutboundDrainLocked();
+        phaseGeneration++;
+        otaRawRouting = false;
+        host.setFastReceive(false);
+        operation = Operation.NONE;
+        operationLease = null;
+        state = State.QUARANTINED;
+        monitor.notifyAll();
+        Log.e(TAG, "UART quarantined by durable BES OTA policy");
     }
 
     /**
@@ -592,6 +977,13 @@ public final class BesUartTransportCoordinator {
             cancelOutboundDrainLocked();
             host.invalidateLinkProof();
             serialSession = null;
+            if (safetyState.currentPolicy() == SafetyPolicy.OTA_OWNER_ONLY
+                    || safetyState.currentPolicy() == SafetyPolicy.QUARANTINED) {
+                state = State.QUARANTINED;
+                phaseGeneration++;
+                Log.i(TAG, "BES apply accepted; waiting for a new Linux boot");
+                return;
+            }
             state = State.DISCOVERING;
             long phase = ++phaseGeneration;
             ioLane.submit(() -> reconnectAfterOta(phase));
@@ -801,6 +1193,7 @@ public final class BesUartTransportCoordinator {
         if (state != State.READY_RENDEZVOUS
                 || operation != Operation.NONE
                 || outboundDrainPending
+                || fastBaudSuppressed
                 || versionSession != serialSession
                 || fastSwitchAttemptSession == serialSession
                 || firmwareVersion.isEmpty()
@@ -811,13 +1204,18 @@ public final class BesUartTransportCoordinator {
     }
 
     private void beginFastSwitchLocked() {
+        beginBaudSwitchLocked(AsgConstants.UART_FAST_BAUD);
+    }
+
+    private void beginBaudSwitchLocked(int targetBaud) {
         fastSwitchAttemptSession = serialSession;
+        baudTransitionTarget = targetBaud;
         state = State.SWITCH_REQUESTED;
         host.invalidateLinkProof();
         long phase = ++phaseGeneration;
         ioLane.submit(
                 () -> {
-                    boolean sent = host.writeControlCommand(buildBaudRequest());
+                    boolean sent = host.writeControlCommand(buildBaudRequest(targetBaud));
                     onBaudRequestWriteComplete(phase, sent);
                 });
     }
@@ -836,14 +1234,18 @@ public final class BesUartTransportCoordinator {
             }
             phaseTimeout =
                     executor.schedule(
-                            () -> reopenFastAndVerifyIfCurrent(phase, "sr_baud_timeout"),
+                            () -> reopenBaudAndVerifyIfCurrent(phase, "sr_baud_timeout"),
                             AsgConstants.UART_BAUD_ACK_TIMEOUT_MS,
                             TimeUnit.MILLISECONDS);
-            Log.i(TAG, "Requested fast UART baud " + AsgConstants.UART_FAST_BAUD);
+            // sr_baud lets us reopen sooner, but it is not the safety proof: BES may switch before
+            // its old-baud acknowledgement reaches ASG. A fresh sr_syvr requested and received
+            // after reopening at targetBaud proves both the switch and the return UART path. If
+            // that proof fails, recovery scans both known baud rates and OTA remains blocked.
+            Log.i(TAG, "Requested UART baud " + baudTransitionTarget);
         }
     }
 
-    private void reopenFastAndVerifyIfCurrent(long phase, String reason) {
+    private void reopenBaudAndVerifyIfCurrent(long phase, String reason) {
         synchronized (monitor) {
             if (phase != phaseGeneration
                     || (state != State.SWITCH_REQUESTED && state != State.WAITING_FAST_REOPEN)) {
@@ -858,39 +1260,47 @@ public final class BesUartTransportCoordinator {
             host.invalidateLinkProof();
             state = State.VERIFYING_FAST;
             long reopenPhase = ++phaseGeneration;
-            ioLane.submit(() -> performFastReopen(reopenPhase, reason));
+            ioLane.submit(() -> performBaudReopen(reopenPhase, reason));
         }
     }
 
-    private void performFastReopen(long reopenPhase, String reason) {
+    private void performBaudReopen(long reopenPhase, String reason) {
+        int targetBaud;
         synchronized (monitor) {
             if (reopenPhase != phaseGeneration || state != State.VERIFYING_FAST) {
                 return;
             }
+            targetBaud = baudTransitionTarget;
         }
 
-        SerialSession opened = replacePhysicalSession(AsgConstants.UART_FAST_BAUD);
+        SerialSession opened = replacePhysicalSession(targetBaud);
         boolean closeOpened = false;
         synchronized (monitor) {
             if (reopenPhase != phaseGeneration || state != State.VERIFYING_FAST) {
                 closeOpened = opened != null;
             } else if (!adoptAndStartSessionLocked(opened)) {
                 closeOpened = opened != null;
-                startRecoveryLocked("fast_reopen_failed");
+                startRecoveryLocked("baud_reopen_failed");
             } else {
                 long verifyPhase = ++phaseGeneration;
                 scheduleProbeBurstLocked(
                         verifyPhase,
-                        AsgConstants.UART_FAST_BAUD,
+                        targetBaud,
                         0,
                         AsgConstants.UART_RECOVERY_PROBES_PER_BURST,
                         AsgConstants.UART_RECOVERY_PROBE_SPACING_MS);
                 phaseTimeout =
                         executor.schedule(
-                                () -> startRecoveryIfCurrent(verifyPhase, "fast_probe_timeout"),
+                                () -> startRecoveryIfCurrent(verifyPhase, "baud_probe_timeout"),
                                 AsgConstants.UART_BAUD_PROBE_TIMEOUT_MS,
                                 TimeUnit.MILLISECONDS);
-                Log.i(TAG, "Reopened fast UART; verifying link (reason=" + reason + ")");
+                Log.i(
+                        TAG,
+                        "Reopened UART at "
+                                + targetBaud
+                                + "; verifying link (reason="
+                                + reason
+                                + ")");
             }
         }
         if (closeOpened) {
@@ -913,6 +1323,13 @@ public final class BesUartTransportCoordinator {
                 scheduleHealthCheckLocked();
             }
             return;
+        }
+        if (state == State.SWITCH_REQUESTED
+                || state == State.WAITING_FAST_REOPEN
+                || state == State.VERIFYING_FAST
+                || state == State.READY_FAST) {
+            fastBaudSuppressed = true;
+            Log.w(TAG, "Suppressing optional fast baud after failed proof: " + reason);
         }
         cancelAllTimersLocked();
         host.invalidateLinkProof();
@@ -1056,16 +1473,20 @@ public final class BesUartTransportCoordinator {
         cancelHealthTimeoutLocked();
         if (state == State.READY_FAST && !executor.isShutdown()) {
             long phase = phaseGeneration;
+            long healthTimer = ++healthTimerGeneration;
             healthTimeout =
                     executor.schedule(
-                            () -> onHealthTimeout(phase),
-                            AsgConstants.UART_HIGH_BAUD_IDLE_PROBE_MS,
+                            () -> onHealthTimeout(phase, healthTimer),
+                            idleHealthProbeMs,
                             TimeUnit.MILLISECONDS);
         }
     }
 
-    private void onHealthTimeout(long phase) {
+    private void onHealthTimeout(long phase, long healthTimer) {
         synchronized (monitor) {
+            if (healthTimer != healthTimerGeneration) {
+                return;
+            }
             healthTimeout = null;
             if (phase != phaseGeneration || state != State.READY_FAST) {
                 return;
@@ -1074,7 +1495,32 @@ public final class BesUartTransportCoordinator {
                 scheduleHealthCheckLocked();
                 return;
             }
-            startRecoveryLocked("idle_health_probe");
+            int baud = host.currentBaud();
+            scheduleProbeBurstLocked(phase, baud, 0, 1, 0);
+            long healthProbeTimer = ++healthTimerGeneration;
+            healthTimeout =
+                    executor.schedule(
+                            () -> onHealthProbeTimeout(phase, healthProbeTimer),
+                            healthProbeTimeoutMs,
+                            TimeUnit.MILLISECONDS);
+            Log.d(TAG, "Probing idle fast UART session at " + baud);
+        }
+    }
+
+    private void onHealthProbeTimeout(long phase, long healthTimer) {
+        synchronized (monitor) {
+            if (healthTimer != healthTimerGeneration) {
+                return;
+            }
+            healthTimeout = null;
+            if (phase != phaseGeneration || state != State.READY_FAST) {
+                return;
+            }
+            if (operation != Operation.NONE) {
+                scheduleHealthCheckLocked();
+                return;
+            }
+            startRecoveryLocked("idle_health_probe_timeout");
         }
     }
 
@@ -1154,6 +1600,7 @@ public final class BesUartTransportCoordinator {
     }
 
     private void cancelHealthTimeoutLocked() {
+        healthTimerGeneration++;
         if (healthTimeout != null) {
             healthTimeout.cancel(false);
             healthTimeout = null;
@@ -1182,10 +1629,10 @@ public final class BesUartTransportCoordinator {
         }
     }
 
-    private static byte[] buildBaudRequest() {
+    private static byte[] buildBaudRequest(int targetBaud) {
         try {
             JSONObject body = new JSONObject();
-            body.put("baud", AsgConstants.UART_FAST_BAUD);
+            body.put("baud", targetBaud);
             JSONObject command = new JSONObject();
             command.put("C", "cs_baud");
             command.put("V", 1);

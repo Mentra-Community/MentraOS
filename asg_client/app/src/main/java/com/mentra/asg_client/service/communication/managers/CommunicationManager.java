@@ -1,6 +1,7 @@
 package com.mentra.asg_client.service.communication.managers;
 
 import android.util.Log;
+
 import com.mentra.asg_client.io.bluetooth.interfaces.IBluetoothManager;
 import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
 import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
@@ -8,13 +9,16 @@ import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.LinkState
 import com.mentra.asg_client.io.network.interfaces.INetworkManager;
 import com.mentra.asg_client.io.network.models.NetworkInfo;
 import com.mentra.asg_client.io.ota.helpers.OtaHelper;
+import com.mentra.asg_client.logging.BleTraceLogger;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
 import com.mentra.asg_client.service.communication.reliability.ReliableMessageManager;
+
+import org.json.JSONException;
+import org.json.JSONObject;
+
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.List;
-import org.json.JSONException;
-import org.json.JSONObject;
 
 /**
  * Manages all communication operations (Bluetooth, WiFi status, etc.). Follows Single
@@ -88,7 +92,9 @@ public class CommunicationManager
         Log.d(TAG, "🔄 =========================================");
         Log.d(TAG, "🔄 SEND WIFI STATUS OVER BLE");
         Log.d(TAG, "🔄 =========================================");
-        Log.d(TAG, "🔄 WiFi connected: " + isConnected + (error != null ? ", error: " + error : ""));
+        Log.d(
+                TAG,
+                "🔄 WiFi connected: " + isConnected + (error != null ? ", error: " + error : ""));
 
         if (transport != null && transport.isConnected()) {
             Log.d(TAG, "🔄 ✅ Transport available and connected");
@@ -184,8 +190,7 @@ public class CommunicationManager
             try {
                 // Send networks in chunks of 4 to avoid BLE message size issues
                 int CHUNK_SIZE = 4;
-                List<String> scanNetworks =
-                        networks != null ? networks : Collections.emptyList();
+                List<String> scanNetworks = networks != null ? networks : Collections.emptyList();
 
                 // Split and send in chunks
                 for (int i = 0; i < scanNetworks.size(); i += CHUNK_SIZE) {
@@ -211,7 +216,8 @@ public class CommunicationManager
                                     + jsonString.getBytes(StandardCharsets.UTF_8).length
                                     + " bytes");
 
-                    boolean sent = transport.sendMessage(jsonString.getBytes(StandardCharsets.UTF_8));
+                    boolean sent =
+                            transport.sendMessage(jsonString.getBytes(StandardCharsets.UTF_8));
                     Log.d(
                             TAG,
                             "📡 "
@@ -235,7 +241,8 @@ public class CommunicationManager
 
                     String jsonString = response.toString();
                     Log.d(TAG, "📡 📤 Sending empty WiFi scan result: " + jsonString);
-                    boolean sent = transport.sendMessage(jsonString.getBytes(StandardCharsets.UTF_8));
+                    boolean sent =
+                            transport.sendMessage(jsonString.getBytes(StandardCharsets.UTF_8));
                     Log.d(
                             TAG,
                             "📡 "
@@ -301,7 +308,8 @@ public class CommunicationManager
                                     + network.getSignalStrength()
                                     + "dBm)");
 
-                    boolean sent = transport.sendMessage(jsonString.getBytes(StandardCharsets.UTF_8));
+                    boolean sent =
+                            transport.sendMessage(jsonString.getBytes(StandardCharsets.UTF_8));
                     Log.d(
                             TAG,
                             "📡 "
@@ -326,7 +334,8 @@ public class CommunicationManager
 
                     String jsonString = response.toString();
                     Log.d(TAG, "📡 📤 Sending empty enhanced WiFi scan result: " + jsonString);
-                    boolean sent = transport.sendMessage(jsonString.getBytes(StandardCharsets.UTF_8));
+                    boolean sent =
+                            transport.sendMessage(jsonString.getBytes(StandardCharsets.UTF_8));
                     Log.d(
                             TAG,
                             "📡 "
@@ -649,7 +658,13 @@ public class CommunicationManager
 
         try {
             if (isTerminal) {
-                boolean sent = reliableManager.sendMessage(status);
+                // Keep the state-rich snapshot in diagnostics, but put only the fields the phone
+                // needs to end the flow on the critical wire. This must remain one legacy v1
+                // notification even after ReliableMessageManager appends its mId.
+                BleTraceLogger.logEvent(
+                        "glasses_to_phone", "ota_diagnostic", "terminal_status", status);
+                JSONObject compactStatus = compactTerminalOtaStatus(status);
+                boolean sent = reliableManager.sendMessage(compactStatus);
                 Log.i(TAG, "📱 OTA Status (reliable): " + statusValue + " sent=" + sent);
             } else {
                 String jsonString = status.toString();
@@ -659,5 +674,43 @@ public class CommunicationManager
         } catch (Exception e) {
             Log.e(TAG, "📱 Error sending OTA status", e);
         }
+    }
+
+    static JSONObject compactTerminalOtaStatus(JSONObject status) throws JSONException {
+        JSONObject compact = new JSONObject();
+        compact.put("type", "ota_status");
+        compact.put("status", status.optString("status", "failed"));
+
+        String sessionId = status.optString("sid", status.optString("session_id", ""));
+        if (!sessionId.isEmpty()) {
+            compact.put("sid", sessionId);
+        }
+
+        String stepType = status.optString("st", status.optString("step_type", ""));
+        if (!stepType.isEmpty()) {
+            compact.put("st", stepType);
+        }
+        String phase = status.optString("phase", "");
+        if (!phase.isEmpty()) {
+            compact.put("phase", phase);
+        }
+
+        if ("complete".equals(compact.optString("status"))) {
+            int overall = status.optInt("op", status.optInt("overall_percent", 100));
+            compact.put("op", overall);
+        }
+
+        if ("failed".equals(compact.optString("status"))) {
+            String error = status.optString("err", status.optString("error_message", ""));
+            compact.put("err", compactErrorCode(error, phase));
+        }
+        return compact;
+    }
+
+    private static String compactErrorCode(String error, String phase) {
+        if (error.matches("[a-z0-9_]{1,48}")) {
+            return error;
+        }
+        return "download".equals(phase) ? "download_failed" : "install_failed";
     }
 }

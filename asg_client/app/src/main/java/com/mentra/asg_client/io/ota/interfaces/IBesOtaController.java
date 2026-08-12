@@ -1,6 +1,8 @@
 package com.mentra.asg_client.io.ota.interfaces;
 
 import androidx.annotation.Nullable;
+import com.mentra.asg_client.io.ota.utils.BesFirmwareArtifactValidator.ValidatedBesArtifact;
+import org.json.JSONObject;
 
 /**
  * Operations on the BES coprocessor OTA subsystem. Implemented by the vendor-specific OTA manager
@@ -42,10 +44,18 @@ public interface IBesOtaController {
     /**
      * Begin a firmware update.
      *
-     * @param filePath path to the firmware binary
+     * @param artifact fully validated immutable release artifact
+     * @param ownerSessionId top-level OTA session that owns the durable BES transaction
      * @return true if the update was started successfully
      */
-    boolean startFirmwareUpdate(String filePath);
+    boolean startFirmwareUpdate(ValidatedBesArtifact artifact, String ownerSessionId);
+
+    /** Authoritative BES OTA projection, or null when no durable BES transaction exists. */
+    @Nullable
+    JSONObject getAuthoritativeStatus();
+
+    /** Apply terminal retirement/restart rules before a new top-level OTA session is admitted. */
+    boolean prepareForNewOtaSession();
 
     /** Called by the MCU event subscriber when BES authorizes the update. */
     void onAuthorizationGranted();

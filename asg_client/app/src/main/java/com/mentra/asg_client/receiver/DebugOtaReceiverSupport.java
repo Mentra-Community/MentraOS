@@ -50,8 +50,10 @@ final class DebugOtaReceiverSupport {
         }
 
         Log.i(tag, "🚀 Starting " + flowLabel + " with custom OTA URL...");
-        helper.setPhoneInitiatedOta(true);
-        helper.startVersionCheckWithUrl(context, url);
-        Log.i(tag, "✅ " + flowLabel + " trigger dispatched - monitor logcat for progress");
+        if (helper.startVersionCheckWithUrl(context, url)) {
+            Log.i(tag, "✅ " + flowLabel + " trigger dispatched - monitor logcat for progress");
+        } else {
+            Log.e(tag, "❌ " + flowLabel + " trigger refused because OTA admission is busy");
+        }
     }
 }
