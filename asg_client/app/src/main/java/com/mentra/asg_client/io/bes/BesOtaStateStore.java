@@ -335,7 +335,7 @@ public final class BesOtaStateStore {
                     return TransitionResult.PERSISTENCE_FAILURE;
                 }
                 return verification == VerificationDecision.SECOND_BOOT_FAILED
-                        ? TransitionResult.ALREADY_TERMINAL
+                        ? TransitionResult.APPLIED
                         : TransitionResult.REJECTED;
             }
             if (current.state == State.AUTH_ATTEMPTED) {

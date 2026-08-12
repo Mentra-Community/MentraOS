@@ -227,23 +227,15 @@ describe("OtaInstallCoordinator ota_start request ownership", () => {
     expect(otaInstallCoordinator.snapshot().displayState).toBe("restarting")
   })
 
-  it("queues an explicit retry behind the previous request and ignores its stale ack", async () => {
+  it("adopts a pending request on Retry and never queues a second ota_start after its ack", async () => {
     setGlassesConnected()
     let resolveFirst!: () => void
-    let resolveSecond!: () => void
-    bluetoothSdkMock.startOtaUpdate
-      .mockImplementationOnce(
-        () =>
-          new Promise<void>((resolve) => {
-            resolveFirst = resolve
-          }),
-      )
-      .mockImplementationOnce(
-        () =>
-          new Promise<void>((resolve) => {
-            resolveSecond = resolve
-          }),
-      )
+    bluetoothSdkMock.startOtaUpdate.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveFirst = resolve
+        }),
+    )
     otaInstallCoordinator.attach()
 
     await jest.advanceTimersByTimeAsync(DOWNLOAD_STUCK_TIMEOUT_MS)
@@ -251,20 +243,33 @@ describe("OtaInstallCoordinator ota_start request ownership", () => {
 
     otaInstallCoordinator.retry()
     expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("starting")
 
-    // An unscoped event from the previous native request must not acknowledge
-    // the fresh logical attempt while that request still owns the bridge.
+    // Both public delivery surfaces refer to the same owned request. Neither
+    // the listener event nor the correlated promise may create another start.
     GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
-    expect((otaInstallCoordinator as unknown as {hasReceivedAck: boolean}).hasReceivedAck).toBe(false)
-
     resolveFirst()
     await flushNativeStartPromise()
-    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(2)
-    expect((otaInstallCoordinator as unknown as {hasReceivedAck: boolean}).hasReceivedAck).toBe(false)
+    await jest.advanceTimersByTimeAsync(RETRY_INTERVAL_MS * MAX_RETRIES)
 
-    resolveSecond()
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+  })
+
+  it("starts a fresh attempt after an authoritative failure and resets the 0%-stuck watchdog", async () => {
+    setGlassesConnected()
+    otaInstallCoordinator.attach()
     await flushNativeStartPromise()
-    expect((otaInstallCoordinator as unknown as {hasReceivedAck: boolean}).hasReceivedAck).toBe(true)
+
+    useGlassesStore.getState().setOtaStatus(inProgressStatus({stepPercent: 40, overallPercent: 40}))
+    useGlassesStore.getState().setOtaStatus(inProgressStatus({status: "failed", stepPercent: 40, overallPercent: 40}))
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("failed")
+
+    otaInstallCoordinator.retry()
+    await flushNativeStartPromise()
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(2)
+
+    await jest.advanceTimersByTimeAsync(DOWNLOAD_STUCK_TIMEOUT_MS)
+    expect(otaInstallCoordinator.snapshot().errorMsg).toBe(OtaProgressMessages.stalledOrStuck)
   })
 })
 
@@ -295,6 +300,17 @@ describe("OtaInstallCoordinator query-status arbitration with an existing sessio
     useGlassesStore.getState().setOtaStatus(inProgressStatus({stepPercent: 12, overallPercent: 12}))
     await jest.advanceTimersByTimeAsync(QUERY_REPLY_TIMEOUT_MS * 2)
 
+    expect(bluetoothSdkMock.startOtaUpdate).not.toHaveBeenCalled()
+  })
+
+  it("does not create a unified ota_start when reconciliation gets no authoritative reply", async () => {
+    setGlassesConnected()
+    useGlassesStore.getState().setOtaStatus(inProgressStatus({stepPercent: 10, overallPercent: 10}))
+    otaInstallCoordinator.attach()
+
+    await jest.advanceTimersByTimeAsync(QUERY_REPLY_TIMEOUT_MS)
+
+    expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalledTimes(1)
     expect(bluetoothSdkMock.startOtaUpdate).not.toHaveBeenCalled()
   })
 })
@@ -395,13 +411,14 @@ describe("OtaInstallCoordinator version-change detour retry gate", () => {
     errorSpy.mockRestore()
   })
 
-  it("retry outside a detour still re-sends ota_start", async () => {
+  it("retry outside a detour reconciles an acknowledged start without re-sending ota_start", async () => {
     setGlassesConnected()
     otaInstallCoordinator.attach()
     expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
     await flushNativeStartPromise()
     otaInstallCoordinator.retry()
-    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(2)
+    expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalledTimes(1)
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -652,7 +669,7 @@ describe("OtaInstallCoordinator legacy ota_progress normalization (WP 8C-a)", ()
     expect(otaInstallCoordinator.snapshot().displayState).toBe("restarting")
   })
 
-  it("glasses_session_changed acts as the reconnect edge: queries status and falls back to ota_start", async () => {
+  it("glasses_session_changed queries status without restarting a silent unified session", async () => {
     // The BES keeps the BLE link alive across the asg restart, so no physical
     // connect edge fires; the sid change is the only restart signal.
     setGlassesConnected()
@@ -665,10 +682,10 @@ describe("OtaInstallCoordinator legacy ota_progress normalization (WP 8C-a)", ()
     GlobalEventEmitter.emit("glasses_session_changed", {previousSid: "", sid: "abcd1234"})
     expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalledTimes(1)
 
-    // No useful reply (session lost on the glasses): the fallback re-sends ota_start.
+    // No authoritative reply is ambiguous: preserve the accepted unified session.
     useGlassesStore.getState().setOtaStatus(null)
     await jest.advanceTimersByTimeAsync(QUERY_REPLY_TIMEOUT_MS)
-    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalled()
+    expect(bluetoothSdkMock.startOtaUpdate).not.toHaveBeenCalled()
   })
 
   it("glasses_session_changed after APK completion queries the ASG-owned session without sending ota_start", async () => {

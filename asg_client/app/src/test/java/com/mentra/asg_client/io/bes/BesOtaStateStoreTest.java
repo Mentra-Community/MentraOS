@@ -192,6 +192,18 @@ public class BesOtaStateStoreTest {
     }
 
     @Test
+    public void restartVersionProofPublishesNewSecondBootFailure() {
+        reserveAndMarkApply();
+        assertThat(store.claimOrResumeVerificationBoot(BOOT_B))
+                .isEqualTo(VerificationDecision.CLAIMED);
+
+        assertThat(store.completeVersionProofAfterRestart(OWNER, BOOT_C, TARGET))
+                .isEqualTo(TransitionResult.APPLIED);
+        assertThat(store.read().getTerminalStatus()).isEqualTo(TerminalStatus.FAILURE);
+        assertThat(store.read().getTerminalCode()).isEqualTo("verification_boot_changed");
+    }
+
+    @Test
     public void restartVersionProofAtomicallyCompletesRecoveredAuthorization() {
         reserve();
 
