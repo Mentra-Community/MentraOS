@@ -152,6 +152,10 @@ public final class PhotoSession {
      */
     @Nullable private volatile ExecutorService persistenceExecutor;
 
+    /** Outstanding deferred JPEG writes; cancelled/awaited before ownership-transfer wipe. */
+    private final java.util.Set<Future<?>> outstandingPersistence =
+            java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
+
     private final Object captureMetadataLock = new Object();
     @Nullable private JSONObject pendingStillCaptureMetadata;
     @Nullable private String pendingCapturedFilePath;
@@ -769,17 +773,49 @@ public final class PhotoSession {
     /** Cancel the active still capture and mark the session idle before camera teardown. */
     public boolean cancelActiveCapture(String errorMessage) {
         synchronized (hooks.serviceLock()) {
-            if (activeCapture == null && shotState == AeStateMachine.ShotState.IDLE) {
-                return false;
+            boolean hadWarmUp = warmUpRequest != null;
+            boolean hadCapture =
+                    activeCapture != null || shotState != AeStateMachine.ShotState.IDLE;
+            if (!hadWarmUp && !hadCapture) {
+                return cancelOutstandingPersistence();
             }
             hdrBurstCapture.cancel();
             hooks.cancelImuRecording();
             aeStateMachine.clearWaitFlags();
-            notifyPhotoError(errorMessage);
-            clearActiveCapture();
+            // Drop late ImageReader frames: SHOOTING check + no fallback path.
             shotState = AeStateMachine.ShotState.IDLE;
+            listenerFallbackPhotoPath = null;
+            closeImageReadersIfPresent();
+            if (hadWarmUp) {
+                failWarmUp(CameraOperationError.warmUpFailed(errorMessage));
+            } else {
+                notifyPhotoError(errorMessage);
+                clearActiveCapture();
+            }
+            cancelOutstandingPersistence();
             return true;
         }
+    }
+
+    /**
+     * Cancel and briefly await deferred disk writes so a wipe cannot race a late JPEG persistence.
+     *
+     * @return true if any outstanding persistence work was present
+     */
+    public boolean cancelOutstandingPersistence() {
+        boolean hadWork = !outstandingPersistence.isEmpty();
+        for (Future<?> future : outstandingPersistence) {
+            future.cancel(false);
+        }
+        for (Future<?> future : outstandingPersistence) {
+            try {
+                future.get(500, java.util.concurrent.TimeUnit.MILLISECONDS);
+            } catch (Exception ignored) {
+                // Cancelled, timed out, or failed — wipe proceeds either way.
+            }
+        }
+        outstandingPersistence.clear();
+        return hadWork;
     }
 
     /**
@@ -1336,7 +1372,7 @@ public final class PhotoSession {
         final JSONObject callbackImuPayload = copyJsonPayload(imuPayload);
         Future<Boolean> persistence;
         if (persistToDisk) {
-            persistence =
+            Future<Boolean> task =
                     persistenceExecutor()
                             .submit(
                                     () -> {
@@ -1354,6 +1390,8 @@ public final class PhotoSession {
                                         Log.d(TAG, "Deferred photo persisted: " + targetPath);
                                         return true;
                                     });
+            outstandingPersistence.add(task);
+            persistence = task;
         } else {
             persistence = CompletableFuture.completedFuture(false);
             Log.d(TAG, "RAM-only photo capture; persistence skipped: " + targetPath);

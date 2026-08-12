@@ -539,8 +539,14 @@ public class CameraNeoService extends LifecycleService {
     /** Cancel an active still capture and synchronously tear down its camera session. */
     public static boolean cancelActivePhotoCapture(String errorMessage) {
         synchronized (SERVICE_LOCK) {
-            if (sInstance == null
-                    || !sInstance.photoSession.cancelActiveCapture(errorMessage)) {
+            if (sInstance == null) {
+                return false;
+            }
+            boolean cancelledCapture = sInstance.photoSession.cancelActiveCapture(errorMessage);
+            // Always drain deferred persistence so a wipe cannot race a late JPEG write
+            // that cleared activeCapture before the background save finished.
+            boolean cancelledPersistence = sInstance.photoSession.cancelOutstandingPersistence();
+            if (!cancelledCapture && !cancelledPersistence) {
                 return false;
             }
             Log.i(TAG, "Cancelling active photo capture");

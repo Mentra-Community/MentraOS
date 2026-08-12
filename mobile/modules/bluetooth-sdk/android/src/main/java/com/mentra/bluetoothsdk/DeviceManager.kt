@@ -2139,6 +2139,32 @@ class DeviceManager {
                         "Bluetooth Classic pairing is in progress. Accept or cancel the system pairing dialog first, then unpair.",
                 )
             }
+            // MentraLive.forget() already destroyed the SGC. Clear the manager reference and
+            // session state without calling disconnect() again (that would hit a dead instance
+            // and leave a destroyed MentraLive retained for the next scan).
+            sgc = null
+            lastSystemTimeSyncConnectionKey = ""
+            searching = false
+            micEnabled = false
+            updateMicState()
+            shouldSendBootingMessage = true
+            DeviceStore.apply("glasses", "deviceModel", "")
+            DeviceStore.apply("glasses", "serialNumber", "")
+            DeviceStore.apply("glasses", "bluetoothMacAddress", "")
+            DeviceStore.apply("glasses", "leftMacAddress", "")
+            DeviceStore.apply("glasses", "rightMacAddress", "")
+            DeviceStore.apply("glasses", "macAddress", "")
+            DeviceStore.apply("glasses", "fullyBooted", false)
+            DeviceStore.apply("glasses", "connected", false)
+            DeviceStore.apply(
+                    "glasses",
+                    "voiceActivityDetectionEnabled",
+                    BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED,
+            )
+            searchingController = false
+            DeviceStore.apply("glasses", "controllerConnected", false)
+            controller?.disconnect()
+            controller = null
         } else {
             // Call forget first to stop timers/handlers/reconnect logic
             sgc?.forget()

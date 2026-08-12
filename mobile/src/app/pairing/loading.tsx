@@ -102,14 +102,14 @@ export default function GlassesPairingLoadingScreen() {
   const handleGoBack = useCallback(() => {
     if (
       isMentraLive &&
-      !pairingResolved &&
+      !pairingResolvedRef.current &&
       (pairingInfoReceived || ownershipInFlightRef.current || pairingInfoRef.current?.had_previous_bond === true)
     ) {
       void abortPairingTransfer()
       return
     }
     goBack()
-  }, [goBack, isMentraLive, pairingResolved, pairingInfoReceived, abortPairingTransfer])
+  }, [goBack, isMentraLive, pairingInfoReceived, abortPairingTransfer])
 
   const finalizeOwnershipTransfer = useCallback(async () => {
     // Await classic readiness when BES reported required bond present; do not deadlock
@@ -130,10 +130,14 @@ export default function GlassesPairingLoadingScreen() {
       // Reconcile once before aborting so a lost acknowledgement does not undo a
       // successful ownership transfer.
       try {
+        // User cancel/teardown wins over a late status reconciliation.
+        if (tearedDownRef.current) {
+          throw finalizeError
+        }
         const status = await BluetoothSdk.getPairingTransferStatus(info?.transfer_id)
         const finalized =
           status.state === "committed" || status.state === "success" || status.terminal_operation === "finalize"
-        if (finalized) {
+        if (finalized && !tearedDownRef.current) {
           pairingResolvedRef.current = true
           setPairingResolved(true)
           return
