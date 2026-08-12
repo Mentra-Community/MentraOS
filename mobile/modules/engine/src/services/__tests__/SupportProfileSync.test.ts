@@ -1,7 +1,12 @@
 /// <reference types="bun-types" />
 
-import {describe, expect, mock, test} from "bun:test"
+import {afterEach, beforeEach, describe, expect, mock, test} from "bun:test"
 
+let subscriptionCallback: (() => void) | null = null
+let nextTimerId = 1
+const timeoutCallbacks = new Map<number, () => void>()
+const intervalCallbacks = new Map<number, () => void>()
+const updateMock = mock(async () => ({status: "accepted" as const}))
 const glassesState = {
   connection: {state: "connected" as const, fullyBooted: true},
   deviceModel: "Mentra Live",
@@ -28,21 +33,55 @@ mock.module("expo-constants", () => ({
 mock.module("expo-device", () => ({modelName: "iPhone 17 Pro"}))
 mock.module("react-native", () => ({Platform: {OS: "ios", Version: "26.0"}}))
 mock.module("../../stores/glasses", () => ({
-  useGlassesStore: {getState: () => glassesState, subscribe: mock(() => () => {})},
+  useGlassesStore: {
+    getState: () => glassesState,
+    subscribe: mock((callback: () => void) => {
+      subscriptionCallback = callback
+      return () => {
+        subscriptionCallback = null
+      }
+    }),
+  },
 }))
 mock.module("../../utils/timers", () => ({
   BgTimer: {
-    setInterval: mock(() => 1),
-    clearInterval: mock(() => {}),
-    setTimeout: mock(() => 1),
-    clearTimeout: mock(() => {}),
+    setInterval: mock((callback: () => void) => {
+      const id = nextTimerId++
+      intervalCallbacks.set(id, callback)
+      return id
+    }),
+    clearInterval: mock((id: number) => intervalCallbacks.delete(id)),
+    setTimeout: mock((callback: () => void) => {
+      const id = nextTimerId++
+      timeoutCallbacks.set(id, callback)
+      return id
+    }),
+    clearTimeout: mock((id: number) => timeoutCallbacks.delete(id)),
   },
 }))
 mock.module("../CloudClientService", () => ({
-  cloudClientService: {core: {supportProfile: {update: mock(async () => ({status: "accepted"}))}}},
+  cloudClientService: {core: {supportProfile: {update: updateMock}}},
 }))
 
-const {buildSnapshot, retryDelayForSupportProfileResult, snapshotFingerprint} = await import("../SupportProfileSync")
+const {
+  buildSnapshot,
+  retryDelayForSupportProfileResult,
+  snapshotFingerprint,
+  startSupportProfileSync,
+  stopSupportProfileSync,
+} = await import("../SupportProfileSync")
+
+beforeEach(() => {
+  stopSupportProfileSync()
+  updateMock.mockClear()
+  updateMock.mockImplementation(async () => ({status: "accepted"}))
+  glassesState.firmwareVersion = "1.2.3"
+  timeoutCallbacks.clear()
+  intervalCallbacks.clear()
+  subscriptionCallback = null
+})
+
+afterEach(() => stopSupportProfileSync())
 
 describe("SupportProfileSync", () => {
   test("projects only the support allowlist and excludes network/device addresses", () => {
@@ -73,4 +112,73 @@ describe("SupportProfileSync", () => {
     const heartbeat = buildSnapshot(new Date("2026-08-11T18:00:00.000Z"))
     expect(snapshotFingerprint(heartbeat)).toBe(snapshotFingerprint(first))
   })
+
+  test("starts immediately, debounces transitions, runs heartbeats, and tears down", async () => {
+    startSupportProfileSync()
+    await flushPromises()
+    expect(updateMock).toHaveBeenCalledTimes(1)
+    expect(subscriptionCallback).not.toBeNull()
+    expect(intervalCallbacks.size).toBe(1)
+
+    glassesState.firmwareVersion = "1.2.4"
+    subscriptionCallback?.()
+    runOnlyTimeout()
+    await flushPromises()
+    expect(updateMock).toHaveBeenCalledTimes(2)
+    ;[...intervalCallbacks.values()][0]?.()
+    await flushPromises()
+    expect(updateMock).toHaveBeenCalledTimes(3)
+
+    stopSupportProfileSync()
+    expect(subscriptionCallback).toBeNull()
+    expect(timeoutCallbacks.size).toBe(0)
+    expect(intervalCallbacks.size).toBe(0)
+  })
+
+  test("keeps a state change queued behind an in-flight send", async () => {
+    let finishFirst: ((value: {status: "accepted"}) => void) | null = null
+    updateMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishFirst = resolve
+        }),
+    )
+    startSupportProfileSync()
+    glassesState.firmwareVersion = "1.2.5"
+    subscriptionCallback?.()
+    finishFirst?.({status: "accepted"})
+    await flushPromises()
+
+    expect(timeoutCallbacks.size).toBe(1)
+    runOnlyTimeout()
+    await flushPromises()
+    expect(updateMock).toHaveBeenCalledTimes(2)
+  })
+
+  test("retries a rate-limited snapshot", async () => {
+    updateMock.mockImplementationOnce(async () => ({
+      status: "rate_limited" as const,
+      observedAt: new Date().toISOString(),
+      retryAfterMs: 5_000,
+    }))
+    startSupportProfileSync()
+    await flushPromises()
+
+    expect(timeoutCallbacks.size).toBe(1)
+    runOnlyTimeout()
+    await flushPromises()
+    expect(updateMock).toHaveBeenCalledTimes(2)
+  })
 })
+
+function runOnlyTimeout(): void {
+  const [id, callback] = [...timeoutCallbacks.entries()][0] ?? []
+  if (id === undefined || !callback) throw new Error("expected one pending timeout")
+  timeoutCallbacks.delete(id)
+  callback()
+}
+
+async function flushPromises(): Promise<void> {
+  await Promise.resolve()
+  await Promise.resolve()
+}

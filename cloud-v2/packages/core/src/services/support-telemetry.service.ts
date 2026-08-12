@@ -14,6 +14,7 @@ export async function enqueueSupportTelemetry(input: {
   mentraUserId: string
   transitionKey: string
   event: string
+  eventAt: Date
   properties: Record<string, unknown>
 }): Promise<void> {
   if (!posthogApiKey()) return
@@ -63,10 +64,19 @@ export async function drainSupportTelemetryOutbox(): Promise<void> {
       if (!row) break
 
       try {
+        const stillActive = await UserModel.exists({
+          mentraUserId: row.mentraUserId,
+          supportTelemetryDeletedAt: null,
+        })
+        if (!stillActive) {
+          await SupportTelemetryOutboxModel.deleteOne({_id: row._id})
+          continue
+        }
         const email = await trustedEmail(row.mentraUserId)
         await sendCapture({
           distinctId: row.mentraUserId,
           event: row.event,
+          eventAt: row.eventAt,
           properties: row.properties as Record<string, unknown>,
           email,
         })
@@ -102,6 +112,7 @@ async function trustedEmail(mentraUserId: string): Promise<string | null> {
 async function sendCapture(input: {
   distinctId: string
   event: string
+  eventAt: Date
   properties: Record<string, unknown>
   email: string | null
 }): Promise<void> {
@@ -118,7 +129,7 @@ async function sendCapture(input: {
     body: JSON.stringify({
       api_key: key,
       event: input.event,
-      timestamp: new Date().toISOString(),
+      timestamp: input.eventAt.toISOString(),
       properties: {
         distinct_id: input.distinctId,
         $process_person_profile: true,

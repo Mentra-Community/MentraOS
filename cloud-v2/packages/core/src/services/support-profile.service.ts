@@ -42,6 +42,7 @@ export interface SupportProfileUpdateResult {
 type PendingTelemetry = {
   fingerprint: string
   events: string[]
+  eventAt: string
   properties: Record<string, unknown>
 }
 
@@ -283,7 +284,12 @@ function currentDevice(profile: any): any | null {
 export function pendingTelemetryFor(previous: any | null, next: any, fingerprint: string): PendingTelemetry | null {
   const events = meaningfulTransitions(previous, next)
   if (events.length === 0) return null
-  return {fingerprint, events, properties: posthogPropertiesFor(next)}
+  return {
+    fingerprint,
+    events,
+    eventAt: next.host.observedAt.toISOString(),
+    properties: posthogPropertiesFor(next),
+  }
 }
 
 async function flushPendingTelemetry(profile: {
@@ -297,6 +303,7 @@ async function flushPendingTelemetry(profile: {
       mentraUserId: profile.mentraUserId,
       transitionKey: `${profile.mentraUserId}:${pending.fingerprint}:${event}`,
       event,
+      eventAt: new Date(pending.eventAt),
       properties: pending.properties,
     })
   }
@@ -325,6 +332,8 @@ export function posthogPropertiesFor(next: any): Record<string, unknown> {
     support_glasses_model: device?.model ?? null,
     support_glasses_android_version: device?.androidVersion ?? null,
     support_glasses_firmware_version: device?.firmwareVersion ?? null,
+    support_glasses_mtk_firmware_version: device?.mtkFirmwareVersion ?? null,
+    support_glasses_bes_firmware_version: device?.besFirmwareVersion ?? null,
     support_glasses_app_version: device?.appVersion ?? null,
     support_last_observed_at: next.host.observedAt.toISOString(),
   }

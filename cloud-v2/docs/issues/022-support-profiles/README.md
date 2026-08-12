@@ -1,5 +1,7 @@
 # Cloud V2 support profiles
 
+**Status:** Implemented
+
 Support profiles give authorized Mentra support staff a current, low-volume view of the app, phone, and glasses software a user is running. They complement reports: a profile answers “what is this user running now?”, while `/api/admin/reports/:reportId` remains the deep diagnostic surface for user-submitted context, logs, and screenshots.
 
 ## Data flow
