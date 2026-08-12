@@ -150,15 +150,6 @@ export async function drainSupportTelemetryOutbox(): Promise<void> {
         ).lean()
         if (!renewedRow) continue
         activeRowLeaseUntil = renewedRow.leasedUntil
-        const stillActive = await UserModel.exists({
-          mentraUserId: row.mentraUserId,
-          supportTelemetryDeletedAt: null,
-          supportTelemetryDeliveryLeaseUntil: activeLeaseUntil,
-        })
-        if (!stillActive) {
-          await SupportTelemetryOutboxModel.deleteOne({_id: row._id})
-          continue
-        }
         await sendCapture({
           distinctId: row.mentraUserId,
           event: row.event,
