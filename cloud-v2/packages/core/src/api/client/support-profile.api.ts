@@ -2,7 +2,8 @@ import {Hono} from "hono"
 import {z} from "zod"
 import {updateSupportProfile} from "../../services/support-profile.service"
 import type {AppContext, AppEnv} from "../../types/hono.types"
-import {InvalidRequest} from "../../types/oauth.types"
+import {InvalidGrant, InvalidRequest} from "../../types/oauth.types"
+import {UserModel} from "../../models/user.model"
 import {userAuth} from "../middleware/user-auth.middleware"
 
 const app = new Hono<AppEnv>()
@@ -58,10 +59,7 @@ async function putSupportProfile(c: AppContext) {
   if (Number.isFinite(contentLength) && contentLength > MAX_BODY_BYTES) {
     throw new InvalidRequest("support profile payload is too large")
   }
-  const text = await c.req.text()
-  if (new TextEncoder().encode(text).byteLength > MAX_BODY_BYTES) {
-    throw new InvalidRequest("support profile payload is too large")
-  }
+  const text = await readBodyCapped(c.req.raw)
   let body: unknown
   try {
     body = JSON.parse(text)
@@ -73,12 +71,39 @@ async function putSupportProfile(c: AppContext) {
     throw new InvalidRequest(parsed.error.issues[0]?.message ?? "invalid support profile payload")
   }
   const observedAt = new Date(parsed.data.observedAt)
+  if (!Number.isFinite(observedAt.getTime())) {
+    throw new InvalidRequest("observedAt must be a valid timestamp")
+  }
   const now = Date.now()
   if (observedAt.getTime() > now + 5 * 60_000 || observedAt.getTime() < now - 30 * 24 * 60 * 60_000) {
     throw new InvalidRequest("observedAt is outside the accepted window")
   }
   const user = c.var.user!
+  const activeUser = await UserModel.exists({
+    mentraUserId: user.mentraUserId,
+    supportTelemetryDeletedAt: null,
+  })
+  if (!activeUser) throw new InvalidGrant("account is deleted")
   return c.json(await updateSupportProfile({mentraUserId: user.mentraUserId, tenantId: user.tenantId}, parsed.data))
+}
+
+async function readBodyCapped(request: Request): Promise<string> {
+  if (!request.body) return ""
+  const reader = request.body.getReader()
+  const decoder = new TextDecoder()
+  let size = 0
+  let text = ""
+  for (;;) {
+    const {done, value} = await reader.read()
+    if (done) break
+    size += value.byteLength
+    if (size > MAX_BODY_BYTES) {
+      await reader.cancel()
+      throw new InvalidRequest("support profile payload is too large")
+    }
+    text += decoder.decode(value, {stream: true})
+  }
+  return text + decoder.decode()
 }
 
 export default app

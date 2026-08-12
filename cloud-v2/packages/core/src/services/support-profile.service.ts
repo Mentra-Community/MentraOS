@@ -1,4 +1,5 @@
 import {createHash, createHmac} from "node:crypto"
+import {createLogger} from "@mentra/cloud-shared"
 import {SupportProfileModel} from "../models/support-profile.model"
 import {enqueueSupportTelemetry} from "./support-telemetry.service"
 
@@ -6,6 +7,7 @@ export const SUPPORT_DEVICE_HISTORY_LIMIT = 12
 export const SUPPORT_IDENTICAL_UPDATE_MIN_MS = 60_000
 export const SUPPORT_RATE_WINDOW_MS = 60 * 60_000
 export const SUPPORT_RATE_WINDOW_LIMIT = 120
+const logger = createLogger("core").child({service: "support-profile"})
 
 export interface SupportStateInput {
   observedAt: string
@@ -65,6 +67,8 @@ export async function updateSupportProfile(
   identity: {mentraUserId: string; tenantId: string},
   input: SupportStateInput,
 ): Promise<SupportProfileUpdateResult> {
+  // Do not serve create-on-miss traffic until the unique user index is usable.
+  await SupportProfileModel.init()
   const observedAt = new Date(input.observedAt)
   const receivedAt = new Date()
   const fingerprint = fingerprintFor(input)
@@ -72,7 +76,7 @@ export async function updateSupportProfile(
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const current = await SupportProfileModel.findOne({mentraUserId: identity.mentraUserId}).lean()
     if (current) {
-      await flushPendingTelemetry(current as any)
+      void flushPendingTelemetry(current as any)
       if (observedAt < current.host.observedAt) {
         return {status: "stale", observedAt: current.host.observedAt.toISOString()}
       }
@@ -106,7 +110,11 @@ export async function updateSupportProfile(
       const host = toStoredHost(input, observedAt, receivedAt)
       const currentDeviceKey = device?.deviceKey ?? current.currentDeviceKey ?? null
       const next = {...current, host, devices, currentDeviceKey}
-      const pendingTelemetry = pendingTelemetryFor(current as any, next, fingerprint)
+      const newPendingTelemetry = pendingTelemetryFor(current as any, next, fingerprint)
+      const pendingTelemetry = [
+        ...normalizePendingTelemetry((current as any).pendingTelemetry),
+        ...(newPendingTelemetry ? [newPendingTelemetry] : []),
+      ]
       const updated = await SupportProfileModel.findOneAndUpdate(
         {_id: current._id, revision: current.revision},
         {
@@ -126,7 +134,7 @@ export async function updateSupportProfile(
         {new: true},
       ).lean()
       if (!updated) continue
-      await flushPendingTelemetry(updated as any)
+      void flushPendingTelemetry(updated as any)
       return {status: "accepted", observedAt: observedAt.toISOString()}
     }
 
@@ -147,10 +155,10 @@ export async function updateSupportProfile(
         lastAcceptedAt: receivedAt,
         rateWindowStartedAt: receivedAt,
         rateWindowCount: 1,
-        pendingTelemetry: pendingTelemetryFor(null, draft, fingerprint),
+        pendingTelemetry: [pendingTelemetryFor(null, draft, fingerprint)].filter(Boolean),
         revision: 0,
       })
-      await flushPendingTelemetry(created.toObject() as any)
+      void flushPendingTelemetry(created.toObject() as any)
       return {status: "accepted", observedAt: observedAt.toISOString()}
     } catch (error) {
       if ((error as {code?: number})?.code !== 11000) throw error
@@ -190,11 +198,28 @@ export function meaningfulTransitions(previous: any | null, next: any): string[]
     else if (beforeConnection === "connected") events.push("support_glasses_disconnected")
     else events.push("support_connection_changed")
   }
-  const versionFields = ["appVersion", "appBuild", "engineVersion", "bluetoothSdkVersion"]
-  const hostChanged = versionFields.some((field) => previous.host[field] !== next.host[field])
+  const hostFields = [
+    "appVersion",
+    "appBuild",
+    "engineVersion",
+    "bluetoothSdkVersion",
+    "phonePlatform",
+    "phoneModel",
+    "phoneOsVersion",
+  ]
+  const hostChanged = hostFields.some((field) => previous.host[field] !== next.host[field])
   const previousDevice = currentDevice(previous)
   const nextDevice = currentDevice(next)
-  const deviceFields = ["firmwareVersion", "mtkFirmwareVersion", "besFirmwareVersion", "appVersion", "buildNumber"]
+  const deviceFields = [
+    "deviceKey",
+    "model",
+    "androidVersion",
+    "firmwareVersion",
+    "mtkFirmwareVersion",
+    "besFirmwareVersion",
+    "appVersion",
+    "buildNumber",
+  ]
   const deviceChanged = deviceFields.some((field) => previousDevice?.[field] !== nextDevice?.[field])
   if (hostChanged || deviceChanged) events.push("support_software_changed")
   if (next.host.failureCode && next.host.failureCode !== previous.host.failureCode) {
@@ -256,6 +281,13 @@ function mergeDevice(devices: StoredDevice[], incoming: StoredDevice | null): St
   const merged: StoredDevice = existing
     ? {
         ...incoming,
+        model: incoming.model ?? existing.model,
+        androidVersion: incoming.androidVersion ?? existing.androidVersion,
+        firmwareVersion: incoming.firmwareVersion ?? existing.firmwareVersion,
+        mtkFirmwareVersion: incoming.mtkFirmwareVersion ?? existing.mtkFirmwareVersion,
+        besFirmwareVersion: incoming.besFirmwareVersion ?? existing.besFirmwareVersion,
+        appVersion: incoming.appVersion ?? existing.appVersion,
+        buildNumber: incoming.buildNumber ?? existing.buildNumber,
         firstSeenAt: existing.firstSeenAt,
         lastSeenAt: later(existing.lastSeenAt, incoming.lastSeenAt),
         lastConnectedAt: incoming.lastConnectedAt ?? existing.lastConnectedAt,
@@ -294,26 +326,38 @@ export function pendingTelemetryFor(previous: any | null, next: any, fingerprint
 
 async function flushPendingTelemetry(profile: {
   mentraUserId: string
-  pendingTelemetry?: PendingTelemetry | null
+  pendingTelemetry?: PendingTelemetry | PendingTelemetry[] | null
 }): Promise<void> {
-  const pending = profile.pendingTelemetry
-  if (!pending) return
-  for (const event of pending.events) {
-    await enqueueSupportTelemetry({
-      mentraUserId: profile.mentraUserId,
-      transitionKey: `${profile.mentraUserId}:${pending.fingerprint}:${event}`,
-      event,
-      eventAt: new Date(pending.eventAt),
-      properties: pending.properties,
-    })
+  for (const pending of normalizePendingTelemetry(profile.pendingTelemetry)) {
+    try {
+      for (const event of pending.events) {
+        await enqueueSupportTelemetry({
+          mentraUserId: profile.mentraUserId,
+          transitionKey: `${profile.mentraUserId}:${pending.fingerprint}:${event}`,
+          event,
+          eventAt: new Date(pending.eventAt),
+          properties: pending.properties,
+        })
+      }
+      await SupportProfileModel.updateOne(
+        {mentraUserId: profile.mentraUserId},
+        {$pull: {pendingTelemetry: {fingerprint: pending.fingerprint}}},
+      )
+    } catch (error) {
+      logger.warn(
+        {mentraUserId: profile.mentraUserId, error: (error as Error)?.message},
+        "support telemetry enqueue deferred",
+      )
+      return
+    }
   }
-  await SupportProfileModel.updateOne(
-    {
-      "mentraUserId": profile.mentraUserId,
-      "pendingTelemetry.fingerprint": pending.fingerprint,
-    },
-    {$set: {pendingTelemetry: null}},
-  )
+}
+
+function normalizePendingTelemetry(
+  value: PendingTelemetry | PendingTelemetry[] | null | undefined,
+): PendingTelemetry[] {
+  if (!value) return []
+  return Array.isArray(value) ? value : [value]
 }
 
 export function posthogPropertiesFor(next: any): Record<string, unknown> {

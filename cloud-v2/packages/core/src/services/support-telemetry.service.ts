@@ -7,6 +7,7 @@ const logger = createLogger("core").child({service: "support-telemetry"})
 const OUTBOX_TTL_MS = 7 * 24 * 60 * 60 * 1_000
 const LEASE_MS = 30_000
 const POLL_MS = 10_000
+const CAPTURE_TIMEOUT_MS = 15_000
 let timer: ReturnType<typeof setInterval> | null = null
 let draining = false
 
@@ -55,6 +56,7 @@ export async function drainSupportTelemetryOutbox(): Promise<void> {
       const row = await SupportTelemetryOutboxModel.findOneAndUpdate(
         {
           deliveredAt: null,
+          expiresAt: {$gt: now},
           availableAt: {$lte: now},
           $or: [{leasedUntil: null}, {leasedUntil: {$lte: now}}],
         },
@@ -64,6 +66,9 @@ export async function drainSupportTelemetryOutbox(): Promise<void> {
       if (!row) break
 
       try {
+        const email = await trustedEmail(row.mentraUserId)
+        // Recheck after identity lookup, immediately before capture: account deletion may have
+        // removed an event while this worker already held its lease.
         const stillActive = await UserModel.exists({
           mentraUserId: row.mentraUserId,
           supportTelemetryDeletedAt: null,
@@ -72,11 +77,11 @@ export async function drainSupportTelemetryOutbox(): Promise<void> {
           await SupportTelemetryOutboxModel.deleteOne({_id: row._id})
           continue
         }
-        const email = await trustedEmail(row.mentraUserId)
         await sendCapture({
           distinctId: row.mentraUserId,
           event: row.event,
           eventAt: row.eventAt,
+          transitionKey: row.transitionKey,
           properties: row.properties as Record<string, unknown>,
           email,
         })
@@ -85,6 +90,11 @@ export async function drainSupportTelemetryOutbox(): Promise<void> {
           {$set: {deliveredAt: new Date(), leasedUntil: null}},
         )
       } catch (error) {
+        if (error instanceof PermanentCaptureError) {
+          await SupportTelemetryOutboxModel.deleteOne({_id: row._id})
+          logger.error({event: row.event, status: error.status}, "dropping permanently rejected PostHog event")
+          continue
+        }
         const attempts = row.attempts + 1
         const delayMs = Math.min(60 * 60 * 1_000, 5_000 * 2 ** Math.min(attempts, 8))
         await SupportTelemetryOutboxModel.updateOne(
@@ -97,6 +107,8 @@ export async function drainSupportTelemetryOutbox(): Promise<void> {
         logger.warn({event: row.event, attempts, error: (error as Error)?.message}, "PostHog delivery failed")
       }
     }
+  } catch (error) {
+    logger.warn({error: (error as Error)?.message}, "support telemetry drain deferred")
   } finally {
     draining = false
   }
@@ -113,6 +125,7 @@ async function sendCapture(input: {
   distinctId: string
   event: string
   eventAt: Date
+  transitionKey: string
   properties: Record<string, unknown>
   email: string | null
 }): Promise<void> {
@@ -125,6 +138,7 @@ async function sendCapture(input: {
   }
   const response = await fetch(`${host}/capture/`, {
     method: "POST",
+    signal: AbortSignal.timeout(CAPTURE_TIMEOUT_MS),
     headers: {"content-type": "application/json"},
     body: JSON.stringify({
       api_key: key,
@@ -132,13 +146,25 @@ async function sendCapture(input: {
       timestamp: input.eventAt.toISOString(),
       properties: {
         distinct_id: input.distinctId,
+        $insert_id: input.transitionKey,
         $process_person_profile: true,
         $set: personProperties,
         ...input.properties,
       },
     }),
   })
-  if (!response.ok) throw new Error(`PostHog capture returned ${response.status}`)
+  if (!response.ok) {
+    if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {
+      throw new PermanentCaptureError(response.status)
+    }
+    throw new Error(`PostHog capture returned ${response.status}`)
+  }
+}
+
+class PermanentCaptureError extends Error {
+  constructor(readonly status: number) {
+    super(`PostHog permanently rejected capture with ${status}`)
+  }
 }
 
 function posthogApiKey(): string | null {

@@ -18,6 +18,10 @@ import {hasDefaultDevice} from "../services/DeviceStoreHydration"
 import {projectPairingIdentity} from "../services/PairingIdentity"
 import {isGlassesConnected, isGlassesReady} from "../services/GlassesReadiness"
 import {pushAllBluetoothSettings} from "../services/GlassesSettingsSync"
+import {
+  clearSupportProfileConnectionFailure,
+  recordSupportProfileConnectionFailure,
+} from "../services/SupportProfileSync"
 import {getModelCapabilities, type DeviceTypes} from "../types"
 import {glassesWifi} from "./glassesWifi"
 import {glassesSettings} from "./glassesSettings"
@@ -81,15 +85,27 @@ export const glasses = {
    * the glasses (this used to be a host-side step before `connectDefault`).
    */
   connectDefault: async (): Promise<void> => {
-    await pushAllBluetoothSettings()
-    return BluetoothSdk.connectDefault()
+    try {
+      await pushAllBluetoothSettings()
+      await BluetoothSdk.connectDefault()
+      clearSupportProfileConnectionFailure()
+    } catch (error) {
+      recordSupportProfileConnectionFailure(error, "connect_default")
+      throw error
+    }
   },
   disconnect: (): Promise<void> => BluetoothSdk.disconnect(),
   forget: (): Promise<void> => BluetoothSdk.forget(),
   /** Connect to a specific (discovered) device. */
   connect: async (...args: Parameters<typeof BluetoothSdk.connect>): Promise<void> => {
-    await pushAllBluetoothSettings()
-    return BluetoothSdk.connect(...args)
+    try {
+      await pushAllBluetoothSettings()
+      await BluetoothSdk.connect(...args)
+      clearSupportProfileConnectionFailure()
+    } catch (error) {
+      recordSupportProfileConnectionFailure(error, "connect")
+      throw error
+    }
   },
   /** Connect the built-in simulated glasses (dev/testing). */
   connectSimulated: (): Promise<void> => BluetoothSdk.connectSimulated(),
@@ -110,6 +126,7 @@ export const glasses = {
       await pushAllBluetoothSettings()
       await BluetoothSdk.connectDefault()
     } catch (error) {
+      recordSupportProfileConnectionFailure(error, "reconnect")
       console.warn("engine.glasses.reconnect failed:", error)
       return false
     }

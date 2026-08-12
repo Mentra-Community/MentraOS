@@ -169,6 +169,23 @@ describe("SupportProfileSync", () => {
     await flushPromises()
     expect(updateMock).toHaveBeenCalledTimes(2)
   })
+
+  test("does not schedule traffic when an old request finishes after stop", async () => {
+    let finish: ((value: {status: "accepted"}) => void) | null = null
+    updateMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        }),
+    )
+    startSupportProfileSync()
+    stopSupportProfileSync()
+    finish?.({status: "accepted"})
+    await flushPromises()
+
+    expect(timeoutCallbacks.size).toBe(0)
+    expect(intervalCallbacks.size).toBe(0)
+  })
 })
 
 function runOnlyTimeout(): void {

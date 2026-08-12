@@ -20,7 +20,9 @@ let retryTimer: number | null = null
 let heartbeatTimer: number | null = null
 let lastSentFingerprint: string | null = null
 let queuedFingerprint: string | null = null
-let sending = false
+let sendingGeneration: number | null = null
+let syncGeneration = 0
+let lastFailure: {code: string; stage: string} | null = null
 
 /**
  * Keep Cloud V2's canonical support snapshot current without creating an event
@@ -29,12 +31,14 @@ let sending = false
  */
 export function startSupportProfileSync(): void {
   if (unsubscribe) return
-  unsubscribe = useGlassesStore.subscribe(scheduleMeaningfulUpdate)
-  heartbeatTimer = BgTimer.setInterval(() => void sendCurrentSnapshot(true), HEARTBEAT_MS)
-  void sendCurrentSnapshot(true)
+  const generation = ++syncGeneration
+  unsubscribe = useGlassesStore.subscribe(() => scheduleMeaningfulUpdate(generation))
+  heartbeatTimer = BgTimer.setInterval(() => void sendCurrentSnapshot(true, generation), HEARTBEAT_MS)
+  void sendCurrentSnapshot(true, generation)
 }
 
 export function stopSupportProfileSync(): void {
+  syncGeneration += 1
   unsubscribe?.()
   unsubscribe = null
   if (debounceTimer !== null) BgTimer.clearTimeout(debounceTimer)
@@ -45,26 +49,30 @@ export function stopSupportProfileSync(): void {
   heartbeatTimer = null
   lastSentFingerprint = null
   queuedFingerprint = null
-  sending = false
+  sendingGeneration = null
+  lastFailure = null
 }
 
-function scheduleMeaningfulUpdate(): void {
+function scheduleMeaningfulUpdate(generation = syncGeneration): void {
+  if (!unsubscribe || generation !== syncGeneration) return
+  if (useGlassesStore.getState().connection.state === "connected") lastFailure = null
   const fingerprint = snapshotFingerprint(buildSnapshot())
   if (fingerprint === lastSentFingerprint) return
   queuedFingerprint = fingerprint
-  armDebounce()
+  armDebounce(generation)
 }
 
-function armDebounce(): void {
+function armDebounce(generation: number): void {
   if (debounceTimer !== null) BgTimer.clearTimeout(debounceTimer)
   debounceTimer = BgTimer.setTimeout(() => {
     debounceTimer = null
-    void sendCurrentSnapshot(false)
+    void sendCurrentSnapshot(false, generation)
   }, DEBOUNCE_MS)
 }
 
-async function sendCurrentSnapshot(force: boolean): Promise<void> {
-  if (sending) {
+async function sendCurrentSnapshot(force: boolean, generation = syncGeneration): Promise<void> {
+  if (!unsubscribe || generation !== syncGeneration) return
+  if (sendingGeneration === generation) {
     const fingerprint = snapshotFingerprint(buildSnapshot())
     if (fingerprint !== lastSentFingerprint) queuedFingerprint = fingerprint
     return
@@ -73,10 +81,11 @@ async function sendCurrentSnapshot(force: boolean): Promise<void> {
   const fingerprint = snapshotFingerprint(snapshot)
   if (!force && fingerprint === lastSentFingerprint) return
 
-  sending = true
+  sendingGeneration = generation
   let retryDelayMs: number | null = null
   try {
     const result = await cloudClientService.core.supportProfile.update(snapshot)
+    if (generation !== syncGeneration || !unsubscribe) return
     retryDelayMs = retryDelayForSupportProfileResult(result)
     if (retryDelayMs === null) {
       lastSentFingerprint = fingerprint
@@ -85,15 +94,17 @@ async function sendCurrentSnapshot(force: boolean): Promise<void> {
       retryTimer = null
     }
   } catch (error) {
+    if (generation !== syncGeneration || !unsubscribe) return
     console.warn("supportProfile: Cloud V2 update failed:", error instanceof Error ? error.message : error)
     retryDelayMs = RETRY_MS
   } finally {
-    sending = false
+    if (generation !== syncGeneration || sendingGeneration !== generation || !unsubscribe) return
+    sendingGeneration = null
     if (retryDelayMs !== null) {
       if (retryTimer !== null) BgTimer.clearTimeout(retryTimer)
       retryTimer = BgTimer.setTimeout(() => {
         retryTimer = null
-        void sendCurrentSnapshot(true)
+        void sendCurrentSnapshot(true, generation)
       }, retryDelayMs)
       return
     }
@@ -101,7 +112,7 @@ async function sendCurrentSnapshot(force: boolean): Promise<void> {
     const currentFingerprint = snapshotFingerprint(buildSnapshot())
     if (currentFingerprint !== lastSentFingerprint) {
       queuedFingerprint = currentFingerprint
-      if (retryTimer === null) armDebounce()
+      if (retryTimer === null) armDebounce(generation)
     }
   }
 }
@@ -143,11 +154,42 @@ export function buildSnapshot(observedAt = new Date()): SupportStateInput {
       bluetoothSdkVersion: optional(BLUETOOTH_SDK_VERSION),
       phonePlatform: Platform.OS === "ios" || Platform.OS === "android" ? Platform.OS : "unknown",
       phoneModel: optional(Device.modelName),
-      phoneOsVersion: optional(String(Platform.Version)),
+      phoneOsVersion: optional(
+        Platform.OS === "android"
+          ? String((Platform.constants as {Release?: string} | undefined)?.Release ?? Platform.Version)
+          : String(Platform.Version),
+      ),
       connectionState: glasses.connection.state,
+      ...(lastFailure ? {failureCode: lastFailure.code, failureStage: lastFailure.stage} : {}),
     },
     ...(hasDevice ? {device} : {}),
   }
+}
+
+/** Record only normalized connection failures; arbitrary exception messages never leave the phone. */
+export function recordSupportProfileConnectionFailure(error: unknown, stage: string): void {
+  const rawCode =
+    typeof error === "object" && error && "code" in error ? String((error as {code?: unknown}).code ?? "") : ""
+  const message = error instanceof Error ? `${error.name} ${error.message}`.toLowerCase() : ""
+  const code = /^[a-zA-Z0-9_.-]{1,64}$/.test(rawCode)
+    ? rawCode.toLowerCase()
+    : message.includes("permission")
+    ? "permission_denied"
+    : message.includes("bluetooth") && (message.includes("off") || message.includes("unavailable"))
+    ? "bluetooth_unavailable"
+    : message.includes("not found") || message.includes("no default")
+    ? "device_not_found"
+    : message.includes("timeout")
+    ? "connect_timeout"
+    : "connect_failed"
+  lastFailure = {code, stage: stage.replace(/[^a-zA-Z0-9_.-]/g, "_").slice(0, 64)}
+  scheduleMeaningfulUpdate()
+}
+
+export function clearSupportProfileConnectionFailure(): void {
+  if (!lastFailure) return
+  lastFailure = null
+  scheduleMeaningfulUpdate()
 }
 
 export function snapshotFingerprint(snapshot: SupportStateInput): string {
