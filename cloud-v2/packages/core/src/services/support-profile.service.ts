@@ -45,7 +45,7 @@ export interface SupportProfileUpdateResult {
 }
 
 type PendingTelemetry = {
-  transitionId: string
+  transitionId?: string
   fingerprint: string
   events: string[]
   eventAt: string
@@ -356,7 +356,13 @@ export function appendPendingTelemetry(
 ): PendingTelemetry[] {
   return [...normalizePendingTelemetry(existing), ...(incoming ? [{...incoming, legacy: false}] : [])]
     .slice(-SUPPORT_PENDING_TELEMETRY_LIMIT)
-    .map(({legacy: _legacy, ...entry}) => entry)
+    .map(({legacy, ...entry}) => {
+      if (!legacy) return entry
+      // Do not rewrite a legacy row before its concurrent flush removes it;
+      // preserving the stored shape keeps the old pull selector race-safe.
+      const {transitionId: _synthetic, ...persistedLegacyEntry} = entry
+      return persistedLegacyEntry
+    })
 }
 
 async function flushPendingTelemetry(profile: {

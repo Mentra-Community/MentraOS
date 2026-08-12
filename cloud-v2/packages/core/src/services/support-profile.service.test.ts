@@ -107,8 +107,8 @@ describe("support profile privacy and transitions", () => {
     expect(pending.at(-1)?.transitionId).toBe(`revision-${SUPPORT_PENDING_TELEMETRY_LIMIT + 4}`)
   })
 
-  test("migrates staged pending transitions on the next canonical write", () => {
-    const migrated = appendPendingTelemetry(
+  test("preserves staged pending shape until the legacy flush removes it", () => {
+    const preserved = appendPendingTelemetry(
       {
         fingerprint: "legacy-fingerprint",
         events: ["support_profile_created"],
@@ -118,9 +118,8 @@ describe("support profile privacy and transitions", () => {
       null,
     )
 
-    expect(migrated).toEqual([
+    expect(preserved).toEqual([
       {
-        transitionId: "2026-08-11T12:00:00.000Z:legacy-fingerprint",
         fingerprint: "legacy-fingerprint",
         events: ["support_profile_created"],
         eventAt: "2026-08-11T12:00:00.000Z",
