@@ -1,4 +1,5 @@
 import Constants from "expo-constants"
+import * as Device from "expo-device"
 import {Platform} from "react-native"
 import type {SupportStateInput} from "@mentra/cloud-client"
 
@@ -10,6 +11,7 @@ const ENGINE_VERSION = (require("../../package.json") as {version?: string}).ver
 const BLUETOOTH_SDK_VERSION = (require("@mentra/bluetooth-sdk/package.json") as {version?: string}).version
 const DEBOUNCE_MS = 2_000
 const RETRY_MS = 30_000
+const RATE_LIMIT_RETRY_MS = 60 * 60_000
 const HEARTBEAT_MS = 6 * 60 * 60_000
 
 let unsubscribe: (() => void) | null = null
@@ -48,8 +50,12 @@ export function stopSupportProfileSync(): void {
 
 function scheduleMeaningfulUpdate(): void {
   const fingerprint = snapshotFingerprint(buildSnapshot())
-  if (fingerprint === lastSentFingerprint || fingerprint === queuedFingerprint) return
+  if (fingerprint === lastSentFingerprint) return
   queuedFingerprint = fingerprint
+  armDebounce()
+}
+
+function armDebounce(): void {
   if (debounceTimer !== null) BgTimer.clearTimeout(debounceTimer)
   debounceTimer = BgTimer.setTimeout(() => {
     debounceTimer = null
@@ -59,7 +65,8 @@ function scheduleMeaningfulUpdate(): void {
 
 async function sendCurrentSnapshot(force: boolean): Promise<void> {
   if (sending) {
-    scheduleMeaningfulUpdate()
+    const fingerprint = snapshotFingerprint(buildSnapshot())
+    if (fingerprint !== lastSentFingerprint) queuedFingerprint = fingerprint
     return
   }
   const snapshot = buildSnapshot()
@@ -67,23 +74,47 @@ async function sendCurrentSnapshot(force: boolean): Promise<void> {
   if (!force && fingerprint === lastSentFingerprint) return
 
   sending = true
+  let retryDelayMs: number | null = null
   try {
-    await cloudClientService.core.supportProfile.update(snapshot)
-    lastSentFingerprint = fingerprint
-    queuedFingerprint = null
-    if (retryTimer !== null) BgTimer.clearTimeout(retryTimer)
-    retryTimer = null
+    const result = await cloudClientService.core.supportProfile.update(snapshot)
+    retryDelayMs = retryDelayForSupportProfileResult(result)
+    if (retryDelayMs === null) {
+      lastSentFingerprint = fingerprint
+      if (queuedFingerprint === fingerprint) queuedFingerprint = null
+      if (retryTimer !== null) BgTimer.clearTimeout(retryTimer)
+      retryTimer = null
+    }
   } catch (error) {
     console.warn("supportProfile: Cloud V2 update failed:", error instanceof Error ? error.message : error)
-    if (retryTimer === null) {
+    retryDelayMs = RETRY_MS
+  } finally {
+    sending = false
+    if (retryDelayMs !== null) {
+      if (retryTimer !== null) BgTimer.clearTimeout(retryTimer)
       retryTimer = BgTimer.setTimeout(() => {
         retryTimer = null
         void sendCurrentSnapshot(true)
-      }, RETRY_MS)
+      }, retryDelayMs)
+      return
     }
-  } finally {
-    sending = false
+
+    const currentFingerprint = snapshotFingerprint(buildSnapshot())
+    if (currentFingerprint !== lastSentFingerprint) {
+      queuedFingerprint = currentFingerprint
+      if (retryTimer === null) armDebounce()
+    }
   }
+}
+
+export function retryDelayForSupportProfileResult(result: {
+  status: "accepted" | "deduplicated" | "stale" | "rate_limited"
+  retryAfterMs?: number
+}): number | null {
+  if (result.status === "accepted" || result.status === "deduplicated") return null
+  if (result.status === "rate_limited") {
+    return Math.max(1_000, result.retryAfterMs ?? RATE_LIMIT_RETRY_MS)
+  }
+  return RETRY_MS
 }
 
 export function buildSnapshot(observedAt = new Date()): SupportStateInput {
@@ -102,7 +133,6 @@ export function buildSnapshot(observedAt = new Date()): SupportStateInput {
   const constants = Constants as typeof Constants & {
     nativeAppVersion?: string | null
     nativeBuildVersion?: string | null
-    deviceName?: string | null
   }
   return {
     observedAt: observedAt.toISOString(),
@@ -112,7 +142,7 @@ export function buildSnapshot(observedAt = new Date()): SupportStateInput {
       engineVersion: optional(ENGINE_VERSION),
       bluetoothSdkVersion: optional(BLUETOOTH_SDK_VERSION),
       phonePlatform: Platform.OS === "ios" || Platform.OS === "android" ? Platform.OS : "unknown",
-      phoneModel: optional(constants.deviceName),
+      phoneModel: optional(Device.modelName),
       phoneOsVersion: optional(String(Platform.Version)),
       connectionState: glasses.connection.state,
     },

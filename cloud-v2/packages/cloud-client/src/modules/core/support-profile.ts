@@ -32,6 +32,8 @@ export interface SupportStateInput {
 export interface SupportProfileUpdateResult {
   status: "accepted" | "deduplicated" | "stale" | "rate_limited"
   observedAt: string
+  /** Present for rate-limited responses so clients retry after the active window. */
+  retryAfterMs?: number
 }
 
 export class SupportProfiles {

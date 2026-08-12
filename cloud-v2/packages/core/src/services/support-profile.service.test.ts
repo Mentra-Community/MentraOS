@@ -3,7 +3,9 @@ import {
   deriveDeviceKey,
   fingerprintFor,
   meaningfulTransitions,
+  pendingTelemetryFor,
   posthogPropertiesFor,
+  shouldRecordConnectedAt,
   type SupportStateInput,
 } from "./support-profile.service"
 
@@ -70,6 +72,22 @@ describe("support profile privacy and transitions", () => {
     expect(serialized).not.toContain("serial")
     expect(properties.support_glasses_model).toBe("Mentra Live")
   })
+
+  test("preserves last-connected time across heartbeats and advances it on transitions", () => {
+    expect(shouldRecordConnectedAt("connected", "device-1", "connected", "device-1")).toBe(false)
+    expect(shouldRecordConnectedAt("disconnected", "device-1", "connected", "device-1")).toBe(true)
+    expect(shouldRecordConnectedAt("connected", "device-1", "connected", "device-2")).toBe(true)
+  })
+
+  test("persists transition material with the profile write for outbox repair", () => {
+    const next = profile({connectionState: "connected", appVersion: "1.0.0"})
+    const pending = pendingTelemetryFor(null, next, "fingerprint-1")
+
+    expect(pending).toMatchObject({
+      fingerprint: "fingerprint-1",
+      events: ["support_profile_created"],
+    })
+  })
 })
 
 function input(device: {hardwareId: string}): SupportStateInput {
@@ -82,7 +100,7 @@ function input(device: {hardwareId: string}): SupportStateInput {
 
 function profile(host: {connectionState: string; appVersion: string; failureCode?: string}) {
   return {
-    host: {...host, failureStage: null},
+    host: {...host, failureStage: null, observedAt: new Date("2026-08-11T12:00:00.000Z")},
     devices: [],
     currentDeviceKey: null,
   }

@@ -4,11 +4,13 @@ import {registerModel} from "./register-model"
 const SupportTelemetryOutboxSchema = new Schema(
   {
     mentraUserId: {type: String, required: true, index: true},
+    transitionKey: {type: String, required: true, unique: true},
     event: {type: String, required: true},
     properties: {type: Schema.Types.Mixed, required: true},
     attempts: {type: Number, required: true, default: 0},
     availableAt: {type: Date, required: true, default: Date.now, index: true},
     leasedUntil: {type: Date, default: null},
+    deliveredAt: {type: Date, default: null},
     expiresAt: {type: Date, required: true},
   },
   {timestamps: {createdAt: true, updatedAt: false}, collection: "support_telemetry_outbox"},

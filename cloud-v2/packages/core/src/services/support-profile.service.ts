@@ -36,6 +36,13 @@ export interface SupportStateInput {
 export interface SupportProfileUpdateResult {
   status: "accepted" | "deduplicated" | "stale" | "rate_limited"
   observedAt: string
+  retryAfterMs?: number
+}
+
+type PendingTelemetry = {
+  fingerprint: string
+  events: string[]
+  properties: Record<string, unknown>
 }
 
 type StoredDevice = {
@@ -60,11 +67,11 @@ export async function updateSupportProfile(
   const observedAt = new Date(input.observedAt)
   const receivedAt = new Date()
   const fingerprint = fingerprintFor(input)
-  const device = input.device ? toStoredDevice(input.device, observedAt, input.host.connectionState) : null
 
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const current = await SupportProfileModel.findOne({mentraUserId: identity.mentraUserId}).lean()
     if (current) {
+      await flushPendingTelemetry(current as any)
       if (observedAt < current.host.observedAt) {
         return {status: "stale", observedAt: current.host.observedAt.toISOString()}
       }
@@ -76,11 +83,29 @@ export async function updateSupportProfile(
       }
       const inCurrentWindow = receivedAt.getTime() - current.rateWindowStartedAt.getTime() < SUPPORT_RATE_WINDOW_MS
       if (inCurrentWindow && current.rateWindowCount >= SUPPORT_RATE_WINDOW_LIMIT) {
-        return {status: "rate_limited", observedAt: current.host.observedAt.toISOString()}
+        return {
+          status: "rate_limited",
+          observedAt: current.host.observedAt.toISOString(),
+          retryAfterMs: Math.max(
+            1_000,
+            current.rateWindowStartedAt.getTime() + SUPPORT_RATE_WINDOW_MS - receivedAt.getTime(),
+          ),
+        }
       }
 
+      const deviceKey = input.device ? deriveDeviceKey(input.device.hardwareId, input.device.model) : null
+      const recordConnectedAt = shouldRecordConnectedAt(
+        current.host.connectionState,
+        current.currentDeviceKey ?? null,
+        input.host.connectionState,
+        deviceKey,
+      )
+      const device = input.device ? toStoredDevice(input.device, observedAt, recordConnectedAt) : null
       const devices = mergeDevice(current.devices as unknown as StoredDevice[], device)
       const host = toStoredHost(input, observedAt, receivedAt)
+      const currentDeviceKey = device?.deviceKey ?? current.currentDeviceKey ?? null
+      const next = {...current, host, devices, currentDeviceKey}
+      const pendingTelemetry = pendingTelemetryFor(current as any, next, fingerprint)
       const updated = await SupportProfileModel.findOneAndUpdate(
         {_id: current._id, revision: current.revision},
         {
@@ -88,35 +113,43 @@ export async function updateSupportProfile(
             tenantId: identity.tenantId,
             host,
             devices,
-            currentDeviceKey: device?.deviceKey ?? current.currentDeviceKey ?? null,
+            currentDeviceKey,
             lastFingerprint: fingerprint,
             lastAcceptedAt: receivedAt,
             rateWindowStartedAt: inCurrentWindow ? current.rateWindowStartedAt : receivedAt,
             rateWindowCount: inCurrentWindow ? current.rateWindowCount + 1 : 1,
+            pendingTelemetry,
           },
           $inc: {revision: 1},
         },
         {new: true},
       ).lean()
       if (!updated) continue
-      await enqueueTransitions(identity.mentraUserId, current as any, updated as any)
+      await flushPendingTelemetry(updated as any)
       return {status: "accepted", observedAt: observedAt.toISOString()}
     }
 
     const host = toStoredHost(input, observedAt, receivedAt)
+    const device = input.device
+      ? toStoredDevice(input.device, observedAt, input.host.connectionState === "connected")
+      : null
+    const draft = {
+      host,
+      devices: device ? [device] : [],
+      currentDeviceKey: device?.deviceKey ?? null,
+    }
     try {
       const created = await SupportProfileModel.create({
         ...identity,
-        host,
-        devices: device ? [device] : [],
-        currentDeviceKey: device?.deviceKey ?? null,
+        ...draft,
         lastFingerprint: fingerprint,
         lastAcceptedAt: receivedAt,
         rateWindowStartedAt: receivedAt,
         rateWindowCount: 1,
+        pendingTelemetry: pendingTelemetryFor(null, draft, fingerprint),
         revision: 0,
       })
-      await enqueueTransitions(identity.mentraUserId, null, created.toObject() as any)
+      await flushPendingTelemetry(created.toObject() as any)
       return {status: "accepted", observedAt: observedAt.toISOString()}
     } catch (error) {
       if ((error as {code?: number})?.code !== 11000) throw error
@@ -169,6 +202,15 @@ export function meaningfulTransitions(previous: any | null, next: any): string[]
   return events
 }
 
+export function shouldRecordConnectedAt(
+  previousState: SupportStateInput["host"]["connectionState"],
+  previousDeviceKey: string | null,
+  nextState: SupportStateInput["host"]["connectionState"],
+  nextDeviceKey: string | null,
+): boolean {
+  return nextState === "connected" && (previousState !== "connected" || previousDeviceKey !== nextDeviceKey)
+}
+
 function toStoredHost(input: SupportStateInput, observedAt: Date, receivedAt: Date) {
   return {
     appVersion: input.host.appVersion ?? null,
@@ -189,7 +231,7 @@ function toStoredHost(input: SupportStateInput, observedAt: Date, receivedAt: Da
 function toStoredDevice(
   input: NonNullable<SupportStateInput["device"]>,
   observedAt: Date,
-  connectionState: SupportStateInput["host"]["connectionState"],
+  recordConnectedAt: boolean,
 ): StoredDevice {
   return {
     deviceKey: deriveDeviceKey(input.hardwareId, input.model),
@@ -202,7 +244,7 @@ function toStoredDevice(
     buildNumber: input.buildNumber ?? null,
     firstSeenAt: observedAt,
     lastSeenAt: observedAt,
-    lastConnectedAt: connectionState === "connected" ? observedAt : null,
+    lastConnectedAt: recordConnectedAt ? observedAt : null,
     observedAt,
   }
 }
@@ -238,11 +280,33 @@ function currentDevice(profile: any): any | null {
   return profile.devices?.find((device: any) => device.deviceKey === profile.currentDeviceKey) ?? null
 }
 
-async function enqueueTransitions(mentraUserId: string, previous: any | null, next: any): Promise<void> {
-  const properties = posthogPropertiesFor(next)
-  for (const event of meaningfulTransitions(previous, next)) {
-    await enqueueSupportTelemetry({mentraUserId, event, properties})
+export function pendingTelemetryFor(previous: any | null, next: any, fingerprint: string): PendingTelemetry | null {
+  const events = meaningfulTransitions(previous, next)
+  if (events.length === 0) return null
+  return {fingerprint, events, properties: posthogPropertiesFor(next)}
+}
+
+async function flushPendingTelemetry(profile: {
+  mentraUserId: string
+  pendingTelemetry?: PendingTelemetry | null
+}): Promise<void> {
+  const pending = profile.pendingTelemetry
+  if (!pending) return
+  for (const event of pending.events) {
+    await enqueueSupportTelemetry({
+      mentraUserId: profile.mentraUserId,
+      transitionKey: `${profile.mentraUserId}:${pending.fingerprint}:${event}`,
+      event,
+      properties: pending.properties,
+    })
   }
+  await SupportProfileModel.updateOne(
+    {
+      "mentraUserId": profile.mentraUserId,
+      "pendingTelemetry.fingerprint": pending.fingerprint,
+    },
+    {$set: {pendingTelemetry: null}},
+  )
 }
 
 export function posthogPropertiesFor(next: any): Record<string, unknown> {

@@ -99,6 +99,7 @@
     "expo-clipboard": "*",
     "expo-calendar": "*",
     "expo-constants": "*",
+    "expo-device": "*",
     "expo-location": "*",
     "expo-task-manager": "*",
     "expo-notifications": "*",

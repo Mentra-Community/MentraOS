@@ -12,16 +12,23 @@ let draining = false
 
 export async function enqueueSupportTelemetry(input: {
   mentraUserId: string
+  transitionKey: string
   event: string
   properties: Record<string, unknown>
 }): Promise<void> {
   if (!posthogApiKey()) return
   const now = new Date()
-  await SupportTelemetryOutboxModel.create({
-    ...input,
-    availableAt: now,
-    expiresAt: new Date(now.getTime() + OUTBOX_TTL_MS),
-  })
+  await SupportTelemetryOutboxModel.updateOne(
+    {transitionKey: input.transitionKey},
+    {
+      $setOnInsert: {
+        ...input,
+        availableAt: now,
+        expiresAt: new Date(now.getTime() + OUTBOX_TTL_MS),
+      },
+    },
+    {upsert: true},
+  )
   void drainSupportTelemetryOutbox()
 }
 
@@ -46,6 +53,7 @@ export async function drainSupportTelemetryOutbox(): Promise<void> {
       const now = new Date()
       const row = await SupportTelemetryOutboxModel.findOneAndUpdate(
         {
+          deliveredAt: null,
           availableAt: {$lte: now},
           $or: [{leasedUntil: null}, {leasedUntil: {$lte: now}}],
         },
@@ -62,7 +70,10 @@ export async function drainSupportTelemetryOutbox(): Promise<void> {
           properties: row.properties as Record<string, unknown>,
           email,
         })
-        await SupportTelemetryOutboxModel.deleteOne({_id: row._id})
+        await SupportTelemetryOutboxModel.updateOne(
+          {_id: row._id},
+          {$set: {deliveredAt: new Date(), leasedUntil: null}},
+        )
       } catch (error) {
         const attempts = row.attempts + 1
         const delayMs = Math.min(60 * 60 * 1_000, 5_000 * 2 ** Math.min(attempts, 8))
