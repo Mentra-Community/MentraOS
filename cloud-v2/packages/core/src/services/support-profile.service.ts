@@ -372,11 +372,12 @@ async function flushPendingTelemetry(profile: {
   for (const pending of normalizePendingTelemetry(profile.pendingTelemetry)) {
     try {
       for (const event of pending.events) {
+        const transitionKey = pending.legacy
+          ? await legacyTransitionKey(profile.mentraUserId, pending, event)
+          : `${profile.mentraUserId}:${pending.transitionId}:${event}`
         await enqueueSupportTelemetry({
           mentraUserId: profile.mentraUserId,
-          transitionKey: pending.legacy
-            ? `${profile.mentraUserId}:${pending.fingerprint}:${event}`
-            : `${profile.mentraUserId}:${pending.transitionId}:${event}`,
+          transitionKey,
           event,
           eventAt: new Date(pending.eventAt),
           properties: pending.properties,
@@ -397,6 +398,26 @@ async function flushPendingTelemetry(profile: {
       return
     }
   }
+}
+
+async function legacyTransitionKey(
+  mentraUserId: string,
+  pending: NormalizedPendingTelemetry,
+  event: string,
+): Promise<string> {
+  const candidates = legacyTransitionKeyCandidates(mentraUserId, pending, event)
+  const existing = await SupportTelemetryOutboxModel.findOne({transitionKey: {$in: candidates}})
+    .select({transitionKey: 1})
+    .lean()
+  return existing?.transitionKey ?? candidates[0]
+}
+
+export function legacyTransitionKeyCandidates(
+  mentraUserId: string,
+  pending: Pick<NormalizedPendingTelemetry, "transitionId" | "fingerprint">,
+  event: string,
+): [string, string] {
+  return [`${mentraUserId}:${pending.transitionId}:${event}`, `${mentraUserId}:${pending.fingerprint}:${event}`]
 }
 
 function normalizePendingTelemetry(

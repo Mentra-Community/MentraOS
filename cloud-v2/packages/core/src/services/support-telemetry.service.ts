@@ -114,9 +114,18 @@ export async function drainSupportTelemetryOutbox(): Promise<void> {
       let activeLeaseUntil = deliveryLease.supportTelemetryDeliveryLeaseUntil
       try {
         const email = await trustedEmail(row.mentraUserId)
-        // Identity lookup can be slow, so renew the lease only after it finishes.
-        // The compare-and-set also rechecks the tombstone: if deletion started,
-        // or another worker recovered an expired lease, this capture is abandoned.
+        const renewedRowLeaseUntil = new Date(Date.now() + LEASE_MS)
+        const renewedRow = await SupportTelemetryOutboxModel.findOneAndUpdate(
+          {_id: row._id, deliveredAt: null, leasedUntil: activeRowLeaseUntil},
+          {$set: {leasedUntil: renewedRowLeaseUntil}},
+          {new: true},
+        ).lean()
+        if (!renewedRow) continue
+        activeRowLeaseUntil = renewedRow.leasedUntil
+
+        // Identity lookup and row renewal can be slow, so renew the user lease
+        // last, immediately before capture. The compare-and-set also rechecks
+        // the tombstone and abandons capture after deletion starts.
         const renewedLeaseUntil = new Date(Date.now() + DELIVERY_LEASE_MS)
         const renewedLease = await UserModel.findOneAndUpdate(
           {
@@ -142,14 +151,6 @@ export async function drainSupportTelemetryOutbox(): Promise<void> {
           continue
         }
         activeLeaseUntil = renewedLease.supportTelemetryDeliveryLeaseUntil
-        const renewedRowLeaseUntil = new Date(Date.now() + LEASE_MS)
-        const renewedRow = await SupportTelemetryOutboxModel.findOneAndUpdate(
-          {_id: row._id, deliveredAt: null, leasedUntil: activeRowLeaseUntil},
-          {$set: {leasedUntil: renewedRowLeaseUntil}},
-          {new: true},
-        ).lean()
-        if (!renewedRow) continue
-        activeRowLeaseUntil = renewedRow.leasedUntil
         await sendCapture({
           distinctId: row.mentraUserId,
           event: row.event,

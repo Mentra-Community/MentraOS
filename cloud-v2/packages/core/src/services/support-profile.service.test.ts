@@ -3,6 +3,7 @@ import {
   appendPendingTelemetry,
   deriveDeviceKey,
   fingerprintFor,
+  legacyTransitionKeyCandidates,
   meaningfulTransitions,
   pendingTelemetryFor,
   posthogPropertiesFor,
@@ -125,6 +126,19 @@ describe("support profile privacy and transitions", () => {
         eventAt: "2026-08-11T12:00:00.000Z",
         properties: {},
       },
+    ])
+    expect(
+      legacyTransitionKeyCandidates(
+        "mu_test",
+        {
+          transitionId: "2026-08-11T12:00:00.000Z:legacy-fingerprint",
+          fingerprint: "legacy-fingerprint",
+        },
+        "support_profile_created",
+      ),
+    ).toEqual([
+      "mu_test:2026-08-11T12:00:00.000Z:legacy-fingerprint:support_profile_created",
+      "mu_test:legacy-fingerprint:support_profile_created",
     ])
   })
 })
