@@ -798,7 +798,7 @@ public class MediaCaptureService {
         // Initialize hardware manager
         hardwareManager = HardwareManagerFactory.getInstance(context);
         photoFeedbackController = new PhotoFeedbackController(hardwareManager, mainHandler);
-        photoLightController = new PhotoLightController(hardwareManager);
+        photoLightController = new PhotoLightController(hardwareManager, mainHandler);
         Log.d(TAG, "Hardware manager initialized: " + hardwareManager.getDeviceModel());
     }
 
@@ -2097,7 +2097,9 @@ public class MediaCaptureService {
                     public void onPhotoExposureStarted(
                             long sensorTimestampNs, long estimatedExposureDurationNs) {
                         photoLightController.onCaptureBoundary(
-                                captureLightToken, "sensor exposure");
+                                captureLightToken,
+                                "sensor exposure",
+                                estimatedExposureDurationNs);
                         photoFeedbackController.onExposureStarted(
                                 captureFeedbackToken,
                                 sensorTimestampNs,
@@ -2341,7 +2343,9 @@ public class MediaCaptureService {
                         public void onPhotoExposureStarted(
                                 long sensorTimestampNs, long estimatedExposureDurationNs) {
                             photoLightController.onCaptureBoundary(
-                                    captureLightToken, "sensor exposure");
+                                    captureLightToken,
+                                    "sensor exposure",
+                                    estimatedExposureDurationNs);
                             photoFeedbackController.onExposureStarted(
                                     captureFeedbackToken,
                                     sensorTimestampNs,
@@ -2782,7 +2786,9 @@ public class MediaCaptureService {
                         public void onPhotoExposureStarted(
                                 long sensorTimestampNs, long estimatedExposureDurationNs) {
                             photoLightController.onCaptureBoundary(
-                                    captureLightToken, "sensor exposure");
+                                    captureLightToken,
+                                    "sensor exposure",
+                                    estimatedExposureDurationNs);
                             photoFeedbackController.onExposureStarted(
                                     captureFeedbackToken,
                                     sensorTimestampNs,
@@ -5183,7 +5189,9 @@ public class MediaCaptureService {
                         public void onPhotoExposureStarted(
                                 long sensorTimestampNs, long estimatedExposureDurationNs) {
                             photoLightController.onCaptureBoundary(
-                                    captureLightToken, "sensor exposure");
+                                    captureLightToken,
+                                    "sensor exposure",
+                                    estimatedExposureDurationNs);
                             photoFeedbackController.onExposureStarted(
                                     captureFeedbackToken,
                                     sensorTimestampNs,
