@@ -105,11 +105,17 @@ function idleStatus(): OtaStatus {
   }
 }
 
+async function flushNativeStartPromise(): Promise<void> {
+  await Promise.resolve()
+  await Promise.resolve()
+  await Promise.resolve()
+}
+
 beforeEach(() => {
   jest.useFakeTimers()
   otaInstallCoordinator.detach()
   useGlassesStore.getState().reset()
-  bluetoothSdkMock.startOtaUpdate.mockClear()
+  bluetoothSdkMock.startOtaUpdate.mockReset().mockResolvedValue(undefined)
   bluetoothSdkMock.sendOtaQueryStatus.mockClear()
   bluetoothSdkMock.requestVersionInfo.mockClear()
   bluetoothSdkMock.updateGlasses.mockClear()
@@ -141,7 +147,7 @@ describe("OtaInstallCoordinator initial-mount arbitration", () => {
     const snap = otaInstallCoordinator.snapshot()
     expect(snap.errorMsg).toBe(OtaProgressMessages.globalTimeout)
     expect(snap.displayState).toBe("failed")
-    // The no-ack retry watchdog never re-sent (ack + first activity cleared it).
+    // The acknowledged native request never re-sent.
     expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
   })
 
@@ -153,36 +159,74 @@ describe("OtaInstallCoordinator initial-mount arbitration", () => {
   })
 })
 
-describe("OtaInstallCoordinator no-ack retry watchdog", () => {
-  it("retries ota_start at RETRY_INTERVAL_MS up to MAX_RETRIES then fails with noAckResponse", async () => {
+describe("OtaInstallCoordinator ota_start request ownership", () => {
+  it("keeps exactly one ota_start while the native request is pending", async () => {
     setGlassesConnected()
+    let rejectStart!: (reason: Error) => void
+    bluetoothSdkMock.startOtaUpdate.mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          rejectStart = reject
+        }),
+    )
     otaInstallCoordinator.attach()
     expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
 
+    await jest.advanceTimersByTimeAsync(RETRY_INTERVAL_MS * MAX_RETRIES)
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+
+    rejectStart(new Error("native timeout"))
+    await Promise.resolve()
     await jest.advanceTimersByTimeAsync(RETRY_INTERVAL_MS)
     expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(2)
-    await jest.advanceTimersByTimeAsync(RETRY_INTERVAL_MS)
-    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(3)
-    expect(otaInstallCoordinator.snapshot().displayState).toBe("starting")
-
-    await jest.advanceTimersByTimeAsync(RETRY_INTERVAL_MS)
-    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(MAX_RETRIES)
-    const snap = otaInstallCoordinator.snapshot()
-    expect(snap.errorMsg).toBe(OtaProgressMessages.noAckResponse)
-    expect(snap.displayState).toBe("failed")
   })
 
-  it("ota_start_ack clears the retry watchdog (no further retries)", async () => {
+  it("serializes rejected native attempts and fails only after MAX_RETRIES ended requests", async () => {
     setGlassesConnected()
+    bluetoothSdkMock.startOtaUpdate.mockRejectedValue(new Error("native timeout"))
     otaInstallCoordinator.attach()
     expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
 
-    await jest.advanceTimersByTimeAsync(RETRY_INTERVAL_MS - 1000)
-    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
-    await jest.advanceTimersByTimeAsync(RETRY_INTERVAL_MS * 3)
+    await Promise.resolve()
+    await jest.advanceTimersByTimeAsync(RETRY_INTERVAL_MS)
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(2)
+    await Promise.resolve()
+    await jest.advanceTimersByTimeAsync(RETRY_INTERVAL_MS)
+
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(MAX_RETRIES)
+    expect(otaInstallCoordinator.snapshot().errorMsg).toBe(OtaProgressMessages.sendOtaStartFailed)
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("failed")
+  })
+
+  it("does not retry or fail when ota_start times out after BES completion activity", async () => {
+    setGlassesConnected()
+    let rejectStart!: (reason: Error) => void
+    bluetoothSdkMock.startOtaUpdate.mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          rejectStart = reject
+        }),
+    )
+    otaInstallCoordinator.attach()
+
+    useGlassesStore.getState().setOtaStatus(
+      inProgressStatus({
+        stepType: "bes",
+        phase: "install",
+        status: "step_complete",
+        stepPercent: 100,
+        overallPercent: 100,
+      }),
+    )
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("restarting")
+
+    rejectStart(new Error("OTA start command timed out waiting for glasses response."))
+    await Promise.resolve()
+    await jest.advanceTimersByTimeAsync(RETRY_INTERVAL_MS * MAX_RETRIES)
 
     expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
     expect(otaInstallCoordinator.snapshot().errorMsg).toBe("")
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("restarting")
   })
 })
 
@@ -259,6 +303,8 @@ describe("OtaInstallCoordinator version-change detour retry gate", () => {
       useGlassesStore.getState().setOtaStatus(inProgressStatus({phase: "install", stepPercent: 100}))
       expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
 
+      await flushNativeStartPromise()
+
       useGlassesStore.getState().setOtaStatus(inProgressStatus({phase: "install", status: "failed", error: errorCode}))
       expect(otaInstallCoordinator.snapshot().displayState).toBe("failed")
       otaInstallCoordinator.retry()
@@ -315,6 +361,7 @@ describe("OtaInstallCoordinator version-change detour retry gate", () => {
     setGlassesConnected()
     otaInstallCoordinator.attach()
     expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+    await flushNativeStartPromise()
     otaInstallCoordinator.retry()
     expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(2)
   })
@@ -408,32 +455,40 @@ describe("OtaInstallCoordinator finish()", () => {
 })
 
 describe("OtaInstallCoordinator detach()", () => {
-  it("clears pending watchdogs; re-attach is a fresh session with fresh retry bookkeeping", async () => {
+  it("keeps a native ota_start single-flight across detach and re-attach", async () => {
     setGlassesConnected()
+    let rejectStart!: (reason: Error) => void
+    bluetoothSdkMock.startOtaUpdate.mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          rejectStart = reject
+        }),
+    )
     otaInstallCoordinator.attach()
     expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
 
-    await jest.advanceTimersByTimeAsync(1000)
     otaInstallCoordinator.detach()
-
-    // No pending watchdog outlives detach: nothing re-fires, nothing fails.
-    await jest.advanceTimersByTimeAsync(GLOBAL_OTA_TIMEOUT_MS * 2)
-    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
-    expect(otaInstallCoordinator.snapshot().errorMsg).toBe("")
-
-    // Re-attach: fresh initial-mount arbitration + a full fresh retry cycle.
     otaInstallCoordinator.attach()
-    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(2)
+
+    // The screen remounted while native still owns the first request. Joining
+    // that request must not open a concurrent ota_start in the bridge.
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
     expect(otaInstallCoordinator.snapshot().displayState).toBe("starting")
-    await jest.advanceTimersByTimeAsync(RETRY_INTERVAL_MS * MAX_RETRIES)
-    expect(otaInstallCoordinator.snapshot().errorMsg).toBe(OtaProgressMessages.noAckResponse)
-    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1 + MAX_RETRIES)
+
+    rejectStart(new Error("native timeout"))
+    await flushNativeStartPromise()
+    await jest.advanceTimersByTimeAsync(RETRY_INTERVAL_MS)
+
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(2)
+    expect(otaInstallCoordinator.snapshot().errorMsg).toBe("")
   })
 
   it("after a failure resets session state so a re-attach starts clean", async () => {
     setGlassesConnected()
+    bluetoothSdkMock.startOtaUpdate.mockRejectedValue(new Error("native timeout"))
     otaInstallCoordinator.attach()
-    await jest.advanceTimersByTimeAsync(RETRY_INTERVAL_MS * MAX_RETRIES)
+    await flushNativeStartPromise()
+    await jest.advanceTimersByTimeAsync(RETRY_INTERVAL_MS * (MAX_RETRIES - 1))
     expect(otaInstallCoordinator.snapshot().displayState).toBe("failed")
 
     otaInstallCoordinator.detach()
@@ -934,14 +989,14 @@ describe("OtaInstallCoordinator APK completion by build-number increase (WP 8C-c
   it("build-number increase recovers a legacy session even from a watchdog failure", async () => {
     setLegacyGlassesConnected("33")
     seedLegacyApkUpdateAvailable()
+    bluetoothSdkMock.startOtaUpdate.mockRejectedValue(new Error("native timeout"))
     otaInstallCoordinator.attach()
 
-    // Old-build no-ack retry runs on the padded legacy interval (WP 8C-g).
-    await jest.advanceTimersByTimeAsync(RETRY_INTERVAL_MS * MAX_RETRIES)
-    expect(otaInstallCoordinator.snapshot().displayState).toBe("starting")
-    await jest.advanceTimersByTimeAsync(LEGACY_RETRY_INTERVAL_MS * MAX_RETRIES)
+    // Old-build request failures retry serially on the padded legacy interval.
+    await flushNativeStartPromise()
+    await jest.advanceTimersByTimeAsync(LEGACY_RETRY_INTERVAL_MS * (MAX_RETRIES - 1))
     expect(otaInstallCoordinator.snapshot().displayState).toBe("failed")
-    expect(otaInstallCoordinator.snapshot().errorMsg).toBe(OtaProgressMessages.noAckResponse)
+    expect(otaInstallCoordinator.snapshot().errorMsg).toBe(OtaProgressMessages.sendOtaStartFailed)
 
     useGlassesStore.getState().setGlassesInfo({buildNumber: "45"})
 

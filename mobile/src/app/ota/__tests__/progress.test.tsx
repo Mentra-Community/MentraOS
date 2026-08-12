@@ -87,7 +87,7 @@ beforeEach(() => {
   useConnectionOverlayConfig.getState().clearConfig()
   mockReplace.mockClear()
   BluetoothSdk.sendOtaQueryStatus.mockClear()
-  BluetoothSdk.startOtaUpdate.mockClear()
+  BluetoothSdk.startOtaUpdate.mockReset().mockResolvedValue(undefined)
   stopOtaAutoChain()
 })
 
@@ -505,8 +505,9 @@ describe("progress.tsx display states", () => {
 })
 
 describe("progress.tsx watchdog timers", () => {
-  it("fails with no-ack message after max ota_start retries while still starting", async () => {
+  it("fails after max serialized native ota_start failures", async () => {
     setGlassesConnected()
+    BluetoothSdk.startOtaUpdate.mockRejectedValue(new Error("native timeout"))
     const {getByText} = render(<OtaProgressScreen />)
 
     await act(async () => {
@@ -514,24 +515,32 @@ describe("progress.tsx watchdog timers", () => {
     })
 
     expect(getByText("Update Failed")).toBeDefined()
-    expect(getByText(OtaProgressMessages.noAckResponse)).toBeDefined()
+    expect(getByText(OtaProgressMessages.sendOtaStartFailed)).toBeDefined()
+    expect(BluetoothSdk.startOtaUpdate).toHaveBeenCalledTimes(3)
   })
 
-  it("does not fail no-ack when ota_start_ack is received", async () => {
+  it("does not fail or duplicate ota_start while the native request is pending", async () => {
     setGlassesConnected()
+    let resolveStart!: (value: undefined) => void
+    BluetoothSdk.startOtaUpdate.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveStart = resolve
+        }),
+    )
     const {queryByText} = render(<OtaProgressScreen />)
 
     await act(async () => {
-      await jest.advanceTimersByTimeAsync(4000)
-    })
-    act(() => {
-      GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
-    })
-    await act(async () => {
-      await jest.advanceTimersByTimeAsync(5100)
+      await jest.advanceTimersByTimeAsync(16_000)
     })
 
-    expect(queryByText(OtaProgressMessages.noAckResponse)).toBeNull()
+    expect(queryByText("Update Failed")).toBeNull()
+    expect(BluetoothSdk.startOtaUpdate).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      resolveStart(undefined)
+      await Promise.resolve()
+    })
   })
 
   it("fails stuck-at-zero after DOWNLOAD_STUCK_TIMEOUT_MS in starting", async () => {
@@ -688,9 +697,15 @@ describe("progress.tsx reconnect", () => {
     expect(BluetoothSdk.startOtaUpdate).toHaveBeenCalled()
   })
 
-  it("retry button starts OTA", () => {
+  it("retry button starts OTA after the previous native request ended", async () => {
     setGlassesConnected()
     const {getByTestId} = render(<OtaProgressScreen />)
+
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    BluetoothSdk.startOtaUpdate.mockClear()
 
     act(() => {
       useGlassesStore.getState().setOtaStatus({
@@ -707,7 +722,7 @@ describe("progress.tsx reconnect", () => {
     })
 
     fireEvent.press(getByTestId("button-Retry"))
-    expect(BluetoothSdk.startOtaUpdate).toHaveBeenCalled()
+    expect(BluetoothSdk.startOtaUpdate).toHaveBeenCalledTimes(1)
   })
 })
 

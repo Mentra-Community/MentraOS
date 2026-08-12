@@ -2,8 +2,8 @@
  * OtaInstallCoordinator — engine-owned OTA install state machine (WP 8B).
  *
  * Owns every timer/retry/sequencing rule that used to live in the host screen
- * `mobile/src/app/ota/progress.tsx`: the global session timeout, the no-ack
- * retry watchdog, the stuck-at-zero watchdog, the progress-stall watchdog keyed
+ * `mobile/src/app/ota/progress.tsx`: the global session timeout, serialized
+ * ota_start retries, the stuck-at-zero watchdog, the progress-stall watchdog keyed
  * on a staleness signature, connect-edge arbitration (initial mount vs
  * reconnect vs post-APK reboot), the ota_query_status reply fallback, the ping
  * keepalive, the ota_start_ack / mtk_update_complete listeners, and terminal
@@ -11,10 +11,7 @@
  * `snapshot()`/`onSnapshot()` plus the `attach()/detach()/retry()/finish()`
  * commands (exposed as `engine.ota.installSession`).
  *
- * Behavior contract: everything here was MOVED, not changed — every timer
- * duration (see ./otaInstallPolicy), arbitration rule, and "[OTA_PROGRESS]"
- * log line is a field-debugging contract and stays byte-identical to the old
- * screen. The reaction pass mirrors the old component's effect ordering: a
+ * The reaction pass mirrors the old component's effect ordering: a
  * pass diffs the store-derived inputs (connected / otaStatus / otaProgress /
  * displayState / stall signature) exactly like the old effect dep arrays, and
  * state written mid-pass queues a follow-up pass — the same way a setState
@@ -212,9 +209,13 @@ class OtaInstallCoordinator {
   private mtkStallDetectTimer: ReturnType<typeof setTimeout> | null = null
   private mtkSimTickTimer: ReturnType<typeof setInterval> | null = null
 
-  // Retry / ack bookkeeping (no glasses source)
+  // Request / retry bookkeeping (no glasses source)
   // At most one apk-install status poll in flight (native rejects concurrent queries).
   private apkInstallPollInFlight = false
+  // The native SDK owns one ota_start request until its application-level ack or
+  // timeout. Keep that ownership across attach/detach so a remount, watchdog, or
+  // query fallback can never open a second native request beside it.
+  private otaStartInFlight: Promise<void> | null = null
   private hasReceivedAck = false
   private hasFirstActivity = false
   // Stuck-at-zero watchdog clears only on first NON-ZERO progress; "first activity"
@@ -837,7 +838,7 @@ class OtaInstallCoordinator {
       }
     }
 
-    // Any glasses activity (ota_status or otaProgress) clears the no-ack retry watchdog.
+    // Any glasses activity proves the logical ota_start was accepted.
     if ((otaStatusChanged || otaProgressChanged) && (otaStatus || otaProgress)) {
       this.onFirstActivity()
     }
@@ -1226,7 +1227,7 @@ class OtaInstallCoordinator {
   }
 
   /**
-   * "Glasses are talking to us" — clears the no-ack retry watchdog only.
+   * "Glasses are talking to us" — suppresses retry if the native request later rejects.
    * Important: this does NOT clear the stuck-at-zero watchdog; that one fires
    * on real progress > 0% (see {@link onFirstNonZeroProgress}).
    */
@@ -1272,36 +1273,13 @@ class OtaInstallCoordinator {
     }, globalTimeoutMs)
   }
 
-  private armAckAndStuckWatchdogsOnly(): void {
-    this.clearRetryTimeout()
+  private armStuckWatchdogOnly(): void {
     this.clearStuckTimeout()
 
     // Durations resolved at arm time (WP 8C-b): legacy-shaped sessions get the
     // padded values progress-legacy.tsx used for old (< 37) builds.
     const legacySession = this.isLegacySessionShapeNow()
-    const retryIntervalMs = legacySession ? LEGACY_RETRY_INTERVAL_MS : RETRY_INTERVAL_MS
     const stuckTimeoutMs = legacySession ? LEGACY_DOWNLOAD_STUCK_TIMEOUT_MS : DOWNLOAD_STUCK_TIMEOUT_MS
-
-    this.retryTimeout = setTimeout(() => {
-      this.retryTimeout = null
-      if (this.hasReceivedAck || this.hasFirstActivity) return
-      if (this.computeDisplayStateNow() !== "starting") return
-      if (this.retryCount < MAX_RETRIES - 1) {
-        this.retryCount += 1
-        this.hasReceivedAck = false
-        console.log(
-          `[OTA_PROGRESS] watchdog: no ack in ${retryIntervalMs}ms, retrying ota_start (attempt ${this.retryCount})`,
-        )
-        void this.sendOtaStartWithWatchdogs(true)
-          .then(() => {
-            this.armAckAndStuckWatchdogsOnly()
-          })
-          .catch(() => {})
-      } else {
-        console.log(`[OTA_PROGRESS] watchdog: ota_start ack never received after ${MAX_RETRIES} attempts, failing`)
-        this.setErrorMsg(OtaProgressMessages.noAckResponse)
-      }
-    }, retryIntervalMs)
 
     this.stuckTimeout = setTimeout(() => {
       this.stuckTimeout = null
@@ -1318,7 +1296,7 @@ class OtaInstallCoordinator {
     }, stuckTimeoutMs)
   }
 
-  private async sendOtaStartWithWatchdogs(retryAlreadyCounted = false): Promise<void> {
+  private sendOtaStartWithWatchdogs(): Promise<void> {
     // INVARIANT BACKSTOP — not normal control flow. Every entry point that can drive the
     // glasses (connect-edge, query fallback, retry, mount) carries its own detour gate with the
     // right behavior for that site; this final check only exists so that a FUTURE entry point
@@ -1329,25 +1307,54 @@ class OtaInstallCoordinator {
       console.error(
         "[OTA_PROGRESS] BACKSTOP: refused ota_start during a latched version-change detour — a caller is missing its detour gate",
       )
-      return
+      return Promise.resolve()
+    }
+    if (this.otaStartInFlight) {
+      console.log("[OTA_PROGRESS] ota_start already in flight — joining existing native request")
+      return this.otaStartInFlight
     }
     this.maybeStartGlobalTimeout()
     this.hasReceivedAck = false
-    this.armAckAndStuckWatchdogsOnly()
+    this.armStuckWatchdogOnly()
+
+    const request = this.performOtaStart()
+    this.otaStartInFlight = request
+    void request.finally(() => {
+      if (this.otaStartInFlight === request) this.otaStartInFlight = null
+    })
+    return request
+  }
+
+  private async performOtaStart(): Promise<void> {
     try {
       const state = useGlassesStore.getState()
       const otaVersionUrl = resolveOtaManifestUrl(state.otaVersionUrl, state.buildNumber)
       console.log(`[OTA_PROGRESS] sending ota_start with manifest URL: ${otaVersionUrl}`)
       await BluetoothSdk.startOtaUpdate(otaVersionUrl)
+      // The public SDK promise resolves only from ota_start_ack. Treat that
+      // resolution as the acknowledgement even if the parallel event dispatch
+      // reaches the coordinator later (or is dropped by a remount).
+      this.handleAck()
     } catch (err) {
       console.warn("[OTA_PROGRESS] sendOtaStart threw", err)
-      this.clearRetryTimeout()
+
+      // A received ota_status/legacy progress event proves that this exact
+      // logical start was accepted. Its application-level ack may be lost while
+      // the update continues; never create another transaction or fail a live,
+      // restarting, or completed session because that stale promise timed out.
+      if (this.hasFirstActivity || this.computeDisplayStateNow() !== "starting") {
+        console.log("[OTA_PROGRESS] ota_start rejection arrived after OTA activity — ignoring stale rejection")
+        return
+      }
+
+      if (!this.attached) return
       this.clearStuckTimeout()
       if (this.retryCount < MAX_RETRIES - 1) {
-        if (!retryAlreadyCounted) {
-          this.retryCount += 1
-        }
+        this.retryCount += 1
         const retryIntervalMs = this.isLegacySessionShapeNow() ? LEGACY_RETRY_INTERVAL_MS : RETRY_INTERVAL_MS
+        console.log(
+          `[OTA_PROGRESS] ota_start request ended without ack or activity; retrying after ${retryIntervalMs}ms (attempt ${this.retryCount + 1}/${MAX_RETRIES})`,
+        )
         this.retryTimeout = setTimeout(() => {
           this.retryTimeout = null
           void this.sendOtaStartWithWatchdogs()
