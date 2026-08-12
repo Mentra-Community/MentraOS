@@ -1013,6 +1013,14 @@ extension MentraLive: CBCentralManagerDelegate {
             self.connectedPeripheral = nil
             self.updateConnectionState(ConnTypes.DISCONNECTED)
 
+            let lower = errorDescription.lowercased()
+            if self.pairingYieldAwaitingReclaim,
+               lower.contains("auth") || lower.contains("encrypt") || lower.contains("peer removed pairing")
+            {
+                self.clearSavedGlassesAfterOwnerLoss(reason: "ios_auth_fail")
+                return
+            }
+
             if !self.isKilled {
                 self.handleReconnection()
             }
@@ -1592,6 +1600,10 @@ class MentraLive: NSObject, SGCManager {
     private var isScanning = false
     private var isConnecting = false
     private var isKilled = false
+    /// Glasses opened pairing window — stand down without forgetting identity/bonds.
+    private var pairingYieldActive = false
+    private var pairingYieldAwaitingReclaim = false
+    private var pairingYieldEndWorkItem: DispatchWorkItem?
     private var reconnectAttempts = 0
     private var isNewVersion = false
     private var peerWireProtocolVersion = 0
@@ -1730,7 +1742,88 @@ class MentraLive: NSObject, SGCManager {
         }
     }
 
+    func isPairingYieldActive() -> Bool {
+        pairingYieldActive
+    }
+
+    private func enterPairingYield(windowMs: Int) {
+        pairingYieldActive = true
+        pairingYieldAwaitingReclaim = false
+        pairingYieldEndWorkItem?.cancel()
+        if isScanning {
+            stopScan()
+        }
+        // Publish disconnect immediately for Phone A UI. didDisconnectPeripheral may lag
+        // or race with cancelPeripheralConnection; do not wait on it for stand-down.
+        isConnecting = false
+        connected = false
+        fullyBooted = false
+        glassesSessionId = nil
+        readinessCompletedThisBleSession = false
+        rgbLedAuthorityClaimed = false
+        stopAllTimers()
+        closeL2capFileChannel()
+        txCharacteristic = nil
+        rxCharacteristic = nil
+        updateConnectionState(ConnTypes.DISCONNECTED)
+        if let peripheral = connectedPeripheral {
+            centralManager?.cancelPeripheralConnection(peripheral)
+        }
+        connectedPeripheral = nil
+
+        func scheduleProbe() {
+            let probe = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                guard self.pairingYieldActive, !self.isKilled, self.connectedPeripheral == nil else { return }
+                Bridge.log("LIVE: Pairing yield probe reconnect")
+                self.handleReconnection(allowDuringPairingYield: true)
+                if self.pairingYieldActive {
+                    scheduleProbe()
+                }
+            }
+            bluetoothQueue.asyncAfter(deadline: .now() + 4.0, execute: probe)
+        }
+        bluetoothQueue.asyncAfter(deadline: .now() + 3.0) {
+            scheduleProbe()
+        }
+
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            Bridge.log("LIVE: Pairing yield ended — resume reconnect if still owned")
+            self.pairingYieldActive = false
+            self.pairingYieldAwaitingReclaim = true
+            self.pairingYieldEndWorkItem = nil
+            if !self.isKilled, self.connectedPeripheral == nil {
+                self.handleReconnection()
+            }
+        }
+        pairingYieldEndWorkItem = work
+        bluetoothQueue.asyncAfter(deadline: .now() + .milliseconds(windowMs), execute: work)
+    }
+
+    private func clearSavedGlassesAfterOwnerLoss(reason: String) {
+        Bridge.log("LIVE: Owner loss (\(reason)) — clearing saved glasses")
+        pairingYieldAwaitingReclaim = false
+        pairingYieldActive = false
+        pairingYieldEndWorkItem?.cancel()
+        pairingYieldEndWorkItem = nil
+        forget()
+        Task { @MainActor in
+            DeviceStore.shared.apply("bluetooth", "default_wearable", "")
+            DeviceStore.shared.apply("bluetooth", "device_name", "")
+            DeviceStore.shared.apply("bluetooth", "device_address", "")
+        }
+        Bridge.saveSetting("default_wearable", "")
+        Bridge.saveSetting("device_name", "")
+        Bridge.saveSetting("device_address", "")
+        Bridge.sendTypedMessage("owner_replaced", body: ["reason": reason])
+    }
+
     func connectById(_ deviceName: String) {
+        if pairingYieldActive {
+            Bridge.log("LIVE: connectById blocked — pairing yield active")
+            return
+        }
         Bridge.log("connectById: \(deviceName)")
         // Save the device name for future reconnection
         UserDefaults.standard.set(deviceName, forKey: PREFS_DEVICE_NAME)
@@ -2302,9 +2395,14 @@ class MentraLive: NSObject, SGCManager {
         }
     }
 
-    private func handleReconnection() {
+    private func handleReconnection(allowDuringPairingYield: Bool = false) {
         if isKilled {
             Bridge.log("LIVE: Reconnection aborted - device has been killed")
+            return
+        }
+
+        if pairingYieldActive && !allowDuringPairingYield {
+            Bridge.log("LIVE: Reconnection aborted - pairing yield active")
             return
         }
 
@@ -2329,7 +2427,10 @@ class MentraLive: NSObject, SGCManager {
         reconnectAttempts += 1
 
         // RN keys off connectionState for reconnecting affordance during backoff (matches Android).
-        updateConnectionState(ConnTypes.CONNECTING)
+        // Keep DISCONNECTED during pairing yield probes so Phone A shows stand-down.
+        if !pairingYieldActive {
+            updateConnectionState(ConnTypes.CONNECTING)
+        }
 
         Bridge.log(
             "LIVE: Scheduling reconnection attempt \(reconnectAttempts) in \(Double(delayNanoseconds) / 1_000_000_000)s (max \(MAX_RECONNECT_ATTEMPTS))"
@@ -2574,6 +2675,10 @@ class MentraLive: NSObject, SGCManager {
             // framing regardless of what this side negotiated earlier. Start a fresh
             // wire epoch (clears v2-active state that would otherwise gate the
             // handshake off), then negotiate from the caps this message advertises.
+            pairingYieldAwaitingReclaim = false
+            pairingYieldActive = false
+            pairingYieldEndWorkItem?.cancel()
+            pairingYieldEndWorkItem = nil
             resetWireNegotiationState()
             parsePeerWireCaps(json)
             maybeSendWireHandshake()
@@ -2724,6 +2829,19 @@ class MentraLive: NSObject, SGCManager {
 
         case "pong":
             Bridge.log("LIVE: Received pong response - connection healthy")
+
+        case "entering_pairing_mode":
+            let windowMs = max(5_000, min(180_000, json["window_ms"] as? Int ?? 120_000))
+            Bridge.log("LIVE: Glasses entering pairing mode — yield \(windowMs)ms (no forget)")
+            enterPairingYield(windowMs: windowMs)
+            var body: [String: Any] = [
+                "window_ms": windowMs,
+                "reason": json["reason"] as? String ?? "user_gesture",
+            ]
+            if let txn = json["txn"] {
+                body["txn"] = txn
+            }
+            Bridge.sendTypedMessage("entering_pairing_mode", body: body)
 
         case "pairing_info":
             Bridge.sendPairingInfo(

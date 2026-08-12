@@ -356,6 +356,8 @@ class BluetoothSdkModule : Module() {
             "version_info",
             "pair_failure",
             "pairing_info",
+            "entering_pairing_mode",
+            "owner_replaced",
             "pairing_transfer_result",
             "pairing_transfer_status_result",
             "wipe_media_result",

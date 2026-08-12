@@ -1986,6 +1986,11 @@ class DeviceManager {
             return
         }
         initSGC(defaultWearable)
+        val live = sgc as? MentraLive
+        if (live?.isPairingYieldActive() == true) {
+            Bridge.log("MAN: connectDefault skipped — Mentra Live pairing yield active")
+            return
+        }
         searching = true
         sgc?.connectById(reconnectTarget)
         connectDefaultController()
@@ -2166,10 +2171,11 @@ class DeviceManager {
             controller?.disconnect()
             controller = null
         } else {
-            // Call forget first to stop timers/handlers/reconnect logic
+            // Typical abandonAttempt path: disconnect() already destroyed SGC and nulled
+            // this.sgc, so MentraLive.forget() never ran and Classic bonds stayed up —
+            // glasses keep IBRT ACL and stop BLE advertising. Tear bonds down here.
+            MentraLive.unbondBondedMentraLiveDevices(Bridge.getContext())
             sgc?.forget()
-
-            // Then disconnect to close connections
             disconnect()
         }
 

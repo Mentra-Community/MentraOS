@@ -131,7 +131,9 @@ export default function SelectGlassesBluetoothScreen() {
   // Secure Mentra Live ads with pairingMode=false are nearby but not pairable yet.
   // Legacy firmware (no secure flag) stays pairable even when pairingMode is unset/false.
   const isLivePairable = (device: Device) =>
-    device.pairingMode !== false || device.securePairingCapable === false
+    !isMentraLivePairingScan ||
+    device.pairingMode !== false ||
+    device.securePairingCapable === false
 
   useEffect(() => {
     void startScanAttempt()
@@ -146,9 +148,17 @@ export default function SelectGlassesBluetoothScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchResults])
 
+  // Scan list shows only pairable units. Non-pairing Mentra Live may still be remembered
+  // for the timeout nearby-hint, but must not appear in the selectable list.
   const pairableResults = useMemo(
-    () => visibleResults.filter((device) => isLivePairable(device)),
-    [visibleResults],
+    () =>
+      visibleResults.filter(
+        (device) =>
+          !isMentraLivePairingScan ||
+          device.pairingMode !== false ||
+          device.securePairingCapable === false,
+      ),
+    [visibleResults, isMentraLivePairingScan],
   )
   const hasNearbyNotInPairingMode = useMemo(
     () =>
@@ -156,6 +166,7 @@ export default function SelectGlassesBluetoothScreen() {
       visibleResults.some((device) => device.pairingMode === false && device.securePairingCapable !== false),
     [isMentraLivePairingScan, visibleResults],
   )
+  const listResults = isMentraLivePairingScan ? pairableResults : visibleResults
 
   useEffect(() => {
     // Timeout only when no pairable Mentra Live appeared; non-pairing nearby units still count
@@ -280,8 +291,6 @@ export default function SelectGlassesBluetoothScreen() {
     }
     if (device.securePairingCapable === false) {
       parts.push(translate("pairing:legacyFirmwareLabel"))
-    } else if (device.pairingMode === false) {
-      parts.push(translate("pairing:notInPairingModeLabel"))
     }
     return parts.join(" · ")
   }
@@ -305,16 +314,13 @@ export default function SelectGlassesBluetoothScreen() {
   }, [searchResults, matchesSelectedModel])
 
   useEffect(() => {
-    if (!isMentraLivePairingScan || scanTimedOut || connectingRef.current || visibleResults.length !== 1) {
-      return
-    }
-    if (!isLivePairable(visibleResults[0])) {
+    if (!isMentraLivePairingScan || scanTimedOut || connectingRef.current || pairableResults.length !== 1) {
       return
     }
 
     connectingRef.current = true
-    void triggerGlassesPairingGuide(visibleResults[0])
-  }, [isMentraLivePairingScan, scanTimedOut, visibleResults])
+    void triggerGlassesPairingGuide(pairableResults[0])
+  }, [isMentraLivePairingScan, scanTimedOut, pairableResults])
 
   const handleTryAgain = () => {
     // Restart scan in place — do not pop back to prep.
@@ -346,10 +352,10 @@ export default function SelectGlassesBluetoothScreen() {
                     : "pairing:noGlassesFoundHint"
                 }
               />
-              {visibleResults.length > 0 ? (
+              {listResults.length > 0 ? (
                 <ScrollView className="max-h-[220px] -mr-4 pr-4" contentContainerClassName="my-2">
                   <Group>
-                    {visibleResults.map((res: Device) => {
+                    {listResults.map((res: Device) => {
                       const deviceTitle =
                         deviceModel === DeviceTypes.AR99 ? getAr99ResultDisplayName(res) : selectedDisplayName
                       const deviceSubtitle = isMentraLivePairingScan
@@ -374,15 +380,15 @@ export default function SelectGlassesBluetoothScreen() {
               ) : null}
               <Button preset="primary" tx="pairing:tryAgain" onPress={handleTryAgain} className="w-full" />
             </View>
-          ) : visibleResults.length === 0 ||
-            (isMentraLivePairingScan && visibleResults.length === 1 && isLivePairable(visibleResults[0])) ? (
+          ) : listResults.length === 0 ||
+            (isMentraLivePairingScan && listResults.length === 1) ? (
             <View className="justify-center min-h-20 py-4">
               <ActivityIndicator size="large" color={theme.colors.foreground} />
             </View>
           ) : (
             <ScrollView className="max-h-[300px] -mr-4 pr-4" contentContainerClassName="my-4">
               <Group>
-                {visibleResults.map((res: Device) => {
+                {listResults.map((res: Device) => {
                   const deviceTitle = deviceModel === DeviceTypes.AR99 ? getAr99ResultDisplayName(res) : selectedDisplayName
                   const deviceSubtitle =
                     deviceModel === DeviceTypes.AR99

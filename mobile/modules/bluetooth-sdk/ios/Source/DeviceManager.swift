@@ -1657,6 +1657,10 @@ struct ViewState {
             return
         }
         initSGC(defaultWearable)
+        if let live = sgc as? MentraLive, live.isPairingYieldActive() {
+            Bridge.log("MAN: connectDefault skipped — Mentra Live pairing yield active")
+            return
+        }
         searching = true
         sgc?.connectById(reconnectTarget)
         connectDefaultController()

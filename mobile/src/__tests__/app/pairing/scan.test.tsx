@@ -417,6 +417,7 @@ describe("pairing scan screen", () => {
           name: "MENTRA_LIVE_BLE_001",
           address: "a",
           pairingCode: "A1B2",
+          pairingMode: true,
           securePairingCapable: true,
         },
         {
@@ -436,6 +437,39 @@ describe("pairing scan screen", () => {
       expect(getByText(/pairing:pairingCodeLabel:A1B2/)).toBeTruthy()
       expect(getByText(/pairing:pairingCodeLabel:C3D4/)).toBeTruthy()
     })
+  })
+
+  it("hides Mentra Live units that are not in pairing mode from the scan list", async () => {
+    setPlatformOS("android")
+    useCoreStore.setState({
+      searchResults: [
+        {
+          id: "idle",
+          model: "Mentra Live",
+          name: "MENTRA_LIVE_BLE_IDLE",
+          address: "idle",
+          pairingMode: false,
+          securePairingCapable: true,
+        },
+        {
+          id: "pairable",
+          model: "Mentra Live",
+          name: "MENTRA_LIVE_BLE_PAIR",
+          address: "pair",
+          pairingMode: true,
+          pairingCode: "ABCD",
+          securePairingCapable: true,
+        },
+      ],
+    })
+
+    const {getByText, queryByText} = render(<SelectGlassesBluetoothScreen />)
+
+    await waitFor(() => {
+      expect(getByText(/pairing:pairingCodeLabel:ABCD/)).toBeTruthy()
+    })
+    expect(queryByText(/MENTRA_LIVE_BLE_IDLE|IDLE/)).toBeNull()
+    expect(queryByText("pairing:notInPairingModeLabel")).toBeNull()
   })
 
   it("filters AR99 scan results to the selected AR99 project", async () => {

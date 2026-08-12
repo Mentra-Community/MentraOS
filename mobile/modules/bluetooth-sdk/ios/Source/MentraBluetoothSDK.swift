@@ -2268,6 +2268,8 @@ private func dispatchDiscoveredDevices(_ rawSearchResults: Any?) {
         case "pairing_info":
             activePairingTransferId = data["transfer_id"] as? String
             delegate?.mentraBluetoothSDK(self, didReceive: .raw(name: "pairing_info", values: data))
+        case "entering_pairing_mode", "owner_replaced":
+            delegate?.mentraBluetoothSDK(self, didReceive: .raw(name: eventName, values: data))
         case "pairing_transfer_result":
             let transferEvent = PairingTransferResultEvent(values: data)
             if let current = pendingPairingTransfer, current.matches(transferEvent) {

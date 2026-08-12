@@ -37,6 +37,8 @@ const PUBLIC_EVENT_NAMES = new Set<BluetoothSdkEventName>([
   "settings_ack",
   "pair_failure",
   "pairing_info",
+  "entering_pairing_mode",
+  "owner_replaced",
   "wipe_media_result",
   "pairing_transfer_result",
   "pairing_transfer_status_result",

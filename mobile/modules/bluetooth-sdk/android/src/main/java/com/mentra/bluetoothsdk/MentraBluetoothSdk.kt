@@ -435,8 +435,21 @@ class MentraBluetoothSdk private constructor(
                 cancelConnectionAttempt()
             }
         }
-        if (options.saveAsDefault && !isController) {
-            setDefaultDevice(device)
+        if (!isController) {
+            if (options.saveAsDefault) {
+                setDefaultDevice(device)
+            } else {
+                // Pairing uses saveAsDefault=false so we don't promote identity until
+                // handleDeviceReady — but MentraLive.connectToSmartGlasses needs the BLE
+                // MAC for direct GATT. Without it we fall back to a name scan that fails
+                // when Classic is still up and the glasses stop advertising.
+                DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "device_name", device.name)
+                DeviceStore.apply(
+                        ObservableStore.BLUETOOTH_CATEGORY,
+                        "device_address",
+                        device.address ?: "",
+                )
+            }
         }
         DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_wearable", device.model.deviceType)
         deviceManager.connectByName(device.name)
