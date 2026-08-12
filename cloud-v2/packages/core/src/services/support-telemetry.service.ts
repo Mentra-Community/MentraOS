@@ -8,7 +8,7 @@ const OUTBOX_TTL_MS = 7 * 24 * 60 * 60 * 1_000
 const LEASE_MS = 30_000
 const POLL_MS = 10_000
 const CAPTURE_TIMEOUT_MS = 15_000
-const DELIVERY_DRAIN_TIMEOUT_MS = CAPTURE_TIMEOUT_MS + 5_000
+const DELIVERY_LEASE_MS = CAPTURE_TIMEOUT_MS + 5_000
 let timer: ReturnType<typeof setInterval> | null = null
 let draining = false
 
@@ -81,13 +81,33 @@ export async function drainSupportTelemetryOutbox(): Promise<void> {
       ).lean()
       if (!row) break
 
+      const leaseStartedAt = new Date()
       const deliveryLease = await UserModel.findOneAndUpdate(
-        {mentraUserId: row.mentraUserId, supportTelemetryDeletedAt: null},
-        {$inc: {supportTelemetryDeliveriesInFlight: 1}},
+        {
+          mentraUserId: row.mentraUserId,
+          supportTelemetryDeletedAt: null,
+          $or: [
+            {supportTelemetryDeliveryLeaseUntil: null},
+            {supportTelemetryDeliveryLeaseUntil: {$lte: leaseStartedAt}},
+          ],
+        },
+        {$set: {supportTelemetryDeliveryLeaseUntil: new Date(leaseStartedAt.getTime() + DELIVERY_LEASE_MS)}},
         {new: true},
       ).lean()
       if (!deliveryLease) {
-        await SupportTelemetryOutboxModel.deleteOne({_id: row._id})
+        const active = await UserModel.exists({
+          mentraUserId: row.mentraUserId,
+          supportTelemetryDeletedAt: null,
+        })
+        if (!active) await SupportTelemetryOutboxModel.deleteOne({_id: row._id})
+        else {
+          // Another worker owns this user's delivery lease. Release this row
+          // for a later pass rather than dropping it.
+          await SupportTelemetryOutboxModel.updateOne(
+            {_id: row._id},
+            {$set: {leasedUntil: null, availableAt: new Date(Date.now() + 1_000)}},
+          )
+        }
         continue
       }
       try {
@@ -133,8 +153,11 @@ export async function drainSupportTelemetryOutbox(): Promise<void> {
         logger.warn({event: row.event, attempts, error: (error as Error)?.message}, "PostHog delivery failed")
       } finally {
         await UserModel.updateOne(
-          {mentraUserId: row.mentraUserId, supportTelemetryDeliveriesInFlight: {$gt: 0}},
-          {$inc: {supportTelemetryDeliveriesInFlight: -1}},
+          {
+            mentraUserId: row.mentraUserId,
+            supportTelemetryDeliveryLeaseUntil: deliveryLease.supportTelemetryDeliveryLeaseUntil,
+          },
+          {$set: {supportTelemetryDeliveryLeaseUntil: null}},
         ).catch((error) =>
           logger.warn({error: (error as Error)?.message}, "support telemetry delivery lease release deferred"),
         )
@@ -202,13 +225,12 @@ export function isPermanentCaptureStatus(status: number): boolean {
 
 /** Prevent account deletion from returning while a capture is still in flight. */
 export async function waitForSupportTelemetryDeliveries(mentraUserId: string): Promise<void> {
-  const deadline = Date.now() + DELIVERY_DRAIN_TIMEOUT_MS
-  while (Date.now() < deadline) {
-    const user = await UserModel.findOne({mentraUserId}).select({supportTelemetryDeliveriesInFlight: 1}).lean()
-    if (!user || (user.supportTelemetryDeliveriesInFlight ?? 0) <= 0) return
-    await new Promise((resolve) => setTimeout(resolve, 50))
+  for (;;) {
+    const user = await UserModel.findOne({mentraUserId}).select({supportTelemetryDeliveryLeaseUntil: 1}).lean()
+    const leasedUntil = user?.supportTelemetryDeliveryLeaseUntil
+    if (!leasedUntil || leasedUntil.getTime() <= Date.now()) return
+    await new Promise((resolve) => setTimeout(resolve, Math.min(50, leasedUntil.getTime() - Date.now())))
   }
-  logger.warn({mentraUserId}, "timed out waiting for support telemetry deliveries to drain")
 }
 
 class PermanentCaptureError extends Error {

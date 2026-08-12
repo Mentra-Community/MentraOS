@@ -32,8 +32,8 @@ const UserSchema = new Schema(
     /** Prevents an already-leased support event from being delivered after account deletion. */
     supportTelemetryDeletedAt: {type: Date, default: null},
 
-    /** Distributed delivery lease count; deletion waits for it to drain. */
-    supportTelemetryDeliveriesInFlight: {type: Number, required: true, default: 0},
+    /** Expiring distributed delivery lease; deletion waits for it to clear or expire. */
+    supportTelemetryDeliveryLeaseUntil: {type: Date, default: null},
   },
   {timestamps: {createdAt: true, updatedAt: false}, collection: "users"},
 )
