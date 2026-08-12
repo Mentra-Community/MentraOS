@@ -110,14 +110,34 @@ export async function drainSupportTelemetryOutbox(): Promise<void> {
         }
         continue
       }
+      let activeLeaseUntil = deliveryLease.supportTelemetryDeliveryLeaseUntil
       try {
         const email = await trustedEmail(row.mentraUserId)
-        // Identity lookup can be slow. Recheck under the delivery lease so a
-        // deletion that started meanwhile prevents capture; deletion itself
-        // waits for leases that passed this gate.
+        // Identity lookup can be slow, so renew the lease only after it finishes.
+        // The compare-and-set also rechecks the tombstone: if deletion started,
+        // or another worker recovered an expired lease, this capture is abandoned.
+        const renewedLeaseUntil = new Date(Date.now() + DELIVERY_LEASE_MS)
+        const renewedLease = await UserModel.findOneAndUpdate(
+          {
+            mentraUserId: row.mentraUserId,
+            supportTelemetryDeletedAt: null,
+            supportTelemetryDeliveryLeaseUntil: activeLeaseUntil,
+          },
+          {$set: {supportTelemetryDeliveryLeaseUntil: renewedLeaseUntil}},
+          {new: true},
+        ).lean()
+        if (!renewedLease) {
+          await SupportTelemetryOutboxModel.updateOne(
+            {_id: row._id},
+            {$set: {leasedUntil: null, availableAt: new Date(Date.now() + 1_000)}},
+          )
+          continue
+        }
+        activeLeaseUntil = renewedLease.supportTelemetryDeliveryLeaseUntil
         const stillActive = await UserModel.exists({
           mentraUserId: row.mentraUserId,
           supportTelemetryDeletedAt: null,
+          supportTelemetryDeliveryLeaseUntil: activeLeaseUntil,
         })
         if (!stillActive) {
           await SupportTelemetryOutboxModel.deleteOne({_id: row._id})
@@ -155,7 +175,7 @@ export async function drainSupportTelemetryOutbox(): Promise<void> {
         await UserModel.updateOne(
           {
             mentraUserId: row.mentraUserId,
-            supportTelemetryDeliveryLeaseUntil: deliveryLease.supportTelemetryDeliveryLeaseUntil,
+            supportTelemetryDeliveryLeaseUntil: activeLeaseUntil,
           },
           {$set: {supportTelemetryDeliveryLeaseUntil: null}},
         ).catch((error) =>
