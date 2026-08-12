@@ -225,7 +225,10 @@ function PostHogIdentityBridge({children}: PropsWithChildren) {
       // Email is intentionally omitted here. Cloud V2 resolves the verified
       // first-party address server-side and owns that PostHog person property.
       posthog.identify(user.id)
-    } else {
+    } else if (posthog.getDistinctId().startsWith("mu_")) {
+      // Reset only a session still identified as a Mentra user (mu_<ULID>).
+      // Resetting on every signed-out boot would mint a fresh anonymous
+      // PostHog person each time the app opens.
       posthog.reset()
     }
   }, [loading, posthog, user?.id])
