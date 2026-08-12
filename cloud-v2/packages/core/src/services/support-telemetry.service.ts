@@ -80,6 +80,7 @@ export async function drainSupportTelemetryOutbox(): Promise<void> {
         {sort: {createdAt: 1}, new: true},
       ).lean()
       if (!row) break
+      let activeRowLeaseUntil = row.leasedUntil
 
       const leaseStartedAt = new Date()
       const deliveryLease = await UserModel.findOneAndUpdate(
@@ -104,7 +105,7 @@ export async function drainSupportTelemetryOutbox(): Promise<void> {
           // Another worker owns this user's delivery lease. Release this row
           // for a later pass rather than dropping it.
           await SupportTelemetryOutboxModel.updateOne(
-            {_id: row._id},
+            {_id: row._id, leasedUntil: activeRowLeaseUntil},
             {$set: {leasedUntil: null, availableAt: new Date(Date.now() + 1_000)}},
           )
         }
@@ -127,13 +128,28 @@ export async function drainSupportTelemetryOutbox(): Promise<void> {
           {new: true},
         ).lean()
         if (!renewedLease) {
-          await SupportTelemetryOutboxModel.updateOne(
-            {_id: row._id},
-            {$set: {leasedUntil: null, availableAt: new Date(Date.now() + 1_000)}},
-          )
+          const active = await UserModel.exists({
+            mentraUserId: row.mentraUserId,
+            supportTelemetryDeletedAt: null,
+          })
+          if (!active) await SupportTelemetryOutboxModel.deleteOne({_id: row._id})
+          else {
+            await SupportTelemetryOutboxModel.updateOne(
+              {_id: row._id, leasedUntil: activeRowLeaseUntil},
+              {$set: {leasedUntil: null, availableAt: new Date(Date.now() + 1_000)}},
+            )
+          }
           continue
         }
         activeLeaseUntil = renewedLease.supportTelemetryDeliveryLeaseUntil
+        const renewedRowLeaseUntil = new Date(Date.now() + LEASE_MS)
+        const renewedRow = await SupportTelemetryOutboxModel.findOneAndUpdate(
+          {_id: row._id, deliveredAt: null, leasedUntil: activeRowLeaseUntil},
+          {$set: {leasedUntil: renewedRowLeaseUntil}},
+          {new: true},
+        ).lean()
+        if (!renewedRow) continue
+        activeRowLeaseUntil = renewedRow.leasedUntil
         const stillActive = await UserModel.exists({
           mentraUserId: row.mentraUserId,
           supportTelemetryDeletedAt: null,
@@ -152,19 +168,19 @@ export async function drainSupportTelemetryOutbox(): Promise<void> {
           email,
         })
         await SupportTelemetryOutboxModel.updateOne(
-          {_id: row._id},
+          {_id: row._id, leasedUntil: activeRowLeaseUntil},
           {$set: {deliveredAt: new Date(), leasedUntil: null}},
         )
       } catch (error) {
         if (error instanceof PermanentCaptureError) {
-          await SupportTelemetryOutboxModel.deleteOne({_id: row._id})
+          await SupportTelemetryOutboxModel.deleteOne({_id: row._id, leasedUntil: activeRowLeaseUntil})
           logger.error({event: row.event, status: error.status}, "dropping permanently rejected PostHog event")
           continue
         }
         const attempts = row.attempts + 1
         const delayMs = Math.min(60 * 60 * 1_000, 5_000 * 2 ** Math.min(attempts, 8))
         await SupportTelemetryOutboxModel.updateOne(
-          {_id: row._id},
+          {_id: row._id, leasedUntil: activeRowLeaseUntil},
           {
             $set: {availableAt: new Date(Date.now() + delayMs), leasedUntil: null},
             $inc: {attempts: 1},
