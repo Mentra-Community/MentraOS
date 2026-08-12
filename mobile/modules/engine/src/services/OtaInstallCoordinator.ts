@@ -1020,10 +1020,11 @@ class OtaInstallCoordinator {
 
     if (!connected) {
       console.log("[OTA_PROGRESS] connect-edge: disconnected")
-      // Also drop a pending query-reply fallback: firing ota_start into a dead
-      // link can only produce a false "failed" state, and the reconnect edge
-      // re-queries and re-arms this fallback anyway.
+      // Also drop pending query/retry sends: firing ota_start into a dead link
+      // can only produce a false "failed" state. Reconnect arbitration first
+      // queries durable status and re-arms the one permitted fallback.
       this.clearQueryReplyTimeout()
+      this.clearRetryTimeout()
       return
     }
 
@@ -1436,7 +1437,7 @@ class OtaInstallCoordinator {
       // logical start was accepted. Its application-level ack may be lost while
       // the update continues; never create another transaction or fail a live,
       // restarting, or completed session because that stale promise timed out.
-      if (this.hasFirstActivity || this.computeDisplayStateNow() !== "starting") {
+      if (this.hasFirstActivity) {
         ownership.outcome = "acknowledged"
         console.log("[OTA_PROGRESS] ota_start rejection arrived after OTA activity — ignoring stale rejection")
         return
@@ -1445,6 +1446,12 @@ class OtaInstallCoordinator {
       ownership.outcome = "rejected"
       if (!this.attached) return
       this.clearStuckTimeout()
+      if (!isGlassesConnected(useGlassesStore.getState().connection)) {
+        console.log(
+          "[OTA_PROGRESS] ota_start request ended while disconnected; deferring retry to reconnect arbitration",
+        )
+        return
+      }
       if (this.retryCount < MAX_RETRIES - 1) {
         this.retryCount += 1
         const retryIntervalMs = this.isLegacySessionShapeNow() ? LEGACY_RETRY_INTERVAL_MS : RETRY_INTERVAL_MS
@@ -1455,6 +1462,10 @@ class OtaInstallCoordinator {
         )
         this.retryTimeout = setTimeout(() => {
           this.retryTimeout = null
+          if (!isGlassesConnected(useGlassesStore.getState().connection)) {
+            console.log("[OTA_PROGRESS] ota_start retry paused while disconnected; reconnect arbitration will resume")
+            return
+          }
           void this.sendOtaStartWithWatchdogs()
         }, retryIntervalMs)
       } else {
@@ -1467,8 +1478,10 @@ class OtaInstallCoordinator {
   /**
    * After sending ota_query_status, wait QUERY_REPLY_TIMEOUT_MS for the glasses
    * to reply with a useful ota_status. A unified session may start again only
-   * after an explicit "idle" reply. Legacy builds ignore ota_query_status, so
-   * their established timeout fallback remains the compatibility path.
+   * after an explicit "idle" reply, or after a locally rejected ota_start has
+   * produced no activity and no authoritative reply across reconnect. Legacy
+   * builds ignore ota_query_status, so their established timeout fallback
+   * remains the compatibility path.
    *
    * Cleared as soon as a non-idle otaStatus or any otaProgress lands in the
    * store (see the reaction block above). An idle reply intentionally does NOT
@@ -1488,7 +1501,8 @@ class OtaInstallCoordinator {
       const legacySession = this.isLegacySessionShapeNow()
       if (!legacySession && hasRecoveringOtaReply(state.otaStatus, state.otaProgress)) return
       const explicitIdle = state.otaStatus?.status === "idle"
-      if (!legacySession && !explicitIdle) {
+      const rejectedStart = this.otaStartOwnership?.outcome === "rejected"
+      if (!legacySession && !explicitIdle && !rejectedStart) {
         console.log(
           `[OTA_PROGRESS] watchdog: ota_query_status got no authoritative idle reply in ${QUERY_REPLY_TIMEOUT_MS}ms (reason=${reason}); preserving the existing session`,
         )
@@ -1496,11 +1510,10 @@ class OtaInstallCoordinator {
       }
       // Don't fire if we've left the active phase (e.g. user backed out, error overlay).
       if (isTerminalForWatchdog(this.computeDisplayStateNow())) return
-      console.log(
-        `[OTA_PROGRESS] watchdog: ${
-          explicitIdle ? "idle ota_status" : "legacy query timeout"
-        } (reason=${reason}), falling back to ota_start`,
-      )
+      let fallbackCause = "legacy query timeout"
+      if (explicitIdle) fallbackCause = "idle ota_status"
+      else if (rejectedStart) fallbackCause = "rejected ota_start with no recovery reply"
+      console.log(`[OTA_PROGRESS] watchdog: ${fallbackCause} (reason=${reason}), falling back to ota_start`)
       this.retryCount = 0
       if (this.otaStartOwnership?.outcome !== "pending" && !this.prepareFreshOtaStartAttempt()) return
       void this.sendOtaStartWithWatchdogs()

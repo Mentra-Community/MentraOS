@@ -227,6 +227,76 @@ describe("OtaInstallCoordinator ota_start request ownership", () => {
     expect(otaInstallCoordinator.snapshot().displayState).toBe("restarting")
   })
 
+  it("defers a rejected start while disconnected and retries only after reconnect reconciliation is silent", async () => {
+    setGlassesConnected()
+    let rejectStart!: (reason: Error) => void
+    bluetoothSdkMock.startOtaUpdate.mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          rejectStart = reject
+        }),
+    )
+    otaInstallCoordinator.attach()
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+    rejectStart(new Error("native request failed during disconnect"))
+    await flushNativeStartPromise()
+    await jest.advanceTimersByTimeAsync(RETRY_INTERVAL_MS * MAX_RETRIES)
+
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+    expect(otaInstallCoordinator.snapshot().errorMsg).toBe("")
+
+    setGlassesConnected()
+    expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalledTimes(1)
+    await jest.advanceTimersByTimeAsync(QUERY_REPLY_TIMEOUT_MS - 1)
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+
+    await jest.advanceTimersByTimeAsync(1)
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(2)
+  })
+
+  it("preserves an active session reported while reconciling a disconnected rejected start", async () => {
+    setGlassesConnected()
+    let rejectStart!: (reason: Error) => void
+    bluetoothSdkMock.startOtaUpdate.mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          rejectStart = reject
+        }),
+    )
+    otaInstallCoordinator.attach()
+
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+    rejectStart(new Error("native request failed during disconnect"))
+    await flushNativeStartPromise()
+
+    setGlassesConnected()
+    expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalledTimes(1)
+    useGlassesStore.getState().setOtaStatus(inProgressStatus({stepPercent: 1, overallPercent: 1}))
+    await jest.advanceTimersByTimeAsync(QUERY_REPLY_TIMEOUT_MS * 2)
+
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("updating")
+  })
+
+  it("cancels a scheduled start retry on disconnect so reconnect remains query-first", async () => {
+    setGlassesConnected()
+    bluetoothSdkMock.startOtaUpdate.mockRejectedValueOnce(new Error("native request failed"))
+    otaInstallCoordinator.attach()
+    await flushNativeStartPromise()
+
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+    setGlassesConnected()
+    expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalledTimes(1)
+
+    await jest.advanceTimersByTimeAsync(RETRY_INTERVAL_MS)
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+
+    await jest.advanceTimersByTimeAsync(QUERY_REPLY_TIMEOUT_MS - RETRY_INTERVAL_MS)
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(2)
+  })
+
   it("adopts a pending request on Retry and never queues a second ota_start after its ack", async () => {
     setGlassesConnected()
     let resolveFirst!: () => void
