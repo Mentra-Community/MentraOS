@@ -158,6 +158,12 @@ const en = {
       "Press the power button 5 times quickly. The LED flashes and the glasses speak a 4-character code (0–9, A–F). Match that code on the scan list if more than one unit appears.",
     noGlassesFound: "No glasses found",
     noGlassesFoundHint: "Make sure you pressed the power button 5 times quickly, then try again.",
+    nearbyNotInPairingModeHint:
+      "Nearby Mentra Live glasses were found, but they are not in pairing mode. Press the power button 5 times quickly, then try again.",
+    notInPairingModeLabel: "Not in pairing mode",
+    notInPairingModeAlertTitle: "Enter pairing mode",
+    notInPairingModeAlertMessage:
+      "Press the power button 5 times quickly. The LED flashes and the glasses speak a 4-character code. Then select the glasses again.",
     tryAgain: "Try Again",
     pairingCodeLabel: "Code {{code}}",
     legacyFirmwareLabel: "Legacy firmware",

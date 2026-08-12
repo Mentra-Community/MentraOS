@@ -281,13 +281,9 @@ describe("pairing loading screen", () => {
     })
   })
 
-  it("finalizes ownership without wipe when media wipe is disabled", async () => {
+  it("ignores had_previous_bond and navigates to success under Design A open reclaim", async () => {
     const showAlert = require("@/utils/AlertUtils").default as jest.Mock
     const {bluetoothSdkMock} = require("@/test-utils/mockBluetoothSdk")
-    bluetoothSdkMock.wipeMediaForPairing = jest.fn(() => Promise.resolve({success: true}))
-    bluetoothSdkMock.finalizePairingTransfer = jest.fn(() =>
-      Promise.resolve({success: true, transfer_id: "T1", operation: "finalize"}),
-    )
 
     render(<GlassesPairingLoadingScreen />)
 
@@ -302,18 +298,21 @@ describe("pairing loading screen", () => {
     act(() => {
       useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
     })
+    act(() => {
+      jest.advanceTimersByTime(1_000)
+    })
 
     await waitFor(() => {
-      expect(bluetoothSdkMock.finalizePairingTransfer).toHaveBeenCalled()
+      expect(replace).toHaveBeenCalledWith("/pairing/success", {deviceModel: "Mentra Live"})
     })
+    expect(bluetoothSdkMock.finalizePairingTransfer).not.toHaveBeenCalled()
     expect(bluetoothSdkMock.wipeMediaForPairing).not.toHaveBeenCalled()
+    expect(bluetoothSdkMock.abortPairingTransfer).not.toHaveBeenCalled()
     expect(showAlert).not.toHaveBeenCalled()
   })
 
-  it("aborts an unresolved ownership transfer when the user cancels", async () => {
+  it("cancels pairing with goBack and does not run ownership abort", async () => {
     const {bluetoothSdkMock} = require("@/test-utils/mockBluetoothSdk")
-    bluetoothSdkMock.finalizePairingTransfer = jest.fn(() => new Promise(() => undefined))
-
     const {getByText} = render(<GlassesPairingLoadingScreen />)
 
     act(() => {
@@ -325,53 +324,10 @@ describe("pairing loading screen", () => {
       })
     })
 
-    await waitFor(() => {
-      expect(bluetoothSdkMock.finalizePairingTransfer).toHaveBeenCalled()
-    })
-
     fireEvent.press(getByText("cancel-pairing"))
 
-    await waitFor(() => {
-      expect(bluetoothSdkMock.abortPairingTransfer).toHaveBeenCalled()
-      expect(replace).toHaveBeenCalledWith("/pairing/prep", {deviceModel: "Mentra Live"})
-    })
-    expect(goBack).not.toHaveBeenCalled()
-  })
-
-  it("recovers when finalize times out after the transfer was committed", async () => {
-    const {bluetoothSdkMock} = require("@/test-utils/mockBluetoothSdk")
-    bluetoothSdkMock.finalizePairingTransfer = jest.fn(() => Promise.reject(new Error("finalize_timeout")))
-    bluetoothSdkMock.getPairingTransferStatus = jest.fn(() =>
-      Promise.resolve({
-        transfer_id: "ABCDEF0123456789",
-        state: "committed",
-        terminal_operation: "finalize",
-      }),
-    )
-
-    render(<GlassesPairingLoadingScreen />)
-
-    act(() => {
-      emitBluetoothSdkEvent("pairing_info", {
-        had_previous_bond: true,
-        secure_pairing_capable: true,
-        transfer_id: "ABCDEF0123456789",
-        classic_bond_ready: true,
-      })
-      useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
-    })
-
-    await waitFor(() => {
-      expect(bluetoothSdkMock.getPairingTransferStatus).toHaveBeenCalledWith("ABCDEF0123456789")
-    })
+    expect(goBack).toHaveBeenCalled()
     expect(bluetoothSdkMock.abortPairingTransfer).not.toHaveBeenCalled()
-
-    act(() => {
-      jest.advanceTimersByTime(1_000)
-    })
-
-    await waitFor(() => {
-      expect(replace).toHaveBeenCalledWith("/pairing/success", {deviceModel: "Mentra Live"})
-    })
+    expect(replace).not.toHaveBeenCalledWith("/pairing/prep", {deviceModel: "Mentra Live"})
   })
 })

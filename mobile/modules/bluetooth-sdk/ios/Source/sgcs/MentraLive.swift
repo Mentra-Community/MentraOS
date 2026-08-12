@@ -873,6 +873,18 @@ extension MentraLive: CBCentralManagerDelegate {
             if !isReconnectTarget && advertisesPairingFlag(advertisementData)
                 && !isPairingDiscoverable(advertisementData)
             {
+                // Surface non-pairing Mentra Live so scan isn't empty; RN blocks connect
+                // until pairingMode is true (OS-1615).
+                let trailer = parseSecurePairingTrailer(advertisementData)
+                discoveredPeripherals[name] = peripheral
+                emitDiscoveredDevice(
+                    name,
+                    identifier: peripheral.identifier.uuidString,
+                    rssi: rssi?.intValue,
+                    pairingMode: false,
+                    pairingCode: nil,
+                    securePairingCapable: trailer.secureCapable
+                )
                 return
             }
 
