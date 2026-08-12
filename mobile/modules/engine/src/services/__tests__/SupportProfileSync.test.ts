@@ -66,6 +66,7 @@ mock.module("../CloudClientService", () => ({
 const {
   buildSnapshot,
   recordSupportProfileConnectionFailure,
+  retryDelayForSendFailure,
   retryDelayForSupportProfileResult,
   snapshotFingerprint,
   startSupportProfileSync,
@@ -107,6 +108,13 @@ describe("SupportProfileSync", () => {
     expect(retryDelayForSupportProfileResult({status: "deduplicated"})).toBeNull()
     expect(retryDelayForSupportProfileResult({status: "stale"})).toBe(30_000)
     expect(retryDelayForSupportProfileResult({status: "rate_limited", retryAfterMs: 42_000})).toBe(42_000)
+  })
+
+  test("backs failed sends off exponentially toward the heartbeat cadence", () => {
+    expect(retryDelayForSendFailure(1)).toBe(30_000)
+    expect(retryDelayForSendFailure(2)).toBe(60_000)
+    expect(retryDelayForSendFailure(5)).toBe(480_000)
+    expect(retryDelayForSendFailure(50)).toBe(6 * 60 * 60_000)
   })
 
   test("does not treat observation time as a meaningful transition", () => {

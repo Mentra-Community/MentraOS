@@ -22,6 +22,7 @@ let lastSentFingerprint: string | null = null
 let queuedFingerprint: string | null = null
 let sendingGeneration: number | null = null
 let syncGeneration = 0
+let consecutiveSendFailures = 0
 let lastFailure: {code: string; stage: string} | null = null
 let lastConnectionState: string | null = null
 
@@ -52,6 +53,7 @@ export function stopSupportProfileSync(): void {
   lastSentFingerprint = null
   queuedFingerprint = null
   sendingGeneration = null
+  consecutiveSendFailures = 0
   lastFailure = null
   lastConnectionState = null
 }
@@ -96,6 +98,7 @@ async function sendCurrentSnapshot(force: boolean, generation = syncGeneration):
   try {
     const result = await cloudClientService.core.supportProfile.update(snapshot)
     if (generation !== syncGeneration || !unsubscribe) return
+    consecutiveSendFailures = 0
     retryDelayMs = retryDelayForSupportProfileResult(result)
     if (retryDelayMs === null) {
       lastSentFingerprint = fingerprint
@@ -105,8 +108,12 @@ async function sendCurrentSnapshot(force: boolean, generation = syncGeneration):
     }
   } catch (error) {
     if (generation !== syncGeneration || !unsubscribe) return
-    console.warn("supportProfile: Cloud V2 update failed:", error instanceof Error ? error.message : error)
-    retryDelayMs = RETRY_MS
+    consecutiveSendFailures += 1
+    retryDelayMs = retryDelayForSendFailure(consecutiveSendFailures)
+    console.warn(
+      `supportProfile: Cloud V2 update failed (retry in ${Math.round(retryDelayMs / 1_000)}s):`,
+      error instanceof Error ? error.message : error,
+    )
   } finally {
     const generationIsActive = generation === syncGeneration && sendingGeneration === generation && Boolean(unsubscribe)
     if (generationIsActive) {
@@ -137,6 +144,15 @@ export function retryDelayForSupportProfileResult(result: {
     return Math.max(1_000, result.retryAfterMs ?? RATE_LIMIT_RETRY_MS)
   }
   return RETRY_MS
+}
+
+/**
+ * Support freshness is not worth an aggressive retry loop. A snapshot the
+ * server keeps rejecting (skewed clock, deleted account, signed-out host)
+ * backs off exponentially until it converges on the heartbeat cadence.
+ */
+export function retryDelayForSendFailure(consecutiveFailures: number): number {
+  return Math.min(HEARTBEAT_MS, RETRY_MS * 2 ** Math.min(Math.max(consecutiveFailures, 1) - 1, 10))
 }
 
 export function buildSnapshot(observedAt = new Date()): SupportStateInput {
@@ -194,12 +210,6 @@ export function recordSupportProfileConnectionFailure(error: unknown, stage: str
             ? "connect_timeout"
             : "connect_failed"
   lastFailure = {code, stage: stage.replace(/[^a-zA-Z0-9_.-]/g, "_").slice(0, 64)}
-  scheduleMeaningfulUpdate()
-}
-
-export function clearSupportProfileConnectionFailure(): void {
-  if (!lastFailure) return
-  lastFailure = null
   scheduleMeaningfulUpdate()
 }
 
