@@ -128,7 +128,9 @@ export async function updateSupportProfile(
         {upsert: true},
       )
     } catch (error) {
-      if ((error as {code?: number})?.code === 11000 && attempt === 0) continue
+      // Duplicate key means we lost a write race. Let the loop bound decide
+      // when to stop retrying and fall through to the stale answer below.
+      if ((error as {code?: number})?.code === 11000) continue
       throw error
     }
     await assertActiveOrCleanup(identity.mentraUserId)
