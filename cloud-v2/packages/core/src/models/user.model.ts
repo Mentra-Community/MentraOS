@@ -29,8 +29,10 @@ const UserSchema = new Schema(
     /** The OEM's own user identifier (their `sub` claim). */
     tenantUserId: {type: String, required: true},
 
-    /** Tombstone set at the start of account deletion; suppresses any further
-     * support telemetry storage or delivery for this user. */
+    /** Tombstone set at the start of account deletion. Prevents new support
+     * telemetry storage or delivery; a capture already in flight when it is
+     * set may still reach PostHog, whose retention policy governs delivered
+     * data (see confirmAccountDeletion). */
     supportTelemetryDeletedAt: {type: Date, default: null},
   },
   {timestamps: {createdAt: true, updatedAt: false}, collection: "users"},

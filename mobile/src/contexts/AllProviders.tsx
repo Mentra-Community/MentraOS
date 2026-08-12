@@ -2,7 +2,7 @@ import {BottomSheetModalProvider} from "@gorhom/bottom-sheet"
 import * as Sentry from "@sentry/react-native"
 import {Stack} from "expo-router"
 import {PostHogProvider, usePostHog} from "posthog-react-native"
-import {Suspense, FunctionComponent, PropsWithChildren, useEffect, useMemo} from "react"
+import {Suspense, FunctionComponent, PropsWithChildren, useEffect, useMemo, useRef} from "react"
 import {Platform, View} from "react-native"
 import ErrorBoundary from "react-native-error-boundary"
 import {GestureHandlerRootView} from "react-native-gesture-handler"
@@ -218,6 +218,7 @@ type WrapperComponent = FunctionComponent<{children: React.ReactNode}>
 function PostHogIdentityBridge({children}: PropsWithChildren) {
   const posthog = usePostHog()
   const {user, loading} = useAuth()
+  const identifiedThisSession = useRef(false)
 
   useEffect(() => {
     if (loading) return
@@ -225,15 +226,24 @@ function PostHogIdentityBridge({children}: PropsWithChildren) {
       // Email is intentionally omitted here. Cloud V2 resolves the verified
       // first-party address server-side and owns that PostHog person property.
       posthog.identify(user.id)
-    } else if (posthog.getDistinctId().startsWith("mu_")) {
-      // Reset only a session still identified as a Mentra user (mu_<ULID>).
-      // Resetting on every signed-out boot would mint a fresh anonymous
-      // PostHog person each time the app opens.
+      identifiedThisSession.current = true
+    } else if (identifiedThisSession.current || !isAnonymousDistinctId(posthog.getDistinctId())) {
+      // Reset only a still-identified session (sign-out, or a boot that kept a
+      // prior identity from any auth provider). Resetting on every signed-out
+      // boot would mint a fresh anonymous PostHog person each time the app opens.
       posthog.reset()
+      identifiedThisSession.current = false
     }
   }, [loading, posthog, user?.id])
 
   return <>{children}</>
+}
+
+/** PostHog's own anonymous distinct ids are UUIDs; every identity our auth
+ * providers pass to identify() (Cloud V2 `mu_<ULID>`, Authing hex id) is not.
+ * An empty string means PostHog has not initialized yet — treat as anonymous. */
+function isAnonymousDistinctId(distinctId: string): boolean {
+  return !distinctId || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(distinctId)
 }
 
 export function withWrappers(...wrappers: Array<WrapperComponent>) {
