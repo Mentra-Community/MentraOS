@@ -1,14 +1,12 @@
 import {createHash, createHmac} from "node:crypto"
 import {createLogger} from "@mentra/cloud-shared"
 import {SupportProfileModel} from "../models/support-profile.model"
-import {SupportTelemetryOutboxModel} from "../models/support-telemetry-outbox.model"
 import {UserModel} from "../models/user.model"
-import {enqueueSupportTelemetry} from "./support-telemetry.service"
+import {getUserById} from "./account/gotrue.client"
 
 export const SUPPORT_DEVICE_HISTORY_LIMIT = 12
 export const SUPPORT_IDENTICAL_UPDATE_MIN_MS = 60_000
-export const SUPPORT_RATE_WINDOW_MS = 60 * 60_000
-export const SUPPORT_RATE_WINDOW_LIMIT = 120
+const CAPTURE_TIMEOUT_MS = 10_000
 const logger = createLogger("core").child({service: "support-profile"})
 
 export interface SupportStateInput {
@@ -38,9 +36,8 @@ export interface SupportStateInput {
 }
 
 export interface SupportProfileUpdateResult {
-  status: "accepted" | "deduplicated" | "stale" | "rate_limited"
+  status: "accepted" | "deduplicated" | "stale"
   observedAt: string
-  retryAfterMs?: number
 }
 
 export class SupportProfileAccountDeletedError extends Error {
@@ -64,18 +61,25 @@ type StoredDevice = {
   observedAt: Date
 }
 
+/**
+ * Last-write-wins support snapshot. This is an operational read model, not an
+ * event log: concurrent phone writes may overwrite each other and that is
+ * fine — support only ever needs the latest picture.
+ */
 export async function updateSupportProfile(
   identity: {mentraUserId: string; tenantId: string},
   input: SupportStateInput,
 ): Promise<SupportProfileUpdateResult> {
-  // Do not serve create-on-miss traffic until the unique user index is usable.
+  // The unique mentraUserId index must exist before upserts can race safely.
   await SupportProfileModel.init()
   await assertActiveOrCleanup(identity.mentraUserId)
   const observedAt = new Date(input.observedAt)
   const receivedAt = new Date()
   const fingerprint = fingerprintFor(input)
 
-  for (let attempt = 0; attempt < 5; attempt += 1) {
+  // Two concurrent first-ever writes can both attempt the insert half of the
+  // upsert; the unique index turns the loser into a single retry.
+  for (let attempt = 0; attempt < 2; attempt += 1) {
     const current = await SupportProfileModel.findOne({mentraUserId: identity.mentraUserId}).lean()
     if (current) {
       if (observedAt < current.host.observedAt) {
@@ -87,32 +91,23 @@ export async function updateSupportProfile(
       ) {
         return {status: "deduplicated", observedAt: current.host.observedAt.toISOString()}
       }
-      const inCurrentWindow = receivedAt.getTime() - current.rateWindowStartedAt.getTime() < SUPPORT_RATE_WINDOW_MS
-      if (inCurrentWindow && current.rateWindowCount >= SUPPORT_RATE_WINDOW_LIMIT) {
-        return {
-          status: "rate_limited",
-          observedAt: current.host.observedAt.toISOString(),
-          retryAfterMs: Math.max(
-            1_000,
-            current.rateWindowStartedAt.getTime() + SUPPORT_RATE_WINDOW_MS - receivedAt.getTime(),
-          ),
-        }
-      }
+    }
 
-      const deviceKey = input.device ? deriveDeviceKey(input.device.hardwareId, input.device.model) : null
-      const recordConnectedAt = shouldRecordConnectedAt(
-        current.host.connectionState,
-        current.currentDeviceKey ?? null,
-        input.host.connectionState,
-        deviceKey,
-      )
-      const device = input.device ? toStoredDevice(input.device, observedAt, recordConnectedAt) : null
-      const devices = mergeDevice(current.devices as unknown as StoredDevice[], device)
-      const host = toStoredHost(input, observedAt, receivedAt)
-      const currentDeviceKey = device?.deviceKey ?? current.currentDeviceKey ?? null
-      const next = {...current, host, devices, currentDeviceKey}
-      const updated = await SupportProfileModel.findOneAndUpdate(
-        {_id: current._id, revision: current.revision},
+    const deviceKey = input.device ? deriveDeviceKey(input.device.hardwareId, input.device.model) : null
+    const recordConnectedAt = shouldRecordConnectedAt(
+      current?.host.connectionState ?? "disconnected",
+      current?.currentDeviceKey ?? null,
+      input.host.connectionState,
+      deviceKey,
+    )
+    const device = input.device ? toStoredDevice(input.device, observedAt, recordConnectedAt) : null
+    const devices = mergeDevice((current?.devices as unknown as StoredDevice[]) ?? [], device)
+    const host = toStoredHost(input, observedAt, receivedAt)
+    const currentDeviceKey = device?.deviceKey ?? current?.currentDeviceKey ?? null
+    const next = {host, devices, currentDeviceKey}
+    try {
+      await SupportProfileModel.updateOne(
+        {mentraUserId: identity.mentraUserId},
         {
           $set: {
             tenantId: identity.tenantId,
@@ -121,51 +116,21 @@ export async function updateSupportProfile(
             currentDeviceKey,
             lastFingerprint: fingerprint,
             lastAcceptedAt: receivedAt,
-            rateWindowStartedAt: inCurrentWindow ? current.rateWindowStartedAt : receivedAt,
-            rateWindowCount: inCurrentWindow ? current.rateWindowCount + 1 : 1,
           },
-          $inc: {revision: 1},
         },
-        {new: true},
-      ).lean()
-      if (!updated) continue
-      await assertActiveOrCleanup(identity.mentraUserId)
-      await enqueueMeaningfulTransitions(
-        identity.mentraUserId,
-        current,
-        next,
-        `${current.revision + 1}:${receivedAt.getTime()}`,
+        {upsert: true},
       )
-      return {status: "accepted", observedAt: observedAt.toISOString()}
-    }
-
-    const host = toStoredHost(input, observedAt, receivedAt)
-    const device = input.device
-      ? toStoredDevice(input.device, observedAt, input.host.connectionState === "connected")
-      : null
-    const draft = {
-      host,
-      devices: device ? [device] : [],
-      currentDeviceKey: device?.deviceKey ?? null,
-    }
-    try {
-      await SupportProfileModel.create({
-        ...identity,
-        ...draft,
-        lastFingerprint: fingerprint,
-        lastAcceptedAt: receivedAt,
-        rateWindowStartedAt: receivedAt,
-        rateWindowCount: 1,
-        revision: 0,
-      })
-      await assertActiveOrCleanup(identity.mentraUserId)
-      await enqueueMeaningfulTransitions(identity.mentraUserId, null, draft, `0:${receivedAt.getTime()}`)
-      return {status: "accepted", observedAt: observedAt.toISOString()}
     } catch (error) {
-      if ((error as {code?: number})?.code !== 11000) throw error
+      if ((error as {code?: number})?.code === 11000 && attempt === 0) continue
+      throw error
     }
+    await assertActiveOrCleanup(identity.mentraUserId)
+    // Analytics is best-effort fire-and-forget: a lost PostHog event never
+    // fails, delays, or retries against the canonical profile write.
+    void captureMeaningfulTransitions(identity.mentraUserId, current, next, receivedAt)
+    return {status: "accepted", observedAt: observedAt.toISOString()}
   }
-  throw new Error("support profile update conflicted repeatedly")
+  throw new Error("support profile upsert conflicted repeatedly")
 }
 
 export function fingerprintFor(input: SupportStateInput): string {
@@ -314,45 +279,84 @@ function currentDevice(profile: any): any | null {
   return profile.devices?.find((device: any) => device.deviceKey === profile.currentDeviceKey) ?? null
 }
 
-/**
- * Analytics mirroring is best-effort by design: the canonical profile write
- * has already succeeded, so a failed outbox enqueue only loses a PostHog
- * transition, never support data. `revision` in the transition id keeps
- * retried enqueues idempotent via the outbox's unique transitionKey.
- */
-async function enqueueMeaningfulTransitions(
-  mentraUserId: string,
-  previous: any | null,
-  next: any,
-  transitionId: string,
-): Promise<void> {
-  const events = meaningfulTransitions(previous, next)
-  if (events.length === 0) return
-  const eventAt = next.host.observedAt
-  const properties = posthogPropertiesFor(next)
-  for (const event of events) {
-    try {
-      await enqueueSupportTelemetry({
-        mentraUserId,
-        transitionKey: `${mentraUserId}:${transitionId}:${event}`,
-        event,
-        eventAt,
-        properties,
-      })
-    } catch (error) {
-      logger.warn({mentraUserId, event, error: (error as Error)?.message}, "support telemetry enqueue dropped")
-    }
-  }
-}
-
 async function assertActiveOrCleanup(mentraUserId: string): Promise<void> {
   const active = await UserModel.exists({mentraUserId, supportTelemetryDeletedAt: null})
   if (active) return
-  await Promise.all([
-    SupportProfileModel.deleteOne({mentraUserId}),
-    SupportTelemetryOutboxModel.deleteMany({mentraUserId}),
-  ])
+  await SupportProfileModel.deleteOne({mentraUserId})
   throw new SupportProfileAccountDeletedError()
+}
+
+async function captureMeaningfulTransitions(
+  mentraUserId: string,
+  previous: any | null,
+  next: any,
+  receivedAt: Date,
+): Promise<void> {
+  if (!posthogApiKey()) return
+  const events = meaningfulTransitions(previous, next)
+  if (events.length === 0) return
+  try {
+    const email = await trustedEmail(mentraUserId)
+    const properties = posthogPropertiesFor(next)
+    for (const event of events) {
+      await sendCapture({
+        distinctId: mentraUserId,
+        event,
+        eventAt: next.host.observedAt,
+        insertId: `${mentraUserId}:${receivedAt.getTime()}:${event}`,
+        properties,
+        email,
+      })
+    }
+  } catch (error) {
+    logger.warn({mentraUserId, error: (error as Error)?.message}, "support PostHog capture dropped")
+  }
+}
+
+async function trustedEmail(mentraUserId: string): Promise<string | null> {
+  const user = await UserModel.findOne({mentraUserId}).lean()
+  if (!user || user.tenantId !== "mentra") return null
+  const identity = await getUserById(user.tenantUserId).catch(() => null)
+  return identity?.emailVerified ? identity.email : null
+}
+
+async function sendCapture(input: {
+  distinctId: string
+  event: string
+  eventAt: Date
+  insertId: string
+  properties: Record<string, unknown>
+  email: string | null
+}): Promise<void> {
+  const key = posthogApiKey()
+  if (!key) return
+  const host = (process.env.POSTHOG_HOST?.trim() || "https://us.i.posthog.com").replace(/\/+$/, "")
+  const personProperties = {
+    ...input.properties,
+    ...(input.email ? {email: input.email} : {}),
+  }
+  const response = await fetch(`${host}/capture/`, {
+    method: "POST",
+    signal: AbortSignal.timeout(CAPTURE_TIMEOUT_MS),
+    headers: {"content-type": "application/json"},
+    body: JSON.stringify({
+      api_key: key,
+      event: input.event,
+      timestamp: input.eventAt.toISOString(),
+      properties: {
+        distinct_id: input.distinctId,
+        $insert_id: input.insertId,
+        $process_person_profile: true,
+        $set: personProperties,
+        ...input.properties,
+      },
+    }),
+  })
+  if (!response.ok) throw new Error(`PostHog capture returned ${response.status}`)
+}
+
+function posthogApiKey(): string | null {
+  return process.env.POSTHOG_API_KEY?.trim() || null
 }
 
 export function posthogPropertiesFor(next: any): Record<string, unknown> {

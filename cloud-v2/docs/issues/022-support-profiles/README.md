@@ -8,8 +8,8 @@ Support profiles give authorized Mentra support staff a current, low-volume view
 
 1. The engine sends an authenticated `PUT /api/client/support-profile` after startup, on a meaningful glasses-state or version change (2-second debounce), and every six hours as a freshness heartbeat.
 2. Core derives identity only from the verified bearer token. A raw glasses serial may cross TLS solely to derive an HMAC device ID; the raw value is then discarded.
-3. MongoDB stores one canonical profile per `mentraUserId`, with the 12 most recently seen devices. Optimistic revisions prevent concurrent phone requests from overwriting one another. Older observations and identical requests inside 60 seconds do not write; a rolling ceiling of 120 accepted changes per user per hour prevents a compromised client from producing an unbounded write/event stream.
-4. Meaningful transitions enter a seven-day MongoDB outbox. The background worker retries PostHog delivery independently, so analytics downtime cannot fail or delay the canonical profile update.
+3. MongoDB stores one canonical profile per `mentraUserId`, with the 12 most recently seen devices. Writes are last-write-wins — this is an operational read model, not an event log, and support only needs the latest picture. Observations older than the stored snapshot and identical requests inside 60 seconds do not write.
+4. Meaningful transitions are mirrored to PostHog inline, best-effort: one attempt, then the event is logged and dropped. Analytics downtime can lose a transition event but can never fail or delay the canonical profile update.
 5. Authorized support staff use `GET /api/admin/support-profiles/lookup?email=...`. The route exact-matches a verified first-party account, returns explicit freshness/source fields and recent report links, and writes an admin audit record without copying the email into the audit metadata.
 
 ## Allowed fields
@@ -41,7 +41,7 @@ Person/event properties use the `support_` prefix and contain only the allowed h
 
 ## Retention and deletion
 
-The canonical profile is retained with the Cloud V2 account because it is an operational support read model. Account deletion removes the profile and any pending telemetry outbox entries before deleting the identity-provider account. Delivered PostHog data follows the analytics project's configured retention/deletion policy. Outbox rows expire automatically after seven days. Admin reads remain in the existing admin audit collection.
+The canonical profile is retained with the Cloud V2 account because it is an operational support read model. Account deletion tombstones the user and removes the profile before deleting the identity-provider account. Delivered PostHog data follows the analytics project's configured retention/deletion policy. Admin reads remain in the existing admin audit collection.
 
 ## Freshness semantics
 

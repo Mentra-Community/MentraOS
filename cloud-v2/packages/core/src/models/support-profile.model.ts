@@ -50,15 +50,9 @@ const SupportProfileSchema = new Schema(
     currentDeviceKey: {type: String, default: null},
     lastFingerprint: {type: String, required: true},
     lastAcceptedAt: {type: Date, required: true},
-    rateWindowStartedAt: {type: Date, required: true},
-    rateWindowCount: {type: Number, required: true, default: 1},
-    revision: {type: Number, required: true, default: 0},
   },
   {timestamps: true, collection: "support_profiles"},
 )
-
-SupportProfileSchema.index({updatedAt: -1})
-SupportProfileSchema.index({"devices.deviceKey": 1})
 
 export type SupportProfile = InferSchemaType<typeof SupportProfileSchema>
 export const SupportProfileModel = registerModel("SupportProfile", SupportProfileSchema)

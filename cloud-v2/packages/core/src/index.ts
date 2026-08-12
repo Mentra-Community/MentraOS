@@ -16,79 +16,66 @@
  * Specs: cloud-v2/docs/issues/001-oem-auth/, 002-oem-portal/, miniapp store work.
  */
 
-import { createLogger } from "@mentra/cloud-shared";
-import {
-  connectMongo,
-  disconnectMongo,
-  mongoReadinessCheck,
-} from "./connections/mongo.connection";
-import { createApp } from "./api/app";
-import { runStartupMigrations } from "./migrations/startup.migrations";
-import {
-  startSupportTelemetryWorker,
-  stopSupportTelemetryWorker,
-} from "./services/support-telemetry.service";
+import {createLogger} from "@mentra/cloud-shared"
+import {connectMongo, disconnectMongo, mongoReadinessCheck} from "./connections/mongo.connection"
+import {createApp} from "./api/app"
+import {runStartupMigrations} from "./migrations/startup.migrations"
 
-const logger = createLogger("core");
+const logger = createLogger("core")
 
 export interface StartCoreOptions {
   /** HTTP port. Default: `process.env.PORT ?? 3000`. */
-  port?: number;
+  port?: number
   /** Mongo URL. Default: `process.env.MONGO_URL ?? "mongodb://127.0.0.1:27017/mentra-cloud-v2"`. */
-  mongoUrl?: string;
+  mongoUrl?: string
 }
 
 export interface CoreHandle {
-  port: number;
-  url: string;
+  port: number
+  url: string
   /** Stop the HTTP server and close Mongo. */
-  stop(): Promise<void>;
+  stop(): Promise<void>
 }
 
 export async function startCore(opts: StartCoreOptions = {}): Promise<CoreHandle> {
-  const port = opts.port ?? Number.parseInt(process.env.PORT ?? "3000", 10);
-  const mongoUrl =
-    opts.mongoUrl ??
-    process.env.MONGO_URL ??
-    "mongodb://127.0.0.1:27017/mentra-cloud-v2";
+  const port = opts.port ?? Number.parseInt(process.env.PORT ?? "3000", 10)
+  const mongoUrl = opts.mongoUrl ?? process.env.MONGO_URL ?? "mongodb://127.0.0.1:27017/mentra-cloud-v2"
 
-  await connectMongo(mongoUrl);
+  await connectMongo(mongoUrl)
   try {
-    await runStartupMigrations();
+    await runStartupMigrations()
   } catch (error) {
     // Disconnect best-effort: a secondary disconnect failure must not mask the
     // original migration error, which is what we rethrow.
-    await disconnectMongo().catch(disconnectError => {
-      logger.warn({ disconnectError }, "failed to disconnect mongo after migration failure");
-    });
-    throw error;
+    await disconnectMongo().catch((disconnectError) => {
+      logger.warn({disconnectError}, "failed to disconnect mongo after migration failure")
+    })
+    throw error
   }
 
-  const app = createApp({ readinessChecks: [mongoReadinessCheck] });
-  const server = Bun.serve({ port, fetch: app.fetch });
-  const boundPort = server.port!;
+  const app = createApp({readinessChecks: [mongoReadinessCheck]})
+  const server = Bun.serve({port, fetch: app.fetch})
+  const boundPort = server.port!
 
-  logger.info({ port: boundPort }, "cloud-v2 core listening");
-  startSupportTelemetryWorker();
+  logger.info({port: boundPort}, "cloud-v2 core listening")
 
   return {
     port: boundPort,
     url: `http://localhost:${boundPort}`,
     async stop() {
-      server.stop();
-      stopSupportTelemetryWorker();
-      await disconnectMongo();
+      server.stop()
+      await disconnectMongo()
     },
-  };
+  }
 }
 
 if (import.meta.main) {
-  const handle = await startCore();
+  const handle = await startCore()
   const shutdown = async (signal: string) => {
-    logger.info({ signal }, "shutdown requested");
-    await handle.stop();
-    process.exit(0);
-  };
-  process.on("SIGTERM", () => void shutdown("SIGTERM"));
-  process.on("SIGINT", () => void shutdown("SIGINT"));
+    logger.info({signal}, "shutdown requested")
+    await handle.stop()
+    process.exit(0)
+  }
+  process.on("SIGTERM", () => void shutdown("SIGTERM"))
+  process.on("SIGINT", () => void shutdown("SIGINT"))
 }

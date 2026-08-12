@@ -11,7 +11,6 @@ const ENGINE_VERSION = (require("../../package.json") as {version?: string}).ver
 const BLUETOOTH_SDK_VERSION = (require("@mentra/bluetooth-sdk/package.json") as {version?: string}).version
 const DEBOUNCE_MS = 2_000
 const RETRY_MS = 30_000
-const RATE_LIMIT_RETRY_MS = 60 * 60_000
 const HEARTBEAT_MS = 6 * 60 * 60_000
 
 let unsubscribe: (() => void) | null = null
@@ -136,13 +135,9 @@ async function sendCurrentSnapshot(force: boolean, generation = syncGeneration):
 }
 
 export function retryDelayForSupportProfileResult(result: {
-  status: "accepted" | "deduplicated" | "stale" | "rate_limited"
-  retryAfterMs?: number
+  status: "accepted" | "deduplicated" | "stale"
 }): number | null {
   if (result.status === "accepted" || result.status === "deduplicated") return null
-  if (result.status === "rate_limited") {
-    return Math.max(1_000, result.retryAfterMs ?? RATE_LIMIT_RETRY_MS)
-  }
   return RETRY_MS
 }
 

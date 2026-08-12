@@ -3,7 +3,6 @@ import {z} from "zod"
 import {SupportProfileAccountDeletedError, updateSupportProfile} from "../../services/support-profile.service"
 import type {AppContext, AppEnv} from "../../types/hono.types"
 import {InvalidGrant, InvalidRequest} from "../../types/oauth.types"
-import {UserModel} from "../../models/user.model"
 import {userAuth} from "../middleware/user-auth.middleware"
 
 const app = new Hono<AppEnv>()
@@ -79,11 +78,6 @@ async function putSupportProfile(c: AppContext) {
     throw new InvalidRequest("observedAt is outside the accepted window")
   }
   const user = c.var.user!
-  const activeUser = await UserModel.exists({
-    mentraUserId: user.mentraUserId,
-    supportTelemetryDeletedAt: null,
-  })
-  if (!activeUser) throw new InvalidGrant("account is deleted")
   try {
     return c.json(await updateSupportProfile({mentraUserId: user.mentraUserId, tenantId: user.tenantId}, parsed.data))
   } catch (error) {

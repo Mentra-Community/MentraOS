@@ -103,11 +103,10 @@ describe("SupportProfileSync", () => {
     expect(serialized).not.toContain("password")
   })
 
-  test("only accepted writes are delivered and rate limits honor the server window", () => {
+  test("only stale results schedule a retry", () => {
     expect(retryDelayForSupportProfileResult({status: "accepted"})).toBeNull()
     expect(retryDelayForSupportProfileResult({status: "deduplicated"})).toBeNull()
     expect(retryDelayForSupportProfileResult({status: "stale"})).toBe(30_000)
-    expect(retryDelayForSupportProfileResult({status: "rate_limited", retryAfterMs: 42_000})).toBe(42_000)
   })
 
   test("backs failed sends off exponentially toward the heartbeat cadence", () => {
@@ -183,11 +182,10 @@ describe("SupportProfileSync", () => {
     expect(updateMock).toHaveBeenCalledTimes(2)
   })
 
-  test("retries a rate-limited snapshot", async () => {
+  test("retries a stale snapshot with a fresh observation time", async () => {
     updateMock.mockImplementationOnce(async () => ({
-      status: "rate_limited" as const,
+      status: "stale" as const,
       observedAt: new Date().toISOString(),
-      retryAfterMs: 5_000,
     }))
     startSupportProfileSync()
     await flushPromises()

@@ -13,7 +13,6 @@ import {findOrCreateUser} from "../user.service"
 import {sendEmail} from "../email/email.service"
 import * as gotrue from "./gotrue.client"
 import {SupportProfileModel} from "../../models/support-profile.model"
-import {SupportTelemetryOutboxModel} from "../../models/support-telemetry-outbox.model"
 import {UserModel} from "../../models/user.model"
 import * as otc from "./one-time-code.service"
 import {AccountError} from "./account-error"
@@ -176,15 +175,12 @@ export async function confirmAccountDeletion(mentraUserId: string, tenantUserId:
   // Cloud V1 is a different system with its own database; its data lifecycle
   // is not a cloud-v2 concern and no code here talks to it.
   await revokeAllSessionsForUser({mentraUserId})
-  // Set the tombstone before removing queued rows so no new telemetry can be
-  // stored or delivered from here on. A capture already in flight past the
-  // worker's tombstone check may still land in PostHog; delivered analytics
-  // data is governed by that project's retention/deletion policy.
+  // Set the tombstone before removing the profile so no new support write can
+  // recreate it. A PostHog capture already in flight when the tombstone lands
+  // may still deliver; delivered analytics data is governed by that project's
+  // retention/deletion policy.
   await UserModel.updateOne({mentraUserId}, {$set: {supportTelemetryDeletedAt: new Date()}})
-  await Promise.all([
-    SupportProfileModel.deleteOne({mentraUserId}),
-    SupportTelemetryOutboxModel.deleteMany({mentraUserId}),
-  ])
+  await SupportProfileModel.deleteOne({mentraUserId})
   await gotrue.deleteUser(tenantUserId)
 }
 
