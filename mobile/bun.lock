@@ -313,6 +313,7 @@
         "expo-calendar": "*",
         "expo-clipboard": "*",
         "expo-constants": "*",
+        "expo-device": "*",
         "expo-file-system": "*",
         "expo-location": "*",
         "expo-modules-core": "*",
