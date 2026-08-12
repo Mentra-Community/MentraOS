@@ -107,7 +107,14 @@ export async function updateSupportProfile(
     const next = {host, devices, currentDeviceKey}
     try {
       await SupportProfileModel.updateOne(
-        {mentraUserId: identity.mentraUserId},
+        {
+          "mentraUserId": identity.mentraUserId,
+          // Freshness guard for racing writes: an older observation must not
+          // overwrite a newer snapshot. When it loses the race the filter
+          // matches nothing, the upsert insert trips the unique index, and
+          // the retry re-reads (usually answering "stale").
+          "host.observedAt": {$lte: observedAt},
+        },
         {
           $set: {
             tenantId: identity.tenantId,
@@ -295,10 +302,10 @@ async function captureMeaningfulTransitions(
   if (!posthogApiKey()) return
   const events = meaningfulTransitions(previous, next)
   if (events.length === 0) return
-  try {
-    const email = await trustedEmail(mentraUserId)
-    const properties = posthogPropertiesFor(next)
-    for (const event of events) {
+  const email = await trustedEmail(mentraUserId).catch(() => null)
+  const properties = posthogPropertiesFor(next)
+  for (const event of events) {
+    try {
       await sendCapture({
         distinctId: mentraUserId,
         event,
@@ -307,9 +314,9 @@ async function captureMeaningfulTransitions(
         properties,
         email,
       })
+    } catch (error) {
+      logger.warn({mentraUserId, event, error: (error as Error)?.message}, "support PostHog capture dropped")
     }
-  } catch (error) {
-    logger.warn({mentraUserId, error: (error as Error)?.message}, "support PostHog capture dropped")
   }
 }
 
