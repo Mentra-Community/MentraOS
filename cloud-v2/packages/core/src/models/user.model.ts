@@ -29,11 +29,9 @@ const UserSchema = new Schema(
     /** The OEM's own user identifier (their `sub` claim). */
     tenantUserId: {type: String, required: true},
 
-    /** Prevents an already-leased support event from being delivered after account deletion. */
+    /** Tombstone set at the start of account deletion; suppresses any further
+     * support telemetry storage or delivery for this user. */
     supportTelemetryDeletedAt: {type: Date, default: null},
-
-    /** Expiring distributed delivery lease; deletion waits for it to clear or expire. */
-    supportTelemetryDeliveryLeaseUntil: {type: Date, default: null},
   },
   {timestamps: {createdAt: true, updatedAt: false}, collection: "users"},
 )

@@ -5,10 +5,12 @@ import {getUserById} from "./account/gotrue.client"
 
 const logger = createLogger("core").child({service: "support-telemetry"})
 const OUTBOX_TTL_MS = 7 * 24 * 60 * 60 * 1_000
+// The row lease must outlive the identity lookup plus the capture timeout. If
+// a worker still overruns it, the worst case is a duplicate capture, which
+// PostHog collapses via $insert_id.
 const LEASE_MS = 30_000
 const POLL_MS = 10_000
 const CAPTURE_TIMEOUT_MS = 15_000
-const DELIVERY_LEASE_MS = CAPTURE_TIMEOUT_MS + 5_000
 let timer: ReturnType<typeof setInterval> | null = null
 let draining = false
 
@@ -80,77 +82,20 @@ export async function drainSupportTelemetryOutbox(): Promise<void> {
         {sort: {createdAt: 1}, new: true},
       ).lean()
       if (!row) break
-      let activeRowLeaseUntil = row.leasedUntil
-
-      const leaseStartedAt = new Date()
-      const deliveryLease = await UserModel.findOneAndUpdate(
-        {
-          mentraUserId: row.mentraUserId,
-          supportTelemetryDeletedAt: null,
-          $or: [
-            {supportTelemetryDeliveryLeaseUntil: null},
-            {supportTelemetryDeliveryLeaseUntil: {$lte: leaseStartedAt}},
-          ],
-        },
-        {$set: {supportTelemetryDeliveryLeaseUntil: new Date(leaseStartedAt.getTime() + DELIVERY_LEASE_MS)}},
-        {new: true},
-      ).lean()
-      if (!deliveryLease) {
+      try {
+        // Drop rather than deliver once account deletion has started. A capture
+        // already past this check can still land; the analytics project's
+        // retention/deletion policy owns delivered data, so deletion never
+        // blocks on the worker.
         const active = await UserModel.exists({
           mentraUserId: row.mentraUserId,
           supportTelemetryDeletedAt: null,
         })
-        if (!active) await SupportTelemetryOutboxModel.deleteOne({_id: row._id})
-        else {
-          // Another worker owns this user's delivery lease. Release this row
-          // for a later pass rather than dropping it.
-          await SupportTelemetryOutboxModel.updateOne(
-            {_id: row._id, leasedUntil: activeRowLeaseUntil},
-            {$set: {leasedUntil: null, availableAt: new Date(Date.now() + 1_000)}},
-          )
-        }
-        continue
-      }
-      let activeLeaseUntil = deliveryLease.supportTelemetryDeliveryLeaseUntil
-      try {
-        const email = await trustedEmail(row.mentraUserId)
-        const renewedRowLeaseUntil = new Date(Date.now() + LEASE_MS)
-        const renewedRow = await SupportTelemetryOutboxModel.findOneAndUpdate(
-          {_id: row._id, deliveredAt: null, leasedUntil: activeRowLeaseUntil},
-          {$set: {leasedUntil: renewedRowLeaseUntil}},
-          {new: true},
-        ).lean()
-        if (!renewedRow) continue
-        activeRowLeaseUntil = renewedRow.leasedUntil
-
-        // Identity lookup and row renewal can be slow, so renew the user lease
-        // last, immediately before capture. The compare-and-set also rechecks
-        // the tombstone and abandons capture after deletion starts.
-        const renewedLeaseUntil = new Date(Date.now() + DELIVERY_LEASE_MS)
-        const renewedLease = await UserModel.findOneAndUpdate(
-          {
-            mentraUserId: row.mentraUserId,
-            supportTelemetryDeletedAt: null,
-            supportTelemetryDeliveryLeaseUntil: activeLeaseUntil,
-          },
-          {$set: {supportTelemetryDeliveryLeaseUntil: renewedLeaseUntil}},
-          {new: true},
-        ).lean()
-        if (!renewedLease) {
-          const active = await UserModel.exists({
-            mentraUserId: row.mentraUserId,
-            supportTelemetryDeletedAt: null,
-          })
-          if (!active) await SupportTelemetryOutboxModel.deleteOne({_id: row._id})
-          else {
-            await SupportTelemetryOutboxModel.updateOne(
-              {_id: row._id, leasedUntil: activeRowLeaseUntil},
-              {$set: {leasedUntil: null, availableAt: new Date(Date.now() + 1_000)}},
-            )
-          }
+        if (!active) {
+          await SupportTelemetryOutboxModel.deleteOne({_id: row._id})
           continue
         }
-        activeLeaseUntil = renewedLease.supportTelemetryDeliveryLeaseUntil
+        const email = await trustedEmail(row.mentraUserId)
         await sendCapture({
           distinctId: row.mentraUserId,
           event: row.event,
@@ -160,35 +105,25 @@ export async function drainSupportTelemetryOutbox(): Promise<void> {
           email,
         })
         await SupportTelemetryOutboxModel.updateOne(
-          {_id: row._id, leasedUntil: activeRowLeaseUntil},
+          {_id: row._id, leasedUntil: row.leasedUntil},
           {$set: {deliveredAt: new Date(), leasedUntil: null}},
         )
       } catch (error) {
         if (error instanceof PermanentCaptureError) {
-          await SupportTelemetryOutboxModel.deleteOne({_id: row._id, leasedUntil: activeRowLeaseUntil})
+          await SupportTelemetryOutboxModel.deleteOne({_id: row._id, leasedUntil: row.leasedUntil})
           logger.error({event: row.event, status: error.status}, "dropping permanently rejected PostHog event")
           continue
         }
         const attempts = row.attempts + 1
         const delayMs = Math.min(60 * 60 * 1_000, 5_000 * 2 ** Math.min(attempts, 8))
         await SupportTelemetryOutboxModel.updateOne(
-          {_id: row._id, leasedUntil: activeRowLeaseUntil},
+          {_id: row._id, leasedUntil: row.leasedUntil},
           {
             $set: {availableAt: new Date(Date.now() + delayMs), leasedUntil: null},
             $inc: {attempts: 1},
           },
         )
         logger.warn({event: row.event, attempts, error: (error as Error)?.message}, "PostHog delivery failed")
-      } finally {
-        await UserModel.updateOne(
-          {
-            mentraUserId: row.mentraUserId,
-            supportTelemetryDeliveryLeaseUntil: activeLeaseUntil,
-          },
-          {$set: {supportTelemetryDeliveryLeaseUntil: null}},
-        ).catch((error) =>
-          logger.warn({error: (error as Error)?.message}, "support telemetry delivery lease release deferred"),
-        )
       }
     }
   } catch (error) {
@@ -249,16 +184,6 @@ export function isPermanentCaptureStatus(status: number): boolean {
   // Authentication, authorization, routing and throttling failures can be
   // repaired operationally. Only payload-specific rejections are terminal.
   return status === 400 || status === 413 || status === 422
-}
-
-/** Prevent account deletion from returning while a capture is still in flight. */
-export async function waitForSupportTelemetryDeliveries(mentraUserId: string): Promise<void> {
-  for (;;) {
-    const user = await UserModel.findOne({mentraUserId}).select({supportTelemetryDeliveryLeaseUntil: 1}).lean()
-    const leasedUntil = user?.supportTelemetryDeliveryLeaseUntil
-    if (!leasedUntil || leasedUntil.getTime() <= Date.now()) return
-    await new Promise((resolve) => setTimeout(resolve, Math.min(50, leasedUntil.getTime() - Date.now())))
-  }
 }
 
 class PermanentCaptureError extends Error {

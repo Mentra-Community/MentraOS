@@ -52,9 +52,6 @@ const SupportProfileSchema = new Schema(
     lastAcceptedAt: {type: Date, required: true},
     rateWindowStartedAt: {type: Date, required: true},
     rateWindowCount: {type: Number, required: true, default: 1},
-    // Stored with the canonical write so an identical retry can repair an outbox enqueue that
-    // was interrupted after Mongo accepted the profile update.
-    pendingTelemetry: {type: Schema.Types.Mixed, default: null},
     revision: {type: Number, required: true, default: 0},
   },
   {timestamps: true, collection: "support_profiles"},

@@ -1,14 +1,10 @@
 import {afterEach, describe, expect, test} from "bun:test"
 import {
-  appendPendingTelemetry,
   deriveDeviceKey,
   fingerprintFor,
-  legacyTransitionKeyCandidates,
   meaningfulTransitions,
-  pendingTelemetryFor,
   posthogPropertiesFor,
   shouldRecordConnectedAt,
-  SUPPORT_PENDING_TELEMETRY_LIMIT,
   type SupportStateInput,
 } from "./support-profile.service"
 
@@ -80,66 +76,6 @@ describe("support profile privacy and transitions", () => {
     expect(shouldRecordConnectedAt("connected", "device-1", "connected", "device-1")).toBe(false)
     expect(shouldRecordConnectedAt("disconnected", "device-1", "connected", "device-1")).toBe(true)
     expect(shouldRecordConnectedAt("connected", "device-1", "connected", "device-2")).toBe(true)
-  })
-
-  test("persists transition material with the profile write for outbox repair", () => {
-    const next = profile({connectionState: "connected", appVersion: "1.0.0"})
-    const pending = pendingTelemetryFor(null, next, "fingerprint-1", "revision-1")
-
-    expect(pending).toMatchObject({
-      transitionId: "revision-1",
-      fingerprint: "fingerprint-1",
-      events: ["support_profile_created"],
-    })
-  })
-
-  test("bounds durable transition repair state and keeps repeated snapshots distinct", () => {
-    const next = profile({connectionState: "connected", appVersion: "1.0.0"})
-    let pending: ReturnType<typeof appendPendingTelemetry> = []
-    for (let revision = 0; revision < SUPPORT_PENDING_TELEMETRY_LIMIT + 5; revision += 1) {
-      pending = appendPendingTelemetry(
-        pending,
-        pendingTelemetryFor(null, next, "same-fingerprint", `revision-${revision}`),
-      )
-    }
-
-    expect(pending).toHaveLength(SUPPORT_PENDING_TELEMETRY_LIMIT)
-    expect(pending[0]?.transitionId).toBe("revision-5")
-    expect(pending.at(-1)?.transitionId).toBe(`revision-${SUPPORT_PENDING_TELEMETRY_LIMIT + 4}`)
-  })
-
-  test("preserves staged pending shape until the legacy flush removes it", () => {
-    const preserved = appendPendingTelemetry(
-      {
-        fingerprint: "legacy-fingerprint",
-        events: ["support_profile_created"],
-        eventAt: "2026-08-11T12:00:00.000Z",
-        properties: {},
-      } as any,
-      null,
-    )
-
-    expect(preserved).toEqual([
-      {
-        fingerprint: "legacy-fingerprint",
-        events: ["support_profile_created"],
-        eventAt: "2026-08-11T12:00:00.000Z",
-        properties: {},
-      },
-    ])
-    expect(
-      legacyTransitionKeyCandidates(
-        "mu_test",
-        {
-          transitionId: "2026-08-11T12:00:00.000Z:legacy-fingerprint",
-          fingerprint: "legacy-fingerprint",
-        },
-        "support_profile_created",
-      ),
-    ).toEqual([
-      "mu_test:2026-08-11T12:00:00.000Z:legacy-fingerprint:support_profile_created",
-      "mu_test:legacy-fingerprint:support_profile_created",
-    ])
   })
 })
 

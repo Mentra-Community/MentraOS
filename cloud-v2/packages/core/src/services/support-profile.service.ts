@@ -9,7 +9,6 @@ export const SUPPORT_DEVICE_HISTORY_LIMIT = 12
 export const SUPPORT_IDENTICAL_UPDATE_MIN_MS = 60_000
 export const SUPPORT_RATE_WINDOW_MS = 60 * 60_000
 export const SUPPORT_RATE_WINDOW_LIMIT = 120
-export const SUPPORT_PENDING_TELEMETRY_LIMIT = 64
 const logger = createLogger("core").child({service: "support-profile"})
 
 export interface SupportStateInput {
@@ -43,16 +42,6 @@ export interface SupportProfileUpdateResult {
   observedAt: string
   retryAfterMs?: number
 }
-
-type PendingTelemetry = {
-  transitionId?: string
-  fingerprint: string
-  events: string[]
-  eventAt: string
-  properties: Record<string, unknown>
-}
-
-type NormalizedPendingTelemetry = PendingTelemetry & {legacy: boolean}
 
 export class SupportProfileAccountDeletedError extends Error {
   constructor() {
@@ -89,7 +78,6 @@ export async function updateSupportProfile(
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const current = await SupportProfileModel.findOne({mentraUserId: identity.mentraUserId}).lean()
     if (current) {
-      void flushPendingTelemetry(current as any)
       if (observedAt < current.host.observedAt) {
         return {status: "stale", observedAt: current.host.observedAt.toISOString()}
       }
@@ -123,13 +111,6 @@ export async function updateSupportProfile(
       const host = toStoredHost(input, observedAt, receivedAt)
       const currentDeviceKey = device?.deviceKey ?? current.currentDeviceKey ?? null
       const next = {...current, host, devices, currentDeviceKey}
-      const newPendingTelemetry = pendingTelemetryFor(
-        current as any,
-        next,
-        fingerprint,
-        `${current.revision + 1}:${receivedAt.getTime()}`,
-      )
-      const pendingTelemetry = appendPendingTelemetry((current as any).pendingTelemetry, newPendingTelemetry)
       const updated = await SupportProfileModel.findOneAndUpdate(
         {_id: current._id, revision: current.revision},
         {
@@ -142,7 +123,6 @@ export async function updateSupportProfile(
             lastAcceptedAt: receivedAt,
             rateWindowStartedAt: inCurrentWindow ? current.rateWindowStartedAt : receivedAt,
             rateWindowCount: inCurrentWindow ? current.rateWindowCount + 1 : 1,
-            pendingTelemetry,
           },
           $inc: {revision: 1},
         },
@@ -150,7 +130,12 @@ export async function updateSupportProfile(
       ).lean()
       if (!updated) continue
       await assertActiveOrCleanup(identity.mentraUserId)
-      void flushPendingTelemetry(updated as any)
+      await enqueueMeaningfulTransitions(
+        identity.mentraUserId,
+        current,
+        next,
+        `${current.revision + 1}:${receivedAt.getTime()}`,
+      )
       return {status: "accepted", observedAt: observedAt.toISOString()}
     }
 
@@ -164,21 +149,17 @@ export async function updateSupportProfile(
       currentDeviceKey: device?.deviceKey ?? null,
     }
     try {
-      const created = await SupportProfileModel.create({
+      await SupportProfileModel.create({
         ...identity,
         ...draft,
         lastFingerprint: fingerprint,
         lastAcceptedAt: receivedAt,
         rateWindowStartedAt: receivedAt,
         rateWindowCount: 1,
-        pendingTelemetry: appendPendingTelemetry(
-          null,
-          pendingTelemetryFor(null, draft, fingerprint, `0:${receivedAt.getTime()}`),
-        ),
         revision: 0,
       })
       await assertActiveOrCleanup(identity.mentraUserId)
-      void flushPendingTelemetry(created.toObject() as any)
+      await enqueueMeaningfulTransitions(identity.mentraUserId, null, draft, `0:${receivedAt.getTime()}`)
       return {status: "accepted", observedAt: observedAt.toISOString()}
     } catch (error) {
       if ((error as {code?: number})?.code !== 11000) throw error
@@ -333,108 +314,35 @@ function currentDevice(profile: any): any | null {
   return profile.devices?.find((device: any) => device.deviceKey === profile.currentDeviceKey) ?? null
 }
 
-export function pendingTelemetryFor(
+/**
+ * Analytics mirroring is best-effort by design: the canonical profile write
+ * has already succeeded, so a failed outbox enqueue only loses a PostHog
+ * transition, never support data. `revision` in the transition id keeps
+ * retried enqueues idempotent via the outbox's unique transitionKey.
+ */
+async function enqueueMeaningfulTransitions(
+  mentraUserId: string,
   previous: any | null,
   next: any,
-  fingerprint: string,
   transitionId: string,
-): PendingTelemetry | null {
+): Promise<void> {
   const events = meaningfulTransitions(previous, next)
-  if (events.length === 0) return null
-  return {
-    transitionId,
-    fingerprint,
-    events,
-    eventAt: next.host.observedAt.toISOString(),
-    properties: posthogPropertiesFor(next),
-  }
-}
-
-export function appendPendingTelemetry(
-  existing: PendingTelemetry | PendingTelemetry[] | null | undefined,
-  incoming: PendingTelemetry | null,
-): PendingTelemetry[] {
-  return [...normalizePendingTelemetry(existing), ...(incoming ? [{...incoming, legacy: false}] : [])]
-    .slice(-SUPPORT_PENDING_TELEMETRY_LIMIT)
-    .map(({legacy, ...entry}) => {
-      if (!legacy) return entry
-      // Do not rewrite a legacy row before its concurrent flush removes it;
-      // preserving the stored shape keeps the old pull selector race-safe.
-      const {transitionId: _synthetic, ...persistedLegacyEntry} = entry
-      return persistedLegacyEntry
-    })
-}
-
-async function flushPendingTelemetry(profile: {
-  mentraUserId: string
-  pendingTelemetry?: PendingTelemetry | PendingTelemetry[] | null
-}): Promise<void> {
-  for (const pending of normalizePendingTelemetry(profile.pendingTelemetry)) {
+  if (events.length === 0) return
+  const eventAt = next.host.observedAt
+  const properties = posthogPropertiesFor(next)
+  for (const event of events) {
     try {
-      for (const event of pending.events) {
-        const transitionKey = pending.legacy
-          ? await legacyTransitionKey(profile.mentraUserId, pending, event)
-          : `${profile.mentraUserId}:${pending.transitionId}:${event}`
-        await enqueueSupportTelemetry({
-          mentraUserId: profile.mentraUserId,
-          transitionKey,
-          event,
-          eventAt: new Date(pending.eventAt),
-          properties: pending.properties,
-        })
-      }
-      const pullSelector = pending.legacy
-        ? {transitionId: {$exists: false}, fingerprint: pending.fingerprint, eventAt: pending.eventAt}
-        : {transitionId: pending.transitionId}
-      await SupportProfileModel.updateOne(
-        {mentraUserId: profile.mentraUserId},
-        {$pull: {pendingTelemetry: pullSelector}},
-      )
+      await enqueueSupportTelemetry({
+        mentraUserId,
+        transitionKey: `${mentraUserId}:${transitionId}:${event}`,
+        event,
+        eventAt,
+        properties,
+      })
     } catch (error) {
-      logger.warn(
-        {mentraUserId: profile.mentraUserId, error: (error as Error)?.message},
-        "support telemetry enqueue deferred",
-      )
-      return
+      logger.warn({mentraUserId, event, error: (error as Error)?.message}, "support telemetry enqueue dropped")
     }
   }
-}
-
-async function legacyTransitionKey(
-  mentraUserId: string,
-  pending: NormalizedPendingTelemetry,
-  event: string,
-): Promise<string> {
-  const candidates = legacyTransitionKeyCandidates(mentraUserId, pending, event)
-  const existing = await SupportTelemetryOutboxModel.findOne({transitionKey: {$in: candidates}})
-    .select({transitionKey: 1})
-    .lean()
-  return existing?.transitionKey ?? candidates[0]
-}
-
-export function legacyTransitionKeyCandidates(
-  mentraUserId: string,
-  pending: Pick<NormalizedPendingTelemetry, "transitionId" | "fingerprint">,
-  event: string,
-): [string, string] {
-  return [`${mentraUserId}:${pending.transitionId}:${event}`, `${mentraUserId}:${pending.fingerprint}:${event}`]
-}
-
-function normalizePendingTelemetry(
-  value: PendingTelemetry | PendingTelemetry[] | null | undefined,
-): NormalizedPendingTelemetry[] {
-  if (!value) return []
-  const entries = Array.isArray(value) ? value : [value]
-  return entries.map((entry) => {
-    const legacy = !entry.transitionId
-    return {
-      ...entry,
-      // Compatibility for staged-rollout profiles. Flush keeps their original
-      // fingerprint key; the next canonical write persists this migration.
-      transitionId: entry.transitionId || `${entry.eventAt}:${entry.fingerprint}`,
-      legacy,
-    }
-  })
 }
 
 async function assertActiveOrCleanup(mentraUserId: string): Promise<void> {
