@@ -137,7 +137,11 @@ export async function updateSupportProfile(
     void captureMeaningfulTransitions(identity.mentraUserId, current, next, receivedAt)
     return {status: "accepted", observedAt: observedAt.toISOString()}
   }
-  throw new Error("support profile upsert conflicted repeatedly")
+  // Three-plus same-user writes racing is pathological. Answer with the
+  // settled snapshot as "stale" instead of surfacing a 500; the phone retries
+  // with a fresh observation.
+  const settled = await SupportProfileModel.findOne({mentraUserId: identity.mentraUserId}).lean()
+  return {status: "stale", observedAt: settled?.host.observedAt.toISOString() ?? input.observedAt}
 }
 
 export function fingerprintFor(input: SupportStateInput): string {
