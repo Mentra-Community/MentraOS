@@ -379,7 +379,6 @@ class OtaInstallCoordinator {
       this.setSawReconnectEdge(false)
       this.setErrorMsg("")
       this.setContinueButtonDisabled(false)
-      this.setApkCompletedViaBuildIncrease(false)
       this.setLegacyApkSettleHold(false)
       this.setMtkSimulatedPercent(null)
       this.lastRealMtkProgress = 0
@@ -539,6 +538,7 @@ class OtaInstallCoordinator {
     this.otaStartOwnership = null
     this.hasFirstActivity = false
     this.hasFirstNonZeroProgress = false
+    this.apkCompletedViaBuildIncrease = false
     return true
   }
 
