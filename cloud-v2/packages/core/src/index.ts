@@ -24,6 +24,10 @@ import {
 } from "./connections/mongo.connection";
 import { createApp } from "./api/app";
 import { runStartupMigrations } from "./migrations/startup.migrations";
+import {
+  startSupportTelemetryWorker,
+  stopSupportTelemetryWorker,
+} from "./services/support-telemetry.service";
 
 const logger = createLogger("core");
 
@@ -65,12 +69,14 @@ export async function startCore(opts: StartCoreOptions = {}): Promise<CoreHandle
   const boundPort = server.port!;
 
   logger.info({ port: boundPort }, "cloud-v2 core listening");
+  startSupportTelemetryWorker();
 
   return {
     port: boundPort,
     url: `http://localhost:${boundPort}`,
     async stop() {
       server.stop();
+      stopSupportTelemetryWorker();
       await disconnectMongo();
     },
   };

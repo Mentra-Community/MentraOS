@@ -1,8 +1,8 @@
 import {BottomSheetModalProvider} from "@gorhom/bottom-sheet"
 import * as Sentry from "@sentry/react-native"
 import {Stack} from "expo-router"
-import {PostHogProvider} from "posthog-react-native"
-import {Suspense, FunctionComponent, PropsWithChildren, useMemo} from "react"
+import {PostHogProvider, usePostHog} from "posthog-react-native"
+import {Suspense, FunctionComponent, PropsWithChildren, useEffect, useMemo} from "react"
 import {Platform, View} from "react-native"
 import ErrorBoundary from "react-native-error-boundary"
 import {GestureHandlerRootView} from "react-native-gesture-handler"
@@ -12,7 +12,7 @@ import Toast from "react-native-toast-message"
 
 // import {ErrorBoundary} from "@/components/error"
 import {Text} from "@/components/ignite"
-import {AuthProvider} from "@/contexts/AuthContext"
+import {AuthProvider, useAuth} from "@/contexts/AuthContext"
 import {DeeplinkProvider} from "@/contexts/DeeplinkContext"
 import {SplashLoaderProvider} from "@/contexts/SplashLoaderProvider"
 import {ThemeProvider} from "@/contexts/ThemeContext"
@@ -104,7 +104,7 @@ export const AllProviders = withWrappers(
 
     return (
       <PostHogProvider apiKey={posthogApiKey} options={{disabled: false}}>
-        {props.children}
+        <PostHogIdentityBridge>{props.children}</PostHogIdentityBridge>
       </PostHogProvider>
     )
   },
@@ -213,6 +213,25 @@ export const AllProviders = withWrappers(
 )
 
 type WrapperComponent = FunctionComponent<{children: React.ReactNode}>
+
+/** Join phone analytics to the same stable Cloud V2 identity used by support profiles. */
+function PostHogIdentityBridge({children}: PropsWithChildren) {
+  const posthog = usePostHog()
+  const {user, loading} = useAuth()
+
+  useEffect(() => {
+    if (loading) return
+    if (user?.id) {
+      // Email is intentionally omitted here. Cloud V2 resolves the verified
+      // first-party address server-side and owns that PostHog person property.
+      posthog.identify(user.id)
+    } else {
+      posthog.reset()
+    }
+  }, [loading, posthog, user?.id])
+
+  return <>{children}</>
+}
 
 export function withWrappers(...wrappers: Array<WrapperComponent>) {
   return function (props: PropsWithChildren) {

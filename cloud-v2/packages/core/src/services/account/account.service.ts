@@ -12,6 +12,8 @@ import { createSession, mintAccountSubjectToken, revokeAllSessionsForUser } from
 import { findOrCreateUser } from "../user.service";
 import { sendEmail } from "../email/email.service";
 import * as gotrue from "./gotrue.client";
+import { SupportProfileModel } from "../../models/support-profile.model";
+import { SupportTelemetryOutboxModel } from "../../models/support-telemetry-outbox.model";
 import * as otc from "./one-time-code.service";
 import { AccountError } from "./account-error";
 
@@ -168,8 +170,9 @@ export async function confirmAccountDeletion(
   code: string,
 ): Promise<void> {
   await otc.consumeCode({ code, purpose: "account_deletion", expectSubject: tenantUserId });
-  // Order: kill V2 sessions, then delete the Supabase user. Everything
-  // human-identifying (email, password, name) lives in GoTrue and dies here.
+  // Order: kill V2 sessions, remove the operational support profile/outbox,
+  // then delete the Supabase user. Everything human-identifying (email,
+  // password, name) lives in GoTrue and dies here.
   //
   // OPEN DECISION (deferred, revisit in a future PR): the Mongo users row
   // ({mentraUserId, tenantId, tenantUserId}) is intentionally kept as a
@@ -180,6 +183,10 @@ export async function confirmAccountDeletion(
   // Cloud V1 is a different system with its own database; its data lifecycle
   // is not a cloud-v2 concern and no code here talks to it.
   await revokeAllSessionsForUser({ mentraUserId });
+  await Promise.all([
+    SupportProfileModel.deleteOne({ mentraUserId }),
+    SupportTelemetryOutboxModel.deleteMany({ mentraUserId }),
+  ]);
   await gotrue.deleteUser(tenantUserId);
 }
 

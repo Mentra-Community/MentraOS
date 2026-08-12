@@ -241,6 +241,10 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
         "./modules/bluetooth-sdk/app.plugin.js",
         {
           node: true,
+          // The Mentra App sends identified support telemetry through Cloud V2.
+          // Keep the SDK's anonymous analytics enabled by default for standalone
+          // integrators, but disable the duplicate embedded copy in this host.
+          analytics: false,
         },
       ],
       // "./plugins/withSplashScreen.ts",
