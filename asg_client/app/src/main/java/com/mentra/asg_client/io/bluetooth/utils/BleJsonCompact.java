@@ -14,7 +14,7 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-/** BLE Wire Protocol v2 JSON compaction: short keys, enum ints, omitted defaults, config diff. */
+/** BLE Wire Protocol v2 JSON compaction with lossless fallback for ambiguous payloads. */
 public final class BleJsonCompact {
 
     private static final Map<String, String> LONG_TO_SHORT = new HashMap<>();
@@ -47,8 +47,6 @@ public final class BleJsonCompact {
             Collections.unmodifiableSet(new HashSet<>(Arrays.asList("ck", "chunked_msg")));
 
     private static long sessionConnectEpochMs;
-    private static boolean resolvedConfigSent;
-    private static String currentSessionResolvedConfigHash;
     private static final Map<String, JSONObject> resolvedConfigByHash = new HashMap<>();
 
     static {
@@ -102,8 +100,6 @@ public final class BleJsonCompact {
 
     public static void resetSession() {
         sessionConnectEpochMs = 0L;
-        resolvedConfigSent = false;
-        currentSessionResolvedConfigHash = null;
         resolvedConfigByHash.clear();
     }
 
@@ -160,7 +156,7 @@ public final class BleJsonCompact {
             return json;
         }
         String messageType = extractMessageType(json);
-        if (!shouldCompactOutbound(messageType)) {
+        if (!shouldCompactOutbound(messageType) || !canCompactLosslessly(json, true)) {
             return json;
         }
         return compactObject(json, true);
@@ -224,53 +220,85 @@ public final class BleJsonCompact {
         fromInt.put(code, value);
     }
 
+    /**
+     * Compact JSON has reserved short keys and enum integers. If an otherwise valid future payload
+     * already uses one of those wire representations, sending verbose JSON is the only way an older
+     * decoder can distinguish the original value.
+     */
+    private static boolean canCompactLosslessly(JSONObject input, boolean topLevel)
+            throws JSONException {
+        String messageType = input.optString("type", input.optString("t", ""));
+        Iterator<String> keys = input.keys();
+        while (keys.hasNext()) {
+            String key = keys.next();
+            Object value = input.get(key);
+            if (SHORT_TO_LONG.containsKey(key)
+                    || (topLevel && KEY_RESOLVED_CONFIG_HASH.equals(key))
+                    || isAmbiguousEnumValue(key, value, messageType)) {
+                return false;
+            }
+            if (value instanceof JSONObject
+                    && !canCompactLosslessly((JSONObject) value, false)) {
+                return false;
+            }
+            if (value instanceof JSONArray
+                    && !canCompactArrayLosslessly((JSONArray) value)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean canCompactArrayLosslessly(JSONArray array) throws JSONException {
+        for (int i = 0; i < array.length(); i++) {
+            Object value = array.get(i);
+            if (value instanceof JSONObject
+                    && !canCompactLosslessly((JSONObject) value, false)) {
+                return false;
+            }
+            if (value instanceof JSONArray
+                    && !canCompactArrayLosslessly((JSONArray) value)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean isAmbiguousEnumValue(
+            String key, Object value, String messageType) {
+        if (!(value instanceof Number)) {
+            return false;
+        }
+        return "kind".equals(key)
+                || "source".equals(key)
+                || "aeStateName".equals(key)
+                || ("status".equals(key) && "photo_status".equals(messageType));
+    }
+
     private static JSONObject compactObject(JSONObject input, boolean topLevel) throws JSONException {
         JSONObject output = new JSONObject();
         String messageType = input.optString("type", input.optString("t", ""));
-        boolean skipResolvedConfig = false;
-
-        if (topLevel && shouldDiffResolvedConfig(messageType) && input.has("resolvedConfig")) {
-            JSONObject resolvedConfig = input.getJSONObject("resolvedConfig");
-            String hash = hashConfig(resolvedConfig);
-            resolvedConfigByHash.put(hash, cloneObject(resolvedConfig));
-            if (resolvedConfigSent && hash.equals(currentSessionResolvedConfigHash)) {
-                output.put(KEY_RESOLVED_CONFIG_HASH, hash);
-                skipResolvedConfig = true;
-            } else {
-                currentSessionResolvedConfigHash = hash;
-                resolvedConfigSent = true;
-            }
-        }
 
         Iterator<String> keys = input.keys();
         while (keys.hasNext()) {
             String key = keys.next();
-            if (skipResolvedConfig && "resolvedConfig".equals(key)) {
-                continue;
-            }
             Object value = input.get(key);
-            String shortKey = LONG_TO_SHORT.getOrDefault(key, key);
+            // Keep the absolute timestamp under its verbose key. Legacy peers recognize it and
+            // therefore do not mistake it for the old session-relative `ts` representation.
+            String shortKey =
+                    topLevel && "timestamp".equals(key)
+                            ? key
+                            : LONG_TO_SHORT.getOrDefault(key, key);
             Object compacted = compactValue(key, value, messageType);
-            if (shouldOmit(compacted)) {
-                continue;
-            }
             output.put(shortKey, compacted);
         }
-
-        if (topLevel) {
-            compactTimestamp(output);
-        }
         return output;
-    }
-
-    private static boolean shouldDiffResolvedConfig(String messageType) {
-        return "photo_status".equals(messageType) || "stream_status".equals(messageType);
     }
 
     private static Object compactValue(String longKey, Object value, String messageType)
             throws JSONException {
         if (value == JSONObject.NULL || value == null) {
-            return null;
+            return JSONObject.NULL;
         }
         if (value instanceof JSONObject) {
             return compactObject((JSONObject) value, false);
@@ -322,40 +350,6 @@ public final class BleJsonCompact {
         return out;
     }
 
-    private static boolean shouldOmit(Object value) {
-        if (value == null || value == JSONObject.NULL) {
-            return true;
-        }
-        if (value instanceof Boolean && !((Boolean) value)) {
-            return true;
-        }
-        if (value instanceof JSONObject && ((JSONObject) value).length() == 0) {
-            return true;
-        }
-        if (value instanceof JSONArray && ((JSONArray) value).length() == 0) {
-            return true;
-        }
-        return false;
-    }
-
-    private static void compactTimestamp(JSONObject output) throws JSONException {
-        String tsKey = output.has("timestamp") ? "timestamp" : (output.has("ts") ? "ts" : null);
-        if (tsKey == null) {
-            return;
-        }
-        long absolute = output.optLong(tsKey);
-        if (absolute <= 0) {
-            return;
-        }
-        if (sessionConnectEpochMs <= 0) {
-            sessionConnectEpochMs = absolute;
-        }
-        output.put("ts", absolute - sessionConnectEpochMs);
-        if (!"ts".equals(tsKey)) {
-            output.remove(tsKey);
-        }
-    }
-
     private static JSONObject expandObject(JSONObject input, boolean topLevel) throws JSONException {
         JSONObject output = new JSONObject();
         String messageType = input.optString("type", input.optString("t", ""));
@@ -370,9 +364,6 @@ public final class BleJsonCompact {
             }
             String longKey = SHORT_TO_LONG.getOrDefault(key, key);
             Object expanded = expandValue(longKey, value, messageType);
-            if (expanded == null || expanded == JSONObject.NULL) {
-                continue;
-            }
             output.put(longKey, expanded);
         }
 
@@ -385,14 +376,12 @@ public final class BleJsonCompact {
     }
 
     private static void cacheResolvedConfigIfPresent(JSONObject output) throws JSONException {
-        if (!output.has("resolvedConfig")) {
+        if (!(output.opt("resolvedConfig") instanceof JSONObject)) {
             return;
         }
         JSONObject resolvedConfig = output.getJSONObject("resolvedConfig");
         String hash = hashConfig(resolvedConfig);
         resolvedConfigByHash.put(hash, cloneObject(resolvedConfig));
-        currentSessionResolvedConfigHash = hash;
-        resolvedConfigSent = true;
     }
 
     private static void expandResolvedConfigHash(JSONObject output) throws JSONException {
@@ -403,14 +392,14 @@ public final class BleJsonCompact {
         JSONObject cached = resolvedConfigByHash.get(hash);
         if (cached != null) {
             output.put("resolvedConfig", cloneObject(cached));
+            output.remove(KEY_RESOLVED_CONFIG_HASH);
         }
-        output.remove(KEY_RESOLVED_CONFIG_HASH);
     }
 
     private static Object expandValue(String longKey, Object value, String messageType)
             throws JSONException {
         if (value == JSONObject.NULL || value == null) {
-            return null;
+            return JSONObject.NULL;
         }
         if (value instanceof JSONObject) {
             return expandObject((JSONObject) value, false);
@@ -449,7 +438,13 @@ public final class BleJsonCompact {
 
     private static void expandTimestamp(JSONObject output) throws JSONException {
         if (!output.has("timestamp") && output.has("ts")) {
-            long delta = output.optLong("ts");
+            Object timestamp = output.opt("ts");
+            if (!(timestamp instanceof Number)) {
+                output.put("timestamp", timestamp);
+                output.remove("ts");
+                return;
+            }
+            long delta = ((Number) timestamp).longValue();
             long absolute = sessionConnectEpochMs > 0 ? sessionConnectEpochMs + delta : delta;
             output.put("timestamp", absolute);
             output.remove("ts");
