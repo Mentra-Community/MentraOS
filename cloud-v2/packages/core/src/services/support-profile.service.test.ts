@@ -1,11 +1,13 @@
 import {afterEach, describe, expect, test} from "bun:test"
 import {
+  appendPendingTelemetry,
   deriveDeviceKey,
   fingerprintFor,
   meaningfulTransitions,
   pendingTelemetryFor,
   posthogPropertiesFor,
   shouldRecordConnectedAt,
+  SUPPORT_PENDING_TELEMETRY_LIMIT,
   type SupportStateInput,
 } from "./support-profile.service"
 
@@ -81,12 +83,28 @@ describe("support profile privacy and transitions", () => {
 
   test("persists transition material with the profile write for outbox repair", () => {
     const next = profile({connectionState: "connected", appVersion: "1.0.0"})
-    const pending = pendingTelemetryFor(null, next, "fingerprint-1")
+    const pending = pendingTelemetryFor(null, next, "fingerprint-1", "revision-1")
 
     expect(pending).toMatchObject({
+      transitionId: "revision-1",
       fingerprint: "fingerprint-1",
       events: ["support_profile_created"],
     })
+  })
+
+  test("bounds durable transition repair state and keeps repeated snapshots distinct", () => {
+    const next = profile({connectionState: "connected", appVersion: "1.0.0"})
+    let pending: ReturnType<typeof appendPendingTelemetry> = []
+    for (let revision = 0; revision < SUPPORT_PENDING_TELEMETRY_LIMIT + 5; revision += 1) {
+      pending = appendPendingTelemetry(
+        pending,
+        pendingTelemetryFor(null, next, "same-fingerprint", `revision-${revision}`),
+      )
+    }
+
+    expect(pending).toHaveLength(SUPPORT_PENDING_TELEMETRY_LIMIT)
+    expect(pending[0]?.transitionId).toBe("revision-5")
+    expect(pending.at(-1)?.transitionId).toBe(`revision-${SUPPORT_PENDING_TELEMETRY_LIMIT + 4}`)
   })
 })
 

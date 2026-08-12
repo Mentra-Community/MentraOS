@@ -1,12 +1,15 @@
 import {createHash, createHmac} from "node:crypto"
 import {createLogger} from "@mentra/cloud-shared"
 import {SupportProfileModel} from "../models/support-profile.model"
+import {SupportTelemetryOutboxModel} from "../models/support-telemetry-outbox.model"
+import {UserModel} from "../models/user.model"
 import {enqueueSupportTelemetry} from "./support-telemetry.service"
 
 export const SUPPORT_DEVICE_HISTORY_LIMIT = 12
 export const SUPPORT_IDENTICAL_UPDATE_MIN_MS = 60_000
 export const SUPPORT_RATE_WINDOW_MS = 60 * 60_000
 export const SUPPORT_RATE_WINDOW_LIMIT = 120
+export const SUPPORT_PENDING_TELEMETRY_LIMIT = 64
 const logger = createLogger("core").child({service: "support-profile"})
 
 export interface SupportStateInput {
@@ -42,10 +45,17 @@ export interface SupportProfileUpdateResult {
 }
 
 type PendingTelemetry = {
+  transitionId: string
   fingerprint: string
   events: string[]
   eventAt: string
   properties: Record<string, unknown>
+}
+
+export class SupportProfileAccountDeletedError extends Error {
+  constructor() {
+    super("account is deleted")
+  }
 }
 
 type StoredDevice = {
@@ -69,6 +79,7 @@ export async function updateSupportProfile(
 ): Promise<SupportProfileUpdateResult> {
   // Do not serve create-on-miss traffic until the unique user index is usable.
   await SupportProfileModel.init()
+  await assertActiveOrCleanup(identity.mentraUserId)
   const observedAt = new Date(input.observedAt)
   const receivedAt = new Date()
   const fingerprint = fingerprintFor(input)
@@ -110,11 +121,13 @@ export async function updateSupportProfile(
       const host = toStoredHost(input, observedAt, receivedAt)
       const currentDeviceKey = device?.deviceKey ?? current.currentDeviceKey ?? null
       const next = {...current, host, devices, currentDeviceKey}
-      const newPendingTelemetry = pendingTelemetryFor(current as any, next, fingerprint)
-      const pendingTelemetry = [
-        ...normalizePendingTelemetry((current as any).pendingTelemetry),
-        ...(newPendingTelemetry ? [newPendingTelemetry] : []),
-      ]
+      const newPendingTelemetry = pendingTelemetryFor(
+        current as any,
+        next,
+        fingerprint,
+        `${current.revision + 1}:${receivedAt.getTime()}`,
+      )
+      const pendingTelemetry = appendPendingTelemetry((current as any).pendingTelemetry, newPendingTelemetry)
       const updated = await SupportProfileModel.findOneAndUpdate(
         {_id: current._id, revision: current.revision},
         {
@@ -134,6 +147,7 @@ export async function updateSupportProfile(
         {new: true},
       ).lean()
       if (!updated) continue
+      await assertActiveOrCleanup(identity.mentraUserId)
       void flushPendingTelemetry(updated as any)
       return {status: "accepted", observedAt: observedAt.toISOString()}
     }
@@ -155,9 +169,13 @@ export async function updateSupportProfile(
         lastAcceptedAt: receivedAt,
         rateWindowStartedAt: receivedAt,
         rateWindowCount: 1,
-        pendingTelemetry: [pendingTelemetryFor(null, draft, fingerprint)].filter(Boolean),
+        pendingTelemetry: appendPendingTelemetry(
+          null,
+          pendingTelemetryFor(null, draft, fingerprint, `0:${receivedAt.getTime()}`),
+        ),
         revision: 0,
       })
+      await assertActiveOrCleanup(identity.mentraUserId)
       void flushPendingTelemetry(created.toObject() as any)
       return {status: "accepted", observedAt: observedAt.toISOString()}
     } catch (error) {
@@ -313,15 +331,30 @@ function currentDevice(profile: any): any | null {
   return profile.devices?.find((device: any) => device.deviceKey === profile.currentDeviceKey) ?? null
 }
 
-export function pendingTelemetryFor(previous: any | null, next: any, fingerprint: string): PendingTelemetry | null {
+export function pendingTelemetryFor(
+  previous: any | null,
+  next: any,
+  fingerprint: string,
+  transitionId: string,
+): PendingTelemetry | null {
   const events = meaningfulTransitions(previous, next)
   if (events.length === 0) return null
   return {
+    transitionId,
     fingerprint,
     events,
     eventAt: next.host.observedAt.toISOString(),
     properties: posthogPropertiesFor(next),
   }
+}
+
+export function appendPendingTelemetry(
+  existing: PendingTelemetry | PendingTelemetry[] | null | undefined,
+  incoming: PendingTelemetry | null,
+): PendingTelemetry[] {
+  return [...normalizePendingTelemetry(existing), ...(incoming ? [incoming] : [])].slice(
+    -SUPPORT_PENDING_TELEMETRY_LIMIT,
+  )
 }
 
 async function flushPendingTelemetry(profile: {
@@ -333,7 +366,7 @@ async function flushPendingTelemetry(profile: {
       for (const event of pending.events) {
         await enqueueSupportTelemetry({
           mentraUserId: profile.mentraUserId,
-          transitionKey: `${profile.mentraUserId}:${pending.fingerprint}:${event}`,
+          transitionKey: `${profile.mentraUserId}:${pending.transitionId}:${event}`,
           event,
           eventAt: new Date(pending.eventAt),
           properties: pending.properties,
@@ -341,7 +374,7 @@ async function flushPendingTelemetry(profile: {
       }
       await SupportProfileModel.updateOne(
         {mentraUserId: profile.mentraUserId},
-        {$pull: {pendingTelemetry: {fingerprint: pending.fingerprint}}},
+        {$pull: {pendingTelemetry: {transitionId: pending.transitionId}}},
       )
     } catch (error) {
       logger.warn(
@@ -357,7 +390,23 @@ function normalizePendingTelemetry(
   value: PendingTelemetry | PendingTelemetry[] | null | undefined,
 ): PendingTelemetry[] {
   if (!value) return []
-  return Array.isArray(value) ? value : [value]
+  const entries = Array.isArray(value) ? value : [value]
+  return entries.map((entry) => ({
+    ...entry,
+    // Compatibility for profiles written during staged rollout before the
+    // per-transition identity was introduced.
+    transitionId: entry.transitionId || `${entry.eventAt}:${entry.fingerprint}`,
+  }))
+}
+
+async function assertActiveOrCleanup(mentraUserId: string): Promise<void> {
+  const active = await UserModel.exists({mentraUserId, supportTelemetryDeletedAt: null})
+  if (active) return
+  await Promise.all([
+    SupportProfileModel.deleteOne({mentraUserId}),
+    SupportTelemetryOutboxModel.deleteMany({mentraUserId}),
+  ])
+  throw new SupportProfileAccountDeletedError()
 }
 
 export function posthogPropertiesFor(next: any): Record<string, unknown> {

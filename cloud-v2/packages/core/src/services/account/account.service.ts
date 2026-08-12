@@ -15,6 +15,7 @@ import * as gotrue from "./gotrue.client"
 import {SupportProfileModel} from "../../models/support-profile.model"
 import {SupportTelemetryOutboxModel} from "../../models/support-telemetry-outbox.model"
 import {UserModel} from "../../models/user.model"
+import {waitForSupportTelemetryDeliveries} from "../support-telemetry.service"
 import * as otc from "./one-time-code.service"
 import {AccountError} from "./account-error"
 
@@ -177,8 +178,10 @@ export async function confirmAccountDeletion(mentraUserId: string, tenantUserId:
   // is not a cloud-v2 concern and no code here talks to it.
   await revokeAllSessionsForUser({mentraUserId})
   // Set the tombstone before removing queued rows. A worker that leased a row
-  // before deletion rechecks this immediately before delivery and drops it.
+  // before deletion owns a distributed delivery lease; wait for those captures
+  // to finish so none can occur after deletion commits.
   await UserModel.updateOne({mentraUserId}, {$set: {supportTelemetryDeletedAt: new Date()}})
+  await waitForSupportTelemetryDeliveries(mentraUserId)
   await Promise.all([
     SupportProfileModel.deleteOne({mentraUserId}),
     SupportTelemetryOutboxModel.deleteMany({mentraUserId}),

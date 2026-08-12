@@ -18,10 +18,7 @@ import {hasDefaultDevice} from "../services/DeviceStoreHydration"
 import {projectPairingIdentity} from "../services/PairingIdentity"
 import {isGlassesConnected, isGlassesReady} from "../services/GlassesReadiness"
 import {pushAllBluetoothSettings} from "../services/GlassesSettingsSync"
-import {
-  clearSupportProfileConnectionFailure,
-  recordSupportProfileConnectionFailure,
-} from "../services/SupportProfileSync"
+import {recordSupportProfileConnectionFailure} from "../services/SupportProfileSync"
 import {getModelCapabilities, type DeviceTypes} from "../types"
 import {glassesWifi} from "./glassesWifi"
 import {glassesSettings} from "./glassesSettings"
@@ -88,7 +85,6 @@ export const glasses = {
     try {
       await pushAllBluetoothSettings()
       await BluetoothSdk.connectDefault()
-      clearSupportProfileConnectionFailure()
     } catch (error) {
       recordSupportProfileConnectionFailure(error, "connect_default")
       throw error
@@ -101,7 +97,6 @@ export const glasses = {
     try {
       await pushAllBluetoothSettings()
       await BluetoothSdk.connect(...args)
-      clearSupportProfileConnectionFailure()
     } catch (error) {
       recordSupportProfileConnectionFailure(error, "connect")
       throw error

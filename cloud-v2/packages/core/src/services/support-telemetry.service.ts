@@ -8,6 +8,7 @@ const OUTBOX_TTL_MS = 7 * 24 * 60 * 60 * 1_000
 const LEASE_MS = 30_000
 const POLL_MS = 10_000
 const CAPTURE_TIMEOUT_MS = 15_000
+const DELIVERY_DRAIN_TIMEOUT_MS = CAPTURE_TIMEOUT_MS + 5_000
 let timer: ReturnType<typeof setInterval> | null = null
 let draining = false
 
@@ -19,6 +20,11 @@ export async function enqueueSupportTelemetry(input: {
   properties: Record<string, unknown>
 }): Promise<void> {
   if (!posthogApiKey()) return
+  const active = await UserModel.exists({
+    mentraUserId: input.mentraUserId,
+    supportTelemetryDeletedAt: null,
+  })
+  if (!active) return
   const now = new Date()
   await SupportTelemetryOutboxModel.updateOne(
     {transitionKey: input.transitionKey},
@@ -31,6 +37,16 @@ export async function enqueueSupportTelemetry(input: {
     },
     {upsert: true},
   )
+  // Close the check/write race with account deletion: whichever operation
+  // happens second removes the row.
+  const stillActive = await UserModel.exists({
+    mentraUserId: input.mentraUserId,
+    supportTelemetryDeletedAt: null,
+  })
+  if (!stillActive) {
+    await SupportTelemetryOutboxModel.deleteOne({transitionKey: input.transitionKey})
+    return
+  }
   void drainSupportTelemetryOutbox()
 }
 
@@ -65,10 +81,20 @@ export async function drainSupportTelemetryOutbox(): Promise<void> {
       ).lean()
       if (!row) break
 
+      const deliveryLease = await UserModel.findOneAndUpdate(
+        {mentraUserId: row.mentraUserId, supportTelemetryDeletedAt: null},
+        {$inc: {supportTelemetryDeliveriesInFlight: 1}},
+        {new: true},
+      ).lean()
+      if (!deliveryLease) {
+        await SupportTelemetryOutboxModel.deleteOne({_id: row._id})
+        continue
+      }
       try {
         const email = await trustedEmail(row.mentraUserId)
-        // Recheck after identity lookup, immediately before capture: account deletion may have
-        // removed an event while this worker already held its lease.
+        // Identity lookup can be slow. Recheck under the delivery lease so a
+        // deletion that started meanwhile prevents capture; deletion itself
+        // waits for leases that passed this gate.
         const stillActive = await UserModel.exists({
           mentraUserId: row.mentraUserId,
           supportTelemetryDeletedAt: null,
@@ -105,6 +131,13 @@ export async function drainSupportTelemetryOutbox(): Promise<void> {
           },
         )
         logger.warn({event: row.event, attempts, error: (error as Error)?.message}, "PostHog delivery failed")
+      } finally {
+        await UserModel.updateOne(
+          {mentraUserId: row.mentraUserId, supportTelemetryDeliveriesInFlight: {$gt: 0}},
+          {$inc: {supportTelemetryDeliveriesInFlight: -1}},
+        ).catch((error) =>
+          logger.warn({error: (error as Error)?.message}, "support telemetry delivery lease release deferred"),
+        )
       }
     }
   } catch (error) {
@@ -154,11 +187,28 @@ async function sendCapture(input: {
     }),
   })
   if (!response.ok) {
-    if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {
+    if (isPermanentCaptureStatus(response.status)) {
       throw new PermanentCaptureError(response.status)
     }
     throw new Error(`PostHog capture returned ${response.status}`)
   }
+}
+
+export function isPermanentCaptureStatus(status: number): boolean {
+  // Authentication, authorization, routing and throttling failures can be
+  // repaired operationally. Only payload-specific rejections are terminal.
+  return status === 400 || status === 413 || status === 422
+}
+
+/** Prevent account deletion from returning while a capture is still in flight. */
+export async function waitForSupportTelemetryDeliveries(mentraUserId: string): Promise<void> {
+  const deadline = Date.now() + DELIVERY_DRAIN_TIMEOUT_MS
+  while (Date.now() < deadline) {
+    const user = await UserModel.findOne({mentraUserId}).select({supportTelemetryDeliveriesInFlight: 1}).lean()
+    if (!user || (user.supportTelemetryDeliveriesInFlight ?? 0) <= 0) return
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  }
+  logger.warn({mentraUserId}, "timed out waiting for support telemetry deliveries to drain")
 }
 
 class PermanentCaptureError extends Error {

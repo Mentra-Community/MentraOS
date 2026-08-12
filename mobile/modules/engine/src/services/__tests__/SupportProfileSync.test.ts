@@ -8,7 +8,7 @@ const timeoutCallbacks = new Map<number, () => void>()
 const intervalCallbacks = new Map<number, () => void>()
 const updateMock = mock(async () => ({status: "accepted" as const}))
 const glassesState = {
-  connection: {state: "connected" as const, fullyBooted: true},
+  connection: {state: "connected" as "connected" | "disconnected", fullyBooted: true},
   deviceModel: "Mentra Live",
   serialNumber: "SERIAL-123",
   firmwareVersion: "1.2.3",
@@ -65,6 +65,7 @@ mock.module("../CloudClientService", () => ({
 
 const {
   buildSnapshot,
+  recordSupportProfileConnectionFailure,
   retryDelayForSupportProfileResult,
   snapshotFingerprint,
   startSupportProfileSync,
@@ -76,6 +77,7 @@ beforeEach(() => {
   updateMock.mockClear()
   updateMock.mockImplementation(async () => ({status: "accepted"}))
   glassesState.firmwareVersion = "1.2.3"
+  glassesState.connection.state = "connected"
   timeoutCallbacks.clear()
   intervalCallbacks.clear()
   subscriptionCallback = null
@@ -111,6 +113,24 @@ describe("SupportProfileSync", () => {
     const first = buildSnapshot(new Date("2026-08-11T12:00:00.000Z"))
     const heartbeat = buildSnapshot(new Date("2026-08-11T18:00:00.000Z"))
     expect(snapshotFingerprint(heartbeat)).toBe(snapshotFingerprint(first))
+  })
+
+  test("keeps a failure until a real successful connection transition", async () => {
+    startSupportProfileSync()
+    await flushPromises()
+
+    recordSupportProfileConnectionFailure(new Error("Bluetooth unavailable"), "connect_default")
+    expect(buildSnapshot().host).toMatchObject({
+      failureCode: "bluetooth_unavailable",
+      failureStage: "connect_default",
+    })
+
+    glassesState.connection.state = "disconnected"
+    subscriptionCallback?.()
+    expect(buildSnapshot().host.failureCode).toBe("bluetooth_unavailable")
+    glassesState.connection.state = "connected"
+    subscriptionCallback?.()
+    expect(buildSnapshot().host.failureCode).toBeUndefined()
   })
 
   test("starts immediately, debounces transitions, runs heartbeats, and tears down", async () => {

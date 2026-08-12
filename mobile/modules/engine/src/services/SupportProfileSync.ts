@@ -23,6 +23,7 @@ let queuedFingerprint: string | null = null
 let sendingGeneration: number | null = null
 let syncGeneration = 0
 let lastFailure: {code: string; stage: string} | null = null
+let lastConnectionState: string | null = null
 
 /**
  * Keep Cloud V2's canonical support snapshot current without creating an event
@@ -32,7 +33,8 @@ let lastFailure: {code: string; stage: string} | null = null
 export function startSupportProfileSync(): void {
   if (unsubscribe) return
   const generation = ++syncGeneration
-  unsubscribe = useGlassesStore.subscribe(() => scheduleMeaningfulUpdate(generation))
+  lastConnectionState = useGlassesStore.getState().connection.state
+  unsubscribe = useGlassesStore.subscribe(() => handleGlassesStoreChange(generation))
   heartbeatTimer = BgTimer.setInterval(() => void sendCurrentSnapshot(true, generation), HEARTBEAT_MS)
   void sendCurrentSnapshot(true, generation)
 }
@@ -51,11 +53,19 @@ export function stopSupportProfileSync(): void {
   queuedFingerprint = null
   sendingGeneration = null
   lastFailure = null
+  lastConnectionState = null
+}
+
+function handleGlassesStoreChange(generation: number): void {
+  if (!unsubscribe || generation !== syncGeneration) return
+  const connectionState = useGlassesStore.getState().connection.state
+  if (connectionState === "connected" && lastConnectionState !== "connected") lastFailure = null
+  lastConnectionState = connectionState
+  scheduleMeaningfulUpdate(generation)
 }
 
 function scheduleMeaningfulUpdate(generation = syncGeneration): void {
   if (!unsubscribe || generation !== syncGeneration) return
-  if (useGlassesStore.getState().connection.state === "connected") lastFailure = null
   const fingerprint = snapshotFingerprint(buildSnapshot())
   if (fingerprint === lastSentFingerprint) return
   queuedFingerprint = fingerprint
@@ -98,21 +108,22 @@ async function sendCurrentSnapshot(force: boolean, generation = syncGeneration):
     console.warn("supportProfile: Cloud V2 update failed:", error instanceof Error ? error.message : error)
     retryDelayMs = RETRY_MS
   } finally {
-    if (generation !== syncGeneration || sendingGeneration !== generation || !unsubscribe) return
-    sendingGeneration = null
-    if (retryDelayMs !== null) {
-      if (retryTimer !== null) BgTimer.clearTimeout(retryTimer)
-      retryTimer = BgTimer.setTimeout(() => {
-        retryTimer = null
-        void sendCurrentSnapshot(true, generation)
-      }, retryDelayMs)
-      return
-    }
-
-    const currentFingerprint = snapshotFingerprint(buildSnapshot())
-    if (currentFingerprint !== lastSentFingerprint) {
-      queuedFingerprint = currentFingerprint
-      if (retryTimer === null) armDebounce(generation)
+    const generationIsActive = generation === syncGeneration && sendingGeneration === generation && Boolean(unsubscribe)
+    if (generationIsActive) {
+      sendingGeneration = null
+      if (retryDelayMs !== null) {
+        if (retryTimer !== null) BgTimer.clearTimeout(retryTimer)
+        retryTimer = BgTimer.setTimeout(() => {
+          retryTimer = null
+          void sendCurrentSnapshot(true, generation)
+        }, retryDelayMs)
+      } else {
+        const currentFingerprint = snapshotFingerprint(buildSnapshot())
+        if (currentFingerprint !== lastSentFingerprint) {
+          queuedFingerprint = currentFingerprint
+          if (retryTimer === null) armDebounce(generation)
+        }
+      }
     }
   }
 }
@@ -174,14 +185,14 @@ export function recordSupportProfileConnectionFailure(error: unknown, stage: str
   const code = /^[a-zA-Z0-9_.-]{1,64}$/.test(rawCode)
     ? rawCode.toLowerCase()
     : message.includes("permission")
-    ? "permission_denied"
-    : message.includes("bluetooth") && (message.includes("off") || message.includes("unavailable"))
-    ? "bluetooth_unavailable"
-    : message.includes("not found") || message.includes("no default")
-    ? "device_not_found"
-    : message.includes("timeout")
-    ? "connect_timeout"
-    : "connect_failed"
+      ? "permission_denied"
+      : message.includes("bluetooth") && (message.includes("off") || message.includes("unavailable"))
+        ? "bluetooth_unavailable"
+        : message.includes("not found") || message.includes("no default")
+          ? "device_not_found"
+          : message.includes("timeout")
+            ? "connect_timeout"
+            : "connect_failed"
   lastFailure = {code, stage: stage.replace(/[^a-zA-Z0-9_.-]/g, "_").slice(0, 64)}
   scheduleMeaningfulUpdate()
 }

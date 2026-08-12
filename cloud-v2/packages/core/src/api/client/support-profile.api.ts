@@ -1,6 +1,6 @@
 import {Hono} from "hono"
 import {z} from "zod"
-import {updateSupportProfile} from "../../services/support-profile.service"
+import {SupportProfileAccountDeletedError, updateSupportProfile} from "../../services/support-profile.service"
 import type {AppContext, AppEnv} from "../../types/hono.types"
 import {InvalidGrant, InvalidRequest} from "../../types/oauth.types"
 import {UserModel} from "../../models/user.model"
@@ -84,7 +84,12 @@ async function putSupportProfile(c: AppContext) {
     supportTelemetryDeletedAt: null,
   })
   if (!activeUser) throw new InvalidGrant("account is deleted")
-  return c.json(await updateSupportProfile({mentraUserId: user.mentraUserId, tenantId: user.tenantId}, parsed.data))
+  try {
+    return c.json(await updateSupportProfile({mentraUserId: user.mentraUserId, tenantId: user.tenantId}, parsed.data))
+  } catch (error) {
+    if (error instanceof SupportProfileAccountDeletedError) throw new InvalidGrant("account is deleted")
+    throw error
+  }
 }
 
 async function readBodyCapped(request: Request): Promise<string> {
