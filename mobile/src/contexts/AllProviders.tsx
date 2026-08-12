@@ -222,17 +222,28 @@ function PostHogIdentityBridge({children}: PropsWithChildren) {
 
   useEffect(() => {
     if (loading) return
-    if (user?.id) {
-      // Email is intentionally omitted here. Cloud V2 resolves the verified
-      // first-party address server-side and owns that PostHog person property.
-      posthog.identify(user.id)
-      identifiedThisSession.current = true
-    } else if (identifiedThisSession.current || !isAnonymousDistinctId(posthog.getDistinctId())) {
-      // Reset only a still-identified session (sign-out, or a boot that kept a
-      // prior identity from any auth provider). Resetting on every signed-out
-      // boot would mint a fresh anonymous PostHog person each time the app opens.
-      posthog.reset()
-      identifiedThisSession.current = false
+    let cancelled = false
+    void (async () => {
+      // getDistinctId() returns "" until PostHog hydrates its persisted
+      // identity; deciding before then would mistake a stale identified
+      // session for an anonymous one on a signed-out cold boot.
+      await posthog.ready()
+      if (cancelled) return
+      if (user?.id) {
+        // Email is intentionally omitted here. Cloud V2 resolves the verified
+        // first-party address server-side and owns that PostHog person property.
+        posthog.identify(user.id)
+        identifiedThisSession.current = true
+      } else if (identifiedThisSession.current || !isAnonymousDistinctId(posthog.getDistinctId())) {
+        // Reset only a still-identified session (sign-out, or a boot that kept a
+        // prior identity from any auth provider). Resetting on every signed-out
+        // boot would mint a fresh anonymous PostHog person each time the app opens.
+        posthog.reset()
+        identifiedThisSession.current = false
+      }
+    })()
+    return () => {
+      cancelled = true
     }
   }, [loading, posthog, user?.id])
 
@@ -241,7 +252,8 @@ function PostHogIdentityBridge({children}: PropsWithChildren) {
 
 /** PostHog's own anonymous distinct ids are UUIDs; every identity our auth
  * providers pass to identify() (Cloud V2 `mu_<ULID>`, Authing hex id) is not.
- * An empty string means PostHog has not initialized yet — treat as anonymous. */
+ * Callers await posthog.ready() first, so "" (not yet hydrated) is a dead
+ * path kept only as a safe default. */
 function isAnonymousDistinctId(distinctId: string): boolean {
   return !distinctId || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(distinctId)
 }
