@@ -30,6 +30,7 @@ import adminPreinstalled from "./admin/preinstalled.api";
 import reportAgent from "./agent/reports.api";
 import clientAuth from "./client/auth.api";
 import clientReports from "./client/reports.api";
+import clientSupportProfile from "./client/support-profile.api";
 import clientMiniapps from "./client/miniapps.api";
 import accountApi from "./account/account.api";
 import accountOauth from "./account/oauth.api";
@@ -81,6 +82,7 @@ export function createApp(opts: CreateAppOptions): Hono<AppEnv> {
   // Audience mounts. Device-called auth lives under /api/client/*.
   app.route("/api/client/auth", clientAuth);
   app.route("/api/client/reports", clientReports);
+  app.route("/api/client/support-profile", clientSupportProfile);
   app.route("/api/agent/reports", reportAgent);
   app.route("/api/client/miniapps", clientMiniapps);
   app.route("/api/account", accountApi);

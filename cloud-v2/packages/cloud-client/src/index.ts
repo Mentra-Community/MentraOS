@@ -67,4 +67,7 @@ export type {
   ReportTrigger,
   SubmitReportInput,
   SubmitReportResult,
+  SupportConnectionState,
+  SupportProfileUpdateResult,
+  SupportStateInput,
 } from "./modules/core/core";
