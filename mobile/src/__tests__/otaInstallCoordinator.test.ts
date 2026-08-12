@@ -1180,6 +1180,32 @@ describe("OtaInstallCoordinator APK completion by build-number increase (WP 8C-c
     expect(snap.errorMsg).toBe("")
   })
 
+  it("does not retry when a late native rejection follows exact build-number completion", async () => {
+    setLegacyGlassesConnected("33")
+    seedLegacyApkUpdateAvailable()
+    let rejectStart!: (reason: Error) => void
+    bluetoothSdkMock.startOtaUpdate.mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          rejectStart = reject
+        }),
+    )
+    otaInstallCoordinator.attach()
+
+    // Legacy version_info is the only completion signal; no ota_start_ack or
+    // ota_status/progress event arrives before the native promise rejects.
+    useGlassesStore.getState().setGlassesInfo({buildNumber: "45"})
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("complete")
+
+    rejectStart(new Error("late native timeout"))
+    await flushNativeStartPromise()
+    await jest.advanceTimersByTimeAsync(LEGACY_RETRY_INTERVAL_MS * MAX_RETRIES)
+
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("complete")
+    expect(otaInstallCoordinator.snapshot().errorMsg).toBe("")
+  })
+
   it("does not fire without an apk step in the selected update", () => {
     setLegacyGlassesConnected("33")
     useGlassesStore.getState().setOtaUpdateAvailable({

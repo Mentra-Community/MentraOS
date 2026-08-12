@@ -1433,13 +1433,14 @@ class OtaInstallCoordinator {
 
       if (this.otaStartOwnership !== ownership) return
 
-      // A received ota_status/legacy progress event proves that this exact
-      // logical start was accepted. Its application-level ack may be lost while
-      // the update continues; never create another transaction or fail a live,
-      // restarting, or completed session because that stale promise timed out.
-      if (this.hasFirstActivity) {
+      // A received ota_status/legacy progress event, or the exact legacy APK
+      // build-number proof, proves that this logical start was accepted. Its
+      // application-level ack may be lost while the update continues; never
+      // create another transaction or fail a live, restarting, or completed
+      // session because that stale promise timed out.
+      if (this.hasFirstActivity || this.apkCompletedViaBuildIncrease) {
         ownership.outcome = "acknowledged"
-        console.log("[OTA_PROGRESS] ota_start rejection arrived after OTA activity — ignoring stale rejection")
+        console.log("[OTA_PROGRESS] ota_start rejection arrived after acceptance proof — ignoring stale rejection")
         return
       }
 
