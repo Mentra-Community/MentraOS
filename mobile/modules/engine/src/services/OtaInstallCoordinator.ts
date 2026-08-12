@@ -216,6 +216,13 @@ class OtaInstallCoordinator {
   // timeout. Keep that ownership across attach/detach so a remount, watchdog, or
   // query fallback can never open a second native request beside it.
   private otaStartInFlight: Promise<void> | null = null
+  // Explicit UI retries are new logical attempts. Native completion callbacks carry
+  // this generation so an older request cannot acknowledge, retry, or fail the new
+  // attempt while it drains. If native still owns the previous request, the fresh
+  // request remains queued until that ownership ends.
+  private otaStartAttemptId = 0
+  private otaStartRequiresFreshRequestAttempt: number | null = null
+  private otaStartIgnoreUnscopedAckAttempt: number | null = null
   private hasReceivedAck = false
   private hasFirstActivity = false
   // Stuck-at-zero watchdog clears only on first NON-ZERO progress; "first activity"
@@ -317,6 +324,10 @@ class OtaInstallCoordinator {
       return
     }
     console.log("[OTA_PROGRESS] retry pressed, clearing state and re-sending ota_start")
+    this.otaStartAttemptId += 1
+    const retryAttemptId = this.otaStartAttemptId
+    this.otaStartRequiresFreshRequestAttempt = this.otaStartInFlight ? retryAttemptId : null
+    this.otaStartIgnoreUnscopedAckAttempt = this.otaStartInFlight ? retryAttemptId : null
     // Batch like the old event handler: React ran the whole handler (including
     // the ota_start send) before re-rendering + re-running effects.
     const wasReacting = this.reacting
@@ -1008,8 +1019,20 @@ class OtaInstallCoordinator {
   // --- BLE OTA event listeners (engine GlobalEventEmitter, fed by OtaService) ---
 
   private readonly handleAck = (): void => {
+    if (this.otaStartIgnoreUnscopedAckAttempt === this.otaStartAttemptId) {
+      console.log("[OTA_PROGRESS] ignoring unscoped ota_start_ack while a fresh retry is queued")
+      return
+    }
+    this.handleAckForAttempt(this.otaStartAttemptId)
+  }
+
+  private handleAckForAttempt(attemptId: number): void {
+    if (attemptId !== this.otaStartAttemptId) return
     if (this.hasReceivedAck) return
     console.log("[OTA_PROGRESS] ota_start_ack received")
+    if (this.otaStartIgnoreUnscopedAckAttempt === attemptId) {
+      this.otaStartIgnoreUnscopedAckAttempt = null
+    }
     this.hasReceivedAck = true
     this.clearRetryTimeout()
   }
@@ -1296,6 +1319,12 @@ class OtaInstallCoordinator {
     }, stuckTimeoutMs)
   }
 
+  /** Arm the 0%-stuck watchdog only when this logical session has none. */
+  private maybeArmStuckWatchdog(): void {
+    if (this.stuckTimeout || this.hasFirstNonZeroProgress) return
+    this.armStuckWatchdogOnly()
+  }
+
   private sendOtaStartWithWatchdogs(): Promise<void> {
     // INVARIANT BACKSTOP — not normal control flow. Every entry point that can drive the
     // glasses (connect-edge, query fallback, retry, mount) carries its own detour gate with the
@@ -1310,14 +1339,47 @@ class OtaInstallCoordinator {
       return Promise.resolve()
     }
     if (this.otaStartInFlight) {
-      console.log("[OTA_PROGRESS] ota_start already in flight — joining existing native request")
-      return this.otaStartInFlight
+      const ownedRequest = this.otaStartInFlight
+      const attemptId = this.otaStartAttemptId
+      this.maybeStartGlobalTimeout()
+      this.maybeArmStuckWatchdog()
+
+      if (this.otaStartRequiresFreshRequestAttempt !== attemptId) {
+        console.log("[OTA_PROGRESS] ota_start already in flight — joining existing native request")
+        return ownedRequest
+      }
+
+      console.log("[OTA_PROGRESS] fresh ota_start queued behind previous native request")
+      return ownedRequest.then(() => {
+        if (attemptId !== this.otaStartAttemptId) {
+          console.log("[OTA_PROGRESS] queued ota_start superseded by a newer retry")
+          return
+        }
+        if (this.hasFirstActivity || this.computeDisplayStateNow() !== "starting") {
+          console.log("[OTA_PROGRESS] OTA activity arrived while retry was queued — no new ota_start")
+          this.otaStartRequiresFreshRequestAttempt = null
+          this.otaStartIgnoreUnscopedAckAttempt = null
+          return
+        }
+        if (!this.attached || !isGlassesConnected(useGlassesStore.getState().connection)) {
+          console.log("[OTA_PROGRESS] queued ota_start waiting for an attached connected session")
+          return
+        }
+        // The previous request has settled, so releasing this exact ownership is
+        // safe even if its cleanup continuation has not run yet.
+        if (this.otaStartInFlight === ownedRequest) this.otaStartInFlight = null
+        return this.sendOtaStartWithWatchdogs()
+      })
     }
     this.maybeStartGlobalTimeout()
     this.hasReceivedAck = false
-    this.armStuckWatchdogOnly()
+    this.maybeArmStuckWatchdog()
 
-    const request = this.performOtaStart()
+    const attemptId = this.otaStartAttemptId
+    if (this.otaStartRequiresFreshRequestAttempt === attemptId) {
+      this.otaStartRequiresFreshRequestAttempt = null
+    }
+    const request = this.performOtaStart(attemptId)
     this.otaStartInFlight = request
     void request.finally(() => {
       if (this.otaStartInFlight === request) this.otaStartInFlight = null
@@ -1325,18 +1387,27 @@ class OtaInstallCoordinator {
     return request
   }
 
-  private async performOtaStart(): Promise<void> {
+  private async performOtaStart(attemptId: number): Promise<void> {
     try {
       const state = useGlassesStore.getState()
       const otaVersionUrl = resolveOtaManifestUrl(state.otaVersionUrl, state.buildNumber)
       console.log(`[OTA_PROGRESS] sending ota_start with manifest URL: ${otaVersionUrl}`)
       await BluetoothSdk.startOtaUpdate(otaVersionUrl)
+      if (attemptId !== this.otaStartAttemptId) {
+        console.log("[OTA_PROGRESS] ignoring ota_start ack from a superseded attempt")
+        return
+      }
       // The public SDK promise resolves only from ota_start_ack. Treat that
       // resolution as the acknowledgement even if the parallel event dispatch
       // reaches the coordinator later (or is dropped by a remount).
-      this.handleAck()
+      this.handleAckForAttempt(attemptId)
     } catch (err) {
       console.warn("[OTA_PROGRESS] sendOtaStart threw", err)
+
+      if (attemptId !== this.otaStartAttemptId) {
+        console.log("[OTA_PROGRESS] ignoring ota_start rejection from a superseded attempt")
+        return
+      }
 
       // A received ota_status/legacy progress event proves that this exact
       // logical start was accepted. Its application-level ack may be lost while
@@ -1353,7 +1424,9 @@ class OtaInstallCoordinator {
         this.retryCount += 1
         const retryIntervalMs = this.isLegacySessionShapeNow() ? LEGACY_RETRY_INTERVAL_MS : RETRY_INTERVAL_MS
         console.log(
-          `[OTA_PROGRESS] ota_start request ended without ack or activity; retrying after ${retryIntervalMs}ms (attempt ${this.retryCount + 1}/${MAX_RETRIES})`,
+          `[OTA_PROGRESS] ota_start request ended without ack or activity; retrying after ${retryIntervalMs}ms (attempt ${
+            this.retryCount + 1
+          }/${MAX_RETRIES})`,
         )
         this.retryTimeout = setTimeout(() => {
           this.retryTimeout = null

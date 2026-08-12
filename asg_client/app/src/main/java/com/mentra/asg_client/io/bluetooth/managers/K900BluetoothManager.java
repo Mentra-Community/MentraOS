@@ -2,6 +2,7 @@ package com.mentra.asg_client.io.bluetooth.managers;
 
 import android.content.Context;
 import android.util.Log;
+
 import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.bes.BesOtaStateStore;
 import com.mentra.asg_client.io.bes.BesOtaUartListener;
@@ -27,6 +28,10 @@ import com.mentra.asg_client.service.core.processors.ChunkedMessageProtocolStrat
 import com.mentra.asg_client.service.utils.SysProp;
 import com.mentra.asg_client.settings.AsgSettings;
 import com.mentra.asg_client.utils.WakeLockManager;
+
+import org.greenrobot.eventbus.EventBus;
+import org.json.JSONObject;
+
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -40,8 +45,6 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
-import org.greenrobot.eventbus.EventBus;
-import org.json.JSONObject;
 
 /**
  * Implementation of IBluetoothManager for K900 devices. Uses the K900's serial port to communicate
@@ -1666,36 +1669,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         if (skipReason != null) {
             return;
         }
-        BesOtaStateStore.TransitionResult completed;
-        if (snapshot.getState() == BesOtaStateStore.State.APPLY_PENDING) {
-            BesOtaStateStore.VerificationDecision verification =
-                    besOtaStateStore.claimOrResumeVerificationBoot(currentBootId);
-            Log.i(
-                    TAG,
-                    "BES_OTA_DIAG version_proof_claim result="
-                            + verification
-                            + " actual="
-                            + diagnosticActualVersion
-                            + " snapshot={"
-                            + besOtaStateStore.read().toDiagnosticString()
-                            + "}");
-            if (verification != BesOtaStateStore.VerificationDecision.CLAIMED
-                    && verification != BesOtaStateStore.VerificationDecision.RESUME) {
-                Log.e(TAG, "BES post-apply verification boot rejected: " + verification);
-                return;
-            }
-            completed =
-                    besOtaStateStore.completeVerified(
-                            snapshot.getOwnerSessionId(), currentBootId, actualVersion);
-        } else if (snapshot.getState() == BesOtaStateStore.State.AUTH_ATTEMPTED) {
-            completed =
-                    besOtaStateStore.completeRecoveredAfterRestart(
-                            snapshot.getOwnerSessionId(), currentBootId, actualVersion);
-        } else {
-            completed =
-                    besOtaStateStore.completeLateExactTargetAfterRecoveryTimeout(
-                            snapshot.getOwnerSessionId(), currentBootId, actualVersion);
-        }
+        BesOtaStateStore.TransitionResult completed =
+                besOtaStateStore.completeVersionProofAfterRestart(
+                        snapshot.getOwnerSessionId(), currentBootId, actualVersion);
         Log.i(
                 TAG,
                 "BES_OTA_DIAG version_proof_complete result="

@@ -106,9 +106,7 @@ function idleStatus(): OtaStatus {
 }
 
 async function flushNativeStartPromise(): Promise<void> {
-  await Promise.resolve()
-  await Promise.resolve()
-  await Promise.resolve()
+  await jest.advanceTimersByTimeAsync(0)
 }
 
 beforeEach(() => {
@@ -227,6 +225,46 @@ describe("OtaInstallCoordinator ota_start request ownership", () => {
     expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
     expect(otaInstallCoordinator.snapshot().errorMsg).toBe("")
     expect(otaInstallCoordinator.snapshot().displayState).toBe("restarting")
+  })
+
+  it("queues an explicit retry behind the previous request and ignores its stale ack", async () => {
+    setGlassesConnected()
+    let resolveFirst!: () => void
+    let resolveSecond!: () => void
+    bluetoothSdkMock.startOtaUpdate
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveFirst = resolve
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveSecond = resolve
+          }),
+      )
+    otaInstallCoordinator.attach()
+
+    await jest.advanceTimersByTimeAsync(DOWNLOAD_STUCK_TIMEOUT_MS)
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("failed")
+
+    otaInstallCoordinator.retry()
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+
+    // An unscoped event from the previous native request must not acknowledge
+    // the fresh logical attempt while that request still owns the bridge.
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+    expect((otaInstallCoordinator as unknown as {hasReceivedAck: boolean}).hasReceivedAck).toBe(false)
+
+    resolveFirst()
+    await flushNativeStartPromise()
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(2)
+    expect((otaInstallCoordinator as unknown as {hasReceivedAck: boolean}).hasReceivedAck).toBe(false)
+
+    resolveSecond()
+    await flushNativeStartPromise()
+    expect((otaInstallCoordinator as unknown as {hasReceivedAck: boolean}).hasReceivedAck).toBe(true)
   })
 })
 
@@ -496,6 +534,56 @@ describe("OtaInstallCoordinator detach()", () => {
 
     expect(otaInstallCoordinator.snapshot().errorMsg).toBe("")
     expect(otaInstallCoordinator.snapshot().displayState).toBe("starting")
+  })
+
+  it("re-arms the 0%-stuck watchdog when a remount adopts the native request", async () => {
+    setGlassesConnected()
+    let resolveStart!: () => void
+    bluetoothSdkMock.startOtaUpdate.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveStart = resolve
+        }),
+    )
+    otaInstallCoordinator.attach()
+
+    otaInstallCoordinator.detach()
+    otaInstallCoordinator.attach()
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+
+    resolveStart()
+    await flushNativeStartPromise()
+    await jest.advanceTimersByTimeAsync(DOWNLOAD_STUCK_TIMEOUT_MS)
+
+    expect(otaInstallCoordinator.snapshot().errorMsg).toBe(OtaProgressMessages.stalledOrStuck)
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("failed")
+  })
+
+  it("re-arms the global timeout when a remount adopts the native request", async () => {
+    setGlassesConnected()
+    let resolveStart!: () => void
+    bluetoothSdkMock.startOtaUpdate.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveStart = resolve
+        }),
+    )
+    otaInstallCoordinator.attach()
+
+    otaInstallCoordinator.detach()
+    otaInstallCoordinator.attach()
+    resolveStart()
+    await flushNativeStartPromise()
+
+    // Steadily advancing progress keeps every per-step watchdog quiet; only the
+    // re-armed session cap can fail this adopted request.
+    for (let minute = 1; minute * 60_000 <= GLOBAL_OTA_TIMEOUT_MS; minute++) {
+      useGlassesStore.getState().setOtaStatus(inProgressStatus({stepPercent: minute, overallPercent: minute}))
+      await jest.advanceTimersByTimeAsync(60_000)
+    }
+
+    expect(otaInstallCoordinator.snapshot().errorMsg).toBe(OtaProgressMessages.globalTimeout)
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("failed")
   })
 })
 
