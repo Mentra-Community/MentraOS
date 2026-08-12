@@ -200,6 +200,13 @@ public class AsgConstants {
     /** Delay before probing the alternate UART baud after ASG starts at the rendezvous rate. */
     public static final long UART_BOOT_RECOVERY_INITIAL_DELAY_MS = 8000;
 
+    /**
+     * Grace after bounded UART recovery is exhausted before a BES OTA timeout becomes terminal.
+     * BES can finish rebooting after the transport scan, and an exact target-version reply from
+     * that later Linux boot is authoritative.
+     */
+    public static final long BES_OTA_RECOVERY_FAILURE_GRACE_MS = 30000;
+
     /** Number of spaced system-version probes used to tolerate short BES UART restart windows. */
     public static final int UART_RECOVERY_PROBES_PER_BURST = 5;
 

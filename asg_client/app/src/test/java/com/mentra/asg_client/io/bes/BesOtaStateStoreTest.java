@@ -153,6 +153,58 @@ public class BesOtaStateStoreTest {
     }
 
     @Test
+    public void recoveryTimeoutCanBeSupersededByExactTargetOnLaterBoot() {
+        reserve();
+        assertThat(store.fail(OWNER, "recovery_timeout")).isEqualTo(TransitionResult.APPLIED);
+
+        assertThat(store.completeLateExactTargetAfterRecoveryTimeout(OWNER, BOOT_B, TARGET))
+                .isEqualTo(TransitionResult.APPLIED);
+        assertThat(store.read().getTerminalStatus()).isEqualTo(TerminalStatus.SUCCESS);
+        assertThat(store.read().getTerminalCode()).isEqualTo("verified");
+        assertThat(store.read().getVerificationBootId()).isEqualTo(BOOT_B);
+    }
+
+    @Test
+    public void verificationTimeoutCanBeSupersededByExactTargetOnLaterBoot() {
+        reserveAndMarkApply();
+        assertThat(store.fail(OWNER, "verification_timeout")).isEqualTo(TransitionResult.APPLIED);
+
+        assertThat(store.completeLateExactTargetAfterRecoveryTimeout(OWNER, BOOT_B, TARGET))
+                .isEqualTo(TransitionResult.APPLIED);
+        assertThat(store.read().getTerminalStatus()).isEqualTo(TerminalStatus.SUCCESS);
+    }
+
+    @Test
+    public void lateTimeoutProofRequiresOwnerLaterBootAndExactTarget() {
+        reserve();
+        store.fail(OWNER, "recovery_timeout");
+
+        assertThat(
+                        store.completeLateExactTargetAfterRecoveryTimeout(
+                                OTHER_OWNER, BOOT_B, TARGET))
+                .isEqualTo(TransitionResult.REJECTED);
+        assertThat(store.completeLateExactTargetAfterRecoveryTimeout(OWNER, BOOT_A, TARGET))
+                .isEqualTo(TransitionResult.ALREADY_TERMINAL);
+        assertThat(
+                        store.completeLateExactTargetAfterRecoveryTimeout(
+                                OWNER, BOOT_B, "26.7.30.3"))
+                .isEqualTo(TransitionResult.ALREADY_TERMINAL);
+        assertThat(store.read().getTerminalStatus()).isEqualTo(TerminalStatus.FAILURE);
+        assertThat(store.read().getTerminalCode()).isEqualTo("recovery_timeout");
+    }
+
+    @Test
+    public void nonTimeoutFailureCannotBeSupersededByVersionProof() {
+        reserve();
+        store.fail(OWNER, "response_timeout");
+
+        assertThat(store.completeLateExactTargetAfterRecoveryTimeout(OWNER, BOOT_B, TARGET))
+                .isEqualTo(TransitionResult.ALREADY_TERMINAL);
+        assertThat(store.read().getTerminalStatus()).isEqualTo(TerminalStatus.FAILURE);
+        assertThat(store.read().getTerminalCode()).isEqualTo("response_timeout");
+    }
+
+    @Test
     public void failedTerminalCannotRetireInAuthorizationBoot() {
         reserve();
         store.fail(OWNER, "install_failed");

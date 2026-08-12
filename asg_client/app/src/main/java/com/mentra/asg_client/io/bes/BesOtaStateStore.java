@@ -392,6 +392,56 @@ public final class BesOtaStateStore {
         }
     }
 
+    /**
+     * Replace only a transport-recovery timeout with exact target-version proof from a later boot.
+     *
+     * <p>Recovery timing is not proof that the installation failed. A fresh framed version reply
+     * from a different Linux boot is stronger evidence, but it must never erase authorization,
+     * protocol, artifact, or version failures.
+     */
+    public TransitionResult completeLateExactTargetAfterRecoveryTimeout(
+            String ownerSessionId, String currentBootId, String actualVersion) {
+        synchronized (TRANSITION_LOCK) {
+            Snapshot current = readLocked();
+            String owner = canonicalNonempty(ownerSessionId);
+            String boot = canonicalBootId(currentBootId);
+            String actual = canonicalVersion(actualVersion);
+            boolean eligibleTimeout =
+                    current.isValid()
+                            && current.state == State.TERMINAL
+                            && current.terminalStatus == TerminalStatus.FAILURE
+                            && ("recovery_timeout".equals(current.terminalCode)
+                                    || "verification_timeout".equals(current.terminalCode));
+            if (!eligibleTimeout
+                    || !current.ownerSessionId.equals(owner)
+                    || boot == null
+                    || boot.equals(current.authorizationBootId)
+                    || !current.targetVersion.equals(actual)) {
+                logDecision(
+                        "late_timeout_version_proof_rejected",
+                        "requested_owner="
+                                + diagnosticValue(owner)
+                                + " requested_boot="
+                                + diagnosticValue(boot)
+                                + " actual="
+                                + diagnosticValue(actual),
+                        current);
+                return current.isValid()
+                                && current.state == State.TERMINAL
+                                && current.ownerSessionId.equals(owner)
+                        ? TransitionResult.ALREADY_TERMINAL
+                        : TransitionResult.REJECTED;
+            }
+            Snapshot verified =
+                    current.withVerificationBoot(boot)
+                            .asTerminal(TerminalStatus.SUCCESS, "verified");
+            return putLocked(
+                            "complete_late_timeout_version_proof", current, verified)
+                    ? TransitionResult.APPLIED
+                    : TransitionResult.PERSISTENCE_FAILURE;
+        }
+    }
+
     /** Monotonic owner-checked failure transition. Failure never erases authorization history. */
     public TransitionResult fail(String ownerSessionId, String stableCode) {
         synchronized (TRANSITION_LOCK) {
