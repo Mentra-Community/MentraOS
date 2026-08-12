@@ -2128,11 +2128,24 @@ class DeviceManager {
 
         Bridge.log("MAN: Forgetting smart glasses")
 
-        // Call forget first to stop timers/handlers/reconnect logic
-        sgc?.forget()
+        if (live != null) {
+            // MentraLive forget() owns teardown so its last-line CTKD guard cannot be
+            // bypassed by a second disconnect here if bonding starts after the check above.
+            live.forget()
+            if (live.isCtkdBondingInProgress()) {
+                // MentraLive refused teardown; surface the same error the UI already handles.
+                throw BluetoothSdkException(
+                        "ctkd_bonding_in_progress",
+                        "Bluetooth Classic pairing is in progress. Accept or cancel the system pairing dialog first, then unpair.",
+                )
+            }
+        } else {
+            // Call forget first to stop timers/handlers/reconnect logic
+            sgc?.forget()
 
-        // Then disconnect to close connections
-        disconnect()
+            // Then disconnect to close connections
+            disconnect()
+        }
 
         // Clear state
         defaultWearable = ""

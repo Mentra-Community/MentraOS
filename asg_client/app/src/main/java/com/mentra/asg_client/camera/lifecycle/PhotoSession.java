@@ -766,6 +766,22 @@ public final class PhotoSession {
         }
     }
 
+    /** Cancel the active still capture and mark the session idle before camera teardown. */
+    public boolean cancelActiveCapture(String errorMessage) {
+        synchronized (hooks.serviceLock()) {
+            if (activeCapture == null && shotState == AeStateMachine.ShotState.IDLE) {
+                return false;
+            }
+            hdrBurstCapture.cancel();
+            hooks.cancelImuRecording();
+            aeStateMachine.clearWaitFlags();
+            notifyPhotoError(errorMessage);
+            clearActiveCapture();
+            shotState = AeStateMachine.ShotState.IDLE;
+            return true;
+        }
+    }
+
     /**
      * Prepare and hold the camera "warm" for {@code durationMs} without capturing a photo. The
      * session is opened/reused and configured with the SAME parameters a same-size SDK photo would

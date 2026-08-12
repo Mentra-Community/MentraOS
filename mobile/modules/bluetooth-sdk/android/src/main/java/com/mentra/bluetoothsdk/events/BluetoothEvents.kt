@@ -130,6 +130,7 @@ data class PairingTransferResultEvent(
     val state: Int? get() = (values["state"] as? Number)?.toInt()
     val error: String? get() = values["error"] as? String
     val binding: String? get() = values["binding"] as? String
+    val protocolVersion: Int? get() = (values["protocol_version"] as? Number)?.toInt()
 }
 
 /**

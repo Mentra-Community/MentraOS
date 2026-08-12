@@ -47,6 +47,11 @@ const ar = {
     hardwareIncompatible: "الأجهزة غير متوافقة",
     hardwareIncompatibleMessage: "{{app}} يتطلب أجهزة غير متوفرة في النظارات المتصلة: {{missing}}",
   },
+  settings: {
+    ...en.settings,
+    forgetGlassesWhilePairing:
+      "اقتران Bluetooth جارٍ. اقبل مربع حوار اقتران النظام أو أغلقه أولاً، ثم حاول إلغاء اقتران النظارات مرة أخرى.",
+  },
   demoNavigator: {
     componentsTab: "عناصر",
     debugTab: "تصحيح",

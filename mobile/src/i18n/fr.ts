@@ -50,6 +50,11 @@ const fr = {
     hardwareIncompatibleMessage:
       "{{app}} nécessite du matériel qui n'est pas disponible sur vos lunettes connectées : {{missing}}",
   },
+  settings: {
+    ...en.settings,
+    forgetGlassesWhilePairing:
+      "L'appairage Bluetooth est en cours. Acceptez ou fermez d'abord la boîte de dialogue d'appairage du système, puis essayez à nouveau de dissocier les lunettes.",
+  },
   demoNavigator: {
     componentsTab: "Composants",
     debugTab: "Débogage",

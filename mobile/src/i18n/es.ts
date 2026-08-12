@@ -50,6 +50,11 @@ const es = {
     hardwareIncompatibleMessage:
       "{{app}} requiere hardware que no está disponible en tus lentes conectados: {{missing}}",
   },
+  settings: {
+    ...en.settings,
+    forgetGlassesWhilePairing:
+      "El emparejamiento Bluetooth está en curso. Acepta o cierra primero el diálogo de emparejamiento del sistema y luego intenta desvincular las gafas de nuevo.",
+  },
   demoNavigator: {
     componentsTab: "Componentes",
     debugTab: "Debug",

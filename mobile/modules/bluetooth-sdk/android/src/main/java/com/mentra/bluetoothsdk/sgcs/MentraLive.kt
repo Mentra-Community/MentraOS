@@ -1138,7 +1138,7 @@ class MentraLive : SGCManager() {
                                 savedDeviceName.isNotEmpty() &&
                                         savedDeviceName == deviceName &&
                                         (isReconnecting || explicitConnectByName)
-                        if (!isNamedConnectTarget &&
+                        if (!isReconnecting &&
                                         advertisesPairingFlag(result) &&
                                         !isPairingDiscoverable(result)
                         ) {
@@ -3342,6 +3342,7 @@ class MentraLive : SGCManager() {
                             if (json.has("state")) json.optInt("state") else null,
                             jsonNullableString(json, "error"),
                             jsonNullableString(json, "binding"),
+                            if (json.has("protocol_version")) json.optInt("protocol_version") else null,
                     )
             "pairing_transfer_status_result" ->
                     Bridge.sendPairingTransferStatus(
@@ -5501,6 +5502,13 @@ class MentraLive : SGCManager() {
     }
 
     override fun forget() {
+        if (isCtkdBondingInProgress()) {
+            Bridge.log(
+                    "LIVE: CTKD: Refusing forget during active bonding (would abort system pairing dialog)"
+            )
+            return
+        }
+
         Bridge.log("LIVE: Forgetting Mentra Live glasses")
 
         // Clear saved device name so a leftover name can't bypass the pairing-mode
@@ -5514,17 +5522,9 @@ class MentraLive : SGCManager() {
 
         // Remove BT Classic bond - this is the ONLY place where we unbond,
         // ensuring bond is only removed when user explicitly unpairs.
-        // Never removeBond during BOND_BONDING: that aborts the system pairing dialog
-        // (DeviceManager refuses forget() in that state; this is defense in depth).
         if (connectedDevice != null) {
-            if (isCtkdBondingInProgress()) {
-                Bridge.log(
-                        "LIVE: CTKD: Skipping removeBond during active bonding (would abort system pairing dialog)"
-                )
-            } else {
-                Bridge.log("LIVE: CTKD: Removing BT bond on explicit unpair")
-                removeBond(connectedDevice!!)
-            }
+            Bridge.log("LIVE: CTKD: Removing BT bond on explicit unpair")
+            removeBond(connectedDevice!!)
         }
 
         if (isScanning) {

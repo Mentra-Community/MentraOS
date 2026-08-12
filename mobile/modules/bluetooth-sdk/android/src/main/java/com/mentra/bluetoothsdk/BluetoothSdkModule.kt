@@ -357,6 +357,7 @@ class BluetoothSdkModule : Module() {
             "pair_failure",
             "pairing_info",
             "pairing_transfer_result",
+            "pairing_transfer_status_result",
             "wipe_media_result",
             "audio_pairing_needed",
             "audio_connected",
@@ -666,6 +667,7 @@ class BluetoothSdkModule : Module() {
                 result.state?.let { put("state", it) }
                 result.error?.let { put("error", it) }
                 result.binding?.let { put("binding", it) }
+                result.protocolVersion?.let { put("protocol_version", it) }
             }
         }
 
@@ -678,6 +680,7 @@ class BluetoothSdkModule : Module() {
                 result.state?.let { put("state", it) }
                 result.error?.let { put("error", it) }
                 result.binding?.let { put("binding", it) }
+                result.protocolVersion?.let { put("protocol_version", it) }
             }
         }
 

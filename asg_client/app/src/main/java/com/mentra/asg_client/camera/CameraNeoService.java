@@ -536,6 +536,21 @@ public class CameraNeoService extends LifecycleService {
         return false;
     }
 
+    /** Cancel an active still capture and synchronously tear down its camera session. */
+    public static boolean cancelActivePhotoCapture(String errorMessage) {
+        synchronized (SERVICE_LOCK) {
+            if (sInstance == null
+                    || !sInstance.photoSession.cancelActiveCapture(errorMessage)) {
+                return false;
+            }
+            Log.i(TAG, "Cancelling active photo capture");
+            sInstance.cancelKeepAliveTimer();
+            sInstance.closeCamera();
+            sInstance.stopSelf();
+            return true;
+        }
+    }
+
     @Override
     public void onCreate() {
         super.onCreate();

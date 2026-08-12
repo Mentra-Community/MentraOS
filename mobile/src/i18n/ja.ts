@@ -48,6 +48,11 @@ const ja = {
     hardwareIncompatible: "ハードウェア非対応",
     hardwareIncompatibleMessage: "{{app}}は接続されたグラスで利用できないハードウェアが必要です: {{missing}}",
   },
+  settings: {
+    ...en.settings,
+    forgetGlassesWhilePairing:
+      "Bluetoothのペアリング中です。先にシステムのペアリングダイアログを承認または閉じてから、もう一度グラスのペアリング解除をお試しください。",
+  },
   demoNavigator: {
     componentsTab: "コンポーネント",
     debugTab: "デバッグ",

@@ -48,6 +48,11 @@ const ko = {
     hardwareIncompatible: "하드웨어 비호환",
     hardwareIncompatibleMessage: "{{app}}은(는) 연결된 안경에서 사용할 수 없는 하드웨어가 필요합니다: {{missing}}",
   },
+  settings: {
+    ...en.settings,
+    forgetGlassesWhilePairing:
+      "Bluetooth 페어링이 진행 중입니다. 먼저 시스템 페어링 대화상자를 수락하거나 닫은 후 안경 페어링 해제를 다시 시도하세요.",
+  },
   demoNavigator: {
     componentsTab: "컴포넌트",
     debugTab: "디버그",

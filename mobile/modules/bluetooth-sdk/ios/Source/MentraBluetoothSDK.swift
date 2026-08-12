@@ -1028,6 +1028,12 @@ public final class MentraBluetoothSDK {
     }
 
     public func wipeMediaForPairing() async throws -> WipeMediaResultEvent {
+        guard let live = DeviceManager.shared.sgc as? MentraLive else {
+            throw BluetoothSdkError(
+                code: "unsupported_device",
+                message: "Wiping media for pairing requires Mentra Live glasses"
+            )
+        }
         if pendingWipeMedia != nil {
             throw BluetoothSdkError(
                 code: "request_in_flight",
@@ -1037,7 +1043,7 @@ public final class MentraBluetoothSDK {
         let pending = PendingResponse<WipeMediaResultEvent>(operation: "wipe media for pairing")
         let entry = PendingWipeMedia(transferId: activePairingTransferId, pending: pending)
         pendingWipeMedia = entry
-        DeviceManager.shared.sendWipeMediaForPairing(transferId: entry.transferId)
+        live.sendWipeMedia(transferId: entry.transferId)
         do {
             let event = try await pending.wait()
             if pendingWipeMedia?.pending === pending {

@@ -138,7 +138,8 @@ class Bridge {
         success: Bool,
         state: Int? = nil,
         error: String? = nil,
-        binding: String? = nil
+        binding: String? = nil,
+        protocolVersion: Int? = nil
     ) {
         var body: [String: Any] = [
             "transfer_id": transferId,
@@ -148,6 +149,7 @@ class Bridge {
         if let state { body["state"] = state }
         if let error { body["error"] = error }
         if let binding { body["binding"] = binding }
+        if let protocolVersion { body["protocol_version"] = protocolVersion }
         Bridge.sendTypedMessage("pairing_transfer_result", body: body)
     }
 

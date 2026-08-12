@@ -42,6 +42,7 @@ export default function GlassesPairingLoadingScreen() {
   const [showGlassesBooting, setShowGlassesBooting] = useState(false)
   const pairingInfoRef = useRef<PairingInfoEvent | null>(null)
   const [pairingResolved, setPairingResolved] = useState(false)
+  const pairingResolvedRef = useRef(false)
   const [pairingInfoReceived, setPairingInfoReceived] = useState(false)
   const [pairingInfoTimedOut, setPairingInfoTimedOut] = useState(false)
   const wipePromptShownRef = useRef(false)
@@ -68,6 +69,7 @@ export default function GlassesPairingLoadingScreen() {
       pairingInfoRef.current = event
       setPairingInfoReceived(true)
       if (!event.had_previous_bond) {
+        pairingResolvedRef.current = true
         setPairingResolved(true)
       }
     })
@@ -98,12 +100,16 @@ export default function GlassesPairingLoadingScreen() {
   }, [deviceModel, replace])
 
   const handleGoBack = useCallback(() => {
-    if (isMentraLive && pairingInfoRef.current?.had_previous_bond === true && !pairingResolved) {
+    if (
+      isMentraLive &&
+      !pairingResolved &&
+      (pairingInfoReceived || ownershipInFlightRef.current || pairingInfoRef.current?.had_previous_bond === true)
+    ) {
       void abortPairingTransfer()
       return
     }
     goBack()
-  }, [goBack, isMentraLive, pairingResolved, abortPairingTransfer])
+  }, [goBack, isMentraLive, pairingResolved, pairingInfoReceived, abortPairingTransfer])
 
   const finalizeOwnershipTransfer = useCallback(async () => {
     // Await classic readiness when BES reported required bond present; do not deadlock
@@ -112,11 +118,31 @@ export default function GlassesPairingLoadingScreen() {
     if (info?.classic_bond_ready === false && info?.secure_pairing_capable) {
       await engine.pairing.waitForBluetoothClassic({timeoutMs: 8_000}).catch(() => false)
     }
-    const finalize = await BluetoothSdk.finalizePairingTransfer()
-    if (!finalize.success) {
-      throw new Error(finalize.error || "finalize_failed")
+    try {
+      const finalize = await BluetoothSdk.finalizePairingTransfer()
+      if (!finalize.success) {
+        throw new Error(finalize.error || "finalize_failed")
+      }
+      pairingResolvedRef.current = true
+      setPairingResolved(true)
+    } catch (finalizeError) {
+      // The finalize response can time out after the glasses have already committed.
+      // Reconcile once before aborting so a lost acknowledgement does not undo a
+      // successful ownership transfer.
+      try {
+        const status = await BluetoothSdk.getPairingTransferStatus(info?.transfer_id)
+        const finalized =
+          status.state === "committed" || status.state === "success" || status.terminal_operation === "finalize"
+        if (finalized) {
+          pairingResolvedRef.current = true
+          setPairingResolved(true)
+          return
+        }
+      } catch (statusError) {
+        console.warn("Failed to reconcile pairing transfer status:", statusError)
+      }
+      throw finalizeError
     }
-    setPairingResolved(true)
   }, [])
 
   const confirmMediaWipe = useCallback(async () => {
@@ -310,14 +336,14 @@ export default function GlassesPairingLoadingScreen() {
       if (
         isMentraLive &&
         pairingInfoRef.current?.had_previous_bond === true &&
-        !pairingResolved &&
+        !pairingResolvedRef.current &&
         !tearedDownRef.current
       ) {
         tearedDownRef.current = true
         void BluetoothSdk.abortPairingTransfer().catch(() => undefined)
       }
     }
-  }, [isMentraLive, pairingResolved])
+  }, [isMentraLive])
 
   focusEffectPreventBack()
 

@@ -189,6 +189,7 @@ public class Bridge private constructor() {
             state: Int? = null,
             error: String? = null,
             binding: String? = null,
+            protocolVersion: Int? = null,
         ) {
             val data = HashMap<String, Any>()
             data["transfer_id"] = transferId
@@ -197,6 +198,7 @@ public class Bridge private constructor() {
             if (state != null) data["state"] = state
             if (error != null) data["error"] = error
             if (binding != null) data["binding"] = binding
+            if (protocolVersion != null) data["protocol_version"] = protocolVersion
             sendTypedMessage("pairing_transfer_result", data as Map<String, Any>)
         }
 

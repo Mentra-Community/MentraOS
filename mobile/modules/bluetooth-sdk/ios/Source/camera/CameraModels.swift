@@ -891,6 +891,7 @@ public struct PairingTransferResultEvent: CustomStringConvertible {
     public let state: Int?
     public let error: String?
     public let binding: String?
+    public let protocolVersion: Int?
     public let values: [String: Any]
 
     public init(values: [String: Any]) {
@@ -901,6 +902,7 @@ public struct PairingTransferResultEvent: CustomStringConvertible {
         self.state = values["state"] as? Int
         self.error = values["error"] as? String
         self.binding = values["binding"] as? String
+        self.protocolVersion = values["protocol_version"] as? Int
     }
 
     public var description: String {

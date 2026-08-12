@@ -49,6 +49,11 @@ const hi = {
     hardwareIncompatibleMessage:
       "{{app}} को ऐसे हार्डवेयर की आवश्यकता है जो आपके कनेक्टेड चश्मे में उपलब्ध नहीं है: {{missing}}",
   },
+  settings: {
+    ...en.settings,
+    forgetGlassesWhilePairing:
+      "Bluetooth पेयरिंग जारी है। पहले सिस्टम पेयरिंग डायलॉग को स्वीकार या बंद करें, फिर चश्मे को दोबारा अनपेयर करने की कोशिश करें।",
+  },
   demoNavigator: {
     componentsTab: "कंपोनेंट्स",
     debugTab: "डीबग",

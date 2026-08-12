@@ -675,6 +675,7 @@ export type PairingTransferResultEvent = {
   error?: string
   /** Credential binding mode negotiated for this transfer, when reported by the glasses. */
   binding?: string
+  protocol_version?: number
 }
 
 export type PairingTransferStatusEvent = {

@@ -226,6 +226,7 @@ export type {
   PairFailureEvent,
   PairingInfoEvent,
   PairingTransferResultEvent,
+  PairingTransferStatusEvent,
   WipeMediaResultEvent,
   PhotoCaptureMetadata,
   PhotoResolvedConfig,

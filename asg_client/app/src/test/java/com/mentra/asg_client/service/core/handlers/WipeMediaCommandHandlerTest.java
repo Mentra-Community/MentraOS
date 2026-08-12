@@ -77,7 +77,7 @@ public class WipeMediaCommandHandlerTest {
         boolean handled = handler.handleCommand("wipe_media", command);
         assertThat(handled).isTrue();
         assertThat(photo.exists()).isTrue();
-        assertThat(WipeMediaCommandHandler.isCaptureBarrierActive(context)).isFalse();
+        assertThat(WipeMediaCommandHandler.isCaptureBarrierActive(context)).isTrue();
 
         ArgumentCaptor<JSONObject> captor = ArgumentCaptor.forClass(JSONObject.class);
         verify(communicationManager).sendBluetoothResponse(captor.capture());
@@ -110,6 +110,16 @@ public class WipeMediaCommandHandlerTest {
     }
 
     @Test
+    public void pairingFinalize_wrongTransferIdLeavesCaptureBarrierArmed() throws Exception {
+        PairingTransferCaptureGate.arm(context, "ABCDEF0123456789");
+
+        assertThat(handler.handleCommand(
+                        "pairing_finalize", new JSONObject().put("transfer_id", "wrong-transfer")))
+                .isTrue();
+        assertThat(WipeMediaCommandHandler.isCaptureBarrierActive(context)).isTrue();
+    }
+
+    @Test
     public void pairingAbort_clearsCaptureBarrier() throws Exception {
         PairingTransferCaptureGate.arm(context, "1122334455667788");
         assertThat(WipeMediaCommandHandler.isCaptureBarrierActive(context)).isTrue();
@@ -118,6 +128,14 @@ public class WipeMediaCommandHandlerTest {
                         "pairing_abort", new JSONObject().put("transfer_id", "1122334455667788")))
                 .isTrue();
         assertThat(WipeMediaCommandHandler.isCaptureBarrierActive(context)).isFalse();
+    }
+
+    @Test
+    public void pairingAbort_emptyTransferIdLeavesCaptureBarrierArmed() {
+        PairingTransferCaptureGate.arm(context, "1122334455667788");
+
+        assertThat(handler.handleCommand("pairing_abort", new JSONObject())).isTrue();
+        assertThat(WipeMediaCommandHandler.isCaptureBarrierActive(context)).isTrue();
     }
 
     @Test

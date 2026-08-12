@@ -48,6 +48,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             "pair_failure",
             "pairing_info",
             "pairing_transfer_result",
+            "pairing_transfer_status_result",
             "wipe_media_result",
             "audio_pairing_needed",
             "audio_connected",
@@ -436,6 +437,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             if let state = result.state { body["state"] = state }
             if let error = result.error { body["error"] = error }
             if let binding = result.binding { body["binding"] = binding }
+            if let protocolVersion = result.protocolVersion { body["protocol_version"] = protocolVersion }
             return body
         }
 
@@ -450,6 +452,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             if let state = result.state { body["state"] = state }
             if let error = result.error { body["error"] = error }
             if let binding = result.binding { body["binding"] = binding }
+            if let protocolVersion = result.protocolVersion { body["protocol_version"] = protocolVersion }
             return body
         }
 

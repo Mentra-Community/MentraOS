@@ -1105,6 +1105,16 @@ public class MediaCaptureService {
             boolean enableFlash,
             boolean enableSound,
             int maxRecordingTimeMinutes) {
+        if (isPairingTransferCaptureBlocked()) {
+            Log.w(TAG, "Blocking handleStartVideoCommand — ownership transfer capture barrier active");
+            if (mMediaCaptureListener != null) {
+                mMediaCaptureListener.onMediaError(
+                        requestId,
+                        "Capture blocked during ownership transfer",
+                        MediaUploadQueueManager.MEDIA_TYPE_VIDEO);
+            }
+            return;
+        }
         Log.d(
                 TAG,
                 "handleStartVideoCommand called with requestId: "
@@ -1869,6 +1879,13 @@ public class MediaCaptureService {
                     .failAllPending("Cancelled for ownership-transfer media wipe");
         } catch (Exception e) {
             Log.w(TAG, "Failed to fail pending photo queue before pairing wipe", e);
+        }
+
+        try {
+            CameraNeoService.cancelActivePhotoCapture(
+                    "Cancelled for ownership-transfer media wipe");
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to cancel active photo capture before pairing wipe", e);
         }
 
         String activeRequestId = activePhotoJobRequestId.getAndSet(null);
@@ -4913,6 +4930,13 @@ public class MediaCaptureService {
             Long exposureTimeNs,
             Integer iso,
             PhotoCaptureSettings captureSettings) {
+        if (isPairingTransferCaptureBlocked()) {
+            Log.w(TAG, "Blocking takePhotoAutoTransfer — ownership transfer capture barrier active");
+            sendPhotoErrorResponse(
+                    requestId, "PAIRING_TRANSFER", "Capture blocked during ownership transfer");
+            clearPhotoTracking(requestId);
+            return false;
+        }
         if (PhotoMode.TEXT.equals(mode)) {
             textRoiDetector.warmUp();
         }

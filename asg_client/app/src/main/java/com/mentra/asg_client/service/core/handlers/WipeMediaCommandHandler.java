@@ -71,6 +71,9 @@ public class WipeMediaCommandHandler implements ICommandHandler {
         boolean success = false;
 
         try {
+            if (transferId != null && !transferId.isEmpty()) {
+                armCaptureBarrier(transferId);
+            }
             if (!AsgConstants.ENABLE_PAIRING_MEDIA_WIPE) {
                 // Keep wipe implementation below; pairing temporarily skips gallery delete.
                 Log.i(TAG, "wipe_media skipped (ENABLE_PAIRING_MEDIA_WIPE=false)"
@@ -94,9 +97,6 @@ public class WipeMediaCommandHandler implements ICommandHandler {
                             : null;
                     if (queueManager != null) {
                         queueManager.clearQueue();
-                    }
-                    if (transferId != null && !transferId.isEmpty()) {
-                        armCaptureBarrier(transferId);
                     }
                 }
                 Log.i(TAG, "wipe_media success=" + success + " transfer_id=" + transferId
@@ -134,8 +134,16 @@ public class WipeMediaCommandHandler implements ICommandHandler {
      */
     private boolean handleTransferEnd(String commandType, JSONObject data) {
         final String transferId = data != null ? data.optString("transfer_id", "") : "";
-        clearCaptureBarrier(appContext);
-        Log.i(TAG, commandType + " cleared capture barrier transfer_id=" + transferId);
+        boolean cleared = clearCaptureBarrier(appContext, transferId);
+        if (cleared) {
+            Log.i(TAG, commandType + " cleared capture barrier transfer_id=" + transferId);
+        } else {
+            Log.w(
+                    TAG,
+                    commandType
+                            + " did not match active capture barrier; leaving armed transfer_id="
+                            + transferId);
+        }
         // Return true so CommandProcessor treats the command as handled on ASG. BES may also
         // process ownership state on its own path; ASG only releases the media gate here.
         return true;
@@ -235,6 +243,10 @@ public class WipeMediaCommandHandler implements ICommandHandler {
 
     public static void clearCaptureBarrier(Context context) {
         PairingTransferCaptureGate.clear(context);
+    }
+
+    public static boolean clearCaptureBarrier(Context context, String transferId) {
+        return PairingTransferCaptureGate.clear(context, transferId);
     }
 
     private boolean deleteDirectoryContents(File directory) {

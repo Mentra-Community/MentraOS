@@ -342,29 +342,24 @@ describe("pairing scan screen", () => {
       })
     })
   })
-  it("does not show no-glasses-found timeout when an eligible device blocks auto-connect", async () => {
+  it("shows retry controls when permission denial blocks Mentra Live auto-connect", async () => {
     jest.useFakeTimers()
     try {
       setPlatformOS("android")
       ;(requestFeaturePermissions as jest.Mock).mockResolvedValue(false)
       useGlassesStore.getState().setGlassesInfo({bluetoothClassicConnected: false})
-      // Eligible results present → timeout must NOT claim "no glasses found".
       useCoreStore.setState({
         searchResults: [{id: "a", model: "Mentra Live", name: "MENTRA_LIVE_BLE_001", address: "a"}],
       })
 
-      const {queryByText} = render(<SelectGlassesBluetoothScreen />)
+      const {getByText} = render(<SelectGlassesBluetoothScreen />)
 
-      await act(async () => {
-        await Promise.resolve()
-        await Promise.resolve()
+      await waitFor(() => {
+        expect(getByText("pairing:noGlassesFound")).toBeTruthy()
+        expect(getByText("pairing:tryAgain")).toBeTruthy()
       })
-
-      act(() => {
-        jest.advanceTimersByTime(15_000)
-      })
-
-      expect(queryByText("pairing:noGlassesFound")).toBeNull()
+      const {bluetoothSdkMock} = require("@/test-utils/mockBluetoothSdk")
+      expect(bluetoothSdkMock.stopScan).toHaveBeenCalled()
     } finally {
       jest.useRealTimers()
     }

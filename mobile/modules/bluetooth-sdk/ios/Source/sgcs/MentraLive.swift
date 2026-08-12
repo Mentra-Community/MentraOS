@@ -2740,7 +2740,8 @@ class MentraLive: NSObject, SGCManager {
                 success: json["success"] as? Bool ?? false,
                 state: json["state"] as? Int,
                 error: json["error"] as? String,
-                binding: json["binding"] as? String
+                binding: json["binding"] as? String,
+                protocolVersion: json["protocol_version"] as? Int
             )
 
         case "pairing_transfer_status_result":
