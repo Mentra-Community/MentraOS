@@ -678,6 +678,7 @@ export const checkFeaturePermissions = async (featureKey: string): Promise<boole
         }
       } catch (error) {
         console.error(`Error checking iOS permission ${permission}:`, error)
+        allGranted = false
       }
     }
     return allGranted
