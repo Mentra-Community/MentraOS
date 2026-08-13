@@ -14,6 +14,7 @@ import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.audio.AudioAssets;
 import com.mentra.asg_client.camera.CameraNeoService;
 import com.mentra.asg_client.camera.feedback.PhotoFeedbackController;
+import com.mentra.asg_client.camera.feedback.PhotoLightController;
 import com.mentra.asg_client.camera.lifecycle.PhotoExifMetadataWriter;
 import com.mentra.asg_client.camera.model.CameraOperationError;
 import com.mentra.asg_client.camera.model.CapturedPhoto;
@@ -94,6 +95,7 @@ public class MediaCaptureService {
     private ServiceCallbackInterface mServiceCallback;
     private final IHardwareManager hardwareManager;
     private final PhotoFeedbackController photoFeedbackController;
+    private final PhotoLightController photoLightController;
     private final MlKitTextRoiDetector textRoiDetector;
 
     // Track current video recording
@@ -798,6 +800,7 @@ public class MediaCaptureService {
         // Initialize hardware manager
         hardwareManager = HardwareManagerFactory.getInstance(context);
         photoFeedbackController = new PhotoFeedbackController(hardwareManager, mainHandler);
+        photoLightController = new PhotoLightController(hardwareManager, mainHandler);
         Log.d(TAG, "Hardware manager initialized: " + hardwareManager.getDeviceModel());
     }
 
@@ -898,33 +901,6 @@ public class MediaCaptureService {
         // hardwareManager.setRecordingLedBrightness(50, 1000); // 50% brightness, 1000ms flash
         // duration
         hardwareManager.flashRecordingLed(1000);
-    }
-
-    /**
-     * Trigger white LED flash for photo capture (synchronized with shutter sound, default
-     * brightness)
-     */
-    private void triggerPhotoFlashLed() {
-        triggerPhotoFlashLed(RgbLedConstants.DEFAULT_BRIGHTNESS);
-    }
-
-    /**
-     * Trigger white LED flash for photo capture with specified brightness
-     *
-     * @param brightness Brightness level (0-255, where 255 is maximum brightness)
-     */
-    private void triggerPhotoFlashLed(int brightness) {
-        Log.i(TAG, "📸 triggerPhotoFlashLed() called with brightness: " + brightness);
-
-        if (hardwareManager != null && hardwareManager.supportsRgbLed()) {
-            hardwareManager.flashRgbLedWhite(2200, brightness); // 2.2 second flash
-            Log.i(
-                    TAG,
-                    "📸 Photo flash LED (white) triggered via hardware manager at brightness "
-                            + brightness);
-        } else {
-            Log.w(TAG, "⚠️ RGB LED not supported on this device");
-        }
     }
 
     /** Trigger solid white LED for video recording duration (default brightness) */
@@ -2113,10 +2089,11 @@ public class MediaCaptureService {
         PhotoCaptureTestHooks.addFakeDelay("CAMERA_INIT");
 
         // Skip sound and flash during camera HAL restart cooldown (e.g. after FOV change)
+        boolean suppressPhotoFeedback = shouldSuppressPhotoFeedback();
+        final PhotoLightController.Token captureLightToken =
+                photoLightController.prepare(!suppressPhotoFeedback);
         PhotoFeedbackController.Token feedbackToken = null;
-        if (!shouldSuppressPhotoFeedback()) {
-            // RGB LED always flashes for photos (user visibility indicator)
-            triggerPhotoFlashLed();
+        if (!suppressPhotoFeedback) {
             if (effectiveSound) {
                 // Button photo: isFromSdk=false, auto exposure (null) — matches the
                 // enqueuePhotoRequest call below so the warm/cold prediction lines up.
@@ -2184,6 +2161,10 @@ public class MediaCaptureService {
                     @Override
                     public void onPhotoExposureStarted(
                             long sensorTimestampNs, long estimatedExposureDurationNs) {
+                        photoLightController.onCaptureBoundary(
+                                captureLightToken,
+                                "sensor exposure",
+                                estimatedExposureDurationNs);
                         photoFeedbackController.onExposureStarted(
                                 captureFeedbackToken,
                                 sensorTimestampNs,
@@ -2192,6 +2173,8 @@ public class MediaCaptureService {
 
                     @Override
                     public void onPhotoFrameAvailable(long sensorTimestampNs) {
+                        photoLightController.onCaptureBoundary(
+                                captureLightToken, "JPEG frame fallback");
                         photoFeedbackController.playSnap(
                                 captureFeedbackToken, "JPEG frame available");
                     }
@@ -2203,6 +2186,8 @@ public class MediaCaptureService {
 
                     @Override
                     public void onPhotoCaptured(String filePath, JSONObject captureMetadata) {
+                        photoLightController.onCaptureBoundary(
+                                captureLightToken, "photo completion fallback");
                         photoFeedbackController.playSnap(
                                 captureFeedbackToken, "photo completion fallback");
 
@@ -2368,9 +2353,11 @@ public class MediaCaptureService {
         File captureDirFile = new File(photoFilePath).getParentFile();
         final String captureId = captureDirFile != null ? captureDirFile.getName() : "";
 
+        boolean suppressPhotoFeedback = shouldSuppressPhotoFeedback();
+        final PhotoLightController.Token captureLightToken =
+                photoLightController.prepare(!suppressPhotoFeedback);
         PhotoFeedbackController.Token feedbackToken = null;
-        if (!shouldSuppressPhotoFeedback()) {
-            triggerPhotoFlashLed();
+        if (!suppressPhotoFeedback) {
             if (enableSound) {
                 // Local-save SDK photo: isFromSdk=true, matching the enqueue below.
                 feedbackToken =
@@ -2427,6 +2414,10 @@ public class MediaCaptureService {
                         @Override
                         public void onPhotoExposureStarted(
                                 long sensorTimestampNs, long estimatedExposureDurationNs) {
+                            photoLightController.onCaptureBoundary(
+                                    captureLightToken,
+                                    "sensor exposure",
+                                    estimatedExposureDurationNs);
                             photoFeedbackController.onExposureStarted(
                                     captureFeedbackToken,
                                     sensorTimestampNs,
@@ -2435,6 +2426,8 @@ public class MediaCaptureService {
 
                         @Override
                         public void onPhotoFrameAvailable(long sensorTimestampNs) {
+                            photoLightController.onCaptureBoundary(
+                                    captureLightToken, "JPEG frame fallback");
                             photoFeedbackController.playSnap(
                                     captureFeedbackToken, "JPEG frame available");
                         }
@@ -2454,6 +2447,8 @@ public class MediaCaptureService {
                                 String filePath,
                                 JSONObject captureMetadata,
                                 CapturedPhoto capturedPhoto) {
+                            photoLightController.onCaptureBoundary(
+                                    captureLightToken, "photo completion fallback");
                             photoFeedbackController.playSnap(
                                     captureFeedbackToken, "photo completion fallback");
                             if (textModeRequested) {
@@ -2779,11 +2774,13 @@ public class MediaCaptureService {
         // TESTING: Add fake delay for camera capture
         PhotoCaptureTestHooks.addFakeDelay("CAMERA_CAPTURE");
 
+        boolean suppressPhotoFeedback = shouldSuppressPhotoFeedback();
+        final PhotoLightController.Token captureLightToken =
+                photoLightController.prepare(!suppressPhotoFeedback);
         PhotoFeedbackController.Token feedbackToken = null;
         try {
             // Skip sound and flash during camera HAL restart cooldown (e.g. after FOV change)
-            if (!shouldSuppressPhotoFeedback()) {
-                triggerPhotoFlashLed();
+            if (!suppressPhotoFeedback) {
                 if (enableSound) {
                     // SDK photo: isFromSdk=true; size and exposure match the enqueuePhotoRequest
                     // call below so the warm/cold prediction lines up.
@@ -2868,6 +2865,10 @@ public class MediaCaptureService {
                         @Override
                         public void onPhotoExposureStarted(
                                 long sensorTimestampNs, long estimatedExposureDurationNs) {
+                            photoLightController.onCaptureBoundary(
+                                    captureLightToken,
+                                    "sensor exposure",
+                                    estimatedExposureDurationNs);
                             photoFeedbackController.onExposureStarted(
                                     captureFeedbackToken,
                                     sensorTimestampNs,
@@ -2876,6 +2877,8 @@ public class MediaCaptureService {
 
                         @Override
                         public void onPhotoFrameAvailable(long sensorTimestampNs) {
+                            photoLightController.onCaptureBoundary(
+                                    captureLightToken, "JPEG frame fallback");
                             photoFeedbackController.playSnap(
                                     captureFeedbackToken, "JPEG frame available");
                         }
@@ -2946,6 +2949,8 @@ public class MediaCaptureService {
                                 String filePath,
                                 JSONObject captureMetadata,
                                 CapturedPhoto capturedPhoto) {
+                            photoLightController.onCaptureBoundary(
+                                    captureLightToken, "photo completion fallback");
                             photoFeedbackController.playSnap(
                                     captureFeedbackToken, "photo completion fallback");
                             if (!textModeRequested) {
@@ -5183,9 +5188,11 @@ public class MediaCaptureService {
         PhotoCaptureTestHooks.addFakeDelay("CAMERA_CAPTURE");
 
         // Skip sound and flash during camera HAL restart cooldown (e.g. after FOV change)
+        boolean suppressPhotoFeedback = shouldSuppressPhotoFeedback();
+        final PhotoLightController.Token captureLightToken =
+                photoLightController.prepare(!suppressPhotoFeedback);
         PhotoFeedbackController.Token feedbackToken = null;
-        if (!shouldSuppressPhotoFeedback()) {
-            triggerPhotoFlashLed();
+        if (!suppressPhotoFeedback) {
             if (enableSound) {
                 // BLE-transfer SDK photo: isFromSdk=true; size and exposure match the
                 // enqueuePhotoRequest call below so the warm/cold prediction lines up.
@@ -5276,6 +5283,10 @@ public class MediaCaptureService {
                         @Override
                         public void onPhotoExposureStarted(
                                 long sensorTimestampNs, long estimatedExposureDurationNs) {
+                            photoLightController.onCaptureBoundary(
+                                    captureLightToken,
+                                    "sensor exposure",
+                                    estimatedExposureDurationNs);
                             photoFeedbackController.onExposureStarted(
                                     captureFeedbackToken,
                                     sensorTimestampNs,
@@ -5284,6 +5295,8 @@ public class MediaCaptureService {
 
                         @Override
                         public void onPhotoFrameAvailable(long sensorTimestampNs) {
+                            photoLightController.onCaptureBoundary(
+                                    captureLightToken, "JPEG frame fallback");
                             photoFeedbackController.playSnap(
                                     captureFeedbackToken, "JPEG frame available");
                         }
@@ -5303,6 +5316,8 @@ public class MediaCaptureService {
                                 String filePath,
                                 JSONObject captureMetadata,
                                 CapturedPhoto capturedPhoto) {
+                            photoLightController.onCaptureBoundary(
+                                    captureLightToken, "photo completion fallback");
                             photoFeedbackController.playSnap(
                                     captureFeedbackToken, "photo completion fallback");
                             // NOTE: do NOT clear isPhotoJobInFlight here — the job continues

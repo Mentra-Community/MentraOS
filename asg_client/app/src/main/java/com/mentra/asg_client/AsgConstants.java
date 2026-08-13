@@ -64,6 +64,9 @@ public class AsgConstants {
     /** Target lead before the estimated end of sensor exposure for starting the camera snap. */
     public static final long CAMERA_SNAP_TARGET_LEAD_MS = 100L;
 
+    /** Duration of the user-visible RGB photo indicator, triggered at the capture boundary. */
+    public static final int PHOTO_LIGHT_DURATION_MS = 2200;
+
     /** Safety lease for a miniapp-owned transient FOV override. */
     public static final long CAMERA_FOV_OVERRIDE_DEFAULT_TTL_MS = 300_000L;
 

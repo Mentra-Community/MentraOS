@@ -740,6 +740,11 @@ export const cloudClientService = {
         return getCoreClient().reports.complete(...args)
       },
     },
+    supportProfile: {
+      update(...args: Parameters<CloudCore["supportProfile"]["update"]>) {
+        return getCoreClient().supportProfile.update(...args)
+      },
+    },
   },
 
   hasAudioSubscriptions(): boolean {
