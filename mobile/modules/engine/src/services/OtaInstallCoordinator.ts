@@ -538,7 +538,7 @@ class OtaInstallCoordinator {
     this.otaStartOwnership = null
     this.hasFirstActivity = false
     this.hasFirstNonZeroProgress = false
-    this.apkCompletedViaBuildIncrease = false
+    this.setApkCompletedViaBuildIncrease(false)
     return true
   }
 

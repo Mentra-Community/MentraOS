@@ -1218,6 +1218,7 @@ describe("OtaInstallCoordinator APK completion by build-number increase (WP 8C-c
 
     bluetoothSdkMock.startOtaUpdate.mockRejectedValue(new Error("fresh native rejection"))
     otaInstallCoordinator.retry()
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("starting")
     await flushNativeStartPromise()
     await jest.advanceTimersByTimeAsync(LEGACY_RETRY_INTERVAL_MS)
 
