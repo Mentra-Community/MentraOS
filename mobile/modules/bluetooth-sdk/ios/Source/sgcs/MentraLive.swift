@@ -971,7 +971,7 @@ extension MentraLive: CBCentralManagerDelegate {
     }
 
     nonisolated func centralManager(
-        _: CBCentralManager, didDisconnectPeripheral _: CBPeripheral, error _: Error?
+        _: CBCentralManager, didDisconnectPeripheral _: CBPeripheral, error: Error?
     ) {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
@@ -994,6 +994,11 @@ extension MentraLive: CBCentralManagerDelegate {
             self.txCharacteristic = nil
             self.rxCharacteristic = nil
 
+            if self.pairingYieldAwaitingReclaim, Self.isPairingAuthFailure(error) {
+                self.clearSavedGlassesAfterOwnerLoss(reason: "ios_auth_fail")
+                return
+            }
+
             // Attempt reconnection if not killed
             if !self.isKilled {
                 self.handleReconnection()
@@ -1013,10 +1018,7 @@ extension MentraLive: CBCentralManagerDelegate {
             self.connectedPeripheral = nil
             self.updateConnectionState(ConnTypes.DISCONNECTED)
 
-            let lower = errorDescription.lowercased()
-            if self.pairingYieldAwaitingReclaim,
-               lower.contains("auth") || lower.contains("encrypt") || lower.contains("peer removed pairing")
-            {
+            if self.pairingYieldAwaitingReclaim, Self.isPairingAuthFailure(error) {
                 self.clearSavedGlassesAfterOwnerLoss(reason: "ios_auth_fail")
                 return
             }
@@ -1781,9 +1783,9 @@ class MentraLive: NSObject, SGCManager {
                     scheduleProbe()
                 }
             }
-            bluetoothQueue.asyncAfter(deadline: .now() + 4.0, execute: probe)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4.0, execute: probe)
         }
-        bluetoothQueue.asyncAfter(deadline: .now() + 3.0) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
             scheduleProbe()
         }
 
@@ -1798,7 +1800,21 @@ class MentraLive: NSObject, SGCManager {
             }
         }
         pairingYieldEndWorkItem = work
-        bluetoothQueue.asyncAfter(deadline: .now() + .milliseconds(windowMs), execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(windowMs), execute: work)
+    }
+
+    /// Pairing/auth failures after yield — CoreBluetooth codes, not localized strings.
+    /// Connection timeouts are not owner-loss.
+    private static func isPairingAuthFailure(_ error: Error?) -> Bool {
+        guard let error = error as NSError? else { return false }
+        if error.domain == CBATTErrorDomain {
+            return error.code == CBATTError.insufficientAuthentication.rawValue
+                || error.code == CBATTError.insufficientEncryption.rawValue
+        }
+        if error.domain == CBErrorDomain {
+            return error.code == CBError.peerRemovedPairingInformation.rawValue
+        }
+        return false
     }
 
     private func clearSavedGlassesAfterOwnerLoss(reason: String) {
@@ -2670,6 +2686,12 @@ class MentraLive: NSObject, SGCManager {
 
         switch type {
         case "glasses_ready":
+            // A queued glasses_ready from the connection we just cancelled for yield
+            // must not close the pairing window. Only accept readiness on a live GATT.
+            if pairingYieldActive && connectedPeripheral == nil {
+                Bridge.log("LIVE: Ignoring stale glasses_ready during pairing yield")
+                return
+            }
             // glasses_ready is a REMOTE wire-session reset: the glasses ran
             // onTransportReset() before sending it, so their side is back on legacy
             // framing regardless of what this side negotiated earlier. Start a fresh

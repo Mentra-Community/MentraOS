@@ -55,6 +55,20 @@ const es = {
     forgetGlassesWhilePairing:
       "El emparejamiento Bluetooth está en curso. Acepta o cierra primero el diálogo de emparejamiento del sistema y luego intenta desvincular las gafas de nuevo.",
   },
+  pairing: {
+    ...en.pairing,
+    nearbyNotInPairingModeHint:
+      "Se encontraron gafas Mentra Live cerca, pero no están en modo de emparejamiento. Pulsa el botón de encendido 5 veces rápido y vuelve a intentarlo.",
+    notInPairingModeLabel: "No está en modo de emparejamiento",
+    notInPairingModeAlertTitle: "Activa el modo de emparejamiento",
+    notInPairingModeAlertMessage:
+      "Pulsa el botón de encendido 5 veces rápido. El LED parpadea y las gafas dicen un código de 4 caracteres. Luego selecciona las gafas de nuevo.",
+    pairingCodeLabel: "Código {{code}}",
+    legacyFirmwareLabel: "Firmware heredado",
+    livePairingModeInfo:
+      "Pulsa el botón de encendido 5 veces rápido. El LED parpadea y las gafas dicen un código de 4 caracteres (0–9, A–F). Compara ese código en la lista si aparece más de una unidad.",
+    noGlassesFoundHint: "Asegúrate de pulsar el botón de encendido 5 veces rápido y vuelve a intentarlo.",
+  },
   demoNavigator: {
     componentsTab: "Componentes",
     debugTab: "Debug",

@@ -310,6 +310,8 @@ class MentraBluetoothSdk private constructor(
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "device_name", device.name)
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "device_address", device.address ?: "")
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "project_name", device.projectName ?: "")
+            DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_name", "")
+            DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_address", "")
         } finally {
             suppressDefaultDeviceEvents = false
         }
@@ -323,6 +325,8 @@ class MentraBluetoothSdk private constructor(
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "device_name", "")
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "device_address", "")
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "project_name", "")
+            DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_name", "")
+            DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_address", "")
         } finally {
             suppressDefaultDeviceEvents = false
         }
@@ -439,14 +443,17 @@ class MentraBluetoothSdk private constructor(
             if (options.saveAsDefault) {
                 setDefaultDevice(device)
             } else {
-                // Pairing uses saveAsDefault=false so we don't promote identity until
-                // handleDeviceReady — but MentraLive.connectToSmartGlasses needs the BLE
-                // MAC for direct GATT. Without it we fall back to a name scan that fails
-                // when Classic is still up and the glasses stop advertising.
-                DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "device_name", device.name)
+                // Pairing uses saveAsDefault=false so default identity stays on the
+                // previous owner until handleDeviceReady. Stash the GATT target separately
+                // so MentraLive can connect by MAC without promoting getDefaultDevice().
                 DeviceStore.apply(
                         ObservableStore.BLUETOOTH_CATEGORY,
-                        "device_address",
+                        "pending_device_name",
+                        device.name,
+                )
+                DeviceStore.apply(
+                        ObservableStore.BLUETOOTH_CATEGORY,
+                        "pending_device_address",
                         device.address ?: "",
                 )
             }
@@ -473,6 +480,8 @@ class MentraBluetoothSdk private constructor(
     }
 
     fun cancelConnectionAttempt() {
+        DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_name", "")
+        DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_address", "")
         deviceManager.disconnect()
     }
 

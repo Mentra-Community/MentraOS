@@ -306,60 +306,6 @@ class MentraLive : SGCManager() {
          * (abandonAttempt), which previously skipped MentraLive.forget() entirely and left
          * Classic ACL up so glasses never re-advertised.
          */
-        // #region agent log
-        @JvmStatic
-        fun debugAgentLog(
-                hypothesisId: String,
-                location: String,
-                message: String,
-                data: Map<String, Any?> = emptyMap()
-        ) {
-            try {
-                val payload = JSONObject()
-                payload.put("sessionId", "f1af02")
-                payload.put("hypothesisId", hypothesisId)
-                payload.put("location", location)
-                payload.put("message", message)
-                payload.put("timestamp", System.currentTimeMillis())
-                payload.put("runId", "post-fix")
-                val dataObj = JSONObject()
-                for ((k, v) in data) {
-                    dataObj.put(k, v ?: JSONObject.NULL)
-                }
-                payload.put("data", dataObj)
-                val line = payload.toString()
-                Bridge.log("LIVE: DEBUG_F1AF02 " + line)
-                Thread(
-                                {
-                                    try {
-                                        val url =
-                                                java.net.URL(
-                                                        "http://127.0.0.1:7905/ingest/5a9713c9-45ff-4d09-9435-2adc5db5e91d"
-                                                )
-                                        val conn =
-                                                url.openConnection() as java.net.HttpURLConnection
-                                        conn.requestMethod = "POST"
-                                        conn.setRequestProperty("Content-Type", "application/json")
-                                        conn.setRequestProperty("X-Debug-Session-Id", "f1af02")
-                                        conn.doOutput = true
-                                        conn.connectTimeout = 800
-                                        conn.readTimeout = 800
-                                        conn.outputStream.use {
-                                            it.write(line.toByteArray(StandardCharsets.UTF_8))
-                                        }
-                                        conn.responseCode
-                                        conn.disconnect()
-                                    } catch (_: Exception) {
-                                    }
-                                },
-                                "debug-f1af02"
-                        )
-                        .start()
-            } catch (_: Exception) {
-            }
-        }
-        // #endregion
-
         @JvmStatic
         fun unbondBondedMentraLiveDevices(context: Context?) {
             if (context == null) {
@@ -388,30 +334,8 @@ class MentraLive : SGCManager() {
             val targets = bonded.filter { isMentraLiveBluetoothName(safeBondedDeviceName(it)) }
             if (targets.isEmpty()) {
                 Bridge.log("LIVE: CTKD: unbond — no bonded Mentra Live devices")
-                // #region agent log
-                debugAgentLog(
-                        "A",
-                        "MentraLive.kt:unbondBondedMentraLiveDevices",
-                        "unbond_no_targets",
-                        mapOf("bondedTotal" to bonded.size)
-                )
-                // #endregion
                 return
             }
-            // #region agent log
-            debugAgentLog(
-                    "A",
-                    "MentraLive.kt:unbondBondedMentraLiveDevices",
-                    "unbond_targets",
-                    mapOf(
-                            "count" to targets.size,
-                            "targets" to
-                                    targets.map {
-                                        safeBondedDeviceName(it) + "|" + it.address
-                                    },
-                    )
-            )
-            // #endregion
             for (device in targets) {
                 Bridge.log(
                         "LIVE: CTKD: tearing down bonded Mentra Live " +
@@ -579,11 +503,6 @@ class MentraLive : SGCManager() {
     private val fileProcessingHandler = Handler(fileProcessingThread.looper)
     private var scheduler: ScheduledExecutorService? = null
     private var isScanning = false
-    // #region agent log
-    private var debugScanMentraSeen = 0
-    private var debugScanMentraFiltered = 0
-    private var debugScanMentraEmitted = 0
-    // #endregion
     private var isConnecting = false
     private var isKilled = false
 
@@ -1275,22 +1194,6 @@ class MentraLive : SGCManager() {
             }
 
             isScanning = true
-            // #region agent log
-            debugScanMentraSeen = 0
-            debugScanMentraFiltered = 0
-            debugScanMentraEmitted = 0
-            debugAgentLog(
-                    "C",
-                    "MentraLive.kt:startScan",
-                    "ble_scan_started",
-                    mapOf(
-                            "timeoutMs" to scanTimeout,
-                            "isReconnecting" to isReconnecting,
-                            "explicitConnectByName" to explicitConnectByName,
-                            "savedDeviceName" to savedDeviceName,
-                    )
-            )
-            // #endregion
             bluetoothScanner!!.startScan(filters, settings, scanCallback)
 
             // Set a timeout to stop scanning
@@ -1349,18 +1252,6 @@ class MentraLive : SGCManager() {
             isScanning = false
             DeviceStore.apply("bluetooth", "searching", false)
             Bridge.log("LIVE: BLE scan stopped")
-            // #region agent log
-            debugAgentLog(
-                    "C",
-                    "MentraLive.kt:stopScan",
-                    "ble_scan_stopped",
-                    mapOf(
-                            "mentraSeen" to debugScanMentraSeen,
-                            "mentraFilteredPairingFlag" to debugScanMentraFiltered,
-                            "mentraEmitted" to debugScanMentraEmitted,
-                    )
-            )
-            // #endregion
 
             // Post event only if we haven't been destroyed
             // if (smartGlassesDevice != null) {
@@ -1432,9 +1323,6 @@ class MentraLive : SGCManager() {
                                     deviceName.startsWith("MENTRA_LIVE_BT") ||
                                     deviceName.lowercase().startsWith("mentra_live")
                     ) {
-                        // #region agent log
-                        debugScanMentraSeen++
-                        // #endregion
                         // Connect-by-name only when reconnecting OR connectById() asked for
                         // this name. A discovery-only pairing scan must not auto-connect just
                         // because savedDeviceName still matches (spoof risk).
@@ -1450,24 +1338,6 @@ class MentraLive : SGCManager() {
                             // so the list is not empty while nearby units advertise. Connect stays
                             // blocked in RN until the glasses enter pairing mode (OS-1615).
                             val (_, _, secureCapable) = parseSecurePairingTrailer(result)
-                            // #region agent log
-                            debugScanMentraFiltered++
-                            debugScanMentraEmitted++
-                            debugAgentLog(
-                                    "D",
-                                    "MentraLive.kt:scanCallback",
-                                    "mentra_emitted_not_pairing_discoverable",
-                                    mapOf(
-                                            "name" to deviceName,
-                                            "address" to deviceAddress,
-                                            "rssi" to result.rssi,
-                                            "seen" to debugScanMentraSeen,
-                                            "filtered" to debugScanMentraFiltered,
-                                            "emitted" to debugScanMentraEmitted,
-                                            "secureCapable" to secureCapable,
-                                    )
-                            )
-                            // #endregion
                             Bridge.sendDiscoveredDevice(
                                     DeviceTypes.LIVE,
                                     deviceName,
@@ -1480,21 +1350,6 @@ class MentraLive : SGCManager() {
                             return
                         }
                         val glassType = if (deviceName == "Xy_A") "Standard" else "K900"
-                        // #region agent log
-                        debugScanMentraEmitted++
-                        debugAgentLog(
-                                "C",
-                                "MentraLive.kt:scanCallback",
-                                "mentra_emitted_to_ui",
-                                mapOf(
-                                        "name" to deviceName,
-                                        "address" to deviceAddress,
-                                        "rssi" to result.rssi,
-                                        "pairingDiscoverable" to isPairingDiscoverable(result),
-                                        "emitted" to debugScanMentraEmitted,
-                                )
-                        )
-                        // #endregion
                         Bridge.log(
                                 "LIVE: Found compatible " +
                                         glassType +
@@ -1768,6 +1623,10 @@ class MentraLive : SGCManager() {
             stopScan()
             emitStopScanEvent()
         }
+        // Drop A2DP/HFP (keep the Classic bond) so glasses can advertise for reclaim.
+        // Do this before nulling connectedDevice — disconnectClassicProfiles needs it.
+        val yieldingDevice = connectedDevice
+        disconnectClassicProfiles(yieldingDevice)
         // closeGattQuietly nulls bluetoothGatt before the disconnect callback, so
         // onConnectionStateChange treats it as stale and never publishes DISCONNECTED.
         // Mirror a real disconnect for UI + session state, then tear GATT down.
@@ -2251,12 +2110,12 @@ class MentraLive : SGCManager() {
                         closeGattQuietly(false)
 
                         // Auth/not-owner after pairing yield — not a generic RF blip.
+                        // GATT 8 / 0x08 is connection timeout; a reclaim RF timeout must
+                        // not wipe the saved owner.
                         if (pairingYieldAwaitingReclaim &&
                                         (status == 5 ||
-                                                status == 8 ||
                                                 status == 15 ||
                                                 status == 0x05 ||
-                                                status == 0x08 ||
                                                 status == 0x0F)
                         ) {
                             clearSavedGlassesAfterOwnerLoss("gatt_auth_status_$status")
@@ -2529,20 +2388,6 @@ class MentraLive : SGCManager() {
 
                     if (isRxCharacteristic) {
                         Bridge.log("LIVE: Received data on RX characteristic")
-                        // #region agent log [810da2] Hypothesis A+C: capture data.length vs
-                        // negotiated MTU
-                        Bridge.log(
-                                "LIVE: [DEBUG-810da2-HypAC] RX dataLen=" +
-                                        data.size +
-                                        " mtu=" +
-                                        currentMtu +
-                                        " firstByte=0x" +
-                                        String.format("%02X", data[0]) +
-                                        " second=0x" +
-                                        (if (data.size > 1) String.format("%02X", data[1])
-                                        else "??")
-                        )
-                        // #endregion
                     } else if (isTxCharacteristic) {
                         Bridge.log("LIVE: Received data on TX characteristic")
                     } else if (isLc3ReadCharacteristic) {
@@ -3623,25 +3468,6 @@ class MentraLive : SGCManager() {
                 processJsonMessage(expanded)
             } else {
                 Log.w(TAG, "Thread-" + threadId + ": Failed to parse K900 protocol data")
-                // #region agent log [810da2] Hypothesis A+B: log header-declared length vs actual
-                // data length
-                val declaredPayloadLen =
-                        if (data.size >= 5)
-                                (((data[3].toInt() and 0xFF) shl 8) or (data[4].toInt() and 0xFF))
-                        else -1
-                Bridge.log(
-                        "LIVE: [DEBUG-810da2-HypAB] K900 PARSE FAILED thread=" +
-                                threadId +
-                                " dataLen=" +
-                                data.size +
-                                " mtu=" +
-                                currentMtu +
-                                " declaredPayloadLen=" +
-                                declaredPayloadLen +
-                                " expectedTotal=" +
-                                (declaredPayloadLen + 7)
-                )
-                // #endregion
             }
 
             return // Exit after processing K900 protocol format
@@ -4252,6 +4078,10 @@ class MentraLive : SGCManager() {
             }
             "glasses_ready" -> {
                 // Glasses SOC has booted and is ready for communication
+                if (pairingYieldActive && !isConnected) {
+                    Bridge.log("LIVE: Ignoring stale glasses_ready during pairing yield")
+                    return
+                }
                 Bridge.log("LIVE: 🎉 Received glasses_ready message - SOC is booted and ready!")
                 pairingYieldAwaitingReclaim = false
                 pairingYieldActive = false
@@ -6002,8 +5832,11 @@ class MentraLive : SGCManager() {
         }
 
         // Stale Classic ACL keeps Mentra Live from advertising — drop A2DP/HFP (keep bond)
-        // so the discovery scan can see the unit again.
-        releaseStaleClassicForDiscovery()
+        // so a pairing/discovery scan can see the unit again. Skip while this session is
+        // already up so a normal scan does not mute live Classic audio.
+        if (!isConnected) {
+            releaseStaleClassicForDiscovery()
+        }
 
         // Start scanning for BLE devices
         startScan()
@@ -6016,40 +5849,11 @@ class MentraLive : SGCManager() {
                     adapter.bondedDevices?.toList().orEmpty()
                 } catch (e: Exception) {
                     Bridge.log("LIVE: Classic: discovery release — cannot list bonded: " + e.message)
-                    // #region agent log
-                    debugAgentLog(
-                            "A",
-                            "MentraLive.kt:releaseStaleClassicForDiscovery",
-                            "bonded_list_error",
-                            mapOf("error" to (e.message ?: "unknown"))
-                    )
-                    // #endregion
                     return
                 }
         val mentraBonded =
                 bonded.filter { isMentraLiveBluetoothName(safeDeviceName(it)) }
-        // #region agent log
-        debugAgentLog(
-                "A",
-                "MentraLive.kt:releaseStaleClassicForDiscovery",
-                "bonded_inventory",
-                mapOf(
-                        "bondedTotal" to bonded.size,
-                        "mentraBonded" to mentraBonded.size,
-                        "mentraNames" to
-                                mentraBonded.map { safeDeviceName(it) + "|" + it.address + "|bond=" + it.bondState },
-                )
-        )
-        // #endregion
         if (mentraBonded.isEmpty()) {
-            // #region agent log
-            debugAgentLog(
-                    "A",
-                    "MentraLive.kt:releaseStaleClassicForDiscovery",
-                    "no_mentra_bonded_skip_release",
-                    emptyMap()
-            )
-            // #endregion
             return
         }
         for (device in mentraBonded) {
@@ -6060,18 +5864,6 @@ class MentraLive : SGCManager() {
                             device.address +
                             ")"
             )
-            // #region agent log
-            debugAgentLog(
-                    "B",
-                    "MentraLive.kt:releaseStaleClassicForDiscovery",
-                    "releasing_classic_profiles",
-                    mapOf(
-                            "name" to safeDeviceName(device),
-                            "address" to device.address,
-                            "bondState" to device.bondState,
-                    )
-            )
-            // #endregion
             disconnectClassicProfiles(device)
         }
     }
@@ -6121,19 +5913,6 @@ class MentraLive : SGCManager() {
         // Remove BT Classic bonds for every Mentra Live unit — not only connectedDevice.
         // After abandonAttempt, disconnect() often runs first so connectedDevice is null
         // while the OS bond/ACL is still alive (glasses keep IBRT links / stop advertising).
-        // #region agent log
-        debugAgentLog(
-                "A",
-                "MentraLive.kt:forget",
-                "forget_begin",
-                mapOf(
-                        "connectedDevice" to
-                                (connectedDevice?.let { safeDeviceName(it) + "|" + it.address }
-                                        ?: "null"),
-                        "connectedBondState" to (connectedDevice?.bondState ?: -1),
-                )
-        )
-        // #endregion
         unbondBondedMentraLiveDevices(context ?: Bridge.getContext())
         if (connectedDevice != null &&
                         connectedDevice!!.bondState != BluetoothDevice.BOND_NONE
@@ -6216,7 +5995,13 @@ class MentraLive : SGCManager() {
         // var context = Bridge.getContext();
         // SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         // String lastDeviceAddress = prefs.getString(PREF_DEVICE_NAME, null);
-        val lastDeviceAddress = DeviceStore.get("bluetooth", "device_address") as String?
+        val pendingAddress =
+                (DeviceStore.get("bluetooth", "pending_device_address") as String?)?.takeIf {
+                    it.isNotEmpty()
+                }
+        val lastDeviceAddress =
+                pendingAddress
+                        ?: (DeviceStore.get("bluetooth", "device_address") as String?)
 
         if (lastDeviceAddress != null && lastDeviceAddress.length > 0) {
             // Connect to last known device if available
@@ -6288,18 +6073,15 @@ class MentraLive : SGCManager() {
         if (device.bondState != BluetoothDevice.BOND_BONDED) {
             return
         }
-        if (isReconnecting) {
-            // #region agent log
-            Bridge.log(
-                    "LIVE: DEBUG_F1AF02 Classic: owner reconnect — leave A2DP/HFP for BLE admit"
-            )
-            // #endregion
-            return
-        }
+        // Owner reconnect and connectById both go through connectToSmartGlasses(),
+        // which clears isReconnecting first. Leave Classic up: tearing A2DP/HFP
+        // here historically caused GATT status=19 reject loops. Discovery teardown
+        // lives in releaseStaleClassicForDiscovery() for pairing scans only.
         Bridge.log(
-                "LIVE: Classic: bonded target — tearing down stale A2DP/HFP before BLE connect"
+                "LIVE: Classic: bonded target — leave A2DP/HFP up for BLE admit (" +
+                        safeDeviceName(device) +
+                        ")"
         )
-        disconnectClassicProfiles(device)
     }
 
     override fun setMicEnabled(enabled: Boolean) {

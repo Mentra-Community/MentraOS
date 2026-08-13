@@ -351,6 +351,8 @@ public final class MentraBluetoothSDK {
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "device_name", device.name)
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "device_address", device.identifier ?? "")
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "project_name", device.projectName ?? "")
+        DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_name", "")
+        DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_address", "")
         finishDefaultDeviceApply(generation: generation)
     }
 
@@ -362,6 +364,8 @@ public final class MentraBluetoothSDK {
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "device_name", "")
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "device_address", "")
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "project_name", "")
+        DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_name", "")
+        DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_address", "")
         finishDefaultDeviceApply(generation: generation)
     }
 
@@ -436,6 +440,9 @@ public final class MentraBluetoothSDK {
         }
         if options.saveAsDefault && !isController {
             setDefaultDevice(device)
+        } else if !isController {
+            DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_name", device.name)
+            DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_address", device.identifier ?? "")
         }
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_wearable", device.model.deviceType)
         DeviceManager.shared.connectByName(device.name)
@@ -460,6 +467,8 @@ public final class MentraBluetoothSDK {
 
     public func cancelConnectionAttempt() {
         clearBluetoothRestoreIntent()
+        DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_name", "")
+        DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_address", "")
         DeviceManager.shared.disconnect()
     }
 

@@ -148,8 +148,8 @@ export default function SelectGlassesBluetoothScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchResults])
 
-  // Scan list shows only pairable units. Non-pairing Mentra Live may still be remembered
-  // for the timeout nearby-hint, but must not appear in the selectable list.
+  // Scan list keeps nearby non-pairing Mentra Live visible; connect is blocked until
+  // five-tap pairing mode. Auto-connect still requires exactly one pairable unit.
   const pairableResults = useMemo(
     () =>
       visibleResults.filter(
@@ -166,7 +166,7 @@ export default function SelectGlassesBluetoothScreen() {
       visibleResults.some((device) => device.pairingMode === false && device.securePairingCapable !== false),
     [isMentraLivePairingScan, visibleResults],
   )
-  const listResults = isMentraLivePairingScan ? pairableResults : visibleResults
+  const listResults = visibleResults
 
   useEffect(() => {
     // Timeout only when no pairable Mentra Live appeared; non-pairing nearby units still count
@@ -358,9 +358,12 @@ export default function SelectGlassesBluetoothScreen() {
                     {listResults.map((res: Device) => {
                       const deviceTitle =
                         deviceModel === DeviceTypes.AR99 ? getAr99ResultDisplayName(res) : selectedDisplayName
-                      const deviceSubtitle = isMentraLivePairingScan
-                        ? formatLiveSubtitle(res)
-                        : filterDeviceName(res.name)
+                      const deviceSubtitle =
+                        deviceModel === DeviceTypes.AR99
+                          ? formatAr99Subtitle(res)
+                          : isMentraLivePairingScan
+                            ? formatLiveSubtitle(res)
+                            : filterDeviceName(res.name)
                       return (
                         <View
                           key={res.id}
@@ -380,8 +383,11 @@ export default function SelectGlassesBluetoothScreen() {
               ) : null}
               <Button preset="primary" tx="pairing:tryAgain" onPress={handleTryAgain} className="w-full" />
             </View>
-          ) : listResults.length === 0 ||
-            (isMentraLivePairingScan && listResults.length === 1) ? (
+          ) : isMentraLivePairingScan && pairableResults.length === 1 ? (
+            <View className="justify-center min-h-20 py-4">
+              <ActivityIndicator size="large" color={theme.colors.foreground} />
+            </View>
+          ) : listResults.length === 0 ? (
             <View className="justify-center min-h-20 py-4">
               <ActivityIndicator size="large" color={theme.colors.foreground} />
             </View>

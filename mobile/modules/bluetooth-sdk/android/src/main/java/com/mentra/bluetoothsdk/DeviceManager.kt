@@ -89,6 +89,14 @@ class DeviceManager {
         get() = DeviceStore.store.get("bluetooth", "pending_wearable") as? String ?: ""
         set(value) = DeviceStore.apply("bluetooth", "pending_wearable", value)
 
+    private var pendingDeviceName: String
+        get() = DeviceStore.store.get("bluetooth", "pending_device_name") as? String ?: ""
+        set(value) = DeviceStore.apply("bluetooth", "pending_device_name", value)
+
+    private var pendingDeviceAddress: String
+        get() = DeviceStore.store.get("bluetooth", "pending_device_address") as? String ?: ""
+        set(value) = DeviceStore.apply("bluetooth", "pending_device_address", value)
+
     public var deviceName: String
         get() = DeviceStore.store.get("bluetooth", "device_name") as? String ?: ""
         set(value) = DeviceStore.apply("bluetooth", "device_name", value)
@@ -1281,6 +1289,14 @@ class DeviceManager {
         lastReadyHandledAtMs = now
 
         Bridge.log("MAN: handleDeviceReady() ${sgc?.type}")
+        if (pendingDeviceName.isNotEmpty()) {
+            deviceName = pendingDeviceName
+        }
+        if (pendingDeviceAddress.isNotEmpty()) {
+            deviceAddress = pendingDeviceAddress
+        }
+        pendingDeviceName = ""
+        pendingDeviceAddress = ""
         pendingWearable = ""
         defaultWearable = sgc?.type ?: ""
         searching = false
@@ -2046,10 +2062,10 @@ class DeviceManager {
         disconnect()
         Thread.sleep(100)
         searching = true
-        deviceName = name
+        pendingDeviceName = name
 
         initSGC(pendingWearable)
-        sgc?.connectById(deviceName)
+        sgc?.connectById(name)
     }
 
     fun connectDevice(deviceModel: String, deviceName: String) {
@@ -2173,8 +2189,14 @@ class DeviceManager {
         } else {
             // Typical abandonAttempt path: disconnect() already destroyed SGC and nulled
             // this.sgc, so MentraLive.forget() never ran and Classic bonds stayed up —
-            // glasses keep IBRT ACL and stop BLE advertising. Tear bonds down here.
-            MentraLive.unbondBondedMentraLiveDevices(Bridge.getContext())
+            // glasses keep IBRT ACL and stop BLE advertising. Only tear Live bonds when
+            // the selected/pending wearable is Mentra Live — forgetting G1/G2 must not
+            // unpair an unrelated Live unit.
+            val liveTarget =
+                    defaultWearable == DeviceTypes.LIVE || pendingWearable == DeviceTypes.LIVE
+            if (liveTarget) {
+                MentraLive.unbondBondedMentraLiveDevices(Bridge.getContext())
+            }
             sgc?.forget()
             disconnect()
         }
@@ -2183,6 +2205,9 @@ class DeviceManager {
         defaultWearable = ""
         deviceName = ""
         deviceAddress = ""
+        pendingDeviceName = ""
+        pendingDeviceAddress = ""
+        pendingWearable = ""
         Bridge.saveSetting("default_wearable", "")
         Bridge.saveSetting("device_name", "")
         Bridge.saveSetting("device_address", "")

@@ -54,6 +54,20 @@ const hi = {
     forgetGlassesWhilePairing:
       "Bluetooth पेयरिंग जारी है। पहले सिस्टम पेयरिंग डायलॉग को स्वीकार या बंद करें, फिर चश्मे को दोबारा अनपेयर करने की कोशिश करें।",
   },
+  pairing: {
+    ...en.pairing,
+    nearbyNotInPairingModeHint:
+      "पास में Mentra Live चश्मे मिले, लेकिन वे पेयरिंग मोड में नहीं हैं। पावर बटन को तेज़ी से 5 बार दबाएँ, फिर फिर से कोशिश करें।",
+    notInPairingModeLabel: "पेयरिंग मोड में नहीं",
+    notInPairingModeAlertTitle: "पेयरिंग मोड शुरू करें",
+    notInPairingModeAlertMessage:
+      "पावर बटन को तेज़ी से 5 बार दबाएँ। LED चमकता है और चश्मा 4-अक्षर का कोड बोलता है। फिर चश्मे को फिर से चुनें।",
+    pairingCodeLabel: "कोड {{code}}",
+    legacyFirmwareLabel: "पुराना फ़र्मवेयर",
+    livePairingModeInfo:
+      "पावर बटन को तेज़ी से 5 बार दबाएँ। LED चमकता है और चश्मा 4-अक्षर का कोड (0–9, A–F) बोलता है। एक से ज़्यादा यूनिट दिखें तो उसी कोड से मिलाएँ।",
+    noGlassesFoundHint: "पक्का करें कि आपने पावर बटन को तेज़ी से 5 बार दबाया, फिर फिर से कोशिश करें।",
+  },
   demoNavigator: {
     componentsTab: "कंपोनेंट्स",
     debugTab: "डीबग",
