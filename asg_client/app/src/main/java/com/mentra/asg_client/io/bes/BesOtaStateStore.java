@@ -5,12 +5,15 @@ import android.content.SharedPreferences;
 import android.os.Process;
 import android.os.SystemClock;
 import android.util.Log;
+
 import com.mentra.asg_client.io.ota.utils.BesFirmwareArtifactValidator.ValidatedBesArtifact;
+
+import org.json.JSONException;
+import org.json.JSONObject;
+
 import java.io.BufferedReader;
 import java.io.FileReader;
 import java.util.Locale;
-import org.json.JSONException;
-import org.json.JSONObject;
 
 /**
  * Single durable authority for legacy BES OTA admission, apply, verification, and terminal state.
@@ -297,6 +300,51 @@ public final class BesOtaStateStore {
         }
     }
 
+    /**
+     * Atomically select and commit the version-proof transition for a later Linux boot.
+     *
+     * <p>The recovery timeout finalizer runs on another thread. Keeping state selection,
+     * verification-boot claiming, and completion under the transition lock guarantees that an exact
+     * proof is applied either to the active record or to the narrowly eligible timeout terminal; it
+     * cannot be lost between a stale manager snapshot and the selected transition.
+     */
+    public TransitionResult completeVersionProofAfterRestart(
+            String ownerSessionId, String currentBootId, String actualVersion) {
+        synchronized (TRANSITION_LOCK) {
+            Snapshot current = readLocked();
+            String owner = canonicalNonempty(ownerSessionId);
+            logDecision(
+                    "reconcile_restart_version_proof",
+                    "requested_owner="
+                            + diagnosticValue(owner)
+                            + " requested_boot="
+                            + diagnosticValue(canonicalBootId(currentBootId))
+                            + " actual="
+                            + diagnosticValue(canonicalVersion(actualVersion)),
+                    current);
+            if (!current.isValid() || !current.ownerSessionId.equals(owner)) {
+                return TransitionResult.REJECTED;
+            }
+            if (current.state == State.APPLY_PENDING) {
+                VerificationDecision verification = claimOrResumeVerificationBoot(currentBootId);
+                if (verification == VerificationDecision.CLAIMED
+                        || verification == VerificationDecision.RESUME) {
+                    return completeVerified(owner, currentBootId, actualVersion);
+                }
+                if (verification == VerificationDecision.PERSISTENCE_FAILURE) {
+                    return TransitionResult.PERSISTENCE_FAILURE;
+                }
+                return verification == VerificationDecision.SECOND_BOOT_FAILED
+                        ? TransitionResult.APPLIED
+                        : TransitionResult.REJECTED;
+            }
+            if (current.state == State.AUTH_ATTEMPTED) {
+                return completeRecoveredAfterRestart(owner, currentBootId, actualVersion);
+            }
+            return completeLateExactTargetAfterRecoveryTimeout(owner, currentBootId, actualVersion);
+        }
+    }
+
     /** Exact post-apply readback is the only success transition. */
     public TransitionResult completeVerified(
             String ownerSessionId, String currentBootId, String actualVersion) {
@@ -387,6 +435,55 @@ public final class BesOtaStateStore {
                                     : "fail_recovered_" + terminal.terminalCode,
                             current,
                             terminal)
+                    ? TransitionResult.APPLIED
+                    : TransitionResult.PERSISTENCE_FAILURE;
+        }
+    }
+
+    /**
+     * Replace only a transport-recovery timeout with exact target-version proof from a later boot.
+     *
+     * <p>Recovery timing is not proof that the installation failed. A fresh framed version reply
+     * from a different Linux boot is stronger evidence, but it must never erase authorization,
+     * protocol, artifact, or version failures.
+     */
+    public TransitionResult completeLateExactTargetAfterRecoveryTimeout(
+            String ownerSessionId, String currentBootId, String actualVersion) {
+        synchronized (TRANSITION_LOCK) {
+            Snapshot current = readLocked();
+            String owner = canonicalNonempty(ownerSessionId);
+            String boot = canonicalBootId(currentBootId);
+            String actual = canonicalVersion(actualVersion);
+            boolean eligibleTimeout =
+                    current.isValid()
+                            && current.state == State.TERMINAL
+                            && current.terminalStatus == TerminalStatus.FAILURE
+                            && ("recovery_timeout".equals(current.terminalCode)
+                                    || "verification_timeout".equals(current.terminalCode));
+            if (!eligibleTimeout
+                    || !current.ownerSessionId.equals(owner)
+                    || boot == null
+                    || boot.equals(current.authorizationBootId)
+                    || !current.targetVersion.equals(actual)) {
+                logDecision(
+                        "late_timeout_version_proof_rejected",
+                        "requested_owner="
+                                + diagnosticValue(owner)
+                                + " requested_boot="
+                                + diagnosticValue(boot)
+                                + " actual="
+                                + diagnosticValue(actual),
+                        current);
+                return current.isValid()
+                                && current.state == State.TERMINAL
+                                && current.ownerSessionId.equals(owner)
+                        ? TransitionResult.ALREADY_TERMINAL
+                        : TransitionResult.REJECTED;
+            }
+            Snapshot verified =
+                    current.withVerificationBoot(boot)
+                            .asTerminal(TerminalStatus.SUCCESS, "verified");
+            return putLocked("complete_late_timeout_version_proof", current, verified)
                     ? TransitionResult.APPLIED
                     : TransitionResult.PERSISTENCE_FAILURE;
         }
@@ -574,7 +671,8 @@ public final class BesOtaStateStore {
             Log.w(
                     TAG,
                     diagnosticPrefix(operation)
-                            + " durable state readback differs immediately after successful commit");
+                            + " durable state readback differs immediately after successful"
+                            + " commit");
         }
         return committed;
     }
