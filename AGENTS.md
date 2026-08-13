@@ -211,6 +211,12 @@ export MENTRA_ADMIN_TOKEN=msk_your-admin-key
 
 Note: the **mentra-console** MCP server (`cloud/packages/console-mcp`, tools `incident_get` / `incident_get_logs`) still targets the legacy V1 incidents API (`/api/agent/incidents`, `X-Agent-Key`) and has not been ported to the V2 reports API yet.
 
+## Mentra Live BES firmware (sibling repo)
+
+Glasses MCU firmware lives in the sibling `mentra-live-bes` repo, not this monorepo. Follow that repo's `AGENTS.md` when changing it.
+
+After **every** BES firmware source change, run the OTA sanity gates in that repo (`./build_pz.sh OTA` or `python3 tools/verify_ota_build.py …`). A successful compile is not enough: a raw `best1502x_ibrt_bpone.bin` **>= 1,966,080 bytes** will brick a device that receives it via OTA. Do not install or release if that gate fails.
+
 ## Additional Documentation
 
 - Mintlify docs: `/mintlify-docs/`

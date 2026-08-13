@@ -2133,33 +2133,13 @@ class DeviceManager {
     }
 
     fun forget() {
-        // Mentra Live CTKD: refuse while the OS pairing dialog is in-flight.
-        // forget() → removeBond/disconnect mid-BOND_BONDING aborts that dialog and
-        // leaves the user waiting ~30s for "Pairing dialog canceled" before retry.
-        val live = sgc as? MentraLive
-        if (live?.isCtkdBondingInProgress() == true) {
-            Bridge.log(
-                    "MAN: Refusing forget during CTKD bonding — finish the system pairing dialog first"
-            )
-            throw BluetoothSdkException(
-                    "ctkd_bonding_in_progress",
-                    "Bluetooth Classic pairing is in progress. Accept or cancel the system pairing dialog first, then unpair.",
-            )
-        }
-
         Bridge.log("MAN: Forgetting smart glasses")
 
+        val live = sgc as? MentraLive
         if (live != null) {
-            // MentraLive forget() owns teardown so its last-line CTKD guard cannot be
-            // bypassed by a second disconnect here if bonding starts after the check above.
+            // MentraLive.forget() disconnects GATT then removeBond. Do not refuse
+            // during CTKD bonding — Unpair is an explicit user request to drop the pair.
             live.forget()
-            if (live.isCtkdBondingInProgress()) {
-                // MentraLive refused teardown; surface the same error the UI already handles.
-                throw BluetoothSdkException(
-                        "ctkd_bonding_in_progress",
-                        "Bluetooth Classic pairing is in progress. Accept or cancel the system pairing dialog first, then unpair.",
-                )
-            }
             // MentraLive.forget() already destroyed the SGC. Clear the manager reference and
             // session state without calling disconnect() again (that would hit a dead instance
             // and leave a destroyed MentraLive retained for the next scan).
@@ -2195,7 +2175,10 @@ class DeviceManager {
             val liveTarget =
                     defaultWearable == DeviceTypes.LIVE || pendingWearable == DeviceTypes.LIVE
             if (liveTarget) {
-                MentraLive.unbondBondedMentraLiveDevices(Bridge.getContext())
+                MentraLive.unbondBondedMentraLiveDevices(
+                        Bridge.getContext(),
+                        deviceAddress.takeIf { it.isNotEmpty() },
+                )
             }
             sgc?.forget()
             disconnect()
@@ -2212,6 +2195,7 @@ class DeviceManager {
         Bridge.saveSetting("device_name", "")
         Bridge.saveSetting("device_address", "")
         Bridge.saveSetting("project_name", "")
+        Bridge.saveSetting("pending_wearable", "")
     }
 
     fun forgetController() {

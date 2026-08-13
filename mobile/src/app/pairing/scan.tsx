@@ -148,8 +148,8 @@ export default function SelectGlassesBluetoothScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchResults])
 
-  // Scan list keeps nearby non-pairing Mentra Live visible; connect is blocked until
-  // five-tap pairing mode. Auto-connect still requires exactly one pairable unit.
+  // Mentra Live: only pairing-mode (or legacy) units are listable. Auto-connect
+  // when exactly one is pairable; show a picker only when two or more are pairable.
   const pairableResults = useMemo(
     () =>
       visibleResults.filter(
@@ -166,7 +166,10 @@ export default function SelectGlassesBluetoothScreen() {
       visibleResults.some((device) => device.pairingMode === false && device.securePairingCapable !== false),
     [isMentraLivePairingScan, visibleResults],
   )
-  const listResults = visibleResults
+  const listResults = isMentraLivePairingScan ? pairableResults : visibleResults
+  const shouldShowDeviceList = isMentraLivePairingScan
+    ? listResults.length >= 2
+    : listResults.length > 0
 
   useEffect(() => {
     // Timeout only when no pairable Mentra Live appeared; non-pairing nearby units still count
@@ -352,7 +355,7 @@ export default function SelectGlassesBluetoothScreen() {
                     : "pairing:noGlassesFoundHint"
                 }
               />
-              {listResults.length > 0 ? (
+              {shouldShowDeviceList ? (
                 <ScrollView className="max-h-[220px] -mr-4 pr-4" contentContainerClassName="my-2">
                   <Group>
                     {listResults.map((res: Device) => {
@@ -387,7 +390,7 @@ export default function SelectGlassesBluetoothScreen() {
             <View className="justify-center min-h-20 py-4">
               <ActivityIndicator size="large" color={theme.colors.foreground} />
             </View>
-          ) : listResults.length === 0 ? (
+          ) : !shouldShowDeviceList ? (
             <View className="justify-center min-h-20 py-4">
               <ActivityIndicator size="large" color={theme.colors.foreground} />
             </View>

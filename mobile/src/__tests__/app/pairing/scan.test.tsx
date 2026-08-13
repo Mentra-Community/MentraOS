@@ -439,7 +439,7 @@ describe("pairing scan screen", () => {
     })
   })
 
-  it("keeps Mentra Live units that are not in pairing mode visible in the scan list", async () => {
+  it("hides Mentra Live units that are not in pairing mode from the scan list", async () => {
     setPlatformOS("android")
     useCoreStore.setState({
       searchResults: [
@@ -472,12 +472,153 @@ describe("pairing scan screen", () => {
       ],
     })
 
-    const {getByText} = render(<SelectGlassesBluetoothScreen />)
+    const {getByText, queryByText} = render(<SelectGlassesBluetoothScreen />)
 
     await waitFor(() => {
       expect(getByText(/pairing:pairingCodeLabel:ABCD/)).toBeTruthy()
+      expect(getByText(/pairing:pairingCodeLabel:EF01/)).toBeTruthy()
     })
-    expect(getByText(/IDLE/)).toBeTruthy()
+    expect(queryByText(/IDLE/)).toBeNull()
+  })
+
+  it("does not show a Mentra Live scan list for a single pairing-mode unit", async () => {
+    setPlatformOS("android")
+    useCoreStore.setState({
+      searchResults: [
+        {
+          id: "idle",
+          model: "Mentra Live",
+          name: "MENTRA_LIVE_BLE_IDLE",
+          address: "idle",
+          pairingMode: false,
+          securePairingCapable: true,
+        },
+        {
+          id: "pairable-a",
+          model: "Mentra Live",
+          name: "MENTRA_LIVE_BLE_PAIR_A",
+          address: "pair-a",
+          pairingMode: true,
+          pairingCode: "ABCD",
+          securePairingCapable: true,
+        },
+      ],
+    })
+
+    const {queryByText} = render(<SelectGlassesBluetoothScreen />)
+
+    await waitFor(() => {
+      expect(push).toHaveBeenCalledWith(
+        "/pairing/loading",
+        expect.objectContaining({
+          deviceModel: "Mentra Live",
+          deviceName: "MENTRA_LIVE_BLE_PAIR_A",
+        }),
+      )
+    })
+    expect(queryByText(/pairing:pairingCodeLabel:ABCD/)).toBeNull()
+    expect(queryByText(/IDLE/)).toBeNull()
+  })
+
+  it("auto-connects a single legacy Mentra Live even when pairingMode is false", async () => {
+    setPlatformOS("android")
+    useCoreStore.setState({
+      searchResults: [
+        {
+          id: "legacy",
+          model: "Mentra Live",
+          name: "MENTRA_LIVE_BLE_LEGACY",
+          address: "legacy",
+          pairingMode: false,
+          securePairingCapable: false,
+        },
+      ],
+    })
+
+    render(<SelectGlassesBluetoothScreen />)
+
+    await waitFor(() => {
+      expect(push).toHaveBeenCalledWith(
+        "/pairing/loading",
+        expect.objectContaining({
+          deviceModel: "Mentra Live",
+          deviceName: "MENTRA_LIVE_BLE_LEGACY",
+          securePairingCapable: false,
+        }),
+      )
+    })
+  })
+
+  it("auto-connects legacy Mentra Live beside a nearby secure unit that is not in pairing mode", async () => {
+    setPlatformOS("android")
+    useCoreStore.setState({
+      searchResults: [
+        {
+          id: "idle",
+          model: "Mentra Live",
+          name: "MENTRA_LIVE_BLE_IDLE",
+          address: "idle",
+          pairingMode: false,
+          securePairingCapable: true,
+        },
+        {
+          id: "legacy",
+          model: "Mentra Live",
+          name: "MENTRA_LIVE_BLE_LEGACY",
+          address: "legacy",
+          pairingMode: false,
+          securePairingCapable: false,
+        },
+      ],
+    })
+
+    render(<SelectGlassesBluetoothScreen />)
+
+    await waitFor(() => {
+      expect(push).toHaveBeenCalledWith(
+        "/pairing/loading",
+        expect.objectContaining({
+          deviceModel: "Mentra Live",
+          deviceName: "MENTRA_LIVE_BLE_LEGACY",
+          securePairingCapable: false,
+        }),
+      )
+    })
+    expect(push).toHaveBeenCalledTimes(1)
+  })
+
+  it("keeps scanning without a list when only non-pairing Mentra Live units are nearby", async () => {
+    jest.useFakeTimers()
+    try {
+      setPlatformOS("android")
+      useCoreStore.setState({
+        searchResults: [
+          {
+            id: "idle",
+            model: "Mentra Live",
+            name: "MENTRA_LIVE_BLE_IDLE",
+            address: "idle",
+            pairingMode: false,
+            securePairingCapable: true,
+          },
+        ],
+      })
+
+      const {getByText, queryByText} = render(<SelectGlassesBluetoothScreen />)
+
+      expect(queryByText(/IDLE/)).toBeNull()
+      expect(push).not.toHaveBeenCalled()
+
+      act(() => {
+        jest.advanceTimersByTime(15_000)
+      })
+
+      expect(getByText("pairing:noGlassesFound")).toBeTruthy()
+      expect(getByText("pairing:nearbyNotInPairingModeHint")).toBeTruthy()
+      expect(queryByText(/IDLE/)).toBeNull()
+    } finally {
+      jest.useRealTimers()
+    }
   })
 
   it("filters AR99 scan results to the selected AR99 project", async () => {
