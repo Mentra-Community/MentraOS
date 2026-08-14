@@ -50,6 +50,7 @@ import {
 } from "@mentra/cloud-protocol";
 import type { WebSocketLike } from "../../transports";
 import type { Logger } from "../../logger";
+import { systemTimers, type CloudClientTimers } from "../../timers";
 
 /** Connection lifecycle, surfaced to the rest of runtime via `onState`. */
 export type ConnectionState = "connecting" | "open" | "closed";
@@ -117,6 +118,7 @@ export interface ConnectionDeps {
   // what rides in the handshake beyond the token it stamps in.
   initPayload: () => ConnectionInit;
   reconnect: { baseMs: number; maxMs: number; jitter: boolean };
+  timers?: CloudClientTimers;
   // Called when the WebSocket upgrade itself is rejected as unauthorized. That
   // happens before a protocol `error` frame can exist, so runtime's normal
   // AUTH_EXPIRED handshake retry cannot see it. The host uses this to invalidate
@@ -170,6 +172,7 @@ function isSupersededByNewerSession(reason: string): boolean {
 
 export class Connection {
   private readonly deps: ConnectionDeps;
+  private readonly timers: CloudClientTimers;
 
   // The current socket. Null between connect attempts and after close, so every
   // access guards on it rather than assuming a live socket.
@@ -205,12 +208,12 @@ export class Connection {
   // already armed is a no-op, so the (intentional) double call from `onClose`
   // and from a failed attempt's catch-reschedule can never stack two timers and
   // double the reconnect rate.
-  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectTimer: unknown | null = null;
 
   // The watchdog interval (started in open(), cleared in close()). It is the
   // backstop that revives the reconnect loop if it ever stalls: see
   // `tickWatchdog` and the file header for why a stall is possible at all.
-  private watchdogTimer: ReturnType<typeof setInterval> | null = null;
+  private watchdogTimer: unknown | null = null;
 
   // Mirror of the last state pushed through `setState`, so the watchdog can ask
   // "are we currently closed?" without a separate subscription. The state
@@ -220,8 +223,8 @@ export class Connection {
 
   // Liveness timers. The interval drives the periodic ping; the pong-wait timer
   // is armed when a ping goes out and disarmed when its pong arrives.
-  private pingTimer: ReturnType<typeof setInterval> | null = null;
-  private pongTimer: ReturnType<typeof setTimeout> | null = null;
+  private pingTimer: unknown | null = null;
+  private pongTimer: unknown | null = null;
 
   // While `open()` is awaiting `connection.ack`, these settle that promise. They
   // are cleared the moment the handshake resolves, rejects, or times out, so a
@@ -229,11 +232,12 @@ export class Connection {
   private pendingAck: {
     resolve: (ack: ConnectionAck) => void;
     reject: (err: Error) => void;
-    timer: ReturnType<typeof setTimeout>;
+    timer: unknown;
   } | null = null;
 
   constructor(deps: ConnectionDeps) {
     this.deps = deps;
+    this.timers = deps.timers ?? systemTimers;
   }
 
   /**
@@ -386,7 +390,7 @@ export class Connection {
     // The promise the handshake settles. Wired before the socket can fire any
     // callback so an immediate open/message cannot race ahead of the listener.
     const acked = new Promise<ConnectionAck>((resolve, reject) => {
-      const timer = setTimeout(() => {
+      const timer = this.timers.setTimeout(() => {
         this.pendingAck = null;
         // Close the half-done socket too: a handshake that times out client-
         // side may still COMPLETE server-side moments later, leaving a ghost
@@ -517,7 +521,7 @@ export class Connection {
     this.reconnectAttempt = 0;
 
     if (this.pendingAck) {
-      clearTimeout(this.pendingAck.timer);
+      this.timers.clearTimeout(this.pendingAck.timer);
       const { resolve } = this.pendingAck;
       this.pendingAck = null;
       resolve(ack);
@@ -620,7 +624,7 @@ export class Connection {
       reason,
     });
 
-    this.reconnectTimer = setTimeout(() => {
+    this.reconnectTimer = this.timers.setTimeout(() => {
       // Null the timer first so this slot is free again: a connect that fails
       // below must be able to schedule the next retry, and the watchdog must see
       // "no reconnect pending" while the attempt is in flight.
@@ -647,7 +651,7 @@ export class Connection {
   /** Cancel a queued reconnect, if any. Safe to call when none is pending. */
   private clearReconnectTimer(): void {
     if (this.reconnectTimer !== null) {
-      clearTimeout(this.reconnectTimer);
+      this.timers.clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
   }
@@ -659,7 +663,7 @@ export class Connection {
    */
   private startWatchdog(): void {
     this.stopWatchdog();
-    this.watchdogTimer = setInterval(
+    this.watchdogTimer = this.timers.setInterval(
       () => this.tickWatchdog(),
       RECONNECT_WATCHDOG_MS,
     );
@@ -668,7 +672,7 @@ export class Connection {
   /** Stop the reconnect watchdog (on host close). */
   private stopWatchdog(): void {
     if (this.watchdogTimer !== null) {
-      clearInterval(this.watchdogTimer);
+      this.timers.clearInterval(this.watchdogTimer);
       this.watchdogTimer = null;
     }
   }
@@ -705,7 +709,7 @@ export class Connection {
    */
   private startLiveness(): void {
     this.stopLiveness();
-    this.pingTimer = setInterval(() => this.sendPing(), PING_INTERVAL_MS);
+    this.pingTimer = this.timers.setInterval(() => this.sendPing(), PING_INTERVAL_MS);
   }
 
   /** Send one liveness ping and arm the pong-wait timer. */
@@ -716,8 +720,8 @@ export class Connection {
     // If a pong-wait timer is already armed, leave it: a single outstanding
     // timeout is enough to catch a dead socket, and re-arming would push the
     // deadline back on every interval.
-    if (this.pongTimer) return;
-    this.pongTimer = setTimeout(() => {
+    if (this.pongTimer !== null) return;
+    this.pongTimer = this.timers.setTimeout(() => {
       // No pong in time. The socket is dead; close it so the close handler runs
       // the reconnect path, rather than reconnecting from here and racing the
       // existing socket's eventual close.
@@ -743,8 +747,8 @@ export class Connection {
 
   /** Stop both liveness timers (on close, reconnect, or teardown). */
   private stopLiveness(): void {
-    if (this.pingTimer) {
-      clearInterval(this.pingTimer);
+    if (this.pingTimer !== null) {
+      this.timers.clearInterval(this.pingTimer);
       this.pingTimer = null;
     }
     this.clearPongTimer();
@@ -752,8 +756,8 @@ export class Connection {
 
   /** Disarm the pong-wait timer (a pong arrived, or liveness is stopping). */
   private clearPongTimer(): void {
-    if (this.pongTimer) {
-      clearTimeout(this.pongTimer);
+    if (this.pongTimer !== null) {
+      this.timers.clearTimeout(this.pongTimer);
       this.pongTimer = null;
     }
   }
@@ -764,7 +768,7 @@ export class Connection {
    */
   private failPendingAck(err: Error): void {
     if (!this.pendingAck) return;
-    clearTimeout(this.pendingAck.timer);
+    this.timers.clearTimeout(this.pendingAck.timer);
     const { reject } = this.pendingAck;
     this.pendingAck = null;
     reject(err);

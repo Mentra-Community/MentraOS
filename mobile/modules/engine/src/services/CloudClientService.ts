@@ -422,6 +422,12 @@ function construct(): void {
     // LC3 at 16 kHz with the frame size the encoder emits.
     audio: {codec: "lc3", sampleRate: 16000, frameSizeBytes: frameSizeBytes()},
     auth,
+    timers: {
+      setTimeout: (callback, delayMs) => BgTimer.setTimeout(callback, delayMs),
+      clearTimeout: (handle) => BgTimer.clearTimeout(handle as number),
+      setInterval: (callback, intervalMs) => BgTimer.setInterval(callback, intervalMs),
+      clearInterval: (handle) => BgTimer.clearInterval(handle as number),
+    },
     logger: cloudLogger,
   })
 

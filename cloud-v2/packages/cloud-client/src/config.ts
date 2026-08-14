@@ -9,6 +9,7 @@
  */
 import type { Logger } from "./logger";
 import type { CloudClientTransports } from "./transports";
+import type { CloudClientTimers } from "./timers";
 
 /**
  * The full shape passed to the root `CloudClient`.
@@ -25,6 +26,13 @@ export interface CloudClientConfig {
   endpoints: { core?: string; runtime: string; proxy?: string };
   auth: AuthConfig;
   transports: CloudClientTransports;
+  /**
+   * Scheduler for all delayed client work, including connection/audio
+   * liveness, retries, and request timeouts. React Native hosts must provide
+   * native background timers because ordinary JS timers pause when Android
+   * backgrounds the app.
+   */
+  timers?: CloudClientTimers;
   logger?: Logger;
   // backoff tuning for the live socket; one place so a host can match its fleet
   reconnect?: { baseMs: number; maxMs: number; jitter: boolean };

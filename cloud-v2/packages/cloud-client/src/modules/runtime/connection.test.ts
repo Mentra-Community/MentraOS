@@ -18,6 +18,7 @@ import { describe, test, expect } from "bun:test";
 import { Connection, type ConnectionDeps } from "./connection";
 import type { WebSocketLike } from "../../transports";
 import { noopLogger } from "../../logger";
+import { systemTimers, type CloudClientTimers } from "../../timers";
 import {
   PROTOCOL_MAJOR,
   type ConnectionInit,
@@ -92,6 +93,7 @@ function makeConnection(opts: {
   // Optional hook to fail a given (re)connect attempt before its socket opens,
   // simulating a transient failure that never produces an onClose.
   getToken?: () => Promise<string>;
+  timers?: CloudClientTimers;
 }): { conn: Connection; createdCount: () => number } {
   let created = 0;
   const ws = (_url: string): WebSocketLike => {
@@ -106,6 +108,7 @@ function makeConnection(opts: {
     getToken: opts.getToken ?? (async () => "test-token"),
     initPayload: () => SAMPLE_INIT,
     reconnect: FAST_RECONNECT,
+    timers: opts.timers ?? systemTimers,
     logger: noopLogger,
   };
 
@@ -118,6 +121,46 @@ function wait(ms: number): Promise<void> {
 }
 
 describe("Connection reconnect robustness", () => {
+  test("uses the injected scheduler for handshake and liveness timers", async () => {
+    const socket = new FakeSocket();
+    const timeouts: Array<{ callback: () => void; delayMs: number }> = [];
+    const intervals: Array<{ callback: () => void; intervalMs: number }> = [];
+    const clearedTimeouts: unknown[] = [];
+    const clearedIntervals: unknown[] = [];
+    const timers: CloudClientTimers = {
+      setTimeout(callback, delayMs) {
+        const handle = { kind: "timeout", index: timeouts.length };
+        timeouts.push({ callback, delayMs });
+        return handle;
+      },
+      clearTimeout(handle) {
+        clearedTimeouts.push(handle);
+      },
+      setInterval(callback, intervalMs) {
+        const handle = { kind: "interval", index: intervals.length };
+        intervals.push({ callback, intervalMs });
+        return handle;
+      },
+      clearInterval(handle) {
+        clearedIntervals.push(handle);
+      },
+    };
+    const { conn } = makeConnection({ sockets: [socket], timers });
+
+    const opening = conn.open();
+    await Promise.resolve();
+    expect(timeouts.map(({ delayMs }) => delayMs)).toEqual([15_000]);
+    expect(intervals.map(({ intervalMs }) => intervalMs)).toEqual([20_000]);
+
+    socket.driveSuccessfulHandshake(SAMPLE_ACK);
+    await opening;
+    expect(intervals.map(({ intervalMs }) => intervalMs)).toEqual([20_000, 15_000]);
+    expect(clearedTimeouts).toHaveLength(1);
+
+    conn.close();
+    expect(clearedIntervals).toHaveLength(2);
+  });
+
   test("a failed initial open still enters the reconnect loop", async () => {
     const retry = new FakeSocket();
     let tokenCalls = 0;
