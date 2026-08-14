@@ -1,4 +1,4 @@
-/** Timer surface used by connection and audio liveness. */
+/** Timer surface used by every delayed operation in the cloud client. */
 export interface CloudClientTimers {
   setTimeout(callback: () => void, delayMs: number): unknown;
   clearTimeout(handle: unknown): void;

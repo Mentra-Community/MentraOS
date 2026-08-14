@@ -27,9 +27,10 @@ export interface CloudClientConfig {
   auth: AuthConfig;
   transports: CloudClientTransports;
   /**
-   * Scheduler for connection and audio liveness. React Native hosts should
-   * provide native background timers because ordinary JS timers pause when
-   * Android backgrounds the app.
+   * Scheduler for all delayed client work, including connection/audio
+   * liveness, retries, and request timeouts. React Native hosts must provide
+   * native background timers because ordinary JS timers pause when Android
+   * backgrounds the app.
    */
   timers?: CloudClientTimers;
   logger?: Logger;
