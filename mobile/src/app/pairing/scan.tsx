@@ -349,10 +349,10 @@ export default function SelectGlassesBluetoothScreen() {
             <View className="gap-4 py-4">
               <Text
                 className="text-center text-sm text-muted-foreground"
-                tx={
+                text={
                   hasNearbyNotInPairingMode
-                    ? "pairing:nearbyNotInPairingModeHint"
-                    : "pairing:noGlassesFoundHint"
+                    ? translate("pairing:nearbyNotInPairingModeHint")
+                    : translate("pairing:noGlassesFoundHint")
                 }
               />
               {shouldShowDeviceList ? (
