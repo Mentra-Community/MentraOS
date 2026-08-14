@@ -164,6 +164,10 @@ function isUnauthorizedUpgrade(reason: string): boolean {
   return /\b401\b|unauthorized/i.test(reason);
 }
 
+function isSupersededByNewerSession(reason: string): boolean {
+  return /superseded by newer session/i.test(reason);
+}
+
 export class Connection {
   private readonly deps: ConnectionDeps;
 
@@ -186,6 +190,11 @@ export class Connection {
   // event does NOT trigger a reconnect. Distinguishes "the host asked us to
   // stop" from "the network dropped".
   private closedByHost = false;
+
+  // True when the cloud closed us with 1012 "superseded by newer session".
+  // Another live socket for this user won; reconnecting would just kill it
+  // and start a two-client fight. Stays down until the host calls open().
+  private replacedByNewerSession = false;
 
   // How many consecutive failed (re)connect attempts, used to grow the backoff.
   // Reset to zero on a successful handshake.
@@ -237,6 +246,11 @@ export class Connection {
     return this.currentAck;
   }
 
+  /** True after the cloud closed us as the losing socket for this user. */
+  get isReplacedByNewerSession(): boolean {
+    return this.replacedByNewerSession;
+  }
+
   /**
    * Open the socket, run the handshake, and resolve with `connection.ack`.
    *
@@ -248,8 +262,9 @@ export class Connection {
    */
   async open(): Promise<ConnectionAck> {
     // A fresh open() means the host wants the socket up; clear any prior
-    // host-close intent so a later drop reconnects normally.
+    // host-close / superseded intent so a later drop reconnects normally.
     this.closedByHost = false;
+    this.replacedByNewerSession = false;
 
     // A fresh open() is a clean slate: cancel any stale reconnect left over from
     // a previous session, and reset the backoff so we do not start this connect
@@ -277,6 +292,7 @@ export class Connection {
    */
   close(): void {
     this.closedByHost = true;
+    this.replacedByNewerSession = false;
     this.stopLiveness();
     // Cancel any queued reconnect and stop the watchdog: the host wants us down,
     // so neither the loop nor its backstop should bring the socket back up.
@@ -509,6 +525,9 @@ export class Connection {
 
     this.setState("open");
     this.startLiveness();
+    this.deps.logger.debug("ws-session-debug handshake ok", {
+      sessionId: ack.sessionId,
+    });
   }
 
   /**
@@ -539,6 +558,20 @@ export class Connection {
     this.setState("closed");
 
     const reason = info.reason || `code ${info.code}`;
+    if (isSupersededByNewerSession(reason)) {
+      // Newest-wins on the server. Coming back up here would supersede the
+      // winner, which then reconnects, forever. Stay down until open().
+      this.replacedByNewerSession = true;
+      this.clearReconnectTimer();
+      this.stopWatchdog();
+      this.deps.logger.info("ws-session-debug staying down after supersede", {
+        code: info.code,
+        reason,
+        sessionId: this.currentAck?.sessionId ?? null,
+        reconnectAttempt: this.reconnectAttempt,
+      });
+      return;
+    }
     if (isUnauthorizedUpgrade(reason)) {
       void Promise.resolve(this.deps.onAuthRejected?.())
         .catch((err) => {
@@ -572,6 +605,12 @@ export class Connection {
     // Already a retry queued -> nothing to do. This is the guard that makes the
     // double call from onClose + catch-reschedule (and the watchdog) harmless.
     if (this.reconnectTimer !== null) return;
+    if (this.replacedByNewerSession) {
+      this.deps.logger.debug("ws-session-debug skip reconnect; replaced by newer session", {
+        reason,
+      });
+      return;
+    }
 
     const delay = backoffDelay(this.reconnectAttempt, this.deps.reconnect);
     this.reconnectAttempt += 1;
@@ -649,6 +688,7 @@ export class Connection {
     if (
       this.currentState === "closed" &&
       !this.closedByHost &&
+      !this.replacedByNewerSession &&
       this.reconnectTimer === null
     ) {
       this.scheduleReconnect("watchdog: no reconnect pending");

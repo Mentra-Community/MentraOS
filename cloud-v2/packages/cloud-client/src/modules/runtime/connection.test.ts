@@ -300,6 +300,27 @@ describe("Connection reconnect robustness", () => {
     conn.close();
   });
 
+  test("superseded by a newer session does not reconnect", async () => {
+    const first = new FakeSocket();
+    const second = new FakeSocket();
+    const { conn, createdCount } = makeConnection({
+      sockets: [first, second],
+    });
+
+    const opened = conn.open();
+    await wait(5);
+    first.driveSuccessfulHandshake(SAMPLE_ACK);
+    await opened;
+    expect(createdCount()).toBe(1);
+
+    first.closeCb?.({ code: 1012, reason: "superseded by newer session" });
+    await wait(80);
+
+    expect(createdCount()).toBe(1);
+
+    conn.close();
+  });
+
   test("an unauthorized WebSocket upgrade refreshes auth before reconnecting", async () => {
     const first = new FakeSocket();
     const second = new FakeSocket();

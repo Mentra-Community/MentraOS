@@ -302,16 +302,25 @@ export class Runtime implements RuntimeModule {
         // current set (at the current version) to restore live transcription.
         void this.handleReopen();
       } else if (state === "closed") {
+        const superseded = this.connection.isReplacedByNewerSession;
+        const reason = superseded
+          ? "superseded by newer session"
+          : "socket closed";
+        this.logger.debug("ws-session-debug runtime closed", {
+          superseded,
+          hostClosed: this.hostClosed,
+          reason,
+        });
         this.stopUdpLiveness();
         this.updateStatus({
-          status: this.hostClosed
+          status: this.hostClosed || superseded
             ? "disconnected"
             : this.opened
               ? "reconnecting"
               : "connecting",
           audioTransport: "none",
         });
-        this.emitter.emit("disconnected", { reason: "socket closed" });
+        this.emitter.emit("disconnected", { reason });
       }
     });
   }
