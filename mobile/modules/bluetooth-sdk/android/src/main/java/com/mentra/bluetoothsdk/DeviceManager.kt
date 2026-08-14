@@ -2094,8 +2094,6 @@ class DeviceManager {
     }
 
     fun disconnect() {
-        pendingDeviceName = ""
-        pendingDeviceAddress = ""
         sgc?.clearDisplay()
         sgc?.disconnect()
         sgc = null // Clear the SGC reference after disconnect

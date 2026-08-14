@@ -988,10 +988,13 @@ extension MentraLive: CBCentralManagerDelegate {
     ) {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            if let current = self.connectedPeripheral, current !== peripheral {
+            let isCurrent =
+                self.connectedPeripheral === peripheral || self.connectingPeripheral === peripheral
+            if !isCurrent {
                 Bridge.log("LIVE: Ignoring stale disconnect for \(peripheral.identifier)")
                 return
             }
+            self.connectingPeripheral = nil
             Bridge.log("LIVE: Disconnected from GATT server")
 
             self.isConnecting = false
@@ -1027,10 +1030,13 @@ extension MentraLive: CBCentralManagerDelegate {
         let errorDescription = error?.localizedDescription ?? "Unknown error"
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            if let current = self.connectedPeripheral, current !== peripheral {
+            let isCurrent =
+                self.connectedPeripheral === peripheral || self.connectingPeripheral === peripheral
+            if !isCurrent {
                 Bridge.log("LIVE: Ignoring stale connect failure for \(peripheral.identifier)")
                 return
             }
+            self.connectingPeripheral = nil
             Bridge.log("LIVE: Failed to connect to peripheral: \(errorDescription)")
 
             self.stopConnectionTimeout()
@@ -1496,8 +1502,7 @@ class MentraLive: NSObject, SGCManager {
         sendJson(["type": "unpair"], wakeUp: true, requireAck: false)
         unpairFlushWorkItem?.cancel()
         unpairFlushPending = true
-        let work = DispatchWorkItem { [weak self] in
-            guard let self else { return }
+        let work = DispatchWorkItem { [self] in
             self.unpairFlushPending = false
             self.unpairFlushWorkItem = nil
             self.destroy()
@@ -1626,6 +1631,8 @@ class MentraLive: NSObject, SGCManager {
     private var centralManager: CBCentralManager?
 
     private var connectedPeripheral: CBPeripheral?
+    /// Peripheral for the in-flight connect; used to ignore stale disconnect/fail callbacks.
+    private var connectingPeripheral: CBPeripheral?
     private var txCharacteristic: CBCharacteristic?
     private var rxCharacteristic: CBCharacteristic?
     private let bes2700MtuLimit = 509
@@ -1818,6 +1825,7 @@ class MentraLive: NSObject, SGCManager {
             centralManager?.cancelPeripheralConnection(peripheral)
         }
         connectedPeripheral = nil
+        connectingPeripheral = nil
         // Stand down for the whole window. Probing GATT during yield races the new
         // phone for the single BLE slot and is exactly what entering_pairing_mode forbids.
 
@@ -2416,6 +2424,7 @@ class MentraLive: NSObject, SGCManager {
 
         isConnecting = true
         updateConnectionState(ConnTypes.CONNECTING)
+        connectingPeripheral = peripheral
         connectedPeripheral = peripheral
         peripheral.delegate = self
 

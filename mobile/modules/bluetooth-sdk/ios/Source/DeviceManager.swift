@@ -1760,8 +1760,6 @@ struct ViewState {
     }
 
     func disconnect() {
-        pendingDeviceName = ""
-        pendingDeviceAddress = ""
         sgc?.clearDisplay() // clear the screen
         sgc?.disconnect()
         sgc = nil // Clear the SGC reference after disconnect

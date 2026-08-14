@@ -7142,8 +7142,12 @@ class MentraLive : SGCManager() {
                         device.address +
                         ")"
         )
-        isBtClassicConnected = false
-        audioConnected = false
+        val isActiveDevice =
+                connectedDevice?.address?.equals(device.address, ignoreCase = true) == true
+        if (isActiveDevice) {
+            isBtClassicConnected = false
+            audioConnected = false
+        }
 
         if (a2dpProfile != null) {
             invokeHiddenProfileDisconnect(
