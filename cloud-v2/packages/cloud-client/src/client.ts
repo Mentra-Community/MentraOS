@@ -20,6 +20,7 @@ import type { CloudClientConfig } from "./config";
 import { createHttpClient } from "./http";
 import { CloudClientError } from "./errors";
 import type { ConnectionInit } from "@mentra/cloud-protocol";
+import { systemTimers } from "./timers";
 
 // The module implementations. Each is owned by another agent under ./modules/**;
 // this file only constructs them, matching the constructor signatures fixed in
@@ -117,6 +118,7 @@ export class CloudClient {
 
     // Reconnect/backoff lives here so the socket's timing is tuned in one spot.
     const reconnect = config.reconnect ?? DEFAULT_RECONNECT;
+    const timers = config.timers ?? systemTimers;
 
     // Resolve the two base addresses. With a proxy set, both route through it;
     // without one, each module talks to its own service directly.
@@ -221,6 +223,7 @@ export class CloudClient {
       getToken: getRuntimeToken,
       initPayload,
       reconnect,
+      timers,
       onAuthRejected: async () => {
         await auth.getRuntimeToken({ forceRefresh: true });
       },
@@ -239,6 +242,7 @@ export class CloudClient {
       tts,
       maps,
       audio,
+      timers,
       logger,
       // On a fatal AUTH_EXPIRED at handshake, runtime forces auth to drop its
       // cached access token and refresh; the connection then re-reads the fresh

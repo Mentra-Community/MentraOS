@@ -29,6 +29,7 @@ import { UdpAudio } from "./audio-udp";
 import type { WebSocketLike, UdpSocketLike } from "../../transports";
 import type { HttpClient } from "../../http";
 import { noopLogger } from "../../logger";
+import { systemTimers, type CloudClientTimers } from "../../timers";
 import {
   PROTOCOL_MAJOR,
   type ConnectionInit,
@@ -243,6 +244,14 @@ describe("Runtime transcript delivery survives a multi-attempt reconnect", () =>
       return socket;
     };
     const udpSent: Uint8Array[] = [];
+    const scheduledIntervals: number[] = [];
+    const timers: CloudClientTimers = {
+      ...systemTimers,
+      setInterval(callback, intervalMs) {
+        scheduledIntervals.push(intervalMs);
+        return systemTimers.setInterval(callback, intervalMs);
+      },
+    };
 
     const emitter = new RuntimeEmitter();
     const subscriptions = new Subscriptions({ http: fakeHttp() });
@@ -269,6 +278,7 @@ describe("Runtime transcript delivery survives a multi-attempt reconnect", () =>
       maps: new Maps({ http: fakeHttp() }),
       tts: fakeTts(),
       audio: new UdpAudio({ udp: () => recordingUdp(udpSent) }),
+      timers,
       logger: noopLogger,
       forceRefreshToken: async () => "tok",
     });
@@ -279,6 +289,7 @@ describe("Runtime transcript delivery survives a multi-attempt reconnect", () =>
     await connectedPromise;
 
     expect(runtime.getStatus()).toEqual({ status: "connected", audioTransport: "udp" });
+    expect(scheduledIntervals).toEqual([1_000]);
     await waitUntil(() => runtime.getStatus().audioTransport === "ws", 4_000);
     expect(runtime.getStatus()).toEqual({ status: "connected", audioTransport: "ws" });
 
