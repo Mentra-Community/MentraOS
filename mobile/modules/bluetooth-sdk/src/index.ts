@@ -227,6 +227,8 @@ export type {
   OtaQueryResult,
   PairFailureEvent,
   PairingInfoEvent,
+  EnteringPairingModeEvent,
+  OwnerReplacedEvent,
   PairingTransferResultEvent,
   PairingTransferStatusEvent,
   WipeMediaResultEvent,

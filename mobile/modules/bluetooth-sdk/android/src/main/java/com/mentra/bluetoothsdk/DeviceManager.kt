@@ -1279,6 +1279,16 @@ class DeviceManager {
             return
         }
 
+        if (pendingDeviceName.isNotEmpty()) {
+            deviceName = pendingDeviceName
+        }
+        if (pendingDeviceAddress.isNotEmpty()) {
+            deviceAddress = pendingDeviceAddress
+        }
+        pendingDeviceName = ""
+        pendingDeviceAddress = ""
+        pendingWearable = ""
+
         val readyKey = "${sgc?.type}:${deviceName}"
         val now = System.currentTimeMillis()
         if (readyKey == lastReadyHandledKey && now - lastReadyHandledAtMs < 2000) {
@@ -1289,15 +1299,6 @@ class DeviceManager {
         lastReadyHandledAtMs = now
 
         Bridge.log("MAN: handleDeviceReady() ${sgc?.type}")
-        if (pendingDeviceName.isNotEmpty()) {
-            deviceName = pendingDeviceName
-        }
-        if (pendingDeviceAddress.isNotEmpty()) {
-            deviceAddress = pendingDeviceAddress
-        }
-        pendingDeviceName = ""
-        pendingDeviceAddress = ""
-        pendingWearable = ""
         defaultWearable = sgc?.type ?: ""
         searching = false
 
@@ -2093,6 +2094,8 @@ class DeviceManager {
     }
 
     fun disconnect() {
+        pendingDeviceName = ""
+        pendingDeviceAddress = ""
         sgc?.clearDisplay()
         sgc?.disconnect()
         sgc = null // Clear the SGC reference after disconnect
@@ -2175,9 +2178,17 @@ class DeviceManager {
             val liveTarget =
                     defaultWearable == DeviceTypes.LIVE || pendingWearable == DeviceTypes.LIVE
             if (liveTarget) {
+                val extraAddress =
+                        when {
+                            defaultWearable == DeviceTypes.LIVE ->
+                                    deviceAddress.takeIf { it.isNotEmpty() }
+                            pendingWearable == DeviceTypes.LIVE ->
+                                    pendingDeviceAddress.takeIf { it.isNotEmpty() }
+                            else -> null
+                        }
                 MentraLive.unbondBondedMentraLiveDevices(
                         Bridge.getContext(),
-                        deviceAddress.takeIf { it.isNotEmpty() },
+                        extraAddress,
                 )
             }
             sgc?.forget()

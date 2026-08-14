@@ -660,6 +660,16 @@ export type PairingInfoEvent = {
   binding?: "ctkd" | "temporal" | "none" | string
 }
 
+export type EnteringPairingModeEvent = {
+  window_ms: number
+  reason?: string
+  txn?: number
+}
+
+export type OwnerReplacedEvent = {
+  reason: string
+}
+
 export type WipeMediaResultEvent = {
   success: boolean
   request_id?: string
@@ -935,6 +945,8 @@ export type BluetoothSdkModuleEvents = {
   settings_ack: (event: SettingsAckEvent) => void
   pair_failure: (event: PairFailureEvent) => void
   pairing_info: (event: PairingInfoEvent) => void
+  entering_pairing_mode: (event: EnteringPairingModeEvent) => void
+  owner_replaced: (event: OwnerReplacedEvent) => void
   wipe_media_result: (event: WipeMediaResultEvent) => void
   pairing_transfer_result: (event: PairingTransferResultEvent) => void
   pairing_transfer_status_result: (event: PairingTransferStatusEvent) => void
@@ -1043,6 +1055,8 @@ export type BluetoothSdkEventMap = {
   settings_ack: SettingsAckEvent
   pair_failure: PairFailureEvent
   pairing_info: PairingInfoEvent
+  entering_pairing_mode: EnteringPairingModeEvent
+  owner_replaced: OwnerReplacedEvent
   wipe_media_result: WipeMediaResultEvent
   pairing_transfer_result: PairingTransferResultEvent
   pairing_transfer_status_result: PairingTransferStatusEvent

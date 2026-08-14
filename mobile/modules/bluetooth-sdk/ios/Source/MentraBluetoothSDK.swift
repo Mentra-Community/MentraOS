@@ -479,6 +479,8 @@ public final class MentraBluetoothSDK {
 
     public func disconnect() {
         clearBluetoothRestoreIntent()
+        DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_name", "")
+        DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_address", "")
         DeviceManager.shared.disconnect()
     }
 

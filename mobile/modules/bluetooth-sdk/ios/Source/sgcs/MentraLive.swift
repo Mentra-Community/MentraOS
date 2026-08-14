@@ -984,10 +984,14 @@ extension MentraLive: CBCentralManagerDelegate {
     }
 
     nonisolated func centralManager(
-        _: CBCentralManager, didDisconnectPeripheral _: CBPeripheral, error: Error?
+        _: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?
     ) {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
+            if let current = self.connectedPeripheral, current !== peripheral {
+                Bridge.log("LIVE: Ignoring stale disconnect for \(peripheral.identifier)")
+                return
+            }
             Bridge.log("LIVE: Disconnected from GATT server")
 
             self.isConnecting = false
@@ -1019,10 +1023,14 @@ extension MentraLive: CBCentralManagerDelegate {
         }
     }
 
-    nonisolated func centralManager(_: CBCentralManager, didFailToConnect _: CBPeripheral, error: Error?) {
+    nonisolated func centralManager(_: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
         let errorDescription = error?.localizedDescription ?? "Unknown error"
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
+            if let current = self.connectedPeripheral, current !== peripheral {
+                Bridge.log("LIVE: Ignoring stale connect failure for \(peripheral.identifier)")
+                return
+            }
             Bridge.log("LIVE: Failed to connect to peripheral: \(errorDescription)")
 
             self.stopConnectionTimeout()
@@ -1484,9 +1492,18 @@ class MentraLive: NSObject, SGCManager {
             emitStopScanEvent()
         }
 
-        // Then do full cleanup (disconnect + clear all references)
+        // Then do full cleanup after the unpair write can leave GATT.
         sendJson(["type": "unpair"], wakeUp: true, requireAck: false)
-        destroy()
+        unpairFlushWorkItem?.cancel()
+        unpairFlushPending = true
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.unpairFlushPending = false
+            self.unpairFlushWorkItem = nil
+            self.destroy()
+        }
+        unpairFlushWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
     }
 
     var type = "Mentra Live"
@@ -1622,6 +1639,9 @@ class MentraLive: NSObject, SGCManager {
     private var pairingYieldActive = false
     private var pairingYieldAwaitingReclaim = false
     private var pairingYieldEndWorkItem: DispatchWorkItem?
+    /// Hold GATT teardown until the unpair write can leave the phone.
+    private var unpairFlushPending = false
+    private var unpairFlushWorkItem: DispatchWorkItem?
     private var reconnectAttempts = 0
     private var isNewVersion = false
     private var peerWireProtocolVersion = 0
@@ -1902,6 +1922,10 @@ class MentraLive: NSObject, SGCManager {
     }
 
     @objc func disconnect() {
+        if unpairFlushPending {
+            Bridge.log("LIVE: disconnect deferred — waiting for unpair write")
+            return
+        }
         Bridge.log("LIVE: disconnect() -Disconnecting from Mentra Live glasses")
 
         // if rgbLedAuthorityClaimed {
@@ -2334,6 +2358,7 @@ class MentraLive: NSObject, SGCManager {
         }
 
         Bridge.log("Starting BLE scan for Mentra Live glasses")
+        discoveredAdvPairing.removeAll()
         isScanning = true
 
         startReadinessCheckLoop()
@@ -2350,11 +2375,8 @@ class MentraLive: NSObject, SGCManager {
 
         centralManager?.scanForPeripherals(withServices: nil, options: scanOptions)
 
-        // emit already discovered peripherals:
-        for (_, peripheral) in discoveredPeripherals {
-            Bridge.log("LIVE: (Already discovered) peripheral: \(peripheral.name ?? "Unknown")")
-            emitDiscoveredDeviceFromCache(peripheral.name!)
-        }
+        // Fresh advertisements refill pairing metadata. Re-emitting the last scan's
+        // cache would keep a unit pairable after it left pairing mode.
         emitConnectedDeviceForPairingScan()
 
         // var dName = DeviceManager.shared.deviceName
@@ -5679,6 +5701,9 @@ class MentraLive: NSObject, SGCManager {
         Bridge.log("Destroying MentraLiveManager")
 
         isKilled = true
+        unpairFlushWorkItem?.cancel()
+        unpairFlushWorkItem = nil
+        unpairFlushPending = false
 
         // Stop scanning
         if isScanning {

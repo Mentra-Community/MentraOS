@@ -107,6 +107,7 @@ class MentraLive : SGCManager() {
         private const val BES2700_MTU_LIMIT = 509
         private const val A2DP_CONNECT_MAX_ATTEMPTS = 5
         private const val A2DP_CONNECT_RETRY_MS = 800L
+        private const val UNPAIR_FLUSH_MS = 400L
 
         // L2CAP CoC fast path: new BES2700 firmware registers an LE L2CAP CoC server on this
         // PSM. When the phone opens the channel, the glasses send file packets over it instead
@@ -585,6 +586,9 @@ class MentraLive : SGCManager() {
     private var pairingYieldEndRunnable: Runnable? = null
     /** After yield ends, auth/not-owner failures may clear saved glasses. */
     private var pairingYieldAwaitingReclaim = false
+    /** Hold GATT teardown until the unpair write can leave the phone. */
+    private var unpairFlushPending = false
+    private var unpairFlushRunnable: Runnable? = null
 
     // CTKD (Cross-Transport Key Derivation) support for BES devices
     private var isBondingReceiverRegistered = false
@@ -1331,6 +1335,7 @@ class MentraLive : SGCManager() {
 
     /** Stops BLE scanning */
     override fun stopScan() {
+        manualDiscoveryActive = false
         if (bluetoothAdapter == null || bluetoothScanner == null || !isScanning) {
             return
         }
@@ -5955,10 +5960,10 @@ class MentraLive : SGCManager() {
         // A fresh user scan owns the radio. Invalidate delayed reconnect callbacks
         // and replace any active fast reconnect scan with discovery mode.
         reconnectGeneration++
-        manualDiscoveryActive = true
         if (isScanning) {
             stopScan()
         }
+        manualDiscoveryActive = true
         isReconnecting = false
         // Discovery-only: do not treat leftover savedDeviceName as a connect target.
         explicitConnectByName = false
@@ -5974,11 +5979,9 @@ class MentraLive : SGCManager() {
         }
 
         // Stale Classic ACL keeps Mentra Live from advertising — drop A2DP/HFP (keep bond)
-        // so a pairing/discovery scan can see the unit again. Skip while this session is
-        // already up so a normal scan does not mute live Classic audio.
-        if (!isConnected) {
-            releaseStaleClassicForDiscovery()
-        }
+        // so a pairing/discovery scan can see the unit again. Keep the active session's
+        // audio; tear down other bonded Lives so a second unit can advertise.
+        releaseStaleClassicForDiscovery()
 
         // Start scanning for BLE devices
         startScan()
@@ -5998,7 +6001,11 @@ class MentraLive : SGCManager() {
         if (mentraBonded.isEmpty()) {
             return
         }
+        val currentAddress = connectedDevice?.address
         for (device in mentraBonded) {
+            if (currentAddress != null && device.address.equals(currentAddress, ignoreCase = true)) {
+                continue
+            }
             Bridge.log(
                     "LIVE: Classic: releasing stale A2DP/HFP before discovery for " +
                             safeDeviceName(device) +
@@ -6067,13 +6074,27 @@ class MentraLive : SGCManager() {
         } catch (e: JSONException) {
             Log.e(TAG, "Error creating unpair command", e)
         }
-        // Drop GATT first. removeBond while the BLE link is still encrypted often
-        // returns true on Samsung but the OS Bluetooth UI keeps the dual-mode pair.
-        disconnect()
-        unbondBondedMentraLiveDevices(ctx, bondedAddress)
+        // Give the unpair write a beat to leave GATT before destroy() cancels the queue.
+        unpairFlushRunnable?.let { handler.removeCallbacks(it) }
+        unpairFlushPending = true
+        val flush =
+                Runnable {
+                    unpairFlushPending = false
+                    unpairFlushRunnable = null
+                    // Drop GATT first. removeBond while the BLE link is still encrypted often
+                    // returns true on Samsung but the OS Bluetooth UI keeps the dual-mode pair.
+                    disconnect()
+                    unbondBondedMentraLiveDevices(ctx, bondedAddress)
+                }
+        unpairFlushRunnable = flush
+        handler.postDelayed(flush, UNPAIR_FLUSH_MS)
     }
 
     override fun disconnect() {
+        if (unpairFlushPending) {
+            Bridge.log("LIVE: disconnect deferred — waiting for unpair write")
+            return
+        }
         Bridge.log("LIVE: Disconnecting from Mentra Live glasses")
         destroy()
     }
@@ -7016,10 +7037,10 @@ class MentraLive : SGCManager() {
         )
         handler.postDelayed(
                 Runnable {
-                    if (isKilled) {
+                    if (isKilled || pairingYieldActive || connectedDevice == null) {
                         return@Runnable
                     }
-                    val target = connectedDevice ?: device
+                    val target = connectedDevice ?: return@Runnable
                     if (a2dpProfile != null) {
                         connectA2dpWithProxy(target)
                     }
@@ -7238,6 +7259,9 @@ class MentraLive : SGCManager() {
         pairingYieldAwaitingReclaim = false
         pairingYieldEndRunnable?.let { handler.removeCallbacks(it) }
         pairingYieldEndRunnable = null
+        unpairFlushRunnable?.let { handler.removeCallbacks(it) }
+        unpairFlushRunnable = null
+        unpairFlushPending = false
 
         // Stop scanning if in progress
         if (isScanning) {

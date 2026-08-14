@@ -490,6 +490,8 @@ class MentraBluetoothSdk private constructor(
     }
 
     fun disconnect() {
+        DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_name", "")
+        DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_address", "")
         deviceManager.disconnect()
     }
 
