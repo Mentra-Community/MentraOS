@@ -153,6 +153,15 @@ public interface IHardwareManager {
         return false;
     }
 
+    /**
+     * Play a local audio file as one MCU I2S job. Used for stitched pairing-code phrases.
+     *
+     * @return {@code true} when playback was started
+     */
+    default boolean playAudioFile(java.io.File file) {
+        return false;
+    }
+
     /** Release any resources held by the hardware manager */
     void shutdown();
 
