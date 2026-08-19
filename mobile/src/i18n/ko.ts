@@ -121,6 +121,18 @@ const ko = {
       content: "즐겨찾기가 없습니다. 에피소드에 있는 하트를 눌러서 즐겨찾기에 추가하세요.",
     },
   },
+  qrScan: {
+    defaultTitle: "QR 코드 스캔",
+    defaultHint: "카메라를 QR 코드에 맞춰 주세요",
+    checkingPermission: "카메라 권한을 확인하는 중\u2026",
+    permissionTitle: "카메라 접근이 필요합니다",
+    permissionBody:
+      "QR 코드를 스캔하려면 카메라가 필요합니다. 이 화면이 열려 있는 동안에만 사용합니다.",
+    grantAccess: "카메라 접근 허용",
+    openSettings: "설정 열기",
+    permissionDeniedTitle: "권한이 거부됨",
+    permissionDeniedBody: "QR 코드를 스캔하려면 설정에서 카메라 접근을 켜 주세요.",
+  },
 } satisfies TranslationResource
 
 export default ko

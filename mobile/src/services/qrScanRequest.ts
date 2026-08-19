@@ -20,7 +20,13 @@ let current: PendingScan | null = null
 const listeners = new Set<() => void>()
 
 function emit(): void {
-  for (const listener of listeners) listener()
+  for (const listener of listeners) {
+    try {
+      listener()
+    } catch (err) {
+      console.warn("qrScanRequest listener failed", err)
+    }
+  }
 }
 
 export function subscribeQrScan(listener: () => void): () => void {
@@ -63,6 +69,7 @@ export function requestPhoneQrScan(options: ScanQrOptions = {}): Promise<ScanQrR
   return promise
 }
 
-export function completeQrScan(result: ScanQrResult): void {
+export function completeQrScan(result: ScanQrResult, requestId?: number): void {
+  if (requestId !== undefined && current?.id !== requestId) return
   current?.settle(result)
 }

@@ -1028,11 +1028,6 @@ class LocalMiniappRuntime {
     // liveness watchdog just because its PONG replies queue behind real work.
     this.handlePong(packageName)
 
-    if (requestType === "miniapp_scan_qr") {
-      void this.handleScanQr(packageName, payload, requestId)
-      return
-    }
-
     // Console-tap forwarding. The miniapp's console.log/warn/etc is wrapped
     // (via injected shim from miniappGlobals.ts) to post a `dev_log`
     // envelope. We fan out to two destinations:
@@ -3115,7 +3110,7 @@ class LocalMiniappRuntime {
         console.warn(`${LOG_TAG}: scanQr seam missing — QR overlay is not registered`)
       }
       this.sendResult(packageName, requestId, false, undefined, {
-        code: (err as {code?: string}).code || MiniappErrorCode.INTERNAL,
+        code: (err as {code?: string} | null | undefined)?.code || MiniappErrorCode.INTERNAL,
         message: err instanceof Error ? err.message : "QR scan failed",
       })
     }

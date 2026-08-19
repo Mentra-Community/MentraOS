@@ -125,6 +125,18 @@ const ja = {
         "お気に入りのエピソードがまだありません。エピソードにあるハートマークにタップして、お気に入りに追加しましょう！",
     },
   },
+  qrScan: {
+    defaultTitle: "QRコードをスキャン",
+    defaultHint: "カメラをQRコードに向けてください",
+    checkingPermission: "カメラの許可を確認しています\u2026",
+    permissionTitle: "カメラへのアクセスが必要です",
+    permissionBody:
+      "QRコードのスキャンにカメラを使います。この画面を開いている間だけ使用します。",
+    grantAccess: "カメラへのアクセスを許可",
+    openSettings: "設定を開く",
+    permissionDeniedTitle: "許可が拒否されました",
+    permissionDeniedBody: "QRコードをスキャンするには、設定でカメラへのアクセスを有効にしてください。",
+  },
 } satisfies TranslationResource
 
 export default ja

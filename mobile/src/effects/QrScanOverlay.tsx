@@ -1,6 +1,6 @@
 import {CameraView, useCameraPermissions} from "expo-camera"
 import * as Haptics from "expo-haptics"
-import {useEffect, useState, useSyncExternalStore, type ReactNode} from "react"
+import {useEffect, useRef, useState, useSyncExternalStore, type ReactNode} from "react"
 import {Linking, Modal, Text as RNText, View} from "react-native"
 
 import {engine} from "@mentra/engine"
@@ -23,6 +23,7 @@ export function QrScanOverlay() {
   const {theme} = useAppTheme()
   const [permission, requestPermission] = useCameraPermissions()
   const [scanned, setScanned] = useState(false)
+  const askedPermissionForId = useRef<number | null>(null)
 
   useEffect(() => {
     if (typeof engine.updateUiSeams === "function") {
@@ -32,14 +33,20 @@ export function QrScanOverlay() {
 
   useEffect(() => {
     setScanned(false)
-    if (request && permission && !permission.granted && permission.canAskAgain) {
-      void requestPermission()
-    }
-  }, [request?.id, permission, requestPermission])
+    if (!request) askedPermissionForId.current = null
+  }, [request?.id])
+
+  useEffect(() => {
+    if (!request || !permission || permission.granted || !permission.canAskAgain) return
+    if (askedPermissionForId.current === request.id) return
+    askedPermissionForId.current = request.id
+    void requestPermission()
+  }, [request, permission, requestPermission])
 
   if (!request) return null
 
-  const cancel = () => completeQrScan({cancelled: true})
+  const requestId = request.id
+  const cancel = () => completeQrScan({cancelled: true}, requestId)
   const title = request.options.title?.trim() || translate("qrScan:defaultTitle")
   const hint = request.options.hint?.trim() || translate("qrScan:defaultHint")
 
@@ -47,7 +54,7 @@ export function QrScanOverlay() {
     if (scanned) return
     setScanned(true)
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {})
-    completeQrScan({data})
+    completeQrScan({data}, requestId)
   }
 
   let body: ReactNode

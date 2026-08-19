@@ -40,4 +40,32 @@ describe("qrScanRequest", () => {
     expect(() => completeQrScan({data: "late"})).not.toThrow()
     expect(getQrScanRequest()).toBeNull()
   })
+
+  test("a stale overlay completion does not settle the replacement request", async () => {
+    const first = requestPhoneQrScan({title: "one"})
+    const firstId = getQrScanRequest()!.id
+    const second = requestPhoneQrScan({title: "two"})
+    const secondId = getQrScanRequest()!.id
+
+    await expect(first).resolves.toEqual({cancelled: true})
+    completeQrScan({data: "https://stale.example/qr"}, firstId)
+    expect(getQrScanRequest()?.id).toBe(secondId)
+
+    completeQrScan({data: "https://fresh.example/qr"}, secondId)
+    await expect(second).resolves.toEqual({data: "https://fresh.example/qr"})
+    expect(getQrScanRequest()).toBeNull()
+  })
+
+  test("a throwing subscriber cannot leave scanQr pending", async () => {
+    const unsubscribe = subscribeQrScan(() => {
+      throw new Error("overlay exploded")
+    })
+    try {
+      const pending = requestPhoneQrScan({title: "scan"})
+      expect(() => completeQrScan({data: "ok"})).not.toThrow()
+      await expect(pending).resolves.toEqual({data: "ok"})
+    } finally {
+      unsubscribe()
+    }
+  })
 })
