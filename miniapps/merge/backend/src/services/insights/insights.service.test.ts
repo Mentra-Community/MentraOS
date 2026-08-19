@@ -34,9 +34,9 @@ describe("insight expansion prompts", () => {
   test("tells the model to elaborate instead of repeating the insight", () => {
     const instructions = mergeInstructions("medium", "English", true)
 
-    expect(instructions).toContain("explicitly swiped for more detail")
+    expect(instructions).toContain("explicitly tapped for more detail")
     expect(instructions).toContain("Do not merely restate the original")
-    expect(instructions).toContain("under 320 characters")
+    expect(instructions).toContain("under 180 characters")
   })
 
   test("includes the selected insight and interaction in the model prompt", () => {

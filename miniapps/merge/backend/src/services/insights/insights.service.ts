@@ -223,7 +223,7 @@ class InsightsService {
       sourceCount: parsed.profiling.sourceCount,
     })
     if (parsed.type === "insight" && parsed.text) {
-      parsed.text = parsed.text.trim().slice(0, isExpansion ? 320 : 180)
+      parsed.text = parsed.text.trim().slice(0, 180)
       parsed.displayAction = isExpansion ? "replace" : (parsed.displayAction ?? "show")
     }
     return parsed
@@ -241,7 +241,7 @@ export function mergeInstructions(frequency: FrequencyMode, answerLanguage = "En
         : "Medium frequency: be selective. Prefer core-topic clarifications, non-obvious tradeoffs, and useful definitions."
 
   const taskRule = isExpansion
-    ? `The user explicitly swiped for more detail about the displayed insight. Expand it with two or three concrete, useful details, an explanation, or relevant context. Do not merely restate the original. Prefer an insight response; stay silent only when adding detail would require guessing or unsupported private context. Keep the expanded text under 320 characters and set displayAction to replace.`
+    ? `The user explicitly tapped for more detail about the displayed insight. Expand it with two or three concrete, useful details, an explanation, or relevant context. Do not merely restate the original. Prefer an insight response; stay silent only when adding detail would require guessing or unsupported private context. Keep the expanded text under 180 characters so it fits on one glasses screen, and set displayAction to replace.`
     : `Your job is to silently listen to conversation snippets and decide whether to surface one short insight.
 ${frequencyRule}`
 
@@ -264,7 +264,7 @@ Rules:
 - Stay silent if the conversation references a specific codebase, project, document, person, meeting, company, or private situation that is not actually present in the recent transcript.
 - Do not guess project-specific or domain-specific answers from generic words. If you would need hidden context, repository access, private docs, or facts not stated in the transcript, return silent.
 - For software, infrastructure, debugging, deployment, or implementation discussions, require several grounded prior transcript turns before giving tactical advice.
-- Keep user-facing insight text concise and glasses-friendly, ${isExpansion ? "under 320 characters." : "ideally under 80 characters."}
+- Keep user-facing insight text concise and glasses-friendly, ${isExpansion ? "under 180 characters so it fits on one screen." : "ideally under 80 characters."}
 - Write insight text as plain natural language only. Never emit Markdown, brackets, XML/SSML tags, or speech-synthesis instructions. Spell out a symbol when its pronunciation matters.
 - When directly answering a question, include a tiny subject cue from the question so the user knows what the answer refers to after other dialog. Use 1-4 words before a colon when helpful, like "Sky color:" or "Date:"; do not repeat the full question.
 - Understand conversation in any language. Write every user-facing insight in ${answerLanguage === "Auto" ? "the user's apparent preferred language from the conversation" : answerLanguage}. Do not switch output language just because another speaker uses a different language.

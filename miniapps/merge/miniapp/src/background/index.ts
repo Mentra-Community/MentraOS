@@ -590,7 +590,7 @@ class MergeController {
     if (capabilityHasDisplay(this.session.capabilities)) {
       // Full-canvas text element; durationMs auto-clears after the display
       // window, same semantics as the legacy layout options.
-      this.renderDisplayedInsight(insight, "↑ More   ↓ Dismiss")
+      this.renderDisplayedInsight(insight, "Tap: More   ↓ Dismiss")
     } else {
       // No display (e.g. Mentra Live): speak the insight so the app is still
       // useful on audio-only glasses. Fire-and-forget — speak() only resolves
@@ -756,7 +756,7 @@ class MergeController {
     this.clearDisplayTimer()
     this.activeDisplayUntil = Date.now() + DISPLAY_DURATION_MS
     if (capabilityHasDisplay(this.session.capabilities)) {
-      this.renderDisplayedInsight(insight, "Looking deeper…")
+      this.renderDisplayedInsight(insight, "Looking deeper…   ↓ Dismiss")
     }
     this.scheduleNextQueuedDisplay()
   }
@@ -766,7 +766,7 @@ class MergeController {
     this.clearDisplayTimer()
     this.activeDisplayUntil = Date.now() + DISPLAY_DURATION_MS
     if (capabilityHasDisplay(this.session.capabilities)) {
-      this.renderDisplayedInsight(insight, "↑ More   ↓ Dismiss")
+      this.renderDisplayedInsight(insight, "Tap: More   ↓ Dismiss")
     }
     this.scheduleNextQueuedDisplay()
   }
@@ -779,8 +779,8 @@ class MergeController {
           type: "text",
           id: "insight",
           box: {x: 0, y: 0, w: d?.width ?? 576, h: d?.height ?? 288},
-          text: `// Merge\n${insight.text}\n\n${footer}`,
-          style: {breakMode: "word"},
+          text: `// Merge   ${footer}\n${insight.text}`,
+          style: {breakMode: "word", overflow: "ellipsis"},
         },
       ],
       {durationMs: DISPLAY_DURATION_MS},

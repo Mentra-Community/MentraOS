@@ -8,13 +8,14 @@ describe("insightGestureAction", () => {
     expect(insightGestureAction("swipe_back")).toBe("dismiss")
   })
 
-  test("maps upward/forward swipes to expand", () => {
-    expect(insightGestureAction("swipe_up")).toBe("expand")
-    expect(insightGestureAction("swipe_forward")).toBe("expand")
+  test("maps taps to expand", () => {
+    expect(insightGestureAction("single_tap")).toBe("expand")
+    expect(insightGestureAction("tap")).toBe("expand")
   })
 
-  test("ignores taps and lifecycle events", () => {
-    expect(insightGestureAction("single_tap")).toBeNull()
+  test("ignores upward swipes and lifecycle events", () => {
+    expect(insightGestureAction("swipe_up")).toBeNull()
+    expect(insightGestureAction("swipe_forward")).toBeNull()
     expect(insightGestureAction("system_exit")).toBeNull()
   })
 })
