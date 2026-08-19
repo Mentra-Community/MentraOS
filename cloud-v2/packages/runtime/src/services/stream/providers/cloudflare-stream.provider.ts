@@ -94,7 +94,13 @@ export function createCloudflareStreamProvider(): StreamProvider {
         headers: { ...authHeaders, "Content-Type": "application/json" },
         body: JSON.stringify({
           meta: { name: `mentra-${mentraUserId}` },
-          recording: { mode: "automatic" },
+          // Cloudflare only serves live HLS/DASH manifests when recording is
+          // on (there's no "relay only, keep nothing" mode) — see provider
+          // header comment. We don't use the saved VOD after the call, so
+          // auto-delete it fast instead of letting it eat the account's
+          // storage quota (which caused ingest to be refused at `publish`
+          // once the account went over its cap).
+          recording: { mode: "automatic", deleteRecordingAfterDays: 1 },
         }),
       });
       const body = (await res.json()) as LiveInputResult;
