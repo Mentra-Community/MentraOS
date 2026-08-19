@@ -147,6 +147,18 @@ const es = {
         "No se han agregado episodios favoritos todavía. ¡Presiona el corazón dentro de un episodio para agregarlo a tus favoritos!",
     },
   },
+  qrScan: {
+    defaultTitle: "Escanear código QR",
+    defaultHint: "Apunta la cámara a un código QR",
+    checkingPermission: "Comprobando permiso de cámara\u2026",
+    permissionTitle: "Se necesita acceso a la cámara",
+    permissionBody:
+      "Necesitamos tu cámara para escanear códigos QR. Solo se usa mientras esta pantalla está abierta.",
+    grantAccess: "Permitir acceso a la cámara",
+    openSettings: "Abrir ajustes",
+    permissionDeniedTitle: "Permiso denegado",
+    permissionDeniedBody: "Activa el acceso a la cámara en Ajustes para escanear códigos QR.",
+  },
 } satisfies TranslationResource
 
 export default es

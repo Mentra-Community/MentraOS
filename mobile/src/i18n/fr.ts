@@ -146,6 +146,18 @@ const fr = {
         "Aucun favori n'a été ajouté pour le moment. Appuyez sur le cœur d'un épisode pour l'ajouter à vos favoris !",
     },
   },
+  qrScan: {
+    defaultTitle: "Scanner un code QR",
+    defaultHint: "Pointez la caméra vers un code QR",
+    checkingPermission: "Vérification de l'autorisation caméra\u2026",
+    permissionTitle: "Accès à la caméra requis",
+    permissionBody:
+      "Nous avons besoin de votre caméra pour scanner des codes QR. Elle n'est utilisée que tant que cet écran est ouvert.",
+    grantAccess: "Autoriser l'accès à la caméra",
+    openSettings: "Ouvrir les réglages",
+    permissionDeniedTitle: "Autorisation refusée",
+    permissionDeniedBody: "Activez l'accès à la caméra dans les Réglages pour scanner des codes QR.",
+  },
 } satisfies TranslationResource
 
 export default fr

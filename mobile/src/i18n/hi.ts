@@ -143,6 +143,18 @@ const hi = {
         "अभी तक कोई पसंदीदा नहीं जोड़ा गया है। इसे अपने पसंदीदा में जोड़ने के लिए किसी एपिसोड पर दिल पर टैप करें!",
     },
   },
+  qrScan: {
+    defaultTitle: "QR कोड स्कैन करें",
+    defaultHint: "कैमरा QR कोड की ओर करें",
+    checkingPermission: "कैमरा अनुमति जाँची जा रही है\u2026",
+    permissionTitle: "कैमरा ऐक्सेस चाहिए",
+    permissionBody:
+      "QR कोड स्कैन करने के लिए कैमरा चाहिए। कैमरा केवल इस स्क्रीन के खुले रहने तक इस्तेमाल होता है।",
+    grantAccess: "कैमरा ऐक्सेस दें",
+    openSettings: "सेटिंग खोलें",
+    permissionDeniedTitle: "अनुमति अस्वीकृत",
+    permissionDeniedBody: "QR कोड स्कैन करने के लिए सेटिंग में कैमरा ऐक्सेस चालू करें।",
+  },
 } satisfies TranslationResource
 
 export default hi

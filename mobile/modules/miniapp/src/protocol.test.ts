@@ -53,6 +53,7 @@ describe("MiniappRequestType wire values", () => {
   test("OPEN_URL", () => expect(MiniappRequestType.OPEN_URL).toBe("miniapp_open_url"))
   test("COPY_CLIPBOARD", () => expect(MiniappRequestType.COPY_CLIPBOARD).toBe("miniapp_copy_clipboard"))
   test("DOWNLOAD", () => expect(MiniappRequestType.DOWNLOAD).toBe("miniapp_download"))
+  test("SCAN_QR", () => expect(MiniappRequestType.SCAN_QR).toBe("miniapp_scan_qr"))
 })
 
 describe("MiniappResponseType wire values", () => {

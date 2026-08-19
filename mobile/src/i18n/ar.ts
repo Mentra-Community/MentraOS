@@ -135,6 +135,18 @@ const ar = {
       content: "لم تتم اضافة اي مفضلات حتى الان. اضغط على القلب في إحدى الحلقات لإضافته الى المفضلة.",
     },
   },
+  qrScan: {
+    defaultTitle: "مسح رمز QR",
+    defaultHint: "وجّه الكاميرا نحو رمز QR",
+    checkingPermission: "جارٍ التحقق من إذن الكاميرا\u2026",
+    permissionTitle: "يلزم الوصول إلى الكاميرا",
+    permissionBody:
+      "نحتاج إلى الكاميرا لمسح رموز QR. تُستخدم الكاميرا فقط أثناء فتح هذه الشاشة.",
+    grantAccess: "منح إذن الكاميرا",
+    openSettings: "فتح الإعدادات",
+    permissionDeniedTitle: "تم رفض الإذن",
+    permissionDeniedBody: "يرجى تفعيل إذن الكاميرا في الإعدادات لمسح رموز QR.",
+  },
 } satisfies TranslationResource
 
 export default ar

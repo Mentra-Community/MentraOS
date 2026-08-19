@@ -166,6 +166,8 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
           "Mentra accesses your calendar to display upcoming events and reminders directly on your smart glasses. For example, the app can show 'Meeting with John at 3 PM in Conference Room A' or remind you '15 minutes until dentist appointment' on your glasses display.",
         NSCalendarsFullAccessUsageDescription:
           "Mentra accesses your calendar to display upcoming events and reminders directly on your smart glasses. For example, the app can show 'Meeting with John at 3 PM in Conference Room A' or remind you '15 minutes until dentist appointment' on your glasses display.",
+        NSCalendarsWriteOnlyAccessUsageDescription:
+          "Mentra uses write-only calendar access to add events requested by miniapps to your calendar.",
         NSCalendarUsageDescription:
           "Mentra accesses your calendar to display upcoming events and reminders directly on your smart glasses. For example, the app can show 'Meeting with John at 3 PM in Conference Room A' or remind you '15 minutes until dentist appointment' on your glasses display.",
         NSPhotoLibraryUsageDescription:
@@ -284,6 +286,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
             "Camera",
             "Microphone",
             "Calendars",
+            "CalendarsWriteOnly",
             "Bluetooth",
             "LocationAccuracy",
             "LocationWhenInUse",

@@ -485,13 +485,62 @@ public class AsgClientService extends Service implements NetworkStateListener, T
             JSONObject payload = new JSONObject();
             payload.put("C", command);
             payload.put("V", 1);
-            payload.put("B", new JSONObject());
+
+            JSONObject body = new JSONObject();
+            Integer rateHz = null;
+            if (playing) {
+                // Tell BES the actual I2S PCM rate Android's audio HAL is about to output,
+                // instead of relying on BES's hardcoded/default guess. A stale default here
+                // previously caused boot/shutter tones to play at the wrong pitch/speed
+                // (48kHz PCM played back at a 44.1kHz assumption).
+                android.media.AudioManager audioManager =
+                        (android.media.AudioManager) getSystemService(Context.AUDIO_SERVICE);
+                if (audioManager == null) {
+                    Log.w(TAG, "[I2S-RATE] AudioManager is null, sending empty body");
+                } else {
+                    String outputRate =
+                            audioManager.getProperty(
+                                    android.media.AudioManager.PROPERTY_OUTPUT_SAMPLE_RATE);
+                    Log.i(TAG, "[I2S-RATE] HAL PROPERTY_OUTPUT_SAMPLE_RATE=" + outputRate);
+                    if (outputRate != null) {
+                        try {
+                            rateHz = Integer.parseInt(outputRate);
+                            body.put("rate", rateHz);
+                        } catch (NumberFormatException e) {
+                            Log.w(TAG, "[I2S-RATE] Unexpected PROPERTY_OUTPUT_SAMPLE_RATE value: " + outputRate);
+                        }
+                    } else {
+                        Log.w(TAG, "[I2S-RATE] HAL sample-rate property missing");
+                    }
+                }
+            }
+            // B must be a JSON *string* (not a nested object) - BES parses it via cJSON's
+            // valuestring, which is only populated for string-typed values.
+            String bodyStr = body.toString();
+            payload.put("B", bodyStr);
+
+            Log.i(
+                    TAG,
+                    "[I2S-RATE] cmd="
+                            + command
+                            + " rate="
+                            + (rateHz != null ? rateHz : "none")
+                            + " B_type=string B="
+                            + bodyStr
+                            + " payload="
+                            + payload);
 
             boolean sent = sendK900Command(payload.toString());
             if (sent) {
                 lastI2sPlaying = playing;
             }
-            Log.i(TAG, "I2S command sent (" + payload.toString() + ") result=" + sent);
+            Log.i(
+                    TAG,
+                    "[I2S-RATE] uart_send result="
+                            + sent
+                            + " payload="
+                            + payload
+                            + " (look for B={\"rate\":...} as a string)");
         } catch (JSONException e) {
             Log.e(TAG, "Failed to construct I2S command payload", e);
         }
