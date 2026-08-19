@@ -97,10 +97,12 @@ export function createCloudflareStreamProvider(): StreamProvider {
           // Cloudflare only serves live HLS/DASH manifests when recording is
           // on (there's no "relay only, keep nothing" mode) — see provider
           // header comment. We don't use the saved VOD after the call, so
-          // auto-delete it fast instead of letting it eat the account's
-          // storage quota (which caused ingest to be refused at `publish`
-          // once the account went over its cap).
-          recording: { mode: "automatic", deleteRecordingAfterDays: 1 },
+          // auto-delete it as soon as Cloudflare allows instead of letting it
+          // eat the account's storage quota (which caused ingest to be refused
+          // at `publish` once the account went over its cap). Cloudflare's
+          // minimum for deleteRecordingAfterDays is 30 (valid range 30-1096);
+          // anything lower fails live-input validation.
+          recording: { mode: "automatic", deleteRecordingAfterDays: 30 },
         }),
       });
       const body = (await res.json()) as LiveInputResult;
