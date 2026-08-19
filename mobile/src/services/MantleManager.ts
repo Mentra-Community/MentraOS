@@ -12,6 +12,7 @@ import {CHINA_HIDDEN_APPS, isChinaBuild, notifyPackageName} from "@/constants/mi
 import {migrate} from "@/services/Migrations"
 import {buildSpokenNotification} from "@/services/notifications/spokenNotification"
 import {cloudConfigValues} from "@/services/cloudClient"
+import {requestPhoneQrScan} from "@/services/qrScanRequest"
 import {engine, BgTimer, SETTINGS} from "@mentra/engine"
 import {
   appRegistry,
@@ -422,6 +423,8 @@ class MantleManager {
               },
             ])
           }),
+        // Overlay only — never clearForeground. UI_CLOSE hangs up live calls.
+        scanQr: (options) => requestPhoneQrScan(options),
       },
     })
     await engine.start()

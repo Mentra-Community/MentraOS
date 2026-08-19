@@ -51,7 +51,20 @@ export interface IslandUiSeams {
    * flow. Absent ⇒ miniapps get NOT_IMPLEMENTED for the request.
    */
   requestWifiSetup?: (reason?: string, packageName?: string) => Promise<void> | void
+  /**
+   * `session.system.scanQr` — open a phone-camera QR scanner overlay. Must NOT
+   * clear miniapp foreground: UI_CLOSE on a live call hangs it up. Absent ⇒
+   * miniapps get NOT_IMPLEMENTED.
+   */
+  scanQr?: (options?: ScanQrOptions) => Promise<ScanQrResult>
 }
+
+export interface ScanQrOptions {
+  title?: string
+  hint?: string
+}
+
+export type ScanQrResult = {data: string} | {cancelled: true}
 
 export interface IslandConfigureOptions {
   /** REQUIRED — the only must-have seam. The host owns login; engine owns the rest. */
@@ -81,6 +94,19 @@ export function configure(opts: IslandConfigureOptions): void {
   options = opts
 }
 
+/**
+ * Merge host-UI seams after configure/start. UI capabilities (scan overlay,
+ * wifi setup) are looked up per request, so this is safe on a running runtime.
+ * Used so Metro reloads can attach seams that missed the original configure().
+ */
+export function updateUiSeams(ui: IslandUiSeams): void {
+  if (!options) {
+    console.warn("engine.updateUiSeams() called before engine.configure(); ignored")
+    return
+  }
+  options = {...options, ui: {...options.ui, ...ui}}
+}
+
 /** Mark the runtime started. Idempotent. */
 export async function start(): Promise<void> {
   if (started) return
@@ -97,6 +123,12 @@ export async function stop(): Promise<void> {
 
 export function isStarted(): boolean {
   return started
+}
+
+/** Test-only: wipe configure state so suites can start from a cold host. */
+export function resetForTests(): void {
+  options = null
+  started = false
 }
 
 /** The host-supplied auth provider, or null if not configured yet. */

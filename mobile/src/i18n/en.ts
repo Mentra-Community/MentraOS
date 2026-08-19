@@ -723,6 +723,18 @@ const en = {
     miniappUrlFetchErrorBody: "Could not fetch miniapp.json from {{url}}",
     miniappUrlRecentTitle: "Recent",
   },
+  qrScan: {
+    defaultTitle: "Scan QR code",
+    defaultHint: "Point the camera at a QR code",
+    checkingPermission: "Checking camera permission\u2026",
+    permissionTitle: "Camera access needed",
+    permissionBody:
+      "We need your camera to scan QR codes. The camera is only used while this screen is open.",
+    grantAccess: "Grant Camera Access",
+    openSettings: "Open Settings",
+    permissionDeniedTitle: "Permission Denied",
+    permissionDeniedBody: "Please enable camera access in Settings to scan QR codes.",
+  },
   miniappDevSettings: {
     title: "Miniapp Developer",
     headline: "Build a miniapp",

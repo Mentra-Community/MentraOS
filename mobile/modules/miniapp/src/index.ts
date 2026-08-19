@@ -130,7 +130,14 @@ export type {
   StreamStatus,
   StreamVideoConfig,
 } from "./modules/stream"
-export type {ShareOptions, ShareResult, DownloadOptions, DownloadResult} from "./modules/system"
+export type {
+  ShareOptions,
+  ShareResult,
+  DownloadOptions,
+  DownloadResult,
+  ScanQrOptions,
+  ScanQrResult,
+} from "./modules/system"
 export type {MiniappInfo, MiniappActionInfo, MiniappCompatibility, ListMiniappsOptions} from "./modules/miniapps"
 export type {ActionContext, ActionHandler, InvokeOptions} from "./modules/actions"
 

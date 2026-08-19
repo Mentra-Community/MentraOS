@@ -66,6 +66,7 @@ import {
   type TtsSynthesisResult,
 } from "../runtime/config"
 import {getAnalytics, getUiSeams} from "../runtime/bootstrap"
+import {invokeScanQrSeam} from "../runtime/scanQrSeam"
 import {normalizeStreamAudioConfig, normalizeStreamVideoConfig} from "../runtime/streamConfig"
 import {toLanguageHint} from "@mentra/cloud-protocol/languages"
 import type {AudioSubscription, LanguageSource, TranscriptionData, TranslationData} from "@mentra/cloud-protocol"
@@ -1027,6 +1028,11 @@ class LocalMiniappRuntime {
     // liveness watchdog just because its PONG replies queue behind real work.
     this.handlePong(packageName)
 
+    if (requestType === "miniapp_scan_qr") {
+      void this.handleScanQr(packageName, payload, requestId)
+      return
+    }
+
     // Console-tap forwarding. The miniapp's console.log/warn/etc is wrapped
     // (via injected shim from miniappGlobals.ts) to post a `dev_log`
     // envelope. We fan out to two destinations:
@@ -1201,6 +1207,9 @@ class LocalMiniappRuntime {
         break
       case MiniappRequestType.DOWNLOAD:
         this.handleDownload(packageName, payload, requestId)
+        break
+      case MiniappRequestType.SCAN_QR:
+        void this.handleScanQr(packageName, payload, requestId)
         break
 
       // Persistent binary blob storage (session.blob)
@@ -3085,6 +3094,29 @@ class LocalMiniappRuntime {
       this.sendResult(packageName, requestId, false, undefined, {
         code: MiniappErrorCode.INTERNAL,
         message: err instanceof Error ? err.message : "Loudness gate set-enabled error",
+      })
+    }
+  }
+
+  /**
+   * session.system.scanQr — host camera overlay. Must not clear miniapp
+   * foreground; the host seam is responsible for presenting a Modal on top.
+   */
+  private async handleScanQr(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    try {
+      const result = await invokeScanQrSeam(getUiSeams().scanQr, payload)
+      this.sendResult(packageName, requestId, true, result)
+    } catch (err) {
+      if (!getUiSeams().scanQr) {
+        console.warn(`${LOG_TAG}: scanQr seam missing — QR overlay is not registered`)
+      }
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: (err as {code?: string}).code || MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "QR scan failed",
       })
     }
   }
