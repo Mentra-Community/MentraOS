@@ -21,57 +21,54 @@ const listDevices = async () => {
   return json.result?.devices ?? []
 }
 
-const isIphone = (d) =>
-  d.hardwareProperties?.deviceType === "iPhone" ||
-  d.capabilities?.some((c) => c.name === "iPhone") ||
-  d.deviceProperties?.marketingName?.includes("iPhone")
+const isSupportedIosDevice = (d) =>
+  d.hardwareProperties?.platform === "iOS" ||
+  ["iPhone", "iPad"].includes(d.hardwareProperties?.deviceType) ||
+  d.capabilities?.some((c) => ["iPhone", "iPad"].includes(c.name)) ||
+  /iPhone|iPad/.test(d.deviceProperties?.marketingName ?? "")
 
-let pairedIphones = (await listDevices()).filter(
+let pairedDevices = (await listDevices()).filter(
   (d) =>
-    isIphone(d) &&
+    isSupportedIosDevice(d) &&
     d.connectionProperties?.pairingState === "paired" &&
     d.connectionProperties?.tunnelState !== "unavailable",
 )
 
-let connected = pairedIphones.find(
-  (d) => d.connectionProperties?.tunnelState === "connected",
-)
+let connected = pairedDevices.find((d) => d.connectionProperties?.tunnelState === "connected")
 
-// A newly plugged/unlocked iPhone can show as paired+wired but
+// A newly plugged/unlocked iOS device can show as paired+wired but
 // tunnelState=disconnected until a CoreDevice command touches it. Warm the
 // tunnel once before failing, then re-read the list the build path uses.
-if (!connected && pairedIphones.length > 0) {
-  const candidate = pairedIphones.find((d) => d.connectionProperties?.transportType === "wired") ?? pairedIphones[0]
+if (!connected && pairedDevices.length > 0) {
+  const candidate = pairedDevices.find((d) => d.connectionProperties?.transportType === "wired") ?? pairedDevices[0]
   const candidateId = candidate.hardwareProperties?.udid ?? candidate.identifier
   if (candidateId) {
-    console.log(`Warming iPhone tunnel for ${candidate.deviceProperties.name} (${candidateId})...`)
+    console.log(`Warming iOS device tunnel for ${candidate.deviceProperties.name} (${candidateId})...`)
     try {
       await $`xcrun devicectl device info details --device ${candidateId} --timeout 15`
     } catch (error) {
-      console.warn(`Could not warm iPhone tunnel: ${error}`)
+      console.warn(`Could not warm iOS device tunnel: ${error}`)
     }
-    pairedIphones = (await listDevices()).filter(
+    pairedDevices = (await listDevices()).filter(
       (d) =>
-        isIphone(d) &&
+        isSupportedIosDevice(d) &&
         d.connectionProperties?.pairingState === "paired" &&
         d.connectionProperties?.tunnelState !== "unavailable",
     )
-    connected = pairedIphones.find((d) => d.connectionProperties?.tunnelState === "connected")
+    connected = pairedDevices.find((d) => d.connectionProperties?.tunnelState === "connected")
   }
 }
 
 if (!connected) {
-  if (pairedIphones.length > 0) {
-    const offline = pairedIphones[0]
+  if (pairedDevices.length > 0) {
+    const offline = pairedDevices[0]
     console.error(
-      `iPhone "${offline.deviceProperties.name}" is paired but not connected (tunnel: ${offline.connectionProperties.tunnelState}).`,
+      `iOS device "${offline.deviceProperties.name}" is paired but not connected (tunnel: ${offline.connectionProperties.tunnelState}).`,
     )
-    console.error(
-      "Plug in via USB, unlock the device, tap Trust on the device, then retry.",
-    )
+    console.error("Plug in via USB, unlock the device, tap Trust on the device, then retry.")
     process.exit(1)
   }
-  console.error("No physical iPhone found")
+  console.error("No physical iPhone or iPad found")
   process.exit(1)
 }
 
@@ -105,6 +102,7 @@ await $({stdio: "inherit"})`xcodebuild \
   -destination id=${deviceUdid} \
   -derivedDataPath ${derivedData} \
   -allowProvisioningUpdates \
+  -allowProvisioningDeviceRegistration \
   build`
 
 // The bundle is named after PRODUCT_NAME ("Mentra"), not the scheme/project

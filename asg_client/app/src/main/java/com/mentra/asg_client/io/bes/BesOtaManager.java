@@ -18,6 +18,7 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import org.greenrobot.eventbus.EventBus;
 import org.json.JSONObject;
 
@@ -306,6 +307,24 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
      */
     @Override
     public boolean startFirmwareUpdate(ValidatedBesArtifact artifact, String ownerSessionId) {
+        return startFirmwareUpdate(artifact, ownerSessionId, null);
+    }
+
+    @Override
+    public boolean startFirmwareUpdateWithInstallGuard(
+            ValidatedBesArtifact artifact, String ownerSessionId, JSONObject installGuard) {
+        if (installGuard == null) {
+            Log.e(TAG, "Phone-controlled BES OTA requires an install guard");
+            return false;
+        }
+        return startFirmwareUpdate(
+                artifact,
+                ownerSessionId,
+                installGuard.toString().getBytes(StandardCharsets.UTF_8));
+    }
+
+    private boolean startFirmwareUpdate(
+            ValidatedBesArtifact artifact, String ownerSessionId, byte[] installGuard) {
         synchronized (mTransferGate) {
             if (isBesOtaInProgress || isWaitingForAuthorization || activeArtifact != null) {
                 Log.e(TAG, "BES OTA is already active");
@@ -318,7 +337,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
             }
             activeArtifact = artifact;
             activeOwnerSessionId = owner;
-            return startFirmwareUpdateLocked();
+            return startFirmwareUpdateLocked(installGuard);
         }
     }
 
@@ -377,7 +396,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
         return decision == BesOtaStateStore.StartDecision.ADMIT;
     }
 
-    private boolean startFirmwareUpdateLocked() {
+    private boolean startFirmwareUpdateLocked(byte[] installGuard) {
         String filePath = activeArtifact.getFile().getAbsolutePath();
         Log.i(
                 TAG,
@@ -425,8 +444,14 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
             boolean queued =
                     authorizationRequest != null
                             && k900BluetoothManager.queueBesOtaAuthorization(
+                                    installGuard,
                                     authorizationRequest,
                                     new K900BluetoothManager.BesOtaAuthorizationCallback() {
+                                        @Override
+                                        public void onInstallGuardWriteFailed() {
+                                            BesOtaManager.this.onInstallGuardWriteFailed();
+                                        }
+
                                         @Override
                                         public boolean onLeaseAcquired(
                                                 BesUartTransportCoordinator.OperationLease lease) {
@@ -504,6 +529,18 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
         } catch (Exception e) {
             Log.e(TAG, "Failed to build BES OTA authorization request", e);
             return null;
+        }
+    }
+
+    private void onInstallGuardWriteFailed() {
+        synchronized (mTransferGate) {
+            if (!isWaitingForAuthorization) {
+                return;
+            }
+            Log.e(TAG, "BES install guard UART write failed before authorization");
+            EventBus.getDefault()
+                    .post(BesOtaProgressEvent.createFailed("Failed to send BES install guard"));
+            cleanupLocked();
         }
     }
 
@@ -781,7 +818,9 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
         if (transportCoordinator != null) {
             BesOtaStateStore.UartPolicy policy =
                     stateStore.uartPolicy(stateStore.currentBootId(), false, activeOwnerSessionId);
-            if (authorizationReserved && policy != BesOtaStateStore.UartPolicy.NORMAL) {
+            if (authorizationReserved
+                    && (policy == BesOtaStateStore.UartPolicy.QUARANTINED
+                            || policy == BesOtaStateStore.UartPolicy.OTA_OWNER_ONLY)) {
                 transportCoordinator.quarantineOta(transportLease);
             } else {
                 transportCoordinator.endOta(transportLease);
