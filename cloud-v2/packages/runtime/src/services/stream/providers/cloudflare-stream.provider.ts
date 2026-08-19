@@ -21,12 +21,43 @@
  *   GET    /accounts/:acct/stream/live_inputs/:uid   -> { result: { status: { current: {...} } } }
  *   DELETE /accounts/:acct/stream/live_inputs/:uid
  *   POST   /accounts/:acct/stream/live_inputs/:uid/outputs   (restream destinations)
+ *   GET    /accounts/:acct/stream/live_inputs/:uid/videos     (recordings of this input)
+ *   DELETE /accounts/:acct/stream/:videoUid                   (a recording)
+ *
+ * Recordings are separate objects from the live input and outlive it: deleting
+ * an input orphans its recordings, which keep counting against the account's
+ * storage quota. Recording cannot simply be turned off -- HLS playback requires
+ * `mode: automatic` -- so `stop()` deletes the recordings before the input, and
+ * `deleteRecordingAfterDays` is set as a floor for anything that slips past.
  */
 
 import type { ManagedStream, StreamOptions, StreamStatusResult } from "@mentra/cloud-protocol/camera";
 import type { StreamProvider } from "../stream.service";
 
 const CF_API = "https://api.cloudflare.com/client/v4";
+
+/** Cloudflare's minimum for `deleteRecordingAfterDays`. A floor, not the policy. */
+const RECORDING_RETENTION_DAYS = 30;
+
+/** `GET /live_inputs` -- every input on the account. */
+interface LiveInputListResult {
+  result?: Array<{
+    uid: string;
+    created?: string;
+    modified?: string;
+    status?: { current?: { state?: string | null } | null } | null;
+  }>;
+  success: boolean;
+}
+
+/** `GET /live_inputs/:uid/videos` -- the recordings produced by an input. */
+interface VideoListResult {
+  result?: Array<{
+    uid: string;
+    status?: { state?: string } | null;
+  }>;
+  success: boolean;
+}
 
 interface LiveInputResult {
   result?: {
@@ -85,6 +116,76 @@ export function createCloudflareStreamProvider(): StreamProvider {
     };
   }
 
+  /**
+   * Delete every finished recording belonging to a live input.
+   *
+   * Best-effort by design: a stream that has just ended may not have a
+   * recording yet (Cloudflare takes up to ~60s to make one available), and a
+   * failure here must not stop the caller from tearing the input down. What
+   * this misses, the sweeper and `deleteRecordingAfterDays` catch.
+   *
+   * Returns the number deleted, so callers can log it.
+   */
+  async function deleteRecordings(inputUid: string): Promise<number> {
+    const listed = await fetch(`${base}/${inputUid}/videos`, { headers: authHeaders });
+    if (!listed.ok) return 0;
+
+    const body = (await listed.json()) as VideoListResult;
+    const videos = body.result ?? [];
+    let deleted = 0;
+
+    for (const video of videos) {
+      // An in-progress broadcast is not a recording yet. Deleting it would
+      // kill a live stream.
+      if (video.status?.state === "live-inprogress") continue;
+
+      const res = await fetch(`${CF_API}/accounts/${accountId}/stream/${video.uid}`, {
+        method: "DELETE",
+        headers: authHeaders,
+      });
+      if (res.ok || res.status === 404) deleted += 1;
+    }
+    return deleted;
+  }
+
+  /**
+   * Reclaim what `stop()` never got to.
+   *
+   * `stop()` only runs when a client explicitly ends a stream. A stream that
+   * ends because the device dropped, the app closed, or the pod restarted
+   * leaves its input and recordings behind forever. That is the leak that
+   * filled the account: thousands of abandoned inputs, each with recordings
+   * still billed against the storage quota.
+   *
+   * Deletes inputs (and their recordings) last modified before the cutoff,
+   * skipping anything currently connected. Idempotent: a 404 counts as done,
+   * so concurrent pods sweeping at once is harmless.
+   */
+  async function sweep(olderThanMs: number): Promise<{ recordings: number; inputs: number }> {
+    const cutoff = Date.now() - olderThanMs;
+    let recordings = 0;
+    let inputs = 0;
+
+    const listed = await fetch(base, { headers: authHeaders });
+    if (!listed.ok) return { recordings, inputs };
+
+    const body = (await listed.json()) as LiveInputListResult;
+    for (const input of body.result ?? []) {
+      const modified = Date.parse(input.modified ?? input.created ?? "");
+      if (!Number.isFinite(modified) || modified >= cutoff) continue;
+
+      // Never touch an input a device is publishing to right now.
+      const state = input.status?.current?.state ?? null;
+      if (state === "connected" || state === "live") continue;
+
+      recordings += await deleteRecordings(input.uid);
+
+      const res = await fetch(`${base}/${input.uid}`, { method: "DELETE", headers: authHeaders });
+      if (res.ok || res.status === 404) inputs += 1;
+    }
+    return { recordings, inputs };
+  }
+
   return {
     name: "cloudflare",
 
@@ -94,7 +195,14 @@ export function createCloudflareStreamProvider(): StreamProvider {
         headers: { ...authHeaders, "Content-Type": "application/json" },
         body: JSON.stringify({
           meta: { name: `mentra-${mentraUserId}` },
+          // `automatic` is required: HLS/DASH playback does not work with
+          // recording off, and Mentra Call needs the live HLS URL.
           recording: { mode: "automatic" },
+          // Backstop only. `stop()` deletes recordings explicitly; this bounds
+          // anything it misses (a stream that ends by disconnect, a failed
+          // delete). Cloudflare's minimum for this field is 30 days, so it
+          // cannot replace explicit deletion.
+          deleteRecordingAfterDays: RECORDING_RETENTION_DAYS,
         }),
       });
       const body = (await res.json()) as LiveInputResult;
@@ -167,6 +275,14 @@ export function createCloudflareStreamProvider(): StreamProvider {
     },
 
     async stop(streamId: string): Promise<void> {
+      // Recordings first, then the input. Deleting the input orphans its
+      // recordings -- they survive, keep counting against the storage quota,
+      // and are no longer reachable through the input's /videos listing -- so
+      // the order matters. Once the account is over quota Cloudflare still
+      // creates live inputs but rejects the broadcast at publish, which
+      // surfaces to the user as a network failure.
+      await deleteRecordings(streamId);
+
       const res = await fetch(`${base}/${streamId}`, {
         method: "DELETE",
         headers: authHeaders,
@@ -175,5 +291,8 @@ export function createCloudflareStreamProvider(): StreamProvider {
         throw new Error(`cloudflare live input delete failed: ${res.status}`);
       }
     },
+
+    deleteRecordings,
+    sweep,
   };
 }
