@@ -131,6 +131,20 @@ public class WhipStreamingService extends Service {
   // HTTP client for WHIP signaling
   private OkHttpClient mHttpClient;
 
+  /** Local candidates gathered for the current negotiation attempt; diagnostic only. */
+  private volatile int mIceCandidateCount = 0;
+
+  // WHIP has no trickle ICE. GATHER_ONCE + STUN can sit in GATHERING for minutes
+  // after the useful host/srflx candidates are already in the local SDP. Phone
+  // startExternallyManagedStream times out at 15s, so POST as soon as we have a
+  // server-reflexive candidate, or after a short cap, whichever comes first.
+  private static final long ICE_GATHER_POST_TIMEOUT_MS = 1500L;
+  private static final long ICE_CONNECT_TIMEOUT_MS = 8000L;
+  private volatile boolean mWhipOfferPosted = false;
+  private volatile boolean mWhipStreamingNotified = false;
+  private final Runnable mPostOfferTimeoutRunnable = () -> postOfferIfReady("timeout");
+  private final Runnable mIceConnectTimeoutRunnable = this::failIceConnectTimeout;
+
   private IHardwareManager mHardwareManager;
 
   // ---- State management ----
@@ -155,6 +169,8 @@ public class WhipStreamingService extends Service {
 
   private Handler mMainHandler;
   private long mStartupStartedAtMs;
+  /** Last `[STREAM_STARTUP]` stage successfully logged; used as `failedStage` context on failure. */
+  private volatile String mLastStartupStage = "not_started";
 
   private long mLastVideoBytesSent = 0;
   private long mLastAudioBytesSent = 0;
@@ -163,6 +179,7 @@ public class WhipStreamingService extends Service {
   private final Runnable mStatsRunnable = new Runnable() {
     @Override
     public void run() {
+      if (!AsgConstants.ENABLE_PIPELINE_FPS_TELEMETRY) return;
       if (mPeerConnection == null) return;
       mPeerConnection.getStats(report -> {
         long videoBytesTotal = 0, audioBytesTotal = 0;
@@ -328,8 +345,7 @@ public class WhipStreamingService extends Service {
   private void startStreaming() {
     // Check if camera is busy with photo/video capture
     if (CameraNeoService.isCameraInUse()) {
-      Log.e(TAG, "Cannot start WHIP stream - camera is busy with photo/video capture");
-      handleStartupFailure("camera_busy");
+      handleStartupFailure("camera_busy", "Cannot start WHIP stream - camera is busy with photo/video capture");
       return;
     }
 
@@ -368,7 +384,7 @@ public class WhipStreamingService extends Service {
       logStartupStage("offer_requested");
     } catch (Exception e) {
       Log.e(TAG, "Failed to start streaming", e);
-      handleStartupFailure("Failed to start: " + e.getMessage());
+      handleStartupFailure("exception", "Failed to start: " + e.getMessage());
     }
   }
 
@@ -463,6 +479,12 @@ public class WhipStreamingService extends Service {
     mEglBase = EglBase.create();
 
     PeerConnectionFactory.Options factoryOptions = new PeerConnectionFactory.Options();
+    // Loopback interfaces (127.0.0.1, ::1) can never reach an external STUN server, but the
+    // ICE agent still waits out the full STUN retransmission timeout on them before declaring
+    // gathering complete, which was delaying the WHIP offer by ~40s. Ignoring loopback here
+    // makes the network monitor skip it entirely so gathering completes as soon as the real
+    // network interface's candidates (including srflx) are ready.
+    factoryOptions.networkIgnoreMask = PeerConnectionFactory.Options.ADAPTER_TYPE_LOOPBACK;
     mPeerConnectionFactory = PeerConnectionFactory.builder()
         .setOptions(factoryOptions)
         .setVideoEncoderFactory(
@@ -514,9 +536,20 @@ public class WhipStreamingService extends Service {
   }
 
   private void createPeerConnectionAndOffer() {
-    // No STUN/TURN needed for WHIP: we connect outbound to a known server,
-    // so host candidates (local IP) are sufficient. STUN only adds latency here.
+    mWhipOfferPosted = false;
+    mWhipStreamingNotified = false;
+    if (mMainHandler != null) {
+      mMainHandler.removeCallbacks(mPostOfferTimeoutRunnable);
+      mMainHandler.removeCallbacks(mIceConnectTimeoutRunnable);
+    }
+
     List<PeerConnection.IceServer> iceServers = new ArrayList<>();
+    String stunServer = mStreamConfig.getStunServer();
+    if (stunServer != null && !stunServer.isEmpty()) {
+      iceServers.add(PeerConnection.IceServer.builder(stunServer).createIceServer());
+    }
+
+    mIceCandidateCount = 0;
 
     PeerConnection.RTCConfiguration rtcConfig =
         new PeerConnection.RTCConfiguration(iceServers);
@@ -551,13 +584,14 @@ public class WhipStreamingService extends Service {
         mPeerConnection.setLocalDescription(new SdpObserver() {
           @Override
           public void onSetSuccess() {
-            Log.d(TAG, "Local description set, waiting for ICE gathering");
+            Log.d(TAG, "Local description set, posting WHIP offer after first srflx or "
+                + ICE_GATHER_POST_TIMEOUT_MS + "ms");
+            mMainHandler.postDelayed(mPostOfferTimeoutRunnable, ICE_GATHER_POST_TIMEOUT_MS);
           }
 
           @Override
           public void onSetFailure(String error) {
-            Log.e(TAG, "setLocalDescription failed: " + error);
-            handleStartupFailure("setLocalDescription failed: " + error);
+            handleStartupFailure("set_local_description_failed", "setLocalDescription failed: " + error);
           }
 
           @Override public void onCreateSuccess(SessionDescription sdp) {}
@@ -567,8 +601,7 @@ public class WhipStreamingService extends Service {
 
       @Override
       public void onCreateFailure(String error) {
-        Log.e(TAG, "createOffer failed: " + error);
-        handleStartupFailure("createOffer failed: " + error);
+        handleStartupFailure("create_offer_failed", "createOffer failed: " + error);
       }
 
       @Override public void onSetSuccess() {}
@@ -686,6 +719,104 @@ public class WhipStreamingService extends Service {
     Log.i(TAG, label + " video section:\n" + section);
   }
 
+  /**
+   * POST the local SDP once. Triggered by first srflx, the gather timeout, or
+   * GATHERING COMPLETE — whichever wins. Later triggers are no-ops.
+   */
+  private void postOfferIfReady(String reason) {
+    PeerConnection peerConnection;
+    synchronized (mStateLock) {
+      if (mWhipOfferPosted) {
+        return;
+      }
+      if (mPeerConnection == null || mStreamState == StreamState.STOPPING
+          || mStreamState == StreamState.IDLE) {
+        Log.w(TAG, "Skipping WHIP POST (" + reason + "): stream already stopping/stopped");
+        return;
+      }
+      mWhipOfferPosted = true;
+      peerConnection = mPeerConnection;
+    }
+    if (mMainHandler != null) {
+      mMainHandler.removeCallbacks(mPostOfferTimeoutRunnable);
+    }
+
+    SessionDescription localSdp = peerConnection.getLocalDescription();
+
+    if (localSdp != null) {
+      Log.i(TAG, "Posting WHIP offer after ICE trigger=" + reason
+          + " candidates=" + mIceCandidateCount);
+      postOfferToWhip(localSdp);
+    } else {
+      Log.e(TAG, "WHIP POST trigger=" + reason + " but local SDP is null");
+      synchronized (mStateLock) {
+        mWhipOfferPosted = false;
+      }
+      handleStartupFailure("local_sdp_missing", "Local SDP unavailable before WHIP POST");
+    }
+  }
+
+  private void completeWhipStartupIfNeeded() {
+    synchronized (mStateLock) {
+      if (mWhipStreamingNotified) return;
+      if (mPeerConnection == null || mStreamState == StreamState.STOPPING
+          || mStreamState == StreamState.IDLE) {
+        return;
+      }
+      mWhipStreamingNotified = true;
+      mStreamState = StreamState.STREAMING;
+    }
+    if (mMainHandler != null) {
+      mMainHandler.removeCallbacks(mIceConnectTimeoutRunnable);
+    }
+    logStartupStage("streaming_live", "candidates=" + mIceCandidateCount);
+
+    SessionDescription remote = mPeerConnection != null ? mPeerConnection.getRemoteDescription() : null;
+    String answerSdp = remote != null ? remote.description : "";
+    mLastVideoBytesSent = 0;
+    mLastAudioBytesSent = 0;
+    mLastStatsAtMs = SystemClock.elapsedRealtime();
+    if (!mIsReconnecting || mStreamStartedAtMs == 0) {
+      mStreamStartedAtMs = mLastStatsAtMs;
+    }
+    if (AsgConstants.ENABLE_PIPELINE_FPS_TELEMETRY) {
+      mMainHandler.postDelayed(mStatsRunnable, AsgConstants.STREAM_METRICS_INTERVAL_MS);
+    }
+    scheduleStreamTimeout(mCurrentStreamId);
+    startBatteryMonitoring();
+    Log.i(TAG, "Streaming started via WHIP, negotiated video codec: "
+        + firstVideoCodecFromSdp(answerSdp));
+    if (mLedEnabled && mHardwareManager != null && mHardwareManager.supportsRecordingLed()) {
+      mHardwareManager.setRecordingLedOn();
+    }
+    if (mSoundEnabled && mHardwareManager != null && mHardwareManager.supportsAudioPlayback()) {
+      mHardwareManager.playAudioAsset(AudioAssets.VIDEO_RECORDING_START);
+    }
+    if (mIsReconnecting) {
+      int attempt = mReconnectAttempts;
+      mIsReconnecting = false;
+      mReconnectAttempts = 0;
+      notifyReconnected(mWhipUrl, attempt);
+    } else {
+      notifyStarted(mWhipUrl);
+    }
+    updateNotification("Streaming");
+  }
+
+  private void failIceConnectTimeout() {
+    synchronized (mStateLock) {
+      if (mWhipStreamingNotified) return;
+      if (mStreamState != StreamState.STARTING && mStreamState != StreamState.RECONNECTING) {
+        return;
+      }
+      mWhipStreamingNotified = true;
+    }
+    if (mMainHandler != null) {
+      mMainHandler.removeCallbacks(mIceConnectTimeoutRunnable);
+    }
+    handleStartupFailure("ice_timeout", "ICE did not connect; WHIP media path failed");
+  }
+
   private void postOfferToWhip(SessionDescription offer) {
     logStartupStage("whip_request_started");
     Log.d(TAG, "POSTing SDP offer to WHIP URL: " + mWhipUrl);
@@ -709,8 +840,7 @@ public class WhipStreamingService extends Service {
       public void onResponse(Call call, Response response) throws IOException {
         if (response.code() != 201) {
           String msg = "WHIP server returned " + response.code();
-          Log.e(TAG, msg);
-          handleStartupFailure(msg);
+          handleStartupFailure("http_" + response.code(), msg);
           return;
         }
 
@@ -724,9 +854,15 @@ public class WhipStreamingService extends Service {
 
         String answerSdp = response.body() != null ? response.body().string() : "";
         if (answerSdp.isEmpty()) {
-          handleStartupFailure("WHIP server returned empty SDP answer");
+          handleStartupFailure("empty_answer_sdp", "WHIP server returned empty SDP answer");
           return;
         }
+
+        int remoteCandidateCount = 0;
+        for (String line : answerSdp.split("\r?\n")) {
+          if (line.startsWith("a=candidate")) remoteCandidateCount++;
+        }
+        logStartupStage("whip_answer_received", "remoteCandidates=" + remoteCandidateCount);
 
         // A late WHIP answer can arrive after the stream was stopped or its startup failed
         // and WebRTC was torn down (releaseWebRtc nulls mPeerConnection on another thread).
@@ -756,48 +892,22 @@ public class WhipStreamingService extends Service {
           @Override
           public void onSetSuccess() {
             synchronized (mStateLock) {
-              // Teardown may have happened between the guard above and this callback.
               if (mPeerConnection == null || mStreamState == StreamState.STOPPING
                   || mStreamState == StreamState.IDLE) {
                 Log.w(TAG, "WHIP remote description set but stream already stopping/stopped, ignoring");
                 return;
               }
-              mStreamState = StreamState.STREAMING;
             }
-            mLastVideoBytesSent = 0;
-            mLastAudioBytesSent = 0;
-            mLastStatsAtMs = SystemClock.elapsedRealtime();
-            if (!mIsReconnecting || mStreamStartedAtMs == 0) {
-              mStreamStartedAtMs = mLastStatsAtMs;
-            }
-            mMainHandler.postDelayed(
-                mStatsRunnable, AsgConstants.STREAM_METRICS_INTERVAL_MS);
-            scheduleStreamTimeout(mCurrentStreamId);
-            startBatteryMonitoring();
             logStartupStage("whip_answer_applied");
-            Log.i(TAG, "Streaming started via WHIP, negotiated video codec: "
-                + firstVideoCodecFromSdp(answerSdp));
-            if (mLedEnabled && mHardwareManager != null && mHardwareManager.supportsRecordingLed()) {
-              mHardwareManager.setRecordingLedOn();
-            }
-            if (mSoundEnabled && mHardwareManager != null && mHardwareManager.supportsAudioPlayback()) {
-              mHardwareManager.playAudioAsset(AudioAssets.VIDEO_RECORDING_START);
-            }
-            if (mIsReconnecting) {
-              int attempt = mReconnectAttempts;
-              mIsReconnecting = false;
-              mReconnectAttempts = 0;
-              notifyReconnected(mWhipUrl, attempt);
-            } else {
-              notifyStarted(mWhipUrl);
-            }
-            updateNotification("Streaming");
+            Log.i(TAG, "WHIP answer applied, waiting for ICE connect (max "
+                + ICE_CONNECT_TIMEOUT_MS + "ms)");
+            mMainHandler.removeCallbacks(mIceConnectTimeoutRunnable);
+            mMainHandler.postDelayed(mIceConnectTimeoutRunnable, ICE_CONNECT_TIMEOUT_MS);
           }
 
           @Override
           public void onSetFailure(String error) {
-            Log.e(TAG, "setRemoteDescription failed: " + error);
-            handleStartupFailure("setRemoteDescription failed: " + error);
+            handleStartupFailure("set_remote_description_failed", "setRemoteDescription failed: " + error);
           }
 
           @Override public void onCreateSuccess(SessionDescription sdp) {}
@@ -808,7 +918,7 @@ public class WhipStreamingService extends Service {
       @Override
       public void onFailure(Call call, IOException e) {
         Log.e(TAG, "WHIP request failed", e);
-        handleStartupFailure("WHIP request failed: " + e.getMessage());
+        handleStartupFailure("whip_request_failed", "WHIP request failed: " + e.getMessage());
       }
     });
   }
@@ -842,20 +952,8 @@ public class WhipStreamingService extends Service {
     public void onIceGatheringChange(PeerConnection.IceGatheringState newState) {
       Log.d(TAG, "ICE gathering state: " + newState);
       if (newState == PeerConnection.IceGatheringState.COMPLETE) {
-        logStartupStage("ice_gathering_complete");
-        synchronized (mStateLock) {
-          if (mPeerConnection == null || mStreamState == StreamState.STOPPING || mStreamState == StreamState.IDLE) {
-            Log.w(TAG, "ICE gathering complete but stream already stopping/stopped, ignoring");
-            return;
-          }
-        }
-        SessionDescription localSdp = mPeerConnection.getLocalDescription();
-        if (localSdp != null) {
-          postOfferToWhip(localSdp);
-        } else {
-          Log.e(TAG, "ICE gathering complete but local SDP is null");
-          handleStartupFailure("Local SDP unavailable after ICE gathering");
-        }
+        logStartupStage("ice_gathering_complete", "candidates=" + mIceCandidateCount);
+        postOfferIfReady("complete");
       }
     }
 
@@ -863,7 +961,17 @@ public class WhipStreamingService extends Service {
     public void onConnectionChange(PeerConnection.PeerConnectionState newState) {
       Log.d(TAG, "PeerConnection state: " + newState);
       if (newState == PeerConnection.PeerConnectionState.FAILED) {
-        mMainHandler.post(() -> attemptReconnect("PeerConnection failed"));
+        mMainHandler.post(() -> {
+          synchronized (mStateLock) {
+            if (mStreamState == StreamState.STARTING) {
+              failIceConnectTimeout();
+              return;
+            }
+          }
+          attemptReconnect("PeerConnection failed");
+        });
+      } else if (newState == PeerConnection.PeerConnectionState.CONNECTED) {
+        mMainHandler.post(WhipStreamingService.this::completeWhipStartupIfNeeded);
       } else if (newState == PeerConnection.PeerConnectionState.DISCONNECTED) {
         Log.w(TAG, "PeerConnection disconnected — waiting before reconnect");
         mMainHandler.postDelayed(() -> {
@@ -883,11 +991,24 @@ public class WhipStreamingService extends Service {
     @Override
     public void onIceConnectionChange(PeerConnection.IceConnectionState iceConnectionState) {
       Log.d(TAG, "ICE connection state: " + iceConnectionState);
+      if (iceConnectionState == PeerConnection.IceConnectionState.CONNECTED
+          || iceConnectionState == PeerConnection.IceConnectionState.COMPLETED) {
+        mMainHandler.post(WhipStreamingService.this::completeWhipStartupIfNeeded);
+      } else if (iceConnectionState == PeerConnection.IceConnectionState.FAILED) {
+        mMainHandler.post(WhipStreamingService.this::failIceConnectTimeout);
+      }
     }
 
     @Override public void onIceConnectionReceivingChange(boolean receiving) {}
     @Override public void onIceCandidatesRemoved(IceCandidate[] candidates) {}
-    @Override public void onIceCandidate(IceCandidate candidate) {}
+
+    @Override
+    public void onIceCandidate(IceCandidate candidate) {
+      mIceCandidateCount++;
+      if (candidate.sdp != null && candidate.sdp.contains("typ srflx")) {
+        mMainHandler.post(() -> postOfferIfReady("srflx"));
+      }
+    }
     @Override public void onAddStream(MediaStream stream) {}
     @Override public void onRemoveStream(MediaStream stream) {}
     @Override public void onDataChannel(DataChannel dataChannel) {}
@@ -901,6 +1022,12 @@ public class WhipStreamingService extends Service {
   // -----------------------------------------------------------------------
 
   private void releaseWebRtc() {
+    if (mMainHandler != null) {
+      mMainHandler.removeCallbacks(mPostOfferTimeoutRunnable);
+      mMainHandler.removeCallbacks(mIceConnectTimeoutRunnable);
+    }
+    mWhipOfferPosted = false;
+    mWhipStreamingNotified = false;
     if (mVideoCapturer != null) {
       try { mVideoCapturer.stopCapture(); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
       mVideoCapturer.dispose();
@@ -956,12 +1083,17 @@ public class WhipStreamingService extends Service {
     updateNotification("Stream failed");
   }
 
-  private void handleStartupFailure(String error) {
+  /**
+   * @param reasonCode short, aggregable failure code (e.g. "ice_timeout", "http_403")
+   * @param message human-readable detail, forwarded to status listeners / UI
+   */
+  private void handleStartupFailure(String reasonCode, String message) {
     if (mMainHandler != null && Looper.myLooper() != Looper.getMainLooper()) {
-      mMainHandler.post(() -> handleStartupFailure(error));
+      mMainHandler.post(() -> handleStartupFailure(reasonCode, message));
       return;
     }
-    notifyError(error);
+    logStartupFailure(reasonCode);
+    notifyError(message);
     cleanupFailedStartup();
   }
 
@@ -1024,6 +1156,7 @@ public class WhipStreamingService extends Service {
       long droppedFrames,
       long durationSeconds,
       double temperatureC) {
+    if (!AsgConstants.ENABLE_PIPELINE_FPS_TELEMETRY) return;
     StreamingStatusCallback callback = sStatusCallback;
     String streamId = mCurrentStreamId;
     if (callback == null) return;
@@ -1075,13 +1208,33 @@ public class WhipStreamingService extends Service {
   // -----------------------------------------------------------------------
 
   private void logStartupStage(String stage) {
+    logStartupStage(stage, null);
+  }
+
+  /** @param extra optional additional "key=value" fields appended to the stage line */
+  private void logStartupStage(String stage, String extra) {
     if (mStartupStartedAtMs == 0) return;
-    Log.i(
+    mLastStartupStage = stage;
+    StringBuilder line = new StringBuilder("[STREAM_STARTUP] streamId=")
+        .append(mCurrentStreamId)
+        .append(" stage=").append(stage)
+        .append(" elapsedMs=").append(SystemClock.elapsedRealtime() - mStartupStartedAtMs);
+    if (extra != null && !extra.isEmpty()) {
+      line.append(' ').append(extra);
+    }
+    Log.i(TAG, line.toString());
+  }
+
+  /** Structured startup failure: aggregable by `reason` instead of grepping message prose. */
+  private void logStartupFailure(String reasonCode) {
+    if (mStartupStartedAtMs == 0) return;
+    Log.w(
         TAG,
-        "[STREAM_STARTUP] stage="
-            + stage
-            + " elapsedMs="
-            + (SystemClock.elapsedRealtime() - mStartupStartedAtMs));
+        "[STREAM_STARTUP] streamId=" + mCurrentStreamId
+            + " stage=startup_failed"
+            + " failedStage=" + mLastStartupStage
+            + " elapsedMs=" + (SystemClock.elapsedRealtime() - mStartupStartedAtMs)
+            + " reason=" + reasonCode);
   }
 
   private String buildAbsoluteUrl(String base, String location) {
