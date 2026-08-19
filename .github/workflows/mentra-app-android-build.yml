@@ -83,18 +83,19 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Select Android ABIs
-        # Full multi-ABI compile is only the production promotion PR (into main).
-        # Pushes to main/dev and PRs into dev stay arm64-only — the main PR already
-        # ran the expensive check, and ci-gate-dev should not wait on it.
+        # Full multi-ABI: PRs into main, and pushes (or dispatch) on main.
+        # Dev PRs / pushes stay arm64-only so ci-gate-dev is not waiting on
+        # emulator/32-bit NDK.
         run: |
           FULL="armeabi-v7a,arm64-v8a,x86,x86_64"
           ARM64="arm64-v8a"
-          if [ "${{ github.event_name }}" = "pull_request" ] && [ "${{ github.base_ref }}" = "main" ]; then
+          if { [ "${{ github.event_name }}" = "pull_request" ] && [ "${{ github.base_ref }}" = "main" ]; } ||
+             { [ "${{ github.event_name }}" != "pull_request" ] && [ "${{ github.ref_name }}" = "main" ]; }; then
             ARCHS="$FULL"
-            echo "Full ABI compile-check (PR into main)."
+            echo "Full ABI compile-check (PR into main / push to main)."
           else
             ARCHS="$ARM64"
-            echo "arm64-only. 32-bit/emulator covered on PRs into main."
+            echo "arm64-only. 32-bit/emulator covered on PRs into main and pushes to main."
           fi
           echo "reactNativeArchitectures=$ARCHS"
           echo "ORG_GRADLE_PROJECT_reactNativeArchitectures=$ARCHS" >> "$GITHUB_ENV"
