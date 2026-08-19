@@ -1,5 +1,5 @@
 export type FrequencyMode = "low" | "medium" | "high"
-export type AnalysisTrigger = "final" | "sentence" | "interval"
+export type AnalysisTrigger = "final" | "sentence" | "interval" | "expand"
 export type DisplayAction = "show" | "replace" | "queue" | "drop"
 
 export interface InsightSource {
@@ -23,6 +23,16 @@ export interface InsightRequest {
   frequency?: FrequencyMode
   settings?: {
     answerLanguage?: string
+  }
+  interaction?: {
+    type: "expand"
+    insight: {
+      id?: string
+      text?: string
+      agentType?: string
+      sources?: InsightSource[]
+    }
+    requestedAt?: number
   }
   analysis?: {
     id?: string
@@ -109,7 +119,8 @@ class InsightsService {
 
   async createInsight(body: InsightRequest): Promise<InsightResponse> {
     const startedAt = nowMs()
-    const text = (body.analysis?.chunkText ?? body.utterance?.text ?? "").trim()
+    const isExpansion = body.interaction?.type === "expand"
+    const text = (body.interaction?.insight.text ?? body.analysis?.chunkText ?? body.utterance?.text ?? "").trim()
     if (text.length < 12) {
       if (canDefer(body)) {
         return withProfiling(
@@ -124,7 +135,7 @@ class InsightsService {
     }
 
     const priorTranscripts = priorContext(body, text)
-    if (isContextSensitiveWorkstream(text) && priorTranscripts.length < 2) {
+    if (!isExpansion && isContextSensitiveWorkstream(text) && priorTranscripts.length < 2) {
       return withProfiling(
         {type: "silent", reasoning: "Needs more grounded project context"},
         profileResult({startedAt, model: this.model, webSearchEnabled: this.webSearchEnabled}),
@@ -153,7 +164,11 @@ class InsightsService {
         },
         body: JSON.stringify({
           systemInstruction: {
-            parts: [{text: mergeInstructions(body.frequency ?? "medium", body.settings?.answerLanguage)}],
+            parts: [
+              {
+                text: mergeInstructions(body.frequency ?? "medium", body.settings?.answerLanguage, isExpansion),
+              },
+            ],
           },
           contents: [
             {
@@ -162,7 +177,7 @@ class InsightsService {
             },
           ],
           generationConfig: {
-            maxOutputTokens: 512,
+            maxOutputTokens: isExpansion ? 768 : 512,
             temperature: 0.3,
             responseMimeType: "application/json",
             thinkingConfig: {
@@ -208,8 +223,8 @@ class InsightsService {
       sourceCount: parsed.profiling.sourceCount,
     })
     if (parsed.type === "insight" && parsed.text) {
-      parsed.text = parsed.text.trim().slice(0, 180)
-      parsed.displayAction = parsed.displayAction ?? "show"
+      parsed.text = parsed.text.trim().slice(0, isExpansion ? 320 : 180)
+      parsed.displayAction = isExpansion ? "replace" : (parsed.displayAction ?? "show")
     }
     return parsed
   }
@@ -217,13 +232,18 @@ class InsightsService {
 
 export const insightsService = new InsightsService()
 
-function mergeInstructions(frequency: FrequencyMode, answerLanguage = "English"): string {
+export function mergeInstructions(frequency: FrequencyMode, answerLanguage = "English", isExpansion = false): string {
   const frequencyRule =
     frequency === "high"
       ? "High frequency: offer useful definitions, corrections, and non-obvious context whenever it truly adds value."
       : frequency === "low"
         ? "Low frequency: stay silent unless the insight prevents confusion, corrects a serious false claim, or defines a term needed to follow the conversation."
         : "Medium frequency: be selective. Prefer core-topic clarifications, non-obvious tradeoffs, and useful definitions."
+
+  const taskRule = isExpansion
+    ? `The user explicitly swiped for more detail about the displayed insight. Expand it with two or three concrete, useful details, an explanation, or relevant context. Do not merely restate the original. Prefer an insight response; stay silent only when adding detail would require guessing or unsupported private context. Keep the expanded text under 320 characters and set displayAction to replace.`
+    : `Your job is to silently listen to conversation snippets and decide whether to surface one short insight.
+${frequencyRule}`
 
   return `You are Merge, a proactive conversation intelligence assistant for smart glasses.
 
@@ -232,11 +252,10 @@ System context:
 - Speech arrives from streaming transcription. Some requests are final utterances, but many are interim fragments that may be incomplete, revised, or missing the next few words.
 - The prompt includes the latest analyzed chunk, the full current utterance when available, recent transcript history, prior insights already shown, and the currently displayed insight.
 
-Your job is to silently listen to conversation snippets and decide whether to surface one short insight.
-${frequencyRule}
+${taskRule}
 
 Rules:
-- Usually remain silent.
+- ${isExpansion ? "Honor the explicit request for more detail when useful and grounded." : "Usually remain silent."}
 - Never summarize or rephrase what was just said.
 - Use the user's timezone and local time from the prompt for every date or time answer. Do not infer "today" or "tomorrow" from server time.
 - Only speak when adding new, useful information that is grounded in the recent transcript alone or, when web search is enabled, grounded by search for public factual/current information: a definition, correction, caveat, surprising constraint, concrete alternative, or direct answer to an information-seeking question.
@@ -245,7 +264,7 @@ Rules:
 - Stay silent if the conversation references a specific codebase, project, document, person, meeting, company, or private situation that is not actually present in the recent transcript.
 - Do not guess project-specific or domain-specific answers from generic words. If you would need hidden context, repository access, private docs, or facts not stated in the transcript, return silent.
 - For software, infrastructure, debugging, deployment, or implementation discussions, require several grounded prior transcript turns before giving tactical advice.
-- Keep user-facing insight text concise and glasses-friendly, ideally under 80 characters.
+- Keep user-facing insight text concise and glasses-friendly, ${isExpansion ? "under 320 characters." : "ideally under 80 characters."}
 - Write insight text as plain natural language only. Never emit Markdown, brackets, XML/SSML tags, or speech-synthesis instructions. Spell out a symbol when its pronunciation matters.
 - When directly answering a question, include a tiny subject cue from the question so the user knows what the answer refers to after other dialog. Use 1-4 words before a colon when helpful, like "Sky color:" or "Date:"; do not repeat the full question.
 - Understand conversation in any language. Write every user-facing insight in ${answerLanguage === "Auto" ? "the user's apparent preferred language from the conversation" : answerLanguage}. Do not switch output language just because another speaker uses a different language.
@@ -265,10 +284,10 @@ Return only JSON:
 or
 {"type":"defer","reasoning":"...","confidence":0.0,"urgency":"low|medium|high"}
 or
-{"type":"insight","text":"...","agentType":"Initial|Definer|FactChecker|QuestionAnswerer","displayAction":"show|replace|queue|drop","urgency":"low|medium|high","confidence":0.0,"reasoning":"..."}`
+{"type":"insight","text":"...","agentType":"Initial|Definer|FactChecker|QuestionAnswerer|FollowUp","displayAction":"show|replace|queue|drop","urgency":"low|medium|high","confidence":0.0,"reasoning":"..."}`
 }
 
-function buildPrompt(body: InsightRequest): string {
+export function buildPrompt(body: InsightRequest): string {
   const transcripts = body.history?.transcripts?.slice(-10) ?? []
   const conversation = body.history?.conversation?.slice(-10) ?? []
   const insights = body.history?.insights?.slice(-8) ?? []
@@ -298,6 +317,7 @@ function buildPrompt(body: InsightRequest): string {
       recentConversation: conversation,
       recentInsightsAlreadyShown: insights,
       currentInsightOnDisplay: body.history?.activeInsight ?? null,
+      interaction: body.interaction ?? null,
       webSearchEnabled: process.env.MERGE_ENABLE_WEB_SEARCH === "true",
     },
     null,

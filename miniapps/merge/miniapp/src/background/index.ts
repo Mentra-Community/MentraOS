@@ -16,6 +16,7 @@ import type {
   MergeSnapshot,
   MergeTranscript,
 } from "../shared/types"
+import {insightGestureAction} from "./insightGestures"
 import {speakInsightText} from "./speech"
 
 type Send = <C extends keyof Channels & string>(channel: C, payload: Channels[C]) => void
@@ -52,6 +53,17 @@ type BackendInsightResponse =
       searchQueries?: string[]
       profiling?: MergeInsightProfiling
     }
+
+interface ExpandInsightRequest {
+  type: "expand"
+  insight: {
+    id: string
+    text: string
+    agentType: string
+    sources: MergeInsightSource[]
+  }
+  requestedAt: number
+}
 
 interface AnalysisChunk {
   id: string
@@ -97,7 +109,11 @@ class MergeController {
   private lastInterimAnalysisAtByUtterance = new Map<string, number>()
   private recentInsightKeys: string[] = []
   private activeDisplayUntil = 0
+  private activeDisplayedInsight: MergeInsight | null = null
   private displayTimer: ReturnType<typeof setTimeout> | null = null
+  private expandingInsightId: string | null = null
+  private expansionRequestVersion = 0
+  private stopped = false
   private cloudStatus: CloudClientStatus = {status: "disconnected", audioTransport: "none"}
   private backendStatus: MergeBackendStatus = "idle"
   private lastError: string | null = null
@@ -113,6 +129,7 @@ class MergeController {
   constructor(private readonly session: MiniappSession) {}
 
   async start(): Promise<void> {
+    this.stopped = false
     this.ui = this.session.ui as unknown as {
       send: Send
       on: On
@@ -122,6 +139,7 @@ class MergeController {
     await this.loadSettings()
     this.wireUI()
     this.wireCloudStatus()
+    this.wireInsightGestures()
     this.transcriptionCleanup = this.session.transcription.on((data) => {
       this.handleTranscription(data)
     })
@@ -130,6 +148,8 @@ class MergeController {
   }
 
   stop(): void {
+    this.stopped = true
+    this.expansionRequestVersion += 1
     this.clearDisplayTimer()
     // Leaving/minimizing the app must not leave a spoken insight playing.
     try {
@@ -168,6 +188,9 @@ class MergeController {
         this.lastInterimAnalysisAtByUtterance.clear()
         this.recentInsightKeys = []
         this.activeDisplayUntil = 0
+        this.activeDisplayedInsight = null
+        this.expandingInsightId = null
+        this.expansionRequestVersion += 1
         this.clearDisplayTimer()
         this.lastError = null
         this.backendStatus = "idle"
@@ -199,6 +222,25 @@ class MergeController {
     } catch (err) {
       console.log("LocalMerge: cloud status subscribe failed", err)
     }
+  }
+
+  private wireInsightGestures(): void {
+    this.unsubs.push(
+      this.session.input.onTouch((data) => {
+        const action = insightGestureAction(data.kind)
+        if (!action) return
+
+        const insight = this.currentDisplayedInsight()
+        if (!insight) return
+
+        if (action === "dismiss") {
+          this.dismissDisplayedInsight(insight)
+          return
+        }
+
+        void this.expandDisplayedInsight(insight)
+      }),
+    )
   }
 
   private async loadSettings(): Promise<void> {
@@ -460,7 +502,7 @@ class MergeController {
           searchQueries: body.searchQueries ?? [],
           profiling,
         })
-        this.addInsight(insight)
+        this.addInsight(insight, primary.trigger)
       } else if (body.type === "defer") {
         this.recordDecision({
           action: "defer",
@@ -502,12 +544,12 @@ class MergeController {
     }
   }
 
-  private addInsight(insight: MergeInsight): void {
+  private addInsight(insight: MergeInsight, trigger: MergeAnalysisTrigger = "final"): boolean {
     const key = normalizeInsight(insight.text)
     if (this.recentInsightKeys.includes(key)) {
       this.recordDecision({
         action: "drop",
-        trigger: "final",
+        trigger,
         chunkText: insight.text,
         reasoning: "Duplicate insight",
         insightText: insight.text,
@@ -517,7 +559,7 @@ class MergeController {
         searchQueries: insight.searchQueries ?? [],
         profiling: insight.profiling,
       })
-      return
+      return false
     }
     this.recentInsightKeys.push(key)
     if (this.recentInsightKeys.length > 12) this.recentInsightKeys = this.recentInsightKeys.slice(-12)
@@ -526,6 +568,7 @@ class MergeController {
     if (this.insights.length > MAX_INSIGHTS) this.insights = this.insights.slice(-MAX_INSIGHTS)
     this.ui.send("merge:insight", insight)
     this.scheduleDisplay(insight)
+    return true
   }
 
   private scheduleDisplay(insight: MergeInsight): void {
@@ -543,22 +586,11 @@ class MergeController {
   private showInsight(insight: MergeInsight): void {
     this.clearDisplayTimer()
     this.activeDisplayUntil = Date.now() + DISPLAY_DURATION_MS
+    this.activeDisplayedInsight = insight
     if (capabilityHasDisplay(this.session.capabilities)) {
       // Full-canvas text element; durationMs auto-clears after the display
       // window, same semantics as the legacy layout options.
-      const d = this.session.capabilities?.display
-      void this.session.display.render(
-        [
-          {
-            type: "text",
-            id: "insight",
-            box: {x: 0, y: 0, w: d?.width ?? 576, h: d?.height ?? 288},
-            text: `// Merge\n${insight.text}`,
-            style: {breakMode: "word"},
-          },
-        ],
-        {durationMs: DISPLAY_DURATION_MS},
-      )
+      this.renderDisplayedInsight(insight, "↑ More   ↓ Dismiss")
     } else {
       // No display (e.g. Mentra Live): speak the insight so the app is still
       // useful on audio-only glasses. Fire-and-forget — speak() only resolves
@@ -567,6 +599,192 @@ class MergeController {
       void this.speakInsight(insight)
     }
     this.scheduleNextQueuedDisplay()
+  }
+
+  private dismissDisplayedInsight(insight: MergeInsight): void {
+    this.expansionRequestVersion += 1
+    this.expandingInsightId = null
+    this.activeDisplayedInsight = null
+    this.activeDisplayUntil = 0
+    this.clearDisplayTimer()
+
+    if (capabilityHasDisplay(this.session.capabilities)) {
+      void this.session.display.render([])
+    }
+    try {
+      this.session.speaker.stop()
+    } catch {
+      /* transport may already be closing */
+    }
+
+    console.log(`LocalMerge: dismissed insight ${insight.id}`)
+    this.scheduleNextQueuedDisplay()
+  }
+
+  private async expandDisplayedInsight(insight: MergeInsight): Promise<void> {
+    if (this.expandingInsightId === insight.id) return
+
+    const requestVersion = ++this.expansionRequestVersion
+    this.expandingInsightId = insight.id
+    this.showExpansionPending(insight)
+    const interaction: ExpandInsightRequest = {
+      type: "expand",
+      insight: {
+        id: insight.id,
+        text: insight.text,
+        agentType: insight.agentType,
+        sources: insight.sources ?? [],
+      },
+      requestedAt: Date.now(),
+    }
+
+    console.log(`LocalMerge: expanding insight ${insight.id}`)
+    try {
+      const requestStartedAt = Date.now()
+      const res = await this.session.auth.fetch(`${this.backendUrl}/api/insights`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          userId: this.session.userId,
+          frequency: this.settings.frequency,
+          settings: {answerLanguage: this.settings.answerLanguage},
+          interaction,
+          analysis: {
+            id: `expand-${insight.id}-${interaction.requestedAt}`,
+            trigger: "expand",
+            chunkText: insight.text,
+            chunkStartedAt: insight.timestamp,
+            chunkEndedAt: interaction.requestedAt,
+            timezone: userTimezone(),
+            timezoneOffsetMinutes: new Date().getTimezoneOffset(),
+            locale: userLocale(),
+            localTime: userLocalTime(),
+            pendingChunkCount: 1,
+            isFinal: true,
+            isInterim: false,
+            canDefer: false,
+          },
+          history: {
+            transcripts: this.transcripts
+              .filter((t) => t.isFinal)
+              .slice(-10)
+              .map((t) => t.text),
+            conversation: this.transcripts.slice(-10).map((t) => ({
+              id: t.id,
+              text: t.text,
+              isFinal: t.isFinal,
+              language: t.language,
+              timestamp: t.receivedAt,
+            })),
+            insights: this.insights.slice(-8).map((i) => i.text),
+            activeInsight: {text: insight.text, ageMs: Date.now() - insight.timestamp},
+          },
+        }),
+      })
+
+      if (!res.ok) throw new Error(`backend ${res.status}`)
+
+      const body = (await res.json()) as BackendInsightResponse
+      if (this.stopped || requestVersion !== this.expansionRequestVersion) return
+
+      const profiling = body.profiling
+        ? {...body.profiling, clientRoundTripMs: Date.now() - requestStartedAt}
+        : undefined
+
+      if (body.type === "insight" && body.text.trim()) {
+        const current = this.currentDisplayedInsight()
+        const displayAction = current && current.id !== insight.id ? "queue" : "replace"
+        const expanded: MergeInsight = {
+          id: `insight-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          text: body.text.trim(),
+          timestamp: Date.now(),
+          agentType: body.agentType ?? "FollowUp",
+          reasoning: body.reasoning,
+          transcriptId: insight.transcriptId,
+          displayAction,
+          urgency: body.urgency,
+          confidence: body.confidence,
+          sources: body.sources ?? [],
+          searchQueries: body.searchQueries ?? [],
+          profiling,
+          parentInsightId: insight.id,
+        }
+        this.recordDecision({
+          action: displayAction,
+          trigger: "expand",
+          chunkText: insight.text,
+          reasoning: body.reasoning ?? "User requested more detail",
+          insightText: expanded.text,
+          confidence: body.confidence,
+          urgency: body.urgency,
+          sources: body.sources ?? [],
+          searchQueries: body.searchQueries ?? [],
+          profiling,
+        })
+        if (!this.addInsight(expanded, "expand")) this.restoreInsightControls(insight)
+      } else {
+        this.recordDecision({
+          action: body.type === "defer" ? "defer" : "silent",
+          trigger: "expand",
+          chunkText: insight.text,
+          reasoning: body.reasoning ?? "No useful additional detail",
+          confidence: body.confidence,
+          urgency: body.urgency,
+          sources: body.sources ?? [],
+          searchQueries: body.searchQueries ?? [],
+          profiling,
+        })
+        this.restoreInsightControls(insight)
+      }
+    } catch (err) {
+      if (this.stopped || requestVersion !== this.expansionRequestVersion) return
+      const message = err instanceof Error ? err.message : "Insight expansion failed"
+      this.recordDecision({
+        action: "error",
+        trigger: "expand",
+        chunkText: insight.text,
+        reasoning: message,
+      })
+      console.log(`LocalMerge: insight expansion failed: ${message}`)
+      this.restoreInsightControls(insight)
+    } finally {
+      if (requestVersion === this.expansionRequestVersion) this.expandingInsightId = null
+    }
+  }
+
+  private showExpansionPending(insight: MergeInsight): void {
+    this.clearDisplayTimer()
+    this.activeDisplayUntil = Date.now() + DISPLAY_DURATION_MS
+    if (capabilityHasDisplay(this.session.capabilities)) {
+      this.renderDisplayedInsight(insight, "Looking deeper…")
+    }
+    this.scheduleNextQueuedDisplay()
+  }
+
+  private restoreInsightControls(insight: MergeInsight): void {
+    if (this.currentDisplayedInsight()?.id !== insight.id) return
+    this.clearDisplayTimer()
+    this.activeDisplayUntil = Date.now() + DISPLAY_DURATION_MS
+    if (capabilityHasDisplay(this.session.capabilities)) {
+      this.renderDisplayedInsight(insight, "↑ More   ↓ Dismiss")
+    }
+    this.scheduleNextQueuedDisplay()
+  }
+
+  private renderDisplayedInsight(insight: MergeInsight, footer: string): void {
+    const d = this.session.capabilities?.display
+    void this.session.display.render(
+      [
+        {
+          type: "text",
+          id: "insight",
+          box: {x: 0, y: 0, w: d?.width ?? 576, h: d?.height ?? 288},
+          text: `// Merge\n${insight.text}\n\n${footer}`,
+          style: {breakMode: "word"},
+        },
+      ],
+      {durationMs: DISPLAY_DURATION_MS},
+    )
   }
 
   private async speakInsight(insight: MergeInsight): Promise<void> {
@@ -619,9 +837,16 @@ class MergeController {
   }
 
   private activeInsightForPrompt(): {text: string; ageMs: number} | null {
-    if (this.activeDisplayUntil <= Date.now() || this.insights.length === 0) return null
-    const latest = this.insights[this.insights.length - 1]
-    return {text: latest.text, ageMs: Date.now() - latest.timestamp}
+    const active = this.currentDisplayedInsight()
+    return active ? {text: active.text, ageMs: Date.now() - active.timestamp} : null
+  }
+
+  private currentDisplayedInsight(): MergeInsight | null {
+    if (!this.activeDisplayedInsight || this.activeDisplayUntil <= Date.now()) {
+      this.activeDisplayedInsight = null
+      return null
+    }
+    return this.activeDisplayedInsight
   }
 
   private sendSnapshot(): void {

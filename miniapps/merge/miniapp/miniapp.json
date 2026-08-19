@@ -1,7 +1,7 @@
 {
   "$schema": "./node_modules/@mentra/miniapp-cli/schema/miniapp.schema.json",
   "packageName": "com.mentra.merge",
-  "version": "0.1.29",
+  "version": "0.1.30",
   "name": "Merge",
   "description": "Merge proactive AI assistant. Listens to conversations and surfaces concise contextual insights through a backend that keeps AI secrets off-device.",
   "type": "background",
