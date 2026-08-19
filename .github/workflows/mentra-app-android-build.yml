@@ -33,9 +33,6 @@ jobs:
     env:
       EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID }}
       EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY }}
-      # PR APKs are sideloaded onto phones (arm64). Push to main/dev still
-      # compile-checks every ABI so emulator/32-bit regressions don't slip.
-      ORG_GRADLE_PROJECT_reactNativeArchitectures: ${{ github.event_name == 'pull_request' && 'arm64-v8a' || 'armeabi-v7a,arm64-v8a,x86,x86_64' }}
 
     steps:
       - name: Update PR comment - Build started
@@ -84,6 +81,25 @@ jobs:
 
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Select Android ABIs
+        # Full multi-ABI compile is the production gate: PRs into main, plus the
+        # main push after merge / a dispatch on main. Dev PRs (what ci-gate-dev
+        # waits on) and pushes to dev stay arm64-only — those APKs are phone
+        # sideloads, and emulator/32-bit coverage lands when we promote to main.
+        run: |
+          FULL="armeabi-v7a,arm64-v8a,x86,x86_64"
+          ARM64="arm64-v8a"
+          if { [ "${{ github.event_name }}" = "pull_request" ] && [ "${{ github.base_ref }}" = "main" ]; } ||
+             { [ "${{ github.event_name }}" != "pull_request" ] && [ "${{ github.ref_name }}" = "main" ]; }; then
+            ARCHS="$FULL"
+            echo "Full ABI compile-check (PR into main / run on main)."
+          else
+            ARCHS="$ARM64"
+            echo "arm64-only (dev PR or non-main). 32-bit/emulator covered on PRs into main."
+          fi
+          echo "reactNativeArchitectures=$ARCHS"
+          echo "ORG_GRADLE_PROJECT_reactNativeArchitectures=$ARCHS" >> "$GITHUB_ENV"
 
       - name: Setup Java
         uses: actions/setup-java@v3
