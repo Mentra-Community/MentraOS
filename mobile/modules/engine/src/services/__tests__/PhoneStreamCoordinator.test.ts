@@ -203,6 +203,25 @@ describe("PhoneStreamCoordinator", () => {
       await coord.stop("com.a")
     })
 
+    test("WHIP BLE start timeout does not fall back to RTMP", async () => {
+      startExternallyManagedStream.mockRejectedValueOnce(
+        new Error("Request timed out waiting for glasses response."),
+      )
+      const coord = new PhoneStreamCoordinator({
+        cloudflareStartupPollInitialMs: 1,
+        cloudflareStatusPollMs: 5,
+        hlsReadinessInitialDelayMs: 5,
+        hlsReadinessPollMs: 5,
+        keepAliveIntervalMs: 10_000,
+      })
+
+      await expect(coord.startManaged("com.a", {ingest: "whip"})).rejects.toThrow(
+        /timed out waiting for glasses response/,
+      )
+      expect(provisionManagedStream).toHaveBeenCalledTimes(1)
+      expect(startExternallyManagedStream).toHaveBeenCalledTimes(1)
+    })
+
     test("WHIP startup falls back to RTMP when Cloudflare never reports the publisher", async () => {
       getManagedStreamStatus.mockImplementation(async () => ({isConnected: false, viewerCount: 0}))
       const coord = new PhoneStreamCoordinator({

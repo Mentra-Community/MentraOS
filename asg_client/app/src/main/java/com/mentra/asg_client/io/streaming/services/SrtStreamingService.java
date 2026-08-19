@@ -329,6 +329,10 @@ public class SrtStreamingService extends Service {
         public void onSuccess() {
           Log.i(TAG, "SRT connection successful");
           synchronized (mStateLock) {
+            if (mStreamState == StreamState.STREAMING && mIsStreaming) {
+              startMetricsReporting();
+              return;
+            }
             if (mStreamState != StreamState.STARTING) {
               Log.w(TAG, "Ignoring SRT onSuccess in state " + mStreamState
                   + " (stop already requested)");

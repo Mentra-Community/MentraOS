@@ -454,15 +454,21 @@ public class RtmpStreamingService extends Service {
                         // complete after Mentra Call already sent stop — that used
                         // to flip us back to STREAMING and keep BLE "streaming"
                         // status (and metrics) alive with no streamId.
+                        if (mStreamState == StreamState.STREAMING && mIsStreaming) {
+                            startMetricsReporting();
+                            return;
+                        }
                         if (mStreamState != StreamState.STARTING) {
                             Log.w(TAG, "Ignoring RTMP onSuccess in state " + mStreamState
                                     + " (stop already requested)");
                             stopMetricsReporting();
-                            if (mStreamState == StreamState.IDLE || mStreamState == StreamState.STOPPING) {
+                            // IDLE already completed teardown — don't emit a second stop.
+                            if (mStreamState == StreamState.STOPPING) {
                                 mReconnectHandler.post(() -> {
                                     synchronized (mStateLock) {
                                         if (mStreamState == StreamState.STARTING
-                                                || mStreamState == StreamState.STREAMING) {
+                                                || mStreamState == StreamState.STREAMING
+                                                || mStreamState == StreamState.IDLE) {
                                             return;
                                         }
                                     }

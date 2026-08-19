@@ -99,10 +99,11 @@ export function createCloudflareStreamProvider(): StreamProvider {
           // header comment. We don't use the saved VOD after the call, so
           // auto-delete it as soon as Cloudflare allows instead of letting it
           // eat the account's storage quota (which caused ingest to be refused
-          // at `publish` once the account went over its cap). Cloudflare's
-          // minimum for deleteRecordingAfterDays is 30 (valid range 30-1096);
-          // anything lower fails live-input validation.
-          recording: { mode: "automatic", deleteRecordingAfterDays: 30 },
+          // at `publish` once the account went over its cap).
+          // deleteRecordingAfterDays is a top-level live-input field (not
+          // nested under recording); Cloudflare's minimum is 30 (range 30-1096).
+          recording: { mode: "automatic" },
+          deleteRecordingAfterDays: 30,
         }),
       });
       const body = (await res.json()) as LiveInputResult;

@@ -340,7 +340,7 @@ export class PhoneStreamCoordinator {
       const message = err instanceof Error ? err.message : String(err)
       if (
         opts.ingest === "whip" &&
-        /WebRTC ingest never reached|ICE did not connect|timed out waiting/i.test(message)
+        /WebRTC ingest never reached|ICE did not connect/i.test(message)
       ) {
         console.warn("[STREAM] WHIP ingest failed, retrying over RTMP:", message)
         return this.executeStartManaged(packageName, {...opts, ingest: "rtmp"})

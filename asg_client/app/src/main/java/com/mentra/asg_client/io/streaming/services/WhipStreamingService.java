@@ -142,8 +142,10 @@ public class WhipStreamingService extends Service {
   private static final long ICE_CONNECT_TIMEOUT_MS = 8000L;
   private volatile boolean mWhipOfferPosted = false;
   private volatile boolean mWhipStreamingNotified = false;
-  private final Runnable mPostOfferTimeoutRunnable = () -> postOfferIfReady("timeout");
-  private final Runnable mIceConnectTimeoutRunnable = this::failIceConnectTimeout;
+  /** Bumped on each new PeerConnection so queued ICE/HTTP callbacks cannot act on a later negotiation. */
+  private volatile int mNegotiationGeneration = 0;
+  private Runnable mPostOfferTimeoutRunnable = () -> postOfferIfReady("timeout");
+  private Runnable mIceConnectTimeoutRunnable = this::failIceConnectTimeout;
 
   private IHardwareManager mHardwareManager;
 
@@ -536,6 +538,7 @@ public class WhipStreamingService extends Service {
   }
 
   private void createPeerConnectionAndOffer() {
+    final int generation = ++mNegotiationGeneration;
     mWhipOfferPosted = false;
     mWhipStreamingNotified = false;
     if (mMainHandler != null) {
@@ -558,7 +561,7 @@ public class WhipStreamingService extends Service {
         PeerConnection.ContinualGatheringPolicy.GATHER_ONCE;
 
     mPeerConnection = mPeerConnectionFactory.createPeerConnection(
-        rtcConfig, new WhipPeerConnectionObserver());
+        rtcConfig, new WhipPeerConnectionObserver(generation));
 
     if (mPeerConnection == null) {
       throw new IllegalStateException("Failed to create PeerConnection");
@@ -581,16 +584,23 @@ public class WhipStreamingService extends Service {
     mPeerConnection.createOffer(new SdpObserver() {
       @Override
       public void onCreateSuccess(SessionDescription offer) {
+        if (generation != mNegotiationGeneration || mPeerConnection == null) return;
         mPeerConnection.setLocalDescription(new SdpObserver() {
           @Override
           public void onSetSuccess() {
+            if (generation != mNegotiationGeneration) return;
             Log.d(TAG, "Local description set, posting WHIP offer after first srflx or "
                 + ICE_GATHER_POST_TIMEOUT_MS + "ms");
+            mPostOfferTimeoutRunnable = () -> {
+              if (generation != mNegotiationGeneration) return;
+              postOfferIfReady("timeout");
+            };
             mMainHandler.postDelayed(mPostOfferTimeoutRunnable, ICE_GATHER_POST_TIMEOUT_MS);
           }
 
           @Override
           public void onSetFailure(String error) {
+            if (generation != mNegotiationGeneration) return;
             handleStartupFailure("set_local_description_failed", "setLocalDescription failed: " + error);
           }
 
@@ -601,6 +611,7 @@ public class WhipStreamingService extends Service {
 
       @Override
       public void onCreateFailure(String error) {
+        if (generation != mNegotiationGeneration) return;
         handleStartupFailure("create_offer_failed", "createOffer failed: " + error);
       }
 
@@ -746,7 +757,7 @@ public class WhipStreamingService extends Service {
     if (localSdp != null) {
       Log.i(TAG, "Posting WHIP offer after ICE trigger=" + reason
           + " candidates=" + mIceCandidateCount);
-      postOfferToWhip(localSdp);
+      postOfferToWhip(localSdp, mNegotiationGeneration);
     } else {
       Log.e(TAG, "WHIP POST trigger=" + reason + " but local SDP is null");
       synchronized (mStateLock) {
@@ -804,20 +815,30 @@ public class WhipStreamingService extends Service {
   }
 
   private void failIceConnectTimeout() {
+    boolean reconnecting;
     synchronized (mStateLock) {
       if (mWhipStreamingNotified) return;
       if (mStreamState != StreamState.STARTING && mStreamState != StreamState.RECONNECTING) {
         return;
       }
-      mWhipStreamingNotified = true;
+      reconnecting = mIsReconnecting;
+      if (!reconnecting) {
+        mWhipStreamingNotified = true;
+      }
     }
     if (mMainHandler != null) {
       mMainHandler.removeCallbacks(mIceConnectTimeoutRunnable);
     }
+    // Reconnect attempts also pass through STARTING. A mid-call ICE miss must
+    // retry, not run the terminal first-start failure path.
+    if (reconnecting) {
+      attemptReconnect("ICE did not connect");
+      return;
+    }
     handleStartupFailure("ice_timeout", "ICE did not connect; WHIP media path failed");
   }
 
-  private void postOfferToWhip(SessionDescription offer) {
+  private void postOfferToWhip(SessionDescription offer, int generation) {
     logStartupStage("whip_request_started");
     Log.d(TAG, "POSTing SDP offer to WHIP URL: " + mWhipUrl);
     logSdpVideoSection("Offer", offer.description);
@@ -838,6 +859,17 @@ public class WhipStreamingService extends Service {
     mHttpClient.newCall(request).enqueue(new Callback() {
       @Override
       public void onResponse(Call call, Response response) throws IOException {
+        if (generation != mNegotiationGeneration) {
+          String location = response.header("Location");
+          if (location != null) {
+            String staleUrl = location.startsWith("http")
+                ? location
+                : buildAbsoluteUrl(mWhipUrl, location);
+            deleteWhipResource(staleUrl);
+          }
+          response.close();
+          return;
+        }
         if (response.code() != 201) {
           String msg = "WHIP server returned " + response.code();
           handleStartupFailure("http_" + response.code(), msg);
@@ -869,7 +901,8 @@ public class WhipStreamingService extends Service {
         // Don't dereference a released peer connection or revive a torn-down session.
         PeerConnection peerConnection;
         synchronized (mStateLock) {
-          if (mPeerConnection == null || mStreamState == StreamState.STOPPING
+          if (generation != mNegotiationGeneration || mPeerConnection == null
+              || mStreamState == StreamState.STOPPING
               || mStreamState == StreamState.IDLE) {
             Log.w(TAG, "WHIP answer received but stream already stopping/stopped, ignoring");
             if (resourceUrl != null) {
@@ -892,7 +925,8 @@ public class WhipStreamingService extends Service {
           @Override
           public void onSetSuccess() {
             synchronized (mStateLock) {
-              if (mPeerConnection == null || mStreamState == StreamState.STOPPING
+              if (generation != mNegotiationGeneration || mPeerConnection == null
+                  || mStreamState == StreamState.STOPPING
                   || mStreamState == StreamState.IDLE) {
                 Log.w(TAG, "WHIP remote description set but stream already stopping/stopped, ignoring");
                 return;
@@ -902,11 +936,16 @@ public class WhipStreamingService extends Service {
             Log.i(TAG, "WHIP answer applied, waiting for ICE connect (max "
                 + ICE_CONNECT_TIMEOUT_MS + "ms)");
             mMainHandler.removeCallbacks(mIceConnectTimeoutRunnable);
+            mIceConnectTimeoutRunnable = () -> {
+              if (generation != mNegotiationGeneration) return;
+              failIceConnectTimeout();
+            };
             mMainHandler.postDelayed(mIceConnectTimeoutRunnable, ICE_CONNECT_TIMEOUT_MS);
           }
 
           @Override
           public void onSetFailure(String error) {
+            if (generation != mNegotiationGeneration) return;
             handleStartupFailure("set_remote_description_failed", "setRemoteDescription failed: " + error);
           }
 
@@ -917,6 +956,7 @@ public class WhipStreamingService extends Service {
 
       @Override
       public void onFailure(Call call, IOException e) {
+        if (generation != mNegotiationGeneration) return;
         Log.e(TAG, "WHIP request failed", e);
         handleStartupFailure("whip_request_failed", "WHIP request failed: " + e.getMessage());
       }
@@ -947,10 +987,20 @@ public class WhipStreamingService extends Service {
   // -----------------------------------------------------------------------
 
   private class WhipPeerConnectionObserver implements PeerConnection.Observer {
+    private final int generation;
+
+    WhipPeerConnectionObserver(int generation) {
+      this.generation = generation;
+    }
+
+    private boolean isStale() {
+      return generation != mNegotiationGeneration;
+    }
 
     @Override
     public void onIceGatheringChange(PeerConnection.IceGatheringState newState) {
       Log.d(TAG, "ICE gathering state: " + newState);
+      if (isStale()) return;
       if (newState == PeerConnection.IceGatheringState.COMPLETE) {
         logStartupStage("ice_gathering_complete", "candidates=" + mIceCandidateCount);
         postOfferIfReady("complete");
@@ -960,10 +1010,12 @@ public class WhipStreamingService extends Service {
     @Override
     public void onConnectionChange(PeerConnection.PeerConnectionState newState) {
       Log.d(TAG, "PeerConnection state: " + newState);
+      if (isStale()) return;
       if (newState == PeerConnection.PeerConnectionState.FAILED) {
         mMainHandler.post(() -> {
+          if (isStale()) return;
           synchronized (mStateLock) {
-            if (mStreamState == StreamState.STARTING) {
+            if (mStreamState == StreamState.STARTING && !mIsReconnecting) {
               failIceConnectTimeout();
               return;
             }
@@ -971,10 +1023,14 @@ public class WhipStreamingService extends Service {
           attemptReconnect("PeerConnection failed");
         });
       } else if (newState == PeerConnection.PeerConnectionState.CONNECTED) {
-        mMainHandler.post(WhipStreamingService.this::completeWhipStartupIfNeeded);
+        mMainHandler.post(() -> {
+          if (isStale()) return;
+          completeWhipStartupIfNeeded();
+        });
       } else if (newState == PeerConnection.PeerConnectionState.DISCONNECTED) {
         Log.w(TAG, "PeerConnection disconnected — waiting before reconnect");
         mMainHandler.postDelayed(() -> {
+          if (isStale()) return;
           synchronized (mStateLock) {
             if (mStreamState != StreamState.STREAMING) return;
           }
@@ -991,11 +1047,24 @@ public class WhipStreamingService extends Service {
     @Override
     public void onIceConnectionChange(PeerConnection.IceConnectionState iceConnectionState) {
       Log.d(TAG, "ICE connection state: " + iceConnectionState);
+      if (isStale()) return;
       if (iceConnectionState == PeerConnection.IceConnectionState.CONNECTED
           || iceConnectionState == PeerConnection.IceConnectionState.COMPLETED) {
-        mMainHandler.post(WhipStreamingService.this::completeWhipStartupIfNeeded);
+        mMainHandler.post(() -> {
+          if (isStale()) return;
+          completeWhipStartupIfNeeded();
+        });
       } else if (iceConnectionState == PeerConnection.IceConnectionState.FAILED) {
-        mMainHandler.post(WhipStreamingService.this::failIceConnectTimeout);
+        mMainHandler.post(() -> {
+          if (isStale()) return;
+          synchronized (mStateLock) {
+            if (mStreamState == StreamState.STARTING && !mIsReconnecting) {
+              failIceConnectTimeout();
+              return;
+            }
+          }
+          attemptReconnect("ICE failed");
+        });
       }
     }
 
@@ -1004,9 +1073,13 @@ public class WhipStreamingService extends Service {
 
     @Override
     public void onIceCandidate(IceCandidate candidate) {
+      if (isStale()) return;
       mIceCandidateCount++;
       if (candidate.sdp != null && candidate.sdp.contains("typ srflx")) {
-        mMainHandler.post(() -> postOfferIfReady("srflx"));
+        mMainHandler.post(() -> {
+          if (isStale()) return;
+          postOfferIfReady("srflx");
+        });
       }
     }
     @Override public void onAddStream(MediaStream stream) {}
@@ -1022,6 +1095,7 @@ public class WhipStreamingService extends Service {
   // -----------------------------------------------------------------------
 
   private void releaseWebRtc() {
+    mNegotiationGeneration++;
     if (mMainHandler != null) {
       mMainHandler.removeCallbacks(mPostOfferTimeoutRunnable);
       mMainHandler.removeCallbacks(mIceConnectTimeoutRunnable);
