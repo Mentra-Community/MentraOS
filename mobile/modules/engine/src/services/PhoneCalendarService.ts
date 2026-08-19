@@ -14,14 +14,18 @@ import {
 
 export {PhoneCalendarError} from "./PhoneCalendarHelpers"
 
+type CalendarPermissionStatus = Awaited<
+  ReturnType<typeof Calendar.getCalendarPermissionsAsync>
+>["status"]
+
 /**
  * expo-calendar reports anything below EventKit full access as not granted,
  * so distinguish the states the user can actually fix. "Reopen the miniapp"
  * is only true while the permission is undetermined — once iOS has resolved
  * it (denied or write-only/limited), only Settings can change it.
  */
-async function calendarPermissionMessage(status: Calendar.PermissionStatus): Promise<string> {
-  if (status === Calendar.PermissionStatus.UNDETERMINED) {
+async function calendarPermissionMessage(status: CalendarPermissionStatus): Promise<string> {
+  if (status === "undetermined") {
     return "Calendar permission has not been granted yet. Reopen the miniapp and allow calendar access."
   }
   if (Platform.OS === "ios") {
