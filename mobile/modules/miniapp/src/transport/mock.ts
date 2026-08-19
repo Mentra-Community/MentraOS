@@ -246,6 +246,9 @@ function syntheticDataFor(requestId: string, requestType: string, requestPayload
     case MiniappRequestType.SET_WIFI_ADB_STATE:
       return {ok: true}
 
+    case MiniappRequestType.SCAN_QR:
+      return {cancelled: true}
+
     default:
       return null
   }

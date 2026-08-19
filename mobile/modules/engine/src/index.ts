@@ -32,6 +32,8 @@ export type {
   IslandConfigValues,
   IslandAnalytics,
   IslandUiSeams,
+  ScanQrOptions,
+  ScanQrResult,
   SubjectTokenType,
 } from "./runtime/bootstrap"
 
