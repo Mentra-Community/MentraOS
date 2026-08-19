@@ -764,9 +764,10 @@ public class WhipStreamingService extends Service {
     } else {
       Log.e(TAG, "WHIP POST trigger=" + reason + " but local SDP is null");
       synchronized (mStateLock) {
-        if (generation == mNegotiationGeneration) {
-          mWhipOfferPosted = false;
+        if (generation != mNegotiationGeneration) {
+          return;
         }
+        mWhipOfferPosted = false;
       }
       handleStartupFailure("local_sdp_missing", "Local SDP unavailable before WHIP POST");
     }
