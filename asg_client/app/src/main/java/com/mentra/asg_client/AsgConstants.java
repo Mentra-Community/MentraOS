@@ -37,17 +37,6 @@ public class AsgConstants {
     public static final long STREAM_METRICS_INTERVAL_MS = 1_000L;
 
     /**
-     * 1Hz encoder FPS/bitrate/dropped-frame telemetry ({@code [STREAM_QUALITY]} and BLE {@code
-     * stream_status.stats}). Lifecycle {@code stream_status} (started/stopped/error) is unaffected.
-     * Keep false in production; flip locally to debug the Mentra Call FPS ladder.
-     *
-     * <p>Double gate: reporters are not scheduled, and {@code onStreamMetrics} returns immediately
-     * so accidental emission cannot reach BLE. Manual acceptance with every layer false: join
-     * waterfall yes; STREAM_QUALITY / BLE stats / encoder-stats / watch-stats / debug ingest no.
-     */
-    public static final boolean ENABLE_PIPELINE_FPS_TELEMETRY = false;
-
-    /**
      * Local-testing stopgap that disables the 60s keep-alive watchdog for RTMP/SRT/WHIP streams.
      * When true, {@code scheduleStreamTimeout()} early-returns and an orphaned stream (lost
      * phone/cloud keep-alives via BLE disconnect or killed app) never auto-stops, holding the

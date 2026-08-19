@@ -77,10 +77,8 @@ export interface StartStreamOptions {
    *     and automatic recording.
    *   - "whip": sub-second WebRTC playback (use `webrtcUrl`/WHEP), but no
    *     HLS/DASH and no recording.
-   *   - "rtmp": RTMPS ingest over TCP 443 → HLS playback. Use when WHIP/SRT
-   *     UDP is blocked (then play `hlsUrl`, not WHEP).
    */
-  ingest?: "srt" | "whip" | "rtmp"
+  ingest?: "srt" | "whip"
   /** Optional Bearer token for direct WHIP Authorization (custom authenticated endpoints). */
   authToken?: string
 }

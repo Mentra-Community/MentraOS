@@ -329,16 +329,6 @@ public class SrtStreamingService extends Service {
         public void onSuccess() {
           Log.i(TAG, "SRT connection successful");
           synchronized (mStateLock) {
-            if (mStreamState == StreamState.STREAMING && mIsStreaming) {
-              startMetricsReporting();
-              return;
-            }
-            if (mStreamState != StreamState.STARTING) {
-              Log.w(TAG, "Ignoring SRT onSuccess in state " + mStreamState
-                  + " (stop already requested)");
-              stopMetricsReporting();
-              return;
-            }
             mStreamState = StreamState.STREAMING;
             mIsStreaming = true;
             mIsStreamingActive = true;
@@ -825,9 +815,6 @@ public class SrtStreamingService extends Service {
   }
 
   private void startMetricsReporting() {
-    if (!AsgConstants.ENABLE_PIPELINE_FPS_TELEMETRY) {
-      return;
-    }
     if (mMetricsReporter != null) {
       mMetricsReporter.start();
     }

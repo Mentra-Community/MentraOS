@@ -203,41 +203,19 @@ describe("PhoneStreamCoordinator", () => {
       await coord.stop("com.a")
     })
 
-    test("WHIP BLE start timeout does not fall back to RTMP", async () => {
-      startExternallyManagedStream.mockRejectedValueOnce(
-        new Error("Request timed out waiting for glasses response."),
-      )
-      const coord = new PhoneStreamCoordinator({
-        cloudflareStartupPollInitialMs: 1,
-        cloudflareStatusPollMs: 5,
-        hlsReadinessInitialDelayMs: 5,
-        hlsReadinessPollMs: 5,
-        keepAliveIntervalMs: 10_000,
-      })
-
-      await expect(coord.startManaged("com.a", {ingest: "whip"})).rejects.toThrow(
-        /timed out waiting for glasses response/,
-      )
-      expect(provisionManagedStream).toHaveBeenCalledTimes(1)
-      expect(startExternallyManagedStream).toHaveBeenCalledTimes(1)
-    })
-
-    test("WHIP startup falls back to RTMP when Cloudflare never reports the publisher", async () => {
+    test("WHIP startup rejects when Cloudflare never reports the publisher", async () => {
       getManagedStreamStatus.mockImplementation(async () => ({isConnected: false, viewerCount: 0}))
       const coord = new PhoneStreamCoordinator({
         cloudflareStartupPollInitialMs: 1,
         cloudflareStatusPollMs: 5,
-        hlsReadinessInitialDelayMs: 5,
         hlsReadinessPollMs: 5,
         hlsReadinessMaxAttempts: 1,
         keepAliveIntervalMs: 10_000,
       })
 
-      const result = await coord.startManaged("com.a", {ingest: "whip"})
-      expect(result.mode).toBe("hls")
-      const arg = startExternallyManagedStream.mock.calls.at(-1)![0] as {streamUrl: string}
-      expect(arg.streamUrl).toBe("rtmp://ingest.test/abc")
-      await coord.stop("com.a")
+      await expect(coord.startManaged("com.a", {ingest: "whip"})).rejects.toThrow(
+        "WebRTC ingest never reached Cloudflare",
+      )
     })
 
     test("startManaged provisions Cloudflare and resolves when HLS is ready", async () => {
@@ -273,20 +251,6 @@ describe("PhoneStreamCoordinator", () => {
       expect(arg.audio).toEqual({bitrate: 64_000})
       expect("keepAlive" in arg).toBe(false)
       expect("keepAliveIntervalSeconds" in arg).toBe(false)
-    })
-
-    test("RTMP preference publishes to the RTMP ingest URL", async () => {
-      const coord = new PhoneStreamCoordinator({
-        hlsReadinessInitialDelayMs: 5,
-        hlsReadinessPollMs: 5,
-        cloudflareStatusPollMs: 1000,
-        keepAliveIntervalMs: 10_000,
-      })
-      const result = await coord.startManaged("com.a", {ingest: "rtmp"})
-      expect(result.mode).toBe("hls")
-      const arg = startExternallyManagedStream.mock.calls[0]![0] as {streamUrl: string}
-      expect(arg.streamUrl).toBe("rtmp://ingest.test/abc")
-      await coord.stop("com.a")
     })
 
     test("second miniapp joins existing managed stream and gets same URLs", async () => {
@@ -384,7 +348,7 @@ describe("PhoneStreamCoordinator", () => {
       expect(streaming.map((u) => u.pkg).sort()).toEqual(["com.a", "com.b"])
     })
 
-    test("fanout strips live bitrate telemetry when FPS telemetry is off", async () => {
+    test("fanout preserves live bitrate and temperature telemetry", async () => {
       const coord = new PhoneStreamCoordinator({
         hlsReadinessInitialDelayMs: 5,
         hlsReadinessPollMs: 5,
@@ -405,7 +369,12 @@ describe("PhoneStreamCoordinator", () => {
         stats: {bitrate: 912_345, fps: 19.8, duration: 31, temperatureC: 54.6},
       } as never)
 
-      expect(telemetry?.stats).toBeUndefined()
+      expect(telemetry?.stats).toEqual({
+        bitrate: 912_345,
+        fps: 19.8,
+        duration: 31,
+        temperatureC: 54.6,
+      })
       await coord.stop("com.a")
     })
 
