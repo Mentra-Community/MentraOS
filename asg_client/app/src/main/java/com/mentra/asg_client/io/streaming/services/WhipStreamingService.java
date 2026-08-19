@@ -144,7 +144,7 @@ public class WhipStreamingService extends Service {
   private volatile boolean mWhipStreamingNotified = false;
   /** Bumped on each new PeerConnection so queued ICE/HTTP callbacks cannot act on a later negotiation. */
   private volatile int mNegotiationGeneration = 0;
-  private Runnable mPostOfferTimeoutRunnable = () -> postOfferIfReady("timeout");
+  private Runnable mPostOfferTimeoutRunnable = () -> {};
   private Runnable mIceConnectTimeoutRunnable = this::failIceConnectTimeout;
 
   private IHardwareManager mHardwareManager;
@@ -593,7 +593,7 @@ public class WhipStreamingService extends Service {
                 + ICE_GATHER_POST_TIMEOUT_MS + "ms");
             mPostOfferTimeoutRunnable = () -> {
               if (generation != mNegotiationGeneration) return;
-              postOfferIfReady("timeout");
+              postOfferIfReady("timeout", generation);
             };
             mMainHandler.postDelayed(mPostOfferTimeoutRunnable, ICE_GATHER_POST_TIMEOUT_MS);
           }
@@ -734,9 +734,12 @@ public class WhipStreamingService extends Service {
    * POST the local SDP once. Triggered by first srflx, the gather timeout, or
    * GATHERING COMPLETE — whichever wins. Later triggers are no-ops.
    */
-  private void postOfferIfReady(String reason) {
+  private void postOfferIfReady(String reason, int generation) {
     PeerConnection peerConnection;
     synchronized (mStateLock) {
+      if (generation != mNegotiationGeneration) {
+        return;
+      }
       if (mWhipOfferPosted) {
         return;
       }
@@ -757,11 +760,13 @@ public class WhipStreamingService extends Service {
     if (localSdp != null) {
       Log.i(TAG, "Posting WHIP offer after ICE trigger=" + reason
           + " candidates=" + mIceCandidateCount);
-      postOfferToWhip(localSdp, mNegotiationGeneration);
+      postOfferToWhip(localSdp, generation);
     } else {
       Log.e(TAG, "WHIP POST trigger=" + reason + " but local SDP is null");
       synchronized (mStateLock) {
-        mWhipOfferPosted = false;
+        if (generation == mNegotiationGeneration) {
+          mWhipOfferPosted = false;
+        }
       }
       handleStartupFailure("local_sdp_missing", "Local SDP unavailable before WHIP POST");
     }
@@ -850,10 +855,7 @@ public class WhipStreamingService extends Service {
         .url(mWhipUrl)
         .post(body)
         .addHeader("Content-Type", "application/sdp");
-    if (mAuthToken != null && !mAuthToken.isEmpty()) {
-      String token = mAuthToken.startsWith("Bearer ") ? mAuthToken : "Bearer " + mAuthToken;
-      requestBuilder.addHeader("Authorization", token);
-    }
+    addWhipAuth(requestBuilder);
     Request request = requestBuilder.build();
 
     mHttpClient.newCall(request).enqueue(new Callback() {
@@ -935,12 +937,15 @@ public class WhipStreamingService extends Service {
             logStartupStage("whip_answer_applied");
             Log.i(TAG, "WHIP answer applied, waiting for ICE connect (max "
                 + ICE_CONNECT_TIMEOUT_MS + "ms)");
-            mMainHandler.removeCallbacks(mIceConnectTimeoutRunnable);
-            mIceConnectTimeoutRunnable = () -> {
+            mMainHandler.post(() -> {
               if (generation != mNegotiationGeneration) return;
-              failIceConnectTimeout();
-            };
-            mMainHandler.postDelayed(mIceConnectTimeoutRunnable, ICE_CONNECT_TIMEOUT_MS);
+              mMainHandler.removeCallbacks(mIceConnectTimeoutRunnable);
+              mIceConnectTimeoutRunnable = () -> {
+                if (generation != mNegotiationGeneration) return;
+                failIceConnectTimeout();
+              };
+              mMainHandler.postDelayed(mIceConnectTimeoutRunnable, ICE_CONNECT_TIMEOUT_MS);
+            });
           }
 
           @Override
@@ -963,11 +968,18 @@ public class WhipStreamingService extends Service {
     });
   }
 
+  private void addWhipAuth(Request.Builder builder) {
+    if (mAuthToken == null || mAuthToken.isEmpty()) return;
+    String token = mAuthToken.startsWith("Bearer ") ? mAuthToken : "Bearer " + mAuthToken;
+    builder.addHeader("Authorization", token);
+  }
+
   private void deleteWhipResource(String resourceUrl) {
-    Request request = new Request.Builder()
+    Request.Builder requestBuilder = new Request.Builder()
         .url(resourceUrl)
-        .delete()
-        .build();
+        .delete();
+    addWhipAuth(requestBuilder);
+    Request request = requestBuilder.build();
 
     mHttpClient.newCall(request).enqueue(new Callback() {
       @Override
@@ -1003,7 +1015,7 @@ public class WhipStreamingService extends Service {
       if (isStale()) return;
       if (newState == PeerConnection.IceGatheringState.COMPLETE) {
         logStartupStage("ice_gathering_complete", "candidates=" + mIceCandidateCount);
-        postOfferIfReady("complete");
+        postOfferIfReady("complete", generation);
       }
     }
 
@@ -1078,7 +1090,7 @@ public class WhipStreamingService extends Service {
       if (candidate.sdp != null && candidate.sdp.contains("typ srflx")) {
         mMainHandler.post(() -> {
           if (isStale()) return;
-          postOfferIfReady("srflx");
+          postOfferIfReady("srflx", generation);
         });
       }
     }
