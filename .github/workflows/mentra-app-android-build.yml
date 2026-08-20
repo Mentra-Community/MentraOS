@@ -33,6 +33,10 @@ jobs:
     env:
       EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID }}
       EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY }}
+      # Compile-check APKs are phone sideloads. Full ABI belongs on the
+      # staging production build (staging-builds.yml + release-android.mjs),
+      # not on this workflow (PRs/pushes to dev and main).
+      ORG_GRADLE_PROJECT_reactNativeArchitectures: arm64-v8a
 
     steps:
       - name: Update PR comment - Build started
@@ -81,24 +85,6 @@ jobs:
 
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Select Android ABIs
-        # Full multi-ABI: PRs into main, and pushes (or dispatch) on main.
-        # Dev PRs / pushes stay arm64-only so ci-gate-dev is not waiting on
-        # emulator/32-bit NDK.
-        run: |
-          FULL="armeabi-v7a,arm64-v8a,x86,x86_64"
-          ARM64="arm64-v8a"
-          if { [ "${{ github.event_name }}" = "pull_request" ] && [ "${{ github.base_ref }}" = "main" ]; } ||
-             { [ "${{ github.event_name }}" != "pull_request" ] && [ "${{ github.ref_name }}" = "main" ]; }; then
-            ARCHS="$FULL"
-            echo "Full ABI compile-check (PR into main / push to main)."
-          else
-            ARCHS="$ARM64"
-            echo "arm64-only. 32-bit/emulator covered on PRs into main and pushes to main."
-          fi
-          echo "reactNativeArchitectures=$ARCHS"
-          echo "ORG_GRADLE_PROJECT_reactNativeArchitectures=$ARCHS" >> "$GITHUB_ENV"
 
       - name: Setup Java
         uses: actions/setup-java@v3
@@ -300,12 +286,11 @@ jobs:
       - name: Build Android Release APK
         id: gradle-build
         working-directory: ./mobile/android
-        # Skip lint/unit tests: this job is a compile + signed-APK check, not the
-        # quality-checks workflow. --max-workers matches the 8 vCPU runner.
-        run: >
-          ./gradlew assembleRelease
-          --build-cache --parallel --max-workers=8
-          -x lint -x lintVitalAnalyzeRelease -x lintVitalReportRelease -x test
+        # --max-workers matches the 8 vCPU runner. Do not -x lintVitalAnalyze*
+        # / lintVitalReport*: assembleRelease still runs lintVitalRelease, which
+        # then fails looking for those tasks' output files. Android lint stays
+        # on this job; Mobile App Quality Checks is TypeScript/Jest only.
+        run: ./gradlew assembleRelease --build-cache --parallel --max-workers=8 -x test
         continue-on-error: true
         env:
           SENTRY_DISABLE_AUTO_UPLOAD: "true"
@@ -329,8 +314,7 @@ jobs:
           # Stop Gradle daemons first to release file locks
           ./gradlew --stop || true
           rm -rf ~/.gradle/caches ~/.gradle/wrapper || true
-          ./gradlew assembleRelease --build-cache --parallel --max-workers=8 \
-            -x lint -x lintVitalAnalyzeRelease -x lintVitalReportRelease -x test
+          ./gradlew assembleRelease --build-cache --parallel --max-workers=8 -x test
         env:
           SENTRY_DISABLE_AUTO_UPLOAD: "true"
           MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}

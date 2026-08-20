@@ -352,6 +352,9 @@ jobs:
           # unauthenticated → "Could not find navigationcore".
           MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
           RNMAPBOX_MAPS_DOWNLOAD_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
+          # Production APK: all ABIs. release-android.mjs keeps this if set
+          # and otherwise defaults to arm64 for local/dev releases.
+          ORG_GRADLE_PROJECT_reactNativeArchitectures: armeabi-v7a,arm64-v8a,x86,x86_64
         # release-android.mjs handles: prebuild → gradle assemble/bundle →
         # GH release upload (v{X.Y}/_Beta_N.apk) → Play internal track upload
         # (if google-play-key.json is at ~/.mentra/credentials/).
