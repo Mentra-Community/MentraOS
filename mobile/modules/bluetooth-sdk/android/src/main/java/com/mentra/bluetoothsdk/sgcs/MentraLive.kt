@@ -172,6 +172,28 @@ class MentraLive : SGCManager() {
         private const val BONDING_RETRY_DELAY_MS =
                 1500L // Delay before retry to let user see dialog again
 
+        /**
+         * GATT status reported when the link-layer security challenge fails, i.e. the stored link
+         * key is rejected by the peer. Seen when a previous bond attempt was torn down before it
+         * reached BOND_BONDED, leaving an unusable half-written bond record.
+         */
+        private const val GATT_AUTH_CHALLENGE_FAILED = 147
+
+        /**
+         * How long to wait for bonding to reach BOND_BONDED before treating it as stuck. A device
+         * left in BOND_BONDING never fires a further state change and createBond() is a no-op while
+         * it is in that state, so without this the deferred service discovery would never run.
+         */
+        private const val BONDING_COMPLETION_TIMEOUT_MS = 20000L
+
+        /**
+         * How many connect-then-drop cycles without ever reaching readiness are tolerated before
+         * the bond is judged unusable. A half-written bond reports BOND_BONDED and lets the link
+         * come up, so it never surfaces as a connection error — repeated useless sessions are the
+         * only signal available from the public API.
+         */
+        private const val UNUSABLE_BOND_FAILURE_THRESHOLD = 3
+
         private const val CORE_TOKEN_MAX_RETRIES = 3
         private const val CORE_TOKEN_RETRY_DELAY_MS = 250L
 
@@ -284,6 +306,22 @@ class MentraLive : SGCManager() {
     private var isBtClassicConnected = false
     private var bondingReceiver: BroadcastReceiver? = null
     private var bondingRetryCount = 0
+
+    /**
+     * Set when service discovery has been deferred until bonding completes. Running GATT operations
+     * while pairing is in flight races the CTKD exchange and corrupts the bond, so discovery is
+     * started from the BOND_BONDED handler instead.
+     */
+    private var pendingServiceDiscovery = false
+
+    /**
+     * Guards the one-shot bond removal performed when a connection fails with
+     * [GATT_AUTH_CHALLENGE_FAILED], so a rejected link key cannot loop.
+     */
+    private var hasClearedUnusableBond = false
+
+    /** Consecutive BLE sessions that connected but dropped before the glasses ever became ready. */
+    private var unusableBondFailureCount = 0
 
     // A2DP profile connection for already-bonded devices
     private var a2dpProfile: BluetoothA2dp? = null
@@ -1600,12 +1638,27 @@ class MentraLive : SGCManager() {
                                 connectA2dpProfile(connectedDevice!!)
                                 // Note: audioConnected will be set to true once A2DP profile
                                 // connects
-                            } else {
-                                createBond(connectedDevice!!)
-                            }
 
-                            // Discover services
-                            gatt.discoverServices()
+                                // Already bonded: the link is encrypted, discovery is safe now.
+                                pendingServiceDiscovery = false
+                                gatt.discoverServices()
+                            } else {
+                                // Defer service discovery until bonding completes.
+                                //
+                                // Calling discoverServices() here races the CTKD exchange: GATT
+                                // traffic on a not-yet-encrypted link causes the peer to drop the
+                                // connection mid-pairing, so the bond never advances past
+                                // BOND_BONDING. What is left on disk is a half-written record
+                                // (le_linkkey_known:T, le_authenticated:F, ble_enc_key_size:0,
+                                // bond_type:BOND_TYPE_UNKNOWN) which reports as BOND_BONDED but
+                                // fails every later connection with status 147.
+                                //
+                                // Discovery is started from the BOND_BONDED branch of the bonding
+                                // receiver instead.
+                                pendingServiceDiscovery = true
+                                createBond(connectedDevice!!)
+                                scheduleBondingWatchdog()
+                            }
 
                             // Reset reconnect attempts on successful connection
                             val previousAttempts = reconnectAttempts
@@ -1625,6 +1678,40 @@ class MentraLive : SGCManager() {
                             Bridge.log(
                                     "LIVE: 🔌 ⚠️ Disconnected from GATT server - Will attempt reconnection"
                             )
+
+                            // Detect a bond that reports BOND_BONDED but was never actually
+                            // authenticated (half-written record: le_authenticated:F,
+                            // ble_enc_key_size:0). Such a bond lets the GATT link come up and then
+                            // drop before the session is ever usable, so it arrives here as an
+                            // ordinary disconnect and never as a connection error — the
+                            // GATT_AUTH_CHALLENGE_FAILED path below cannot see it, and the
+                            // already-bonded branch keeps skipping re-bonding forever.
+                            //
+                            // Repeated connect->drop cycles that never reach readiness are the only
+                            // signal the public API exposes, so use that to clear the bond once and
+                            // let the device pair from scratch.
+                            if (!glassesReadyReceived) {
+                                unusableBondFailureCount++
+                                val staleBondDevice = connectedDevice
+                                if (unusableBondFailureCount >= UNUSABLE_BOND_FAILURE_THRESHOLD &&
+                                                !hasClearedUnusableBond &&
+                                                staleBondDevice != null &&
+                                                staleBondDevice.bondState ==
+                                                        BluetoothDevice.BOND_BONDED
+                                ) {
+                                    hasClearedUnusableBond = true
+                                    unusableBondFailureCount = 0
+                                    Bridge.log(
+                                            "LIVE: CTKD: " +
+                                                    UNUSABLE_BOND_FAILURE_THRESHOLD +
+                                                    " connect/drop cycles without readiness - bond reports BONDED but is unusable, removing it so the next attempt re-pairs"
+                                    )
+                                    removeBond(staleBondDevice)
+                                }
+                            } else {
+                                unusableBondFailureCount = 0
+                            }
+
                             isConnected = false
                             isConnecting = false
 
@@ -1693,6 +1780,24 @@ class MentraLive : SGCManager() {
                                         status +
                                         ") - Will retry reconnection"
                         )
+
+                        // A security-challenge failure means the stored link key is rejected by the
+                        // glasses, which no number of retries can fix. Drop the unusable bond once
+                        // so the next attempt pairs from scratch instead of looping until the
+                        // reconnect budget is exhausted.
+                        if (status == GATT_AUTH_CHALLENGE_FAILED &&
+                                        !hasClearedUnusableBond &&
+                                        connectedDevice != null
+                        ) {
+                            hasClearedUnusableBond = true
+                            Bridge.log(
+                                    "LIVE: CTKD: status=" +
+                                            GATT_AUTH_CHALLENGE_FAILED +
+                                            " - link key rejected, removing unusable bond so the next attempt re-pairs"
+                            )
+                            removeBond(connectedDevice!!)
+                        }
+
                         isConnected = false
                         isConnecting = false
                         glassesReady = false
@@ -1777,11 +1882,31 @@ class MentraLive : SGCManager() {
                             lc3ReadCharacteristic = service.getCharacteristic(LC3_READ_UUID)
                             lc3WriteCharacteristic = service.getCharacteristic(LC3_WRITE_UUID)
 
-                            // Check if we have required characteristics
+                            // Only the core TX/RX pair is genuinely required to run a session.
+                            //
+                            // The LC3 audio characteristics were previously treated as mandatory
+                            // ("always supported"), but that does not hold for glasses running
+                            // firmware older than the LC3 audio support. On those devices the
+                            // service and the core TX/RX characteristics are present and perfectly
+                            // usable, yet the connection was torn down with gatt.disconnect() and
+                            // retried forever — with no user-visible error, so it presents as an
+                            // infinite "connecting" spinner rather than "your glasses need a
+                            // firmware update".
+                            //
+                            // Degrade gracefully instead: run the session without LC3 audio. The
+                            // LC3 fields are nullable and the write path already null-checks them.
                             val hasRequiredCharacteristics =
-                                    (rxCharacteristic != null && txCharacteristic != null) &&
-                                            (lc3ReadCharacteristic != null &&
-                                                    lc3WriteCharacteristic != null)
+                                    rxCharacteristic != null && txCharacteristic != null
+
+                            if (hasRequiredCharacteristics &&
+                                            (lc3ReadCharacteristic == null ||
+                                                    lc3WriteCharacteristic == null)
+                            ) {
+                                Bridge.log(
+                                        "LIVE: ⚠️ LC3 audio characteristics absent - continuing without LC3 audio " +
+                                                "(glasses firmware likely predates LC3 support; core TX/RX are present)"
+                                )
+                            }
 
                             if (hasRequiredCharacteristics) {
                                 // BLE connection established, but we still need to wait for glasses
@@ -5935,6 +6060,18 @@ class MentraLive : SGCManager() {
                                                 audioConnected = true
                                                 bondingRetryCount =
                                                         0 // Reset retry counter on success
+                                                hasClearedUnusableBond = false
+
+                                                // Bonding is finished and the link is encrypted, so
+                                                // the discovery deferred at connect time can run
+                                                // now.
+                                                if (pendingServiceDiscovery) {
+                                                    pendingServiceDiscovery = false
+                                                    Bridge.log(
+                                                            "LIVE: CTKD: Bond complete - starting deferred service discovery"
+                                                    )
+                                                    bluetoothGatt?.discoverServices()
+                                                }
                                                 // Both BLE and BT Classic are now connected via
                                                 // CTKD
 
@@ -6078,6 +6215,42 @@ class MentraLive : SGCManager() {
             Bridge.log("LIVE: CTKD: Error creating bond: " + e.message)
             return false
         }
+    }
+
+    /**
+     * Fail-safe for bonding that never resolves. If the bond has not reached BOND_BONDED by the
+     * timeout, the deferred service discovery would otherwise never run, so drop the partial bond
+     * and let the normal reconnect path pair again from a clean state.
+     */
+    private fun scheduleBondingWatchdog() {
+        handler.postDelayed(
+                Runnable {
+                    if (isKilled || !pendingServiceDiscovery) {
+                        return@Runnable
+                    }
+                    val device = connectedDevice
+                    if (device != null && device.bondState == BluetoothDevice.BOND_BONDED) {
+                        // Bond completed but the receiver did not fire (e.g. it was registered
+                        // late); run the deferred discovery rather than tearing anything down.
+                        pendingServiceDiscovery = false
+                        Bridge.log(
+                                "LIVE: CTKD: Bond already complete at watchdog - starting deferred service discovery"
+                        )
+                        bluetoothGatt?.discoverServices()
+                        return@Runnable
+                    }
+                    pendingServiceDiscovery = false
+                    Bridge.log(
+                            "LIVE: CTKD: ⏱️ Bonding did not complete within " +
+                                    BONDING_COMPLETION_TIMEOUT_MS +
+                                    "ms - clearing partial bond and reconnecting"
+                    )
+                    if (device != null) {
+                        removeBond(device)
+                    }
+                },
+                BONDING_COMPLETION_TIMEOUT_MS
+        )
     }
 
     /** Remove bond with device to disconnect BT Classic */
