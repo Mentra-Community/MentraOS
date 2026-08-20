@@ -189,6 +189,16 @@ public class AsgConstants {
     /** Debug BES intent extra carrying a stable identifier for durable state. */
     public static final String DEBUG_BES_OTA_ARTIFACT_ID_EXTRA = "artifact_id";
 
+    /** ADB/local command that reboots BES before handing MTK to a factory USB flasher. */
+    public static final String COMMAND_REBOOT_BES_FOR_MTK_FLASH =
+            "reboot_bes_for_mtk_flash";
+
+    /** Correlation field used to prove that the requested BES reboot reached the UART worker. */
+    public static final String MTK_FLASH_REQUEST_ID_FIELD = "request_id";
+
+    /** BES command that resets the MCU without rebooting the running MTK Android system. */
+    public static final String BES_REBOOT_COMMAND = "cs_rebt";
+
     /**
      * Exclusive decompressed destination limit in the deployed ota_copy bootloader:
      * NEW_IMAGE_FLASH_OFFSET (0x200000) - OTA_CODE_OFFSET (0x20000). Images at or above this size
@@ -213,6 +223,13 @@ public class AsgConstants {
 
     /** Delay before probing the alternate UART baud after ASG starts at the rendezvous rate. */
     public static final long UART_BOOT_RECOVERY_INITIAL_DELAY_MS = 8000;
+
+    /**
+     * Grace after bounded UART recovery is exhausted before a BES OTA timeout becomes terminal.
+     * BES can finish rebooting after the transport scan, and an exact target-version reply from
+     * that later Linux boot is authoritative.
+     */
+    public static final long BES_OTA_RECOVERY_FAILURE_GRACE_MS = 30000;
 
     /** Number of spaced system-version probes used to tolerate short BES UART restart windows. */
     public static final int UART_RECOVERY_PROBES_PER_BURST = 5;

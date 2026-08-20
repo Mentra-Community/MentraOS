@@ -136,6 +136,11 @@ export enum MiniappRequestType {
   COPY_CLIPBOARD = "miniapp_copy_clipboard",
   /** Download a file (triggers OS share sheet for save location). */
   DOWNLOAD = "miniapp_download",
+  /**
+   * Open a phone-camera QR scanner overlay. Host must not unmount the miniapp
+   * (clearing foreground fires UI_CLOSE and can hang up live sessions).
+   */
+  SCAN_QR = "miniapp_scan_qr",
 
   /**
    * Phone-local persistent binary blob storage, scoped to (userId, packageName).

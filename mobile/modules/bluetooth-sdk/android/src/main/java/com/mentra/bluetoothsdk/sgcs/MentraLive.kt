@@ -27,6 +27,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.ActivityCompat
 import com.mentra.bluetoothsdk.BluetoothSdkDefaults
@@ -83,6 +84,7 @@ import org.json.JSONObject
  * display-related methods are stubbed out and will log a message but not actually display anything.
  */
 class MentraLive : SGCManager() {
+    private val besOtaHeartbeatGuard = BesOtaHeartbeatGuard()
 
     companion object {
         private const val TAG = "Live"
@@ -882,6 +884,17 @@ class MentraLive : SGCManager() {
         cachedOtaCurrentStep = 0
         cachedOtaStepSequence = null
         lastBesOtaProgress = -1
+        // The bounded UART-ownership lease is transport state, not session-cache state. Keep it
+        // through a BLE reconnect so heartbeats cannot resume while BES still owns the UART.
+    }
+
+    private fun updateBesOtaHeartbeatGuard(stepType: String, phase: String, status: String) {
+        besOtaHeartbeatGuard.observeOtaStatus(
+            stepType,
+            phase,
+            status,
+            SystemClock.elapsedRealtime(),
+        )
     }
 
     protected fun setFontSizes() {
@@ -3428,6 +3441,7 @@ class MentraLive : SGCManager() {
                 if (osStepSequence != null && osStepSequence.length() > 0) {
                     cachedOtaStepSequence = osStepSequence
                 }
+                updateBesOtaHeartbeatGuard(osStepType, osPhase, osStatus)
 
                 Bridge.log(
                         "LIVE: 📱 OTA status - step " +
@@ -3478,6 +3492,7 @@ class MentraLive : SGCManager() {
                     } else {
                         unified = "in_progress"
                     }
+                    updateBesOtaHeartbeatGuard(currentUpdate, legacyPhase, unified)
                     Bridge.log(
                             "LIVE: 📱 Legacy ota_progress → ota_status: " +
                                     legacyStage +
@@ -4578,6 +4593,14 @@ class MentraLive : SGCManager() {
                         val besOtaProgressVal = mapping.progress
                         val besOtaErrorMessage = mapping.errorMessage
 
+                        if ("FINISHED" == besOtaStatus || "FAILED" == besOtaStatus) {
+                            besOtaHeartbeatGuard.clear()
+                        } else {
+                            // Refresh before progress de-duplication: raw progress proves the BES
+                            // transfer is active even when the rounded UI value is unchanged.
+                            besOtaHeartbeatGuard.refresh(SystemClock.elapsedRealtime())
+                        }
+
                         // Only send if nonterminal display progress changed to a new 5% increment.
                         if ("PROGRESS" == besOtaStatus && besOtaProgressVal == lastBesOtaProgress) {
                             return
@@ -5067,6 +5090,10 @@ class MentraLive : SGCManager() {
     private fun sendHeartbeat() {
         if (!glassesReady || connectionState != ConnTypes.CONNECTED) {
             Bridge.log("LIVE: Skipping heartbeat - glasses not ready or not connected")
+            return
+        }
+        if (besOtaHeartbeatGuard.shouldSuppress(SystemClock.elapsedRealtime())) {
+            Bridge.log("LIVE: Skipping heartbeat while BES OTA owns the UART")
             return
         }
 

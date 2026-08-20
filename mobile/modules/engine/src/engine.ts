@@ -8,7 +8,7 @@
  * live on the `@mentra/engine/internal` entry (and the debug singletons on
  * `@mentra/engine/devtools`); they shrink as screens move onto `engine.*`.
  */
-import {configure, start as bootstrapStart, stop as bootstrapStop} from "./runtime/bootstrap"
+import {configure, start as bootstrapStart, stop as bootstrapStop, updateUiSeams} from "./runtime/bootstrap"
 import {cloudClientService} from "./services/CloudClientService"
 import {hydrateDeviceStore, demoteOrphanedDefaultWearable} from "./services/DeviceStoreHydration"
 import {startGlassesSettingsSync, stopGlassesSettingsSync} from "./services/GlassesSettingsSync"
@@ -46,6 +46,8 @@ import {logBuffer} from "./utils/devLogging"
 export const engine = {
   /** Front door — hand engine auth + config, then start/stop the runtime. */
   configure,
+  /** Merge host-UI seams on a running runtime (scan overlay, wifi setup, …). */
+  updateUiSeams,
   /** Start the runtime: mark started + construct/connect the cloud client + begin
    * syncing device settings to the glasses. */
   async start() {

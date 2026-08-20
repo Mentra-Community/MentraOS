@@ -247,10 +247,16 @@ public final class BesUartTransportCoordinator {
     /** Route bytes only when they belong to the descriptor currently owned by this coordinator. */
     public InboundRoute inboundRoute(SerialSession session) {
         synchronized (monitor) {
-            if (!isCurrentSerialSessionLocked(session)
-                    || state == State.CLOSED
-                    || state == State.QUARANTINED) {
+            if (!isCurrentSerialSessionLocked(session) || state == State.CLOSED) {
                 return InboundRoute.REJECTED;
+            }
+            if (state == State.QUARANTINED) {
+                SafetyPolicy policy = safetyState.currentPolicy();
+                if (policy != SafetyPolicy.RECOVERY_PROBE_ONLY
+                        && policy != SafetyPolicy.VERSION_PROBE_ONLY) {
+                    return InboundRoute.REJECTED;
+                }
+                beginSafetyRecoveryLocked(policy, "current_session_activity");
             }
             return otaRawRouting ? InboundRoute.OTA : InboundRoute.NORMAL;
         }
@@ -344,17 +350,7 @@ public final class BesUartTransportCoordinator {
             }
             if (policy == SafetyPolicy.RECOVERY_PROBE_ONLY
                     || policy == SafetyPolicy.VERSION_PROBE_ONLY) {
-                state = State.SAFETY_RECOVERING;
-                otaRawRouting = true;
-                safetyRawProbeAttempts = 0;
-                safetyAlternateBaudAttempted = false;
-                phaseGeneration++;
-                if (safetyRecoveryListenerReady) {
-                    Log.w(TAG, "Starting raw-first BES OTA recovery probe: " + policy);
-                    armSafetyRecoveryProbesLocked();
-                } else {
-                    Log.w(TAG, "Awaiting raw parser listener before BES OTA recovery: " + policy);
-                }
+                beginSafetyRecoveryLocked(policy, "serial_ready");
                 return;
             }
             long phase = ++phaseGeneration;
@@ -420,6 +416,27 @@ public final class BesUartTransportCoordinator {
                         },
                         1,
                         TimeUnit.SECONDS);
+    }
+
+    private void beginSafetyRecoveryLocked(SafetyPolicy policy, String reason) {
+        cancelAllTimersLocked();
+        cancelDeferredNormalWritesLocked("BES OTA recovery");
+        cancelOutboundDrainLocked();
+        otaRawRouting = true;
+        host.setFastReceive(false);
+        operation = Operation.NONE;
+        operationLease = null;
+        host.resetParser();
+        state = State.SAFETY_RECOVERING;
+        safetyRawProbeAttempts = 0;
+        safetyAlternateBaudAttempted = false;
+        phaseGeneration++;
+        if (safetyRecoveryListenerReady) {
+            Log.w(TAG, "Starting raw-first BES OTA recovery probe: " + policy + " reason=" + reason);
+            armSafetyRecoveryProbesLocked();
+        } else {
+            Log.w(TAG, "Awaiting raw parser listener before BES OTA recovery: " + policy);
+        }
     }
 
     private void finishSafetyRawSilence(long phase) {
@@ -898,6 +915,7 @@ public final class BesUartTransportCoordinator {
                 return false;
             }
             otaRawRouting = true;
+            host.invalidateLinkProof();
             host.setFastReceive(true);
             Log.i(TAG, "BES OTA authorization promoted to raw transfer routing");
             return true;
@@ -915,9 +933,13 @@ public final class BesUartTransportCoordinator {
             host.setFastReceive(false);
             operation = Operation.NONE;
             operationLease = null;
-            if (safetyState.currentPolicy() == SafetyPolicy.NORMAL) {
+            SafetyPolicy policy = safetyState.currentPolicy();
+            if (policy == SafetyPolicy.NORMAL) {
                 flushDeferredNormalWritesLocked();
                 resumeAfterOutboundDrainLocked();
+            } else if (policy == SafetyPolicy.RECOVERY_PROBE_ONLY
+                    || policy == SafetyPolicy.VERSION_PROBE_ONLY) {
+                beginSafetyRecoveryLocked(policy, "ota_ended");
             } else {
                 cancelDeferredNormalWritesLocked("durable BES OTA quarantine");
                 state = State.QUARANTINED;

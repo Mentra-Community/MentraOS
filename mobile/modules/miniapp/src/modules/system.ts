@@ -1,5 +1,5 @@
 /**
- * @fileoverview SystemModule — OS-level utilities (share, open URL, clipboard, download).
+ * @fileoverview SystemModule — OS-level utilities (share, open URL, clipboard, download, QR scan).
  *
  * These bridge to native phone capabilities via LocalMiniappRuntime.
  */
@@ -37,6 +37,15 @@ export interface DownloadResult {
   cancelled?: boolean
 }
 
+export interface ScanQrOptions {
+  /** Header title on the phone scanner overlay. */
+  title?: string
+  /** Hint shown over the camera viewfinder. */
+  hint?: string
+}
+
+export type ScanQrResult = {data: string; cancelled?: false} | {cancelled: true; data?: undefined}
+
 export class SystemModule {
   constructor(private readonly session: MiniappSession) {}
 
@@ -72,5 +81,21 @@ export class SystemModule {
       ...options,
     })
     return result ?? { success: false }
+  }
+
+  /**
+   * Open the phone camera QR scanner as a host overlay. Does not unmount the
+   * miniapp (so live sessions survive the scan). Resolves with the raw QR
+   * payload, or `{cancelled: true}` if the user dismisses the scanner.
+   */
+  async scanQr(options: ScanQrOptions = {}): Promise<ScanQrResult> {
+    const result = await this.session.sendRequest<ScanQrResult>(
+      {
+        type: MiniappRequestType.SCAN_QR,
+        ...options,
+      },
+      {timeoutMs: 0},
+    )
+    return result ?? { cancelled: true }
   }
 }

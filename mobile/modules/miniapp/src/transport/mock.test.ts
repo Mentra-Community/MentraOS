@@ -100,6 +100,20 @@ describe("MockTransport", () => {
     expect(payload.data).toEqual({events: [], truncated: false})
   })
 
+  test("SCAN_QR returns cancelled so mock hosts never open a camera", async () => {
+    const t = new MockTransport({silent: true})
+    const received: string[] = []
+    t.onMessage((raw) => received.push(raw))
+    await t.open()
+
+    t.send(envelope({type: MiniappRequestType.SCAN_QR, title: "Scan"}, "rid-qr"))
+    await new Promise((r) => queueMicrotask(() => r(null)))
+
+    const payload = parseEnvelope(received[0])!.payload as {ok: boolean; data: {cancelled: boolean}}
+    expect(payload.ok).toBe(true)
+    expect(payload.data).toEqual({cancelled: true})
+  })
+
   test("CAMERA_FOV returns a synthetic ready result", async () => {
     const t = new MockTransport({silent: true})
     const received: string[] = []
