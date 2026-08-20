@@ -3515,6 +3515,54 @@ class MentraLive : SGCManager() {
                     } catch (e: JSONException) {
                         Log.e(TAG, "Error parsing networks_neo", e)
                     }
+                } else if (json.has("networks")) {
+                    // Legacy scan format, sent by glasses firmware that predates `networks_neo`:
+                    // a plain array of SSID strings rather than objects carrying security info.
+                    //
+                    // Without this branch the reply is parsed as zero networks and an empty list is
+                    // dispatched, so the scan appears to time out ("timed out waiting for glasses
+                    // response") even though the glasses answered correctly and the SSIDs are
+                    // sitting in the received payload.
+                    //
+                    // The consumer defaults requiresPassword to true and signalStrength to -100
+                    // when absent, so an SSID-only entry maps correctly.
+                    try {
+                        val legacyNetworksArray = json.getJSONArray("networks")
+
+                        for (i in 0 until legacyNetworksArray.length()) {
+                            // Tolerate either bare strings or objects, since firmware revisions
+                            // differ in what they put in this array.
+                            val entry = legacyNetworksArray.opt(i)
+                            val networkMap = HashMap<String, Any>()
+
+                            if (entry is JSONObject) {
+                                val keys = entry.keys()
+                                while (keys.hasNext()) {
+                                    val key = keys.next()
+                                    networkMap[key] = entry.get(key)
+                                }
+                                if (!networkMap.containsKey("ssid")) {
+                                    continue
+                                }
+                            } else {
+                                val ssid = entry?.toString().orEmpty()
+                                if (ssid.isEmpty()) {
+                                    continue
+                                }
+                                networkMap["ssid"] = ssid
+                            }
+
+                            networks.add(networkMap)
+                        }
+
+                        Bridge.log(
+                                "Received legacy WiFi scan results: " +
+                                        networks.size +
+                                        " networks (SSID only; glasses firmware predates networks_neo)"
+                        )
+                    } catch (e: JSONException) {
+                        Log.e(TAG, "Error parsing legacy networks array", e)
+                    }
                 }
 
                 val scanComplete =
