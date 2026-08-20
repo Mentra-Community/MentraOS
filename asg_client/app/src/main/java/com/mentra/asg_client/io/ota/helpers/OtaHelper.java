@@ -2023,8 +2023,8 @@ public class OtaHelper {
      * MTK requires sequential updates - must find patch starting from current version.
      * @param patches Array of patch objects with start_firmware, end_firmware, url
      * @param currentVersion Current MTK firmware version as reported by
-     *     {@code ro.custom.ota.version}, e.g. "MentraLive_20260626"; both sides are
-     *     normalized before comparison, so a bare "20260626" would also match
+     *     {@code ro.custom.ota.version}, e.g. "MentraLive_20260820.1"; both sides are
+     *     normalized before comparison, so a bare "20260820.1" would also match
      * @return Matching patch object, or null if no match or version unknown
      */
     private JSONObject findMatchingMtkPatch(JSONArray patches, String currentVersion) {
@@ -2053,9 +2053,9 @@ public class OtaHelper {
     }
 
     /**
-     * Reduce an MTK version string to its bare date so manifest entries and the device
+     * Reduce an MTK version string to its version suffix so manifest entries and the device
      * property match regardless of any "MentraLive_"-style prefix. Both normally carry the
-     * prefix; this is defensive so a bare-date value on either side still matches.
+     * prefix; this is defensive so a bare suffix on either side still matches.
      */
     private String normalizeMtkFirmwareVersion(String version) {
         if (version == null) {

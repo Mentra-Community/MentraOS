@@ -41,11 +41,17 @@
       "end_firmware": "MentraLive_20260709",
       "url": "https://github.com/Mentra-Community/MentraOS/releases/download/asg-client/mtk_ota_update_20260626_20260709.zip",
       "sha256": "be75eed47e4eb16644747e7413d132447bcc36e27ac676249d104fa7ed8eba7b"
+    },
+    {
+      "start_firmware": "MentraLive_20260709",
+      "end_firmware": "MentraLive_20260820.2",
+      "url": "https://mtkfirmware.mentraglass.com/mtk_ota_update_20260709_20260820.2.zip",
+      "sha256": "d3b9c7c4b4205703568ed73f9ab3deabcc6a815f57d352fdac66b7755632cc9b"
     }
   ],
   "bes_firmware": {
-    "version": "26.8.8.0",
-    "url": "https://firmwarecdn.mentraglass.com/bes_firmware_26.8.8.0.bin",
-    "sha256": "aaf2da4d6868c375564ddfdff71fd919b26f5d8da8f11b12898e4cc3d94527b9"
+    "version": "26.8.19.4",
+    "url": "https://firmwarecdn.mentraglass.com/bes_firmware_26.8.19.4.bin",
+    "sha256": "3a878f3825e3ddfb9a1c7112852ff86aa07baac7d9860e2ee23057e80d8856a9"
   }
 }
