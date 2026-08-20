@@ -22,7 +22,7 @@ Same logic and variables:
 | Signed URL endpoint | auto: `http://<this-Mac-LAN-IP>:8788/signed-url` at build time |
 | Signing server port | `8788` |
 
-Flow: local signing server (holds `ELEVENLABS_API_KEY`) → background fetches signed URL → WebSocket → `session.mic.onAudioChunk` as `{ user_audio_chunk }` → agent PCM played on glasses via `session.speaker.createStream` (resampled when needed).
+Flow: local signing server (holds `ELEVENLABS_API_KEY`) → background fetches signed URL → WebSocket → `session.mic.onAudioChunk` as `{ user_audio_chunk }` → agent PCM played on glasses via `session.speaker.createStream` (resampled when needed). The same mic PCM feed (post-LC3 decode, same as the Recorder miniapp) is captured to a single phone blob (`elevenlabs-conversation.wav`, overwritten on each Start) so you can **Play recording** after Stop.
 
 ### Setup
 

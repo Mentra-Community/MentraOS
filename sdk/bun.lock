@@ -263,7 +263,7 @@
     },
     "../mobile/modules/bluetooth-sdk": {
       "name": "@mentra/bluetooth-sdk",
-      "version": "0.1.21-dev.1",
+      "version": "0.1.21-dev.5",
       "devDependencies": {
         "@types/node": "^25.9.3",
         "expo-module-scripts": "^55.0.2",
@@ -332,6 +332,7 @@
         "expo-calendar": "*",
         "expo-clipboard": "*",
         "expo-constants": "*",
+        "expo-device": "*",
         "expo-file-system": "*",
         "expo-location": "*",
         "expo-modules-core": "*",
@@ -364,6 +365,7 @@
       "name": "@mentra/miniapp",
       "version": "0.3.0-dev.1",
       "dependencies": {
+        "@mentra/cloud-protocol": "workspace:*",
         "@mentra/types": "1.0.0-beta.2",
         "eventemitter3": "^5.0.1",
       },
@@ -1852,6 +1854,8 @@
 
     "expo-constants": ["expo-constants@57.0.2", "", { "dependencies": { "@expo/env": "~2.4.0" }, "peerDependencies": { "expo": "*", "react-native": "*" } }, "sha512-Bq0lIOB+olAQrYCS/fZi0cu1i8V0lo/YNr9fqMELerOfYYFkg8zTVrVaRjdFdMYBmz3dtym26UEBxV5dyUYZOg=="],
 
+    "expo-device": ["expo-device@57.0.1", "", { "dependencies": { "ua-parser-js": "^0.7.33" }, "peerDependencies": { "expo": "*" } }, "sha512-jyEMDUticH+dhcL3GHa2aiifOvGXJsmb3oVT2R2q4i8bN7Bddy61+NkpMmuS2VAZrvoLQwf0TJJ/1vi1ukvutA=="],
+
     "expo-file-system": ["expo-file-system@55.0.23", "", { "peerDependencies": { "expo": "*", "react-native": "*" } }, "sha512-XNV/NaPc7Tvd2JIsWkPW8s2vfJUI/Oe4UMX9TmOGpc6cn5BckDw/nn2Qre9lq4btT4FWHJw4SAOHmATShLC0og=="],
 
     "expo-font": ["expo-font@55.0.8", "", { "dependencies": { "fontfaceobserver": "^2.1.0" }, "peerDependencies": { "expo": "*", "react": "*", "react-native": "*" } }, "sha512-WyP75pnKqhLNktYwDn3xKAUNt5rLihRDv8XWGhhz6VEhVqypixpT86NA3uGtiDTlM3gGjhrYCY7o7ypXgCUOZg=="],
@@ -2879,6 +2883,8 @@
     "typesafe-ts": ["typesafe-ts@1.7.1", "", { "peerDependencies": { "@typescript-eslint/utils": "^8.39.0" } }, "sha512-D5XfO/F/3NXk5hlFtQ8LFAcBYXX82JQjfeikHOPSMGBff8/mXmdHzYnw15v2BWjsY7xhaUNizlTudmJRha0JjQ=="],
 
     "typescript": ["typescript@5.9.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw=="],
+
+    "ua-parser-js": ["ua-parser-js@0.7.41", "", { "bin": { "ua-parser-js": "script/cli.js" } }, "sha512-O3oYyCMPYgNNHuO7Jjk3uacJWZF8loBgwrfd/5LE/HyZ3lUIOdniQ7DNXJcIgZbwioZxk0fLfI4EVnetdiX5jg=="],
 
     "ulid": ["ulid@3.0.2", "", { "bin": { "ulid": "dist/cli.js" } }, "sha512-yu26mwteFYzBAot7KVMqFGCVpsF6g8wXfJzQUHvu1no3+rRRSFcSV2nKeYvNPLD2J4b08jYBDhHUjeH0ygIl9w=="],
 

@@ -143,6 +143,21 @@ jobs:
               return;
             }
 
+            // Late CI completions on a PR already in human handoff only burn
+            // runners. Skip the full Plan job unless agent-resume is present.
+            // Mirrors scripts/pr-agent/src/handoff-gate.ts.
+            if (context.eventName === 'workflow_run') {
+              const labelNames = (pr.labels ?? []).map((l) =>
+                typeof l === 'string' ? l : l.name,
+              );
+              const hasHandoff = labelNames.includes('ready-for-human-review');
+              const hasResume = labelNames.includes('agent-resume');
+              if (hasHandoff && !hasResume) {
+                core.setOutput('pr_number', '');
+                return;
+              }
+            }
+
             core.setOutput('pr_number', String(pr.number));
             core.setOutput('head_sha', workflowRunSha ?? pr.head.sha);
             core.setOutput('head_ref', pr.head.ref);
@@ -316,7 +331,13 @@ jobs:
       - review-standards
       - review-depth
       - review-bugbot
-    if: always() && needs.plan.outputs.should_skip != 'true' && needs.plan.outputs.recheck_only != 'true'
+    # Require plan.result == success so a cancelled Plan (empty outputs) cannot
+    # revive Aggregate — empty should_skip != 'true' used to pass after cancel.
+    if: >
+      always() &&
+      needs.plan.result == 'success' &&
+      needs.plan.outputs.should_skip != 'true' &&
+      needs.plan.outputs.recheck_only != 'true'
     runs-on: ubuntu-latest
     outputs:
       should_fix: ${{ steps.agg.outputs.should_fix }}
@@ -394,7 +415,9 @@ jobs:
     name: Wait for CI
     needs: [resolve-context, plan, aggregate, fix]
     if: |
-      always() && needs.plan.outputs.should_skip != 'true' &&
+      always() &&
+      needs.plan.result == 'success' &&
+      needs.plan.outputs.should_skip != 'true' &&
       (needs.fix.result == 'success' || needs.fix.result == 'skipped') &&
       needs.aggregate.outputs.should_handoff != 'true'
     runs-on: ubuntu-latest
@@ -421,7 +444,9 @@ jobs:
     name: Recheck handoff after CI
     needs: [resolve-context, plan, aggregate, fix, wait-ci]
     if: |
-      always() && needs.plan.outputs.should_skip != 'true' &&
+      always() &&
+      needs.plan.result == 'success' &&
+      needs.plan.outputs.should_skip != 'true' &&
       (needs.plan.outputs.recheck_only == 'true' ||
         (needs.aggregate.result == 'success' &&
           needs.aggregate.outputs.should_handoff != 'true' &&
@@ -452,7 +477,9 @@ jobs:
     name: Finalize handoff
     needs: [resolve-context, plan, aggregate, recheck-handoff]
     if: |
-      always() && (
+      always() &&
+      needs.plan.result == 'success' &&
+      (
         needs.plan.outputs.should_handoff == 'true' ||
         (needs.aggregate.result == 'success' && needs.aggregate.outputs.should_handoff == 'true') ||
         (needs.recheck-handoff.result == 'success' && needs.recheck-handoff.outputs.should_handoff == 'true')

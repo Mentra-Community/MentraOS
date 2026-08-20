@@ -77,8 +77,12 @@ export interface StartStreamOptions {
    *     and automatic recording.
    *   - "whip": sub-second WebRTC playback (use `webrtcUrl`/WHEP), but no
    *     HLS/DASH and no recording.
+   *   - "rtmp": RTMPS ingest over TCP 443 → HLS playback. Use when WHIP/SRT
+   *     UDP is blocked (then play `hlsUrl`, not WHEP).
    */
-  ingest?: "srt" | "whip"
+  ingest?: "srt" | "whip" | "rtmp"
+  /** Optional Bearer token for direct WHIP Authorization (custom authenticated endpoints). */
+  authToken?: string
 }
 
 export interface StreamResult {
@@ -141,6 +145,7 @@ export class StreamModule {
         video: options.video,
         audio: options.audio,
         sound: options.sound ?? true,
+        ...(options.authToken ? {authToken: options.authToken} : {}),
       })
     }
     return this.session.sendRequest<StreamResult>({

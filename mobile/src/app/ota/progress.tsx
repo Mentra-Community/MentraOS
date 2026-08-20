@@ -1,5 +1,5 @@
-import {engine} from "@mentra/engine"
-import {useCallback, useEffect} from "react"
+import {engine, SETTINGS, useSetting} from "@mentra/engine"
+import {useCallback, useEffect, useRef} from "react"
 import {View, ActivityIndicator} from "react-native"
 
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
@@ -8,9 +8,16 @@ import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useConnectionOverlayConfig} from "@/contexts/ConnectionOverlayContext"
 import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
-import {getOtaErrorMessage, shouldShowChangeWifiForOtaDownloadFailure} from "@/utils/otaErrorMapping"
+import {
+  BES_INSTALL_RESTART_MESSAGE,
+  getOtaErrorMessage,
+  shouldRequireGlassesRebootForBesFailure,
+  shouldShowChangeWifiForOtaDownloadFailure,
+} from "@/utils/otaErrorMapping"
 import {useNavigationStore} from "@/stores/navigation"
-import {SETTINGS, useSetting} from "@mentra/engine"
+import {isOtaAutoChainActive, stopOtaAutoChain} from "@/services/otaAutoChain"
+
+const AUTO_CHAIN_COMPLETE_DELAY_MS = 750
 
 /**
  * Pure renderer over the island OTA install state machine
@@ -35,11 +42,11 @@ export default function OtaProgressScreen() {
     versionChangeConverged,
     versionChangePhase,
   } = install
+  const autoChainAdvancedRef = useRef(false)
 
   focusEffectPreventBack()
 
-  const isFirmwareCompleting =
-    (!connected && displayState === "restarting") || versionChangePhase === "restarting"
+  const isFirmwareCompleting = (!connected && displayState === "restarting") || versionChangePhase === "restarting"
 
   const {setConfig, clearConfig} = useConnectionOverlayConfig()
   useEffect(() => {
@@ -65,7 +72,26 @@ export default function OtaProgressScreen() {
     }
   }, [])
 
+  // A verified completion is the safe boundary between manifest generations.
+  // Wait through any final reboot, keep success visible briefly, then re-enter
+  // the checker; it either starts the next pass or presents the final state.
+  useEffect(() => {
+    if (displayState !== "complete" || !connected || !isOtaAutoChainActive() || autoChainAdvancedRef.current) return
+
+    const timeout = setTimeout(() => {
+      if (!isOtaAutoChainActive()) return
+      autoChainAdvancedRef.current = true
+      engine.ota.installSession.finish()
+      replace("/ota/check-for-updates")
+    }, AUTO_CHAIN_COMPLETE_DELAY_MS)
+
+    return () => clearTimeout(timeout)
+  }, [connected, displayState, replace])
+
   const handleContinue = () => {
+    // This is the explicit BES recovery escape hatch shown before reboot
+    // verification completes. Returning early must not preserve automation.
+    stopOtaAutoChain()
     engine.ota.installSession.finish()
     replace("/ota/check-for-updates")
   }
@@ -80,13 +106,20 @@ export default function OtaProgressScreen() {
   }
 
   const handleChangeWifi = useCallback(() => {
+    stopOtaAutoChain()
     push("/wifi/scan")
   }, [push])
 
   const handleSkipSuper = useCallback(() => {
+    stopOtaAutoChain()
     engine.ota.installSession.discard()
     replace("/ota/check-for-updates")
   }, [replace])
+
+  const handleFailureDone = () => {
+    stopOtaAutoChain()
+    handleDone()
+  }
 
   const renderContent = () => {
     // Downgrade detour: the recovery worker owns the transaction while ASG is being
@@ -105,7 +138,11 @@ export default function OtaProgressScreen() {
           <View className="h-4" />
           <ActivityIndicator size="large" color={theme.colors.foreground} />
           <View className="h-4" />
-          <Text tx="ota:versionChangeKeepNearby" className="text-sm text-center" style={{color: theme.colors.textDim}} />
+          <Text
+            tx="ota:versionChangeKeepNearby"
+            className="text-sm text-center"
+            style={{color: theme.colors.textDim}}
+          />
           <View className="h-2" />
           <Text tx="ota:downgradeDuration" className="text-sm text-center" style={{color: theme.colors.textDim}} />
         </View>
@@ -256,7 +293,10 @@ export default function OtaProgressScreen() {
     }
 
     if (displayState === "failed") {
-      const displayedError = errorMsg || getOtaErrorMessage(otaStatus?.error)
+      const requiresGlassesReboot = shouldRequireGlassesRebootForBesFailure(otaStatus, otaProgress, errorMsg)
+      const displayedError = requiresGlassesReboot
+        ? BES_INSTALL_RESTART_MESSAGE
+        : errorMsg || getOtaErrorMessage(otaStatus?.error)
       const showChangeWifi = shouldShowChangeWifiForOtaDownloadFailure(otaStatus, otaProgress, errorMsg)
       return (
         <>
@@ -268,7 +308,11 @@ export default function OtaProgressScreen() {
             <Text text={displayedError} className="text-sm text-center text-secondary-foreground" />
           </View>
           <View className="gap-3">
-            <Button preset="primary" text="Retry" flexContainer onPress={handleRetry} />
+            {requiresGlassesReboot ? (
+              <Button preset="primary" text="Done" flexContainer onPress={handleFailureDone} />
+            ) : (
+              <Button preset="primary" text="Retry" flexContainer onPress={handleRetry} />
+            )}
             {showChangeWifi ? (
               <Button preset="secondary" text="Change WiFi" flexContainer onPress={handleChangeWifi} />
             ) : null}

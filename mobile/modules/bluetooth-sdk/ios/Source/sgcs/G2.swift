@@ -11,6 +11,14 @@ import CoreBluetooth
 import Foundation
 import UIKit
 
+/// Keep a low-rate, non-audio EvenHub sensor stream active so iOS continues receiving BLE
+/// notifications while the Mentra App is backgrounded. The samples stay internal unless IMU was
+/// explicitly enabled through Mentra's developer-facing setting.
+private let g2ImuKeepaliveEnabled = true
+private let g2ImuKeepaliveReportPace: Int32 = 1000
+private let g2ImuConfirmationDelay: TimeInterval = 2
+private let g2ImuMaxControlAttempts = 3
+
 // MARK: - Data Little-Endian Helpers (for BMP construction)
 
 extension Data {
@@ -1524,6 +1532,8 @@ class G2: NSObject, SGCManager {
     private var foregroundObserver: NSObjectProtocol?
     private var startupPageCreated: Bool = false  // createStartUpPageContainer can only be called once
     private var pageCreated: Bool = false
+    private var pageGeneration: UInt64 = 0
+    private var lastImuReportTimestamp: Int64?
     // Live hardware truth: is the firmware mic actually streaming. DISTINCT from the
     // glasses/micEnabled DeviceStore flag, which is *intent* (does the user want the mic on).
     // Cleared on every page teardown (the firmware kills the mic with the page) WITHOUT touching
@@ -2959,11 +2969,17 @@ class G2: NSObject, SGCManager {
         }
         signalDisplayDirty()
 
-        try? await Task.sleep(nanoseconds: 300_000_000)  // 300ms to settle
+        try? await Task.sleep(nanoseconds: 300_000_000) // 300ms to settle
+        syncImuReportingWithIntent()
+        confirmImuReporting(
+            forPageGeneration: pageGeneration,
+            commandSentAt: Int64(Date().timeIntervalSince1970 * 1000),
+            attemptsRemaining: g2ImuMaxControlAttempts - 1
+        )
         restartMicIfAlreadyEnabled()
     }
 
-    /// Single coalesced recovery: rebuild the page + re-arm the mic from intent, but never
+    /// Single coalesced recovery: rebuild the page + re-arm sensor streams from intent, but never
     /// stack rebuilds. The firmware spams systemExit/dashboard-close ~1×/sec; without this
     /// guard each one triggered a rebuild that was torn down again → rebuild→exit→rebuild
     /// storm. At most one rebuild in flight, and at most one per RECOVERY_DEBOUNCE_MS.
@@ -3481,6 +3497,8 @@ class G2: NSObject, SGCManager {
                 appId: activeMenuAppId
             )
         }
+        pageGeneration &+= 1
+        lastImuReportTimestamp = nil
         sendEvenHubCommand(msg)
         pageCreated = true
     }
@@ -3489,6 +3507,62 @@ class G2: NSObject, SGCManager {
         let currentEnabled = DeviceStore.shared.get("glasses", "micEnabled") as? Bool ?? false
         if currentEnabled {
             restartMic()
+        }
+    }
+
+    /// Keep the firmware IMU stream alive at its slowest supported pace even when no miniapp
+    /// requested motion data. Incoming keepalive samples are discarded in `handleTouchEvent`.
+    private func syncImuReportingWithIntent(
+        _ intentEnabled: Bool? = nil,
+        requestedReportPace: Int32 = EvenHubProto.imuPaceP100
+    ) {
+        guard pageCreated else { return }
+
+        let shouldForwardSamples =
+            intentEnabled
+                ?? (DeviceStore.shared.get("bluetooth", "imu_enabled") as? Bool ?? false)
+        let shouldStream = shouldForwardSamples || g2ImuKeepaliveEnabled
+        let reportPace =
+            shouldForwardSamples ? requestedReportPace : g2ImuKeepaliveReportPace
+
+        Bridge.log(
+            "G2: syncing IMU stream — hardware=\(shouldStream), forward=\(shouldForwardSamples), pace=\(reportPace)"
+        )
+        let msg = EvenHubProto.imuControlMessage(
+            enable: shouldStream,
+            reportFrq: reportPace,
+            magicRandom: sendManager.nextMagicRandom()
+        )
+        sendEvenHubCommand(msg)
+    }
+
+    /// EvenHub does not ACK IMU control commands, so use the data stream itself as confirmation.
+    /// A page-generation guard prevents a delayed retry from targeting a replacement page.
+    private func confirmImuReporting(
+        forPageGeneration generation: UInt64,
+        commandSentAt: Int64,
+        attemptsRemaining: Int
+    ) {
+        guard attemptsRemaining > 0 else { return }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + g2ImuConfirmationDelay) { [weak self] in
+            guard let self,
+                  self.pageCreated,
+                  self.pageGeneration == generation,
+                  g2ImuKeepaliveEnabled
+                  || (DeviceStore.shared.get("bluetooth", "imu_enabled") as? Bool ?? false),
+                  !(self.lastImuReportTimestamp.map { $0 >= commandSentAt } ?? false)
+            else { return }
+
+            Bridge.log(
+                "G2: no IMU report received for page generation \(generation); retrying control (\(attemptsRemaining) remaining)"
+            )
+            self.syncImuReportingWithIntent()
+            self.confirmImuReporting(
+                forPageGeneration: generation,
+                commandSentAt: Int64(Date().timeIntervalSince1970 * 1000),
+                attemptsRemaining: attemptsRemaining - 1
+            )
         }
     }
 
@@ -3829,21 +3903,7 @@ class G2: NSObject, SGCManager {
             await rebuildState()
         }
 
-        let send = { [weak self] in
-            guard let self = self else { return }
-            let msg = EvenHubProto.imuControlMessage(
-                enable: enabled, reportFrq: reportFrq,
-                magicRandom: self.sendManager.nextMagicRandom()
-            )
-            self.sendEvenHubCommand(msg)
-        }
-
-        // If we just asked for a page, give it a moment to be created first.
-        if enabled, !pageCreated {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: send)
-        } else {
-            send()
-        }
+        syncImuReportingWithIntent(enabled, requestedReportPace: reportFrq)
     }
 
     // MARK: - SGCManager: Device Control
@@ -4367,16 +4427,9 @@ class G2: NSObject, SGCManager {
             return
         }
 
-
         if cmdValue == EvenHubResponseCmd.osNotifyEventToApp.rawValue {
-            // Touch/gesture event from glasses
+            // Device event from glasses (touch/gesture or sensor data)
             guard let devEventData = fields[13] as? Data else { return }
-            let timestamp = Int64(Date().timeIntervalSince1970 * 1000)
-            if lastClickTimestamp != nil && timestamp - lastClickTimestamp! < 100 {
-                // Bridge.log("G2: Double click ignored (too soon)")
-                return
-            }
-            lastClickTimestamp = timestamp
             handleTouchEvent(devEventData)
         } else if cmdValue == 17 {
             // Miniapp selection from glasses dashboard menu (cmdId=17)
@@ -4526,6 +4579,35 @@ class G2: NSObject, SGCManager {
 
         let timestamp = Int64(Date().timeIntervalSince1970 * 1000)
 
+        // Classify IMU reports before applying the click debounce. Keepalive samples arrive
+        // continuously and must not update `lastClickTimestamp`, or a real gesture delivered
+        // within 100 ms of a sample can be dropped.
+        var parsedSysFields: [Int: Any]?
+        if let sysData = fields[3] as? Data {
+            var sysReader = ProtobufReader(sysData)
+            let sysFields = sysReader.parseFields()
+            if (sysFields[1] as? Int32) == OsEventType.imuDataReport.rawValue {
+                lastImuReportTimestamp = timestamp
+                let shouldForwardSamples =
+                    DeviceStore.shared.get("bluetooth", "imu_enabled") as? Bool ?? false
+                if shouldForwardSamples,
+                   let imuData = sysFields[3] as? Data,
+                   let imu = parseImuReportData(imuData)
+                {
+                    Bridge.log("G2: IMU data report: \(imu.x), \(imu.y), \(imu.z)")
+                    Bridge.sendAccelEvent(x: imu.x, y: imu.y, z: imu.z, timestamp: timestamp)
+                }
+                return
+            }
+            parsedSysFields = sysFields
+        }
+
+        if lastClickTimestamp != nil && timestamp - lastClickTimestamp! < 100 {
+            // Bridge.log("G2: Double click ignored (too soon)")
+            return
+        }
+        lastClickTimestamp = timestamp
+
         // if we are receiving touch events we are fully booted:
         setFullyConnected()
 
@@ -4534,22 +4616,7 @@ class G2: NSObject, SGCManager {
         //     "G2: handleTouchEvent: \(devEventData.map { String(format: "%02X", $0) }.joined())")
 
         // SysEvent (field 3) - system-level gestures
-        if let sysData = fields[3] as? Data {
-            var sysReader = ProtobufReader(sysData)
-            let sysFields = sysReader.parseFields()
-
-            // IMU data report: eventType == IMU_DATA_REPORT (8), imuData in field 3
-            // (IMU_Report_Data { x, y, z } as 32-bit floats). Handle and return before
-            // the gesture-mapping path.
-            if (sysFields[1] as? Int32) == OsEventType.imuDataReport.rawValue,
-                let imuData = sysFields[3] as? Data,
-                let imu = parseImuReportData(imuData)
-            {
-                Bridge.log("G2: IMU data report: \(imu.x), \(imu.y), \(imu.z)")
-                Bridge.sendAccelEvent(x: imu.x, y: imu.y, z: imu.z, timestamp: timestamp)
-                return
-            }
-
+        if let sysFields = parsedSysFields {
             var eventType: OsEventType? = nil
             var eventSource: Int32? = nil
             if let normalType = sysFields[1] as? Int32 {

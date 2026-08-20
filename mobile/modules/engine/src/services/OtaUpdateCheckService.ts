@@ -259,7 +259,7 @@ export function checkBesUpdate(besFirmware: BesFirmware | undefined, currentVers
   return compareVersions(besFirmware.version, currentVersion) > 0
 }
 
-function compareVersions(version1: string, version2: string): number {
+export function compareVersions(version1: string, version2: string): number {
   if (version1.includes(".") && version2.includes(".")) {
     const parts1 = version1.split(".")
     const parts2 = version2.split(".")
@@ -401,6 +401,18 @@ export async function checkCurrentGlassesForUpdate(
     return emptyCheckResult("disconnected")
   }
 
+  const embeddedManifestUrl = process.env.EXPO_PUBLIC_ASG_OTA_VERSION_URL?.trim()
+  const superMode = useSettingsStore.getState().getSetting(SETTINGS.super_mode.key)
+  const overrideUrl = useSettingsStore.getState().getSetting(SETTINGS.ota_version_url.key)
+  const overrideActive = superMode && typeof overrideUrl === "string" && overrideUrl.trim() !== ""
+  if (!embeddedManifestUrl && !overrideActive) {
+    console.log("OTA: check skipped - mobile app has no embedded OTA manifest pin")
+    return emptyCheckResult("dev_build")
+  }
+  if (!embeddedManifestUrl) {
+    console.log("OTA: no embedded manifest pin, but super-mode manifest override is active - checking anyway")
+  }
+
   if (refreshVersionInfo) {
     void BluetoothSdk.requestVersionInfo().catch((error) => {
       console.warn("OTA: Failed to request version_info from glasses:", error)
@@ -418,22 +430,6 @@ export async function checkCurrentGlassesForUpdate(
     // cannot parse means nothing is verifiable, so skip rather than ghost an
     // "up to date" result from a comparison that never really ran.
     return emptyCheckResult("missing_build")
-  }
-
-  // Development builds (debug buildType) report a "-dev" versionName suffix and are exempt
-  // from OTA: a sideloaded dev build must not be prompted to roll back to the app's pinned
-  // release on every check. A super-mode manifest override re-enables checks so OTA flows can
-  // still be exercised against dev glasses deliberately.
-  const glassesAppVersion = useGlassesStore.getState().appVersion
-  if (glassesAppVersion?.endsWith("-dev")) {
-    const superMode = useSettingsStore.getState().getSetting(SETTINGS.super_mode.key)
-    const overrideUrl = useSettingsStore.getState().getSetting(SETTINGS.ota_version_url.key)
-    const overrideActive = superMode && typeof overrideUrl === "string" && overrideUrl.trim() !== ""
-    if (!overrideActive) {
-      console.log(`OTA: check skipped - glasses run a development build (${glassesAppVersion})`)
-      return emptyCheckResult("dev_build")
-    }
-    console.log("OTA: dev build detected but super-mode manifest override active - checking anyway")
   }
 
   if (!glassesConnectedNow()) {
@@ -516,6 +512,7 @@ export async function checkCurrentGlassesForUpdate(
         versionName: result.latestVersionInfo?.versionName || "",
         updates: filteredUpdates,
         totalSize: 0,
+        ...(filteredUpdates.includes("bes") && result.besVersion ? {besVersion: result.besVersion} : {}),
         isDowngrade: isApkDowngrade,
       }
     : null

@@ -29,6 +29,13 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
 
   useEffect(() => {
     let subscription: {unsubscribe: () => void} | undefined
+    // onAuthStateChange() is async, so this effect can be cleaned up while the
+    // subscribe call is still in flight. The subscription would then be created
+    // *after* cleanup ran and never torn down. That used to be self-correcting,
+    // because the provider held one slot and the next subscriber overwrote the
+    // orphan; now that every listener is retained, the orphan would survive and
+    // another would accumulate on each remount, updating an unmounted provider.
+    let cancelled = false
 
     // 1. Check for an active session on mount
     const getInitialSession = async () => {
@@ -51,10 +58,13 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
 
     // 2. Setup auth state change listener
     const setupAuthListener = async () => {
-      const res = await mentraAuth.onAuthStateChange((_event, session: any) => {
-        // console.log("AuthContext: Auth state changed:", event)
-        // console.log("AuthContext: Session:", session)
-        // console.log("AuthContext: User:", session?.user)
+      const res = await mentraAuth.onAuthStateChange((event, session: any) => {
+        // Whether the UI's listener actually receives auth events is the whole
+        // of OS-1828: the provider kept a single callback slot, the engine
+        // registered second and silently replaced this one, and sign-in went
+        // nowhere. There was no log either way, so the failure looked like
+        // "SSO is flaky". Never log the session itself — tokens live on it.
+        console.log(`AuthContext: auth state ${event}, session ${session ? "present" : "absent"}`)
         setSession(session)
         setUser(session?.user ?? null)
         setLoading(false)
@@ -71,10 +81,23 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
       })
       console.log("AuthContext: setupAuthListener()", res)
       if (res.is_ok()) {
-        let changeData = res.value
-        if (changeData.data?.subscription) {
-          subscription = changeData.data.subscription
+        // The provider returns {unsubscribe}. This used to look for
+        // {data:{subscription}} — a Supabase shape that no provider has emitted
+        // since the Cloud V2 cutover — so `subscription` stayed undefined and
+        // the cleanup below was a silent no-op, leaking a listener on every
+        // remount. Accept the current shape, keeping the old one for safety.
+        const changeData = res.value as {
+          unsubscribe?: () => void
+          data?: {subscription?: {unsubscribe: () => void}}
         }
+        const resolved =
+          changeData.data?.subscription ??
+          (typeof changeData.unsubscribe === "function" ? {unsubscribe: changeData.unsubscribe} : undefined)
+
+        // Cleanup already ran while we were awaiting, so nothing will unsubscribe
+        // this later. Drop it here instead of leaving it registered forever.
+        if (cancelled) resolved?.unsubscribe()
+        else subscription = resolved
       }
     }
 
@@ -83,6 +106,7 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
 
     // Cleanup the listener
     return () => {
+      cancelled = true
       subscription?.unsubscribe()
     }
   }, [])

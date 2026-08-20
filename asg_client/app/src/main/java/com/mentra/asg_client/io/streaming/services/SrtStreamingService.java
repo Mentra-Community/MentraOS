@@ -329,6 +329,16 @@ public class SrtStreamingService extends Service {
         public void onSuccess() {
           Log.i(TAG, "SRT connection successful");
           synchronized (mStateLock) {
+            if (mStreamState == StreamState.STREAMING && mIsStreaming) {
+              startMetricsReporting();
+              return;
+            }
+            if (mStreamState != StreamState.STARTING) {
+              Log.w(TAG, "Ignoring SRT onSuccess in state " + mStreamState
+                  + " (stop already requested)");
+              stopMetricsReporting();
+              return;
+            }
             mStreamState = StreamState.STREAMING;
             mIsStreaming = true;
             mIsStreamingActive = true;
@@ -768,20 +778,39 @@ public class SrtStreamingService extends Service {
     return new PeriodicStreamMetricsReporter(
         mReconnectHandler,
         AsgConstants.STREAM_METRICS_INTERVAL_MS,
+        "srt",
         () -> {
           synchronized (mStateLock) {
             return mStreamState == StreamState.STREAMING && mIsStreaming && !mReconnecting;
           }
         },
-        () ->
-            new PeriodicStreamMetricsReporter.MetricsSample(
-                mStreamConfig.getVideoBitrate(),
-                mStreamConfig.getVideoFps(),
-                0,
-                mStreamStartTime > 0
-                    ? Math.max(0, (System.currentTimeMillis() - mStreamStartTime) / 1_000L)
-                    : 0,
-                StreamThermalReader.readCpuTemperatureC()),
+        () -> {
+          double measuredFps = Double.NaN;
+          long measuredBitrateBps = -1L;
+          double cameraFps = Double.NaN;
+          try {
+            if (mSrtStreamer != null) {
+              measuredFps = mSrtStreamer.getSettings().getVideo().getMeasuredFps();
+              measuredBitrateBps = mSrtStreamer.getSettings().getVideo().getMeasuredBitrateBps();
+              cameraFps = mSrtStreamer.getSettings().getMeasuredCaptureFps();
+            }
+          } catch (Exception ignored) {
+            // Keep n/a measured fields
+          }
+          return new PeriodicStreamMetricsReporter.MetricsSample(
+              mStreamConfig.getVideoWidth(),
+              mStreamConfig.getVideoHeight(),
+              mStreamConfig.getVideoBitrate(),
+              measuredBitrateBps,
+              mStreamConfig.getVideoFps(),
+              measuredFps,
+              cameraFps,
+              0,
+              mStreamStartTime > 0
+                  ? Math.max(0, (System.currentTimeMillis() - mStreamStartTime) / 1_000L)
+                  : 0,
+              StreamThermalReader.readCpuTemperatureC());
+        },
         new PeriodicStreamMetricsReporter.CallbackProvider() {
           @Override
           public StreamingStatusCallback getCallback() {
@@ -796,6 +825,9 @@ public class SrtStreamingService extends Service {
   }
 
   private void startMetricsReporting() {
+    if (!AsgConstants.ENABLE_PIPELINE_FPS_TELEMETRY) {
+      return;
+    }
     if (mMetricsReporter != null) {
       mMetricsReporter.start();
     }
@@ -816,6 +848,12 @@ public class SrtStreamingService extends Service {
     cancelStreamTimeout();
     mCurrentStreamId = streamId;
     mIsStreamingActive = true;
+
+    if (AsgConstants.DISABLE_STREAM_KEEP_ALIVE_TIMEOUT) {
+      Log.i(TAG, "Keep-alive timeout disabled; stream will not auto-stop: " + streamId);
+      return;
+    }
+
     mStreamTimeoutTimer = new Timer("SrtStreamTimeout-" + streamId);
     mStreamTimeoutTimer.schedule(new TimerTask() {
       @Override

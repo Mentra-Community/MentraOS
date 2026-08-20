@@ -32,6 +32,7 @@ export type {
   UdpSocketLike,
   KeyValueStore,
 } from "./transports";
+export type { CloudClientTimers } from "./timers";
 
 // Local error types a host can branch on with `instanceof`.
 export { CloudClientError, HttpError, AuthExpiredError } from "./errors";
@@ -67,4 +68,7 @@ export type {
   ReportTrigger,
   SubmitReportInput,
   SubmitReportResult,
+  SupportConnectionState,
+  SupportProfileUpdateResult,
+  SupportStateInput,
 } from "./modules/core/core";

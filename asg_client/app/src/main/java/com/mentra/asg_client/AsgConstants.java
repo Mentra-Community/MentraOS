@@ -10,27 +10,50 @@ public class AsgConstants {
     /** Maximum interval between activity updates while a response body is streaming. */
     public static final long HTTP_ACTIVITY_STREAM_UPDATE_INTERVAL_MS = 5_000L;
 
-    /** How often Mentra Live checks for the LocalOnlyHotspot gateway interface. */
+    /** How often Mentra Live checks for its hotspot gateway and credentials. */
     public static final long LOCAL_HOTSPOT_READINESS_POLL_MS = 200L;
 
-    /** Maximum wait for the LocalOnlyHotspot gateway interface to become ready. */
+    /** Maximum wait for the Mentra Live hotspot to become ready. */
     public static final long LOCAL_HOTSPOT_READINESS_TIMEOUT_MS = 12_000L;
 
-    /** Delay after enabling the WiFi radio before requesting a LocalOnlyHotspot. */
+    /** Delay after enabling the WiFi radio before requesting the Mentra Live hotspot. */
     public static final long LOCAL_HOTSPOT_WIFI_ENABLE_DELAY_MS = 500L;
 
     /** Current Mentra Live Android hotspot gateway when interface discovery is unavailable. */
     public static final String DEFAULT_HOTSPOT_GATEWAY_IP = "192.168.43.1";
 
-    /** SharedPreferences key for the manufacturing serial reported by the BES. */
-    public static final String KEY_BES_MANUFACTURING_SERIAL = "bes_manufacturing_serial";
+    /** SmartXY setting containing the Mentra Live hotspot SSID. */
+    public static final String K900_VENDOR_HOTSPOT_SSID_SETTING = "xy_ssid";
+
+    /** SmartXY setting containing the Mentra Live hotspot password. */
+    public static final String K900_VENDOR_HOTSPOT_PASSWORD_SETTING = "xy_pwd";
 
     /** Canonical camera crop defaults shared with the phone and Bluetooth SDK. */
     public static final int CAMERA_FOV_DEFAULT = 118;
+
     public static final int CAMERA_ROI_POSITION_DEFAULT = 0;
 
     /** Cadence for live stream bitrate, frame-rate, duration, and thermal telemetry. */
-    public static final long STREAM_METRICS_INTERVAL_MS = 2_000L;
+    public static final long STREAM_METRICS_INTERVAL_MS = 1_000L;
+
+    /**
+     * 1Hz encoder FPS/bitrate/dropped-frame telemetry ({@code [STREAM_QUALITY]} and BLE {@code
+     * stream_status.stats}). Lifecycle {@code stream_status} (started/stopped/error) is unaffected.
+     * Keep false in production; flip locally to debug the Mentra Call FPS ladder.
+     *
+     * <p>Double gate: reporters are not scheduled, and {@code onStreamMetrics} returns immediately
+     * so accidental emission cannot reach BLE. Manual acceptance with every layer false: join
+     * waterfall yes; STREAM_QUALITY / BLE stats / encoder-stats / watch-stats / debug ingest no.
+     */
+    public static final boolean ENABLE_PIPELINE_FPS_TELEMETRY = false;
+
+    /**
+     * Local-testing stopgap that disables the 60s keep-alive watchdog for RTMP/SRT/WHIP streams.
+     * When true, {@code scheduleStreamTimeout()} early-returns and an orphaned stream (lost
+     * phone/cloud keep-alives via BLE disconnect or killed app) never auto-stops, holding the
+     * camera and draining battery/thermals. MUST stay false for production; flip locally only.
+     */
+    public static final boolean DISABLE_STREAM_KEEP_ALIVE_TIMEOUT = false;
 
     /** Linux thermal sysfs root used to discover the Mentra Live CPU sensor. */
     public static final String THERMAL_SYSFS_ROOT = "/sys/class/thermal";
@@ -39,15 +62,25 @@ public class AsgConstants {
     public static final String CPU_THERMAL_ZONE_TYPE = "mtktscpu";
 
     /** Known Mentra Live CPU-temperature fallback when sysfs type discovery is unavailable. */
-    public static final String CPU_THERMAL_FALLBACK_PATH =
-            "/sys/class/thermal/thermal_zone1/temp";
+    public static final String CPU_THERMAL_FALLBACK_PATH = "/sys/class/thermal/thermal_zone1/temp";
 
     /** Warm-up leases are intentionally short-lived to bound idle camera power use. */
     public static final long CAMERA_WARM_UP_DEFAULT_DURATION_MS = 15_000L;
+
     public static final long CAMERA_WARM_UP_MAX_DURATION_MS = 60_000L;
+
+    /** Cadence for the short hold-still click while a cold photo spins up the camera. */
+    public static final long CAMERA_PREP_CLICK_INTERVAL_MS = 900L;
+
+    /** Target lead before the estimated end of sensor exposure for starting the camera snap. */
+    public static final long CAMERA_SNAP_TARGET_LEAD_MS = 100L;
+
+    /** Duration of the user-visible RGB photo indicator, triggered at the capture boundary. */
+    public static final int PHOTO_LIGHT_DURATION_MS = 2200;
 
     /** Safety lease for a miniapp-owned transient FOV override. */
     public static final long CAMERA_FOV_OVERRIDE_DEFAULT_TTL_MS = 300_000L;
+
     public static final long CAMERA_FOV_OVERRIDE_MAX_TTL_MS = 600_000L;
 
     public static String appName = "AugmentOS ASG Client";
@@ -86,47 +119,49 @@ public class AsgConstants {
             "com.mentra.recovery.ACTION_GLASSES_BATTERY_STATUS";
 
     /**
-     * Awake window granted per wake-flagged phone command ("W":1 string wrapper or FLAG_WAKE
-     * binary frame). The BES only pulses the MTK power key for these when the SoC is already
-     * asleep, so a command landing mid-awake-window gets no extra time — this window is the
-     * in-band equivalent. Must outlive the longest command follow-up that runs on
-     * suspend-frozen clocks: the wifi credentials flow sends its failure verdict at ~12.4s
-     * (3s + 3x3s status polls), so 15s covers it with margin. Acquired extend-only, so it
-     * never shortens a longer-lived lock (BES/MTK OTA).
+     * Awake window granted per wake-flagged phone command ("W":1 string wrapper or FLAG_WAKE binary
+     * frame). The BES only pulses the MTK power key for these when the SoC is already asleep, so a
+     * command landing mid-awake-window gets no extra time — this window is the in-band equivalent.
+     * Must outlive the longest command follow-up that runs on suspend-frozen clocks: the wifi
+     * credentials flow sends its failure verdict at ~12.4s (3s + 3x3s status polls), so 15s covers
+     * it with margin. Acquired extend-only, so it never shortens a longer-lived lock (BES/MTK OTA).
      */
     public static final long PHONE_WAKE_COMMAND_WINDOW_MS = 15000;
 
     /**
-     * Rolling wake-lease window re-armed on confirmed BES OTA segments. The BES UART
-     * transfer dies when the vendor display-sleep hook fires mid-flight even with a CPU
-     * lock held (2026-07-08 incident: frozen between segments at 80% with 4:40 left on
-     * the lock), so the transfer holds BOTH cpu and screen leases and re-arms them while
-     * segments keep confirming: progress keeps the device awake, a wedged transfer lets
-     * it sleep within this window (aligned with the phone's 120s stall watchdog).
+     * Rolling wake-lease window re-armed on confirmed BES OTA segments. The BES UART transfer dies
+     * when the vendor display-sleep hook fires mid-flight even with a CPU lock held (2026-07-08
+     * incident: frozen between segments at 80% with 4:40 left on the lock), so the transfer holds
+     * BOTH cpu and screen leases and re-arms them while segments keep confirming: progress keeps
+     * the device awake, a wedged transfer lets it sleep within this window (aligned with the
+     * phone's 120s stall watchdog).
      */
     public static final long BES_OTA_SEGMENT_LEASE_WINDOW_MS = 120000;
 
     /**
-     * Dead-man window for the BES OTA transfer. The transfer is response-driven (every BES
-     * response triggers the next send, there is no wait loop), so one lost response stalls
-     * it silently forever. If no OTA response arrives within this window the transfer is
-     * aborted through the normal failure path - the BES stays on its current firmware and
-     * the phone retries the whole OTA. Kept well below the phone's 120s stall watchdog so
-     * the glasses clean up first; normal inter-response gaps are under a second.
+     * Dead-man window for the BES OTA transfer. The transfer is response-driven (every BES response
+     * triggers the next send, there is no wait loop), so one lost response stalls it silently
+     * forever. If no OTA response arrives within this window the transfer is aborted through the
+     * normal failure path - the BES stays on its current firmware and the phone retries the whole
+     * OTA. Kept well below the phone's 120s stall watchdog so the glasses clean up first; normal
+     * inter-response gaps are under a second.
      */
     public static final long BES_OTA_RESPONSE_TIMEOUT_MS = 30000;
 
     /**
      * Resend schedule for the post-APK-restart OTA completion push
-     * (OtaHelper#sendCompletionToPhone). The freshly installed process races its own UART
-     * transport startup, and a one-shot send can be silently lost — the phone then fails a
-     * successful update via its 120s stall watchdog (incident rep_01KY31HEMTSBSMK8DVMNXJ5XGG).
-     * 15 attempts x 3s = 45s of coverage, well past transport settle and below the phone's
-     * watchdog. Duplicate terminal statuses are idempotent on the phone.
+     * (OtaHelper#sendCompletionToPhone). The freshly installed process races its own UART transport
+     * startup, and a one-shot send can be silently lost — the phone then fails a successful update
+     * via its 120s stall watchdog (incident rep_01KY31HEMTSBSMK8DVMNXJ5XGG). 15 attempts x 3s = 45s
+     * of coverage, well past transport settle and below the phone's watchdog. Duplicate terminal
+     * statuses are idempotent on the phone.
      */
     public static final long OTA_COMPLETION_RESEND_INTERVAL_MS = 3_000L;
 
-    /** Number of post-APK-restart completion resend attempts (see {@link #OTA_COMPLETION_RESEND_INTERVAL_MS}). */
+    /**
+     * Number of post-APK-restart completion resend attempts (see {@link
+     * #OTA_COMPLETION_RESEND_INTERVAL_MS}).
+     */
     public static final int OTA_COMPLETION_RESEND_ATTEMPTS = 15;
 
     /**
@@ -146,48 +181,71 @@ public class AsgConstants {
     public static final int OTA_RESUME_MANIFEST_PROBE_TIMEOUT_MS = 3_000;
 
     /**
-     * FALLBACK maximum packed frame size for a v1 K900 STRING ck chunk, used until the BES
-     * advertises its true notification cap. The BES relays v1 string frames to the phone in a
-     * single unfragmented BLE notification, and the worst-case ATT payload on that link is 253
-     * bytes (ATT MTU 256) regardless of the MTU the phone requested — a packed chunk over that
-     * cap is silently truncated on the wire and the phone drops it as unparseable (incident
-     * rep_01KY6BJ0B7A4RBMQ7VN39KAE5E: OTA completion ck chunks packed to 256-263 bytes and none
-     * survived). 240 = 253 - {@link #K900_STRING_CHUNK_BUDGET_MARGIN_BYTES}. BES firmware >=
-     * 17.26.7.23 advertises {@code wire_caps.notify_cap} (the measured single-notification
-     * payload cap) and the budget becomes notify_cap minus the same margin — see
-     * MessageChunker.setStringChunkBudgetFromNotifyCap.
+     * Maximum packed K900 control-message frame relayed in one BLE notification. This applies to
+     * both v1 JSON chunks and v2 binary fragments: phone-side v2 reassembly cannot recover a frame
+     * that BES could not deliver atomically. The 240-byte ceiling is the hardware-proven envelope
+     * from incident rep_01KY6BJ0B7A4RBMQ7VN39KAE5E and remains a local upper bound even when old
+     * firmware advertises a larger, bearer-specific {@code wire_caps.notify_cap}.
      */
-    public static final int K900_STRING_CHUNK_MAX_FRAME_BYTES = 240;
+    public static final int K900_CONTROL_MAX_PACKED_FRAME_BYTES = 240;
+
+    /** Mentra Live BES build target required in the decompressed image payload. */
+    public static final String BES_OTA_PRODUCT = "best1502x_ibrt_bpone";
+
+    /** Prefix for hash-addressed ADB-only artifacts, separate from phone-owned BES OTA data. */
+    public static final String DEBUG_BES_OTA_ARTIFACT_PREFIX =
+            "/storage/emulated/0/asg/debug_bes_";
+
+    /** Debug BES intent extra carrying the exact post-reboot firmware version. */
+    public static final String DEBUG_BES_OTA_TARGET_VERSION_EXTRA = "target_version";
+
+    /** Debug BES intent extra carrying the staged artifact SHA-256. */
+    public static final String DEBUG_BES_OTA_SHA256_EXTRA = "sha256";
+
+    /** Debug BES intent extra carrying a stable identifier for durable state. */
+    public static final String DEBUG_BES_OTA_ARTIFACT_ID_EXTRA = "artifact_id";
+
+    /** ADB/local command that reboots BES before handing MTK to a factory USB flasher. */
+    public static final String COMMAND_REBOOT_BES_FOR_MTK_FLASH =
+            "reboot_bes_for_mtk_flash";
+
+    /** Correlation field used to prove that the requested BES reboot reached the UART worker. */
+    public static final String MTK_FLASH_REQUEST_ID_FIELD = "request_id";
+
+    /** BES command that resets the MCU without rebooting the running MTK Android system. */
+    public static final String BES_REBOOT_COMMAND = "cs_rebt";
 
     /**
-     * Safety margin subtracted from the BLE notification payload cap when sizing packed v1
-     * STRING ck chunks, absorbing BES re-framing variance between the UART frame we send and
-     * the notification the BES actually emits (240 = 253 - 13 was the hardware-validated
-     * budget for the worst-case 253-byte cap).
+     * Exclusive decompressed destination limit in the deployed ota_copy bootloader:
+     * NEW_IMAGE_FLASH_OFFSET (0x200000) - OTA_CODE_OFFSET (0x20000). Images at or above this size
+     * overwrite the adjacent staging region and must never be sent to BES.
      */
-    public static final int K900_STRING_CHUNK_BUDGET_MARGIN_BYTES = 13;
+    public static final int BES_OTA_MAX_DECOMPRESSED_IMAGE_BYTES = 0x1E0000;
 
-    /**
-     * Contract floor of {@code wire_caps.notify_cap} (BES firmware >= 17.26.7.23 computes
-     * max(253, min(ATT MTU - 3, 509))). An advertised value below this is malformed and is
-     * ignored in favor of the fallback budget.
-     */
-    public static final int K900_BLE_NOTIFY_CAP_FLOOR_BYTES = 253;
+    /** Rendezvous baud shared by every ASG and BES firmware generation. */
+    public static final int UART_RENDEZVOUS_BAUD = 460800;
 
-    /**
-     * Contract ceiling of {@code wire_caps.notify_cap} (see
-     * {@link #K900_BLE_NOTIFY_CAP_FLOOR_BYTES}: the BES computes max(253, min(ATT MTU - 3,
-     * 509))). An advertised value above this is malformed; it is clamped down so a buggy
-     * advertisement can never size chunks beyond what the transport carries — the exact silent
-     * truncation class the notification budget exists to prevent.
-     */
-    public static final int K900_BLE_NOTIFY_CAP_CEILING_BYTES = 509;
+    /** Fast UART baud negotiated after the rendezvous link proves compatible firmware. */
+    public static final int UART_FAST_BAUD = 1152000;
+
+    /** First BES firmware version that implements the {@code cs_baud}/{@code sr_baud} contract. */
+    public static final String UART_FAST_BAUD_MIN_BES_VERSION = "17.26.7.5";
+
+    /** Delay after BES acknowledges {@code cs_baud} before ASG reopens at the fast rate. */
+    public static final long UART_BAUD_REOPEN_DELAY_MS = 250;
+
+    /** Time allowed for the version probe that proves the newly negotiated fast link. */
+    public static final long UART_BAUD_PROBE_TIMEOUT_MS = 3000;
 
     /** Delay before probing the alternate UART baud after ASG starts at the rendezvous rate. */
     public static final long UART_BOOT_RECOVERY_INITIAL_DELAY_MS = 8000;
 
-    /** Delay before retrying boot recovery when baud negotiation or BES OTA temporarily owns UART. */
-    public static final long UART_BOOT_RECOVERY_RETRY_DELAY_MS = 3000;
+    /**
+     * Grace after bounded UART recovery is exhausted before a BES OTA timeout becomes terminal.
+     * BES can finish rebooting after the transport scan, and an exact target-version reply from
+     * that later Linux boot is authoritative.
+     */
+    public static final long BES_OTA_RECOVERY_FAILURE_GRACE_MS = 30000;
 
     /** Number of spaced system-version probes used to tolerate short BES UART restart windows. */
     public static final int UART_RECOVERY_PROBES_PER_BURST = 5;
@@ -224,9 +282,6 @@ public class AsgConstants {
 
     /** Time allowed for BES to reboot at the rendezvous baud after applying an OTA image. */
     public static final long BES_OTA_RECONNECT_DELAY_MS = 2500;
-
-    /** Bounded rendezvous attempts after BES OTA while the controller finishes rebooting. */
-    public static final int BES_OTA_RECONNECT_ATTEMPTS = 6;
 
     // RGB LED Control Constants (Glasses BES Chipset - Remote Control via Bluetooth)
     // NOTE: These are different from the local MTK recording LED
@@ -275,8 +330,8 @@ public class AsgConstants {
     public static final boolean ENABLE_PHOTO_TIMING_LOGS = true;
 
     /**
-     * ZSL preview/capture buffering kill switch. Disable only as an emergency; normal photo
-     * capture uses ZSL by default.
+     * ZSL preview/capture buffering kill switch. Disable only as an emergency; normal photo capture
+     * uses ZSL by default.
      */
     public static final boolean ENABLE_ZSL = true;
 
@@ -357,9 +412,37 @@ public class AsgConstants {
     public static final int BLE_PHOTO_JPEG_FAST_QUALITY = 80;
 
     /**
-     * Log UART file-transfer send progress every N packets. {@code 0} = off (start/end/errors only).
+     * Log UART file-transfer send progress every N packets. {@code 0} = off (start/end/errors
+     * only).
      */
     public static final int FILE_TRANSFER_PROGRESS_LOG_INTERVAL = 10;
+
+    // Video capture thumbnails
+    // -------------------------------------------------------------------------
+
+    /** JPEG sidecar written next to a finalized video for direct-filesystem consumers. */
+    public static final String VIDEO_THUMBNAIL_SIDECAR_NAME = "thumb.jpg";
+
+    /** Transient thumbnail filename; the .partial suffix keeps it out of gallery listings. */
+    public static final String VIDEO_THUMBNAIL_PARTIAL_NAME = "thumb.jpg.partial";
+
+    /** Longest edge of generated video thumbnails, in pixels. */
+    public static final int VIDEO_THUMBNAIL_MAX_DIMENSION = 480;
+
+    /** JPEG compression quality for video thumbnail sidecars. */
+    public static final int VIDEO_THUMBNAIL_JPEG_QUALITY = 80;
+
+    /** Frame position sampled for video thumbnails, in microseconds. */
+    public static final long VIDEO_THUMBNAIL_FRAME_TIME_US = 1_000_000L;
+
+    /** Maximum time allowed for platform video-frame extraction. */
+    public static final long VIDEO_THUMBNAIL_EXTRACTION_TIMEOUT_MS = 10_000L;
+
+    /** Final main-thread wait after thumbnail work has drained during other cleanup steps. */
+    public static final long VIDEO_THUMBNAIL_SHUTDOWN_TIMEOUT_MS = 250L;
+
+    /** Maximum abandoned native decoder workers retained after timeout. */
+    public static final int VIDEO_THUMBNAIL_MAX_RETIRED_DECODERS = 2;
 
     /**
      * Max wait for the deferred background photo write ({@code CapturedPhoto.persistence}) when a
@@ -377,4 +460,10 @@ public class AsgConstants {
     public static final int BLE_PHOTO_HIGH_TARGET_PX = 1600;
     public static final int BLE_PHOTO_HIGH_AVIF_QUALITY = 48;
     public static final int BLE_PHOTO_MAX_TARGET_PX = 1920;
+
+    /**
+     * Phone → glasses JSON command type to enable or disable Wi-Fi ADB (Mentra Live).
+     * Persisted via AsgSettings and applied at boot (default off).
+     */
+    public static final String COMMAND_SET_WIFI_ADB_STATE = "set_wifi_adb_state";
 }

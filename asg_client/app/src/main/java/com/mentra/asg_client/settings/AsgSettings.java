@@ -39,6 +39,7 @@ public class AsgSettings {
     /** Legacy coupled button key; migrated once into independent button ZSL/MFNR keys. */
     private static final String KEY_BUTTON_PHOTO_ZSL_MFNR = "button_photo_zsl_mfnr";
     private static final String KEY_HDR_BURST_ENABLED = "hdr_burst_enabled";
+    private static final String KEY_WIFI_ADB_ENABLED = "wifi_adb_enabled";
     private static final String KEY_MCU_FIRMWARE_VERSION = "mcu_firmware_version";
     private static final String KEY_BES_BAUD_SWITCH_VERSION = "bes_baud_switch_version";
     private static final String KEY_CAMERA_FOV = "camera_fov";
@@ -518,6 +519,22 @@ public class AsgSettings {
     }
 
     /**
+     * Whether Wi-Fi ADB (wireless debugging) should be enabled.
+     * Defaults to false for security (OS-1627).
+     */
+    public boolean isWifiAdbEnabled() {
+        return prefs.getBoolean(KEY_WIFI_ADB_ENABLED, false);
+    }
+
+    /**
+     * Persist Wi-Fi ADB preference and apply on next boot / command.
+     */
+    public void setWifiAdbEnabled(boolean enabled) {
+        Log.d(TAG, "Setting Wi-Fi ADB enabled to: " + enabled);
+        prefs.edit().putBoolean(KEY_WIFI_ADB_ENABLED, enabled).commit();
+    }
+
+    /**
      * Get the MCU firmware version (cached from hs_syvr command)
      * @return MCU firmware version string, or empty string if not yet received
      * @deprecated Use getBesFirmwareVersion() for clarity - MCU refers to BES firmware
@@ -559,23 +576,6 @@ public class AsgSettings {
      */
     public void setBesFirmwareVersion(String version) {
         setMcuFirmwareVersion(version);
-    }
-
-    /** Return the manufacturing serial last reported by the BES. */
-    public String getBesManufacturingSerial() {
-        return prefs.getString(AsgConstants.KEY_BES_MANUFACTURING_SERIAL, "");
-    }
-
-    /** Persist the manufacturing serial reported by the BES, or clear an unprovisioned value. */
-    public void setBesManufacturingSerial(String serialNumber) {
-        String normalized = serialNumber == null ? "" : serialNumber.trim();
-        if (normalized.isEmpty() || normalized.matches("0+")) {
-            prefs.edit().remove(AsgConstants.KEY_BES_MANUFACTURING_SERIAL).commit();
-            return;
-        }
-        prefs.edit()
-                .putString(AsgConstants.KEY_BES_MANUFACTURING_SERIAL, normalized)
-                .commit();
     }
 
     /** Return the exact BES version field last used to evaluate fast-UART capability. */

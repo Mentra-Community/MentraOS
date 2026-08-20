@@ -8,21 +8,18 @@ public final class BesVersionEvent extends McuEvent {
     private final String btName;
     private final String btAddress;
     private final String bleAddress;
-    private final String manufacturingSerial;
 
     public BesVersionEvent(
             String firmwareVersion,
             String bleName,
             String btName,
             String btAddress,
-            String bleAddress,
-            String manufacturingSerial) {
+            String bleAddress) {
         this.firmwareVersion = firmwareVersion;
         this.bleName = bleName;
         this.btName = btName;
         this.btAddress = btAddress;
         this.bleAddress = bleAddress;
-        this.manufacturingSerial = manufacturingSerial;
     }
 
     /** BES firmware version from JSON field {@code version}. */
@@ -48,10 +45,5 @@ public final class BesVersionEvent extends McuEvent {
     /** BLE MAC address from JSON field {@code bleaddr}. */
     public String getBleAddress() {
         return bleAddress;
-    }
-
-    /** Manufacturing serial from JSON field {@code serial_number}. */
-    public String getManufacturingSerial() {
-        return manufacturingSerial;
     }
 }

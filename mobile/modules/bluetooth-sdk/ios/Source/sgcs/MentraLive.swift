@@ -1282,13 +1282,14 @@ class MentraLive: NSObject, SGCManager {
     /// Mirrors Android `updateConnectionState` — RN home reads `glasses.connectionState` for reconnecting UI.
     private func updateConnectionState(_ state: String) {
         if state == ConnTypes.DISCONNECTED {
-            // A manufacturing serial is session-bound. Clear it on disconnect so a previous
-            // pair's serial cannot be associated with the next connection. Connect must NOT
-            // clear it: DeviceManager.disconnect already wipes it before any new connection, and
-            // clearing on CONNECTED would wipe a still-valid serial mid-session when a same-link
-            // glasses_ready (e.g. ASG restart) re-publishes CONNECTED (iOS has no equal-state
-            // early return, unlike Android).
+            // Device identity is session-bound. Clear it on disconnect so a previous pair's
+            // identifiers cannot be associated with the next connection. Connect must NOT clear
+            // them: DeviceManager.disconnect already wipes them before any new connection, and
+            // clearing on CONNECTED would wipe still-valid identity mid-session when a same-link
+            // glasses_ready (e.g. ASG restart) re-publishes CONNECTED (iOS has no equal-state early
+            // return, unlike Android).
             DeviceStore.shared.apply("glasses", "serialNumber", "")
+            DeviceStore.shared.apply("glasses", "bluetoothMacAddress", "")
         }
         connectionState = state
         DeviceStore.shared.apply("glasses", "connectionState", state)
@@ -1296,6 +1297,7 @@ class MentraLive: NSObject, SGCManager {
         // a previous pairing into the next one (would otherwise surface as wrong overall_percent
         // or stale lastBesOtaProgress on the next OTA).
         if state == ConnTypes.DISCONNECTED {
+            resetPendingAckState(reason: "BLE session ended")
             resetWireNegotiationState()
             resetAncsRelayState()
             // Queued writes are session-bound: transmitting them into the NEXT session
@@ -1451,6 +1453,7 @@ class MentraLive: NSObject, SGCManager {
     private let KEEP_ALIVE_INTERVAL_MS: UInt64 = 5_000_000_000 // 5 seconds
     private let CONNECTION_TIMEOUT_MS: UInt64 = 100_000_000_000 // 100 seconds
     private let HEARTBEAT_INTERVAL_MS: TimeInterval = 30.0 // 30 seconds
+    private let BES_OTA_HEARTBEAT_LEASE_SEC: TimeInterval = 120.0
     private let BATTERY_REQUEST_EVERY_N_HEARTBEATS = 10
     private let SIGNAL_STRENGTH_READ_INTERVAL_MS: TimeInterval = 10.0
     private let MIN_SEND_DELAY_MS: UInt64 = 160_000_000 // 160ms in nanoseconds
@@ -1545,6 +1548,7 @@ class MentraLive: NSObject, SGCManager {
 
     /// BES OTA progress tracking - only send to UI on 5% increments
     private var lastBesOtaProgress = -1
+    private var besOtaHeartbeatSuppressedUntil: TimeInterval = 0
 
     // Cached OTA session context from last ota_status — used to fill in session fields for sr_adota
     private var cachedOtaSessionId: String?
@@ -1939,6 +1943,18 @@ class MentraLive: NSObject, SGCManager {
 
     private var pending: PendingMessage?
     private var pendingMessageTimer: Timer?
+
+    /// ACK state belongs to the BLE session that sent the message. If the link drops while an ACK
+    /// is outstanding, keeping `pending` set permanently blocks the command queue because the
+    /// timeout timer is stopped during disconnect. Release both together before reconnecting.
+    private func resetPendingAckState(reason: String) {
+        pendingMessageTimer?.invalidate()
+        pendingMessageTimer = nil
+
+        guard let pendingMessage = pending else { return }
+        pending = nil
+        Bridge.log("LIVE: Cleared pending ACK mId \(pendingMessage.id) because \(reason)")
+    }
 
     actor CommandQueue {
         private var commands: [PendingMessage] = []
@@ -2668,6 +2684,7 @@ class MentraLive: NSObject, SGCManager {
             if let seq = json["sq"] as? [String] ?? json["step_sequence"] as? [String], !seq.isEmpty {
                 cachedOtaStepSequence = seq
             }
+            updateBesOtaHeartbeatGuard(stepType: osStepType, phase: osPhase, status: osStatus)
 
             Bridge.log("LIVE: 📱 OTA status - step \(osCurrentStep)/\(osTotalSteps) \(osPhase) \(osStatus) \(osOverallPercent)%")
 
@@ -2701,6 +2718,7 @@ class MentraLive: NSObject, SGCManager {
             } else {
                 unified = "in_progress"
             }
+            updateBesOtaHeartbeatGuard(stepType: currentUpdate, phase: legacyPhase, status: unified)
             Bridge.log(
                 "LIVE: 📱 Legacy ota_progress → ota_status: \(legacyStage) \(legacyStatus) \(legacyProgress)%"
             )
@@ -2760,10 +2778,10 @@ class MentraLive: NSObject, SGCManager {
                 if let systemTimeMs = fields["system_time_ms"] as? NSNumber {
                     DeviceStore.shared.apply("glasses", "systemTimeMs", systemTimeMs.int64Value)
                 }
-                if let bluetoothMacAddress = fields["bt_mac_address"] as? String {
+                if let bluetoothMacAddress = nonEmptyStringValue(fields, "bt_mac_address") {
                     DeviceStore.shared.apply("glasses", "bluetoothMacAddress", bluetoothMacAddress)
                 }
-                if let serialNumber = fields["serial_number"] as? String, !serialNumber.isEmpty {
+                if let serialNumber = nonEmptyStringValue(fields, "serial_number") {
                     DeviceStore.shared.apply("glasses", "serialNumber", serialNumber)
                 }
                 if let systemTimeMs = fields["system_time_ms"] as? NSNumber {
@@ -2828,6 +2846,19 @@ class MentraLive: NSObject, SGCManager {
         cachedOtaCurrentStep = 0
         cachedOtaStepSequence = nil
         lastBesOtaProgress = -1
+        // The bounded UART-ownership lease is transport state, not session-cache state. Keep it
+        // through a BLE reconnect so heartbeats cannot resume while BES still owns the UART.
+    }
+
+    private func updateBesOtaHeartbeatGuard(stepType: String, phase: String, status: String) {
+        guard stepType.lowercased() == "bes", phase.lowercased() == "install" else { return }
+        switch status.lowercased() {
+        case "failed", "complete", "step_complete", "finished", "success":
+            besOtaHeartbeatSuppressedUntil = 0
+        default:
+            besOtaHeartbeatSuppressedUntil =
+                ProcessInfo.processInfo.systemUptime + BES_OTA_HEARTBEAT_LEASE_SEC
+        }
     }
 
     /// Falls back to raw besProgress when step sequence is unavailable.
@@ -2999,62 +3030,41 @@ class MentraLive: NSObject, SGCManager {
                 var progress = ((rawProgress + 2) / 5) * 5
                 if progress > 100 { progress = 100 }
 
-                // Only send if progress changed to a new 5% increment
                 let isTerminalStatus = type == "success" || type == "error" || type == "fail"
-                if progress == lastBesOtaProgress && !isTerminalStatus {
-                    break // Skip duplicate progress
-                }
-                lastBesOtaProgress = progress
-
-                Bridge.log(
-                    "LIVE: 📱 BES OTA progress via sr_adota - type: \(type), raw: \(rawProgress)%, rounded: \(progress)%"
-                )
-
-                // Determine status and error message based on type
-                var besOtaStatus: String
                 var besOtaProgressVal: Int
                 var besOtaErrorMessage: String? = nil
 
-                // Order matters here: check completion (rawProgress >= 100 OR success) BEFORE
-                // type=="update", because some BES firmware emits the final 100% tick with
-                // type=="update" rather than type=="success". Treating that as PROGRESS would
-                // leave the UI stuck at 100% forever.
-                if type == "success" || rawProgress >= 100 {
-                    besOtaStatus = "FINISHED"
+                let failed = type == "error" || type == "fail"
+                let succeeded = type == "success"
+                if isTerminalStatus {
+                    besOtaHeartbeatSuppressedUntil = 0
+                } else {
+                    // Refresh before progress de-duplication: raw progress proves the BES
+                    // transfer is active even when the rounded UI value is unchanged.
+                    besOtaHeartbeatSuppressedUntil =
+                        ProcessInfo.processInfo.systemUptime + BES_OTA_HEARTBEAT_LEASE_SEC
+                }
+                if succeeded {
                     besOtaProgressVal = 100
-                    lastBesOtaProgress = -1 // Reset for next OTA
-                } else if type == "error" || type == "fail" {
-                    besOtaStatus = "FAILED"
+                } else if failed {
                     besOtaProgressVal = progress
                     besOtaErrorMessage = bodyObj["message"] as? String ?? "BES update failed"
-                    lastBesOtaProgress = -1 // Reset for next OTA
-                } else if type == "update" {
-                    besOtaStatus = "PROGRESS"
-                    besOtaProgressVal = progress
                 } else {
-                    // Unknown type, treat as progress
-                    besOtaStatus = "PROGRESS"
-                    besOtaProgressVal = progress
+                    // A raw update:100 precedes whole-image CRC/apply and is not terminal.
+                    besOtaProgressVal = min(progress, 95)
                 }
 
-                let syntheticStatus: String
-                if besOtaStatus == "FINISHED" {
-                    // The glasses power-cycle right after the final BES tick, so a session
-                    // whose BES step is the LAST step never gets a follow-up ota_status from
-                    // the glasses — consumers mapping on this synthetic status would otherwise
-                    // never see a terminal state. Emit "complete" for the final step;
-                    // mid-session BES steps keep "step_complete" so session-level trackers
-                    // advance normally. Unknown sessions (cachedOtaTotalSteps == 0, e.g.
-                    // legacy glasses that never sent an ota_status) conservatively keep
-                    // "step_complete".
-                    syntheticStatus = (cachedOtaTotalSteps > 0 && cachedOtaCurrentStep >= cachedOtaTotalSteps)
-                        ? "complete"
-                        : "step_complete"
-                } else if besOtaStatus == "FAILED" {
-                    syntheticStatus = "failed"
-                } else {
-                    syntheticStatus = "in_progress"
+                // Only send if nonterminal display progress changed to a new 5% increment.
+                if besOtaProgressVal == lastBesOtaProgress && !isTerminalStatus {
+                    break
                 }
+                lastBesOtaProgress = isTerminalStatus ? -1 : besOtaProgressVal
+
+                Bridge.log(
+                    "LIVE: 📱 BES OTA progress via sr_adota - type: \(type), raw: \(rawProgress)%, rounded: \(progress)%, display: \(besOtaProgressVal)%"
+                )
+
+                let syntheticStatus = succeeded ? "step_complete" : (failed ? "failed" : "in_progress")
                 let sid = cachedOtaSessionId ?? ""
                 let totalSteps = cachedOtaTotalSteps > 0 ? cachedOtaTotalSteps : 1
                 let currentStep = cachedOtaCurrentStep > 0 ? cachedOtaCurrentStep : 1
@@ -3203,6 +3213,17 @@ class MentraLive: NSObject, SGCManager {
 
         let json: [String: Any] = [
             "type": "set_hotspot_state",
+            "enabled": enabled,
+        ]
+
+        sendJson(json, wakeUp: true)
+    }
+
+    func sendWifiAdbState(_ enabled: Bool) {
+        Bridge.log("LIVE: 🔧 Sending Wi-Fi ADB state: \(enabled)")
+
+        let json: [String: Any] = [
+            "type": "set_wifi_adb_state",
             "enabled": enabled,
         ]
 
@@ -3441,15 +3462,17 @@ class MentraLive: NSObject, SGCManager {
         let androidVersion = json["android_version"] as? String ?? ""
         let otaVersionUrl = json["ota_version_url"] as? String ?? ""
         let firmwareVersion = json["firmware_version"] as? String ?? ""
-        let bluetoothMacAddress = json["bt_mac_address"] as? String ?? ""
-        let serialNumber = json["serial_number"] as? String ?? ""
+        let bluetoothMacAddress = nonEmptyStringValue(json, "bt_mac_address")
+        let serialNumber = nonEmptyStringValue(json, "serial_number")
 
         DeviceStore.shared.apply("glasses", "appVersion", appVersion)
         DeviceStore.shared.apply("glasses", "buildNumber", buildNumber)
         DeviceStore.shared.apply("glasses", "otaVersionUrl", otaVersionUrl)
         DeviceStore.shared.apply("glasses", "firmwareVersion", firmwareVersion)
-        DeviceStore.shared.apply("glasses", "bluetoothMacAddress", bluetoothMacAddress)
-        if !serialNumber.isEmpty {
+        if let bluetoothMacAddress {
+            DeviceStore.shared.apply("glasses", "bluetoothMacAddress", bluetoothMacAddress)
+        }
+        if let serialNumber {
             DeviceStore.shared.apply("glasses", "serialNumber", serialNumber)
         }
         isNewVersion = (Int(buildNumber) ?? 0) >= 5
@@ -3462,14 +3485,14 @@ class MentraLive: NSObject, SGCManager {
         // hasMic = supportsLC3Audio
 
         Bridge.log(
-            "Glasses Version - App: \(appVersion), Build: \(buildNumber), Device: \(deviceModel), Android: \(androidVersion), Firmware: \(firmwareVersion), BT MAC: \(bluetoothMacAddress), OTA URL: \(otaVersionUrl)"
+            "Glasses Version - App: \(appVersion), Build: \(buildNumber), Device: \(deviceModel), Android: \(androidVersion), Firmware: \(firmwareVersion), BT MAC available: \(bluetoothMacAddress != nil), OTA URL: \(otaVersionUrl)"
         )
         Bridge.log("LIVE: LC3 Audio Support: \(supportsLC3Audio), Has Mic: \(hasMic)")
         emitVersionInfo(
             appVersion: appVersion, buildNumber: buildNumber, deviceModel: deviceModel,
             androidVersion: androidVersion, otaVersionUrl: otaVersionUrl,
             firmwareVersion: firmwareVersion,
-            bluetoothMacAddress: bluetoothMacAddress
+            bluetoothMacAddress: bluetoothMacAddress ?? ""
         )
     }
 
@@ -5065,6 +5088,10 @@ class MentraLive: NSObject, SGCManager {
             Bridge.log("LIVE: Skipping heartbeat - glasses not fully booted or not connected")
             return
         }
+        if ProcessInfo.processInfo.systemUptime < besOtaHeartbeatSuppressedUntil {
+            Bridge.log("LIVE: Skipping heartbeat while BES OTA owns the UART")
+            return
+        }
 
         // Send ping message to glasses hardware (no ACK needed for heartbeats)
         let pingJson: [String: Any] = ["type": "ping"]
@@ -5178,8 +5205,7 @@ class MentraLive: NSObject, SGCManager {
         stopReadinessCheckLoop()
         stopConnectionTimeout()
         stopMicBeat() // Stop LC3 audio micbeat
-        pendingMessageTimer?.invalidate()
-        pendingMessageTimer = nil
+        resetPendingAckState(reason: "transport timers stopped")
         reconnectionWorkItem?.cancel()
         reconnectionWorkItem = nil
     }

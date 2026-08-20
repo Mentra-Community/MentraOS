@@ -29,6 +29,23 @@ export interface Setting {
   // overwrite a just-promoted identity. PAIRING_IDENTITY_KEYS is derived from
   // this flag so the sync exclusions can't drift from the descriptors.
   nativeAuthoritative?: true
+  /**
+   * Clear this setting when the build's environment changes.
+   *
+   * A persisted override normally outranks both the build's env and the
+   * compiled default, which is right within one environment: a developer's
+   * METRO_AUTO pin should survive a rebuild. It is wrong across environments,
+   * where an override pinned under a dev build would silently follow the
+   * install onto a store build pointed at production.
+   *
+   * Note this keys off the build's environment label, so it does NOT fire on a
+   * TestFlight to App Store promotion: that ships the same binary with the same
+   * label. Promotion is safe because the publishing lane bakes prod URLs, not
+   * because this reset runs. See the resolution block in loadSettings.
+   *
+   * Absent means the value is never invalidated automatically.
+   */
+  resetOnBuildEnvChange?: true
 }
 
 export const SETTINGS: Record<string, Setting> = {
@@ -37,7 +54,9 @@ export const SETTINGS: Record<string, Setting> = {
   debug_mode: {key: "debug_mode", defaultValue: () => __DEV__, writable: true, saveOnServer: true, persist: true},
   android_notification_listener_enabled: {
     key: "android_notification_listener_enabled",
-    defaultValue: () => false,
+    // Operational kill switch. The listener now runs in a guarded lightweight
+    // process, so normal installs can safely capture notifications by default.
+    defaultValue: () => true,
     writable: true,
     saveOnServer: true,
     persist: true,
@@ -166,6 +185,7 @@ export const SETTINGS: Record<string, Setting> = {
     writable: true,
     saveOnServer: false,
     persist: true,
+    resetOnBuildEnvChange: true,
   },
   cloud_runtime_url: {
     key: "cloud_runtime_url",
@@ -173,6 +193,7 @@ export const SETTINGS: Record<string, Setting> = {
     writable: true,
     saveOnServer: false,
     persist: true,
+    resetOnBuildEnvChange: true,
   },
   // Bookmarked Cloud V2 endpoint pairs. Each entry is {label, coreUrl,
   // runtimeUrl} — core + runtime are saved together because they are always
@@ -647,13 +668,6 @@ export const SETTINGS: Record<string, Setting> = {
     persist: true,
   },
   // notifications
-  notifications_enabled: {
-    key: "notifications_enabled",
-    defaultValue: () => true,
-    writable: true,
-    saveOnServer: true,
-    persist: true,
-  },
   notifications_blocklist: {
     key: "notifications_blocklist",
     defaultValue: () => [],
@@ -957,6 +971,94 @@ export const useSettingsStore = create<SettingsState>()(
           settings: {...state.settings, ...loadedSettings},
         }))
 
+        // This hidden debug switch originally shipped default-off while the
+        // notification-listener cold-start ANR was being investigated. Now
+        // that the listener runs in its own guarded process, migrate existing
+        // installs to the new default once; later explicit debug changes still
+        // persist normally.
+        // Reset the cloud backend override when the build's environment changes.
+        //
+        // cloud_core_url / cloud_runtime_url are persist:true and outrank both
+        // the build's env and the compiled default (see resolveUrl in
+        // cloudClient.ts). That is what we want inside one environment: a
+        // developer's METRO_AUTO pin should survive a rebuild. It is wrong
+        // across environments.
+        //
+        // The concrete case is an install that moves BETWEEN environments: an
+        // internal tester running a dev build with a pinned override who then
+        // installs the store build. The override outranks that build's prod
+        // URLs, so without this they keep talking to dev with nothing
+        // surfacing it.
+        //
+        // Note what this deliberately does NOT do, because the distinction is
+        // easy to get backwards. TestFlight and the App Store receive the SAME
+        // binary, so promotion does not change EXPO_PUBLIC_BUILD_ENV and this
+        // reset never fires on it. Promotion is safe for a different reason:
+        // the publishing lane bakes prod URLs (staging-builds.yml defaults
+        // cloud_env to prod), so a promoted build was pointed at production the
+        // whole time. The same holds for Android internal-track to production.
+        //
+        // The residual gap is therefore an override pinned while already on a
+        // prod-labelled build, which no label comparison can see. That is a
+        // deliberate limit: reaching it means typing a URL into a dev-only
+        // screen, VersionInfo renders the current value, and the same screen
+        // clears it.
+        //
+        // Comparing the baked EXPO_PUBLIC_BUILD_ENV against the last one seen
+        // on this device covers those environment switches and fresh installs
+        // without touching the setting write path. A reinstall needs no
+        // handling: it drops the marker and the override together
+        // (android:allowBackup="false", and iOS deletes the container).
+        const BUILD_ENV_KEY = "settings.lastBuildEnv"
+        const buildEnv = (process.env.EXPO_PUBLIC_BUILD_ENV ?? "dev").trim() || "dev"
+        const lastBuildEnv = storage.load<string>(BUILD_ENV_KEY)
+        const previousBuildEnv = lastBuildEnv.is_error() ? undefined : lastBuildEnv.value
+        if (previousBuildEnv !== buildEnv) {
+          // Clear when there is no marker yet, not just on a recorded change.
+          // The first build carrying this code meets every existing install
+          // with previousBuildEnv === undefined, and those are exactly the
+          // installs that may hold an override set before the pin existed --
+          // the population this is here to repair. Treating "no marker" as a
+          // fresh install would record the marker and never look again. A
+          // genuinely fresh install has nothing persisted, so the clear below
+          // writes each default over itself and costs nothing.
+          //
+          // Driven by the descriptors rather than a hardcoded key list, so a
+          // setting that needs this behaviour declares it in one place and
+          // cannot be missed here.
+          const scoped = Object.values(SETTINGS).filter((setting) => setting.resetOnBuildEnvChange)
+          console.log(
+            `SETTINGS: build env ${previousBuildEnv ?? "(none recorded)"} -> ${buildEnv}, ` +
+              `clearing ${scoped.length} build-scoped setting(s)`,
+          )
+          let allCleared = true
+          for (const setting of scoped) {
+            const cleared = await get().setSetting(setting.key, setting.defaultValue(), false)
+            if (cleared.is_error()) {
+              allCleared = false
+              console.log(`SETTINGS: could not clear ${setting.key}:`, cleared.error)
+            }
+          }
+          // Advance the marker only once the reset actually landed. Recording
+          // it after a failed write would retire the retry and leave the stale
+          // override for the life of the install; leaving it unset costs one
+          // repeated attempt per launch until a write succeeds.
+          if (allCleared) {
+            storage.save(BUILD_ENV_KEY, buildEnv)
+          }
+        }
+
+        const NOTIFICATION_LISTENER_MIGRATION_KEY = "migration:android_notification_listener_default_on_v1"
+        const notificationListenerMigrationDone = storage.load<boolean>(NOTIFICATION_LISTENER_MIGRATION_KEY)
+        if (notificationListenerMigrationDone.is_error() || !notificationListenerMigrationDone.value) {
+          const result = await get().setSetting(SETTINGS.android_notification_listener_enabled.key, true, false)
+          if (result.is_error()) {
+            console.log("SETTINGS: notification listener migration failed:", result.error)
+          } else {
+            storage.save(NOTIFICATION_LISTENER_MIGRATION_KEY, true)
+          }
+        }
+
         // One-time migration: force android_blur=false for existing users.
         // The setting's default is already false; this migration covers users
         // who explicitly opted into Android blur effects before we discovered
@@ -1050,7 +1152,6 @@ export const useSetting = <T = any>(key: string): [T, (value: T) => AsyncResult<
   const setSetting = useSettingsStore((state) => state.setSetting)
   return [value, (newValue: T) => setSetting(key, newValue)]
 }
-
 
 
 

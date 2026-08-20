@@ -3,29 +3,16 @@
  * notifications to the glasses, with a per-app blocklist. Android-only (the
  * NotificationListenerService); the getters return sensible defaults on iOS.
  *
- * Enabled-state + blocklist are engine settings (auto-synced to the native
- * listener); the installed-apps list + the listener permission are CrustModule.
+ * The per-app blocklist is an engine setting (auto-synced to the native
+ * listener); the installed-apps list + listener permission are CrustModule.
+ * Capture itself is controlled only by Android notification access and the
+ * hidden operational kill switch.
  */
 import {Platform} from "react-native"
 import CrustModule from "@mentra/crust"
 import {useSettingsStore, SETTINGS} from "../stores/settings"
 
 export const phoneNotifications = {
-  /** Is phone-notification forwarding enabled? (false on iOS) */
-  enabled: (): boolean => {
-    if (Platform.OS !== "android") return false
-    const settings = useSettingsStore.getState()
-    return (
-      Boolean(settings.getSetting(SETTINGS.android_notification_listener_enabled.key)) &&
-      Boolean(settings.getSetting(SETTINGS.notifications_enabled.key))
-    )
-  },
-  /** Enable/disable phone-notification forwarding. (no-op on iOS) */
-  setEnabled: (enabled: boolean) => {
-    if (Platform.OS !== "android") return
-    return useSettingsStore.getState().setSetting(SETTINGS.notifications_enabled.key, enabled)
-  },
-
   /** The phone's installed apps (package, name, icon). (empty on iOS) */
   installedApps: (): Promise<Array<{packageName: string; appName: string; icon: string | null}>> => {
     if (Platform.OS !== "android") return Promise.resolve([])

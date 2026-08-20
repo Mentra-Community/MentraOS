@@ -11,6 +11,7 @@ jest.mock("@mentra/crust", () => ({
   default: {
     hasNotificationListenerPermission: jest.fn(),
     openNotificationListenerSettings: jest.fn(),
+    refreshNotificationListener: jest.fn(),
   },
 }))
 
@@ -34,6 +35,7 @@ describe("checkAndRequestNotificationAccessSpecialPermission", () => {
     jest.clearAllMocks()
     Object.defineProperty(Platform, "OS", {value: "android", configurable: true, writable: true})
     mockCrust.hasNotificationListenerPermission.mockResolvedValue(false)
+    mockCrust.refreshNotificationListener.mockResolvedValue(true)
   })
 
   it("distinguishes postponing the prompt from denying in Settings", async () => {
@@ -46,6 +48,15 @@ describe("checkAndRequestNotificationAccessSpecialPermission", () => {
     await expect(result).resolves.toBe("cancelled")
   })
 
+  it("does not restart the listener when access is already granted", async () => {
+    mockCrust.hasNotificationListenerPermission.mockResolvedValue(true)
+
+    await expect(checkAndRequestNotificationAccessSpecialPermission()).resolves.toBe("granted")
+
+    expect(mockShowAlert).not.toHaveBeenCalled()
+    expect(mockCrust.refreshNotificationListener).not.toHaveBeenCalled()
+  })
+
   it("reports denial after returning from Settings without access", async () => {
     mockCheckPermissionAfterSettingsReturn.mockResolvedValue(false)
     const result = checkAndRequestNotificationAccessSpecialPermission()
@@ -55,9 +66,10 @@ describe("checkAndRequestNotificationAccessSpecialPermission", () => {
     await buttons?.[1].onPress?.()
 
     await expect(result).resolves.toBe("denied")
+    expect(mockCrust.refreshNotificationListener).not.toHaveBeenCalled()
   })
 
-  it("reports granted access after the Settings round-trip", async () => {
+  it("starts the listener after access is granted in Settings", async () => {
     mockCheckPermissionAfterSettingsReturn.mockResolvedValue(true)
     const result = checkAndRequestNotificationAccessSpecialPermission()
     await Promise.resolve()
@@ -66,5 +78,6 @@ describe("checkAndRequestNotificationAccessSpecialPermission", () => {
     await buttons?.[1].onPress?.()
 
     await expect(result).resolves.toBe("granted")
+    expect(mockCrust.refreshNotificationListener).toHaveBeenCalledTimes(1)
   })
 })

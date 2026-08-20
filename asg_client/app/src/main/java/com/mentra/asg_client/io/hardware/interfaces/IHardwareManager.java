@@ -1,6 +1,7 @@
 package com.mentra.asg_client.io.hardware.interfaces;
 
 import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
+
 import java.util.Set;
 
 /**
@@ -94,8 +95,63 @@ public interface IHardwareManager {
      */
     void playAudioAsset(String assetName);
 
+    /**
+     * Play a primary audio asset and return a token identifying that exact playback.
+     *
+     * <p>Implementations that do not support tracked playback return {@code 0}.
+     *
+     * @param assetName Name of the asset in the application's assets directory
+     * @return a positive playback token, or {@code 0} when tracking is unavailable
+     */
+    default long playAudioAssetTracked(String assetName) {
+        playAudioAsset(assetName);
+        return 0L;
+    }
+
+    /**
+     * Replace the primary audio only when {@code playbackToken} still owns it.
+     *
+     * @return {@code true} when the asset was replaced
+     */
+    default boolean replaceAudioAssetIfCurrent(long playbackToken, String assetName) {
+        return false;
+    }
+
+    /**
+     * Play a short asset without replacing the primary audio cue.
+     *
+     * <p>The default preserves legacy behavior for hardware without overlay support.
+     */
+    default void playAudioAssetOverlay(String assetName) {
+        playAudioAsset(assetName);
+    }
+
+    /**
+     * Play an independently stoppable overlay without replacing primary audio.
+     *
+     * @return a positive overlay token, or {@code 0} when tracking is unavailable
+     */
+    default long playAudioAssetOverlayTracked(String assetName) {
+        playAudioAssetOverlay(assetName);
+        return 0L;
+    }
+
+    /** Stop only the overlay identified by {@code playbackToken}. */
+    default boolean stopAudioOverlayPlayback(long playbackToken) {
+        return false;
+    }
+
     /** Stop any active MCU-managed audio playback. */
     void stopAudioPlayback();
+
+    /**
+     * Stop primary audio only when {@code playbackToken} still owns it.
+     *
+     * @return {@code true} when the owned playback was stopped
+     */
+    default boolean stopAudioPlaybackIfCurrent(long playbackToken) {
+        return false;
+    }
 
     /** Release any resources held by the hardware manager */
     void shutdown();
@@ -105,16 +161,27 @@ public interface IHardwareManager {
     // ============================================
 
     /**
-     * Get the current battery level. On K900 devices, this may query BES if cache is stale (>2
-     * min), with 50ms timeout. On standard Android devices, uses BatteryManager API directly.
+     * Get the current battery level without waiting for external hardware. K900 implementations
+     * may trigger an asynchronous cache refresh when stale. Standard Android devices use
+     * BatteryManager directly.
      *
      * @return Battery level percentage (0-100), or -1 if unknown
      */
     int getBatteryLevel();
 
     /**
-     * Get the current charging status. On K900 devices, this may query BES if cache is stale (>2
-     * min), with 50ms timeout. On standard Android devices, uses BatteryManager API directly.
+     * Actively refresh and return the battery level. Implementations that query external hardware
+     * may block, so callers must use a worker thread. Implementations without an external battery
+     * source fall back to {@link #getBatteryLevel()}.
+     */
+    default int queryBatteryLevel() {
+        return getBatteryLevel();
+    }
+
+    /**
+     * Get the current charging status without waiting for external hardware. K900 implementations
+     * may trigger an asynchronous cache refresh when stale. Standard Android devices use
+     * BatteryManager directly.
      *
      * @return true if charging, false if not charging or unknown
      */

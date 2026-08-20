@@ -88,6 +88,8 @@ export interface StartUnmanagedOptions {
   video?: StreamStartRequest["video"]
   audio?: StreamStartRequest["audio"]
   sound?: boolean
+  /** Optional Bearer token for WHIP Authorization (custom authenticated endpoints). */
+  authToken?: string
 }
 
 export interface StartManagedOptions {
@@ -102,8 +104,10 @@ export interface StartManagedOptions {
    *   - "whip": WebRTC ingest -> WHEP playback (<1s glass-to-screen), but NO
    *     HLS/DASH playback and NO recording (Cloudflare limitation; the returned
    *     hlsUrl will serve 204 forever).
+   *   - "rtmp": RTMPS ingest over TCP 443 -> HLS playback. Survives networks
+   *     that drop WHIP/SRT UDP.
    */
-  ingest?: "srt" | "whip"
+  ingest?: "srt" | "whip" | "rtmp"
 }
 
 export interface StreamPublisherStartResult {
@@ -314,6 +318,7 @@ export class PhoneStreamCoordinator {
           // undefined, expected an Object") — only include what was provided.
           ...(opts.video !== undefined ? {video: opts.video} : {}),
           ...(opts.audio !== undefined ? {audio: opts.audio} : {}),
+          ...(opts.authToken ? {authToken: opts.authToken} : {}),
         })
         const result = publisherStartResult(streamId, event)
         this.startLifecycle(streamId)
@@ -330,6 +335,14 @@ export class PhoneStreamCoordinator {
     opts: StartManagedOptions,
   ): Promise<ManagedStartResult> {
     const startupStartedAtMs = Date.now()
+    // streamId doesn't exist yet — it's minted a few lines below, once we
+    // know this is a fresh provision rather than a join onto an existing one.
+    console.info("[STREAM_STARTUP]", {
+      stage: "requested",
+      packageName,
+      ingest: opts.ingest,
+      elapsedMs: 0,
+    })
     // Two-phase: the entry-claim runs under the transition lock; the wait for
     // HLS readiness happens AFTER the lock releases so a long warm-up doesn't
     // block subsequent start/stop transitions on this coordinator.
@@ -824,7 +837,7 @@ export class PhoneStreamCoordinator {
   }
 }
 
-function pickIngestUrl(p: ProvisionResult, preference?: "srt" | "whip"): string {
+function pickIngestUrl(p: ProvisionResult, preference?: "srt" | "whip" | "rtmp"): string {
   // Glasses' StreamCommandHandler detects protocol from URL prefix.
   //
   // Default priority: SRT > RTMP > WHIP. SRT first: Cloudflare's WebRTC (WHIP)
@@ -835,13 +848,18 @@ function pickIngestUrl(p: ProvisionResult, preference?: "srt" | "whip"): string 
   //
   // "whip" preference flips the trade: sub-second WHEP playback for
   // live-monitor use cases, accepting no HLS and no recording.
+  // "rtmp" prefers TCP 443 ingest so networks that drop WHIP/SRT UDP still
+  // get HLS playback. Callers must request it explicitly; WHIP starts do not
+  // fall back to RTMP.
   //
   // Throw if none resolved so the caller's Promise rejects with a clear
   // message rather than the glasses' "unknown protocol" error.
   const url =
     preference === "whip"
       ? p.webrtcPublishUrl || p.srtUrl || p.rtmpUrl
-      : p.srtUrl || p.rtmpUrl || p.webrtcPublishUrl
+      : preference === "rtmp"
+        ? p.rtmpUrl || p.srtUrl || p.webrtcPublishUrl
+        : p.srtUrl || p.rtmpUrl || p.webrtcPublishUrl
   if (!url) {
     throw new Error("Cloudflare provision returned no usable ingest URL")
   }

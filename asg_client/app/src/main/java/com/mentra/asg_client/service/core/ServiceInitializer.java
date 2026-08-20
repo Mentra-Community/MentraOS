@@ -42,11 +42,15 @@ import com.mentra.asg_client.service.system.managers.ConfigurationManager;
 import com.mentra.asg_client.service.system.managers.ServiceLifecycleManager;
 import com.mentra.asg_client.service.system.managers.StateManager;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 /** Wires core service components (replaces the former {@link ServiceContainer}). */
 public final class ServiceInitializer {
 
     private static final String TAG = "ServiceInitializer";
+    private static final long BATTERY_ANNOUNCEMENT_SHUTDOWN_TIMEOUT_MS = 1000;
 
     private final IServiceLifecycle lifecycleManager;
     private final ICommunicationManager communicationManager;
@@ -57,6 +61,7 @@ public final class ServiceInitializer {
     private final CommandProcessor commandProcessor;
     private final AsgNotificationManager notificationManager;
     private final IResponseBuilder responseBuilder;
+    private final ExecutorService batteryAnnouncementExecutor;
 
     public ServiceInitializer(
             @NonNull AsgClientService service,
@@ -84,6 +89,9 @@ public final class ServiceInitializer {
         serviceManager.setStateManager(this.stateManager);
 
         this.streamingManager = new MediaManager(context, serviceManager);
+        this.batteryAnnouncementExecutor =
+                Executors.newSingleThreadExecutor(
+                        runnable -> new Thread(runnable, "battery-announcement"));
 
         RgbLedCommandHandler rgbLedHandler =
                 new RgbLedCommandHandler(serviceManager, hardwareManager);
@@ -100,11 +108,15 @@ public final class ServiceInitializer {
         peripheralBus.subscribe(
                 new BatteryEventSubscriber(hardwareManager, stateManager, serviceManager));
         peripheralBus.subscribe(
-                new ButtonEventSubscriber(serviceManager, hardwareManager, stateManager));
+                new ButtonEventSubscriber(
+                        serviceManager,
+                        hardwareManager,
+                        stateManager,
+                        batteryAnnouncementExecutor));
         peripheralBus.subscribe(new ShutdownEventSubscriber(serviceManager, context));
         peripheralBus.subscribe(new FactoryResetEventSubscriber(serviceManager, context, otaHelper));
         peripheralBus.subscribe(new BesVersionEventSubscriber(serviceManager));
-        peripheralBus.subscribe(new BtMacEventSubscriber(context));
+        peripheralBus.subscribe(new BtMacEventSubscriber(serviceManager));
         peripheralBus.subscribe(new BesOtaAuthEventSubscriber(serviceManager));
         peripheralBus.subscribe(new HotspotEventSubscriber(serviceManager));
         peripheralBus.subscribe(new FileTransferAckEventSubscriber(serviceManager));
@@ -141,6 +153,16 @@ public final class ServiceInitializer {
 
     public void cleanup() {
         Log.d(TAG, "Cleaning up service graph");
+        batteryAnnouncementExecutor.shutdownNow();
+        try {
+            if (!batteryAnnouncementExecutor.awaitTermination(
+                    BATTERY_ANNOUNCEMENT_SHUTDOWN_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+                Log.w(TAG, "Battery announcement worker did not stop before service teardown");
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            Log.w(TAG, "Interrupted while stopping battery announcement worker");
+        }
         streamingManager.cleanup();
         lifecycleManager.cleanup();
         Log.d(TAG, "Service graph cleanup completed");

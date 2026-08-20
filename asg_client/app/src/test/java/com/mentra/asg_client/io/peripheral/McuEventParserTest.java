@@ -174,8 +174,7 @@ public class McuEventParserTest {
                         .put("ble", "MyBle")
                         .put("bt", "MyBt")
                         .put("btaddr", "AA:BB")
-                        .put("bleaddr", "CC:DD")
-                        .put("serial_number", "ML1234567890ABCD");
+                        .put("bleaddr", "CC:DD");
         McuEvent event = McuEventParser.parse(cmd("hs_syvr", body));
         assertThat(event).isInstanceOf(BesVersionEvent.class);
         BesVersionEvent version = (BesVersionEvent) event;
@@ -184,7 +183,6 @@ public class McuEventParserTest {
         assertThat(version.getBtName()).isEqualTo("MyBt");
         assertThat(version.getBtAddress()).isEqualTo("AA:BB");
         assertThat(version.getBleAddress()).isEqualTo("CC:DD");
-        assertThat(version.getManufacturingSerial()).isEqualTo("ML1234567890ABCD");
     }
 
     @Test

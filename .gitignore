@@ -406,6 +406,9 @@ MEMORY.md
 .mcp.json
 .codex/
 
+# Graphify knowledge graph output (local AST extract)
+graphify-out/
+
 # Local Cursor/agent skills
 mobile/agents/
 
@@ -421,3 +424,7 @@ miniapps/navigation/build/
 # Downloaded bug report bundles (scripts/fetch-incident-logs.sh)
 incident-logs/
 asg_client/StreamPackLite.zip
+
+# Local temp artifacts and generated decks
+tmp/
+output/

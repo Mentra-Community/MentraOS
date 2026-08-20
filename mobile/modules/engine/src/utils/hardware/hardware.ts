@@ -1,11 +1,4 @@
-import {
-  Capabilities,
-  HardwareRequirement,
-  HardwareType,
-  HardwareRequirementLevel,
-  DeviceTypes,
-} from "../../types"
-import {simulatedGlasses} from "../../types"
+import {Capabilities, DeviceTypes, HardwareRequirement, HardwareRequirementLevel, HardwareType, simulatedGlasses} from "../../types"
 
 /**
  * Result of a hardware compatibility check
@@ -86,7 +79,12 @@ export class HardwareCompatibility {
         return capabilities.hasDisplay
 
       case HardwareType.MICROPHONE:
-        return capabilities.hasMicrophone
+        // MentraOS always provides an audio-input path. When the connected
+        // glasses do not have an onboard microphone, the engine falls back to
+        // the phone microphone. Keep `capabilities.hasMicrophone` reserved for
+        // physical-device/source selection; app compatibility is about whether
+        // the requested input is available to the miniapp.
+        return true
 
       case HardwareType.SPEAKER:
         return capabilities.hasSpeaker

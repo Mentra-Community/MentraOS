@@ -239,6 +239,24 @@ public class AsgClientService extends Service implements NetworkStateListener, T
                             },
                             3000);
 
+            // Apply persisted Wi-Fi ADB preference (default off for security — OS-1627)
+            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                try {
+                    boolean wifiAdbEnabled = false;
+                    if (serviceInitializer != null
+                            && serviceInitializer.getServiceManager() != null
+                            && serviceInitializer.getServiceManager().getAsgSettings() != null) {
+                        wifiAdbEnabled =
+                                serviceInitializer.getServiceManager().getAsgSettings().isWifiAdbEnabled();
+                    }
+                    Log.d(TAG, "🔧 Applying Wi-Fi ADB state on boot: " + wifiAdbEnabled);
+                    SystemControllerFactory.get(this).setWifiAdb(wifiAdbEnabled);
+                } catch (Exception e) {
+                    Log.w(TAG, "Could not apply Wi-Fi ADB state on boot; forcing disabled", e);
+                    SystemControllerFactory.get(this).setWifiAdb(false);
+                }
+            }, 3000);
+
             // Register receivers
             Log.d(TAG, "📻 Registering broadcast receivers");
             registerReceivers();
@@ -467,13 +485,62 @@ public class AsgClientService extends Service implements NetworkStateListener, T
             JSONObject payload = new JSONObject();
             payload.put("C", command);
             payload.put("V", 1);
-            payload.put("B", new JSONObject());
+
+            JSONObject body = new JSONObject();
+            Integer rateHz = null;
+            if (playing) {
+                // Tell BES the actual I2S PCM rate Android's audio HAL is about to output,
+                // instead of relying on BES's hardcoded/default guess. A stale default here
+                // previously caused boot/shutter tones to play at the wrong pitch/speed
+                // (48kHz PCM played back at a 44.1kHz assumption).
+                android.media.AudioManager audioManager =
+                        (android.media.AudioManager) getSystemService(Context.AUDIO_SERVICE);
+                if (audioManager == null) {
+                    Log.w(TAG, "[I2S-RATE] AudioManager is null, sending empty body");
+                } else {
+                    String outputRate =
+                            audioManager.getProperty(
+                                    android.media.AudioManager.PROPERTY_OUTPUT_SAMPLE_RATE);
+                    Log.i(TAG, "[I2S-RATE] HAL PROPERTY_OUTPUT_SAMPLE_RATE=" + outputRate);
+                    if (outputRate != null) {
+                        try {
+                            rateHz = Integer.parseInt(outputRate);
+                            body.put("rate", rateHz);
+                        } catch (NumberFormatException e) {
+                            Log.w(TAG, "[I2S-RATE] Unexpected PROPERTY_OUTPUT_SAMPLE_RATE value: " + outputRate);
+                        }
+                    } else {
+                        Log.w(TAG, "[I2S-RATE] HAL sample-rate property missing");
+                    }
+                }
+            }
+            // B must be a JSON *string* (not a nested object) - BES parses it via cJSON's
+            // valuestring, which is only populated for string-typed values.
+            String bodyStr = body.toString();
+            payload.put("B", bodyStr);
+
+            Log.i(
+                    TAG,
+                    "[I2S-RATE] cmd="
+                            + command
+                            + " rate="
+                            + (rateHz != null ? rateHz : "none")
+                            + " B_type=string B="
+                            + bodyStr
+                            + " payload="
+                            + payload);
 
             boolean sent = sendK900Command(payload.toString());
             if (sent) {
                 lastI2sPlaying = playing;
             }
-            Log.i(TAG, "I2S command sent (" + payload.toString() + ") result=" + sent);
+            Log.i(
+                    TAG,
+                    "[I2S-RATE] uart_send result="
+                            + sent
+                            + " payload="
+                            + payload
+                            + " (look for B={\"rate\":...} as a string)");
         } catch (JSONException e) {
             Log.e(TAG, "Failed to construct I2S command payload", e);
         }
@@ -1138,15 +1205,7 @@ public class AsgClientService extends Service implements NetworkStateListener, T
 
             // Include BES BT MAC address as unique device identifier (stored in system properties)
             String besBtMac = SysProp.getBesBtMac(this);
-            String manufacturingSerial = "";
-            if (serviceInitializer.getServiceManager() != null
-                    && serviceInitializer.getServiceManager().getAsgSettings() != null) {
-                manufacturingSerial =
-                        serviceInitializer
-                                .getServiceManager()
-                                .getAsgSettings()
-                                .getBesManufacturingSerial();
-            }
+            String deviceSerial = SysProp.getDeviceSerial(this);
 
             Log.d(
                     TAG,
@@ -1160,8 +1219,8 @@ public class AsgClientService extends Service implements NetworkStateListener, T
                             + mtkFirmwareVersion
                             + ", BT MAC: "
                             + besBtMac
-                            + ", Manufacturing serial available: "
-                            + !manufacturingSerial.isEmpty());
+                            + ", Android device serial available: "
+                            + !deviceSerial.isEmpty());
 
             if (serviceInitializer.getServiceManager().getBluetoothManager() != null
                     && serviceInitializer.getServiceManager().getBluetoothManager().isConnected()) {
@@ -1197,8 +1256,8 @@ public class AsgClientService extends Service implements NetworkStateListener, T
                 chunk3.put("bes_fw_version", besFirmwareVersion);
                 chunk3.put("mtk_fw_version", mtkFirmwareVersion);
                 chunk3.put("bt_mac_address", besBtMac);
-                if (!manufacturingSerial.isEmpty()) {
-                    chunk3.put("serial_number", manufacturingSerial);
+                if (!deviceSerial.isEmpty()) {
+                    chunk3.put("serial_number", deviceSerial);
                 }
                 addPhoneWireCapsIfSupported(chunk3);
 
@@ -1412,6 +1471,18 @@ public class AsgClientService extends Service implements NetworkStateListener, T
                     Log.w(TAG, "⚠️ Bluetooth manager is null - cannot send file");
                     return false;
                 }
+            }
+
+            @Override
+            public boolean sendFileViaBluetooth(byte[] data, String fileName, byte[] prelude) {
+                if (serviceInitializer.getServiceManager().getBluetoothManager() == null) {
+                    Log.w(TAG, "Bluetooth manager is null - cannot send file with prelude");
+                    return false;
+                }
+                return serviceInitializer
+                        .getServiceManager()
+                        .getBluetoothManager()
+                        .sendFile(data, fileName, prelude);
             }
 
             @Override

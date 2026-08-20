@@ -439,6 +439,16 @@ Sets the glasses system clock from the phone. Sent only when the phone detects c
 
 No response is required for V1 (fire-and-forget).
 
+#### `set_wifi_adb_state`
+
+Enable or disable Wi-Fi ADB (wireless debugging) on Mentra Live. Persisted on the glasses; boot applies the saved preference (default `false` for security).
+
+```json
+{"type": "set_wifi_adb_state", "enabled": true}
+```
+
+No response is required (fire-and-forget).
+
 #### `disconnect_wifi`
 
 ```json
@@ -487,11 +497,15 @@ The glasses also emit `battery_status` outbound:
 {"type": "request_version"}
 ```
 
-Returns version information chunked across three messages — `version_info_1`, `version_info_2`, `version_info_3` — to fit BLE MTU:
+Returns version information in chunks to fit the BLE MTU:
 
-- `version_info_1`: `app_version`, `build_number`, `device_model`, `android_version`, `system_time_ms`
-- `version_info_2`: `ota_version_url` (the ASG client's compiled default OTA manifest URL)
-- `version_info_3`: `bes_fw_version`, `mtk_fw_version`, `bt_mac_address`
+- `version_info_1`: `app_version`, `build_number`, `device_model`, `android_version`, `system_time_ms`, `sid`
+- `version_info_3`: `bes_fw_version`, `mtk_fw_version`, `bt_mac_address`, `serial_number`
+
+`serial_number` is the Android firmware product serial from `ro.serialno`; the
+generic `0123456789ABCDEF` Android/ADB placeholder is omitted.
+`bt_mac_address` comes from BES and may arrive in a follow-up `version_info_3`
+after BES responds to the MAC-address request.
 
 ---
 

@@ -1,6 +1,7 @@
 import {engine} from "@mentra/engine"
 
 import mantle from "@/services/MantleManager"
+import {settleFrame} from "@/utils/settleFrame"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import mentraAuth from "@/utils/auth/authClient"
 import {storage} from "@/utils/storage"
@@ -16,14 +17,33 @@ export class LogoutUtils {
     console.log(`${this.TAG}: Starting complete logout process...`)
 
     try {
-      // Step 1: Disconnect and forget any connected glasses
+      // Step 1: Sign out first, so the UI leaves the screen that called us.
+      //
+      // Logout is almost always triggered from Settings → Profile → Log Out,
+      // and that screen renders *inside the miniapp surface*. Step 2 tears that
+      // surface down (mantle.cleanup() → localMiniappRuntime.cleanup()), so
+      // running it first pulls the container out from under a component that is
+      // still mounted and still awaiting this call. Fabric then fails to
+      // reparent a view that already has a parent, React Native escalates that
+      // to a host exception, and the ReactHost is destroyed — leaving a white
+      // screen that survives navigation and only a force-quit clears (OS-1834).
+      //
+      // Signing out emits SIGNED_OUT, AuthContext drops the session, and the
+      // tree re-renders to the auth stack, which unmounts the miniapp surface
+      // on its own. That delivery is what OS-1828 fixed: before that, this
+      // event never reached AuthContext at all.
+      await this.clearAuthSession()
+
+      // Step 2: Let that unmount actually commit before destroying what it was
+      // rendering. Without this the teardown below still races the re-render
+      // described above.
+      await settleFrame()
+
+      // Step 3: Disconnect and forget any connected glasses
       await this.disconnectAndForgetGlasses()
 
-      // Step 2: Stop island runtime services before clearing auth/session state
+      // Step 4: Stop island runtime services
       await this.stopToolkitRuntime()
-
-      // Step 3: Sign out of the account provider + wipe legacy auth storage
-      await this.clearAuthSession()
 
       // Step 5: Clear all app settings and user data
       await this.clearAppSettings()

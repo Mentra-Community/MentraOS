@@ -13,57 +13,96 @@ public class WhipStreamConfigTest {
     @Test
     public void fromJson_null_null_returnsDefaults() {
         WhipStreamConfig c = WhipStreamConfig.fromJson(null, null);
-        assertEquals(WhipStreamConfig.DEFAULT_VIDEO_WIDTH, c.getVideoWidth());
-        assertEquals(WhipStreamConfig.DEFAULT_VIDEO_HEIGHT, c.getVideoHeight());
-        assertEquals(WhipStreamConfig.DEFAULT_VIDEO_BITRATE, c.getVideoBitrate());
-        assertEquals(WhipStreamConfig.DEFAULT_VIDEO_FPS, c.getVideoFps());
+        assertEquals(1280, c.getVideoWidth());
+        assertEquals(720, c.getVideoHeight());
+        assertEquals(2_500_000, c.getVideoBitrate());
+        assertEquals(15, c.getVideoFps());
         assertFalse(c.isEchoCancellation());
         assertFalse(c.isNoiseSuppression());
     }
 
     @Test
-    public void compactVsFull_videoParity() throws JSONException {
-        JSONObject vCompact = new JSONObject();
-        vCompact.put("w", 1280);
-        vCompact.put("h", 720);
-        vCompact.put("br", 2_500_000);
-        vCompact.put("fr", 25);
+    public void fromJson_honorsFullKeys() throws JSONException {
+        JSONObject v = new JSONObject();
+        v.put("width", 1920);
+        v.put("height", 1080);
+        v.put("bitrate", 8_000_000);
+        v.put("frameRate", 30);
 
-        JSONObject vFull = new JSONObject();
-        vFull.put("width", 1280);
-        vFull.put("height", 720);
-        vFull.put("bitrate", 2_500_000);
-        vFull.put("frameRate", 25);
-
-        WhipStreamConfig c1 = WhipStreamConfig.fromJson(vCompact, null);
-        WhipStreamConfig c2 = WhipStreamConfig.fromJson(vFull, null);
-        assertEquals(c2.getVideoWidth(), c1.getVideoWidth());
-        assertEquals(c2.getVideoHeight(), c1.getVideoHeight());
-        assertEquals(c2.getVideoBitrate(), c1.getVideoBitrate());
-        assertEquals(c2.getVideoFps(), c1.getVideoFps());
+        WhipStreamConfig c = WhipStreamConfig.fromJson(v, null);
+        assertEquals(1920, c.getVideoWidth());
+        assertEquals(1080, c.getVideoHeight());
+        assertEquals(8_000_000, c.getVideoBitrate());
+        assertEquals(30, c.getVideoFps());
     }
 
     @Test
-    public void videoClamps_matchRtmpThresholds() throws JSONException {
-        JSONObject low = new JSONObject();
-        low.put("width", 100);
-        low.put("height", 100);
-        low.put("bitrate", 1);
-        low.put("frameRate", 1);
-        WhipStreamConfig c = WhipStreamConfig.fromJson(low, null);
-        assertEquals(320, c.getVideoWidth());
-        assertEquals(240, c.getVideoHeight());
-        assertEquals(100_000, c.getVideoBitrate());
-        assertEquals(5, c.getVideoFps());
+    public void fromJson_honorsCompactKeys() throws JSONException {
+        JSONObject v = new JSONObject();
+        v.put("w", 640);
+        v.put("h", 360);
+        v.put("br", 500_000);
+        v.put("fr", 24);
 
-        JSONObject high = new JSONObject();
-        high.put("width", 4000);
-        high.put("height", 4000);
-        high.put("bitrate", 100_000_000);
-        high.put("frameRate", 240);
-        c = WhipStreamConfig.fromJson(high, null);
-        assertEquals(1920, c.getVideoWidth());
-        assertEquals(1080, c.getVideoHeight());
+        WhipStreamConfig c = WhipStreamConfig.fromJson(v, null);
+        assertEquals(640, c.getVideoWidth());
+        assertEquals(360, c.getVideoHeight());
+        assertEquals(500_000, c.getVideoBitrate());
+        assertEquals(24, c.getVideoFps());
+    }
+
+    @Test
+    public void fromJson_honorsFpsAndFKeys() throws JSONException {
+        JSONObject vFps = new JSONObject();
+        vFps.put("width", 854);
+        vFps.put("height", 480);
+        vFps.put("bitrate", 1_000_000);
+        vFps.put("fps", 20);
+
+        WhipStreamConfig c1 = WhipStreamConfig.fromJson(vFps, null);
+        assertEquals(20, c1.getVideoFps());
+
+        JSONObject vF = new JSONObject();
+        vF.put("w", 640);
+        vF.put("h", 360);
+        vF.put("br", 750_000);
+        vF.put("f", 10);
+
+        WhipStreamConfig c2 = WhipStreamConfig.fromJson(vF, null);
+        assertEquals(10, c2.getVideoFps());
+    }
+
+    @Test
+    public void fromJson_fullKeyWinsOverCompact() throws JSONException {
+        JSONObject v = new JSONObject();
+        v.put("width", 1280);
+        v.put("w", 640);
+        v.put("height", 720);
+        v.put("h", 360);
+        v.put("bitrate", 2_500_000);
+        v.put("br", 500_000);
+        v.put("frameRate", 15);
+        v.put("fr", 30);
+        v.put("fps", 24);
+
+        WhipStreamConfig c = WhipStreamConfig.fromJson(v, null);
+        assertEquals(1280, c.getVideoWidth());
+        assertEquals(720, c.getVideoHeight());
+        assertEquals(2_500_000, c.getVideoBitrate());
+        assertEquals(15, c.getVideoFps());
+    }
+
+    @Test
+    public void fromJson_clampsAndSnapsOddDimensions() throws JSONException {
+        JSONObject v = new JSONObject();
+        v.put("width", 641);
+        v.put("height", 361);
+        v.put("bitrate", 50_000_000);
+        v.put("frameRate", 120);
+
+        WhipStreamConfig c = WhipStreamConfig.fromJson(v, null);
+        assertEquals(640, c.getVideoWidth());
+        assertEquals(360, c.getVideoHeight());
         assertEquals(10_000_000, c.getVideoBitrate());
         assertEquals(30, c.getVideoFps());
     }

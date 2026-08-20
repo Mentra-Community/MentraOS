@@ -1,41 +1,54 @@
+import {chmodSync, writeFileSync} from 'fs';
 import QRCode from 'qrcode';
-import {join} from 'node:path';
-import {tmpdir} from 'node:os';
 
+/**
+ * Print a scannable QR to the terminal.
+ *
+ * Use the *large* terminal renderer (`small: false`), not half-blocks.
+ * Half-block mode (`█▄▀`) packs two modules per row and breaks whenever the
+ * terminal has non-1.0 line-height or odd font metrics — looks like noise and
+ * often won't scan. The large renderer paints each module as two spaces with
+ * forced ANSI black/white backgrounds (same scheme as qrcode-terminal), so
+ * modules stay roughly square and readable on dark or light themes.
+ */
 export async function printQR(url: string): Promise<void> {
-  // We render with `qrcode` (node-qrcode), not `qrcode-terminal`, to fix two
-  // distinct ways the QR came out unscannable for some users:
-  //
-  //  1. Theme inversion. `qrcode-terminal`'s compact mode prints raw half-block
-  //     glyphs in the terminal's *default* foreground color, so on a dark theme
-  //     (default macOS Terminal.app, Codex desktop terminal) it renders
-  //     light-on-dark — an inverted QR most phone cameras can't read. node-qrcode
-  //     emits explicit ANSI colors (white bg / black fg), forcing dark-on-light
-  //     regardless of terminal theme.
-  //  2. Height. A full-block QR is one terminal row per module (~39–43 rows for
-  //     our deep links) and gets clipped in a default 24-row window — also
-  //     unscannable. `small: true` packs two module rows per line (~23 rows),
-  //     which fits while keeping the forced colors above.
-  //
   try {
-    const str = await QRCode.toString(url, {type: 'terminal', small: true});
-    process.stdout.write(str);
+    const str = await QRCode.toString(url, {
+      type: 'terminal',
+      small: false,
+      errorCorrectionLevel: 'M',
+      margin: 1,
+    });
+    process.stdout.write('\n' + str);
   } catch (error) {
     console.error(`Could not render terminal QR code: ${(error as Error).message}`);
   }
+}
 
-  // Terminal line-height and font settings can distort half-block QRs. Always
-  // provide a high-resolution PNG fallback that can be opened or command-clicked.
-  const pngPath = join(tmpdir(), `mentra-miniapp-dev-qr-${process.pid}.png`);
+/**
+ * Write a PNG QR to disk with mode 0o600.
+ *
+ * Dev/release URLs can carry a signed attestation query param; writing with
+ * restrictive permissions avoids a world-readable window on multi-user machines.
+ * Failures only warn — a broken PNG write must not take down the server.
+ *
+ * @returns true if the file was written successfully
+ */
+export async function writeQRPng(url: string, outPath: string): Promise<boolean> {
   try {
-    await QRCode.toFile(pngPath, url, {
+    const buffer = await QRCode.toBuffer(url, {
       type: 'png',
-      width: 1024,
-      margin: 4,
       errorCorrectionLevel: 'M',
+      margin: 2,
+      scale: 8,
     });
-    console.log(`\nHigh-resolution QR: file://${pngPath}`);
+    // mode on writeFileSync only applies to newly created files — always chmod
+    // after write so overwrites of a looser-mode temp path stay private.
+    writeFileSync(outPath, buffer, {mode: 0o600});
+    chmodSync(outPath, 0o600);
+    return true;
   } catch (error) {
-    console.error(`Could not write QR image: ${(error as Error).message}`);
+    console.warn(`Could not write QR PNG to ${outPath}: ${(error as Error).message}`);
+    return false;
   }
 }

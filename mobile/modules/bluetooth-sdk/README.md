@@ -158,7 +158,7 @@ enterprise device deployments:
 
 - `bluetooth_sdk_started`: sent once per app runtime after the native SDK starts.
 - `bluetooth_sdk_glasses_connected`: sent when SDK status transitions from not connected to connected.
-- `bluetooth_sdk_glasses_identified`: sent once per connection after the SDK receives a valid manufacturing serial from the glasses. This fires for every supported model that reports a serial. G1 and Ar99 decode the serial from the glasses' BLE advertisement, so they emit this event as soon as this SDK version ships. Mentra Live instead reports the serial provisioned in BES NV storage, which requires compatible BES firmware and `asg_client` software.
+- `bluetooth_sdk_glasses_identified`: sent once per connection after the SDK receives a valid manufacturing serial from the glasses. This fires for every supported model that reports a serial. G1 and Ar99 decode the serial from the glasses' BLE advertisement. Mentra Live reports the product serial provisioned by its Android firmware through `asg_client`.
 
 Analytics delivery is fire-and-forget: events are submitted asynchronously, do
 not block Bluetooth SDK behavior, and are not retried if delivery fails.
@@ -302,6 +302,8 @@ console.log(forgetStatus.state)
 
 const hotspotStatus = await BluetoothSdk.setHotspotState(true)
 console.log(hotspotStatus.state)
+
+await BluetoothSdk.setWifiAdbState(true) // Mentra Live Wi-Fi ADB (wireless debugging)
 
 const galleryAck = await BluetoothSdk.setGalleryModeEnabled(true)
 console.log(galleryAck.status)

@@ -15,7 +15,7 @@
  * the developer's own backend, not in MENTRA_PUBLIC_*.
  */
 
-import {networkInterfaces} from "os"
+import {getLanIp} from "@mentra/miniapp-cli/lan"
 import {existsSync} from "fs"
 import {rm} from "fs/promises"
 import {reactSingletonPlugin} from "@mentra/miniapp-cli/build-helpers"
@@ -55,18 +55,6 @@ await rm(distDir, {recursive: true, force: true})
 const DEFAULT_ELEVENLABS_AGENT_ID = "agent_0301ks3wg64pf9evgxqa6dw34t1f"
 
 /** Prefer LAN IP so a MentraOS phone can reach the Mac signing server. */
-function getLanIp(): string | null {
-  const interfaces = networkInterfaces()
-  for (const name of Object.keys(interfaces)) {
-    for (const iface of interfaces[name] ?? []) {
-      if (iface.family === "IPv4" && !iface.internal) {
-        return iface.address
-      }
-    }
-  }
-  return null
-}
-
 const lanIp = getLanIp()
 const signerPort = Number(process.env.ELEVENLABS_SIGNING_SERVER_PORT || 8788)
 const DEFAULT_ELEVENLABS_SIGNED_URL_ENDPOINT = lanIp

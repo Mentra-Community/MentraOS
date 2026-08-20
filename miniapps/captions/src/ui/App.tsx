@@ -29,6 +29,7 @@ export function App() {
     settings,
     updateLanguage,
     updateHints,
+    updateUseOfflineStt,
     updateDisplayLines,
     updateDisplayWidth,
     updateWordBreaking,
@@ -108,6 +109,7 @@ export function App() {
               displayPreview={displayPreview}
               accentColor={presentation.accentColor}
               accentForeground={presentation.accentForeground}
+              onUpdateUseOfflineStt={updateUseOfflineStt}
               onUpdateDisplayLines={updateDisplayLines}
               onUpdateDisplayWidth={updateDisplayWidth}
               onUpdateWordBreaking={updateWordBreaking}

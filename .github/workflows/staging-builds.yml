@@ -34,6 +34,15 @@ on:
         required: false
         default: "false"
         type: boolean
+      cloud_env:
+        description: "Cloud backend to bake in. Defaults to prod because this lane's binary is promoted to the stores unchanged; pick staging only for a build you will NOT promote."
+        required: false
+        default: "prod"
+        type: choice
+        options:
+          - prod
+          - staging
+          - dev
 
 permissions:
   contents: write
@@ -150,7 +159,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.bun/install/cache
-          key: bun-${{ runner.os }}-${{ hashFiles('mobile/bun.lockb') }}
+          key: bun-${{ runner.os }}-${{ hashFiles('mobile/bun.lock') }}
           restore-keys: |
             bun-${{ runner.os }}-
 
@@ -167,13 +176,123 @@ jobs:
         # it into the Android manifest (com.mapbox.token) for the Nav SDK.
         env:
           MAPBOX_PUBLIC_TOKEN: ${{ secrets.MAPBOX_PUBLIC_TOKEN }}
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN_MOBILE_STG }}
         run: |
           cp .env.example .env
+          # Pin which cloud this binary talks to (OS-1875).
+          #
+          # This lane is the only one that uploads to TestFlight and Play internal,
+          # and that binary is promoted to the stores unchanged. It must therefore
+          # carry production URLs: a promoted build cannot learn it was promoted.
+          # Build a staging-cloud variant deliberately with the cloud_env input, and
+          # do not promote that one.
+          #
+          # .env.example ships dev URLs so a local checkout builds with no setup.
+          # A lane that produces a distributable must not inherit that silently.
+          # Fatal on release-producing events, warning on pull_request, matching the
+          # Sentry DSN rule (OS-1827).
+          CLOUD_ENV="${{ inputs.cloud_env }}"
+          [ -n "$CLOUD_ENV" ] || CLOUD_ENV="prod"
+          case "$CLOUD_ENV" in
+            dev)
+              CLOUD_CORE="https://core.dev.us-west-2.mentraglass.com"
+              CLOUD_RT="https://runtime.dev.us-west-2.mentraglass.com"
+              ;;
+            staging)
+              CLOUD_CORE="https://core.staging.us-west-2.mentraglass.com"
+              CLOUD_RT="https://runtime.staging.us-west-2.mentraglass.com"
+              ;;
+            prod)
+              CLOUD_CORE="https://core.us-west-2.mentraglass.com"
+              CLOUD_RT="https://runtime.us-west-2.mentraglass.com"
+              ;;
+            *)
+              CLOUD_CORE=""
+              CLOUD_RT=""
+              ;;
+          esac
+          if [ -n "$CLOUD_CORE" ]; then
+            sed -e "s|^EXPO_PUBLIC_BUILD_ENV=.*|EXPO_PUBLIC_BUILD_ENV=$CLOUD_ENV|" \
+                -e "s|^EXPO_PUBLIC_CLOUD_CORE_URL=.*|EXPO_PUBLIC_CLOUD_CORE_URL=$CLOUD_CORE|" \
+                -e "s|^EXPO_PUBLIC_CLOUD_RUNTIME_URL=.*|EXPO_PUBLIC_CLOUD_RUNTIME_URL=$CLOUD_RT|" \
+                .env > .env.tmp && mv .env.tmp .env
+            # Make the pin authoritative for every later step. release:android /
+            # release:ios call setBuildEnv(), which keeps any value already
+            # present in the environment over the .env file (standard dotenv
+            # precedence, deliberately relied on for the signing credentials).
+            # These jobs run on persistent self-hosted runners, so a stale
+            # runner-level EXPO_PUBLIC_CLOUD_* or EXPO_PUBLIC_BUILD_ENV would
+            # otherwise outrank the values written above, Expo would bundle the
+            # inherited endpoint, and validateReleaseArchive() would compare the
+            # bundle against that same inherited process env and pass. GITHUB_ENV
+            # takes precedence over the runner's inherited environment, so the
+            # three keys agree from here on.
+            {
+              echo "EXPO_PUBLIC_BUILD_ENV=$CLOUD_ENV"
+              echo "EXPO_PUBLIC_CLOUD_CORE_URL=$CLOUD_CORE"
+              echo "EXPO_PUBLIC_CLOUD_RUNTIME_URL=$CLOUD_RT"
+            } >> "$GITHUB_ENV"
+            echo "Cloud backend pinned to $CLOUD_ENV ($CLOUD_CORE)"
+          elif [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "::warning::Unrecognised cloud env '$CLOUD_ENV'; this PR build keeps the dev backend (OS-1875)."
+          else
+            echo "::error::Unrecognised cloud env '$CLOUD_ENV'. A distributable build must pin its backend (OS-1875)."
+            exit 1
+          fi
           if [ -n "$MAPBOX_PUBLIC_TOKEN" ]; then
             # Replace the whole line so the ci-dummy value can't leak through.
             sed -i '' "s|^EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN=.*|EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN=$MAPBOX_PUBLIC_TOKEN|" .env
           else
             echo "::warning::MAPBOX_PUBLIC_TOKEN secret not set — Android build will use the dummy token and on-device navigation will not work."
+          fi
+          # .env.example ships an empty EXPO_PUBLIC_SENTRY_DSN and SentrySetup.tsx
+          # returns early on an empty DSN *without logging*, so every CI build has
+          # shipped with crash reporting silently off (OS-1827). Warn rather than
+          # fail — a missing DSN should not block a release — but never be silent
+          # about it again.
+          # A release-producing lane must never ship a green build with crash
+          # reporting silently off -- that is the exact failure OS-1827 exists to
+          # remove. pull_request runs legitimately have no secrets (forks, and
+          # secrets are not exposed to PRs from outside collaborators), so those
+          # still warn and continue. Everything else -- push to a release branch,
+          # workflow_dispatch, staging -- is fatal.
+          #
+          # Note the curl below keeps `|| true` on purpose: a network failure or a
+          # changed response shape lands here as an empty DSN and is reported with
+          # an actionable message, rather than killing the step with a bare
+          # non-zero exit that says nothing about crash reporting.
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            SENTRY_DSN_REQUIRED=false
+          else
+            SENTRY_DSN_REQUIRED=true
+          fi
+          sentry_dsn_unavailable() {
+            if [ "$SENTRY_DSN_REQUIRED" = "true" ]; then
+              echo "::error::$1 A release build must have crash reporting (OS-1827)."
+              exit 1
+            fi
+            echo "::warning::$1 This PR build will have no crash reporting (OS-1827)."
+          }
+          if [ -n "$DOPPLER_TOKEN" ]; then
+            # curl, not the Doppler CLI action: that action verifies its own
+            # download with gpg and hard-fails where gpg is absent, which is the
+            # case on our self-hosted macOS runners. curl needs nothing that is
+            # not already on every runner. The single-secret endpoint keeps the
+            # rest of the config (MAPBOX_DOWNLOADS_TOKEN) out of the shell; a
+            # service token implies its own project and config.
+            SENTRY_DSN_RESPONSE="$(curl -sS --fail-with-body --retry 3 --retry-connrefused \
+              -u "$DOPPLER_TOKEN:" \
+              "https://api.doppler.com/v3/configs/config/secret?name=EXPO_PUBLIC_SENTRY_DSN" || true)"
+            # A DSN contains no double quote, so this extraction is exact.
+            SENTRY_DSN_VALUE="$(printf '%s' "$SENTRY_DSN_RESPONSE" | sed -n 's/.*"computed":"\([^"]*\)".*/\1/p')"
+            echo "::add-mask::$SENTRY_DSN_VALUE"
+            if [ -n "$SENTRY_DSN_VALUE" ]; then
+              sed "s|^EXPO_PUBLIC_SENTRY_DSN=.*|EXPO_PUBLIC_SENTRY_DSN=$SENTRY_DSN_VALUE|" .env > .env.tmp && mv .env.tmp .env
+            else
+              sentry_dsn_unavailable "Doppler returned an empty EXPO_PUBLIC_SENTRY_DSN."
+            fi
+          else
+            sentry_dsn_unavailable "DOPPLER_TOKEN_MOBILE_STG secret not set."
           fi
           # Pin this app build's glasses OTA manifest to the ASG paired with it
           # (immutable per-run asset uploaded by upload-releases).
@@ -201,20 +320,19 @@ jobs:
       - name: Wait for paired ASG pin manifest
         # No app upload without a live pin: the publish-asg-pin job must have
         # succeeded (including its GitHub asset uploads) before this binary is
-        # allowed near TestFlight / Play / the release. A missing pin here
-        # means the ASG build or the asset upload failed -- fail loudly rather
-        # than ship an app whose baked manifest URL 404s.
+        # allowed near TestFlight / Play / the release. The manifest and its
+        # referenced APK must both be valid and downloadable.
         run: |
           echo "Waiting for $ASG_PINNED_OTA_MANIFEST_URL"
           for attempt in {1..80}; do
             if curl --fail --silent --location "$ASG_PINNED_OTA_MANIFEST_URL" -o /tmp/asg_pin.json 2>/dev/null \
-              && jq -e '.apps["com.mentra.asg_client"].versionCode > 0' /tmp/asg_pin.json >/dev/null 2>&1; then
-              echo "Pin manifest is live."
+              && .github/scripts/validate-asg-ota-manifest.sh /tmp/asg_pin.json --check-apk; then
+              echo "Pin manifest and referenced APK are live."
               exit 0
             fi
             sleep 15
           done
-          echo "::error::Paired ASG pin manifest never became available -- refusing to upload an app with a dead pin (did the ASG build or its asset upload fail?)"
+          echo "::error::Paired ASG pin manifest or its referenced APK never became valid and downloadable -- refusing to upload an app with a dead pin"
           exit 1
 
       - name: Run release-android (signed APK + Beta_N upload + Play internal)
@@ -384,7 +502,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.bun/install/cache
-          key: bun-${{ runner.os }}-${{ hashFiles('mobile/bun.lockb') }}
+          key: bun-${{ runner.os }}-${{ hashFiles('mobile/bun.lock') }}
           restore-keys: |
             bun-${{ runner.os }}-
 
@@ -410,12 +528,118 @@ jobs:
         # file (not a shell env var) is the source of truth.
         env:
           MAPBOX_PUBLIC_TOKEN: ${{ secrets.MAPBOX_PUBLIC_TOKEN }}
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN_MOBILE_STG }}
         run: |
           cp .env.example .env
+          # Pin which cloud this binary talks to (OS-1875).
+          #
+          # This lane is the only one that uploads to TestFlight and Play internal,
+          # and that binary is promoted to the stores unchanged. It must therefore
+          # carry production URLs: a promoted build cannot learn it was promoted.
+          # Build a staging-cloud variant deliberately with the cloud_env input, and
+          # do not promote that one.
+          #
+          # .env.example ships dev URLs so a local checkout builds with no setup.
+          # A lane that produces a distributable must not inherit that silently.
+          # Fatal on release-producing events, warning on pull_request, matching the
+          # Sentry DSN rule (OS-1827).
+          CLOUD_ENV="${{ inputs.cloud_env }}"
+          [ -n "$CLOUD_ENV" ] || CLOUD_ENV="prod"
+          case "$CLOUD_ENV" in
+            dev)
+              CLOUD_CORE="https://core.dev.us-west-2.mentraglass.com"
+              CLOUD_RT="https://runtime.dev.us-west-2.mentraglass.com"
+              ;;
+            staging)
+              CLOUD_CORE="https://core.staging.us-west-2.mentraglass.com"
+              CLOUD_RT="https://runtime.staging.us-west-2.mentraglass.com"
+              ;;
+            prod)
+              CLOUD_CORE="https://core.us-west-2.mentraglass.com"
+              CLOUD_RT="https://runtime.us-west-2.mentraglass.com"
+              ;;
+            *)
+              CLOUD_CORE=""
+              CLOUD_RT=""
+              ;;
+          esac
+          if [ -n "$CLOUD_CORE" ]; then
+            sed -e "s|^EXPO_PUBLIC_BUILD_ENV=.*|EXPO_PUBLIC_BUILD_ENV=$CLOUD_ENV|" \
+                -e "s|^EXPO_PUBLIC_CLOUD_CORE_URL=.*|EXPO_PUBLIC_CLOUD_CORE_URL=$CLOUD_CORE|" \
+                -e "s|^EXPO_PUBLIC_CLOUD_RUNTIME_URL=.*|EXPO_PUBLIC_CLOUD_RUNTIME_URL=$CLOUD_RT|" \
+                .env > .env.tmp && mv .env.tmp .env
+            # Make the pin authoritative for every later step. release:android /
+            # release:ios call setBuildEnv(), which keeps any value already
+            # present in the environment over the .env file (standard dotenv
+            # precedence, deliberately relied on for the signing credentials).
+            # These jobs run on persistent self-hosted runners, so a stale
+            # runner-level EXPO_PUBLIC_CLOUD_* or EXPO_PUBLIC_BUILD_ENV would
+            # otherwise outrank the values written above, Expo would bundle the
+            # inherited endpoint, and validateReleaseArchive() would compare the
+            # bundle against that same inherited process env and pass. GITHUB_ENV
+            # takes precedence over the runner's inherited environment, so the
+            # three keys agree from here on.
+            {
+              echo "EXPO_PUBLIC_BUILD_ENV=$CLOUD_ENV"
+              echo "EXPO_PUBLIC_CLOUD_CORE_URL=$CLOUD_CORE"
+              echo "EXPO_PUBLIC_CLOUD_RUNTIME_URL=$CLOUD_RT"
+            } >> "$GITHUB_ENV"
+            echo "Cloud backend pinned to $CLOUD_ENV ($CLOUD_CORE)"
+          elif [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "::warning::Unrecognised cloud env '$CLOUD_ENV'; this PR build keeps the dev backend (OS-1875)."
+          else
+            echo "::error::Unrecognised cloud env '$CLOUD_ENV'. A distributable build must pin its backend (OS-1875)."
+            exit 1
+          fi
           if [ -n "$MAPBOX_PUBLIC_TOKEN" ]; then
             sed -i '' "s|^EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN=.*|EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN=$MAPBOX_PUBLIC_TOKEN|" .env
           else
             echo "::warning::MAPBOX_PUBLIC_TOKEN secret not set — iOS build will use the dummy token and on-device navigation will not work."
+          fi
+          # See the Android job: an empty DSN disables Sentry silently (OS-1827).
+          # A release-producing lane must never ship a green build with crash
+          # reporting silently off -- that is the exact failure OS-1827 exists to
+          # remove. pull_request runs legitimately have no secrets (forks, and
+          # secrets are not exposed to PRs from outside collaborators), so those
+          # still warn and continue. Everything else -- push to a release branch,
+          # workflow_dispatch, staging -- is fatal.
+          #
+          # Note the curl below keeps `|| true` on purpose: a network failure or a
+          # changed response shape lands here as an empty DSN and is reported with
+          # an actionable message, rather than killing the step with a bare
+          # non-zero exit that says nothing about crash reporting.
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            SENTRY_DSN_REQUIRED=false
+          else
+            SENTRY_DSN_REQUIRED=true
+          fi
+          sentry_dsn_unavailable() {
+            if [ "$SENTRY_DSN_REQUIRED" = "true" ]; then
+              echo "::error::$1 A release build must have crash reporting (OS-1827)."
+              exit 1
+            fi
+            echo "::warning::$1 This PR build will have no crash reporting (OS-1827)."
+          }
+          if [ -n "$DOPPLER_TOKEN" ]; then
+            # curl, not the Doppler CLI action: that action verifies its own
+            # download with gpg and hard-fails where gpg is absent, which is the
+            # case on our self-hosted macOS runners. curl needs nothing that is
+            # not already on every runner. The single-secret endpoint keeps the
+            # rest of the config (MAPBOX_DOWNLOADS_TOKEN) out of the shell; a
+            # service token implies its own project and config.
+            SENTRY_DSN_RESPONSE="$(curl -sS --fail-with-body --retry 3 --retry-connrefused \
+              -u "$DOPPLER_TOKEN:" \
+              "https://api.doppler.com/v3/configs/config/secret?name=EXPO_PUBLIC_SENTRY_DSN" || true)"
+            # A DSN contains no double quote, so this extraction is exact.
+            SENTRY_DSN_VALUE="$(printf '%s' "$SENTRY_DSN_RESPONSE" | sed -n 's/.*"computed":"\([^"]*\)".*/\1/p')"
+            echo "::add-mask::$SENTRY_DSN_VALUE"
+            if [ -n "$SENTRY_DSN_VALUE" ]; then
+              sed "s|^EXPO_PUBLIC_SENTRY_DSN=.*|EXPO_PUBLIC_SENTRY_DSN=$SENTRY_DSN_VALUE|" .env > .env.tmp && mv .env.tmp .env
+            else
+              sentry_dsn_unavailable "Doppler returned an empty EXPO_PUBLIC_SENTRY_DSN."
+            fi
+          else
+            sentry_dsn_unavailable "DOPPLER_TOKEN_MOBILE_STG secret not set."
           fi
           # Pin this app build's glasses OTA manifest to the ASG paired with it
           # (immutable per-run asset uploaded by upload-releases).
@@ -527,20 +751,19 @@ jobs:
       - name: Wait for paired ASG pin manifest
         # No app upload without a live pin: the publish-asg-pin job must have
         # succeeded (including its GitHub asset uploads) before this binary is
-        # allowed near TestFlight / Play / the release. A missing pin here
-        # means the ASG build or the asset upload failed -- fail loudly rather
-        # than ship an app whose baked manifest URL 404s.
+        # allowed near TestFlight / Play / the release. The manifest and its
+        # referenced APK must both be valid and downloadable.
         run: |
           echo "Waiting for $ASG_PINNED_OTA_MANIFEST_URL"
           for attempt in {1..80}; do
             if curl --fail --silent --location "$ASG_PINNED_OTA_MANIFEST_URL" -o /tmp/asg_pin.json 2>/dev/null \
-              && jq -e '.apps["com.mentra.asg_client"].versionCode > 0' /tmp/asg_pin.json >/dev/null 2>&1; then
-              echo "Pin manifest is live."
+              && .github/scripts/validate-asg-ota-manifest.sh /tmp/asg_pin.json --check-apk; then
+              echo "Pin manifest and referenced APK are live."
               exit 0
             fi
             sleep 15
           done
-          echo "::error::Paired ASG pin manifest never became available -- refusing to upload an app with a dead pin (did the ASG build or its asset upload fail?)"
+          echo "::error::Paired ASG pin manifest or its referenced APK never became valid and downloadable -- refusing to upload an app with a dead pin"
           exit 1
 
       - name: Run release-ios (signed IPA + Beta_N upload + TestFlight)
@@ -621,12 +844,11 @@ jobs:
     runs-on: blacksmith-4vcpu-ubuntu-2404
 
     outputs:
-      version_code: ${{ steps.asg-reuse.outputs.reuse == 'true' && steps.asg-reuse.outputs.version_code || steps.asg-build-info.outputs.version_code }}
-      version_name: ${{ steps.asg-reuse.outputs.reuse == 'true' && steps.asg-reuse.outputs.version_name || steps.asg-build-info.outputs.version_name }}
-      apk_sha256: ${{ steps.asg-reuse.outputs.reuse == 'true' && steps.asg-reuse.outputs.apk_sha256 || steps.asg-apk-info.outputs.sha256 }}
-      apk_size: ${{ steps.asg-reuse.outputs.reuse == 'true' && steps.asg-reuse.outputs.apk_size || steps.asg-apk-info.outputs.size }}
+      version_code: ${{ steps.asg-build-info.outputs.version_code }}
+      version_name: ${{ steps.asg-build-info.outputs.version_name }}
+      apk_sha256: ${{ steps.asg-apk-info.outputs.sha256 }}
+      apk_size: ${{ steps.asg-apk-info.outputs.size }}
       reuse: ${{ steps.asg-reuse.outputs.reuse }}
-      apk_url: ${{ steps.asg-reuse.outputs.apk_url }}
       tree_hash: ${{ steps.asg-reuse.outputs.tree_hash }}
 
     steps:
@@ -706,15 +928,22 @@ jobs:
             exit 0
           fi
 
+          mkdir -p asg-reuse
+          printf '%s\n' "$manifest" > asg-reuse/previous-manifest.json
+
           echo "asg_client/ unchanged; reusing published ASG ${VERSION_NAME} (${VERSION_CODE})"
-          {
-            echo "reuse=true"
-            echo "version_code=${VERSION_CODE}"
-            echo "version_name=${VERSION_NAME}"
-            echo "apk_sha256=${APK_SHA256}"
-            echo "apk_size=${APK_SIZE}"
-            echo "apk_url=${APK_URL}"
-          } >> "$GITHUB_OUTPUT"
+          echo "reuse=true" >> "$GITHUB_OUTPUT"
+
+      - name: Upload ASG reuse metadata
+        # Keep the public APK URL in a file. GitHub drops job outputs that contain
+        # any configured secret value; the signing alias is short enough to match
+        # the historical ASG asset names.
+        if: steps.asg-reuse.outputs.reuse == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: asg-reuse-metadata
+          path: asg-reuse/previous-manifest.json
+          retention-days: 1
 
       - name: Free up disk space
         if: steps.asg-reuse.outputs.reuse != 'true'
@@ -873,6 +1102,13 @@ jobs:
           name: asg-staging
           path: ./asg-apk
 
+      - name: Download ASG reuse metadata
+        if: needs.build-asg.outputs.reuse == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: asg-reuse-metadata
+          path: ./asg-reuse
+
       - name: Generate ASG staging OTA manifest
         if: needs.build-asg.result == 'success'
         env:
@@ -883,14 +1119,18 @@ jobs:
           APK_SHA256: ${{ needs.build-asg.outputs.apk_sha256 }}
           APK_SIZE: ${{ needs.build-asg.outputs.apk_size }}
           ASG_REUSE: ${{ needs.build-asg.outputs.reuse }}
-          REUSED_APK_URL: ${{ needs.build-asg.outputs.apk_url }}
           ASG_TREE_HASH: ${{ needs.build-asg.outputs.tree_hash }}
         run: |
           mkdir -p asg-manifest
           if [ "$ASG_REUSE" = "true" ]; then
             # asg_client/ unchanged: the manifest re-pins the previously published
             # artifact so app-only releases never move the glasses pin (OS-1689).
-            APK_URL="$REUSED_APK_URL"
+            REUSE_MANIFEST="asg-reuse/previous-manifest.json"
+            VERSION_CODE=$(jq -er '.apps["com.mentra.asg_client"].versionCode' "$REUSE_MANIFEST")
+            VERSION_NAME=$(jq -er '.apps["com.mentra.asg_client"].versionName' "$REUSE_MANIFEST")
+            APK_SHA256=$(jq -er '.apps["com.mentra.asg_client"].sha256' "$REUSE_MANIFEST")
+            APK_SIZE=$(jq -er '.apps["com.mentra.asg_client"].apkSize' "$REUSE_MANIFEST")
+            APK_URL=$(jq -er '.apps["com.mentra.asg_client"].apkUrl' "$REUSE_MANIFEST")
           else
             APK_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/staging-builds/asg-staging-${BUILD_DATE}-${BUILD_SHORT_SHA}.apk"
           fi
@@ -923,6 +1163,8 @@ jobs:
               bes_firmware: .bes_firmware
             }
             + (if .remediation then {remediation: .remediation} else {} end)' "$FIRMWARE_MANIFEST" > asg-manifest/staging_live_version.json
+
+          .github/scripts/validate-asg-ota-manifest.sh asg-manifest/staging_live_version.json
 
       - name: Publish pin, APK and rolling manifest to staging-builds release
         uses: actions/github-script@v7

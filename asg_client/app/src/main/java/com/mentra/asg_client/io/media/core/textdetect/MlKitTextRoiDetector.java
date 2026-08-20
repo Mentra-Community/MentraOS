@@ -79,7 +79,7 @@ public final class MlKitTextRoiDetector implements AutoCloseable {
             Bitmap blank = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888);
             blank.eraseColor(Color.WHITE);
             long startMs = SystemClock.elapsedRealtime();
-            Task<Text> task = tryStartRecognizerProcess(InputImage.fromBitmap(blank, 0));
+            Task<Text> task = tryStartRecognizerProcess(blank);
             if (task == null) {
                 blank.recycle();
                 return;
@@ -105,7 +105,7 @@ public final class MlKitTextRoiDetector implements AutoCloseable {
      *     #lastStartFailureReason} for the caller-facing full-frame reason.
      */
     @Nullable
-    private Task<Text> tryStartRecognizerProcess(InputImage image) {
+    private Task<Text> tryStartRecognizerProcess(Bitmap bitmap) {
         TextRecognizer availableRecognizer = getOrCreateRecognizer();
         if (availableRecognizer == null) {
             if (lastStartFailureReason == null) {
@@ -123,6 +123,10 @@ public final class MlKitTextRoiDetector implements AutoCloseable {
                 activeRecognizerTask.compareAndSet(activeTask, null);
             }
             try {
+                // InputImage.fromBitmap() also reads MlKitContext. Build it only after
+                // getOrCreateRecognizer() has repaired provider initialization for a process that
+                // started during direct boot.
+                InputImage image = InputImage.fromBitmap(bitmap, 0);
                 Task<Text> newTask = availableRecognizer.process(image);
                 activeRecognizerTask.set(newTask);
                 newTask.addOnCompleteListener(
@@ -281,7 +285,7 @@ public final class MlKitTextRoiDetector implements AutoCloseable {
             }
 
             analysis = scaleLongEdge(decoded, analysisLongEdge);
-            detectionTask = tryStartRecognizerProcess(InputImage.fromBitmap(analysis, 0));
+            detectionTask = tryStartRecognizerProcess(analysis);
             if (detectionTask == null) {
                 String reason =
                         lastStartFailureReason != null ? lastStartFailureReason : "mlkit_busy";

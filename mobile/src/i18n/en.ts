@@ -398,7 +398,8 @@ const en = {
     updateLater: "Later",
     upToDate: "Up to Date",
     devBuild: "Development Build",
-    devBuildNoOta: "These glasses run a development build, so automatic updates are disabled. Use the developer settings manifest override to update them manually.",
+    devBuildNoOta:
+      "This mobile app is a development build, so automatic glasses updates are disabled. Use the developer settings manifest override to update them manually.",
     noUpdatesAvailable: "Your glasses are running the latest version.",
     checkFailed: "Check Failed",
     checkFailedMessage: "Couldn't check for updates. Please check your connection and try again.",
@@ -721,6 +722,18 @@ const en = {
     miniappUrlFetchErrorTitle: "Error",
     miniappUrlFetchErrorBody: "Could not fetch miniapp.json from {{url}}",
     miniappUrlRecentTitle: "Recent",
+  },
+  qrScan: {
+    defaultTitle: "Scan QR code",
+    defaultHint: "Point the camera at a QR code",
+    checkingPermission: "Checking camera permission\u2026",
+    permissionTitle: "Camera access needed",
+    permissionBody:
+      "We need your camera to scan QR codes. The camera is only used while this screen is open.",
+    grantAccess: "Grant Camera Access",
+    openSettings: "Open Settings",
+    permissionDeniedTitle: "Permission Denied",
+    permissionDeniedBody: "Please enable camera access in Settings to scan QR codes.",
   },
   miniappDevSettings: {
     title: "Miniapp Developer",

@@ -75,7 +75,7 @@ export function useRegisterCapsule({
   const handleRightPress = useCallback(
     async (shouldGoBack?: boolean) => {
       console.log(`CAPSULE MENU: handleRightPress() called ${shouldGoBack}`)
-      await captureScreenshot(viewShotRef, packageName, insetsTopRef.current)
+      await captureScreenshot(viewShotRef, packageName, insetsTopRef.current, {settle: true})
       if (shouldGoBack) {
         goBack()
       }
@@ -90,7 +90,7 @@ export function useRegisterCapsule({
     async (shouldGoBack?: boolean) => {
       console.log(`CAPSULE MENU: handleLeftPress() called ${shouldGoBack}`)
 
-      await captureScreenshot(viewShotRef, packageName, insetsTopRef.current)
+      await captureScreenshot(viewShotRef, packageName, insetsTopRef.current, {settle: true})
       if (shouldGoBack) {
         goBack()
       }

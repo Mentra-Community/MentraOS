@@ -1,6 +1,7 @@
 const {getSentryExpoConfig} = require("@sentry/react-native/metro")
 const {withUniwindConfig} = require("uniwind/metro")
 const path = require("path")
+const {withExpoPublicEnvCacheVersion} = require("./scripts/metro-cache-version.cjs")
 
 /** @type {import('expo/metro-config').MetroConfig} */
 var config = getSentryExpoConfig(__dirname)
@@ -123,10 +124,19 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
       return (baseResolveRequest ?? context.resolveRequest)(context, target, platform)
     }
   }
-  // @mentra/engine -> src/index.ts. Keep this limited to the public root export
-  // so future engine internals do not become implicit app import surface area.
+  // @mentra/engine (+ /internal, /devtools) -> TypeScript SOURCE. The package
+  // "default" export points at build/, and Metro will happily bundle that stale
+  // compile if we only alias the root specifier. LocalMiniappRuntime lives on
+  // /internal — that's why miniapp_scan_qr stayed unimplemented until this
+  // alias covered the subpath too.
   if (moduleName === "@mentra/engine") {
     return (baseResolveRequest ?? context.resolveRequest)(context, path.join(ENGINE_SRC, "index"), platform)
+  }
+  if (moduleName === "@mentra/engine/internal") {
+    return (baseResolveRequest ?? context.resolveRequest)(context, path.join(ENGINE_SRC, "internal"), platform)
+  }
+  if (moduleName === "@mentra/engine/devtools") {
+    return (baseResolveRequest ?? context.resolveRequest)(context, path.join(ENGINE_SRC, "devtools"), platform)
   }
   const miniappAlias = MINIAPP_ALIASES[moduleName]
   if (miniappAlias) return (baseResolveRequest ?? context.resolveRequest)(context, miniappAlias, platform)
@@ -147,5 +157,10 @@ config = withUniwindConfig(config, {
   // defaults to project's root
   dtsFile: "./src/uniwind-types.d.ts",
 })
+
+// Babel inlines EXPO_PUBLIC_* values, but Metro's default transform cache key
+// does not include them. Expo also keeps that cache when CI=true, so concurrent
+// builds on our shared runners could reuse transforms from a different release.
+config.cacheVersion = withExpoPublicEnvCacheVersion(config.cacheVersion)
 
 module.exports = config

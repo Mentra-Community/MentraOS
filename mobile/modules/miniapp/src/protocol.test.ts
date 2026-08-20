@@ -38,6 +38,8 @@ describe("MiniappRequestType wire values", () => {
     expect(MiniappRequestType.MIC_SET_VAD_ENABLED).toBe("miniapp_mic_set_vad_enabled"))
   test("MIC_SET_LOUDNESS_GATE_ENABLED", () =>
     expect(MiniappRequestType.MIC_SET_LOUDNESS_GATE_ENABLED).toBe("miniapp_mic_set_loudness_gate_enabled"))
+  test("SET_WIFI_ADB_STATE", () =>
+    expect(MiniappRequestType.SET_WIFI_ADB_STATE).toBe("miniapp_set_wifi_adb_state"))
   test("PING", () => expect(MiniappRequestType.PING).toBe("miniapp_ping"))
   test("DASHBOARD_CONTENT_UPDATE", () =>
     expect(MiniappRequestType.DASHBOARD_CONTENT_UPDATE).toBe("miniapp_dashboard_content_update"))
@@ -51,6 +53,7 @@ describe("MiniappRequestType wire values", () => {
   test("OPEN_URL", () => expect(MiniappRequestType.OPEN_URL).toBe("miniapp_open_url"))
   test("COPY_CLIPBOARD", () => expect(MiniappRequestType.COPY_CLIPBOARD).toBe("miniapp_copy_clipboard"))
   test("DOWNLOAD", () => expect(MiniappRequestType.DOWNLOAD).toBe("miniapp_download"))
+  test("SCAN_QR", () => expect(MiniappRequestType.SCAN_QR).toBe("miniapp_scan_qr"))
 })
 
 describe("MiniappResponseType wire values", () => {

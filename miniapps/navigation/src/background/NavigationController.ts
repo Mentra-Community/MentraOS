@@ -32,7 +32,23 @@ import type {
 import {deriveManeuverDisplay, liveDistanceToNextTurn} from "../shared/maneuverDisplay"
 
 import {getSavedAddresses, setSavedAddress} from "./actions/savedAddressActions"
+import {renderManeuverArrowBmp} from "./lib/ArrowRenderer"
+import {borderTestImageBase64} from "./lib/bmp"
+import {readGlassesCapabilities} from "./lib/capabilities"
+import {formatDistance, formatDuration} from "./lib/formatDistance"
+import {
+  bearingDeg,
+  distanceToPolylineMeters,
+  haversineMeters,
+  nextSegmentBearing,
+  remainingRouteMeters,
+  remainingRoutePoints,
+  sideOfFinalSegment,
+  type LatLng,
+} from "./lib/geometry"
+import {buildOsmLineMap, fetchOsmRoads, renderOsmLineMap} from "./lib/OsmLineMapRenderer"
 import type {PlaceDetails} from "./lib/places"
+import {TEST_BITMAP_288_B64} from "./lib/testBitmap"
 import {AudioGuidanceManager, selectAudioGuidanceDistance} from "./managers/AudioGuidanceManager"
 import {CompassManager} from "./managers/CompassManager"
 import {DisplayManager} from "./managers/DisplayManager"
@@ -40,21 +56,6 @@ import {LocationManager} from "./managers/LocationManager"
 import {NavigationManager} from "./managers/NavigationManager"
 import {PlacesManager} from "./managers/PlacesManager"
 import {SimpleStorageManager} from "./managers/SimpleStorageManager"
-import {renderManeuverArrowBmp} from "./lib/ArrowRenderer"
-import {formatDistance, formatDuration} from "./lib/formatDistance"
-import {
-  bearingDeg,
-  distanceToPolylineMeters,
-  haversineMeters,
-  nextSegmentBearing,
-  remainingRoutePoints,
-  remainingRouteMeters,
-  sideOfFinalSegment,
-  type LatLng,
-} from "./lib/geometry"
-import {TEST_BITMAP_288_B64} from "./lib/testBitmap"
-import {borderTestImageBase64} from "./lib/bmp"
-import {buildOsmLineMap, fetchOsmRoads, renderOsmLineMap} from "./lib/OsmLineMapRenderer"
 
 export class NavigationController {
   private readonly ui: UIModule<Channels>
@@ -246,6 +247,7 @@ export class NavigationController {
   private capabilities: GlassesCapabilitySnapshot = {
     modelName: null,
     hasDisplay: false,
+    canPosition: false,
     hasSpeaker: false,
     hasButton: false,
   }
@@ -300,16 +302,6 @@ export class NavigationController {
     this.session.onBeforeDisconnect(() => this.dispose())
   }
 
-  private readCapabilities(capabilities: MiniappSession["capabilities"]): GlassesCapabilitySnapshot {
-    const record = (capabilities ?? {}) as Record<string, unknown>
-    return {
-      modelName: typeof record.modelName === "string" ? record.modelName : null,
-      hasDisplay: record.hasDisplay === true || !!record.display,
-      hasSpeaker: record.hasSpeaker === true,
-      hasButton: record.hasButton === true,
-    }
-  }
-
   private defaultVoiceGuidanceMode(capabilities = this.capabilities): VoiceGuidanceMode {
     if (!capabilities.hasSpeaker) return "off"
     return capabilities.hasDisplay ? "essential" : "full"
@@ -317,7 +309,7 @@ export class NavigationController {
 
   private applyCapabilities(raw: MiniappSession["capabilities"]): void {
     const previous = this.capabilities
-    this.capabilities = this.readCapabilities(raw)
+    this.capabilities = readGlassesCapabilities(raw)
     this.audioGuidance.setAvailable(this.capabilities.hasSpeaker)
     if (!this.voiceGuidancePreferenceExplicit) {
       this.voiceGuidanceMode = this.defaultVoiceGuidanceMode()
@@ -328,6 +320,17 @@ export class NavigationController {
       this.lastMinimapPng = null
     } else if (!previous.hasDisplay && this.trip.running) {
       this.startMinimapWatchdog()
+      this.lastHudKey = ""
+      this.refreshHUD()
+    } else if (previous.canPosition !== this.capabilities.canPosition && this.trip.running) {
+      // A glasses swap can change the HUD from a compact text wall to a
+      // positioned scene (or vice versa) without changing hasDisplay.
+      if (this.capabilities.canPosition) {
+        this.startMinimapWatchdog()
+      } else {
+        this.stopMinimapWatchdog()
+        this.lastMinimapPng = null
+      }
       this.lastHudKey = ""
       this.refreshHUD()
     }
@@ -1524,9 +1527,10 @@ export class NavigationController {
 
     if (!this.capabilities.hasDisplay || this.largeMapShown) return
 
-    // Minimap runs first so heading-only updates still refresh the map
-    // even when the text line below is unchanged (and short-circuits).
-    this.refreshMinimap()
+    // Minimap runs first so heading-only updates still refresh the map even
+    // when the text line below is unchanged (and short-circuits). G1/Z100
+    // cannot position or display scene images, so skip the work entirely.
+    if (this.capabilities.canPosition) this.refreshMinimap()
 
     let next: string | null = null
     let durationMs: number | undefined
@@ -1686,7 +1690,7 @@ export class NavigationController {
     // The minimap (right) was pushed by refreshMinimap() above. Special states
     // (welcome/rerouting/arrived/off-route) have no arrow/stats split and fall
     // through to the single-container text frame below.
-    if (maneuverBody != null && running) {
+    if (maneuverBody != null && running && this.capabilities.canPosition) {
       const key = `hud|${maneuverArrow}|${maneuverBody}|${stats ?? ""}|${clock}`
       const nowHud = Date.now()
       const unchanged = key === this.lastHudKey
@@ -1719,7 +1723,12 @@ export class NavigationController {
 
     // Coalesce on the combined frame so we don't re-push identical content.
     // Prefixed "msg|" so a message frame never collides with a "hud|" key.
-    const key = `msg|${combined}${durationMs ?? 0}|${clock}`
+    // Non-positioning displays have a five-line text wall. Omitting the clock
+    // leaves room for the direction (arrow + distance + instruction) before
+    // optional trip stats; the old degraded positioned scene put clock/stats
+    // first and clipped the instruction off the bottom on G1.
+    const displayClock = this.capabilities.canPosition ? clock : null
+    const key = `msg|${combined}${durationMs ?? 0}|${displayClock ?? ""}`
     // Re-push every ~3s even when unchanged: the G2 frequently tears down our
     // EvenHub page (system_exit / dashboard), swallowing a one-time send.
     const nowHud = Date.now()
@@ -1730,7 +1739,11 @@ export class NavigationController {
     // Render as the "message" frame (positioned at the arrow's left x). The
     // frame replaces turn-by-turn entirely; returning to turn-by-turn replaces
     // it back. Nothing lingers — render() is the whole screen.
-    this.display.showNavMessage(combined, clock)
+    if (this.capabilities.canPosition) {
+      this.display.showNavMessage(combined, displayClock)
+    } else {
+      this.display.showCompactNavHud(next, stats)
+    }
   }
 
   /**
@@ -1813,7 +1826,7 @@ export class NavigationController {
   private readonly MINIMAP_MIN_INTERVAL_MS = 300
 
   private refreshMinimap(): void {
-    if (!this.capabilities.hasDisplay) return
+    if (!this.capabilities.hasDisplay || !this.capabilities.canPosition) return
     if (this.largeMapShown) return // large map owns the screen; don't overdraw
     if (!this.showMinimap) return
     if (!this.trip.running || !this.coords) return
@@ -1979,7 +1992,7 @@ export class NavigationController {
 
   /** Start the recurring minimap watchdog (no-op if already running). */
   private startMinimapWatchdog(): void {
-    if (!this.capabilities.hasDisplay) return
+    if (!this.capabilities.hasDisplay || !this.capabilities.canPosition) return
     if (this.minimapWatchdogTimer != null) return
     console.log(
       `[MINIMAP-WATCHDOG] started (every ${this.MINIMAP_WATCHDOG_INTERVAL_MS}ms, idle threshold ${this.MINIMAP_WATCHDOG_IDLE_MS}ms)`,
@@ -2082,7 +2095,11 @@ export class NavigationController {
     // band until either Mapbox reroutes (status → "rerouting", which takes over
     // the HUD) or the user returns to within ADVISORY_M (back to the original
     // instruction). TRIGGER_M is kept only for the diagnostic log threshold.
-    const bucket = dist >= OFF_ROUTE_ADVISORY_M ? 1 : 0
+    // Use separate enter/exit thresholds so ordinary GPS jitter near 20m
+    // cannot flip the HUD between its message and turn-by-turn topologies on
+    // every fix. Each topology change is structural on G2 and requires a page
+    // rebuild, so threshold chatter presents as a whole-display refresh.
+    const bucket = classifyOffRouteAdvisory(dist, this.offRouteAdvisory) ? 1 : 0
     // Keep the advisory distance live so the glasses "Go back in X m" line
     // tracks the user every fix — growing as they move away, shrinking as they
     // return. Null when on route.
@@ -2457,15 +2474,19 @@ function withPivotDefaults<T extends {pivots?: {radiusMeters?: number; approachT
   }
 }
 
-// Off-route advisory threshold (meters): how far off the route polyline the
-// user must be before the glasses show "Go back in X m". Set to 20m so
+// Off-route advisory thresholds (meters): how far off the route polyline the
+// user must be before the glasses show "Go back in X m". Enter at 20m so
 // opposite-sidewalk crossings at typical urban 4-way intersections don't read
 // as deviations — walking the far curb across a 4-lane road (~15m wide incl.
-// parking) lands ~12-18m from the route polyline, just under this band. Above
-// 20m the advisory shows and its distance GROWS until Mapbox reroutes or the
-// user returns. (The old separate TRIGGER_M rebuild threshold was removed when
-// reroute became native-owned — there's only on/off now.)
+// parking) lands ~12-18m from the route polyline, just under this band. Once
+// active, require a fix below 15m before clearing it. This hysteresis prevents
+// GPS noise around 20m from repeatedly changing the G2 page structure.
 const OFF_ROUTE_ADVISORY_M = 20
+const OFF_ROUTE_RECOVERY_M = 15
+
+export function classifyOffRouteAdvisory(distanceMeters: number, advisoryActive: boolean): boolean {
+  return advisoryActive ? distanceMeters >= OFF_ROUTE_RECOVERY_M : distanceMeters >= OFF_ROUTE_ADVISORY_M
+}
 
 // How long the HUD may sit on "Starting…" (running, no maneuver event yet)
 // before the watchdog derives the first instruction from the route's steps.

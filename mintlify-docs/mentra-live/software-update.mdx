@@ -10,12 +10,12 @@ The latest matching pair is:
 
 | Mobile app dependency | Required glasses software |
 | --- | --- |
-| React Native `@mentra/bluetooth-sdk@0.1.21-beta.1` | Mentra Live software `0.1.21-beta.1` |
-| Android `com.mentraglass:bluetooth-sdk:0.1.21-beta.1` | Mentra Live software `0.1.21-beta.1` |
-| iOS `MentraBluetoothSDK` version `0.1.21-beta.1` | Mentra Live software `0.1.21-beta.1` |
+| React Native `@mentra/bluetooth-sdk@0.1.21-beta.5` | Mentra Live software `0.1.21-beta.5` |
+| Android `com.mentraglass:bluetooth-sdk:0.1.21-beta.5` | Mentra Live software `0.1.21-beta.5` |
+| iOS `MentraBluetoothSDK` version `0.1.21-beta.5` | Mentra Live software `0.1.21-beta.5` |
 
 <Warning>
-Bluetooth connection alone does not confirm version compatibility. Glasses running an older software release may connect to an app using SDK `0.1.21-beta.1`, but SDK features may fail or behave incorrectly. Install the matching `0.1.21-beta.1` glasses software before testing SDK features.
+Bluetooth connection alone does not confirm version compatibility. Glasses running an older software release may connect to an app using SDK `0.1.21-beta.5`, but SDK features may fail or behave incorrectly. Install the matching `0.1.21-beta.5` glasses software before testing SDK features.
 </Warning>
 
 ## How Version Matching Works
@@ -28,7 +28,7 @@ When you upgrade your app to a new Bluetooth SDK release, run the OTA check agai
 
 The [Mentra Bluetooth SDK Starter Kit](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit) includes the complete OTA flow. You can build an example app from source or install the recommended prebuilt React Native Android app.
 
-- [Download the React Native example APK for SDK `0.1.21-beta.1`](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/releases/download/sdk-0.1.21-beta.1/mentra-example-react-native.apk)
+- [Download the React Native example APK for SDK `0.1.21-beta.5`](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/releases/download/sdk-0.1.21-beta.5/mentra-example-react-native.apk)
 
 For another SDK version, open the [Starter Kit tags page](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/tags), choose the matching `sdk-<version>` tag, and select **Downloads** to find its React Native example APK.
 
@@ -60,7 +60,7 @@ Use the serial shown by `adb devices`. If only one Android device is connected, 
 6. Wait until the app reports that the update is complete. The glasses may restart during installation.
 7. Reconnect and run **Check OTA** again to confirm that no update remains.
 
-The example app uses the release-specific OTA manifest selected by SDK `0.1.21-beta.1`, so it installs the glasses software components matching that SDK release.
+The example app uses the release-specific OTA manifest selected by SDK `0.1.21-beta.5`, so it installs the glasses software components matching that SDK release.
 
 ## Bootstrap The Update With ADB
 
@@ -68,7 +68,7 @@ Use this path when the software currently installed on Mentra Live cannot run th
 
 All supported versions are available on the [Bluetooth SDK OTA Artifacts release page](https://github.com/Mentra-Community/MentraOS/releases/tag/bluetooth-sdk-ota). Choose the ASG client APK whose filename starts with `asg-client-sdk-<sdk-version>-`, using the same version as your app's Bluetooth SDK dependency.
 
-For the latest `0.1.21-beta.1` release, open the [Bluetooth SDK OTA Artifacts release page](https://github.com/Mentra-Community/MentraOS/releases/tag/bluetooth-sdk-ota) and download the APK whose filename starts with `asg-client-sdk-0.1.21-beta.1-`.
+For the latest `0.1.21-beta.5` release, open the [Bluetooth SDK OTA Artifacts release page](https://github.com/Mentra-Community/MentraOS/releases/tag/bluetooth-sdk-ota) and download the APK whose filename starts with `asg-client-sdk-0.1.21-beta.5-`.
 
 Install [ADB](https://developer.android.com/tools/adb), connect Mentra Live to the computer with a data-capable USB cable, and verify that the glasses appear:
 
@@ -80,13 +80,13 @@ Install the ASG client using the glasses serial shown by that command:
 
 ```bash
 adb -s <glasses-serial> install -r \
-  "$HOME/Downloads/<asg-client-sdk-0.1.21-beta.1-build>.apk"
+  "$HOME/Downloads/<asg-client-sdk-0.1.21-beta.5-build>.apk"
 ```
 
 If only the glasses are connected, you can omit `-s <glasses-serial>`.
 
 <Warning>
-This command installs only the `0.1.21-beta.1` ASG client application. It does not necessarily install the matching MTK system software or BES firmware. After installing the APK, use the `0.1.21-beta.1` example app's OTA flow to install any remaining components and complete the matching glasses software release.
+This command installs only the `0.1.21-beta.5` ASG client application. It does not necessarily install the matching MTK system software or BES firmware. After installing the APK, use the `0.1.21-beta.5` example app's OTA flow to install any remaining components and complete the matching glasses software release.
 </Warning>
 
 ## Add The OTA Requirement To Your App

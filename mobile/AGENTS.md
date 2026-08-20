@@ -37,6 +37,10 @@ The user-facing app version (`CFBundleShortVersionString` on iOS,
 - The build number (`CFBundleVersion` / `versionCode`) is derived at
   build time from wall-clock seconds — see `mobile/scripts/build-number.mjs`.
   Nothing to bump manually; just don't downgrade `EXPO_PUBLIC_MENTRAOS_VERSION`.
+- Automatic glasses OTA is enabled only when the mobile bundle contains an
+  `EXPO_PUBLIC_ASG_OTA_VERSION_URL` release pin. Local and compile-only builds
+  without a pin fail closed; a Super Mode manifest override remains available
+  for deliberate local OTA testing.
 
 ### Testing
 
@@ -104,6 +108,12 @@ bun ios
 - Backend server required for local testing
 - Port forwarding: `bun adb` (sets up tcp:9090, tcp:3000, tcp:9001, tcp:8081)
 - Bluetooth functionality for glasses pairing
+- **Background timers on Android are always native** (no env var, dev and
+  release alike). If startup shows a "Background timers unavailable" alert or
+  red-boxes in the nitro module, your dev client's native binary predates
+  `react-native-nitro-bg-timer` — rebuild with `bun android`. Until then,
+  backgrounded behavior is broken: engine timers freeze and local miniapps
+  (captions, wake words) stop whenever the app isn't foregrounded.
 
 ## Mapbox tokens (two different credentials!)
 

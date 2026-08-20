@@ -704,14 +704,16 @@ struct ViewState {
             let layoutType = currentViewState.layoutType
             switch layoutType {
             case "text_wall":
-                let text = currentViewState.text
+                let text = parsePlaceholders(currentViewState.text)
                 await sgc?.sendTextWall(text)
             case "double_text_wall":
-                let topText = currentViewState.topText
-                let bottomText = currentViewState.bottomText
+                let topText = parsePlaceholders(currentViewState.topText)
+                let bottomText = parsePlaceholders(currentViewState.bottomText)
                 await sgc?.sendDoubleTextWall(topText, bottomText)
             case "reference_card":
-                await sgc?.sendTextWall(currentViewState.title + "\n\n" + currentViewState.text)
+                let title = parsePlaceholders(currentViewState.title)
+                let text = parsePlaceholders(currentViewState.text)
+                await sgc?.sendTextWall(title + "\n\n" + text)
             case "bitmap_view":
                 // Bridge.log("MAN: Processing bitmap_view layout")
                 guard let data = currentViewState.data else {
@@ -727,11 +729,12 @@ struct ViewState {
                     height: currentViewState.bmpHeight
                 )
             case "positioned_text":
+                let text = parsePlaceholders(currentViewState.text)
                 Bridge.log(
-                    "MAN: positioned_text -> text='\(currentViewState.text)' rect=\(currentViewState.bmpX ?? 0),\(currentViewState.bmpY ?? 0) \(currentViewState.bmpWidth ?? 576)x\(currentViewState.bmpHeight ?? 288)"
+                    "MAN: positioned_text -> text='\(text)' rect=\(currentViewState.bmpX ?? 0),\(currentViewState.bmpY ?? 0) \(currentViewState.bmpWidth ?? 576)x\(currentViewState.bmpHeight ?? 288)"
                 )
                 await sgc?.sendPositionedText(
-                    currentViewState.text,
+                    text,
                     x: currentViewState.bmpX ?? 0,
                     y: currentViewState.bmpY ?? 0,
                     width: currentViewState.bmpWidth ?? 576,
@@ -753,6 +756,8 @@ struct ViewState {
     }
 
     func parsePlaceholders(_ text: String) -> String {
+        guard text.contains("$") else { return text }
+
         let dateFormatter = DateFormatter()
         dateFormatter.dateFormat = "M/dd, h:mm"
         let formattedDate = dateFormatter.string(from: Date())
@@ -1322,6 +1327,11 @@ struct ViewState {
         sgc?.sendHotspotState(enabled)
     }
 
+    func setWifiAdbState(_ enabled: Bool) {
+        Bridge.log("MAN: 🔧 Setting glasses Wi-Fi ADB state: \(enabled)")
+        sgc?.sendWifiAdbState(enabled)
+    }
+
     func setSystemTime(_ timestampMs: Int64) {
         Bridge.log("MAN: Setting glasses system time: \(timestampMs)")
         sgc?.sendSetSystemTime(timestampMs)
@@ -1712,11 +1722,13 @@ struct ViewState {
         shouldSendBootingMessage = true // Reset for next first connect
         // clear glasses properties:
         DeviceStore.shared.apply("glasses", "deviceModel", "")
-        // A manufacturing serial is session-bound. Clear it on every disconnect so a
-        // previously connected pair's serial can never be reported for the next
-        // connection (e.g. switching from G1/Ar99, which populate it from the
-        // advertisement, to a model that never writes it, like G2).
+        // Device identifiers are session-bound. Clear them on every disconnect so a
+        // previously connected pair can never be reported for the next connection.
         DeviceStore.shared.apply("glasses", "serialNumber", "")
+        DeviceStore.shared.apply("glasses", "bluetoothMacAddress", "")
+        DeviceStore.shared.apply("glasses", "leftMacAddress", "")
+        DeviceStore.shared.apply("glasses", "rightMacAddress", "")
+        DeviceStore.shared.apply("glasses", "macAddress", "")
         DeviceStore.shared.apply("glasses", "fullyBooted", false)
         DeviceStore.shared.apply("glasses", "connected", false)
         DeviceStore.shared.apply("glasses", "connectionState", ConnTypes.DISCONNECTED)
@@ -1807,4 +1819,3 @@ struct ViewState {
         cancellables.removeAll()
     }
 }
-

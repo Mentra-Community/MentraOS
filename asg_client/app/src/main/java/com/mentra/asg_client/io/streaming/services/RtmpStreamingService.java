@@ -450,6 +450,34 @@ public class RtmpStreamingService extends Service {
                     Log.i(TAG, "RTMP connection successful");
 
                     synchronized (mStateLock) {
+                        // stopStream() is async. An in-flight RTMP handshake can
+                        // complete after Mentra Call already sent stop — that used
+                        // to flip us back to STREAMING and keep BLE "streaming"
+                        // status (and metrics) alive with no streamId.
+                        if (mStreamState == StreamState.STREAMING && mIsStreaming) {
+                            startMetricsReporting();
+                            return;
+                        }
+                        if (mStreamState != StreamState.STARTING) {
+                            Log.w(TAG, "Ignoring RTMP onSuccess in state " + mStreamState
+                                    + " (stop already requested)");
+                            stopMetricsReporting();
+                            // IDLE already completed teardown — don't emit a second stop.
+                            if (mStreamState == StreamState.STOPPING) {
+                                mReconnectHandler.post(() -> {
+                                    synchronized (mStateLock) {
+                                        if (mStreamState == StreamState.STARTING
+                                                || mStreamState == StreamState.STREAMING
+                                                || mStreamState == StreamState.IDLE) {
+                                            return;
+                                        }
+                                    }
+                                    forceStopStreamingInternal(false);
+                                });
+                            }
+                            return;
+                        }
+
                         // NOW we're actually streaming
                         mStreamState = StreamState.STREAMING;
                         mIsStreaming = true;
@@ -719,8 +747,45 @@ public class RtmpStreamingService extends Service {
      * @param url Stream URL (rtmp:// or rtmps://)
      */
     public void setRtmpUrl(String url) {
-        this.mRtmpUrl = url;
-        Log.i(TAG, "RTMP URL set to: " + url);
+        String normalized = normalizeRtmpUrlForStreamPack(url);
+        this.mRtmpUrl = normalized;
+        if (normalized != null && !normalized.equals(url)) {
+            Log.i(TAG, "RTMP URL normalized for StreamPack: " + url + " → " + normalized);
+        } else {
+            Log.i(TAG, "RTMP URL set to: " + normalized);
+        }
+    }
+
+    /**
+     * StreamPack's RTMP client requires {@code rtmp://host/app/streamKey} (two path
+     * segments). MediaMTX and many servers accept a single-segment path like
+     * {@code rtmp://host/live}; append a default stream key so those URLs still work.
+     */
+    static String normalizeRtmpUrlForStreamPack(String url) {
+        if (url == null || url.isEmpty()) {
+            return url;
+        }
+        String trimmed = url.trim();
+        if (!trimmed.regionMatches(true, 0, "rtmp://", 0, 7)
+                && !trimmed.regionMatches(true, 0, "rtmps://", 0, 8)) {
+            return trimmed;
+        }
+        try {
+            java.net.URI uri = java.net.URI.create(trimmed);
+            String path = uri.getPath();
+            if (path == null || path.isEmpty() || "/".equals(path)) {
+                return trimmed.endsWith("/") ? trimmed + "live/stream" : trimmed + "/live/stream";
+            }
+            String withoutSlash = path.startsWith("/") ? path.substring(1) : path;
+            // Already app/streamKey (or deeper) — leave alone.
+            if (withoutSlash.contains("/")) {
+                return trimmed;
+            }
+            return trimmed.endsWith("/") ? trimmed + "stream" : trimmed + "/stream";
+        } catch (Exception e) {
+            Log.w(TAG, "Could not normalize RTMP URL: " + trimmed, e);
+            return trimmed;
+        }
     }
 
     /**
@@ -1251,6 +1316,7 @@ public class RtmpStreamingService extends Service {
         return new PeriodicStreamMetricsReporter(
                 mReconnectHandler,
                 AsgConstants.STREAM_METRICS_INTERVAL_MS,
+                "rtmp",
                 () -> {
                     synchronized (mStateLock) {
                         return mStreamState == StreamState.STREAMING
@@ -1258,18 +1324,37 @@ public class RtmpStreamingService extends Service {
                                 && !mReconnecting;
                     }
                 },
-                () ->
-                        new PeriodicStreamMetricsReporter.MetricsSample(
-                                mStreamConfig.getVideoBitrate(),
-                                mStreamConfig.getVideoFps(),
-                                0,
-                                mStreamStartTime > 0
-                                        ? Math.max(
-                                                0,
-                                                (System.currentTimeMillis() - mStreamStartTime)
-                                                        / 1_000L)
-                                        : 0,
-                                StreamThermalReader.readCpuTemperatureC()),
+                () -> {
+                    double measuredFps = Double.NaN;
+                    long measuredBitrateBps = -1L;
+                    double cameraFps = Double.NaN;
+                    try {
+                        if (mStreamer != null) {
+                            measuredFps = mStreamer.getSettings().getVideo().getMeasuredFps();
+                            measuredBitrateBps =
+                                    mStreamer.getSettings().getVideo().getMeasuredBitrateBps();
+                            cameraFps = mStreamer.getSettings().getMeasuredCaptureFps();
+                        }
+                    } catch (Exception ignored) {
+                        // Keep n/a measured fields
+                    }
+                    return new PeriodicStreamMetricsReporter.MetricsSample(
+                            mStreamConfig.getVideoWidth(),
+                            mStreamConfig.getVideoHeight(),
+                            mStreamConfig.getVideoBitrate(),
+                            measuredBitrateBps,
+                            mStreamConfig.getVideoFps(),
+                            measuredFps,
+                            cameraFps,
+                            0,
+                            mStreamStartTime > 0
+                                    ? Math.max(
+                                            0,
+                                            (System.currentTimeMillis() - mStreamStartTime)
+                                                    / 1_000L)
+                                    : 0,
+                            StreamThermalReader.readCpuTemperatureC());
+                },
                 new PeriodicStreamMetricsReporter.CallbackProvider() {
                     @Override
                     public StreamingStatusCallback getCallback() {
@@ -1284,6 +1369,9 @@ public class RtmpStreamingService extends Service {
     }
 
     private void startMetricsReporting() {
+        if (!AsgConstants.ENABLE_PIPELINE_FPS_TELEMETRY) {
+            return;
+        }
         if (mMetricsReporter != null) {
             mMetricsReporter.start();
         }
@@ -1319,6 +1407,11 @@ public class RtmpStreamingService extends Service {
 
         mCurrentStreamId = streamId;
         mIsStreamingActive = true;
+
+        if (AsgConstants.DISABLE_STREAM_KEEP_ALIVE_TIMEOUT) {
+            Log.i(TAG, "Keep-alive timeout disabled; stream will not auto-stop: " + streamId);
+            return;
+        }
 
         mRtmpStreamTimeoutTimer = new Timer("RtmpStreamTimeout-" + streamId);
         mRtmpStreamTimeoutTimer.schedule(new TimerTask() {

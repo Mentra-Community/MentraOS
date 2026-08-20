@@ -15,7 +15,9 @@ function printUsage(): void {
   console.log('Usage: mentra-miniapp <command>\n');
   console.log('Commands:');
   console.log('  dev                              Start dev server with hot reload and QR code');
+  console.log('                                   Options: --qr-output <path>  write PNG QR to path');
   console.log('  release                          Build, pack, and serve a QR to install on a phone');
+  console.log('                                   Options: --no-cache  --qr-output <path>');
   console.log('  pack                             Production-build and package miniapp into build/<pkg>-<version>.zip (--no-build to skip build)');
   console.log('  manifest                         Edit miniapp.json interactively');
   console.log('  permission list                  List declared permissions');
@@ -28,12 +30,26 @@ function printUsage(): void {
   console.log('  schema regenerate                Regenerate the published schema file (CLI internal)');
 }
 
+function flagValue(flag: string): string | undefined {
+  const idx = process.argv.indexOf(flag);
+  if (idx === -1) return undefined;
+  const value = process.argv[idx + 1];
+  if (!value || value.startsWith('-')) {
+    console.error(`Error: ${flag} requires a path argument`);
+    process.exit(1);
+  }
+  return value;
+}
+
 switch (subcommand) {
   case 'dev':
-    await dev();
+    await dev({qrOutput: flagValue('--qr-output')});
     break;
   case 'release':
-    await release({noCache: process.argv.includes('--no-cache')});
+    await release({
+      noCache: process.argv.includes('--no-cache'),
+      qrOutput: flagValue('--qr-output'),
+    });
     break;
   case 'pack':
     // Build with NODE_ENV=production before zipping, so `pack` never ships

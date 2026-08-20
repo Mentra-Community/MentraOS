@@ -39,6 +39,8 @@
     "release-android": "zx ./scripts/release-android.mjs",
     "release-ios": "zx ./scripts/release-ios.mjs",
     "generate-bundled-miniapps": "zx ./scripts/generate-bundled-miniapps.mjs",
+    "pull:glasses-photos": "bash ./scripts/pull-glasses-photos.sh",
+    "wipe:glasses-photos": "bash ./scripts/wipe-glasses-photos.sh",
     "compile": "tsc --noEmit -p . --pretty",
     "lint": "eslint . --fix",
     "lint:check": "eslint .",

@@ -1,0 +1,138 @@
+MentraOS — Install Docker on Ubuntu + start local livestream server
+====================================================================
+
+These steps install Docker Engine + Compose on Ubuntu, then start the
+local MediaMTX server used for Mentra Live same-WiFi streaming tests.
+
+
+--------------------------------------------------------------------
+1. Prerequisites
+--------------------------------------------------------------------
+
+sudo apt update
+sudo apt install -y ca-certificates curl
+
+
+--------------------------------------------------------------------
+2. Add Docker's official apt repository
+--------------------------------------------------------------------
+
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
+  $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}") stable" | \
+  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+sudo apt update
+
+
+--------------------------------------------------------------------
+3. Install Docker Engine + Compose plugin
+--------------------------------------------------------------------
+
+sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+
+--------------------------------------------------------------------
+4. Allow your user to run Docker without sudo
+--------------------------------------------------------------------
+
+sudo usermod -aG docker "$USER"
+newgrp docker
+
+# If docker still requires sudo after newgrp, log out and log back in
+# (or reboot), then retry the verify step.
+
+
+--------------------------------------------------------------------
+5. Verify Docker works
+--------------------------------------------------------------------
+
+docker --version
+docker compose version
+docker run --rm hello-world
+
+
+--------------------------------------------------------------------
+6. (Optional) Install ffprobe for FPS stats in the local-stream monitor
+--------------------------------------------------------------------
+
+sudo apt install -y ffmpeg
+
+
+--------------------------------------------------------------------
+7. Firewall (if ufw is enabled)
+--------------------------------------------------------------------
+
+# RTMP publish
+sudo ufw allow 1935/tcp
+
+# HLS watch (browser on this machine or LAN)
+sudo ufw allow 8888/tcp
+
+# SRT (if you use SRT)
+sudo ufw allow 8890/udp
+
+# WHIP / WHEP WebRTC (if you use WHIP)
+sudo ufw allow 8889/tcp
+sudo ufw allow 8189/udp
+
+sudo ufw status
+
+
+--------------------------------------------------------------------
+8. Start the local MediaMTX stream server
+--------------------------------------------------------------------
+
+# From the MentraOS repo root:
+cd /path/to/MentraOS
+./scripts/local-stream/start-local-stream.sh
+
+# The script will:
+#   - detect your LAN IP
+#   - start MediaMTX via docker compose
+#   - print RTMP / SRT / WHIP publish + watch URLs
+#   - stay attached and print [RECV] stats
+
+# Example RTMP publish URL to use in Livestreamer Custom + Local network:
+#   rtmp://<LAN_IP>:1935/live/stream
+
+
+--------------------------------------------------------------------
+9. Stop the local stream server
+--------------------------------------------------------------------
+
+docker compose -f scripts/local-stream/docker-compose.yml down
+
+# Or from the scripts/local-stream directory:
+# docker compose -f docker-compose.yml down
+
+
+--------------------------------------------------------------------
+10. Livestreamer setup reminder
+--------------------------------------------------------------------
+
+1. Phone, glasses, and this Ubuntu machine on the SAME Wi-Fi
+2. Livestreamer → Custom
+3. Protocol: RTMP (recommended)
+4. Stream Server URL: rtmp://<LAN_IP>:1935/live/stream
+5. Stream key: leave blank for the full URL above
+6. Enable Local network
+7. Connect → Go Live
+8. Watch on the Ubuntu machine:
+   - Browser: http://<LAN_IP>:8888/live/stream/
+   - Or VLC:  rtmp://<LAN_IP>:1935/live/stream
+
+
+--------------------------------------------------------------------
+Notes
+--------------------------------------------------------------------
+
+- Official Docker docs: https://docs.docker.com/engine/install/ubuntu/
+- Prefer Docker Engine on Ubuntu (these steps), not Docker Desktop.
+- The start-local-stream.sh script works on Ubuntu; LAN IP uses
+  hostname -I as the Linux fallback.
+- If LAN IP detection fails, check Wi-Fi is up and run: hostname -I

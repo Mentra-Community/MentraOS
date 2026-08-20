@@ -22,7 +22,6 @@ import androidx.annotation.NonNull;
 import com.mentra.asg_client.io.streaming.config.WhipStreamConfig;
 import com.mentra.asg_client.service.utils.DeviceProfile;
 import com.mentra.asg_client.service.utils.ServiceUtils;
-import java.util.Arrays;
 import java.util.Collections;
 import org.webrtc.CapturerObserver;
 import org.webrtc.SurfaceTextureHelper;
@@ -161,36 +160,8 @@ public class WhipCameraCapturer implements VideoCapturer {
             mSurfaceTextureHelper.setTextureSize(mCameraSurfaceWidth, mCameraSurfaceHeight);
             initialFrameRotation = getFrameOrientation();
 
-            if (selection.hasSupportedSizes()) {
-                Log.d(
-                        TAG,
-                        "Available SurfaceTexture sizes: "
-                                + Arrays.toString(selection.getAvailableOutputSizes()));
-                if (selection.getTransformPenalty() == 1) {
-                    Log.d(
-                            TAG,
-                            "Selected camera size "
-                                    + mCameraSurfaceWidth
-                                    + "x"
-                                    + mCameraSurfaceHeight
-                                    + " will be cropped and downscaled to "
-                                    + width
-                                    + "x"
-                                    + height);
-                } else if (selection.getTransformPenalty() == 2) {
-                    Log.w(
-                            TAG,
-                            "Selected camera size "
-                                    + mCameraSurfaceWidth
-                                    + "x"
-                                    + mCameraSurfaceHeight
-                                    + " cannot reach requested "
-                                    + width
-                                    + "x"
-                                    + height
-                                    + " without upscaling");
-                }
-            }
+            WhipCameraFormatSelector.logCameraLivestreamResolutions(
+                    cameraId, width, height, selection);
 
             Log.i(
                     TAG,

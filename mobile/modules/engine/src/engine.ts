@@ -8,13 +8,14 @@
  * live on the `@mentra/engine/internal` entry (and the debug singletons on
  * `@mentra/engine/devtools`); they shrink as screens move onto `engine.*`.
  */
-import {configure, start as bootstrapStart, stop as bootstrapStop} from "./runtime/bootstrap"
+import {configure, start as bootstrapStart, stop as bootstrapStop, updateUiSeams} from "./runtime/bootstrap"
 import {cloudClientService} from "./services/CloudClientService"
 import {hydrateDeviceStore, demoteOrphanedDefaultWearable} from "./services/DeviceStoreHydration"
 import {startGlassesSettingsSync, stopGlassesSettingsSync} from "./services/GlassesSettingsSync"
 import {startGlassesStatusProjection, stopGlassesStatusProjection} from "./services/GlassesStatusProjection"
 import {startOtaService, stopOtaService} from "./services/OtaService"
 import {startAudioCloudUplink, stopAudioCloudUplink} from "./services/AudioCloudUplink"
+import {startSupportProfileSync, stopSupportProfileSync} from "./services/SupportProfileSync"
 import {startDeviceEventRouter, stopDeviceEventRouter} from "./services/DeviceEventRouter"
 import {startPhoneNotificationsSync, stopPhoneNotificationsSync} from "./services/PhoneNotificationsSync"
 import {startCaptionsTesterReportService, stopCaptionsTesterReportService} from "./services/CaptionsTesterReportService"
@@ -45,6 +46,8 @@ import {logBuffer} from "./utils/devLogging"
 export const engine = {
   /** Front door — hand engine auth + config, then start/stop the runtime. */
   configure,
+  /** Merge host-UI seams on a running runtime (scan overlay, wifi setup, …). */
+  updateUiSeams,
   /** Start the runtime: mark started + construct/connect the cloud client + begin
    * syncing device settings to the glasses. */
   async start() {
@@ -96,6 +99,7 @@ export const engine = {
         error instanceof Error ? error.message : error,
       )
     }
+    startSupportProfileSync()
     // Push device-setting changes to the glasses for ANY host, so
     // engine.glasses.settings.set() reaches the device (not just the Mentra app).
     startGlassesSettingsSync()
@@ -135,6 +139,7 @@ export const engine = {
     await safely("device event router", stopDeviceEventRouter)
     await safely("ota service", stopOtaService)
     await safely("audio cloud uplink", stopAudioCloudUplink)
+    await safely("support profile sync", stopSupportProfileSync)
     await safely("phone notifications sync", stopPhoneNotificationsSync)
     await safely("captions tester report service", stopCaptionsTesterReportService)
     await safely("mentrajs crashloop report service", stopMentraJSCrashloopReportService)

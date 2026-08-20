@@ -28,7 +28,7 @@ Consult module-specific AGENTS.md when working within that module.
 
 ## Project Structure & Module Organization
 
-Core client app lives in `mobile/` (Expo React Native). Backend services and the TypeScript SDK sit in `cloud/packages/`, while the Developer Console and Store front ends live in `cloud/websites/`; cloud integration tests are in `cloud/tests/`. Platform SDKs are in `android_core/`, `android_library/`, `sdk_ios/`; hardware tooling lives in `mcu_client/`. Public Mintlify docs live in `mintlify-docs/`; notes and plans live in `agents/` and `notes/`.
+Core client app lives in `mobile/` (Expo React Native). Backend services and the TypeScript SDK sit in `cloud/packages/`, while the Developer Console and Store front ends live in `cloud/websites/`; cloud integration tests are in `cloud/tests/`. Platform SDKs are in `android_core/`, `android_library/`, `sdk_ios/`; hardware tooling lives in `mcu_client/`. Public Mintlify docs live in `mintlify-docs/`; notes and plans live in `agents/` and `notes/` — see [`notes/README.md`](notes/README.md) for the specs/plans convention.
 
 ## Build Commands
 
@@ -214,5 +214,5 @@ Note: the **mentra-console** MCP server (`cloud/packages/console-mcp`, tools `in
 ## Additional Documentation
 
 - Mintlify docs: `/mintlify-docs/`
-- Architecture specs, design docs, and working notes: `/notes/`
+- Architecture specs, design docs, and working notes: `/notes/` (convention: [`notes/README.md`](notes/README.md))
 - Module-specific implementation details: See module-specific `AGENTS.md` files

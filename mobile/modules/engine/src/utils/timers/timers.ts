@@ -1,6 +1,28 @@
-// until https://github.com/tconns/react-native-nitro-bg-timer/issues/2 is resolved, we need to use this class to disable this package on iOS:
+// BgTimer — background-safe timers for the engine.
+//
+// Everything timing-critical in the engine runs through this class: the
+// miniapp liveness watchdog, display durationMs expiries, boot windows,
+// auth-token refresh. On Android, React Native PAUSES plain JS timers while
+// the app is backgrounded, so those features only keep working in the
+// background when the native implementation (react-native-nitro-bg-timer)
+// is active.
+//
+// Who actually gets native timers:
+//   - Android, dev AND release: always attempted — dev must match production
+//     background behavior. There is no opt-in/opt-out env var. If the native
+//     module is unavailable (a dev client whose binary predates it, or a
+//     broken release binary), the failure is LOUD: a console.error with the
+//     remediation, plus a blocking dev alert. The JS-timer fallback still
+//     engages so foreground behavior keeps working, but backgrounded
+//     behavior is broken until the native rebuild — the error says exactly
+//     that. (A silent dev fallback previously cost a full debugging day of
+//     phantom "zombie miniapp" bugs; see OS-1790.)
+//   - iOS: never, dev or prod — the package is disabled pending
+//     https://github.com/tconns/react-native-nitro-bg-timer/issues/2. iOS
+//     suspends the whole process in background anyway, so background timing
+//     there is handled by native per-device queues, not JS timers.
 
-import {Platform} from "react-native"
+import {Alert, Platform} from "react-native"
 
 type NitroTimerApi = {
   setInterval: (callback: () => void, delay: number) => number
@@ -11,27 +33,40 @@ type NitroTimerApi = {
 
 let nitroTimer: NitroTimerApi | null | undefined
 let nitroDisabled = false
-let warnedUnavailable = false
+let failedLoud = false
 
-function warnUnavailable(reason: string) {
-  if (warnedUnavailable) {
+/**
+ * The native background timer is unavailable — say so ONCE, loudly, with the
+ * remediation. The JS-timer fallback keeps foreground behavior working, but
+ * everything timing-driven freezes while the app is backgrounded, which
+ * presents as phantom miniapp bugs (frozen captions, missed wake words,
+ * watchdog kills on resume). A quiet warning here has already cost a full
+ * debugging day; never downgrade this to console.warn.
+ */
+function failUnavailable(reason: string) {
+  if (failedLoud) {
     return
   }
-  warnedUnavailable = true
-  console.warn(`BgTimer: ${reason}, using JS timers`)
+  failedLoud = true
+  const message =
+    `BgTimer: native background timer unavailable (${reason}). ` +
+    "Backgrounded behavior IS BROKEN until you rebuild the Android app: run `bun android`. " +
+    "Engine timers and local miniapps (captions, wake words) freeze whenever the app is not foregrounded."
+  console.error(message)
+  if (__DEV__) {
+    // A stale dev client may ALSO show the library's own require-time red box
+    // (bridgeless LogBox surfaces it even though we catch below) — this alert
+    // is the actionable one: it names the fix.
+    try {
+      Alert.alert("Background timers unavailable", message)
+    } catch {
+      /* Alert not available (tests / headless) — the console.error stands. */
+    }
+  }
 }
 
 function getNitroTimer(): NitroTimerApi | null {
   if (nitroDisabled || Platform.OS !== "android") {
-    return null
-  }
-
-  // react-native-nitro-bg-timer calls createHybridObject() at require() time. On dev
-  // builds with a stale native binary that throws NPE, React Native still surfaces a
-  // red LogBox error even when the exception is caught. Skip nitro in __DEV__ unless
-  // explicitly enabled after a native rebuild (bun android).
-  if (__DEV__ && process.env.EXPO_PUBLIC_USE_NITRO_BG_TIMER !== "true") {
-    warnUnavailable("nitro bg-timer disabled in dev (set EXPO_PUBLIC_USE_NITRO_BG_TIMER=true after native rebuild)")
     return null
   }
 
@@ -43,7 +78,7 @@ function getNitroTimer(): NitroTimerApi | null {
     const {isRuntimeAlive} = require("react-native-nitro-modules") as {isRuntimeAlive?: () => boolean}
     if (typeof isRuntimeAlive === "function" && !isRuntimeAlive()) {
       nitroTimer = null
-      warnUnavailable("nitro runtime is not alive")
+      failUnavailable("nitro runtime is not alive")
       return nitroTimer
     }
 
@@ -62,7 +97,7 @@ function getNitroTimer(): NitroTimerApi | null {
   }
 
   if (!nitroTimer) {
-    warnUnavailable("react-native-nitro-bg-timer unavailable")
+    failUnavailable("react-native-nitro-bg-timer failed to load")
   }
   return nitroTimer
 }
@@ -77,7 +112,8 @@ function withNitro<T>(run: (api: NitroTimerApi) => T, fallback: () => T): T {
   } catch (error) {
     nitroDisabled = true
     nitroTimer = null
-    console.warn("BgTimer: nitro timer failed, using JS timers", error)
+    failedLoud = false // a mid-session failure is new information — re-announce
+    failUnavailable(`nitro timer call threw: ${String(error)}`)
     return fallback()
   }
 }

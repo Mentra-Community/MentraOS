@@ -32,6 +32,8 @@ export type {
   IslandConfigValues,
   IslandAnalytics,
   IslandUiSeams,
+  ScanQrOptions,
+  ScanQrResult,
   SubjectTokenType,
 } from "./runtime/bootstrap"
 
@@ -91,7 +93,6 @@ export {
   DOWNLOAD_STUCK_TIMEOUT_MS,
   MTK_INSTALL_TIMEOUT_MS,
   GLOBAL_OTA_TIMEOUT_MS,
-  POST_APK_OTA_START_DELAY_MS,
   PING_INTERVAL_MS,
   QUERY_REPLY_TIMEOUT_MS,
   OtaProgressMessages,
@@ -153,7 +154,12 @@ export {
 } from "./stores/apps"
 
 // Pure dev-miniapp launch-route decision (registration itself is internal).
-export {decideDevLaunchRoute, type DevLaunchResult, type DevManifest} from "./utils/devMiniappLaunch"
+export {
+  decideDevLaunchRoute,
+  type DecideDevLaunchOptions,
+  type DevLaunchResult,
+  type DevManifest,
+} from "./utils/devMiniappLaunch"
 export {HardwareCompatibility, type CompatibilityResult} from "./utils/hardware"
 export {BgTimer, throttle, debounce} from "./utils/timers"
 

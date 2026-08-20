@@ -89,7 +89,12 @@ export class HardwareCompatibilityService {
         return capabilities.hasDisplay;
 
       case HardwareType.MICROPHONE:
-        return capabilities.hasMicrophone;
+        // MentraOS always provides an audio-input path. When the connected
+        // glasses do not have an onboard microphone, the client falls back to
+        // the phone microphone. Keep `capabilities.hasMicrophone` reserved for
+        // describing the physical device; compatibility is about whether the
+        // requested input is available to the miniapp.
+        return true;
 
       case HardwareType.SPEAKER:
         return capabilities.hasSpeaker;

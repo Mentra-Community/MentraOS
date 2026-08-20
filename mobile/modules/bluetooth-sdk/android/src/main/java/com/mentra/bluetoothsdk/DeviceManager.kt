@@ -948,15 +948,20 @@ class DeviceManager {
 
         when (currentViewState.layoutType) {
             "text_wall" -> {
-                sgc?.sendTextWall(currentViewState.text)
+                sgc?.sendTextWall(parsePlaceholders(currentViewState.text))
             }
 
             "double_text_wall" -> {
-                sgc?.sendDoubleTextWall(currentViewState.topText, currentViewState.bottomText)
+                sgc?.sendDoubleTextWall(
+                    parsePlaceholders(currentViewState.topText),
+                    parsePlaceholders(currentViewState.bottomText)
+                )
             }
 
             "reference_card" -> {
-                sgc?.sendTextWall("${currentViewState.title}\n\n${currentViewState.text}")
+                val title = parsePlaceholders(currentViewState.title)
+                val text = parsePlaceholders(currentViewState.text)
+                sgc?.sendTextWall("$title\n\n$text")
             }
 
             "bitmap_view" -> {
@@ -973,7 +978,7 @@ class DeviceManager {
 
             "positioned_text" -> {
                 sgc?.sendPositionedText(
-                    currentViewState.text,
+                    parsePlaceholders(currentViewState.text),
                     currentViewState.bmpX ?: 0,
                     currentViewState.bmpY ?: 0,
                     currentViewState.bmpWidth ?: 576,
@@ -994,6 +999,8 @@ class DeviceManager {
     }
 
     private fun parsePlaceholders(text: String): String {
+        if (!text.contains('$')) return text
+
         val dateFormatter = SimpleDateFormat("M/dd, h:mm", Locale.getDefault())
         val formattedDate = dateFormatter.format(Date())
 
@@ -1634,6 +1641,11 @@ class DeviceManager {
         sgc?.sendHotspotState(enabled)
     }
 
+    fun setWifiAdbState(enabled: Boolean) {
+        Bridge.log("MAN: Setting glasses Wi-Fi ADB state: $enabled")
+        sgc?.sendWifiAdbState(enabled)
+    }
+
     fun setSystemTime(timestampMs: Long) {
         Bridge.log("MAN: Setting glasses system time: $timestampMs")
         sgc?.sendSetSystemTime(timestampMs)
@@ -2050,11 +2062,13 @@ class DeviceManager {
         shouldSendBootingMessage = true // Reset for next first connect
         // clear glasses properties:
         DeviceStore.apply("glasses", "deviceModel", "")
-        // A manufacturing serial is session-bound. Clear it on every disconnect so a
-        // previously connected pair's serial can never be reported for the next
-        // connection (e.g. switching from G1/Ar99, which populate it from the
-        // advertisement, to a model that never writes it, like G2).
+        // Device identifiers are session-bound. Clear them on every disconnect so a
+        // previously connected pair can never be reported for the next connection.
         DeviceStore.apply("glasses", "serialNumber", "")
+        DeviceStore.apply("glasses", "bluetoothMacAddress", "")
+        DeviceStore.apply("glasses", "leftMacAddress", "")
+        DeviceStore.apply("glasses", "rightMacAddress", "")
+        DeviceStore.apply("glasses", "macAddress", "")
         DeviceStore.apply("glasses", "fullyBooted", false)
         DeviceStore.apply("glasses", "connected", false)
         DeviceStore.apply(
@@ -2164,4 +2178,3 @@ class DeviceManager {
         }
     }
 }
-

@@ -123,6 +123,22 @@ export interface ElevenLabsLogEntry {
   message: string
 }
 
+/** Mic PCM capture (post-LC3) saved under a fixed phone blob key. */
+export type ElevenLabsRecordingStatus = "none" | "capturing" | "ready" | "error"
+
+export interface ElevenLabsRecording {
+  status: ElevenLabsRecordingStatus
+  /** Fixed blob key (overwritten each conversation). */
+  blobKey: string
+  /** `file://` path on the phone once committed, else null. */
+  uri: string | null
+  bytes: number
+  durationMs: number
+  sampleRate: number | null
+  error: string | null
+  isPlaying: boolean
+}
+
 /** Full ElevenLabs tester snapshot pushed background → UI. */
 export interface ElevenLabsSnapshot {
   agentId: string
@@ -136,4 +152,5 @@ export interface ElevenLabsSnapshot {
   stats: ElevenLabsStreamStats
   diagnostics: ElevenLabsDiagnostics
   logs: ElevenLabsLogEntry[]
+  recording: ElevenLabsRecording
 }

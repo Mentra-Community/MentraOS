@@ -109,7 +109,9 @@ class MiniappLauncher {
       const entry = manifest.entry as {background?: string; ui?: string} | undefined
       if (!entry?.background) return null
 
-      const base = devUrl.replace(/\/$/, "")
+      // Use the host that actually answered — may differ from the stored IP
+      // after a laptop Wi-Fi change (mDNS / Metro failover inside decideDevLaunchRoute).
+      const base = route.resolvedUrl.replace(/\/$/, "")
       // entry.* are bundle-root paths (dist/ stripped); the dev server serves
       // files relative to cwd, so prepend dist/.
       const bgUrl = `${base}/dist/${entry.background.replace(/^\.?\/+/, "")}`
@@ -147,7 +149,7 @@ class MiniappLauncher {
         uiBaseDir: uiUri ? uiUri.replace(/\/[^/]+$/, "/") : null,
         declaredPermissions,
         installedManifest,
-        devUrl,
+        devUrl: route.resolvedUrl,
         devPort: this.resolveDevPort(hints?.devPort, packageName),
       }
     }

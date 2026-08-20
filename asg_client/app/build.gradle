@@ -398,6 +398,9 @@ dependencies {
     // JSON handling
     implementation 'org.json:json:20210307'
     
+    // Decode the exact LZMA-alone chunks used by BES release OTA artifacts before authorization.
+    implementation 'org.tukaani:xz:1.9'
+
     // AVIF encoding/decoding support
     implementation 'com.github.awxkee:avif-coder:1.7.3'
     implementation 'androidx.heifwriter:heifwriter:1.1.0'

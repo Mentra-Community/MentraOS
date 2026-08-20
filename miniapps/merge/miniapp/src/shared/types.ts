@@ -10,7 +10,7 @@ export type FrequencyMode = "low" | "medium" | "high"
 export type AnswerLanguage = "English" | "Spanish" | "French" | "German" | "Italian" | "Portuguese" | "Japanese" | "Korean" | "Chinese" | "Auto"
 
 export type MergeBackendStatus = "idle" | "processing" | "ok" | "unconfigured" | "error"
-export type MergeAnalysisTrigger = "final" | "sentence" | "interval"
+export type MergeAnalysisTrigger = "final" | "sentence" | "interval" | "expand"
 export type MergeDisplayAction = "show" | "replace" | "queue" | "drop"
 export type MergeDecisionAction = "silent" | "defer" | MergeDisplayAction | "error"
 
@@ -54,6 +54,7 @@ export interface MergeInsight {
   sources?: MergeInsightSource[]
   searchQueries?: string[]
   profiling?: MergeInsightProfiling
+  parentInsightId?: string
 }
 
 export interface MergeSettings {

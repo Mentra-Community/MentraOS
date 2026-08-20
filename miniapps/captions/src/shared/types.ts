@@ -19,6 +19,7 @@ export const DEFAULT_CAPTION_TIMEOUT_SECONDS = 40
 export interface CaptionSettings {
   language: string
   languageHints: string[]
+  useOfflineStt: boolean
   displayLines: number
   displayWidth: number
   wordBreaking: boolean

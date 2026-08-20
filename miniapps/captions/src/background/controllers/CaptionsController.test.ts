@@ -58,3 +58,100 @@ describe("CaptionsController caption timeout", () => {
     expect(DEFAULT_CAPTION_TIMEOUT_SECONDS).toBe(40)
   })
 })
+
+describe("CaptionsController offline speech to text", () => {
+  test("restores the persisted setting", async () => {
+    const get = mock((key: string) => Promise.resolve(key === "useOfflineStt" ? "true" : null))
+    const controller = new CaptionsController({
+      storage: {get},
+    } as never) as unknown as {
+      settings: {useOfflineStt: boolean}
+      loadSettings: () => Promise<void>
+    }
+
+    await controller.loadSettings()
+
+    expect(controller.settings.useOfflineStt).toBe(true)
+  })
+
+  test("persists the setting and rebuilds the subscription with forceLocal", async () => {
+    const previousCleanup = mock(() => {})
+    const nextCleanup = mock(() => {})
+    const on = mock((_handler: (data: unknown) => void, _options?: {forceLocal?: boolean}) => nextCleanup)
+    const set = mock(() => Promise.resolve())
+    const send = mock(() => {})
+
+    const controller = new CaptionsController({
+      storage: {set},
+      transcription: {
+        configure: mock(() => Promise.resolve()),
+        on,
+      },
+    } as never) as unknown as {
+      settings: {useOfflineStt: boolean}
+      ui: {send: typeof send}
+      transcriptionCleanup: () => void
+      setUseOfflineStt: (enabled: boolean) => Promise<void>
+    }
+    controller.ui = {send}
+    controller.transcriptionCleanup = previousCleanup
+
+    await controller.setUseOfflineStt(true)
+
+    expect(previousCleanup).toHaveBeenCalledTimes(1)
+    expect(set).toHaveBeenCalledWith("useOfflineStt", "true")
+    expect(on).toHaveBeenCalledTimes(1)
+    expect(on.mock.calls[0]?.[1]).toEqual({forceLocal: true})
+    expect(send).toHaveBeenCalledWith("captions:settings-update", expect.objectContaining({useOfflineStt: true}))
+  })
+
+  test("returns to cloud transcription when the setting is disabled", async () => {
+    const on = mock((_handler: (data: unknown) => void, _options?: {forceLocal?: boolean}) => mock(() => {}))
+    const controller = new CaptionsController({
+      storage: {set: mock(() => Promise.resolve())},
+      transcription: {
+        configure: mock(() => Promise.resolve()),
+        on,
+      },
+    } as never) as unknown as {
+      settings: {useOfflineStt: boolean}
+      ui: {send: () => void}
+      setUseOfflineStt: (enabled: boolean) => Promise<void>
+    }
+    controller.settings.useOfflineStt = true
+    controller.ui = {send: mock(() => {})}
+
+    await controller.setUseOfflineStt(false)
+
+    expect(on).toHaveBeenCalledTimes(1)
+    expect(on.mock.calls[0]?.[1]).toEqual({})
+  })
+
+  test("uses the local model for a selected language", () => {
+    const forLanguage = mock(
+      (_language: string, _handler: (data: unknown) => void, _options?: {forceLocal?: boolean}) => mock(() => {}),
+    )
+    const controller = new CaptionsController({
+      transcription: {
+        configure: mock(() => Promise.resolve()),
+        forLanguage,
+      },
+    } as never) as unknown as {
+      settings: {
+        language: string
+        languageHints: string[]
+        useOfflineStt: boolean
+      }
+      subscribeTranscription: () => void
+    }
+    controller.settings.language = "fr-FR"
+    controller.settings.languageHints = []
+    controller.settings.useOfflineStt = true
+
+    controller.subscribeTranscription()
+
+    expect(forLanguage).toHaveBeenCalledTimes(1)
+    expect(forLanguage.mock.calls[0]?.[0]).toBe("fr-FR")
+    expect(forLanguage.mock.calls[0]?.[2]).toEqual({forceLocal: true})
+  })
+})

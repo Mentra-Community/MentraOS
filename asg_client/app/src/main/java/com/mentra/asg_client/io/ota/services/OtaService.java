@@ -14,6 +14,7 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.util.Log;
+
 import androidx.core.app.NotificationCompat;
 import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.events.BatteryStatusEvent;
@@ -25,13 +26,15 @@ import com.mentra.asg_client.io.ota.helpers.OtaHelper;
 import com.mentra.asg_client.io.ota.session.OtaSessionManager;
 import com.mentra.asg_client.io.ota.utils.OtaConstants;
 import com.mentra.asg_client.service.system.core.SystemControllerFactory;
+
 import dagger.hilt.android.AndroidEntryPoint;
 import java.net.HttpURLConnection;
 import java.net.URL;
-import javax.inject.Inject;
 import org.greenrobot.eventbus.EventBus;
 import org.greenrobot.eventbus.Subscribe;
 import org.greenrobot.eventbus.ThreadMode;
+
+import javax.inject.Inject;
 
 @AndroidEntryPoint
 public class OtaService extends Service {
@@ -67,6 +70,11 @@ public class OtaService extends Service {
         if (!EventBus.getDefault().isRegistered(this)) {
             EventBus.getDefault().register(this);
         }
+
+        // Startup may follow the BES-triggered reboot, before any EventBus subscriber existed.
+        // The durable store is truth, so replay its current projection rather than relying on the
+        // event that originally committed it.
+        otaHelper.sendAuthoritativeBesStatusToPhone();
 
         Log.i(TAG, "OTA service initialized - waiting for phone-initiated ota_start");
     }
@@ -234,7 +242,8 @@ public class OtaService extends Service {
                 // whether a BES update follows), NOT from session state — so it is correct on both
                 // the session path and the legacy/no-session path below. consume*() clears the flag
                 // so a duplicate/late SUCCESS event can't schedule a second reboot.
-                boolean shouldRebootAfterMtk = otaHelper != null && otaHelper.consumeRebootAfterMtkInstall();
+                boolean shouldRebootAfterMtk =
+                        otaHelper != null && otaHelper.consumeRebootAfterMtkInstall();
 
                 if (otaHelper != null) {
                     otaHelper.sendMtkInstallProgressToPhone("FINISHED", 100, null);
@@ -246,7 +255,8 @@ public class OtaService extends Service {
                         // can decide whether to start another round.
                         Log.i(
                                 TAG,
-                                "📱 MTK complete (no session) - notifying phone via legacy broadcast");
+                                "📱 MTK complete (no session) - notifying phone via legacy"
+                                        + " broadcast");
                         sendMtkUpdateCompleteMessage();
                     }
                 } else {
@@ -281,20 +291,26 @@ public class OtaService extends Service {
     /**
      * Reboot the device to apply a staged MTK-only firmware update.
      *
-     * MTK A/B updates do not change ro.custom.ota.version until the device reboots. When MTK is
+     * <p>MTK A/B updates do not change ro.custom.ota.version until the device reboots. When MTK is
      * bundled with a BES update the BES install power-cycles the device for us; for an MTK-only
      * update nothing else triggers the reboot, so the device would otherwise keep re-offering the
      * same patch (current firmware still matches the patch's start_firmware) in a loop.
      *
-     * Delayed so the phone receives the BLE "complete" status before the connection drops.
+     * <p>Delayed so the phone receives the BLE "complete" status before the connection drops.
      */
     private void scheduleMtkRebootToApplyUpdate() {
-        Log.i(TAG, "🔄 MTK was the final OTA step (no BES update) - rebooting in "
-                + (MTK_REBOOT_DELAY_MS / 1000) + "s to apply staged firmware");
-        new Handler(Looper.getMainLooper()).postDelayed(() -> {
-            Log.i(TAG, "🔄 Rebooting now to apply staged MTK firmware update");
-            SystemControllerFactory.get(this).reboot();
-        }, MTK_REBOOT_DELAY_MS);
+        Log.i(
+                TAG,
+                "🔄 MTK was the final OTA step (no BES update) - rebooting in "
+                        + (MTK_REBOOT_DELAY_MS / 1000)
+                        + "s to apply staged firmware");
+        new Handler(Looper.getMainLooper())
+                .postDelayed(
+                        () -> {
+                            Log.i(TAG, "🔄 Rebooting now to apply staged MTK firmware update");
+                            SystemControllerFactory.get(this).reboot();
+                        },
+                        MTK_REBOOT_DELAY_MS);
     }
 
     @Subscribe(threadMode = ThreadMode.MAIN)
@@ -317,14 +333,23 @@ public class OtaService extends Service {
             case FINISHED:
                 Log.i(TAG, "BES firmware update finished successfully");
                 updateNotification("BES firmware updated successfully");
-                // Note: BES chip will send sr_adota with progress=100 or type=success
+                if (otaHelper != null) {
+                    otaHelper.sendAuthoritativeBesStatusToPhone();
+                    otaHelper.deleteDownloadedArtifactForType("bes");
+                }
                 break;
             case FAILED:
                 Log.e(TAG, "BES firmware update failed: " + event.getErrorMessage());
                 updateNotification("BES firmware update failed: " + event.getErrorMessage());
                 // Try to notify phone of failure (might work if UART recovers)
                 if (otaHelper != null) {
-                    otaHelper.sendBesInstallProgressToPhone("FAILED", 0, event.getErrorMessage());
+                    if (!otaHelper.sendAuthoritativeBesStatusToPhone()) {
+                        // Failures before mh_ota has been durably reserved intentionally have no
+                        // BES record. They still belong to the active top-level OTA session and
+                        // must terminate its phone UI instead of disappearing.
+                        otaHelper.sendBesInstallProgressToPhone(
+                                "FAILED", event.getProgress(), event.getErrorMessage());
+                    }
                     otaHelper.deleteDownloadedArtifactForType("bes");
                 }
                 break;
@@ -379,14 +404,15 @@ public class OtaService extends Service {
                 if (isApkInstallRestart) {
                     Log.i(
                             TAG,
-                            "📱 Active APK install session found without restart guard — resuming next step");
+                            "📱 Active APK install session found without restart guard — resuming"
+                                    + " next step");
                     resumeFromSession(sessionManager);
                     return;
                 }
                 Log.i(
                         TAG,
-                        "📱 Active OTA session found without restart guard but not APK install restart "
-                                + "(step="
+                        "📱 Active OTA session found without restart guard but not APK install"
+                                + " restart (step="
                                 + currentStepIndex
                                 + " type="
                                 + currentStepType
@@ -498,7 +524,7 @@ public class OtaService extends Service {
      * hotspot, which died with this process's restart — resuming immediately would burn the
      * session on a guaranteed connect timeout. The phone re-establishes the hotspot and
      * normally supersedes this wait with a fresh ota_start (whose check this loop detects via
-     * the check lock or session movement, and stands down). On the glasses-WiFi path the
+     * OTA admission or session movement, and stands down). On the glasses-WiFi path the
      * first probe succeeds immediately and the resume proceeds as before. If the window
      * expires the check runs anyway so failures surface with today's exact semantics.
      */
@@ -514,7 +540,7 @@ public class OtaService extends Service {
                                     SystemClock.elapsedRealtime()
                                             + AsgConstants.OTA_RESUME_MANIFEST_PROBE_WINDOW_MS;
                             while (SystemClock.elapsedRealtime() < deadline) {
-                                if (otaHelper.isVersionCheckInProgress()) {
+                                if (otaHelper.isOtaAdmissionBusy()) {
                                     Log.i(
                                             TAG,
                                             "Resume probe: version check in progress elsewhere -"
@@ -541,9 +567,13 @@ public class OtaService extends Service {
                                             TAG,
                                             "Resume probe: manifest reachable - starting resume"
                                                     + " check");
-                                    otaHelper.setPhoneInitiatedOta(true);
-                                    otaHelper.startVersionCheckWithUrl(
-                                            OtaService.this, versionJsonUrl);
+                                    if (!otaHelper.startVersionCheckWithUrl(
+                                            OtaService.this, versionJsonUrl)) {
+                                        Log.i(
+                                                TAG,
+                                                "Resume probe: OTA admission was claimed before"
+                                                        + " dispatch - standing down");
+                                    }
                                     return;
                                 }
                                 try {
@@ -558,8 +588,13 @@ public class OtaService extends Service {
                                     "Resume probe: manifest still unreachable after "
                                             + AsgConstants.OTA_RESUME_MANIFEST_PROBE_WINDOW_MS
                                             + "ms - running resume check anyway");
-                            otaHelper.setPhoneInitiatedOta(true);
-                            otaHelper.startVersionCheckWithUrl(OtaService.this, versionJsonUrl);
+                            if (!otaHelper.startVersionCheckWithUrl(
+                                    OtaService.this, versionJsonUrl)) {
+                                Log.i(
+                                        TAG,
+                                        "Resume probe: OTA admission was claimed at timeout -"
+                                                + " standing down");
+                            }
                         },
                         "OtaResumeManifestProbe");
         probeThread.setDaemon(true);

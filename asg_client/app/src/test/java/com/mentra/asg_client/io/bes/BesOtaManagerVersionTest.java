@@ -4,10 +4,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 
 import android.content.Context;
+
 import androidx.test.core.app.ApplicationProvider;
-import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.SerialPortBridge;
+
+import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
 import com.mentra.asg_client.io.ota.interfaces.IBesOtaController;
-import com.mentra.asg_client.service.core.handlers.K900CommandHandler;
+
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -24,15 +26,15 @@ import org.robolectric.annotation.Config;
 @Config(sdk = 33)
 public class BesOtaManagerVersionTest {
 
+    private Context context;
     private IBesOtaController controller;
     private boolean previousInProgressFlag;
 
     @Before
     public void setUp() {
-        Context context = ApplicationProvider.getApplicationContext();
-        controller =
-                new BesOtaManager(
-                        mock(SerialPortBridge.class), context, mock(K900CommandHandler.class));
+        context = ApplicationProvider.getApplicationContext();
+        context.getSharedPreferences("bes_ota_state", Context.MODE_PRIVATE).edit().clear().commit();
+        controller = new BesOtaManager(null, mock(K900BluetoothManager.class), context);
         previousInProgressFlag = BesOtaManager.isBesOtaInProgress;
     }
 
@@ -40,6 +42,7 @@ public class BesOtaManagerVersionTest {
     public void tearDown() {
         // The in-progress flag is static — restore it so state never leaks across tests.
         BesOtaManager.isBesOtaInProgress = previousInProgressFlag;
+        context.getSharedPreferences("bes_ota_state", Context.MODE_PRIVATE).edit().clear().commit();
     }
 
     @Test
@@ -102,6 +105,17 @@ public class BesOtaManagerVersionTest {
         assertThat(controller.isBesOtaInProgress()).isFalse();
 
         BesOtaManager.isBesOtaInProgress = true;
+        assertThat(controller.isBesOtaInProgress()).isTrue();
+    }
+
+    @Test
+    public void isBesOtaInProgress_blocksAdmissionWhenDurableStateIsCorrupt() {
+        BesOtaManager.isBesOtaInProgress = false;
+        context.getSharedPreferences("bes_ota_state", Context.MODE_PRIVATE)
+                .edit()
+                .putString("record", "")
+                .commit();
+
         assertThat(controller.isBesOtaInProgress()).isTrue();
     }
 }
