@@ -646,7 +646,11 @@ export class BlobStore {
     let tempDir: Directory | null = null
     let shareId: string | null = null
     let handoffStarted = false
-    this.pruneShareExports()
+    try {
+      this.pruneShareExports()
+    } catch (error) {
+      console.warn(`${LOG_TAG}: blob share pruning failed`, error)
+    }
     try {
       shareId = this.makeId()
       this.activeShareIds.add(shareId)
