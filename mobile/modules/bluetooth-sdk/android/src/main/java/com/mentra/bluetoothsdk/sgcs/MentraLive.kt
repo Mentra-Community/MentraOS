@@ -5028,15 +5028,12 @@ class MentraLive : SGCManager() {
      * (it must be an http(s) URL). A null url omits the field, leaving the glasses to fall back to
      * their default version manifest.
      */
-    fun sendOtaStart(otaVersionUrl: String? = null, otaTransport: String? = null) {
+    fun sendOtaStart(otaVersionUrl: String? = null) {
         try {
             val json = JSONObject()
             json.put("type", "ota_start")
             if (otaVersionUrl != null) {
                 json.put("ota_version_url", otaVersionUrl)
-            }
-            if (!otaTransport.isNullOrBlank()) {
-                json.put("ota_transport", otaTransport)
             }
             json.put("timestamp", System.currentTimeMillis())
             sendJson(json, true)

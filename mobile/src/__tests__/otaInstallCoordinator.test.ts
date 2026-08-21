@@ -199,14 +199,11 @@ describe("OtaInstallCoordinator hotspot transport selection", () => {
 
     expect(mockHotspotPrepare).toHaveBeenCalledTimes(1)
     expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
-    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledWith(
-      "http://192.168.43.2:8791/version.json",
-      "hotspot",
-    )
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledWith("http://192.168.43.2:8791/version.json")
 
-    useGlassesStore.getState().setOtaStatus(
-      inProgressStatus({sessionId: "hotpot1", totalSteps: 3, stepPercent: 20, overallPercent: 4}),
-    )
+    useGlassesStore
+      .getState()
+      .setOtaStatus(inProgressStatus({sessionId: "hotpot1", totalSteps: 3, stepPercent: 20, overallPercent: 4}))
     GlobalEventEmitter.emit("glasses_session_changed", {previousSid: "old", sid: "new"})
 
     expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalledTimes(1)

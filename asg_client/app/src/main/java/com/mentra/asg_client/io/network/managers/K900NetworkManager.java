@@ -116,7 +116,6 @@ public class K900NetworkManager extends BaseNetworkManager {
      * ASG-side state from the real interface and credentials without sending another ap_start.
      */
     private void adoptExistingVendorHotspot() {
-        OtaSessionManager otaSession = new OtaSessionManager(context);
         String gatewayIp = findLocalHotspotGatewayIp();
         String ssid = readVendorHotspotSetting(AsgConstants.K900_VENDOR_HOTSPOT_SSID_SETTING);
         String password =
@@ -124,25 +123,14 @@ public class K900NetworkManager extends BaseNetworkManager {
         boolean hotspotPresent = !gatewayIp.isEmpty() && !ssid.isEmpty() && !password.isEmpty();
 
         if (hotspotPresent) {
-            boolean restartLeaseAdopted = otaSession.adoptHotspotRestartLease();
             onHotspotStarted(ssid, password, gatewayIp);
             notificationManager.showHotspotStateNotification(true);
             Log.i(
                     TAG,
-                    "🔥 Adopted existing K900 vendor hotspot"
-                            + (restartLeaseAdopted ? " for OTA APK restart" : " without OTA lease")
-                            + ": "
+                    "🔥 Adopted existing K900 vendor hotspot: "
                             + ssid
                             + " gateway="
                             + gatewayIp);
-            return;
-        }
-
-        if (otaSession.hasArmedHotspotRestartLease()) {
-            Log.e(TAG, "🔥 Hotspot restart lease is armed but the K900 AP is absent");
-            otaSession.clearHotspotRestartLease();
-            otaSession.clearRestartGuard();
-            otaSession.setFailed("hotspot_lost_during_apk_restart");
         }
     }
 
@@ -778,10 +766,11 @@ public class K900NetworkManager extends BaseNetworkManager {
         Log.d(TAG, "Shutting down K900NetworkManager");
         OtaSessionManager otaSession = new OtaSessionManager(context);
         if (otaSession.shouldPreserveHotspotOnShutdown()) {
-            // The vendor SystemUI process owns the AP. Leave it untouched exactly once so the
-            // replacement ASG process can adopt the same endpoint and continue the same session.
-            Log.i(TAG, "🔥 Preserving K900 hotspot for armed OTA APK restart lease");
-            onHotspotStopped();
+            // The vendor SystemUI process owns the AP. During an intentional OTA package
+            // replacement, leave an active AP untouched so the new ASG process can reclaim it.
+            // If no AP is active, this branch is a harmless no-op and the persisted OTA session
+            // resumes over its existing network path.
+            Log.i(TAG, "🔥 Preserving any active K900 hotspot during OTA APK replacement");
         } else {
             stopHotspot();
         }

@@ -539,7 +539,7 @@ class R1: NSObject, ControllerManager {
     func sendWifiCredentials(_: String, _: String) {}
     func forgetWifiNetwork(_: String) {}
     func sendHotspotState(_: Bool) {}
-    func sendOtaStart(otaVersionUrl: String?, otaTransport: String?) {}
+    func sendOtaStart(otaVersionUrl: String?) {}
     func sendOtaQueryStatus() {}
     func sendUserEmailToGlasses(_: String) {}
     func queryGalleryStatus() {}

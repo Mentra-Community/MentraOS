@@ -1137,11 +1137,8 @@ export interface BluetoothSdkPublicModule {
   requestVersionInfo(): Promise<VersionInfoResult>
   /** Fetch the configured OTA manifest and return whether any ASG/BES/MTK update is available. */
   checkForOtaUpdate(): Promise<boolean>
-  /** Start OTA using Wi-Fi by default, or an explicitly staged hotspot manifest. */
-  startOtaUpdate(
-    otaVersionUrl?: string | null,
-    otaTransport?: "wifi" | "hotspot" | null,
-  ): Promise<OtaStartAckEvent>
+  /** Start OTA from the configured or explicitly supplied manifest URL. */
+  startOtaUpdate(otaVersionUrl?: string | null): Promise<OtaStartAckEvent>
   startAr99OtaFromFile(path: string): Promise<boolean>
   cancelAr99Ota(): Promise<void>
   sendAr99FactoryReset(): Promise<void>

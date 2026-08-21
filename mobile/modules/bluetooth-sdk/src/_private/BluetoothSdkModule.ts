@@ -159,10 +159,7 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   setOtaVersionUrl(otaVersionUrl: string): void
   getOtaVersionUrl(): string
   checkForOtaUpdate(): Promise<boolean>
-  startOtaUpdate(
-    otaVersionUrl?: string | null,
-    otaTransport?: "wifi" | "hotspot" | null,
-  ): Promise<OtaStartAckEvent>
+  startOtaUpdate(otaVersionUrl?: string | null): Promise<OtaStartAckEvent>
   sendOtaQueryStatus(): Promise<OtaQueryResult>
   startAr99OtaFromFile(path: string): Promise<boolean>
   cancelAr99Ota(): Promise<void>
@@ -654,6 +651,3 @@ NativeBluetoothSdkModule.warmUpCamera = function (params: WarmUpCameraParams) {
 
 export default NativeBluetoothSdkModule
 export const BluetoothSdk = NativeBluetoothSdkModule as BluetoothSdkInternalModule
-
-
-

@@ -23,7 +23,7 @@ class Mach1: UltraliteBaseViewController, SGCManager {
 
     var connectionState: String = ConnTypes.DISCONNECTED
 
-    func sendOtaStart(otaVersionUrl: String?, otaTransport: String?) {}
+    func sendOtaStart(otaVersionUrl: String?) {}
     func sendOtaQueryStatus() {}
 
     func sendJson(_: [String: Any], wakeUp _: Bool, requireAck _: Bool) {}

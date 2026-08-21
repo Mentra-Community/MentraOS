@@ -1185,10 +1185,7 @@ class MentraBluetoothSdk private constructor(
         return startOtaUpdate(otaVersionUrl)
     }
 
-    private suspend fun startOtaCommand(
-        otaVersionUrl: String,
-        otaTransport: String? = null,
-    ): OtaStartAckEvent {
+    private suspend fun startOtaCommand(otaVersionUrl: String): OtaStartAckEvent {
         val pending = PendingResponse<OtaStartAckEvent>("OTA start command")
         synchronized(oneShotLock) {
             if (pendingOtaStart != null) {
@@ -1200,7 +1197,7 @@ class MentraBluetoothSdk private constructor(
             pendingOtaStart = pending
         }
         try {
-            deviceManager.sendOtaStart(otaVersionUrl, otaTransport)
+            deviceManager.sendOtaStart(otaVersionUrl)
             return pending.await()
         } finally {
             synchronized(oneShotLock) {
@@ -1213,11 +1210,6 @@ class MentraBluetoothSdk private constructor(
 
     internal suspend fun startOtaUpdate(otaVersionUrl: String): OtaStartAckEvent =
         startOtaCommand(otaVersionUrl)
-
-    internal suspend fun startOtaUpdate(
-        otaVersionUrl: String,
-        otaTransport: String?,
-    ): OtaStartAckEvent = startOtaCommand(otaVersionUrl, otaTransport)
 
     internal suspend fun sendOtaQueryStatus(): OtaQueryResult = queryOtaStatus()
 
@@ -2178,5 +2170,4 @@ class MentraBluetoothSdk private constructor(
         }
     }
 }
-
 

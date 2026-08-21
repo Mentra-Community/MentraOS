@@ -129,7 +129,6 @@ public class OtaHelper {
     // The manifest URL of the current/last phone-started OTA check. Always phone-supplied:
     // the glasses have no baked default manifest and never originate an OTA decision.
     private volatile String lastVersionJsonUrl = null;
-    private volatile String currentOtaTransport = "wifi";
 
     /**
      * Set the phone-initiated OTA flag. Used by DebugApkOtaReceiver to force
@@ -457,10 +456,6 @@ public class OtaHelper {
      * the glasses act on is phone-supplied and exact-pin shaped; there is no baked fallback.
      */
     public void startOtaFromPhone(String versionJsonUrl) {
-        startOtaFromPhone(versionJsonUrl, "wifi");
-    }
-
-    public void startOtaFromPhone(String versionJsonUrl, String otaTransport) {
         String requestedVersionJsonUrl = requireVersionJsonUrl(versionJsonUrl);
         if (requestedVersionJsonUrl == null) {
             // OtaCommandHandler already rejects URL-less ota_start; this is a defensive guard.
@@ -468,7 +463,6 @@ public class OtaHelper {
             return;
         }
         Log.i(TAG, "📱 Starting OTA from phone request");
-        currentOtaTransport = "hotspot".equals(otaTransport) ? "hotspot" : "wifi";
 
         // Immediately acknowledge receipt so the phone cancels its retry timer.
         sendOtaStartAck();
@@ -745,8 +739,7 @@ public class OtaHelper {
             if (!steps.isEmpty()) {
                 // Non-null: every check runs through startVersionCheckWithUrl, which stores the
                 // phone-supplied URL under the version-check lock before reaching here.
-                sessionManager.createSession(
-                        steps.toArray(new String[0]), lastVersionJsonUrl, currentOtaTransport);
+                sessionManager.createSession(steps.toArray(new String[0]), lastVersionJsonUrl);
                 Log.i(TAG, "OTA session created with steps: " + steps);
             }
         }
@@ -1037,29 +1030,7 @@ public class OtaHelper {
                 // after the restart via sendCompletionToPhone(), or naturally from
                 // the next step for multi-step sessions.
                 if (sessionManager != null) {
-                    // The hotspot lease must hit disk before the existing restart guard. If
-                    // either durable write fails, do not dispatch an install that would strand
-                    // the phone-served endpoint in an ambiguous ownership state.
-                    boolean leaseReady = sessionManager.armHotspotRestartLease();
-                    boolean hotspotNeedsPostRestartServer =
-                            "hotspot".equals(sessionManager.getTransport())
-                                    && sessionManager.getCurrentStepIndex() + 1
-                                            < sessionManager.getTotalSteps();
-                    if (hotspotNeedsPostRestartServer && !leaseReady) {
-                        Log.e(TAG, "Hotspot OTA APK restart lease could not be armed");
-                        sessionManager.setFailed("hotspot_restart_lease_not_armed");
-                        sendProgressToPhone(
-                                "install",
-                                0,
-                                0,
-                                0,
-                                "FAILED",
-                                "hotspot_restart_lease_not_armed");
-                        isUpdating = false;
-                        return false;
-                    }
                     if (!sessionManager.setRestarting()) {
-                        sessionManager.clearHotspotRestartLease();
                         sessionManager.setFailed("apk_restart_guard_not_persisted");
                         sendProgressToPhone(
                                 "install", 0, 0, 0, "FAILED", "apk_restart_guard_not_persisted");
@@ -1075,7 +1046,6 @@ public class OtaHelper {
                     Log.w(TAG, "installApk did not kick install — rolling back restart guard and reporting FAILED");
                     if (sessionManager != null) {
                         sessionManager.clearRestartGuard();
-                        sessionManager.clearHotspotRestartLease();
                     }
                     sendProgressToPhone("install", 0, 0, 0, "FAILED", "install_failed");
                     if (apkFile.exists() && !apkFile.delete()) {

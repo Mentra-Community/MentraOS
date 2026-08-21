@@ -1502,12 +1502,7 @@ class OtaInstallCoordinator {
       }
       console.log(`[OTA_PROGRESS] sending ota_start with ${this.selectedTransport} manifest URL: ${otaVersionUrl}`)
       nativeStartAttempted = true
-      if (this.selectedTransport === "hotspot") {
-        await BluetoothSdk.startOtaUpdate(otaVersionUrl, "hotspot")
-      } else {
-        // Preserve the existing Wi-Fi call shape for old native modules and pre-SID glasses.
-        await BluetoothSdk.startOtaUpdate(otaVersionUrl)
-      }
+      await BluetoothSdk.startOtaUpdate(otaVersionUrl)
       if (this.otaStartOwnership !== ownership) return
       // The public SDK promise resolves only from ota_start_ack. Treat that
       // resolution as the acknowledgement even if the parallel event dispatch

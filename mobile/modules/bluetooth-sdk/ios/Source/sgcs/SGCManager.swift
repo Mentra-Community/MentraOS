@@ -190,7 +190,7 @@ protocol SGCManager {
     func forgetWifiNetwork(_ ssid: String)
     func sendHotspotState(_ enabled: Bool)
     func sendWifiAdbState(_ enabled: Bool)
-    func sendOtaStart(otaVersionUrl: String?, otaTransport: String?)
+    func sendOtaStart(otaVersionUrl: String?)
     func sendOtaQueryStatus()
     func sendSetSystemTime(_ timestampMs: Int64)
 

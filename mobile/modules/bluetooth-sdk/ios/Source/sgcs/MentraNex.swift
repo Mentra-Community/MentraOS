@@ -384,7 +384,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
 
     func sendHotspotState(_: Bool) {}
 
-    func sendOtaStart(otaVersionUrl: String?, otaTransport: String?) {}
+    func sendOtaStart(otaVersionUrl: String?) {}
     func sendOtaQueryStatus() {}
 
     func sendUserEmailToGlasses(_: String) {}

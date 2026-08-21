@@ -22,7 +22,7 @@ The connected-device Android vertical slice passed on a Samsung Z Fold (Android 
 - the phone retained internet for staging, then captured scoped hotspot network `105`,
   started one server at `192.168.43.159:8791`, and served the rewritten manifest and
   SHA-addressed artifact to `192.168.43.1`;
-- the phone sent exactly one `ota_start` with `ota_transport: hotspot`;
+- the phone sent exactly one `ota_start` with the local manifest URL;
 - ASG installed `51687003 / os1676-hw-c` -> `51687004 / os1676-hw-d`, restarted from SID
   `a70ba217` to `71b05852`, and the phone recovered with `ota_query_status` rather than a
   second `ota_start`;
@@ -106,8 +106,9 @@ This draft makes four deliberate choices:
 
 1. Hotspot OTA is gated on an explicit ASG capability; unsupported ASG versions keep
    Wi-Fi OTA but do not receive a two-window hotspot fallback.
-2. The existing `ota_start` gains an optional transport field so ASG never infers hotspot
-   ownership from a URL.
+2. `ota_start` remains unchanged. ASG preserves an AP only when the existing persisted APK
+   restart marker is active and the K900 AP is physically on; the phone does not label the
+   transport.
 3. The current Wi-Fi OTA coordinator and persisted ASG session remain authoritative.
 4. If the complete phone-link preservation gate fails, the design is revised instead of
    adding polling, URL replacement, or duplicate-start recovery.
@@ -167,24 +168,24 @@ incidental build behavior.
 `hotspot_ota_version: 1` means all of the following are present:
 
 - the hotspot is owned by K900 SystemUI rather than an app-local reservation;
-- APK replacement preserves an OTA-owned hotspot;
+- APK replacement leaves an already-active hotspot running;
 - the new ASG process adopts an already-running hotspot;
 - the ASG restores the 120-second inactivity policy after adoption; and
 - terminal cleanup can reliably stop an adopted hotspot.
 
-The existing `ota_start` command gains one optional field:
+The existing `ota_start` command is unchanged:
 
 ```json
 {
   "type": "ota_start",
-  "ota_version_url": "http://192.168.43.100:8787/version.json",
-  "ota_transport": "hotspot"
+  "ota_version_url": "http://192.168.43.100:8787/version.json"
 }
 ```
 
-`ota_transport` accepts `wifi` or `hotspot`. Missing means `wifi`, preserving every old
-phone and Wi-Fi OTA call site. ASG persists the selected transport in `OtaSessionManager`;
-it never derives transport ownership from the URL.
+The phone still selects Wi-Fi or hotspot locally because that determines whether it stages
+artifacts, joins the AP, runs the local server, and performs terminal hotspot cleanup. That
+selection is not part of the glasses protocol. ASG uses two facts it already owns: the
+persisted APK-restart session and whether the K900 AP is actually running.
 
 The phone may additionally keep a minimum-build constant as a defensive rollout gate, but
 `hotspot_ota_version` is authoritative.
@@ -195,14 +196,16 @@ Wi-Fi OTA remains available exactly as it is today:
 
 - SID-capable ASG: restart detection plus `ota_query_status` recovery.
 - Pre-SID ASG: existing connection, timeout, and legacy progress fallbacks.
-- No hotspot preservation or adoption is required when the update uses the normal remote
-  manifest.
+- A normal Wi-Fi OTA with no active AP behaves exactly as before. If an AP happens to be
+  active during the ASG package replacement, preserving and reclaiming it is safer than
+  implicitly shutting down SystemUI-owned network state; normal inactivity and explicit
+  cleanup still apply.
 
 ### Unsupported combinations
 
 - Do not run hotspot OTA against an ASG without `hotspot_ota_version: 1`.
 - Do not implement the old two-hotspot-window flow as a fallback.
-- Do not guess that a local HTTP URL implies hotspot ownership.
+- Do not infer transport from the manifest URL.
 - Do not change the Wi-Fi OTA flow to make unsupported hotspot clients appear compatible.
 
 An older ASG must first receive a normal Wi-Fi, factory, or explicitly supported service
@@ -256,22 +259,22 @@ the app after approving the update does not interrupt the internet download.
 7. The phone starts one HTTP server bound to its hotspot-side address.
 8. The phone serves a rewritten copy of the already-selected manifest. Only artifact URLs
    change; target versions, sizes, and hashes do not.
-9. The phone sends the existing `ota_start` once with that local manifest URL and
-   `ota_transport: hotspot`.
+9. The phone sends the existing `ota_start` once with that local manifest URL.
 
 ### APK replacement
 
-1. Before dispatching APK installation, ASG durably marks the active OTA session as owning
-   the current hotspot across one package replacement.
+1. Before dispatching APK installation, ASG durably marks the existing OTA session as
+   restarting.
 2. ASG performs its existing verified APK installation.
-3. Cleanup releases process-local callbacks, listeners, and handlers but does not send
-   `ap_start(false)` while the valid OTA preservation marker is active.
+3. Cleanup releases process-local callbacks, listeners, and handlers. If the persisted APK
+   restart marker is active, it does not send `ap_start(false)`; if no AP is on, this is a
+   harmless no-op.
 4. SystemUI keeps the same AP, SSID, password, and gateway alive.
 5. The phone remains joined and keeps the same HTTP server running.
 6. The new ASG process starts and detects the already-active K900 AP.
-7. ASG validates the durable marker against the persisted OTA session, reads the current
-   SystemUI SSID/password and `ap0` gateway, then adopts the AP without sending
-   `ap_start(true)` again.
+7. ASG reads the current SystemUI SSID/password and `ap0` gateway. If the AP is on, it
+   adopts it without sending `ap_start(true)` again; if it is off, there is nothing to
+   adopt and the persisted OTA session still resumes normally.
 8. Adoption restores in-memory hotspot state, status reporting, and the existing
    inactivity monitor.
 9. `OtaService` resumes the persisted session using its original manifest URL and proceeds
@@ -286,42 +289,34 @@ the app after approving the update does not interrupt the internet download.
 3. The phone sends the existing hotspot-disable command.
 4. Because the new ASG process adopted the AP, `isHotspotEnabled()` reflects reality and
    the disable command reaches SystemUI.
-5. ASG clears the OTA hotspot-preservation marker.
+5. ASG clears the existing APK restart marker as part of normal session resume.
 6. Phone artifact files referenced only by this update are deleted.
 
 Teardown operations must be idempotent and safe in any order.
 
-## ASG hotspot ownership contract
+## ASG restart and hotspot contract
 
-The preservation state is a small durable lease associated with the OTA session, not a
-global “never stop hotspot” flag.
-
-Required fields:
-
-- OTA session identifier;
-- owner = hotspot OTA;
-- state = preserving for APK replacement;
-- creation time based on `elapsedRealtime()`; and
-- the expected current OTA step.
+No hotspot-specific ownership record is added. The existing persisted OTA session is the
+only restart authority.
 
 Rules:
 
-- Create the lease immediately before the existing APK restart guard is committed.
-- Preserve only when the session is active, the current step is APK, the next step exists,
-  and the persisted `ota_transport` is `hotspot`.
-- A normal service shutdown, gallery session, Wi-Fi OTA, crash outside that narrow window,
-  or terminal OTA must not preserve the hotspot.
-- Adoption requires both a valid lease and an actually active K900 AP.
-- If the lease exists but the AP is absent, clear the lease and fail with
-  `hotspot_lost_during_apk_restart`; do not silently create a new hotspot.
-- K900 startup always reconciles in-memory state with the actual SystemUI AP. If an AP is
-  active without a valid lease, adopt it for truthful status, idle expiry, and safe cleanup,
-  but do not resume an OTA from it.
-- Clear the lease after successful adoption, terminal failure, terminal completion, or
-  expiry.
+- Immediately before verified APK installation, persist the existing restart marker with
+  a synchronous commit. If that write fails, do not dispatch the package replacement.
+- Preserve network state only while that session is active at the APK install step and its
+  restart marker is set.
+- During that narrow shutdown, do not send the vendor hotspot-disable command. This never
+  starts an AP; it merely leaves an already-active SystemUI AP alone.
+- K900 startup always reconciles ASG memory with the real SystemUI AP. If an AP is active,
+  read its credentials and `ap0` gateway, reclaim it, and restore truthful status plus the
+  120-second inactivity monitor. If no AP is active, do nothing.
+- `OtaService` resumes from the same persisted session and original manifest URL whether
+  or not an AP was reclaimed. It does not start another hotspot or OTA session.
+- Clear the existing restart marker during normal resume. Session expiry remains the
+  backstop for a replacement that never completes.
 
-The lease covers one process replacement. It must not survive a full device reboot or be
-reused by another OTA session.
+A normal service shutdown, gallery cleanup, crash outside the persisted APK-restart
+window, or terminal OTA still follows ordinary hotspot cleanup behavior.
 
 ## Inactivity and recovery
 
@@ -352,9 +347,9 @@ Failures are explicit and terminal for the active attempt:
 | Phone artifact download or verification fails | Do not start the hotspot; delete partial files. |
 | Hotspot start or phone join fails | Stop any partial local resources; do not send `ota_start`. |
 | ASG cannot reach the initial local manifest | Fail before APK installation; tear down normally. |
-| AP disappears during APK replacement | Report `hotspot_lost_during_apk_restart`; do not create a second OTA session. |
-| New ASG cannot validate/adopt the lease | Fail closed and let the phone tear down; do not guess ownership. |
-| Original manifest URL is unreachable after adoption | Report a transport failure; do not probe alternate URLs or resend `ota_start`. |
+| AP disappears during APK replacement | Resume the same persisted session; the original local manifest request reports the ordinary transport failure. Do not create another hotspot or OTA session. |
+| New ASG starts with no active AP | Reclaim nothing and resume the persisted session normally. |
+| Original manifest URL is unreachable after restart | Report a transport failure; do not probe alternate URLs or resend `ota_start`. |
 | ASG never returns | Recovery worker performs its existing recovery and eventually disables the AP. |
 | Phone app is backgrounded or screen locks | Continue the same OTA attempt and endpoint; do not tear down the hotspot or server. |
 | Phone app is force-quit or crashes | ASG inactivity policy disables the adopted AP after genuine inactivity; require a new attempt after the app relaunches. |
@@ -371,7 +366,7 @@ does not resume an ambiguous or partially owned hotspot session.
 - Serve only the selected manifest and SHA-addressed artifacts using `GET` and `HEAD`.
 - Reject traversal, arbitrary paths, uploads, and files not selected for the active OTA.
 - Do not log hotspot passwords, manifest bodies, or user data.
-- Keep the server and preservation lease scoped to one active OTA attempt.
+- Keep the phone server and persisted restart state scoped to one active OTA attempt.
 - ASG retains its existing artifact verification before every install.
 
 ## Implementation slices
@@ -381,9 +376,9 @@ particular, the phone trigger must not land after the preservation code in a way
 makes the first PR impossible to exercise end to end.
 
 1. **ASG preservation and adoption**
-   - advertise `hotspot_ota_version: 1`, accept `ota_transport`, and persist it;
-   - add the durable one-restart lease;
-   - make K900 cleanup lease-aware;
+   - advertise `hotspot_ota_version: 1` without changing `ota_start`;
+   - reuse the existing durable APK restart marker;
+   - make K900 cleanup restart-aware;
    - adopt an active vendor AP during startup;
    - restore inactivity monitoring and reliable terminal stop;
    - add recovery-worker orphan cleanup; and
@@ -478,10 +473,10 @@ a clean retry rather than silently send a second `ota_start`.
 
 ### Gate 1: ASG tests
 
-- lease is created only for a hotspot OTA APK step with a remaining step;
-- Wi-Fi OTA and gallery cleanup still stop normally;
-- valid AP plus valid lease adopts without an `ap_start(true)` command;
-- missing AP, wrong session, expired lease, and wrong step fail closed;
+- only an active persisted APK-install restart suppresses the shutdown disable command;
+- ordinary shutdown, non-APK sessions, and terminal sessions still stop normally;
+- an active AP is reclaimed without an `ap_start(true)` command;
+- no active AP is a no-op rather than a second start or a separate OTA failure mode;
 - adopted AP restarts inactivity monitoring and can be stopped;
 - `OtaService` resumes exactly once and does not advance unrelated sessions; and
 - recovery worker disables an orphaned AP after failed ASG recovery.
