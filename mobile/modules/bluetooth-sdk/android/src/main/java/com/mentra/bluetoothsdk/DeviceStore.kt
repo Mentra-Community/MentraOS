@@ -74,6 +74,7 @@ object DeviceStore {
         store.set("glasses", "caseBatteryLevel", -1)
         store.set("glasses", "headUp", false)
         store.set("glasses", "bluetoothMacAddress", "")
+        store.set("glasses", "wifiMacAddress", "")
         store.set("glasses", "leftMacAddress", "")
         store.set("glasses", "rightMacAddress", "")
         store.set("glasses", "macAddress", "")

@@ -1290,6 +1290,7 @@ class MentraLive: NSObject, SGCManager {
             // return, unlike Android).
             DeviceStore.shared.apply("glasses", "serialNumber", "")
             DeviceStore.shared.apply("glasses", "bluetoothMacAddress", "")
+            DeviceStore.shared.apply("glasses", "wifiMacAddress", "")
         }
         connectionState = state
         DeviceStore.shared.apply("glasses", "connectionState", state)
@@ -2780,6 +2781,9 @@ class MentraLive: NSObject, SGCManager {
                 }
                 if let bluetoothMacAddress = nonEmptyStringValue(fields, "bt_mac_address") {
                     DeviceStore.shared.apply("glasses", "bluetoothMacAddress", bluetoothMacAddress)
+                }
+                if let wifiMacAddress = nonEmptyStringValue(fields, "wifi_mac_address") {
+                    DeviceStore.shared.apply("glasses", "wifiMacAddress", wifiMacAddress)
                 }
                 if let serialNumber = nonEmptyStringValue(fields, "serial_number") {
                     DeviceStore.shared.apply("glasses", "serialNumber", serialNumber)
