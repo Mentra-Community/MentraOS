@@ -10,7 +10,6 @@ import Foundation
 public class MentraOtaServerModule: Module {
     private let serverLock = NSLock()
     private var otaServer: LocalOtaServer?
-    private var healthTimer: DispatchSourceTimer?
     private lazy var artifactDownloader = BackgroundOtaArtifactDownloader { [weak self] destination, written, total in
         self?.sendEvent("artifactDownloadProgress", [
             "destination": destination,
@@ -22,11 +21,7 @@ public class MentraOtaServerModule: Module {
     public func definition() -> ModuleDefinition {
         Name("MentraOtaServer")
 
-        Events("serverStatus", "artifactDownloadProgress")
-
-        AsyncFunction("isSupported") {
-            true
-        }
+        Events("artifactDownloadProgress")
 
         AsyncFunction("startOtaServer") { (manifestJson: String, artifactPaths: [String: String], host: String?) -> [String: Any] in
             try self.startOtaServer(manifestJson: manifestJson, artifactPaths: artifactPaths, hostOverride: host)
@@ -34,14 +29,6 @@ public class MentraOtaServerModule: Module {
 
         AsyncFunction("stopOtaServer") {
             self.stopOtaServerInternal()
-        }
-
-        AsyncFunction("startHealthKeepalive") { (url: String, intervalMs: Int) in
-            try self.startHealthKeepalive(url: url, intervalMs: intervalMs)
-        }
-
-        AsyncFunction("stopHealthKeepalive") {
-            self.stopHealthKeepaliveInternal()
         }
 
         AsyncFunction("waitForWifiAddress") { (gateway: String, timeoutMs: Int) -> String in
@@ -53,7 +40,6 @@ public class MentraOtaServerModule: Module {
         }
 
         OnDestroy {
-            self.stopHealthKeepaliveInternal()
             self.stopOtaServerInternal()
         }
     }
@@ -131,43 +117,8 @@ public class MentraOtaServerModule: Module {
         emitStatus(message: "OTA server stopped")
     }
 
-    private func startHealthKeepalive(url: String, intervalMs: Int) throws {
-        guard let healthUrl = URL(string: url),
-              healthUrl.scheme == "http" || healthUrl.scheme == "https"
-        else {
-            throw OtaServerModuleError("Invalid health URL")
-        }
-        stopHealthKeepaliveInternal()
-        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
-        let cadence = max(intervalMs, 5000)
-        timer.schedule(deadline: .now(), repeating: .milliseconds(cadence))
-        timer.setEventHandler { [weak self] in
-            var request = URLRequest(url: healthUrl)
-            request.httpMethod = "HEAD"
-            request.timeoutInterval = 5
-            URLSession.shared.dataTask(with: request) { _, response, error in
-                if let error {
-                    self?.emitStatus(message: "Glasses health keepalive failed: \(error.localizedDescription)")
-                } else {
-                    let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-                    self?.emitStatus(message: "Glasses health keepalive HTTP \(status)")
-                }
-            }.resume()
-        }
-        healthTimer = timer
-        timer.resume()
-    }
-
-    private func stopHealthKeepaliveInternal() {
-        healthTimer?.cancel()
-        healthTimer = nil
-    }
-
     private func emitStatus(message: String) {
         NSLog("[MentraOtaServer] %@", message)
-        sendEvent("serverStatus", [
-            "message": message,
-        ])
     }
 
     private func serverResult(host: String, port: UInt16) -> [String: Any] {

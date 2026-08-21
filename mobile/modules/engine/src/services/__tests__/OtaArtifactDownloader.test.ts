@@ -56,14 +56,7 @@ mock.module("@dr.pogodin/react-native-fs", () => ({
   default: rnfsMock,
 }))
 
-const {
-  OtaArtifactError,
-  cleanupArtifacts,
-  planArtifacts,
-  prepareArtifacts,
-  rewriteManifestForLocalServer,
-  verifyPreparedArtifacts,
-} =
+const {OtaArtifactError, cleanupArtifacts, planArtifacts, prepareArtifacts, rewriteManifestForLocalServer} =
   await import("../OtaArtifactDownloader")
 
 const APK_URL = "https://cdn.example.com/asg.apk"
@@ -100,7 +93,6 @@ function checkResult(overrides: Record<string, unknown> = {}) {
     updateInfo: null,
     isRequired: false,
     ...overrides,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any
 }
 
@@ -123,9 +115,9 @@ describe("planArtifacts", () => {
   test("plans every pending artifact from the raw manifest", () => {
     const plan = planArtifacts(checkResult())
     expect(plan).toEqual([
-      {kind: "apk", url: APK_URL, expectedSha256: hashes.apk, sizeBytes: 1234},
-      {kind: "mtk", url: MTK_URL, expectedSha256: hashes.mtk, sizeBytes: null},
-      {kind: "bes", url: BES_URL, expectedSha256: hashes.bes, sizeBytes: null},
+      {kind: "apk", url: APK_URL, sha256: hashes.apk},
+      {kind: "mtk", url: MTK_URL, sha256: hashes.mtk},
+      {kind: "bes", url: BES_URL, sha256: hashes.bes},
     ])
   })
 
@@ -149,7 +141,7 @@ describe("planArtifacts", () => {
       bes_firmware: {version: "9.9.9", firmwareUrl: BES_URL, sha256: hashes.bes},
     }
     const plan = planArtifacts(checkResult({updates: ["bes"], mtkPatch: null, manifestBody: JSON.stringify(legacy)}))
-    expect(plan).toEqual([{kind: "bes", url: BES_URL, expectedSha256: hashes.bes, sizeBytes: null}])
+    expect(plan).toEqual([{kind: "bes", url: BES_URL, sha256: hashes.bes}])
   })
 
   test("rejects a selected artifact without a manifest hash", () => {
@@ -163,7 +155,7 @@ describe("planArtifacts", () => {
 
 describe("prepareArtifacts", () => {
   test("downloads, verifies, and stores by hash", async () => {
-    const plan = [{kind: "bes" as const, url: BES_URL, expectedSha256: hashes.bes, sizeBytes: null}]
+    const plan = [{kind: "bes" as const, url: BES_URL, sha256: hashes.bes}]
     const prepared = await prepareArtifacts(plan)
     expect(prepared).toHaveLength(1)
     expect(prepared[0].sha256).toBe(hashes.bes)
@@ -176,14 +168,14 @@ describe("prepareArtifacts", () => {
     downloadImpl = async () => {
       throw new Error("should not download")
     }
-    const plan = [{kind: "bes" as const, url: BES_URL, expectedSha256: hashes.bes, sizeBytes: null}]
+    const plan = [{kind: "bes" as const, url: BES_URL, sha256: hashes.bes}]
     const prepared = await prepareArtifacts(plan)
     expect(prepared[0].filePath).toBe(`/docs/ota_artifacts/${hashes.bes}`)
   })
 
   test("re-downloads when the cached file no longer verifies", async () => {
     files.set(`/docs/ota_artifacts/${hashes.bes}`, "corrupted")
-    const plan = [{kind: "bes" as const, url: BES_URL, expectedSha256: hashes.bes, sizeBytes: null}]
+    const plan = [{kind: "bes" as const, url: BES_URL, sha256: hashes.bes}]
     const prepared = await prepareArtifacts(plan)
     expect(prepared[0].sha256).toBe(hashes.bes)
     expect(files.get(`/docs/ota_artifacts/${hashes.bes}`)).toBe("bes")
@@ -194,21 +186,14 @@ describe("prepareArtifacts", () => {
       files.set(toFile, "tampered")
       return {statusCode: 200}
     }
-    const plan = [{kind: "bes" as const, url: BES_URL, expectedSha256: hashes.bes, sizeBytes: null}]
+    const plan = [{kind: "bes" as const, url: BES_URL, sha256: hashes.bes}]
     await expect(prepareArtifacts(plan)).rejects.toThrow("hash mismatch")
     expect([...files.keys()].some((path) => path.endsWith(".part"))).toBe(false)
   })
 
-  test("keys manifest-less MTK artifacts by their computed hash", async () => {
-    const plan = [{kind: "mtk" as const, url: MTK_URL, expectedSha256: null, sizeBytes: null}]
-    const prepared = await prepareArtifacts(plan)
-    expect(prepared[0].sha256).toBe(hashes.mtk)
-    expect(prepared[0].filePath).toBe(`/docs/ota_artifacts/${hashes.mtk}`)
-  })
-
   test("surfaces HTTP failures as artifact_download_failed", async () => {
     downloadImpl = async () => ({statusCode: 503})
-    const plan = [{kind: "bes" as const, url: BES_URL, expectedSha256: hashes.bes, sizeBytes: null}]
+    const plan = [{kind: "bes" as const, url: BES_URL, sha256: hashes.bes}]
     await expect(prepareArtifacts(plan)).rejects.toMatchObject({code: "artifact_download_failed"})
   })
 })
@@ -220,9 +205,7 @@ describe("rewriteManifestForLocalServer", () => {
       rewriteManifestForLocalServer(JSON.stringify(manifest), prepared, "http://192.168.43.100:8791"),
     )
 
-    expect(rewritten.apps["com.mentra.asg_client"].apkUrl).toBe(
-      `http://192.168.43.100:8791/artifacts/${hashes.apk}`,
-    )
+    expect(rewritten.apps["com.mentra.asg_client"].apkUrl).toBe(`http://192.168.43.100:8791/artifacts/${hashes.apk}`)
     expect(rewritten.apps["com.mentra.asg_client"].versionCode).toBe(100)
     expect(rewritten.mtk_patches[0].url).toBe(`http://192.168.43.100:8791/artifacts/${hashes.mtk}`)
     expect(rewritten.mtk_patches[0].sha256).toBe(hashes.mtk)
@@ -235,21 +218,10 @@ describe("rewriteManifestForLocalServer", () => {
     const legacy = {
       bes_firmware: {version: "9.9.9", url: BES_URL, firmwareUrl: BES_URL, sha256: hashes.bes},
     }
-    const prepared = await prepareArtifacts([{kind: "bes", url: BES_URL, expectedSha256: hashes.bes, sizeBytes: null}])
+    const prepared = await prepareArtifacts([{kind: "bes", url: BES_URL, sha256: hashes.bes}])
     const rewritten = JSON.parse(rewriteManifestForLocalServer(JSON.stringify(legacy), prepared, "http://host:1"))
     expect(rewritten.bes_firmware.url).toBe(`http://host:1/artifacts/${hashes.bes}`)
     expect(rewritten.bes_firmware.firmwareUrl).toBe(`http://host:1/artifacts/${hashes.bes}`)
-  })
-})
-
-describe("verifyPreparedArtifacts", () => {
-  test("re-verifies staged content immediately before serving", async () => {
-    const prepared = await prepareArtifacts([
-      {kind: "bes", url: BES_URL, expectedSha256: hashes.bes, sizeBytes: null},
-    ])
-    await expect(verifyPreparedArtifacts(prepared)).resolves.toBeUndefined()
-    files.set(prepared[0].filePath, "tampered")
-    await expect(verifyPreparedArtifacts(prepared)).rejects.toThrow("changed before serving")
   })
 })
 

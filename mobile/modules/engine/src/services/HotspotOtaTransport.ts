@@ -9,7 +9,6 @@ import {
   planArtifacts,
   prepareArtifacts,
   rewriteManifestForLocalServer,
-  verifyPreparedArtifacts,
   type OtaArtifactDownloadProgress,
   type PreparedOtaArtifact,
 } from "./OtaArtifactDownloader"
@@ -24,12 +23,10 @@ export type HotspotOtaProgress = {
 }
 
 export type HotspotOtaErrorCode =
-  | "hotspot_ota_phone_unsupported"
   | "hotspot_wifi_permission_denied"
   | "hotspot_start_failed"
   | "hotspot_join_failed"
   | "hotspot_server_failed"
-  | "hotspot_keepalive_failed"
 
 export class HotspotOtaTransportError extends Error {
   constructor(
@@ -48,7 +45,6 @@ class HotspotOtaTransport {
   private hotspotRequested = false
   private localNetworkConnected = false
   private serverStarted = false
-  private keepaliveStarted = false
   private teardownPromise: Promise<void> | null = null
 
   async prepare(
@@ -64,14 +60,7 @@ class HotspotOtaTransport {
     }
 
     let phase: HotspotOtaPhase = "downloading"
-    let manifestPublished = false
     try {
-      if (!(await MentraOtaServer.isSupported())) {
-        throw new HotspotOtaTransportError(
-          "hotspot_ota_phone_unsupported",
-          "This phone does not support the hotspot OTA transport",
-        )
-      }
       await this.ensureAndroidWifiPermission()
       onProgress?.({phase: "downloading"})
       this.prepared = await prepareArtifacts(
@@ -102,8 +91,6 @@ class HotspotOtaTransport {
           )
         }
       }
-      await verifyPreparedArtifacts(this.prepared)
-
       const artifactPaths = Object.fromEntries(this.prepared.map((artifact) => [artifact.sha256, artifact.filePath]))
       // Start exactly one native listener to learn its selected port, then atomically replace
       // the placeholder with the immutable rewritten manifest before ota_start is sent.
@@ -114,10 +101,6 @@ class HotspotOtaTransport {
       if (published.manifestUrl !== server.manifestUrl) {
         throw new Error("Local OTA server endpoint changed while publishing the manifest")
       }
-      manifestPublished = true
-
-      await localNetworkTransport.startHealthKeepalive(`http://${hotspot.localIp}:8089/api/health`, 30_000)
-      this.keepaliveStarted = true
       this.active = true
       onProgress?.({phase: "serving"})
       return published.manifestUrl
@@ -134,17 +117,13 @@ class HotspotOtaTransport {
       if (phase === "joining_hotspot" && !joined) {
         throw new HotspotOtaTransportError("hotspot_join_failed", message)
       }
-      if (!manifestPublished) {
-        throw new HotspotOtaTransportError("hotspot_server_failed", message)
-      }
-      throw new HotspotOtaTransportError("hotspot_keepalive_failed", message)
+      throw new HotspotOtaTransportError("hotspot_server_failed", message)
     }
   }
 
   /** Android 13+ requires the nearby-WiFi runtime grant before WifiNetworkSpecifier is usable. */
   private async ensureAndroidWifiPermission(): Promise<void> {
-    const apiLevel = typeof Platform.Version === "number" ? Platform.Version : Number.parseInt(Platform.Version, 10)
-    if (Platform.OS !== "android" || !Number.isFinite(apiLevel) || apiLevel < 33) return
+    if (Platform.OS !== "android") return
 
     const permission = PermissionsAndroid.PERMISSIONS.NEARBY_WIFI_DEVICES
     if (await PermissionsAndroid.check(permission)) return
@@ -185,13 +164,11 @@ class HotspotOtaTransport {
           console.warn("[OTA_PROGRESS] glasses hotspot shutdown was not confirmed after bounded retries")
         }
       }
-      if (this.keepaliveStarted) await localNetworkTransport.stopHealthKeepalive().catch(() => {})
       if (this.serverStarted) await MentraOtaServer.stopOtaServer().catch(() => {})
       if (this.localNetworkConnected) await localNetworkTransport.disconnect().catch(() => {})
       await cleanupArtifacts().catch(() => {})
       this.prepared = []
       this.active = false
-      this.keepaliveStarted = false
       this.serverStarted = false
       this.localNetworkConnected = false
       this.hotspotRequested = false

@@ -1,16 +1,10 @@
 package com.mentra.bluetoothsdk.otaserver
 
-import android.os.Build
 import android.util.Log
 import com.mentra.bluetoothsdk.net.LocalIpv4
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import java.io.File
-import java.net.HttpURLConnection
-import java.net.URL
-import java.util.concurrent.Executors
-import java.util.concurrent.ScheduledFuture
-import java.util.concurrent.TimeUnit
 
 /**
  * Expo surface for the hotspot-served OTA file server (OS-1676).
@@ -22,17 +16,9 @@ import java.util.concurrent.TimeUnit
  */
 class MentraOtaServerModule : Module() {
   private var otaServer: LocalOtaServer? = null
-  private val keepaliveExecutor = Executors.newSingleThreadScheduledExecutor()
-  private var keepaliveFuture: ScheduledFuture<*>? = null
 
   override fun definition() = ModuleDefinition {
     Name("MentraOtaServer")
-
-    Events("serverStatus")
-
-    AsyncFunction("isSupported") {
-      Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
-    }
 
     AsyncFunction("startOtaServer") { manifestJson: String, artifactPaths: Map<String, String>, host: String? ->
       startOtaServer(manifestJson, artifactPaths, host)
@@ -40,14 +26,6 @@ class MentraOtaServerModule : Module() {
 
     AsyncFunction("stopOtaServer") {
       stopOtaServerInternal()
-    }
-
-    AsyncFunction("startHealthKeepalive") { url: String, intervalMs: Int ->
-      startHealthKeepalive(url, intervalMs)
-    }
-
-    AsyncFunction("stopHealthKeepalive") {
-      stopHealthKeepaliveInternal()
     }
 
     // API parity with iOS. Android hotspot OTA obtains the authoritative address
@@ -58,9 +36,7 @@ class MentraOtaServerModule : Module() {
     }
 
     OnDestroy {
-      stopHealthKeepaliveInternal()
       closeOtaServerInternal()
-      keepaliveExecutor.shutdownNow()
     }
   }
 
@@ -119,39 +95,6 @@ class MentraOtaServerModule : Module() {
   }
 
   @Synchronized
-  private fun startHealthKeepalive(url: String, intervalMs: Int) {
-    require(url.startsWith("http://") || url.startsWith("https://")) { "Invalid health URL" }
-    stopHealthKeepaliveInternal()
-    val cadence = intervalMs.coerceAtLeast(5_000).toLong()
-    keepaliveFuture = keepaliveExecutor.scheduleWithFixedDelay(
-      {
-        var connection: HttpURLConnection? = null
-        try {
-          connection = URL(url).openConnection() as HttpURLConnection
-          connection.requestMethod = "HEAD"
-          connection.connectTimeout = 5_000
-          connection.readTimeout = 5_000
-          val status = connection.responseCode
-          emitStatus("Glasses health keepalive HTTP $status")
-        } catch (error: Throwable) {
-          emitStatus("Glasses health keepalive failed: ${error.message ?: error::class.java.simpleName}")
-        } finally {
-          connection?.disconnect()
-        }
-      },
-      0,
-      cadence,
-      TimeUnit.MILLISECONDS,
-    )
-  }
-
-  @Synchronized
-  private fun stopHealthKeepaliveInternal() {
-    keepaliveFuture?.cancel(true)
-    keepaliveFuture = null
-  }
-
-  @Synchronized
   private fun closeOtaServerInternal() {
     otaServer?.close()
     otaServer = null
@@ -159,10 +102,6 @@ class MentraOtaServerModule : Module() {
 
   private fun emitStatus(message: String) {
     Log.d(TAG, message)
-    sendEvent(
-      "serverStatus",
-      mapOf("message" to message),
-    )
   }
 
   private fun serverResult(host: String, port: Int): Map<String, Any> {

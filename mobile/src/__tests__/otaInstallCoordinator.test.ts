@@ -176,14 +176,13 @@ describe("OtaInstallCoordinator hotspot transport selection", () => {
     expect(() => otaInstallCoordinator.prepare(checkResult())).toThrow("require Wi-Fi")
   })
 
-  it("uses Wi-Fi by default but lets super mode force the production hotspot path", () => {
+  it("uses the existing Wi-Fi transport when glasses Wi-Fi is connected", () => {
     useGlassesStore.getState().setGlassesInfo({
       hotspotOtaVersion: 1,
       wifi: {state: "connected", ssid: "office"},
     })
 
     expect(otaInstallCoordinator.prepare(checkResult())).toBe("wifi")
-    expect(otaInstallCoordinator.prepare(checkResult(), true)).toBe("hotspot")
   })
 
   it("sends one hotspot ota_start and only queries status across an ASG SID change", async () => {

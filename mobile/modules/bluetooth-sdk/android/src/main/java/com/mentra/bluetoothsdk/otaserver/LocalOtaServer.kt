@@ -27,9 +27,8 @@ import org.json.JSONObject
  * Static HTTP server for hotspot-served glasses OTA (OS-1676).
  *
  * Serves the rewritten OTA manifest at /version.json and pre-downloaded artifacts at
- * /artifacts/<sha256> to the glasses over the glasses-hotspot link. GET and HEAD only
- * with single-range support on artifacts. Same hand-rolled socket structure as
- * [LocalPhotoUploadServer] —
+ * /artifacts/<sha256> to the glasses over the glasses-hotspot link. Same hand-rolled
+ * socket structure as [LocalPhotoUploadServer] —
  * no third-party HTTP dependency in the SDK.
  */
 class LocalOtaServer(
@@ -142,45 +141,34 @@ class LocalOtaServer(
                 request = HttpRequest.parse(headerText)
                 onLog("${request.method} ${request.path} from ${client.inetAddress.hostAddress}")
 
-                if (request.method != "GET" && request.method != "HEAD") {
+                if (request.method != "GET") {
                     status = 405
                     writeJson(output, status, """{"ok":false,"error":"method_not_allowed"}""")
                     return
                 }
-                val headOnly = request.method == "HEAD"
 
                 when {
-                    request.path == "/" || request.path == "/health" -> {
-                        status = 200
-                        writeJson(output, status, """{"ok":true,"service":"mentra-ota-server"}""", headOnly)
-                    }
                     request.path == "/version.json" -> {
                         val body = manifestJson.toByteArray(StandardCharsets.UTF_8)
                         status = 200
                         responseBytes = body.size.toLong()
-                        writeBody(output, status, "application/json", body, headOnly)
+                        writeBody(output, status, "application/json", body)
                     }
                     request.path.startsWith("/artifacts/") -> {
                         val key = request.path.removePrefix("/artifacts/")
                         val file = artifacts[key]
                         if (file == null || !file.isFile) {
                             status = 404
-                            writeJson(output, status, """{"ok":false,"error":"artifact_not_found"}""", headOnly)
+                            writeJson(output, status, """{"ok":false,"error":"artifact_not_found"}""")
                         } else {
-                            val range = parseRange(request.headers["range"], file.length())
-                            if (range == INVALID_RANGE) {
-                                status = 416
-                                writeJson(output, status, """{"ok":false,"error":"range_not_satisfiable"}""", headOnly)
-                            } else {
-                                status = if (range == null) 200 else 206
-                                responseBytes = (range?.let { it.last - it.first + 1 }) ?: file.length()
-                                writeFile(output, file, range, headOnly)
-                            }
+                            status = 200
+                            responseBytes = file.length()
+                            writeFile(output, file)
                         }
                     }
                     else -> {
                         status = 404
-                        writeJson(output, status, """{"ok":false,"error":"not_found"}""", headOnly)
+                        writeJson(output, status, """{"ok":false,"error":"not_found"}""")
                     }
                 }
             } catch (error: Throwable) {
@@ -198,50 +186,15 @@ class LocalOtaServer(
         }
     }
 
-    /** Returns null for no range, [INVALID_RANGE] for an unsatisfiable/malformed one. */
-    private fun parseRange(header: String?, fileLength: Long): LongRange? {
-        if (header == null) return null
-        val match = Regex("""^bytes=(\d*)-(\d*)$""").find(header.trim()) ?: return INVALID_RANGE
-        val (startText, endText) = match.destructured
-        if (startText.isEmpty() && endText.isEmpty()) return INVALID_RANGE
-        if (startText.isEmpty()) {
-            // Suffix range: last N bytes.
-            val suffix = endText.toLongOrNull() ?: return INVALID_RANGE
-            if (suffix <= 0) return INVALID_RANGE
-            val start = maxOf(0, fileLength - suffix)
-            return if (fileLength == 0L) INVALID_RANGE else start..(fileLength - 1)
-        }
-        val start = startText.toLongOrNull() ?: return INVALID_RANGE
-        val end = if (endText.isEmpty()) fileLength - 1 else (endText.toLongOrNull() ?: return INVALID_RANGE)
-        if (start > end || start >= fileLength) return INVALID_RANGE
-        return start..minOf(end, fileLength - 1)
-    }
-
-    private fun writeFile(output: OutputStream, file: File, range: LongRange?, headOnly: Boolean) {
+    private fun writeFile(output: OutputStream, file: File) {
         val fileLength = file.length()
-        val byteCount = range?.let { it.last - it.first + 1 } ?: fileLength
-        val status = if (range == null) "200 OK" else "206 Partial Content"
-        output.write("HTTP/1.1 $status\r\n".toByteArray(StandardCharsets.US_ASCII))
+        output.write("HTTP/1.1 200 OK\r\n".toByteArray(StandardCharsets.US_ASCII))
         output.write("Content-Type: application/octet-stream\r\n".toByteArray(StandardCharsets.US_ASCII))
-        output.write("Content-Length: $byteCount\r\n".toByteArray(StandardCharsets.US_ASCII))
-        output.write("Accept-Ranges: bytes\r\n".toByteArray(StandardCharsets.US_ASCII))
-        if (range != null) {
-            output.write(
-                "Content-Range: bytes ${range.first}-${range.last}/$fileLength\r\n"
-                    .toByteArray(StandardCharsets.US_ASCII),
-            )
-        }
+        output.write("Content-Length: $fileLength\r\n".toByteArray(StandardCharsets.US_ASCII))
         output.write("Connection: close\r\n\r\n".toByteArray(StandardCharsets.US_ASCII))
-        if (headOnly) {
-            output.flush()
-            return
-        }
         file.inputStream().use { fileInput ->
-            if (range != null) {
-                skipFully(fileInput, range.first)
-            }
             val buffer = ByteArray(STREAM_CHUNK_BYTES)
-            var remaining = byteCount
+            var remaining = fileLength
             while (remaining > 0) {
                 val read = fileInput.read(buffer, 0, minOf(buffer.size.toLong(), remaining).toInt())
                 if (read <= 0) throw EOFException("artifact truncated while streaming")
@@ -250,15 +203,6 @@ class LocalOtaServer(
             }
         }
         output.flush()
-    }
-
-    private fun skipFully(input: InputStream, byteCount: Long) {
-        var remaining = byteCount
-        while (remaining > 0) {
-            val skipped = input.skip(remaining)
-            if (skipped <= 0) throw EOFException("artifact truncated while seeking")
-            remaining -= skipped
-        }
     }
 
     private fun rejectClient(socket: Socket) {
@@ -290,8 +234,8 @@ class LocalOtaServer(
         }
     }
 
-    private fun writeJson(output: OutputStream, status: Int, body: String, headOnly: Boolean = false) {
-        writeBody(output, status, "application/json", body.toByteArray(StandardCharsets.UTF_8), headOnly)
+    private fun writeJson(output: OutputStream, status: Int, body: String) {
+        writeBody(output, status, "application/json", body.toByteArray(StandardCharsets.UTF_8))
     }
 
     private fun writeBody(
@@ -299,13 +243,11 @@ class LocalOtaServer(
         status: Int,
         contentType: String,
         body: ByteArray,
-        headOnly: Boolean,
     ) {
         val reason = when (status) {
             200 -> "OK"
             404 -> "Not Found"
             405 -> "Method Not Allowed"
-            416 -> "Range Not Satisfiable"
             503 -> "Service Unavailable"
             else -> "Internal Server Error"
         }
@@ -313,9 +255,7 @@ class LocalOtaServer(
         output.write("Content-Type: $contentType\r\n".toByteArray(StandardCharsets.US_ASCII))
         output.write("Content-Length: ${body.size}\r\n".toByteArray(StandardCharsets.US_ASCII))
         output.write("Connection: close\r\n\r\n".toByteArray(StandardCharsets.US_ASCII))
-        if (!headOnly) {
-            output.write(body)
-        }
+        output.write(body)
         output.flush()
     }
 
@@ -343,7 +283,6 @@ class LocalOtaServer(
     private data class HttpRequest(
         val method: String,
         val path: String,
-        val headers: Map<String, String>,
     ) {
         companion object {
             fun parse(headerText: String): HttpRequest {
@@ -351,12 +290,7 @@ class LocalOtaServer(
                 val requestParts = lines.firstOrNull()?.split(" ").orEmpty()
                 val method = requestParts.getOrNull(0)?.uppercase(Locale.US).orEmpty()
                 val path = requestParts.getOrNull(1)?.substringBefore("?").orEmpty()
-                val headers = lines.drop(1).mapNotNull { line ->
-                    val separator = line.indexOf(':')
-                    if (separator <= 0) return@mapNotNull null
-                    line.substring(0, separator).lowercase(Locale.US) to line.substring(separator + 1).trim()
-                }.toMap()
-                return HttpRequest(method, path, headers)
+                return HttpRequest(method, path)
             }
         }
     }
@@ -366,6 +300,5 @@ class LocalOtaServer(
         private const val MAX_ACTIVE_CLIENTS = 2
         private const val SOCKET_TIMEOUT_MS = 20_000
         private const val STREAM_CHUNK_BYTES = 64 * 1024
-        private val INVALID_RANGE = 1L..0L
     }
 }

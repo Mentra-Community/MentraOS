@@ -28,8 +28,9 @@ The connected-device Android vertical slice passed on a Samsung Z Fold (Android 
   second `ota_start`;
 - ASG reported authoritative completion, the phone stopped its local server, released the
   scoped network, disabled the hotspot, and `ap0` returned to `DOWN`;
-- Android's first native `/api/health` keepalive returned HTTP 200 without the former
-  pooled-connection protocol error; and
+- the coordinator's existing BLE ping loop remained active throughout the OTA; the
+  redundant native HTTP keepalive has since been removed in favor of letting those pings
+  refresh ASG's hotspot activity timer; and
 - the expected brief loss of the default internet network during hotspot teardown was
   handled by one bounded automatic-chain retry, after which the production screen showed
   **Up to Date** for build `51687004`.
@@ -320,23 +321,24 @@ window, or terminal OTA still follows ordinary hotspot cleanup behavior.
 
 ## Inactivity and recovery
 
-The current 120-second expiry is an ASG `Handler` driven by inbound HTTP activity on the
-glasses server. It disappears when the ASG process is replaced. The SystemUI AP did not
-expire independently in the 141-second hardware test.
+The current 120-second expiry is an ASG `Handler` driven by hotspot activity. It disappears
+when the ASG process is replaced. The SystemUI AP did not expire independently in the
+141-second hardware test.
 
 Therefore:
 
-- the phone polls the existing glasses `/api/health` endpoint every 30 seconds while
-  hotspot OTA is active; on iOS this polling is owned by native OTA code and does not
-  depend on a JavaScript timer;
+- the coordinator's existing 10-second BLE OTA pings refresh hotspot activity only while
+  an OTA session and the AP are both active; ordinary pings do not extend hotspot life;
+- the same BLE traffic already keeps the iOS app alive in the supported background mode,
+  so hotspot OTA adds no second keepalive mechanism;
 - the short APK replacement gap is tolerated while the glasses HTTP server is restarting;
 - AP adoption starts a fresh 120-second ASG inactivity window; and
 - the independent recovery worker must stop the vendor AP if ASG does not return within
   its existing APK recovery/supervision deadline.
 
-The recovery worker cleanup is a failsafe, not a second hotspot owner. It may only send the
-vendor disable command after it has proved the OTA-started ASG replacement failed to
-recover.
+The recovery worker cleanup is a failsafe, not a second hotspot owner. After restart and
+late-PONG recovery are exhausted, it sends the idempotent vendor disable command without
+persisting a hotspot-specific ownership bit.
 
 ## Failure behavior
 
@@ -360,10 +362,10 @@ does not resume an ambiguous or partially owned hotspot session.
 ## Security and integrity invariants
 
 - Download artifacts before joining the internet-less hotspot.
-- Verify hashes after phone download and immediately before serving.
+- Verify each required manifest hash once while staging on the phone.
 - Keep manifest target versions and hashes unchanged when rewriting URLs.
 - Bind the phone server only to the hotspot-side address.
-- Serve only the selected manifest and SHA-addressed artifacts using `GET` and `HEAD`.
+- Serve only the selected manifest and SHA-addressed artifacts using full `GET` requests.
 - Reject traversal, arbitrary paths, uploads, and files not selected for the active OTA.
 - Do not log hotspot passwords, manifest bodies, or user data.
 - Keep the phone server and persisted restart state scoped to one active OTA attempt.
@@ -400,7 +402,7 @@ makes the first PR impossible to exercise end to end.
    - reuse the current `OtaInstallCoordinator`;
    - perform one hotspot start and one phone join;
    - retain the phone network/server across SID change;
-   - keep `/api/health` active from platform-native code; and
+   - reuse the coordinator's existing BLE OTA pings for hotspot activity; and
    - perform idempotent terminal teardown.
 5. **UI and rollout**
    - add phone-download and hotspot-connection progress;
@@ -422,16 +424,11 @@ contain enough of every implementation slice above to run a real hotspot OTA:
 - when no glasses Wi-Fi is connected, the existing **Update Now** action selects hotspot
   OTA instead of routing the user to Wi-Fi setup, but only when the connected ASG
   advertises the capability;
-- super mode can explicitly force hotspot transport while glasses Wi-Fi is connected so
-  the same production path can be exercised repeatedly on the bench; and
 - the existing progress screen exposes the minimum download, hotspot connection,
   updating, completion, and failure states needed to operate the test safely.
 
-The force option is transport selection at the existing OTA entry point. It must not add
-an exported Android receiver, a second OTA command, a debug-only coordinator, or a bypass
-around artifact and capability validation.
-
-Before the first PR is considered ready, use that entry point to pass both Gate 0 phone
+Before the first PR is considered ready, disable glasses Wi-Fi and use that production
+entry point to pass both Gate 0 phone
 runs and at least one complete APK + MTK + BES update. Later PRs may improve copy,
 telemetry, visual polish, and rollout controls, but they must not be required to trigger or
 complete the first PR's OTA flow.

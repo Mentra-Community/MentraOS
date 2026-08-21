@@ -11,7 +11,6 @@ import {RouteButton} from "@/components/ui/RouteButton"
 export default function SuperSettingsScreen() {
   const {goBack} = useNavigationStore.getState()
   const [superMode, setSuperMode] = useSetting(SETTINGS.super_mode.key)
-  const [forceHotspotOta, setForceHotspotOta] = useSetting(SETTINGS.ota_force_hotspot.key)
   const [useNativeDashboard, setUseNativeDashboard] = useSetting(SETTINGS.use_native_dashboard.key)
   const [debugNavigationHistoryEnabled, setDebugNavigationHistoryEnabled] = useSetting(
     SETTINGS.debug_navigation_history.key,
@@ -39,13 +38,6 @@ export default function SuperSettingsScreen() {
               label="Debug Navigation History"
               value={debugNavigationHistoryEnabled}
               onValueChange={(value) => setDebugNavigationHistoryEnabled(value)}
-            />
-
-            <ToggleSetting
-              label="Force Hotspot OTA"
-              subtitle="Use the production hotspot path even when glasses Wi-Fi is connected"
-              value={forceHotspotOta}
-              onValueChange={(value) => setForceHotspotOta(value)}
             />
 
             <ToggleSetting

@@ -125,7 +125,6 @@ export const OtaProgressMessages = {
   sendOtaStartFailed: "Failed to communicate with glasses.",
   hotspotArtifactDownloadFailed: "Could not download the update to your phone. Check phone internet and try again.",
   hotspotArtifactVerifyFailed: "The update package could not be verified. Please try again later.",
-  hotspotPhoneUnsupported: "This phone does not support updating through the glasses hotspot.",
   hotspotWifiPermissionDenied: "Allow nearby devices access so the phone can connect to the glasses hotspot.",
   hotspotStartFailed: "Could not start the glasses hotspot. Please try again.",
   hotspotJoinFailed: "Could not connect the phone to the glasses hotspot. Please try again.",

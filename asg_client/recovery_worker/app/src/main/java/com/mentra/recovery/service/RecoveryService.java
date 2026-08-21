@@ -97,14 +97,9 @@ public class RecoveryService extends Service {
           @Override
           public void onReceive(Context context, Intent intent) {
             if (RecoveryConstants.ACTION_INSTALL_IN_PROGRESS.equals(intent.getAction())) {
-              new HotspotOtaFailsafe(context)
-                  .setOwnedRestart(
-                      intent.getBooleanExtra(
-                          RecoveryConstants.EXTRA_HOTSPOT_OTA_RESTART, false));
               healthMonitor.setPaused(true);
               InstallPauseNotifier.setInstallPaused(true);
             } else if (RecoveryConstants.ACTION_INSTALL_COMPLETED.equals(intent.getAction())) {
-              new HotspotOtaFailsafe(context).clear();
               healthMonitor.setPaused(false);
               InstallPauseNotifier.setInstallPaused(false);
             }

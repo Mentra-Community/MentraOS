@@ -5,7 +5,6 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.net.wifi.WifiNetworkSpecifier
-import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Base64
@@ -20,8 +19,6 @@ import java.net.Inet4Address
 import java.net.URL
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
-import java.util.concurrent.ScheduledFuture
-import java.util.concurrent.TimeUnit
 
 /** MentraOS-internal transport for glasses-local traffic without process network binding. */
 class MentraLocalNetworkModule : Module() {
@@ -32,7 +29,6 @@ class MentraLocalNetworkModule : Module() {
 
     private val lock = Any()
     private val executor = Executors.newCachedThreadPool()
-    private val keepaliveExecutor = Executors.newSingleThreadScheduledExecutor()
     private val handler = Handler(Looper.getMainLooper())
     private val activeConnections = ConcurrentHashMap<String, HttpURLConnection>()
     private val networkReadiness = ScopedNetworkReadiness<Network>()
@@ -40,7 +36,6 @@ class MentraLocalNetworkModule : Module() {
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var pendingConnectPromise: Promise? = null
     private var pendingReadinessTimeout: Runnable? = null
-    private var keepaliveFuture: ScheduledFuture<*>? = null
 
     override fun definition() = ModuleDefinition {
         Name("MentraLocalNetwork")
@@ -83,15 +78,10 @@ class MentraLocalNetworkModule : Module() {
         }
 
         AsyncFunction("cancel") { requestId: String -> cancel(requestId) }
-        AsyncFunction("startHealthKeepalive") { url: String, intervalMs: Int ->
-            startHealthKeepalive(url, intervalMs)
-        }
-        AsyncFunction("stopHealthKeepalive") { stopHealthKeepalive() }
         AsyncFunction("disconnect") { disconnect() }
 
         OnDestroy {
             disconnect()
-            keepaliveExecutor.shutdownNow()
         }
     }
 
@@ -101,11 +91,6 @@ class MentraLocalNetworkModule : Module() {
         }
 
     private fun connect(ssid: String, password: String, promise: Promise) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-            promise.reject("ERR_UNSUPPORTED_ANDROID", "Scoped local WiFi requires Android 10 or newer", null)
-            return
-        }
-
         disconnect()
         val manager = connectivityManager()
         val specifier =
@@ -345,59 +330,6 @@ class MentraLocalNetworkModule : Module() {
         activeConnections.keys.toList().forEach(::cancel)
     }
 
-    @Synchronized
-    private fun startHealthKeepalive(url: String, intervalMs: Int) {
-        require(url.startsWith("http://") || url.startsWith("https://")) { "Invalid health URL" }
-        if (synchronized(lock) { localNetwork } == null) {
-            throw IllegalStateException("Local WiFi is not connected")
-        }
-        stopHealthKeepalive()
-        val cadence = intervalMs.coerceAtLeast(5_000).toLong()
-        keepaliveFuture =
-            keepaliveExecutor.scheduleWithFixedDelay(
-                {
-                    val requestId = "ota_health_keepalive"
-                    var connection: HttpURLConnection? = null
-                    try {
-                        connection = openConnection(requestId, url)
-                        // The glasses camera server may return a compressed body for HEAD.
-                        // Android can pool that unread body and parse it as the next response's
-                        // status line. GET and drain the small health payload so every scoped
-                        // keepalive leaves the connection in a reusable, well-defined state.
-                        connection.requestMethod = "GET"
-                        connection.connectTimeout = 5_000
-                        connection.readTimeout = 5_000
-                        val responseCode = connection.responseCode
-                        val responseStream =
-                            if (responseCode >= 400) connection.errorStream else connection.inputStream
-                        responseStream?.use { stream ->
-                            val buffer = ByteArray(1_024)
-                            while (stream.read(buffer) != -1) {
-                                // Drain the bounded health response so HttpURLConnection can
-                                // safely reuse or close the scoped-network connection.
-                            }
-                        }
-                        Log.d(TAG, "Glasses health keepalive HTTP $responseCode")
-                    } catch (error: Throwable) {
-                        Log.w(TAG, "Glasses health keepalive failed", error)
-                    } finally {
-                        activeConnections.remove(requestId)
-                        connection?.disconnect()
-                    }
-                },
-                0,
-                cadence,
-                TimeUnit.MILLISECONDS,
-            )
-    }
-
-    @Synchronized
-    private fun stopHealthKeepalive() {
-        keepaliveFuture?.cancel(true)
-        keepaliveFuture = null
-        cancel("ota_health_keepalive")
-    }
-
     private fun scheduleReadinessTimeout(
         callback: ConnectivityManager.NetworkCallback,
         ssid: String,
@@ -432,7 +364,6 @@ class MentraLocalNetworkModule : Module() {
     }
 
     private fun disconnect() {
-        stopHealthKeepalive()
         cancelAll()
         val manager = appContext.reactContext?.getSystemService(ConnectivityManager::class.java)
         val callback: ConnectivityManager.NetworkCallback?

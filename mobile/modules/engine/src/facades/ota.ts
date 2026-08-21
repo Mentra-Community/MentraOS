@@ -117,8 +117,7 @@ export const ota = {
    */
   installSession: {
     /** Select Wi-Fi or capability-gated hotspot transport for this checked manifest. */
-    prepare: (result: OtaCheckCurrentGlassesResult, forceHotspot = false) =>
-      otaInstallCoordinator.prepare(result, forceHotspot),
+    prepare: (result: OtaCheckCurrentGlassesResult) => otaInstallCoordinator.prepare(result),
     /** Bind the machine to the mounted progress screen. Idempotent per attach/detach cycle. */
     attach: () => otaInstallCoordinator.attach(),
     /** Unbind on unmount: clears all timers/listeners and resets session state. */

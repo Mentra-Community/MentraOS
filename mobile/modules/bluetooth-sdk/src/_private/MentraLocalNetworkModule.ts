@@ -44,8 +44,6 @@ declare class MentraLocalNetworkNativeModule extends NativeModule<LocalNetworkEv
     readTimeoutMs: number,
   ): Promise<LocalNetworkDownloadResult>
   cancel(requestId: string): Promise<void>
-  startHealthKeepalive(url: string, intervalMs: number): Promise<void>
-  stopHealthKeepalive(): Promise<void>
   disconnect(): Promise<void>
 }
 

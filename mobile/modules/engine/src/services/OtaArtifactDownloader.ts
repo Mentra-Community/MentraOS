@@ -22,15 +22,11 @@ export interface OtaArtifactPlanEntry {
   kind: OtaArtifactKind
   /** URL this artifact is fetched from, exactly as it appears in the raw manifest. */
   url: string
-  /** Expected content hash from the manifest; null when the manifest omits it (MTK). */
-  expectedSha256: string | null
-  /** Size from the manifest when declared (APK); null otherwise. */
-  sizeBytes: number | null
+  /** Required content hash from the manifest. */
+  sha256: string
 }
 
 export interface PreparedOtaArtifact extends OtaArtifactPlanEntry {
-  /** Actual content hash — equals expectedSha256 when one was declared. */
-  sha256: string
   filePath: string
 }
 
@@ -88,8 +84,7 @@ export function planArtifacts(result: OtaCheckCurrentGlassesResult): OtaArtifact
     entries.push({
       kind: "apk",
       url,
-      expectedSha256: requireSha256(app, "APK"),
-      sizeBytes: typeof app?.apkSize === "number" ? app.apkSize : null,
+      sha256: requireSha256(app, "APK"),
     })
   }
 
@@ -104,8 +99,7 @@ export function planArtifacts(result: OtaCheckCurrentGlassesResult): OtaArtifact
     entries.push({
       kind: "mtk",
       url,
-      expectedSha256: requireSha256(raw, "MTK"),
-      sizeBytes: null,
+      sha256: requireSha256(raw, "MTK"),
     })
   }
 
@@ -118,8 +112,7 @@ export function planArtifacts(result: OtaCheckCurrentGlassesResult): OtaArtifact
     entries.push({
       kind: "bes",
       url,
-      expectedSha256: requireSha256(raw, "BES"),
-      sizeBytes: null,
+      sha256: requireSha256(raw, "BES"),
     })
   }
 
@@ -147,30 +140,28 @@ export async function prepareArtifacts(
   for (let index = 0; index < plan.length; index++) {
     const entry = plan[index]
 
-    if (entry.expectedSha256) {
-      const cachedPath = `${directory}/${entry.expectedSha256}`
-      if (await RNFS.exists(cachedPath)) {
-        const cachedHash = (await RNFS.hash(cachedPath, "sha256")).toLowerCase()
-        if (cachedHash === entry.expectedSha256) {
-          prepared.push({...entry, sha256: cachedHash, filePath: cachedPath})
-          continue
-        }
-        await safeUnlink(cachedPath)
+    const cachedPath = `${directory}/${entry.sha256}`
+    if (await RNFS.exists(cachedPath)) {
+      const cachedHash = (await RNFS.hash(cachedPath, "sha256")).toLowerCase()
+      if (cachedHash === entry.sha256) {
+        prepared.push({...entry, filePath: cachedPath})
+        continue
       }
+      await safeUnlink(cachedPath)
     }
 
     const partPath = `${directory}/download-${index}.part`
     await safeUnlink(partPath)
     try {
       const reportProgress = (bytesWritten: number, contentLength: number) => {
-          onProgress?.({
-            kind: entry.kind,
-            index,
-            totalCount: plan.length,
-            artifactPercent: contentLength > 0 ? Math.round((bytesWritten / contentLength) * 100) : 0,
-            bytesWritten,
-            contentLength,
-          })
+        onProgress?.({
+          kind: entry.kind,
+          index,
+          totalCount: plan.length,
+          artifactPercent: contentLength > 0 ? Math.round((bytesWritten / contentLength) * 100) : 0,
+          bytesWritten,
+          contentLength,
+        })
       }
       const downloadResult = nativeDownload
         ? await nativeDownload(entry, partPath, reportProgress)
@@ -192,17 +183,17 @@ export async function prepareArtifacts(
       }
 
       const actualSha256 = (await RNFS.hash(partPath, "sha256")).toLowerCase()
-      if (entry.expectedSha256 && actualSha256 !== entry.expectedSha256) {
+      if (actualSha256 !== entry.sha256) {
         throw new OtaArtifactError(
           "artifact_verify_failed",
-          `${entry.kind} artifact hash mismatch: expected ${entry.expectedSha256}, got ${actualSha256}`,
+          `${entry.kind} artifact hash mismatch: expected ${entry.sha256}, got ${actualSha256}`,
         )
       }
 
-      const finalPath = `${directory}/${actualSha256}`
+      const finalPath = `${directory}/${entry.sha256}`
       await safeUnlink(finalPath)
       await RNFS.moveFile(partPath, finalPath)
-      prepared.push({...entry, sha256: actualSha256, filePath: finalPath})
+      prepared.push({...entry, filePath: finalPath})
     } catch (error) {
       await safeUnlink(partPath)
       if (error instanceof OtaArtifactError) {
@@ -285,28 +276,6 @@ function rewriteFirmwareEntry(
   // CDN URL over the local one.
   if (typeof entry.firmwareUrl === "string") {
     entry.firmwareUrl = localUrl(artifact)
-  }
-}
-
-/** Re-verify every staged file immediately before publishing it through the local server. */
-export async function verifyPreparedArtifacts(artifacts: PreparedOtaArtifact[]): Promise<void> {
-  for (const artifact of artifacts) {
-    if (!(await RNFS.exists(artifact.filePath))) {
-      throw new OtaArtifactError("artifact_verify_failed", `${artifact.kind} artifact disappeared before serving`)
-    }
-    const actualSha256 = (await RNFS.hash(artifact.filePath, "sha256")).toLowerCase()
-    if (actualSha256 !== artifact.sha256) {
-      throw new OtaArtifactError(
-        "artifact_verify_failed",
-        `${artifact.kind} artifact changed before serving: expected ${artifact.sha256}, got ${actualSha256}`,
-      )
-    }
-    if (artifact.expectedSha256 && actualSha256 !== artifact.expectedSha256) {
-      throw new OtaArtifactError(
-        "artifact_verify_failed",
-        `${artifact.kind} artifact no longer matches the manifest hash`,
-      )
-    }
   }
 }
 

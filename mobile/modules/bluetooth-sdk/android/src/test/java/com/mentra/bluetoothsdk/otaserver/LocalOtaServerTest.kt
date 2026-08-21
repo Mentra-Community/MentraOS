@@ -42,57 +42,10 @@ class LocalOtaServerTest {
     }
 
     @Test
-    fun `answers manifest HEAD probes`() {
-        val connection = open("/version.json")
-        connection.requestMethod = "HEAD"
-        assertThat(connection.responseCode).isEqualTo(200)
-        assertThat(connection.contentLengthLong)
-            .isEqualTo(manifest.toByteArray().size.toLong())
-        assertThat(connection.inputStream.readBytes()).isEmpty()
-    }
-
-    @Test
     fun `streams a full artifact`() {
         val connection = open("/artifacts/$sha")
         assertThat(connection.responseCode).isEqualTo(200)
-        assertThat(connection.getHeaderField("Accept-Ranges")).isEqualTo("bytes")
         assertThat(connection.inputStream.readBytes()).isEqualTo(artifactBytes)
-    }
-
-    @Test
-    fun `serves a byte range`() {
-        val connection = open("/artifacts/$sha")
-        connection.setRequestProperty("Range", "bytes=100-199")
-        assertThat(connection.responseCode).isEqualTo(206)
-        assertThat(connection.getHeaderField("Content-Range"))
-            .isEqualTo("bytes 100-199/${artifactBytes.size}")
-        assertThat(connection.inputStream.readBytes())
-            .isEqualTo(artifactBytes.copyOfRange(100, 200))
-    }
-
-    @Test
-    fun `serves a suffix range`() {
-        val connection = open("/artifacts/$sha")
-        connection.setRequestProperty("Range", "bytes=-16")
-        assertThat(connection.responseCode).isEqualTo(206)
-        assertThat(connection.inputStream.readBytes())
-            .isEqualTo(artifactBytes.copyOfRange(artifactBytes.size - 16, artifactBytes.size))
-    }
-
-    @Test
-    fun `serves an open-ended range`() {
-        val connection = open("/artifacts/$sha")
-        connection.setRequestProperty("Range", "bytes=1000-")
-        assertThat(connection.responseCode).isEqualTo(206)
-        assertThat(connection.inputStream.readBytes())
-            .isEqualTo(artifactBytes.copyOfRange(1000, artifactBytes.size))
-    }
-
-    @Test
-    fun `rejects an unsatisfiable range`() {
-        val connection = open("/artifacts/$sha")
-        connection.setRequestProperty("Range", "bytes=${artifactBytes.size}-")
-        assertThat(connection.responseCode).isEqualTo(416)
     }
 
     @Test
@@ -108,13 +61,6 @@ class LocalOtaServerTest {
         connection.doOutput = true
         connection.outputStream.use { it.write("{}".toByteArray()) }
         assertThat(connection.responseCode).isEqualTo(405)
-    }
-
-    @Test
-    fun `reports health`() {
-        val connection = open("/health")
-        assertThat(connection.responseCode).isEqualTo(200)
-        assertThat(connection.inputStream.readBytes().decodeToString()).contains("mentra-ota-server")
     }
 
     @Test

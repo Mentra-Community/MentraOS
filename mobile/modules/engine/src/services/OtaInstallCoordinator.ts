@@ -69,8 +69,6 @@ function hotspotPreflightErrorMessage(error: unknown): string {
     case "artifact_verify_failed":
     case "manifest_invalid":
       return OtaProgressMessages.hotspotArtifactVerifyFailed
-    case "hotspot_ota_phone_unsupported":
-      return OtaProgressMessages.hotspotPhoneUnsupported
     case "hotspot_wifi_permission_denied":
       return OtaProgressMessages.hotspotWifiPermissionDenied
     case "hotspot_start_failed":
@@ -78,7 +76,6 @@ function hotspotPreflightErrorMessage(error: unknown): string {
     case "hotspot_join_failed":
       return OtaProgressMessages.hotspotJoinFailed
     case "hotspot_server_failed":
-    case "hotspot_keepalive_failed":
       return OtaProgressMessages.hotspotServerFailed
     default:
       return OtaProgressMessages.hotspotServerFailed
@@ -287,18 +284,15 @@ class OtaInstallCoordinator {
   // --- public surface (engine.ota.installSession) ---
 
   /** Select the transport at the existing install entry point before the progress route attaches. */
-  prepare(checkResult: OtaCheckCurrentGlassesResult, forceHotspot = false): "wifi" | "hotspot" {
+  prepare(checkResult: OtaCheckCurrentGlassesResult): "wifi" | "hotspot" {
     const state = useGlassesStore.getState()
     const hotspotSupported = (state.hotspotOtaVersion ?? 0) >= 1
     const wifiConnected = state.wifi.state === "connected"
-    if (forceHotspot && !hotspotSupported) {
-      throw new Error("Connected glasses do not support hotspot OTA")
-    }
     if (!wifiConnected && !hotspotSupported) {
       throw new Error("Connected glasses require Wi-Fi for OTA")
     }
     this.preparedCheckResult = checkResult
-    this.selectedTransport = forceHotspot || !wifiConnected ? "hotspot" : "wifi"
+    this.selectedTransport = wifiConnected ? "wifi" : "hotspot"
     this.hotspotManifestUrl = null
     this.hotspotPhase = "idle"
     this.hotspotArtifactPercent = null
@@ -791,9 +785,6 @@ class OtaInstallCoordinator {
         }),
       )
       this.prevDisplayState = displayState
-      if (displayState === "complete" || displayState === "failed") {
-        void this.teardownHotspotTransport()
-      }
     }
 
     // APK-step latch (was the [otaStatus] effect above the timers).
@@ -1011,11 +1002,6 @@ class OtaInstallCoordinator {
       }, lockoutMs)
     }
 
-    if (displayStateChanged && displayState === "failed") {
-      this.clearPerStepTimers()
-      void this.teardownHotspotTransport()
-    }
-
     // Legacy MTK install stall simulation (WP 8C-e): display-only. The simulation
     // timers only ever touch the projected snapshot percent — they never feed back
     // into arbitration (no reaction pass, no watchdog resets).
@@ -1031,6 +1017,9 @@ class OtaInstallCoordinator {
       displayStateChanged &&
       (displayState === "complete" || displayState === "restarting" || displayState === "failed")
     ) {
+      if (displayState === "failed") {
+        this.clearPerStepTimers()
+      }
       useGlassesStore.getState().setOtaUpdateAvailable(null)
       if (displayState === "complete" || displayState === "failed") {
         void this.teardownHotspotTransport()

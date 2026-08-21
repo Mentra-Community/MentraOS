@@ -51,8 +51,6 @@ dependencies {
     implementation libs.work.runtime
     implementation libs.core
     testImplementation libs.junit
-    testImplementation 'androidx.test:core:1.5.0'
-    testImplementation 'org.robolectric:robolectric:4.11.1'
     // Real org.json on the JVM so RemediationPolicy.fromJson can be unit-tested
     // (android.jar's org.json is a stub that throws under plain JVM unit tests).
     testImplementation 'org.json:json:20240303'

@@ -32,11 +32,6 @@
       "types": "./build/photo-receiver/index.d.ts",
       "default": "./build/photo-receiver/index.js"
     },
-    "./ota-server": {
-      "react-native": "./src/ota-server/index.ts",
-      "types": "./build/ota-server/index.d.ts",
-      "default": "./build/ota-server/index.js"
-    },
     "./debug": {
       "react-native": "./src/debug.ts",
       "types": "./build/debug.d.ts",

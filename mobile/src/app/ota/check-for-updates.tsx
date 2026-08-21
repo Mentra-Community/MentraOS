@@ -38,8 +38,6 @@ export default function OtaCheckForUpdatesScreen() {
   const glassesWifiConnected = otaSnapshot.wifiConnected
   const hotspotOtaSupported = otaSnapshot.hotspotOtaVersion >= 1
   const canInstallUpdate = glassesWifiConnected || hotspotOtaSupported
-  const [superMode] = useSetting(SETTINGS.super_mode.key)
-  const [forceHotspotOta] = useSetting(SETTINGS.ota_force_hotspot.key)
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const deviceName = defaultWearable || "Glasses"
   const glassesConnected = otaSnapshot.connected
@@ -252,7 +250,7 @@ export default function OtaCheckForUpdatesScreen() {
               const admission = tryAdvanceOtaAutoChain(fingerprint, result.updateInfo.isDowngrade === true)
               if (admission.advance) {
                 console.log(`OTA: Automatically starting chained update pass ${admission.passCount}`)
-                engine.ota.installSession.prepare(result, superMode && forceHotspotOta)
+                engine.ota.installSession.prepare(result)
                 navigateToProgress()
                 return
               }
@@ -337,7 +335,7 @@ export default function OtaCheckForUpdatesScreen() {
       push("/wifi/scan")
       return
     }
-    engine.ota.installSession.prepare(result, superMode && forceHotspotOta)
+    engine.ota.installSession.prepare(result)
     if (updateFingerprint) {
       beginOtaAutoChain(updateFingerprint, isDowngradeUpdate)
     }

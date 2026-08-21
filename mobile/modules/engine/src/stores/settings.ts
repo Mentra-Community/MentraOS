@@ -62,13 +62,6 @@ export const SETTINGS: Record<string, Setting> = {
     persist: true,
   },
   super_mode: {key: "super_mode", defaultValue: () => false, writable: true, saveOnServer: true, persist: true},
-  ota_force_hotspot: {
-    key: "ota_force_hotspot",
-    defaultValue: () => false,
-    writable: true,
-    saveOnServer: false,
-    persist: true,
-  },
   appearance_menu_enabled: {
     key: "appearance_menu_enabled",
     defaultValue: () => false,
@@ -1159,5 +1152,3 @@ export const useSetting = <T = any>(key: string): [T, (value: T) => AsyncResult<
   const setSetting = useSettingsStore((state) => state.setSetting)
   return [value, (newValue: T) => setSetting(key, newValue)]
 }
-
-

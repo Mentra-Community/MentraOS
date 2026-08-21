@@ -1,5 +1,5 @@
 import * as RNFS from "@dr.pogodin/react-native-fs"
-import {MentraLocalNetwork, MentraOtaServer, type LocalNetworkDownloadProgress} from "@mentra/bluetooth-sdk/internal"
+import {MentraLocalNetwork, type LocalNetworkDownloadProgress} from "@mentra/bluetooth-sdk/internal"
 import {Buffer} from "buffer"
 import {Platform} from "react-native"
 import WifiManager from "react-native-wifi-reborn"
@@ -12,17 +12,12 @@ let nextJobId = 1_000_000
 const nativeJobs = new Map<number, string>()
 const cancelledNativeJobs = new Set<number>()
 
-export function shouldUseScopedLocalNetwork(
-  os: string,
-  platformVersion: number | string,
-  moduleAvailable: boolean,
-): boolean {
-  const level = typeof platformVersion === "number" ? platformVersion : Number.parseInt(platformVersion, 10)
-  return os === "android" && level >= 29 && moduleAvailable
+export function shouldUseScopedLocalNetwork(os: string, moduleAvailable: boolean): boolean {
+  return os === "android" && moduleAvailable
 }
 
 function supportsScopedConnection(): boolean {
-  return shouldUseScopedLocalNetwork(Platform.OS, Platform.Version, MentraLocalNetwork != null)
+  return shouldUseScopedLocalNetwork(Platform.OS, MentraLocalNetwork != null)
 }
 
 function normalizeHeaders(headers?: HeadersInit): Record<string, string> {
@@ -64,21 +59,6 @@ export const localNetworkTransport = {
     }
     scopedConnectionActive = false
     nativeJobs.clear()
-  },
-
-  async startHealthKeepalive(url: string, intervalMs: number): Promise<void> {
-    if (scopedConnectionActive && MentraLocalNetwork) {
-      await MentraLocalNetwork.startHealthKeepalive(url, intervalMs)
-      return
-    }
-    await MentraOtaServer.startHealthKeepalive(url, intervalMs)
-  },
-
-  async stopHealthKeepalive(): Promise<void> {
-    if (MentraLocalNetwork) {
-      await MentraLocalNetwork.stopHealthKeepalive().catch(() => {})
-    }
-    await MentraOtaServer.stopHealthKeepalive().catch(() => {})
   },
 
   async fetch(url: string | URL | Request, init?: RequestInit, timeoutMs = 30_000): Promise<Response> {

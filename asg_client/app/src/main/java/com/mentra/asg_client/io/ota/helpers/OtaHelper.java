@@ -1522,9 +1522,6 @@ public class OtaHelper {
         }
         Intent intent = new Intent(OtaConstants.RECOVERY_INSTALL_IN_PROGRESS);
         intent.setPackage(OtaConstants.RECOVERY_PACKAGE);
-        intent.putExtra(
-                "hotspot_ota_restart",
-                new OtaSessionManager(context).shouldPreserveHotspotOnShutdown());
         context.sendBroadcast(intent, OtaConstants.RECOVERY_CONTROL_PERMISSION);
         Log.d(TAG, "Notified recovery worker: install in progress");
     }
