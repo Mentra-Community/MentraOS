@@ -939,10 +939,10 @@ extension MentraLive: CBCentralManagerDelegate {
     }
 
     nonisolated func centralManager(
-        _: CBCentralManager, didDisconnectPeripheral _: CBPeripheral, error _: Error?
+        _: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error _: Error?
     ) {
         DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
+            guard let self, peripheral === self.connectedPeripheral else { return }
             Bridge.log("LIVE: Disconnected from GATT server")
 
             self.isConnecting = false
@@ -969,10 +969,12 @@ extension MentraLive: CBCentralManagerDelegate {
         }
     }
 
-    nonisolated func centralManager(_: CBCentralManager, didFailToConnect _: CBPeripheral, error: Error?) {
+    nonisolated func centralManager(
+        _: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?
+    ) {
         let errorDescription = error?.localizedDescription ?? "Unknown error"
         DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
+            guard let self, peripheral === self.connectedPeripheral else { return }
             Bridge.log("LIVE: Failed to connect to peripheral: \(errorDescription)")
 
             self.stopConnectionTimeout()

@@ -1945,6 +1945,10 @@ class MentraLive : SGCManager() {
                         gatt: BluetoothGatt,
                         characteristic: BluetoothGattCharacteristic
                 ) {
+                    if (!isCurrentGattCallback(gatt)) {
+                        return
+                    }
+
                     // Get thread ID for tracking thread issues
                     val threadId = Thread.currentThread().id
                     val uuid = characteristic.uuid

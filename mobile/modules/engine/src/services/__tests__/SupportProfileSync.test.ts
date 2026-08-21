@@ -99,6 +99,7 @@ describe("SupportProfileSync", () => {
     })
     expect(snapshot.host.phoneModel).toBe("iPhone 17 Pro")
     expect(serialized).not.toContain("AA:BB")
+    expect(serialized).not.toContain("12:34")
     expect(serialized).not.toContain("Private Wi-Fi")
     expect(serialized).not.toContain("192.0.2")
     expect(serialized).not.toContain("password")
