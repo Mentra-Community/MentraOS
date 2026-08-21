@@ -1,8 +1,8 @@
 # OS-1676: Mentra Live OTA over the glasses hotspot
 
-Status: approved design implemented as a capability-gated Android/iOS vertical slice;
-Android hardware verification passed, while iPhone background hardware verification and
-a safe full APK + MTK + BES run remain merge gates
+Status: approved design implemented as a capability-gated Android/iOS vertical slice.
+Android and iPhone locked/background hardware verification passed. A safe full-chain run
+with APK, MTK, and BES remains a merge gate.
 
 ## Implementation and verification snapshot (2026-08-20)
 
@@ -40,9 +40,41 @@ targets, so downgrading them would not be valid verification. Multi-step restart
 and continuation are covered by focused ASG and phone tests, but the required live APK +
 MTK + BES gate still needs correctly versioned, provenance-checked newer artifacts.
 
-The iOS native implementation compiles in the simulator build. Gate 0 background/lock and
-force-quit behavior still requires a supported physical iPhone; it is not inferred from
-the simulator build or from the Android result.
+The iOS production path passed on a physical iPhone 15 running iOS 26.5 and the same
+Mentra Live hardware:
+
+- the native background `URLSession` staged and verified the 107,708,451-byte
+  `51687010 / os1676-hw-j` artifact with SHA-256
+  `f31116144b77ad3a526f454b1f556aab722cef470d5aae483bde2d5cee427a2a` before the
+  phone joined the internet-less hotspot;
+- the Mentra App entered the background at 20:16:04, the hotspot join completed at
+  20:16:06, and the original `NWListener` became ready on the iPhone Wi-Fi interface at
+  `192.168.43.185:8791` at 20:16:07;
+- while the iPhone remained locked, that listener accepted the APK connection at
+  20:16:08 and served it through 20:16:11 without changing address or port;
+- the phone sent exactly one hotspot `ota_start`; ASG installed
+  `51687009 / os1676-hw-i` -> `51687010 / os1676-hw-j`, restarted from SID `6d188f68`
+  to `a3aded4a`, and the phone recovered with `ota_query_status`;
+- terminal `complete` reached the backgrounded phone, the delayed disable command reached
+  the restarted ASG process, `ap0` returned to `DOWN`, and the original listener was then
+  cancelled; and
+- glasses Wi-Fi reconnected at `192.168.1.32`, after which the production screen reported
+  **Up to Date**.
+
+An earlier physical-iPhone foreground run exposed a teardown race: the disable command
+could be sent before the restarted ASG command path had settled. Terminal teardown now
+keeps the listener and scoped network alive, waits 750 ms, and performs a bounded confirmed
+disable retry before releasing local resources. The locked run above proves the corrected
+ordering on hardware.
+
+The deliberate iOS termination gate also passed. The Mentra App was terminated after
+`51687011 / os1676-hw-k` installed but before the phone could perform terminal teardown.
+The restarted ASG process adopted the still-active AP at 20:21:01 without inventing a new
+OTA session, then its inactivity policy disabled the orphaned hotspot at 20:23:11 without
+manual intervention. `ap0` remained `DOWN` after relaunch; the phone reconnected to build
+`51687011`, sent no second `ota_start`, and presented no update prompt because the installed
+build matched the manifest. A live APK + MTK + BES matrix remains a separate acceptance
+gate requiring correctly versioned newer firmware artifacts.
 
 ## Decision
 

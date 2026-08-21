@@ -12,6 +12,10 @@ class MentraOtaServerModule extends NativeModule<MentraOtaServerModuleEvents> {
   }
 
   async stopOtaServer(): Promise<void> {}
+
+  async waitForWifiAddress(): Promise<string> {
+    throw new Error("The OTA server is only available in native apps.")
+  }
 }
 
 export default registerWebModule(MentraOtaServerModule, "MentraOtaServer")

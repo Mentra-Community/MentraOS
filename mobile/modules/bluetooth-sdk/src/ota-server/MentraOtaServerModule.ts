@@ -18,6 +18,8 @@ declare class MentraOtaServerModule extends NativeModule<MentraOtaServerModuleEv
   stopOtaServer(): Promise<void>
   startHealthKeepalive(url: string, intervalMs: number): Promise<void>
   stopHealthKeepalive(): Promise<void>
+  /** Wait for iPhone Wi-Fi (`en0`) to acquire an address on the glasses gateway subnet. */
+  waitForWifiAddress(gateway: string, timeoutMs: number): Promise<string>
   downloadArtifact(source: string, destination: string): Promise<{statusCode: number; bytesWritten: number}>
 }
 

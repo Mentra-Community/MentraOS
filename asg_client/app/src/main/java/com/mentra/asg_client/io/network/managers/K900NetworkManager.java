@@ -261,14 +261,7 @@ public class K900NetworkManager extends BaseNetworkManager {
                     return;
                 }
                 mHotspotHandler.postDelayed(
-                        () -> {
-                            if (!wifiManager.isWifiEnabled()) {
-                                failVendorHotspotStartup(
-                                        generation, "WiFi did not become ready for hotspot");
-                                return;
-                            }
-                            requestVendorHotspot(generation);
-                        },
+                        () -> waitForWifiRadioThenRequestHotspot(generation),
                         AsgConstants.LOCAL_HOTSPOT_WIFI_ENABLE_DELAY_MS);
                 return;
             }
@@ -285,6 +278,50 @@ public class K900NetworkManager extends BaseNetworkManager {
             Log.e(TAG, "🔥 Error requesting K900 vendor hotspot", e);
             failVendorHotspotStartup(generation, "Failed to start: " + e.getMessage());
         }
+    }
+
+    private void waitForWifiRadioThenRequestHotspot(int generation) {
+        synchronized (mHotspotLock) {
+            if (generation != mHotspotGeneration || !mHotspotStarting) {
+                Log.d(TAG, "🔥 WiFi readiness wait was cancelled");
+                return;
+            }
+        }
+
+        WifiRadioReadiness readiness =
+                classifyWifiRadioReadiness(
+                        wifiManager.isWifiEnabled(),
+                        SystemClock.elapsedRealtime(),
+                        mHotspotReadinessDeadlineMs);
+        if (readiness == WifiRadioReadiness.READY) {
+            Log.i(TAG, "🔥 WiFi radio is ready; requesting K900 hotspot");
+            requestVendorHotspot(generation);
+            return;
+        }
+        if (readiness == WifiRadioReadiness.TIMED_OUT) {
+            failVendorHotspotStartup(generation, "WiFi did not become ready for hotspot");
+            return;
+        }
+
+        mHotspotHandler.postDelayed(
+                () -> waitForWifiRadioThenRequestHotspot(generation),
+                AsgConstants.LOCAL_HOTSPOT_READINESS_POLL_MS);
+    }
+
+    enum WifiRadioReadiness {
+        READY,
+        WAITING,
+        TIMED_OUT
+    }
+
+    static WifiRadioReadiness classifyWifiRadioReadiness(
+            boolean wifiEnabled, long nowElapsedMs, long deadlineElapsedMs) {
+        if (wifiEnabled) {
+            return WifiRadioReadiness.READY;
+        }
+        return nowElapsedMs < deadlineElapsedMs
+                ? WifiRadioReadiness.WAITING
+                : WifiRadioReadiness.TIMED_OUT;
     }
 
     private void checkVendorHotspotReadiness(int generation) {

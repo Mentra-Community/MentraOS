@@ -13,6 +13,7 @@ import {
   type OtaArtifactDownloadProgress,
   type PreparedOtaArtifact,
 } from "./OtaArtifactDownloader"
+import {disableHotspotWithRetry} from "./HotspotShutdown"
 import {localNetworkTransport} from "./asg/localNetworkTransport"
 
 export type HotspotOtaPhase = "idle" | "downloading" | "starting_hotspot" | "joining_hotspot" | "serving"
@@ -88,8 +89,19 @@ class HotspotOtaTransport {
       }
       phase = "joining_hotspot"
       onProgress?.({phase: "joining_hotspot"})
-      const localAddress = await localNetworkTransport.connect(hotspot.ssid, hotspot.password)
+      const scopedAddress = await localNetworkTransport.connect(hotspot.ssid, hotspot.password)
       this.localNetworkConnected = true
+      let localAddress = scopedAddress
+      if (Platform.OS === "ios") {
+        try {
+          localAddress = await MentraOtaServer.waitForWifiAddress(hotspot.localIp, 15_000)
+        } catch (error) {
+          throw new HotspotOtaTransportError(
+            "hotspot_join_failed",
+            error instanceof Error ? error.message : String(error),
+          )
+        }
+      }
       await verifyPreparedArtifacts(this.prepared)
 
       const artifactPaths = Object.fromEntries(this.prepared.map((artifact) => [artifact.sha256, artifact.filePath]))
@@ -163,10 +175,19 @@ class HotspotOtaTransport {
   async teardown(): Promise<void> {
     if (this.teardownPromise) return this.teardownPromise
     this.teardownPromise = (async () => {
+      if (this.hotspotRequested) {
+        const hotspotStopped = await disableHotspotWithRetry(() => BluetoothSdk.setHotspotState(false), {
+          // A completed APK step has just replaced ASG. Let the new command path
+          // settle before asking it to tear down the SystemUI-owned access point.
+          initialDelayMs: this.serverStarted ? 750 : 0,
+        })
+        if (!hotspotStopped) {
+          console.warn("[OTA_PROGRESS] glasses hotspot shutdown was not confirmed after bounded retries")
+        }
+      }
       if (this.keepaliveStarted) await localNetworkTransport.stopHealthKeepalive().catch(() => {})
       if (this.serverStarted) await MentraOtaServer.stopOtaServer().catch(() => {})
       if (this.localNetworkConnected) await localNetworkTransport.disconnect().catch(() => {})
-      if (this.hotspotRequested) await BluetoothSdk.setHotspotState(false).catch(() => {})
       await cleanupArtifacts().catch(() => {})
       this.prepared = []
       this.active = false
