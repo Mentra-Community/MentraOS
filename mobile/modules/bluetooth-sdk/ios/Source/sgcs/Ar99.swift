@@ -758,7 +758,7 @@ final class Ar99: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCM
     func sendWifiCredentials(_: String, _: String) {}
     func forgetWifiNetwork(_: String) {}
     func sendHotspotState(_: Bool) {}
-    func sendOtaStart(otaVersionUrl _: String?) {}
+    func sendOtaStart(otaVersionUrl _: String?, otaTransport _: String?) {}
     func sendOtaQueryStatus() {}
     func sendUserEmailToGlasses(_: String) {}
 

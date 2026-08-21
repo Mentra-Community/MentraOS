@@ -41,6 +41,8 @@ export default function OtaProgressScreen() {
     isVersionChange,
     versionChangeConverged,
     versionChangePhase,
+    hotspotPhase,
+    hotspotArtifactPercent,
   } = install
   const autoChainAdvancedRef = useRef(false)
 
@@ -150,12 +152,32 @@ export default function OtaProgressScreen() {
     }
 
     if (displayState === "starting") {
+      const hotspotTitle =
+        hotspotPhase === "downloading"
+          ? "Downloading update to phone..."
+          : hotspotPhase === "starting_hotspot"
+            ? "Starting glasses hotspot..."
+            : hotspotPhase === "joining_hotspot"
+              ? "Connecting phone to glasses..."
+              : hotspotPhase === "serving"
+                ? "Starting update..."
+                : "Starting update..."
       return (
         <View className="flex-1 items-center justify-center px-6">
           <Icon name="world-download" size={64} color={theme.colors.primary} />
           <View className="h-6" />
-          <Text text="Starting update..." className="font-semibold text-xl text-center" />
+          <Text text={hotspotTitle} className="font-semibold text-xl text-center" />
           <View className="h-4" />
+          {hotspotPhase === "downloading" && hotspotArtifactPercent !== null && (
+            <>
+              <Text
+                text={`${Math.round(hotspotArtifactPercent)}%`}
+                className="text-3xl font-bold"
+                style={{color: theme.colors.primary}}
+              />
+              <View className="h-4" />
+            </>
+          )}
           <ActivityIndicator size="large" color={theme.colors.foreground} />
           <View className="h-4" />
           <Text

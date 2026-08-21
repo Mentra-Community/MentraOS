@@ -1185,7 +1185,10 @@ class MentraBluetoothSdk private constructor(
         return startOtaUpdate(otaVersionUrl)
     }
 
-    private suspend fun startOtaCommand(otaVersionUrl: String): OtaStartAckEvent {
+    private suspend fun startOtaCommand(
+        otaVersionUrl: String,
+        otaTransport: String? = null,
+    ): OtaStartAckEvent {
         val pending = PendingResponse<OtaStartAckEvent>("OTA start command")
         synchronized(oneShotLock) {
             if (pendingOtaStart != null) {
@@ -1197,7 +1200,7 @@ class MentraBluetoothSdk private constructor(
             pendingOtaStart = pending
         }
         try {
-            deviceManager.sendOtaStart(otaVersionUrl)
+            deviceManager.sendOtaStart(otaVersionUrl, otaTransport)
             return pending.await()
         } finally {
             synchronized(oneShotLock) {
@@ -1210,6 +1213,11 @@ class MentraBluetoothSdk private constructor(
 
     internal suspend fun startOtaUpdate(otaVersionUrl: String): OtaStartAckEvent =
         startOtaCommand(otaVersionUrl)
+
+    internal suspend fun startOtaUpdate(
+        otaVersionUrl: String,
+        otaTransport: String?,
+    ): OtaStartAckEvent = startOtaCommand(otaVersionUrl, otaTransport)
 
     internal suspend fun sendOtaQueryStatus(): OtaQueryResult = queryOtaStatus()
 
@@ -1244,6 +1252,12 @@ class MentraBluetoothSdk private constructor(
                 systemTimeMs = versionInfo.systemTimeMs ?: status.systemTimeMs,
                 otaVersionUrl = versionInfo.otaVersionUrl.ifBlank { status.otaVersionUrl },
                 appVersion = versionInfo.appVersion.ifBlank { status.appVersion },
+                hotspotOtaVersion =
+                    if (versionInfo.hotspotOtaVersion > 0) {
+                        versionInfo.hotspotOtaVersion
+                    } else {
+                        status.hotspotOtaVersion
+                    },
             )
         } catch (cancellation: CancellationException) {
             // Never swallow cancellation into the stale-status fallback: callers
@@ -2164,7 +2178,5 @@ class MentraBluetoothSdk private constructor(
         }
     }
 }
-
-
 
 

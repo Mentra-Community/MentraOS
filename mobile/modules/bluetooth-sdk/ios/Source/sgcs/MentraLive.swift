@@ -2778,6 +2778,13 @@ class MentraLive: NSObject, SGCManager {
                 if let systemTimeMs = fields["system_time_ms"] as? NSNumber {
                     DeviceStore.shared.apply("glasses", "systemTimeMs", systemTimeMs.int64Value)
                 }
+                if let hotspotOtaVersion = fields["hotspot_ota_version"] as? NSNumber {
+                    DeviceStore.shared.apply(
+                        "glasses",
+                        "hotspotOtaVersion",
+                        hotspotOtaVersion.intValue
+                    )
+                }
                 if let bluetoothMacAddress = nonEmptyStringValue(fields, "bt_mac_address") {
                     DeviceStore.shared.apply("glasses", "bluetoothMacAddress", bluetoothMacAddress)
                 }
@@ -3337,7 +3344,7 @@ class MentraLive: NSObject, SGCManager {
     /// Send OTA start command to glasses.
     /// Called when user approves an update (onboarding or background mode).
     /// Triggers glasses to begin download and installation.
-    func sendOtaStart(otaVersionUrl: String?) {
+    func sendOtaStart(otaVersionUrl: String?, otaTransport: String?) {
         Bridge.log("LIVE: 📱 Sending ota_start command to glasses")
 
         var json: [String: Any] = [
@@ -3348,6 +3355,11 @@ class MentraLive: NSObject, SGCManager {
            !otaVersionUrl.isEmpty
         {
             json["ota_version_url"] = otaVersionUrl
+        }
+        if let otaTransport = otaTransport?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !otaTransport.isEmpty
+        {
+            json["ota_transport"] = otaTransport
         }
 
         sendJson(json, wakeUp: true)

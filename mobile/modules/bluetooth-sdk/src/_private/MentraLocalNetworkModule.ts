@@ -26,7 +26,7 @@ type LocalNetworkEvents = {
 }
 
 declare class MentraLocalNetworkNativeModule extends NativeModule<LocalNetworkEvents> {
-  connect(ssid: string, password: string): Promise<{connected: boolean; ssid: string}>
+  connect(ssid: string, password: string): Promise<{connected: boolean; ssid: string; localAddress?: string}>
   request(
     requestId: string,
     url: string,
@@ -44,6 +44,8 @@ declare class MentraLocalNetworkNativeModule extends NativeModule<LocalNetworkEv
     readTimeoutMs: number,
   ): Promise<LocalNetworkDownloadResult>
   cancel(requestId: string): Promise<void>
+  startHealthKeepalive(url: string, intervalMs: number): Promise<void>
+  stopHealthKeepalive(): Promise<void>
   disconnect(): Promise<void>
 }
 

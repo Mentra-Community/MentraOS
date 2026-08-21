@@ -28,6 +28,16 @@ public class AsgConstants {
     /** SmartXY setting containing the Mentra Live hotspot password. */
     public static final String K900_VENDOR_HOTSPOT_PASSWORD_SETTING = "xy_pwd";
 
+    /** Protocol version for phone-served OTA artifacts over the Mentra Live hotspot. */
+    public static final int HOTSPOT_OTA_VERSION = 1;
+
+    /**
+     * Maximum lifetime of the one-process hotspot preservation lease around an ASG APK install.
+     * This only bridges the SystemUI-owned AP across the package replacement; normal hotspot
+     * inactivity and explicit shutdown behavior remain unchanged.
+     */
+    public static final long HOTSPOT_OTA_RESTART_LEASE_TIMEOUT_MS = 180_000L;
+
     /** Canonical camera crop defaults shared with the phone and Bluetooth SDK. */
     public static final int CAMERA_FOV_DEFAULT = 118;
 

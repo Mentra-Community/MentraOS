@@ -15,6 +15,7 @@ import com.mentra.asg_client.io.network.core.BaseNetworkManager;
 import com.mentra.asg_client.io.network.utils.WifiSecurityChooser;
 import com.mentra.asg_client.io.network.interfaces.IWifiScanCallback;
 import com.mentra.asg_client.io.network.utils.DebugNotificationManager;
+import com.mentra.asg_client.io.ota.session.OtaSessionManager;
 import com.mentra.asg_client.service.system.core.SystemControllerFactory;
 import java.util.ArrayList;
 import java.net.Inet4Address;
@@ -91,6 +92,8 @@ public class K900NetworkManager extends BaseNetworkManager {
         registerWifiStateReceiver();
         Log.d(TAG, "🌐 ✅ WiFi state receiver registered");
 
+        adoptExistingVendorHotspot();
+
         // Check if we're already connected to WiFi
         boolean wifiConnected = isConnectedToWifi();
         Log.d(TAG, "🌐 📡 Current WiFi connection status: " + wifiConnected);
@@ -106,6 +109,41 @@ public class K900NetworkManager extends BaseNetworkManager {
         }
 
         Log.d(TAG, "🌐 ✅ K900 Network Manager initialization complete");
+    }
+
+    /**
+     * SystemUI owns the K900 access point, so it can outlive an ASG APK replacement. Rebuild the
+     * ASG-side state from the real interface and credentials without sending another ap_start.
+     */
+    private void adoptExistingVendorHotspot() {
+        OtaSessionManager otaSession = new OtaSessionManager(context);
+        String gatewayIp = findLocalHotspotGatewayIp();
+        String ssid = readVendorHotspotSetting(AsgConstants.K900_VENDOR_HOTSPOT_SSID_SETTING);
+        String password =
+                readVendorHotspotSetting(AsgConstants.K900_VENDOR_HOTSPOT_PASSWORD_SETTING);
+        boolean hotspotPresent = !gatewayIp.isEmpty() && !ssid.isEmpty() && !password.isEmpty();
+
+        if (hotspotPresent) {
+            boolean restartLeaseAdopted = otaSession.adoptHotspotRestartLease();
+            onHotspotStarted(ssid, password, gatewayIp);
+            notificationManager.showHotspotStateNotification(true);
+            Log.i(
+                    TAG,
+                    "🔥 Adopted existing K900 vendor hotspot"
+                            + (restartLeaseAdopted ? " for OTA APK restart" : " without OTA lease")
+                            + ": "
+                            + ssid
+                            + " gateway="
+                            + gatewayIp);
+            return;
+        }
+
+        if (otaSession.hasArmedHotspotRestartLease()) {
+            Log.e(TAG, "🔥 Hotspot restart lease is armed but the K900 AP is absent");
+            otaSession.clearHotspotRestartLease();
+            otaSession.clearRestartGuard();
+            otaSession.setFailed("hotspot_lost_during_apk_restart");
+        }
     }
 
     @Override
@@ -701,7 +739,15 @@ public class K900NetworkManager extends BaseNetworkManager {
     @Override
     public void shutdown() {
         Log.d(TAG, "Shutting down K900NetworkManager");
-        stopHotspot();
+        OtaSessionManager otaSession = new OtaSessionManager(context);
+        if (otaSession.shouldPreserveHotspotOnShutdown()) {
+            // The vendor SystemUI process owns the AP. Leave it untouched exactly once so the
+            // replacement ASG process can adopt the same endpoint and continue the same session.
+            Log.i(TAG, "🔥 Preserving K900 hotspot for armed OTA APK restart lease");
+            onHotspotStopped();
+        } else {
+            stopHotspot();
+        }
         unregisterWifiStateReceiver();
         super.shutdown();
     }

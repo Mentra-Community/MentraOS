@@ -1,5 +1,5 @@
 import * as RNFS from "@dr.pogodin/react-native-fs"
-import {MentraLocalNetwork, type LocalNetworkDownloadProgress} from "@mentra/bluetooth-sdk/internal"
+import {MentraLocalNetwork, MentraOtaServer, type LocalNetworkDownloadProgress} from "@mentra/bluetooth-sdk/internal"
 import {Buffer} from "buffer"
 import {Platform} from "react-native"
 import WifiManager from "react-native-wifi-reborn"
@@ -46,15 +46,16 @@ export const localNetworkTransport = {
   supportsScopedConnection: (): boolean => supportsScopedConnection(),
   isScopedConnectionActive: (): boolean => scopedConnectionActive,
 
-  async connect(ssid: string, password: string): Promise<void> {
+  async connect(ssid: string, password: string): Promise<string | undefined> {
     scopedConnectionActive = false
     nativeJobs.clear()
     if (!supportsScopedConnection()) {
       await WifiManager.connectToProtectedSSID(ssid, password, false, false)
-      return
+      return undefined
     }
-    await MentraLocalNetwork!.connect(ssid, password)
+    const result = await MentraLocalNetwork!.connect(ssid, password)
     scopedConnectionActive = true
+    return result.localAddress
   },
 
   async disconnect(): Promise<void> {
@@ -63,6 +64,21 @@ export const localNetworkTransport = {
     }
     scopedConnectionActive = false
     nativeJobs.clear()
+  },
+
+  async startHealthKeepalive(url: string, intervalMs: number): Promise<void> {
+    if (scopedConnectionActive && MentraLocalNetwork) {
+      await MentraLocalNetwork.startHealthKeepalive(url, intervalMs)
+      return
+    }
+    await MentraOtaServer.startHealthKeepalive(url, intervalMs)
+  },
+
+  async stopHealthKeepalive(): Promise<void> {
+    if (MentraLocalNetwork) {
+      await MentraLocalNetwork.stopHealthKeepalive().catch(() => {})
+    }
+    await MentraOtaServer.stopHealthKeepalive().catch(() => {})
   },
 
   async fetch(url: string | URL | Request, init?: RequestInit, timeoutMs = 30_000): Promise<Response> {

@@ -4124,6 +4124,12 @@ class MentraLive : SGCManager() {
                             DeviceStore.apply("glasses", "systemTimeMs", v.toLong())
                         }
                     }
+                    if (fields.containsKey("hotspot_ota_version")) {
+                        val version = fields["hotspot_ota_version"]
+                        if (version is Number) {
+                            DeviceStore.apply("glasses", "hotspotOtaVersion", version.toInt())
+                        }
+                    }
 
                     // Negotiate wire caps from ANY version_info chunk, not only the one
                     // carrying build_number: the glasses put wire_caps in version_info_3
@@ -5022,12 +5028,15 @@ class MentraLive : SGCManager() {
      * (it must be an http(s) URL). A null url omits the field, leaving the glasses to fall back to
      * their default version manifest.
      */
-    fun sendOtaStart(otaVersionUrl: String? = null) {
+    fun sendOtaStart(otaVersionUrl: String? = null, otaTransport: String? = null) {
         try {
             val json = JSONObject()
             json.put("type", "ota_start")
             if (otaVersionUrl != null) {
                 json.put("ota_version_url", otaVersionUrl)
+            }
+            if (!otaTransport.isNullOrBlank()) {
+                json.put("ota_transport", otaTransport)
             }
             json.put("timestamp", System.currentTimeMillis())
             sendJson(json, true)

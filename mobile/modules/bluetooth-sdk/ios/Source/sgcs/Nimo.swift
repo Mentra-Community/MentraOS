@@ -1070,7 +1070,7 @@ class Nimo: NSObject, SGCManager {
     func sendWifiCredentials(_: String, _: String) {}
     func forgetWifiNetwork(_: String) {}
     func sendHotspotState(_: Bool) {}
-    func sendOtaStart(otaVersionUrl: String?) {}
+    func sendOtaStart(otaVersionUrl: String?, otaTransport: String?) {}
     func sendOtaQueryStatus() {}
 
     // MARK: - SGCManager: User Context / Gallery / Version

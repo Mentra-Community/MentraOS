@@ -159,7 +159,10 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   setOtaVersionUrl(otaVersionUrl: string): void
   getOtaVersionUrl(): string
   checkForOtaUpdate(): Promise<boolean>
-  startOtaUpdate(otaVersionUrl?: string | null): Promise<OtaStartAckEvent>
+  startOtaUpdate(
+    otaVersionUrl?: string | null,
+    otaTransport?: "wifi" | "hotspot" | null,
+  ): Promise<OtaStartAckEvent>
   sendOtaQueryStatus(): Promise<OtaQueryResult>
   startAr99OtaFromFile(path: string): Promise<boolean>
   cancelAr99Ota(): Promise<void>
@@ -295,7 +298,7 @@ const CAMERA_ROI_POSITION_VALUES: Record<CameraRoiPosition, CameraFovSetting["ro
 }
 
 // Named presets are a convenience layer over the numeric {fov, roiPosition} API.
-// The default is the full sensor; "standard" preserves the historical 102° crop.
+// The default is the full sensor; "standard" preserves the historical 102Â° crop.
 const CAMERA_FOV_PRESETS: Record<CameraFovPreset, CameraFovSetting> = {
   narrow: {fov: 82, roiPosition: 0},
   standard: {fov: 102, roiPosition: 0},
@@ -651,7 +654,6 @@ NativeBluetoothSdkModule.warmUpCamera = function (params: WarmUpCameraParams) {
 
 export default NativeBluetoothSdkModule
 export const BluetoothSdk = NativeBluetoothSdkModule as BluetoothSdkInternalModule
-
 
 
 

@@ -312,7 +312,7 @@ class G1: NSObject, SGCManager {
 
     func queryGalleryStatus() {}
 
-    func sendOtaStart(otaVersionUrl: String?) {}
+    func sendOtaStart(otaVersionUrl: String?, otaTransport: String?) {}
     func sendOtaQueryStatus() {}
 
     func ping() {}

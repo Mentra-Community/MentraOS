@@ -27,6 +27,7 @@ import com.mentra.recovery.health.InstallPauseNotifier;
 import com.mentra.recovery.reset.RecoveryStateStore;
 import com.mentra.recovery.reset.ReinstallStrategy;
 import com.mentra.recovery.reset.RestartStrategy;
+import com.mentra.recovery.service.HotspotOtaFailsafe;
 import com.mentra.recovery.telemetry.RecoveryTelemetry;
 import com.mentra.recovery.util.RecoveryConstants;
 
@@ -104,6 +105,10 @@ public class RecoveryWorker extends Worker {
       return Result.success();
     }
 
+    // We have now exhausted restart plus late-PONG checks. Only at this proven recovery
+    // boundary may the independent worker tear down an AP explicitly marked as belonging to
+    // the ASG replacement. It never starts or otherwise owns the hotspot.
+    new HotspotOtaFailsafe(context).stopOrphanedVendorApIfOwned();
     store.setState(RecoveryConstants.STATE_REINSTALLING_BACKUP, "RESTART_FAILED");
     telemetry.emit(
         "mentra_recovery_reinstall_attempted",

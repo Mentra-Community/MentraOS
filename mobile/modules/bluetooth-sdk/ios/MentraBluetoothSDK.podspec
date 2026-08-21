@@ -63,7 +63,11 @@ Pod::Spec.new do |s|
   native_source_files.concat([
     "BluetoothSdkModule.swift",
     "LocalPhotoUploadServer.swift",
-    "MentraPhotoReceiverModule.swift"
+    "MentraPhotoReceiverModule.swift",
+    "LocalIPv4.swift",
+    "LocalOtaServer.swift",
+    "BackgroundOtaArtifactDownloader.swift",
+    "MentraOtaServerModule.swift"
   ]) if include_expo_adapter
   s.source_files = native_source_files
 

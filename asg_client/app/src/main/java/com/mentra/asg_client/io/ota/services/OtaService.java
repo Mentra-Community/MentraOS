@@ -459,10 +459,21 @@ public class OtaService extends Service {
 
     private void resumeFromSession(OtaSessionManager sessionManager) {
         try {
+            int nextStep = sessionManager.getCurrentStepIndex() + 1;
+            boolean requiresHotspotRestartAdoption =
+                    requiresHotspotRestartAdoption(
+                            sessionManager.getTransport(), nextStep, sessionManager.getTotalSteps());
+            if (requiresHotspotRestartAdoption
+                    && !sessionManager.hasAdoptedHotspotRestartLease()) {
+                Log.e(TAG, "Hotspot OTA session cannot resume because its AP was not adopted");
+                sessionManager.clearRestartGuard();
+                sessionManager.clearHotspotRestartLease();
+                sessionManager.setFailed("hotspot_lost_during_apk_restart");
+                return;
+            }
             // Clear any recovery heartbeat pause that was set before the APK install.
             OtaHelper.notifyRecoveryInstallCompleted(this);
             sessionManager.clearRestartGuard();
-            int nextStep = sessionManager.getCurrentStepIndex() + 1;
 
             if (nextStep >= sessionManager.getTotalSteps()) {
                 Log.i(TAG, "📱 All OTA session steps complete after APK restart");
@@ -477,6 +488,7 @@ public class OtaService extends Service {
                 if (otaHelper != null) {
                     otaHelper.sendCompletionToPhone(sessionManager);
                 }
+                sessionManager.clearHotspotRestartLease();
                 return;
             }
 
@@ -484,6 +496,7 @@ public class OtaService extends Service {
             // so buildApkDoneJson() captures the correct pre-advance session fields.
             sessionManager.setPendingApkStatus("step_complete");
             sessionManager.advanceStep(nextStep, "download");
+            sessionManager.clearHotspotRestartLease();
             String stepType = sessionManager.getStepType(nextStep);
             Log.i(
                     TAG,
@@ -517,5 +530,10 @@ public class OtaService extends Service {
             Log.e(TAG, "Error resuming OTA from session", e);
             sessionManager.setFailed("Resume error: " + e.getMessage());
         }
+    }
+
+    static boolean requiresHotspotRestartAdoption(
+            String transport, int nextStep, int totalSteps) {
+        return "hotspot".equals(transport) && nextStep < totalSteps;
     }
 }

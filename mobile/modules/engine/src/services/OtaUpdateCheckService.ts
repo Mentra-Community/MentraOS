@@ -29,11 +29,13 @@ export interface MtkPatch {
   start_firmware: string
   end_firmware: string
   url: string
+  sha256?: string
 }
 
 export interface BesFirmware {
   version: string
   url: string
+  sha256?: string
 }
 
 export interface VersionJson {

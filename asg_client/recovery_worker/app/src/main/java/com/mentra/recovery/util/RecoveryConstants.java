@@ -23,6 +23,7 @@ public final class RecoveryConstants {
   public static final String ACTION_PONG = "com.mentra.recovery.ACTION_PONG";
   public static final String ACTION_INSTALL_IN_PROGRESS = "com.mentra.recovery.ACTION_INSTALL_IN_PROGRESS";
   public static final String ACTION_INSTALL_COMPLETED = "com.mentra.recovery.ACTION_INSTALL_COMPLETED";
+  public static final String EXTRA_HOTSPOT_OTA_RESTART = "hotspot_ota_restart";
   public static final String ACTION_TELEMETRY = "com.mentra.recovery.ACTION_TELEMETRY";
 
   public static final String STATE_PREFS = "mentra_recovery_state";

@@ -5,6 +5,8 @@ import android.content.SharedPreferences;
 import android.os.SystemClock;
 import android.util.Log;
 
+import com.mentra.asg_client.AsgConstants;
+
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -42,6 +44,16 @@ public class OtaSessionManager {
     private String mVersionJsonUrl;
     private long mLastActivityAtElapsed;
     private long mRestartingSinceElapsed;
+    private String mTransport = "wifi";
+    private String mHotspotRestartLeaseState;
+    private String mHotspotRestartLeaseSessionId;
+    private long mHotspotRestartLeaseArmedAtElapsed = -1;
+    private int mHotspotRestartLeaseExpectedStepIndex = -1;
+    private String mHotspotRestartLeaseExpectedStepType;
+    private String mHotspotRestartAdoptionSessionId;
+    private long mHotspotRestartAdoptedAtElapsed = -1;
+    private int mHotspotRestartAdoptionStepIndex = -1;
+    private String mHotspotRestartAdoptionStepType;
 
     private int mLastPersistedPercent;
 
@@ -51,6 +63,11 @@ public class OtaSessionManager {
     }
 
     public synchronized boolean createSession(String[] stepSequence, String versionJsonUrl) {
+        return createSession(stepSequence, versionJsonUrl, "wifi");
+    }
+
+    public synchronized boolean createSession(
+            String[] stepSequence, String versionJsonUrl, String transport) {
         // Defensive: a session with no steps is meaningless (and would later divide-by-zero
         // in computeOverallPercent / computeStepWeights). Refuse to create one and let the
         // caller decide how to recover (typically by skipping OTA entirely).
@@ -85,6 +102,8 @@ public class OtaSessionManager {
         mStatus = "in_progress";
         mErrorMessage = null;
         mVersionJsonUrl = versionJsonUrl;
+        mTransport = "hotspot".equals(transport) ? "hotspot" : "wifi";
+        clearHotspotRestartStateFields();
         mLastActivityAtElapsed = SystemClock.elapsedRealtime();
         mRestartingSinceElapsed = -1;
         mLastPersistedPercent = 0;
@@ -215,6 +234,7 @@ public class OtaSessionManager {
     public synchronized void setFailed(String errorMessage) {
         mStatus = "failed";
         mErrorMessage = errorMessage;
+        clearHotspotRestartStateFields();
         mLastActivityAtElapsed = SystemClock.elapsedRealtime();
         persist();
         Log.e(TAG, "Session failed: " + errorMessage);
@@ -223,15 +243,147 @@ public class OtaSessionManager {
     public synchronized void setComplete() {
         mStatus = "complete";
         mStepPercent = 100;
+        clearHotspotRestartStateFields();
         mLastActivityAtElapsed = SystemClock.elapsedRealtime();
         persist();
         Log.i(TAG, "Session complete: " + mSessionId);
     }
 
-    public synchronized void setRestarting() {
+    public synchronized boolean setRestarting() {
         mRestartingSinceElapsed = SystemClock.elapsedRealtime();
-        persist();
+        if (!persistImmediately()) {
+            mRestartingSinceElapsed = -1;
+            Log.e(TAG, "Could not durably mark session as restarting");
+            return false;
+        }
         Log.i(TAG, "Session marked as restarting");
+        return true;
+    }
+
+    /** Arm the narrow lease that permits only this APK replacement to preserve the vendor AP. */
+    public synchronized boolean armHotspotRestartLease() {
+        if (!"hotspot".equals(mTransport)
+                || mSessionId == null
+                || !hasActiveSession()
+                || mCurrentStepIndex + 1 >= mTotalSteps
+                || !"apk".equals(getStepType(mCurrentStepIndex))) {
+            return false;
+        }
+        mHotspotRestartLeaseState = "armed";
+        mHotspotRestartLeaseSessionId = mSessionId;
+        mHotspotRestartLeaseArmedAtElapsed = SystemClock.elapsedRealtime();
+        mHotspotRestartLeaseExpectedStepIndex = mCurrentStepIndex;
+        mHotspotRestartLeaseExpectedStepType = getStepType(mCurrentStepIndex);
+        if (!persistImmediately()) {
+            clearHotspotRestartLeaseFields();
+            Log.e(TAG, "Could not durably arm hotspot restart lease");
+            return false;
+        }
+        Log.i(TAG, "Armed hotspot restart lease for session " + mSessionId);
+        return true;
+    }
+
+    /** True only in the outgoing process, before the replacement process adopts the AP. */
+    public synchronized boolean shouldPreserveHotspotOnShutdown() {
+        return "armed".equals(mHotspotRestartLeaseState) && isHotspotRestartLeaseFresh();
+    }
+
+    /**
+     * Consume an armed lease after proving the vendor AP is still present.
+     *
+     * <p>The preservation lease is cleared in the same durable write. A separate, short-lived
+     * receipt lets {@code OtaService} prove that this exact session and APK step were adopted
+     * before it advances the session; it never authorizes hotspot preservation.
+     */
+    public synchronized boolean adoptHotspotRestartLease() {
+        if (!shouldPreserveHotspotOnShutdown()) {
+            clearExpiredHotspotRestartLease();
+            return false;
+        }
+        String leaseState = mHotspotRestartLeaseState;
+        String leaseSessionId = mHotspotRestartLeaseSessionId;
+        long leaseArmedAtElapsed = mHotspotRestartLeaseArmedAtElapsed;
+        int leaseStepIndex = mHotspotRestartLeaseExpectedStepIndex;
+        String leaseStepType = mHotspotRestartLeaseExpectedStepType;
+
+        mHotspotRestartAdoptionSessionId = leaseSessionId;
+        mHotspotRestartAdoptedAtElapsed = SystemClock.elapsedRealtime();
+        mHotspotRestartAdoptionStepIndex = leaseStepIndex;
+        mHotspotRestartAdoptionStepType = leaseStepType;
+        clearHotspotRestartLeaseFields();
+        if (!persistImmediately()) {
+            mHotspotRestartLeaseState = leaseState;
+            mHotspotRestartLeaseSessionId = leaseSessionId;
+            mHotspotRestartLeaseArmedAtElapsed = leaseArmedAtElapsed;
+            mHotspotRestartLeaseExpectedStepIndex = leaseStepIndex;
+            mHotspotRestartLeaseExpectedStepType = leaseStepType;
+            clearHotspotRestartAdoptionFields();
+            Log.e(TAG, "Could not durably claim hotspot restart lease");
+            return false;
+        }
+        Log.i(TAG, "Consumed hotspot restart lease for session " + mSessionId);
+        return true;
+    }
+
+    public synchronized boolean hasArmedHotspotRestartLease() {
+        return "armed".equals(mHotspotRestartLeaseState) && isHotspotRestartLeaseFresh();
+    }
+
+    public synchronized boolean hasAdoptedHotspotRestartLease() {
+        long now = SystemClock.elapsedRealtime();
+        return mSessionId != null
+                && mSessionId.equals(mHotspotRestartAdoptionSessionId)
+                && mCurrentStepIndex == mHotspotRestartAdoptionStepIndex
+                && getStepType(mCurrentStepIndex).equals(mHotspotRestartAdoptionStepType)
+                && mRestartingSinceElapsed >= 0
+                && mHotspotRestartAdoptedAtElapsed >= 0
+                && now >= mHotspotRestartAdoptedAtElapsed
+                && now - mHotspotRestartAdoptedAtElapsed
+                        <= AsgConstants.HOTSPOT_OTA_RESTART_LEASE_TIMEOUT_MS;
+    }
+
+    public synchronized void clearHotspotRestartLease() {
+        clearHotspotRestartStateFields();
+        persist();
+    }
+
+    private boolean isHotspotRestartLeaseFresh() {
+        long now = SystemClock.elapsedRealtime();
+        return mSessionId != null
+                && mSessionId.equals(mHotspotRestartLeaseSessionId)
+                && mCurrentStepIndex == mHotspotRestartLeaseExpectedStepIndex
+                && getStepType(mCurrentStepIndex).equals(mHotspotRestartLeaseExpectedStepType)
+                && mHotspotRestartLeaseArmedAtElapsed >= 0
+                && now >= mHotspotRestartLeaseArmedAtElapsed
+                && now - mHotspotRestartLeaseArmedAtElapsed
+                        <= AsgConstants.HOTSPOT_OTA_RESTART_LEASE_TIMEOUT_MS;
+    }
+
+    private void clearExpiredHotspotRestartLease() {
+        if (mHotspotRestartLeaseState != null && !isHotspotRestartLeaseFresh()) {
+            clearHotspotRestartLeaseFields();
+            persist();
+        }
+    }
+
+    private void clearHotspotRestartLeaseFields() {
+        mHotspotRestartLeaseState = null;
+        mHotspotRestartLeaseSessionId = null;
+        mHotspotRestartLeaseArmedAtElapsed = -1;
+        mHotspotRestartLeaseExpectedStepIndex = -1;
+        mHotspotRestartLeaseExpectedStepType = null;
+    }
+
+    private void clearHotspotRestartAdoptionFields() {
+        mHotspotRestartAdoptionSessionId = null;
+        mHotspotRestartAdoptedAtElapsed = -1;
+        mHotspotRestartAdoptionStepIndex = -1;
+        mHotspotRestartAdoptionStepType = null;
+    }
+
+    private void clearHotspotRestartStateFields() {
+        clearHotspotRestartLeaseFields();
+        clearHotspotRestartAdoptionFields();
     }
 
     public synchronized boolean isInRestartGuard() {
@@ -254,6 +406,7 @@ public class OtaSessionManager {
 
     public synchronized void clearRestartGuard() {
         mRestartingSinceElapsed = -1;
+        clearHotspotRestartStateFields();
         persist();
     }
 
@@ -325,6 +478,8 @@ public class OtaSessionManager {
         mVersionJsonUrl = null;
         mLastActivityAtElapsed = 0;
         mRestartingSinceElapsed = -1;
+        mTransport = "wifi";
+        clearHotspotRestartStateFields();
         mLastPersistedPercent = 0;
         mPrefs.edit().remove(KEY_SESSION_DATA).apply();
     }
@@ -354,6 +509,10 @@ public class OtaSessionManager {
 
     public synchronized String getVersionJsonUrl() {
         return mVersionJsonUrl;
+    }
+
+    public synchronized String getTransport() {
+        return mTransport;
     }
 
     /**
@@ -494,6 +653,15 @@ public class OtaSessionManager {
     }
 
     private void persist() {
+        persist(false);
+    }
+
+    /** Package replacement can kill this process immediately, so critical restart writes use commit. */
+    private boolean persistImmediately() {
+        return persist(true);
+    }
+
+    private boolean persist(boolean immediately) {
         try {
             JSONObject json = new JSONObject();
             json.put("session_id", mSessionId != null ? mSessionId : JSONObject.NULL);
@@ -507,9 +675,54 @@ public class OtaSessionManager {
             json.put("version_json_url", mVersionJsonUrl != null ? mVersionJsonUrl : JSONObject.NULL);
             json.put("last_activity_at_elapsed", mLastActivityAtElapsed);
             json.put("restarting_since_elapsed", mRestartingSinceElapsed);
-            mPrefs.edit().putString(KEY_SESSION_DATA, json.toString()).apply();
+            json.put("transport", mTransport);
+            json.put(
+                    "hotspot_restart_lease_state",
+                    mHotspotRestartLeaseState != null
+                            ? mHotspotRestartLeaseState
+                            : JSONObject.NULL);
+            json.put(
+                    "hotspot_restart_lease_session_id",
+                    mHotspotRestartLeaseSessionId != null
+                            ? mHotspotRestartLeaseSessionId
+                            : JSONObject.NULL);
+            json.put(
+                    "hotspot_restart_lease_armed_at_elapsed",
+                    mHotspotRestartLeaseArmedAtElapsed);
+            json.put(
+                    "hotspot_restart_lease_expected_step_index",
+                    mHotspotRestartLeaseExpectedStepIndex);
+            json.put(
+                    "hotspot_restart_lease_expected_step_type",
+                    mHotspotRestartLeaseExpectedStepType != null
+                            ? mHotspotRestartLeaseExpectedStepType
+                            : JSONObject.NULL);
+            json.put(
+                    "hotspot_restart_adoption_session_id",
+                    mHotspotRestartAdoptionSessionId != null
+                            ? mHotspotRestartAdoptionSessionId
+                            : JSONObject.NULL);
+            json.put(
+                    "hotspot_restart_adopted_at_elapsed",
+                    mHotspotRestartAdoptedAtElapsed);
+            json.put(
+                    "hotspot_restart_adoption_step_index",
+                    mHotspotRestartAdoptionStepIndex);
+            json.put(
+                    "hotspot_restart_adoption_step_type",
+                    mHotspotRestartAdoptionStepType != null
+                            ? mHotspotRestartAdoptionStepType
+                            : JSONObject.NULL);
+            SharedPreferences.Editor editor =
+                    mPrefs.edit().putString(KEY_SESSION_DATA, json.toString());
+            if (immediately) {
+                return editor.commit();
+            }
+            editor.apply();
+            return true;
         } catch (JSONException e) {
             Log.e(TAG, "Failed to persist session", e);
+            return false;
         }
     }
 
@@ -534,6 +747,35 @@ public class OtaSessionManager {
             mVersionJsonUrl = json.isNull("version_json_url") ? null : json.optString("version_json_url", null);
             mLastActivityAtElapsed = json.optLong("last_activity_at_elapsed", 0);
             mRestartingSinceElapsed = json.optLong("restarting_since_elapsed", -1);
+            mTransport = json.optString("transport", "wifi");
+            mHotspotRestartLeaseState =
+                    json.isNull("hotspot_restart_lease_state")
+                            ? null
+                            : json.optString("hotspot_restart_lease_state", null);
+            mHotspotRestartLeaseSessionId =
+                    json.isNull("hotspot_restart_lease_session_id")
+                            ? null
+                            : json.optString("hotspot_restart_lease_session_id", null);
+            mHotspotRestartLeaseArmedAtElapsed =
+                    json.optLong("hotspot_restart_lease_armed_at_elapsed", -1);
+            mHotspotRestartLeaseExpectedStepIndex =
+                    json.optInt("hotspot_restart_lease_expected_step_index", -1);
+            mHotspotRestartLeaseExpectedStepType =
+                    json.isNull("hotspot_restart_lease_expected_step_type")
+                            ? null
+                            : json.optString("hotspot_restart_lease_expected_step_type", null);
+            mHotspotRestartAdoptionSessionId =
+                    json.isNull("hotspot_restart_adoption_session_id")
+                            ? null
+                            : json.optString("hotspot_restart_adoption_session_id", null);
+            mHotspotRestartAdoptedAtElapsed =
+                    json.optLong("hotspot_restart_adopted_at_elapsed", -1);
+            mHotspotRestartAdoptionStepIndex =
+                    json.optInt("hotspot_restart_adoption_step_index", -1);
+            mHotspotRestartAdoptionStepType =
+                    json.isNull("hotspot_restart_adoption_step_type")
+                            ? null
+                            : json.optString("hotspot_restart_adoption_step_type", null);
             mLastPersistedPercent = mStepPercent;
         } catch (JSONException e) {
             Log.e(TAG, "Failed to load session", e);

@@ -206,6 +206,10 @@ struct GlassesStatus: CustomStringConvertible {
         stringValue(values, "appVersion") ?? ""
     }
 
+    var hotspotOtaVersion: Int {
+        intValue(values["hotspotOtaVersion"]) ?? 0
+    }
+
     var bluetoothName: String {
         stringValue(values, "bluetoothName") ?? ""
     }
@@ -359,6 +363,7 @@ public struct VersionInfoResult: CustomStringConvertible {
     public let systemTimeMs: Int?
     public let otaVersionUrl: String
     public let appVersion: String
+    public let hotspotOtaVersion: Int
 
     init(status: GlassesStatus) {
         androidVersion = status.androidVersion
@@ -369,6 +374,7 @@ public struct VersionInfoResult: CustomStringConvertible {
         systemTimeMs = intValue(status.values["systemTimeMs"])
         otaVersionUrl = status.otaVersionUrl
         appVersion = status.appVersion
+        hotspotOtaVersion = status.hotspotOtaVersion
     }
 
     init(values: [String: Any]) {
@@ -380,6 +386,10 @@ public struct VersionInfoResult: CustomStringConvertible {
         systemTimeMs = intValue(values["systemTimeMs"]) ?? intValue(values["system_time_ms"])
         otaVersionUrl = stringValue(values, "otaVersionUrl", "ota_version_url") ?? ""
         appVersion = stringValue(values, "appVersion", "app_version") ?? ""
+        hotspotOtaVersion =
+            intValue(values["hotspotOtaVersion"])
+                ?? intValue(values["hotspot_ota_version"])
+                ?? 0
     }
 
     public var dictionary: [String: Any] {
@@ -391,6 +401,7 @@ public struct VersionInfoResult: CustomStringConvertible {
             "buildNumber": buildNumber,
             "otaVersionUrl": otaVersionUrl,
             "appVersion": appVersion,
+            "hotspotOtaVersion": hotspotOtaVersion,
         ]
         if let systemTimeMs {
             values["systemTimeMs"] = systemTimeMs
@@ -683,6 +694,10 @@ struct GlassesStatusUpdate: CustomStringConvertible {
 
     var appVersion: String? {
         optionalStringValue(values, "appVersion")
+    }
+
+    var hotspotOtaVersion: Int? {
+        optionalIntValue(values, "hotspotOtaVersion")
     }
 
     var bluetoothName: String? {

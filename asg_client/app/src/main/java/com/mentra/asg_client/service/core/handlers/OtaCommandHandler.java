@@ -22,6 +22,7 @@ public class OtaCommandHandler implements ICommandHandler {
     private static final String TAG = "OtaCommandHandler";
     private static final String OTA_VERSION_URL_FIELD = "ota_version_url";
     private static final String INVALID_OTA_VERSION_URL = "invalid_ota_version_url";
+    private static final String OTA_TRANSPORT_FIELD = "ota_transport";
 
     // Retry configuration for ota_start when OtaHelper not yet initialized
     private static final int OTA_START_MAX_RETRIES = 4;
@@ -115,7 +116,12 @@ public class OtaCommandHandler implements ICommandHandler {
         }
 
         // Start OTA from phone request
-        otaHelper.startOtaFromPhone(otaVersionUrl);
+        String otaTransport = data.optString(OTA_TRANSPORT_FIELD, "wifi").trim().toLowerCase();
+        if (!"wifi".equals(otaTransport) && !"hotspot".equals(otaTransport)) {
+            sendOtaError("ota_start ota_transport must be wifi or hotspot.");
+            return false;
+        }
+        otaHelper.startOtaFromPhone(otaVersionUrl, otaTransport);
         Log.i(TAG, "📱 OTA started from phone command");
         return true;
     }

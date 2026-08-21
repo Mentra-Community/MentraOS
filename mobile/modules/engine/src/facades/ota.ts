@@ -26,6 +26,7 @@ function projectSnapshot() {
     buildNumber: s.buildNumber || null,
     mtkFirmwareVersion: s.mtkFirmwareVersion || null,
     besFirmwareVersion: s.besFirmwareVersion || null,
+    hotspotOtaVersion: s.hotspotOtaVersion ?? 0,
     wifiConnected: s.wifi.state === "connected",
     wifiStatusKnown: s.wifiStatusKnown,
     manifestUrl: resolveOtaManifestUrl(s.otaVersionUrl, s.buildNumber),
@@ -115,6 +116,9 @@ export const ota = {
    * the snapshot; every watchdog/retry/reconnect rule lives in the coordinator.
    */
   installSession: {
+    /** Select Wi-Fi or capability-gated hotspot transport for this checked manifest. */
+    prepare: (result: OtaCheckCurrentGlassesResult, forceHotspot = false) =>
+      otaInstallCoordinator.prepare(result, forceHotspot),
     /** Bind the machine to the mounted progress screen. Idempotent per attach/detach cycle. */
     attach: () => otaInstallCoordinator.attach(),
     /** Unbind on unmount: clears all timers/listeners and resets session state. */

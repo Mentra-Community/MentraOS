@@ -694,12 +694,12 @@ class BluetoothSdkModule : Module() {
             withContext(Dispatchers.IO) { requireSdk().checkForOtaUpdate() }
         }
 
-        SdkCoroutineFunction("startOtaUpdate") { otaVersionUrl: String? ->
+        SdkCoroutineFunction("startOtaUpdate") { otaVersionUrl: String?, otaTransport: String? ->
             val sdk = requireSdk()
             if (otaVersionUrl.isNullOrBlank()) {
                 sdk.startOtaUpdate().values
             } else {
-                sdk.startOtaUpdate(otaVersionUrl).values
+                sdk.startOtaUpdate(otaVersionUrl, otaTransport).values
             }
         }
 

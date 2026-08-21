@@ -50,6 +50,7 @@ internal data class GlassesStatus(
     val systemTimeMs: Long?,
     val otaVersionUrl: String,
     val appVersion: String,
+    val hotspotOtaVersion: Int,
     val bluetoothName: String,
     val serialNumber: String,
     val style: String,
@@ -91,6 +92,7 @@ internal data class GlassesStatus(
             "buildNumber" to buildNumber,
             "otaVersionUrl" to otaVersionUrl,
             "appVersion" to appVersion,
+            "hotspotOtaVersion" to hotspotOtaVersion,
             "bluetoothName" to bluetoothName,
             "serialNumber" to serialNumber,
             "style" to style,
@@ -141,6 +143,7 @@ internal data class GlassesStatus(
                 systemTimeMs = longValue(values, "systemTimeMs"),
                 otaVersionUrl = stringValue(values, "otaVersionUrl") ?: "",
                 appVersion = stringValue(values, "appVersion") ?: "",
+                hotspotOtaVersion = numberValue(values, "hotspotOtaVersion") ?: 0,
                 bluetoothName = stringValue(values, "bluetoothName") ?: "",
                 serialNumber = stringValue(values, "serialNumber") ?: "",
                 style = stringValue(values, "style") ?: "",
@@ -173,6 +176,7 @@ data class VersionInfoResult(
     val systemTimeMs: Long?,
     val otaVersionUrl: String,
     val appVersion: String,
+    val hotspotOtaVersion: Int,
 ) {
     internal fun toMap(): Map<String, Any> =
         buildMap {
@@ -184,6 +188,7 @@ data class VersionInfoResult(
             systemTimeMs?.let { put("systemTimeMs", it) }
             put("otaVersionUrl", otaVersionUrl)
             put("appVersion", appVersion)
+            put("hotspotOtaVersion", hotspotOtaVersion)
         }
 
     companion object {
@@ -197,6 +202,7 @@ data class VersionInfoResult(
                 systemTimeMs = status.systemTimeMs,
                 otaVersionUrl = status.otaVersionUrl,
                 appVersion = status.appVersion,
+                hotspotOtaVersion = status.hotspotOtaVersion,
             )
 
         internal fun fromMap(values: Map<String, Any>): VersionInfoResult =
@@ -209,6 +215,8 @@ data class VersionInfoResult(
                 systemTimeMs = longValue(values, "systemTimeMs", "system_time_ms"),
                 otaVersionUrl = stringValue(values, "otaVersionUrl", "ota_version_url") ?: "",
                 appVersion = stringValue(values, "appVersion", "app_version") ?: "",
+                hotspotOtaVersion =
+                    numberValue(values, "hotspotOtaVersion", "hotspot_ota_version") ?: 0,
             )
     }
 }
@@ -379,6 +387,7 @@ internal data class GlassesStatusUpdate(
     val buildNumber: String? = null,
     val otaVersionUrl: String? = null,
     val appVersion: String? = null,
+    val hotspotOtaVersion: Int? = null,
     val bluetoothName: String? = null,
     val serialNumber: String? = null,
     val style: String? = null,
@@ -428,6 +437,7 @@ internal data class GlassesStatusUpdate(
             putIfNotNull("buildNumber", buildNumber)
             putIfNotNull("otaVersionUrl", otaVersionUrl)
             putIfNotNull("appVersion", appVersion)
+            putIfNotNull("hotspotOtaVersion", hotspotOtaVersion)
             putIfNotNull("bluetoothName", bluetoothName)
             putIfNotNull("serialNumber", serialNumber)
             putIfNotNull("style", style)
@@ -476,6 +486,7 @@ internal data class GlassesStatusUpdate(
                 buildNumber = optionalStringValue(values, "buildNumber"),
                 otaVersionUrl = optionalStringValue(values, "otaVersionUrl"),
                 appVersion = optionalStringValue(values, "appVersion"),
+                hotspotOtaVersion = optionalNumberValue(values, "hotspotOtaVersion"),
                 bluetoothName = optionalStringValue(values, "bluetoothName"),
                 serialNumber = optionalStringValue(values, "serialNumber"),
                 style = optionalStringValue(values, "style"),

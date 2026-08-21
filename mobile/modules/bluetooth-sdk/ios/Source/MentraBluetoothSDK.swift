@@ -1248,7 +1248,10 @@ public final class MentraBluetoothSDK {
         return try await startOtaUpdate(otaVersionUrl: otaVersionUrl)
     }
 
-    private func startOtaCommand(otaVersionUrl: String) async throws -> OtaStartAckEvent {
+    private func startOtaCommand(
+        otaVersionUrl: String,
+        otaTransport: String? = nil
+    ) async throws -> OtaStartAckEvent {
         if pendingOtaStart != nil {
             throw BluetoothSdkError(
                 code: "request_in_flight",
@@ -1257,7 +1260,10 @@ public final class MentraBluetoothSDK {
         }
         let pending = PendingResponse<OtaStartAckEvent>(operation: "OTA start command")
         pendingOtaStart = pending
-        DeviceManager.shared.sendOtaStart(otaVersionUrl: otaVersionUrl)
+        DeviceManager.shared.sendOtaStart(
+            otaVersionUrl: otaVersionUrl,
+            otaTransport: otaTransport
+        )
         do {
             let event = try await pending.wait()
             if pendingOtaStart === pending {
@@ -1274,6 +1280,16 @@ public final class MentraBluetoothSDK {
 
     func startOtaUpdate(otaVersionUrl: String) async throws -> OtaStartAckEvent {
         try await startOtaCommand(otaVersionUrl: otaVersionUrl)
+    }
+
+    func startOtaUpdate(
+        otaVersionUrl: String,
+        otaTransport: String?
+    ) async throws -> OtaStartAckEvent {
+        try await startOtaCommand(
+            otaVersionUrl: otaVersionUrl,
+            otaTransport: otaTransport
+        )
     }
 
     func sendOtaQueryStatus() async throws -> OtaQueryResult { try await queryOtaStatus() }
@@ -2178,7 +2194,6 @@ private func dispatchDiscoveredDevices(_ rawSearchResults: Any?) {
         }
     }
 }
-
 
 
 

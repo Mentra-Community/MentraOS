@@ -130,6 +130,7 @@ const initialState: GlassesStore = {
   color: "",
   mtkFirmwareVersion: "",
   besFirmwareVersion: "",
+  hotspotOtaVersion: 0,
   // wifi info
   wifi: {state: "disconnected"},
   wifiStatusKnown: false,

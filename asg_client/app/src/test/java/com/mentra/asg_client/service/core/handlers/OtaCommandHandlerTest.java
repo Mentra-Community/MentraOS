@@ -1,7 +1,7 @@
 package com.mentra.asg_client.service.core.handlers;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -40,7 +40,7 @@ public class OtaCommandHandlerTest {
         boolean handled = handler.handleCommand("ota_start", new JSONObject());
 
         assertThat(handled).isFalse();
-        verify(otaHelper, never()).startOtaFromPhone(any());
+        verify(otaHelper, never()).startOtaFromPhone(anyString(), anyString());
     }
 
     @Test
@@ -55,7 +55,7 @@ public class OtaCommandHandlerTest {
                         "ota_start", new JSONObject().put("ota_version_url", versionUrl));
 
         assertThat(handled).isTrue();
-        verify(otaHelper).startOtaFromPhone(versionUrl);
+        verify(otaHelper).startOtaFromPhone(versionUrl, "wifi");
     }
 
     @Test
@@ -70,7 +70,7 @@ public class OtaCommandHandlerTest {
                         "ota_start", new JSONObject().put("ota_version_url", versionUrl));
 
         assertThat(handled).isTrue();
-        verify(otaHelper).startOtaFromPhone(versionUrl);
+        verify(otaHelper).startOtaFromPhone(versionUrl, "wifi");
     }
 
     @Test
@@ -83,7 +83,7 @@ public class OtaCommandHandlerTest {
                 handler.handleCommand("ota_start", new JSONObject().put("ota_version_url", " "));
 
         assertThat(handled).isFalse();
-        verify(otaHelper, never()).startOtaFromPhone(any());
+        verify(otaHelper, never()).startOtaFromPhone(anyString(), anyString());
     }
 
     @Test
@@ -97,7 +97,42 @@ public class OtaCommandHandlerTest {
                         "ota_start", new JSONObject().put("ota_version_url", "file:///tmp/x"));
 
         assertThat(handled).isFalse();
-        verify(otaHelper, never()).startOtaFromPhone(any());
+        verify(otaHelper, never()).startOtaFromPhone(anyString(), anyString());
+    }
+
+    @Test
+    public void handleOtaStart_withHotspotTransport_passesExplicitTransport() throws Exception {
+        OtaHelper otaHelper = mock(OtaHelper.class);
+        OtaCommandHandler handler =
+                new OtaCommandHandler(otaHelper, mock(ICommunicationManager.class));
+        String versionUrl = "http://192.168.43.2:8791/manifest.json";
+
+        boolean handled =
+                handler.handleCommand(
+                        "ota_start",
+                        new JSONObject()
+                                .put("ota_version_url", versionUrl)
+                                .put("ota_transport", "hotspot"));
+
+        assertThat(handled).isTrue();
+        verify(otaHelper).startOtaFromPhone(versionUrl, "hotspot");
+    }
+
+    @Test
+    public void handleOtaStart_withUnknownTransport_isRejected() throws Exception {
+        OtaHelper otaHelper = mock(OtaHelper.class);
+        OtaCommandHandler handler =
+                new OtaCommandHandler(otaHelper, mock(ICommunicationManager.class));
+
+        boolean handled =
+                handler.handleCommand(
+                        "ota_start",
+                        new JSONObject()
+                                .put("ota_version_url", "https://example.com/version.json")
+                                .put("ota_transport", "cellular"));
+
+        assertThat(handled).isFalse();
+        verify(otaHelper, never()).startOtaFromPhone(anyString(), anyString());
     }
 
     @Test

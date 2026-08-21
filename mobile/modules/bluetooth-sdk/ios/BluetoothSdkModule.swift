@@ -482,10 +482,13 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             return try await sdk.checkForOtaUpdate()
         }
 
-        AsyncFunction("startOtaUpdate") { (otaVersionUrl: String?) in
+        AsyncFunction("startOtaUpdate") { (otaVersionUrl: String?, otaTransport: String?) in
             let sdk = await MainActor.run { self.bluetoothSdk() }
             if let otaVersionUrl, !otaVersionUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                return try await sdk.startOtaUpdate(otaVersionUrl: otaVersionUrl).values
+                return try await sdk.startOtaUpdate(
+                    otaVersionUrl: otaVersionUrl,
+                    otaTransport: otaTransport
+                ).values
             }
             return try await sdk.startOtaUpdate().values
         }
@@ -922,7 +925,6 @@ private extension ConnectOptions {
         )
     }
 }
-
 
 
 
