@@ -2,8 +2,24 @@ import {
   findMatchingMtkPatch,
   checkBesUpdate,
   checkVersionUpdateAvailable,
+  getPendingUpdatePromptAction,
   getLatestVersionInfo,
 } from "@/effects/OtaUpdateChecker"
+
+describe("getPendingUpdatePromptAction", () => {
+  it("prompts for WiFi when returning home with an old ASG and no glasses WiFi", () => {
+    expect(getPendingUpdatePromptAction(true, false, false)).toBe("wifi_setup")
+  })
+
+  it("waits while an update is cached away from home with no available transport", () => {
+    expect(getPendingUpdatePromptAction(false, false, false)).toBeNull()
+  })
+
+  it("prompts for install when WiFi or hotspot OTA is available", () => {
+    expect(getPendingUpdatePromptAction(true, true, false)).toBe("install")
+    expect(getPendingUpdatePromptAction(true, false, true)).toBe("install")
+  })
+})
 
 describe("findMatchingMtkPatch", () => {
   const patches = [

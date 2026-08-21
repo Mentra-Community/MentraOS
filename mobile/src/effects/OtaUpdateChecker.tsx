@@ -23,6 +23,15 @@ function areGlassesConnectedNow(): boolean {
   return engine.ota.snapshot().connected
 }
 
+export function getPendingUpdatePromptAction(
+  returnedHome: boolean,
+  wifiConnected: boolean,
+  hotspotOtaSupported: boolean,
+): "install" | "wifi_setup" | null {
+  if (!returnedHome && !wifiConnected && !hotspotOtaSupported) return null
+  return wifiConnected || hotspotOtaSupported ? "install" : "wifi_setup"
+}
+
 // How often to re-fetch the OTA manifest while glasses stay connected, so a
 // server-side manifest change surfaces the update prompt without a reconnect.
 const MANIFEST_POLL_INTERVAL_MS = 60_000
@@ -198,10 +207,6 @@ export function OtaUpdateChecker() {
     const returnedHome = wasAwayFromHomeRef.current
     wasAwayFromHomeRef.current = false
 
-    // Fire when returning to home, or when WiFi becomes connected while a
-    // pending update is already waiting on home.
-    if (!returnedHome && !glassesWifiConnected && !hotspotOtaSupported) return
-
     if (!glassesConnected) return
     if (hasPromptedOta.current) return
 
@@ -209,24 +214,48 @@ export function OtaUpdateChecker() {
     // disconnect and navigation happen in the same render cycle.
     if (!areGlassesConnectedNow()) return
     const currentOtaSnapshot = engine.ota.snapshot()
-    if (!currentOtaSnapshot.wifiConnected && currentOtaSnapshot.hotspotOtaVersion < 1) {
-      console.log(
-        "OTA: Pending update is waiting for glasses WiFi or hotspot OTA support before showing install prompt",
+    const promptAction = getPendingUpdatePromptAction(
+      returnedHome,
+      currentOtaSnapshot.wifiConnected,
+      currentOtaSnapshot.hotspotOtaVersion >= 1,
+    )
+    if (!promptAction) return
+
+    const deviceName = defaultWearable || "Glasses"
+    const updateCount = pending.updates.length
+    const isDowngrade = pending.isDowngrade
+    const updateList = pending.updates.join(", ").toUpperCase()
+    const updateMessage = isDowngrade
+      ? translate("ota:downgradeDescriptionShort") + (superMode ? ` (${updateList})` : "")
+      : superMode
+        ? `Updates available: ${updateList}`
+        : updateCount === 1
+          ? "1 update available"
+          : `${updateCount} updates available`
+
+    if (promptAction === "wifi_setup") {
+      if (hasPromptedOtaWifiSetup.current) return
+      console.log("OTA: User returned home with a pending update but no glasses WiFi - prompting WiFi setup")
+      hasPromptedOtaWifiSetup.current = true
+      showAlert(
+        translate(isDowngrade ? "ota:downgradeAvailable" : "ota:updateAvailable", {deviceName}),
+        `${updateMessage}\n\nConnect your ${deviceName} to WiFi to install.`,
+        [
+          {
+            text: translate("ota:updateLater"),
+            style: "cancel",
+            onPress: () => {
+              pendingUpdate.current = null
+              hasPromptedOtaWifiSetup.current = false
+            },
+          },
+          {text: translate("ota:setupWifi"), onPress: () => push("/wifi/scan")},
+        ],
       )
       return
     }
 
-    console.log("OTA: User returned to home with pending update - showing alert")
-    const deviceName = defaultWearable || "Glasses"
-    const updateCount = pending.updates.length
-    const isDowngrade = pending.isDowngrade
-    const updateMessage = isDowngrade
-      ? translate("ota:downgradeDescriptionShort") + (superMode ? ` (${pending.updates.join(", ").toUpperCase()})` : "")
-      : superMode
-        ? `Updates available: ${pending.updates.join(", ").toUpperCase()}`
-        : updateCount === 1
-          ? "1 update available"
-          : `${updateCount} updates available`
+    console.log("OTA: User returned to home with pending update - showing install alert")
     pendingUpdate.current = null
     hasPromptedOta.current = true
     hasPromptedOtaWifiSetup.current = false
