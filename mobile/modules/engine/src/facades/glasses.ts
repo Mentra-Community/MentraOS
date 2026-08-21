@@ -63,6 +63,7 @@ function projectInfo() {
     serialNumber: s.serialNumber,
     buildNumber: s.buildNumber,
     btMac: s.bluetoothMacAddress,
+    wifiMac: s.wifiMacAddress,
     leftMac: s.leftMacAddress,
     rightMac: s.rightMacAddress,
     // Copy: the snapshot must not hand callers a mutable reference into the store.

@@ -182,6 +182,10 @@ struct GlassesStatus: CustomStringConvertible {
         stringValue(values, "bluetoothMacAddress") ?? ""
     }
 
+    var wifiMacAddress: String {
+        stringValue(values, "wifiMacAddress") ?? ""
+    }
+
     var leftMacAddress: String {
         stringValue(values, "leftMacAddress") ?? ""
     }
@@ -659,6 +663,10 @@ struct GlassesStatusUpdate: CustomStringConvertible {
 
     var bluetoothMacAddress: String? {
         optionalStringValue(values, "bluetoothMacAddress")
+    }
+
+    var wifiMacAddress: String? {
+        optionalStringValue(values, "wifiMacAddress")
     }
 
     var leftMacAddress: String? {

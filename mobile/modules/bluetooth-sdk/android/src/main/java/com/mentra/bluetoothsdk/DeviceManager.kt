@@ -2066,6 +2066,7 @@ class DeviceManager {
         // previously connected pair can never be reported for the next connection.
         DeviceStore.apply("glasses", "serialNumber", "")
         DeviceStore.apply("glasses", "bluetoothMacAddress", "")
+        DeviceStore.apply("glasses", "wifiMacAddress", "")
         DeviceStore.apply("glasses", "leftMacAddress", "")
         DeviceStore.apply("glasses", "rightMacAddress", "")
         DeviceStore.apply("glasses", "macAddress", "")

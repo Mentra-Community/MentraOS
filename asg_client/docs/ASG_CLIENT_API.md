@@ -500,12 +500,14 @@ The glasses also emit `battery_status` outbound:
 Returns version information in chunks to fit the BLE MTU:
 
 - `version_info_1`: `app_version`, `build_number`, `device_model`, `android_version`, `system_time_ms`, `sid`
-- `version_info_3`: `bes_fw_version`, `mtk_fw_version`, `bt_mac_address`, `serial_number`
+- `version_info_3`: `bes_fw_version`, `mtk_fw_version`, `bt_mac_address`, `wifi_mac_address`, `serial_number`
 
 `serial_number` is the Android firmware product serial from `ro.serialno`; the
 generic `0123456789ABCDEF` Android/ADB placeholder is omitted.
 `bt_mac_address` comes from BES and may arrive in a follow-up `version_info_3`
 after BES responds to the MAC-address request.
+`wifi_mac_address` is the MTK Wi-Fi interface MAC and is omitted when Android
+does not expose a valid address.
 
 ---
 
