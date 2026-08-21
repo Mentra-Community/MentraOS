@@ -3138,13 +3138,8 @@ class MentraLive : SGCManager() {
 
     /** Process a JSON message */
     private fun processJsonMessage(json: JSONObject) {
-        // Demoted from INFO (Bridge.log) to DEBUG: per-type handlers below already log
-        // the messages that matter, and full payloads can leak PII (wifi SSID, bt_mac,
-        // OTA URLs) into the persisted file logger when they arrive every ~50ms during OTA.
-        // Re-enable on a debugging device via: adb shell setprop log.tag.MentraLive DEBUG
-        if (Log.isLoggable(TAG, Log.DEBUG)) {
-            Log.d(TAG, "LIVE: Got some JSON from glasses: " + json.toString())
-        }
+        // BleTraceLogger keeps the useful framing metadata while redacting secrets,
+        // compact chunk contents, and relayed notification content.
         BleTraceLogger.logJson("glasses_to_phone", "sdk_ble_event", json, null)
 
         if (MessageChunker.isChunkedMessage(json)) {

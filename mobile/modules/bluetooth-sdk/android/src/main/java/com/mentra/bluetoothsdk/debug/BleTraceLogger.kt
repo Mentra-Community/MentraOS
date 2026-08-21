@@ -11,8 +11,16 @@ object BleTraceLogger {
     private const val TAG = "MentraBleTrace"
     private const val MAX_PAYLOAD_CHARS = 3000
     private const val K900_TYPE = "k900"
+    private const val ANCS_COMMAND = "sr_ancs"
+    private const val CHUNK_TYPE = "ck"
+    private const val NOTIFICATION_EVENT = "phone_notification"
+    private const val NOTIFICATION_DISMISSED_EVENT = "phone_notification_dismissed"
+    private const val REDACTED = "<redacted>"
+    private const val REDACTED_CHUNK = "<redacted chunk data>"
     private val sensitiveKeyParts =
         listOf("password", "pass", "token", "secret", "authorization", "auth", "email", "serial")
+    private val ancsContentKeys = setOf("appIdentifier", "date", "title", "subtitle", "message")
+    private val notificationContentKeys = setOf("app", "title", "content", "packageName")
 
     @JvmStatic
     fun logJson(direction: String, layer: String, payload: JSONObject?, bytes: Int? = null) {
@@ -21,14 +29,14 @@ object BleTraceLogger {
             return
         }
 
-        val sanitized = sanitize(payload)
+        val sanitized = sanitizeForLogging(payload)
         Log.i(TAG, format(direction, layer, caller(), extractType(payload), bytes, sanitized.toString()))
     }
 
     @JvmStatic
     fun logMap(direction: String, layer: String, type: String?, payload: Map<String, Any>) {
         try {
-            val sanitized = sanitize(JSONObject(payload))
+            val sanitized = sanitizeForLogging(JSONObject(payload))
             Log.i(TAG, format(direction, layer, caller(), type ?: extractType(sanitized), null, sanitized.toString()))
         } catch (e: Exception) {
             Log.d(TAG, "BLE trace map logging failed", e)
@@ -97,6 +105,43 @@ object BleTraceLogger {
             output.put(key, sanitizeValue(key, value.opt(key)))
         }
         return output
+    }
+
+    /** Returns a diagnostic-safe copy without changing the payload delivered to SDK consumers. */
+    internal fun sanitizeForLogging(value: JSONObject): JSONObject {
+        val sanitized = sanitize(value)
+
+        if (value.optString("C") == ANCS_COMMAND) {
+            val body = sanitized.optJSONObject("B")
+            if (body == null) {
+                sanitized.put("B", REDACTED)
+            } else {
+                ancsContentKeys.forEach { key ->
+                    if (body.has(key)) {
+                        body.put(key, REDACTED)
+                    }
+                }
+            }
+        }
+
+        if (
+            value.optString("type") == NOTIFICATION_EVENT ||
+                value.optString("type") == NOTIFICATION_DISMISSED_EVENT
+        ) {
+            notificationContentKeys.forEach { key ->
+                if (sanitized.has(key)) {
+                    sanitized.put(key, REDACTED)
+                }
+            }
+        }
+
+        // Compact chunks can contain arbitrary reconstructed application data, including
+        // notification titles and bodies. Keep framing metadata, never the chunk contents.
+        if (value.optString("t") == CHUNK_TYPE && value.has("d")) {
+            sanitized.put("d", REDACTED_CHUNK)
+        }
+
+        return sanitized
     }
 
     private fun sanitize(value: JSONArray): JSONArray {

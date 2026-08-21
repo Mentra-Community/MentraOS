@@ -6,7 +6,15 @@ enum BleTraceLogger {
     private static let log = OSLog(subsystem: "com.mentra.bluetoothsdk", category: "MentraBleTrace")
     private static let maxPayloadChars = 3000
     private static let k900Type = "k900"
+    private static let ancsCommand = "sr_ancs"
+    private static let chunkType = "ck"
+    private static let notificationEvent = "phone_notification"
+    private static let notificationDismissedEvent = "phone_notification_dismissed"
+    private static let redacted = "<redacted>"
+    private static let redactedChunk = "<redacted chunk data>"
     private static let sensitiveKeyParts = ["password", "pass", "token", "secret", "authorization", "auth", "email", "serial"]
+    private static let ancsContentKeys = ["appIdentifier", "date", "title", "subtitle", "message"]
+    private static let notificationContentKeys = ["app", "title", "content", "packageName"]
 
     static func logJson(
         direction: String,
@@ -29,7 +37,7 @@ enum BleTraceLogger {
             return
         }
 
-        let sanitized = sanitizeDictionary(payload)
+        let sanitized = sanitizeForLogging(payload)
         emit(format(
             direction: direction,
             layer: layer,
@@ -50,7 +58,7 @@ enum BleTraceLogger {
         sourceFunction: String = #function,
         sourceLine: Int = #line
     ) {
-        let sanitized = sanitizeDictionary(payload)
+        let sanitized = sanitizeForLogging(payload)
         emit(format(
             direction: direction,
             layer: layer,
@@ -118,6 +126,38 @@ enum BleTraceLogger {
             output[key] = sanitizeValue(key: key, value: child)
         }
         return output
+    }
+
+    /// Returns a diagnostic-safe copy without changing the payload delivered to SDK consumers.
+    static func sanitizeForLogging(_ value: [String: Any]) -> [String: Any] {
+        var sanitized = sanitizeDictionary(value)
+
+        if value["C"] as? String == ancsCommand {
+            if var body = sanitized["B"] as? [String: Any] {
+                for key in ancsContentKeys where body[key] != nil {
+                    body[key] = redacted
+                }
+                sanitized["B"] = body
+            } else {
+                sanitized["B"] = redacted
+            }
+        }
+
+        if value["type"] as? String == notificationEvent ||
+            value["type"] as? String == notificationDismissedEvent
+        {
+            for key in notificationContentKeys where sanitized[key] != nil {
+                sanitized[key] = redacted
+            }
+        }
+
+        // Compact chunks can contain arbitrary reconstructed application data, including
+        // notification titles and bodies. Keep framing metadata, never the chunk contents.
+        if value["t"] as? String == chunkType, value["d"] != nil {
+            sanitized["d"] = redactedChunk
+        }
+
+        return sanitized
     }
 
     private static func sanitizeArray(_ value: [Any]) -> [Any] {
