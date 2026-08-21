@@ -43,6 +43,7 @@ internal data class GlassesStatus(
     val besFirmwareVersion: String,
     val mtkFirmwareVersion: String,
     val bluetoothMacAddress: String,
+    val wifiMacAddress: String,
     val leftMacAddress: String,
     val rightMacAddress: String,
     val macAddress: String,
@@ -86,6 +87,7 @@ internal data class GlassesStatus(
             "besFirmwareVersion" to besFirmwareVersion,
             "mtkFirmwareVersion" to mtkFirmwareVersion,
             "bluetoothMacAddress" to bluetoothMacAddress,
+            "wifiMacAddress" to wifiMacAddress,
             "leftMacAddress" to leftMacAddress,
             "rightMacAddress" to rightMacAddress,
             "macAddress" to macAddress,
@@ -136,6 +138,7 @@ internal data class GlassesStatus(
                 besFirmwareVersion = stringValue(values, "besFirmwareVersion") ?: "",
                 mtkFirmwareVersion = stringValue(values, "mtkFirmwareVersion") ?: "",
                 bluetoothMacAddress = stringValue(values, "bluetoothMacAddress") ?: "",
+                wifiMacAddress = stringValue(values, "wifiMacAddress") ?: "",
                 leftMacAddress = stringValue(values, "leftMacAddress") ?: "",
                 rightMacAddress = stringValue(values, "rightMacAddress") ?: "",
                 macAddress = stringValue(values, "macAddress") ?: "",
@@ -381,6 +384,7 @@ internal data class GlassesStatusUpdate(
     val besFirmwareVersion: String? = null,
     val mtkFirmwareVersion: String? = null,
     val bluetoothMacAddress: String? = null,
+    val wifiMacAddress: String? = null,
     val leftMacAddress: String? = null,
     val rightMacAddress: String? = null,
     val macAddress: String? = null,
@@ -431,6 +435,7 @@ internal data class GlassesStatusUpdate(
             putIfNotNull("besFirmwareVersion", besFirmwareVersion)
             putIfNotNull("mtkFirmwareVersion", mtkFirmwareVersion)
             putIfNotNull("bluetoothMacAddress", bluetoothMacAddress)
+            putIfNotNull("wifiMacAddress", wifiMacAddress)
             putIfNotNull("leftMacAddress", leftMacAddress)
             putIfNotNull("rightMacAddress", rightMacAddress)
             putIfNotNull("macAddress", macAddress)
@@ -480,6 +485,7 @@ internal data class GlassesStatusUpdate(
                 besFirmwareVersion = optionalStringValue(values, "besFirmwareVersion"),
                 mtkFirmwareVersion = optionalStringValue(values, "mtkFirmwareVersion"),
                 bluetoothMacAddress = optionalStringValue(values, "bluetoothMacAddress"),
+                wifiMacAddress = optionalStringValue(values, "wifiMacAddress"),
                 leftMacAddress = optionalStringValue(values, "leftMacAddress"),
                 rightMacAddress = optionalStringValue(values, "rightMacAddress"),
                 macAddress = optionalStringValue(values, "macAddress"),

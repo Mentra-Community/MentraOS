@@ -833,6 +833,7 @@ class MentraLive : SGCManager() {
             // same-link glasses_ready (e.g. ASG restart) re-publishes CONNECTED.
             DeviceStore.apply("glasses", "serialNumber", "")
             DeviceStore.apply("glasses", "bluetoothMacAddress", "")
+            DeviceStore.apply("glasses", "wifiMacAddress", "")
         }
 
         // Actually update the connection state!
@@ -1944,6 +1945,10 @@ class MentraLive : SGCManager() {
                         gatt: BluetoothGatt,
                         characteristic: BluetoothGattCharacteristic
                 ) {
+                    if (!isCurrentGattCallback(gatt)) {
+                        return
+                    }
+
                     // Get thread ID for tracking thread issues
                     val threadId = Thread.currentThread().id
                     val uuid = characteristic.uuid
@@ -4114,6 +4119,9 @@ class MentraLive : SGCManager() {
                     }
                     (fields["bt_mac_address"] as? String)?.trim()?.takeIf { it.isNotEmpty() }?.let {
                         DeviceStore.apply("glasses", "bluetoothMacAddress", it)
+                    }
+                    (fields["wifi_mac_address"] as? String)?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                        DeviceStore.apply("glasses", "wifiMacAddress", it)
                     }
                     (fields["serial_number"] as? String)?.trim()?.takeIf { it.isNotEmpty() }?.let {
                         DeviceStore.apply("glasses", "serialNumber", it)

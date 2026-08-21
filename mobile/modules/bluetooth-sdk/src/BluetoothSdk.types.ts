@@ -1237,6 +1237,7 @@ export interface GlassesStatus {
   besFirmwareVersion: string
   mtkFirmwareVersion: string
   bluetoothMacAddress: string
+  wifiMacAddress: string
   leftMacAddress: string
   rightMacAddress: string
   buildNumber: string

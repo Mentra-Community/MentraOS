@@ -159,6 +159,8 @@ the generic `0123456789ABCDEF` Android/ADB placeholder—regardless of which
 property exposes it—or a BES system-version field. The Bluetooth
 MAC is sourced from BES (`hs_syvr`/`sr_btaddr`), persisted in
 `persist.mentra.live.mac`, and republished to the phone as soon as it is learned.
+The MTK Wi-Fi interface MAC is read from Android's Wi-Fi service and forwarded
+separately as `wifi_mac_address` when available.
 
 `asg_client` includes logging, crash/error reporting, incident log buffering, and debug receivers for development and OTA testing. Production behavior should prioritize device stability and useful logs for support while avoiding secrets in logs.
 

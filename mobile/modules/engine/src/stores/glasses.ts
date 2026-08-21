@@ -118,6 +118,7 @@ const initialState: GlassesStore = {
   androidVersion: "",
   firmwareVersion: "",
   bluetoothMacAddress: "",
+  wifiMacAddress: "",
   leftMacAddress: "",
   rightMacAddress: "",
   buildNumber: "",
