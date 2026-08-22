@@ -40,6 +40,7 @@ public class K900NetworkManager extends BaseNetworkManager {
     private BroadcastReceiver wifiStateReceiver;
     private final boolean isSystemApp;
 
+    private final Handler mWifiStateHandler = new Handler(Looper.getMainLooper());
     private final Handler mHotspotHandler = new Handler(Looper.getMainLooper());
     private final Object mHotspotLock = new Object();
     private Runnable mPendingHotspotReadiness;
@@ -660,16 +661,14 @@ public class K900NetworkManager extends BaseNetworkManager {
                                     // For K900, delay the WiFi state check to let connection
                                     // stabilize
                                     // This prevents rapid CONNECTED/DISCONNECTED flapping
-                                    new Handler(Looper.getMainLooper())
-                                            .postDelayed(
-                                                    () -> {
-                                                        boolean isConnected = isConnectedToWifi();
-                                                        notificationManager
-                                                                .showWifiStateNotification(
-                                                                        isConnected);
-                                                        notifyWifiStateChanged(isConnected);
-                                                    },
-                                                    500); // Wait 500ms for connection to stabilize
+                                    mWifiStateHandler.postDelayed(
+                                            () -> {
+                                                boolean isConnected = isConnectedToWifi();
+                                                notificationManager.showWifiStateNotification(
+                                                        isConnected);
+                                                notifyWifiStateChanged(isConnected);
+                                            },
+                                            500); // Wait 500ms for connection to stabilize
                                     break;
                                 case K900_BROADCAST_ACTION:
                                     handleK900Broadcast(intent);
@@ -699,6 +698,7 @@ public class K900NetworkManager extends BaseNetworkManager {
     }
 
     private void unregisterWifiStateReceiver() {
+        mWifiStateHandler.removeCallbacksAndMessages(null);
         if (wifiStateReceiver != null) {
             try {
                 context.unregisterReceiver(wifiStateReceiver);
