@@ -4,6 +4,10 @@ description: "Turn-by-turn directions on the glasses, driven by the phone's GPS.
 icon: "route"
 ---
 
+import BetaNote from '/snippets/beta-note.mdx'
+
+<BetaNote />
+
 `session.navigation` runs a turn-by-turn trip. Call `start()` with a destination,
 then read live maneuvers from `onUpdate()` as the user moves. The phone owns the
 trip lifecycle; your miniapp starts it, listens, and stops it.

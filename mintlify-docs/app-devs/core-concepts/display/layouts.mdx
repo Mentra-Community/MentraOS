@@ -4,6 +4,10 @@ description: "Render scenes of positioned text, images, and shapes on the glasse
 icon: "display"
 ---
 
+import BetaNote from '/snippets/beta-note.mdx'
+
+<BetaNote />
+
 `session.display.render()` draws to the glasses HUD. Each call describes the
 whole frame: everything that should be on screen right now. The phone diffs it
 against the previous frame, so elements with a stable `id` update in place (no
