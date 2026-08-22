@@ -102,6 +102,8 @@ type SpeakerStateValue = "idle" | "loading" | "playing" | "stopped" | "error"
 
 interface ConnectedMiniapp {
   subscriptions: Set<string>
+  /** Invalidates async CONNECT completions when this context is reset. */
+  handshakeGeneration: number
   /** Transcription streams this app explicitly requires to stay on-device. */
   forceLocalTranscriptionStreams: Set<string>
   /** Transcription streams with at least one listener using the default/cloud route. */
@@ -400,6 +402,8 @@ class LocalMiniappRuntime {
   private cloudResultsWired = false
   private cloudStatusWired = false
   private cloudAudioSubscriptionSync = new CloudAudioSubscriptionSync()
+  /** Pushes a fresh capability profile when pairing promotes a new wearable. */
+  private capabilityUpdatesUnsubscribe: (() => void) | null = null
 
   /**
    * Per-miniapp language hints from TRANSCRIPTION_CONFIG (issue 021 WP3).
@@ -759,6 +763,7 @@ class LocalMiniappRuntime {
     }
     this.connectedApps.set(packageName, {
       subscriptions: new Set(),
+      handshakeGeneration: 0,
       forceLocalTranscriptionStreams: new Set(),
       cloudTranscriptionStreams: new Set(),
       sendMessage: sendFn,
@@ -776,6 +781,7 @@ class LocalMiniappRuntime {
     // The WebView will re-SUBSCRIBE shortly and the rate will reappear.
     this.recomputeLocationTier()
     this.ensureCloudStatusWired()
+    this.ensureCapabilityUpdatesWired()
     this.ensurePingLoop()
 
     // Show the system boot message ("Starting <name>…") on the glasses for the
@@ -834,6 +840,8 @@ class LocalMiniappRuntime {
    * are failed so a wake mid-respawn retries rather than hanging.
    */
   public resetHandshake(packageName: string): void {
+    const app = this.connectedApps.get(packageName)
+    if (app) app.handshakeGeneration += 1
     this.handshookApps.delete(packageName)
     this.flushConnectWaiters(packageName, new Error(`${packageName} respawning`))
   }
@@ -998,6 +1006,7 @@ class LocalMiniappRuntime {
 
     if (this.connectedApps.size === 0) {
       this.stopPingLoop()
+      this.stopCapabilityUpdates()
     }
   }
 
@@ -1363,16 +1372,11 @@ class LocalMiniappRuntime {
       console.warn(`${LOG_TAG}: CONNECT from unregistered app ${packageName}, ignoring`)
       return
     }
+    const handshakeGeneration = ++existing.handshakeGeneration
 
     // Update lastPongAt so it doesn't time out right away
     existing.lastPongAt = Date.now()
     existing.unansweredPingRounds = 0
-
-    // Read current glasses capabilities from the settings store
-    const defaultWearable = useSettingsStore.getState().getSetting(ISLAND_SETTINGS_KEYS.defaultWearable) as
-      | DeviceTypes
-      | undefined
-    const capabilities = getModelCapabilities(defaultWearable || DeviceTypes.NONE)
 
     // Build the declared-permission record for the SDK's session.permissions
     // module. Lower-cased to match v3's PermissionType union (microphone,
@@ -1387,6 +1391,16 @@ class LocalMiniappRuntime {
     this.clearMiniappAuthDeliveryRetry(packageName)
     const authPromise = this.requestMiniappAuth(packageName)
     const initialAuth = await withTimeout(authPromise, 1_500)
+
+    // CONNECT is asynchronous because auth minting may take up to 1.5s. A
+    // crash-respawn can replace this package's ConnectedMiniapp during that
+    // window; never let the stale handshake send into or mark the replacement
+    // context as connected.
+    if (this.connectedApps.get(packageName) !== existing || existing.handshakeGeneration !== handshakeGeneration) {
+      console.log(`${LOG_TAG}: ignoring stale CONNECT completion for replaced app ${packageName}`)
+      return
+    }
+
     const userId = initialAuth?.mentraUserId ?? ""
     if (initialAuth) {
       existing.authDelivered = true
@@ -1399,7 +1413,9 @@ class LocalMiniappRuntime {
         type: MiniappResponseType.CONNECT_ACK,
         userId,
         packageName,
-        capabilities,
+        // Resolve after the async auth mint. Pairing may promote the wearable
+        // while CONNECT is waiting, and the ACK must carry the newest profile.
+        capabilities: this.currentCapabilities(),
         permissions: declaredPermissions,
         ...(initialAuth ? {auth: initialAuth} : {}),
       },
@@ -1413,7 +1429,7 @@ class LocalMiniappRuntime {
       // trying to mint (and re-drive on cloud-connect) so the app authenticates
       // to its backend on its own, instead of staying dead until a full manual
       // Cloud V2 reconnect re-runs the whole handshake.
-      this.deliverInitialMiniappAuth(packageName, authPromise, 0)
+      this.deliverInitialMiniappAuth(packageName, existing, handshakeGeneration, authPromise, 0)
     }
     this.sendCloudStatusToMiniapp(packageName)
 
@@ -1510,43 +1526,51 @@ class LocalMiniappRuntime {
    */
   private deliverInitialMiniappAuth(
     packageName: string,
+    app: ConnectedMiniapp,
+    handshakeGeneration: number,
     inFlight: Promise<MiniappAuthToken | null> | undefined,
     attempt: number,
   ): void {
-    const app = this.connectedApps.get(packageName)
-    if (!app || app.authDelivered) return
+    if (!this.isCurrentHandshake(packageName, app, handshakeGeneration) || app.authDelivered) return
     const mint = inFlight ?? this.requestMiniappAuth(packageName)
     void mint
       .then((auth) => {
-        const current = this.connectedApps.get(packageName)
-        if (!current || current.authDelivered) return
+        if (!this.isCurrentHandshake(packageName, app, handshakeGeneration) || app.authDelivered) return
         if (!auth) return // no auth hook — permanent, don't spin
-        current.authDelivered = true
+        app.authDelivered = true
         this.clearMiniappAuthDeliveryRetry(packageName)
         this.scheduleMiniappAuthRefresh(packageName, auth)
         this.sendToMiniapp(packageName, {type: MiniappResponseType.AUTH_UPDATE, auth})
       })
       .catch((err) => {
+        if (!this.isCurrentHandshake(packageName, app, handshakeGeneration)) return
         console.warn(
           `${LOG_TAG}: miniapp auth mint failed for ${packageName} (attempt ${attempt}): ${
             (err as Error)?.message ?? err
           }`,
         )
-        this.scheduleInitialMiniappAuthRetry(packageName, attempt)
+        this.scheduleInitialMiniappAuthRetry(packageName, app, handshakeGeneration, attempt)
       })
   }
 
-  private scheduleInitialMiniappAuthRetry(packageName: string, attempt: number): void {
-    const app = this.connectedApps.get(packageName)
-    if (!app || app.authDelivered) return
+  private scheduleInitialMiniappAuthRetry(
+    packageName: string,
+    app: ConnectedMiniapp,
+    handshakeGeneration: number,
+    attempt: number,
+  ): void {
+    if (!this.isCurrentHandshake(packageName, app, handshakeGeneration) || app.authDelivered) return
     this.clearMiniappAuthDeliveryRetry(packageName)
     const delay = Math.min(MINIAPP_AUTH_RETRY_MAX_MS, MINIAPP_AUTH_RETRY_BASE_MS * 2 ** attempt)
     app.authRetryTimerId = BgTimer.setTimeout(() => {
-      const current = this.connectedApps.get(packageName)
-      if (!current) return
-      current.authRetryTimerId = null
-      this.deliverInitialMiniappAuth(packageName, undefined, attempt + 1)
+      app.authRetryTimerId = null
+      if (!this.isCurrentHandshake(packageName, app, handshakeGeneration)) return
+      this.deliverInitialMiniappAuth(packageName, app, handshakeGeneration, undefined, attempt + 1)
     }, delay)
+  }
+
+  private isCurrentHandshake(packageName: string, app: ConnectedMiniapp, handshakeGeneration: number): boolean {
+    return this.connectedApps.get(packageName) === app && app.handshakeGeneration === handshakeGeneration
   }
 
   private clearMiniappAuthDeliveryRetry(packageName: string): void {
@@ -1570,7 +1594,7 @@ class LocalMiniappRuntime {
       // state; skip anything still mid-handshake (handleConnect owns that).
       if (!this.handshookApps.has(packageName)) continue
       this.clearMiniappAuthDeliveryRetry(packageName)
-      this.deliverInitialMiniappAuth(packageName, undefined, 0)
+      this.deliverInitialMiniappAuth(packageName, app, app.handshakeGeneration, undefined, 0)
     }
   }
 
@@ -3753,6 +3777,43 @@ class LocalMiniappRuntime {
     )
   }
 
+  private currentCapabilities() {
+    const defaultWearable = useSettingsStore.getState().getSetting(ISLAND_SETTINGS_KEYS.defaultWearable) as
+      | DeviceTypes
+      | undefined
+    return getModelCapabilities(defaultWearable || DeviceTypes.NONE)
+  }
+
+  /**
+   * Keep already-connected MiniappSession capability snapshots synchronized
+   * with pairing identity. CONNECT_ACK is only an initial snapshot; a wearable
+   * can be promoted after a miniapp starts (the normal pairing-success race),
+   * so every completed handshake also needs CAPABILITIES_UPDATE.
+   */
+  private ensureCapabilityUpdatesWired(): void {
+    if (this.capabilityUpdatesUnsubscribe) return
+    this.capabilityUpdatesUnsubscribe = useSettingsStore.subscribe(
+      (state) => state.getSetting(ISLAND_SETTINGS_KEYS.defaultWearable) as DeviceTypes | undefined,
+      (defaultWearable) => {
+        const capabilities = getModelCapabilities(defaultWearable || DeviceTypes.NONE)
+        console.log(
+          `${LOG_TAG}: wearable capabilities changed to ${capabilities.modelName}; notifying ${this.handshookApps.size} miniapp(s)`,
+        )
+        for (const packageName of this.handshookApps) {
+          this.sendToMiniapp(packageName, {
+            type: MiniappResponseType.CAPABILITIES_UPDATE,
+            capabilities,
+          })
+        }
+      },
+    )
+  }
+
+  private stopCapabilityUpdates(): void {
+    this.capabilityUpdatesUnsubscribe?.()
+    this.capabilityUpdatesUnsubscribe = null
+  }
+
   private currentCloudStatus(): CloudClientStatusSnapshot {
     const base = cloudClientService.getStatus()
     const fallbackActive =
@@ -4557,6 +4618,7 @@ class LocalMiniappRuntime {
   public cleanup(): void {
     console.log(`${LOG_TAG}: cleanup()`)
     this.stopPingLoop()
+    this.stopCapabilityUpdates()
 
     // Copy keys since unregisterApp mutates the map
     const packageNames = [...this.connectedApps.keys()]

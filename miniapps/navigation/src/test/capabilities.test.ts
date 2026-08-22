@@ -46,4 +46,14 @@ describe("navigation glasses capabilities", () => {
   test("does not claim positioning support without a display", () => {
     expect(readGlassesCapabilities({modelName: "Mentra Live", hasDisplay: false}).canPosition).toBe(false)
   })
+
+  test("respects hasDisplay false when a legacy descriptor is still present", () => {
+    expect(
+      readGlassesCapabilities({
+        modelName: "None",
+        hasDisplay: false,
+        display: {resolution: {width: 640, height: 480}},
+      }),
+    ).toMatchObject({hasDisplay: false, canPosition: false})
+  })
 })
