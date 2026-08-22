@@ -35,6 +35,14 @@ public class BesFirmwareArtifactValidatorTest {
     }
 
     @Test
+    public void httpArtifactWithExactIdentityPasses() throws Exception {
+        TestArtifact artifact = createArtifact();
+        artifact.metadata.put("url", "http://192.168.43.159:8791/artifacts/local-bes.bin");
+
+        BesFirmwareArtifactValidator.validate(artifact.file, artifact.metadata);
+    }
+
+    @Test
     public void localReleasePackagedArtifactWithExplicitIdentityPasses() throws Exception {
         TestArtifact artifact = createArtifact();
 
