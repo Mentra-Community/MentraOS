@@ -151,6 +151,29 @@ describe("planArtifacts", () => {
     }
     expect(() => planArtifacts(checkResult({manifestBody: JSON.stringify(broken)}))).toThrow("manifest sha256")
   })
+
+  test("resolves portable bundle paths against the manifest URL", () => {
+    const portable = {
+      ...manifest,
+      apps: {
+        "com.mentra.asg_client": {...manifest.apps["com.mentra.asg_client"], apkUrl: "artifacts/asg.apk"},
+      },
+      mtk_patches: [{...manifest.mtk_patches[0], url: "artifacts/mtk.zip"}],
+      bes_firmware: {...manifest.bes_firmware, url: "artifacts/bes.bin"},
+    }
+    const plan = planArtifacts(
+      checkResult({
+        manifestBody: JSON.stringify(portable),
+        manifestUrl: "https://updates.example.com/releases/v1/version.json",
+        mtkPatch: {...manifest.mtk_patches[0], url: "artifacts/mtk.zip"},
+      }),
+    )
+    expect(plan.map((entry) => entry.url)).toEqual([
+      "https://updates.example.com/releases/v1/artifacts/asg.apk",
+      "https://updates.example.com/releases/v1/artifacts/mtk.zip",
+      "https://updates.example.com/releases/v1/artifacts/bes.bin",
+    ])
+  })
 })
 
 describe("prepareArtifacts", () => {
@@ -222,6 +245,31 @@ describe("rewriteManifestForLocalServer", () => {
     const rewritten = JSON.parse(rewriteManifestForLocalServer(JSON.stringify(legacy), prepared, "http://host:1"))
     expect(rewritten.bes_firmware.url).toBe(`http://host:1/artifacts/${hashes.bes}`)
     expect(rewritten.bes_firmware.firmwareUrl).toBe(`http://host:1/artifacts/${hashes.bes}`)
+  })
+
+  test("rewrites relative bundle paths after resolving them against the source manifest", async () => {
+    const portable = {
+      apps: {
+        "com.mentra.asg_client": {...manifest.apps["com.mentra.asg_client"], apkUrl: "artifacts/asg.apk"},
+      },
+    }
+    const prepared = [
+      {
+        kind: "apk" as const,
+        url: "https://updates.example.com/releases/v1/artifacts/asg.apk",
+        sha256: hashes.apk,
+        filePath: `/docs/ota_artifacts/${hashes.apk}`,
+      },
+    ]
+    const rewritten = JSON.parse(
+      rewriteManifestForLocalServer(
+        JSON.stringify(portable),
+        prepared,
+        "http://192.168.43.100:8791",
+        "https://updates.example.com/releases/v1/version.json",
+      ),
+    )
+    expect(rewritten.apps["com.mentra.asg_client"].apkUrl).toBe(`http://192.168.43.100:8791/artifacts/${hashes.apk}`)
   })
 })
 

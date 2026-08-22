@@ -38,7 +38,9 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.Semaphore;
@@ -622,7 +624,7 @@ public class OtaHelper {
                 // Fetch version info from URL
                 String versionInfo = fetchVersionInfo(resolvedVersionJsonUrl);
                 stage[0] = "parse_version_json";
-                JSONObject json = new JSONObject(versionInfo);
+                JSONObject json = resolveArtifactUrls(new JSONObject(versionInfo), resolvedVersionJsonUrl);
 
                 Log.d(TAG, "Version JSON parsed successfully. Root keys -> apps=" + json.has("apps")
                         + ", mtk_patches=" + json.has("mtk_patches")
@@ -728,6 +730,51 @@ public class OtaHelper {
                     + (e.getMessage() != null ? e.getMessage() : ""));
             throw e;
         }
+    }
+
+    static JSONObject resolveArtifactUrls(JSONObject manifest, String manifestUrl) throws Exception {
+        JSONObject apps = manifest.optJSONObject("apps");
+        if (apps != null) {
+            Iterator<String> packageNames = apps.keys();
+            while (packageNames.hasNext()) {
+                JSONObject app = apps.optJSONObject(packageNames.next());
+                if (app != null) {
+                    resolveUrlField(app, "apkUrl", manifestUrl);
+                    resolveUrlField(app, "download", manifestUrl);
+                }
+            }
+        }
+
+        JSONArray mtkPatches = manifest.optJSONArray("mtk_patches");
+        if (mtkPatches != null) {
+            for (int index = 0; index < mtkPatches.length(); index++) {
+                JSONObject patch = mtkPatches.optJSONObject(index);
+                if (patch != null) {
+                    resolveUrlField(patch, "url", manifestUrl);
+                    resolveUrlField(patch, "firmwareUrl", manifestUrl);
+                }
+            }
+        }
+
+        JSONObject besFirmware = manifest.optJSONObject("bes_firmware");
+        if (besFirmware != null) {
+            resolveUrlField(besFirmware, "url", manifestUrl);
+            resolveUrlField(besFirmware, "firmwareUrl", manifestUrl);
+        }
+        return manifest;
+    }
+
+    private static void resolveUrlField(JSONObject entry, String field, String manifestUrl) throws Exception {
+        String reference = entry.optString(field, "").trim();
+        if (reference.isEmpty()) {
+            return;
+        }
+        URL resolved = new URL(new URL(manifestUrl), reference);
+        String protocol = resolved.getProtocol().toLowerCase(Locale.ROOT);
+        if (!"http".equals(protocol) && !"https".equals(protocol)) {
+            throw new IOException("OTA artifact URL must resolve to HTTP(S): " + reference);
+        }
+        entry.put(field, resolved.toString());
     }
 
     private void processAppsSequentially(JSONObject rootJson, Context context) throws Exception {
