@@ -56,8 +56,8 @@ const addListener: BluetoothSdkPublicModule["addListener"] = (eventName, listene
   return PrivateBluetoothSdkModule.addListener(eventName, listener as BluetoothSdkEventListener<BluetoothSdkEventName>)
 }
 
-const startOtaUpdate: BluetoothSdkPublicModule["startOtaUpdate"] = () => {
-  return PrivateBluetoothSdkModule.startOtaUpdate()
+const startOtaUpdate: BluetoothSdkPublicModule["startOtaUpdate"] = (otaVersionUrl) => {
+  return PrivateBluetoothSdkModule.startOtaUpdate(otaVersionUrl)
 }
 
 const bindPublicMethod = <K extends keyof BluetoothSdkPublicModule>(name: K): BluetoothSdkPublicModule[K] => {

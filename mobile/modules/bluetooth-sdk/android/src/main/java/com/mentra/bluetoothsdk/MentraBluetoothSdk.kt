@@ -1244,6 +1244,12 @@ class MentraBluetoothSdk private constructor(
                 systemTimeMs = versionInfo.systemTimeMs ?: status.systemTimeMs,
                 otaVersionUrl = versionInfo.otaVersionUrl.ifBlank { status.otaVersionUrl },
                 appVersion = versionInfo.appVersion.ifBlank { status.appVersion },
+                hotspotOtaVersion =
+                    if (versionInfo.hotspotOtaVersion > 0) {
+                        versionInfo.hotspotOtaVersion
+                    } else {
+                        status.hotspotOtaVersion
+                    },
             )
         } catch (cancellation: CancellationException) {
             // Never swallow cancellation into the stale-status fallback: callers
@@ -2164,7 +2170,4 @@ class MentraBluetoothSdk private constructor(
         }
     }
 }
-
-
-
 

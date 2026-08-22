@@ -1030,7 +1030,13 @@ public class OtaHelper {
                 // after the restart via sendCompletionToPhone(), or naturally from
                 // the next step for multi-step sessions.
                 if (sessionManager != null) {
-                    sessionManager.setRestarting();
+                    if (!sessionManager.setRestarting()) {
+                        sessionManager.setFailed("apk_restart_guard_not_persisted");
+                        sendProgressToPhone(
+                                "install", 0, 0, 0, "FAILED", "apk_restart_guard_not_persisted");
+                        isUpdating = false;
+                        return false;
+                    }
                 }
 
                 boolean installKicked = installApk(context, localPath);

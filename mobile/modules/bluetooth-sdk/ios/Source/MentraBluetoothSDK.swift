@@ -2180,5 +2180,3 @@ private func dispatchDiscoveredDevices(_ rawSearchResults: Any?) {
 }
 
 
-
-

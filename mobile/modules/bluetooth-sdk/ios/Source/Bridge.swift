@@ -340,6 +340,11 @@ class Bridge {
         if let systemTimeMs = intValue(values["systemTimeMs"]) ?? intValue(values["system_time_ms"]) {
             body["systemTimeMs"] = systemTimeMs
         }
+        if let hotspotOtaVersion = intValue(values["hotspotOtaVersion"])
+            ?? intValue(values["hotspot_ota_version"])
+        {
+            body["hotspotOtaVersion"] = hotspotOtaVersion
+        }
         Bridge.sendTypedMessage("version_info", body: body)
     }
 
@@ -613,8 +618,6 @@ class Bridge {
         return payload
     }
 }
-
-
 
 
 

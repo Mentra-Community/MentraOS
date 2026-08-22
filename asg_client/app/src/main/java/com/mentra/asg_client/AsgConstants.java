@@ -28,6 +28,9 @@ public class AsgConstants {
     /** SmartXY setting containing the Mentra Live hotspot password. */
     public static final String K900_VENDOR_HOTSPOT_PASSWORD_SETTING = "xy_pwd";
 
+    /** Protocol version for phone-served OTA artifacts over the Mentra Live hotspot. */
+    public static final int HOTSPOT_OTA_VERSION = 1;
+
     /** Canonical camera crop defaults shared with the phone and Bluetooth SDK. */
     public static final int CAMERA_FOV_DEFAULT = 118;
 

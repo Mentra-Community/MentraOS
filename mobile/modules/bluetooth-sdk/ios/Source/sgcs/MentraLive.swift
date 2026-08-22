@@ -1293,6 +1293,7 @@ class MentraLive: NSObject, SGCManager {
             DeviceStore.shared.apply("glasses", "serialNumber", "")
             DeviceStore.shared.apply("glasses", "bluetoothMacAddress", "")
             DeviceStore.shared.apply("glasses", "wifiMacAddress", "")
+            DeviceStore.shared.apply("glasses", "hotspotOtaVersion", 0)
         }
         connectionState = state
         DeviceStore.shared.apply("glasses", "connectionState", state)
@@ -2781,6 +2782,13 @@ class MentraLive: NSObject, SGCManager {
                 if let systemTimeMs = fields["system_time_ms"] as? NSNumber {
                     DeviceStore.shared.apply("glasses", "systemTimeMs", systemTimeMs.int64Value)
                 }
+                if let hotspotOtaVersion = fields["hotspot_ota_version"] as? NSNumber {
+                    DeviceStore.shared.apply(
+                        "glasses",
+                        "hotspotOtaVersion",
+                        hotspotOtaVersion.intValue
+                    )
+                }
                 if let bluetoothMacAddress = nonEmptyStringValue(fields, "bt_mac_address") {
                     DeviceStore.shared.apply("glasses", "bluetoothMacAddress", bluetoothMacAddress)
                 }
@@ -3355,7 +3363,6 @@ class MentraLive: NSObject, SGCManager {
         {
             json["ota_version_url"] = otaVersionUrl
         }
-
         sendJson(json, wakeUp: true)
     }
 

@@ -18,6 +18,7 @@ import android.os.Looper;
 import android.util.Log;
 import android.util.Size;
 import com.dev.api.DevApi;
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.NetworkUtils;
 import com.mentra.asg_client.camera.UvcStreamingState;
 import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
@@ -46,6 +47,7 @@ import com.mentra.asg_client.service.system.interfaces.IConfigurationManager;
 import com.mentra.asg_client.service.system.interfaces.IServiceLifecycle;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
 import com.mentra.asg_client.service.system.managers.AsgNotificationManager;
+import com.mentra.asg_client.service.utils.DeviceProfile;
 import com.mentra.asg_client.service.utils.ProcessSessionId;
 import com.mentra.asg_client.service.utils.ServiceUtils;
 import com.mentra.asg_client.service.utils.SysProp;
@@ -1241,6 +1243,11 @@ public class AsgClientService extends Service implements NetworkStateListener, T
                 // Process session id: lets the phone detect an asg restart under a
                 // surviving BLE link (the boot version_info push is the announcement).
                 chunk1.put("sid", ProcessSessionId.SID);
+                chunk1.put(
+                        "hotspot_ota_version",
+                        DeviceProfile.detect(this).isK900()
+                                ? AsgConstants.HOTSPOT_OTA_VERSION
+                                : 0);
 
                 Log.d(TAG, "📤 Sending version_info_1: " + chunk1.toString());
                 serviceInitializer

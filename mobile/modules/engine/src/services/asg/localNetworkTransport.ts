@@ -12,17 +12,12 @@ let nextJobId = 1_000_000
 const nativeJobs = new Map<number, string>()
 const cancelledNativeJobs = new Set<number>()
 
-export function shouldUseScopedLocalNetwork(
-  os: string,
-  platformVersion: number | string,
-  moduleAvailable: boolean,
-): boolean {
-  const level = typeof platformVersion === "number" ? platformVersion : Number.parseInt(platformVersion, 10)
-  return os === "android" && level >= 29 && moduleAvailable
+export function shouldUseScopedLocalNetwork(os: string, moduleAvailable: boolean): boolean {
+  return os === "android" && moduleAvailable
 }
 
 function supportsScopedConnection(): boolean {
-  return shouldUseScopedLocalNetwork(Platform.OS, Platform.Version, MentraLocalNetwork != null)
+  return shouldUseScopedLocalNetwork(Platform.OS, MentraLocalNetwork != null)
 }
 
 function normalizeHeaders(headers?: HeadersInit): Record<string, string> {
@@ -46,15 +41,16 @@ export const localNetworkTransport = {
   supportsScopedConnection: (): boolean => supportsScopedConnection(),
   isScopedConnectionActive: (): boolean => scopedConnectionActive,
 
-  async connect(ssid: string, password: string): Promise<void> {
+  async connect(ssid: string, password: string): Promise<string | undefined> {
     scopedConnectionActive = false
     nativeJobs.clear()
     if (!supportsScopedConnection()) {
       await WifiManager.connectToProtectedSSID(ssid, password, false, false)
-      return
+      return undefined
     }
-    await MentraLocalNetwork!.connect(ssid, password)
+    const result = await MentraLocalNetwork!.connect(ssid, password)
     scopedConnectionActive = true
+    return result.localAddress
   },
 
   async disconnect(): Promise<void> {

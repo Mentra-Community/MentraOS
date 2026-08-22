@@ -15,6 +15,7 @@ import com.mentra.asg_client.io.network.core.BaseNetworkManager;
 import com.mentra.asg_client.io.network.utils.WifiSecurityChooser;
 import com.mentra.asg_client.io.network.interfaces.IWifiScanCallback;
 import com.mentra.asg_client.io.network.utils.DebugNotificationManager;
+import com.mentra.asg_client.io.ota.session.OtaSessionManager;
 import com.mentra.asg_client.service.system.core.SystemControllerFactory;
 import java.util.ArrayList;
 import java.net.Inet4Address;
@@ -39,6 +40,7 @@ public class K900NetworkManager extends BaseNetworkManager {
     private BroadcastReceiver wifiStateReceiver;
     private final boolean isSystemApp;
 
+    private final Handler mWifiStateHandler = new Handler(Looper.getMainLooper());
     private final Handler mHotspotHandler = new Handler(Looper.getMainLooper());
     private final Object mHotspotLock = new Object();
     private Runnable mPendingHotspotReadiness;
@@ -91,6 +93,8 @@ public class K900NetworkManager extends BaseNetworkManager {
         registerWifiStateReceiver();
         Log.d(TAG, "🌐 ✅ WiFi state receiver registered");
 
+        adoptExistingVendorHotspot();
+
         // Check if we're already connected to WiFi
         boolean wifiConnected = isConnectedToWifi();
         Log.d(TAG, "🌐 📡 Current WiFi connection status: " + wifiConnected);
@@ -106,6 +110,29 @@ public class K900NetworkManager extends BaseNetworkManager {
         }
 
         Log.d(TAG, "🌐 ✅ K900 Network Manager initialization complete");
+    }
+
+    /**
+     * SystemUI owns the K900 access point, so it can outlive an ASG APK replacement. Rebuild the
+     * ASG-side state from the real interface and credentials without sending another ap_start.
+     */
+    private void adoptExistingVendorHotspot() {
+        String gatewayIp = findLocalHotspotGatewayIp();
+        String ssid = readVendorHotspotSetting(AsgConstants.K900_VENDOR_HOTSPOT_SSID_SETTING);
+        String password =
+                readVendorHotspotSetting(AsgConstants.K900_VENDOR_HOTSPOT_PASSWORD_SETTING);
+        boolean hotspotPresent = !gatewayIp.isEmpty() && !ssid.isEmpty() && !password.isEmpty();
+
+        if (hotspotPresent) {
+            onHotspotStarted(ssid, password, gatewayIp);
+            notificationManager.showHotspotStateNotification(true);
+            Log.i(
+                    TAG,
+                    "🔥 Adopted existing K900 vendor hotspot: "
+                            + ssid
+                            + " gateway="
+                            + gatewayIp);
+        }
     }
 
     @Override
@@ -223,14 +250,7 @@ public class K900NetworkManager extends BaseNetworkManager {
                     return;
                 }
                 mHotspotHandler.postDelayed(
-                        () -> {
-                            if (!wifiManager.isWifiEnabled()) {
-                                failVendorHotspotStartup(
-                                        generation, "WiFi did not become ready for hotspot");
-                                return;
-                            }
-                            requestVendorHotspot(generation);
-                        },
+                        () -> waitForWifiRadioThenRequestHotspot(generation),
                         AsgConstants.LOCAL_HOTSPOT_WIFI_ENABLE_DELAY_MS);
                 return;
             }
@@ -247,6 +267,50 @@ public class K900NetworkManager extends BaseNetworkManager {
             Log.e(TAG, "🔥 Error requesting K900 vendor hotspot", e);
             failVendorHotspotStartup(generation, "Failed to start: " + e.getMessage());
         }
+    }
+
+    private void waitForWifiRadioThenRequestHotspot(int generation) {
+        synchronized (mHotspotLock) {
+            if (generation != mHotspotGeneration || !mHotspotStarting) {
+                Log.d(TAG, "🔥 WiFi readiness wait was cancelled");
+                return;
+            }
+        }
+
+        WifiRadioReadiness readiness =
+                classifyWifiRadioReadiness(
+                        wifiManager.isWifiEnabled(),
+                        SystemClock.elapsedRealtime(),
+                        mHotspotReadinessDeadlineMs);
+        if (readiness == WifiRadioReadiness.READY) {
+            Log.i(TAG, "🔥 WiFi radio is ready; requesting K900 hotspot");
+            requestVendorHotspot(generation);
+            return;
+        }
+        if (readiness == WifiRadioReadiness.TIMED_OUT) {
+            failVendorHotspotStartup(generation, "WiFi did not become ready for hotspot");
+            return;
+        }
+
+        mHotspotHandler.postDelayed(
+                () -> waitForWifiRadioThenRequestHotspot(generation),
+                AsgConstants.LOCAL_HOTSPOT_READINESS_POLL_MS);
+    }
+
+    enum WifiRadioReadiness {
+        READY,
+        WAITING,
+        TIMED_OUT
+    }
+
+    static WifiRadioReadiness classifyWifiRadioReadiness(
+            boolean wifiEnabled, long nowElapsedMs, long deadlineElapsedMs) {
+        if (wifiEnabled) {
+            return WifiRadioReadiness.READY;
+        }
+        return nowElapsedMs < deadlineElapsedMs
+                ? WifiRadioReadiness.WAITING
+                : WifiRadioReadiness.TIMED_OUT;
     }
 
     private void checkVendorHotspotReadiness(int generation) {
@@ -597,16 +661,14 @@ public class K900NetworkManager extends BaseNetworkManager {
                                     // For K900, delay the WiFi state check to let connection
                                     // stabilize
                                     // This prevents rapid CONNECTED/DISCONNECTED flapping
-                                    new Handler(Looper.getMainLooper())
-                                            .postDelayed(
-                                                    () -> {
-                                                        boolean isConnected = isConnectedToWifi();
-                                                        notificationManager
-                                                                .showWifiStateNotification(
-                                                                        isConnected);
-                                                        notifyWifiStateChanged(isConnected);
-                                                    },
-                                                    500); // Wait 500ms for connection to stabilize
+                                    mWifiStateHandler.postDelayed(
+                                            () -> {
+                                                boolean isConnected = isConnectedToWifi();
+                                                notificationManager.showWifiStateNotification(
+                                                        isConnected);
+                                                notifyWifiStateChanged(isConnected);
+                                            },
+                                            500); // Wait 500ms for connection to stabilize
                                     break;
                                 case K900_BROADCAST_ACTION:
                                     handleK900Broadcast(intent);
@@ -636,6 +698,7 @@ public class K900NetworkManager extends BaseNetworkManager {
     }
 
     private void unregisterWifiStateReceiver() {
+        mWifiStateHandler.removeCallbacksAndMessages(null);
         if (wifiStateReceiver != null) {
             try {
                 context.unregisterReceiver(wifiStateReceiver);
@@ -701,7 +764,21 @@ public class K900NetworkManager extends BaseNetworkManager {
     @Override
     public void shutdown() {
         Log.d(TAG, "Shutting down K900NetworkManager");
-        stopHotspot();
+        OtaSessionManager otaSession = new OtaSessionManager(context);
+        if (otaSession.shouldPreserveHotspotOnShutdown()) {
+            synchronized (mHotspotLock) {
+                mHotspotStarting = false;
+                mHotspotGeneration++;
+                cancelHotspotReadinessLocked();
+            }
+            // The vendor SystemUI process owns the AP. During an intentional OTA package
+            // replacement, leave an active AP untouched so the new ASG process can reclaim it.
+            // If no AP is active, this branch is a harmless no-op and the persisted OTA session
+            // resumes over its existing network path.
+            Log.i(TAG, "🔥 Preserving any active K900 hotspot during OTA APK replacement");
+        } else {
+            stopHotspot();
+        }
         unregisterWifiStateReceiver();
         super.shutdown();
     }
