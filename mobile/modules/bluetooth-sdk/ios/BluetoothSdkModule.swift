@@ -281,6 +281,21 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             }
         }
 
+        // MARK: - Native Notification Centre (internal, Android/G2 only)
+
+        // Parity stub: iOS drivers all inherit the protocol no-op (glasses read notifications
+        // over ANCS). The JS bridge is Android-gated, so a log line here means something
+        // bypassed that gate.
+        AsyncFunction("sendPhoneNotification") { (notification: [String: Any]) in
+            // Package only — never the notification text.
+            Bridge.log(
+                "MAN: sendPhoneNotification from \(notification["packageName"] ?? "unknown") — ignored, iOS uses ANCS"
+            )
+            await MainActor.run {
+                DeviceManager.shared.sgc?.sendPhoneNotification(notification)
+            }
+        }
+
         // MARK: - WiFi Commands
 
         AsyncFunction("requestWifiScan") {

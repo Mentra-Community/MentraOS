@@ -1,6 +1,7 @@
-import {ScrollView, View} from "react-native"
+import {Platform, ScrollView, View} from "react-native"
 import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
 
+import {DeviceTypes} from "@/../../cloud/packages/types/src"
 import {Header, Screen} from "@/components/ignite"
 import ToggleSetting from "@/components/settings/ToggleSetting"
 import {Group} from "@/components/ui/Group"
@@ -19,6 +20,11 @@ export default function SuperSettingsScreen() {
   const [iosAppSwitcherBottomSwipe, setIosAppSwitcherBottomSwipe] = useSetting(
     SETTINGS.ios_app_switcher_bottom_swipe.key,
   )
+  const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
+  const [g2NativeNotifications, setG2NativeNotifications] = useSetting(SETTINGS.g2_native_notifications.key)
+  // Needs both halves: the Android notification listener and the G2 driver. iOS glasses read
+  // notifications over ANCS and never take a pushed one.
+  const showG2NativeNotifications = Platform.OS === "android" && defaultWearable === DeviceTypes.G2
   const {push} = useNavigationStore.getState()
   return (
     <Screen preset="fixed">
@@ -51,6 +57,14 @@ export default function SuperSettingsScreen() {
               value={useNativeDashboard}
               onValueChange={(value) => setUseNativeDashboard(value)}
             />
+
+            {showG2NativeNotifications && (
+              <ToggleSetting
+                label="G2 Native Notifications"
+                value={g2NativeNotifications}
+                onValueChange={(value) => setG2NativeNotifications(value)}
+              />
+            )}
 
             <ToggleSetting
               label="Enable iOS App Switcher Bottom Swipe"

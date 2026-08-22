@@ -33,10 +33,13 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 
 // ---------- G2 Protocol Constants ----------
@@ -45,6 +48,8 @@ private object G2BLE {
     // EvenHub BLE characteristic UUIDs (NOT the G1 UART UUIDs!)
     val CHAR_WRITE: UUID = UUID.fromString("00002760-08C2-11E1-9073-0E8AC72E5401")
     val CHAR_NOTIFY: UUID = UUID.fromString("00002760-08C2-11E1-9073-0E8AC72E5402")
+    val FILE_WRITE: UUID = UUID.fromString("00002760-08C2-11E1-9073-0E8AC72E7401")
+    val FILE_NOTIFY: UUID = UUID.fromString("00002760-08C2-11E1-9073-0E8AC72E7402")
     val AUDIO_NOTIFY: UUID = UUID.fromString("00002760-08C2-11E1-9073-0E8AC72E6402")
     val SERVICE_UUID: UUID = UUID.fromString("00002760-08C2-11E1-9073-0E8AC72E0000")
     val CLIENT_CHARACTERISTIC_CONFIG: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
@@ -59,6 +64,9 @@ private object G2BLE {
 private enum class ServiceID(val value: Byte) {
     DASHBOARD(0x01), // UI_BACKGROUND_DASHBOARD_APP_ID
     MENU(0x03), // UI_FOREGROUND_MEUN_ID (typo is intentional — matches Even's proto)
+    NOTIFICATION(0x04), // UI_FOREGROUND_NOTIFICATION_ID (the on-glasses notification centre)
+    FILE_CMD(0xC4.toByte()), // Even File Service — command channel (START/DATA/RESULT_CHECK)
+    FILE_DATA(0xC5.toByte()), // Even File Service — raw file bytes
     EVEN_AI(0x07), // UI_FOREGROUND_EVEN_AI_ID
     NAVIGATION(0x08), // UI_BACKGROUND_NAVIGATION_ID (compass/heading lives here)
     G2_SETTING(0x09), // UI_SETTING_APP_ID
@@ -834,6 +842,174 @@ private object EvenAIProto {
     }
 }
 
+// ---------- Notification Service (notification.proto, service ID 4) ----------
+
+/**
+ * Control plane for the on-glasses notification centre. Content does not travel here — it goes
+ * over the file service below. Wire formats: `notes/g2-notification-service.md`.
+ */
+private object NotificationProto {
+    const val CMD_CTRL = 1
+    const val CMD_NOTIFICATION_IOS = 2
+    const val CMD_WHITELIST_CTRL = 3
+    const val CMD_WHITELIST_CHK = 4
+    const val CMD_COMM_RSP = 161
+
+    fun notificationCtrl(
+        magicRandom: Int,
+        notifEnable: Int = 1,
+        autoDispEnable: Int = 1,
+        dispTime: Int = 5,
+        avoidDisturbEnable: Int = 0
+    ): ByteArray {
+        val ctrlW = ProtobufWriter()
+        ctrlW.writeInt32Field(1, notifEnable)
+        ctrlW.writeInt32Field(2, autoDispEnable)
+        ctrlW.writeInt32Field(3, dispTime)
+        ctrlW.writeInt32Field(5, avoidDisturbEnable)
+
+        val w = ProtobufWriter()
+        w.writeInt32Field(1, CMD_CTRL)
+        w.writeInt32Field(2, magicRandom)
+        w.writeMessageField(3, ctrlW.toByteArray())
+        return w.toByteArray()
+    }
+
+    /**
+     * `whitelistDisable = 1` stops the glasses filtering incoming notifications against the
+     * whitelist file they hold, so we can filter phone-side instead of maintaining that file.
+     */
+    fun whitelistCtrl(magicRandom: Int, whitelistDisable: Int): ByteArray {
+        val wlW = ProtobufWriter()
+        wlW.writeInt32Field(1, whitelistDisable)
+
+        val w = ProtobufWriter()
+        w.writeInt32Field(1, CMD_WHITELIST_CTRL)
+        w.writeInt32Field(2, magicRandom)
+        w.writeMessageField(6, wlW.toByteArray())
+        return w.toByteArray()
+    }
+
+    fun cmdName(cmd: Int): String =
+        when (cmd) {
+            CMD_CTRL -> "CTRL"
+            CMD_NOTIFICATION_IOS -> "NOTIFICATION_IOS"
+            CMD_WHITELIST_CTRL -> "WHITELIST_CTRL"
+            CMD_WHITELIST_CHK -> "WHITELIST_CHK"
+            CMD_COMM_RSP -> "COMM_RSP"
+            else -> "cmd_$cmd"
+        }
+}
+
+// ---------- Even File Service (service 0xC4 cmd / 0xC5 data) ----------
+
+/**
+ * The glasses' generic file-push channel, and how notification content gets across: the body is a
+ * JSON document pushed as a file. Unlike every other G2 service this is **not** protobuf —
+ * SEND_START is a fixed 93-byte struct and the data phase writes raw bytes.
+ *
+ * Each phase is acked with a 2-byte `[cid][status]`:
+ *   START(fileType, length, crc32, filename) → ack → DATA → raw bytes on 0xC5 → ack
+ *     → RESULT_CHECK → ack
+ */
+private object FileService {
+    // eEvenFileSendServiceCID — first byte of every 0xC4 payload
+    const val CID_SEND_START = 0
+    const val CID_SEND_DATA = 1
+    const val CID_SEND_RESULT_CHECK = 2
+
+    const val TYPE_ANDROID_MSG_JSON_NOTIFICATION = 1
+
+    // Notification bodies and the whitelist share this path: the firmware has one filename
+    // constant (`BleG2GlassesFilePath.notifyWhitelist`) and discriminates on `fileType`.
+    const val PATH_NOTIFY = "user/notify_whitelist.json"
+
+    const val FILENAME_FIELD_LEN = 80
+    const val SEND_START_LEN = 93 // 1 + 4 + 4 + 4 + 80
+
+    // eEvenFileServiceRsp
+    fun statusName(status: Int): String =
+        when (status) {
+            0 -> "SUCCESS"
+            1 -> "START_ERR"
+            2 -> "DATA_CRC_ERR"
+            3 -> "FLASH_WRITE_ERR"
+            4 -> "TIMEOUT"
+            5 -> "NO_RESOURCES"
+            6 -> "RESULT_CHECK_FAIL"
+            7 -> "FAIL"
+            8 -> "CANCEL"
+            else -> "status_$status"
+        }
+
+    private fun ByteArrayOutputStream.writeU32LE(value: Int) {
+        write(value and 0xFF)
+        write((value ushr 8) and 0xFF)
+        write((value ushr 16) and 0xFF)
+        write((value ushr 24) and 0xFF)
+    }
+
+    /** 93-byte fixed struct: cid | fileType u32 | fileLength u32 | fileCrc32 u32 | filename[80]. */
+    fun sendStart(fileType: Int, fileLength: Int, fileCrc32: Int, filename: String): ByteArray {
+        val out = ByteArrayOutputStream()
+        out.write(CID_SEND_START)
+        out.writeU32LE(fileType)
+        out.writeU32LE(fileLength)
+        out.writeU32LE(fileCrc32)
+
+        val nameBytes = filename.toByteArray(Charsets.US_ASCII)
+        require(nameBytes.size < FILENAME_FIELD_LEN) { "filename too long: $filename" }
+        out.write(nameBytes)
+        repeat(FILENAME_FIELD_LEN - nameBytes.size) { out.write(0) } // NUL-padded to 80
+
+        return out.toByteArray().also { check(it.size == SEND_START_LEN) }
+    }
+
+    fun sendData(): ByteArray = byteArrayOf(CID_SEND_DATA.toByte())
+
+    fun resultCheck(): ByteArray = byteArrayOf(CID_SEND_RESULT_CHECK.toByte())
+}
+
+// ---------- Notification payload JSON ----------
+
+/**
+ * The JSON document the glasses expect on the file service — these nine fields, exactly. Schema
+ * confirmed against a BLE capture of the Even app; see `notes/g2-notification-service.md`.
+ *
+ * `time_s` is UTC epoch seconds while `date` is **device-local** wall time; formatting `date` in
+ * UTC would skew every displayed timestamp by the device's offset.
+ */
+private object NotificationJson {
+    fun androidNotification(
+        msgId: Int,
+        action: Int,
+        appIdentifier: String,
+        title: String,
+        subtitle: String,
+        message: String,
+        postTimeMs: Long,
+        displayName: String
+    ): ByteArray {
+        val dateFmt = java.text.SimpleDateFormat("yyyyMMdd'T'HHmmss", java.util.Locale.US)
+        val body =
+            org.json.JSONObject()
+                .put("msg_id", msgId)
+                .put("action", action)
+                .put("app_identifier", appIdentifier)
+                .put("title", title)
+                .put("subtitle", subtitle)
+                .put("message", message)
+                .put("time_s", postTimeMs / 1000)
+                .put("date", dateFmt.format(java.util.Date(postTimeMs)))
+                .put("display_name", displayName)
+
+        return org.json.JSONObject()
+            .put("android_notification", body)
+            .toString()
+            .toByteArray(Charsets.UTF_8)
+    }
+}
+
 // ---------- Menu Protobuf Builders (menu.proto, service ID 3) ----------
 
 private object MenuProto {
@@ -1147,7 +1323,14 @@ private class G2ReceiveManager {
         val status = rawData[7].toInt() and 0xFF
         val resultCode = (status shr 1) and 0x0F
 
-        if (resultCode != 0) return null
+        if (resultCode != 0) {
+            // Silent drops here look identical to an ack timeout at the file layer, so say so.
+            val sid = serviceId.toInt() and 0xFF
+            if (sid == 0xC4 || sid == 0xC5) {
+                Bridge.log("G2/FILE: inbound dropped before dispatch — resultCode=$resultCode")
+            }
+            return null
+        }
 
         val isLast = serialNum == totalPackets
         val hasCrc = isLast
@@ -1256,6 +1439,9 @@ class G2 : SGCManager() {
     private var rightGatt: BluetoothGatt? = null
     private var leftWriteChar: BluetoothGattCharacteristic? = null
     private var rightWriteChar: BluetoothGattCharacteristic? = null
+    // The file service has its own characteristic group (…7401/…7402), separate from the UI one,
+    // and is driven over the right leg only — see [writeFilePackets].
+    private var rightFileWriteChar: BluetoothGattCharacteristic? = null
     private var leftNotifyChar: BluetoothGattCharacteristic? = null
     private var rightNotifyChar: BluetoothGattCharacteristic? = null
     private var leftAudioChar: BluetoothGattCharacteristic? = null
@@ -1557,25 +1743,31 @@ class G2 : SGCManager() {
         }
     }
 
+    /**
+     * One characteristic write. Shared by the UI path ([writeOnePacket]) and the file path
+     * ([writeFilePackets]), which differ only in the characteristic pair they target. No-ops if
+     * the leg isn't bound. [leg] non-null also logs the write — file transfers only; the UI path
+     * is far too hot for that.
+     */
+    private fun writeTo(
+        char: BluetoothGattCharacteristic?,
+        gatt: BluetoothGatt?,
+        packet: ByteArray,
+        leg: String?
+    ) {
+        if (char == null || gatt == null) return
+        char.value = packet
+        char.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+        val ok = gatt.writeCharacteristic(char)
+        bgcapNoteWriteResult(ok) // BGCAP
+        if (leg != null) {
+            Bridge.log("G2/FILE: write $leg ${packet.size}B -> ${if (ok) "queued" else "DROPPED (stack busy)"}")
+        }
+    }
+
     private fun writeOnePacket(packet: ByteArray, left: Boolean, right: Boolean) {
-        if (right) {
-            rightWriteChar?.let { char ->
-                rightGatt?.let { gatt ->
-                    char.value = packet
-                    char.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
-                    bgcapNoteWriteResult(gatt.writeCharacteristic(char)) // BGCAP
-                }
-            }
-        }
-        if (left) {
-            leftWriteChar?.let { char ->
-                leftGatt?.let { gatt ->
-                    char.value = packet
-                    char.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
-                    bgcapNoteWriteResult(gatt.writeCharacteristic(char)) // BGCAP
-                }
-            }
-        }
+        if (right) writeTo(rightWriteChar, rightGatt, packet, null)
+        if (left) writeTo(leftWriteChar, leftGatt, packet, null)
     }
 
     private fun sendToGlasses(
@@ -1670,6 +1862,158 @@ class G2 : SGCManager() {
                 reserveFlag = true
             )
         sendToGlasses(packets)
+    }
+
+    // ---------- Even File Service ----------
+
+    /**
+     * Ack slot. One transfer is ever in flight (serialized on [fileTransferMutex]), so one slot
+     * suffices. @Volatile + CompletableDeferred for the same reason as [pendingImgAck]: the ack
+     * lands on the BLE callback thread.
+     */
+    @Volatile private var pendingFileAckCid: Int? = null
+
+    @Volatile private var pendingFileAck: CompletableDeferred<Int>? = null
+    private val fileTransferMutex = Mutex()
+
+    /**
+     * Generous on purpose. `sendToGlasses` enqueues rather than transmits, and the BLE write queue
+     * routinely runs 2-5s deep under display/audio load — a tighter timeout would measure our own
+     * queue latency instead of the glasses' response.
+     */
+    private val FILE_ACK_TIMEOUT_MS = 15000L
+
+    /** [ServiceID.FILE_CMD] carries the phase opcodes, [ServiceID.FILE_DATA] the raw file bytes. */
+    private suspend fun sendOnFileService(serviceId: Byte, payload: ByteArray) {
+        // reserveFlag=false per the capture: every file frame carries status byte 0x00, where a
+        // set flag stamps 0x20 (what the multi-packet dashboard frames use).
+        writeFilePackets(
+            sendManager.buildPackets(serviceId = serviceId, payload = payload, reserveFlag = false)
+        )
+    }
+
+    /**
+     * File-service writes go to the bulk-group write characteristic ([G2BLE.FILE_WRITE], ATT
+     * 0x0882) — **not** the UI write characteristic every other service uses. A file opcode sent
+     * to the UI characteristic is silently ignored: no ack, no error.
+     *
+     * Right leg only, per the capture: every 0xC4/0xC5 frame went to the right connection, with
+     * ATT 0x0882/0x0884 active only there. Both legs expose the characteristic; the glasses relay
+     * internally.
+     *
+     * Paced like [sendToGlasses] — back-to-back WRITE_TYPE_NO_RESPONSE writes in a multi-fragment
+     * body get dropped as "stack busy" and read as an ack timeout. suspend + delay so the gap
+     * doesn't block the main looper.
+     */
+    private suspend fun writeFilePackets(packets: List<ByteArray>) {
+        if (rightFileWriteChar == null) {
+            Bridge.log("G2/FILE: no FILE WRITE characteristic bound — cannot send")
+            return
+        }
+        for ((index, packet) in packets.withIndex()) {
+            if (index > 0) delay(BLE_PACKET_GAP_MS)
+            writeTo(rightFileWriteChar, rightGatt, packet, "RIGHT")
+        }
+    }
+
+    /**
+     * Arm the ack slot *before* transmitting, so a fast reply can't land while we aren't listening.
+     * Separate from [awaitFileAck] because the data phase transmits twice (the 0xC4 open and the
+     * 0xC5 bytes) against a single ack.
+     */
+    private fun armFileAck(cid: Int): CompletableDeferred<Int> {
+        val ack = CompletableDeferred<Int>()
+        pendingFileAckCid = cid
+        pendingFileAck = ack
+        return ack
+    }
+
+    /** Wait for the armed ack's `[cid][status]`. Returns the status, or null on timeout. */
+    private suspend fun awaitFileAck(ack: CompletableDeferred<Int>): Int? {
+        val status = withTimeoutOrNull(FILE_ACK_TIMEOUT_MS) { ack.await() }
+        pendingFileAck = null
+        pendingFileAckCid = null
+        return status
+    }
+
+    /**
+     * Push a file to the glasses over the Even File Service. Bodies of any length are fine —
+     * [G2SendManager.buildPackets] fragments correctly, verified by re-encoding a full capture
+     * byte-for-byte.
+     *
+     * Returns RESULT_CHECK's `eEvenFileServiceRsp` status (0 = SUCCESS), or null if a phase timed
+     * out. A failing phase returns its own status, so a checksum rejection (DATA_CRC_ERR at
+     * RESULT_CHECK) is distinguishable from a refusal at START.
+     */
+    private suspend fun sendFile(fileType: Int, filename: String, bytes: ByteArray): Int? =
+        fileTransferMutex.withLock {
+            if (rightFileWriteChar == null) {
+                // Checked before arming: an armed ack with nothing transmitted holds the caller
+                // on a wait that can only time out.
+                Bridge.log("G2/FILE: no FILE WRITE characteristic bound — cannot send")
+                return@withLock null
+            }
+            val crc32 = evenCrc32(bytes)
+            Bridge.log(
+                "G2/FILE: START type=$fileType len=${bytes.size} crc32=0x${
+                    String.format("%08X", crc32)
+                } name=$filename"
+            )
+
+            val startAck = armFileAck(FileService.CID_SEND_START)
+            sendOnFileService(ServiceID.FILE_CMD.value, FileService.sendStart(fileType, bytes.size, crc32, filename))
+            val startStatus = awaitFileAck(startAck)
+            if (startStatus != 0) {
+                Bridge.log("G2/FILE: START failed — ${startStatus?.let(FileService::statusName) ?: "timeout"}")
+                return@withLock startStatus
+            }
+
+            // The data phase opens and fills without an ack in between. The captured session is
+            //     TX 0xC4 01  ->  TX 0xC5 <raw>  ->  RX 0xC5 01 00
+            // i.e. ONE ack, after the bytes. Waiting on the 0xC4 open stalls until timeout, since
+            // the glasses never ack it on its own.
+            val dataAck = armFileAck(FileService.CID_SEND_DATA)
+            sendOnFileService(ServiceID.FILE_CMD.value, FileService.sendData())
+            // WRITE_TYPE_NO_RESPONSE writes go straight at the stack; back-to-back ones get
+            // dropped as "stack busy", and dropping the raw bytes here would read as a timeout.
+            delay(BLE_PACKET_GAP_MS)
+            sendOnFileService(ServiceID.FILE_DATA.value, bytes)
+            val dataStatus = awaitFileAck(dataAck)
+            if (dataStatus != 0) {
+                Bridge.log("G2/FILE: DATA failed — ${dataStatus?.let(FileService::statusName) ?: "timeout"}")
+                return@withLock dataStatus
+            }
+
+            val checkAck = armFileAck(FileService.CID_SEND_RESULT_CHECK)
+            sendOnFileService(ServiceID.FILE_CMD.value, FileService.resultCheck())
+            val checkStatus = awaitFileAck(checkAck)
+            Bridge.log(
+                "G2/FILE: RESULT_CHECK — ${checkStatus?.let(FileService::statusName) ?: "timeout"}"
+            )
+            // DATA_CRC_ERR means framing and struct were accepted and only the checksum is wrong.
+            if (checkStatus == 2) {
+                Bridge.log("G2/FILE: DATA_CRC_ERR — everything but evenCrc32 is correct")
+            }
+            return@withLock checkStatus
+        }
+
+    /**
+     * SEND_START's `fileCrc32`: CRC-32/Castagnoli polynomial, but MSB-first and unreflected, with
+     * no final xor — not stock CRC-32C. Verified against all four captured transfers.
+     */
+    private val evenCrc32Table: IntArray =
+        IntArray(256) { i ->
+            var c = i shl 24
+            repeat(8) { c = if (c < 0) (c shl 1) xor 0x1EDC6F41 else c shl 1 }
+            c
+        }
+
+    private fun evenCrc32(data: ByteArray): Int {
+        var crc = 0
+        for (byte in data) {
+            crc = (crc shl 8) xor evenCrc32Table[((byte.toInt() and 0xFF) xor (crc ushr 24)) and 0xFF]
+        }
+        return crc
     }
 
     private fun sendMenuCommand(payload: ByteArray) {
@@ -3557,6 +3901,7 @@ class G2 : SGCManager() {
         activeMenuAppId = null
         lastClickTimestamp = null
         lastMenuSelectTimestamp = null
+        notificationCentreArmed = false
         DeviceStore.apply("glasses", "connected", false)
         DeviceStore.apply("glasses", "fullyBooted", false)
     }
@@ -3574,6 +3919,7 @@ class G2 : SGCManager() {
         rightWriteChar = null
         leftNotifyChar = null
         rightNotifyChar = null
+        rightFileWriteChar = null
         leftAudioChar = null
         rightAudioChar = null
         DEVICE_SEARCH_ID = "NOT_SET"
@@ -3720,6 +4066,177 @@ class G2 : SGCManager() {
         DeviceStore.apply("glasses", "controllerConnected", false)
         DeviceStore.apply("glasses", "controllerFullyBooted", false)
         Bridge.log("G2: Sent RING_DISCONNECT_INFO for MAC $mac")
+    }
+
+    // ---------- Native Notification Centre ----------
+
+    /**
+     * Set the notification centre's control plane: whether it's on, and whether the glasses filter
+     * against the whitelist file they hold. Two commands with a gap — back-to-back writes on this
+     * service have been seen to drop.
+     */
+    private suspend fun pinControlPlane(notifEnable: Int, whitelistDisable: Int) {
+        Bridge.log("G2/NOTIF: pinning notifEnable=$notifEnable whitelistDisable=$whitelistDisable")
+        sendToGlasses(
+            sendManager.buildPackets(
+                serviceId = ServiceID.NOTIFICATION.value,
+                payload = NotificationProto.notificationCtrl(
+                    magicRandom = sendManager.nextMagicRandom(),
+                    notifEnable = notifEnable,
+                    autoDispEnable = 1,
+                    dispTime = 5,
+                    avoidDisturbEnable = 0
+                ),
+                reserveFlag = true
+            )
+        )
+        delay(400)
+        sendToGlasses(
+            sendManager.buildPackets(
+                serviceId = ServiceID.NOTIFICATION.value,
+                payload = NotificationProto.whitelistCtrl(
+                    magicRandom = sendManager.nextMagicRandom(),
+                    whitelistDisable = whitelistDisable
+                ),
+                reserveFlag = true
+            )
+        )
+    }
+
+    /**
+     * Bounded hand-off from the Expo bridge thread to the BLE send loop. A push is three BLE round
+     * trips serialized behind [fileTransferMutex] — seconds under display load — so an unbounded
+     * queue would grow faster than it drains during a burst. DROP_OLDEST because a backlog of
+     * stale notifications is worth less than the newest one.
+     */
+    private val notificationQueue =
+        Channel<Map<String, Any>>(capacity = 8, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+
+    private var notificationPumpStarted = false
+
+    /**
+     * Whether THIS connection has had its notification centre switched on. Armed lazily on the
+     * first push, so a user who never enables the feature never has these settings written;
+     * cleared on disconnect and on a refused pin, since the glasses don't persist it and
+     * re-arming is two writes.
+     */
+    @Volatile private var notificationCentreArmed = false
+
+    /**
+     * Push a phone notification into the G2's own notification centre. Runs in PARALLEL with the
+     * normal MentraOS card — neither replaces nor suppresses it. Enqueue and return; the transfer
+     * happens on [notificationQueue]'s consumer.
+     */
+    override fun sendPhoneNotification(notification: Map<String, Any>) {
+        ensureNotificationPump()
+        notificationQueue.trySend(notification)
+    }
+
+    /**
+     * Start the single consumer coroutine, once. Synchronized because a racing check-then-set
+     * would start two pumps, and two transfers would then interleave on the one ack slot.
+     */
+    @Synchronized
+    private fun ensureNotificationPump() {
+        if (notificationPumpStarted) return
+        notificationPumpStarted = true
+        displayScope.launch {
+            for (notification in notificationQueue) {
+                // One bad notification must not kill the pump for the process's lifetime.
+                try {
+                    pushNotificationToCentre(notification)
+                } catch (e: Exception) {
+                    Bridge.log("G2/NOTIF: push failed — ${e.message}")
+                }
+            }
+        }
+    }
+
+    private suspend fun pushNotificationToCentre(notification: Map<String, Any>) {
+        val isFullyBooted = DeviceStore.get("glasses", "fullyBooted") as? Boolean ?: false
+        if (!isFullyBooted) {
+            Bridge.log("G2/NOTIF: glasses not ready - dropping")
+            return
+        }
+
+        if (!notificationCentreArmed) {
+            // Set before the writes go out: a refusal can only arrive after its write, so the
+            // clear-on-reject always lands after this set. Set after the pin instead, a refusal
+            // arriving inside the pin's inter-write gap would be overwritten.
+            notificationCentreArmed = true
+            // whitelistDisable=1 turns off the on-glass per-app filter, which otherwise drops
+            // every notification absent from the stored whitelist. We push no whitelist:
+            // per-app filtering already happens phone-side in the notification listener.
+            pinControlPlane(notifEnable = 1, whitelistDisable = 1)
+            Bridge.log("G2/NOTIF: centre armed (on-glass filtering disabled)")
+        }
+
+        val packageName = notification["packageName"] as? String ?: ""
+        val appName = notification["appName"] as? String ?: ""
+        val title = notification["title"] as? String ?: ""
+        val subtitle = notification["subtitle"] as? String ?: ""
+        val body = notification["body"] as? String ?: ""
+        // JS numbers cross the bridge as Double - `as? Long`/`as? Int` would silently null out.
+        val timestampMs = (notification["timestampMs"] as? Number)?.toLong() ?: System.currentTimeMillis()
+        val action = (notification["action"] as? Number)?.toInt() ?: 0
+        val msgId = msgIdFor(notification["notificationId"] as? String ?: "")
+
+        val bytes = NotificationJson.androidNotification(
+            msgId = msgId,
+            action = action,
+            appIdentifier = packageName,
+            title = title,
+            subtitle = subtitle,
+            message = body,
+            postTimeMs = timestampMs,
+            displayName = appName
+        )
+
+        // Length and package, never the text.
+        Bridge.log("G2/NOTIF: pushing ${bytes.size}B from $packageName msgId=$msgId action=$action")
+        val status =
+            sendFile(FileService.TYPE_ANDROID_MSG_JSON_NOTIFICATION, FileService.PATH_NOTIFY, bytes)
+        Bridge.log("G2/NOTIF: push -> ${status?.let(FileService::statusName) ?: "timeout"}")
+    }
+
+    /**
+     * The glasses key notification cards on a numeric `msg_id`; the phone id is a string
+     * ("$packageName-${sbn.key}"), so ids are minted here. The same phone id keeps the same
+     * msg_id while it stays in the LRU: a notification re-posts under its id on update, and
+     * reusing the msg_id makes the glasses replace the card in place rather than stack a
+     * duplicate. Numeric phone ids pass straight through; an empty id gets a fresh mint, since
+     * there is nothing to correlate on. Only touched from [notificationQueue]'s single consumer.
+     */
+    private val msgIdsByPhoneId =
+        object : LinkedHashMap<String, Int>(32, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Int>) = size > 512
+        }
+
+    private fun msgIdFor(notificationId: String): Int {
+        notificationId.toIntOrNull()?.let { return it }
+        if (notificationId.isEmpty()) return mintMsgId()
+        return msgIdsByPhoneId.getOrPut(notificationId) { mintMsgId() }
+    }
+
+    /**
+     * Four digits like the captured ones — a wider field costs payload budget, and the firmware
+     * has only been seen handling short ids. Minting skips ids still mapped to a phone id: the
+     * counter wraps after 8000 mints while up to 512 mappings stay live, and a reused id would
+     * make the glasses replace the wrong card. Any 513 consecutive candidates contain a free id.
+     */
+    private var syntheticMsgId = 2000
+
+    private fun mintMsgId(): Int {
+        repeat(msgIdsByPhoneId.size + 1) {
+            val candidate = nextSyntheticMsgId()
+            if (!msgIdsByPhoneId.containsValue(candidate)) return candidate
+        }
+        return nextSyntheticMsgId()
+    }
+
+    private fun nextSyntheticMsgId(): Int {
+        syntheticMsgId = if (syntheticMsgId >= 9999) 2000 else syntheticMsgId + 1
+        return syntheticMsgId
     }
 
     // ---------- SGCManager: Device Control ----------
@@ -4099,6 +4616,7 @@ class G2 : SGCManager() {
                         rightWriteChar = null
                         leftNotifyChar = null
                         rightNotifyChar = null
+                        rightFileWriteChar = null
                         leftAudioChar = null
                         rightAudioChar = null
                         authStarted = false
@@ -4109,6 +4627,7 @@ class G2 : SGCManager() {
                         pageCreated = false
                         dashboardShowing = 0
                         dashboardOpening = false
+                        notificationCentreArmed = false
                         DeviceStore.apply("glasses", "connected", false)
                         DeviceStore.apply("glasses", "fullyBooted", false)
 
@@ -4170,6 +4689,16 @@ class G2 : SGCManager() {
                                     enqueueGattOp { enableNotifications(gatt, char) }
                                 }
 
+                                G2BLE.FILE_WRITE -> {
+                                    Bridge.log("G2: Found FILE WRITE char on $side")
+                                    if (side != "LEFT") rightFileWriteChar = char
+                                }
+
+                                G2BLE.FILE_NOTIFY -> {
+                                    Bridge.log("G2: Found FILE NOTIFY char on $side")
+                                    enqueueGattOp { enableNotifications(gatt, char) }
+                                }
+
                                 G2BLE.AUDIO_NOTIFY -> {
                                     Bridge.log("G2: Found AUDIO char on $side")
                                     if (side == "LEFT") leftAudioChar = char
@@ -4210,6 +4739,10 @@ class G2 : SGCManager() {
 
                 val sourceKey = if (side == "LEFT") "L" else "R"
                 when (characteristic.uuid) {
+                    // File-service acks arrive on their own characteristic and share the standard
+                    // transport framing, so they need no demux — just the usual decode.
+                    G2BLE.FILE_NOTIFY -> mainHandler.post { handleNotifyData(data, sourceKey) }
+
                     G2BLE.AUDIO_NOTIFY -> handleAudioData(data, sourceKey)
                     G2BLE.CHAR_NOTIFY -> {
                         // Correlate an in-flight image ACK INLINE on the BLE callback thread, before
@@ -4341,6 +4874,9 @@ class G2 : SGCManager() {
             ServiceID.NAVIGATION.value -> handleNavigationResponse(payload)
             ServiceID.EVEN_AI.value -> handleEvenAIResponse(payload)
             ServiceID.EVEN_HUB_CTRL.value -> handleEvenHubCtrlResponse(payload)
+            ServiceID.NOTIFICATION.value -> handleNotificationResponse(payload)
+            ServiceID.FILE_CMD.value -> handleFileServiceResponse(payload)
+            ServiceID.FILE_DATA.value -> handleFileServiceResponse(payload)
             else -> {
                 Bridge.log(
                     "G2: Unhandled service ${serviceId.toInt() and 0xFF} (${payload.size} bytes): ${
@@ -4349,6 +4885,73 @@ class G2 : SGCManager() {
                 )
             }
         }
+    }
+
+    /**
+     * Even File Service acks. A real ack is **exactly two bytes** — `[cid][status]`. Resolves
+     * whichever phase [sendFile] is waiting on.
+     *
+     * The size check is load-bearing: our own transmissions come back on this characteristic, and
+     * with the transport header stripped they present as payloads starting with the very CID we
+     * just sent. Accepting those as SUCCESS makes every phase pass unconditionally, including the
+     * RESULT_CHECK that verifies the checksum.
+     */
+    private fun handleFileServiceResponse(payload: ByteArray) {
+        if (payload.isEmpty()) {
+            Bridge.log("G2/FILE: empty response")
+            return
+        }
+
+        val cid = payload[0].toInt() and 0xFF
+        if (payload.size != 2 || cid > FileService.CID_SEND_RESULT_CHECK) {
+            Bridge.log("G2/FILE: ignoring ${payload.size}B frame — our own echo, not an ack")
+            return
+        }
+
+        val status = payload[1].toInt() and 0xFF
+        Bridge.log("G2/FILE: ACK cid=$cid status=$status (${FileService.statusName(status)})")
+
+        if (pendingFileAckCid == cid) {
+            pendingFileAck?.complete(status)
+        } else {
+            Bridge.log("G2/FILE: ack cid=$cid ignored — waiting on ${pendingFileAckCid ?: "nothing"}")
+        }
+    }
+
+    /**
+     * Notification service (0x04). Log-only — it acknowledges [pinControlPlane] and reports the
+     * glasses' own notification activity; content never travels here. Field map in
+     * `notes/g2-notification-service.md`.
+     */
+    private fun handleNotificationResponse(payload: ByteArray) {
+        val fields = ProtobufReader(payload).parseFields()
+        val cmd = fields[1] as? Int ?: -1
+        val magic = fields[2] as? Int
+
+        // COMM_RSP carries field 5 = {f1=commandId that failed, f2=errorCode}.
+        var verdict = ""
+        if (cmd == NotificationProto.CMD_COMM_RSP) {
+            val rsp = (fields[5] as? ByteArray)?.let { ProtobufReader(it).parseFields() }
+            val failedCmd = rsp?.get(1) as? Int
+            val errorCode = rsp?.get(2) as? Int
+            verdict =
+                " REJECTED cmd=${failedCmd?.let { NotificationProto.cmdName(it) } ?: "?"}" +
+                    " errorCode=$errorCode" +
+                    (if (errorCode == 8) " (NOT_SUPPORT)" else "")
+            // A refused pin means the centre is NOT armed, whatever the flag says; dropping the
+            // latch makes the next push re-pin instead of pushing into a disabled centre forever.
+            if (failedCmd == NotificationProto.CMD_CTRL ||
+                failedCmd == NotificationProto.CMD_WHITELIST_CTRL
+            ) {
+                notificationCentreArmed = false
+            }
+        }
+
+        Bridge.log(
+            "G2/NOTIF: RX ${NotificationProto.cmdName(cmd)}" +
+                (magic?.let { " magic=$it" } ?: "") +
+                verdict
+        )
     }
 
     /**
