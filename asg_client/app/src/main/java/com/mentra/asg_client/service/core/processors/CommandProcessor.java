@@ -408,7 +408,11 @@ public class CommandProcessor {
             Log.d(TAG, "✅ Registered KeepAwakeCommandHandler");
 
             commandHandlerRegistry.registerHandler(
-                    new StreamCommandHandler(context, stateManager, streamingManager));
+                    new StreamCommandHandler(
+                            context,
+                            stateManager,
+                            streamingManager,
+                            serviceManager.getNetworkManager()));
             Log.d(TAG, "✅ Registered StreamCommandHandler");
 
             commandHandlerRegistry.registerHandler(

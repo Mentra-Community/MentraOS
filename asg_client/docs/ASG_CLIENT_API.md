@@ -313,7 +313,7 @@ See [features/rtmp-streaming.md](features/rtmp-streaming.md) for stream lifecycl
 | `flash`     | boolean | `true`   | Privacy LED during stream                                                                                                     |
 | `sound`     | boolean | `true`   | Start/stop tones                                                                                                              |
 
-**Constraints:** battery ≥ 10%, WiFi connected. WHIP streams whose requested resolution exceeds the camera's supported output are rejected (`WhipCameraFormatSelector`).
+**Constraints:** battery ≥ 10%, and either STA WiFi is connected or the stream endpoint is on the active glasses-hosted hotspot subnet. WHIP streams whose requested resolution exceeds the camera's supported output are rejected (`WhipCameraFormatSelector`).
 
 **Response wire type:** `stream_status` (new universal type from `MediaManager.sendStreamStatusResponse`). Legacy `rtmp_stream_status` is still produced by `ResponseBuilder` in some paths.
 
