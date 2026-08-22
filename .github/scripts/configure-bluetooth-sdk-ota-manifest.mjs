@@ -3,7 +3,7 @@
 // The portable archive cannot know its eventual hostname. Convert its relative template into the
 // absolute artifact URLs required by public ASG build 39 before the directory is hosted.
 
-import {readFileSync, realpathSync, writeFileSync} from 'node:fs';
+import {existsSync, readFileSync, realpathSync, writeFileSync} from 'node:fs';
 import {dirname, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
@@ -76,6 +76,10 @@ function main() {
   process.stdout.write(`Wrote ${outputPath} for ${finalManifestUrl}\n`);
 }
 
-if (process.argv[1] && realpathSync(fileURLToPath(import.meta.url)) === realpathSync(process.argv[1])) {
+if (
+  process.argv[1] &&
+  existsSync(process.argv[1]) &&
+  realpathSync(fileURLToPath(import.meta.url)) === realpathSync(process.argv[1])
+) {
   main();
 }
