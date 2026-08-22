@@ -393,12 +393,21 @@ jobs:
           rm "$BUNDLE_DIRECTORY/version.json"
 
           find "$BUNDLE_DIRECTORY" -exec touch -t 198001010000 {} +
-          find "$BUNDLE_DIRECTORY" -type f -print \
-            | LC_ALL=C sort \
-            | zip -X -q "sdk-ota-bundle/$BUNDLE_ASSET" -@
+          (
+            cd "$BUNDLE_DIRECTORY"
+            find . -type f -print \
+              | LC_ALL=C sort \
+              | sed 's#^\./##' \
+              | zip -X -q "../sdk-ota-bundle/$BUNDLE_ASSET" -@
+          )
           test -f "$BUNDLE_DIRECTORY/version.template.json"
           test -f "$BUNDLE_DIRECTORY/configure.mjs"
           test ! -e "$BUNDLE_DIRECTORY/version.json"
+          zipinfo -1 "sdk-ota-bundle/$BUNDLE_ASSET" | grep -x 'version.template.json' >/dev/null
+          if zipinfo -1 "sdk-ota-bundle/$BUNDLE_ASSET" | grep "^${BUNDLE_DIRECTORY}/" >/dev/null; then
+            echo "Portable OTA ZIP unexpectedly contains a versioned directory prefix." >&2
+            exit 1
+          fi
           unzip -t "sdk-ota-bundle/$BUNDLE_ASSET"
 
       - name: Upload SDK OTA artifacts
@@ -526,14 +535,20 @@ jobs:
             sleep 10
           done
 
-          bundle_status=$(curl --fail --silent --show-error --head --location \
-            --output /dev/null \
-            --write-out "%{http_code}" \
-            "${{ steps.sdk-ota-info.outputs.bundle_url }}")
-          if [[ "$bundle_status" != "200" ]]; then
-            echo "Portable OTA bundle returned HTTP ${bundle_status}." >&2
-            exit 1
-          fi
+          for attempt in {1..12}; do
+            bundle_status=$(curl --silent --show-error --head --location \
+              --output /dev/null \
+              --write-out "%{http_code}" \
+              "${{ steps.sdk-ota-info.outputs.bundle_url }}" || true)
+            if [[ "$bundle_status" == "200" ]]; then
+              break
+            fi
+            if [[ "$attempt" -eq 12 ]]; then
+              echo "Portable OTA bundle returned HTTP ${bundle_status} after deploy." >&2
+              exit 1
+            fi
+            sleep 10
+          done
 
       - name: Summarize SDK OTA artifact
         run: |

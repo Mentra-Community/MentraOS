@@ -83,27 +83,41 @@ test('builds a portable template and configures a backward-compatible absolute m
   );
 });
 
-test('rejects an artifact that does not match the canonical manifest hash', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'mentra-ota-bundle-bad-'));
-  const artifact = join(root, 'asg.apk');
-  writeFileSync(artifact, 'tampered');
-  const source = 'https://cdn.example.com/asg.apk';
-  const manifest = {
-    apps: {
-      'com.mentra.asg_client': {apkUrl: source, sha256: hash('expected')},
-    },
-    mtk_patches: [{url: source, sha256: hash('expected')}],
-    bes_firmware: {url: source, sha256: hash('expected')},
-  };
+test('rejects a hash mismatch independently for every OTA component', async (t) => {
+  const labels = {asg: 'ASG APK', mtk: 'MTK patch 0', bes: 'BES firmware'};
+  for (const mismatchedKind of Object.keys(labels)) {
+    await t.test(mismatchedKind, async () => {
+      const root = mkdtempSync(join(tmpdir(), `mentra-ota-bundle-bad-${mismatchedKind}-`));
+      const sources = {
+        asg: 'https://cdn.example.com/asg.apk',
+        mtk: 'https://cdn.example.com/mtk.zip',
+        bes: 'https://cdn.example.com/bes.bin',
+      };
+      const expected = {asg: 'expected-asg', mtk: 'expected-mtk', bes: 'expected-bes'};
+      const localArtifacts = {};
+      for (const kind of Object.keys(sources)) {
+        const path = join(root, `${kind}.bin`);
+        writeFileSync(path, kind === mismatchedKind ? `tampered-${kind}` : expected[kind]);
+        localArtifacts[sources[kind]] = path;
+      }
+      const manifest = {
+        apps: {
+          'com.mentra.asg_client': {apkUrl: sources.asg, sha256: hash(expected.asg)},
+        },
+        mtk_patches: [{url: sources.mtk, sha256: hash(expected.mtk)}],
+        bes_firmware: {url: sources.bes, sha256: hash(expected.bes)},
+      };
 
-  await assert.rejects(
-    buildPortableOtaBundle({
-      manifest,
-      outputDirectory: join(root, 'bundle'),
-      localArtifacts: {[source]: artifact},
-    }),
-    /hash mismatch/,
-  );
+      await assert.rejects(
+        buildPortableOtaBundle({
+          manifest,
+          outputDirectory: join(root, 'bundle'),
+          localArtifacts,
+        }),
+        new RegExp(`${labels[mismatchedKind]} hash mismatch`),
+      );
+    });
+  }
 });
 
 test('rejects a non-HTTP final manifest URL', () => {
