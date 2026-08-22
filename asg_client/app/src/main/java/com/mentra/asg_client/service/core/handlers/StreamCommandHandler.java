@@ -7,6 +7,7 @@ import android.hardware.camera2.CameraManager;
 import android.os.SystemClock;
 import android.util.Log;
 import com.mentra.asg_client.io.media.core.MediaCaptureService;
+import com.mentra.asg_client.io.network.utils.HotspotNetworkUtils;
 import com.mentra.asg_client.io.streaming.config.RtmpStreamConfig;
 import com.mentra.asg_client.io.streaming.config.WhipStreamConfig;
 import com.mentra.asg_client.io.streaming.services.RtmpStreamingService;
@@ -157,9 +158,13 @@ public class StreamCommandHandler implements ICommandHandler {
                 Log.w(TAG, "⚠️ StateManager not available - skipping battery check");
             }
 
-            // WiFi check (WHIP streams may work on mobile data; skip only for WHIP if needed)
-            if (stateManager != null && !stateManager.isConnectedToWifi()) {
-                Log.e(TAG, "Cannot start stream - no WiFi connection");
+            // The hotspot is a directly connected local network, even though Android does not
+            // report it as a connected STA WiFi network.
+            boolean hasStaWifi = stateManager == null || stateManager.isConnectedToWifi();
+            boolean hasLocalHotspotRoute =
+                    !hasStaWifi && HotspotNetworkUtils.isEndpointOnActiveHotspot(streamUrl);
+            if (!hasStaWifi && !hasLocalHotspotRoute) {
+                Log.e(TAG, "Cannot start stream - no WiFi or local hotspot route");
                 sendStreamErrorStatus(streamId, ServiceConstants.ERROR_NO_WIFI_CONNECTION);
                 return false;
             }

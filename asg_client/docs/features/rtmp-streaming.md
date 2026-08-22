@@ -29,7 +29,7 @@ See the [API doc](../ASG_CLIENT_API.md#streaming-rtmp--srt--whip) for fields and
 
 1. **Validate URL.** The URL prefix selects the protocol; an unknown prefix is rejected with `Unknown stream URL protocol`.
 2. **Battery check.** Reject if battery is below `BatteryConstants.MIN_BATTERY_LEVEL` (currently 10%) — `BATTERY_LOW` error.
-3. **WiFi check.** All three protocols require WiFi.
+3. **Network check.** Require either a STA WiFi connection or an endpoint on the active glasses-hosted hotspot subnet.
 4. **Stop any existing stream** to avoid camera contention; brief pause so the camera HAL releases.
 5. **Resolution check (WHIP only).** Reject if requested resolution exceeds the camera's supported output (`WhipCameraFormatSelector`).
 6. **Disable EIS** during streaming to reduce camera HAL thermal load (`SysControl.setEisEnable(context, false)`). Re-enabled on stop.
