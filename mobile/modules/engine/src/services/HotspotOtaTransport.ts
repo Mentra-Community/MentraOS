@@ -96,12 +96,7 @@ class HotspotOtaTransport {
       // the placeholder with the immutable rewritten manifest before ota_start is sent.
       const server = await MentraOtaServer.startOtaServer("{}", artifactPaths, localAddress)
       this.serverStarted = true
-      const manifest = rewriteManifestForLocalServer(
-        checkResult.manifestBody,
-        this.prepared,
-        server.baseUrl,
-        checkResult.manifestUrl,
-      )
+      const manifest = rewriteManifestForLocalServer(checkResult.manifestBody, this.prepared, server.baseUrl)
       const published = await MentraOtaServer.startOtaServer(manifest, artifactPaths, server.host)
       if (published.manifestUrl !== server.manifestUrl) {
         throw new Error("Local OTA server endpoint changed while publishing the manifest")

@@ -2,6 +2,7 @@
 
 import {createHash} from 'node:crypto';
 import {
+  copyFileSync,
   mkdirSync,
   readFileSync,
   utimesSync,
@@ -12,6 +13,9 @@ import {fileURLToPath} from 'node:url';
 
 const ASG_PACKAGE = 'com.mentra.asg_client';
 const FIXED_MTIME = new Date('1980-01-01T00:00:00.000Z');
+const CONFIGURE_SCRIPT_SOURCE = fileURLToPath(
+  new URL('./configure-bluetooth-sdk-ota-manifest.mjs', import.meta.url),
+);
 
 function sha256(data) {
   return createHash('sha256').update(data).digest('hex');
@@ -112,9 +116,35 @@ export async function buildPortableOtaBundle({manifest, outputDirectory, localAr
     }
   }
 
-  const manifestPath = join(outputDirectory, 'version.json');
+  // Keep portability in a clearly named template. The bundled configurator writes version.json
+  // with absolute URLs, which is the only manifest operators should expose to glasses.
+  const manifestPath = join(outputDirectory, 'version.template.json');
   writeFileSync(manifestPath, `${JSON.stringify(portableManifest, null, 2)}\n`);
   utimesSync(manifestPath, FIXED_MTIME, FIXED_MTIME);
+
+  const configurePath = join(outputDirectory, 'configure.mjs');
+  copyFileSync(CONFIGURE_SCRIPT_SOURCE, configurePath);
+  utimesSync(configurePath, FIXED_MTIME, FIXED_MTIME);
+
+  const readmePath = join(outputDirectory, 'README.txt');
+  writeFileSync(
+    readmePath,
+    [
+      'Mentra Bluetooth SDK OTA bundle',
+      '',
+      'Before hosting this directory, generate the final manifest with its exact public or internal URL:',
+      '',
+      '  node configure.mjs https://updates.example.com/mentra/version.json',
+      '',
+      'Then host this entire directory at that location and pass the same version.json URL to',
+      'BluetoothSdk.setOtaVersionUrl(...). Re-run the command if the directory moves.',
+      '',
+      'The generated manifest contains absolute artifact URLs for compatibility with Mentra Live',
+      'ASG build 39 and newer. Builds before 39 must first use their legacy Mentra update path.',
+      '',
+    ].join('\n'),
+  );
+  utimesSync(readmePath, FIXED_MTIME, FIXED_MTIME);
 
   const sums = [...bundledByHash.entries()]
     .sort(([left], [right]) => left.localeCompare(right))

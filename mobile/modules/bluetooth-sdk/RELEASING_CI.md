@@ -107,7 +107,9 @@ derives it from the channel (`automatic` on `dev`, `user_managed` on
    metadata from `asg_client/ota_manifests/firmware_live.json`, then uploads the
    APK and manifest to the persistent `bluetooth-sdk-ota` GitHub release. It also
    downloads and hash-verifies those same referenced artifacts and packages them
-   with a host-relative copy of the manifest as a portable self-hosted ZIP. The APK
+   with a host-relative manifest template and a dependency-free configurator as a
+   portable self-hosted ZIP. The configurator emits an absolute-URL `version.json`
+   for compatibility with ASG build 39 and newer. The APK
    asset name includes the SDK version, ASG `versionCode`, and commit SHA; the
    manifest asset name includes the SDK version.
    The ASG `versionCode` uses the same Jan 1 2025 wall-clock offset formula as
