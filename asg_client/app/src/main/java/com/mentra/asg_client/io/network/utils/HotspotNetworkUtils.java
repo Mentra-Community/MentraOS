@@ -19,8 +19,10 @@ import java.util.concurrent.CopyOnWriteArraySet;
 /** Utilities for discovering and addressing the active Mentra Live hotspot interface. */
 public final class HotspotNetworkUtils {
     private static final String TAG = "HotspotNetworkUtils";
+    private static final Object HOTSPOT_STATE_LOCK = new Object();
     private static final Set<HotspotStateListener> HOTSPOT_STATE_LISTENERS =
             new CopyOnWriteArraySet<>();
+    private static Boolean sLastHotspotState;
 
     private HotspotNetworkUtils() {}
 
@@ -29,28 +31,50 @@ public final class HotspotNetworkUtils {
         void onHotspotStateChanged(boolean enabled);
     }
 
-    /** Registers a listener for hotspot lifecycle changes. */
+    /** Registers a listener and replays the latest hotspot lifecycle state, when known. */
     public static void addHotspotStateListener(HotspotStateListener listener) {
-        if (listener != null) {
+        synchronized (HOTSPOT_STATE_LOCK) {
+            if (listener == null) {
+                return;
+            }
             HOTSPOT_STATE_LISTENERS.add(listener);
+            if (sLastHotspotState != null) {
+                notifyListener(listener, sLastHotspotState);
+            }
         }
     }
 
     /** Removes a previously registered hotspot lifecycle listener. */
     public static void removeHotspotStateListener(HotspotStateListener listener) {
-        if (listener != null) {
-            HOTSPOT_STATE_LISTENERS.remove(listener);
+        synchronized (HOTSPOT_STATE_LOCK) {
+            if (listener != null) {
+                HOTSPOT_STATE_LISTENERS.remove(listener);
+            }
         }
     }
 
     /** Publishes a hotspot lifecycle change to in-process network consumers such as WebRTC. */
     public static void notifyHotspotStateChanged(boolean enabled) {
-        for (HotspotStateListener listener : HOTSPOT_STATE_LISTENERS) {
-            try {
-                listener.onHotspotStateChanged(enabled);
-            } catch (RuntimeException e) {
-                Log.w(TAG, "Hotspot state listener failed", e);
+        synchronized (HOTSPOT_STATE_LOCK) {
+            sLastHotspotState = enabled;
+            for (HotspotStateListener listener : HOTSPOT_STATE_LISTENERS) {
+                notifyListener(listener, enabled);
             }
+        }
+    }
+
+    static void resetHotspotStateForTests() {
+        synchronized (HOTSPOT_STATE_LOCK) {
+            sLastHotspotState = null;
+            HOTSPOT_STATE_LISTENERS.clear();
+        }
+    }
+
+    private static void notifyListener(HotspotStateListener listener, boolean enabled) {
+        try {
+            listener.onHotspotStateChanged(enabled);
+        } catch (RuntimeException e) {
+            Log.w(TAG, "Hotspot state listener failed", e);
         }
     }
 

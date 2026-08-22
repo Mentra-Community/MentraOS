@@ -528,7 +528,9 @@ public class StreamCommandHandler implements ICommandHandler {
             if (RtmpStreamingService.isStreaming() || RtmpStreamingService.isReconnecting()) {
                 boolean valid = RtmpStreamingService.resetStreamTimeout(streamId);
                 if (valid || RtmpStreamingService.isStreaming()) {
-                    mHotspotActivityTracker.onKeepAlive();
+                    if (valid) {
+                        mHotspotActivityTracker.onKeepAlive();
+                    }
                     streamingManager.sendKeepAliveAck(streamId, ackId);
                     return true;
                 }
@@ -537,7 +539,9 @@ public class StreamCommandHandler implements ICommandHandler {
             if (SrtStreamingService.isStreaming() || SrtStreamingService.isReconnecting()) {
                 boolean valid = SrtStreamingService.resetStreamTimeout(streamId);
                 if (valid || SrtStreamingService.isStreaming()) {
-                    mHotspotActivityTracker.onKeepAlive();
+                    if (valid) {
+                        mHotspotActivityTracker.onKeepAlive();
+                    }
                     streamingManager.sendKeepAliveAck(streamId, ackId);
                     return true;
                 }
@@ -546,7 +550,9 @@ public class StreamCommandHandler implements ICommandHandler {
             if (WhipStreamingService.isStreaming() || WhipStreamingService.isReconnecting()) {
                 boolean valid = WhipStreamingService.resetStreamTimeout(streamId);
                 if (valid || WhipStreamingService.isStreaming()) {
-                    mHotspotActivityTracker.onKeepAlive();
+                    if (valid) {
+                        mHotspotActivityTracker.onKeepAlive();
+                    }
                     streamingManager.sendKeepAliveAck(streamId, ackId);
                     return true;
                 }

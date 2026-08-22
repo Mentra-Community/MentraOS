@@ -2,6 +2,8 @@ package com.mentra.asg_client.io.network.utils;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import org.junit.After;
+import org.junit.Before;
 import org.junit.Test;
 import org.webrtc.NetworkChangeDetector;
 
@@ -12,6 +14,16 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class HotspotAwareNetworkChangeDetectorTest {
+    @Before
+    public void resetHotspotState() {
+        HotspotNetworkUtils.resetHotspotStateForTests();
+    }
+
+    @After
+    public void clearHotspotState() {
+        HotspotNetworkUtils.resetHotspotStateForTests();
+    }
+
     @Test
     public void exposesHotspotAsLocalWifiNetwork() throws Exception {
         HotspotNetworkUtils.HotspotInterface hotspot =
@@ -112,6 +124,39 @@ public class HotspotAwareNetworkChangeDetectorTest {
             detector.destroy();
         }
         assertThat(delegate.destroyed).isTrue();
+    }
+
+    @Test
+    public void replaysEnableNotificationMissedDuringConstruction() throws Exception {
+        HotspotNetworkUtils.HotspotInterface activeHotspot =
+                new HotspotNetworkUtils.HotspotInterface(
+                        "ap0", List.of(InetAddress.getByName("192.168.43.1")));
+        AtomicReference<HotspotNetworkUtils.HotspotInterface> hotspot = new AtomicReference<>();
+        RecordingObserver observer = new RecordingObserver();
+        FakeNetworkChangeDetector delegate =
+                new FakeNetworkChangeDetector(NetworkChangeDetector.ConnectionType.CONNECTION_NONE);
+
+        HotspotAwareNetworkChangeDetector detector =
+                new HotspotAwareNetworkChangeDetector(
+                        observer,
+                        delegate,
+                        () -> {
+                            if (hotspot.get() == null) {
+                                hotspot.set(activeHotspot);
+                                HotspotNetworkUtils.notifyHotspotStateChanged(true);
+                                return null;
+                            }
+                            return hotspot.get();
+                        });
+        try {
+            assertThat(observer.connectedNetworks).hasSize(1);
+            assertThat(observer.connectedNetworks.get(0).name).isEqualTo("ap0");
+            assertThat(detector.getActiveNetworkList())
+                    .extracting(network -> network.name)
+                    .containsExactly("ap0");
+        } finally {
+            detector.destroy();
+        }
     }
 
     @Test
