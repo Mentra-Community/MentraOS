@@ -237,7 +237,6 @@ export default function OtaCheckForUpdatesScreen() {
 
         if (result.updateAvailable && result.updateInfo) {
           console.log("📱 Updates available - setting update_available state")
-          checkCompletedRef.current = true
           setIsUpdateRequired(result.isRequired)
           setIsDowngradeUpdate(result.updateInfo.isDowngrade === true)
           const fingerprint = otaAutoChainFingerprint(result)
@@ -255,6 +254,7 @@ export default function OtaCheckForUpdatesScreen() {
               const admission = tryAdvanceOtaAutoChain(fingerprint, result.updateInfo.isDowngrade === true)
               if (admission.advance) {
                 console.log(`OTA: Automatically starting chained update pass ${admission.passCount}`)
+                checkCompletedRef.current = true
                 engine.ota.installSession.prepare(result)
                 navigateToProgress()
                 return
@@ -263,6 +263,7 @@ export default function OtaCheckForUpdatesScreen() {
             }
           }
 
+          checkCompletedRef.current = true
           setCheckState("update_available")
         } else {
           console.log("📱 No updates available - setting no_update state")
