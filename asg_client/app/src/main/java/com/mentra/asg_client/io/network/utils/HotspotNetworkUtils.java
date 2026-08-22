@@ -36,8 +36,7 @@ public final class HotspotNetworkUtils {
     /** Registers a listener and replays the latest hotspot lifecycle state, when known. */
     public static void addHotspotStateListener(HotspotStateListener listener) {
         HotspotStateRegistration registration;
-        Boolean replayState;
-        long replayVersion;
+        boolean shouldDrain = false;
         synchronized (HOTSPOT_STATE_LOCK) {
             if (listener == null) {
                 return;
@@ -45,11 +44,12 @@ public final class HotspotNetworkUtils {
             registration =
                     HOTSPOT_STATE_LISTENERS.computeIfAbsent(
                             listener, HotspotStateRegistration::new);
-            replayState = sLastHotspotState;
-            replayVersion = sHotspotStateVersion;
+            if (sLastHotspotState != null) {
+                shouldDrain = registration.enqueue(sLastHotspotState, sHotspotStateVersion);
+            }
         }
-        if (replayState != null) {
-            enqueueHotspotState(registration, replayState, replayVersion);
+        if (shouldDrain) {
+            drainHotspotStates(registration);
         }
     }
 
@@ -67,15 +67,19 @@ public final class HotspotNetworkUtils {
 
     /** Publishes a hotspot lifecycle change to in-process network consumers such as WebRTC. */
     public static void notifyHotspotStateChanged(boolean enabled) {
-        List<HotspotStateRegistration> registrations;
+        List<HotspotStateRegistration> registrationsToDrain = new ArrayList<>();
         long version;
         synchronized (HOTSPOT_STATE_LOCK) {
             sLastHotspotState = enabled;
             version = ++sHotspotStateVersion;
-            registrations = new ArrayList<>(HOTSPOT_STATE_LISTENERS.values());
+            for (HotspotStateRegistration registration : HOTSPOT_STATE_LISTENERS.values()) {
+                if (registration.enqueue(enabled, version)) {
+                    registrationsToDrain.add(registration);
+                }
+            }
         }
-        for (HotspotStateRegistration registration : registrations) {
-            enqueueHotspotState(registration, enabled, version);
+        for (HotspotStateRegistration registration : registrationsToDrain) {
+            drainHotspotStates(registration);
         }
     }
 
@@ -92,12 +96,7 @@ public final class HotspotNetworkUtils {
         }
     }
 
-    private static void enqueueHotspotState(
-            HotspotStateRegistration registration, boolean enabled, long version) {
-        if (!registration.enqueue(enabled, version)) {
-            return;
-        }
-
+    private static void drainHotspotStates(HotspotStateRegistration registration) {
         HotspotStateEvent event;
         while ((event = registration.next()) != null) {
             try {
