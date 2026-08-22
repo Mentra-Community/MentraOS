@@ -27,7 +27,7 @@ public final class HotspotAwareNetworkChangeDetector implements NetworkChangeDet
     private final HotspotNetworkUtils.HotspotStateListener mHotspotStateListener;
     private final Object mHotspotLock = new Object();
     private NetworkInformation mPublishedHotspot;
-    private volatile boolean mHotspotAvailable;
+    private volatile boolean mHotspotEnabled;
 
     public HotspotAwareNetworkChangeDetector(Observer observer, Context context) {
         this(
@@ -43,7 +43,7 @@ public final class HotspotAwareNetworkChangeDetector implements NetworkChangeDet
         mObserver = observer;
         mDelegate = delegate;
         mHotspotSupplier = hotspotSupplier;
-        mHotspotAvailable = hotspotSupplier.get() != null;
+        mHotspotEnabled = hotspotSupplier.get() != null;
         mHotspotStateListener = this::onHotspotStateChanged;
         HotspotNetworkUtils.addHotspotStateListener(mHotspotStateListener);
     }
@@ -51,7 +51,7 @@ public final class HotspotAwareNetworkChangeDetector implements NetworkChangeDet
     @Override
     public ConnectionType getCurrentConnectionType() {
         ConnectionType delegateType = mDelegate.getCurrentConnectionType();
-        if (delegateType == ConnectionType.CONNECTION_NONE && mHotspotAvailable) {
+        if (delegateType == ConnectionType.CONNECTION_NONE && mHotspotEnabled) {
             return ConnectionType.CONNECTION_WIFI;
         }
         return delegateType;
@@ -67,12 +67,14 @@ public final class HotspotAwareNetworkChangeDetector implements NetworkChangeDet
         List<NetworkInformation> detectedNetworks = mDelegate.getActiveNetworkList();
         HotspotNetworkUtils.HotspotInterface hotspot;
         synchronized (mHotspotLock) {
-            hotspot = mHotspotAvailable ? mHotspotSupplier.get() : null;
-            mHotspotAvailable = hotspot != null;
-            mPublishedHotspot =
+            hotspot = mHotspotEnabled ? mHotspotSupplier.get() : null;
+            NetworkInformation currentHotspot =
                     hotspot != null && !containsInterface(detectedNetworks, hotspot.getName())
                             ? createNetworkInformation(hotspot)
                             : null;
+            if (currentHotspot != null) {
+                mPublishedHotspot = currentHotspot;
+            }
         }
         return mergeNetworks(detectedNetworks, hotspot);
     }
@@ -105,11 +107,11 @@ public final class HotspotAwareNetworkChangeDetector implements NetworkChangeDet
         boolean disconnected = false;
         synchronized (mHotspotLock) {
             if (enabled) {
+                mHotspotEnabled = true;
                 if (mPublishedHotspot != null) {
                     return;
                 }
                 HotspotNetworkUtils.HotspotInterface hotspot = mHotspotSupplier.get();
-                mHotspotAvailable = hotspot != null;
                 if (hotspot != null
                         && containsInterface(mDelegate.getActiveNetworkList(), hotspot.getName())) {
                     return;
@@ -120,11 +122,11 @@ public final class HotspotAwareNetworkChangeDetector implements NetworkChangeDet
                 }
                 mPublishedHotspot = connectedNetwork;
             } else if (mPublishedHotspot != null) {
-                mHotspotAvailable = false;
+                mHotspotEnabled = false;
                 mPublishedHotspot = null;
                 disconnected = true;
             } else {
-                mHotspotAvailable = false;
+                mHotspotEnabled = false;
             }
         }
 

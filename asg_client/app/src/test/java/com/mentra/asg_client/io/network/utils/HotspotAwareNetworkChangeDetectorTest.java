@@ -137,6 +137,43 @@ public class HotspotAwareNetworkChangeDetectorTest {
         }
     }
 
+    @Test
+    public void transientMissingInterfaceDoesNotDropPendingDisconnect() throws Exception {
+        HotspotNetworkUtils.HotspotInterface activeHotspot =
+                new HotspotNetworkUtils.HotspotInterface(
+                        "ap0", List.of(InetAddress.getByName("192.168.43.1")));
+        AtomicReference<HotspotNetworkUtils.HotspotInterface> hotspot =
+                new AtomicReference<>(activeHotspot);
+        RecordingObserver observer = new RecordingObserver();
+        FakeNetworkChangeDetector delegate =
+                new FakeNetworkChangeDetector(NetworkChangeDetector.ConnectionType.CONNECTION_NONE);
+        HotspotAwareNetworkChangeDetector detector =
+                new HotspotAwareNetworkChangeDetector(observer, delegate, hotspot::get);
+        try {
+            assertThat(detector.getActiveNetworkList())
+                    .extracting(network -> network.name)
+                    .containsExactly("ap0");
+
+            hotspot.set(null);
+            assertThat(detector.getActiveNetworkList()).isEmpty();
+
+            hotspot.set(activeHotspot);
+            assertThat(detector.getActiveNetworkList())
+                    .extracting(network -> network.name)
+                    .containsExactly("ap0");
+
+            hotspot.set(null);
+            assertThat(detector.getActiveNetworkList()).isEmpty();
+            HotspotNetworkUtils.notifyHotspotStateChanged(false);
+
+            assertThat(observer.disconnectedHandles).containsExactly(0L);
+            assertThat(detector.getCurrentConnectionType())
+                    .isEqualTo(NetworkChangeDetector.ConnectionType.CONNECTION_NONE);
+        } finally {
+            detector.destroy();
+        }
+    }
+
     private static NetworkChangeDetector.NetworkInformation network(
             String name, long handle, String address) throws Exception {
         return new NetworkChangeDetector.NetworkInformation(
