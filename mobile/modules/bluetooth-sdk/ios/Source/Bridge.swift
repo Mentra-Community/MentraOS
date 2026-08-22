@@ -336,13 +336,14 @@ class Bridge {
             "buildNumber": stringValue(values, "buildNumber", "build_number") ?? "",
             "otaVersionUrl": stringValue(values, "otaVersionUrl", "ota_version_url") ?? "",
             "appVersion": stringValue(values, "appVersion", "app_version") ?? "",
-            "hotspotOtaVersion":
-                intValue(values["hotspotOtaVersion"])
-                    ?? intValue(values["hotspot_ota_version"])
-                    ?? 0,
         ]
         if let systemTimeMs = intValue(values["systemTimeMs"]) ?? intValue(values["system_time_ms"]) {
             body["systemTimeMs"] = systemTimeMs
+        }
+        if let hotspotOtaVersion = intValue(values["hotspotOtaVersion"])
+            ?? intValue(values["hotspot_ota_version"])
+        {
+            body["hotspotOtaVersion"] = hotspotOtaVersion
         }
         Bridge.sendTypedMessage("version_info", body: body)
     }
@@ -617,7 +618,6 @@ class Bridge {
         return payload
     }
 }
-
 
 
 

@@ -195,6 +195,7 @@ export const useGlassesStore = create<GlassesState>()(
         }
         if (!isGlassesConnected(next.connection)) {
           next.wifiStatusKnown = false
+          next.hotspotOtaVersion = 0
         }
         return next
       }),

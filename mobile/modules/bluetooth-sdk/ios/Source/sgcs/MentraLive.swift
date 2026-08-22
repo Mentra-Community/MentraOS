@@ -1293,6 +1293,7 @@ class MentraLive: NSObject, SGCManager {
             DeviceStore.shared.apply("glasses", "serialNumber", "")
             DeviceStore.shared.apply("glasses", "bluetoothMacAddress", "")
             DeviceStore.shared.apply("glasses", "wifiMacAddress", "")
+            DeviceStore.shared.apply("glasses", "hotspotOtaVersion", 0)
         }
         connectionState = state
         DeviceStore.shared.apply("glasses", "connectionState", state)

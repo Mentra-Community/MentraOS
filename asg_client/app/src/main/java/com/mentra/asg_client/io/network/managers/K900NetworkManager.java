@@ -766,6 +766,11 @@ public class K900NetworkManager extends BaseNetworkManager {
         Log.d(TAG, "Shutting down K900NetworkManager");
         OtaSessionManager otaSession = new OtaSessionManager(context);
         if (otaSession.shouldPreserveHotspotOnShutdown()) {
+            synchronized (mHotspotLock) {
+                mHotspotStarting = false;
+                mHotspotGeneration++;
+                cancelHotspotReadinessLocked();
+            }
             // The vendor SystemUI process owns the AP. During an intentional OTA package
             // replacement, leave an active AP untouched so the new ASG process can reclaim it.
             // If no AP is active, this branch is a harmless no-op and the persisted OTA session

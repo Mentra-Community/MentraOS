@@ -65,6 +65,7 @@ object DeviceStore {
         store.set("glasses", "connectionState", ConnTypes.DISCONNECTED)
         store.set("glasses", "deviceModel", "")
         store.set("glasses", "firmwareVersion", "")
+        store.set("glasses", "hotspotOtaVersion", 0)
         store.set("glasses", "micEnabled", false)
         store.set("glasses", "voiceActivityDetectionEnabled", BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED)
         store.set("glasses", "bluetoothClassicConnected", false)

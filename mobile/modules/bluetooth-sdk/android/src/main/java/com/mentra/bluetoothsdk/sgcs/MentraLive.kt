@@ -811,6 +811,9 @@ class MentraLive : SGCManager() {
     }
 
     private fun updateConnectionState(state: String) {
+        if (state == ConnTypes.DISCONNECTED) {
+            DeviceStore.apply("glasses", "hotspotOtaVersion", 0)
+        }
         val isEqual = state == connectionState
         if (isEqual) {
             if (state == ConnTypes.DISCONNECTED) {

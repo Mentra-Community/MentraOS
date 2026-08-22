@@ -231,6 +231,10 @@ public final class BesFirmwareArtifactValidator {
     private static String artifactIdFromUrl(JSONObject metadata) throws Exception {
         String urlValue = metadata.optString("url", metadata.optString("firmwareUrl", "")).trim();
         URI uri = new URI(urlValue);
+        String scheme = uri.getScheme();
+        if (!("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme))) {
+            throw new ValidationException("BES OTA URL must use HTTP or HTTPS");
+        }
         if (uri.getHost() == null
                 || uri.getRawQuery() != null
                 || uri.getRawFragment() != null

@@ -7,17 +7,21 @@ import {
 } from "@/effects/OtaUpdateChecker"
 
 describe("getPendingUpdatePromptAction", () => {
+  it("waits until the glasses WiFi status is known", () => {
+    expect(getPendingUpdatePromptAction(true, false, false, true)).toBeNull()
+  })
+
   it("prompts for WiFi when returning home with an old ASG and no glasses WiFi", () => {
-    expect(getPendingUpdatePromptAction(true, false, false)).toBe("wifi_setup")
+    expect(getPendingUpdatePromptAction(true, true, false, false)).toBe("wifi_setup")
   })
 
   it("waits while an update is cached away from home with no available transport", () => {
-    expect(getPendingUpdatePromptAction(false, false, false)).toBeNull()
+    expect(getPendingUpdatePromptAction(false, true, false, false)).toBeNull()
   })
 
   it("prompts for install when WiFi or hotspot OTA is available", () => {
-    expect(getPendingUpdatePromptAction(true, true, false)).toBe("install")
-    expect(getPendingUpdatePromptAction(true, false, true)).toBe("install")
+    expect(getPendingUpdatePromptAction(true, true, true, false)).toBe("install")
+    expect(getPendingUpdatePromptAction(true, true, false, true)).toBe("install")
   })
 })
 

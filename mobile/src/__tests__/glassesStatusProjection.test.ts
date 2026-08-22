@@ -77,4 +77,19 @@ describe("GlassesStatusProjection", () => {
       }),
     )
   })
+
+  it("clears session-scoped hotspot capability and Wi-Fi knowledge on disconnect", () => {
+    startGlassesStatusProjection()
+    emitBluetoothSdkEvent("glasses_status", {
+      connection: {state: "connected", fullyBooted: true},
+      hotspotOtaVersion: 1,
+      wifi: {state: "connected", ssid: "office"},
+    })
+
+    expect(useGlassesStore.getState()).toEqual(expect.objectContaining({hotspotOtaVersion: 1, wifiStatusKnown: true}))
+
+    emitBluetoothSdkEvent("glasses_status", {connection: {state: "disconnected"}})
+
+    expect(useGlassesStore.getState()).toEqual(expect.objectContaining({hotspotOtaVersion: 0, wifiStatusKnown: false}))
+  })
 })

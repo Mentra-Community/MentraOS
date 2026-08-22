@@ -36,8 +36,9 @@ export default function OtaCheckForUpdatesScreen() {
   const mtkFirmwareVersion = otaSnapshot.mtkFirmwareVersion
   const besFirmwareVersion = otaSnapshot.besFirmwareVersion
   const glassesWifiConnected = otaSnapshot.wifiConnected
-  const hotspotOtaSupported = otaSnapshot.hotspotOtaVersion >= 1
-  const canInstallUpdate = glassesWifiConnected || hotspotOtaSupported
+  const glassesWifiStatusKnown = otaSnapshot.wifiStatusKnown
+  const hotspotOtaSupported = otaSnapshot.hotspotOtaVersion === 1
+  const canInstallUpdate = glassesWifiStatusKnown && (glassesWifiConnected || hotspotOtaSupported)
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const deviceName = defaultWearable || "Glasses"
   const glassesConnected = otaSnapshot.connected
@@ -166,6 +167,7 @@ export default function OtaCheckForUpdatesScreen() {
             refreshVersionInfo: true,
             fixClockBeforeCheck: false,
           })
+          if (cancelled || myGen !== performCheckGenerationRef.current) return
         }
 
         console.log(
@@ -243,7 +245,10 @@ export default function OtaCheckForUpdatesScreen() {
 
           if (isOtaAutoChainActive()) {
             const snapshot = engine.ota.snapshot()
-            if (!snapshot.wifiConnected && snapshot.hotspotOtaVersion < 1) {
+            if (!snapshot.wifiStatusKnown) {
+              console.log("OTA: Automatic update chain is waiting for glasses Wi-Fi status")
+              return
+            } else if (!snapshot.wifiConnected && snapshot.hotspotOtaVersion !== 1) {
               console.log("OTA: Automatic update chain paused because neither Wi-Fi nor hotspot OTA is available")
               stopOtaAutoChain()
             } else {
@@ -292,7 +297,15 @@ export default function OtaCheckForUpdatesScreen() {
       if (reconnectTimeout) clearTimeout(reconnectTimeout)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [checkKey, currentBuildNumber, mtkFirmwareVersion, besFirmwareVersion, glassesConnected, navigateToProgress])
+  }, [
+    checkKey,
+    currentBuildNumber,
+    mtkFirmwareVersion,
+    besFirmwareVersion,
+    glassesConnected,
+    glassesWifiStatusKnown,
+    navigateToProgress,
+  ])
 
   // Navigate to next step based on onboarding status
   const handleContinue = () => {
@@ -330,7 +343,13 @@ export default function OtaCheckForUpdatesScreen() {
       setCheckState("error")
       return
     }
-    if (!engine.ota.snapshot().wifiConnected && !hotspotOtaSupported) {
+    const snapshot = engine.ota.snapshot()
+    if (!snapshot.wifiStatusKnown) {
+      console.log("OTA: Update Now pressed before glasses Wi-Fi status was known - retrying check")
+      handleRetry()
+      return
+    }
+    if (!snapshot.wifiConnected && snapshot.hotspotOtaVersion !== 1) {
       console.log("OTA: Update Now pressed but glasses not on WiFi - pushing /wifi/scan")
       push("/wifi/scan")
       return
@@ -391,8 +410,9 @@ export default function OtaCheckForUpdatesScreen() {
           <View className="gap-3">
             <Button
               preset="primary"
-              tx={canInstallUpdate ? "ota:updateNow" : "ota:setupWifi"}
+              tx={!glassesWifiStatusKnown || canInstallUpdate ? "ota:updateNow" : "ota:setupWifi"}
               onPress={handleUpdateNow}
+              disabled={!glassesWifiStatusKnown}
             />
             {!isUpdateRequired && <Button preset="secondary" tx="ota:updateLater" onPress={handleContinue} />}
             {__DEV__ && isUpdateRequired && (

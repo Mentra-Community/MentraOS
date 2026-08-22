@@ -286,7 +286,10 @@ class OtaInstallCoordinator {
   /** Select the transport at the existing install entry point before the progress route attaches. */
   prepare(checkResult: OtaCheckCurrentGlassesResult): "wifi" | "hotspot" {
     const state = useGlassesStore.getState()
-    const hotspotSupported = (state.hotspotOtaVersion ?? 0) >= 1
+    if (!state.wifiStatusKnown) {
+      throw new Error("Glasses Wi-Fi status is not available")
+    }
+    const hotspotSupported = state.hotspotOtaVersion === 1
     const wifiConnected = state.wifi.state === "connected"
     if (!wifiConnected && !hotspotSupported) {
       throw new Error("Connected glasses require Wi-Fi for OTA")

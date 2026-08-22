@@ -152,14 +152,24 @@ beforeEach(() => {
 
 afterEach(() => {
   otaInstallCoordinator.detach()
-  useGlassesStore.getState().setGlassesInfo({wifi: {state: "connected", ssid: "test"}})
+  useGlassesStore.getState().setGlassesInfo({
+    connection: {state: "connected", fullyBooted: true},
+    wifi: {state: "connected", ssid: "test"},
+  })
   otaInstallCoordinator.prepare(checkResult())
   jest.useRealTimers()
 })
 
 describe("OtaInstallCoordinator hotspot transport selection", () => {
+  it("waits for an explicit glasses Wi-Fi status before choosing a transport", () => {
+    useGlassesStore.getState().setGlassesInfo({hotspotOtaVersion: 1})
+
+    expect(() => otaInstallCoordinator.prepare(checkResult())).toThrow("Wi-Fi status is not available")
+  })
+
   it("selects hotspot when glasses have no Wi-Fi and advertise the capability", () => {
     useGlassesStore.getState().setGlassesInfo({
+      connection: {state: "connected", fullyBooted: true},
       hotspotOtaVersion: 1,
       wifi: {state: "disconnected"},
     })
@@ -169,7 +179,18 @@ describe("OtaInstallCoordinator hotspot transport selection", () => {
 
   it("keeps unsupported glasses on the existing Wi-Fi requirement", () => {
     useGlassesStore.getState().setGlassesInfo({
+      connection: {state: "connected", fullyBooted: true},
       hotspotOtaVersion: 0,
+      wifi: {state: "disconnected"},
+    })
+
+    expect(() => otaInstallCoordinator.prepare(checkResult())).toThrow("require Wi-Fi")
+  })
+
+  it("rejects unknown future hotspot OTA protocol versions", () => {
+    useGlassesStore.getState().setGlassesInfo({
+      connection: {state: "connected", fullyBooted: true},
+      hotspotOtaVersion: 2,
       wifi: {state: "disconnected"},
     })
 
@@ -178,6 +199,7 @@ describe("OtaInstallCoordinator hotspot transport selection", () => {
 
   it("uses the existing Wi-Fi transport when glasses Wi-Fi is connected", () => {
     useGlassesStore.getState().setGlassesInfo({
+      connection: {state: "connected", fullyBooted: true},
       hotspotOtaVersion: 1,
       wifi: {state: "connected", ssid: "office"},
     })

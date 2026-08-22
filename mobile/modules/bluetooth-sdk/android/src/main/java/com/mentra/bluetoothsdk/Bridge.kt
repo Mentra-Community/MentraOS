@@ -462,11 +462,9 @@ public class Bridge private constructor() {
             }
             body["otaVersionUrl"] = stringField("otaVersionUrl", "ota_version_url")
             body["appVersion"] = stringField("appVersion", "app_version")
-            body["hotspotOtaVersion"] =
-                    (values["hotspotOtaVersion"] as? Number
-                                    ?: values["hotspot_ota_version"] as? Number)
-                            ?.toInt()
-                            ?: 0
+            (values["hotspotOtaVersion"] as? Number
+                            ?: values["hotspot_ota_version"] as? Number)
+                    ?.let { body["hotspotOtaVersion"] = it.toInt() }
             sendTypedMessage("version_info", body)
         }
 
@@ -879,5 +877,4 @@ public class Bridge private constructor() {
         }
     }
 }
-
 

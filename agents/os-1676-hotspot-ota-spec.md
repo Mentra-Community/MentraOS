@@ -1,8 +1,40 @@
 # OS-1676: Mentra Live OTA over the glasses hotspot
 
 Status: approved design implemented as a capability-gated Android/iOS vertical slice.
-Android and iPhone locked/background hardware verification passed. A safe full-chain run
-with APK, MTK, and BES remains a merge gate.
+Android and iPhone locked/background hardware verification passed. A real Android
+APK/MTK/BES recovery chain also passed; one uninterrupted APK -> MTK -> BES run remains a
+separate release-matrix check.
+
+## Three-component recovery verification (2026-08-21)
+
+A Samsung Z Fold (Android 16 / API 36) and Mentra Live `ML396102B` completed a real
+three-component hotspot OTA from ASG `51769441 / os1676-three-step`, MTK
+`MentraLive_20260709`, and BES `26.8.8.0` to:
+
+- ASG `51770750 / os1676-three-step-fix1`;
+- MTK `MentraLive_20260820.2`; and
+- BES `26.8.19.4`.
+
+The first attempt installed APK, recovered the persisted OTA session after the ASG SID
+changed, installed and staged MTK, and continued to BES. BES then failed before UART
+installation because `BesFirmwareArtifactValidator` rejected the phone's intentional
+hotspot-side HTTP URL. The implementation was simplified to accept HTTP or HTTPS while
+retaining the existing host, path, artifact-name, size, SHA-256, container CRC, product,
+and target checks.
+
+The explicit retry proved recovery from that partial state. It downloaded and installed
+the fixed APK, retained the same hotspot across the ASG restart, recovered by SID with
+`ota_query_status`, served and installed the BES artifact over local HTTP, and completed
+the required power cycle. That reboot activated the already-staged MTK image. After
+reconnect, BLE reported all three target versions, the local server stopped, the hotspot
+was off, and the production update check returned **Up to Date**. A pinned ADB check after
+the legacy manual USB replug independently confirmed serial `ML396102B`, a completed
+Android boot, and ASG build `51770750`.
+
+This is deliberately recorded as a recovery-chain pass rather than a pristine single OTA
+session: MTK was staged by the first attempt and activated by the successful retry's final
+reboot. The uninterrupted APK -> MTK -> BES case remains in Gate 3 so the release matrix
+does not overstate what was observed.
 
 ## Implementation and verification snapshot (2026-08-20)
 
