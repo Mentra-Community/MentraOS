@@ -71,7 +71,7 @@ If no stream is active, the response is `status: "error"` with `errorDetails: "n
 ## Resource constraints
 
 - **Battery** — start gated at `MIN_BATTERY_LEVEL`. The phone gets `BATTERY_LOW` and the user hears a low-battery audio cue.
-- **WiFi** — required for all three protocols. Mobile data is not used.
+- **Network** — requires either STA WiFi or an endpoint on the active glasses-hosted hotspot subnet. The glasses do not use cellular data.
 - **Camera contention** — only one stream at a time; starting a second stream stops the first. Buffer recording, photos, and video recording all share the same camera and yield to (or reject) streams.
 - **Thermal** — EIS is disabled while streaming.
 

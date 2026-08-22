@@ -1,7 +1,9 @@
 package com.mentra.asg_client.io.network.utils;
 
 import android.util.Log;
+
 import com.mentra.asg_client.AsgConstants;
+
 import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.InterfaceAddress;
@@ -11,12 +13,46 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Enumeration;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.CopyOnWriteArraySet;
 
 /** Utilities for discovering and addressing the active Mentra Live hotspot interface. */
 public final class HotspotNetworkUtils {
     private static final String TAG = "HotspotNetworkUtils";
+    private static final Set<HotspotStateListener> HOTSPOT_STATE_LISTENERS =
+            new CopyOnWriteArraySet<>();
 
     private HotspotNetworkUtils() {}
+
+    /** Receives in-process hotspot lifecycle changes after the AP becomes ready or stops. */
+    public interface HotspotStateListener {
+        void onHotspotStateChanged(boolean enabled);
+    }
+
+    /** Registers a listener for hotspot lifecycle changes. */
+    public static void addHotspotStateListener(HotspotStateListener listener) {
+        if (listener != null) {
+            HOTSPOT_STATE_LISTENERS.add(listener);
+        }
+    }
+
+    /** Removes a previously registered hotspot lifecycle listener. */
+    public static void removeHotspotStateListener(HotspotStateListener listener) {
+        if (listener != null) {
+            HOTSPOT_STATE_LISTENERS.remove(listener);
+        }
+    }
+
+    /** Publishes a hotspot lifecycle change to in-process network consumers such as WebRTC. */
+    public static void notifyHotspotStateChanged(boolean enabled) {
+        for (HotspotStateListener listener : HOTSPOT_STATE_LISTENERS) {
+            try {
+                listener.onHotspotStateChanged(enabled);
+            } catch (RuntimeException e) {
+                Log.w(TAG, "Hotspot state listener failed", e);
+            }
+        }
+    }
 
     /** Snapshot of an active hotspot interface and the addresses WebRTC should expose for it. */
     public static final class HotspotInterface {

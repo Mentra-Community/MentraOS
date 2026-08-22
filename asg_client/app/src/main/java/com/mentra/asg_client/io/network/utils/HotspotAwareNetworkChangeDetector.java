@@ -1,11 +1,14 @@
 package com.mentra.asg_client.io.network.utils;
 
 import android.content.Context;
+
+import org.webrtc.NetworkChangeDetector;
+import org.webrtc.NetworkMonitorAutoDetect;
+
 import java.net.InetAddress;
 import java.util.ArrayList;
 import java.util.List;
-import org.webrtc.NetworkChangeDetector;
-import org.webrtc.NetworkMonitorAutoDetect;
+import java.util.function.Supplier;
 
 /**
  * Adds the local-only Mentra Live hotspot to WebRTC's Android network inventory.
@@ -18,17 +21,37 @@ import org.webrtc.NetworkMonitorAutoDetect;
 public final class HotspotAwareNetworkChangeDetector implements NetworkChangeDetector {
     private static final long LOCAL_ONLY_NETWORK_HANDLE = 0L;
 
-    private final NetworkMonitorAutoDetect mDelegate;
+    private final NetworkChangeDetector mDelegate;
+    private final Observer mObserver;
+    private final Supplier<HotspotNetworkUtils.HotspotInterface> mHotspotSupplier;
+    private final HotspotNetworkUtils.HotspotStateListener mHotspotStateListener;
+    private final Object mHotspotLock = new Object();
+    private NetworkInformation mPublishedHotspot;
+    private volatile boolean mHotspotAvailable;
 
     public HotspotAwareNetworkChangeDetector(Observer observer, Context context) {
-        mDelegate = new NetworkMonitorAutoDetect(observer, context);
+        this(
+                observer,
+                new NetworkMonitorAutoDetect(observer, context),
+                HotspotNetworkUtils::getActiveHotspotInterface);
+    }
+
+    HotspotAwareNetworkChangeDetector(
+            Observer observer,
+            NetworkChangeDetector delegate,
+            Supplier<HotspotNetworkUtils.HotspotInterface> hotspotSupplier) {
+        mObserver = observer;
+        mDelegate = delegate;
+        mHotspotSupplier = hotspotSupplier;
+        mHotspotAvailable = hotspotSupplier.get() != null;
+        mHotspotStateListener = this::onHotspotStateChanged;
+        HotspotNetworkUtils.addHotspotStateListener(mHotspotStateListener);
     }
 
     @Override
     public ConnectionType getCurrentConnectionType() {
         ConnectionType delegateType = mDelegate.getCurrentConnectionType();
-        if (delegateType == ConnectionType.CONNECTION_NONE
-                && HotspotNetworkUtils.getActiveHotspotInterface() != null) {
+        if (delegateType == ConnectionType.CONNECTION_NONE && mHotspotAvailable) {
             return ConnectionType.CONNECTION_WIFI;
         }
         return delegateType;
@@ -42,7 +65,16 @@ public final class HotspotAwareNetworkChangeDetector implements NetworkChangeDet
     @Override
     public List<NetworkInformation> getActiveNetworkList() {
         List<NetworkInformation> detectedNetworks = mDelegate.getActiveNetworkList();
-        return mergeNetworks(detectedNetworks, HotspotNetworkUtils.getActiveHotspotInterface());
+        HotspotNetworkUtils.HotspotInterface hotspot;
+        synchronized (mHotspotLock) {
+            hotspot = mHotspotAvailable ? mHotspotSupplier.get() : null;
+            mHotspotAvailable = hotspot != null;
+            mPublishedHotspot =
+                    hotspot != null && !containsInterface(detectedNetworks, hotspot.getName())
+                            ? createNetworkInformation(hotspot)
+                            : null;
+        }
+        return mergeNetworks(detectedNetworks, hotspot);
     }
 
     static List<NetworkInformation> mergeNetworks(
@@ -64,11 +96,56 @@ public final class HotspotAwareNetworkChangeDetector implements NetworkChangeDet
 
     @Override
     public void destroy() {
+        HotspotNetworkUtils.removeHotspotStateListener(mHotspotStateListener);
         mDelegate.destroy();
+    }
+
+    void onHotspotStateChanged(boolean enabled) {
+        NetworkInformation connectedNetwork = null;
+        boolean disconnected = false;
+        synchronized (mHotspotLock) {
+            if (enabled) {
+                if (mPublishedHotspot != null) {
+                    return;
+                }
+                HotspotNetworkUtils.HotspotInterface hotspot = mHotspotSupplier.get();
+                mHotspotAvailable = hotspot != null;
+                if (hotspot != null
+                        && containsInterface(mDelegate.getActiveNetworkList(), hotspot.getName())) {
+                    return;
+                }
+                connectedNetwork = createNetworkInformation(hotspot);
+                if (connectedNetwork == null) {
+                    return;
+                }
+                mPublishedHotspot = connectedNetwork;
+            } else if (mPublishedHotspot != null) {
+                mHotspotAvailable = false;
+                mPublishedHotspot = null;
+                disconnected = true;
+            } else {
+                mHotspotAvailable = false;
+            }
+        }
+
+        if (connectedNetwork != null) {
+            mObserver.onNetworkConnect(connectedNetwork);
+            if (mDelegate.getCurrentConnectionType() == ConnectionType.CONNECTION_NONE) {
+                mObserver.onConnectionTypeChanged(ConnectionType.CONNECTION_WIFI);
+            }
+        } else if (disconnected) {
+            mObserver.onNetworkDisconnect(LOCAL_ONLY_NETWORK_HANDLE);
+            if (mDelegate.getCurrentConnectionType() == ConnectionType.CONNECTION_NONE) {
+                mObserver.onConnectionTypeChanged(ConnectionType.CONNECTION_NONE);
+            }
+        }
     }
 
     static NetworkInformation createNetworkInformation(
             HotspotNetworkUtils.HotspotInterface hotspot) {
+        if (hotspot == null) {
+            return null;
+        }
         List<InetAddress> addresses = hotspot.getAddresses();
         if (addresses.isEmpty()) {
             return null;
@@ -86,6 +163,9 @@ public final class HotspotAwareNetworkChangeDetector implements NetworkChangeDet
     }
 
     private static boolean containsInterface(List<NetworkInformation> networks, String name) {
+        if (networks == null) {
+            return false;
+        }
         for (NetworkInformation network : networks) {
             if (name.equals(network.name)) {
                 return true;

@@ -2,11 +2,14 @@ package com.mentra.asg_client.io.network.utils;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.net.InetAddress;
-import java.util.Collections;
-import java.util.List;
 import org.junit.Test;
 import org.webrtc.NetworkChangeDetector;
+
+import java.net.InetAddress;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class HotspotAwareNetworkChangeDetectorTest {
     @Test
@@ -75,6 +78,65 @@ public class HotspotAwareNetworkChangeDetectorTest {
         assertThat(HotspotAwareNetworkChangeDetector.createNetworkInformation(hotspot)).isNull();
     }
 
+    @Test
+    public void emitsHotspotConnectAndDisconnectLifecycle() throws Exception {
+        AtomicReference<HotspotNetworkUtils.HotspotInterface> hotspot = new AtomicReference<>();
+        RecordingObserver observer = new RecordingObserver();
+        FakeNetworkChangeDetector delegate =
+                new FakeNetworkChangeDetector(NetworkChangeDetector.ConnectionType.CONNECTION_NONE);
+        HotspotAwareNetworkChangeDetector detector =
+                new HotspotAwareNetworkChangeDetector(observer, delegate, hotspot::get);
+        try {
+            hotspot.set(
+                    new HotspotNetworkUtils.HotspotInterface(
+                            "ap0", List.of(InetAddress.getByName("192.168.43.1"))));
+
+            HotspotNetworkUtils.notifyHotspotStateChanged(true);
+            HotspotNetworkUtils.notifyHotspotStateChanged(true);
+
+            assertThat(observer.connectedNetworks).hasSize(1);
+            assertThat(observer.connectedNetworks.get(0).name).isEqualTo("ap0");
+            assertThat(observer.connectionTypes)
+                    .containsExactly(NetworkChangeDetector.ConnectionType.CONNECTION_WIFI);
+
+            HotspotNetworkUtils.notifyHotspotStateChanged(false);
+
+            assertThat(observer.disconnectedHandles).containsExactly(0L);
+            assertThat(detector.getCurrentConnectionType())
+                    .isEqualTo(NetworkChangeDetector.ConnectionType.CONNECTION_NONE);
+            assertThat(observer.connectionTypes)
+                    .containsExactly(
+                            NetworkChangeDetector.ConnectionType.CONNECTION_WIFI,
+                            NetworkChangeDetector.ConnectionType.CONNECTION_NONE);
+        } finally {
+            detector.destroy();
+        }
+        assertThat(delegate.destroyed).isTrue();
+    }
+
+    @Test
+    public void preservesStaConnectionTypeDuringHotspotLifecycle() throws Exception {
+        AtomicReference<HotspotNetworkUtils.HotspotInterface> hotspot =
+                new AtomicReference<>(
+                        new HotspotNetworkUtils.HotspotInterface(
+                                "ap0", List.of(InetAddress.getByName("192.168.43.1"))));
+        RecordingObserver observer = new RecordingObserver();
+        FakeNetworkChangeDetector delegate =
+                new FakeNetworkChangeDetector(NetworkChangeDetector.ConnectionType.CONNECTION_WIFI);
+        HotspotAwareNetworkChangeDetector detector =
+                new HotspotAwareNetworkChangeDetector(observer, delegate, hotspot::get);
+        try {
+            detector.onHotspotStateChanged(true);
+            detector.onHotspotStateChanged(false);
+
+            assertThat(observer.connectedNetworks).hasSize(1);
+            assertThat(observer.disconnectedHandles).containsExactly(0L);
+            assertThat(observer.connectionTypes).isEmpty();
+        } finally {
+            detector.destroy();
+        }
+    }
+
     private static NetworkChangeDetector.NetworkInformation network(
             String name, long handle, String address) throws Exception {
         return new NetworkChangeDetector.NetworkInformation(
@@ -85,5 +147,60 @@ public class HotspotAwareNetworkChangeDetectorTest {
                 new NetworkChangeDetector.IPAddress[] {
                     new NetworkChangeDetector.IPAddress(InetAddress.getByName(address).getAddress())
                 });
+    }
+
+    private static final class RecordingObserver extends NetworkChangeDetector.Observer {
+        final List<NetworkChangeDetector.ConnectionType> connectionTypes = new ArrayList<>();
+        final List<NetworkChangeDetector.NetworkInformation> connectedNetworks = new ArrayList<>();
+        final List<Long> disconnectedHandles = new ArrayList<>();
+
+        @Override
+        public void onConnectionTypeChanged(
+                NetworkChangeDetector.ConnectionType newConnectionType) {
+            connectionTypes.add(newConnectionType);
+        }
+
+        @Override
+        public void onNetworkConnect(NetworkChangeDetector.NetworkInformation networkInfo) {
+            connectedNetworks.add(networkInfo);
+        }
+
+        @Override
+        public void onNetworkDisconnect(long networkHandle) {
+            disconnectedHandles.add(networkHandle);
+        }
+
+        @Override
+        public void onNetworkPreference(
+                List<NetworkChangeDetector.ConnectionType> types, int preference) {}
+    }
+
+    private static final class FakeNetworkChangeDetector implements NetworkChangeDetector {
+        private final ConnectionType connectionType;
+        boolean destroyed;
+
+        FakeNetworkChangeDetector(ConnectionType connectionType) {
+            this.connectionType = connectionType;
+        }
+
+        @Override
+        public ConnectionType getCurrentConnectionType() {
+            return connectionType;
+        }
+
+        @Override
+        public boolean supportNetworkCallback() {
+            return true;
+        }
+
+        @Override
+        public List<NetworkInformation> getActiveNetworkList() {
+            return Collections.emptyList();
+        }
+
+        @Override
+        public void destroy() {
+            destroyed = true;
+        }
     }
 }
