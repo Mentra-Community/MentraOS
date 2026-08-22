@@ -77,13 +77,13 @@ export function planArtifacts(result: OtaCheckCurrentGlassesResult): OtaArtifact
 
   if (result.updates.includes("apk")) {
     const app = manifest.apps?.[ASG_PACKAGE] as unknown as Record<string, unknown> | undefined
-    const manifestReference = typeof app?.apkUrl === "string" ? app.apkUrl : null
-    if (!manifestReference) {
+    const url = typeof app?.apkUrl === "string" ? app.apkUrl : null
+    if (!url) {
       throw new OtaArtifactError("manifest_invalid", "Manifest has no apkUrl for the pending APK update")
     }
     entries.push({
       kind: "apk",
-      url: resolveArtifactUrl(manifestReference, result.manifestUrl),
+      url,
       sha256: requireSha256(app, "APK"),
     })
   }
@@ -92,26 +92,26 @@ export function planArtifacts(result: OtaCheckCurrentGlassesResult): OtaArtifact
     const raw = (manifest.mtk_patches ?? []).find(
       (patch) => firmwareUrl(patch) === firmwareUrl(result.mtkPatch!),
     ) as unknown as Record<string, unknown> | undefined
-    const manifestReference = firmwareUrl(raw) ?? firmwareUrl(result.mtkPatch)
-    if (!manifestReference) {
+    const url = firmwareUrl(raw) ?? firmwareUrl(result.mtkPatch)
+    if (!url) {
       throw new OtaArtifactError("manifest_invalid", "Manifest has no URL for the pending MTK patch")
     }
     entries.push({
       kind: "mtk",
-      url: resolveArtifactUrl(manifestReference, result.manifestUrl),
+      url,
       sha256: requireSha256(raw, "MTK"),
     })
   }
 
   if (result.updates.includes("bes") && manifest.bes_firmware) {
     const raw = manifest.bes_firmware as unknown as Record<string, unknown>
-    const manifestReference = firmwareUrl(raw)
-    if (!manifestReference) {
+    const url = firmwareUrl(raw)
+    if (!url) {
       throw new OtaArtifactError("manifest_invalid", "Manifest has no URL for the pending BES firmware")
     }
     entries.push({
       kind: "bes",
-      url: resolveArtifactUrl(manifestReference, result.manifestUrl),
+      url,
       sha256: requireSha256(raw, "BES"),
     })
   }
@@ -218,7 +218,6 @@ export function rewriteManifestForLocalServer(
   manifestBody: string,
   artifacts: PreparedOtaArtifact[],
   baseUrl: string,
-  sourceManifestUrl?: string,
 ): string {
   let manifest: VersionJson
   try {
@@ -231,23 +230,17 @@ export function rewriteManifestForLocalServer(
 
   for (const app of Object.values(manifest.apps ?? {})) {
     const record = app as unknown as Record<string, unknown>
-    const artifact =
-      typeof record.apkUrl === "string" ? byUrl.get(resolveArtifactUrl(record.apkUrl, sourceManifestUrl)) : undefined
+    const artifact = typeof record.apkUrl === "string" ? byUrl.get(record.apkUrl) : undefined
     if (artifact) {
       record.apkUrl = localUrl(artifact)
     }
   }
 
   for (const patch of manifest.mtk_patches ?? []) {
-    rewriteFirmwareEntry(patch as unknown as Record<string, unknown>, byUrl, localUrl, sourceManifestUrl)
+    rewriteFirmwareEntry(patch as unknown as Record<string, unknown>, byUrl, localUrl)
   }
   if (manifest.bes_firmware) {
-    rewriteFirmwareEntry(
-      manifest.bes_firmware as unknown as Record<string, unknown>,
-      byUrl,
-      localUrl,
-      sourceManifestUrl,
-    )
+    rewriteFirmwareEntry(manifest.bes_firmware as unknown as Record<string, unknown>, byUrl, localUrl)
   }
 
   return JSON.stringify(manifest)
@@ -272,10 +265,9 @@ function rewriteFirmwareEntry(
   entry: Record<string, unknown>,
   byUrl: Map<string, PreparedOtaArtifact>,
   localUrl: (artifact: PreparedOtaArtifact) => string,
-  sourceManifestUrl?: string,
 ): void {
   const url = firmwareUrl(entry)
-  const artifact = url ? byUrl.get(resolveArtifactUrl(url, sourceManifestUrl)) : undefined
+  const artifact = url ? byUrl.get(url) : undefined
   if (!artifact) {
     return
   }
@@ -284,21 +276,6 @@ function rewriteFirmwareEntry(
   // CDN URL over the local one.
   if (typeof entry.firmwareUrl === "string") {
     entry.firmwareUrl = localUrl(artifact)
-  }
-}
-
-function resolveArtifactUrl(reference: string, manifestUrl?: string): string {
-  try {
-    const resolved = manifestUrl ? new URL(reference, manifestUrl) : new URL(reference)
-    if (resolved.protocol !== "http:" && resolved.protocol !== "https:") {
-      throw new Error(`unsupported protocol ${resolved.protocol}`)
-    }
-    return resolved.toString()
-  } catch (error) {
-    throw new OtaArtifactError(
-      "manifest_invalid",
-      `OTA artifact URL cannot be resolved${manifestUrl ? ` against ${manifestUrl}` : ""}: ${reference} (${error instanceof Error ? error.message : String(error)})`,
-    )
   }
 }
 

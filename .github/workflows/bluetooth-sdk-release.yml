@@ -383,10 +383,22 @@ jobs:
           LOCAL_ARTIFACTS_JSON="$LOCAL_ARTIFACTS_JSON" \
             node .github/scripts/build-bluetooth-sdk-ota-bundle.mjs
 
+          node "$BUNDLE_DIRECTORY/configure.mjs" \
+            "https://updates.example.invalid/mentra/version.json"
+          jq -e '
+            (.apps | all(.[]; (.apkUrl | test("^https?://"))))
+            and (.mtk_patches | all(.[]; ((.url // .firmwareUrl) | test("^https?://"))))
+            and ((.bes_firmware.url // .bes_firmware.firmwareUrl) | test("^https?://"))
+          ' "$BUNDLE_DIRECTORY/version.json" >/dev/null
+          rm "$BUNDLE_DIRECTORY/version.json"
+
           find "$BUNDLE_DIRECTORY" -exec touch -t 198001010000 {} +
           find "$BUNDLE_DIRECTORY" -type f -print \
             | LC_ALL=C sort \
             | zip -X -q "sdk-ota-bundle/$BUNDLE_ASSET" -@
+          test -f "$BUNDLE_DIRECTORY/version.template.json"
+          test -f "$BUNDLE_DIRECTORY/configure.mjs"
+          test ! -e "$BUNDLE_DIRECTORY/version.json"
           unzip -t "sdk-ota-bundle/$BUNDLE_ASSET"
 
       - name: Upload SDK OTA artifacts
@@ -407,7 +419,7 @@ jobs:
               'Each SDK version owns an immutable manifest at:',
               '`https://github.com/Mentra-Community/MentraOS/releases/download/bluetooth-sdk-ota/bluetooth-sdk-<sdkVersion>-version.json`',
               '',
-              'The matching `bluetooth-sdk-<sdkVersion>-ota-bundle.zip` contains the same manifest and artifacts with host-relative URLs for self-hosting.',
+              'The matching `bluetooth-sdk-<sdkVersion>-ota-bundle.zip` contains the same artifacts plus a manifest template and configurator for absolute-URL self-hosting.',
               '',
               'Do not delete assets from this release unless the matching SDK version is intentionally retired.',
             ].join('\n');
