@@ -11,6 +11,8 @@ import java.net.InetAddress;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class HotspotAwareNetworkChangeDetectorTest {
@@ -156,6 +158,47 @@ public class HotspotAwareNetworkChangeDetectorTest {
                     .containsExactly("ap0");
         } finally {
             detector.destroy();
+        }
+    }
+
+    @Test
+    public void listenerCallbacksDoNotHoldRegistryLock() throws Exception {
+        CountDownLatch nestedNotificationReturned = new CountDownLatch(1);
+        CountDownLatch disabledDelivered = new CountDownLatch(1);
+        AtomicReference<Thread> nestedThread = new AtomicReference<>();
+        HotspotNetworkUtils.HotspotStateListener listener =
+                enabled -> {
+                    if (!enabled) {
+                        disabledDelivered.countDown();
+                        return;
+                    }
+                    Thread thread =
+                            new Thread(
+                                    () -> {
+                                        HotspotNetworkUtils.notifyHotspotStateChanged(false);
+                                        nestedNotificationReturned.countDown();
+                                    });
+                    nestedThread.set(thread);
+                    thread.start();
+                    try {
+                        assertThat(nestedNotificationReturned.await(2, TimeUnit.SECONDS)).isTrue();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new AssertionError(e);
+                    }
+                };
+
+        HotspotNetworkUtils.addHotspotStateListener(listener);
+        try {
+            HotspotNetworkUtils.notifyHotspotStateChanged(true);
+
+            assertThat(disabledDelivered.await(2, TimeUnit.SECONDS)).isTrue();
+        } finally {
+            HotspotNetworkUtils.removeHotspotStateListener(listener);
+            Thread thread = nestedThread.get();
+            if (thread != null) {
+                thread.join(2_000);
+            }
         }
     }
 

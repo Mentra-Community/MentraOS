@@ -9,20 +9,22 @@ import java.net.InetAddress;
 import java.net.InterfaceAddress;
 import java.net.NetworkInterface;
 import java.net.URI;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Enumeration;
+import java.util.HashMap;
 import java.util.List;
-import java.util.Set;
-import java.util.concurrent.CopyOnWriteArraySet;
+import java.util.Map;
 
 /** Utilities for discovering and addressing the active Mentra Live hotspot interface. */
 public final class HotspotNetworkUtils {
     private static final String TAG = "HotspotNetworkUtils";
     private static final Object HOTSPOT_STATE_LOCK = new Object();
-    private static final Set<HotspotStateListener> HOTSPOT_STATE_LISTENERS =
-            new CopyOnWriteArraySet<>();
+    private static final Map<HotspotStateListener, HotspotStateRegistration>
+            HOTSPOT_STATE_LISTENERS = new HashMap<>();
     private static Boolean sLastHotspotState;
+    private static long sHotspotStateVersion;
 
     private HotspotNetworkUtils() {}
 
@@ -33,48 +35,127 @@ public final class HotspotNetworkUtils {
 
     /** Registers a listener and replays the latest hotspot lifecycle state, when known. */
     public static void addHotspotStateListener(HotspotStateListener listener) {
+        HotspotStateRegistration registration;
+        Boolean replayState;
+        long replayVersion;
         synchronized (HOTSPOT_STATE_LOCK) {
             if (listener == null) {
                 return;
             }
-            HOTSPOT_STATE_LISTENERS.add(listener);
-            if (sLastHotspotState != null) {
-                notifyListener(listener, sLastHotspotState);
-            }
+            registration =
+                    HOTSPOT_STATE_LISTENERS.computeIfAbsent(
+                            listener, HotspotStateRegistration::new);
+            replayState = sLastHotspotState;
+            replayVersion = sHotspotStateVersion;
+        }
+        if (replayState != null) {
+            enqueueHotspotState(registration, replayState, replayVersion);
         }
     }
 
     /** Removes a previously registered hotspot lifecycle listener. */
     public static void removeHotspotStateListener(HotspotStateListener listener) {
+        HotspotStateRegistration registration;
         synchronized (HOTSPOT_STATE_LOCK) {
-            if (listener != null) {
-                HOTSPOT_STATE_LISTENERS.remove(listener);
-            }
+            registration =
+                    listener == null ? null : HOTSPOT_STATE_LISTENERS.remove(listener);
+        }
+        if (registration != null) {
+            registration.deactivate();
         }
     }
 
     /** Publishes a hotspot lifecycle change to in-process network consumers such as WebRTC. */
     public static void notifyHotspotStateChanged(boolean enabled) {
+        List<HotspotStateRegistration> registrations;
+        long version;
         synchronized (HOTSPOT_STATE_LOCK) {
             sLastHotspotState = enabled;
-            for (HotspotStateListener listener : HOTSPOT_STATE_LISTENERS) {
-                notifyListener(listener, enabled);
-            }
+            version = ++sHotspotStateVersion;
+            registrations = new ArrayList<>(HOTSPOT_STATE_LISTENERS.values());
+        }
+        for (HotspotStateRegistration registration : registrations) {
+            enqueueHotspotState(registration, enabled, version);
         }
     }
 
     static void resetHotspotStateForTests() {
+        List<HotspotStateRegistration> registrations;
         synchronized (HOTSPOT_STATE_LOCK) {
             sLastHotspotState = null;
+            sHotspotStateVersion = 0;
+            registrations = new ArrayList<>(HOTSPOT_STATE_LISTENERS.values());
             HOTSPOT_STATE_LISTENERS.clear();
+        }
+        for (HotspotStateRegistration registration : registrations) {
+            registration.deactivate();
         }
     }
 
-    private static void notifyListener(HotspotStateListener listener, boolean enabled) {
-        try {
-            listener.onHotspotStateChanged(enabled);
-        } catch (RuntimeException e) {
-            Log.w(TAG, "Hotspot state listener failed", e);
+    private static void enqueueHotspotState(
+            HotspotStateRegistration registration, boolean enabled, long version) {
+        if (!registration.enqueue(enabled, version)) {
+            return;
+        }
+
+        HotspotStateEvent event;
+        while ((event = registration.next()) != null) {
+            try {
+                registration.listener.onHotspotStateChanged(event.enabled);
+            } catch (RuntimeException e) {
+                Log.w(TAG, "Hotspot state listener failed", e);
+            }
+        }
+    }
+
+    private static final class HotspotStateEvent {
+        final boolean enabled;
+
+        HotspotStateEvent(boolean enabled) {
+            this.enabled = enabled;
+        }
+    }
+
+    private static final class HotspotStateRegistration {
+        final HotspotStateListener listener;
+        final ArrayDeque<HotspotStateEvent> pendingEvents = new ArrayDeque<>();
+        boolean active = true;
+        boolean delivering;
+        long lastEnqueuedVersion = -1;
+
+        HotspotStateRegistration(HotspotStateListener listener) {
+            this.listener = listener;
+        }
+
+        synchronized boolean enqueue(boolean enabled, long version) {
+            if (!active || version <= lastEnqueuedVersion) {
+                return false;
+            }
+            lastEnqueuedVersion = version;
+            pendingEvents.add(new HotspotStateEvent(enabled));
+            if (delivering) {
+                return false;
+            }
+            delivering = true;
+            return true;
+        }
+
+        synchronized HotspotStateEvent next() {
+            if (!active) {
+                pendingEvents.clear();
+                delivering = false;
+                return null;
+            }
+            HotspotStateEvent event = pendingEvents.poll();
+            if (event == null) {
+                delivering = false;
+            }
+            return event;
+        }
+
+        synchronized void deactivate() {
+            active = false;
+            pendingEvents.clear();
         }
     }
 
