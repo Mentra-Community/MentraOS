@@ -141,6 +141,7 @@ jobs:
     runs-on: [self-hosted, macOS, ARM64]
     outputs:
       manifest_url: ${{ steps.sdk-ota-info.outputs.manifest_url }}
+      bundle_url: ${{ steps.sdk-ota-info.outputs.bundle_url }}
       version_code: ${{ steps.existing-sdk-ota.outputs.version_code || steps.asg-build-info.outputs.version_code }}
       version_name: ${{ steps.existing-sdk-ota.outputs.version_name || steps.asg-build-info.outputs.version_name }}
     steps:
@@ -199,19 +200,24 @@ jobs:
           fi
           APK_ASSET="asg-client-sdk-${SDK_VERSION}-vc${VERSION_CODE}-${SHORT_SHA}.apk"
           MANIFEST_ASSET="bluetooth-sdk-${SDK_VERSION}-version.json"
+          BUNDLE_ASSET="bluetooth-sdk-${SDK_VERSION}-ota-bundle.zip"
           APK_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${SDK_OTA_RELEASE_TAG}/${APK_ASSET}"
           MANIFEST_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${SDK_OTA_RELEASE_TAG}/${MANIFEST_ASSET}"
+          BUNDLE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${SDK_OTA_RELEASE_TAG}/${BUNDLE_ASSET}"
 
           echo "apk_asset=${APK_ASSET}" >> "$GITHUB_OUTPUT"
           echo "apk_url=${APK_URL}" >> "$GITHUB_OUTPUT"
           echo "manifest_asset=${MANIFEST_ASSET}" >> "$GITHUB_OUTPUT"
           echo "manifest_url=${MANIFEST_URL}" >> "$GITHUB_OUTPUT"
+          echo "bundle_asset=${BUNDLE_ASSET}" >> "$GITHUB_OUTPUT"
+          echo "bundle_url=${BUNDLE_URL}" >> "$GITHUB_OUTPUT"
 
       - name: Check existing SDK OTA manifest
         id: existing-sdk-ota
         if: needs.detect.outputs.dry_run != 'true'
         env:
           MANIFEST_URL: ${{ steps.sdk-ota-info.outputs.manifest_url }}
+          BUNDLE_URL: ${{ steps.sdk-ota-info.outputs.bundle_url }}
         run: |
           set -euo pipefail
 
@@ -222,6 +228,7 @@ jobs:
 
           if [[ "$http_status" == "404" ]]; then
             echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "bundle_exists=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -244,6 +251,20 @@ jobs:
           echo "version_code=${version_code}" >> "$GITHUB_OUTPUT"
           echo "version_name=${version_name}" >> "$GITHUB_OUTPUT"
           echo "Reusing existing SDK OTA manifest at ${MANIFEST_URL}."
+
+          bundle_status=$(curl --silent --show-error --head --location \
+            --output /dev/null \
+            --write-out "%{http_code}" \
+            "$BUNDLE_URL" || true)
+          if [[ "$bundle_status" == "200" ]]; then
+            echo "bundle_exists=true" >> "$GITHUB_OUTPUT"
+            echo "Reusing existing portable OTA bundle at ${BUNDLE_URL}."
+          elif [[ "$bundle_status" == "404" ]]; then
+            echo "bundle_exists=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Unexpected HTTP ${bundle_status} while checking ${BUNDLE_URL}" >&2
+            exit 1
+          fi
 
       - name: Setup Java
         if: steps.existing-sdk-ota.outputs.exists != 'true'
@@ -334,8 +355,42 @@ jobs:
           SDK_VERSION: ${{ needs.detect.outputs.version }}
         run: node .github/scripts/build-bluetooth-sdk-ota-manifest.mjs
 
-      - name: Upload ASG APK and manifest to SDK OTA release
-        if: needs.detect.outputs.dry_run != 'true' && steps.existing-sdk-ota.outputs.exists != 'true'
+      - name: Build portable self-hosted OTA bundle
+        if: steps.existing-sdk-ota.outputs.bundle_exists != 'true'
+        env:
+          APK_URL: ${{ steps.sdk-ota-info.outputs.apk_url }}
+          BUNDLE_ASSET: ${{ steps.sdk-ota-info.outputs.bundle_asset }}
+          BUNDLE_DIRECTORY: bluetooth-sdk-${{ needs.detect.outputs.version }}-ota
+          EXISTING_MANIFEST: ${{ steps.existing-sdk-ota.outputs.exists }}
+        run: |
+          set -euo pipefail
+          if [[ "$EXISTING_MANIFEST" == "true" ]]; then
+            MANIFEST_SOURCE=/tmp/sdk_ota_version.json
+            LOCAL_ARTIFACTS_JSON='{}'
+          else
+            MANIFEST_SOURCE=sdk-ota-manifest/version.json
+            LOCAL_ARTIFACTS_JSON=$(jq -cn \
+              --arg url "$APK_URL" \
+              --arg path "asg_client/app/build/outputs/apk/release/app-release.apk" \
+              '{($url): $path}')
+          fi
+
+          rm -rf "$BUNDLE_DIRECTORY"
+          mkdir -p sdk-ota-bundle
+          rm -f "sdk-ota-bundle/$BUNDLE_ASSET"
+          MANIFEST_SOURCE="$MANIFEST_SOURCE" \
+          OUTPUT_DIRECTORY="$BUNDLE_DIRECTORY" \
+          LOCAL_ARTIFACTS_JSON="$LOCAL_ARTIFACTS_JSON" \
+            node .github/scripts/build-bluetooth-sdk-ota-bundle.mjs
+
+          find "$BUNDLE_DIRECTORY" -exec touch -t 198001010000 {} +
+          find "$BUNDLE_DIRECTORY" -type f -print \
+            | LC_ALL=C sort \
+            | zip -X -q "sdk-ota-bundle/$BUNDLE_ASSET" -@
+          unzip -t "sdk-ota-bundle/$BUNDLE_ASSET"
+
+      - name: Upload SDK OTA artifacts
+        if: needs.detect.outputs.dry_run != 'true' && (steps.existing-sdk-ota.outputs.exists != 'true' || steps.existing-sdk-ota.outputs.bundle_exists != 'true')
         uses: actions/github-script@v7
         with:
           script: |
@@ -351,6 +406,8 @@ jobs:
               '',
               'Each SDK version owns an immutable manifest at:',
               '`https://github.com/Mentra-Community/MentraOS/releases/download/bluetooth-sdk-ota/bluetooth-sdk-<sdkVersion>-version.json`',
+              '',
+              'The matching `bluetooth-sdk-<sdkVersion>-ota-bundle.zip` contains the same manifest and artifacts with host-relative URLs for self-hosting.',
               '',
               'Do not delete assets from this release unless the matching SDK version is intentionally retired.',
             ].join('\n');
@@ -384,16 +441,23 @@ jobs:
               release_id: releaseId,
               per_page: 100,
             });
-            const uploads = [
-              {
+            const uploads = [];
+            if ('${{ steps.existing-sdk-ota.outputs.exists }}' !== 'true') {
+              uploads.push({
                 path: 'asg_client/app/build/outputs/apk/release/app-release.apk',
                 name: '${{ steps.sdk-ota-info.outputs.apk_asset }}',
-              },
-              {
+              });
+              uploads.push({
                 path: 'sdk-ota-manifest/version.json',
                 name: '${{ steps.sdk-ota-info.outputs.manifest_asset }}',
-              },
-            ];
+              });
+            }
+            if ('${{ steps.existing-sdk-ota.outputs.bundle_exists }}' !== 'true') {
+              uploads.push({
+                path: 'sdk-ota-bundle/${{ steps.sdk-ota-info.outputs.bundle_asset }}',
+                name: '${{ steps.sdk-ota-info.outputs.bundle_asset }}',
+              });
+            }
 
             for (const upload of uploads) {
               const data = fs.readFileSync(upload.path);
@@ -450,6 +514,15 @@ jobs:
             sleep 10
           done
 
+          bundle_status=$(curl --fail --silent --show-error --head --location \
+            --output /dev/null \
+            --write-out "%{http_code}" \
+            "${{ steps.sdk-ota-info.outputs.bundle_url }}")
+          if [[ "$bundle_status" != "200" ]]; then
+            echo "Portable OTA bundle returned HTTP ${bundle_status}." >&2
+            exit 1
+          fi
+
       - name: Summarize SDK OTA artifact
         run: |
           {
@@ -460,7 +533,9 @@ jobs:
             echo "- ASG versionName: \`${{ steps.existing-sdk-ota.outputs.version_name || steps.asg-build-info.outputs.version_name }}\`"
             echo "- APK asset: \`${{ steps.existing-sdk-ota.outputs.exists == 'true' && 'reused from existing manifest' || steps.sdk-ota-info.outputs.apk_asset }}\`"
             echo "- Manifest URL: \`${{ steps.sdk-ota-info.outputs.manifest_url }}\`"
+            echo "- Portable bundle URL: \`${{ steps.sdk-ota-info.outputs.bundle_url }}\`"
             echo "- Existing manifest reused: \`${{ steps.existing-sdk-ota.outputs.exists == 'true' }}\`"
+            echo "- Existing portable bundle reused: \`${{ steps.existing-sdk-ota.outputs.bundle_exists == 'true' }}\`"
             echo "- Dry run: \`${{ needs.detect.outputs.dry_run }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 

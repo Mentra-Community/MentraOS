@@ -135,6 +135,8 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
   setGlassesMediaVolume: bindPublicMethod("setGlassesMediaVolume"),
   rgbLedControl: bindPublicMethod("rgbLedControl"),
   requestVersionInfo: bindPublicMethod("requestVersionInfo"),
+  setOtaVersionUrl: bindPublicMethod("setOtaVersionUrl"),
+  getOtaVersionUrl: bindPublicMethod("getOtaVersionUrl"),
   checkForOtaUpdate: bindPublicMethod("checkForOtaUpdate"),
   startOtaUpdate,
   startAr99OtaFromFile: bindPublicMethod("startAr99OtaFromFile"),

@@ -1135,6 +1135,13 @@ export interface BluetoothSdkPublicModule {
   ): Promise<RgbLedControlSuccessResponseEvent>
 
   requestVersionInfo(): Promise<VersionInfoResult>
+  /**
+   * Select the OTA manifest used by subsequent update checks and installs.
+   * The URL may point at Mentra's hosted manifest or any customer-controlled HTTP(S) server.
+   */
+  setOtaVersionUrl(otaVersionUrl: string): void
+  /** Return the configured OTA manifest URL, or this SDK release's default manifest URL. */
+  getOtaVersionUrl(): string
   /** Fetch the configured OTA manifest and return whether any ASG/BES/MTK update is available. */
   checkForOtaUpdate(): Promise<boolean>
   /** Start OTA from the configured or explicitly supplied manifest URL. */
