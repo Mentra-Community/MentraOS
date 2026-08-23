@@ -13,6 +13,10 @@
 
 set -euo pipefail
 
+if [ -n "${ADB_SERIAL:-}" ] && [ -z "${ANDROID_SERIAL:-}" ]; then
+    export ANDROID_SERIAL="$ADB_SERIAL"
+fi
+
 PORT=${OTA_TEST_PORT:-9876}
 WAIT_SECONDS=20
 MAX_TRIGGER_ATTEMPTS=3
@@ -167,7 +171,7 @@ monitor_update() {
            [[ "$line" == *"MTK OTA success:"* ]]; then
             exec 3<&-
             echo "✅ Complete. Rebooting glasses..."
-            if adb shell reboot >/dev/null 2>&1; then
+            if adb reboot >/dev/null 2>&1; then
                 echo "✅ Reboot command sent"
             else
                 echo "⚠️  ADB disconnected before reboot completed. This can be expected after the update."

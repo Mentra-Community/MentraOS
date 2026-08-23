@@ -9,25 +9,23 @@
 #   ./scripts/restore-stock.sh
 #
 
-set -e
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ASG_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_DIR="$(cd "$ASG_DIR/.." && pwd)"
+source "$REPO_DIR/scripts/lib/glasses-device.sh"
 
 STOCK_PKG="com.mentra.asg_client"
 DEV_PKG="com.mentra.asg_client.thirdparty"
+RECOVERY_PKG="com.mentra.recovery"
 OTA_URL="https://ota.mentraglass.com/prod_live_version_v2.json"
 
 echo "=== Restore Stock MentraOS ==="
 echo ""
 
-# Check for ADB connection
-if ! adb devices | grep -q "device$"; then
-    echo "ERROR: No ADB device connected."
-    echo ""
-    echo "Connect your Mentra Live using the Infinity Cable and try again."
-    exit 1
-fi
-
-echo "Connected device:"
-adb devices | grep "device$"
+resolve_serial
+export ANDROID_SERIAL="$SERIAL"
 echo ""
 
 # Step 1: Uninstall third-party build
@@ -46,6 +44,7 @@ echo "=== Re-enabling Stock App ==="
 echo ""
 adb shell pm enable "$STOCK_PKG" 2>/dev/null || true
 adb shell cmd package install-existing "$STOCK_PKG" 2>/dev/null || true
+adb shell pm enable "$RECOVERY_PKG" 2>/dev/null || true
 echo "Stock app enabled."
 
 echo ""

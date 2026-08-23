@@ -120,8 +120,13 @@ adb devices
 This script will:
 
 1. Build your debug APK
-2. Install it as `com.mentra.asg_client.thirdparty`, disable the stock app, and set your build as the default launcher
-3. Grant all required permissions
+2. Snapshot the latest staging OTA manifest and update stock ASG, BES, and MTK firmware
+3. Disable the stock app and its recovery agents
+4. Install your build as `com.mentra.asg_client.thirdparty`, grant its permissions, and make it the default launcher
+
+Older Mentra Live firmware may need an explicit reboot after an MTK patch. If USB ADB has not
+returned after 45 seconds, the script asks you to unplug and reconnect the Infinity Cable, then
+continues automatically.
 
 **Warning:** Your fork will not receive OTA updates from Mentra.
 
