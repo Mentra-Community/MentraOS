@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # Test BES firmware OTA update
-# Usage: ./scripts/test-bes-ota.sh <path-to-update_ota.bin> <target-version>
+# Usage: ./scripts/test-bes-ota.sh <path-to-update_ota.bin> <target-version> [--no-follow]
 #
 # The artifact must be the release-packaged OTA container, never raw BES build output.
 # Set ANDROID_SERIAL when more than one Android device may be attached.
@@ -11,9 +11,17 @@ set -euo pipefail
 
 FIRMWARE_PATH="${1:-}"
 TARGET_VERSION="${2:-}"
+FOLLOW_LOGS=true
+
+if [ "${3:-}" = "--no-follow" ]; then
+    FOLLOW_LOGS=false
+elif [ -n "${3:-}" ]; then
+    echo "Unknown option: $3"
+    exit 1
+fi
 
 if [ -z "$FIRMWARE_PATH" ] || [ -z "$TARGET_VERSION" ]; then
-    echo "Usage: ./scripts/test-bes-ota.sh <path-to-update_ota.bin> <target-version>"
+    echo "Usage: ./scripts/test-bes-ota.sh <path-to-update_ota.bin> <target-version> [--no-follow]"
     echo "Example: ANDROID_SERIAL=0123456789ABCDEF $0 ./update_ota.bin 17.26.7.9"
     exit 1
 fi
@@ -36,8 +44,9 @@ for component in "${VERSION_COMPONENTS[@]}"; do
 done
 
 ADB=(adb)
-if [ -n "${ANDROID_SERIAL:-}" ]; then
-    ADB+=( -s "$ANDROID_SERIAL" )
+DEVICE_SERIAL="${ANDROID_SERIAL:-${ADB_SERIAL:-}}"
+if [ -n "$DEVICE_SERIAL" ]; then
+    ADB+=( -s "$DEVICE_SERIAL" )
 fi
 
 "${ADB[@]}" get-state >/dev/null
@@ -52,6 +61,7 @@ else
 fi
 ARTIFACT_ID="adb-${FIRMWARE_SHA256}.bin"
 REMOTE_PATH="/storage/emulated/0/asg/debug_bes_${FIRMWARE_SHA256}.bin"
+LEGACY_REMOTE_PATH="/storage/emulated/0/asg/bes_firmware.bin"
 
 echo "=========================================="
 echo "🔧 BES OTA Test"
@@ -63,12 +73,23 @@ echo "SHA-256: $FIRMWARE_SHA256"
 echo ""
 
 echo "📤 Pushing firmware to glasses..."
+"${ADB[@]}" shell mkdir -p /storage/emulated/0/asg
 "${ADB[@]}" push "$FIRMWARE_PATH" "$REMOTE_PATH"
 
 REMOTE_SHA256="$("${ADB[@]}" shell sha256sum "$REMOTE_PATH" | awk '{print $1}' | tr -d '\r')"
 if [ "$REMOTE_SHA256" != "$FIRMWARE_SHA256" ]; then
     echo "❌ Device SHA-256 mismatch after push"
     "${ADB[@]}" shell rm -f "$REMOTE_PATH"
+    exit 1
+fi
+
+# ASG 36 predates target/hash extras and always reads this fixed path. Keep both
+# copies so this one broadcast works with the bootstrap client and current ASG.
+"${ADB[@]}" shell cp "$REMOTE_PATH" "$LEGACY_REMOTE_PATH"
+LEGACY_REMOTE_SHA256="$("${ADB[@]}" shell sha256sum "$LEGACY_REMOTE_PATH" | awk '{print $1}' | tr -d '\r')"
+if [ "$LEGACY_REMOTE_SHA256" != "$FIRMWARE_SHA256" ]; then
+    echo "❌ Device SHA-256 mismatch at legacy ASG 36 path"
+    "${ADB[@]}" shell rm -f "$REMOTE_PATH" "$LEGACY_REMOTE_PATH"
     exit 1
 fi
 
@@ -81,6 +102,11 @@ echo "🚀 Triggering BES OTA..."
     --es sha256 "$FIRMWARE_SHA256" \
     --es artifact_id "$ARTIFACT_ID" \
     -n com.mentra.asg_client/.receiver.DebugBesOtaReceiver
+
+if [ "$FOLLOW_LOGS" = false ]; then
+    echo "✅ BES OTA triggered; log following disabled."
+    exit 0
+fi
 
 echo ""
 echo "📋 Monitoring logs (Ctrl+C to exit)..."

@@ -6,6 +6,7 @@
 # and installs your version as the default launcher.
 #
 # How it works:
+#   - Updates stock ASG/BES/MTK from one latest-staging manifest snapshot
 #   - Stock asg_client is a system app signed with Mentra's key
 #   - Your build uses package name com.mentra.asg_client.thirdparty
 #   - Stock app is disabled (not deleted) so your app becomes the launcher
@@ -16,17 +17,25 @@
 #   2. Run: ./scripts/dev-setup.sh
 #
 
-set -e
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ASG_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_DIR="$(cd "$ASG_DIR/.." && pwd)"
+source "$REPO_DIR/scripts/lib/glasses-device.sh"
 
 STOCK_PKG="com.mentra.asg_client"
 DEV_PKG="com.mentra.asg_client.thirdparty"
-APK_PATH="app/build/outputs/apk/debug/app-debug.apk"
+RECOVERY_PKG="com.mentra.recovery"
+LEGACY_UPDATER_PKG="com.augmentos.otaupdater"
+APK_PATH="$ASG_DIR/app/build/outputs/apk/debug/app-debug.apk"
 
 echo ""
 echo "╔════════════════════════════════════════════════════════════════╗"
 echo "║                         ⚠️  WARNING                            ║"
 echo "╠════════════════════════════════════════════════════════════════╣"
 echo "║  This script will:                                             ║"
+echo "║    • Update stock ASG, BES, and MTK from latest staging        ║"
 echo "║    • Disable Mentra's stock asg_client                         ║"
 echo "║    • Install your build as com.mentra.asg_client.thirdparty    ║"
 echo "║    • Set your build as the default launcher                    ║"
@@ -52,24 +61,38 @@ echo ""
 echo "=== Mentra Live Development Setup ==="
 echo ""
 
-# Check for ADB connection
-if ! adb devices | grep -q "device$"; then
-    echo "ERROR: No ADB device connected."
-    echo ""
-    echo "Connect your Mentra Live using the Infinity Cable and try again."
-    echo ""
-    exit 1
-fi
+resolve_serial
+ADB=(adb -s "$SERIAL")
+export ANDROID_SERIAL="$SERIAL"
+SETUP_MUTATED=false
 
-echo "Connected device:"
-adb devices | grep "device$"
+restore_stock_after_failure() {
+    local status=$?
+    trap - EXIT
+    if [ "$status" -ne 0 ] && [ "$SETUP_MUTATED" = true ] && "${ADB[@]}" get-state >/dev/null 2>&1; then
+        echo ""
+        echo "Setup failed; restoring the stock launcher..." >&2
+        "${ADB[@]}" shell cmd package install-existing "$STOCK_PKG" >/dev/null 2>&1 || true
+        "${ADB[@]}" shell pm enable "$STOCK_PKG" >/dev/null 2>&1 || true
+        "${ADB[@]}" shell pm enable "$RECOVERY_PKG" >/dev/null 2>&1 || true
+        "${ADB[@]}" shell cmd package set-home-activity --user 0 \
+            "$STOCK_PKG/com.mentra.asg_client.MainActivity" >/dev/null 2>&1 || true
+        "${ADB[@]}" shell am start -n \
+            "$STOCK_PKG/com.mentra.asg_client.MainActivity" >/dev/null 2>&1 || true
+    elif [ "$status" -ne 0 ] && [ "$SETUP_MUTATED" = true ]; then
+        echo "Setup failed while ADB was offline." >&2
+        echo "Reconnect the Infinity Cable, then run ./scripts/restore-stock.sh." >&2
+    fi
+    exit "$status"
+}
+trap restore_stock_after_failure EXIT
 echo ""
 
 # Step 1: Build the debug APK
 echo "=== Building Debug APK ==="
 echo ""
 echo "Building... (this may take a minute)"
-if ./gradlew assembleDebug; then
+if (cd "$ASG_DIR" && ./gradlew assembleDebug); then
     echo ""
     echo "Build succeeded."
 else
@@ -88,25 +111,36 @@ fi
 
 echo ""
 
-# Step 2: Disable stock app
+# Step 2: Put the stock firmware on a known-compatible staging baseline.
+echo "=== Updating Mentra Live Firmware ==="
+echo ""
+ADB_SERIAL="$SERIAL" "$SCRIPT_DIR/update-stock-for-dev.sh"
+SETUP_MUTATED=true
+
+# Step 3: Disable stock and its recovery agents.
 echo "=== Disabling Stock App ==="
 echo ""
+echo "Disabling stock recovery agents..."
+"${ADB[@]}" shell am force-stop "$RECOVERY_PKG" 2>/dev/null || true
+"${ADB[@]}" shell pm disable-user --user 0 "$RECOVERY_PKG" 2>/dev/null || true
+"${ADB[@]}" shell am force-stop "$LEGACY_UPDATER_PKG" 2>/dev/null || true
+"${ADB[@]}" shell pm disable-user --user 0 "$LEGACY_UPDATER_PKG" 2>/dev/null || true
 echo "Disabling $STOCK_PKG..."
-adb shell pm disable-user --user 0 "$STOCK_PKG" 2>/dev/null || true
+"${ADB[@]}" shell pm disable-user --user 0 "$STOCK_PKG" 2>/dev/null || true
 echo "Stock app disabled."
 
 echo ""
 
-# Step 3: Uninstall any previous dev build
+# Step 4: Uninstall any previous dev build
 echo "=== Removing Previous Dev Build (if any) ==="
 echo ""
-adb shell pm uninstall "$DEV_PKG" 2>/dev/null || true
+"${ADB[@]}" shell pm uninstall "$DEV_PKG" 2>/dev/null || true
 
-# Step 4: Install new build
+# Step 5: Install new build
 echo "=== Installing Your Build ==="
 echo ""
 echo "Installing $APK_PATH..."
-if adb install -g "$APK_PATH"; then
+if "${ADB[@]}" install -g "$APK_PATH"; then
     echo "Install succeeded."
 else
     echo ""
@@ -116,7 +150,7 @@ fi
 
 echo ""
 
-# Step 5: Grant additional permissions
+# Step 6: Grant additional permissions
 echo "=== Granting Permissions ==="
 echo ""
 
@@ -140,30 +174,30 @@ PERMISSIONS=(
 )
 
 for perm in "${PERMISSIONS[@]}"; do
-    if adb shell pm grant "$DEV_PKG" "$perm" 2>/dev/null; then
+    if "${ADB[@]}" shell pm grant "$DEV_PKG" "$perm" 2>/dev/null; then
         echo "Granted: $perm"
     fi
 done
 
 echo ""
 
-# Step 6: Set as default home launcher
+# Step 7: Set as default home launcher
 echo "=== Setting as Default Launcher ==="
 echo ""
 # Clear any stale chooser-cached preferences for both packages so the
 # "which launcher?" popup doesn't reappear.
-adb shell pm clear-package-preferred-activities "$STOCK_PKG" 2>/dev/null || true
-adb shell pm clear-package-preferred-activities "$DEV_PKG" 2>/dev/null || true
-adb shell cmd package set-home-activity --user 0 "$DEV_PKG/com.mentra.asg_client.MainActivity" 2>/dev/null || true
+"${ADB[@]}" shell pm clear-package-preferred-activities "$STOCK_PKG" 2>/dev/null || true
+"${ADB[@]}" shell pm clear-package-preferred-activities "$DEV_PKG" 2>/dev/null || true
+"${ADB[@]}" shell cmd package set-home-activity --user 0 "$DEV_PKG/com.mentra.asg_client.MainActivity" 2>/dev/null || true
 # Force the resolver to re-evaluate HOME so the new default takes effect now.
-adb shell am start -a android.intent.action.MAIN -c android.intent.category.HOME 2>/dev/null || true
+"${ADB[@]}" shell am start -a android.intent.action.MAIN -c android.intent.category.HOME 2>/dev/null || true
 echo "Default launcher set."
 
 echo ""
 
-# Step 7: Launch the app
+# Step 8: Launch the app
 echo "=== Launching App ==="
-adb shell am start -n "$DEV_PKG/com.mentra.asg_client.MainActivity" 2>/dev/null || true
+"${ADB[@]}" shell am start -n "$DEV_PKG/com.mentra.asg_client.MainActivity" 2>/dev/null || true
 
 echo ""
 echo "=== Setup Complete ==="
@@ -172,6 +206,6 @@ echo "Your build ($DEV_PKG) is now the active launcher."
 echo ""
 echo "Useful commands:"
 echo "  View logs:        adb logcat -s ASGClient"
-echo "  Reinstall:        adb install -r -g $APK_PATH"
+echo "  Reinstall:        adb -s $SERIAL install -r -g $APK_PATH"
 echo "  Restore stock:    ./scripts/restore-stock.sh"
 echo ""
