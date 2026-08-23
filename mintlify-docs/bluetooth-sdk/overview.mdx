@@ -1,6 +1,6 @@
 ---
-title: "Mentra Live"
-description: "Build mobile apps that connect directly to Mentra Live over Bluetooth."
+title: "Mentra Bluetooth SDK"
+description: "Connect mobile apps directly to Mentra Live over Bluetooth."
 icon: "bluetooth"
 ---
 
@@ -15,6 +15,18 @@ Use this SDK when your app owns the mobile experience and needs a direct phone-t
 | Android | `com.mentraglass:bluetooth-sdk` | `import com.mentra.bluetoothsdk.*` |
 | iOS | `MentraBluetoothSDK` Swift package | `import MentraBluetoothSDK` |
 | React Native / Expo | `@mentra/bluetooth-sdk` | `import BluetoothSdk from '@mentra/bluetooth-sdk'` |
+
+## Quickstart
+
+The fastest way to try the Mentra Bluetooth SDK is to run one of the complete
+Android, iOS, or React Native example apps in the Mentra Bluetooth SDK Starter
+Kit.
+
+<Card title="Run an example app" icon="rocket" href="/bluetooth-sdk/quickstart">
+  Clone the starter kit, choose your platform, and connect to Mentra Live.
+</Card>
+
+You can also [open the starter kit directly on GitHub](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit).
 
 ## What You Can Build
 
@@ -33,23 +45,22 @@ Use this SDK when your app owns the mobile experience and needs a direct phone-t
 - Bluetooth permissions, plus Android location permission where BLE scanning requires it.
 
 <Warning>
-Bluetooth connection alone does not confirm version compatibility. Before testing SDK features, [update Mentra Live to the glasses software matching your SDK version](/mentra-live/software-update). An app using Bluetooth SDK `0.1.21-beta.5` must use the matching Mentra Live `0.1.21-beta.5` software release.
+Bluetooth connection alone does not confirm version compatibility. Before testing SDK features, [update Mentra Live to the glasses software matching your SDK version](/bluetooth-sdk/software-update). An app using Bluetooth SDK `0.1.21-beta.5` must use the matching Mentra Live `0.1.21-beta.5` software release.
 </Warning>
 
+## Next Steps
+
 <CardGroup cols={2}>
-  <Card title="Update Mentra Live" icon="download" href="/mentra-live/software-update">
+  <Card title="Build from Scratch" icon="screwdriver-wrench" href="/bluetooth-sdk/build-from-scratch">
+    Add the SDK to your own Android, iOS, or React Native app.
+  </Card>
+  <Card title="Update Mentra Live" icon="download" href="/bluetooth-sdk/software-update">
     Install the glasses software that matches your Bluetooth SDK release.
   </Card>
-  <Card title="Quickstart" icon="rocket" href="/mentra-live/quickstart">
-    Install the SDK, connect to Mentra Live, and read glasses status.
-  </Card>
-  <Card title="Example Apps" icon="mobile" href="/mentra-live/examples">
-    Run the Android, iOS, and React Native starter apps from a fresh clone.
-  </Card>
-  <Card title="API Reference" icon="book" href="/mentra-live/api-reference">
+  <Card title="API Reference" icon="book" href="/bluetooth-sdk/api-reference">
     Review lifecycle, commands, events, status fields, and Mentra Live behavior.
   </Card>
-  <Card title="Troubleshooting" icon="circle-question" href="/mentra-live/troubleshooting">
+  <Card title="Troubleshooting" icon="circle-question" href="/bluetooth-sdk/troubleshooting">
     Fix native build, permission, scan, stream, and Expo issues.
   </Card>
 </CardGroup>
