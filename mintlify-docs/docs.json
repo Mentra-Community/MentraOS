@@ -24,7 +24,7 @@
         ]
       },
       {
-        "tab": "Miniapp Development",
+        "tab": "Miniapp SDK",
         "groups": [
           {
             "group": "Getting Started",
@@ -115,38 +115,38 @@
         ]
       },
       {
-        "tab": "Mentra Live",
+        "tab": "Bluetooth SDK",
         "groups": [
           {
             "group": "Getting Started",
             "icon": "bluetooth",
             "pages": [
-              "mentra-live/overview",
-              "mentra-live/software-update",
-              "mentra-live/ai-ide-integration",
-              "mentra-live/quickstart",
-              "mentra-live/examples"
+              "bluetooth-sdk/overview",
+              "bluetooth-sdk/quickstart",
+              "bluetooth-sdk/build-from-scratch",
+              "bluetooth-sdk/software-update",
+              "bluetooth-sdk/ai-ide-integration"
             ]
           },
           {
             "group": "Platform Setup",
             "icon": "mobile",
-            "pages": ["mentra-live/react-native-expo", "mentra-live/android", "mentra-live/ios"]
+            "pages": ["bluetooth-sdk/react-native-expo", "bluetooth-sdk/android", "bluetooth-sdk/ios"]
           },
           {
             "group": "Core APIs",
             "icon": "glasses",
             "pages": [
-              "mentra-live/api-reference",
-              "mentra-live/audio",
-              "mentra-live/camera-streaming",
-              "mentra-live/hardware"
+              "bluetooth-sdk/api-reference",
+              "bluetooth-sdk/audio",
+              "bluetooth-sdk/camera-streaming",
+              "bluetooth-sdk/hardware"
             ]
           },
           {
             "group": "Release",
             "icon": "clipboard-check",
-            "pages": ["mentra-live/troubleshooting", "mentra-live/production-checklist"]
+            "pages": ["bluetooth-sdk/troubleshooting", "bluetooth-sdk/production-checklist"]
           }
         ]
       },
@@ -304,6 +304,22 @@
     {"source": "/os-devs/asg-client/architecture", "destination": "/contributing"},
     {"source": "/os-devs/asg-client/mentra-live", "destination": "/contributing"},
     {"source": "/os-devs/asg-client/button-system", "destination": "/contributing"},
-    {"source": "/os-devs/asg-client/streaming", "destination": "/contributing"}
+    {"source": "/os-devs/asg-client/streaming", "destination": "/contributing"},
+    {"source": "/mentra-live", "destination": "/bluetooth-sdk/overview"},
+    {"source": "/mentra-live/overview", "destination": "/bluetooth-sdk/overview"},
+    {"source": "/mentra-live/quickstart", "destination": "/bluetooth-sdk/quickstart"},
+    {"source": "/mentra-live/examples", "destination": "/bluetooth-sdk/quickstart"},
+    {"source": "/bluetooth-sdk/examples", "destination": "/bluetooth-sdk/quickstart"},
+    {"source": "/mentra-live/software-update", "destination": "/bluetooth-sdk/software-update"},
+    {"source": "/mentra-live/ai-ide-integration", "destination": "/bluetooth-sdk/ai-ide-integration"},
+    {"source": "/mentra-live/react-native-expo", "destination": "/bluetooth-sdk/react-native-expo"},
+    {"source": "/mentra-live/android", "destination": "/bluetooth-sdk/android"},
+    {"source": "/mentra-live/ios", "destination": "/bluetooth-sdk/ios"},
+    {"source": "/mentra-live/api-reference", "destination": "/bluetooth-sdk/api-reference"},
+    {"source": "/mentra-live/audio", "destination": "/bluetooth-sdk/audio"},
+    {"source": "/mentra-live/camera-streaming", "destination": "/bluetooth-sdk/camera-streaming"},
+    {"source": "/mentra-live/hardware", "destination": "/bluetooth-sdk/hardware"},
+    {"source": "/mentra-live/troubleshooting", "destination": "/bluetooth-sdk/troubleshooting"},
+    {"source": "/mentra-live/production-checklist", "destination": "/bluetooth-sdk/production-checklist"}
   ]
 }
