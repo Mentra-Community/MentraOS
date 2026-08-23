@@ -119,7 +119,7 @@
         "groups": [
           {
             "group": "Getting Started",
-            "icon": "bluetooth",
+            "icon": "compass",
             "pages": [
               "bluetooth-sdk/overview",
               "bluetooth-sdk/quickstart",
@@ -130,7 +130,7 @@
           },
           {
             "group": "Platform Setup",
-            "icon": "mobile",
+            "icon": "gears",
             "pages": ["bluetooth-sdk/react-native-expo", "bluetooth-sdk/android", "bluetooth-sdk/ios"]
           },
           {
