@@ -6,7 +6,10 @@ import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraManager;
 import android.os.SystemClock;
 import android.util.Log;
+
 import com.mentra.asg_client.io.media.core.MediaCaptureService;
+import com.mentra.asg_client.io.network.interfaces.INetworkManager;
+import com.mentra.asg_client.io.network.utils.HotspotNetworkUtils;
 import com.mentra.asg_client.io.streaming.config.RtmpStreamConfig;
 import com.mentra.asg_client.io.streaming.config.WhipStreamConfig;
 import com.mentra.asg_client.io.streaming.services.RtmpStreamingService;
@@ -21,10 +24,13 @@ import com.mentra.asg_client.service.system.core.SystemControllerFactory;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
 import com.mentra.asg_client.service.utils.ServiceConstants;
 import com.mentra.asg_client.service.utils.ServiceUtils;
+
 import io.github.thibaultbee.streampack.internal.sources.camera.CameraController;
-import java.util.Set;
+
 import org.json.JSONException;
 import org.json.JSONObject;
+
+import java.util.Set;
 
 /**
  * Handler for streaming commands (RTMP, SRT, WHIP). Routes to the appropriate streaming service
@@ -50,12 +56,17 @@ public class StreamCommandHandler implements ICommandHandler {
     private final Context context;
     private final IStateManager stateManager;
     private final IMediaManager streamingManager;
+    private final HotspotStreamActivityTracker mHotspotActivityTracker;
 
     public StreamCommandHandler(
-            Context context, IStateManager stateManager, IMediaManager streamingManager) {
+            Context context,
+            IStateManager stateManager,
+            IMediaManager streamingManager,
+            INetworkManager networkManager) {
         this.context = context;
         this.stateManager = stateManager;
         this.streamingManager = streamingManager;
+        this.mHotspotActivityTracker = new HotspotStreamActivityTracker(networkManager);
     }
 
     @Override
@@ -157,9 +168,12 @@ public class StreamCommandHandler implements ICommandHandler {
                 Log.w(TAG, "⚠️ StateManager not available - skipping battery check");
             }
 
-            // WiFi check (WHIP streams may work on mobile data; skip only for WHIP if needed)
-            if (stateManager != null && !stateManager.isConnectedToWifi()) {
-                Log.e(TAG, "Cannot start stream - no WiFi connection");
+            // The hotspot is a directly connected local network, even though Android does not
+            // report it as a connected STA WiFi network.
+            boolean hasStaWifi = stateManager == null || stateManager.isConnectedToWifi();
+            boolean hasLocalHotspotRoute = HotspotNetworkUtils.isEndpointOnActiveHotspot(streamUrl);
+            if (!hasStaWifi && !hasLocalHotspotRoute) {
+                Log.e(TAG, "Cannot start stream - no WiFi or local hotspot route");
                 sendStreamErrorStatus(streamId, ServiceConstants.ERROR_NO_WIFI_CONNECTION);
                 return false;
             }
@@ -247,6 +261,8 @@ public class StreamCommandHandler implements ICommandHandler {
                         break;
                     }
             }
+
+            mHotspotActivityTracker.onStreamStarted(hasLocalHotspotRoute);
 
             return true;
         } catch (Exception e) {
@@ -371,20 +387,24 @@ public class StreamCommandHandler implements ICommandHandler {
             if (RtmpStreamingService.isStreaming() || RtmpStreamingService.isReconnecting()) {
                 sendStreamStoppingStatus(RtmpStreamingService.getCurrentStreamId());
                 RtmpStreamingService.stopStreaming(context);
+                mHotspotActivityTracker.onStreamStopped();
                 restoreEisAfterStreaming();
                 return true;
             } else if (SrtStreamingService.isStreaming() || SrtStreamingService.isReconnecting()) {
                 sendStreamStoppingStatus(SrtStreamingService.getCurrentStreamId());
                 SrtStreamingService.stopStreaming(context);
+                mHotspotActivityTracker.onStreamStopped();
                 restoreEisAfterStreaming();
                 return true;
             } else if (WhipStreamingService.isStreaming()
                     || WhipStreamingService.isReconnecting()) {
                 sendStreamStoppingStatus(WhipStreamingService.getCurrentStreamId());
                 WhipStreamingService.stopStreaming(context);
+                mHotspotActivityTracker.onStreamStopped();
                 restoreEisAfterStreaming();
                 return true;
             } else {
+                mHotspotActivityTracker.onStreamStopped();
                 streamingManager.sendStreamStatusResponse(
                         false, ServiceConstants.STATUS_ERROR, ServiceConstants.ERROR_NOT_STREAMING);
                 return false;
@@ -508,6 +528,9 @@ public class StreamCommandHandler implements ICommandHandler {
             if (RtmpStreamingService.isStreaming() || RtmpStreamingService.isReconnecting()) {
                 boolean valid = RtmpStreamingService.resetStreamTimeout(streamId);
                 if (valid || RtmpStreamingService.isStreaming()) {
+                    if (valid) {
+                        mHotspotActivityTracker.onKeepAlive();
+                    }
                     streamingManager.sendKeepAliveAck(streamId, ackId);
                     return true;
                 }
@@ -516,6 +539,9 @@ public class StreamCommandHandler implements ICommandHandler {
             if (SrtStreamingService.isStreaming() || SrtStreamingService.isReconnecting()) {
                 boolean valid = SrtStreamingService.resetStreamTimeout(streamId);
                 if (valid || SrtStreamingService.isStreaming()) {
+                    if (valid) {
+                        mHotspotActivityTracker.onKeepAlive();
+                    }
                     streamingManager.sendKeepAliveAck(streamId, ackId);
                     return true;
                 }
@@ -524,6 +550,9 @@ public class StreamCommandHandler implements ICommandHandler {
             if (WhipStreamingService.isStreaming() || WhipStreamingService.isReconnecting()) {
                 boolean valid = WhipStreamingService.resetStreamTimeout(streamId);
                 if (valid || WhipStreamingService.isStreaming()) {
+                    if (valid) {
+                        mHotspotActivityTracker.onKeepAlive();
+                    }
                     streamingManager.sendKeepAliveAck(streamId, ackId);
                     return true;
                 }
@@ -542,6 +571,7 @@ public class StreamCommandHandler implements ICommandHandler {
     // -------------------------------------------------------------------------
 
     private boolean stopAllServices() {
+        mHotspotActivityTracker.onStreamStopped();
         boolean stoppedExistingStream = false;
         if (RtmpStreamingService.isStreaming() || RtmpStreamingService.isReconnecting()) {
             RtmpStreamingService.stopStreaming(context);

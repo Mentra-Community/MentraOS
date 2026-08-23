@@ -811,6 +811,9 @@ class MentraLive : SGCManager() {
     }
 
     private fun updateConnectionState(state: String) {
+        if (state == ConnTypes.DISCONNECTED) {
+            DeviceStore.apply("glasses", "hotspotOtaVersion", 0)
+        }
         val isEqual = state == connectionState
         if (isEqual) {
             if (state == ConnTypes.DISCONNECTED) {
@@ -833,6 +836,7 @@ class MentraLive : SGCManager() {
             // same-link glasses_ready (e.g. ASG restart) re-publishes CONNECTED.
             DeviceStore.apply("glasses", "serialNumber", "")
             DeviceStore.apply("glasses", "bluetoothMacAddress", "")
+            DeviceStore.apply("glasses", "wifiMacAddress", "")
         }
 
         // Actually update the connection state!
@@ -1944,6 +1948,10 @@ class MentraLive : SGCManager() {
                         gatt: BluetoothGatt,
                         characteristic: BluetoothGattCharacteristic
                 ) {
+                    if (!isCurrentGattCallback(gatt)) {
+                        return
+                    }
+
                     // Get thread ID for tracking thread issues
                     val threadId = Thread.currentThread().id
                     val uuid = characteristic.uuid
@@ -4115,6 +4123,9 @@ class MentraLive : SGCManager() {
                     (fields["bt_mac_address"] as? String)?.trim()?.takeIf { it.isNotEmpty() }?.let {
                         DeviceStore.apply("glasses", "bluetoothMacAddress", it)
                     }
+                    (fields["wifi_mac_address"] as? String)?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                        DeviceStore.apply("glasses", "wifiMacAddress", it)
+                    }
                     (fields["serial_number"] as? String)?.trim()?.takeIf { it.isNotEmpty() }?.let {
                         DeviceStore.apply("glasses", "serialNumber", it)
                     }
@@ -4122,6 +4133,12 @@ class MentraLive : SGCManager() {
                         val v = fields["system_time_ms"]
                         if (v is Number) {
                             DeviceStore.apply("glasses", "systemTimeMs", v.toLong())
+                        }
+                    }
+                    if (fields.containsKey("hotspot_ota_version")) {
+                        val version = fields["hotspot_ota_version"]
+                        if (version is Number) {
+                            DeviceStore.apply("glasses", "hotspotOtaVersion", version.toInt())
                         }
                     }
 

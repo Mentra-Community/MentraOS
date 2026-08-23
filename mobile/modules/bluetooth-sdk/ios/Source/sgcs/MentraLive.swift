@@ -939,10 +939,10 @@ extension MentraLive: CBCentralManagerDelegate {
     }
 
     nonisolated func centralManager(
-        _: CBCentralManager, didDisconnectPeripheral _: CBPeripheral, error _: Error?
+        _: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error _: Error?
     ) {
         DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
+            guard let self, peripheral === self.connectedPeripheral else { return }
             Bridge.log("LIVE: Disconnected from GATT server")
 
             self.isConnecting = false
@@ -969,10 +969,12 @@ extension MentraLive: CBCentralManagerDelegate {
         }
     }
 
-    nonisolated func centralManager(_: CBCentralManager, didFailToConnect _: CBPeripheral, error: Error?) {
+    nonisolated func centralManager(
+        _: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?
+    ) {
         let errorDescription = error?.localizedDescription ?? "Unknown error"
         DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
+            guard let self, peripheral === self.connectedPeripheral else { return }
             Bridge.log("LIVE: Failed to connect to peripheral: \(errorDescription)")
 
             self.stopConnectionTimeout()
@@ -1290,6 +1292,8 @@ class MentraLive: NSObject, SGCManager {
             // return, unlike Android).
             DeviceStore.shared.apply("glasses", "serialNumber", "")
             DeviceStore.shared.apply("glasses", "bluetoothMacAddress", "")
+            DeviceStore.shared.apply("glasses", "wifiMacAddress", "")
+            DeviceStore.shared.apply("glasses", "hotspotOtaVersion", 0)
         }
         connectionState = state
         DeviceStore.shared.apply("glasses", "connectionState", state)
@@ -2778,8 +2782,18 @@ class MentraLive: NSObject, SGCManager {
                 if let systemTimeMs = fields["system_time_ms"] as? NSNumber {
                     DeviceStore.shared.apply("glasses", "systemTimeMs", systemTimeMs.int64Value)
                 }
+                if let hotspotOtaVersion = fields["hotspot_ota_version"] as? NSNumber {
+                    DeviceStore.shared.apply(
+                        "glasses",
+                        "hotspotOtaVersion",
+                        hotspotOtaVersion.intValue
+                    )
+                }
                 if let bluetoothMacAddress = nonEmptyStringValue(fields, "bt_mac_address") {
                     DeviceStore.shared.apply("glasses", "bluetoothMacAddress", bluetoothMacAddress)
+                }
+                if let wifiMacAddress = nonEmptyStringValue(fields, "wifi_mac_address") {
+                    DeviceStore.shared.apply("glasses", "wifiMacAddress", wifiMacAddress)
                 }
                 if let serialNumber = nonEmptyStringValue(fields, "serial_number") {
                     DeviceStore.shared.apply("glasses", "serialNumber", serialNumber)
@@ -3349,7 +3363,6 @@ class MentraLive: NSObject, SGCManager {
         {
             json["ota_version_url"] = otaVersionUrl
         }
-
         sendJson(json, wakeUp: true)
     }
 

@@ -348,6 +348,10 @@ Android and iOS async APIs use `BluetoothSdkException` / `BluetoothSdkError` for
 
 Mentra Live firmware owns the OTA flow. The SDK mirrors the MentraOS app commands and events:
 
+- `setOtaVersionUrl(url)` selects the manifest used by subsequent checks and installs. Use this
+  for a customer-controlled internal update server.
+- `getOtaVersionUrl()` returns the selected manifest, or the SDK-version-pinned Mentra manifest
+  when no override was supplied.
 - `checkForOtaUpdate()` fetches the configured manifest and resolves with `true` when an ASG APK, MTK, or BES update is available.
 - `startOtaUpdate()` sends `ota_start` with the same configured manifest URL and resolves with the ASG start ack after your app presents the update and the user accepts it.
 
@@ -362,6 +366,9 @@ prompt for an update the glasses cannot install.
 ```ts
 import BluetoothSdk from '@mentra/bluetooth-sdk'
 
+// Optional: point both the phone-side check and glasses install at an internal server.
+BluetoothSdk.setOtaVersionUrl('https://updates.example.internal/mentra-live/version.json')
+
 BluetoothSdk.addListener('ota_status', (event) => {
   console.log(`OTA ${event.status}: ${event.overall_percent}%`)
 })
@@ -375,6 +382,23 @@ if (hasUpdate) {
   }
 }
 ```
+
+Bluetooth SDK releases also publish
+`bluetooth-sdk-<sdkVersion>-ota-bundle.zip` beside the default manifest. The archive contains
+`version.template.json`, every referenced ASG/MTK/BES artifact, `SHA256SUMS`, and a dependency-free
+configuration script. After unpacking it, generate the final manifest for its exact hosting URL:
+
+```sh
+node configure.mjs https://updates.example.internal/mentra-live/version.json
+```
+
+Host the entire directory at that location, then pass the same URL to `setOtaVersionUrl(...)`.
+The generated `version.json` contains absolute internal artifact URLs, so it works with Mentra Live
+ASG build 39 and newer as well as future firmware. Re-run the command if the hosted directory moves.
+
+Firmware before ASG build 39 ignores `ota_start.ota_version_url` and must first be updated through
+its legacy or factory-supported path. OTA remains host-driven: the SDK does not check or install
+automatically.
 
 OTA requires Mentra Live glasses firmware that supports the ASG OTA protocol and network access from the glasses. During install, normal BLE traffic can be interrupted and the glasses may restart; keep the app connected and avoid sending unrelated commands until `ota_status.status` is `complete` or `failed`.
 

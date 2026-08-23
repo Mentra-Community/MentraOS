@@ -77,3 +77,20 @@ import {miniappRunningRegistry} from "@mentra/engine/devtools"
 Inside `mobile/modules/engine/src/`, use **relative paths** (`./services/...`,
 `../utils/...`). The mobile app's `@/*` alias is not configured here — there
 is no build-time path rewriter for this module.
+
+## Testing
+
+Run the suite with `bun run test` (from this directory). It executes
+`scripts/test.sh`, which runs **each test file in its own bun process** — do
+not replace it with a single `bun test src`.
+
+Why: bun's `mock.module` patches one process-wide module registry with live
+ESM bindings, last write wins. Several suites mock the same specifiers
+(`"@mentra/bluetooth-sdk/internal"` alone is mocked by `audioTestMocks.ts`,
+`PhonePhotoCoordinator.test.ts`, and others), so in a shared process one
+file's mock clobbers another's and suites that pass alone fail in the
+combined run. Per-file processes give every suite an isolated registry.
+
+The same rule applies when writing tests: it is fine to `mock.module` any
+specifier your suite needs, but never rely on a mock installed by a
+*different* test file — each file must set up everything it imports.
