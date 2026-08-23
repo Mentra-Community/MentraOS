@@ -130,6 +130,20 @@ continues automatically.
 
 **Warning:** Your fork will not receive OTA updates from Mentra.
 
+### Updating Mentra Live Firmware with a Custom Build Installed
+
+After using `dev-setup.sh`, update the glasses firmware without rebuilding or reinstalling your
+custom ASG Client:
+
+```bash
+./scripts/update-mentra-live.sh
+```
+
+The script preserves the third-party APK and its app data. It temporarily activates signed stock
+ASG to update BES and MTK, then returns to the existing third-party launcher only after verifying
+the firmware transitions. If the update fails, it leaves stock ASG active as the recovery-safe
+launcher.
+
 ### Restoring Stock Firmware
 
 ```bash

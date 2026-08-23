@@ -7,6 +7,7 @@
 # Usage:
 #   ADB_SERIAL=<serial> ./scripts/update-stock-for-dev.sh
 #   ./scripts/update-stock-for-dev.sh --manifest-url <https-url>
+#   ./scripts/update-stock-for-dev.sh --resume-thirdparty
 
 set -euo pipefail
 
@@ -16,6 +17,7 @@ REPO_DIR="$(cd "$ASG_DIR/.." && pwd)"
 
 DEFAULT_MANIFEST_URL="https://github.com/Mentra-Community/MentraOS/releases/download/staging-builds/staging_live_version.json"
 MANIFEST_URL="${ASG_DEV_OTA_MANIFEST_URL:-$DEFAULT_MANIFEST_URL}"
+RESUME_THIRDPARTY=false
 
 # Officially signed ASG 36 bridge. Its deliberately high versionCode allows it
 # to replace every old stock update, and it speaks to day-one BES firmware.
@@ -29,6 +31,7 @@ DEV_PKG="com.mentra.asg_client.thirdparty"
 RECOVERY_PKG="com.mentra.recovery"
 LEGACY_UPDATER_PKG="com.augmentos.otaupdater"
 STOCK_COMPONENT="$STOCK_PKG/com.mentra.asg_client.MainActivity"
+DEV_COMPONENT="$DEV_PKG/com.mentra.asg_client.MainActivity"
 COMMAND_RECEIVER="$STOCK_PKG/.receiver.IntentCommandReceiver"
 
 WORK_DIR=""
@@ -36,7 +39,7 @@ DEVICE_MUTATED=false
 SUCCESS=false
 
 usage() {
-  echo "Usage: $0 [--manifest-url <https-url>]"
+  echo "Usage: $0 [--manifest-url <https-url>] [--resume-thirdparty]"
 }
 
 fail() {
@@ -51,6 +54,10 @@ while [[ $# -gt 0 ]]; do
       [ "$#" -ge 2 ] || fail "--manifest-url requires a URL"
       MANIFEST_URL="${2:-}"
       shift 2
+      ;;
+    --resume-thirdparty)
+      RESUME_THIRDPARTY=true
+      shift
       ;;
     -h|--help)
       usage
@@ -74,6 +81,11 @@ fi
 resolve_serial
 ADB=(adb -s "$SERIAL")
 export ANDROID_SERIAL="$SERIAL"
+
+if [ "$RESUME_THIRDPARTY" = true ] \
+  && ! "${ADB[@]}" shell pm path "$DEV_PKG" 2>/dev/null | tr -d '\r' | grep -q '^package:'; then
+  fail "$DEV_PKG is not installed; run ./scripts/dev-setup.sh first"
+fi
 
 sha256_file() {
   if command -v shasum >/dev/null 2>&1; then
@@ -148,6 +160,34 @@ enable_stock_runtime() {
   "${ADB[@]}" shell pm clear-package-preferred-activities "$STOCK_PKG" >/dev/null 2>&1 || true
   "${ADB[@]}" shell cmd package set-home-activity --user 0 "$STOCK_COMPONENT" >/dev/null 2>&1 || true
   "${ADB[@]}" shell am start -n "$STOCK_COMPONENT" >/dev/null 2>&1 || true
+}
+
+enable_thirdparty_runtime() {
+  local resolved_home
+  "${ADB[@]}" shell am force-stop "$RECOVERY_PKG" >/dev/null 2>&1 || true
+  "${ADB[@]}" shell pm disable-user --user 0 "$RECOVERY_PKG" >/dev/null 2>&1 || true
+  "${ADB[@]}" shell am force-stop "$LEGACY_UPDATER_PKG" >/dev/null 2>&1 || true
+  "${ADB[@]}" shell pm disable-user --user 0 "$LEGACY_UPDATER_PKG" >/dev/null 2>&1 || true
+  "${ADB[@]}" shell pm enable "$DEV_PKG" >/dev/null
+  "${ADB[@]}" shell pm disable-user --user 0 "$STOCK_PKG" >/dev/null
+  "${ADB[@]}" shell pm clear-package-preferred-activities "$STOCK_PKG" >/dev/null 2>&1 || true
+  "${ADB[@]}" shell pm clear-package-preferred-activities "$DEV_PKG" >/dev/null 2>&1 || true
+  "${ADB[@]}" shell cmd package set-home-activity --user 0 "$DEV_COMPONENT" >/dev/null
+  "${ADB[@]}" shell am start -a android.intent.action.MAIN \
+    -c android.intent.category.HOME >/dev/null 2>&1 || true
+  "${ADB[@]}" shell am start -n "$DEV_COMPONENT" >/dev/null
+
+  "${ADB[@]}" shell pm list packages -e 2>/dev/null \
+    | tr -d '\r' \
+    | grep -Fqx "package:$DEV_PKG" \
+    || fail "Could not re-enable $DEV_PKG after the firmware update"
+  resolved_home="$("${ADB[@]}" shell cmd package resolve-activity --brief --user 0 \
+    -a android.intent.action.MAIN \
+    -c android.intent.category.HOME 2>/dev/null | tr -d '\r' | tail -n 1)"
+  case "$resolved_home" in
+    "$DEV_PKG"/*) ;;
+    *) fail "Third-party package is enabled, but HOME resolved to ${resolved_home:-unknown}" ;;
+  esac
 }
 
 restore_safe_stock_on_failure() {
@@ -474,5 +514,12 @@ echo "Stock firmware baseline is ready:"
 echo "  ASG: $TARGET_VERSION_NAME ($TARGET_VERSION_CODE)"
 echo "  BES: $BES_VERSION or newer"
 echo "  MTK: $FINAL_MTK"
+
+if [ "$RESUME_THIRDPARTY" = true ]; then
+  echo ""
+  echo "=== Returning to the installed third-party ASG Client ==="
+  enable_thirdparty_runtime
+  echo "$DEV_PKG is active again; its APK and app data were preserved."
+fi
 
 SUCCESS=true
