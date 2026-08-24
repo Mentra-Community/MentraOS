@@ -4,7 +4,7 @@
     package="com.mentra.asg_client">
 
     <permission
-        android:name="com.mentra.asg_client.permission.RECOVERY_TELEMETRY"
+        android:name="${applicationId}.permission.RECOVERY_TELEMETRY"
         android:protectionLevel="signature" />
 
     <uses-permission android:name="com.mentra.recovery.permission.HEARTBEAT" />
@@ -216,7 +216,7 @@
             android:name="com.mentra.asg_client.receiver.RecoveryTelemetryReceiver"
             android:enabled="true"
             android:exported="true"
-            android:permission="com.mentra.asg_client.permission.RECOVERY_TELEMETRY">
+            android:permission="${applicationId}.permission.RECOVERY_TELEMETRY">
             <intent-filter>
                 <action android:name="com.mentra.recovery.ACTION_TELEMETRY" />
             </intent-filter>
