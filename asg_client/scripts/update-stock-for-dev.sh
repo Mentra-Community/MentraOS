@@ -26,6 +26,10 @@ BRIDGE_APK_SHA256="8fbac72d3fb895548cdd2b213eb331f1d7b0e7532e4ad4a2233529a8170b9
 BRIDGE_APK_SIZE="87174306"
 BRIDGE_VERSION_CODE="99999999"
 
+# The first ASG builds that could leave BES at negotiated 1152000 baud used the
+# timestamp-derived versionCode floor from the 2026-07-29 transport rollout.
+FAST_BAUD_ASG_MIN_VERSION_CODE="49693600"
+
 STOCK_PKG="com.mentra.asg_client"
 DEV_PKG="com.mentra.asg_client.thirdparty"
 RECOVERY_PKG="com.mentra.recovery"
@@ -421,6 +425,58 @@ query_firmware_versions() {
   return 1
 }
 
+package_may_have_negotiated_fast_baud() {
+  local version_code="$1"
+  [[ "$version_code" =~ ^[0-9]+$ ]] || return 1
+  [ "$version_code" != "$BRIDGE_VERSION_CODE" ] \
+    && [ "$version_code" -ge "$FAST_BAUD_ASG_MIN_VERSION_CODE" ]
+}
+
+return_bes_to_rendezvous_before_bridge() {
+  local request_id deadline logs versions bes installed_version
+  request_id="devsetup_$$_$RANDOM"
+
+  echo "=== Returning BES UART to the ASG 36 rendezvous baud ==="
+  echo "Installing the manifest-pinned stock ASG as the transition controller..."
+  "${ADB[@]}" install -r "$TARGET_APK_PATH"
+  installed_version="$(package_version_code "$STOCK_PKG")"
+  [ "$installed_version" = "$TARGET_VERSION_CODE" ] \
+    || fail "Rendezvous controller expected versionCode $TARGET_VERSION_CODE, got ${installed_version:-unknown}"
+  enable_stock_runtime
+  sleep 20
+
+  versions="$(query_firmware_versions || true)"
+  bes="${versions%%|*}"
+  [ -n "$bes" ] && valid_bes_version "$bes" \
+    || fail "Current stock ASG could not prove the BES UART before the ASG 36 transition"
+  echo "Current stock ASG proved BES $bes before the bridge transition."
+
+  "${ADB[@]}" logcat -c >/dev/null 2>&1 || true
+  "${ADB[@]}" shell am broadcast \
+    -a com.mentra.asg_client.ACTION_SEND_COMMAND \
+    --es json "{\"type\":\"reboot_bes_for_mtk_flash\",\"mId\":424243,\"request_id\":\"$request_id\"}" \
+    -n "$COMMAND_RECEIVER" >/dev/null \
+    || fail "Could not dispatch the BES rendezvous reset"
+
+  deadline=$((SECONDS + 30))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    logs="$("${ADB[@]}" logcat -d 2>/dev/null | grep -F "MTK_FLASH_BES_RESET request_id=$request_id" || true)"
+    if printf '%s\n' "$logs" | grep -Fq 'uart_write=true'; then
+      # BES is now resetting to 460800. Stop the current client before it can
+      # rediscover the chip and renegotiate fast baud ahead of ASG 36.
+      "${ADB[@]}" shell am force-stop "$STOCK_PKG" >/dev/null 2>&1 || true
+      sleep 5
+      echo "BES reset command completed; rendezvous baud is ready for ASG 36."
+      return 0
+    fi
+    if printf '%s\n' "$logs" | grep -Eq 'uart_write=false|queued=false|failed'; then
+      fail "Current stock ASG could not write the BES rendezvous reset"
+    fi
+    sleep 1
+  done
+  fail "Timed out waiting for proof that the BES rendezvous reset reached UART"
+}
+
 wait_for_bes_success() {
   local target_version="$1"
   local deadline logs versions bes
@@ -570,6 +626,14 @@ download_verified "staging ASG Client" "$TARGET_APK_URL" "$TARGET_APK_SHA256" "$
 download_verified "BES firmware $BES_VERSION" "$BES_URL" "$BES_SHA256" "" "$BES_PATH"
 build_mtk_plan "$MANIFEST_PATH" "$INITIAL_MTK" "$MTK_PLAN_PATH"
 
+INITIAL_STOCK_VERSION_CODE="$(package_version_code "$STOCK_PKG")"
+INITIAL_DEV_VERSION_CODE="$(package_version_code "$DEV_PKG")"
+MAY_HAVE_FAST_BAUD=false
+if package_may_have_negotiated_fast_baud "$INITIAL_STOCK_VERSION_CODE" \
+  || package_may_have_negotiated_fast_baud "$INITIAL_DEV_VERSION_CODE"; then
+  MAY_HAVE_FAST_BAUD=true
+fi
+
 echo ""
 echo "All OTA artifacts are downloaded and verified."
 echo ""
@@ -581,7 +645,11 @@ DEVICE_MUTATED=true
 "${ADB[@]}" shell pm disable-user --user 0 "$RECOVERY_PKG" >/dev/null 2>&1 || true
 "${ADB[@]}" shell am force-stop "$LEGACY_UPDATER_PKG" >/dev/null 2>&1 || true
 "${ADB[@]}" shell pm disable-user --user 0 "$LEGACY_UPDATER_PKG" >/dev/null 2>&1 || true
-enable_stock_runtime
+if [ "$MAY_HAVE_FAST_BAUD" = true ]; then
+  return_bes_to_rendezvous_before_bridge
+else
+  enable_stock_runtime
+fi
 
 echo "=== Installing ASG 36 BES bridge ==="
 "${ADB[@]}" install -r "$BRIDGE_APK_PATH"
