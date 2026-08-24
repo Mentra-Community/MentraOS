@@ -1,5 +1,5 @@
 ---
-status: implemented
+status: active
 owner: Mentra
 ---
 
@@ -104,18 +104,27 @@ publisher signatures can be enforced later without changing the API.
 
 - [x] Cloud typecheck.
 - [x] Developer Console production build.
-- [x] Cloud Store/CLI bundle tests: 11 passed.
-- [x] Publish-to-catalog integration: 7 passed, 25 assertions.
+- [x] Cloud Store/CLI bundle tests: 16 passed.
+- [x] Publish-to-catalog integration: 7 passed, including concurrent listing
+      edits, moderation, artwork privacy, and the 10-screenshot cap.
+- [x] Miniapp packer regressions: 2 passed, including atomic preservation of
+      the previous artifact after a failed ZIP command.
 - [x] Mentra Miniapp SDK: 270 passed.
 - [x] Installer/SYSTEM security tests, including bundle-name impersonation.
-- [x] Store controller tests: 4 passed.
+- [x] Store controller tests: 6 passed.
+- [x] Headless Chromium Store UI E2E at a 390×844 phone viewport: catalog,
+      search-query preservation, install, details, verified identity, Installed
+      state, and horizontal-overflow assertion.
 - [x] Mentra App TypeScript compile.
 - [x] Mentra App Jest: 84 suites passed (1 skipped), 671 tests passed
       (2 skipped).
 - [x] Android ASG and Bluetooth SDK compile checks.
 - [x] Full iOS Simulator native build with code signing disabled.
 - [x] ZIP integrity check. Bundled Store SHA-256:
-      `afbd9b23535531c7ad9932e1fce6a08c06546de34a873a4204a32ddbd65fe57b`.
+      `c9689f513e082fbda1a0b4d3f2f0085fe8c0b14ff1101cd241e07b14e406186e`.
+- [x] Review regressions: bounded streaming inflation and CRC checks in both
+      Core and the phone, trusted host-selected Core URL, complete catalog
+      pagination, and running-context reload around updates.
 - [x] Touched-file lint and `git diff --check`.
 - [x] Full Cloud suite audit: 544 passed, 1 skipped. The aggregate invocation
       also reproduces unrelated shared-state/credential baselines (R2 is not
@@ -147,5 +156,5 @@ These are not blockers for the approved first-release trust model.
 - [x] Push the existing workspace branch without renaming it.
 - [x] Open a non-draft PR targeting `dev` with test evidence.
 - [ ] Monitor required checks and automated reviews.
-- [ ] Fix valid findings and rerun affected verification.
+- [x] Fix valid findings and rerun affected verification.
 - [ ] Leave the PR ready for human review.

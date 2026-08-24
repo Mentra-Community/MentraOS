@@ -3,22 +3,15 @@ import { z } from "zod";
 import { adminAuth } from "../middleware/admin-auth.middleware";
 import adminReports from "./reports.api";
 import adminSupportProfiles from "./support-profiles.api";
-import {
-  PREINSTALLED_INSTALL_POLICIES,
-} from "../../models/preinstalled-registry-revision.model";
-import {
-  PREINSTALLED_REGISTRY_ENVIRONMENTS,
-} from "../../models/preinstalled-registry.model";
+import { PREINSTALLED_INSTALL_POLICIES } from "../../models/preinstalled-registry-revision.model";
+import { PREINSTALLED_REGISTRY_ENVIRONMENTS } from "../../models/preinstalled-registry.model";
 import { AdminActionAuditLogModel } from "../../models/admin-action-audit-log.model";
 import {
   PreinstalledRegistryService,
   PreinstalledRegistryServiceError,
   type AdminIdentity,
 } from "../../services/miniapps/preinstalled-registry.service";
-import {
-  MiniAppService,
-  MiniAppServiceError,
-} from "../../services/miniapps/miniapp.service";
+import { MiniAppService, MiniAppServiceError } from "../../services/miniapps/miniapp.service";
 import type { AppContext, AppEnv } from "../../types/hono.types";
 import { InvalidRequest } from "../../types/oauth.types";
 
@@ -50,17 +43,29 @@ const reviewDecisionSchema = z.object({
   notes: z.string().nullable().optional(),
 });
 
+const storeModerationSchema = z
+  .object({
+    reviewTier: z.enum(["community", "verified"]).optional(),
+    featured: z.boolean().optional(),
+  })
+  .refine(value => value.reviewTier !== undefined || value.featured !== undefined, {
+    message: "reviewTier or featured is required",
+  });
+
 app.get("/health", c => c.json({ status: "ok", service: "cloud-core-admin" }));
 app.use("*", adminAuth);
-app.get("/me", c => c.json({
-  authenticated: true,
-  admin: true,
-  user: c.var.developer ?? null,
-}));
+app.get("/me", c =>
+  c.json({
+    authenticated: true,
+    admin: true,
+    user: c.var.developer ?? null,
+  }),
+);
 app.get("/submissions", getSubmissions);
 app.post("/submissions/:releaseId/approve", postApproveSubmission);
 app.post("/submissions/:releaseId/reject", postRejectSubmission);
 app.post("/submissions/:releaseId/publish", postPublishSubmission);
+app.patch("/apps/:packageName/store-moderation", patchStoreModeration);
 app.get("/preinstalled/registries", getRegistries);
 app.post("/preinstalled/registries", postRegistry);
 app.get("/preinstalled/releases", getReleases);
@@ -116,6 +121,19 @@ async function postPublishSubmission(c: AppContext) {
   }
 }
 
+async function patchStoreModeration(c: AppContext) {
+  const packageName = requiredParam(c, "packageName");
+  const parsed = storeModerationSchema.safeParse(await readJsonBody(c));
+  if (!parsed.success) throw new InvalidRequest(parsed.error.issues[0]?.message ?? "invalid moderation payload");
+  try {
+    const listing = await miniapps.updateStoreModeration({ packageName, ...parsed.data });
+    await audit(c, "miniapp.store_moderation.update", "miniapp", packageName, null, { listing });
+    return c.json({ listing });
+  } catch (error) {
+    return serviceError(error);
+  }
+}
+
 async function getRegistries(c: AppContext) {
   return c.json({ registries: await service.listRegistries() });
 }
@@ -139,7 +157,14 @@ async function postRevision(c: AppContext) {
   if (!parsed.success) throw new InvalidRequest(parsed.error.issues[0]?.message ?? "invalid revision payload");
   try {
     const revision = await service.createRevision(admin(c), requiredParam(c, "registryId"), parsed.data);
-    await audit(c, "preinstalled_registry.revision.create", "preinstalled_registry", requiredParam(c, "registryId"), parsed.data.reason ?? null, { revision });
+    await audit(
+      c,
+      "preinstalled_registry.revision.create",
+      "preinstalled_registry",
+      requiredParam(c, "registryId"),
+      parsed.data.reason ?? null,
+      { revision },
+    );
     return c.json({ revision }, 201);
   } catch (error) {
     return serviceError(error);
@@ -153,7 +178,14 @@ async function postPromoteRevision(c: AppContext) {
       requiredParam(c, "registryId"),
       requiredParam(c, "revisionId"),
     );
-    await audit(c, "preinstalled_registry.revision.promote", "preinstalled_registry_revision", requiredParam(c, "revisionId"), result.revision.reason, result);
+    await audit(
+      c,
+      "preinstalled_registry.revision.promote",
+      "preinstalled_registry_revision",
+      requiredParam(c, "revisionId"),
+      result.revision.reason,
+      result,
+    );
     return c.json(result);
   } catch (error) {
     return serviceError(error);
@@ -161,10 +193,7 @@ async function postPromoteRevision(c: AppContext) {
 }
 
 async function getAuditLog(c: AppContext) {
-  const logs = await AdminActionAuditLogModel.find({})
-    .sort({ createdAt: -1 })
-    .limit(100)
-    .lean();
+  const logs = await AdminActionAuditLogModel.find({}).sort({ createdAt: -1 }).limit(100).lean();
   return c.json({
     events: logs.map(log => ({
       id: log._id.toString(),
@@ -231,22 +260,16 @@ async function audit(
 
 function serviceError(error: unknown) {
   if (error instanceof PreinstalledRegistryServiceError) {
-    return new Response(
-      JSON.stringify({ error: error.code, error_description: error.message }),
-      {
-        status: error.status,
-        headers: { "content-type": "application/json" },
-      },
-    );
+    return new Response(JSON.stringify({ error: error.code, error_description: error.message }), {
+      status: error.status,
+      headers: { "content-type": "application/json" },
+    });
   }
   if (error instanceof MiniAppServiceError) {
-    return new Response(
-      JSON.stringify({ error: error.code, error_description: error.message }),
-      {
-        status: error.status,
-        headers: { "content-type": "application/json" },
-      },
-    );
+    return new Response(JSON.stringify({ error: error.code, error_description: error.message }), {
+      status: error.status,
+      headers: { "content-type": "application/json" },
+    });
   }
   throw error;
 }

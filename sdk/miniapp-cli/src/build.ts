@@ -35,21 +35,19 @@ export function packageJsonHasBuildScript(cwd: string): boolean {
  * Run `<pm> run build` with NODE_ENV=production and verify it produced
  * `dist/`. Exits the process with an error message on any failure.
  */
-export async function buildProduction(cwd: string): Promise<void> {
+export async function buildProduction(cwd: string, options: {silent?: boolean} = {}): Promise<void> {
   const pm = detectPackageManager(cwd)
   if (!packageJsonHasBuildScript(cwd)) {
-    console.error(
-      'Error: no "build" script in package.json. Add one (e.g. "build": "vite build") and re-run.',
-    )
+    console.error('Error: no "build" script in package.json. Add one (e.g. "build": "vite build") and re-run.')
     process.exit(1)
   }
-  console.log(`Building with ${pm} run build...`)
+  if (!options.silent) console.log(`Building with ${pm} run build...`)
   const buildStart = Date.now()
   const buildProc = Bun.spawn([pm, 'run', 'build'], {
     cwd,
     env: {...process.env, NODE_ENV: 'production'},
-    stdout: 'inherit',
-    stderr: 'inherit',
+    stdout: options.silent ? 'ignore' : 'inherit',
+    stderr: options.silent ? 'ignore' : 'inherit',
   })
   const buildCode = await buildProc.exited
   if (buildCode !== 0) {
@@ -58,10 +56,8 @@ export async function buildProduction(cwd: string): Promise<void> {
   }
   const distDir = resolve(cwd, 'dist')
   if (!existsSync(distDir)) {
-    console.error(
-      'Error: build succeeded but dist/ does not exist. Configure your bundler to output to dist/.',
-    )
+    console.error('Error: build succeeded but dist/ does not exist. Configure your bundler to output to dist/.')
     process.exit(1)
   }
-  console.log(`✓ Built (${((Date.now() - buildStart) / 1000).toFixed(1)}s)`)
+  if (!options.silent) console.log(`✓ Built (${((Date.now() - buildStart) / 1000).toFixed(1)}s)`)
 }

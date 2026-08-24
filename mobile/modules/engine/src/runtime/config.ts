@@ -17,6 +17,8 @@ export interface CloudClientStatusSnapshot {
 export interface MiniappAuthToken {
   mentraUserId: string
   tenantId?: string
+  /** Host-selected Cloud Core origin. Miniapps must not derive this from token claims. */
+  coreUrl: string
   token: string
   expiresAt: number
 }

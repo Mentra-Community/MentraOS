@@ -62,6 +62,22 @@ describe("parseCanonicalBundleManifest", () => {
     await expect(parseCanonicalBundleManifest(await bundle(invalid), invalid)).rejects.toMatchObject({
       code: "invalid_version",
     } satisfies Partial<BundleManifestError>);
+    const leadingZero = { ...manifest, version: "1.0.0-01" };
+    await expect(parseCanonicalBundleManifest(await bundle(leadingZero), leadingZero)).rejects.toMatchObject({
+      code: "invalid_version",
+    } satisfies Partial<BundleManifestError>);
+  });
+
+  test("rejects duplicate raw ZIP records", async () => {
+    const archive = await bundle(manifest, zip => {
+      zip.file("one.txt", "one");
+      zip.file("two.txt", "two");
+    });
+    patchCentralName(archive, "two.txt", "one.txt");
+    await expect(parseCanonicalBundleManifest(archive)).rejects.toMatchObject({
+      code: "invalid_bundle",
+      message: expect.stringContaining("duplicate path"),
+    } satisfies Partial<BundleManifestError>);
   });
 
   test("rejects symbolic links before storage", async () => {
@@ -72,4 +88,51 @@ describe("parseCanonicalBundleManifest", () => {
       parseCanonicalBundleManifest(await zip.generateAsync({ type: "uint8array", platform: "UNIX" })),
     ).rejects.toMatchObject({ code: "unsafe_bundle_path" } satisfies Partial<BundleManifestError>);
   });
+
+  test("bounds inflation before checking a forged expanded size", async () => {
+    const archive = await bundle(manifest, zip => zip.file("bomb.txt", "x".repeat(2 * 1024 * 1024)));
+    patchCentralUncompressedSize(archive, "bomb.txt", 1);
+
+    await expect(parseCanonicalBundleManifest(archive)).rejects.toMatchObject({
+      code: "invalid_bundle",
+      message: expect.stringContaining("could not safely inflate bomb.txt"),
+    } satisfies Partial<BundleManifestError>);
+  });
+
+  test("checks each entry CRC without an unbounded JSZip pre-inflation", async () => {
+    const archive = await bundle();
+    patchCentralCrc(archive, "background/index.js", 0);
+
+    await expect(parseCanonicalBundleManifest(archive)).rejects.toMatchObject({
+      code: "invalid_bundle",
+      message: expect.stringContaining("CRC mismatch"),
+    } satisfies Partial<BundleManifestError>);
+  });
 });
+
+function patchCentralUncompressedSize(archive: Uint8Array, name: string, size: number): void {
+  const offset = findCentralEntry(archive, name);
+  new DataView(archive.buffer, archive.byteOffset, archive.byteLength).setUint32(offset + 24, size, true);
+}
+
+function patchCentralCrc(archive: Uint8Array, name: string, crc: number): void {
+  const offset = findCentralEntry(archive, name);
+  new DataView(archive.buffer, archive.byteOffset, archive.byteLength).setUint32(offset + 16, crc, true);
+}
+
+function findCentralEntry(archive: Uint8Array, expectedName: string): number {
+  const view = new DataView(archive.buffer, archive.byteOffset, archive.byteLength);
+  for (let offset = 0; offset <= archive.byteLength - 46; offset += 1) {
+    if (view.getUint32(offset, true) !== 0x02014b50) continue;
+    const nameLength = view.getUint16(offset + 28, true);
+    const name = new TextDecoder().decode(archive.subarray(offset + 46, offset + 46 + nameLength));
+    if (name === expectedName) return offset;
+  }
+  throw new Error(`central ZIP entry not found: ${expectedName}`);
+}
+
+function patchCentralName(archive: Uint8Array, expectedName: string, replacement: string): void {
+  if (expectedName.length !== replacement.length) throw new Error("replacement ZIP name must have equal length");
+  const offset = findCentralEntry(archive, expectedName);
+  archive.set(new TextEncoder().encode(replacement), offset + 46);
+}

@@ -58,6 +58,8 @@ export class StoreCatalogService {
     if (!asset) throw new StoreCatalogError("not_found", "asset not found", 404);
     const app = await MiniAppModel.findOne({ _id: asset.miniAppId, status: "active" }).lean();
     if (!app?.activeReleaseId) throw new StoreCatalogError("not_found", "asset not found", 404);
+    const publishedRelease = await MiniAppReleaseModel.exists({ _id: app.activeReleaseId, status: "published" });
+    if (!publishedRelease) throw new StoreCatalogError("not_found", "asset not found", 404);
     const referenced = [
       app.storeListing?.iconAssetId,
       app.storeListing?.coverAssetId,

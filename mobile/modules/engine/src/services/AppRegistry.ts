@@ -46,6 +46,16 @@ const ALLOWED_PERMISSION_TYPES: ReadonlySet<AppPermissionType> = new Set<AppPerm
   "POST_NOTIFICATIONS",
 ])
 
+type ActivationArtifact = {kind: "backup" | "staging"; version: string; timestamp: number}
+
+function parseActivationArtifact(name: string): ActivationArtifact | null {
+  const match = /^\.(backup|staging)-(.+)-(\d{10,})$/.exec(name)
+  if (!match) return null
+  const timestamp = Number(match[3])
+  if (!Number.isSafeInteger(timestamp)) return null
+  return {kind: match[1] as ActivationArtifact["kind"], version: match[2], timestamp}
+}
+
 /**
  * Normalize the `permissions` field from a miniapp.json manifest.
  *
@@ -332,6 +342,7 @@ async function unpackMiniApp(
   // Swap only after the complete bundle is staged. If activation fails,
   // restore a previous same-version directory instead of leaving a partial
   // installation behind.
+  const hadExisting = versionDir.exists
   let movedExisting = false
   try {
     onProgress?.("activating")
@@ -344,8 +355,14 @@ async function unpackMiniApp(
   } catch (error) {
     console.error("Error activating the staged miniapp", error)
     try {
-      if (versionDir.exists) versionDir.delete()
-      if (movedExisting && backupDir.exists) backupDir.move(versionDir)
+      if (movedExisting) {
+        if (versionDir.exists) versionDir.delete()
+        if (backupDir.exists) backupDir.move(versionDir)
+      } else if (!hadExisting && versionDir.exists) {
+        // No prior install can be harmed; remove a partially moved first
+        // install if the filesystem move failed after creating its target.
+        versionDir.delete()
+      }
       if (stagingDir.exists) stagingDir.delete()
     } catch (rollbackError) {
       console.error("Error restoring the previous miniapp version", rollbackError)
@@ -408,7 +425,44 @@ class AppRegistry {
 
   private static instance: AppRegistry | null = null
 
-  private constructor() {}
+  private constructor() {
+    this.recoverInterruptedActivations()
+  }
+
+  /**
+   * Recover an activation interrupted by process death. A backup without its
+   * target means the old version was moved aside before the staged version was
+   * activated, so restore it. Backups beside a complete target and all staging
+   * directories are stale transaction artifacts and are removed.
+   */
+  private recoverInterruptedActivations(): void {
+    try {
+      const lmasDir = new Directory(Paths.document, "lmas")
+      if (!lmasDir.exists) return
+      for (const packageDir of lmasDir.list()) {
+        if (!(packageDir instanceof Directory)) continue
+        const artifacts = packageDir
+          .list()
+          .filter((item): item is Directory => item instanceof Directory)
+          .map((directory) => ({directory, parsed: parseActivationArtifact(directory.name)}))
+          .filter((item): item is {directory: Directory; parsed: ActivationArtifact} => item.parsed !== null)
+
+        const backups = artifacts
+          .filter((item) => item.parsed.kind === "backup")
+          .sort((left, right) => right.parsed.timestamp - left.parsed.timestamp)
+        for (const {directory, parsed} of backups) {
+          const target = new Directory(packageDir, parsed.version)
+          if (target.exists) directory.delete()
+          else directory.move(target)
+        }
+        for (const {directory, parsed} of artifacts) {
+          if (parsed.kind === "staging" && directory.exists) directory.delete()
+        }
+      }
+    } catch (error) {
+      console.warn("APP_REGISTRY: interrupted activation recovery failed", error)
+    }
+  }
 
   public static getInstance(): AppRegistry {
     if (!AppRegistry.instance) {

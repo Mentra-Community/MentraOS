@@ -470,7 +470,9 @@ function construct(): void {
     connected = false
     console.log(`${LOG_TAG}: runtime disconnected (${info.reason})`)
     console.log(
-      `${LOG_TAG}: debug: ws-session-debug disconnected reason=${info.reason} willStayDown=${/superseded by newer session/i.test(info.reason)}`,
+      `${LOG_TAG}: debug: ws-session-debug disconnected reason=${
+        info.reason
+      } willStayDown=${/superseded by newer session/i.test(info.reason)}`,
     )
     // Arm the persistent-failure alarm once; if we're still down when it fires, raise
     // the notification. A reconnect within the window cancels it (onConnected above).
@@ -595,6 +597,7 @@ export const cloudClientService = {
     return {
       mentraUserId: identity.mentraUserId,
       tenantId: identity.tenantId,
+      coreUrl: resolveEndpoints().core,
       token,
       expiresAt: normalizeExpiresAt(expiresAt),
     }

@@ -36,6 +36,7 @@ const miniapps = new MiniAppService();
 const signing = new DeveloperSigningService();
 const MAX_RELEASE_BUNDLE_BYTES = 50 * 1024 * 1024;
 const MAX_RELEASE_REQUEST_BODY_BYTES = 72 * 1024 * 1024;
+const MAX_STORE_ASSET_REQUEST_BODY_BYTES = 15 * 1024 * 1024;
 const releaseBodyLimit = bodyLimit({
   maxSize: MAX_RELEASE_REQUEST_BODY_BYTES,
   onError: c =>
@@ -43,6 +44,17 @@ const releaseBodyLimit = bodyLimit({
       {
         error: "invalid_request",
         error_description: `release request exceeds ${MAX_RELEASE_REQUEST_BODY_BYTES} bytes`,
+      },
+      413,
+    ),
+});
+const storeAssetBodyLimit = bodyLimit({
+  maxSize: MAX_STORE_ASSET_REQUEST_BODY_BYTES,
+  onError: c =>
+    c.json(
+      {
+        error: "invalid_request",
+        error_description: `Store asset request exceeds ${MAX_STORE_ASSET_REQUEST_BODY_BYTES} bytes`,
       },
       413,
     ),
@@ -135,7 +147,7 @@ app.post("/apps", postApps);
 app.delete("/apps/:packageName", deleteApp);
 app.get("/apps/:packageName/listing", getStoreListing);
 app.put("/apps/:packageName/listing", putStoreListing);
-app.post("/apps/:packageName/listing/assets", postStoreAsset);
+app.post("/apps/:packageName/listing/assets", storeAssetBodyLimit, postStoreAsset);
 app.delete("/apps/:packageName/listing/assets/:assetId", deleteStoreAsset);
 app.get("/apps/:packageName/releases", getReleases);
 app.post("/apps/:packageName/releases", releaseBodyLimit, postRelease);

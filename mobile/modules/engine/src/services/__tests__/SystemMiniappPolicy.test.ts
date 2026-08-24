@@ -1,11 +1,13 @@
 /// <reference types="bun-types" />
 
 import {describe, expect, test} from "bun:test"
-import {isHostTrustedSystemMiniapp, isSystemMiniappPackage} from "../SystemMiniappPolicy"
+import {isHostTrustedSystemMiniapp, isStoreMiniappPackage, isSystemMiniappPackage} from "../SystemMiniappPolicy"
 
 describe("SYSTEM miniapp policy", () => {
   test("trusts the bundled Mentra Store", () => {
     expect(isSystemMiniappPackage("com.mentra.store")).toBe(true)
+    expect(isStoreMiniappPackage("com.mentra.store")).toBe(true)
+    expect(isStoreMiniappPackage("com.mentra.settings")).toBe(false)
   })
 
   test.each(["com.example.store", "com.mentra.store.fake", "com.example.dev"])(

@@ -57,6 +57,12 @@ export interface AdminReleaseDecisionInput {
   notes?: string | null;
 }
 
+export interface AdminStoreModerationInput {
+  packageName: string;
+  reviewTier?: "community" | "verified";
+  featured?: boolean;
+}
+
 const storage = createStorageService();
 
 export class MiniAppService {
@@ -65,15 +71,15 @@ export class MiniAppService {
       .sort({ createdAt: -1 })
       .lean();
 
-    const appIds = apps.map((app) => app._id.toString());
+    const appIds = apps.map(app => app._id.toString());
     const releases = await MiniAppReleaseModel.find({ miniAppId: { $in: appIds } })
       .sort({ createdAt: -1 })
       .lean();
 
-    return apps.map((app) => {
-      const appReleases = releases.filter((release) => release.miniAppId === app._id.toString());
+    return apps.map(app => {
+      const appReleases = releases.filter(release => release.miniAppId === app._id.toString());
       const activeRelease = app.activeReleaseId
-        ? appReleases.find((release) => release._id.toString() === app.activeReleaseId)
+        ? appReleases.find(release => release._id.toString() === app.activeReleaseId)
         : null;
       const latestRelease = appReleases[0] ?? null;
       return {
@@ -175,11 +181,11 @@ export class MiniAppService {
     })
       .sort({ submittedAt: -1, createdAt: -1 })
       .lean();
-    const appIds = [...new Set(releases.map((release) => release.miniAppId))];
+    const appIds = [...new Set(releases.map(release => release.miniAppId))];
     const apps = await MiniAppModel.find({ _id: { $in: appIds } }).lean();
-    const appsById = new Map(apps.map((app) => [app._id.toString(), app]));
+    const appsById = new Map(apps.map(app => [app._id.toString(), app]));
 
-    return releases.map((release) => {
+    return releases.map(release => {
       const app = appsById.get(release.miniAppId);
       return {
         ...serializeRelease(release),
@@ -242,6 +248,27 @@ export class MiniAppService {
 
     await Promise.all([release.save(), app.save()]);
     return serializeRelease(release.toObject());
+  }
+
+  async updateStoreModeration(input: AdminStoreModerationInput) {
+    const packageName = normalizePackageName(input.packageName);
+    const updates: Record<string, unknown> = {};
+    if (input.reviewTier !== undefined) updates["storeListing.reviewTier"] = input.reviewTier;
+    if (input.featured !== undefined) updates["storeListing.featured"] = input.featured;
+    if (Object.keys(updates).length === 0) {
+      throw new MiniAppServiceError("invalid_request", "reviewTier or featured is required", 400);
+    }
+    const app = await MiniAppModel.findOneAndUpdate(
+      { packageName, status: { $ne: "archived" } },
+      { $set: updates },
+      { new: true },
+    ).lean();
+    if (!app) throw new MiniAppServiceError("not_found", "miniapp not found", 404);
+    return {
+      packageName: app.packageName,
+      reviewTier: app.storeListing?.reviewTier ?? "community",
+      featured: app.storeListing?.featured === true,
+    };
   }
 
   async createRelease(developer: DeveloperIdentity, input: CreateReleaseInput) {
@@ -337,14 +364,14 @@ export class MiniAppService {
       const releaseId = release._id.toString();
       // Best-effort compensation. Log each failure with context so blocked
       // retries or orphaned artifacts stay diagnosable rather than silent.
-      await MiniAppReleaseModel.deleteOne({ _id: release._id }).catch((cleanupError) => {
+      await MiniAppReleaseModel.deleteOne({ _id: release._id }).catch(cleanupError => {
         logger.error(
           { cleanupError, releaseId, packageName, version: input.version },
           "failed to roll back release row after createRelease failure",
         );
       });
       if (assetId) {
-        await MiniAppAssetModel.deleteOne({ _id: assetId }).catch((cleanupError) => {
+        await MiniAppAssetModel.deleteOne({ _id: assetId }).catch(cleanupError => {
           logger.error(
             { cleanupError, releaseId, assetId },
             "failed to roll back asset row after createRelease failure",
@@ -352,7 +379,7 @@ export class MiniAppService {
         });
       }
       if (storedKey) {
-        await storage.deleteObject(storedKey).catch((cleanupError) => {
+        await storage.deleteObject(storedKey).catch(cleanupError => {
           logger.error(
             { cleanupError, releaseId, storageKey: storedKey },
             "failed to delete stored bundle after createRelease failure",
@@ -379,8 +406,8 @@ export class MiniAppService {
 
   async updateStoreListing(developer: DeveloperIdentity, packageName: string, input: UpdateStoreListingInput) {
     const app = await this.requireMiniApp(developer, normalizePackageName(packageName));
-    const categories = input.categories?.map((category) => category.trim().toLowerCase()).filter(Boolean);
-    if (categories && (categories.length > 5 || categories.some((category) => category.length > 40))) {
+    const categories = input.categories?.map(category => category.trim().toLowerCase()).filter(Boolean);
+    if (categories && (categories.length > 5 || categories.some(category => category.length > 40))) {
       throw new MiniAppServiceError("invalid_categories", "use at most five categories of 40 characters", 400);
     }
     const normalizeUrl = (value: string | null | undefined) => {
@@ -397,18 +424,21 @@ export class MiniAppService {
       }
       return url.toString();
     };
-    const listing = app.storeListing ?? {};
-    if (input.subtitle !== undefined) listing.subtitle = cleanText(input.subtitle, 120);
-    if (input.longDescription !== undefined) listing.longDescription = cleanText(input.longDescription, 10_000);
-    if (categories !== undefined) listing.categories = [...new Set(categories)];
+    const updates: Record<string, unknown> = {};
+    if (input.subtitle !== undefined) updates["storeListing.subtitle"] = cleanText(input.subtitle, 120);
+    if (input.longDescription !== undefined) {
+      updates["storeListing.longDescription"] = cleanText(input.longDescription, 10_000);
+    }
+    if (categories !== undefined) updates["storeListing.categories"] = [...new Set(categories)];
     const privacyPolicyUrl = normalizeUrl(input.privacyPolicyUrl);
     const supportUrl = normalizeUrl(input.supportUrl);
     const websiteUrl = normalizeUrl(input.websiteUrl);
-    if (privacyPolicyUrl !== undefined) listing.privacyPolicyUrl = privacyPolicyUrl;
-    if (supportUrl !== undefined) listing.supportUrl = supportUrl;
-    if (websiteUrl !== undefined) listing.websiteUrl = websiteUrl;
-    app.storeListing = listing;
-    await app.save();
+    if (privacyPolicyUrl !== undefined) updates["storeListing.privacyPolicyUrl"] = privacyPolicyUrl;
+    if (supportUrl !== undefined) updates["storeListing.supportUrl"] = supportUrl;
+    if (websiteUrl !== undefined) updates["storeListing.websiteUrl"] = websiteUrl;
+    if (Object.keys(updates).length > 0) {
+      await MiniAppModel.updateOne({ _id: app._id, orgId: developer.orgId }, { $set: updates });
+    }
     return this.getStoreListing(developer, packageName);
   }
 
@@ -426,6 +456,9 @@ export class MiniAppService {
         "Store asset bytes do not match the declared image content type",
         400,
       );
+    }
+    if (input.role === "gallery_screenshot" && (app.storeListing?.screenshotAssetIds?.length ?? 0) >= 10) {
+      throw new MiniAppServiceError("too_many_screenshots", "Store listings can have at most 10 screenshots", 400);
     }
     const safeFileName = input.fileName.replace(/[^a-zA-Z0-9._-]/g, "-").slice(0, 120) || "asset";
     const storageKey = ["miniapps", app.packageName, "store", `${ulid()}-${safeFileName}`].join("/");
@@ -449,14 +482,28 @@ export class MiniAppService {
         sortOrder,
         createdBy: developer.developerId,
       });
-      const listing = app.storeListing ?? {};
-      if (input.role === "store_icon") listing.iconAssetId = asset._id.toString();
-      if (input.role === "store_cover") listing.coverAssetId = asset._id.toString();
-      if (input.role === "gallery_screenshot") {
-        listing.screenshotAssetIds = [...(listing.screenshotAssetIds ?? []), asset._id.toString()].slice(0, 10);
+      const assetId = asset._id.toString();
+      if (input.role === "store_icon") {
+        await MiniAppModel.updateOne({ _id: app._id }, { $set: { "storeListing.iconAssetId": assetId } });
       }
-      app.storeListing = listing;
-      await app.save();
+      if (input.role === "store_cover") {
+        await MiniAppModel.updateOne({ _id: app._id }, { $set: { "storeListing.coverAssetId": assetId } });
+      }
+      if (input.role === "gallery_screenshot") {
+        const updated = await MiniAppModel.findOneAndUpdate(
+          {
+            _id: app._id,
+            $expr: {
+              $lt: [{ $size: { $ifNull: ["$storeListing.screenshotAssetIds", []] } }, 10],
+            },
+          },
+          { $push: { "storeListing.screenshotAssetIds": assetId } },
+          { new: true },
+        );
+        if (!updated) {
+          throw new MiniAppServiceError("too_many_screenshots", "Store listings can have at most 10 screenshots", 400);
+        }
+      }
       return serializeStoreAsset(asset.toObject());
     } catch (error) {
       await storage.deleteObject(storageKey).catch(() => {});
@@ -476,12 +523,17 @@ export class MiniAppService {
     if (!asset) throw new MiniAppServiceError("not_found", "Store asset not found", 404);
     await storage.deleteObject(asset.storageKey);
     await asset.deleteOne();
-    const listing = app.storeListing ?? {};
-    if (listing.iconAssetId === assetId) listing.iconAssetId = null;
-    if (listing.coverAssetId === assetId) listing.coverAssetId = null;
-    listing.screenshotAssetIds = (listing.screenshotAssetIds ?? []).filter((id) => id !== assetId);
-    app.storeListing = listing;
-    await app.save();
+    await Promise.all([
+      MiniAppModel.updateOne(
+        { "_id": app._id, "storeListing.iconAssetId": assetId },
+        { $set: { "storeListing.iconAssetId": null } },
+      ),
+      MiniAppModel.updateOne(
+        { "_id": app._id, "storeListing.coverAssetId": assetId },
+        { $set: { "storeListing.coverAssetId": null } },
+      ),
+      MiniAppModel.updateOne({ _id: app._id }, { $pull: { "storeListing.screenshotAssetIds": assetId } }),
+    ]);
     return { ok: true };
   }
 

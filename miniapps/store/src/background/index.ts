@@ -1,5 +1,5 @@
 import {registerMiniapp, type MiniappSession} from "@mentra/miniapp/background"
-import {coreOriginFromToken, parseCatalog} from "./catalog"
+import {loadCompleteCatalog, trustedCoreOrigin} from "./catalog"
 import type {StoreChannels} from "../shared/channels"
 import type {StoreApp, StoreSnapshot} from "../shared/types"
 
@@ -17,6 +17,7 @@ class StoreController {
     refreshedAt: null,
   }
   private refreshing: Promise<StoreSnapshot> | null = null
+  private mutationTail: Promise<void> = Promise.resolve()
   private refreshQueued = false
   private queuedQuery = ""
   private lastQuery = ""
@@ -50,9 +51,15 @@ class StoreController {
       wasConnected = connected
     })
     this.ui.handle("store:refresh", ({query}: {query?: string}) => this.refresh(query))
-    this.ui.handle("store:install", ({packageName}: {packageName: string}) => this.install(packageName))
-    this.ui.handle("store:uninstall", ({packageName}: {packageName: string}) => this.uninstall(packageName))
-    this.ui.handle("store:open", ({packageName}: {packageName: string}) => this.open(packageName))
+    this.ui.handle("store:install", ({packageName, query}: {packageName: string; query?: string}) =>
+      this.enqueueMutation(() => this.install(packageName, query)),
+    )
+    this.ui.handle("store:uninstall", ({packageName, query}: {packageName: string; query?: string}) =>
+      this.enqueueMutation(() => this.uninstall(packageName, query)),
+    )
+    this.ui.handle("store:open", ({packageName, query}: {packageName: string; query?: string}) =>
+      this.enqueueMutation(() => this.open(packageName, query)),
+    )
     void this.refresh()
     setInterval(() => void this.refresh(this.lastQuery), 15 * 60_000)
   }
@@ -63,8 +70,7 @@ class StoreController {
 
   private async coreUrl() {
     try {
-      const token = await this.session.auth.getToken()
-      return coreOriginFromToken(token) ?? FALLBACK_CORE_URL
+      return trustedCoreOrigin(await this.session.auth.getCoreUrl()) ?? FALLBACK_CORE_URL
     } catch {
       return FALLBACK_CORE_URL
     }
@@ -90,27 +96,31 @@ class StoreController {
     return this.snapshot
   }
 
-  private async load(query?: string) {
+  private async load(query?: string, clearOperation = false) {
     this.snapshot = {...this.snapshot, loading: true, error: null}
     this.send()
     try {
       const base = await this.coreUrl()
-      const url = new URL("/api/store/apps", base)
-      url.searchParams.set("limit", "50")
-      if (query?.trim()) url.searchParams.set("q", query.trim())
-      const [catalogResponse, installed] = await Promise.all([
-        this.session.auth.fetch(url.toString(), {headers: {accept: "application/json"}}),
+      const [apps, installed] = await Promise.all([
+        loadCompleteCatalog(async (page) => {
+          const url = new URL("/api/store/apps", base)
+          url.searchParams.set("limit", "50")
+          url.searchParams.set("page", String(page))
+          if (query?.trim()) url.searchParams.set("q", query.trim())
+          const response = await this.session.auth.fetch(url.toString(), {headers: {accept: "application/json"}})
+          if (!response.ok) throw new Error(`Store catalog unavailable (${response.status})`)
+          return response.json()
+        }),
         this.session.miniapps.list({includeIncompatible: true}),
       ])
-      if (!catalogResponse.ok) throw new Error(`Store catalog unavailable (${catalogResponse.status})`)
-      this.apps = parseCatalog(await catalogResponse.json())
+      this.apps = apps
       this.snapshot = {
         apps: this.apps,
         installed,
         loading: false,
         offline: false,
         error: null,
-        operation: null,
+        operation: clearOperation ? null : this.snapshot.operation,
         refreshedAt: Date.now(),
       }
     } catch (error) {
@@ -119,7 +129,7 @@ class StoreController {
         loading: false,
         offline: true,
         error: error instanceof Error ? error.message : "Store unavailable",
-        operation: null,
+        operation: clearOperation ? null : this.snapshot.operation,
       }
     }
     this.send()
@@ -132,7 +142,17 @@ class StoreController {
     return app
   }
 
-  private async install(packageName: string) {
+  private enqueueMutation(run: () => Promise<StoreSnapshot>): Promise<StoreSnapshot> {
+    const result = this.mutationTail.then(run, run)
+    this.mutationTail = result.then(
+      () => undefined,
+      () => undefined,
+    )
+    return result
+  }
+
+  private async install(packageName: string, query?: string) {
+    if (query !== undefined) this.lastQuery = query
     const app = this.requireApp(packageName)
     this.snapshot = {...this.snapshot, operation: {packageName, kind: "install", phase: "downloading"}, error: null}
     this.send()
@@ -145,7 +165,7 @@ class StoreController {
         releaseId: app.release.id,
         channel: "stable",
       })
-      return this.load()
+      return this.load(this.lastQuery, true)
     } catch (error) {
       this.snapshot = {
         ...this.snapshot,
@@ -157,12 +177,13 @@ class StoreController {
     }
   }
 
-  private async uninstall(packageName: string) {
+  private async uninstall(packageName: string, query?: string) {
+    if (query !== undefined) this.lastQuery = query
     this.snapshot = {...this.snapshot, operation: {packageName, kind: "uninstall"}, error: null}
     this.send()
     try {
       await this.session.miniapps.uninstall(packageName)
-      return this.load()
+      return this.load(this.lastQuery, true)
     } catch (error) {
       this.snapshot = {
         ...this.snapshot,
@@ -174,12 +195,13 @@ class StoreController {
     }
   }
 
-  private async open(packageName: string) {
+  private async open(packageName: string, query?: string) {
+    if (query !== undefined) this.lastQuery = query
     this.snapshot = {...this.snapshot, operation: {packageName, kind: "open"}, error: null}
     this.send()
     try {
       await this.session.miniapps.open(packageName)
-      return this.load()
+      return this.load(this.lastQuery, true)
     } catch (error) {
       this.snapshot = {...this.snapshot, operation: null, error: error instanceof Error ? error.message : "Open failed"}
       this.send()

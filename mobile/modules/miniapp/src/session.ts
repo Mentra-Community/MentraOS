@@ -110,6 +110,8 @@ export interface ConnectAckPayload {
 export interface MiniappAuthState {
   mentraUserId: string
   oemId?: string
+  /** Cloud Core endpoint selected and vouched for by the host. */
+  coreUrl?: string
   token: string
   expiresAt: number
 }

@@ -43,6 +43,8 @@ export const developerAppSchema = z.object({
       bundleSizeBytes: z.number().nullable(),
       manifestSha256: z.string().nullable().optional(),
       manifest: z.record(z.string(), z.unknown()).nullable().optional(),
+      signingKeyId: z.string().nullable().optional(),
+      signedAt: z.string().nullable().optional(),
       reviewedBy: z.string().nullable().optional(),
       reviewNotes: z.string().nullable().optional(),
       createdAt: z.string().nullable(),
@@ -59,6 +61,8 @@ export const developerAppSchema = z.object({
       bundleSizeBytes: z.number().nullable(),
       manifestSha256: z.string().nullable().optional(),
       manifest: z.record(z.string(), z.unknown()).nullable().optional(),
+      signingKeyId: z.string().nullable().optional(),
+      signedAt: z.string().nullable().optional(),
       reviewedBy: z.string().nullable().optional(),
       reviewNotes: z.string().nullable().optional(),
       createdAt: z.string().nullable(),
@@ -85,6 +89,8 @@ export const developerReleaseSchema = z.object({
   bundleSizeBytes: z.number().nullable().optional(),
   manifestSha256: z.string().nullable().optional(),
   manifest: z.record(z.string(), z.unknown()).nullable().optional(),
+  signingKeyId: z.string().nullable().optional(),
+  signedAt: z.string().nullable().optional(),
   reviewedBy: z.string().nullable().optional(),
   reviewNotes: z.string().nullable().optional(),
   createdAt: z.string().nullable().optional(),
@@ -161,7 +167,7 @@ export function uploadStoreAsset(
     file: File;
   },
 ): Promise<{ asset: StoreAsset }> {
-  return fileToBase64(input.file).then((base64) =>
+  return fileToBase64(input.file).then(base64 =>
     apiRequest(
       `/console/apps/${encodeURIComponent(packageName)}/listing/assets`,
       z.object({ asset: storeAssetSchema }),

@@ -1,10 +1,40 @@
 import type {StoreApp} from "../shared/types"
 
+export interface StoreCatalogPage {
+  apps: StoreApp[]
+  page: number
+  hasMore: boolean
+}
+
+const MAX_CATALOG_PAGES = 200
+
 export function parseCatalog(value: unknown): StoreApp[] {
   if (!value || typeof value !== "object" || !Array.isArray((value as {apps?: unknown}).apps)) {
     throw new Error("Store catalog returned an invalid response")
   }
   return (value as {apps: unknown[]}).apps.filter(isStoreApp)
+}
+
+export function parseCatalogPage(value: unknown): StoreCatalogPage {
+  const record = value as {page?: unknown; hasMore?: unknown}
+  if (!Number.isInteger(record?.page) || Number(record.page) < 1 || typeof record?.hasMore !== "boolean") {
+    throw new Error("Store catalog returned invalid pagination metadata")
+  }
+  return {apps: parseCatalog(value), page: Number(record.page), hasMore: record.hasMore}
+}
+
+export async function loadCompleteCatalog(
+  fetchPage: (page: number) => Promise<unknown>,
+  maxPages = MAX_CATALOG_PAGES,
+): Promise<StoreApp[]> {
+  const apps = new Map<string, StoreApp>()
+  for (let requestedPage = 1; requestedPage <= maxPages; requestedPage += 1) {
+    const page = parseCatalogPage(await fetchPage(requestedPage))
+    if (page.page !== requestedPage) throw new Error("Store catalog returned an unexpected page")
+    for (const app of page.apps) apps.set(app.packageName, app)
+    if (!page.hasMore) return [...apps.values()]
+  }
+  throw new Error(`Store catalog exceeded the ${maxPages}-page safety limit`)
 }
 
 function isStoreApp(value: unknown): value is StoreApp {
@@ -23,14 +53,10 @@ function isStoreApp(value: unknown): value is StoreApp {
   )
 }
 
-export function coreOriginFromToken(token: string): string | null {
+export function trustedCoreOrigin(value: string | null | undefined): string | null {
   try {
-    const payload = token.split(".")[1]
-    if (!payload) return null
-    const normalized = payload.replace(/-/g, "+").replace(/_/g, "/")
-    const parsed = JSON.parse(atob(normalized)) as {iss?: unknown}
-    if (typeof parsed.iss !== "string") return null
-    const url = new URL(parsed.iss)
+    if (!value) return null
+    const url = new URL(value)
     return url.protocol === "https:" || url.hostname === "localhost" ? url.origin : null
   } catch {
     return null
@@ -43,7 +69,8 @@ export function isNewerVersion(candidate: string, current: string): boolean {
   const installed = parseSemver(current)
   if (!next || !installed) return false
   for (let index = 0; index < 3; index += 1) {
-    if (next.core[index] !== installed.core[index]) return next.core[index]! > installed.core[index]!
+    const comparison = compareNumericIdentifier(next.core[index]!, installed.core[index]!)
+    if (comparison !== 0) return comparison > 0
   }
   if (next.prerelease.length === 0 || installed.prerelease.length === 0) {
     return next.prerelease.length === 0 && installed.prerelease.length > 0
@@ -55,9 +82,9 @@ export function isNewerVersion(candidate: string, current: string): boolean {
     if (left === right) continue
     if (left === undefined) return false
     if (right === undefined) return true
-    const leftNumber = /^\d+$/.test(left) ? Number(left) : null
-    const rightNumber = /^\d+$/.test(right) ? Number(right) : null
-    if (leftNumber !== null && rightNumber !== null) return leftNumber > rightNumber
+    const leftNumber = /^\d+$/.test(left) ? left : null
+    const rightNumber = /^\d+$/.test(right) ? right : null
+    if (leftNumber !== null && rightNumber !== null) return compareNumericIdentifier(leftNumber, rightNumber) > 0
     if (leftNumber !== null) return false
     if (rightNumber !== null) return true
     return left > right
@@ -65,13 +92,23 @@ export function isNewerVersion(candidate: string, current: string): boolean {
   return false
 }
 
-function parseSemver(value: string): {core: [number, number, number]; prerelease: string[]} | null {
-  const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.exec(
-    value,
-  )
+function parseSemver(value: string): {core: [string, string, string]; prerelease: string[]} | null {
+  const match =
+    /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.exec(
+      value,
+    )
   if (!match) return null
-  return {
-    core: [Number(match[1]), Number(match[2]), Number(match[3])],
-    prerelease: match[4]?.split(".") ?? [],
+  const prerelease = match[4]?.split(".") ?? []
+  if (prerelease.some((identifier) => /^\d+$/.test(identifier) && identifier.length > 1 && identifier[0] === "0")) {
+    return null
   }
+  return {
+    core: [match[1], match[2], match[3]],
+    prerelease,
+  }
+}
+
+function compareNumericIdentifier(left: string, right: string): number {
+  if (left.length !== right.length) return left.length > right.length ? 1 : -1
+  return left === right ? 0 : left > right ? 1 : -1
 }

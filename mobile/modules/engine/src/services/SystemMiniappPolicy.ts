@@ -5,7 +5,7 @@
  * request or inherit SYSTEM by changing a manifest, installing a bundle, or
  * running in dev mode. Adding a package requires a reviewed Mentra App build.
  */
-export const SYSTEM_MINIAPP_PACKAGES: ReadonlySet<string> = new Set([
+const SYSTEM_MINIAPP_PACKAGES = new Set([
   "com.mentra.camera",
   "com.mentra.gallery",
   "com.mentra.settings",
@@ -18,8 +18,15 @@ export const SYSTEM_MINIAPP_PACKAGES: ReadonlySet<string> = new Set([
   "com.mentra.store",
 ])
 
+/** Store packages are a strict subset of SYSTEM and own registry mutation. */
+const STORE_MINIAPP_PACKAGES = new Set(["com.mentra.store"])
+
 export function isSystemMiniappPackage(packageName: string): boolean {
   return SYSTEM_MINIAPP_PACKAGES.has(packageName)
+}
+
+export function isStoreMiniappPackage(packageName: string): boolean {
+  return STORE_MINIAPP_PACKAGES.has(packageName)
 }
 
 /**

@@ -151,8 +151,8 @@ export class MiniappsModule {
    */
   async install(request: InstallMiniappRequest): Promise<InstallMiniappResult> {
     return this.session.sendRequest<InstallMiniappResult>({
-      type: MiniappRequestType.MINIAPPS_INSTALL,
       ...request,
+      type: MiniappRequestType.MINIAPPS_INSTALL,
     })
   }
 

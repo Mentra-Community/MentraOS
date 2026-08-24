@@ -1,6 +1,6 @@
-import JSZip from "jszip";
+import { createHash } from "node:crypto";
 import { canonicalJson } from "./developer-signing.service";
-import { sha256Hex } from "../storage/storage.service";
+import { verifyZipArchive, type VerifiedZipEntry } from "./zip-archive";
 
 const MAX_BUNDLE_BYTES = 50 * 1024 * 1024;
 const MAX_EXPANDED_BYTES = 200 * 1024 * 1024;
@@ -32,37 +32,32 @@ export async function parseCanonicalBundleManifest(
     throw new BundleManifestError("invalid_bundle_size", `bundle must be between 1 byte and ${MAX_BUNDLE_BYTES} bytes`);
   }
 
-  let archive: JSZip;
+  let entries: Map<string, VerifiedZipEntry>;
   try {
-    archive = await JSZip.loadAsync(bundle, { checkCRC32: true });
+    entries = verifyZipArchive(bundle, {
+      maxEntries: MAX_ZIP_ENTRIES,
+      maxExpandedBytes: MAX_EXPANDED_BYTES,
+      maxEntryBytes: name => (name === "miniapp.json" ? MAX_MANIFEST_BYTES : undefined),
+      capture: name => name === "miniapp.json",
+      validatePath: isSafeZipPath,
+    });
   } catch (error) {
-    throw new BundleManifestError("invalid_bundle", `bundle is not a valid ZIP archive: ${errorMessage(error)}`);
+    const message = errorMessage(error);
+    const code = message.includes("ZIP entry exceeds its configured limit: miniapp.json")
+      ? "manifest_too_large"
+      : message.includes("unsafe path") || message.includes("symbolic link")
+        ? "unsafe_bundle_path"
+        : message.includes("expands beyond")
+          ? "bundle_expands_too_large"
+          : message.includes("entry count")
+            ? "invalid_bundle_entries"
+            : "invalid_bundle";
+    throw new BundleManifestError(code, `bundle is not a valid ZIP archive: ${message}`);
   }
 
-  const entries = Object.values(archive.files);
-  if (entries.length === 0 || entries.length > MAX_ZIP_ENTRIES) {
-    throw new BundleManifestError(
-      "invalid_bundle_entries",
-      `bundle must contain between 1 and ${MAX_ZIP_ENTRIES} entries`,
-    );
-  }
-
-  let expandedBytes = 0;
-  for (const entry of entries) {
-    const originalName = unsafeOriginalName(entry) ?? entry.name;
-    if (!isSafeZipPath(originalName) || !isSafeZipPath(entry.name)) {
-      throw new BundleManifestError("unsafe_bundle_path", `bundle contains an unsafe path: ${originalName}`);
-    }
-    if (isSymlink(entry)) {
-      throw new BundleManifestError("unsafe_bundle_path", `bundle contains a symbolic link: ${originalName}`);
-    }
-    expandedBytes += uncompressedSize(entry);
-    if (expandedBytes > MAX_EXPANDED_BYTES) {
-      throw new BundleManifestError("bundle_expands_too_large", `bundle expands beyond ${MAX_EXPANDED_BYTES} bytes`);
-    }
-  }
-
-  const manifestEntries = entries.filter((entry) => !entry.dir && entry.name.toLowerCase().endsWith("miniapp.json"));
+  const manifestEntries = [...entries.values()].filter(
+    entry => !entry.directory && entry.name.toLowerCase().endsWith("miniapp.json"),
+  );
   if (manifestEntries.length !== 1 || manifestEntries[0]?.name !== "miniapp.json") {
     throw new BundleManifestError(
       "invalid_manifest_location",
@@ -70,18 +65,14 @@ export async function parseCanonicalBundleManifest(
     );
   }
 
-  let manifestText: string;
-  try {
-    manifestText = await manifestEntries[0].async("string");
-  } catch (error) {
-    throw new BundleManifestError("invalid_manifest", `could not read miniapp.json: ${errorMessage(error)}`);
-  }
-  if (Buffer.byteLength(manifestText, "utf8") > MAX_MANIFEST_BYTES) {
+  const manifestBytes = manifestEntries[0].bytes;
+  if (!manifestBytes) throw new BundleManifestError("invalid_manifest", "could not read miniapp.json");
+  if (manifestBytes.byteLength > MAX_MANIFEST_BYTES) {
     throw new BundleManifestError("manifest_too_large", `miniapp.json exceeds ${MAX_MANIFEST_BYTES} bytes`);
   }
-
   let manifest: Record<string, unknown>;
   try {
+    const manifestText = new TextDecoder("utf-8", { fatal: true }).decode(manifestBytes);
     const parsed = JSON.parse(manifestText) as unknown;
     if (!isRecord(parsed)) throw new Error("manifest must be a JSON object");
     manifest = parsed;
@@ -97,11 +88,11 @@ export async function parseCanonicalBundleManifest(
     );
   }
   const version = requiredString(manifest, "version");
-  if (!VERSION_PATTERN.test(version)) {
+  if (!isValidSemanticVersion(version)) {
     throw new BundleManifestError("invalid_version", "miniapp.json version must be valid semantic version text");
   }
   requiredString(manifest, "name");
-  validateManifestEntries(archive, manifest);
+  validateManifestEntries(entries, manifest);
 
   if (submittedManifest && canonicalJson(submittedManifest) !== canonicalJson(manifest)) {
     throw new BundleManifestError(
@@ -112,7 +103,7 @@ export async function parseCanonicalBundleManifest(
 
   return {
     manifest,
-    manifestSha256: sha256Hex(Buffer.from(canonicalJson(manifest))),
+    manifestSha256: createHash("sha256").update(canonicalJson(manifest)).digest("hex"),
     packageName,
     version,
   };
@@ -128,27 +119,27 @@ export class BundleManifestError extends Error {
   }
 }
 
-function validateManifestEntries(archive: JSZip, manifest: Record<string, unknown>): void {
+function validateManifestEntries(entries: Map<string, VerifiedZipEntry>, manifest: Record<string, unknown>): void {
   if (manifest.entry === undefined) return;
   if (!isRecord(manifest.entry)) {
     throw new BundleManifestError("invalid_manifest_entry", "miniapp.json entry must be an object");
   }
   const background = requiredString(manifest.entry, "background");
-  validateEntryPath(archive, "background", background);
+  validateEntryPath(entries, "background", background);
   if (manifest.entry.ui !== undefined) {
-    validateEntryPath(archive, "ui", requiredString(manifest.entry, "ui"));
+    validateEntryPath(entries, "ui", requiredString(manifest.entry, "ui"));
   }
 }
 
-function validateEntryPath(archive: JSZip, label: string, path: string): void {
+function validateEntryPath(entries: Map<string, VerifiedZipEntry>, label: string, path: string): void {
   if (!isSafeZipPath(path) || path.endsWith("/")) {
     throw new BundleManifestError(
       "invalid_manifest_entry",
       `miniapp.json entry.${label} must be a safe relative file path`,
     );
   }
-  const entry = archive.files[path];
-  if (!entry || entry.dir) {
+  const entry = entries.get(path);
+  if (!entry || entry.directory) {
     throw new BundleManifestError(
       "missing_manifest_entry",
       `miniapp.json entry.${label} points at missing bundle file "${path}"`,
@@ -168,23 +159,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function isValidSemanticVersion(value: string): boolean {
+  if (!VERSION_PATTERN.test(value)) return false;
+  const prerelease = value.split("+", 1)[0]?.split("-", 2)[1];
+  return !prerelease
+    ?.split(".")
+    .some(identifier => /^\d+$/.test(identifier) && identifier.length > 1 && identifier[0] === "0");
+}
+
 function isSafeZipPath(path: string): boolean {
   if (!path || path.includes("\\") || path.startsWith("/") || /^[a-z]:/i.test(path)) return false;
-  const pieces = path.split("/");
-  return !pieces.some((piece) => piece === ".." || (piece === "" && pieces.length > 1 && pieces.at(-1) !== ""));
-}
-
-function unsafeOriginalName(entry: JSZip.JSZipObject): string | undefined {
-  return (entry as JSZip.JSZipObject & { unsafeOriginalName?: string }).unsafeOriginalName;
-}
-
-function uncompressedSize(entry: JSZip.JSZipObject): number {
-  const data = (entry as JSZip.JSZipObject & { _data?: { uncompressedSize?: number } })._data;
-  return Number.isFinite(data?.uncompressedSize) ? Math.max(0, data?.uncompressedSize ?? 0) : 0;
-}
-
-function isSymlink(entry: JSZip.JSZipObject): boolean {
-  return typeof entry.unixPermissions === "number" && (entry.unixPermissions & 0o170000) === 0o120000;
+  const normalized = path.endsWith("/") ? path.slice(0, -1) : path;
+  return normalized.length > 0 && normalized.split("/").every(piece => piece !== "" && piece !== "." && piece !== "..");
 }
 
 function errorMessage(error: unknown): string {

@@ -53,18 +53,23 @@ export function App() {
         ? updateApps
         : snapshot.apps
   const orphanedInstalled =
-    tab === "installed"
-      ? snapshot.installed.filter((installed) => !snapshot.apps.some((app) => app.packageName === installed.packageName))
+    tab === "installed" && !query.trim()
+      ? snapshot.installed.filter(
+          (installed) => !snapshot.apps.some((app) => app.packageName === installed.packageName),
+        )
       : []
 
-  const run = useCallback(async (kind: "install" | "uninstall" | "open", packageName: string) => {
-    try {
-      const next = (await mentra.request(`store:${kind}`, {packageName})) as StoreSnapshot
-      setSnapshot(next)
-    } catch (error) {
-      setSnapshot((current) => ({...current, error: error instanceof Error ? error.message : `${kind} failed`}))
-    }
-  }, [])
+  const run = useCallback(
+    async (kind: "install" | "uninstall" | "open", packageName: string) => {
+      try {
+        const next = (await mentra.request(`store:${kind}`, {packageName, query})) as StoreSnapshot
+        setSnapshot(next)
+      } catch (error) {
+        setSnapshot((current) => ({...current, error: error instanceof Error ? error.message : `${kind} failed`}))
+      }
+    },
+    [query],
+  )
 
   const style = {
     paddingTop: insets.top,
@@ -218,7 +223,10 @@ function InstalledOnlyRow({
         <small>No longer listed · version {installed.version}</small>
       </span>
       <div className="installed-actions">
-        <button className="action" disabled={busy} onClick={() => void onAction("open", installed.packageName)}>
+        <button
+          className="action"
+          disabled={busy || installed.compatibility.isCompatible === false}
+          onClick={() => void onAction("open", installed.packageName)}>
           Open
         </button>
         <button

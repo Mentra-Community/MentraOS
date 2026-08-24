@@ -15,6 +15,7 @@ describe("readBoundedByteStream", () => {
     })
 
     expect([...(await readBoundedByteStream(stream, 3))]).toEqual([1, 2, 3])
+    expect(stream.locked).toBe(false)
   })
 
   test("cancels a chunked response as soon as it exceeds the ceiling", async () => {
@@ -31,5 +32,6 @@ describe("readBoundedByteStream", () => {
 
     await expect(readBoundedByteStream(stream, 3)).rejects.toThrow("response exceeds 3 bytes")
     expect(cancelled).toBe(true)
+    expect(stream.locked).toBe(false)
   })
 })

@@ -104,7 +104,7 @@ describe("miniapp release lifecycle", () => {
     expect(submitted.status).toBe("submitted");
 
     const adminRows = await miniapps.listAdminSubmissions();
-    expect(adminRows.map((row) => row.id)).toContain(release.id);
+    expect(adminRows.map(row => row.id)).toContain(release.id);
 
     const accepted = await miniapps.approveRelease({
       releaseId: release.id,
@@ -202,7 +202,7 @@ describe("miniapp release lifecycle", () => {
     });
 
     const publishable = await registries.listPublishableReleases();
-    expect(publishable.map((row) => row.id)).toContain(release.id);
+    expect(publishable.map(row => row.id)).toContain(release.id);
 
     const registry = await registries.ensureRegistry({ adminId: "admin@mentraglass.com" }, { environment: "dev" });
     const revision = await registries.createRevision({ adminId: "admin@mentraglass.com" }, registry.id, {
@@ -291,6 +291,15 @@ describe("miniapp release lifecycle", () => {
       categories: ["Productivity"],
       privacyPolicyUrl: "https://example.com/privacy",
     });
+    await Promise.all([
+      miniapps.updateStoreListing(developer, "com.example.catalog", { supportUrl: "https://example.com/support" }),
+      miniapps.updateStoreListing(developer, "com.example.catalog", { websiteUrl: "https://example.com" }),
+    ]);
+    await miniapps.updateStoreModeration({
+      packageName: "com.example.catalog",
+      reviewTier: "verified",
+      featured: true,
+    });
     const manifest = {
       packageName: "com.example.catalog",
       name: "Catalog App",
@@ -314,6 +323,10 @@ describe("miniapp release lifecycle", () => {
       packageName: manifest.packageName,
       subtitle: "A useful miniapp",
       categories: ["productivity"],
+      reviewTier: "verified",
+      featured: true,
+      supportUrl: "https://example.com/support",
+      websiteUrl: "https://example.com/",
       release: {
         id: release.id,
         version: "1.2.3",
@@ -344,6 +357,21 @@ describe("miniapp release lifecycle", () => {
       contentType: "image/png",
       bytes: Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]),
     });
+    const catalogService = new StoreCatalogService();
+    await expect(catalogService.getPublicAsset(icon.id)).rejects.toMatchObject({ status: 404 });
+
+    const screenshots = await Promise.allSettled(
+      Array.from({ length: 11 }, (_, index) =>
+        miniapps.createStoreAsset(developer, "com.example.artwork", {
+          role: "gallery_screenshot",
+          fileName: `screenshot-${index}.png`,
+          contentType: "image/png",
+          bytes: Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, index]),
+        }),
+      ),
+    );
+    expect(screenshots.filter(result => result.status === "fulfilled")).toHaveLength(10);
+    expect(screenshots.filter(result => result.status === "rejected")).toHaveLength(1);
     const release = await miniapps.createRelease(developer, {
       packageName: "com.example.artwork",
       version: "1.0.0",
@@ -354,7 +382,6 @@ describe("miniapp release lifecycle", () => {
     await miniapps.approveRelease({ releaseId: release.id, adminId: "admin@mentraglass.com" });
     await miniapps.publishRelease({ releaseId: release.id, adminId: "admin@mentraglass.com" });
 
-    const catalogService = new StoreCatalogService();
     const publicAsset = await catalogService.getPublicAsset(icon.id);
     expect(publicAsset.contentType).toBe("image/png");
     await miniapps.deleteStoreAsset(developer, "com.example.artwork", icon.id);
@@ -374,6 +401,6 @@ function canonicalJson(value: unknown): string {
   const record = value as Record<string, unknown>;
   return `{${Object.keys(record)
     .sort()
-    .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
+    .map(key => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
     .join(",")}}`;
 }

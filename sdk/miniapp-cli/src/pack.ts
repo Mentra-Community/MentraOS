@@ -1,5 +1,15 @@
-import { existsSync, mkdirSync, readFileSync, copyFileSync, rmSync, writeFileSync } from 'fs';
-import { resolve, join } from 'path';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  copyFileSync,
+  lstatSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from 'fs';
+import { isAbsolute, resolve, join, relative, sep } from 'path';
 import { buildProduction } from './build.js';
 import { validateManifest } from './manifest.js';
 
@@ -13,6 +23,8 @@ export interface PackOptions {
   /** Quiet stdout. The `release` command swallows pack output and prints
    * its own progress; standalone `pack` calls leave it on. */
   silent?: boolean;
+  /** Command used to create the ZIP. Intended for tests and embedders. */
+  zipCommand?: string;
 }
 
 /**
@@ -27,7 +39,7 @@ export interface PackOptions {
 export async function pack(opts: PackOptions = {}): Promise<string> {
   const cwd = resolve(opts.cwd ?? process.cwd());
   if (opts.build) {
-    await buildProduction(cwd);
+    await buildProduction(cwd, { silent: opts.silent });
   }
 
   const distDir = resolve(cwd, 'dist');
@@ -74,7 +86,8 @@ export async function pack(opts: PackOptions = {}): Promise<string> {
   // Entry paths are relative to the *bundle root*, which is dist/'s contents
   // (we zip from inside dist/ below), so `background/index.js` in the manifest
   // is `dist/background/index.js` on disk — resolve against distDir.
-  const entry = manifest.entry as {background?: string; ui?: string} | undefined;
+  const entry = manifest.entry as { background?: string; ui?: string } | undefined;
+  const realDistDir = realpathSync(distDir);
   if (entry) {
     const checkRelative = (label: string, rel: string | undefined, required: boolean) => {
       if (!rel) {
@@ -84,8 +97,25 @@ export async function pack(opts: PackOptions = {}): Promise<string> {
         }
         return;
       }
+      if (
+        rel.includes('\\') ||
+        isAbsolute(rel) ||
+        rel.split('/').some(segment => segment === '' || segment === '.' || segment === '..')
+      ) {
+        console.error(`Error: manifest.entry.${label} must be a safe relative path inside dist/`);
+        process.exit(1);
+      }
       const abs = resolve(distDir, rel);
-      if (!existsSync(abs)) {
+      const relativePath = relative(distDir, abs);
+      if (!relativePath || relativePath.split(sep).includes('..')) {
+        console.error(`Error: manifest.entry.${label} must be a safe relative path inside dist/`);
+        process.exit(1);
+      }
+      if (
+        !existsSync(abs) ||
+        !lstatSync(abs).isFile() ||
+        relative(realDistDir, realpathSync(abs)).split(sep).includes('..')
+      ) {
         console.error(`Error: manifest.entry.${label} points at "${rel}" but dist/${rel} does not exist`);
         process.exit(1);
       }
@@ -116,24 +146,22 @@ export async function pack(opts: PackOptions = {}): Promise<string> {
     writeFileSync(selfIgnore, '*\n');
   }
   const outputPath = resolve(outDir, outputName);
+  const temporaryPath = resolve(outDir, `.${outputName}.${process.pid}.${Date.now()}.tmp`);
 
-  // `zip -r` updates an existing archive and retains files that disappeared
-  // from dist (for example hashed UI chunks from the previous build). Always
-  // start from a fresh archive so release contents exactly match dist/.
-  if (existsSync(outputPath)) rmSync(outputPath);
-
-  // Create ZIP using system zip command
-  const zipProc = Bun.spawn(['zip', '-r', outputPath, '.'], {
+  // Build beside the destination and atomically replace it only after zip
+  // succeeds. A failed pack must never destroy the last publishable artifact.
+  const zipProc = Bun.spawn([opts.zipCommand ?? 'zip', '-r', temporaryPath, '.'], {
     cwd: distDir,
-    stdout: opts.silent ? 'pipe' : 'inherit',
-    stderr: opts.silent ? 'pipe' : 'inherit',
+    stdout: opts.silent ? 'ignore' : 'inherit',
+    stderr: opts.silent ? 'ignore' : 'inherit',
   });
 
   const exitCode = await zipProc.exited;
   if (exitCode !== 0) {
-    console.error('Error: zip command failed');
-    process.exit(1);
+    rmSync(temporaryPath, { force: true });
+    throw new Error('zip command failed');
   }
+  renameSync(temporaryPath, outputPath);
 
   if (!opts.silent) {
     console.log(`\nPacked: ${outputPath}`);

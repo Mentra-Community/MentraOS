@@ -8,11 +8,12 @@ import type {MentraJSRouter} from "../MentraJSRouter"
 
 // getActiveVersion is mutable so a test can force an "unresolvable" bundle.
 let activeVersion = "1.0.0"
+let releaseSource = "bundled_asset"
 
 mock.module("../AppRegistry", () => ({
   default: {
     getActiveVersion: async () => activeVersion,
-    getReleaseIdentity: () => ({source: "bundled_asset"}),
+    getReleaseIdentity: () => ({source: releaseSource}),
     getMiniappEntryPaths: () => ({background: "file:///bundle/bg.js", ui: "file:///bundle/ui.html"}),
     getMiniappManifest: () => ({permissions: [{type: "MICROPHONE"}], hardwareRequirements: []}),
   },
@@ -92,6 +93,7 @@ describe("MiniappLauncher", () => {
 
   beforeEach(() => {
     activeVersion = "1.0.0"
+    releaseSource = "bundled_asset"
     waitForConnectCalls = []
     mockRouter = buildMockRouter()
     miniappLauncher.configure({router: mockRouter.router})
@@ -121,6 +123,12 @@ describe("MiniappLauncher", () => {
 
     await miniappLauncher.ensureRunning("com.example.store")
     expect(mockRouter.spawnCalls[1].hostTrustedSystem).toBe(false)
+  })
+
+  test("does not trust an allowlisted package installed by a Store", async () => {
+    releaseSource = "store"
+    await miniappLauncher.ensureRunning("com.mentra.store")
+    expect(mockRouter.spawnCalls[0].hostTrustedSystem).toBe(false)
   })
 
   test("coalesces concurrent launches of the same package onto one spawn", async () => {

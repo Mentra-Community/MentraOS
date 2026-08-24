@@ -23,11 +23,11 @@ export function MiniappDetailPage() {
     enabled: canLoadPrivateData,
   });
 
-  const app = apps.data?.apps.find((item) => item.packageName === packageName);
+  const app = apps.data?.apps.find(item => item.packageName === packageName);
   const releases = releasesQuery.data?.releases ?? [];
   const packagePrefix = session.data?.packagePrefix;
-  const published = releases.find((release) => release.status === "published") ?? app?.activeRelease ?? null;
-  const inReview = releases.find((release) => reviewStatuses.has(release.status));
+  const published = releases.find(release => release.status === "published") ?? app?.activeRelease ?? null;
+  const inReview = releases.find(release => reviewStatuses.has(release.status));
 
   return (
     <AppShell>
@@ -70,6 +70,12 @@ export function MiniappDetailPage() {
               {releases[0].manifestSha256 ? (
                 <p className="mt-2 break-all font-mono text-xs text-[#747780]">SHA-256 {releases[0].manifestSha256}</p>
               ) : null}
+              {releases[0].signingKeyId ? (
+                <p className="mt-1 break-all font-mono text-xs text-[#747780]">
+                  Signing key {releases[0].signingKeyId}
+                  {releases[0].signedAt ? ` · signed ${formatDate(releases[0].signedAt)}` : ""}
+                </p>
+              ) : null}
             </CardContent>
           </Card>
         ) : null}
@@ -94,7 +100,7 @@ export function MiniappDetailPage() {
               </div>
             ) : (
               <div className="divide-y divide-[#eceeeb]">
-                {releases.map((release) => (
+                {releases.map(release => (
                   <div
                     key={release.id}
                     className="grid gap-3 px-4 py-4 sm:px-6 md:grid-cols-[120px_minmax(0,1fr)_140px] md:items-center">

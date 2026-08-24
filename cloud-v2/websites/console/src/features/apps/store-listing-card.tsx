@@ -20,17 +20,23 @@ export function StoreListingCard({ packageName }: { packageName: string }) {
   const [privacyPolicyUrl, setPrivacyPolicyUrl] = useState("");
   const [supportUrl, setSupportUrl] = useState("");
   const [websiteUrl, setWebsiteUrl] = useState("");
+  const [dirty, setDirty] = useState(false);
 
   useEffect(() => {
     const listing = listingQuery.data?.listing;
-    if (!listing) return;
+    if (!listing || dirty) return;
     setSubtitle(listing.subtitle ?? "");
     setDescription(listing.longDescription ?? "");
     setCategories(listing.categories.join(", "));
     setPrivacyPolicyUrl(listing.privacyPolicyUrl ?? "");
     setSupportUrl(listing.supportUrl ?? "");
     setWebsiteUrl(listing.websiteUrl ?? "");
-  }, [listingQuery.data]);
+  }, [dirty, listingQuery.data]);
+
+  const edit = (setter: (value: string) => void, value: string) => {
+    setDirty(true);
+    setter(value);
+  };
 
   const refresh = () => client.invalidateQueries({ queryKey: ["store-listing", packageName] });
   const save = useMutation({
@@ -40,13 +46,16 @@ export function StoreListingCard({ packageName }: { packageName: string }) {
         longDescription: description || null,
         categories: categories
           .split(",")
-          .map((value) => value.trim())
+          .map(value => value.trim())
           .filter(Boolean),
         privacyPolicyUrl: privacyPolicyUrl || null,
         supportUrl: supportUrl || null,
         websiteUrl: websiteUrl || null,
       }),
-    onSuccess: refresh,
+    onSuccess: () => {
+      setDirty(false);
+      void refresh();
+    },
   });
   const upload = useMutation({
     mutationFn: ({ role, file }: { role: "store_icon" | "store_cover" | "gallery_screenshot"; file: File }) =>
@@ -96,13 +105,13 @@ export function StoreListingCard({ packageName }: { packageName: string }) {
         ) : null}
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Subtitle">
-            <Input value={subtitle} maxLength={120} onChange={(event) => setSubtitle(event.target.value)} />
+            <Input value={subtitle} maxLength={120} onChange={event => edit(setSubtitle, event.target.value)} />
           </Field>
           <Field label="Categories">
             <Input
               value={categories}
               placeholder="productivity, accessibility"
-              onChange={(event) => setCategories(event.target.value)}
+              onChange={event => edit(setCategories, event.target.value)}
             />
           </Field>
         </div>
@@ -111,18 +120,22 @@ export function StoreListingCard({ packageName }: { packageName: string }) {
             value={description}
             rows={6}
             maxLength={10_000}
-            onChange={(event) => setDescription(event.target.value)}
+            onChange={event => edit(setDescription, event.target.value)}
           />
         </Field>
         <div className="grid gap-4 sm:grid-cols-3">
           <Field label="Privacy policy URL">
-            <Input type="url" value={privacyPolicyUrl} onChange={(event) => setPrivacyPolicyUrl(event.target.value)} />
+            <Input
+              type="url"
+              value={privacyPolicyUrl}
+              onChange={event => edit(setPrivacyPolicyUrl, event.target.value)}
+            />
           </Field>
           <Field label="Support URL">
-            <Input type="url" value={supportUrl} onChange={(event) => setSupportUrl(event.target.value)} />
+            <Input type="url" value={supportUrl} onChange={event => edit(setSupportUrl, event.target.value)} />
           </Field>
           <Field label="Website URL">
-            <Input type="url" value={websiteUrl} onChange={(event) => setWebsiteUrl(event.target.value)} />
+            <Input type="url" value={websiteUrl} onChange={event => edit(setWebsiteUrl, event.target.value)} />
           </Field>
         </div>
         <div>
@@ -133,7 +146,7 @@ export function StoreListingCard({ packageName }: { packageName: string }) {
             {uploadInput("gallery_screenshot", "Add screenshot")}
           </div>
           <div className="mt-3 grid gap-2">
-            {assets.map((asset) => (
+            {assets.map(asset => (
               <AssetRow
                 key={asset.id}
                 asset={asset}

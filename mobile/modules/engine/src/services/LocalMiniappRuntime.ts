@@ -80,7 +80,8 @@ import {resolveForegroundLocationPermission} from "./ForegroundLocationPermissio
 import {advanceMiniappPingLiveness} from "./MiniappLiveness"
 import {listPhoneCalendarEvents, PhoneCalendarError} from "./PhoneCalendarService"
 import {LocalMiniappStorage} from "./LocalMiniappStorage"
-import {isSystemMiniappPackage, SYSTEM_MINIAPP_PACKAGES} from "./SystemMiniappPolicy"
+import {isStoreMiniappPackage, isSystemMiniappPackage} from "./SystemMiniappPolicy"
+import {installWithRuntimeReload} from "../utils/storeInstallRuntime"
 
 // =============================================================================
 // Types
@@ -4322,10 +4323,7 @@ class LocalMiniappRuntime {
     requestId?: string,
   ): Promise<void> {
     const target = typeof payload.packageName === "string" ? payload.packageName : undefined
-    if (
-      !SYSTEM_MINIAPP_PACKAGES.has(storePackageName) ||
-      !this.connectedApps.get(storePackageName)?.hostTrustedSystem
-    ) {
+    if (!isStoreMiniappPackage(storePackageName) || !this.connectedApps.get(storePackageName)?.hostTrustedSystem) {
       this.sendResult(storePackageName, requestId, false, undefined, {
         code: MiniappErrorCode.NOT_PERMITTED,
         message: "Installing miniapps is restricted to bundled system Stores",
@@ -4359,7 +4357,7 @@ class LocalMiniappRuntime {
       })
       return
     }
-    if (SYSTEM_MINIAPP_PACKAGES.has(target)) {
+    if (isSystemMiniappPackage(target)) {
       this.sendResult(storePackageName, requestId, false, undefined, {
         code: MiniappErrorCode.NOT_PERMITTED,
         message: "Store APIs cannot replace bundled system miniapps",
@@ -4394,26 +4392,40 @@ class LocalMiniappRuntime {
         return
       }
 
-      const result = await appRegistry.installFromUrl(bundleUrl, {
-        expectedPackageName: target,
-        expectedVersion: version,
-        expectedBundleSha256: bundleSha256,
-        onProgress: (phase) =>
-          this.sendToMiniapp(storePackageName, {
-            type: MiniappResponseType.MINIAPPS_INSTALL_PROGRESS,
-            packageName: target,
-            version,
-            phase,
-          }),
-        releaseIdentity: {
-          source: "store",
-          storePackageName,
-          bundleSha256,
-          ...(typeof payload.releaseId === "string" ? {releaseId: payload.releaseId} : {}),
-          ...(typeof payload.channel === "string" ? {channel: payload.channel} : {}),
+      await installWithRuntimeReload(
+        miniappLauncher,
+        target,
+        async () => {
+          const installed = await appRegistry.installFromUrl(bundleUrl, {
+            expectedPackageName: target,
+            expectedVersion: version,
+            expectedBundleSha256: bundleSha256,
+            onProgress: (phase) =>
+              this.sendToMiniapp(storePackageName, {
+                type: MiniappResponseType.MINIAPPS_INSTALL_PROGRESS,
+                packageName: target,
+                version,
+                phase,
+              }),
+            releaseIdentity: {
+              source: "store",
+              storePackageName,
+              bundleSha256,
+              ...(typeof payload.releaseId === "string" ? {releaseId: payload.releaseId} : {}),
+              ...(typeof payload.channel === "string" ? {channel: payload.channel} : {}),
+            },
+          })
+          if (installed.is_error()) throw installed.error
+          return installed
         },
-      })
-      if (result.is_error()) throw result.error
+        (restartError) => {
+          console.warn(
+            `${LOG_TAG}: failed to restore ${target} after Store install: ${
+              (restartError as Error)?.message ?? restartError
+            }`,
+          )
+        },
+      )
       this.sendToMiniapp(storePackageName, {
         type: MiniappResponseType.MINIAPPS_INSTALL_PROGRESS,
         packageName: target,
@@ -4450,17 +4462,14 @@ class LocalMiniappRuntime {
     requestId?: string,
   ): Promise<void> {
     const target = typeof payload.packageName === "string" ? payload.packageName : undefined
-    if (
-      !SYSTEM_MINIAPP_PACKAGES.has(storePackageName) ||
-      !this.connectedApps.get(storePackageName)?.hostTrustedSystem
-    ) {
+    if (!isStoreMiniappPackage(storePackageName) || !this.connectedApps.get(storePackageName)?.hostTrustedSystem) {
       this.sendResult(storePackageName, requestId, false, undefined, {
         code: MiniappErrorCode.NOT_PERMITTED,
         message: "Uninstalling miniapps is restricted to bundled system Stores",
       })
       return
     }
-    if (!target || SYSTEM_MINIAPP_PACKAGES.has(target)) {
+    if (!target || isSystemMiniappPackage(target)) {
       this.sendResult(storePackageName, requestId, false, undefined, {
         code: MiniappErrorCode.NOT_PERMITTED,
         message: "A Store cannot uninstall a bundled system miniapp",
@@ -4478,10 +4487,10 @@ class LocalMiniappRuntime {
     try {
       const activeVersion = await appRegistry.getActiveVersion(target)
       const identity = activeVersion ? appRegistry.getReleaseIdentity(target, activeVersion) : null
-      if (identity?.source === "store" && identity.storePackageName !== storePackageName) {
+      if (identity?.source !== "store" || identity.storePackageName !== storePackageName) {
         this.sendResult(storePackageName, requestId, false, undefined, {
           code: MiniappErrorCode.STORE_OWNERSHIP_CONFLICT,
-          message: `${target} is managed by ${identity.storePackageName ?? "another Store"}`,
+          message: `${target} is managed by ${identity?.storePackageName ?? "another Store"}`,
         })
         return
       }

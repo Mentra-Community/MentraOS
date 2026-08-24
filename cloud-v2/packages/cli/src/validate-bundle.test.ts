@@ -34,4 +34,18 @@ describe("validatePackedBundle", () => {
       "missing",
     );
   });
+
+  test("rejects traversal entry paths", async () => {
+    const unsafeManifest = { ...manifest, entry: { background: "../background/index.js" } };
+    await expect(validatePackedBundle(await bundle(unsafeManifest), unsafeManifest)).rejects.toThrow("unsafe path");
+  });
+
+  test("rejects symbolic links", async () => {
+    const zip = new JSZip();
+    zip.file("miniapp.json", JSON.stringify(manifest));
+    zip.file("background/index.js", "target", { unixPermissions: 0o120777 });
+    await expect(
+      validatePackedBundle(await zip.generateAsync({ type: "uint8array", platform: "UNIX" }), manifest),
+    ).rejects.toThrow("symbolic link");
+  });
 });

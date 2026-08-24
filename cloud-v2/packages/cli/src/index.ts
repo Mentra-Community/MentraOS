@@ -284,7 +284,7 @@ releases
     if (!creds) return;
     try {
       const { releases: releaseList } = await listReleases(creds, packageName);
-      const release = releaseId ? releaseList.find((item) => item.id === releaseId) : releaseList[0];
+      const release = releaseId ? releaseList.find(item => item.id === releaseId) : releaseList[0];
       if (!release) throw new Error(releaseId ? `Release not found: ${releaseId}` : `No releases for ${packageName}`);
       if (options.json) console.log(JSON.stringify({ release }, null, 2));
       else {
@@ -386,7 +386,7 @@ preinstall
     try {
       const environment = options.environment ? parseEnvironment(options.environment) : inferEnvironment(creds.coreUrl);
       const { registries } = await listAdminRegistries(creds);
-      const registry = registries.find((item) => item.environment === environment && item.name === "default");
+      const registry = registries.find(item => item.environment === environment && item.name === "default");
       if (!registry) {
         console.log(`No active ${environment} preinstall registry.`);
         return;
@@ -401,7 +401,7 @@ preinstall
       }
 
       const { revisions } = await listAdminRegistryRevisions(creds, registry.id);
-      const active = revisions.find((revision) => revision.id === registry.activeRevisionId);
+      const active = revisions.find(revision => revision.id === registry.activeRevisionId);
       console.log(`Active revision: ${registry.activeRevisionId}`);
       if (!active || active.entries.length === 0) {
         console.log("No preinstalled releases.");
@@ -409,7 +409,7 @@ preinstall
       }
 
       const { releases: releaseList } = await listAdminPreinstallReleases(creds);
-      const byId = new Map(releaseList.map((release) => [release.id, release]));
+      const byId = new Map(releaseList.map(release => [release.id, release]));
       for (const entry of active.entries) {
         const release = byId.get(entry.releaseId);
         const label = release ? `${release.packageName}@${release.version}` : entry.releaseId;
@@ -431,7 +431,7 @@ preinstall
     try {
       const environment = options.environment ? parseEnvironment(options.environment) : null;
       const { registries } = await listAdminRegistries(creds);
-      const filtered = environment ? registries.filter((registry) => registry.environment === environment) : registries;
+      const filtered = environment ? registries.filter(registry => registry.environment === environment) : registries;
       if (filtered.length === 0) {
         console.log("No preinstall registries.");
         return;
@@ -441,7 +441,7 @@ preinstall
         console.log(formatRegistry(registry));
         if (registry.activeRevisionId) {
           const { revisions } = await listAdminRegistryRevisions(creds, registry.id);
-          const active = revisions.find((revision) => revision.id === registry.activeRevisionId);
+          const active = revisions.find(revision => revision.id === registry.activeRevisionId);
           if (active) {
             console.log(`  active revision: ${active.id}`);
             for (const entry of active.entries) {
@@ -598,9 +598,9 @@ program
       await ensureMiniappRecord(creds, { packageName, displayName: name, description });
 
       if (options.pack) {
-        await packMiniapp({ cwd, build: options.build });
+        await packMiniapp({ cwd, build: options.build, silent: options.json });
       } else if (options.build) {
-        await buildMiniappProduction(cwd);
+        await buildMiniappProduction(cwd, { silent: options.json });
       }
 
       const zipPath = join(cwd, "build", `${packageName}-${version}.zip`);
@@ -760,7 +760,7 @@ async function ensureMiniappRecord(
   }
 
   const { apps } = await listApps(creds);
-  const existing = apps.find((app) => app.packageName === input.packageName && app.status !== "archived");
+  const existing = apps.find(app => app.packageName === input.packageName && app.status !== "archived");
   if (!existing) {
     throw new Error(`Package ${input.packageName} is already claimed by another developer org.`);
   }
@@ -801,16 +801,16 @@ function parsePolicy(value: string): PreinstallPolicy {
 }
 
 function resolveReleaseRefs(refs: string[], releases: AdminReleaseSummary[]): AdminReleaseSummary[] {
-  const selected = refs.map((ref) => {
+  const selected = refs.map(ref => {
     const trimmed = ref.trim();
-    const byId = releases.find((release) => release.id === trimmed);
+    const byId = releases.find(release => release.id === trimmed);
     if (byId) return byId;
 
     const atIndex = trimmed.lastIndexOf("@");
     if (atIndex > 0) {
       const packageName = trimmed.slice(0, atIndex);
       const version = trimmed.slice(atIndex + 1);
-      const matches = releases.filter((release) => release.packageName === packageName && release.version === version);
+      const matches = releases.filter(release => release.packageName === packageName && release.version === version);
       if (matches.length === 1) return matches[0];
       if (matches.length > 1) throw new Error(`release ref ${trimmed} matched more than one release`);
     }
@@ -840,11 +840,11 @@ async function activePreinstallReleaseIds(
   environment: PreinstallEnvironment,
 ): Promise<Set<string>> {
   const { registries } = await listAdminRegistries(credentials);
-  const registry = registries.find((item) => item.environment === environment && item.name === "default");
+  const registry = registries.find(item => item.environment === environment && item.name === "default");
   if (!registry?.activeRevisionId) return new Set();
   const { revisions } = await listAdminRegistryRevisions(credentials, registry.id);
-  const active = revisions.find((revision) => revision.id === registry.activeRevisionId);
-  return new Set(active?.entries.map((entry) => entry.releaseId) ?? []);
+  const active = revisions.find(revision => revision.id === registry.activeRevisionId);
+  return new Set(active?.entries.map(entry => entry.releaseId) ?? []);
 }
 
 interface AdminReleaseGroup {
@@ -862,13 +862,13 @@ function groupAdminReleases(releases: AdminReleaseSummary[], activeReleaseIds: S
   }
 
   return [...groups.values()]
-    .map((groupReleases) => {
+    .map(groupReleases => {
       const sorted = [...groupReleases].sort(compareReleaseRecency);
       return {
         packageName: sorted[0]!.packageName,
         displayName: sorted[0]!.displayName,
         latest: sorted[0]!,
-        current: sorted.find((release) => activeReleaseIds.has(release.id)) ?? null,
+        current: sorted.find(release => activeReleaseIds.has(release.id)) ?? null,
         releases: sorted,
       };
     })
@@ -911,5 +911,5 @@ function commandNameForCoreUrl(coreUrl: string): string {
 }
 
 function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
