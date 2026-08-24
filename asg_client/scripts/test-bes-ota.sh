@@ -107,7 +107,7 @@ fi
 # run to distinguish our staged copy from a new phone-owned file and fail closed
 # rather than overwrite an ambiguous artifact.
 if "${ADB[@]}" shell test -f "$LEGACY_BACKUP_STATE_PATH"; then
-    echo "♻️  Recovering the ASG 36 compatibility path from an interrupted run..."
+    echo "♻️  Recovering firmware-update state from an interrupted run..."
     BACKUP_STATE="$("${ADB[@]}" shell cat "$LEGACY_BACKUP_STATE_PATH" 2>/dev/null | tr -d '\r\n')"
     IFS=: read -r BACKUP_MODE STAGED_SHA ORIGINAL_SHA <<< "$BACKUP_STATE"
     if [[ "$BACKUP_MODE" != "existing" && "$BACKUP_MODE" != "absent" ]] \
@@ -207,7 +207,7 @@ LEGACY_PATH_STAGED=true
 "${ADB[@]}" shell cp "$REMOTE_PATH" "$LEGACY_REMOTE_PATH"
 LEGACY_REMOTE_SHA256="$(device_sha256 "$LEGACY_REMOTE_PATH")"
 if [ "$LEGACY_REMOTE_SHA256" != "$FIRMWARE_SHA256" ]; then
-    echo "❌ Device SHA-256 mismatch at legacy ASG 36 path"
+    echo "❌ Device SHA-256 mismatch for the staged compatibility image"
     "${ADB[@]}" shell rm -f "$REMOTE_PATH" "$LEGACY_REMOTE_PATH"
     exit 1
 fi

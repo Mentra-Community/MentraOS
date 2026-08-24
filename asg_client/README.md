@@ -139,11 +139,11 @@ custom ASG Client:
 ./scripts/update-mentra-live.sh
 ```
 
-The script preserves the third-party APK and its app data. It temporarily activates signed stock
-ASG to update BES and MTK, then returns to the existing third-party launcher only after verifying
-the firmware transitions. If the update fails, it leaves stock ASG active as the recovery-safe
-launcher. See the [custom-client firmware maintenance runbook](docs/features/dev-firmware-update.md)
-for the complete update sequence, data-preservation behavior, and recovery procedures.
+The script preserves the third-party APK and its app data, updates the glasses with Mentra-signed
+firmware, and returns to the existing third-party launcher after verifying the update. If the
+update fails, it leaves the stock launcher active as a safe recovery path. See
+[maintaining customized Mentra Live devices](docs/features/dev-firmware-update.md) for setup,
+firmware update, reconnect, and recovery guidance.
 
 ### Restoring Stock Firmware
 
