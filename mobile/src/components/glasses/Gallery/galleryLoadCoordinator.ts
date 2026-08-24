@@ -12,22 +12,24 @@ export interface GalleryLoadCoordinator {
  */
 export function createGalleryLoadCoordinator(): GalleryLoadCoordinator {
   let inFlight: Promise<void> | null = null
-  let refreshRequested = false
-  let latestLoad: (() => Promise<void>) | null = null
+  let queuedLoad: (() => Promise<void>) | null = null
 
   return {
     run(load, {refreshAfterCurrent = true} = {}) {
-      latestLoad = load
       if (inFlight) {
-        if (refreshAfterCurrent) refreshRequested = true
+        // Lifecycle calls may share the current request, but only a storage
+        // mutation is allowed to replace the queued refresh callback.
+        if (refreshAfterCurrent) queuedLoad = load
         return inFlight
       }
 
       const request = (async () => {
-        do {
-          refreshRequested = false
-          await latestLoad?.()
-        } while (refreshRequested)
+        let nextLoad: (() => Promise<void>) | null = load
+        while (nextLoad) {
+          await nextLoad()
+          nextLoad = queuedLoad
+          queuedLoad = null
+        }
       })()
 
       inFlight = request
