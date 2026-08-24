@@ -119,9 +119,9 @@ Unplug the Infinity Cable, then plug it back in.
 The script will resume automatically when ADB returns.
 ```
 
-The script keeps waiting for the selected device. If ADB returns with the old boot ID, it sends one
-explicit `adb reboot` and bounds the online wait for that reboot. Wi-Fi ADB devices are waited for
-without showing the USB cable instruction.
+The script keeps waiting for the selected device. If ADB returns with the old boot ID, it sends an
+explicit `adb reboot` up to three times and bounds the online wait for each attempt. Wi-Fi ADB
+devices are waited for without showing the USB cable instruction.
 
 ## Failure and recovery behavior
 

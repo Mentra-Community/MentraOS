@@ -147,7 +147,7 @@ version_at_least() {
 valid_bes_version() {
   awk -F. 'NF != 4 { exit 1 } {
     for (x = 1; x <= 4; x++) {
-      if ($x !~ /^[0-9]{1,3}$/ || $x + 0 > 255) exit 1;
+      if ($x !~ /^[0-9][0-9]?[0-9]?$/ || $x + 0 > 255) exit 1;
     }
     exit 0;
   }' <<< "$1"

@@ -91,6 +91,17 @@ restore_legacy_path() {
 
 trap restore_legacy_path EXIT
 
+# The ASG 36 rendezvous uses a fixed regular-file path. A directory, broken
+# symlink, or other special entry there cannot be staged safely and must not be
+# mistaken for an absent phone-owned artifact.
+if "${ADB[@]}" shell test -e "$LEGACY_REMOTE_PATH" \
+    || "${ADB[@]}" shell test -L "$LEGACY_REMOTE_PATH"; then
+    if ! "${ADB[@]}" shell test -f "$LEGACY_REMOTE_PATH"; then
+        echo "❌ Compatibility path exists but is not a regular file: $LEGACY_REMOTE_PATH" >&2
+        exit 1
+    fi
+fi
+
 # A previous run can lose ADB during the fixed-path swap. The stable state file
 # records both the debug image and original artifact digests, allowing the next
 # run to distinguish our staged copy from a new phone-owned file and fail closed
@@ -159,6 +170,14 @@ echo ""
 echo "📤 Pushing firmware to glasses..."
 "${ADB[@]}" shell mkdir -p /storage/emulated/0/asg
 "${ADB[@]}" push "$FIRMWARE_PATH" "$REMOTE_PATH"
+
+if "${ADB[@]}" shell test -e "$LEGACY_REMOTE_PATH" \
+    || "${ADB[@]}" shell test -L "$LEGACY_REMOTE_PATH"; then
+    if ! "${ADB[@]}" shell test -f "$LEGACY_REMOTE_PATH"; then
+        echo "❌ Compatibility path became a non-regular file: $LEGACY_REMOTE_PATH" >&2
+        exit 1
+    fi
+fi
 
 REMOTE_SHA256="$(device_sha256 "$REMOTE_PATH")"
 if [ "$REMOTE_SHA256" != "$FIRMWARE_SHA256" ]; then
