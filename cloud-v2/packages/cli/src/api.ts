@@ -159,7 +159,7 @@ export interface AdminRegistryRevision {
 }
 
 export async function startLogin(config: CliConfig): Promise<DeviceAuthorizationResponse> {
-  assertWorkosClientId(config);
+  await ensureWorkosClientId(config);
   const body = new URLSearchParams({ client_id: config.workosClientId });
   const response = await fetch(`${config.workosApiBaseUrl}/user_management/authorize/device`, {
     method: "POST",
@@ -174,7 +174,7 @@ export async function pollLoginToken(
   config: CliConfig,
   deviceCode: string,
 ): Promise<LoginTokenResponse | PendingDeviceAuthorization | SlowDownDeviceAuthorization> {
-  assertWorkosClientId(config);
+  await ensureWorkosClientId(config);
   const body = new URLSearchParams({
     grant_type: DEVICE_AUTH_GRANT_TYPE,
     device_code: deviceCode,
@@ -200,7 +200,7 @@ export async function refreshLoginToken(
   refreshToken: string,
   organizationId?: string | null,
 ): Promise<LoginTokenResponse> {
-  assertWorkosClientId(config);
+  await ensureWorkosClientId(config);
   const body: Record<string, string> = {
     client_id: config.workosClientId,
     grant_type: "refresh_token",
@@ -390,12 +390,21 @@ async function coreRequest<T>(credentials: CliCredentials, path: string, init?: 
   return (await response.json()) as T;
 }
 
-function assertWorkosClientId(config: CliConfig): void {
-  if (!config.workosClientId) {
-    throw new Error(
-      "WORKOS_CLIENT_ID is not configured. Add the public AuthKit client id to Doppler cloud-v2/dev as WORKOS_CLIENT_ID.",
-    );
+async function ensureWorkosClientId(config: CliConfig): Promise<void> {
+  if (config.workosClientId) return;
+
+  const response = await fetch(`${config.coreUrl}/api/console/auth/cli-config`, {
+    headers: { accept: "application/json" },
+  });
+  if (!response.ok) throw new Error(await errorMessage(response));
+  const body = (await response.json()) as { workosClientId?: unknown };
+  if (typeof body.workosClientId !== "string" || !body.workosClientId.trim()) {
+    throw new Error("Mentra Core did not provide a WorkOS client id for CLI login");
   }
+  // Cache the public client id on this command's config so polling does not
+  // refetch Core every interval. Environment overrides still win for local or
+  // non-Mentra deployments.
+  config.workosClientId = body.workosClientId.trim();
 }
 
 async function errorMessage(response: Response): Promise<string> {

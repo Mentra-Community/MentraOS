@@ -31,6 +31,14 @@ publisher signatures can be enforced later without changing the API.
 - [x] Require both an exact hardcoded package and host-bundled provenance. A dev
       miniapp copying `com.mentra.store` is not privileged.
 - [x] Protect every bundled SYSTEM package from Store replacement or removal.
+- [x] Protect every bundled SYSTEM package from direct user uninstall at the
+      host registry boundary while preserving Remove from Home.
+- [x] Hardcode the currently shipped first-party bundles (including Notes,
+      Translation, Livestreamer, Captions, Merge, Maps, Recorder, and
+      Teleprompter) as SYSTEM for the initial release.
+- [x] Persist user uninstalls for non-SYSTEM bundled miniapps so app startup
+      does not silently reinstall them; an explicit later install clears the
+      tombstone.
 - [x] Record the installing Store as provenance and reject cross-Store updates
       and removals.
 - [x] Allow an OEM build to add one or more bundled Store package names to the
@@ -156,6 +164,43 @@ These are not blockers for the approved first-release trust model.
 - [ ] Verify publisher signatures again on-device and enforce publisher-key
       continuity across package upgrades.
 - [ ] Add issuer/key rotation and revocation UX.
+
+## Launch-readiness audit findings (2026-08-24)
+
+The implementation is a strong install/catalog foundation, but the following
+work remains before describing the overall Store program as production-ready:
+
+- [ ] Add an automatic-update policy for Store-installed miniapps. The Store
+      currently checks on startup/open/foreground/reconnect and every 15
+      minutes, but only exposes a user-triggered Update action.
+- [ ] Seed or migrate production Store content. Cloud V2 production currently
+      has no active published miniapp records, while the legacy Cloud V1 Store
+      currently exposes 10 published cloud miniapps that cannot be copied
+      blindly without canonical local bundles and publisher identities.
+- [ ] Merge and deploy the Core catalog route; the production
+      `/api/store/apps` endpoint returns 404 until this change is deployed.
+- [ ] Resolve the remaining browser Developer Console scope in Linear OS-1443.
+      The Console now manages listings, shows the canonical manifest and
+      release history, and can submit/re-submit CLI-uploaded drafts. Direct ZIP
+      upload remains intentionally CLI-only so publisher signing keys stay on
+      the developer's machine; the Linear acceptance text should be updated if
+      that is the final product decision.
+- [x] Make the published Cloud V2 `mentra` CLI default to production and
+      discover the selected Core's public WorkOS client id, while retaining
+      environment overrides for dev/staging/OEM deployments.
+- [ ] Expand the admin review UI to show the canonical manifest permissions,
+      hardware requirements, Store listing/artwork, and moderation controls
+      before publication.
+- [ ] Decide and enforce Store-listing completeness requirements (at minimum
+      icon, description, privacy/support information) before publication.
+- [ ] Add successful-update garbage collection for obsolete semver bundle
+      directories while preserving the rollback version.
+- [ ] Verify the full flow on attached iOS and Android devices, including
+      install, runtime restart, rollback, offline recovery, update, uninstall,
+      and Remove from Home.
+- [ ] Finish the public SDK launch work tracked in Linear OS-1907 and promote
+      Cloud V2 `@mentra/cli` from prerelease after this production auth flow is
+      validated.
 
 ## Pull request and review
 

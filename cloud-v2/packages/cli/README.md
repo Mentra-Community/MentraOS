@@ -35,4 +35,8 @@ mentra miniapps list      # miniapps owned by your org
 mentra releases submit    # submit an uploaded release for review
 ```
 
+The published CLI targets production by default. Set `MENTRA_CORE_URL` and
+`MENTRA_CONSOLE_URL` to use a local, development, staging, or self-hosted Core;
+the CLI discovers that Core's public WorkOS client id automatically.
+
 Run `mentra <command> --help` for the full option set.

@@ -128,6 +128,7 @@ const createApiTokenSchema = z.object({
 });
 
 app.get("/health", c => c.json({ status: "ok", service: "cloud-core-console" }));
+app.get("/auth/cli-config", getCliConfig);
 app.get("/auth/login", getLogin);
 app.get("/auth/social/:provider", getSocialLogin);
 app.get("/auth/callback", getCallback);
@@ -160,6 +161,15 @@ app.delete("/tokens/:tokenId", deleteToken);
 app.post("/auth/magic/start", postMagicStart);
 app.post("/auth/magic/verify", postMagicVerify);
 app.post("/auth/logout", postLogout);
+
+function getCliConfig(c: AppContext) {
+  const workosClientId = process.env.WORKOS_CLIENT_ID;
+  if (!workosClientId) throw new OauthServerError("WORKOS_CLIENT_ID is not configured");
+  // WorkOS client ids are intentionally public OAuth configuration. Serving
+  // this from the selected Core makes the published CLI self-configuring while
+  // keeping each Mentra/OEM environment independent.
+  return c.json({ workosClientId });
+}
 
 function getLogin(c: AppContext) {
   return redirectToWorkos(c, "authkit");

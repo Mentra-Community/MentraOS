@@ -1,19 +1,21 @@
 import { Link, useParams } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Boxes, ChevronLeft } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { PackageName } from "@/components/package-name";
 import { Badge } from "@/components/status-badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { sessionQuery } from "@/features/session/session.queries";
 import { appsQuery } from "./apps.queries";
-import { listDeveloperReleases, type DeveloperRelease } from "./apps.api";
+import { listDeveloperReleases, submitDeveloperRelease, type DeveloperRelease } from "./apps.api";
 import { StoreListingCard } from "./store-listing-card";
 
 const reviewStatuses = new Set(["submitted", "in_review"]);
 
 export function MiniappDetailPage() {
   const { packageName } = useParams({ from: "/apps/$packageName" });
+  const queryClient = useQueryClient();
   const session = useQuery(sessionQuery());
   const canLoadPrivateData = session.isSuccess && !session.data.onboardingRequired;
   const apps = useQuery(appsQuery(canLoadPrivateData));
@@ -21,6 +23,15 @@ export function MiniappDetailPage() {
     queryKey: ["developer-releases", packageName],
     queryFn: () => listDeveloperReleases(packageName),
     enabled: canLoadPrivateData,
+  });
+  const submitRelease = useMutation({
+    mutationFn: (releaseId: string) => submitDeveloperRelease({ packageName, releaseId }),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["developer-releases", packageName] }),
+        queryClient.invalidateQueries({ queryKey: ["developer-apps"] }),
+      ]);
+    },
   });
 
   const app = apps.data?.apps.find(item => item.packageName === packageName);
@@ -120,9 +131,27 @@ export function MiniappDetailPage() {
                         {release.bundleSha256 ? ` · ${release.bundleSha256.slice(0, 12)}…` : ""}
                       </div>
                     </div>
-                    <div className="text-sm text-[#747780] md:text-right">{formatDate(release.createdAt)}</div>
+                    <div className="flex items-center gap-2 md:flex-col md:items-end">
+                      <div className="text-sm text-[#747780]">{formatDate(release.createdAt)}</div>
+                      {release.status === "draft" || release.status === "rejected" ? (
+                        <Button
+                          size="sm"
+                          className="rounded-full bg-[#111217] text-white hover:bg-[#25262c]"
+                          disabled={submitRelease.isPending}
+                          onClick={() => submitRelease.mutate(release.id)}>
+                          {submitRelease.isPending && submitRelease.variables === release.id
+                            ? "Submitting…"
+                            : "Submit for review"}
+                        </Button>
+                      ) : null}
+                    </div>
                   </div>
                 ))}
+                {submitRelease.error ? (
+                  <div className="px-4 py-3 text-sm text-red-700 sm:px-6">
+                    {submitRelease.error instanceof Error ? submitRelease.error.message : "Could not submit release"}
+                  </div>
+                ) : null}
               </div>
             )}
           </CardContent>

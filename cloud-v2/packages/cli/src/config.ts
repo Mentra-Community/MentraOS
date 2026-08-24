@@ -8,8 +8,8 @@ export interface CliConfig {
 export function getConfig(): CliConfig {
   const workosClientId = process.env.MENTRA_WORKOS_CLIENT_ID || process.env.WORKOS_CLIENT_ID || "";
   return {
-    coreUrl: normalizeUrl(process.env.MENTRA_CORE_URL || "http://localhost:3000"),
-    consoleUrl: normalizeUrl(process.env.MENTRA_CONSOLE_URL || "http://localhost:5173"),
+    coreUrl: normalizeUrl(process.env.MENTRA_CORE_URL || "https://core.mentraglass.com"),
+    consoleUrl: normalizeUrl(process.env.MENTRA_CONSOLE_URL || "https://console2.mentraglass.com"),
     workosClientId,
     workosApiBaseUrl: normalizeUrl(process.env.WORKOS_API_BASE_URL || "https://api.workos.com"),
   };

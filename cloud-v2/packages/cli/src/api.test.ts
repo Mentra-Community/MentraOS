@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { createRelease } from "./api";
+import { createRelease, startLogin } from "./api";
+import type { CliConfig } from "./config";
 
 const credentials = {
   token: "token",
@@ -58,5 +59,39 @@ describe("createRelease", () => {
     });
     expect(JSON.parse(String(form.get("signedBundle")))).toMatchObject({ signingKeyId: "key_1" });
     expect(request?.headers).not.toHaveProperty("content-type");
+  });
+});
+
+describe("startLogin", () => {
+  test("discovers the public WorkOS client id from the selected Core", async () => {
+    const config: CliConfig = {
+      coreUrl: "https://core.example.test",
+      consoleUrl: "https://console.example.test",
+      workosClientId: "",
+      workosApiBaseUrl: "https://api.workos.test",
+    };
+    const requests: string[] = [];
+    globalThis.fetch = mock(async (url: string | URL | Request) => {
+      requests.push(String(url));
+      if (String(url).endsWith("/api/console/auth/cli-config")) {
+        return Response.json({ workosClientId: "client_public_123" });
+      }
+      return Response.json({
+        device_code: "device",
+        user_code: "USER-CODE",
+        verification_uri: "https://login.example.test/device",
+        verification_uri_complete: "https://login.example.test/device?code=USER-CODE",
+        expires_in: 600,
+        interval: 5,
+      });
+    }) as unknown as typeof fetch;
+
+    await startLogin(config);
+
+    expect(requests).toEqual([
+      "https://core.example.test/api/console/auth/cli-config",
+      "https://api.workos.test/user_management/authorize/device",
+    ]);
+    expect(config.workosClientId).toBe("client_public_123");
   });
 });
