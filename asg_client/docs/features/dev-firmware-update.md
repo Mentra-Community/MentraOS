@@ -1,181 +1,113 @@
-# Mentra Live firmware maintenance for custom ASG Clients
+# Maintaining customized Mentra Live devices
 
-This runbook covers the supported shell-script flow for bringing Mentra Live ASG, BES, and MTK
-firmware to the latest staging baseline before or while running a custom ASG Client.
+This guide is for teams that prepare and manage fleets of Mentra Live devices with a custom ASG
+Client. The provided scripts handle initial setup, firmware maintenance, recovery, and returning
+the glasses to your custom launcher.
 
 ## Choose the command
 
-From `asg_client/`:
+Run these commands from `asg_client/`:
 
 ```bash
-# First installation, or rebuilding the custom client from this checkout
+# Build and install your custom ASG Client on a new or reset device
 ./scripts/dev-setup.sh
 
-# Firmware maintenance when dev-setup.sh already installed the custom client
+# Safely update a device that already has your custom ASG Client
 ./scripts/update-mentra-live.sh
 
-# Remove the custom client and return to stock
+# Remove your custom ASG Client and return the device to stock software
 ./scripts/restore-stock.sh
 ```
 
-`update-mentra-live.sh` supports the package installed by `dev-setup.sh`:
-`com.mentra.asg_client.thirdparty`. It does not rebuild, reinstall, or clear that package, so its
-APK and app data survive the maintenance window.
+## Before you begin
 
-## Prerequisites
+- Connect Mentra Live to your computer with the Infinity Cable.
+- Confirm that the device appears as `device` when you run `adb devices`.
+- Install `adb`, `curl`, `jq`, and `python3` on your computer.
+- Keep your computer online while the script downloads and verifies the required files.
+- Keep the glasses connected until the script says the operation is complete.
 
-- Connect Mentra Live with the Infinity Cable and confirm it appears in `adb devices`.
-- Install `adb`, `curl`, `jq`, and `python3` on the host.
-- Keep the host online while artifacts download.
-- If multiple Android devices are attached, select the glasses explicitly:
-
-  ```bash
-  ADB_SERIAL=<serial> ./scripts/update-mentra-live.sh
-  ```
-
-The scripts download every required artifact and verify its SHA-256 before changing packages or
-firmware. Do not disconnect the glasses during a BES or MTK transfer.
-
-## Baseline selection
-
-Each run downloads this rolling staging manifest exactly once:
-
-```text
-https://github.com/Mentra-Community/MentraOS/releases/download/staging-builds/staging_live_version.json
-```
-
-That local snapshot controls the entire run: target stock ASG APK, BES image, and the exact MTK
-patch graph. Although the release asset is mutable between staging publications, it cannot change
-under a run after the initial download.
-
-For a deliberate test, override the manifest without editing the script:
+If more than one Android device is attached, select the glasses explicitly:
 
 ```bash
-./scripts/update-mentra-live.sh --manifest-url https://example.com/version.json
+ADB_SERIAL=<serial> ./scripts/dev-setup.sh
+ADB_SERIAL=<serial> ./scripts/update-mentra-live.sh
 ```
 
-The manifest and all referenced files must pass the same HTTPS, schema, size, and SHA-256 checks.
+## Set up a customized device
 
-## Why ASG 36 is a bridge
+Use `dev-setup.sh` when preparing a Mentra Live for the first time or when installing a new build
+from your checkout:
 
-Factory/day-one BES firmware cannot reliably communicate with current ASG builds. The updater
-temporarily installs the officially signed ASG 36 bridge because it can communicate with that old
-BES generation and its high version code can replace old stock update layers.
-
-ASG 36 reads `/storage/emulated/0/asg/bes_firmware.bin` and accepts a no-metadata debug broadcast.
-Current ASG reads a hash-addressed debug artifact and validates target/hash metadata. The shared
-`test-bes-ota.sh` stages both forms, but moves any existing phone-owned legacy artifact aside and
-restores it immediately after ASG 36 synchronously loads the debug image. The backup uses a stable
-path, so a later run restores it before staging anything if ADB disappeared during the short
-compatibility window.
-
-Modern BES can retain a negotiated 1152000 baud when its ASG process stops, while ASG 36 only
-opens the universal 460800 rendezvous baud. The updater therefore uses the manifest-pinned stock
-client, or retains an already-installed newer stock client, to probe both supported baud rates.
-When it proves a BES link, it sends a BES-only reset, requires confirmation that the reset reached
-UART, and force-stops the current client before it can renegotiate. ASG 36 then starts after BES
-has returned to 460800. If current ASG cannot find BES at either baud, ASG 36 performs the legacy
-discovery needed by the factory BES generation. Any later failure removes the bridge and restores
-the manifest-pinned stock client, a newer built-in stock client exposed by bridge removal, or the
-exact newer data update preserved before the transition, before selecting stock HOME.
-
-Installing ASG 36 replaces an active `/data/app` stock update even though uninstalling ASG 36 can
-only reveal the older system copy. Before that transition, the updater preserves any stock APK
-newer than the manifest target at `/storage/emulated/0/asg/dev_setup_newer_stock.apk`, along with
-its version and SHA-256. The copy survives an ADB disconnect and is restored before the staging
-target after bridge removal. A split-APK stock install fails closed because a single APK backup
-could not reproduce it exactly. Built-in stock versions do not need a copy because uninstalling
-the bridge reveals them again. On the next run, the updater compares the installed, preserved,
-and current manifest versions: it restores the preserved update when bridge removal exposed an
-older package, keeps an installed version that is at least as new, and discards the copy when the
-rolling manifest target has caught up.
-
-After ASG 36 reports apply success, the updater waits for the BES chip to reboot and repeatedly
-requests `version_info_3`. It does not continue until the reported BES version is at least the
-manifest target. A newer BES is retained rather than downgraded.
-
-## Update sequence
-
-The updater performs these steps:
-
-1. Resolve exactly one ADB device and snapshot the staging manifest.
-2. Independently validate and download the target stock ASG. If an interrupted run left ASG 36
-   installed, remove it and activate the verified stock ASG before unrelated firmware preflight.
-3. Validate the full manifest, read the current MTK version, then download and verify ASG 36, BES
-   firmware, and every MTK patch in the exact current-to-terminal path.
-4. Disable the third-party client, recovery sidecar, and legacy updater; use the manifest-pinned
-   stock ASG (or an already-installed newer stock ASG) to probe both UART bauds and reset a proven
-   BES link to 460800.
-5. Preserve a newer data-installed stock ASG, then activate ASG 36 and update BES when the device
-   is below the manifest target.
-6. Move the stock package's legacy external-files tree to uninstall-safe shared storage.
-7. Remove the ASG 36 update layer, restore a preserved newer stock update, retain a newer built-in
-   stock ASG, or install the manifest-pinned target (in that order); then restore the legacy tree
-   so current ASG can migrate captures to `/storage/emulated/0/asg_media`.
-8. Apply each exact MTK patch, issue `adb reboot`, require a changed Android boot ID, and verify
-   `ro.custom.ota.version` after the reboot.
-9. For `update-mentra-live.sh`, disable stock/recovery again and restore the existing third-party
-   package as HOME. For `dev-setup.sh`, install the newly built third-party APK instead.
-
-Unknown MTK starting versions fail closed. MTK versions newer than the manifest terminal are kept
-instead of downgraded.
-
-## USB ADB after an MTK reboot
-
-Many older MTK releases do not restore USB ADB while the Infinity Cable remains connected. The
-updater identifies a real Android reboot by comparing `/proc/sys/kernel/random/boot_id`; a cable
-disconnect/reconnect alone is not accepted. The MTK helper also enforces a 15-minute overall
-deadline after each trigger, so a stalled update exits into stock recovery instead of holding the
-development setup indefinitely.
-
-If ADB is still offline 45 seconds after the reboot command, the script prints:
-
-```text
-Unplug the Infinity Cable, then plug it back in.
-The script will resume automatically when ADB returns.
+```bash
+./scripts/dev-setup.sh
 ```
 
-The script keeps waiting for the selected device. If ADB returns with the old boot ID, it sends an
-explicit `adb reboot` up to three times and bounds the online wait for each attempt. Wi-Fi ADB
-devices are waited for without showing the USB cable instruction.
+The script:
 
-## Failure and recovery behavior
+1. Builds your custom ASG Client.
+2. Brings the glasses onto the latest firmware baseline supported by this workflow.
+3. Installs the custom client as `com.mentra.asg_client.thirdparty`.
+4. Makes the custom client the default launcher.
 
-The safe fallback is signed stock ASG, not the custom client:
+The stock software remains on the device as a recovery path. Your custom build does not receive
+automatic OTA updates from Mentra, so use the maintenance command below when you need to update
+the glasses.
 
-- A failure before device mutation leaves the current installation unchanged.
-- A failure after mutation stops/disables a partially activated third-party client, restores any
-  staged legacy stock data, removes ASG 36 when it is active, reinstalls the manifest-pinned stock
-  ASG, restores a preserved newer update, or retains a newer built-in version; it then activates
-  stock HOME and enables available recovery packages.
-- If failure occurs while ADB is offline, reconnect the Infinity Cable and rerun the same updater.
-  It detects an interrupted ASG 36 installation and restores the preserved newer stock update,
-  manifest-pinned target, or newer built-in version before attempting another bridge transition.
-  `./scripts/restore-stock.sh` remains the path for removing the third-party package after stock
-  has been recovered.
-- If returning to the custom client fails after firmware completed, the firmware remains updated
-  but stock stays active so the device retains a working launcher.
+## Update a customized device
 
-The standalone update reports success only after the third-party package is enabled and Android
-resolves HOME to its `MainActivity`.
+Use `update-mentra-live.sh` for a device that was prepared with `dev-setup.sh`:
 
-## Validation checklist
+```bash
+./scripts/update-mentra-live.sh
+```
 
-Before changing this flow, test at least:
+The script preserves the installed custom APK and its app data, updates the glasses with
+Mentra-signed firmware, and returns to the same custom launcher after verifying the update. You do
+not need to rebuild or reinstall your custom client.
 
-1. Factory/day-one BES through ASG 36, target BES, target stock ASG, MTK patch, and reboot.
-2. A modern BES already negotiated at 1152000, including the proven reset to 460800 before ASG 36.
-3. A device already at the manifest BES and MTK targets.
-4. A device newer than the manifest targets to confirm downgrade prevention.
-5. A newer `/data/app` stock update preserved and restored across normal and interrupted ASG 36
-   transitions.
-6. USB ADB failing to return until the Infinity Cable is unplugged and reconnected.
-7. A cable-only reconnect with an unchanged boot ID.
-8. Legacy captures under the stock app-owned external-files tree across bridge removal.
-9. An interrupted ASG 36 compatibility-artifact swap recovered by the next run.
-10. `update-mentra-live.sh` returning to the same third-party APK, data, and HOME activity.
-11. Failures during artifact download, BES transfer, MTK reboot, stock restoration, and third-party
-   handoff.
+Run this command as part of your normal device-maintenance process whenever you need to bring a
+customized device onto the current supported firmware baseline.
 
-The shell scripts can validate manifests, downloads, hashes, and device state, but BES and MTK
-transitions still require a physical Mentra Live test.
+## If USB ADB does not return after a reboot
+
+Some older device versions do not reconnect over USB ADB automatically after a firmware reboot.
+The script waits for the reboot and continues on its own when ADB returns.
+
+If the device is still offline after 45 seconds, the script asks you to:
+
+1. Unplug the Infinity Cable.
+2. Plug the Infinity Cable back in.
+3. Leave the script running; it will resume automatically.
+
+Reconnecting the cable does not restart the update or erase your custom client.
+
+## If an update is interrupted or fails
+
+The scripts use the stock launcher as the safe fallback during maintenance. If the custom launcher
+cannot be restored, the device stays on the stock launcher instead of being left without a working
+HOME screen.
+
+After reconnecting the Infinity Cable and confirming the device appears in `adb devices`, rerun the
+same command. The updater detects and recovers incomplete maintenance work before continuing.
+
+If you want to remove the custom client and return the device to stock software, run:
+
+```bash
+./scripts/restore-stock.sh
+```
+
+Do not manually uninstall the stock ASG Client or sideload individual firmware files. The scripts
+verify the complete update set and preserve the recovery path for you.
+
+## Confirm the device is ready
+
+Before shipping or returning a device to service, confirm that:
+
+- The script exits successfully.
+- Your custom launcher is visible after the final reboot.
+- The device reconnects to your expected phone or network.
+- Camera, audio, and any hardware features used by your product work normally.
+
+If a run fails, save its terminal output before retrying. It contains the device and firmware state
+needed to diagnose the problem.

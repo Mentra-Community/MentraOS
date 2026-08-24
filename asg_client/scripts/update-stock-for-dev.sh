@@ -235,7 +235,7 @@ load_preserved_stock_update() {
     echo "Preserved stock-ASG update SHA-256 mismatch." >&2
     return 1
   fi
-  echo "Recovered stock ASG $PRESERVED_STOCK_VERSION_CODE preserved by an interrupted bridge run."
+  echo "Recovered stock ASG $PRESERVED_STOCK_VERSION_CODE preserved by an interrupted firmware update."
 }
 
 preserve_newer_stock_update() {
@@ -250,20 +250,20 @@ preserve_newer_stock_update() {
     | tr -d '\r' | sed -n 's/^package://p')"
   package_path_count="$(printf '%s\n' "$package_path" | sed '/^$/d' | wc -l | tr -d ' ')"
   if [ "$package_path_count" -ne 1 ]; then
-    echo "Newer stock ASG uses $package_path_count APK files; refusing a bridge transition that cannot restore it exactly." >&2
+    echo "Newer stock ASG uses $package_path_count APK files; refusing an update that cannot restore it exactly." >&2
     return 1
   fi
   case "$package_path" in
     /data/app/*.apk) ;;
     *)
-      echo "Newer stock ASG $installed_version is built into the system image and will reappear after bridge removal."
+      echo "Newer stock ASG $installed_version is built into the system image and will be retained."
       return 0
       ;;
   esac
 
   clear_preserved_stock_update
   PRESERVED_STOCK_APK_PATH="$WORK_DIR/preserved-newer-stock.apk"
-  echo "Preserving newer installed stock ASG $installed_version across the bridge transition..."
+  echo "Preserving newer installed stock ASG $installed_version during firmware maintenance..."
   "${ADB[@]}" pull "$package_path" "$PRESERVED_STOCK_APK_PATH" >/dev/null || return 1
   host_sha="$(sha256_file "$PRESERVED_STOCK_APK_PATH")"
   "${ADB[@]}" shell mkdir -p /storage/emulated/0/asg || return 1
@@ -349,7 +349,7 @@ preserve_legacy_stock_files() {
     return 0
   fi
   LEGACY_STOCK_BACKUP="$LEGACY_STOCK_BACKUP_PATH"
-  echo "Preserving $entry_count legacy stock-data entries before removing the bridge..."
+  echo "Preserving $entry_count legacy stock-data entries during firmware maintenance..."
   "${ADB[@]}" shell mkdir -p /storage/emulated/0/asg || return 1
   "${ADB[@]}" shell mv "$LEGACY_STOCK_FILES" "$LEGACY_STOCK_BACKUP" \
     || return 1
@@ -425,16 +425,16 @@ replace_bridge_with_target_stock() {
   if [ -n "$PRESERVED_STOCK_APK_PATH" ]; then
     if [[ "$installed_version" =~ ^[0-9]+$ ]] \
       && [ "$installed_version" -ge "$PRESERVED_STOCK_VERSION_CODE" ]; then
-      echo "Built-in stock ASG $installed_version is at least as new as preserved update $PRESERVED_STOCK_VERSION_CODE; retaining it after bridge removal."
+      echo "Built-in stock ASG $installed_version is at least as new as preserved update $PRESERVED_STOCK_VERSION_CODE; retaining it."
     else
       "${ADB[@]}" install -r "$PRESERVED_STOCK_APK_PATH" >/dev/null || return 1
       installed_version="$(package_version_code "$STOCK_PKG")"
       [ "$installed_version" = "$PRESERVED_STOCK_VERSION_CODE" ] || return 1
-      echo "Restored preserved stock ASG $installed_version after bridge removal."
+      echo "Restored preserved stock ASG $installed_version."
     fi
   elif [[ "$installed_version" =~ ^[0-9]+$ ]] \
     && [ "$installed_version" -gt "$TARGET_VERSION_CODE" ]; then
-    echo "Built-in stock ASG $installed_version is newer than staging target $TARGET_VERSION_CODE; retaining it after bridge removal."
+    echo "Built-in stock ASG $installed_version is newer than staging target $TARGET_VERSION_CODE; retaining it."
   else
     "${ADB[@]}" shell pm disable-user --user 0 "$STOCK_PKG" >/dev/null 2>&1 || true
     "${ADB[@]}" install -r "$TARGET_APK_PATH" >/dev/null || return 1
@@ -458,9 +458,9 @@ restore_safe_stock_on_failure() {
     "${ADB[@]}" shell pm disable-user --user 0 "$DEV_PKG" >/dev/null 2>&1 || true
     if [ "$BRIDGE_ACTIVE" = true ]; then
       if replace_bridge_with_target_stock; then
-        echo "Removed the ASG 36 bridge and restored a safe stock ASG." >&2
+        echo "Restored a safe stock ASG after the interrupted update." >&2
       else
-        echo "Could not fully replace ASG 36 automatically; preserved data remains staged if needed." >&2
+        echo "Could not fully restore stock ASG automatically; preserved data remains staged if needed." >&2
       fi
     fi
     restore_legacy_stock_files || true
@@ -473,7 +473,7 @@ restore_safe_stock_on_failure() {
     "${ADB[@]}" shell pm enable "$LEGACY_UPDATER_PKG" >/dev/null 2>&1 || true
   elif [ "$DEVICE_MUTATED" = true ]; then
     if [ "$BRIDGE_ACTIVE" = true ]; then
-      echo "ASG 36 may still be installed. Reconnect ADB and rerun this updater; it will restore the preserved newer stock ASG or pinned target first." >&2
+      echo "Firmware maintenance may be incomplete. Reconnect ADB and rerun this updater; it will restore a safe stock ASG first." >&2
     fi
     if [ -n "$LEGACY_STOCK_BACKUP" ]; then
       echo "Legacy stock data remains safe at $LEGACY_STOCK_BACKUP once ADB reconnects." >&2
@@ -596,7 +596,7 @@ return_bes_to_rendezvous_before_bridge() {
   local request_id deadline logs versions bes installed_version
   request_id="devsetup_$$_$RANDOM"
 
-  echo "=== Returning BES UART to the ASG 36 rendezvous baud ==="
+  echo "=== Preparing BES for firmware maintenance ==="
   installed_version="$(package_version_code "$STOCK_PKG")"
   if [[ "$installed_version" =~ ^[0-9]+$ ]] \
     && [ "$installed_version" -gt "$TARGET_VERSION_CODE" ]; then
@@ -619,10 +619,10 @@ return_bes_to_rendezvous_before_bridge() {
     # probe client and let the bridge attempt its fail-closed version query.
     "${ADB[@]}" shell am force-stop "$STOCK_PKG" >/dev/null 2>&1 || true
     sleep 2
-    echo "Current stock ASG found no BES link at either baud; continuing with ASG 36 legacy discovery."
+    echo "Current stock ASG found no BES link; continuing with compatibility recovery."
     return 0
   fi
-  echo "Current stock ASG proved BES $bes before the bridge transition."
+  echo "Current stock ASG found BES $bes before firmware maintenance."
 
   "${ADB[@]}" logcat -c >/dev/null 2>&1 || true
   "${ADB[@]}" shell am broadcast \
@@ -639,7 +639,7 @@ return_bes_to_rendezvous_before_bridge() {
       # rediscover the chip and renegotiate fast baud ahead of ASG 36.
       "${ADB[@]}" shell am force-stop "$STOCK_PKG" >/dev/null 2>&1 || true
       sleep 5
-      echo "BES reset command completed; rendezvous baud is ready for ASG 36."
+      echo "BES reset completed; compatibility update is ready."
       return 0
     fi
     if printf '%s\n' "$logs" | grep -Eq 'uart_write=false|queued=false|failed'; then
@@ -660,7 +660,7 @@ wait_for_bes_success() {
     adb_online || fail "ADB disconnected during the BES transfer"
     logs="$("${ADB[@]}" logcat -d 2>/dev/null | tail -n 500 || true)"
     if printf '%s\n' "$logs" | grep -Fq 'BES firmware update SUCCESS! BES will reboot.'; then
-      echo "ASG 36 reports that BES accepted the firmware and is rebooting."
+      echo "BES accepted the firmware and is rebooting."
       break
     fi
     if printf '%s\n' "$logs" | grep -Eq 'Apply firmware error|WHOLE CRC32 CHECK FAILED|BES OTA authorization DENIED|Debug BES OTA dispatch failed|BES OTA failed to start|BesOtaManager not initialized'; then
@@ -785,13 +785,13 @@ TARGET_APK_SHA256="$(jq -er '.apps["com.mentra.asg_client"].sha256 | ascii_downc
 download_verified "staging ASG Client" "$TARGET_APK_URL" "$TARGET_APK_SHA256" "$TARGET_APK_SIZE" "$TARGET_APK_PATH"
 INITIAL_STOCK_VERSION_CODE="$(package_version_code "$STOCK_PKG")"
 load_preserved_stock_update \
-  || fail "Could not validate the stock ASG preserved by an interrupted bridge run"
+  || fail "Could not validate the stock ASG preserved by an interrupted firmware update"
 if [ "$INITIAL_STOCK_VERSION_CODE" = "$BRIDGE_VERSION_CODE" ]; then
-  echo "Found ASG 36 left by an interrupted earlier run; restoring a safe stock ASG first."
+  echo "Found an interrupted firmware update; restoring a safe stock ASG first."
   DEVICE_MUTATED=true
   BRIDGE_ACTIVE=true
   replace_bridge_with_target_stock \
-    || fail "Could not recover a safe stock ASG from the interrupted bridge run"
+    || fail "Could not recover a safe stock ASG from the interrupted firmware update"
   enable_stock_runtime \
     || fail "Recovered the stock ASG package, but could not activate its launcher"
 elif [ -n "$PRESERVED_STOCK_APK_PATH" ]; then
@@ -839,7 +839,7 @@ echo ""
 
 # Except for interrupted-bridge recovery above, finish every remaining download
 # and integrity check before replacing any package or beginning a transition.
-download_verified "ASG 36 bridge" "$BRIDGE_APK_URL" "$BRIDGE_APK_SHA256" "$BRIDGE_APK_SIZE" "$BRIDGE_APK_PATH"
+download_verified "firmware compatibility client" "$BRIDGE_APK_URL" "$BRIDGE_APK_SHA256" "$BRIDGE_APK_SIZE" "$BRIDGE_APK_PATH"
 download_verified "BES firmware $BES_VERSION" "$BES_URL" "$BES_SHA256" "" "$BES_PATH"
 build_mtk_plan "$MANIFEST_PATH" "$INITIAL_MTK" "$MTK_PLAN_PATH"
 
@@ -856,13 +856,13 @@ DEVICE_MUTATED=true
 "${ADB[@]}" shell pm disable-user --user 0 "$LEGACY_UPDATER_PKG" >/dev/null 2>&1 || true
 return_bes_to_rendezvous_before_bridge
 
-echo "=== Installing ASG 36 BES bridge ==="
+echo "=== Preparing BES firmware compatibility ==="
 preserve_newer_stock_update \
-  || fail "Could not preserve the newer installed stock ASG before the bridge transition"
+  || fail "Could not preserve the newer installed stock ASG before firmware maintenance"
 "${ADB[@]}" install -r "$BRIDGE_APK_PATH"
 INSTALLED_VERSION_CODE="$(package_version_code "$STOCK_PKG")"
 [ "$INSTALLED_VERSION_CODE" = "$BRIDGE_VERSION_CODE" ] \
-  || fail "ASG 36 bridge installation did not produce versionCode $BRIDGE_VERSION_CODE"
+  || fail "Firmware compatibility client did not produce the expected versionCode $BRIDGE_VERSION_CODE"
 BRIDGE_ACTIVE=true
 "${ADB[@]}" shell am start -n "$STOCK_COMPONENT" >/dev/null
 sleep 20
@@ -874,13 +874,13 @@ for attempt in 1 2 3; do
     break
   fi
   if [ "$attempt" -lt 3 ]; then
-    echo "Could not read the current BES version through ASG 36; retrying ($attempt/3)..."
+    echo "Could not read the current BES version; retrying ($attempt/3)..."
     sleep 5
   fi
 done
 CURRENT_BES="${VERSIONS%%|*}"
 [ -n "$CURRENT_BES" ] && valid_bes_version "$CURRENT_BES" \
-  || fail "Could not determine the current BES version through ASG 36; refusing to flash an unknown firmware state"
+  || fail "Could not determine the current BES version; refusing to flash an unknown firmware state"
 echo "Detected BES firmware $CURRENT_BES."
 
 if version_at_least "$CURRENT_BES" "$BES_VERSION"; then
@@ -890,15 +890,15 @@ if version_at_least "$CURRENT_BES" "$BES_VERSION"; then
     echo "BES $CURRENT_BES is newer than staging target $BES_VERSION; refusing to downgrade it."
   fi
 else
-  echo "=== Updating BES to $BES_VERSION through ASG 36 ==="
+  echo "=== Updating BES to $BES_VERSION ==="
   ANDROID_SERIAL="$SERIAL" "$SCRIPT_DIR/test-bes-ota.sh" "$BES_PATH" "$BES_VERSION" --no-follow
   wait_for_bes_success "$BES_VERSION"
 fi
 
 echo ""
-echo "=== Replacing bridge with staging ASG Client ==="
+echo "=== Restoring the current staging ASG Client ==="
 replace_bridge_with_target_stock \
-  || fail "Could not replace ASG 36 with a safe stock ASG"
+  || fail "Could not restore a safe stock ASG after firmware maintenance"
 enable_stock_runtime
 sleep 20
 

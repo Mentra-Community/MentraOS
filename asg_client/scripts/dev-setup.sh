@@ -85,7 +85,7 @@ restore_stock_after_failure() {
     elif [ "$status" -ne 0 ] && [ "$SETUP_MUTATED" = true ]; then
         echo "Setup failed while ADB was offline." >&2
         echo "Reconnect the Infinity Cable, then run ./scripts/update-stock-for-dev.sh." >&2
-        echo "That updater recovers a temporary ASG 36 bridge before you retry dev setup or restore stock." >&2
+        echo "That updater recovers interrupted firmware maintenance before you retry dev setup or restore stock." >&2
     fi
     exit "$status"
 }
