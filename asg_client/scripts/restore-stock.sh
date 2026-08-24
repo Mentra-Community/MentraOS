@@ -36,6 +36,11 @@ resolve_serial
 export ANDROID_SERIAL="$SERIAL"
 echo ""
 
+adb get-state >/dev/null 2>&1 || {
+    echo "ERROR: Selected Mentra Live is no longer available over ADB." >&2
+    exit 1
+}
+
 # Recover stock data staged outside the package-owned tree by an interrupted
 # ASG bridge removal before doing any further package operations.
 if adb shell test -d "$LEGACY_STOCK_BACKUP"; then
@@ -79,6 +84,9 @@ if adb shell test -d "$LEGACY_STOCK_BACKUP"; then
     fi
     echo "Preserved stock data restored."
     echo ""
+elif ! adb get-state >/dev/null 2>&1; then
+    echo "ERROR: ADB disconnected while checking for preserved stock data." >&2
+    exit 1
 fi
 
 # Step 1: Uninstall third-party build
