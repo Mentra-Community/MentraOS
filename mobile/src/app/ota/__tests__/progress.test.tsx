@@ -383,6 +383,31 @@ describe("progress.tsx display states", () => {
     }
   })
 
+  it("restores overlay suppression when retrying after WiFi setup", () => {
+    setGlassesConnected()
+    const {getByText} = render(<OtaProgressScreen />)
+
+    act(() => {
+      useGlassesStore.getState().setOtaStatus({
+        sessionId: "s1",
+        totalSteps: 1,
+        currentStep: 1,
+        stepType: "apk",
+        phase: "download",
+        stepPercent: 0,
+        overallPercent: 0,
+        status: "failed",
+        error: "no_internet",
+      })
+    })
+
+    fireEvent.press(getByText("Change WiFi"))
+    expect(useConnectionOverlayConfig.getState().suppressOverlay).toBe(false)
+
+    fireEvent.press(getByText("Retry"))
+    expect(useConnectionOverlayConfig.getState().suppressOverlay).toBe(true)
+  })
+
   it("requires a glasses restart for the existing generic BES install failure", () => {
     setGlassesConnected()
     const {getByText, queryByText} = render(<OtaProgressScreen />)

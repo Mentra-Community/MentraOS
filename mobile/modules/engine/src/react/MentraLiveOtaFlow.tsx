@@ -258,8 +258,7 @@ function OtaCheckPage({
           const remainingMs = otaAutoChainReconnectWaitRemaining()
           if (remainingMs === null) return
           reconnectTimeout = setTimeout(() => {
-            if (cancelled || myGeneration !== performCheckGenerationRef.current || ota.snapshot().connected)
-              return
+            if (cancelled || myGeneration !== performCheckGenerationRef.current || ota.snapshot().connected) return
             stopOtaAutoChain()
             checkCompletedRef.current = true
             setCheckState("error")
@@ -576,6 +575,10 @@ function OtaProgressPage({
     stopOtaAutoChain()
     finishAndCheck()
   }
+  const retryInstall = () => {
+    onFirmwareRestartingChange?.(false, true)
+    ota.installSession.retry()
+  }
 
   if (versionChangePhase === "restarting" || versionChangePhase === "verifying") {
     return (
@@ -696,7 +699,7 @@ function OtaProgressPage({
             <FlowButton
               colors={colors}
               label={requiresGlassesReboot ? "Done" : "Retry"}
-              onPress={requiresGlassesReboot ? stopAndCheck : () => ota.installSession.retry()}
+              onPress={requiresGlassesReboot ? stopAndCheck : retryInstall}
             />
             {showChangeWifi ? (
               <FlowButton
