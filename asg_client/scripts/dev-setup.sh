@@ -118,8 +118,8 @@ echo ""
 # Step 2: Put the stock firmware on a known-compatible staging baseline.
 echo "=== Updating Mentra Live Firmware ==="
 echo ""
-SETUP_MUTATED=true
 ADB_SERIAL="$SERIAL" "$SCRIPT_DIR/update-stock-for-dev.sh"
+SETUP_MUTATED=true
 
 # Step 3: Disable stock and its recovery agents.
 echo "=== Disabling Stock App ==="
