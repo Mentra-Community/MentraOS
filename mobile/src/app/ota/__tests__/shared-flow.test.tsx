@@ -70,6 +70,55 @@ describe("MentraLiveOtaFlow", () => {
     expect(getByText("Starting update...")).toBeDefined()
   })
 
+  it("does not restart an active check when host callbacks change", async () => {
+    jest.useFakeTimers()
+    useGlassesStore.getState().setGlassesInfo({
+      connection: {state: "connected", fullyBooted: true},
+      buildNumber: "37",
+      hotspotOtaVersion: 1,
+      wifi: {state: "disconnected"},
+    })
+    let finishCheck: (result: unknown) => void = () => {}
+    const check = jest.spyOn(ota, "checkForUpdates").mockReturnValue(
+      new Promise((resolve) => {
+        finishCheck = resolve
+      }) as never,
+    )
+    const {getByText, rerender} = render(
+      <MentraLiveOtaFlow initializeRuntime={false} onFinished={jest.fn()} onOpenWifiSetup={jest.fn()} />,
+    )
+
+    rerender(<MentraLiveOtaFlow initializeRuntime={false} onFinished={jest.fn()} onOpenWifiSetup={jest.fn()} />)
+    rerender(<MentraLiveOtaFlow initializeRuntime={false} onFinished={jest.fn()} onOpenWifiSetup={jest.fn()} />)
+    act(() => {
+      useGlassesStore.getState().setGlassesInfo({buildNumber: "38"})
+      useGlassesStore.getState().setGlassesInfo({mtkFirmwareVersion: "MentraLive_20260709"})
+      useGlassesStore.getState().setGlassesInfo({besFirmwareVersion: "26.8.8.0"})
+    })
+    expect(check).toHaveBeenCalledTimes(1)
+
+    finishCheck({
+      hasCheckCompleted: true,
+      updateAvailable: false,
+      latestVersionInfo: null,
+      updates: [],
+      mtkPatch: null,
+      besVersion: null,
+      isApkDowngrade: false,
+      manifestBody: "{}",
+      updateInfo: null,
+      isRequired: false,
+      manifestUrl: "https://example.com/version.json",
+      buildNumber: "37",
+    })
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(1_100)
+    })
+
+    expect(check).toHaveBeenCalledTimes(1)
+    expect(getByText("Up To Date")).toBeDefined()
+  })
+
   it("reports that progress is inactive when the flow unmounts", () => {
     useGlassesStore.getState().setGlassesInfo({
       connection: {state: "connected", fullyBooted: true},

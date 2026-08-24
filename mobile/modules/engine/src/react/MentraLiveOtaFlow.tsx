@@ -225,6 +225,10 @@ function OtaCheckPage({
   const checkStartedRef = useRef(false)
   const checkCompletedRef = useRef(false)
   const selectedCheckResultRef = useRef<Awaited<ReturnType<typeof ota.checkForUpdates>> | null>(null)
+  const onFinishedRef = useRef(onFinished)
+  const onStartProgressRef = useRef(onStartProgress)
+  onFinishedRef.current = onFinished
+  onStartProgressRef.current = onStartProgress
 
   const glassesWifiConnected = otaSnapshot.wifiConnected
   const glassesWifiStatusKnown = otaSnapshot.wifiStatusKnown
@@ -234,8 +238,8 @@ function OtaCheckPage({
 
   const navigateToProgress = useCallback(() => {
     ota.clearProgress()
-    onStartProgress()
-  }, [onStartProgress])
+    onStartProgressRef.current()
+  }, [])
 
   useEffect(() => {
     const MIN_DISPLAY_TIME_MS = 1100
@@ -272,7 +276,7 @@ function OtaCheckPage({
           return
         }
         checkCompletedRef.current = true
-        onFinished()
+        onFinishedRef.current()
         return
       }
 
@@ -316,7 +320,7 @@ function OtaCheckPage({
             stopOtaAutoChain()
             setCheckState("error")
           } else {
-            onFinished()
+            onFinishedRef.current()
           }
           return
         }
@@ -379,13 +383,9 @@ function OtaCheckPage({
     }
   }, [
     checkKey,
-    otaSnapshot.besFirmwareVersion,
-    otaSnapshot.buildNumber,
     otaSnapshot.connected,
-    otaSnapshot.mtkFirmwareVersion,
     otaSnapshot.wifiStatusKnown,
     navigateToProgress,
-    onFinished,
   ])
 
   const retry = () => {
