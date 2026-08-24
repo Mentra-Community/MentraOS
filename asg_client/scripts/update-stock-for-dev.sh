@@ -36,12 +36,16 @@ COMMAND_RECEIVER="$STOCK_PKG/.receiver.IntentCommandReceiver"
 LEGACY_STOCK_FILES="/storage/emulated/0/Android/data/$STOCK_PKG/files"
 LEGACY_STOCK_PARENT="/storage/emulated/0/Android/data/$STOCK_PKG"
 LEGACY_STOCK_BACKUP_PATH="/storage/emulated/0/asg/dev_setup_stock_files_backup"
+PRESERVED_STOCK_APK_DEVICE_PATH="/storage/emulated/0/asg/dev_setup_newer_stock.apk"
+PRESERVED_STOCK_STATE_PATH="/storage/emulated/0/asg/dev_setup_newer_stock.state"
 
 WORK_DIR=""
 DEVICE_MUTATED=false
 SUCCESS=false
 LEGACY_STOCK_BACKUP=""
 BRIDGE_ACTIVE=false
+PRESERVED_STOCK_APK_PATH=""
+PRESERVED_STOCK_VERSION_CODE=""
 
 usage() {
   echo "Usage: $0 [--manifest-url <https-url>] [--resume-thirdparty]"
@@ -166,6 +170,91 @@ package_version_code() {
     | tr -d '\r' \
     | sed -n 's/.*versionCode=\([0-9][0-9]*\).*/\1/p' \
     | head -n 1
+}
+
+device_sha256() {
+  "${ADB[@]}" shell sha256sum "$1" 2>/dev/null | awk '{print $1}' | tr -d '\r'
+}
+
+clear_preserved_stock_update() {
+  "${ADB[@]}" shell rm -f \
+    "$PRESERVED_STOCK_APK_DEVICE_PATH" "$PRESERVED_STOCK_STATE_PATH" >/dev/null 2>&1 || true
+  PRESERVED_STOCK_APK_PATH=""
+  PRESERVED_STOCK_VERSION_CODE=""
+}
+
+load_preserved_stock_update() {
+  local state expected_sha actual_sha
+  local apk_exists=false state_exists=false
+
+  "${ADB[@]}" shell test -f "$PRESERVED_STOCK_APK_DEVICE_PATH" && apk_exists=true
+  "${ADB[@]}" shell test -f "$PRESERVED_STOCK_STATE_PATH" && state_exists=true
+  if [ "$apk_exists" = false ] && [ "$state_exists" = false ]; then
+    return 0
+  fi
+  if [ "$apk_exists" != true ] || [ "$state_exists" != true ]; then
+    echo "Incomplete preserved stock-ASG update metadata on the device." >&2
+    return 1
+  fi
+
+  state="$("${ADB[@]}" shell cat "$PRESERVED_STOCK_STATE_PATH" 2>/dev/null | tr -d '\r\n')"
+  IFS=: read -r PRESERVED_STOCK_VERSION_CODE expected_sha <<< "$state"
+  if ! [[ "$PRESERVED_STOCK_VERSION_CODE" =~ ^[0-9]+$ ]] \
+    || [ "$PRESERVED_STOCK_VERSION_CODE" -le "$TARGET_VERSION_CODE" ] \
+    || ! [[ "$expected_sha" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "Invalid preserved stock-ASG update metadata." >&2
+    return 1
+  fi
+
+  PRESERVED_STOCK_APK_PATH="$WORK_DIR/preserved-newer-stock.apk"
+  "${ADB[@]}" pull "$PRESERVED_STOCK_APK_DEVICE_PATH" "$PRESERVED_STOCK_APK_PATH" >/dev/null \
+    || return 1
+  actual_sha="$(sha256_file "$PRESERVED_STOCK_APK_PATH")"
+  if [ "$actual_sha" != "$expected_sha" ]; then
+    echo "Preserved stock-ASG update SHA-256 mismatch." >&2
+    return 1
+  fi
+  echo "Recovered stock ASG $PRESERVED_STOCK_VERSION_CODE preserved by an interrupted bridge run."
+}
+
+preserve_newer_stock_update() {
+  local installed_version package_path package_path_count device_sha host_sha
+  installed_version="$(package_version_code "$STOCK_PKG")"
+  if ! [[ "$installed_version" =~ ^[0-9]+$ ]] \
+    || [ "$installed_version" -le "$TARGET_VERSION_CODE" ]; then
+    return 0
+  fi
+
+  package_path="$("${ADB[@]}" shell pm path "$STOCK_PKG" 2>/dev/null \
+    | tr -d '\r' | sed -n 's/^package://p')"
+  package_path_count="$(printf '%s\n' "$package_path" | sed '/^$/d' | wc -l | tr -d ' ')"
+  if [ "$package_path_count" -ne 1 ]; then
+    echo "Newer stock ASG uses $package_path_count APK files; refusing a bridge transition that cannot restore it exactly." >&2
+    return 1
+  fi
+  case "$package_path" in
+    /data/app/*.apk) ;;
+    *)
+      echo "Newer stock ASG $installed_version is built into the system image and will reappear after bridge removal."
+      return 0
+      ;;
+  esac
+
+  clear_preserved_stock_update
+  PRESERVED_STOCK_APK_PATH="$WORK_DIR/preserved-newer-stock.apk"
+  echo "Preserving newer installed stock ASG $installed_version across the bridge transition..."
+  "${ADB[@]}" pull "$package_path" "$PRESERVED_STOCK_APK_PATH" >/dev/null || return 1
+  host_sha="$(sha256_file "$PRESERVED_STOCK_APK_PATH")"
+  "${ADB[@]}" shell mkdir -p /storage/emulated/0/asg || return 1
+  "${ADB[@]}" push "$PRESERVED_STOCK_APK_PATH" "$PRESERVED_STOCK_APK_DEVICE_PATH" >/dev/null \
+    || return 1
+  device_sha="$(device_sha256 "$PRESERVED_STOCK_APK_DEVICE_PATH")"
+  [ "$device_sha" = "$host_sha" ] || return 1
+  "${ADB[@]}" shell \
+    "printf '%s' '$installed_version:$host_sha' > '$PRESERVED_STOCK_STATE_PATH'" \
+    || return 1
+  PRESERVED_STOCK_VERSION_CODE="$installed_version"
+  echo "Stored a verified recovery copy at $PRESERVED_STOCK_APK_DEVICE_PATH."
 }
 
 enable_stock_runtime() {
@@ -312,7 +401,12 @@ replace_bridge_with_target_stock() {
   "${ADB[@]}" uninstall "$STOCK_PKG" >/dev/null || return 1
   "${ADB[@]}" shell cmd package install-existing "$STOCK_PKG" >/dev/null 2>&1 || true
   installed_version="$(package_version_code "$STOCK_PKG")"
-  if [[ "$installed_version" =~ ^[0-9]+$ ]] \
+  if [ -n "$PRESERVED_STOCK_APK_PATH" ]; then
+    "${ADB[@]}" install -r "$PRESERVED_STOCK_APK_PATH" >/dev/null || return 1
+    installed_version="$(package_version_code "$STOCK_PKG")"
+    [ "$installed_version" = "$PRESERVED_STOCK_VERSION_CODE" ] || return 1
+    echo "Restored preserved stock ASG $installed_version after bridge removal."
+  elif [[ "$installed_version" =~ ^[0-9]+$ ]] \
     && [ "$installed_version" -gt "$TARGET_VERSION_CODE" ]; then
     echo "Built-in stock ASG $installed_version is newer than staging target $TARGET_VERSION_CODE; retaining it after bridge removal."
   else
@@ -323,6 +417,7 @@ replace_bridge_with_target_stock() {
   fi
   BRIDGE_ACTIVE=false
   restore_legacy_stock_files || return 1
+  clear_preserved_stock_update
 }
 
 restore_safe_stock_on_failure() {
@@ -337,7 +432,7 @@ restore_safe_stock_on_failure() {
     "${ADB[@]}" shell pm disable-user --user 0 "$DEV_PKG" >/dev/null 2>&1 || true
     if [ "$BRIDGE_ACTIVE" = true ]; then
       if replace_bridge_with_target_stock; then
-        echo "Removed the ASG 36 bridge and restored the manifest-pinned stock ASG." >&2
+        echo "Removed the ASG 36 bridge and restored a safe stock ASG." >&2
       else
         echo "Could not fully replace ASG 36 automatically; preserved data remains staged if needed." >&2
       fi
@@ -352,7 +447,7 @@ restore_safe_stock_on_failure() {
     "${ADB[@]}" shell pm enable "$LEGACY_UPDATER_PKG" >/dev/null 2>&1 || true
   elif [ "$DEVICE_MUTATED" = true ]; then
     if [ "$BRIDGE_ACTIVE" = true ]; then
-      echo "ASG 36 may still be installed. Reconnect ADB and rerun this updater; it will restore the pinned stock ASG first." >&2
+      echo "ASG 36 may still be installed. Reconnect ADB and rerun this updater; it will restore the preserved newer stock ASG or pinned target first." >&2
     fi
     if [ -n "$LEGACY_STOCK_BACKUP" ]; then
       echo "Legacy stock data remains safe at $LEGACY_STOCK_BACKUP once ADB reconnects." >&2
@@ -659,18 +754,24 @@ TARGET_APK_SIZE="$(jq -er '.apps["com.mentra.asg_client"].apkSize' "$MANIFEST_PA
 TARGET_APK_SHA256="$(jq -er '.apps["com.mentra.asg_client"].sha256 | ascii_downcase' "$MANIFEST_PATH")"
 
 # Recover an ASG 36 bridge left by an interrupted run before unrelated BES or
-# MTK preflight can fail. The replacement is still pinned to independently
-# validated and hash-checked stock metadata from this run's manifest snapshot.
+# MTK preflight can fail. Prefer a verified newer update preserved on-device;
+# otherwise use the independently validated stock target from this snapshot.
 download_verified "staging ASG Client" "$TARGET_APK_URL" "$TARGET_APK_SHA256" "$TARGET_APK_SIZE" "$TARGET_APK_PATH"
 INITIAL_STOCK_VERSION_CODE="$(package_version_code "$STOCK_PKG")"
 if [ "$INITIAL_STOCK_VERSION_CODE" = "$BRIDGE_VERSION_CODE" ]; then
-  echo "Found ASG 36 left by an interrupted earlier run; restoring the pinned stock ASG first."
+  echo "Found ASG 36 left by an interrupted earlier run; restoring a safe stock ASG first."
+  load_preserved_stock_update \
+    || fail "Could not validate the newer stock ASG preserved by the interrupted bridge run"
   DEVICE_MUTATED=true
   BRIDGE_ACTIVE=true
   replace_bridge_with_target_stock \
-    || fail "Could not recover the manifest-pinned stock ASG from the interrupted bridge run"
+    || fail "Could not recover a safe stock ASG from the interrupted bridge run"
   enable_stock_runtime \
     || fail "Recovered the stock ASG package, but could not activate its launcher"
+else
+  # A durable copy can remain if an earlier run stopped before installing the
+  # bridge. The still-installed package is authoritative in that case.
+  clear_preserved_stock_update
 fi
 
 "$REPO_DIR/.github/scripts/validate-asg-ota-manifest.sh" "$MANIFEST_PATH"
@@ -717,6 +818,8 @@ DEVICE_MUTATED=true
 return_bes_to_rendezvous_before_bridge
 
 echo "=== Installing ASG 36 BES bridge ==="
+preserve_newer_stock_update \
+  || fail "Could not preserve the newer installed stock ASG before the bridge transition"
 "${ADB[@]}" install -r "$BRIDGE_APK_PATH"
 INSTALLED_VERSION_CODE="$(package_version_code "$STOCK_PKG")"
 [ "$INSTALLED_VERSION_CODE" = "$BRIDGE_VERSION_CODE" ] \
@@ -756,7 +859,7 @@ fi
 echo ""
 echo "=== Replacing bridge with staging ASG Client ==="
 replace_bridge_with_target_stock \
-  || fail "Could not replace ASG 36 with the manifest-pinned stock ASG"
+  || fail "Could not replace ASG 36 with a safe stock ASG"
 enable_stock_runtime
 sleep 20
 

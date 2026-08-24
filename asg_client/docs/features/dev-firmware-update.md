@@ -76,8 +76,16 @@ When it proves a BES link, it sends a BES-only reset, requires confirmation that
 UART, and force-stops the current client before it can renegotiate. ASG 36 then starts after BES
 has returned to 460800. If current ASG cannot find BES at either baud, ASG 36 performs the legacy
 discovery needed by the factory BES generation. Any later failure removes the bridge and restores
-the manifest-pinned stock client, or a newer built-in stock client exposed by bridge removal,
-before selecting stock HOME.
+the manifest-pinned stock client, a newer built-in stock client exposed by bridge removal, or the
+exact newer data update preserved before the transition, before selecting stock HOME.
+
+Installing ASG 36 replaces an active `/data/app` stock update even though uninstalling ASG 36 can
+only reveal the older system copy. Before that transition, the updater preserves any stock APK
+newer than the manifest target at `/storage/emulated/0/asg/dev_setup_newer_stock.apk`, along with
+its version and SHA-256. The copy survives an ADB disconnect and is restored before the staging
+target after bridge removal. A split-APK stock install fails closed because a single APK backup
+could not reproduce it exactly. Built-in stock versions do not need a copy because uninstalling
+the bridge reveals them again.
 
 After ASG 36 reports apply success, the updater waits for the BES chip to reboot and repeatedly
 requests `version_info_3`. It does not continue until the reported BES version is at least the
@@ -95,11 +103,12 @@ The updater performs these steps:
 4. Disable the third-party client, recovery sidecar, and legacy updater; use the manifest-pinned
    stock ASG (or an already-installed newer stock ASG) to probe both UART bauds and reset a proven
    BES link to 460800.
-5. Activate ASG 36 and update BES when the device is below the manifest target.
+5. Preserve a newer data-installed stock ASG, then activate ASG 36 and update BES when the device
+   is below the manifest target.
 6. Move the stock package's legacy external-files tree to uninstall-safe shared storage.
-7. Remove the ASG 36 update layer, install the manifest-pinned stock ASG (or retain a newer
-   built-in stock ASG), and restore the legacy tree so current ASG can migrate captures to
-   `/storage/emulated/0/asg_media`.
+7. Remove the ASG 36 update layer, restore a preserved newer stock update, retain a newer built-in
+   stock ASG, or install the manifest-pinned target (in that order); then restore the legacy tree
+   so current ASG can migrate captures to `/storage/emulated/0/asg_media`.
 8. Apply each exact MTK patch, issue `adb reboot`, require a changed Android boot ID, and verify
    `ro.custom.ota.version` after the reboot.
 9. For `update-mentra-live.sh`, disable stock/recovery again and restore the existing third-party
@@ -134,12 +143,13 @@ The safe fallback is signed stock ASG, not the custom client:
 - A failure before device mutation leaves the current installation unchanged.
 - A failure after mutation stops/disables a partially activated third-party client, restores any
   staged legacy stock data, removes ASG 36 when it is active, reinstalls the manifest-pinned stock
-  ASG or retains a newer built-in version, activates stock HOME, and enables available recovery
-  packages.
+  ASG, restores a preserved newer update, or retains a newer built-in version; it then activates
+  stock HOME and enables available recovery packages.
 - If failure occurs while ADB is offline, reconnect the Infinity Cable and rerun the same updater.
-  It detects an interrupted ASG 36 installation and restores the manifest-pinned stock ASG, or a
-  newer built-in version, before attempting another bridge transition. `./scripts/restore-stock.sh`
-  remains the path for removing the third-party package after stock has been recovered.
+  It detects an interrupted ASG 36 installation and restores the preserved newer stock update,
+  manifest-pinned target, or newer built-in version before attempting another bridge transition.
+  `./scripts/restore-stock.sh` remains the path for removing the third-party package after stock
+  has been recovered.
 - If returning to the custom client fails after firmware completed, the firmware remains updated
   but stock stays active so the device retains a working launcher.
 
@@ -154,12 +164,14 @@ Before changing this flow, test at least:
 2. A modern BES already negotiated at 1152000, including the proven reset to 460800 before ASG 36.
 3. A device already at the manifest BES and MTK targets.
 4. A device newer than the manifest targets to confirm downgrade prevention.
-5. USB ADB failing to return until the Infinity Cable is unplugged and reconnected.
-6. A cable-only reconnect with an unchanged boot ID.
-7. Legacy captures under the stock app-owned external-files tree across bridge removal.
-8. An interrupted ASG 36 compatibility-artifact swap recovered by the next run.
-9. `update-mentra-live.sh` returning to the same third-party APK, data, and HOME activity.
-10. Failures during artifact download, BES transfer, MTK reboot, stock restoration, and third-party
+5. A newer `/data/app` stock update preserved and restored across normal and interrupted ASG 36
+   transitions.
+6. USB ADB failing to return until the Infinity Cable is unplugged and reconnected.
+7. A cable-only reconnect with an unchanged boot ID.
+8. Legacy captures under the stock app-owned external-files tree across bridge removal.
+9. An interrupted ASG 36 compatibility-artifact swap recovered by the next run.
+10. `update-mentra-live.sh` returning to the same third-party APK, data, and HOME activity.
+11. Failures during artifact download, BES transfer, MTK reboot, stock restoration, and third-party
    handoff.
 
 The shell scripts can validate manifests, downloads, hashes, and device state, but BES and MTK
