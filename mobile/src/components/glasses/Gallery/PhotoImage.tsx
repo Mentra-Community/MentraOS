@@ -127,7 +127,7 @@ export const PhotoImage = memo(function PhotoImage({photo, style, showPlaceholde
     }
 
     checkFileAndFormat()
-  }, [photo, imageUrl])
+  }, [imageUrl, photo.mime_type, photo.name])
 
   const handleLoadEnd = () => {
     setIsLoading(false)
