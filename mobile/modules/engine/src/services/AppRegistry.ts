@@ -33,6 +33,7 @@ import {sha256Hex} from "../utils/sha256"
 import {checkManifestVersions} from "./manifestVersionGate"
 import {normalizeManifestActions} from "./manifestActions"
 import {miniappRunningRegistry} from "./MiniappRunningRegistry"
+import {requiresConnectedGlasses} from "./SystemMiniappPolicy"
 import {validateInstallBundleArchive} from "./validateInstallBundle"
 
 export {normalizeManifestActions} from "./manifestActions"
@@ -138,8 +139,12 @@ export function buildHardwareRequirements(
     }
   }
 
-  // Always require glasses to be connected for any local miniapp.
-  out.push({type: HardwareType.EXIST, level: HardwareRequirementLevel.REQUIRED})
+  // Most miniapps require connected glasses. Store packages are phone-first
+  // system surfaces: users must be able to browse, install, and manage apps
+  // while their glasses are disconnected.
+  if (requiresConnectedGlasses(packageName)) {
+    out.push({type: HardwareType.EXIST, level: HardwareRequirementLevel.REQUIRED})
+  }
   return out
 }
 

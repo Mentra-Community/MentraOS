@@ -57,10 +57,34 @@ export function trustedCoreOrigin(value: string | null | undefined): string | nu
   try {
     if (!value) return null
     const url = new URL(value)
-    return url.protocol === "https:" || url.hostname === "localhost" ? url.origin : null
+    if (url.username || url.password) return null
+    if (url.protocol === "https:") return url.origin
+    return url.protocol === "http:" && isPrivateDevelopmentHost(url.hostname) ? url.origin : null
   } catch {
     return null
   }
+}
+
+function isPrivateDevelopmentHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, "")
+  if (host === "localhost" || host === "::1") return true
+
+  const ipv4 = host.split(".").map(Number)
+  if (ipv4.length === 4 && ipv4.every((part) => Number.isInteger(part) && part >= 0 && part <= 255)) {
+    return (
+      ipv4[0] === 10 ||
+      ipv4[0] === 127 ||
+      (ipv4[0] === 169 && ipv4[1] === 254) ||
+      (ipv4[0] === 172 && ipv4[1]! >= 16 && ipv4[1]! <= 31) ||
+      (ipv4[0] === 192 && ipv4[1] === 168)
+    )
+  }
+
+  const firstIpv6Group = Number.parseInt(host.split(":", 1)[0] ?? "", 16)
+  return (
+    Number.isInteger(firstIpv6Group) &&
+    ((firstIpv6Group & 0xfe00) === 0xfc00 || (firstIpv6Group & 0xffc0) === 0xfe80)
+  )
 }
 
 /** True only when `candidate` is a strictly newer semantic version. */

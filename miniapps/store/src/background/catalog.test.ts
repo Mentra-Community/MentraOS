@@ -16,7 +16,11 @@ describe("Store catalog", () => {
   test("accepts only a safe host-provided Core origin", () => {
     expect(trustedCoreOrigin("https://core.dev.example.test/oauth")).toBe("https://core.dev.example.test")
     expect(trustedCoreOrigin("http://localhost:3000")).toBe("http://localhost:3000")
+    expect(trustedCoreOrigin("http://192.168.1.42:3000/path")).toBe("http://192.168.1.42:3000")
+    expect(trustedCoreOrigin("http://10.0.2.2:3000")).toBe("http://10.0.2.2:3000")
+    expect(trustedCoreOrigin("http://[fd12:3456::1]:3000")).toBe("http://[fd12:3456::1]:3000")
     expect(trustedCoreOrigin("http://evil.example.test")).toBeNull()
+    expect(trustedCoreOrigin("http://user:password@192.168.1.42:3000")).toBeNull()
   })
 
   test("keeps only installable catalog entries", () => {

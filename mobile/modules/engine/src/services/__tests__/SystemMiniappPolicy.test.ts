@@ -6,6 +6,7 @@ import {
   isPreinstalledMiniappPackageAllowed,
   isStoreMiniappPackage,
   isSystemMiniappPackage,
+  requiresConnectedGlasses,
 } from "../SystemMiniappPolicy"
 
 describe("SYSTEM miniapp policy", () => {
@@ -30,5 +31,10 @@ describe("SYSTEM miniapp policy", () => {
     expect(isPreinstalledMiniappPackageAllowed("com.mentra.store")).toBe(false)
     expect(isPreinstalledMiniappPackageAllowed("com.mentra.settings")).toBe(false)
     expect(isPreinstalledMiniappPackageAllowed("com.example.weather")).toBe(true)
+  })
+
+  test("keeps Store management available while glasses are disconnected", () => {
+    expect(requiresConnectedGlasses("com.mentra.store")).toBe(false)
+    expect(requiresConnectedGlasses("com.example.weather")).toBe(true)
   })
 })

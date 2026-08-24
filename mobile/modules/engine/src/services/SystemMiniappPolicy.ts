@@ -29,6 +29,11 @@ export function isStoreMiniappPackage(packageName: string): boolean {
   return STORE_MINIAPP_PACKAGES.has(packageName)
 }
 
+/** Store management is a phone surface and remains available without glasses. */
+export function requiresConnectedGlasses(packageName: string): boolean {
+  return !isStoreMiniappPackage(packageName)
+}
+
 /**
  * The remotely managed preinstalled registry must never replace a build-owned
  * SYSTEM package. Supporting remote SYSTEM updates requires a separate signed
