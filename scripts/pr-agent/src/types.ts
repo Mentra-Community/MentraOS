@@ -94,6 +94,12 @@ export type AggregateOutput = {
   ciFailed: boolean;
   newBlockingCount: number;
   /**
+   * Blocking findings first introduced this cycle by model reviewers (external
+   * bot findings excluded — those already exist as inline comments). Used to
+   * post inline PR review comments anchored at file/line.
+   */
+  newBlockingFindings: Finding[];
+  /**
    * True when reviewers were scheduled but none produced a usable verdict.
    * The cycle carried no review signal, so no convergence counters moved.
    */

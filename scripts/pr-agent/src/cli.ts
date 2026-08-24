@@ -15,6 +15,7 @@ import {
 import { loadConfig } from './config.js';
 import { fetchExternalFindings, type ExternalFindings } from './external-reviews.js';
 import { runFix } from './fix.js';
+import { postInlineFindings } from './inline-comments.js';
 import { buildHandoffComment } from './handoff.js';
 import { runPlan, writePlanOutputs } from './plan.js';
 import { recheckHandoff } from './recheck-handoff.js';
@@ -132,6 +133,15 @@ async function cmdAggregate() {
     activePair,
   );
   await upsertMarkerComment(octokit, owner, repo, prNumber, MARKER_REVIEW, reviewComment);
+
+  // Inline comments are best-effort: an anchor rejection must not fail the cycle.
+  if (result.newBlockingFindings.length > 0) {
+    try {
+      await postInlineFindings(octokit, owner, repo, prNumber, ref, result.newBlockingFindings);
+    } catch (err) {
+      console.warn('posting inline finding comments failed; continuing:', err);
+    }
+  }
 
   const out = process.env.GITHUB_OUTPUT;
   if (out) {

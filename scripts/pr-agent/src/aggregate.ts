@@ -171,6 +171,7 @@ export function aggregateCycle(
       handoffReason: undefined,
       ciFailed,
       newBlockingCount: 0,
+      newBlockingFindings: [],
       emptyCycle: true,
     };
   }
@@ -279,6 +280,11 @@ export function aggregateCycle(
     lastOpenCount: internalOpenCount,
   };
 
+  const newFingerprintSet = new Set(newBlockingFingerprints);
+  const newBlockingFindings = openFindings.filter(
+    (f) => newFingerprintSet.has(f.fingerprint) && f.status === 'open',
+  );
+
   return {
     state: nextState,
     shouldFix,
@@ -286,6 +292,7 @@ export function aggregateCycle(
     handoffReason,
     ciFailed,
     newBlockingCount,
+    newBlockingFindings,
   };
 }
 
