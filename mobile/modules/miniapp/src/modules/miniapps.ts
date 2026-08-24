@@ -66,6 +66,8 @@ export interface InstallMiniappRequest {
   minHostVersion?: string
   /** Mentra Miniapp SDK ABI version declared by the release manifest. */
   sdkVersion?: string
+  /** Glasses hardware requirements declared by the release manifest. */
+  hardwareRequirements?: MiniappHardwareRequirement[]
   releaseId?: string
   channel?: string
   /**
@@ -96,9 +98,18 @@ export interface InstallMiniappResult {
 export interface InstallMiniappCompatibilityRequest {
   minHostVersion?: string | null
   sdkVersion?: string | null
+  hardwareRequirements?: MiniappHardwareRequirement[]
 }
 
-export type InstallMiniappCompatibility = {compatible: true} | {compatible: false; reason: string}
+export interface MiniappHardwareRequirement {
+  type: string
+  level: string
+  description?: string
+}
+
+export type InstallMiniappCompatibility =
+  | {compatible: true}
+  | {compatible: false; blocker: "host" | "sdk" | "hardware"; reason: string}
 
 export type InstallMiniappPhase = "downloading" | "verifying" | "extracting" | "activating" | "complete"
 
@@ -183,6 +194,7 @@ export class MiniappsModule {
       type: MiniappRequestType.MINIAPPS_INSTALL_CHECK,
       minHostVersion: request.minHostVersion ?? undefined,
       sdkVersion: request.sdkVersion ?? undefined,
+      hardwareRequirements: request.hardwareRequirements ?? [],
     })
   }
 

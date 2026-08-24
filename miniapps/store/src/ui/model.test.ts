@@ -57,7 +57,18 @@ describe("Store UI model", () => {
     expect(
       isStoreActionDisabled("install", installed(true), {
         compatible: false,
+        blocker: "host",
         reason: "requires host >=3.0.0",
+      }),
+    ).toBe(true)
+  })
+
+  test("blocks a new install that requires unavailable glasses hardware", () => {
+    expect(
+      isStoreActionDisabled("install", undefined, {
+        compatible: false,
+        blocker: "hardware",
+        reason: "camera required",
       }),
     ).toBe(true)
   })

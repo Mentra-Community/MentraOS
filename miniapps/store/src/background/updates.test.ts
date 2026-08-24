@@ -64,7 +64,10 @@ describe("automatic Store updates", () => {
 
   test("defers incompatible updates until the host becomes compatible", () => {
     const incompatible = app({
-      release: {...app().release, installCompatibility: {compatible: false, reason: "Requires a newer host"}},
+      release: {
+        ...app().release,
+        installCompatibility: {compatible: false, blocker: "host", reason: "Requires a newer host"},
+      },
     })
     expect(isAutomaticUpdateCandidate(incompatible, installed({system: true}), storePackageName)).toBe(false)
   })

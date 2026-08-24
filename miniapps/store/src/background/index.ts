@@ -115,7 +115,7 @@ class StoreController {
         }),
         this.session.miniapps.list({includeIncompatible: true}),
       ])
-      this.apps = await this.annotateUpdateCompatibility(apps, installed)
+      this.apps = await this.annotateInstallCompatibility(apps)
       this.snapshot = {
         apps: this.apps,
         installed,
@@ -139,16 +139,14 @@ class StoreController {
     return this.snapshot
   }
 
-  private async annotateUpdateCompatibility(apps: StoreApp[], installed: InstalledApp[]): Promise<StoreApp[]> {
-    const installedByPackage = new Map(installed.map((app) => [app.packageName, app]))
+  private async annotateInstallCompatibility(apps: StoreApp[]): Promise<StoreApp[]> {
     return Promise.all(
       apps.map(async (app) => {
-        const current = installedByPackage.get(app.packageName)
-        if (!current || !isNewerVersion(app.release.version, current.version)) return app
         try {
           const installCompatibility = await this.session.miniapps.checkInstallCompatibility({
             minHostVersion: app.release.minHostVersion,
             sdkVersion: app.release.sdkVersion,
+            hardwareRequirements: app.release.hardwareRequirements,
           })
           return {...app, release: {...app.release, installCompatibility}}
         } catch (error) {
@@ -229,6 +227,7 @@ class StoreController {
         bundleSha256: app.release.bundleSha256,
         ...(app.release.minHostVersion ? {minHostVersion: app.release.minHostVersion} : {}),
         ...(app.release.sdkVersion ? {sdkVersion: app.release.sdkVersion} : {}),
+        hardwareRequirements: app.release.hardwareRequirements,
         releaseId: app.release.id,
         channel: "stable",
       })

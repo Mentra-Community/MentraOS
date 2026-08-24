@@ -269,8 +269,20 @@ function AppRow({
 }) {
   const update = Boolean(installed && isNewerVersion(app.release.version, installed.version))
   const action = !installed || update ? "install" : "open"
-  const blockedUpdate = update && app.release.installCompatibility?.compatible === false
-  const label = busy ? "Working…" : blockedUpdate ? "Requires update" : update ? "Update" : installed ? "Open" : "Get"
+  const installBlocker = action === "install" && app.release.installCompatibility?.compatible === false
+  const label = busy
+    ? "Working…"
+    : installBlocker
+      ? app.release.installCompatibility?.blocker === "hardware"
+        ? "Not compatible"
+        : app.release.installCompatibility?.blocker === "host" || app.release.installCompatibility?.blocker === "sdk"
+          ? "Requires update"
+          : "Unavailable"
+      : update
+        ? "Update"
+        : installed
+          ? "Open"
+          : "Get"
   return (
     <article className="app-row">
       <button className="app-main" onClick={onSelect} aria-label={`View ${app.name}`}>
@@ -284,7 +296,7 @@ function AppRow({
       <button
         className="action"
         disabled={busy || isStoreActionDisabled(action, installed, app.release.installCompatibility)}
-        title={blockedUpdate ? app.release.installCompatibility?.reason : undefined}
+        title={installBlocker ? app.release.installCompatibility?.reason : undefined}
         onClick={() => void onAction(action, app.packageName)}>
         {label}
       </button>
@@ -317,11 +329,15 @@ function Detail({
 }) {
   const update = Boolean(installed && isNewerVersion(app.release.version, installed.version))
   const kind = !installed || update ? "install" : "open"
-  const blockedUpdate = update && app.release.installCompatibility?.compatible === false
+  const installBlocker = kind === "install" && app.release.installCompatibility?.compatible === false
   const label = busy
     ? "Working…"
-    : blockedUpdate
-      ? "Requires Mentra App update"
+    : installBlocker
+      ? app.release.installCompatibility?.blocker === "hardware"
+        ? "Not compatible"
+        : app.release.installCompatibility?.blocker === "host" || app.release.installCompatibility?.blocker === "sdk"
+          ? "Requires Mentra App update"
+          : "Unavailable"
       : update
         ? "Update"
         : installed
@@ -353,9 +369,14 @@ function Detail({
         {installed?.compatibility.isCompatible === false && (
           <div className="notice">This miniapp is not compatible with the connected glasses.</div>
         )}
-        {blockedUpdate && (
+        {installBlocker && app.release.installCompatibility?.blocker === "hardware" && (
+          <div className="notice">{app.release.installCompatibility.reason}</div>
+        )}
+        {installBlocker && app.release.installCompatibility?.blocker !== "hardware" && (
           <div className="notice">
-            This update will install automatically after the Mentra App is updated.{" "}
+            {update
+              ? "This update will install automatically after the Mentra App is updated. "
+              : "Update the Mentra App to install this miniapp. "}
             {app.release.installCompatibility?.reason}
           </div>
         )}

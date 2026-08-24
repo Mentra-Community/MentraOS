@@ -6,11 +6,15 @@ export interface StoreRelease {
   manifestSha256: string | null
   publishedAt: string | null
   permissions: Array<string | {type: string; required?: boolean; description?: string}>
-  hardwareRequirements: Array<{type: string; level?: string; description?: string}>
+  hardwareRequirements: Array<{type: string; level: string; description?: string}>
   minHostVersion: string | null
   sdkVersion: string | null
   /** Host-computed compatibility for an available update. Never trusted from the catalog. */
-  installCompatibility?: {compatible: boolean; reason?: string}
+  installCompatibility?: {
+    compatible: boolean
+    blocker?: "host" | "sdk" | "hardware"
+    reason?: string
+  }
 }
 
 export interface StoreApp {

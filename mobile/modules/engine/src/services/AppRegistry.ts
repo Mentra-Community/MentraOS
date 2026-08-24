@@ -24,13 +24,14 @@ import semver from "semver"
 import {AsyncResult, Result, result as Res} from "typesafe-ts"
 
 import type {AppletPermission, AppPermissionType, AppletType, ClientApp} from "../types/applet"
-import {HardwareRequirement, HardwareRequirementLevel, HardwareType} from "../types"
+import {type Capabilities, HardwareRequirement, HardwareRequirementLevel, HardwareType} from "../types"
 import {readBoundedByteStream} from "../utils/boundedByteStream"
 import {configuredDevHost} from "../utils/configuredDevHost"
 import {storage} from "../utils/storage/storage"
 import {printDirectory} from "../utils/storage/zip"
 import {sha256Hex} from "../utils/sha256"
 import {checkManifestVersions} from "./manifestVersionGate"
+import {checkMiniappInstallCompatibility} from "./miniappInstallCompatibility"
 import {normalizeManifestActions} from "./manifestActions"
 import {miniappRunningRegistry} from "./MiniappRunningRegistry"
 import {isSystemMiniappPackage, requiresConnectedGlasses} from "./SystemMiniappPolicy"
@@ -172,12 +173,32 @@ export interface InstallBundleOptions {
   expectedPackageName?: string
   expectedVersion?: string
   expectedBundleSha256?: string
-  compatibilityPolicy?: {hostVersion: string; supportedSdkRange: string}
+  compatibilityPolicy?: {
+    hostVersion: string
+    supportedSdkRange: string
+    hardwareCapabilities?: Capabilities
+  }
   onProgress?: (phase: "downloading" | "verifying" | "extracting" | "activating") => void
 }
 
 const MAX_REMOTE_BUNDLE_BYTES = 50 * 1024 * 1024
 const REMOTE_BUNDLE_TIMEOUT_MS = 45_000
+
+function assertInstallCompatibility(
+  manifest: Awaited<ReturnType<typeof validateInstallBundleArchive>>,
+  policy: NonNullable<InstallBundleOptions["compatibilityPolicy"]>,
+): void {
+  if (!policy.hardwareCapabilities) {
+    const versionCompatibility = checkManifestVersions(manifest, policy)
+    if (!versionCompatibility.ok) throw new Error(versionCompatibility.reason)
+    return
+  }
+  const compatibility = checkMiniappInstallCompatibility(manifest, {
+    ...policy,
+    hardwareCapabilities: policy.hardwareCapabilities,
+  })
+  if (!compatibility.compatible) throw new Error(compatibility.reason)
+}
 
 function releaseIdentityKey(packageName: string, version: string): string {
   return `miniapp_release_identity:${packageName}:${version}`
@@ -410,10 +431,7 @@ async function downloadAndInstallMiniApp(
       packageName: opts?.expectedPackageName,
       version: opts?.expectedVersion,
     })
-    if (opts?.compatibilityPolicy) {
-      const compatibility = checkManifestVersions(manifest, opts.compatibilityPolicy)
-      if (!compatibility.ok) throw new Error(compatibility.reason)
-    }
+    if (opts?.compatibilityPolicy) assertInstallCompatibility(manifest, opts.compatibilityPolicy)
     console.log("ZIP: done downloading, starting unzip")
     return await unpackMiniApp(
       downloadedZipPath,
@@ -637,10 +655,7 @@ class AppRegistry {
         packageName: opts?.expectedPackageName,
         version: opts?.expectedVersion,
       })
-      if (opts?.compatibilityPolicy) {
-        const compatibility = checkManifestVersions(manifest, opts.compatibilityPolicy)
-        if (!compatibility.ok) throw new Error(compatibility.reason)
-      }
+      if (opts?.compatibilityPolicy) assertInstallCompatibility(manifest, opts.compatibilityPolicy)
       const {packageName, version} = await unpackMiniApp(
         zipPath,
         opts?.versionOverride,

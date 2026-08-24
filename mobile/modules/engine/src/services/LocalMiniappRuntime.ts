@@ -82,7 +82,7 @@ import {listPhoneCalendarEvents, PhoneCalendarError} from "./PhoneCalendarServic
 import {LocalMiniappStorage} from "./LocalMiniappStorage"
 import {canStoreUpdateSystemMiniapp, isStoreMiniappPackage, isSystemMiniappPackage} from "./SystemMiniappPolicy"
 import {installWithRuntimeReload} from "../utils/storeInstallRuntime"
-import {checkManifestVersions} from "./manifestVersionGate"
+import {checkMiniappInstallCompatibility} from "./miniappInstallCompatibility"
 
 // =============================================================================
 // Types
@@ -4328,6 +4328,34 @@ class LocalMiniappRuntime {
     }
   }
 
+  private currentInstallHardwareCapabilities() {
+    const defaultWearable = useSettingsStore.getState().getSetting(ISLAND_SETTINGS_KEYS.defaultWearable) as
+      | DeviceTypes
+      | undefined
+    return getModelCapabilities(defaultWearable || DeviceTypes.NONE)
+  }
+
+  private evaluateInstallCompatibility(
+    payload: Record<string, unknown>,
+  ): {compatible: true} | {compatible: false; blocker: "host" | "sdk" | "hardware"; reason: string} {
+    const {hostVersion, supportedMiniappSdkRange} = getConfigValues()
+    if (!hostVersion || !supportedMiniappSdkRange) {
+      return {compatible: false, blocker: "host", reason: "Host miniapp compatibility policy is not configured"}
+    }
+    return checkMiniappInstallCompatibility(
+      {
+        minHostVersion: typeof payload.minHostVersion === "string" ? payload.minHostVersion.trim() : undefined,
+        sdkVersion: typeof payload.sdkVersion === "string" ? payload.sdkVersion.trim() : undefined,
+        hardwareRequirements: payload.hardwareRequirements,
+      },
+      {
+        hostVersion,
+        supportedSdkRange: supportedMiniappSdkRange,
+        hardwareCapabilities: this.currentInstallHardwareCapabilities(),
+      },
+    )
+  }
+
   private async handleMiniappsInstall(
     storePackageName: string,
     payload: Record<string, unknown>,
@@ -4402,11 +4430,12 @@ class LocalMiniappRuntime {
       if (!hostVersion || !supportedMiniappSdkRange) {
         throw new Error("Host miniapp compatibility policy is not configured")
       }
-      const compatibility = checkManifestVersions(
-        {minHostVersion, sdkVersion},
-        {hostVersion, supportedSdkRange: supportedMiniappSdkRange},
-      )
-      if (!compatibility.ok) {
+      const compatibility = this.evaluateInstallCompatibility({
+        minHostVersion,
+        sdkVersion,
+        hardwareRequirements: payload.hardwareRequirements,
+      })
+      if (!compatibility.compatible) {
         this.sendResult(storePackageName, requestId, false, undefined, {
           code: MiniappErrorCode.APP_NOT_COMPATIBLE,
           message: compatibility.reason,
@@ -4435,7 +4464,11 @@ class LocalMiniappRuntime {
             expectedPackageName: target,
             expectedVersion: version,
             expectedBundleSha256: bundleSha256,
-            compatibilityPolicy: {hostVersion, supportedSdkRange: supportedMiniappSdkRange},
+            compatibilityPolicy: {
+              hostVersion,
+              supportedSdkRange: supportedMiniappSdkRange,
+              hardwareCapabilities: this.currentInstallHardwareCapabilities(),
+            },
             onProgress: (phase) =>
               this.sendToMiniapp(storePackageName, {
                 type: MiniappResponseType.MINIAPPS_INSTALL_PROGRESS,
@@ -4511,27 +4544,7 @@ class LocalMiniappRuntime {
       })
       return
     }
-    const {hostVersion, supportedMiniappSdkRange} = getConfigValues()
-    if (!hostVersion || !supportedMiniappSdkRange) {
-      this.sendResult(storePackageName, requestId, false, undefined, {
-        code: MiniappErrorCode.INTERNAL,
-        message: "Host miniapp compatibility policy is not configured",
-      })
-      return
-    }
-    const compatibility = checkManifestVersions(
-      {
-        minHostVersion: typeof payload.minHostVersion === "string" ? payload.minHostVersion.trim() : undefined,
-        sdkVersion: typeof payload.sdkVersion === "string" ? payload.sdkVersion.trim() : undefined,
-      },
-      {hostVersion, supportedSdkRange: supportedMiniappSdkRange},
-    )
-    this.sendResult(
-      storePackageName,
-      requestId,
-      true,
-      compatibility.ok ? {compatible: true} : {compatible: false, reason: compatibility.reason},
-    )
+    this.sendResult(storePackageName, requestId, true, this.evaluateInstallCompatibility(payload))
   }
 
   private async handleMiniappsUninstall(

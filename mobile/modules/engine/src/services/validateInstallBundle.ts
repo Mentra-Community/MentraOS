@@ -1,6 +1,8 @@
 import JSZip from "jszip"
 import semver from "semver"
 
+import {HardwareRequirementLevel, HardwareType, type HardwareRequirement} from "../types"
+
 const MAX_EXPANDED_BYTES = 200 * 1024 * 1024
 const MAX_ENTRIES = 2_000
 const MAX_MANIFEST_BYTES = 256 * 1024
@@ -9,7 +11,13 @@ const PACKAGE_NAME_PATTERN = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/
 export async function validateInstallBundleArchive(
   bytes: Uint8Array,
   expected?: {packageName?: string; version?: string},
-): Promise<{packageName: string; version: string; sdkVersion?: string; minHostVersion?: string}> {
+): Promise<{
+  packageName: string
+  version: string
+  sdkVersion?: string
+  minHostVersion?: string
+  hardwareRequirements: HardwareRequirement[]
+}> {
   inspectCentralDirectory(bytes)
   let zip: JSZip
   try {
@@ -55,6 +63,7 @@ export async function validateInstallBundleArchive(
   const version = typeof manifest.version === "string" ? manifest.version : ""
   const sdkVersion = typeof manifest.sdkVersion === "string" ? manifest.sdkVersion : undefined
   const minHostVersion = typeof manifest.minHostVersion === "string" ? manifest.minHostVersion : undefined
+  const hardwareRequirements = validateManifestHardwareRequirements(manifest.hardwareRequirements)
   if (!PACKAGE_NAME_PATTERN.test(packageName)) throw new Error("bundle manifest has an invalid packageName")
   if (!semver.valid(version)) throw new Error("bundle manifest has an invalid semantic version")
   if (expected?.packageName && expected.packageName !== packageName) {
@@ -73,7 +82,37 @@ export async function validateInstallBundleArchive(
       }
     }
   }
-  return {packageName, version, sdkVersion, minHostVersion}
+  return {packageName, version, sdkVersion, minHostVersion, hardwareRequirements}
+}
+
+const AUTHOR_DECLARABLE_HARDWARE_TYPES = new Set<HardwareType>(
+  Object.values(HardwareType).filter((type) => type !== HardwareType.EXIST),
+)
+
+/** Validate untrusted catalog/ZIP hardware requirements against the public manifest schema. */
+export function validateManifestHardwareRequirements(value: unknown): HardwareRequirement[] {
+  if (value === undefined) return []
+  if (!Array.isArray(value)) throw new Error("bundle manifest hardwareRequirements must be an array")
+  return value.map((candidate, index) => {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
+      throw new Error(`bundle manifest hardwareRequirements[${index}] is invalid`)
+    }
+    const record = candidate as Record<string, unknown>
+    if (typeof record.type !== "string" || !AUTHOR_DECLARABLE_HARDWARE_TYPES.has(record.type as HardwareType)) {
+      throw new Error(`bundle manifest hardwareRequirements[${index}].type is invalid`)
+    }
+    if (record.level !== HardwareRequirementLevel.REQUIRED && record.level !== HardwareRequirementLevel.OPTIONAL) {
+      throw new Error(`bundle manifest hardwareRequirements[${index}].level is invalid`)
+    }
+    if (record.description !== undefined && typeof record.description !== "string") {
+      throw new Error(`bundle manifest hardwareRequirements[${index}].description is invalid`)
+    }
+    return {
+      type: record.type as HardwareType,
+      level: record.level,
+      ...(typeof record.description === "string" ? {description: record.description} : {}),
+    }
+  })
 }
 
 function safePath(path: string): boolean {

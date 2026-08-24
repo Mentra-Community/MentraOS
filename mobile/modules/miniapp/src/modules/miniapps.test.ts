@@ -37,6 +37,7 @@ describe("MiniappsModule Store operations", () => {
         bundleSha256: "a".repeat(64),
         minHostVersion: "2.13.0",
         sdkVersion: "0.3.0",
+        hardwareRequirements: [{type: "CAMERA", level: "REQUIRED"}],
         releaseId: "rel_123",
         channel: "stable",
       }),
@@ -50,6 +51,7 @@ describe("MiniappsModule Store operations", () => {
         bundleSha256: "a".repeat(64),
         minHostVersion: "2.13.0",
         sdkVersion: "0.3.0",
+        hardwareRequirements: [{type: "CAMERA", level: "REQUIRED"}],
         releaseId: "rel_123",
         channel: "stable",
       },
@@ -63,17 +65,22 @@ describe("MiniappsModule Store operations", () => {
     expect(requests).toEqual([{type: MiniappRequestType.MINIAPPS_UNINSTALL, packageName: "com.example.weather"}])
   })
 
-  test("preflights host and SDK compatibility", async () => {
-    const result = {compatible: false, reason: "Built for a newer SDK"}
+  test("preflights host, SDK, and glasses hardware compatibility", async () => {
+    const result = {compatible: false, blocker: "hardware", reason: "Camera required"}
     const {session, requests} = mockSession(result)
     await expect(
-      new MiniappsModule(session).checkInstallCompatibility({minHostVersion: "3.0.0", sdkVersion: "0.4.0"}),
+      new MiniappsModule(session).checkInstallCompatibility({
+        minHostVersion: "3.0.0",
+        sdkVersion: "0.4.0",
+        hardwareRequirements: [{type: "CAMERA", level: "REQUIRED"}],
+      }),
     ).resolves.toEqual(result)
     expect(requests).toEqual([
       {
         type: MiniappRequestType.MINIAPPS_INSTALL_CHECK,
         minHostVersion: "3.0.0",
         sdkVersion: "0.4.0",
+        hardwareRequirements: [{type: "CAMERA", level: "REQUIRED"}],
       },
     ])
   })

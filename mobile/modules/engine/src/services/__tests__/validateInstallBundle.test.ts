@@ -18,6 +18,7 @@ describe("validateInstallBundleArchive", () => {
       version: "1.0.0",
       sdkVersion: "0.3.0",
       minHostVersion: "2.13.0",
+      hardwareRequirements: [{type: "CAMERA", level: "REQUIRED"}],
       entry: {background: "background/index.js"},
     })
     await expect(
@@ -27,10 +28,23 @@ describe("validateInstallBundleArchive", () => {
       version: "1.0.0",
       sdkVersion: "0.3.0",
       minHostVersion: "2.13.0",
+      hardwareRequirements: [{type: "CAMERA", level: "REQUIRED"}],
     })
     await expect(validateInstallBundleArchive(bytes, {packageName: "com.example.other"})).rejects.toThrow(
       "package mismatch",
     )
+  })
+
+  test("rejects malformed hardware requirements before native extraction", async () => {
+    await expect(
+      validateInstallBundleArchive(
+        await bundle({
+          packageName: "com.example.app",
+          version: "1.0.0",
+          hardwareRequirements: [{type: "CAMERA", level: "MAYBE"}],
+        }),
+      ),
+    ).rejects.toThrow("hardwareRequirements[0].level")
   })
 
   test("rejects a nested manifest", async () => {

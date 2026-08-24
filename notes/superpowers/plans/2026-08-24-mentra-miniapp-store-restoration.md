@@ -115,6 +115,12 @@ publisher signatures can be enforced later without changing the API.
 - [x] Preflight update `minHostVersion` and `sdkVersion` against the current
       Mentra App before showing or applying an update. Incompatible updates are
       deferred and become eligible automatically after the host is upgraded.
+- [x] Preflight every new install and update against the remembered glasses
+      model's required hardware. For example, reject a `CAMERA: REQUIRED`
+      release for Even Realities G1 while accepting it for Mentra Live; optional
+      hardware does not block installation.
+- [x] Enforce hardware compatibility in the host install request and verify the
+      canonical ZIP manifest again before activation, not only in Store UI.
 - [x] Automatically update compatible SYSTEM releases assigned to this Store
       and non-SYSTEM releases already owned by this Store. Never adopt or update
       another Store's packages.
@@ -133,7 +139,7 @@ publisher signatures can be enforced later without changing the API.
       the previous artifact after a failed ZIP command.
 - [x] Mentra Miniapp SDK: 272 passed.
 - [x] Installer/SYSTEM security tests, including bundle-name impersonation.
-- [x] Store catalog, automatic-update policy, ownership, and UI-model tests: 15
+- [x] Store catalog, automatic-update policy, ownership, and UI-model tests: 16
       passed.
 - [x] Headless Chromium Store UI E2E at a 390×844 phone viewport: catalog,
       search-query preservation, install, details, verified identity, Installed
@@ -144,11 +150,13 @@ publisher signatures can be enforced later without changing the API.
 - [x] Android ASG and Bluetooth SDK compile checks.
 - [x] Full iOS Simulator native build with code signing disabled.
 - [x] ZIP integrity check. Bundled Store SHA-256:
-      `4f2c3fff1a5eb1bd33d0485efa5d26352db654a263c553c8dc74fe98899a2386`.
+      `515599e4dccce2ca8f0b3501f620d0e595db96fbf4d1ff48aba9866b1889f5d6`.
 - [x] Review regressions: bounded streaming inflation and CRC checks in both
       Core and the phone, trusted host-selected Core URL, complete catalog
       pagination, Store-owned uninstall visibility, pre-activation host/SDK
       compatibility gates, running-context retry/rollback around updates,
+      required/optional hardware installation gates (including G1 camera
+      rejection and Mentra Live acceptance),
       unbounded install request correlation, update repair of incompatible
       releases, live detail resolution after catalog refreshes, Expo-native
       bounded response streaming, and rejection of remote preinstalled
