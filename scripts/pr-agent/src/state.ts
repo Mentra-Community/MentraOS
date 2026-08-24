@@ -68,14 +68,46 @@ export async function loadOrCreateState(
   repo: string,
   issueNumber: number,
 ): Promise<{ state: PrAgentState; commentId?: number }> {
-  const comments = await listAllIssueComments(octokit, owner, repo, issueNumber);
+  // Races between concurrent orchestrator runs (e.g. a workflow_run-triggered
+  // run on the default branch overlapping a pull_request-triggered run on the
+  // PR branch) have produced duplicate state comments: a transient list/parse
+  // failure made one run fall back to a default state, whose save then created
+  // a second marker comment. Recover deterministically: parse every marker
+  // comment, adopt the highest revision, and best-effort delete the rest so
+  // the ledger converges back to a single source of truth.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const comments = await listAllIssueComments(octokit, owner, repo, issueNumber);
+    const markers = comments.filter((c) => c.body?.includes(MARKER_ORCHESTRATOR));
 
-  const markerComment = comments.find((c) => c.body?.includes(MARKER_ORCHESTRATOR));
-  if (markerComment?.body) {
-    const parsed = parseStateFromComment(markerComment.body);
-    if (parsed) {
-      return { state: parsed, commentId: markerComment.id };
+    const parsed = markers
+      .map((c) => ({ id: c.id, state: c.body ? parseStateFromComment(c.body) : null }))
+      .filter((x): x is { id: number; state: PrAgentState } => x.state != null);
+
+    if (parsed.length > 0) {
+      parsed.sort((a, b) => (b.state.revision ?? 0) - (a.state.revision ?? 0));
+      const winner = parsed[0]!;
+      for (const dup of parsed.slice(1)) {
+        try {
+          await octokit.issues.deleteComment({ owner, repo, comment_id: dup.id });
+          console.log(
+            `Deleted duplicate state comment ${dup.id} (revision ${dup.state.revision ?? 0} < ${winner.state.revision ?? 0})`,
+          );
+        } catch {
+          // Best-effort: a leftover duplicate is inert as long as the winner sorts first.
+        }
+      }
+      return { state: winner.state, commentId: winner.id };
     }
+
+    if (markers.length > 0 && attempt === 0) {
+      // Marker comments exist but none parsed — likely a transient mid-edit
+      // read. Retry once before falling back: proceeding with a default state
+      // silently resets the ledger and budget counters.
+      console.warn('State comment present but unparseable; retrying once before default');
+      await new Promise((r) => setTimeout(r, 5000));
+      continue;
+    }
+    break;
   }
   return { state: defaultState() };
 }
