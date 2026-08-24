@@ -118,6 +118,7 @@ const initialState: GlassesStore = {
   androidVersion: "",
   firmwareVersion: "",
   bluetoothMacAddress: "",
+  wifiMacAddress: "",
   leftMacAddress: "",
   rightMacAddress: "",
   buildNumber: "",
@@ -130,6 +131,7 @@ const initialState: GlassesStore = {
   color: "",
   mtkFirmwareVersion: "",
   besFirmwareVersion: "",
+  hotspotOtaVersion: 0,
   // wifi info
   wifi: {state: "disconnected"},
   wifiStatusKnown: false,
@@ -193,6 +195,7 @@ export const useGlassesStore = create<GlassesState>()(
         }
         if (!isGlassesConnected(next.connection)) {
           next.wifiStatusKnown = false
+          next.hotspotOtaVersion = 0
         }
         return next
       }),

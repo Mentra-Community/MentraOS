@@ -59,8 +59,8 @@ const addListener: BluetoothSdkPublicModule["addListener"] = (eventName, listene
   return PrivateBluetoothSdkModule.addListener(eventName, listener as BluetoothSdkEventListener<BluetoothSdkEventName>)
 }
 
-const startOtaUpdate: BluetoothSdkPublicModule["startOtaUpdate"] = () => {
-  return PrivateBluetoothSdkModule.startOtaUpdate()
+const startOtaUpdate: BluetoothSdkPublicModule["startOtaUpdate"] = (otaVersionUrl) => {
+  return PrivateBluetoothSdkModule.startOtaUpdate(otaVersionUrl)
 }
 
 const bindPublicMethod = <K extends keyof BluetoothSdkPublicModule>(name: K): BluetoothSdkPublicModule[K] => {
@@ -138,6 +138,8 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
   setGlassesMediaVolume: bindPublicMethod("setGlassesMediaVolume"),
   rgbLedControl: bindPublicMethod("rgbLedControl"),
   requestVersionInfo: bindPublicMethod("requestVersionInfo"),
+  setOtaVersionUrl: bindPublicMethod("setOtaVersionUrl"),
+  getOtaVersionUrl: bindPublicMethod("getOtaVersionUrl"),
   checkForOtaUpdate: bindPublicMethod("checkForOtaUpdate"),
   startOtaUpdate,
   startAr99OtaFromFile: bindPublicMethod("startAr99OtaFromFile"),

@@ -47,9 +47,9 @@ fail() {
     exit 1
 }
 
-extract_trailing_date() {
+extract_version_suffix() {
     local value="$1"
-    if [[ "$value" =~ ([0-9]{8})$ ]]; then
+    if [[ "$value" =~ ([0-9]{8}(\.[0-9]+)?)$ ]]; then
         echo "${BASH_REMATCH[1]}"
         return 0
     fi
@@ -256,11 +256,11 @@ if [ ! -f "$PATCH_PATH" ]; then
 fi
 
 PATCH_NAME="$(basename "$PATCH_PATH")"
-if [[ "$PATCH_NAME" =~ ([0-9]{8})_([0-9]{8})\.zip$ ]]; then
-    FILE_START_DATE="${BASH_REMATCH[1]}"
-    FILE_END_DATE="${BASH_REMATCH[2]}"
+if [[ "$PATCH_NAME" =~ ([0-9]{8}(\.[0-9]+)?)_([0-9]{8}(\.[0-9]+)?)\.zip$ ]]; then
+    FILE_START_VERSION="${BASH_REMATCH[1]}"
+    FILE_END_VERSION="${BASH_REMATCH[3]}"
 else
-    fail "Could not parse start/end dates from filename: $PATCH_NAME"
+    fail "Could not parse start/end versions from filename: $PATCH_NAME"
 fi
 
 DEVICE_VERSION="$(adb shell getprop ro.custom.ota.version 2>/dev/null | tr -d '\r\n')"
@@ -268,23 +268,23 @@ if [ -z "$DEVICE_VERSION" ]; then
     fail "Failed to read ro.custom.ota.version from device"
 fi
 
-if ! DEVICE_START_DATE="$(extract_trailing_date "$DEVICE_VERSION")"; then
-    fail "Device firmware version does not end with YYYYMMDD: $DEVICE_VERSION"
+if ! DEVICE_START_VERSION="$(extract_version_suffix "$DEVICE_VERSION")"; then
+    fail "Device firmware version does not end with YYYYMMDD or YYYYMMDD.N: $DEVICE_VERSION"
 fi
 
 START_FIRMWARE="${START_FIRMWARE_OVERRIDE:-$DEVICE_VERSION}"
-if ! START_DATE="$(extract_trailing_date "$START_FIRMWARE")"; then
-    fail "start_firmware does not end with YYYYMMDD: $START_FIRMWARE"
+if ! START_VERSION="$(extract_version_suffix "$START_FIRMWARE")"; then
+    fail "start_firmware does not end with YYYYMMDD or YYYYMMDD.N: $START_FIRMWARE"
 fi
 
-if [ "$FILE_START_DATE" != "$START_DATE" ]; then
-    fail "Patch start date ($FILE_START_DATE) does not match start_firmware date ($START_DATE)"
+if [ "$FILE_START_VERSION" != "$START_VERSION" ]; then
+    fail "Patch start version ($FILE_START_VERSION) does not match start_firmware version ($START_VERSION)"
 fi
 
 if [ -n "$END_FIRMWARE_OVERRIDE" ]; then
     END_FIRMWARE="$END_FIRMWARE_OVERRIDE"
 else
-    END_FIRMWARE="${START_FIRMWARE%$START_DATE}$FILE_END_DATE"
+    END_FIRMWARE="${START_FIRMWARE%$START_VERSION}$FILE_END_VERSION"
 fi
 
 if command -v shasum >/dev/null 2>&1; then

@@ -10,6 +10,7 @@ import com.mentra.asg_client.io.bes.BesOtaStateStore.TerminalStatus;
 import com.mentra.asg_client.io.bes.BesOtaStateStore.TransitionResult;
 import com.mentra.asg_client.io.bes.BesOtaStateStore.UartPolicy;
 import com.mentra.asg_client.io.bes.BesOtaStateStore.VerificationDecision;
+
 import org.json.JSONObject;
 import org.junit.Before;
 import org.junit.Test;
@@ -17,6 +18,12 @@ import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 import org.robolectric.shadows.ShadowLog;
+
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 33)
@@ -153,6 +160,141 @@ public class BesOtaStateStoreTest {
     }
 
     @Test
+    public void recoveryTimeoutCanBeSupersededByExactTargetOnLaterBoot() {
+        reserve();
+        assertThat(store.fail(OWNER, "recovery_timeout")).isEqualTo(TransitionResult.APPLIED);
+
+        assertThat(store.completeLateExactTargetAfterRecoveryTimeout(OWNER, BOOT_B, TARGET))
+                .isEqualTo(TransitionResult.APPLIED);
+        assertThat(store.read().getTerminalStatus()).isEqualTo(TerminalStatus.SUCCESS);
+        assertThat(store.read().getTerminalCode()).isEqualTo("verified");
+        assertThat(store.read().getVerificationBootId()).isEqualTo(BOOT_B);
+    }
+
+    @Test
+    public void verificationTimeoutCanBeSupersededByExactTargetOnLaterBoot() {
+        reserveAndMarkApply();
+        assertThat(store.fail(OWNER, "verification_timeout")).isEqualTo(TransitionResult.APPLIED);
+
+        assertThat(store.completeLateExactTargetAfterRecoveryTimeout(OWNER, BOOT_B, TARGET))
+                .isEqualTo(TransitionResult.APPLIED);
+        assertThat(store.read().getTerminalStatus()).isEqualTo(TerminalStatus.SUCCESS);
+    }
+
+    @Test
+    public void restartVersionProofAtomicallyCompletesApplyPending() {
+        reserveAndMarkApply();
+
+        assertThat(store.completeVersionProofAfterRestart(OWNER, BOOT_B, TARGET))
+                .isEqualTo(TransitionResult.APPLIED);
+        assertThat(store.read().getTerminalStatus()).isEqualTo(TerminalStatus.SUCCESS);
+        assertThat(store.read().getVerificationBootId()).isEqualTo(BOOT_B);
+    }
+
+    @Test
+    public void restartVersionProofPublishesNewSecondBootFailure() {
+        reserveAndMarkApply();
+        assertThat(store.claimOrResumeVerificationBoot(BOOT_B))
+                .isEqualTo(VerificationDecision.CLAIMED);
+
+        assertThat(store.completeVersionProofAfterRestart(OWNER, BOOT_C, TARGET))
+                .isEqualTo(TransitionResult.APPLIED);
+        assertThat(store.read().getTerminalStatus()).isEqualTo(TerminalStatus.FAILURE);
+        assertThat(store.read().getTerminalCode()).isEqualTo("verification_boot_changed");
+    }
+
+    @Test
+    public void restartVersionProofAtomicallyCompletesRecoveredAuthorization() {
+        reserve();
+
+        assertThat(store.completeVersionProofAfterRestart(OWNER, BOOT_B, TARGET))
+                .isEqualTo(TransitionResult.APPLIED);
+        assertThat(store.read().getTerminalStatus()).isEqualTo(TerminalStatus.SUCCESS);
+        assertThat(store.read().getVerificationBootId()).isEqualTo(BOOT_B);
+    }
+
+    @Test
+    public void restartVersionProofAtomicallySupersedesOnlyEligibleTimeout() {
+        reserve();
+        assertThat(store.fail(OWNER, "recovery_timeout")).isEqualTo(TransitionResult.APPLIED);
+
+        assertThat(store.completeVersionProofAfterRestart(OWNER, BOOT_B, TARGET))
+                .isEqualTo(TransitionResult.APPLIED);
+        assertThat(store.read().getTerminalStatus()).isEqualTo(TerminalStatus.SUCCESS);
+    }
+
+    @Test
+    public void restartVersionProofKeepsNonTimeoutFailureTerminal() {
+        reserve();
+        assertThat(store.fail(OWNER, "response_timeout")).isEqualTo(TransitionResult.APPLIED);
+
+        assertThat(store.completeVersionProofAfterRestart(OWNER, BOOT_B, TARGET))
+                .isEqualTo(TransitionResult.ALREADY_TERMINAL);
+        assertThat(store.read().getTerminalStatus()).isEqualTo(TerminalStatus.FAILURE);
+        assertThat(store.read().getTerminalCode()).isEqualTo("response_timeout");
+    }
+
+    @Test
+    public void restartVersionProofCannotBeLostToConcurrentRecoveryTimeout() throws Exception {
+        reserve();
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        CountDownLatch start = new CountDownLatch(1);
+        try {
+            Future<TransitionResult> proof =
+                    executor.submit(
+                            () -> {
+                                start.await();
+                                return store.completeVersionProofAfterRestart(
+                                        OWNER, BOOT_B, TARGET);
+                            });
+            Future<TransitionResult> timeout =
+                    executor.submit(
+                            () -> {
+                                start.await();
+                                return store.fail(OWNER, "recovery_timeout");
+                            });
+
+            start.countDown();
+            assertThat(proof.get(2, TimeUnit.SECONDS)).isEqualTo(TransitionResult.APPLIED);
+            TransitionResult timeoutResult = timeout.get(2, TimeUnit.SECONDS);
+            assertThat(
+                            timeoutResult == TransitionResult.APPLIED
+                                    || timeoutResult == TransitionResult.ALREADY_TERMINAL)
+                    .isTrue();
+            assertThat(store.read().getTerminalStatus()).isEqualTo(TerminalStatus.SUCCESS);
+            assertThat(store.read().getTerminalCode()).isEqualTo("verified");
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    public void lateTimeoutProofRequiresOwnerLaterBootAndExactTarget() {
+        reserve();
+        store.fail(OWNER, "recovery_timeout");
+
+        assertThat(store.completeLateExactTargetAfterRecoveryTimeout(OTHER_OWNER, BOOT_B, TARGET))
+                .isEqualTo(TransitionResult.REJECTED);
+        assertThat(store.completeLateExactTargetAfterRecoveryTimeout(OWNER, BOOT_A, TARGET))
+                .isEqualTo(TransitionResult.ALREADY_TERMINAL);
+        assertThat(store.completeLateExactTargetAfterRecoveryTimeout(OWNER, BOOT_B, "26.7.30.3"))
+                .isEqualTo(TransitionResult.ALREADY_TERMINAL);
+        assertThat(store.read().getTerminalStatus()).isEqualTo(TerminalStatus.FAILURE);
+        assertThat(store.read().getTerminalCode()).isEqualTo("recovery_timeout");
+    }
+
+    @Test
+    public void nonTimeoutFailureCannotBeSupersededByVersionProof() {
+        reserve();
+        store.fail(OWNER, "response_timeout");
+
+        assertThat(store.completeLateExactTargetAfterRecoveryTimeout(OWNER, BOOT_B, TARGET))
+                .isEqualTo(TransitionResult.ALREADY_TERMINAL);
+        assertThat(store.read().getTerminalStatus()).isEqualTo(TerminalStatus.FAILURE);
+        assertThat(store.read().getTerminalCode()).isEqualTo("response_timeout");
+    }
+
+    @Test
     public void failedTerminalCannotRetireInAuthorizationBoot() {
         reserve();
         store.fail(OWNER, "install_failed");
@@ -195,13 +337,27 @@ public class BesOtaStateStoreTest {
     }
 
     @Test
-    public void sameBootProcessRestartRecordsFailureAndQuarantines() {
+    public void sameBootProcessRestartRecordsFailureAndRequiresFramedRecoveryProof() {
         reserve();
 
-        assertThat(store.reconcileStartup(BOOT_A)).isEqualTo(StartupDecision.QUARANTINED);
+        assertThat(store.reconcileStartup(BOOT_A)).isEqualTo(StartupDecision.RECOVERY_PROBE_ONLY);
         assertThat(store.read().getState()).isEqualTo(State.TERMINAL);
         assertThat(store.read().getTerminalCode()).isEqualTo("interrupted");
-        assertThat(store.uartPolicy(BOOT_A, false, null)).isEqualTo(UartPolicy.QUARANTINED);
+        assertThat(store.uartPolicy(BOOT_A, false, null)).isEqualTo(UartPolicy.RECOVERY_PROBE_ONLY);
+        assertThat(store.uartPolicy(BOOT_A, true, null)).isEqualTo(UartPolicy.NORMAL);
+        assertThat(store.prepareForNewSession(BOOT_A, true))
+                .isEqualTo(StartDecision.RESTART_REQUIRED);
+    }
+
+    @Test
+    public void sameBootTerminalFailureAllowsOnlyOrdinaryUartAfterFramedProof() {
+        reserve();
+        assertThat(store.fail(OWNER, "response_timeout")).isEqualTo(TransitionResult.APPLIED);
+
+        assertThat(store.uartPolicy(BOOT_A, false, null)).isEqualTo(UartPolicy.RECOVERY_PROBE_ONLY);
+        assertThat(store.uartPolicy(BOOT_A, true, null)).isEqualTo(UartPolicy.NORMAL);
+        assertThat(store.prepareForNewSession(BOOT_A, true))
+                .isEqualTo(StartDecision.RESTART_REQUIRED);
     }
 
     @Test

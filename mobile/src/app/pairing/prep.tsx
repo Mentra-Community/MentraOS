@@ -324,7 +324,10 @@ export default function PairingPrepScreen() {
     const {theme} = useAppTheme()
 
     return (
-      <View className="flex-1 flex-col justify-start mt-6">
+      <ScrollView
+        className="flex-1 mt-6"
+        contentContainerStyle={{paddingBottom: theme.spacing.s6}}
+        showsVerticalScrollIndicator>
         <View className="flex-col items-center justify-center bg-primary-foreground rounded-xl mb-6">
           <Image source={require("../../../assets/glasses/g1.png")} resizeMode="contain" className="w-50 h-25" />
           <Icon name="chevron-down" size={36} color={theme.colors.text} />
@@ -346,7 +349,7 @@ export default function PairingPrepScreen() {
             text="2. Place your G1 in the charging case with the lid open."
           />
         </View>
-      </View>
+      </ScrollView>
     )
   }
 
@@ -371,7 +374,10 @@ export default function PairingPrepScreen() {
     const {theme} = useAppTheme()
 
     return (
-      <View className="flex-1 flex-col justify-start mt-6">
+      <ScrollView
+        className="flex-1 mt-6"
+        contentContainerStyle={{paddingBottom: theme.spacing.s6}}
+        showsVerticalScrollIndicator>
         <View className="flex-col items-center justify-center bg-primary-foreground rounded-xl mb-6">
           <Image
             source={require("../../../assets/glasses/even_realities_g2/even_realities_g2.png")}
@@ -394,7 +400,7 @@ export default function PairingPrepScreen() {
           />
           <Text className="text-lg text-secondary-foreground" text="2. Place your G2 in the charging case." />
         </View>
-      </View>
+      </ScrollView>
     )
   }
 

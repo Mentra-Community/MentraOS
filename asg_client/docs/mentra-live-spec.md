@@ -108,6 +108,8 @@ Every camera-button press should still be forwarded to the phone as a `button_pr
 
 Mentra Live supports camera/microphone live streaming paths from `asg_client`, including RTMP, SRT, and WHIP services. Streaming behavior must coordinate camera ownership, microphone foreground-service requirements, reconnect/keep-alive handling, and privacy LED state.
 
+Streaming endpoints on the active Mentra Live hotspot subnet are reachable without a separate STA WiFi connection. `asg_client` derives that subnet from the live hotspot interface rather than assuming fixed client addresses. For WHIP, the WebRTC network inventory must also expose the hotspot interface so ICE can gather a directly reachable local candidate.
+
 ### Local media sync server
 
 `asg_client` runs an embedded HTTP server that lets the phone enumerate, download, ZIP, and delete captured media. This is used for gallery sync and avoids relying on cloud connectivity for local media transfer.
@@ -136,7 +138,7 @@ Camera and streaming features must leave LEDs in a safe state on stop, error, se
 
 The phone can configure WiFi behavior through `asg_client`. Mentra Live-specific network managers should be used when platform APIs are required; generic Android fallbacks exist for non-K900 paths.
 
-When the phone requests the Mentra Live hotspot, `asg_client` starts the K900 firmware hotspot through the SmartXY `ap_start` intent. It waits for the AP gateway and firmware-configured SSID/password before returning them to the phone over BLE. Clients must use the latest BLE status rather than assume fixed credentials. The hotspot remains active while the local HTTP server is receiving requests or streaming response data and automatically stops after 120 seconds of genuine HTTP inactivity.
+When the phone requests the Mentra Live hotspot, `asg_client` starts the K900 firmware hotspot through the SmartXY `ap_start` intent. It waits for the AP gateway and firmware-configured SSID/password before returning them to the phone over BLE. Clients must use the latest BLE status rather than assume fixed credentials. The hotspot remains active while the local HTTP server is receiving requests or streaming response data, or while a hotspot-local stream receives its standard stream keep-alives. It automatically stops after 120 seconds without any of those activity signals.
 
 ### OTA and updates
 
@@ -159,6 +161,8 @@ the generic `0123456789ABCDEF` Android/ADB placeholder—regardless of which
 property exposes it—or a BES system-version field. The Bluetooth
 MAC is sourced from BES (`hs_syvr`/`sr_btaddr`), persisted in
 `persist.mentra.live.mac`, and republished to the phone as soon as it is learned.
+The MTK Wi-Fi interface MAC is read from Android's Wi-Fi service and forwarded
+separately as `wifi_mac_address` when available.
 
 `asg_client` includes logging, crash/error reporting, incident log buffering, and debug receivers for development and OTA testing. Production behavior should prioritize device stability and useful logs for support while avoiding secrets in logs.
 

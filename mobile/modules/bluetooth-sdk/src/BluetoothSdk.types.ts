@@ -155,6 +155,8 @@ export type VersionInfoResult = {
   systemTimeMs?: number
   otaVersionUrl: string
   appVersion: string
+  /** Phone-served hotspot OTA protocol version; 0 means unsupported/legacy glasses. */
+  hotspotOtaVersion: number
 }
 
 export type VersionInfoEvent = VersionInfoResult & {
@@ -1161,10 +1163,17 @@ export interface BluetoothSdkPublicModule {
   ): Promise<RgbLedControlSuccessResponseEvent>
 
   requestVersionInfo(): Promise<VersionInfoResult>
+  /**
+   * Select the OTA manifest used by subsequent update checks and installs.
+   * The URL may point at Mentra's hosted manifest or any customer-controlled HTTP(S) server.
+   */
+  setOtaVersionUrl(otaVersionUrl: string): void
+  /** Return the configured OTA manifest URL, or this SDK release's default manifest URL. */
+  getOtaVersionUrl(): string
   /** Fetch the configured OTA manifest and return whether any ASG/BES/MTK update is available. */
   checkForOtaUpdate(): Promise<boolean>
-  /** Start the OTA flow with the same configured manifest URL used by checkForOtaUpdate(). */
-  startOtaUpdate(): Promise<OtaStartAckEvent>
+  /** Start OTA from the configured or explicitly supplied manifest URL. */
+  startOtaUpdate(otaVersionUrl?: string | null): Promise<OtaStartAckEvent>
   startAr99OtaFromFile(path: string): Promise<boolean>
   cancelAr99Ota(): Promise<void>
   sendAr99FactoryReset(): Promise<void>
@@ -1263,6 +1272,7 @@ export interface GlassesStatus {
   besFirmwareVersion: string
   mtkFirmwareVersion: string
   bluetoothMacAddress: string
+  wifiMacAddress: string
   leftMacAddress: string
   rightMacAddress: string
   buildNumber: string
@@ -1270,6 +1280,8 @@ export interface GlassesStatus {
   systemTimeMs?: number
   otaVersionUrl: string
   appVersion: string
+  /** Phone-served hotspot OTA protocol version; 0 means unsupported/legacy glasses. */
+  hotspotOtaVersion: number
   bluetoothName: string
   serialNumber: string
   style: string

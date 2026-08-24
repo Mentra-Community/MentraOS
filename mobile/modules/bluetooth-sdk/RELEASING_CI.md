@@ -46,6 +46,8 @@ The same derived version drives all public artifacts:
 
 - ASG OTA manifest:
   `https://github.com/Mentra-Community/MentraOS/releases/download/bluetooth-sdk-ota/bluetooth-sdk-VERSION-version.json`
+- Portable self-hosted OTA bundle:
+  `https://github.com/Mentra-Community/MentraOS/releases/download/bluetooth-sdk-ota/bluetooth-sdk-VERSION-ota-bundle.zip`
 - ASG APK release asset under the persistent `bluetooth-sdk-ota` release tag
 - npm staged package: `@mentra/bluetooth-sdk`
 - Maven Central: `com.mentraglass:bluetooth-sdk` and `com.mentraglass:lc3Lib`
@@ -103,7 +105,11 @@ derives it from the channel (`automatic` on `dev`, `user_managed` on
 2. The SDK OTA job builds the ASG client APK from the same release commit,
    generates a versioned manifest with ASG APK metadata plus the MTK and BES
    metadata from `asg_client/ota_manifests/firmware_live.json`, then uploads the
-   APK and manifest to the persistent `bluetooth-sdk-ota` GitHub release. The APK
+   APK and manifest to the persistent `bluetooth-sdk-ota` GitHub release. It also
+   downloads and hash-verifies those same referenced artifacts and packages them
+   with a host-relative manifest template and a dependency-free configurator as a
+   portable self-hosted ZIP. The configurator emits an absolute-URL `version.json`
+   for compatibility with ASG build 39 and newer. The APK
    asset name includes the SDK version, ASG `versionCode`, and commit SHA; the
    manifest asset name includes the SDK version.
    The ASG `versionCode` uses the same Jan 1 2025 wall-clock offset formula as
@@ -172,6 +178,7 @@ After a real release:
 npm view @mentra/bluetooth-sdk@VERSION version
 npm stage list @mentra/bluetooth-sdk
 curl -fsS "https://github.com/Mentra-Community/MentraOS/releases/download/bluetooth-sdk-ota/bluetooth-sdk-VERSION-version.json"
+curl -fsSI "https://github.com/Mentra-Community/MentraOS/releases/download/bluetooth-sdk-ota/bluetooth-sdk-VERSION-ota-bundle.zip"
 curl -fsS "https://repo.maven.apache.org/maven2/com/mentraglass/bluetooth-sdk/VERSION/bluetooth-sdk-VERSION.pom"
 curl -fsS "https://repo.maven.apache.org/maven2/com/mentraglass/lc3Lib/VERSION/lc3Lib-VERSION.pom"
 git ls-remote --tags git@github.com:Mentra-Community/mentra-bluetooth-sdk-ios.git VERSION

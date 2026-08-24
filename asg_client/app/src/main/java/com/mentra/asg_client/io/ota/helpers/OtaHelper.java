@@ -143,7 +143,6 @@ public class OtaHelper {
     private int lastProgressSentPercent = 0;
     private static final long PROGRESS_MIN_INTERVAL_MS = 2000; // 2 seconds
     private static final int PROGRESS_MIN_CHANGE_PERCENT = 5;   // 5%
-
     // Current update stage for progress reporting
     private String currentUpdateStage = "download"; // "download" or "install"
     private String currentUpdateType = "apk"; // "apk", "mtk", or "bes"
@@ -1031,7 +1030,13 @@ public class OtaHelper {
                 // after the restart via sendCompletionToPhone(), or naturally from
                 // the next step for multi-step sessions.
                 if (sessionManager != null) {
-                    sessionManager.setRestarting();
+                    if (!sessionManager.setRestarting()) {
+                        sessionManager.setFailed("apk_restart_guard_not_persisted");
+                        sendProgressToPhone(
+                                "install", 0, 0, 0, "FAILED", "apk_restart_guard_not_persisted");
+                        isUpdating = false;
+                        return false;
+                    }
                 }
 
                 boolean installKicked = installApk(context, localPath);
@@ -2024,8 +2029,8 @@ public class OtaHelper {
      * MTK requires sequential updates - must find patch starting from current version.
      * @param patches Array of patch objects with start_firmware, end_firmware, url
      * @param currentVersion Current MTK firmware version as reported by
-     *     {@code ro.custom.ota.version}, e.g. "MentraLive_20260626"; both sides are
-     *     normalized before comparison, so a bare "20260626" would also match
+     *     {@code ro.custom.ota.version}, e.g. "MentraLive_20260820.1"; both sides are
+     *     normalized before comparison, so a bare "20260820.1" would also match
      * @return Matching patch object, or null if no match or version unknown
      */
     private JSONObject findMatchingMtkPatch(JSONArray patches, String currentVersion) {
@@ -2054,9 +2059,9 @@ public class OtaHelper {
     }
 
     /**
-     * Reduce an MTK version string to its bare date so manifest entries and the device
+     * Reduce an MTK version string to its version suffix so manifest entries and the device
      * property match regardless of any "MentraLive_"-style prefix. Both normally carry the
-     * prefix; this is defensive so a bare-date value on either side still matches.
+     * prefix; this is defensive so a bare suffix on either side still matches.
      */
     private String normalizeMtkFirmwareVersion(String version) {
         if (version == null) {
@@ -2249,7 +2254,8 @@ public class OtaHelper {
                 }
                 Log.i(TAG, "Starting validated BES firmware update artifact="
                         + artifact.getArtifactId() + " target=" + artifact.getTargetVersion());
-                boolean started = manager.startFirmwareUpdate(artifact, ownerSessionId);
+                boolean started =
+                        startBesFirmwareInstall(manager, artifact, ownerSessionId);
                 if (started) {
                     Log.i(TAG, "BES firmware update initiated successfully");
                     return true;
@@ -2394,6 +2400,32 @@ public class OtaHelper {
                 "BES firmware sha256 verification failed"
             );
         }
+    }
+
+    /** Build the phone guard and let the BES controller order it immediately before mh_ota. */
+    boolean startBesFirmwareInstall(
+            IBesOtaController manager,
+            ValidatedBesArtifact artifact,
+            String ownerSessionId) {
+        currentUpdateType = "bes";
+        JSONObject installGuard = buildBesInstallStartStatus();
+        if (installGuard == null) {
+            Log.e(TAG, "BES install blocked - could not build phone guard status");
+            return false;
+        }
+        return manager.startFirmwareUpdateWithInstallGuard(
+                artifact, ownerSessionId, installGuard);
+    }
+
+    private JSONObject buildBesInstallStartStatus() {
+        updateSessionFromProgress("install", 0, "STARTED", null);
+        lastProgressSentTime = System.currentTimeMillis();
+        lastProgressSentPercent = 0;
+        lastOtaPhoneStage = "install";
+        lastOtaPhoneProgress = 0;
+        lastOtaPhoneEventStatus = "STARTED";
+        lastOtaPhoneError = null;
+        return buildOtaStatusForPhone();
     }
 
     /**
@@ -2957,8 +2989,7 @@ public class OtaHelper {
         return true;
     }
 
-    private void sendOtaStatus() {
-        if (phoneConnectionProvider == null || !isPhoneConnected()) return;
+    private JSONObject buildOtaStatusForPhone() {
         JSONObject sessionState = getAuthoritativeBesStatus();
         if (sessionState == null && sessionManager != null) {
             sessionState = sessionManager.getSessionState();
@@ -2967,7 +2998,7 @@ public class OtaHelper {
             sessionState = buildMinimalOtaStatusJson();
             if (sessionState == null) {
                 Log.w(TAG, "No OTA session and cannot build minimal ota_status — phone will not see progress");
-                return;
+                return null;
             }
             Log.w(TAG, "No OTA session state — sending minimal ota_status so the phone UI can update");
         }
@@ -2979,9 +3010,18 @@ public class OtaHelper {
             if ("failed".equals(sessionState.optString("status"))) {
                 sessionState.put("glasses_time_ms", System.currentTimeMillis());
             }
-            phoneConnectionProvider.sendOtaStatus(sessionState);
+            return sessionState;
         } catch (JSONException e) {
             Log.e(TAG, "Failed to send OTA status", e);
+            return null;
+        }
+    }
+
+    private void sendOtaStatus() {
+        if (phoneConnectionProvider == null || !isPhoneConnected()) return;
+        JSONObject sessionState = buildOtaStatusForPhone();
+        if (sessionState != null) {
+            phoneConnectionProvider.sendOtaStatus(sessionState);
         }
     }
 

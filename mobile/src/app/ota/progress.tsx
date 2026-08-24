@@ -1,5 +1,5 @@
 import {engine, SETTINGS, useSetting} from "@mentra/engine"
-import {useCallback, useEffect} from "react"
+import {useCallback, useEffect, useRef} from "react"
 import {View, ActivityIndicator} from "react-native"
 
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
@@ -15,6 +15,9 @@ import {
   shouldShowChangeWifiForOtaDownloadFailure,
 } from "@/utils/otaErrorMapping"
 import {useNavigationStore} from "@/stores/navigation"
+import {isOtaAutoChainActive, stopOtaAutoChain} from "@/services/otaAutoChain"
+
+const AUTO_CHAIN_COMPLETE_DELAY_MS = 750
 
 /**
  * Pure renderer over the island OTA install state machine
@@ -38,7 +41,10 @@ export default function OtaProgressScreen() {
     isVersionChange,
     versionChangeConverged,
     versionChangePhase,
+    hotspotPhase,
+    hotspotArtifactPercent,
   } = install
+  const autoChainAdvancedRef = useRef(false)
 
   focusEffectPreventBack()
 
@@ -68,7 +74,26 @@ export default function OtaProgressScreen() {
     }
   }, [])
 
+  // A verified completion is the safe boundary between manifest generations.
+  // Wait through any final reboot, keep success visible briefly, then re-enter
+  // the checker; it either starts the next pass or presents the final state.
+  useEffect(() => {
+    if (displayState !== "complete" || !connected || !isOtaAutoChainActive() || autoChainAdvancedRef.current) return
+
+    const timeout = setTimeout(() => {
+      if (!isOtaAutoChainActive()) return
+      autoChainAdvancedRef.current = true
+      engine.ota.installSession.finish()
+      replace("/ota/check-for-updates")
+    }, AUTO_CHAIN_COMPLETE_DELAY_MS)
+
+    return () => clearTimeout(timeout)
+  }, [connected, displayState, replace])
+
   const handleContinue = () => {
+    // This is the explicit BES recovery escape hatch shown before reboot
+    // verification completes. Returning early must not preserve automation.
+    stopOtaAutoChain()
     engine.ota.installSession.finish()
     replace("/ota/check-for-updates")
   }
@@ -83,13 +108,20 @@ export default function OtaProgressScreen() {
   }
 
   const handleChangeWifi = useCallback(() => {
+    stopOtaAutoChain()
     push("/wifi/scan")
   }, [push])
 
   const handleSkipSuper = useCallback(() => {
+    stopOtaAutoChain()
     engine.ota.installSession.discard()
     replace("/ota/check-for-updates")
   }, [replace])
+
+  const handleFailureDone = () => {
+    stopOtaAutoChain()
+    handleDone()
+  }
 
   const renderContent = () => {
     // Downgrade detour: the recovery worker owns the transaction while ASG is being
@@ -120,12 +152,32 @@ export default function OtaProgressScreen() {
     }
 
     if (displayState === "starting") {
+      const hotspotTitle =
+        hotspotPhase === "downloading"
+          ? "Downloading update to phone..."
+          : hotspotPhase === "starting_hotspot"
+            ? "Starting glasses hotspot..."
+            : hotspotPhase === "joining_hotspot"
+              ? "Connecting phone to glasses..."
+              : hotspotPhase === "serving"
+                ? "Starting update..."
+                : "Starting update..."
       return (
         <View className="flex-1 items-center justify-center px-6">
           <Icon name="world-download" size={64} color={theme.colors.primary} />
           <View className="h-6" />
-          <Text text="Starting update..." className="font-semibold text-xl text-center" />
+          <Text text={hotspotTitle} className="font-semibold text-xl text-center" />
           <View className="h-4" />
+          {hotspotPhase === "downloading" && hotspotArtifactPercent !== null && (
+            <>
+              <Text
+                text={`${Math.round(hotspotArtifactPercent)}%`}
+                className="text-3xl font-bold"
+                style={{color: theme.colors.primary}}
+              />
+              <View className="h-4" />
+            </>
+          )}
           <ActivityIndicator size="large" color={theme.colors.foreground} />
           <View className="h-4" />
           <Text
@@ -143,10 +195,10 @@ export default function OtaProgressScreen() {
       const isApkOnlyInstalling = otaStatus?.stepType === "apk" && otaStatus?.phase === "install" && totalSteps === 1
 
       const rawPercent = isDownload
-        ? otaStatus?.stepPercent ?? 0
+        ? (otaStatus?.stepPercent ?? 0)
         : totalSteps >= 2
-        ? otaStatus?.overallPercent ?? 0
-        : otaStatus?.stepPercent ?? 0
+          ? (otaStatus?.overallPercent ?? 0)
+          : (otaStatus?.stepPercent ?? 0)
       // Legacy (< 37) MTK install stall simulation (WP 8C-e): the coordinator projects a
       // display-only percent while the MTK system install goes quiet; render whichever is
       // further along. Null for unified sessions and outside legacy MTK installs.
@@ -279,9 +331,9 @@ export default function OtaProgressScreen() {
           </View>
           <View className="gap-3">
             {requiresGlassesReboot ? (
-              <Button preset="primary" text="Done" flexContainer onPress={handleDone} />
+              <Button preset="primary" text="Done" flexContainer onPress={handleFailureDone} />
             ) : (
-            <Button preset="primary" text="Retry" flexContainer onPress={handleRetry} />
+              <Button preset="primary" text="Retry" flexContainer onPress={handleRetry} />
             )}
             {showChangeWifi ? (
               <Button preset="secondary" text="Change WiFi" flexContainer onPress={handleChangeWifi} />

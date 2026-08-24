@@ -313,7 +313,7 @@ See [features/rtmp-streaming.md](features/rtmp-streaming.md) for stream lifecycl
 | `flash`     | boolean | `true`   | Privacy LED during stream                                                                                                     |
 | `sound`     | boolean | `true`   | Start/stop tones                                                                                                              |
 
-**Constraints:** battery ≥ 10%, WiFi connected. WHIP streams whose requested resolution exceeds the camera's supported output are rejected (`WhipCameraFormatSelector`).
+**Constraints:** battery ≥ 10%, and either STA WiFi is connected or the stream endpoint is on the active glasses-hosted hotspot subnet. WHIP streams whose requested resolution exceeds the camera's supported output are rejected (`WhipCameraFormatSelector`).
 
 **Response wire type:** `stream_status` (new universal type from `MediaManager.sendStreamStatusResponse`). Legacy `rtmp_stream_status` is still produced by `ResponseBuilder` in some paths.
 
@@ -500,12 +500,14 @@ The glasses also emit `battery_status` outbound:
 Returns version information in chunks to fit the BLE MTU:
 
 - `version_info_1`: `app_version`, `build_number`, `device_model`, `android_version`, `system_time_ms`, `sid`
-- `version_info_3`: `bes_fw_version`, `mtk_fw_version`, `bt_mac_address`, `serial_number`
+- `version_info_3`: `bes_fw_version`, `mtk_fw_version`, `bt_mac_address`, `wifi_mac_address`, `serial_number`
 
 `serial_number` is the Android firmware product serial from `ro.serialno`; the
 generic `0123456789ABCDEF` Android/ADB placeholder is omitted.
 `bt_mac_address` comes from BES and may arrive in a follow-up `version_info_3`
 after BES responds to the MAC-address request.
+`wifi_mac_address` is the MTK Wi-Fi interface MAC and is omitted when Android
+does not expose a valid address.
 
 ---
 

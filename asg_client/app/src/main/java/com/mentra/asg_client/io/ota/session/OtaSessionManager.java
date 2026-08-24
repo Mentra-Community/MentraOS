@@ -228,10 +228,29 @@ public class OtaSessionManager {
         Log.i(TAG, "Session complete: " + mSessionId);
     }
 
-    public synchronized void setRestarting() {
+    public synchronized boolean setRestarting() {
         mRestartingSinceElapsed = SystemClock.elapsedRealtime();
-        persist();
+        if (!persistImmediately()) {
+            mRestartingSinceElapsed = -1;
+            Log.e(TAG, "Could not durably mark session as restarting");
+            return false;
+        }
         Log.i(TAG, "Session marked as restarting");
+        return true;
+    }
+
+    /**
+     * True only while an active OTA is intentionally replacing the ASG APK.
+     *
+     * <p>The network manager combines this durable fact with the physical K900 AP state: if the
+     * AP is on, shutdown leaves the SystemUI-owned hotspot alone; if it is off, there is nothing
+     * to preserve. The OTA protocol does not need to label its transport.
+     */
+    public synchronized boolean shouldPreserveHotspotOnShutdown() {
+        return mRestartingSinceElapsed >= 0
+                && hasActiveSession()
+                && "apk".equals(getStepType(mCurrentStepIndex))
+                && "install".equals(mCurrentPhase);
     }
 
     public synchronized boolean isInRestartGuard() {
@@ -494,6 +513,15 @@ public class OtaSessionManager {
     }
 
     private void persist() {
+        persist(false);
+    }
+
+    /** Package replacement can kill this process immediately, so critical restart writes use commit. */
+    private boolean persistImmediately() {
+        return persist(true);
+    }
+
+    private boolean persist(boolean immediately) {
         try {
             JSONObject json = new JSONObject();
             json.put("session_id", mSessionId != null ? mSessionId : JSONObject.NULL);
@@ -507,9 +535,16 @@ public class OtaSessionManager {
             json.put("version_json_url", mVersionJsonUrl != null ? mVersionJsonUrl : JSONObject.NULL);
             json.put("last_activity_at_elapsed", mLastActivityAtElapsed);
             json.put("restarting_since_elapsed", mRestartingSinceElapsed);
-            mPrefs.edit().putString(KEY_SESSION_DATA, json.toString()).apply();
+            SharedPreferences.Editor editor =
+                    mPrefs.edit().putString(KEY_SESSION_DATA, json.toString());
+            if (immediately) {
+                return editor.commit();
+            }
+            editor.apply();
+            return true;
         } catch (JSONException e) {
             Log.e(TAG, "Failed to persist session", e);
+            return false;
         }
     }
 

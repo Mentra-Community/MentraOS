@@ -5,7 +5,6 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.net.wifi.WifiNetworkSpecifier
-import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Base64
@@ -16,6 +15,7 @@ import expo.modules.kotlin.modules.ModuleDefinition
 import java.io.File
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
+import java.net.Inet4Address
 import java.net.URL
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
@@ -80,7 +80,9 @@ class MentraLocalNetworkModule : Module() {
         AsyncFunction("cancel") { requestId: String -> cancel(requestId) }
         AsyncFunction("disconnect") { disconnect() }
 
-        OnDestroy { disconnect() }
+        OnDestroy {
+            disconnect()
+        }
     }
 
     private fun connectivityManager(): ConnectivityManager =
@@ -89,11 +91,6 @@ class MentraLocalNetworkModule : Module() {
         }
 
     private fun connect(ssid: String, password: String, promise: Promise) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-            promise.reject("ERR_UNSUPPORTED_ANDROID", "Scoped local WiFi requires Android 10 or newer", null)
-            return
-        }
-
         disconnect()
         val manager = connectivityManager()
         val specifier =
@@ -147,7 +144,19 @@ class MentraLocalNetworkModule : Module() {
                         "Glasses WiFi network=$network is foreground and ready " +
                             "processBoundNetwork=${manager.boundNetworkForProcess}",
                     )
-                    connectPromise?.resolve(mapOf("connected" to true, "ssid" to ssid))
+                    val localAddress =
+                        manager.getLinkProperties(network)
+                            ?.linkAddresses
+                            ?.firstOrNull { it.address is Inet4Address }
+                            ?.address
+                            ?.hostAddress
+                    connectPromise?.resolve(
+                        buildMap<String, Any> {
+                            put("connected", true)
+                            put("ssid", ssid)
+                            if (!localAddress.isNullOrBlank()) put("localAddress", localAddress)
+                        },
+                    )
                 }
 
                 override fun onUnavailable() {

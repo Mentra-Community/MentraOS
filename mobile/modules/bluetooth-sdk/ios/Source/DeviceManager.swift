@@ -1748,6 +1748,7 @@ struct ViewState {
         // previously connected pair can never be reported for the next connection.
         DeviceStore.shared.apply("glasses", "serialNumber", "")
         DeviceStore.shared.apply("glasses", "bluetoothMacAddress", "")
+        DeviceStore.shared.apply("glasses", "wifiMacAddress", "")
         DeviceStore.shared.apply("glasses", "leftMacAddress", "")
         DeviceStore.shared.apply("glasses", "rightMacAddress", "")
         DeviceStore.shared.apply("glasses", "macAddress", "")

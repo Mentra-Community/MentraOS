@@ -334,25 +334,6 @@ export class PhoneStreamCoordinator {
     packageName: string,
     opts: StartManagedOptions,
   ): Promise<ManagedStartResult> {
-    try {
-      return await this.executeStartManaged(packageName, opts)
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      if (
-        opts.ingest === "whip" &&
-        /WebRTC ingest never reached|ICE did not connect/i.test(message)
-      ) {
-        console.warn("[STREAM] WHIP ingest failed, retrying over RTMP:", message)
-        return this.executeStartManaged(packageName, {...opts, ingest: "rtmp"})
-      }
-      throw err
-    }
-  }
-
-  private async executeStartManaged(
-    packageName: string,
-    opts: StartManagedOptions,
-  ): Promise<ManagedStartResult> {
     const startupStartedAtMs = Date.now()
     // streamId doesn't exist yet — it's minted a few lines below, once we
     // know this is a fresh provision rather than a join onto an existing one.
@@ -868,7 +849,8 @@ function pickIngestUrl(p: ProvisionResult, preference?: "srt" | "whip" | "rtmp")
   // "whip" preference flips the trade: sub-second WHEP playback for
   // live-monitor use cases, accepting no HLS and no recording.
   // "rtmp" prefers TCP 443 ingest so networks that drop WHIP/SRT UDP still
-  // get HLS playback (Mentra Call Teams in restricted networks).
+  // get HLS playback. Callers must request it explicitly; WHIP starts do not
+  // fall back to RTMP.
   //
   // Throw if none resolved so the caller's Promise rejects with a clear
   // message rather than the glasses' "unknown protocol" error.

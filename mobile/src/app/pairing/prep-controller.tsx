@@ -1,6 +1,6 @@
 import {ControllerTypes, DeviceTypes} from "@/../../cloud/packages/types/src"
 import {useRoute} from "@react-navigation/native"
-import {Linking, PermissionsAndroid, Image, Platform, View} from "react-native"
+import {Linking, PermissionsAndroid, Image, Platform, ScrollView, View} from "react-native"
 import type {Permission} from "react-native"
 
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
@@ -207,7 +207,10 @@ export default function PairingPrepScreen() {
     const {theme} = useAppTheme()
 
     return (
-      <View className="flex-1 flex-col justify-start mt-6">
+      <ScrollView
+        className="flex-1 mt-6"
+        contentContainerStyle={{paddingBottom: theme.spacing.s6}}
+        showsVerticalScrollIndicator>
         <View className="flex-col items-center justify-center bg-primary-foreground rounded-xl mb-6">
           <Image
             source={require("../../../assets/glasses/even_realities_g2/even_realities_g2.png")}
@@ -230,7 +233,7 @@ export default function PairingPrepScreen() {
           />
           <Text className="text-lg text-secondary-foreground" text="2. Place your G2 in the charging case." />
         </View>
-      </View>
+      </ScrollView>
     )
   }
 

@@ -36,7 +36,7 @@
     "build": "expo-module build",
     "clean": "expo-module clean",
     "lint": "expo-module lint",
-    "test": "bun test src",
+    "test": "./scripts/test.sh",
     "build:module": "expo-module prepare",
     "prepublishOnly": "expo-module prepublishOnly",
     "expo-module": "expo-module"

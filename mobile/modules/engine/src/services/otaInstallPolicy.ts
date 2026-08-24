@@ -10,6 +10,7 @@ import type {OtaProgress, OtaStatus} from "@mentra/bluetooth-sdk/internal"
 export const MINIMUM_OTA_STATUS_BUILD = 37
 
 export const MAX_RETRIES = 3
+/** Wait between ended native ota_start requests; never overlaps a pending request. */
 export const RETRY_INTERVAL_MS = 5000
 /** APK/BES and general install when progress events are expected */
 export const PROGRESS_TIMEOUT_MS = 120_000
@@ -119,8 +120,13 @@ export function selectOtaProtocolProfile(
 }
 
 export const OtaProgressMessages = {
-  noAckResponse: "Unable to start update. Glasses did not respond.",
   stalledOrStuck: "Update may have failed. Ensure glasses have internet access and try again.",
   globalTimeout: "Update took too long. Please try again.",
   sendOtaStartFailed: "Failed to communicate with glasses.",
+  hotspotArtifactDownloadFailed: "Could not download the update to your phone. Check phone internet and try again.",
+  hotspotArtifactVerifyFailed: "The update package could not be verified. Please try again later.",
+  hotspotWifiPermissionDenied: "Allow nearby devices access so the phone can connect to the glasses hotspot.",
+  hotspotStartFailed: "Could not start the glasses hotspot. Please try again.",
+  hotspotJoinFailed: "Could not connect the phone to the glasses hotspot. Please try again.",
+  hotspotServerFailed: "Could not make the update available to the glasses. Please try again.",
 } as const

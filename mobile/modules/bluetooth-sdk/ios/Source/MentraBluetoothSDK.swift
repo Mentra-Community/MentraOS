@@ -1183,11 +1183,13 @@ public final class MentraBluetoothSDK {
         }
     }
 
-    func setOtaVersionUrl(_ otaVersionUrl: String) throws {
+    /// Select the HTTP(S) manifest used by subsequent OTA checks and installs.
+    public func setOtaVersionUrl(_ otaVersionUrl: String) throws {
         configuredOtaVersionUrl = try OtaManifestChecker.normalizeHttpUrl(otaVersionUrl)
     }
 
-    func getOtaVersionUrl() throws -> String {
+    /// Return the configured OTA manifest, or this SDK release's default manifest.
+    public func getOtaVersionUrl() throws -> String {
         try configuredOtaVersionUrl ?? OtaManifestDefaults.defaultOtaVersionUrl()
     }
 
@@ -2193,7 +2195,4 @@ private func dispatchDiscoveredDevices(_ rawSearchResults: Any?) {
         }
     }
 }
-
-
-
 

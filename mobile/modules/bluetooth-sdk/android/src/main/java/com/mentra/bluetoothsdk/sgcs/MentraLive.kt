@@ -91,6 +91,7 @@ private fun jsonNullableString(json: org.json.JSONObject, key: String): String? 
 }
 
 class MentraLive : SGCManager() {
+    private val besOtaHeartbeatGuard = BesOtaHeartbeatGuard()
 
     companion object {
         private const val TAG = "Live"
@@ -1131,6 +1132,9 @@ class MentraLive : SGCManager() {
     }
 
     private fun updateConnectionState(state: String) {
+        if (state == ConnTypes.DISCONNECTED) {
+            DeviceStore.apply("glasses", "hotspotOtaVersion", 0)
+        }
         val isEqual = state == connectionState
         if (isEqual) {
             if (state == ConnTypes.DISCONNECTED) {
@@ -1153,6 +1157,7 @@ class MentraLive : SGCManager() {
             // same-link glasses_ready (e.g. ASG restart) re-publishes CONNECTED.
             DeviceStore.apply("glasses", "serialNumber", "")
             DeviceStore.apply("glasses", "bluetoothMacAddress", "")
+            DeviceStore.apply("glasses", "wifiMacAddress", "")
         }
 
         // Actually update the connection state!
@@ -1204,6 +1209,17 @@ class MentraLive : SGCManager() {
         cachedOtaCurrentStep = 0
         cachedOtaStepSequence = null
         lastBesOtaProgress = -1
+        // The bounded UART-ownership lease is transport state, not session-cache state. Keep it
+        // through a BLE reconnect so heartbeats cannot resume while BES still owns the UART.
+    }
+
+    private fun updateBesOtaHeartbeatGuard(stepType: String, phase: String, status: String) {
+        besOtaHeartbeatGuard.observeOtaStatus(
+            stepType,
+            phase,
+            status,
+            SystemClock.elapsedRealtime(),
+        )
     }
 
     protected fun setFontSizes() {
@@ -2496,6 +2512,10 @@ class MentraLive : SGCManager() {
                         gatt: BluetoothGatt,
                         characteristic: BluetoothGattCharacteristic
                 ) {
+                    if (!isCurrentGattCallback(gatt)) {
+                        return
+                    }
+
                     // Get thread ID for tracking thread issues
                     val threadId = Thread.currentThread().id
                     val uuid = characteristic.uuid
@@ -3984,6 +4004,7 @@ class MentraLive : SGCManager() {
                 if (osStepSequence != null && osStepSequence.length() > 0) {
                     cachedOtaStepSequence = osStepSequence
                 }
+                updateBesOtaHeartbeatGuard(osStepType, osPhase, osStatus)
 
                 Bridge.log(
                         "LIVE: 📱 OTA status - step " +
@@ -4034,6 +4055,7 @@ class MentraLive : SGCManager() {
                     } else {
                         unified = "in_progress"
                     }
+                    updateBesOtaHeartbeatGuard(currentUpdate, legacyPhase, unified)
                     Bridge.log(
                             "LIVE: 📱 Legacy ota_progress → ota_status: " +
                                     legacyStage +
@@ -4670,6 +4692,9 @@ class MentraLive : SGCManager() {
                     (fields["bt_mac_address"] as? String)?.trim()?.takeIf { it.isNotEmpty() }?.let {
                         DeviceStore.apply("glasses", "bluetoothMacAddress", it)
                     }
+                    (fields["wifi_mac_address"] as? String)?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                        DeviceStore.apply("glasses", "wifiMacAddress", it)
+                    }
                     (fields["serial_number"] as? String)?.trim()?.takeIf { it.isNotEmpty() }?.let {
                         DeviceStore.apply("glasses", "serialNumber", it)
                     }
@@ -4677,6 +4702,12 @@ class MentraLive : SGCManager() {
                         val v = fields["system_time_ms"]
                         if (v is Number) {
                             DeviceStore.apply("glasses", "systemTimeMs", v.toLong())
+                        }
+                    }
+                    if (fields.containsKey("hotspot_ota_version")) {
+                        val version = fields["hotspot_ota_version"]
+                        if (version is Number) {
+                            DeviceStore.apply("glasses", "hotspotOtaVersion", version.toInt())
                         }
                     }
 
@@ -5151,6 +5182,14 @@ class MentraLive : SGCManager() {
                         val besOtaStatus = mapping.status
                         val besOtaProgressVal = mapping.progress
                         val besOtaErrorMessage = mapping.errorMessage
+
+                        if ("FINISHED" == besOtaStatus || "FAILED" == besOtaStatus) {
+                            besOtaHeartbeatGuard.clear()
+                        } else {
+                            // Refresh before progress de-duplication: raw progress proves the BES
+                            // transfer is active even when the rounded UI value is unchanged.
+                            besOtaHeartbeatGuard.refresh(SystemClock.elapsedRealtime())
+                        }
 
                         // Only send if nonterminal display progress changed to a new 5% increment.
                         if ("PROGRESS" == besOtaStatus && besOtaProgressVal == lastBesOtaProgress) {
@@ -5641,6 +5680,10 @@ class MentraLive : SGCManager() {
     private fun sendHeartbeat() {
         if (!glassesReady || connectionState != ConnTypes.CONNECTED) {
             Bridge.log("LIVE: Skipping heartbeat - glasses not ready or not connected")
+            return
+        }
+        if (besOtaHeartbeatGuard.shouldSuppress(SystemClock.elapsedRealtime())) {
+            Bridge.log("LIVE: Skipping heartbeat while BES OTA owns the UART")
             return
         }
 

@@ -222,7 +222,7 @@ describe("PhoneStreamCoordinator", () => {
       expect(startExternallyManagedStream).toHaveBeenCalledTimes(1)
     })
 
-    test("WHIP startup falls back to RTMP when Cloudflare never reports the publisher", async () => {
+    test("WHIP startup fails when Cloudflare never reports the publisher", async () => {
       getManagedStreamStatus.mockImplementation(async () => ({isConnected: false, viewerCount: 0}))
       const coord = new PhoneStreamCoordinator({
         cloudflareStartupPollInitialMs: 1,
@@ -233,11 +233,12 @@ describe("PhoneStreamCoordinator", () => {
         keepAliveIntervalMs: 10_000,
       })
 
-      const result = await coord.startManaged("com.a", {ingest: "whip"})
-      expect(result.mode).toBe("hls")
-      const arg = startExternallyManagedStream.mock.calls.at(-1)![0] as {streamUrl: string}
-      expect(arg.streamUrl).toBe("rtmp://ingest.test/abc")
-      await coord.stop("com.a")
+      await expect(coord.startManaged("com.a", {ingest: "whip"})).rejects.toThrow(
+        /WebRTC ingest never reached Cloudflare/,
+      )
+      expect(startExternallyManagedStream).toHaveBeenCalledTimes(1)
+      const arg = startExternallyManagedStream.mock.calls[0]![0] as {streamUrl: string}
+      expect(arg.streamUrl).toBe("https://ingest.test/abc/whip")
     })
 
     test("startManaged provisions Cloudflare and resolves when HLS is ready", async () => {

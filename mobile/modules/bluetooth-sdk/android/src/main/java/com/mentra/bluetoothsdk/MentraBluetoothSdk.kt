@@ -1138,11 +1138,13 @@ class MentraBluetoothSdk private constructor(
         }
     }
 
-    internal fun setOtaVersionUrl(otaVersionUrl: String) {
+    /** Select the HTTP(S) manifest used by subsequent OTA checks and installs. */
+    fun setOtaVersionUrl(otaVersionUrl: String) {
         configuredOtaVersionUrl = OtaManifestChecker.normalizeHttpUrl(otaVersionUrl)
     }
 
-    internal fun getOtaVersionUrl(): String = configuredOtaVersionUrl ?: OtaManifestDefaults.defaultOtaVersionUrl()
+    /** Return the configured OTA manifest, or this SDK release's default manifest. */
+    fun getOtaVersionUrl(): String = configuredOtaVersionUrl ?: OtaManifestDefaults.defaultOtaVersionUrl()
 
     /** Fetch the configured OTA manifest and return whether any ASG/BES/MTK update is available. */
     suspend fun checkForOtaUpdate(): Boolean {
@@ -1268,6 +1270,12 @@ class MentraBluetoothSdk private constructor(
                 systemTimeMs = versionInfo.systemTimeMs ?: status.systemTimeMs,
                 otaVersionUrl = versionInfo.otaVersionUrl.ifBlank { status.otaVersionUrl },
                 appVersion = versionInfo.appVersion.ifBlank { status.appVersion },
+                hotspotOtaVersion =
+                    if (versionInfo.hotspotOtaVersion > 0) {
+                        versionInfo.hotspotOtaVersion
+                    } else {
+                        status.hotspotOtaVersion
+                    },
             )
         } catch (cancellation: CancellationException) {
             // Never swallow cancellation into the stale-status fallback: callers
@@ -2191,6 +2199,3 @@ class MentraBluetoothSdk private constructor(
         }
     }
 }
-
-
-

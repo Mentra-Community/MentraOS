@@ -18,6 +18,7 @@ const glassesState = {
   appVersion: "live-2",
   buildNumber: "200",
   bluetoothMacAddress: "AA:BB:CC:DD:EE:FF",
+  wifiMacAddress: "12:34:56:78:9A:BC",
   leftMacAddress: "11:22:33:44:55:66",
   wifi: {state: "connected", ssid: "Private Wi-Fi", localIp: "192.0.2.10"},
   hotspot: {state: "enabled", ssid: "secret", password: "password", localIp: "192.0.2.1"},
@@ -98,6 +99,7 @@ describe("SupportProfileSync", () => {
     })
     expect(snapshot.host.phoneModel).toBe("iPhone 17 Pro")
     expect(serialized).not.toContain("AA:BB")
+    expect(serialized).not.toContain("12:34")
     expect(serialized).not.toContain("Private Wi-Fi")
     expect(serialized).not.toContain("192.0.2")
     expect(serialized).not.toContain("password")

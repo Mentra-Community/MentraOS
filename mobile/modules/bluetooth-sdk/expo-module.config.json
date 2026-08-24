@@ -1,13 +1,14 @@
 {
   "platforms": ["apple", "android"],
   "apple": {
-    "modules": ["BluetoothSdkModule", "MentraPhotoReceiverModule"]
+    "modules": ["BluetoothSdkModule", "MentraPhotoReceiverModule", "MentraOtaServerModule"]
   },
   "android": {
     "modules": [
       "com.mentra.bluetoothsdk.BluetoothSdkModule",
       "com.mentra.bluetoothsdk.MentraLocalNetworkModule",
-      "com.mentra.bluetoothsdk.photoreceiver.MentraPhotoReceiverModule"
+      "com.mentra.bluetoothsdk.photoreceiver.MentraPhotoReceiverModule",
+      "com.mentra.bluetoothsdk.otaserver.MentraOtaServerModule"
     ]
   }
 }
