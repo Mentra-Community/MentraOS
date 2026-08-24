@@ -1159,6 +1159,36 @@ public final class MentraBluetoothSDK {
         }
     }
 
+    public func queryVideoRecordingStatus(requestId: String) async throws -> VideoRecordingStatusEvent {
+        guard !requestId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw BluetoothSdkError(
+                code: "missing_request_id",
+                message: "requestId is required to query video recording status."
+            )
+        }
+        try requireGlassesConnected(operation: "query video recording status")
+        let pending = PendingResponse<VideoRecordingStatusEvent>(operation: "query video recording status \(requestId)")
+        guard pendingVideoRecordingRequests[requestId] == nil else {
+            throw BluetoothSdkError(
+                code: "request_in_flight",
+                message: "A video recording command is already waiting for requestId \(requestId)."
+            )
+        }
+        pendingVideoRecordingRequests[requestId] = PendingVideoRecordingRequest(
+            expectedStatus: "recording_status",
+            pending: pending
+        )
+        DeviceManager.shared.queryVideoRecordingStatus(requestId)
+        do {
+            let event = try await pending.wait()
+            pendingVideoRecordingRequests.removeValue(forKey: requestId)
+            return event
+        } catch {
+            pendingVideoRecordingRequests.removeValue(forKey: requestId)
+            throw error
+        }
+    }
+
     public func requestVersionInfo() async throws -> VersionInfoResult {
         guard pendingVersionInfo == nil else {
             throw BluetoothSdkError(
@@ -2077,6 +2107,8 @@ private func dispatchDiscoveredDevices(_ rawSearchResults: Any?) {
             if !event.lc3.isEmpty {
                 delegate?.mentraBluetoothSDK(self, didReceiveMicLc3: event)
             }
+        case "mic_health":
+            delegate?.mentraBluetoothSDK(self, didReceive: .micHealth(MicHealthEvent(values: data)))
         case "local_transcription":
             let event = LocalTranscriptionEvent(
                 text: data["text"] as? String ?? "",
@@ -2171,7 +2203,13 @@ private func dispatchDiscoveredDevices(_ rawSearchResults: Any?) {
             var resultValues = data
             resultValues["type"] = "ota_status"
             pendingOtaQuery?.resolve(OtaQueryResult(values: resultValues))
-            delegate?.mentraBluetoothSDK(self, didReceive: .otaStatus(OtaStatusEvent(values: resultValues)))
+            let event = OtaStatusEvent(values: resultValues)
+            if let errorCode = otaStartRejectionErrorCode(event) {
+                pendingOtaStart?.reject(
+                    BluetoothSdkError(code: errorCode, message: "Glasses rejected OTA start: \(errorCode)")
+                )
+            }
+            delegate?.mentraBluetoothSDK(self, didReceive: .otaStatus(event))
         case "settings_ack":
             let event = SettingsAckEvent(values: data)
             handleSettingsAckForRequests(event)
@@ -2196,3 +2234,12 @@ private func dispatchDiscoveredDevices(_ rawSearchResults: Any?) {
     }
 }
 
+/// OTA status messages are not request-correlated, so only known pre-ack failures settle a start.
+private func otaStartRejectionErrorCode(_ event: OtaStatusEvent) -> String? {
+    guard event.status.lowercased() == "failed",
+          event.errorMessage?.lowercased() == "battery_low"
+    else {
+        return nil
+    }
+    return "battery_low"
+}

@@ -130,6 +130,14 @@ class Bridge {
     }
 
     @MainActor
+    static func sendMicHealth(_ health: MicHealth, reason: String) {
+        var body = health.dictionary
+        body["reason"] = reason
+        body["timestamp"] = Int64(Date().timeIntervalSince1970 * 1000)
+        Bridge.sendTypedMessage("mic_health", body: body)
+    }
+
+    @MainActor
     private static func micPcmEventBody(_ data: Data) -> [String: Any] {
         let voiceActivityDetectionEnabled =
             DeviceStore.shared.get("glasses", "voiceActivityDetectionEnabled") as? Bool

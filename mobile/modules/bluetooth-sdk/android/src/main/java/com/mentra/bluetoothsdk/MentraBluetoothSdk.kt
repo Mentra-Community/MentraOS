@@ -1139,6 +1139,25 @@ class MentraBluetoothSdk private constructor(
         }
     }
 
+    suspend fun queryVideoRecordingStatus(requestId: String): VideoRecordingStatusEvent {
+        require(requestId.isNotBlank()) { "requestId is required to query video recording status." }
+        requireGlassesConnected("query video recording status")
+        val pending = PendingResponse<VideoRecordingStatusEvent>("query video recording status")
+        val pendingRequest = PendingVideoRecordingRequest("recording_status", pending)
+        if (pendingVideoRecordingRequests.putIfAbsent(requestId, pendingRequest) != null) {
+            throw BluetoothSdkException(
+                "request_in_flight",
+                "A video recording command is already waiting for requestId $requestId.",
+            )
+        }
+        try {
+            deviceManager.queryVideoRecordingStatus(requestId)
+            return pending.await()
+        } finally {
+            pendingVideoRecordingRequests.remove(requestId, pendingRequest)
+        }
+    }
+
     suspend fun requestVersionInfo(): VersionInfoResult {
         val pending = PendingResponse<VersionInfoResult>("version info request")
         synchronized(oneShotLock) {
@@ -1636,10 +1655,19 @@ class MentraBluetoothSdk private constructor(
             }
             "ota_status" -> {
                 val resultValues = data + mapOf("type" to "ota_status")
+                val event = OtaStatusEvent.fromMap(resultValues)
                 synchronized(oneShotLock) {
                     pendingOtaQuery?.resolve(OtaQueryResult(resultValues))
+                    otaStartRejectionErrorCode(event)?.let { errorCode ->
+                        pendingOtaStart?.reject(
+                            BluetoothSdkException(errorCode, "Glasses rejected OTA start: $errorCode")
+                        )
+                    }
                 }
-                dispatchToListeners { it.onOtaStatus(OtaStatusEvent.fromMap(resultValues)) }
+                dispatchToListeners { it.onOtaStatus(event) }
+            }
+            "mic_health" -> {
+                dispatchToListeners { it.onMicHealth(MicHealthEvent.fromMap(data)) }
             }
             "settings_ack" -> {
                 val event = SettingsAckEvent(data)
@@ -2229,3 +2257,14 @@ class MentraBluetoothSdk private constructor(
         }
     }
 }
+
+/** OTA status messages are not request-correlated, so only known pre-ack failures settle a start. */
+internal fun otaStartRejectionErrorCode(event: OtaStatusEvent): String? =
+    if (
+        event.status.equals("failed", ignoreCase = true) &&
+            event.errorMessage.equals("battery_low", ignoreCase = true)
+    ) {
+        "battery_low"
+    } else {
+        null
+    }

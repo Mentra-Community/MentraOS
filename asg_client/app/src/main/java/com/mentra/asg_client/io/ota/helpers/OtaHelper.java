@@ -464,6 +464,15 @@ public class OtaHelper {
         }
         Log.i(TAG, "📱 Starting OTA from phone request");
 
+        // Reject before acknowledging or acquiring OTA admission. This preserves the former
+        // standalone updater's battery defense in depth while leaving the app free to apply a
+        // stricter product-level threshold. Unknown battery state remains fail-open.
+        if (!isBatterySufficientForUpdates()) {
+            Log.w(TAG, "📱 Refusing ota_start because glasses battery is below the safe threshold");
+            sendOtaStartRejection("battery_low");
+            return;
+        }
+
         // Immediately acknowledge receipt so the phone cancels its retry timer.
         sendOtaStartAck();
         String resolvedVersionJsonUrl = requireVersionJsonUrl(requestedVersionJsonUrl);
@@ -1992,7 +2001,7 @@ public class OtaHelper {
             return true;
         }
 
-        // Block updates if battery < 5% and not charging
+        // Block updates if battery < 5%. The app may enforce a higher threshold.
         if (glassesBatteryLevel < 5) {
             Log.w(TAG, "🚨 Battery insufficient for OTA updates: " + glassesBatteryLevel +
                   "% - blocking updates");
@@ -3022,6 +3031,30 @@ public class OtaHelper {
         JSONObject sessionState = buildOtaStatusForPhone();
         if (sessionState != null) {
             phoneConnectionProvider.sendOtaStatus(sessionState);
+        }
+    }
+
+    /**
+     * Report a command rejected before OTA admission without reading or mutating an older session.
+     */
+    private void sendOtaStartRejection(String errorCode) {
+        if (phoneConnectionProvider == null || !isPhoneConnected()) return;
+        try {
+            JSONObject status = new JSONObject();
+            status.put("type", "ota_status");
+            status.put("session_id", "");
+            status.put("total_steps", 1);
+            status.put("current_step", 1);
+            status.put("step_type", UPDATE_TYPE_APK);
+            status.put("phase", "download");
+            status.put("step_percent", 0);
+            status.put("overall_percent", 0);
+            status.put("status", "failed");
+            status.put("error_message", errorCode);
+            status.put("glasses_time_ms", System.currentTimeMillis());
+            phoneConnectionProvider.sendOtaStatus(status);
+        } catch (JSONException e) {
+            Log.e(TAG, "Failed to send ota_start rejection", e);
         }
     }
 

@@ -193,6 +193,14 @@ public class Bridge private constructor() {
             sendTypedMessage("mic_lc3", body as Map<String, Any>)
         }
 
+        @JvmStatic
+        internal fun sendMicHealth(health: MicHealth, reason: String) {
+            val body = HashMap(health.toMap())
+            body["reason"] = reason
+            body["timestamp"] = System.currentTimeMillis()
+            sendTypedMessage("mic_health", body)
+        }
+
         private fun micPcmEventBody(data: ByteArray): HashMap<String, Any> {
             val voiceActivityDetectionEnabled =
                     DeviceStore.get("glasses", "voiceActivityDetectionEnabled") as? Boolean
