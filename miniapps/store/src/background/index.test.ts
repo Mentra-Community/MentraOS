@@ -60,4 +60,49 @@ describe("StoreController refresh serialization", () => {
     ])
     expect(controller.refreshing).toBeNull()
   })
+
+  test("does not strand a refresh queued as the drain promise settles", async () => {
+    const snapshot = {
+      apps: [],
+      installed: [],
+      loading: false,
+      offline: false,
+      error: null,
+      operation: null,
+      refreshedAt: null,
+    } satisfies StoreSnapshot
+    const session = {
+      ui: {
+        send: () => undefined,
+      },
+    } as unknown as MiniappSession
+    const controller = new StoreController(session) as unknown as TestController
+    const loadCalls: string[] = []
+    controller.load = async (query) => {
+      loadCalls.push(query ?? "")
+      return snapshot
+    }
+
+    let completionRefresh: Promise<StoreSnapshot> | undefined
+    let queuedCompletionRefresh = false
+    Object.defineProperty(controller, "snapshot", {
+      configurable: true,
+      get: () => {
+        if (!queuedCompletionRefresh) {
+          queuedCompletionRefresh = true
+          queueMicrotask(() => {
+            completionRefresh = controller.refresh("completion", false, true)
+          })
+        }
+        return snapshot
+      },
+    })
+
+    await controller.refresh("initial")
+    await Promise.resolve()
+    await completionRefresh
+
+    expect(loadCalls).toEqual(["initial", "completion"])
+    expect(controller.refreshing).toBeNull()
+  })
 })

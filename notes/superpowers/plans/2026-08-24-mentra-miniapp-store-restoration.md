@@ -140,7 +140,7 @@ publisher signatures can be enforced later without changing the API.
 - [x] Mentra Miniapp SDK: 272 passed.
 - [x] Installer/SYSTEM security tests, including bundle-name impersonation.
 - [x] Store catalog, automatic-update policy, ownership, refresh serialization,
-      and UI-model tests: 19
+      and UI-model tests: 20
       passed.
 - [x] Headless Chromium Store UI E2E at a 390×844 phone viewport: catalog,
       search-query preservation, install, details, verified identity, Installed
