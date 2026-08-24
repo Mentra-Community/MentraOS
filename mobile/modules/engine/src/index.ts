@@ -107,6 +107,24 @@ export type {
   OtaSnapshot,
   OtaInstallSnapshot,
 } from "./facades/ota"
+export {
+  beginOtaAutoChain,
+  clearOtaAutoChainReconnectWait,
+  isOtaAutoChainActive,
+  otaAutoChainFingerprint,
+  otaAutoChainReconnectWaitRemaining,
+  stopOtaAutoChain,
+  tryAdvanceOtaAutoChain,
+  MAX_OTA_AUTO_CHAIN_PASSES,
+  OTA_AUTO_CHAIN_RECONNECT_TIMEOUT_MS,
+} from "./services/OtaAutoChain"
+export type {OtaAutoChainAdvanceResult} from "./services/OtaAutoChain"
+export {
+  BES_INSTALL_RESTART_MESSAGE,
+  getOtaErrorMessage,
+  shouldRequireGlassesRebootForBesFailure,
+  shouldShowChangeWifiForOtaDownloadFailure,
+} from "./services/OtaErrorMapping"
 
 // Gallery read models: engine.gallery.onNotice payload types, the media
 // permission helper + display-name derivation host gallery UI uses, and the

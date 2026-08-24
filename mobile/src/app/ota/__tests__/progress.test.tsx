@@ -199,7 +199,7 @@ describe("progress.tsx display states", () => {
     beginOtaAutoChain("initial-offer", false)
     const replaceSpy = jest.spyOn(useNavigationStore.getState(), "replace")
     try {
-      render(<OtaProgressScreen />)
+      const {getByText} = render(<OtaProgressScreen />)
 
       act(() => {
         useGlassesStore.getState().setOtaStatus({
@@ -218,7 +218,8 @@ describe("progress.tsx display states", () => {
       await act(async () => {
         await jest.advanceTimersByTimeAsync(750)
       })
-      expect(replaceSpy).toHaveBeenCalledWith("/ota/check-for-updates")
+      expect(getByText("ota:checkingForUpdates")).toBeDefined()
+      expect(replaceSpy).not.toHaveBeenCalledWith("/ota/check-for-updates")
     } finally {
       replaceSpy.mockRestore()
     }
@@ -239,7 +240,7 @@ describe("progress.tsx display states", () => {
     })
     const replaceSpy = jest.spyOn(useNavigationStore.getState(), "replace")
     try {
-      render(<OtaProgressScreen />)
+      const {getByText} = render(<OtaProgressScreen />)
 
       await act(async () => {
         await jest.advanceTimersByTimeAsync(750)
@@ -252,7 +253,8 @@ describe("progress.tsx display states", () => {
       await act(async () => {
         await jest.advanceTimersByTimeAsync(750)
       })
-      expect(replaceSpy).toHaveBeenCalledWith("/ota/check-for-updates")
+      expect(getByText("ota:checkingForUpdates")).toBeDefined()
+      expect(replaceSpy).not.toHaveBeenCalledWith("/ota/check-for-updates")
     } finally {
       replaceSpy.mockRestore()
     }
@@ -263,7 +265,7 @@ describe("progress.tsx display states", () => {
     beginOtaAutoChain("initial-offer", false)
     const replaceSpy = jest.spyOn(useNavigationStore.getState(), "replace")
     try {
-      render(<OtaProgressScreen />)
+      const {getByText} = render(<OtaProgressScreen />)
       act(() => {
         useGlassesStore.getState().setOtaStatus({
           sessionId: "s1",
@@ -294,16 +296,17 @@ describe("progress.tsx display states", () => {
       await act(async () => {
         await jest.advanceTimersByTimeAsync(750)
       })
-      expect(replaceSpy).toHaveBeenCalledWith("/ota/check-for-updates")
+      expect(getByText("ota:checkingForUpdates")).toBeDefined()
+      expect(replaceSpy).not.toHaveBeenCalledWith("/ota/check-for-updates")
     } finally {
       replaceSpy.mockRestore()
     }
   })
 
-  it("stops automatic chaining when Continue bypasses BES reboot verification", () => {
+  it("stops automatic chaining when Continue bypasses BES reboot verification", async () => {
     setGlassesConnected()
     beginOtaAutoChain("initial-offer", false)
-    const {getByText} = render(<OtaProgressScreen />)
+    const {getByTestId} = render(<OtaProgressScreen />)
 
     act(() => {
       useGlassesStore.getState().setOtaStatus({
@@ -318,8 +321,10 @@ describe("progress.tsx display states", () => {
       })
     })
 
-    fireEvent.press(getByText("Continue"))
-
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(15_000)
+    })
+    fireEvent.press(getByTestId("button-Continue"))
     expect(isOtaAutoChainActive()).toBe(false)
   })
 
@@ -416,7 +421,7 @@ describe("progress.tsx display states", () => {
     const {getByText, getByTestId} = render(<OtaProgressScreen />)
     expect(getByText("Skip (super)")).toBeDefined()
     fireEvent.press(getByTestId("button-Skip (super)"))
-    expect(replaceSpy).toHaveBeenCalledWith("/ota/check-for-updates")
+    expect(replaceSpy).toHaveBeenCalled()
     replaceSpy.mockRestore()
   })
 

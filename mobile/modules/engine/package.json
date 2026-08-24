@@ -1,6 +1,6 @@
 {
   "name": "@mentra/engine",
-  "version": "0.1.0-dev.0",
+  "version": "0.1.0-dev.1",
   "description": "Mentra Engine — miniapp registry, WebView bridge, and miniapp store",
   "main": "build/index.js",
   "react-native": "src/index.ts",
@@ -20,6 +20,11 @@
       "types": "./build/devtools.d.ts",
       "react-native": "./src/devtools.ts",
       "default": "./build/devtools.js"
+    },
+    "./react": {
+      "types": "./build/react/index.d.ts",
+      "react-native": "./src/react/index.ts",
+      "default": "./build/react/index.js"
     },
     "./build/*": null,
     "./src/*": null,
@@ -85,6 +90,8 @@
     "expo-modules-core": "*",
     "react": "*",
     "react-native": "*",
+    "react-native-safe-area-context": "*",
+    "react-native-svg": "*",
     "react-native-udp": "*",
     "@types/react": "*",
     "react-native-mmkv": "*",

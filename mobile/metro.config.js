@@ -124,7 +124,7 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
       return (baseResolveRequest ?? context.resolveRequest)(context, target, platform)
     }
   }
-  // @mentra/engine (+ /internal, /devtools) -> TypeScript SOURCE. The package
+  // @mentra/engine (+ /internal, /devtools, /react) -> TypeScript SOURCE. The package
   // "default" export points at build/, and Metro will happily bundle that stale
   // compile if we only alias the root specifier. LocalMiniappRuntime lives on
   // /internal — that's why miniapp_scan_qr stayed unimplemented until this
@@ -137,6 +137,9 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
   }
   if (moduleName === "@mentra/engine/devtools") {
     return (baseResolveRequest ?? context.resolveRequest)(context, path.join(ENGINE_SRC, "devtools"), platform)
+  }
+  if (moduleName === "@mentra/engine/react") {
+    return (baseResolveRequest ?? context.resolveRequest)(context, path.join(ENGINE_SRC, "react/index"), platform)
   }
   const miniappAlias = MINIAPP_ALIASES[moduleName]
   if (miniappAlias) return (baseResolveRequest ?? context.resolveRequest)(context, miniappAlias, platform)

@@ -278,7 +278,7 @@
     },
     "modules/engine": {
       "name": "@mentra/engine",
-      "version": "0.1.0-dev.0",
+      "version": "0.1.0-dev.1",
       "dependencies": {
         "buffer": "^6.0.3",
         "events": "^3.3.0",
@@ -328,7 +328,9 @@
         "react-native-nitro-modules": "*",
         "react-native-permissions": "*",
         "react-native-reanimated": "*",
+        "react-native-safe-area-context": "*",
         "react-native-share": "*",
+        "react-native-svg": "*",
         "react-native-udp": "*",
         "react-native-wifi-reborn": "*",
         "react-native-zip-archive": "*",

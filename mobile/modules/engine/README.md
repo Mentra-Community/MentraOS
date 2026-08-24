@@ -21,7 +21,7 @@ npm install @mentra/engine
 
 ## Entry points
 
-The package exposes three entry points (declared in `package.json` `exports`,
+The package exposes four entry points (declared in `package.json` `exports`,
 with the `react-native` condition pointing at `src/` so Metro, tsc and jest
 resolve live TypeScript source):
 
@@ -41,6 +41,10 @@ resolve live TypeScript source):
   `/internal` import in `mobile/src` (report-only) as the burn-down metric.
 - **`@mentra/engine/devtools`** (`src/devtools.ts`) — debug-only singletons
   (`miniappRunningRegistry`, `devServerBridge`) for the internal dev screens.
+- **`@mentra/engine/react`** (`src/react/index.ts`) — shared full-screen React
+  Native experiences. `MentraLiveOtaFlow` owns the complete check, hotspot or
+  Wi-Fi install, APK/MTK/BES progress, reboot, retry, and final verification
+  flow so hosts do not implement their own OTA state machines.
 
 See `cloud-v2/docs/issues/020-glasses-status-boundary/integration-review.md`
 §D for the burn-down plan.
@@ -71,6 +75,25 @@ import {miniappRunningRegistry} from "@mentra/engine/devtools"
   (and CSS variables / console-tap shim) used by every miniapp WebView.
 - `decideDevLaunchRoute` — pre-flight a dev URL's `miniapp.json` to decide
   whether to mount live or take the user to the offline screen.
+
+### Mentra Live OTA flow
+
+Bluetooth-only hosts can render the OTA flow without configuring or starting
+the authenticated cloud/miniapp runtime:
+
+```tsx
+import {MentraLiveOtaFlow} from "@mentra/engine/react"
+
+<MentraLiveOtaFlow
+  onFinished={() => setShowOta(false)}
+  onOpenWifiSetup={() => setShowWifiSetup(true)}
+/>
+```
+
+The component starts only the glasses-status and OTA projections. A host that
+already called `engine.start()` should pass `initializeRuntime={false}`. Show
+the flow after a Mentra Live connects; `onOpenWifiSetup` is needed only for
+older glasses that cannot provide the OTA hotspot transport.
 
 ## Imports
 
