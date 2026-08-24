@@ -464,6 +464,15 @@ public class OtaHelper {
         }
         Log.i(TAG, "📱 Starting OTA from phone request");
 
+        // Reject before acknowledging or acquiring OTA admission. This preserves the former
+        // standalone updater's battery defense in depth while leaving the app free to apply a
+        // stricter product-level threshold. Unknown battery state remains fail-open.
+        if (!isBatterySufficientForUpdates()) {
+            Log.w(TAG, "📱 Refusing ota_start because glasses battery is below the safe threshold");
+            sendProgressToPhone("download", 0, 0, 0, "FAILED", "battery_low");
+            return;
+        }
+
         // Immediately acknowledge receipt so the phone cancels its retry timer.
         sendOtaStartAck();
         String resolvedVersionJsonUrl = requireVersionJsonUrl(requestedVersionJsonUrl);
@@ -1992,7 +2001,7 @@ public class OtaHelper {
             return true;
         }
 
-        // Block updates if battery < 5% and not charging
+        // Block updates if battery < 5%. The app may enforce a higher threshold.
         if (glassesBatteryLevel < 5) {
             Log.w(TAG, "🚨 Battery insufficient for OTA updates: " + glassesBatteryLevel +
                   "% - blocking updates");

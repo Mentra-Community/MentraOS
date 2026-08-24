@@ -725,6 +725,17 @@ export type MicLc3Event = {
   voiceActivityDetectionEnabled: boolean
 }
 
+/** Native glasses-microphone diagnostics emitted when the SDK detects a transport or decode issue. */
+export type MicHealthEvent = {
+  type: "mic_health"
+  reason: "sequence_gap" | "decode_failure"
+  sequenceGapEvents: number
+  decodeFailures: number
+  lastLc3ReceivedAt?: number
+  lastPcmProducedAt?: number
+  timestamp: number
+}
+
 export type StreamStatusLifecycleState = "initializing" | "streaming" | "stopping" | "stopped"
 export type StreamStatusReconnectState = "reconnecting" | "reconnected" | "reconnect_failed"
 export type StreamStatusState = StreamStatusLifecycleState | StreamStatusReconnectState | "error"
@@ -930,6 +941,7 @@ export type BluetoothSdkModuleEvents = {
   ws_bin: (event: WsBinEvent) => void
   mic_pcm: (event: MicPcmEvent) => void
   mic_lc3: (event: MicLc3Event) => void
+  mic_health: (event: MicHealthEvent) => void
   stream_status: (event: StreamStatusEvent) => void
   keep_alive_ack: (event: KeepAliveAckEvent) => void
   mtk_update_complete: (event: MtkUpdateCompleteEvent) => void
@@ -1034,6 +1046,7 @@ export type BluetoothSdkEventMap = {
   audio_disconnected: AudioDisconnectedEvent
   mic_pcm: MicPcmEvent
   mic_lc3: MicLc3Event
+  mic_health: MicHealthEvent
   stream_status: StreamStatusEvent
   ota_start_ack: OtaStartAckEvent
   ota_status: OtaStatusEvent
@@ -1142,6 +1155,8 @@ export interface BluetoothSdkPublicModule {
     webhookUrl?: string,
     authToken?: string,
   ): Promise<VideoRecordingStoppedStatusEvent>
+  /** Query the glasses for the current recording state and elapsed duration. */
+  queryVideoRecordingStatus(requestId: string): Promise<VideoRecordingStatusEvent>
 
   startStream(params: StreamStartRequest): Promise<StreamStatusEvent>
   stopStream(): Promise<StreamStatusEvent>

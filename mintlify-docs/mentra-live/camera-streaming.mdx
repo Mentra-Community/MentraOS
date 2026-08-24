@@ -192,6 +192,10 @@ const started = await BluetoothSdk.startVideoRecording(requestId, true, true, {
 });
 console.log('video started', started.status);
 
+// Reconcile state after app resume, a timeout, or a reconnect.
+const current = await BluetoothSdk.queryVideoRecordingStatus(`status-${Date.now()}`);
+console.log('recording now', current.data?.recording, current.data?.duration_ms);
+
 const stopped = await BluetoothSdk.stopVideoRecording(
   requestId,
   'https://api.example.com/mentra/video',
@@ -218,6 +222,9 @@ val started = sdk.startVideoRecording(
     )
 )
 println("video started: ${started.status}")
+
+val current = sdk.queryVideoRecordingStatus("status-${System.currentTimeMillis()}")
+println("recording now: ${current.data?.get("recording")}")
 
 val stopped = sdk.stopVideoRecording(
     requestId = requestId,
@@ -246,6 +253,9 @@ let started = try await sdk.startVideoRecording(
 )
 print("video started: \(started.status)")
 
+let current = try await sdk.queryVideoRecordingStatus(requestId: "status-\(Date().timeIntervalSince1970)")
+print("recording now: \(current.data?["recording"] ?? false)")
+
 let stopped = try await sdk.stopVideoRecording(
     requestId: requestId,
     webhookUrl: "https://api.example.com/mentra/video",
@@ -257,7 +267,7 @@ print("video uploaded: \(stopped.status)")
   </Tab>
 </Tabs>
 
-`startVideoRecording(...)` resolves from `recording_started`. `stopVideoRecording(...)` without a webhook resolves from `recording_stopped`; when you pass a webhook URL, it waits for `recording_stopped` plus video `media_success`, and rejects on video `media_error`. Raw `video_recording_status`, `media_success`, and `media_error` events remain available for listeners that need the glasses event stream directly. The video upload webhook should accept multipart form data with a `video` field and `requestId`. Pass the webhook URL and auth token at stop time so upload credentials can be fresh when the recording ends.
+`startVideoRecording(...)` resolves from `recording_started`. `stopVideoRecording(...)` without a webhook resolves from `recording_stopped`; when you pass a webhook URL, it waits for `recording_stopped` plus video `media_success`, and rejects on video `media_error`. `queryVideoRecordingStatus(requestId)` sends the glasses' existing status query and resolves with the current `recording` state and elapsed `duration_ms`, so use it to reconcile after a timeout, reconnect, or app resume. Use a fresh request ID for each query. Raw `video_recording_status`, `media_success`, and `media_error` events remain available for listeners that need the glasses event stream directly. The video upload webhook should accept multipart form data with a `video` field and `requestId`. Pass the webhook URL and auth token at stop time so upload credentials can be fresh when the recording ends.
 
 ## Gallery Mode
 

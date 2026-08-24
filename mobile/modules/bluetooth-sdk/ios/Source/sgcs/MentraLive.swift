@@ -1533,6 +1533,7 @@ class MentraLive: NSObject, SGCManager {
         micIntentEnabled = enabled
 
         if enabled {
+            DeviceManager.shared.resetMicSequenceBaseline()
             // User wants mic ON
             // Check if we should suspend due to phone audio (only if BLOCK_AUDIO_DUPLEX is enabled)
             if BLOCK_AUDIO_DUPLEX, let monitor = phoneAudioMonitor, monitor.isPlaying() {
@@ -1588,7 +1589,6 @@ class MentraLive: NSObject, SGCManager {
     private var lc3ReadCharacteristic: CBCharacteristic?
     private var lc3WriteCharacteristic: CBCharacteristic?
     private var supportsLC3Audio = true
-    private var lastReceivedLc3Sequence: Int8 = -1
     private let LC3_FRAME_SIZE = 40 // bytes per LC3 frame
     private let MICBEAT_INTERVAL_MS: TimeInterval = 30 * 60 // 30 minutes in seconds
     private var micBeatTimer: Timer?
@@ -3846,16 +3846,8 @@ class MentraLive: NSObject, SGCManager {
             return
         }
 
-        let sequenceNumber = Int8(bitPattern: data[1])
+        let sequenceNumber = Int(data[1])
         let lc3Data = data.subdata(in: 2 ..< data.count)
-
-        // Validate sequence number for packet loss detection
-        if lastReceivedLc3Sequence != -1 && (lastReceivedLc3Sequence &+ 1) != sequenceNumber {
-            Bridge.log(
-                "LIVE: LC3 packet sequence mismatch. Expected: \(lastReceivedLc3Sequence &+ 1), Got: \(sequenceNumber)"
-            )
-        }
-        lastReceivedLc3Sequence = sequenceNumber
 
         // // Decode LC3 to PCM using existing PcmConverter
         // let pcmConverter = PcmConverter()
@@ -3870,7 +3862,7 @@ class MentraLive: NSObject, SGCManager {
         // Bridge.log(
         //     "LIVE: Processed LC3 audio seq=\(sequenceNumber), \(lc3Data.count) bytes"
         // )
-        DeviceManager.shared.handleGlassesMicData(lc3Data, 40)
+        DeviceManager.shared.handleGlassesMicData(lc3Data, 40, sequenceNumber: sequenceNumber)
 
         // Bridge.log(
         //     "LIVE: Processed LC3 audio seq=\(sequenceNumber), \(lc3Data.count)→\(pcmData.count) bytes"
@@ -6936,6 +6928,17 @@ extension MentraLive {
 
     func stopVideoRecording(requestId: String) {
         stopVideoRecording(requestId: requestId, webhookUrl: nil, authToken: nil)
+    }
+
+    func queryVideoRecordingStatus(requestId: String) {
+        guard connectionState == ConnTypes.CONNECTED else {
+            Bridge.log("Cannot query video recording status - not connected")
+            return
+        }
+        sendJson([
+            "type": "get_video_recording_status",
+            "requestId": requestId,
+        ])
     }
 
     func stopVideoRecording(requestId: String, webhookUrl: String?, authToken: String?) {

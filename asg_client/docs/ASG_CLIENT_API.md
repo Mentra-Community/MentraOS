@@ -273,7 +273,7 @@ If `requestId` is provided, the capture service validates it matches the active 
 #### `get_video_recording_status`
 
 ```json
-{"type": "get_video_recording_status"}
+{"type": "get_video_recording_status", "requestId": "status_001"}
 ```
 
 Response while recording:
@@ -281,10 +281,14 @@ Response while recording:
 ```json
 {
   "type": "video_recording_status",
+  "requestId": "status_001",
   "success": true,
+  "status": "recording_status",
   "data": {"recording": true, "duration_ms": 15000, "duration_formatted": "00:15"}
 }
 ```
+
+The Bluetooth SDK exposes this command as `queryVideoRecordingStatus(requestId)` and correlates the returned `video_recording_status` with that request ID.
 
 ---
 
@@ -435,7 +439,7 @@ Response:
 
 #### `set_system_time`
 
-Sets the glasses system clock from the phone. Sent only when the phone detects clock skew during gallery sync or OTA version checks (not on every BLE connect).
+Sets the glasses system clock from the phone. The Bluetooth SDK sends this once shortly after every ready connection and again after a reconnect; it does not periodically correct a long-lived connection.
 
 ```json
 {"type": "set_system_time", "timestamp_ms": 1710000000000}
@@ -927,7 +931,7 @@ Optionally, the phone can supply a custom manifest URL for this install attempt:
 
 When `ota_version_url` is omitted, ASG uses the compiled production default. When provided, it must be a non-empty `http` or `https` URL.
 
-On receipt, ASG sends `ota_start_ack` before version checks or downloads:
+When the known glasses battery level is below 5%, ASG rejects the request before acknowledgement and sends a failed `ota_status` with `error_message: "battery_low"`. Unknown battery state is allowed. Otherwise, ASG sends `ota_start_ack` before version checks or downloads:
 
 ```json
 {"type": "ota_start_ack", "timestamp": 1708963201234}

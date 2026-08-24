@@ -286,6 +286,10 @@ class BluetoothSdkModule : Module() {
                     sendEvent("mic_lc3", event.toMap())
                 }
 
+                override fun onMicHealth(event: MicHealthEvent) {
+                    sendEvent("mic_health", event.values)
+                }
+
                 override fun onLocalTranscription(event: LocalTranscriptionEvent) {
                     sendEvent("local_transcription", event.values)
                 }
@@ -368,6 +372,7 @@ class BluetoothSdkModule : Module() {
             "ws_bin",
             "mic_pcm",
             "mic_lc3",
+            "mic_health",
             "stream_status",
             "keep_alive_ack",
             "mtk_update_complete",
@@ -761,6 +766,10 @@ class BluetoothSdkModule : Module() {
                 webhookUrl: String?,
                 authToken: String? ->
             requireSdk().stopVideoRecording(requestId, webhookUrl, authToken).values
+        }
+
+        SdkCoroutineFunction("queryVideoRecordingStatus") { requestId: String ->
+            requireSdk().queryVideoRecordingStatus(requestId).values
         }
 
         // MARK: - Stream Commands

@@ -1139,6 +1139,25 @@ class MentraBluetoothSdk private constructor(
         }
     }
 
+    suspend fun queryVideoRecordingStatus(requestId: String): VideoRecordingStatusEvent {
+        require(requestId.isNotBlank()) { "requestId is required to query video recording status." }
+        requireGlassesConnected("query video recording status")
+        val pending = PendingResponse<VideoRecordingStatusEvent>("query video recording status")
+        val pendingRequest = PendingVideoRecordingRequest("recording_status", pending)
+        if (pendingVideoRecordingRequests.putIfAbsent(requestId, pendingRequest) != null) {
+            throw BluetoothSdkException(
+                "request_in_flight",
+                "A video recording command is already waiting for requestId $requestId.",
+            )
+        }
+        try {
+            deviceManager.queryVideoRecordingStatus(requestId)
+            return pending.await()
+        } finally {
+            pendingVideoRecordingRequests.remove(requestId, pendingRequest)
+        }
+    }
+
     suspend fun requestVersionInfo(): VersionInfoResult {
         val pending = PendingResponse<VersionInfoResult>("version info request")
         synchronized(oneShotLock) {
@@ -1636,10 +1655,20 @@ class MentraBluetoothSdk private constructor(
             }
             "ota_status" -> {
                 val resultValues = data + mapOf("type" to "ota_status")
+                val event = OtaStatusEvent.fromMap(resultValues)
                 synchronized(oneShotLock) {
                     pendingOtaQuery?.resolve(OtaQueryResult(resultValues))
+                    if (event.status.equals("failed", ignoreCase = true)) {
+                        val errorCode = event.errorMessage?.takeIf { it.isNotBlank() } ?: "ota_start_failed"
+                        pendingOtaStart?.reject(
+                            BluetoothSdkException(errorCode, "Glasses rejected OTA start: $errorCode")
+                        )
+                    }
                 }
-                dispatchToListeners { it.onOtaStatus(OtaStatusEvent.fromMap(resultValues)) }
+                dispatchToListeners { it.onOtaStatus(event) }
+            }
+            "mic_health" -> {
+                dispatchToListeners { it.onMicHealth(MicHealthEvent.fromMap(data)) }
             }
             "settings_ack" -> {
                 val event = SettingsAckEvent(data)

@@ -945,7 +945,6 @@ class MentraLive : SGCManager() {
     private val secureRandom = SecureRandom()
     private val deviceId = System.currentTimeMillis() xor Random().nextLong()
 
-    private var lastReceivedLc3Sequence: Byte = -1
     private var lc3SequenceNumber: Byte = 0
     private var lc3DecoderPtr = 0L
     private var lc3AudioPlayer: Lc3Player? = null
@@ -6229,6 +6228,7 @@ class MentraLive : SGCManager() {
         micIntentEnabled = enabled
 
         if (enabled) {
+            DeviceManager.getInstance().resetMicSequenceBaseline()
             // User wants mic ON
             // Check if we should suspend due to phone audio (only if BLOCK_AUDIO_DUPLEX is enabled)
             if (BLOCK_AUDIO_DUPLEX && phoneAudioMonitor != null && phoneAudioMonitor!!.isPlaying()
@@ -10393,6 +10393,21 @@ class MentraLive : SGCManager() {
         stopVideoRecording(requestId, null, null)
     }
 
+    override fun queryVideoRecordingStatus(requestId: String) {
+        if (!isConnected) {
+            Log.w(TAG, "Cannot query video recording status - not connected")
+            return
+        }
+        try {
+            val json = JSONObject()
+            json.put("type", "get_video_recording_status")
+            json.put("requestId", requestId)
+            sendJson(json, true)
+        } catch (e: JSONException) {
+            Log.e(TAG, "Failed to create video recording status query", e)
+        }
+    }
+
     override fun stopVideoRecording(requestId: String, webhookUrl: String?, authToken: String?) {
         Bridge.log(
                 "LIVE: Stopping video recording: requestId=" +
@@ -10443,20 +10458,6 @@ class MentraLive : SGCManager() {
             val sequenceNumber = data[1]
             val receiveTime = System.currentTimeMillis()
 
-            // Basic sequence validation
-            if (lastReceivedLc3Sequence != (-1).toByte() &&
-                            (lastReceivedLc3Sequence + 1).toByte() != sequenceNumber
-            ) {
-                Log.w(
-                        TAG,
-                        "LC3 packet sequence mismatch. Expected: " +
-                                (lastReceivedLc3Sequence + 1) +
-                                ", Got: " +
-                                sequenceNumber
-                )
-            }
-            lastReceivedLc3Sequence = sequenceNumber
-
             val lc3Data = Arrays.copyOfRange(data, 2, data.size)
 
             // Enhanced LC3 packet logging and saving
@@ -10468,7 +10469,11 @@ class MentraLive : SGCManager() {
 
             // Forward raw LC3 to DeviceManager (matches iOS behavior)
             // MentraLive uses 40-byte LC3 frames
-            DeviceManager.getInstance().handleGlassesMicData(lc3Data, LC3_FRAME_SIZE)
+            DeviceManager.getInstance().handleGlassesMicData(
+                lc3Data,
+                LC3_FRAME_SIZE,
+                sequenceNumber.toInt() and 0xff,
+            )
 
             // Bridge.log("LIVE: 🔊 Audio playback enabled: " + audioPlaybackEnabled);
             // } else {

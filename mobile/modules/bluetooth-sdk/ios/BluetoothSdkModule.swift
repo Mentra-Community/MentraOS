@@ -60,6 +60,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             "ws_bin",
             "mic_pcm",
             "mic_lc3",
+            "mic_health",
             "stream_status",
             "keep_alive_ack",
             "mtk_update_complete",
@@ -570,6 +571,11 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             ).values
         }
 
+        AsyncFunction("queryVideoRecordingStatus") { (requestId: String) in
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await sdk.queryVideoRecordingStatus(requestId: requestId).values
+        }
+
         // MARK: - Stream Commands
 
         AsyncFunction("startStream") { (params: [String: Any]) in
@@ -820,6 +826,8 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             sendEvent("voice_activity_detection_status", status.values)
         case let .speakingStatus(status):
             sendEvent("speaking_status", status.values)
+        case let .micHealth(health):
+            sendEvent("mic_health", health.values)
         case let .wifiStatus(status):
             sendEvent("wifi_status_change", status.values)
         case let .hotspotStatus(status):

@@ -330,6 +330,37 @@ public class OtaHelperBesGuardTest {
     }
 
     @Test
+    public void phoneOtaLowBatteryFailsBeforeAckAdmissionAndWakeLease() throws Exception {
+        StubRegistry registry = new StubRegistry();
+        IBesOtaController controller = mock(IBesOtaController.class);
+        registry.setInstance(controller);
+        OtaHelper helper = newHelper(registry);
+        OtaHelper.PhoneConnectionProvider provider =
+                mock(OtaHelper.PhoneConnectionProvider.class);
+        when(provider.isPhoneConnected()).thenReturn(true);
+        helper.setPhoneConnectionProvider(provider);
+        helper.onBatteryStatusEvent(new BatteryStatusEvent(4, false, System.currentTimeMillis()));
+        clearInvocations(provider, controller);
+        WakeLockManager.release(WakeLockManager.WakeOwner.MTK_OTA);
+        PowerManager.WakeLock previousWakeLock = ShadowPowerManager.getLatestWakeLock();
+
+        helper.startOtaFromPhone("https://updates.example.invalid/version.json");
+
+        verify(provider, never()).sendOtaMessage(any(JSONObject.class));
+        verify(provider)
+                .sendOtaStatus(
+                        argThat(
+                                status ->
+                                        "failed".equals(status.optString("status"))
+                                                && "battery_low".equals(
+                                                        status.optString("error_message"))));
+        verify(controller, never()).prepareForNewOtaSession();
+        assertThat(admissionPermit().availablePermits()).isEqualTo(1);
+        assertThat(phoneInitiatedOta()).isFalse();
+        assertThat(ShadowPowerManager.getLatestWakeLock()).isSameAs(previousWakeLock);
+    }
+
+    @Test
     public void continuedPhoneSessionFailsDurablyWhenDebugOwnsAdmissionPermit()
             throws Exception {
         StubRegistry registry = new StubRegistry();
