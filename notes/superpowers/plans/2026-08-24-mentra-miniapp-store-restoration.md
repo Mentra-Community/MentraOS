@@ -139,7 +139,8 @@ publisher signatures can be enforced later without changing the API.
       the previous artifact after a failed ZIP command.
 - [x] Mentra Miniapp SDK: 272 passed.
 - [x] Installer/SYSTEM security tests, including bundle-name impersonation.
-- [x] Store catalog, automatic-update policy, ownership, and UI-model tests: 18
+- [x] Store catalog, automatic-update policy, ownership, refresh serialization,
+      and UI-model tests: 19
       passed.
 - [x] Headless Chromium Store UI E2E at a 390×844 phone viewport: catalog,
       search-query preservation, install, details, verified identity, Installed
@@ -150,7 +151,7 @@ publisher signatures can be enforced later without changing the API.
 - [x] Android ASG and Bluetooth SDK compile checks.
 - [x] Full iOS Simulator native build with code signing disabled.
 - [x] ZIP integrity check. Bundled Store SHA-256:
-      `d89178da1ed0bbfe1e94c6c31025b85a074c6e6653bca22df8cf49ba1705a76b`.
+      `3959276b78adad75e1174b2119dfd26e3fcbbae5302fdb58d155229de3332fc4`.
 - [x] Review regressions: bounded streaming inflation and CRC checks in both
       Core and the phone, trusted host-selected Core URL, complete catalog
       pagination, Store-owned uninstall visibility, pre-activation host/SDK
@@ -158,8 +159,9 @@ publisher signatures can be enforced later without changing the API.
       required/optional hardware installation gates (including G1 camera
       rejection and Mentra Live acceptance),
       per-Store SYSTEM update ownership, unfiltered background update
-      reconciliation, preservation of newer trusted SYSTEM releases over older
-      bundled ZIPs, and central rejection of direct/dev SYSTEM replacements,
+      reconciliation, serialized post-mutation refreshes, preservation of
+      newer trusted SYSTEM releases over older bundled ZIPs, and central
+      rejection of direct/dev SYSTEM replacements,
       unbounded install request correlation, update repair of incompatible
       releases, live detail resolution after catalog refreshes, Expo-native
       bounded response streaming, and rejection of remote preinstalled

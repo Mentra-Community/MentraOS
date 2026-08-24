@@ -6,7 +6,7 @@ import {MENTRA_STORE_PACKAGE_NAME, type InstalledApp, type StoreApp, type StoreS
 
 const FALLBACK_CORE_URL = process.env.MENTRA_PUBLIC_CORE_URL
 
-class StoreController {
+export class StoreController {
   private apps: StoreApp[] = []
   private automaticApps: StoreApp[] = []
   private snapshot: StoreSnapshot = {
@@ -23,6 +23,7 @@ class StoreController {
   private automaticUpdateRunning = false
   private refreshQueued = false
   private queuedAutomaticRefresh = false
+  private queuedClearOperation = false
   private queuedQuery = ""
   private lastQuery = ""
   private ui: {
@@ -80,11 +81,12 @@ class StoreController {
     }
   }
 
-  private refresh(query = "", refreshAutomaticCatalog = false): Promise<StoreSnapshot> {
+  private refresh(query = "", refreshAutomaticCatalog = false, clearOperation = false): Promise<StoreSnapshot> {
     this.lastQuery = query
     this.queuedQuery = query
     this.refreshQueued = true
     this.queuedAutomaticRefresh ||= refreshAutomaticCatalog
+    this.queuedClearOperation ||= clearOperation
     if (this.refreshing) return this.refreshing
     this.refreshing = this.drainRefreshes().finally(() => {
       this.refreshing = null
@@ -96,9 +98,11 @@ class StoreController {
     while (this.refreshQueued) {
       const query = this.queuedQuery
       const refreshAutomaticCatalog = this.queuedAutomaticRefresh
+      const clearOperation = this.queuedClearOperation
       this.refreshQueued = false
       this.queuedAutomaticRefresh = false
-      await this.load(query, false, refreshAutomaticCatalog)
+      this.queuedClearOperation = false
+      await this.load(query, clearOperation, refreshAutomaticCatalog)
     }
     return this.snapshot
   }
@@ -252,7 +256,7 @@ class StoreController {
         releaseId: app.release.id,
         channel: "stable",
       })
-      return this.load(this.lastQuery, true)
+      return this.refresh(this.lastQuery, false, true)
     } catch (error) {
       this.snapshot = {
         ...this.snapshot,
@@ -270,7 +274,7 @@ class StoreController {
     this.send()
     try {
       await this.session.miniapps.uninstall(packageName)
-      return this.load(this.lastQuery, true)
+      return this.refresh(this.lastQuery, false, true)
     } catch (error) {
       this.snapshot = {
         ...this.snapshot,
@@ -288,7 +292,7 @@ class StoreController {
     this.send()
     try {
       await this.session.miniapps.open(packageName)
-      return this.load(this.lastQuery, true)
+      return this.refresh(this.lastQuery, false, true)
     } catch (error) {
       this.snapshot = {...this.snapshot, operation: null, error: error instanceof Error ? error.message : "Open failed"}
       this.send()
