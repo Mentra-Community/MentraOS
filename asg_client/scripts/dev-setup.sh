@@ -72,9 +72,12 @@ restore_stock_after_failure() {
     if [ "$status" -ne 0 ] && [ "$SETUP_MUTATED" = true ] && "${ADB[@]}" get-state >/dev/null 2>&1; then
         echo ""
         echo "Setup failed; restoring the stock launcher..." >&2
+        "${ADB[@]}" shell am force-stop "$DEV_PKG" >/dev/null 2>&1 || true
+        "${ADB[@]}" shell pm disable-user --user 0 "$DEV_PKG" >/dev/null 2>&1 || true
         "${ADB[@]}" shell cmd package install-existing "$STOCK_PKG" >/dev/null 2>&1 || true
         "${ADB[@]}" shell pm enable "$STOCK_PKG" >/dev/null 2>&1 || true
         "${ADB[@]}" shell pm enable "$RECOVERY_PKG" >/dev/null 2>&1 || true
+        "${ADB[@]}" shell pm enable "$LEGACY_UPDATER_PKG" >/dev/null 2>&1 || true
         "${ADB[@]}" shell cmd package set-home-activity --user 0 \
             "$STOCK_PKG/com.mentra.asg_client.MainActivity" >/dev/null 2>&1 || true
         "${ADB[@]}" shell am start -n \
@@ -114,8 +117,8 @@ echo ""
 # Step 2: Put the stock firmware on a known-compatible staging baseline.
 echo "=== Updating Mentra Live Firmware ==="
 echo ""
-ADB_SERIAL="$SERIAL" "$SCRIPT_DIR/update-stock-for-dev.sh"
 SETUP_MUTATED=true
+ADB_SERIAL="$SERIAL" "$SCRIPT_DIR/update-stock-for-dev.sh"
 
 # Step 3: Disable stock and its recovery agents.
 echo "=== Disabling Stock App ==="
