@@ -108,7 +108,9 @@ instead of downgraded.
 
 Many older MTK releases do not restore USB ADB while the Infinity Cable remains connected. The
 updater identifies a real Android reboot by comparing `/proc/sys/kernel/random/boot_id`; a cable
-disconnect/reconnect alone is not accepted.
+disconnect/reconnect alone is not accepted. The MTK helper also enforces a 15-minute overall
+deadline after each trigger, so a stalled update exits into stock recovery instead of holding the
+development setup indefinitely.
 
 If ADB is still offline 45 seconds after the reboot command, the script prints:
 
