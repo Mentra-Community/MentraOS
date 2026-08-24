@@ -19,9 +19,19 @@ export async function runCodexReview(
   state: PrAgentState,
 ): Promise<void> {
   const config = loadConfig(repoRoot);
-  if (!process.env.OPENAI_API_KEY) {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
     throw new Error('OPENAI_API_KEY is required for the codex review slot');
   }
+
+  // Codex CLI (0.149+) does not read OPENAI_API_KEY from the environment for
+  // API auth — without an explicit login it sends no Authorization header at
+  // all ("401 Missing bearer or basic authentication"). Register the key via
+  // `codex login --with-api-key`, which reads it from stdin.
+  execFileSync('codex', ['login', '--with-api-key'], {
+    input: apiKey,
+    stdio: ['pipe', 'inherit', 'inherit'],
+  });
 
   const promptPath = join(repoRoot, '.github/pr-agent/prompts/codex-review.md');
   const basePrompt = readFileSync(promptPath, 'utf8');
