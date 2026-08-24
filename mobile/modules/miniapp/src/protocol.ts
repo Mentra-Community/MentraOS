@@ -203,6 +203,8 @@ export enum MiniappRequestType {
   MINIAPPS_STOP = "miniapp_apps_stop",
   /** Install/update an approved bundle. SYSTEM callers only. */
   MINIAPPS_INSTALL = "miniapp_apps_install",
+  /** Preflight a release's host/SDK requirements without downloading it. */
+  MINIAPPS_INSTALL_CHECK = "miniapp_apps_install_check",
   /** Uninstall a package owned by the calling Store. SYSTEM callers only. */
   MINIAPPS_UNINSTALL = "miniapp_apps_uninstall",
   /** Invoke a declared action on another miniapp; headless-wakes it if stopped. */

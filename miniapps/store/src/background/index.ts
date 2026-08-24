@@ -1,7 +1,8 @@
 import {registerMiniapp, type MiniappSession} from "@mentra/miniapp/background"
-import {loadCompleteCatalog, trustedCoreOrigin} from "./catalog"
+import {isNewerVersion, loadCompleteCatalog, trustedCoreOrigin} from "./catalog"
+import {isAutomaticUpdateCandidate} from "./updates"
 import type {StoreChannels} from "../shared/channels"
-import type {StoreApp, StoreSnapshot} from "../shared/types"
+import {MENTRA_STORE_PACKAGE_NAME, type InstalledApp, type StoreApp, type StoreSnapshot} from "../shared/types"
 
 const FALLBACK_CORE_URL = process.env.MENTRA_PUBLIC_CORE_URL
 
@@ -18,6 +19,7 @@ class StoreController {
   }
   private refreshing: Promise<StoreSnapshot> | null = null
   private mutationTail: Promise<void> = Promise.resolve()
+  private automaticUpdateRunning = false
   private refreshQueued = false
   private queuedQuery = ""
   private lastQuery = ""
@@ -113,7 +115,7 @@ class StoreController {
         }),
         this.session.miniapps.list({includeIncompatible: true}),
       ])
-      this.apps = apps
+      this.apps = await this.annotateUpdateCompatibility(apps, installed)
       this.snapshot = {
         apps: this.apps,
         installed,
@@ -133,7 +135,70 @@ class StoreController {
       }
     }
     this.send()
+    if (!this.snapshot.offline) this.scheduleAutomaticUpdates()
     return this.snapshot
+  }
+
+  private async annotateUpdateCompatibility(apps: StoreApp[], installed: InstalledApp[]): Promise<StoreApp[]> {
+    const installedByPackage = new Map(installed.map((app) => [app.packageName, app]))
+    return Promise.all(
+      apps.map(async (app) => {
+        const current = installedByPackage.get(app.packageName)
+        if (!current || !isNewerVersion(app.release.version, current.version)) return app
+        try {
+          const installCompatibility = await this.session.miniapps.checkInstallCompatibility({
+            minHostVersion: app.release.minHostVersion,
+            sdkVersion: app.release.sdkVersion,
+          })
+          return {...app, release: {...app.release, installCompatibility}}
+        } catch (error) {
+          return {
+            ...app,
+            release: {
+              ...app.release,
+              installCompatibility: {
+                compatible: false,
+                reason: error instanceof Error ? error.message : "Unable to verify update compatibility",
+              },
+            },
+          }
+        }
+      }),
+    )
+  }
+
+  private automaticUpdateCandidates(): StoreApp[] {
+    const installedByPackage = new Map(this.snapshot.installed.map((app) => [app.packageName, app]))
+    return this.apps.filter((app) => {
+      const installed = installedByPackage.get(app.packageName)
+      return isAutomaticUpdateCandidate(app, installed, MENTRA_STORE_PACKAGE_NAME)
+    })
+  }
+
+  private scheduleAutomaticUpdates(): void {
+    if (this.automaticUpdateRunning) return
+    const candidates = this.automaticUpdateCandidates()
+    if (candidates.length === 0) return
+    this.automaticUpdateRunning = true
+    void this.enqueueMutation(async () => {
+      try {
+        for (const app of candidates) {
+          const installed = this.snapshot.installed.find((candidate) => candidate.packageName === app.packageName)
+          if (!installed || !isNewerVersion(app.release.version, installed.version)) continue
+          await this.install(app.packageName, undefined, app)
+        }
+      } finally {
+        this.automaticUpdateRunning = false
+      }
+      return this.snapshot
+    }).catch((error) => {
+      this.snapshot = {
+        ...this.snapshot,
+        operation: null,
+        error: error instanceof Error ? error.message : "Automatic update failed",
+      }
+      this.send()
+    })
   }
 
   private requireApp(packageName: string) {
@@ -151,9 +216,9 @@ class StoreController {
     return result
   }
 
-  private async install(packageName: string, query?: string) {
+  private async install(packageName: string, query?: string, selectedApp?: StoreApp) {
     if (query !== undefined) this.lastQuery = query
-    const app = this.requireApp(packageName)
+    const app = selectedApp ?? this.requireApp(packageName)
     this.snapshot = {...this.snapshot, operation: {packageName, kind: "install", phase: "downloading"}, error: null}
     this.send()
     try {

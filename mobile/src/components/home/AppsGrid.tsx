@@ -671,16 +671,17 @@ export function AppsGrid({
             }
           },
         },
-        !isSystemMiniappPackage(liveSelectedApp?.packageName || "") && {
-          label: translate("appInfo:settings"),
-          icon: "exclamation-circle",
-          onPress: () => {
-            push("/applet/settings", {
-              packageName: liveSelectedApp?.packageName,
-              appName: liveSelectedApp?.name,
-            })
+        !liveSelectedApp?.offline &&
+          !isSystemMiniappPackage(liveSelectedApp?.packageName || "") && {
+            label: translate("appInfo:settings"),
+            icon: "exclamation-circle",
+            onPress: () => {
+              push("/applet/settings", {
+                packageName: liveSelectedApp?.packageName,
+                appName: liveSelectedApp?.name,
+              })
+            },
           },
-        },
         !showAllApps && {
           label: translate("appInfo:remove"),
           icon: "circle-minus",
@@ -700,16 +701,17 @@ export function AppsGrid({
             }
           },
         },
-        !isSystemMiniappPackage(liveSelectedApp?.packageName || "") && {
-          label: translate("appInfo:uninstall"),
-          icon: "trash",
-          destructive: true,
-          onPress: () => {
-            if (liveSelectedApp) {
-              uninstallAppUI(liveSelectedApp)
-            }
+        !liveSelectedApp?.offline &&
+          !isSystemMiniappPackage(liveSelectedApp?.packageName || "") && {
+            label: translate("appInfo:uninstall"),
+            icon: "trash",
+            destructive: true,
+            onPress: () => {
+              if (liveSelectedApp) {
+                uninstallAppUI(liveSelectedApp)
+              }
+            },
           },
-        },
       ].filter(Boolean) as PopoverAction[],
     [liveSelectedApp, openApp, stopApplet, showAllApps, placeAppOnHome, push],
   )

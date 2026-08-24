@@ -80,7 +80,7 @@ export default function AppSettings() {
     }
   }, [appsLoaded, appInfo, packageName, replaceAll])
 
-  const uninstallable = !isSystemMiniappPackage(packageName)
+  const uninstallable = Boolean(appInfo && !appInfo.offline && !isSystemMiniappPackage(packageName))
 
   const viewShotRef = useRef(null)
   const saveScreenshot = async () => {

@@ -13,7 +13,23 @@ export const BUNDLED_MINIAPPS: number[] = [
   require("@assets/miniapps/com.mentra.navigation-1.1.29.zip"),
   require("@assets/miniapps/com.mentra.notes-1.0.16.zip"),
   require("@assets/miniapps/com.mentra.recorder-1.0.7.zip"),
-  require("@assets/miniapps/com.mentra.store-1.0.0.zip"),
+  require("@assets/miniapps/com.mentra.store-1.0.1.zip"),
   require("@assets/miniapps/com.mentra.teleprompter-1.0.6.zip"),
   require("@assets/miniapps/com.mentra.translation-1.0.19.zip"),
 ]
+
+// Build-owned package identities. A manifest cannot request SYSTEM; changing
+// this set requires shipping a Mentra App build containing the corresponding
+// ZIP asset.
+export const BUNDLED_SYSTEM_MINIAPP_PACKAGES = [
+  "com.mentra.ai",
+  "com.mentra.captions",
+  "com.mentra.livestreamer",
+  "com.mentra.merge",
+  "com.mentra.navigation",
+  "com.mentra.notes",
+  "com.mentra.recorder",
+  "com.mentra.store",
+  "com.mentra.teleprompter",
+  "com.mentra.translation",
+] as const

@@ -7,7 +7,7 @@ import {router} from "expo-router"
 import {bootstrapMentraJS} from "@/services/mentraJsBootstrap"
 import {preinstalledMiniappSync} from "@/services/miniapps/preinstalledMiniappSync"
 import builtInMiniappCatalog from "@/services/miniapps/BuiltInMiniappCatalog"
-import {BUNDLED_MINIAPPS} from "@/generated/bundledMiniapps"
+import {BUNDLED_MINIAPPS, BUNDLED_SYSTEM_MINIAPP_PACKAGES} from "@/generated/bundledMiniapps"
 import {CHINA_HIDDEN_APPS, isChinaBuild, notifyPackageName} from "@/constants/miniapps"
 import {migrate} from "@/services/Migrations"
 import {buildSpokenNotification} from "@/services/notifications/spokenNotification"
@@ -400,7 +400,14 @@ class MantleManager {
       },
       // Resolved cloud endpoints + LC3 frame size. island builds its cloud
       // client from these; the host keeps the dev/settings URL resolution.
-      config: cloudConfigValues(),
+      config: {
+        ...cloudConfigValues(),
+        bundledSystemMiniappPackages: BUNDLED_SYSTEM_MINIAPP_PACKAGES,
+        bundledStoreMiniappPackages: ["com.mentra.store"],
+        bundledSystemMiniappStoreOwners: Object.fromEntries(
+          BUNDLED_SYSTEM_MINIAPP_PACKAGES.map((packageName) => [packageName, "com.mentra.store"]),
+        ),
+      },
       // Named host-UI seams: island dispatches the miniapp request, the host
       // owns the screen (branding/navigation).
       ui: {

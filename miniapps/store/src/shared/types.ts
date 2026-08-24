@@ -9,6 +9,8 @@ export interface StoreRelease {
   hardwareRequirements: Array<{type: string; level?: string; description?: string}>
   minHostVersion: string | null
   sdkVersion: string | null
+  /** Host-computed compatibility for an available update. Never trusted from the catalog. */
+  installCompatibility?: {compatible: boolean; reason?: string}
 }
 
 export interface StoreApp {
@@ -33,6 +35,8 @@ export interface InstalledApp {
   name: string
   version: string
   running: boolean
+  /** Host-owned identity bit derived from the Mentra App's bundled ZIP catalog. */
+  system: boolean
   compatibility: {isCompatible: boolean; warnings: string[]}
   storeOwnerPackageName?: string
 }

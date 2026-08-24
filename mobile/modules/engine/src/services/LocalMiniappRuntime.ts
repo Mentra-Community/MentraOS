@@ -80,7 +80,7 @@ import {resolveForegroundLocationPermission} from "./ForegroundLocationPermissio
 import {advanceMiniappPingLiveness} from "./MiniappLiveness"
 import {listPhoneCalendarEvents, PhoneCalendarError} from "./PhoneCalendarService"
 import {LocalMiniappStorage} from "./LocalMiniappStorage"
-import {isStoreMiniappPackage, isSystemMiniappPackage} from "./SystemMiniappPolicy"
+import {canStoreUpdateSystemMiniapp, isStoreMiniappPackage, isSystemMiniappPackage} from "./SystemMiniappPolicy"
 import {installWithRuntimeReload} from "../utils/storeInstallRuntime"
 import {checkManifestVersions} from "./manifestVersionGate"
 
@@ -1319,6 +1319,9 @@ class LocalMiniappRuntime {
         break
       case MiniappRequestType.MINIAPPS_INSTALL:
         void this.handleMiniappsInstall(packageName, payload, requestId)
+        break
+      case MiniappRequestType.MINIAPPS_INSTALL_CHECK:
+        this.handleMiniappsInstallCheck(packageName, payload, requestId)
         break
       case MiniappRequestType.MINIAPPS_UNINSTALL:
         void this.handleMiniappsUninstall(packageName, payload, requestId)
@@ -4191,8 +4194,10 @@ class LocalMiniappRuntime {
       version: app.version ?? "",
       running: app.running,
       compatibility,
+      system: isSystemMiniappPackage(app.packageName),
       actions: app.actions ?? [],
-      ...(releaseIdentity?.source === "store" && releaseIdentity.storePackageName
+      ...((releaseIdentity?.source === "store" || releaseIdentity?.source === "system_store") &&
+      releaseIdentity.storePackageName
         ? {storeOwnerPackageName: releaseIdentity.storePackageName}
         : {}),
     }
@@ -4365,10 +4370,17 @@ class LocalMiniappRuntime {
       })
       return
     }
-    if (isSystemMiniappPackage(target)) {
+    if (isStoreMiniappPackage(target)) {
       this.sendResult(storePackageName, requestId, false, undefined, {
         code: MiniappErrorCode.NOT_PERMITTED,
-        message: "Store APIs cannot replace bundled system miniapps",
+        message: "A Store cannot replace a Store package while handling its own update request",
+      })
+      return
+    }
+    if (isSystemMiniappPackage(target) && !canStoreUpdateSystemMiniapp(storePackageName, target)) {
+      this.sendResult(storePackageName, requestId, false, undefined, {
+        code: MiniappErrorCode.STORE_OWNERSHIP_CONFLICT,
+        message: `${target} is assigned to another bundled Store by this host build`,
       })
       return
     }
@@ -4404,7 +4416,7 @@ class LocalMiniappRuntime {
       const activeVersion = await appRegistry.getActiveVersion(target)
       const currentIdentity = activeVersion ? appRegistry.getReleaseIdentity(target, activeVersion) : null
       if (
-        currentIdentity?.source === "store" &&
+        (currentIdentity?.source === "store" || currentIdentity?.source === "system_store") &&
         currentIdentity.storePackageName &&
         currentIdentity.storePackageName !== storePackageName
       ) {
@@ -4432,7 +4444,7 @@ class LocalMiniappRuntime {
                 phase,
               }),
             releaseIdentity: {
-              source: "store",
+              source: isSystemMiniappPackage(target) ? "system_store" : "store",
               storePackageName,
               bundleSha256,
               ...(typeof payload.releaseId === "string" ? {releaseId: payload.releaseId} : {}),
@@ -4485,6 +4497,41 @@ class LocalMiniappRuntime {
     } finally {
       this.storeMutationInFlight = null
     }
+  }
+
+  private handleMiniappsInstallCheck(
+    storePackageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): void {
+    if (!isStoreMiniappPackage(storePackageName) || !this.connectedApps.get(storePackageName)?.hostTrustedSystem) {
+      this.sendResult(storePackageName, requestId, false, undefined, {
+        code: MiniappErrorCode.NOT_PERMITTED,
+        message: "Install compatibility checks are restricted to bundled system Stores",
+      })
+      return
+    }
+    const {hostVersion, supportedMiniappSdkRange} = getConfigValues()
+    if (!hostVersion || !supportedMiniappSdkRange) {
+      this.sendResult(storePackageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: "Host miniapp compatibility policy is not configured",
+      })
+      return
+    }
+    const compatibility = checkManifestVersions(
+      {
+        minHostVersion: typeof payload.minHostVersion === "string" ? payload.minHostVersion.trim() : undefined,
+        sdkVersion: typeof payload.sdkVersion === "string" ? payload.sdkVersion.trim() : undefined,
+      },
+      {hostVersion, supportedSdkRange: supportedMiniappSdkRange},
+    )
+    this.sendResult(
+      storePackageName,
+      requestId,
+      true,
+      compatibility.ok ? {compatible: true} : {compatible: false, reason: compatibility.reason},
+    )
   }
 
   private async handleMiniappsUninstall(

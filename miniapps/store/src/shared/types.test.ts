@@ -7,6 +7,7 @@ const installed: InstalledApp = {
   name: "Example",
   version: "1.0.0",
   running: false,
+  system: false,
   compatibility: {isCompatible: true, warnings: []},
 }
 

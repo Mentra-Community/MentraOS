@@ -208,7 +208,7 @@ class MiniappLauncher {
       uiBaseDir: entryPaths.ui ? entryPaths.ui.replace(/\/[^/]+$/, "/") : null,
       declaredPermissions,
       installedManifest,
-      hostTrustedSystem: isHostTrustedSystemMiniapp(packageName, releaseIdentity?.source),
+      hostTrustedSystem: isHostTrustedSystemMiniapp(packageName, releaseIdentity),
       devUrl: null,
       devPort: null,
     }

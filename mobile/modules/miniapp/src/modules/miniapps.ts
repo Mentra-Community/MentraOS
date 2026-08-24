@@ -43,6 +43,8 @@ export interface MiniappInfo {
   version: string
   running: boolean
   compatibility: MiniappCompatibility
+  /** True when this package identity is backed by a ZIP in the host build. */
+  system: boolean
   /** Store package that owns this active release, if it was Store-installed. */
   storeOwnerPackageName?: string
   /** Declared actions (empty if the miniapp declares none). */
@@ -90,6 +92,13 @@ export interface InstallMiniappResult {
   version: string
   installedByStore: string
 }
+
+export interface InstallMiniappCompatibilityRequest {
+  minHostVersion?: string | null
+  sdkVersion?: string | null
+}
+
+export type InstallMiniappCompatibility = {compatible: true} | {compatible: false; reason: string}
 
 export type InstallMiniappPhase = "downloading" | "verifying" | "extracting" | "activating" | "complete"
 
@@ -166,6 +175,15 @@ export class MiniappsModule {
       // The request still settles on the host response or session disconnect.
       {timeoutMs: 0},
     )
+  }
+
+  /** Check host and Mentra Miniapp SDK compatibility before offering or automatically applying an update. */
+  async checkInstallCompatibility(request: InstallMiniappCompatibilityRequest): Promise<InstallMiniappCompatibility> {
+    return this.session.sendRequest<InstallMiniappCompatibility>({
+      type: MiniappRequestType.MINIAPPS_INSTALL_CHECK,
+      minHostVersion: request.minHostVersion ?? undefined,
+      sdkVersion: request.sdkVersion ?? undefined,
+    })
   }
 
   /** Subscribe to host-owned install/update progress. Returns an unsubscribe function. */

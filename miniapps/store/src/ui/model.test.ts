@@ -11,6 +11,7 @@ function installed(isCompatible: boolean): InstalledApp {
     name: "Weather",
     version: "1.0.0",
     running: false,
+    system: false,
     compatibility: {isCompatible, warnings: []},
   }
 }
@@ -50,6 +51,15 @@ describe("Store UI model", () => {
     const incompatible = installed(false)
     expect(isStoreActionDisabled("install", incompatible)).toBe(false)
     expect(isStoreActionDisabled("open", incompatible)).toBe(true)
+  })
+
+  test("blocks an update that requires a newer Mentra App or Miniapp SDK", () => {
+    expect(
+      isStoreActionDisabled("install", installed(true), {
+        compatible: false,
+        reason: "requires host >=3.0.0",
+      }),
+    ).toBe(true)
   })
 
   test("resolves open details from the latest catalog snapshot", () => {

@@ -28,19 +28,25 @@ publisher signatures can be enforced later without changing the API.
 - [x] Keep the installation request backend-neutral: package, version, URL,
       SHA-256, release metadata, and an optional future authorization envelope.
 - [x] Make SYSTEM build-owned and non-author-declarable.
-- [x] Require both an exact hardcoded package and host-bundled provenance. A dev
-      miniapp copying `com.mentra.store` is not privileged.
-- [x] Protect every bundled SYSTEM package from Store replacement or removal.
+- [x] Generate SYSTEM package identity from the ZIPs bundled into each Mentra
+      App build. There is no author-declarable manifest permission or parallel
+      hardcoded package-name list; a dev miniapp copying a bundled package name
+      is not privileged without host-owned release provenance.
+- [x] Protect every bundled SYSTEM package from removal and ordinary Store or
+      preinstall replacement.
 - [x] Protect every bundled SYSTEM package from direct user uninstall at the
       host registry boundary while preserving Remove from Home.
-- [x] Hardcode the currently shipped first-party bundles (including Notes,
-      Translation, Livestreamer, Captions, Merge, Maps, Recorder, and
-      Teleprompter) as SYSTEM for the initial release.
+- [x] Treat every currently shipped bundle (including Notes, Translation,
+      Livestreamer, Captions, Merge, Maps, Recorder, and Teleprompter) as SYSTEM
+      automatically because its ZIP is present in the build.
 - [x] Persist user uninstalls for non-SYSTEM bundled miniapps so app startup
       does not silently reinstall them; an explicit later install clears the
       tombstone.
 - [x] Record the installing Store as provenance and reject cross-Store updates
       and removals.
+- [x] Add a build-assigned SYSTEM update channel: the bundled Store selected as
+      owner for a SYSTEM package may install a newer catalog release, and that
+      release retains host-trusted SYSTEM provenance across restarts.
 - [x] Allow an OEM build to add one or more bundled Store package names to the
       build-owned allowlist while reusing the same SDK/host contract and any
       backend.
@@ -106,7 +112,15 @@ publisher signatures can be enforced later without changing the API.
       foreground, connectivity restoration, and a bounded background interval.
 - [x] Coalesce refreshes and serialize host mutations to prevent races/loops.
 - [x] Prevent downgrades by offering only strict semantic-version upgrades.
-- [x] Package and integrity-check `com.mentra.store-1.0.0.zip`.
+- [x] Preflight update `minHostVersion` and `sdkVersion` against the current
+      Mentra App before showing or applying an update. Incompatible updates are
+      deferred and become eligible automatically after the host is upgraded.
+- [x] Automatically update compatible SYSTEM releases assigned to this Store
+      and non-SYSTEM releases already owned by this Store. Never adopt or update
+      another Store's packages.
+- [x] Keep the Store itself out of its in-process update loop; Store-self update
+      remains a future signed host-owned updater concern.
+- [x] Package and integrity-check `com.mentra.store-1.0.1.zip`.
 
 ## Verification
 
@@ -117,19 +131,20 @@ publisher signatures can be enforced later without changing the API.
       edits, moderation, artwork privacy, and the 10-screenshot cap.
 - [x] Miniapp packer regressions: 2 passed, including atomic preservation of
       the previous artifact after a failed ZIP command.
-- [x] Mentra Miniapp SDK: 270 passed.
+- [x] Mentra Miniapp SDK: 272 passed.
 - [x] Installer/SYSTEM security tests, including bundle-name impersonation.
-- [x] Store controller, ownership, and UI-model tests: 10 passed.
+- [x] Store catalog, automatic-update policy, ownership, and UI-model tests: 15
+      passed.
 - [x] Headless Chromium Store UI E2E at a 390×844 phone viewport: catalog,
       search-query preservation, install, details, verified identity, Installed
       state, and horizontal-overflow assertion.
 - [x] Mentra App TypeScript compile.
-- [x] Mentra App Jest: 84 suites passed (1 skipped), 671 tests passed
+- [x] Mentra App Jest: 85 suites passed (1 skipped), 672 tests passed
       (2 skipped).
 - [x] Android ASG and Bluetooth SDK compile checks.
 - [x] Full iOS Simulator native build with code signing disabled.
 - [x] ZIP integrity check. Bundled Store SHA-256:
-      `413044b0a1c34f117fa955a7b456cb29c676ca744dda594e55695ce9e5d3c5dc`.
+      `4f2c3fff1a5eb1bd33d0485efa5d26352db654a263c553c8dc74fe98899a2386`.
 - [x] Review regressions: bounded streaming inflation and CRC checks in both
       Core and the phone, trusted host-selected Core URL, complete catalog
       pagination, Store-owned uninstall visibility, pre-activation host/SDK
@@ -170,9 +185,9 @@ These are not blockers for the approved first-release trust model.
 The implementation is a strong install/catalog foundation, but the following
 work remains before describing the overall Store program as production-ready:
 
-- [ ] Add an automatic-update policy for Store-installed miniapps. The Store
-      currently checks on startup/open/foreground/reconnect and every 15
-      minutes, but only exposes a user-triggered Update action.
+- [x] Add compatible automatic updates for this Store's installed releases and
+      its build-assigned SYSTEM packages, with host/SDK deferral and retry after
+      the Mentra App becomes compatible.
 - [ ] Seed or migrate production Store content. Cloud V2 production currently
       has no active published miniapp records, while the legacy Cloud V1 Store
       currently exposes 10 published cloud miniapps that cannot be copied

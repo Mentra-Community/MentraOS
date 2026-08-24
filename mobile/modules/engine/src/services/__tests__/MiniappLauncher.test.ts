@@ -1,7 +1,8 @@
 /// <reference types="bun-types" />
 
-import {beforeAll, beforeEach, describe, expect, test, mock} from "bun:test"
+import {afterAll, beforeAll, beforeEach, describe, expect, test, mock} from "bun:test"
 
+import {configure, resetForTests} from "../../runtime/bootstrap"
 import type {MentraJSRouter} from "../MentraJSRouter"
 
 // --- Mock the launcher's heavy module deps before importing it. ------------
@@ -9,11 +10,12 @@ import type {MentraJSRouter} from "../MentraJSRouter"
 // getActiveVersion is mutable so a test can force an "unresolvable" bundle.
 let activeVersion = "1.0.0"
 let releaseSource = "bundled_asset"
+let releaseStorePackageName: string | undefined
 
 mock.module("../AppRegistry", () => ({
   default: {
     getActiveVersion: async () => activeVersion,
-    getReleaseIdentity: () => ({source: releaseSource}),
+    getReleaseIdentity: () => ({source: releaseSource, storePackageName: releaseStorePackageName}),
     getMiniappEntryPaths: () => ({background: "file:///bundle/bg.js", ui: "file:///bundle/ui.html"}),
     getMiniappManifest: () => ({permissions: [{type: "MICROPHONE"}], hardwareRequirements: []}),
   },
@@ -55,9 +57,22 @@ mock.module("expo-file-system", () => ({
 let miniappLauncher: typeof import("../MiniappLauncher").miniappLauncher
 
 beforeAll(async () => {
+  configure({
+    auth: {getSubjectToken: async () => ({token: "test", type: "test"})},
+    config: {
+      bundledSystemMiniappPackages: ["com.mentra.store", "com.mentra.notes"],
+      bundledStoreMiniappPackages: ["com.mentra.store"],
+      bundledSystemMiniappStoreOwners: {
+        "com.mentra.store": "com.mentra.store",
+        "com.mentra.notes": "com.mentra.store",
+      },
+    },
+  })
   const mod = await import("../MiniappLauncher")
   miniappLauncher = mod.miniappLauncher
 })
+
+afterAll(resetForTests)
 
 // Fresh router (mutable registered set) per test.
 function buildMockRouter() {
@@ -94,6 +109,7 @@ describe("MiniappLauncher", () => {
   beforeEach(() => {
     activeVersion = "1.0.0"
     releaseSource = "bundled_asset"
+    releaseStorePackageName = undefined
     waitForConnectCalls = []
     mockRouter = buildMockRouter()
     miniappLauncher.configure({router: mockRouter.router})
@@ -125,10 +141,17 @@ describe("MiniappLauncher", () => {
     expect(mockRouter.spawnCalls[1].hostTrustedSystem).toBe(false)
   })
 
-  test("does not trust an allowlisted package installed by a Store", async () => {
+  test("does not trust a normal Store release for a build-owned package", async () => {
     releaseSource = "store"
     await miniappLauncher.ensureRunning("com.mentra.store")
     expect(mockRouter.spawnCalls[0].hostTrustedSystem).toBe(false)
+  })
+
+  test("trusts a build-owned package updated by its bundled Store channel", async () => {
+    releaseSource = "system_store"
+    releaseStorePackageName = "com.mentra.store"
+    await miniappLauncher.ensureRunning("com.mentra.notes")
+    expect(mockRouter.spawnCalls[0].hostTrustedSystem).toBe(true)
   })
 
   test("coalesces concurrent launches of the same package onto one spawn", async () => {

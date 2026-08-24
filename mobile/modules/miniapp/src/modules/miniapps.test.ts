@@ -63,6 +63,21 @@ describe("MiniappsModule Store operations", () => {
     expect(requests).toEqual([{type: MiniappRequestType.MINIAPPS_UNINSTALL, packageName: "com.example.weather"}])
   })
 
+  test("preflights host and SDK compatibility", async () => {
+    const result = {compatible: false, reason: "Built for a newer SDK"}
+    const {session, requests} = mockSession(result)
+    await expect(
+      new MiniappsModule(session).checkInstallCompatibility({minHostVersion: "3.0.0", sdkVersion: "0.4.0"}),
+    ).resolves.toEqual(result)
+    expect(requests).toEqual([
+      {
+        type: MiniappRequestType.MINIAPPS_INSTALL_CHECK,
+        minHostVersion: "3.0.0",
+        sdkVersion: "0.4.0",
+      },
+    ])
+  })
+
   test("fans host install progress out to subscribers", () => {
     const {session} = mockSession()
     const miniapps = new MiniappsModule(session)

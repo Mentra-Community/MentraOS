@@ -241,7 +241,7 @@ function InstalledOnlyRow({
           onClick={() => void onAction("open", installed.packageName)}>
           Open
         </button>
-        {isManagedByThisStore(installed) && (
+        {!installed.system && isManagedByThisStore(installed) && (
           <button
             className="action danger-action"
             disabled={busy}
@@ -269,7 +269,8 @@ function AppRow({
 }) {
   const update = Boolean(installed && isNewerVersion(app.release.version, installed.version))
   const action = !installed || update ? "install" : "open"
-  const label = busy ? "Working…" : update ? "Update" : installed ? "Open" : "Get"
+  const blockedUpdate = update && app.release.installCompatibility?.compatible === false
+  const label = busy ? "Working…" : blockedUpdate ? "Requires update" : update ? "Update" : installed ? "Open" : "Get"
   return (
     <article className="app-row">
       <button className="app-main" onClick={onSelect} aria-label={`View ${app.name}`}>
@@ -282,7 +283,8 @@ function AppRow({
       </button>
       <button
         className="action"
-        disabled={busy || isStoreActionDisabled(action, installed)}
+        disabled={busy || isStoreActionDisabled(action, installed, app.release.installCompatibility)}
+        title={blockedUpdate ? app.release.installCompatibility?.reason : undefined}
         onClick={() => void onAction(action, app.packageName)}>
         {label}
       </button>
@@ -315,7 +317,16 @@ function Detail({
 }) {
   const update = Boolean(installed && isNewerVersion(app.release.version, installed.version))
   const kind = !installed || update ? "install" : "open"
-  const label = busy ? "Working…" : update ? "Update" : installed ? "Open" : "Get"
+  const blockedUpdate = update && app.release.installCompatibility?.compatible === false
+  const label = busy
+    ? "Working…"
+    : blockedUpdate
+      ? "Requires Mentra App update"
+      : update
+        ? "Update"
+        : installed
+          ? "Open"
+          : "Get"
   return (
     <div className="detail">
       <header className="detail-nav">
@@ -334,13 +345,19 @@ function Detail({
           </div>
           <button
             className="action primary"
-            disabled={busy || isStoreActionDisabled(kind, installed)}
+            disabled={busy || isStoreActionDisabled(kind, installed, app.release.installCompatibility)}
             onClick={() => void onAction(kind, app.packageName)}>
             {label}
           </button>
         </section>
         {installed?.compatibility.isCompatible === false && (
           <div className="notice">This miniapp is not compatible with the connected glasses.</div>
+        )}
+        {blockedUpdate && (
+          <div className="notice">
+            This update will install automatically after the Mentra App is updated.{" "}
+            {app.release.installCompatibility?.reason}
+          </div>
         )}
         <section className="detail-section">
           <h2>About</h2>
@@ -367,7 +384,7 @@ function Detail({
             <button onClick={() => window.open(app.privacyPolicyUrl!, "_blank")}>Privacy policy ↗</button>
           )}
           {app.supportUrl && <button onClick={() => window.open(app.supportUrl!, "_blank")}>Support ↗</button>}
-          {installed && isManagedByThisStore(installed) && (
+          {installed && !installed.system && isManagedByThisStore(installed) && (
             <button className="danger" disabled={busy} onClick={() => void onAction("uninstall", app.packageName)}>
               Uninstall
             </button>

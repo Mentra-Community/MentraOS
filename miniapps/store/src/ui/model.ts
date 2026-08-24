@@ -1,8 +1,13 @@
-import type {InstalledApp, StoreApp} from "../shared/types"
+import type {InstalledApp, StoreApp, StoreRelease} from "../shared/types"
 
 export type StoreAction = "install" | "open"
 
-export function isStoreActionDisabled(action: StoreAction, installed?: InstalledApp): boolean {
+export function isStoreActionDisabled(
+  action: StoreAction,
+  installed?: InstalledApp,
+  installCompatibility?: StoreRelease["installCompatibility"],
+): boolean {
+  if (action === "install" && installCompatibility?.compatible === false) return true
   return action === "open" && installed?.compatibility.isCompatible === false
 }
 

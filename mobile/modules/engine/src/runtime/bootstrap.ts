@@ -30,6 +30,12 @@ export interface IslandConfigValues {
   hostVersion?: string
   /** Semver range of Mentra Miniapp SDK bundle ABIs this host can execute. */
   supportedMiniappSdkRange?: string
+  /** Package identities backed by miniapp ZIPs shipped in this host build. */
+  bundledSystemMiniappPackages?: readonly string[]
+  /** Build-selected Store packages; each must also be a bundled SYSTEM package. */
+  bundledStoreMiniappPackages?: readonly string[]
+  /** Build-owned SYSTEM package -> bundled Store package allowed to update it. */
+  bundledSystemMiniappStoreOwners?: Readonly<Record<string, string>>
   /**
    * LC3 frame size (bytes) the phone's mic encoder emits — announced to the
    * cloud on connect (20 for G1, 40 for G2, …). Defaults to 20 if unset.

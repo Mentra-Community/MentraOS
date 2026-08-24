@@ -159,7 +159,7 @@ interface InstalledLma {
 }
 
 export interface MiniappReleaseIdentity {
-  source: "direct_download" | "bundled_asset" | "preinstalled_registry" | "dev_snapshot" | "store"
+  source: "direct_download" | "bundled_asset" | "preinstalled_registry" | "dev_snapshot" | "store" | "system_store"
   releaseId?: string
   bundleSha256?: string
   channel?: string
@@ -779,6 +779,9 @@ class AppRegistry {
       // protected here.
       if (isSystemMiniappPackage(packageName)) {
         throw new Error(`SYSTEM miniapp ${packageName} cannot be uninstalled; remove it from Home instead`)
+      }
+      if (this.offlineApps.some((app) => app.packageName === packageName)) {
+        throw new Error(`Host miniapp ${packageName} cannot be uninstalled; remove it from Home instead`)
       }
       if (version) {
         const lmaDir = new Directory(Paths.document, "lmas", packageName, version)

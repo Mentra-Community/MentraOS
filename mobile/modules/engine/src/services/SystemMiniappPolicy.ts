@@ -1,40 +1,29 @@
-/**
- * Build-owned SYSTEM identity policy.
- *
- * This list is intentionally not derived from miniapp.json. A developer cannot
- * request or inherit SYSTEM by changing a manifest, installing a bundle, or
- * running in dev mode. Adding a package requires a reviewed Mentra App build.
- */
-const SYSTEM_MINIAPP_PACKAGES = new Set([
-  "com.mentra.camera",
-  "com.mentra.gallery",
-  "com.mentra.settings",
-  "com.mentra.simulated",
-  "com.mentra.mirror",
-  "com.mentra.ai",
-  "com.mentra.captions",
-  "com.mentra.livestreamer",
-  "com.mentra.merge",
-  "com.mentra.navigation",
-  "com.mentra.notes",
-  "com.mentra.recorder",
-  "com.mentra.teleprompter",
-  "com.mentra.translation",
-  "cloud.augmentos.notify",
-  "com.mentra.feedback",
-  "com.mentra.miniappdev",
-  "com.mentra.store",
-])
+import {getConfigValues} from "../runtime/bootstrap"
 
-/** Store packages are a strict subset of SYSTEM and own registry mutation. */
-const STORE_MINIAPP_PACKAGES = new Set(["com.mentra.store"])
+/**
+ * SYSTEM identity comes from the host build's generated bundled-ZIP catalog,
+ * never miniapp.json. Merely installing a bundle with the same package name
+ * does not add an identity to this set.
+ */
+function configuredPackages(key: "bundledSystemMiniappPackages" | "bundledStoreMiniappPackages"): readonly string[] {
+  return getConfigValues()[key] ?? []
+}
 
 export function isSystemMiniappPackage(packageName: string): boolean {
-  return SYSTEM_MINIAPP_PACKAGES.has(packageName)
+  return configuredPackages("bundledSystemMiniappPackages").includes(packageName)
 }
 
 export function isStoreMiniappPackage(packageName: string): boolean {
-  return STORE_MINIAPP_PACKAGES.has(packageName)
+  return isSystemMiniappPackage(packageName) && configuredPackages("bundledStoreMiniappPackages").includes(packageName)
+}
+
+/** Build-selected ownership prevents one bundled Store from replacing another Store's SYSTEM apps. */
+export function canStoreUpdateSystemMiniapp(storePackageName: string, targetPackageName: string): boolean {
+  return (
+    isStoreMiniappPackage(storePackageName) &&
+    isSystemMiniappPackage(targetPackageName) &&
+    getConfigValues().bundledSystemMiniappStoreOwners?.[targetPackageName] === storePackageName
+  )
 }
 
 /** Store management is a phone surface and remains available without glasses. */
@@ -44,9 +33,9 @@ export function requiresConnectedGlasses(packageName: string): boolean {
 
 /**
  * The remotely managed preinstalled registry must never replace a build-owned
- * SYSTEM package. Supporting remote SYSTEM updates requires a separate signed
- * host-owned channel; treating ordinary registry provenance as bundled would
- * let a downloaded replacement inherit privileged APIs.
+ * SYSTEM package. SYSTEM updates use the narrower bundled-Store channel;
+ * treating ordinary registry provenance as bundled would let a downloaded
+ * replacement inherit privileged APIs.
  */
 export function isPreinstalledMiniappPackageAllowed(packageName: string): boolean {
   return !isSystemMiniappPackage(packageName)
@@ -57,6 +46,15 @@ export function isPreinstalledMiniappPackageAllowed(packageName: string): boolea
  * host-owned bundle provenance. A dev server or downloaded bundle that copies
  * a SYSTEM package name must never inherit privileged host APIs.
  */
-export function isHostTrustedSystemMiniapp(packageName: string, releaseSource?: string): boolean {
-  return isSystemMiniappPackage(packageName) && releaseSource === "bundled_asset"
+export function isHostTrustedSystemMiniapp(
+  packageName: string,
+  releaseIdentity?: {source?: string; storePackageName?: string} | null,
+): boolean {
+  if (!isSystemMiniappPackage(packageName)) return false
+  if (releaseIdentity?.source === "bundled_asset") return true
+  return (
+    releaseIdentity?.source === "system_store" &&
+    typeof releaseIdentity.storePackageName === "string" &&
+    canStoreUpdateSystemMiniapp(releaseIdentity.storePackageName, packageName)
+  )
 }

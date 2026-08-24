@@ -40,6 +40,8 @@ describe("MiniappRequestType wire values", () => {
   test("SET_WIFI_ADB_STATE", () => expect(MiniappRequestType.SET_WIFI_ADB_STATE).toBe("miniapp_set_wifi_adb_state"))
   test("PING", () => expect(MiniappRequestType.PING).toBe("miniapp_ping"))
   test("MINIAPPS_INSTALL", () => expect(MiniappRequestType.MINIAPPS_INSTALL).toBe("miniapp_apps_install"))
+  test("MINIAPPS_INSTALL_CHECK", () =>
+    expect(MiniappRequestType.MINIAPPS_INSTALL_CHECK).toBe("miniapp_apps_install_check"))
   test("MINIAPPS_UNINSTALL", () => expect(MiniappRequestType.MINIAPPS_UNINSTALL).toBe("miniapp_apps_uninstall"))
   test("DASHBOARD_CONTENT_UPDATE", () =>
     expect(MiniappRequestType.DASHBOARD_CONTENT_UPDATE).toBe("miniapp_dashboard_content_update"))
