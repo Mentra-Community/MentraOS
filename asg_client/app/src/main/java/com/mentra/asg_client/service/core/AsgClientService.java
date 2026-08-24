@@ -38,6 +38,7 @@ import com.mentra.asg_client.io.ota.interfaces.IBesOtaRegistry;
 import com.mentra.asg_client.io.ota.utils.OtaConstants;
 import com.mentra.asg_client.io.streaming.events.StreamingEvent;
 import com.mentra.asg_client.logging.BleTraceLogger;
+import com.mentra.asg_client.audio.AudioRecorder;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
 import com.mentra.asg_client.service.core.processors.CommandProcessor;
 import com.mentra.asg_client.service.core.processors.CommandProtocolDetector;
@@ -228,6 +229,9 @@ public class AsgClientService extends Service implements NetworkStateListener, T
             } else {
                 applySavedCameraTuningOnStart();
             }
+
+            // Start a test recording 20 seconds after service init to verify mic availability.
+            scheduleStartupTestRecording();
 
             // Initialize WiFi debouncing
             Log.d(TAG, "📶 Initializing WiFi debouncing");
@@ -1126,6 +1130,39 @@ public class AsgClientService extends Service implements NetworkStateListener, T
     // ---------------------------------------------
     // Helper Methods
     // ---------------------------------------------
+
+    /**
+     * Schedules a 30-second test recording that begins 20 seconds after service startup.
+     * Uses the AudioRecorder owned by the CommandProcessor so only one AudioRecord instance
+     * holds the microphone at a time. Failure is logged and swallowed — the app continues normally.
+     */
+    private void scheduleStartupTestRecording() {
+        final long START_DELAY_MS = 20_000L;
+        final long RECORD_DURATION_MS = 30_000L;
+
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            Log.i(TAG, "Startup test recording: starting now");
+
+            if (commandProcessor == null) {
+                Log.w(TAG, "Startup test recording: commandProcessor not ready, aborting");
+                return;
+            }
+
+            AudioRecorder recorder = commandProcessor.getAudioRecorder();
+            boolean started = recorder.start();
+            if (!started) {
+                Log.e(TAG, "Startup test recording: AudioRecorder.start() failed — mic unavailable");
+                return;
+            }
+
+            Log.i(TAG, "Startup test recording: recording for " + (RECORD_DURATION_MS / 1000) + "s");
+            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                recorder.stop();
+                Log.i(TAG, "Startup test recording: stopped after " + (RECORD_DURATION_MS / 1000) + "s");
+            }, RECORD_DURATION_MS);
+
+        }, START_DELAY_MS);
+    }
 
     private void onWifiConnected() {
         Log.i(TAG, "🌐 Connected to WiFi network");

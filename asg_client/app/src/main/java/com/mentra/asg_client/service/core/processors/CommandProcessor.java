@@ -11,6 +11,8 @@ import com.mentra.asg_client.logging.BleTraceLogger;
 import com.mentra.asg_client.reporting.core.ReportManager;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
 import com.mentra.asg_client.service.communication.interfaces.IResponseBuilder;
+import com.mentra.asg_client.audio.AudioRecorder;
+import com.mentra.asg_client.service.core.AsgClientService;
 import com.mentra.asg_client.service.core.handlers.AuthTokenCommandHandler;
 import com.mentra.asg_client.service.core.handlers.BatteryCommandHandler;
 import com.mentra.asg_client.service.core.handlers.BleConfigCommandHandler;
@@ -20,6 +22,7 @@ import com.mentra.asg_client.service.core.handlers.I2SAudioCommandHandler;
 import com.mentra.asg_client.service.core.handlers.ImuCommandHandler;
 import com.mentra.asg_client.service.core.handlers.K900CommandHandler;
 import com.mentra.asg_client.service.core.handlers.KeepAwakeCommandHandler;
+import com.mentra.asg_client.service.core.handlers.MicrophoneCommandHandler;
 import com.mentra.asg_client.service.core.handlers.OtaCommandHandler;
 import com.mentra.asg_client.service.core.handlers.PhoneReadyCommandHandler;
 import com.mentra.asg_client.service.core.handlers.PhotoCommandHandler;
@@ -84,6 +87,7 @@ public class CommandProcessor {
     private final RgbLedCommandHandler rgbLedCommandHandler;
 
     private final OtaCommandHandler otaCommandHandler;
+    private final AudioRecorder audioRecorder;
 
     public CommandProcessor(
             Context context,
@@ -109,6 +113,18 @@ public class CommandProcessor {
         this.fileManager = fileManager;
         this.rgbLedCommandHandler = rgbLedCommandHandler;
         this.otaCommandHandler = otaCommandHandler;
+        this.audioRecorder = new AudioRecorder(context);
+        // Wire I2S gate: Mentra Live routes the mic through the BES MCU's I2S bus.
+        // AudioFlinger cannot open a record track until mh_starti2s is sent to the BES chip.
+        this.audioRecorder.setI2SAudioCallbacks(
+                () -> {
+                    AsgClientService svc = AsgClientService.getInstance();
+                    if (svc != null) svc.handleI2SAudioState(true);
+                },
+                () -> {
+                    AsgClientService svc = AsgClientService.getInstance();
+                    if (svc != null) svc.handleI2SAudioState(false);
+                });
 
         // Initialize components (Single Responsibility Principle)
         Log.d(TAG, "📦 Creating command processing components");
@@ -142,6 +158,10 @@ public class CommandProcessor {
 
     public K900CommandHandler getK900CommandHandler() {
         return k900CommandHandler;
+    }
+
+    public AudioRecorder getAudioRecorder() {
+        return audioRecorder;
     }
 
     /**
@@ -475,6 +495,9 @@ public class CommandProcessor {
             commandHandlerRegistry.registerHandler(new I2SAudioCommandHandler());
             Log.d(TAG, "✅ Registered I2SAudioCommandHandler");
 
+            commandHandlerRegistry.registerHandler(new MicrophoneCommandHandler(audioRecorder));
+            Log.d(TAG, "✅ Registered MicrophoneCommandHandler");
+
             Log.i(
                     TAG,
                     "✅ Successfully registered "
@@ -602,6 +625,7 @@ public class CommandProcessor {
 
     public void cleanup() {
         besTracePoller.stop();
+        audioRecorder.release();
     }
 
     /**
