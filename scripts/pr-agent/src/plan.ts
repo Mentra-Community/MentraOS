@@ -1,6 +1,6 @@
 import { loadConfig } from './config.js';
 import { resolveActivePair } from './rotate.js';
-import { applyResolvedIds, parseResolveIds } from './findings.js';
+import { applyResolvedIds, openBlocking, parseResolveIds } from './findings.js';
 import {
   createOctokit,
   listAllIssueComments,
@@ -147,6 +147,31 @@ export async function runPlan(repoRoot: string): Promise<PlanOutput> {
       state,
       shouldSkip: true,
       skipReason: `status ${state.status}`,
+    };
+  }
+
+  // Reviews already converged: no open blocking findings and enough clean
+  // cycles for handoff. The only thing left to wait for is CI, so re-running
+  // model reviews of an unchanged diff just burns credits (#3648 spent 8 full
+  // review cycles — ~16 model runs — reaching a handoff that needed 2). Route
+  // straight to the wait-ci -> recheck-handoff path instead.
+  if (
+    openBlocking(state.openFindings).length === 0 &&
+    state.consecutiveNoNewReviews >= config.limits.consecutiveNoNewReviewsForHandoff
+  ) {
+    console.log(
+      `Reviews clean (consecutiveNoNewReviews=${state.consecutiveNoNewReviews}); skipping model reviews, CI recheck only`,
+    );
+    await saveState(octokit, owner, repo, prNumber, state, commentId);
+    return {
+      runBugbot: false,
+      runStandards: false,
+      runDepth: false,
+      activePair: [],
+      state,
+      shouldSkip: false,
+      recheckOnly: true,
+      skipReason: 'reviews clean; awaiting CI',
     };
   }
 
