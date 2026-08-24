@@ -184,11 +184,28 @@ clear_preserved_stock_update() {
 }
 
 load_preserved_stock_update() {
-  local state expected_sha actual_sha
+  local presence state expected_sha actual_sha
   local apk_exists=false state_exists=false
 
-  "${ADB[@]}" shell test -f "$PRESERVED_STOCK_APK_DEVICE_PATH" && apk_exists=true
-  "${ADB[@]}" shell test -f "$PRESERVED_STOCK_STATE_PATH" && state_exists=true
+  if ! presence="$("${ADB[@]}" shell \
+    "if [ -f '$PRESERVED_STOCK_APK_DEVICE_PATH' ]; then printf 1; else printf 0; fi; if [ -f '$PRESERVED_STOCK_STATE_PATH' ]; then printf 1; else printf 0; fi" \
+    2>/dev/null | tr -d '\r\n')"; then
+    echo "ADB disconnected while checking preserved stock-ASG state." >&2
+    return 1
+  fi
+  case "$presence" in
+    00) ;;
+    01) state_exists=true ;;
+    10) apk_exists=true ;;
+    11)
+      apk_exists=true
+      state_exists=true
+      ;;
+    *)
+      echo "Could not determine preserved stock-ASG state on the device." >&2
+      return 1
+      ;;
+  esac
   if [ "$apk_exists" = false ] && [ "$state_exists" = false ]; then
     return 0
   fi
@@ -406,10 +423,15 @@ replace_bridge_with_target_stock() {
   "${ADB[@]}" shell cmd package install-existing "$STOCK_PKG" >/dev/null 2>&1 || true
   installed_version="$(package_version_code "$STOCK_PKG")"
   if [ -n "$PRESERVED_STOCK_APK_PATH" ]; then
-    "${ADB[@]}" install -r "$PRESERVED_STOCK_APK_PATH" >/dev/null || return 1
-    installed_version="$(package_version_code "$STOCK_PKG")"
-    [ "$installed_version" = "$PRESERVED_STOCK_VERSION_CODE" ] || return 1
-    echo "Restored preserved stock ASG $installed_version after bridge removal."
+    if [[ "$installed_version" =~ ^[0-9]+$ ]] \
+      && [ "$installed_version" -ge "$PRESERVED_STOCK_VERSION_CODE" ]; then
+      echo "Built-in stock ASG $installed_version is at least as new as preserved update $PRESERVED_STOCK_VERSION_CODE; retaining it after bridge removal."
+    else
+      "${ADB[@]}" install -r "$PRESERVED_STOCK_APK_PATH" >/dev/null || return 1
+      installed_version="$(package_version_code "$STOCK_PKG")"
+      [ "$installed_version" = "$PRESERVED_STOCK_VERSION_CODE" ] || return 1
+      echo "Restored preserved stock ASG $installed_version after bridge removal."
+    fi
   elif [[ "$installed_version" =~ ^[0-9]+$ ]] \
     && [ "$installed_version" -gt "$TARGET_VERSION_CODE" ]; then
     echo "Built-in stock ASG $installed_version is newer than staging target $TARGET_VERSION_CODE; retaining it after bridge removal."
