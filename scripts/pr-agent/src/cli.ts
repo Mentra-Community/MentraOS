@@ -13,6 +13,7 @@ import {
   requiredWorkflowsForPaths,
 } from './ci-gates.js';
 import { loadConfig } from './config.js';
+import { fetchExternalFindings, type ExternalFindings } from './external-reviews.js';
 import { runFix } from './fix.js';
 import { buildHandoffComment } from './handoff.js';
 import { runPlan, writePlanOutputs } from './plan.js';
@@ -84,12 +85,29 @@ async function cmdAggregate() {
   const ref = (await getPrHeadSha(octokit, owner, repo, prNumber)) || headSha;
   const ciChecks = await fetchWorkflowStatuses(octokit, owner, repo, ref, required);
 
+  // Ingestion of external bot inline comments must never take down the cycle:
+  // on API failure we proceed without them and pick them up next cycle.
+  let external: ExternalFindings | undefined;
+  try {
+    external = await fetchExternalFindings(
+      octokit,
+      owner,
+      repo,
+      prNumber,
+      repoRoot,
+      state.cycle,
+    );
+  } catch (err) {
+    console.warn('external review ingestion failed; continuing without:', err);
+  }
+
   const reviews = {
     standards: loadReviewOutput(repoRoot, 'standards'),
     depth: loadReviewOutput(repoRoot, 'depth'),
     bugbot: await loadBugbotVerdict(octokit, owner, repo, prNumber),
     bugbotCheckCompleted: process.env.BUGBOT_COMPLETED === 'true',
     bugbotCheckSuccess: process.env.BUGBOT_SUCCESS === 'true',
+    external,
   };
 
   const result = aggregateCycle(repoRoot, state, reviews, ciChecks, activePair);

@@ -33,6 +33,22 @@ const ConfigSchema = z.object({
       }),
     )
     .default([]),
+  /**
+   * External review-bot ingestion: native inline PR review comments from these
+   * bot logins are normalized into ledger findings so the fixer addresses them
+   * without a human copy/pasting them into the loop.
+   */
+  externalReviewers: z
+    .object({
+      enabled: z.boolean().default(true),
+      bots: z.array(z.string()).default(['cursor[bot]', 'cubic-dev-ai[bot]']),
+      /**
+       * Per-bot regex overrides (case-insensitive) that classify a comment as
+       * blocking. Bots without an entry use the built-in defaults.
+       */
+      blockingPatterns: z.record(z.array(z.string())).default({}),
+    })
+    .default({}),
 });
 
 export type PrAgentConfig = z.infer<typeof ConfigSchema>;

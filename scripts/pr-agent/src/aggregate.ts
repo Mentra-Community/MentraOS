@@ -14,6 +14,7 @@ import { frozenPairFromFindings } from './rotate.js';
 import { listAllIssueComments } from './state.js';
 import { MARKER_BUGBOT_VERDICT, type AggregateOutput, type PrAgentState, type ReviewSlot } from './types.js';
 import { isCiFailed, isCiGreen, type CiCheckStatus } from './ci-gates.js';
+import { isExternalSource, type ExternalFindings } from './external-reviews.js';
 
 export type ReviewOutputs = {
   standards?: string;
@@ -21,6 +22,8 @@ export type ReviewOutputs = {
   bugbot?: string;
   bugbotCheckCompleted?: boolean;
   bugbotCheckSuccess?: boolean;
+  /** Normalized live inline comments from allowlisted external bots. */
+  external?: ExternalFindings;
 };
 
 function slotReviewSucceeded(slot: ReviewSlot, reviews: ReviewOutputs): boolean {
@@ -100,6 +103,40 @@ export function aggregateCycle(
     }
   }
 
+  // External bot inline comments (Bugbot native, cubic, …) become findings so
+  // the fixer addresses them without a human copy/pasting them into the loop.
+  // They deliberately do NOT touch newBlockingFingerprints, allApproved, or
+  // stagnation counters: external bots re-review on their own schedule, so our
+  // convergence bookkeeping cannot key off their cadence. Their lifecycle is:
+  // live comment => open finding; comment outdated/deleted => resolved.
+  if (reviews.external) {
+    const extBlocking = reviews.external.current.filter(
+      (f) => f.severity === 'blocking' && !muted.has(f.fingerprint),
+    );
+    const extNits = reviews.external.current.filter(
+      (f) => f.severity === 'nit' && !muted.has(f.fingerprint),
+    );
+    openFindings = mergeFindings(openFindings, extBlocking, cycle).merged;
+    nitFindings = mergeFindings(nitFindings, extNits, cycle).merged;
+
+    const liveFingerprints = new Set(reviews.external.current.map((f) => f.fingerprint));
+    const extSources = new Set([
+      ...reviews.external.sources,
+      ...openFindings.map((f) => String(f.source)).filter(isExternalSource),
+    ]);
+    for (const source of extSources) {
+      const stale = resolveStaleFindingsFromSource(
+        openFindings,
+        resolvedFindings,
+        source,
+        liveFingerprints,
+        cycle,
+      );
+      openFindings = stale.open;
+      resolvedFindings = stale.resolved;
+    }
+  }
+
   const allSlotsSucceeded = activePair.every((slot) => slotReviewSucceeded(slot, reviews));
 
   const newBlockingCount = newBlockingFingerprints.length;
@@ -130,16 +167,22 @@ export function aggregateCycle(
   // Stagnation tracks the *fixer* failing to reduce open findings. It is only
   // meaningful when the fixer actually runs — never accumulate it in dry run,
   // where unchanged findings across review cycles are expected (no fixes land).
+  // External findings are excluded: their resolution depends on GitHub marking
+  // the underlying comment outdated, which lags our cycles and must not be
+  // read as the fixer stalling.
+  const internalOpenCount = openBlocking(openFindings).filter(
+    (f) => !isExternalSource(String(f.source)),
+  ).length;
   let stagnationFixRounds = state.stagnationFixRounds;
   if (config.dryRun) {
     stagnationFixRounds = 0;
   } else if (
     state.lastOpenCount !== undefined &&
-    openCount === state.lastOpenCount &&
-    openCount > 0
+    internalOpenCount === state.lastOpenCount &&
+    internalOpenCount > 0
   ) {
     stagnationFixRounds += 1;
-  } else if (openCount < (state.lastOpenCount ?? openCount)) {
+  } else if (internalOpenCount < (state.lastOpenCount ?? internalOpenCount)) {
     stagnationFixRounds = 0;
   }
 
@@ -161,7 +204,7 @@ export function aggregateCycle(
   } else if (newBlockingCount >= config.limits.maxNewBlockingPerCycle) {
     status = 'diverging';
     handoffReason = 'diverging';
-  } else if (stagnationFixRounds >= 2 && openCount > 0) {
+  } else if (stagnationFixRounds >= 2 && internalOpenCount > 0) {
     status = 'diverging';
     handoffReason = 'diverging';
   } else if (newBlockingCount >= 3 && state.fixRound >= 2) {
@@ -202,7 +245,7 @@ export function aggregateCycle(
     lastPair: activePair,
     status,
     stagnationFixRounds,
-    lastOpenCount: openCount,
+    lastOpenCount: internalOpenCount,
   };
 
   return {

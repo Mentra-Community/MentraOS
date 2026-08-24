@@ -25,6 +25,20 @@ limits:
   consecutiveNoNewReviewsForHandoff: 2
   discoveryCycles: 1
 
+# External review-bot ingestion: live inline PR review comments from these bot
+# logins are normalized into ledger findings automatically, so the fixer
+# addresses them without a human copy/pasting them into the loop. A comment
+# counts as blocking when it matches the built-in severity patterns
+# ("High/Critical Severity", "blocking"); override per bot via blockingPatterns.
+externalReviewers:
+  enabled: true
+  bots:
+    - "cursor[bot]"
+    - "cubic-dev-ai[bot]"
+  # blockingPatterns:
+  #   "cubic-dev-ai[bot]":
+  #     - "\\bP0\\b"
+
 # Path-scoped required CI check names (must match workflow `name:` fields)
 ciGates:
   - paths:
