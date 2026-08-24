@@ -2,6 +2,7 @@ package com.mentra.asg_client.io.peripheral;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.mentra.asg_client.audio.AudioAssets;
 import com.mentra.asg_client.io.peripheral.events.BatteryEvent;
 import com.mentra.asg_client.io.peripheral.events.BesOtaAuthEvent;
 import com.mentra.asg_client.io.peripheral.events.BesVersionEvent;
@@ -110,6 +111,30 @@ public class McuEventParserTest {
                 McuEventParser.parse(cmd("hm_spkcode", new JSONObject().put("code", "A1B2")));
         assertThat(event).isInstanceOf(SpeakPairingCodeEvent.class);
         assertThat(((SpeakPairingCodeEvent) event).getCode()).isEqualTo("A1B2");
+    }
+
+    @Test
+    public void hmSpkcode_a12b_mapsEachCharToAPairingAsset() throws Exception {
+        McuEvent event =
+                McuEventParser.parse(cmd("hm_spkcode", new JSONObject().put("code", "A12B")));
+        String code = ((SpeakPairingCodeEvent) event).getCode();
+        assertThat(code).isEqualTo("A12B");
+        assertThat(AudioAssets.getPairingCharAsset(code.charAt(0)))
+                .isEqualTo("pairing/letter_a.wav");
+        assertThat(AudioAssets.getPairingCharAsset(code.charAt(1)))
+                .isEqualTo("pairing/digit_1.wav");
+        assertThat(AudioAssets.getPairingCharAsset(code.charAt(2)))
+                .isEqualTo("pairing/digit_2.wav");
+        assertThat(AudioAssets.getPairingCharAsset(code.charAt(3)))
+                .isEqualTo("pairing/letter_b.wav");
+    }
+
+    @Test
+    public void hmSpkcode_preservesLowercaseForTheStitcher() throws Exception {
+        McuEvent event =
+                McuEventParser.parse(cmd("hm_spkcode", new JSONObject().put("code", "a12b")));
+        assertThat(((SpeakPairingCodeEvent) event).getCode()).isEqualTo("a12b");
+        assertThat(AudioAssets.getPairingCharAsset('a')).isEqualTo("pairing/letter_a.wav");
     }
 
     @Test

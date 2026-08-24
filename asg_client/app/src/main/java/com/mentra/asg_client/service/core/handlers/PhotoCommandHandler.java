@@ -285,13 +285,6 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                 logCommandResult("take_photo", false, "Media capture service not available");
                 return false;
             }
-            if (captureService.isPairingTransferCaptureBlocked()) {
-                String message = "Capture blocked during ownership transfer";
-                Log.w(TAG, "🚫 Photo request rejected - ownership transfer capture barrier active");
-                logCommandResult("take_photo", false, message);
-                captureService.sendPhotoErrorResponse(requestId, "PAIRING_TRANSFER", message);
-                return false;
-            }
             if (transferMethod == null || !PHOTO_TRANSFER_METHODS.contains(transferMethod)) {
                 Object invalidTransferMethod = data.opt("transferMethod");
                 String message =

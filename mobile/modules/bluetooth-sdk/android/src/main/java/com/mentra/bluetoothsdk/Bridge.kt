@@ -166,65 +166,6 @@ public class Bridge private constructor() {
             sendTypedMessage("pairing_info", data as Map<String, Any>)
         }
 
-        @JvmStatic
-        fun sendWipeMediaResult(
-            success: Boolean,
-            requestId: String? = null,
-            transferId: String? = null,
-            error: String? = null,
-        ) {
-            val data = HashMap<String, Any>()
-            data["success"] = success
-            if (requestId != null) data["request_id"] = requestId
-            if (transferId != null) data["transfer_id"] = transferId
-            if (error != null) data["error"] = error
-            sendTypedMessage("wipe_media_result", data as Map<String, Any>)
-        }
-
-        @JvmStatic
-        fun sendPairingTransferResult(
-            transferId: String,
-            operation: String,
-            success: Boolean,
-            state: Int? = null,
-            error: String? = null,
-            binding: String? = null,
-            protocolVersion: Int? = null,
-        ) {
-            val data = HashMap<String, Any>()
-            data["transfer_id"] = transferId
-            data["operation"] = operation
-            data["success"] = success
-            if (state != null) data["state"] = state
-            if (error != null) data["error"] = error
-            if (binding != null) data["binding"] = binding
-            if (protocolVersion != null) data["protocol_version"] = protocolVersion
-            sendTypedMessage("pairing_transfer_result", data as Map<String, Any>)
-        }
-
-        /**
-         * Send the result of a `pairing_transfer_status` query — the current state of an
-         * in-flight or completed secure pairing transfer, without finalizing or aborting it.
-         */
-        @JvmStatic
-        fun sendPairingTransferStatus(
-            transferId: String,
-            state: String,
-            terminalOperation: String? = null,
-            binding: String? = null,
-            credentialCleanupPending: Boolean? = null,
-            protocolVersion: Int? = null,
-        ) {
-            val data = HashMap<String, Any>()
-            data["transfer_id"] = transferId
-            data["state"] = state
-            if (terminalOperation != null) data["terminal_operation"] = terminalOperation
-            if (binding != null) data["binding"] = binding
-            if (credentialCleanupPending != null) data["credential_cleanup_pending"] = credentialCleanupPending
-            if (protocolVersion != null) data["protocol_version"] = protocolVersion
-            sendTypedMessage("pairing_transfer_status_result", data as Map<String, Any>)
-        }
-
         /** Send audio connected event - matches iOS implementation for platform parity */
         @JvmStatic
         fun sendAudioConnected(deviceName: String) {

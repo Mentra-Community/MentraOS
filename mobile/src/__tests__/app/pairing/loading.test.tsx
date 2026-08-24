@@ -114,21 +114,6 @@ describe("pairing loading screen", () => {
       params: {deviceModel: "Mentra Live", deviceName: "MENTRA_LIVE_BLE_001"},
     })
     ;(useNavigationStore.getState as jest.Mock).mockReturnValue({replace, goBack})
-    const {bluetoothSdkMock} = require("@/test-utils/mockBluetoothSdk")
-    bluetoothSdkMock.wipeMediaForPairing = jest.fn(() => Promise.resolve({success: true}))
-    bluetoothSdkMock.finalizePairingTransfer = jest.fn(() =>
-      Promise.resolve({success: true, transfer_id: "ABCDEF0123456789", operation: "finalize"}),
-    )
-    bluetoothSdkMock.abortPairingTransfer = jest.fn(() =>
-      Promise.resolve({success: true, transfer_id: "ABCDEF0123456789", operation: "abort"}),
-    )
-    bluetoothSdkMock.getPairingTransferStatus = jest.fn(() =>
-      Promise.resolve({
-        transfer_id: "ABCDEF0123456789",
-        state: "active",
-        terminal_operation: null,
-      }),
-    )
     ;(engine.pairing.waitForBluetoothClassic as jest.Mock)?.mockResolvedValue?.(true)
   })
 
@@ -306,7 +291,6 @@ describe("pairing loading screen", () => {
 
   it("ignores had_previous_bond and navigates to success under Design A open reclaim", async () => {
     const showAlert = require("@/utils/AlertUtils").default as jest.Mock
-    const {bluetoothSdkMock} = require("@/test-utils/mockBluetoothSdk")
 
     render(<GlassesPairingLoadingScreen />)
 
@@ -328,14 +312,10 @@ describe("pairing loading screen", () => {
     await waitFor(() => {
       expect(replace).toHaveBeenCalledWith("/pairing/success", {deviceModel: "Mentra Live"})
     })
-    expect(bluetoothSdkMock.finalizePairingTransfer).not.toHaveBeenCalled()
-    expect(bluetoothSdkMock.wipeMediaForPairing).not.toHaveBeenCalled()
-    expect(bluetoothSdkMock.abortPairingTransfer).not.toHaveBeenCalled()
     expect(showAlert).not.toHaveBeenCalled()
   })
 
-  it("cancels pairing with goBack and does not run ownership abort", async () => {
-    const {bluetoothSdkMock} = require("@/test-utils/mockBluetoothSdk")
+  it("cancels pairing with goBack", async () => {
     const {getByText} = render(<GlassesPairingLoadingScreen />)
 
     act(() => {
@@ -350,7 +330,6 @@ describe("pairing loading screen", () => {
     fireEvent.press(getByText("cancel-pairing"))
 
     expect(goBack).toHaveBeenCalled()
-    expect(bluetoothSdkMock.abortPairingTransfer).not.toHaveBeenCalled()
     expect(replace).not.toHaveBeenCalledWith("/pairing/prep", {deviceModel: "Mentra Live"})
   })
 })

@@ -38,7 +38,6 @@ import com.mentra.asg_client.io.streaming.services.WhipStreamingService;
 import com.mentra.asg_client.logging.BleTraceLogger;
 import com.mentra.asg_client.service.core.CameraRestartCooldown;
 import com.mentra.asg_client.service.core.constants.BatteryConstants;
-import com.mentra.asg_client.service.pairing.PairingTransferCaptureGate;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
 import com.mentra.asg_client.settings.AsgSettings;
 import com.mentra.asg_client.settings.VideoSettings;
@@ -970,10 +969,6 @@ public class MediaCaptureService {
         // command handlers
         // Thread safety is maintained through CameraNeoService's internal threading and Handler
         // usage
-        if (isPairingTransferCaptureBlocked()) {
-            Log.w(TAG, "Blocking startVideoRecording — ownership transfer capture barrier active");
-            return;
-        }
         Log.d(
                 TAG,
                 "startVideoRecording called with settings: "
@@ -1081,16 +1076,6 @@ public class MediaCaptureService {
             boolean enableFlash,
             boolean enableSound,
             int maxRecordingTimeMinutes) {
-        if (isPairingTransferCaptureBlocked()) {
-            Log.w(TAG, "Blocking handleStartVideoCommand — ownership transfer capture barrier active");
-            if (mMediaCaptureListener != null) {
-                mMediaCaptureListener.onMediaError(
-                        requestId,
-                        "Capture blocked during ownership transfer",
-                        MediaUploadQueueManager.MEDIA_TYPE_VIDEO);
-            }
-            return;
-        }
         Log.d(
                 TAG,
                 "handleStartVideoCommand called with requestId: "
@@ -1831,51 +1816,6 @@ public class MediaCaptureService {
         return isRecordingVideo;
     }
 
-    /** Ownership-transfer wipe barrier — block new captures until transfer window ends. */
-    public boolean isPairingTransferCaptureBlocked() {
-        return PairingTransferCaptureGate.isActive(mContext);
-    }
-
-    /**
-     * Stop active video and fail queued/in-flight photo jobs before an ownership-transfer wipe so
-     * persistence cannot recreate gallery media after a verified empty check.
-     */
-    public void cancelInFlightCapturesForPairingWipe() {
-        try {
-            if (isRecordingVideo()) {
-                Log.i(TAG, "Stopping active video recording before pairing wipe");
-                stopVideoRecording();
-            }
-        } catch (Exception e) {
-            Log.w(TAG, "Failed to stop active recording before pairing wipe", e);
-        }
-
-        try {
-            QueuedPhotoRequestQueue.getInstance()
-                    .failAllPending("Cancelled for ownership-transfer media wipe");
-        } catch (Exception e) {
-            Log.w(TAG, "Failed to fail pending photo queue before pairing wipe", e);
-        }
-
-        try {
-            CameraNeoService.cancelActivePhotoCapture(
-                    "Cancelled for ownership-transfer media wipe");
-        } catch (Exception e) {
-            Log.w(TAG, "Failed to cancel active photo capture before pairing wipe", e);
-        }
-
-        String activeRequestId = activePhotoJobRequestId.getAndSet(null);
-        if (activeRequestId != null) {
-            Log.i(TAG, "Force-releasing in-flight photo job before pairing wipe: " + activeRequestId);
-            cancelCaptureSafetyTimeout(activeRequestId);
-            clearPhotoTracking(activeRequestId);
-            sendPhotoErrorResponse(
-                    activeRequestId,
-                    "PAIRING_WIPE",
-                    "Photo cancelled for ownership-transfer media wipe");
-        }
-    }
-
     /**
      * Get the capture directory name (e.g. "VID_20250322_120000_123") of the actively recording
      * video, or null if idle. Used by AsgCameraServer to exclude the entire capture group from
@@ -1949,10 +1889,6 @@ public class MediaCaptureService {
     public void takePhotoLocally(String size, boolean enableFlash, boolean enableSound) {
         // Start timing for end-to-end photo capture performance measurement
         final long requestStartTimeMs = System.currentTimeMillis();
-        if (isPairingTransferCaptureBlocked()) {
-            Log.w(TAG, "Blocking takePhotoLocally — ownership transfer capture barrier active");
-            return;
-        }
         if (AsgConstants.ENABLE_PHOTO_TIMING_LOGS) {
             Log.i(TAG, "⏱️ [TIMING] LOCAL Photo request START");
         }
@@ -2291,13 +2227,6 @@ public class MediaCaptureService {
         }
         final boolean textModeRequested = PhotoMode.TEXT.equals(mode);
         String captureSize = PhotoMode.captureSize(mode, size);
-
-        if (isPairingTransferCaptureBlocked()) {
-            Log.w(TAG, "Blocking takePhotoForLocalSave — ownership transfer capture barrier active");
-            sendPhotoErrorResponse(
-                    requestId, "PAIRING_TRANSFER", "Capture blocked during ownership transfer");
-            return false;
-        }
 
         // Photos cannot interrupt streams
         if (RtmpStreamingService.isStreaming()
@@ -2669,14 +2598,6 @@ public class MediaCaptureService {
         Log.d(
                 TAG,
                 "Taking photo and uploading to " + webhookUrl + " with compression: " + compress);
-
-        if (isPairingTransferCaptureBlocked()) {
-            Log.w(TAG, "Blocking takePhotoAndUpload — ownership transfer capture barrier active");
-            sendPhotoErrorResponse(
-                    requestId, "PAIRING_TRANSFER", "Capture blocked during ownership transfer");
-            clearPhotoTracking(requestId);
-            return false;
-        }
 
         // Check if any streaming is active - photos cannot interrupt streams
         if (RtmpStreamingService.isStreaming()
@@ -4935,13 +4856,6 @@ public class MediaCaptureService {
             Long exposureTimeNs,
             Integer iso,
             PhotoCaptureSettings captureSettings) {
-        if (isPairingTransferCaptureBlocked()) {
-            Log.w(TAG, "Blocking takePhotoAutoTransfer — ownership transfer capture barrier active");
-            sendPhotoErrorResponse(
-                    requestId, "PAIRING_TRANSFER", "Capture blocked during ownership transfer");
-            clearPhotoTracking(requestId);
-            return false;
-        }
         if (PhotoMode.TEXT.equals(mode)) {
             textRoiDetector.warmUp();
         }
@@ -5069,14 +4983,6 @@ public class MediaCaptureService {
             logBlePhotoStep(requestId, "request_received");
         }
         logBlePhotoStep(requestId, "ble_capture_accepted");
-
-        if (isPairingTransferCaptureBlocked()) {
-            Log.w(TAG, "Blocking takePhotoForBleTransfer — ownership transfer capture barrier active");
-            sendPhotoErrorResponse(
-                    requestId, "PAIRING_TRANSFER", "Capture blocked during ownership transfer");
-            clearPhotoTracking(requestId);
-            return false;
-        }
 
         // Check if any streaming is active - photos cannot interrupt streams
         logBlePhotoStep(requestId, "streaming_check", "checking RTMP, SRT, and WHIP camera usage");

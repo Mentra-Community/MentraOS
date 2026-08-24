@@ -2930,35 +2930,6 @@ class MentraLive: NSObject, SGCManager {
                 binding: json["binding"] as? String
             )
 
-        case "wipe_media_result":
-            Bridge.sendWipeMediaResult(
-                success: json["success"] as? Bool ?? false,
-                requestId: json["request_id"] as? String,
-                transferId: json["transfer_id"] as? String,
-                error: json["error"] as? String
-            )
-
-        case "pairing_transfer_result":
-            Bridge.sendPairingTransferResult(
-                transferId: json["transfer_id"] as? String ?? "",
-                operation: json["operation"] as? String ?? "",
-                success: json["success"] as? Bool ?? false,
-                state: json["state"] as? Int,
-                error: json["error"] as? String,
-                binding: json["binding"] as? String,
-                protocolVersion: json["protocol_version"] as? Int
-            )
-
-        case "pairing_transfer_status_result":
-            Bridge.sendPairingTransferStatus(
-                transferId: json["transfer_id"] as? String ?? "",
-                state: json["state"] as? String ?? "unknown",
-                terminalOperation: json["terminal_operation"] as? String,
-                binding: json["binding"] as? String,
-                credentialCleanupPending: json["credential_cleanup_pending"] as? Bool,
-                protocolVersion: json["protocol_version"] as? Int
-            )
-
         case "imu_response", "imu_stream_response", "imu_gesture_response",
              "imu_gesture_subscribed", "imu_ack", "imu_error":
             // Handle IMU-related responses
@@ -3682,36 +3653,6 @@ class MentraLive: NSObject, SGCManager {
 
         sendJson(json, wakeUp: true)
     }
-
-    func sendWipeMedia(transferId: String? = nil, requestId: String? = nil) {
-        var json: [String: Any] = ["type": "wipe_media"]
-        if let transferId { json["transfer_id"] = transferId }
-        if let requestId { json["request_id"] = requestId }
-        sendJson(json, wakeUp: true)
-    }
-
-    func sendPairingFinalize(transferId: String? = nil) {
-        var json: [String: Any] = ["type": "pairing_finalize"]
-        if let transferId { json["transfer_id"] = transferId }
-        sendJson(json, wakeUp: true)
-    }
-
-    func sendPairingAbort(transferId: String? = nil) {
-        var json: [String: Any] = ["type": "pairing_abort"]
-        if let transferId { json["transfer_id"] = transferId }
-        sendJson(json, wakeUp: true)
-    }
-
-    /// Query the current state of a secure pairing transfer without finalizing or aborting it.
-    /// Glasses respond with `pairing_transfer_status_result`. Used to recover after a
-    /// finalize/abort request times out on the phone side so the outcome of the in-flight
-    /// operation can be determined rather than blindly retried or assumed failed.
-    func sendPairingTransferStatus(transferId: String? = nil) {
-        var json: [String: Any] = ["type": "pairing_transfer_status"]
-        if let transferId { json["transfer_id"] = transferId }
-        sendJson(json, wakeUp: true)
-    }
-
 
     func keepAwake() {
         Bridge.log("LIVE: 📱 Sending keep_awake command to glasses")

@@ -36,7 +36,6 @@ import com.mentra.asg_client.service.core.handlers.UserEmailCommandHandler;
 import com.mentra.asg_client.service.core.handlers.VersionCommandHandler;
 import com.mentra.asg_client.service.core.handlers.VideoCommandHandler;
 import com.mentra.asg_client.service.core.handlers.WifiCommandHandler;
-import com.mentra.asg_client.service.core.handlers.WipeMediaCommandHandler;
 import com.mentra.asg_client.service.legacy.interfaces.ICommandHandler;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import com.mentra.asg_client.service.media.interfaces.IMediaManager;
@@ -475,10 +474,6 @@ public class CommandProcessor {
 
             commandHandlerRegistry.registerHandler(new PairingAudioCommandHandler(context));
             Log.d(TAG, "✅ Registered PairingAudioCommandHandler");
-
-            commandHandlerRegistry.registerHandler(
-                    new WipeMediaCommandHandler(communicationManager, serviceManager, fileManager));
-            Log.d(TAG, "✅ Registered WipeMediaCommandHandler");
 
             Log.i(
                     TAG,

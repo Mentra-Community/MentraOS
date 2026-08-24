@@ -278,13 +278,6 @@ public class AsgConstants {
     public static final boolean FORCE_BLE_TRANSFER = false;
 
     /**
-     * Gallery wipe during Mentra Live pairing. Kept false under Design A (open reclaim):
-     * five-tap clears prior bonds/owner and the first successful pair wins — no
-     * ownership-transfer media wipe. {@code wipe_media} still acknowledges without deleting.
-     */
-    public static final boolean ENABLE_PAIRING_MEDIA_WIPE = false;
-
-    /**
      * Grayscale luma BLE pipeline (crop + contrast + unsharp on 1-byte/pixel buffers). When false,
      * uses the legacy full-color decode → scale → sharpen path.
      */

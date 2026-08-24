@@ -49,9 +49,6 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             "pairing_info",
             "entering_pairing_mode",
             "owner_replaced",
-            "pairing_transfer_result",
-            "pairing_transfer_status_result",
-            "wipe_media_result",
             "audio_pairing_needed",
             "audio_connected",
             "audio_disconnected",
@@ -416,62 +413,6 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
         AsyncFunction("queryGalleryStatus") {
             let sdk = await MainActor.run { self.bluetoothSdk() }
             return try await sdk.queryGalleryStatus().values
-        }
-
-        AsyncFunction("wipeMediaForPairing") {
-            let sdk = await MainActor.run { self.bluetoothSdk() }
-            let result = try await sdk.wipeMediaForPairing()
-            var body: [String: Any] = ["success": result.success]
-            if let requestId = result.requestId { body["request_id"] = requestId }
-            if let transferId = result.transferId { body["transfer_id"] = transferId }
-            if let error = result.error { body["error"] = error }
-            return body
-        }
-
-        AsyncFunction("finalizePairingTransfer") {
-            let sdk = await MainActor.run { self.bluetoothSdk() }
-            let result = try await sdk.finalizePairingTransfer()
-            var body: [String: Any] = [
-                "transfer_id": result.transferId,
-                "operation": result.operation,
-                "success": result.success,
-            ]
-            if let state = result.state { body["state"] = state }
-            if let error = result.error { body["error"] = error }
-            if let binding = result.binding { body["binding"] = binding }
-            if let protocolVersion = result.protocolVersion { body["protocol_version"] = protocolVersion }
-            return body
-        }
-
-        AsyncFunction("abortPairingTransfer") {
-            let sdk = await MainActor.run { self.bluetoothSdk() }
-            let result = try await sdk.abortPairingTransfer()
-            var body: [String: Any] = [
-                "transfer_id": result.transferId,
-                "operation": result.operation,
-                "success": result.success,
-            ]
-            if let state = result.state { body["state"] = state }
-            if let error = result.error { body["error"] = error }
-            if let binding = result.binding { body["binding"] = binding }
-            if let protocolVersion = result.protocolVersion { body["protocol_version"] = protocolVersion }
-            return body
-        }
-
-        AsyncFunction("getPairingTransferStatus") { (transferId: String?) in
-            let sdk = await MainActor.run { self.bluetoothSdk() }
-            let result = try await sdk.getPairingTransferStatus(transferId: transferId)
-            var body: [String: Any] = [
-                "transfer_id": result.transferId,
-                "state": result.state,
-            ]
-            if let terminalOperation = result.terminalOperation { body["terminal_operation"] = terminalOperation }
-            if let binding = result.binding { body["binding"] = binding }
-            if let credentialCleanupPending = result.credentialCleanupPending {
-                body["credential_cleanup_pending"] = credentialCleanupPending
-            }
-            if let protocolVersion = result.protocolVersion { body["protocol_version"] = protocolVersion }
-            return body
         }
 
         AsyncFunction("requestPhoto") { (params: [String: Any]) in

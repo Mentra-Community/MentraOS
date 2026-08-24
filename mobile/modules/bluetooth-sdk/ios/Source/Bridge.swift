@@ -119,61 +119,6 @@ class Bridge {
         Bridge.sendTypedMessage("pairing_info", body: body)
     }
 
-    static func sendWipeMediaResult(
-        success: Bool,
-        requestId: String? = nil,
-        transferId: String? = nil,
-        error: String? = nil
-    ) {
-        var body: [String: Any] = ["success": success]
-        if let requestId { body["request_id"] = requestId }
-        if let transferId { body["transfer_id"] = transferId }
-        if let error { body["error"] = error }
-        Bridge.sendTypedMessage("wipe_media_result", body: body)
-    }
-
-    static func sendPairingTransferResult(
-        transferId: String,
-        operation: String,
-        success: Bool,
-        state: Int? = nil,
-        error: String? = nil,
-        binding: String? = nil,
-        protocolVersion: Int? = nil
-    ) {
-        var body: [String: Any] = [
-            "transfer_id": transferId,
-            "operation": operation,
-            "success": success,
-        ]
-        if let state { body["state"] = state }
-        if let error { body["error"] = error }
-        if let binding { body["binding"] = binding }
-        if let protocolVersion { body["protocol_version"] = protocolVersion }
-        Bridge.sendTypedMessage("pairing_transfer_result", body: body)
-    }
-
-    /// Send the result of a `pairing_transfer_status` query — the current state of an
-    /// in-flight or completed secure pairing transfer, without finalizing or aborting it.
-    static func sendPairingTransferStatus(
-        transferId: String,
-        state: String,
-        terminalOperation: String? = nil,
-        binding: String? = nil,
-        credentialCleanupPending: Bool? = nil,
-        protocolVersion: Int? = nil
-    ) {
-        var body: [String: Any] = [
-            "transfer_id": transferId,
-            "state": state,
-        ]
-        if let terminalOperation { body["terminal_operation"] = terminalOperation }
-        if let binding { body["binding"] = binding }
-        if let credentialCleanupPending { body["credential_cleanup_pending"] = credentialCleanupPending }
-        if let protocolVersion { body["protocol_version"] = protocolVersion }
-        Bridge.sendTypedMessage("pairing_transfer_status_result", body: body)
-    }
-
     @MainActor
     static func sendMicPcm(_ data: Data) {
         Bridge.sendTypedMessage("mic_pcm", body: micPcmEventBody(data))

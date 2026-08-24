@@ -3803,36 +3803,6 @@ class MentraLive : SGCManager() {
                             json.optInt("protocol_version", 1),
                             jsonNullableString(json, "binding"),
                     )
-            "wipe_media_result" ->
-                    Bridge.sendWipeMediaResult(
-                            json.optBoolean("success", false),
-                            jsonNullableString(json, "request_id"),
-                            jsonNullableString(json, "transfer_id"),
-                            jsonNullableString(json, "error"),
-                    )
-            "pairing_transfer_result" ->
-                    Bridge.sendPairingTransferResult(
-                            json.optString("transfer_id", ""),
-                            json.optString("operation", ""),
-                            json.optBoolean("success", false),
-                            if (json.has("state")) json.optInt("state") else null,
-                            jsonNullableString(json, "error"),
-                            jsonNullableString(json, "binding"),
-                            if (json.has("protocol_version")) json.optInt("protocol_version") else null,
-                    )
-            "pairing_transfer_status_result" ->
-                    Bridge.sendPairingTransferStatus(
-                            json.optString("transfer_id", ""),
-                            json.optString("state", "unknown"),
-                            jsonNullableString(json, "terminal_operation"),
-                            jsonNullableString(json, "binding"),
-                            if (json.has("credential_cleanup_pending")) {
-                                json.optBoolean("credential_cleanup_pending")
-                            } else {
-                                null
-                            },
-                            if (json.has("protocol_version")) json.optInt("protocol_version") else null,
-                    )
             "imu_response",
             "imu_stream_response",
             "imu_gesture_response",
@@ -5629,58 +5599,6 @@ class MentraLive : SGCManager() {
             Log.e(TAG, "📱 Error creating ota_query_status command", e)
         }
     }
-
-    fun sendWipeMedia(transferId: String? = null, requestId: String? = null) {
-        try {
-            val json = JSONObject()
-            json.put("type", "wipe_media")
-            if (transferId != null) json.put("transfer_id", transferId)
-            if (requestId != null) json.put("request_id", requestId)
-            sendJson(json, true)
-        } catch (e: JSONException) {
-            Log.e(TAG, "Error creating wipe_media command", e)
-        }
-    }
-
-    fun sendPairingFinalize(transferId: String? = null) {
-        try {
-            val json = JSONObject()
-            json.put("type", "pairing_finalize")
-            if (transferId != null) json.put("transfer_id", transferId)
-            sendJson(json, true)
-        } catch (e: JSONException) {
-            Log.e(TAG, "Error creating pairing_finalize command", e)
-        }
-    }
-
-    fun sendPairingAbort(transferId: String? = null) {
-        try {
-            val json = JSONObject()
-            json.put("type", "pairing_abort")
-            if (transferId != null) json.put("transfer_id", transferId)
-            sendJson(json, true)
-        } catch (e: JSONException) {
-            Log.e(TAG, "Error creating pairing_abort command", e)
-        }
-    }
-
-    /**
-     * Query the current state of a secure pairing transfer without finalizing or aborting it.
-     * Glasses respond with `pairing_transfer_status_result`. Used to recover after a
-     * finalize/abort request times out on the phone side so the outcome of the in-flight
-     * operation can be determined rather than blindly retried or assumed failed.
-     */
-    fun sendPairingTransferStatus(transferId: String? = null) {
-        try {
-            val json = JSONObject()
-            json.put("type", "pairing_transfer_status")
-            if (transferId != null) json.put("transfer_id", transferId)
-            sendJson(json, true)
-        } catch (e: JSONException) {
-            Log.e(TAG, "Error creating pairing_transfer_status command", e)
-        }
-    }
-
 
     /**
      * Request version info from glasses. Glasses will respond with version_info message containing

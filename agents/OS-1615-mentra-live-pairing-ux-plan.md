@@ -1,10 +1,10 @@
 # OS-1615 — Mentra Live Secure Pairing and Ownership Transfer
 
 **Linear:** [OS-1615](https://linear.app/mentralabs/issue/OS-1615)  
-**Status:** Implemented design (replaces the prior v1 pairing UX design note)  
+**Status:** Rule Alpha / Design A (open reclaim) is live. Design B wipe/finalize/abort is retired.  
 **Repos:** MentraOS (mobile + asg_client + Bluetooth SDK), mentra-live-bes (BES firmware)
 
-This document is the authoritative end-to-end design for secure pairing and ownership transfer. It supersedes the earlier draft that used a single `g_pairing_mode` boolean and post-connect LTK rejection only.
+This document is the authoritative end-to-end design for Mentra Live pairing. Five-tap clears prior owner/bonds; the first successful pair wins. `pairing_info` is a readiness signal only — do not gate UI or commands on `had_previous_bond`. Design B media wipe, pairing finalize/abort, and pairing-transfer status APIs must not be re-armed.
 
 ---
 
@@ -14,7 +14,7 @@ This document is the authoritative end-to-end design for secure pairing and owne
 2. A provisional owner never replaces or deletes the committed owner before successful finalization.
 3. At most one provisional ownership transaction exists at a time.
 4. At most one candidate device participates in that transaction.
-5. Wipe success is correlated to the active transaction and is verified, not merely reported.
+5. ~~Wipe success is correlated to the active transaction and is verified, not merely reported.~~ Retired: Design B wipe/confirm is not part of live pairing.
 6. Duplicate commands cannot repeat destructive effects.
 7. Reboot yields either the old committed owner or a fully committed new owner — never an ownerless intermediate once finalize has begun.
 8. **No timeout alone opens pairing.**
@@ -66,7 +66,7 @@ The controller distinguishes:
 | `BT_INITIALIZED_NOT_EXPOSED` | Stack may exist; BLE advertising and Classic accessibility disabled until MTK readiness |
 | `OWNER_ONLY` | Accept list / Classic policy allow committed owner only |
 | `PAIRING` | 120s open window; undirected adv; LED 400 ms; voice every 15 s |
-| `PROVISIONAL_TRANSFER` | Open pairing paused; committed + provisional valid; 5 min for wipe/confirm |
+| `PROVISIONAL_TRANSFER` | Historical Design B state. Live pairing does not wait for wipe/confirm. |
 
 **UART fail-safe (locked, fail-closed):** No auto-open pairing after N seconds of missing MTK. Remain non-discoverable; five-tap physical gesture may enter pairing; factory/test paths and 20-tap reset retained.
 
@@ -147,7 +147,7 @@ Commit automatically when required bonds exist per platform anti-deadlock rules:
 
 ### Wipe / ownership non-atomicity
 
-Never finalize without verified wipe for the active `transfer_id`. A failed or interrupted transfer **may still leave media deleted**. Media is not restored on abort.
+Retired. MentraOS must not send `wipe_media`, `pairing_finalize`, `pairing_abort`, or `pairing_transfer_status`. Media is not wiped as a pairing precondition.
 
 ---
 
@@ -177,12 +177,11 @@ type PairingMessageBase = {
 
 // pairing_info: had_previous_bond, transfer_id, pairing_code,
 //               classic_bond_ready, secure_pairing_capable
-// wipe_media_result: success, request_id, transfer_id, error?
-// pairing_transfer_result: transfer_id, operation, success, state, error?
+// pairing_info is a readiness signal only. Do not strip unused fields.
 ```
 
-Commands: `wipe_media`, `pairing_finalize`, `pairing_abort` (and results).  
-SDK methods `wipeMediaForPairing`, `finalizePairingTransfer`, `abortPairingTransfer` resolve only after correlated acknowledgment. Active transfer ID cached natively; unsupported glasses reject via Mentra Live accessor — never silent no-op.
+Retired Design B commands (do not re-arm): `wipe_media`, `pairing_finalize`, `pairing_abort`, `pairing_transfer_status` and their results.  
+Retired SDK methods: `wipeMediaForPairing`, `finalizePairingTransfer`, `abortPairingTransfer`, `getPairingTransferStatus`.
 
 Capability: protocol version + capability bitmask for mixed-version rollout.
 
@@ -192,13 +191,13 @@ Capability: protocol version + capability bitmask for mixed-version rollout.
 
 - Prep: five taps, flashing LED, spoken code, match code in app.
 - Scan: filter secure firmware by pairing mode; saved-device reconnect bypasses filter; legacy labeled and OTA-forced; auto-connect when exactly one eligible; multi-result list shows four-char codes; 15 s timeout only when zero eligible; Try Again restarts in place; generation-based stale-callback protection.
-- Loading: always confirm/wipe when `had_previous_bond` (even gallery total 0); await verified wipe + required Classic readiness; Retry/Cancel on wipe failure; secure-capable firmware does not use legacy pairing_info timeout fallback; best-effort abort on controlled exit; firmware timeout is authoritative for app-kill.
+- Loading: `pairing_info` is a readiness signal only. Ignore `had_previous_bond` for UI gating. Do not confirm, wipe, finalize, or abort a pairing transfer. Secure-capable firmware does not use the legacy pairing_info timeout fallback.
 
 ---
 
 ## 10. ASG media wipe
 
-Serialized, idempotent: pause capture/uploads, cancel recording, clear queues, delete user media + thumbnails + temp + trash, re-enumerate and verify empty. Capture barrier keyed by `transfer_id` survives process recreation. Correlate by transfer/request ID; success only after verification. Barrier held until BES finalize/abort over UART.
+Retired. Do not register `WipeMediaCommandHandler`, do not arm `PairingTransferCaptureGate`, and do not block capture on a `transfer_id`. Design A open reclaim does not wipe gallery media during pairing.
 
 ---
 

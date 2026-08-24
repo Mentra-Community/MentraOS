@@ -112,43 +112,6 @@ data class RgbLedControlResponseEvent(
     val errorCode: String? get() = stringValue(values, "errorCode")
 }
 
-data class WipeMediaResultEvent(
-    val success: Boolean,
-    val values: Map<String, Any>,
-) {
-    val requestId: String? get() = values["request_id"] as? String
-    val transferId: String? get() = values["transfer_id"] as? String
-    val error: String? get() = values["error"] as? String
-}
-
-data class PairingTransferResultEvent(
-    val transferId: String,
-    val operation: String,
-    val success: Boolean,
-    val values: Map<String, Any>,
-) {
-    val state: Int? get() = (values["state"] as? Number)?.toInt()
-    val error: String? get() = values["error"] as? String
-    val binding: String? get() = values["binding"] as? String
-    val protocolVersion: Int? get() = (values["protocol_version"] as? Number)?.toInt()
-}
-
-/**
- * Response to a `pairing_transfer_status` query — the current state of an in-flight or
- * completed secure pairing transfer, queried without finalizing or aborting it. Used to
- * recover after finalize/abort times out on the phone side.
- */
-data class PairingTransferStatusEvent(
-    val transferId: String,
-    val state: String,
-    val values: Map<String, Any>,
-) {
-    val terminalOperation: String? get() = values["terminal_operation"] as? String
-    val binding: String? get() = values["binding"] as? String
-    val credentialCleanupPending: Boolean? get() = values["credential_cleanup_pending"] as? Boolean
-    val protocolVersion: Int? get() = (values["protocol_version"] as? Number)?.toInt()
-}
-
 interface MentraBluetoothSdkListener {
     fun onStateChanged(state: MentraBluetoothState) {}
     fun onGlassesChanged(glasses: GlassesRuntimeState) {}

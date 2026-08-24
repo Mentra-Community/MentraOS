@@ -167,12 +167,6 @@ const en = {
     tryAgain: "Try Again",
     pairingCodeLabel: "Code {{code}}",
     legacyFirmwareLabel: "Legacy firmware",
-    wipeMediaTitle: "Delete previous owner media?",
-    wipeMediaMessage:
-      "To use these glasses, the previous owner's photos and videos must be deleted. Delete and continue?",
-    wipeMediaConfirm: "Delete and continue",
-    pairingCancelledTitle: "Pairing cancelled",
-    pairingCancelledMessage: "The glasses still belong to their previous owner.",
     ar99Step1: "1. Confirm that the Bluetooth switch of the mobile phone is turned on.",
     ar99Step2: "2. Press and hold the power button for 3 to 5 seconds to turn on the glasses.",
   },

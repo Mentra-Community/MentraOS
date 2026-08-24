@@ -358,9 +358,6 @@ class BluetoothSdkModule : Module() {
             "pairing_info",
             "entering_pairing_mode",
             "owner_replaced",
-            "pairing_transfer_result",
-            "pairing_transfer_status_result",
-            "wipe_media_result",
             "audio_pairing_needed",
             "audio_connected",
             "audio_disconnected",
@@ -654,49 +651,6 @@ class BluetoothSdkModule : Module() {
         }
 
         SdkCoroutineFunction("queryGalleryStatus") { -> requireSdk().queryGalleryStatus().values }
-
-        SdkCoroutineFunction("wipeMediaForPairing") { ->
-            val result = requireSdk().wipeMediaForPairing()
-            mapOf("success" to result.success)
-        }
-
-        SdkCoroutineFunction("finalizePairingTransfer") { ->
-            val result = requireSdk().finalizePairingTransfer()
-            buildMap {
-                put("transfer_id", result.transferId)
-                put("operation", result.operation)
-                put("success", result.success)
-                result.state?.let { put("state", it) }
-                result.error?.let { put("error", it) }
-                result.binding?.let { put("binding", it) }
-                result.protocolVersion?.let { put("protocol_version", it) }
-            }
-        }
-
-        SdkCoroutineFunction("abortPairingTransfer") { ->
-            val result = requireSdk().abortPairingTransfer()
-            buildMap {
-                put("transfer_id", result.transferId)
-                put("operation", result.operation)
-                put("success", result.success)
-                result.state?.let { put("state", it) }
-                result.error?.let { put("error", it) }
-                result.binding?.let { put("binding", it) }
-                result.protocolVersion?.let { put("protocol_version", it) }
-            }
-        }
-
-        SdkCoroutineFunction("getPairingTransferStatus") { transferId: String? ->
-            val result = requireSdk().getPairingTransferStatus(transferId)
-            buildMap {
-                put("transfer_id", result.transferId)
-                put("state", result.state)
-                result.terminalOperation?.let { put("terminal_operation", it) }
-                result.binding?.let { put("binding", it) }
-                result.credentialCleanupPending?.let { put("credential_cleanup_pending", it) }
-                result.protocolVersion?.let { put("protocol_version", it) }
-            }
-        }
 
         SdkCoroutineFunction("requestPhoto") { params: Map<String, Any?> ->
             // JS may pass null for optional fields; Map<String, Any> rejects null values at the bridge.

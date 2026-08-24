@@ -44,10 +44,6 @@ class MentraBluetoothSdk private constructor(
     private val streamStartOrderLock = Any()
     private val oneShotLock = Any()
     private var pendingGalleryStatus: PendingResponse<GalleryStatusEvent>? = null
-    private var pendingWipeMedia: PendingWipeMedia? = null
-    private var pendingPairingTransfer: PendingPairingTransfer? = null
-    private var pendingPairingTransferStatus: PendingPairingTransferStatus? = null
-    private var activePairingTransferId: String? = null
     private var pendingOtaQuery: PendingResponse<OtaQueryResult>? = null
     private var pendingOtaStart: PendingResponse<OtaStartAckEvent>? = null
     private var pendingStreamStop: PendingStreamStop? = null
@@ -80,10 +76,6 @@ class MentraBluetoothSdk private constructor(
         // Max-quality BLE fallback can legitimately exceed the generic command deadline.
         private const val PHOTO_REQUEST_TIMEOUT_MS = 30_000L
         private const val WIFI_SCAN_TIMEOUT_MS = 20_000L
-        // Secure pairing finalize/abort round-trips through a credential-binding handshake
-        // (CTKD, keystore commit, etc.) on the glasses and can legitimately take longer than
-        // the generic command deadline. Do not fold this into DEFAULT_REQUEST_TIMEOUT_MS.
-        private const val PAIRING_TRANSFER_TIMEOUT_MS = 60_000L
         private const val VIDEO_UPLOAD_STOP_TIMEOUT_MS = 10 * 60 * 1000L
         private const val STREAM_START_TIMEOUT_MS = 30_000L
         private const val STREAM_STOP_TIMEOUT_MS = 15_000L
@@ -217,50 +209,6 @@ class MentraBluetoothSdk private constructor(
                 )
         }
     }
-
-    /**
-     * Correlates an in-flight wipe-media request to the response that should resolve it.
-     * A [transferId] of null matches any response (legacy firmware that omits transfer_id).
-     */
-    private data class PendingWipeMedia(
-        val transferId: String?,
-        val pending: PendingResponse<WipeMediaResultEvent>,
-    )
-
-    /**
-     * Correlates an in-flight finalize/abort call to the response that should resolve it, so a
-     * stale, wrong-transfer, or opposite-operation acknowledgment cannot complete it.
-     */
-    private data class PendingPairingTransfer(
-        val operation: String,
-        val transferId: String?,
-        val pending: PendingResponse<PairingTransferResultEvent>,
-    )
-
-    /**
-     * Correlates an in-flight status query to the response that should resolve it.
-     * A [transferId] of null matches any response (no transfer id known yet).
-     */
-    private data class PendingPairingTransferStatus(
-        val transferId: String?,
-        val pending: PendingResponse<PairingTransferStatusEvent>,
-    )
-
-    private fun matchesPendingWipeMedia(
-        entry: PendingWipeMedia,
-        event: WipeMediaResultEvent,
-    ): Boolean = entry.transferId == null || entry.transferId == event.transferId
-
-    private fun matchesPendingPairingTransfer(
-        entry: PendingPairingTransfer,
-        event: PairingTransferResultEvent,
-    ): Boolean =
-        entry.operation == event.operation && (entry.transferId == null || entry.transferId == event.transferId)
-
-    private fun matchesPendingPairingTransferStatus(
-        entry: PendingPairingTransferStatus,
-        event: PairingTransferStatusEvent,
-    ): Boolean = entry.transferId == null || entry.transferId == event.transferId
 
     fun addListener(listener: MentraBluetoothSdkListener) {
         listeners.add(listener)
@@ -1014,115 +962,6 @@ class MentraBluetoothSdk private constructor(
         }
     }
 
-    suspend fun wipeMediaForPairing(): WipeMediaResultEvent {
-        val pending = PendingResponse<WipeMediaResultEvent>("wipe media for pairing")
-        val entry = PendingWipeMedia(activePairingTransferId, pending)
-        synchronized(oneShotLock) {
-            if (pendingWipeMedia != null) {
-                throw BluetoothSdkException(
-                    "request_in_flight",
-                    "A wipe media request is already waiting for a glasses response.",
-                )
-            }
-            pendingWipeMedia = entry
-        }
-        try {
-            deviceManager.sendWipeMediaForPairing(entry.transferId)
-            return pending.await()
-        } finally {
-            synchronized(oneShotLock) {
-                if (pendingWipeMedia === entry) {
-                    pendingWipeMedia = null
-                }
-            }
-        }
-    }
-
-    suspend fun finalizePairingTransfer(): PairingTransferResultEvent {
-        val live = deviceManager.requireMentraLiveForPairing()
-        val pending = PendingResponse<PairingTransferResultEvent>("finalize pairing transfer")
-        val entry = PendingPairingTransfer("finalize", activePairingTransferId, pending)
-        synchronized(oneShotLock) {
-            if (pendingPairingTransfer != null) {
-                throw BluetoothSdkException(
-                    "request_in_flight",
-                    "A pairing transfer command is already waiting for a glasses response.",
-                )
-            }
-            pendingPairingTransfer = entry
-        }
-        try {
-            live.sendPairingFinalize(entry.transferId)
-            // Finalize timing out does not mean the operation failed — the glasses may still
-            // commit or have already committed the transfer. Callers must not auto-abort on
-            // this timeout; instead they should query getPairingTransferStatus() and/or retry
-            // the same finalize call.
-            return pending.await(PAIRING_TRANSFER_TIMEOUT_MS)
-        } finally {
-            synchronized(oneShotLock) {
-                if (pendingPairingTransfer === entry) {
-                    pendingPairingTransfer = null
-                }
-            }
-        }
-    }
-
-    suspend fun abortPairingTransfer(): PairingTransferResultEvent {
-        val live = deviceManager.requireMentraLiveForPairing()
-        val pending = PendingResponse<PairingTransferResultEvent>("abort pairing transfer")
-        val entry = PendingPairingTransfer("abort", activePairingTransferId, pending)
-        synchronized(oneShotLock) {
-            if (pendingPairingTransfer != null) {
-                throw BluetoothSdkException(
-                    "request_in_flight",
-                    "A pairing transfer command is already waiting for a glasses response.",
-                )
-            }
-            pendingPairingTransfer = entry
-        }
-        try {
-            live.sendPairingAbort(entry.transferId)
-            return pending.await(PAIRING_TRANSFER_TIMEOUT_MS)
-        } finally {
-            synchronized(oneShotLock) {
-                if (pendingPairingTransfer === entry) {
-                    pendingPairingTransfer = null
-                }
-            }
-        }
-    }
-
-    /**
-     * Query the current state of a secure pairing transfer without finalizing or aborting it.
-     * Used to recover after finalize/abort times out — the caller can determine whether the
-     * glasses already committed/aborted the transfer instead of guessing.
-     */
-    suspend fun getPairingTransferStatus(transferId: String? = null): PairingTransferStatusEvent {
-        val live = deviceManager.requireMentraLiveForPairing()
-        val effectiveTransferId = transferId ?: activePairingTransferId
-        val pending = PendingResponse<PairingTransferStatusEvent>("pairing transfer status query")
-        val entry = PendingPairingTransferStatus(effectiveTransferId, pending)
-        synchronized(oneShotLock) {
-            if (pendingPairingTransferStatus != null) {
-                throw BluetoothSdkException(
-                    "request_in_flight",
-                    "A pairing transfer status query is already waiting for a glasses response.",
-                )
-            }
-            pendingPairingTransferStatus = entry
-        }
-        try {
-            live.sendPairingTransferStatus(entry.transferId)
-            return pending.await(PAIRING_TRANSFER_TIMEOUT_MS)
-        } finally {
-            synchronized(oneShotLock) {
-                if (pendingPairingTransferStatus === entry) {
-                    pendingPairingTransferStatus = null
-                }
-            }
-        }
-    }
-
     suspend fun startStream(request: StreamRequest): StreamStatusEvent =
         startStream(request, startSdkKeepAlive = true)
 
@@ -1710,59 +1549,6 @@ class MentraBluetoothSdk private constructor(
                 dispatchToListeners { it.onGalleryStatus(event) }
             }
             "pairing_info" -> {
-                activePairingTransferId = data["transfer_id"] as? String
-                dispatchToListeners { it.onRawEvent(eventName, data) }
-            }
-            "wipe_media_result" -> {
-                val event = WipeMediaResultEvent(data["success"] as? Boolean ?: false, data)
-                synchronized(oneShotLock) {
-                    val current = pendingWipeMedia
-                    if (current != null && matchesPendingWipeMedia(current, event)) {
-                        current.pending.resolve(event)
-                        pendingWipeMedia = null
-                    }
-                }
-                dispatchToListeners { it.onRawEvent(eventName, data) }
-            }
-            "pairing_transfer_result" -> {
-                val event =
-                        PairingTransferResultEvent(
-                                data["transfer_id"] as? String ?: "",
-                                data["operation"] as? String ?: "",
-                                data["success"] as? Boolean ?: false,
-                                data,
-                        )
-                synchronized(oneShotLock) {
-                    val current = pendingPairingTransfer
-                    if (current != null && matchesPendingPairingTransfer(current, event)) {
-                        current.pending.resolve(event)
-                        pendingPairingTransfer = null
-                    }
-                }
-                // A pairing_transfer_result is always a terminal outcome (committed or
-                // aborted) for that transfer id — it no longer refers to an active,
-                // resumable transfer. This is intentionally NOT cleared on disconnect, so a
-                // finalize/abort that times out mid-flight can still be recovered/retried
-                // against the same transfer id after reconnecting.
-                if (activePairingTransferId == null || activePairingTransferId == event.transferId) {
-                    activePairingTransferId = null
-                }
-                dispatchToListeners { it.onRawEvent(eventName, data) }
-            }
-            "pairing_transfer_status_result" -> {
-                val event =
-                        PairingTransferStatusEvent(
-                                data["transfer_id"] as? String ?: "",
-                                data["state"] as? String ?: "unknown",
-                                data,
-                        )
-                synchronized(oneShotLock) {
-                    val current = pendingPairingTransferStatus
-                    if (current != null && matchesPendingPairingTransferStatus(current, event)) {
-                        current.pending.resolve(event)
-                        pendingPairingTransferStatus = null
-                    }
-                }
                 dispatchToListeners { it.onRawEvent(eventName, data) }
             }
             "photo_response" -> {

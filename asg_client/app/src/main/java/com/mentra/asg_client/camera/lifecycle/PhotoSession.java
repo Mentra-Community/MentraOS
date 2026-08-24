@@ -156,7 +156,7 @@ public final class PhotoSession {
      */
     @Nullable private volatile ExecutorService persistenceExecutor;
 
-    /** Outstanding deferred JPEG writes; cancelled/awaited before ownership-transfer wipe. */
+    /** Outstanding deferred JPEG writes; cancelled or awaited before session teardown. */
     private final java.util.Set<Future<?>> outstandingPersistence =
             java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
 
