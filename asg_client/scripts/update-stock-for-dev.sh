@@ -143,6 +143,15 @@ version_at_least() {
   }'
 }
 
+valid_bes_version() {
+  awk -F. 'NF != 4 { exit 1 } {
+    for (x = 1; x <= 4; x++) {
+      if ($x !~ /^[0-9]{1,3}$/ || $x + 0 > 255) exit 1;
+    }
+    exit 0;
+  }' <<< "$1"
+}
+
 firmware_suffix() {
   printf '%s\n' "$1" | sed -nE 's/.*_([0-9]{8}(\.[0-9]+)?)$/\1/p'
 }
@@ -402,7 +411,7 @@ query_firmware_versions() {
       clean="$(printf '%s\n' "$line" | tr -d '\\')"
       bes="$(printf '%s\n' "$clean" | sed -n 's/.*"bes_fw_version":"\([^"]*\)".*/\1/p')"
       mtk="$(printf '%s\n' "$clean" | sed -n 's/.*"mtk_fw_version":"\([^"]*\)".*/\1/p')"
-      if [ -n "$bes" ]; then
+      if [ -n "$bes" ] && valid_bes_version "$bes"; then
         printf '%s|%s\n' "$bes" "$mtk"
         return 0
       fi
@@ -454,6 +463,7 @@ build_mtk_plan() {
   local plan="$3"
   local cursor="$initial"
   local step=0 count row end url sha filename suffix max_suffix candidate_suffix
+  local file_start_suffix file_end_suffix start_suffix end_suffix
 
   : > "$plan"
   while true; do
@@ -490,8 +500,16 @@ build_mtk_plan() {
     sha="$(printf '%s\n' "$sha" | tr '[:upper:]' '[:lower:]')"
     step=$((step + 1))
     filename="$(basename "${url%%\?*}")"
-    if ! [[ "$filename" =~ _[0-9]{8}(\.[0-9]+)?_[0-9]{8}(\.[0-9]+)?\.zip$ ]]; then
+    if [[ "$filename" =~ _([0-9]{8}(\.[0-9]+)?)_([0-9]{8}(\.[0-9]+)?)\.zip$ ]]; then
+      file_start_suffix="${BASH_REMATCH[1]}"
+      file_end_suffix="${BASH_REMATCH[3]}"
+    else
       fail "MTK patch URL has an unsupported filename: $filename"
+    fi
+    start_suffix="$(firmware_suffix "$cursor")"
+    end_suffix="$(firmware_suffix "$end")"
+    if [ "$file_start_suffix" != "$start_suffix" ] || [ "$file_end_suffix" != "$end_suffix" ]; then
+      fail "MTK patch filename $filename does not match manifest transition $cursor -> $end"
     fi
     mkdir -p "$WORK_DIR/mtk-$step"
     download_verified "MTK patch $cursor -> $end" "$url" "$sha" "" "$WORK_DIR/mtk-$step/$filename"
@@ -573,13 +591,23 @@ INSTALLED_VERSION_CODE="$(package_version_code "$STOCK_PKG")"
 "${ADB[@]}" shell am start -n "$STOCK_COMPONENT" >/dev/null
 sleep 20
 
-VERSIONS="$(query_firmware_versions || true)"
+VERSIONS=""
+for attempt in 1 2 3; do
+  VERSIONS="$(query_firmware_versions || true)"
+  if [ -n "${VERSIONS%%|*}" ]; then
+    break
+  fi
+  if [ "$attempt" -lt 3 ]; then
+    echo "Could not read the current BES version through ASG 36; retrying ($attempt/3)..."
+    sleep 5
+  fi
+done
 CURRENT_BES="${VERSIONS%%|*}"
-if [ -n "$CURRENT_BES" ]; then
-  echo "Detected BES firmware $CURRENT_BES."
-fi
+[ -n "$CURRENT_BES" ] && valid_bes_version "$CURRENT_BES" \
+  || fail "Could not determine the current BES version through ASG 36; refusing to flash an unknown firmware state"
+echo "Detected BES firmware $CURRENT_BES."
 
-if [ -n "$CURRENT_BES" ] && version_at_least "$CURRENT_BES" "$BES_VERSION"; then
+if version_at_least "$CURRENT_BES" "$BES_VERSION"; then
   if [ "$CURRENT_BES" = "$BES_VERSION" ]; then
     echo "BES is already at the staging target."
   else
