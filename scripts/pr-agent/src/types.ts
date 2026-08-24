@@ -93,4 +93,9 @@ export type AggregateOutput = {
   handoffReason?: 'human_handoff' | 'budget_exhausted' | 'diverging';
   ciFailed: boolean;
   newBlockingCount: number;
+  /**
+   * True when reviewers were scheduled but none produced a usable verdict.
+   * The cycle carried no review signal, so no convergence counters moved.
+   */
+  emptyCycle?: boolean;
 };

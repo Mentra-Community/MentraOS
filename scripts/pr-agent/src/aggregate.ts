@@ -147,6 +147,32 @@ export function aggregateCycle(
     isCiFailed(ciChecks) || process.env.CI_TRIGGER_FAILED === 'true';
   const ciGreen = isCiGreen(ciChecks);
 
+  // A cycle where reviewers were scheduled but none produced a usable verdict
+  // (agent run failed, artifact missing, Bugbot never completed) carries zero
+  // review signal. Consuming cycle budget or stagnation counters here produced
+  // false diverging/budget_exhausted exits (#3716 cycle 4: "No model reviews
+  // ran this cycle" still bumped both). Persist any external-comment ledger
+  // updates, but leave every convergence counter untouched and schedule
+  // nothing — the next genuine cycle re-runs the same pair.
+  const anyReviewIngested = activePair.some((slot) => slotReviewSucceeded(slot, reviews));
+  if (activePair.length > 0 && !anyReviewIngested) {
+    return {
+      state: {
+        ...state,
+        openFindings,
+        resolvedFindings,
+        nitFindings,
+        lastPair: activePair,
+      },
+      shouldFix: false,
+      shouldHandoff: false,
+      handoffReason: undefined,
+      ciFailed,
+      newBlockingCount: 0,
+      emptyCycle: true,
+    };
+  }
+
   let consecutiveNoNewReviews = state.consecutiveNoNewReviews;
   if (newBlockingCount === 0 && allApproved && allSlotsSucceeded) {
     consecutiveNoNewReviews += 1;
