@@ -70,13 +70,13 @@ path, so a later run restores it before staging anything if ADB disappeared duri
 compatibility window.
 
 Modern BES can retain a negotiated 1152000 baud when its ASG process stops, while ASG 36 only
-opens the universal 460800 rendezvous baud. The updater therefore always installs the
-manifest-pinned stock client first and probes both supported baud rates. When it proves a BES link,
-it sends a BES-only reset, requires confirmation that the reset reached UART, and force-stops the
-current client before it can renegotiate. ASG 36 then starts after BES has returned to 460800. If
-current ASG cannot find BES at either baud, ASG 36 performs the legacy discovery needed by the
-factory BES generation. Any later failure removes the bridge and restores the manifest-pinned
-stock client before selecting stock HOME.
+opens the universal 460800 rendezvous baud. The updater therefore uses the manifest-pinned stock
+client, or retains an already-installed newer stock client, to probe both supported baud rates.
+When it proves a BES link, it sends a BES-only reset, requires confirmation that the reset reached
+UART, and force-stops the current client before it can renegotiate. ASG 36 then starts after BES
+has returned to 460800. If current ASG cannot find BES at either baud, ASG 36 performs the legacy
+discovery needed by the factory BES generation. Any later failure removes the bridge and restores
+the manifest-pinned stock client before selecting stock HOME.
 
 After ASG 36 reports apply success, the updater waits for the BES chip to reboot and repeatedly
 requests `version_info_3`. It does not continue until the reported BES version is at least the
@@ -91,7 +91,8 @@ The updater performs these steps:
 3. Download and verify ASG 36, target stock ASG, BES firmware, and every MTK patch in the exact
    current-to-terminal path.
 4. Disable the third-party client, recovery sidecar, and legacy updater; use the manifest-pinned
-   stock ASG to probe both UART bauds and reset a proven BES link to 460800.
+   stock ASG (or an already-installed newer stock ASG) to probe both UART bauds and reset a proven
+   BES link to 460800.
 5. Activate ASG 36 and update BES when the device is below the manifest target.
 6. Move the stock package's legacy external-files tree to uninstall-safe shared storage.
 7. Remove the ASG 36 update layer, install the manifest-pinned stock ASG, and restore the legacy
