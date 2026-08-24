@@ -50,10 +50,18 @@ export function buildReviewComment(
 
   const overall = blocking > 0 ? '⚠️ Changes requested' : '✅ No blocking findings';
   const reviewerList = activePair.length ? activePair.join(', ') : 'none';
-  const body =
-    sections.length > 0
-      ? sections.join('\n\n---\n\n')
-      : '_No model reviews ran this cycle._';
+
+  // No ingested review text: showing the ledger's blocking/nit counts next to
+  // "no reviews ran" reads as a contradiction. State plainly that this cycle
+  // carried no review signal and that counters did not move.
+  if (sections.length === 0) {
+    return `${MARKER_REVIEW}
+## 🤖 PR Agent Review — cycle ${state.cycle}
+
+_No model reviews were ingested this cycle (scheduled: ${reviewerList}); ledger and budget counters unchanged._
+
+<sub>Updated automatically by the PR Agent Orchestrator each review cycle. Nits do not block merge.</sub>`;
+  }
 
   return `${MARKER_REVIEW}
 ## 🤖 PR Agent Review — cycle ${state.cycle}
@@ -61,7 +69,7 @@ export function buildReviewComment(
 **${overall}** · ${blocking} blocking · ${nits} nit${nits === 1 ? '' : 's'}
 _Reviewers this cycle: ${reviewerList}_
 
-${body}
+${sections.join('\n\n---\n\n')}
 
 <sub>Updated automatically by the PR Agent Orchestrator each review cycle. Nits do not block merge.</sub>`;
 }

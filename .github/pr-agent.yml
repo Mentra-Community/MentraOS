@@ -27,7 +27,6 @@ limits:
   maxNewBlockingPerCycle: 5
   maxFixAgentTurns: 80
   consecutiveNoNewReviewsForHandoff: 2
-  discoveryCycles: 1
 
 # External review-bot ingestion: live inline PR review comments from these bot
 # logins are normalized into ledger findings automatically, so the fixer

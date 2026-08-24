@@ -24,7 +24,6 @@ const ConfigSchema = z.object({
       maxNewBlockingPerCycle: z.number().default(5),
       maxFixAgentTurns: z.number().default(80),
       consecutiveNoNewReviewsForHandoff: z.number().default(2),
-      discoveryCycles: z.number().default(1),
     })
     .default({}),
   ciGates: z
