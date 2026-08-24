@@ -248,14 +248,37 @@ restore_legacy_stock_files() {
   fi
 
   # Package installation may recreate an empty external-files directory. rmdir
-  # refuses a non-empty destination, so this never overwrites newly created data.
+  # refuses a non-empty destination. Prefer Toybox's -T so a concurrently
+  # recreated directory makes mv fail instead of nesting the backup. Very old
+  # builds lack -T, so detect and undo nesting before reporting failure there.
   "${ADB[@]}" shell mkdir -p "$LEGACY_STOCK_PARENT"
   "${ADB[@]}" shell rmdir "$LEGACY_STOCK_FILES" >/dev/null 2>&1 || true
   if "${ADB[@]}" shell test -e "$LEGACY_STOCK_FILES"; then
     echo "Legacy stock data remains safe at $LEGACY_STOCK_BACKUP." >&2
     return 1
   fi
-  "${ADB[@]}" shell mv "$LEGACY_STOCK_BACKUP" "$LEGACY_STOCK_FILES" || return 1
+  if ! "${ADB[@]}" shell mv -T "$LEGACY_STOCK_BACKUP" "$LEGACY_STOCK_FILES" >/dev/null 2>&1; then
+    local nested_backup="$LEGACY_STOCK_FILES/${LEGACY_STOCK_BACKUP##*/}"
+    if ! "${ADB[@]}" shell test -d "$LEGACY_STOCK_BACKUP"; then
+      return 1
+    fi
+    if "${ADB[@]}" shell test -e "$LEGACY_STOCK_FILES"; then
+      echo "Legacy stock data remains safe at $LEGACY_STOCK_BACKUP." >&2
+      return 1
+    fi
+    "${ADB[@]}" shell mv "$LEGACY_STOCK_BACKUP" "$LEGACY_STOCK_FILES" || return 1
+    if "${ADB[@]}" shell test -d "$nested_backup"; then
+      "${ADB[@]}" shell mv "$nested_backup" "$LEGACY_STOCK_BACKUP" || {
+        echo "Legacy stock data remains safe at $nested_backup." >&2
+        return 1
+      }
+      echo "The stock-data directory was recreated during restore; preserved data was moved back to $LEGACY_STOCK_BACKUP." >&2
+      return 1
+    fi
+  fi
+  if "${ADB[@]}" shell test -e "$LEGACY_STOCK_BACKUP"; then
+    return 1
+  fi
   echo "Restored legacy stock data for migration by the staging ASG Client."
   LEGACY_STOCK_BACKUP=""
 }
