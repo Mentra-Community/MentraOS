@@ -330,15 +330,24 @@ public class OtaHelperBesGuardTest {
     }
 
     @Test
-    public void phoneOtaLowBatteryFailsBeforeAckAdmissionAndWakeLease() throws Exception {
+    public void phoneOtaLowBatteryRejectsIndependentlyOfStaleOtaState() throws Exception {
         StubRegistry registry = new StubRegistry();
         IBesOtaController controller = mock(IBesOtaController.class);
+        when(controller.getAuthoritativeStatus())
+                .thenReturn(new JSONObject().put("status", "complete"));
         registry.setInstance(controller);
         OtaHelper helper = newHelper(registry);
         OtaHelper.PhoneConnectionProvider provider =
                 mock(OtaHelper.PhoneConnectionProvider.class);
         when(provider.isPhoneConnected()).thenReturn(true);
         helper.setPhoneConnectionProvider(provider);
+        assertThat(
+                        helper.getSessionManager()
+                                .createSession(
+                                        new String[] {"apk"},
+                                        "https://updates.example.invalid/version.json"))
+                .isTrue();
+        String sessionId = helper.getSessionManager().getSessionState().optString("sid");
         helper.onBatteryStatusEvent(new BatteryStatusEvent(4, false, System.currentTimeMillis()));
         clearInvocations(provider, controller);
         WakeLockManager.release(WakeLockManager.WakeOwner.MTK_OTA);
@@ -354,6 +363,9 @@ public class OtaHelperBesGuardTest {
                                         "failed".equals(status.optString("status"))
                                                 && "battery_low".equals(
                                                         status.optString("error_message"))));
+        assertThat(helper.getSessionManager().getStatus()).isEqualTo("in_progress");
+        assertThat(helper.getSessionManager().getSessionState().optString("sid"))
+                .isEqualTo(sessionId);
         verify(controller, never()).prepareForNewOtaSession();
         assertThat(admissionPermit().availablePermits()).isEqualTo(1);
         assertThat(phoneInitiatedOta()).isFalse();

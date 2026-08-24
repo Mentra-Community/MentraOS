@@ -469,7 +469,7 @@ public class OtaHelper {
         // stricter product-level threshold. Unknown battery state remains fail-open.
         if (!isBatterySufficientForUpdates()) {
             Log.w(TAG, "📱 Refusing ota_start because glasses battery is below the safe threshold");
-            sendProgressToPhone("download", 0, 0, 0, "FAILED", "battery_low");
+            sendOtaStartRejection("battery_low");
             return;
         }
 
@@ -3031,6 +3031,30 @@ public class OtaHelper {
         JSONObject sessionState = buildOtaStatusForPhone();
         if (sessionState != null) {
             phoneConnectionProvider.sendOtaStatus(sessionState);
+        }
+    }
+
+    /**
+     * Report a command rejected before OTA admission without reading or mutating an older session.
+     */
+    private void sendOtaStartRejection(String errorCode) {
+        if (phoneConnectionProvider == null || !isPhoneConnected()) return;
+        try {
+            JSONObject status = new JSONObject();
+            status.put("type", "ota_status");
+            status.put("session_id", "");
+            status.put("total_steps", 1);
+            status.put("current_step", 1);
+            status.put("step_type", UPDATE_TYPE_APK);
+            status.put("phase", "download");
+            status.put("step_percent", 0);
+            status.put("overall_percent", 0);
+            status.put("status", "failed");
+            status.put("error_message", errorCode);
+            status.put("glasses_time_ms", System.currentTimeMillis());
+            phoneConnectionProvider.sendOtaStatus(status);
+        } catch (JSONException e) {
+            Log.e(TAG, "Failed to send ota_start rejection", e);
         }
     }
 

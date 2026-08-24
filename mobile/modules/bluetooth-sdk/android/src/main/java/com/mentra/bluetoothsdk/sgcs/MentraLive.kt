@@ -5776,6 +5776,8 @@ class MentraLive : SGCManager() {
 
     /** Start the micbeat mechanism - periodically enable custom audio TX */
     private fun startMicBeat() {
+        // A resumed custom-audio stream starts a new sequence domain.
+        DeviceManager.getInstance().resetMicSequenceBaseline()
         micOnCount++
         Bridge.log("LIVE: 🎤 Mic ON/OFF count: " + micOnCount + " on, " + micOffCount + " off")
         micBeatCount = 0
@@ -6228,7 +6230,6 @@ class MentraLive : SGCManager() {
         micIntentEnabled = enabled
 
         if (enabled) {
-            DeviceManager.getInstance().resetMicSequenceBaseline()
             // User wants mic ON
             // Check if we should suspend due to phone audio (only if BLOCK_AUDIO_DUPLEX is enabled)
             if (BLOCK_AUDIO_DUPLEX && phoneAudioMonitor != null && phoneAudioMonitor!!.isPlaying()

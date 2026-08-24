@@ -2204,8 +2204,7 @@ private func dispatchDiscoveredDevices(_ rawSearchResults: Any?) {
             resultValues["type"] = "ota_status"
             pendingOtaQuery?.resolve(OtaQueryResult(values: resultValues))
             let event = OtaStatusEvent(values: resultValues)
-            if event.status.lowercased() == "failed" {
-                let errorCode = event.errorMessage.flatMap { $0.isEmpty ? nil : $0 } ?? "ota_start_failed"
+            if let errorCode = otaStartRejectionErrorCode(event) {
                 pendingOtaStart?.reject(
                     BluetoothSdkError(code: errorCode, message: "Glasses rejected OTA start: \(errorCode)")
                 )
@@ -2235,3 +2234,12 @@ private func dispatchDiscoveredDevices(_ rawSearchResults: Any?) {
     }
 }
 
+/// OTA status messages are not request-correlated, so only known pre-ack failures settle a start.
+private func otaStartRejectionErrorCode(_ event: OtaStatusEvent) -> String? {
+    guard event.status.lowercased() == "failed",
+          event.errorMessage?.lowercased() == "battery_low"
+    else {
+        return nil
+    }
+    return "battery_low"
+}

@@ -1658,8 +1658,7 @@ class MentraBluetoothSdk private constructor(
                 val event = OtaStatusEvent.fromMap(resultValues)
                 synchronized(oneShotLock) {
                     pendingOtaQuery?.resolve(OtaQueryResult(resultValues))
-                    if (event.status.equals("failed", ignoreCase = true)) {
-                        val errorCode = event.errorMessage?.takeIf { it.isNotBlank() } ?: "ota_start_failed"
+                    otaStartRejectionErrorCode(event)?.let { errorCode ->
                         pendingOtaStart?.reject(
                             BluetoothSdkException(errorCode, "Glasses rejected OTA start: $errorCode")
                         )
@@ -2258,3 +2257,14 @@ class MentraBluetoothSdk private constructor(
         }
     }
 }
+
+/** OTA status messages are not request-correlated, so only known pre-ack failures settle a start. */
+internal fun otaStartRejectionErrorCode(event: OtaStatusEvent): String? =
+    if (
+        event.status.equals("failed", ignoreCase = true) &&
+            event.errorMessage.equals("battery_low", ignoreCase = true)
+    ) {
+        "battery_low"
+    } else {
+        null
+    }

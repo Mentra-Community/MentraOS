@@ -1533,7 +1533,6 @@ class MentraLive: NSObject, SGCManager {
         micIntentEnabled = enabled
 
         if enabled {
-            DeviceManager.shared.resetMicSequenceBaseline()
             // User wants mic ON
             // Check if we should suspend due to phone audio (only if BLOCK_AUDIO_DUPLEX is enabled)
             if BLOCK_AUDIO_DUPLEX, let monitor = phoneAudioMonitor, monitor.isPlaying() {
@@ -1963,6 +1962,8 @@ class MentraLive: NSObject, SGCManager {
 
     /// Start the micbeat mechanism to keep LC3 audio streaming active
     private func startMicBeat() {
+        // A resumed custom-audio stream starts a new sequence domain.
+        DeviceManager.shared.resetMicSequenceBaseline()
         Bridge.log("LIVE: 🎤 Starting micbeat mechanism")
         micBeatCount = 0
 
