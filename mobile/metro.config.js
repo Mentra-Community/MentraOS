@@ -138,7 +138,7 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
   if (moduleName === "@mentra/engine/devtools") {
     return (baseResolveRequest ?? context.resolveRequest)(context, path.join(ENGINE_SRC, "devtools"), platform)
   }
-  if (moduleName === "@mentra/engine/react") {
+  if (moduleName === "@mentra/engine/ota") {
     return (baseResolveRequest ?? context.resolveRequest)(context, path.join(ENGINE_SRC, "react/index"), platform)
   }
   const miniappAlias = MINIAPP_ALIASES[moduleName]

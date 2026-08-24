@@ -2,7 +2,7 @@
  * ota facade — `engine.ota`: the OEM-facing OTA read/observe surface. Engine's
  * OtaService projects the glasses' OTA BLE events into the engine store; this facade
  * exposes the snapshot + change subscriptions behind the shared OTA flow exported by
- * `@mentra/engine/react`. Hosts retain only their surrounding navigation and theme/i18n adapters.
+ * `@mentra/engine/ota`. Hosts retain only their surrounding navigation and theme/i18n adapters.
  *
  * Availability checks live in engine. Install orchestration lives in engine too:
  * `installSession` fronts the OtaInstallCoordinator state machine (WP 8B) — the host

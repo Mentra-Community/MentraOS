@@ -21,7 +21,7 @@
       "react-native": "./src/devtools.ts",
       "default": "./build/devtools.js"
     },
-    "./react": {
+    "./ota": {
       "types": "./build/react/index.d.ts",
       "react-native": "./src/react/index.ts",
       "default": "./build/react/index.js"

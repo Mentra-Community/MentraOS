@@ -1,7 +1,7 @@
 import React from "react"
 import {act, fireEvent, render, waitFor} from "@testing-library/react-native"
 
-import {MentraLiveOtaFlow} from "@mentra/engine/react"
+import {MentraLiveOtaFlow} from "@mentra/engine/ota"
 import {ota} from "../../../../modules/engine/src/facades/ota"
 import {useGlassesStore} from "../../../../modules/engine/src/stores/glasses"
 

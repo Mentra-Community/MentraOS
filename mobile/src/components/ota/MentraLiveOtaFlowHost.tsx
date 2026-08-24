@@ -1,5 +1,5 @@
 import {SETTINGS, useSetting} from "@mentra/engine"
-import {MentraLiveOtaFlow, type MentraLiveOtaFlowPage} from "@mentra/engine/react"
+import {MentraLiveOtaFlow, type MentraLiveOtaFlowPage} from "@mentra/engine/ota"
 import {useCallback, useEffect} from "react"
 
 import {useConnectionOverlayConfig} from "@/contexts/ConnectionOverlayContext"

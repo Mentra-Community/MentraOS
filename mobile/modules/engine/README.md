@@ -41,7 +41,7 @@ resolve live TypeScript source):
   `/internal` import in `mobile/src` (report-only) as the burn-down metric.
 - **`@mentra/engine/devtools`** (`src/devtools.ts`) — debug-only singletons
   (`miniappRunningRegistry`, `devServerBridge`) for the internal dev screens.
-- **`@mentra/engine/react`** (`src/react/index.ts`) — shared full-screen React
+- **`@mentra/engine/ota`** (`src/react/index.ts`) — shared full-screen OTA
   Native experiences. `MentraLiveOtaFlow` owns the complete check, hotspot or
   Wi-Fi install, APK/MTK/BES progress, reboot, retry, and final verification
   flow so hosts do not implement their own OTA state machines.
@@ -82,7 +82,7 @@ Bluetooth-only hosts can render the OTA flow without configuring or starting
 the authenticated cloud/miniapp runtime:
 
 ```tsx
-import {MentraLiveOtaFlow} from "@mentra/engine/react"
+import {MentraLiveOtaFlow} from "@mentra/engine/ota"
 
 <MentraLiveOtaFlow
   onFinished={() => setShowOta(false)}
