@@ -49,6 +49,9 @@ permissions:
 
 env:
   FORCE_ROTATION: ${{ github.event.inputs.force_rotation || 'false' }}
+  # With a PAT the fixer's pushes trigger CI for real, so the CI gate stops
+  # conceding awaiting-approval workflow runs as green (see ci-gates.ts).
+  PR_AGENT_HAS_PAT: ${{ secrets.PR_AGENT_GITHUB_TOKEN != '' }}
 
 jobs:
   resolve-context:
