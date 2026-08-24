@@ -20,7 +20,7 @@
     "dev:console": "bun --cwd websites/console dev",
     "dev:admin": "bun --cwd websites/admin dev",
     "dev:portal": "bun --cwd websites/portal dev",
-    "mentra:local": "bun packages/cli/src/index.ts",
+    "mentra:local": "MENTRA_CORE_URL=http://localhost:3000 MENTRA_CONSOLE_URL=http://localhost:5173 bun packages/cli/src/index.ts",
     "mentra:dev": "doppler run --project cloud-v2 --config dev_aws -- env MENTRA_CORE_URL=https://core.dev.us-west-2.mentraglass.com MENTRA_CONSOLE_URL=https://console2.dev.mentraglass.com bun packages/cli/src/index.ts",
     "mentra:staging": "doppler run --project cloud-v2 --config staging -- env MENTRA_CORE_URL=https://core.staging.us-west-2.mentraglass.com MENTRA_CONSOLE_URL=https://console2.staging.mentraglass.com bun packages/cli/src/index.ts",
     "mentra:prod": "doppler run --project cloud-v2 --config prod -- env MENTRA_CORE_URL=https://core.mentraglass.com MENTRA_CONSOLE_URL=https://console2.mentraglass.com bun packages/cli/src/index.ts",

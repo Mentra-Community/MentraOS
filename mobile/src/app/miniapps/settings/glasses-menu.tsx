@@ -10,8 +10,9 @@ import {RouteButton} from "@/components/ui/RouteButton"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n/translate"
-import {isSystemMiniappPackage, sortAppsByLastOpenTime, useApps, type ClientApp} from "@mentra/engine"
-import {SETTINGS, useSetting} from "@mentra/engine"
+import {SETTINGS, sortAppsByLastOpenTime, useApps, useSetting, type ClientApp} from "@mentra/engine"
+
+import {GLASSES_MENU_EXCLUDED_APPS} from "@/constants/miniapps"
 import {buildMenuItems, filterCompatibleMenuItems, getDefaultMenuApps, type GlassesMenuItem} from "@/utils/glassesMenu"
 
 const MAX_MENU_ITEMS = 10
@@ -72,12 +73,12 @@ export default function GlassesMenuScreen() {
     return applets.find((a) => a.packageName === packageName)
   }
 
-  // Apps available to add (compatible, not hidden, not system, not already in menu)
+  // Apps available to add (compatible, not hidden, not a host utility, not already in menu)
   const availableApps = applets.filter(
     (app) =>
       !app.hidden &&
       app.compatibility?.isCompatible !== false &&
-      !isSystemMiniappPackage(app.packageName) &&
+      !GLASSES_MENU_EXCLUDED_APPS.includes(app.packageName) &&
       !menuItems.some((item) => item.packageName === app.packageName),
   )
 

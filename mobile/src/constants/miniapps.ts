@@ -18,3 +18,21 @@ export const isChinaBuild = (): boolean => process.env.EXPO_PUBLIC_DEPLOYMENT_RE
  * filter that the cloud/local merge flows through.
  */
 export const CHINA_HIDDEN_APPS = [navigationPackageName, notifyPackageName, feedbackPackageName]
+
+/**
+ * Host utilities that should not appear in the glasses' launch menu.
+ *
+ * This is deliberately separate from SYSTEM identity: bundled glasses-facing
+ * miniapps such as Notes and Translation are SYSTEM-owned but remain valid
+ * menu choices.
+ */
+export const GLASSES_MENU_EXCLUDED_APPS = [
+  cameraPackageName,
+  galleryPackageName,
+  settingsPackageName,
+  simulatedPackageName,
+  mirrorPackageName,
+  mentraAiPackageName,
+  notifyPackageName,
+  feedbackPackageName,
+]
