@@ -1,3 +1,5 @@
+import semver from "semver"
+
 import {getConfigValues} from "../runtime/bootstrap"
 
 /**
@@ -24,6 +26,44 @@ export function canStoreUpdateSystemMiniapp(storePackageName: string, targetPack
     isSystemMiniappPackage(targetPackageName) &&
     getConfigValues().bundledSystemMiniappStoreOwners?.[targetPackageName] === storePackageName
   )
+}
+
+/** Store selected by the host build to update this SYSTEM package, if any. */
+export function systemMiniappStoreOwner(packageName: string): string | undefined {
+  if (!isSystemMiniappPackage(packageName)) return undefined
+  return getConfigValues().bundledSystemMiniappStoreOwners?.[packageName]
+}
+
+/**
+ * Central install authority for protected package identities.
+ *
+ * A bundled provenance claim is accepted only on the local bundled-asset path;
+ * remote/direct/dev callers cannot manufacture it. SYSTEM Store updates must
+ * come from the exact Store selected by the host build.
+ */
+export function canInstallMiniappRelease(
+  packageName: string,
+  releaseIdentity: {source?: string; storePackageName?: string},
+  localBundledAsset: boolean,
+): boolean {
+  if (!isSystemMiniappPackage(packageName)) return true
+  if (releaseIdentity.source === "bundled_asset") return localBundledAsset
+  return (
+    releaseIdentity.source === "system_store" &&
+    typeof releaseIdentity.storePackageName === "string" &&
+    canStoreUpdateSystemMiniapp(releaseIdentity.storePackageName, packageName)
+  )
+}
+
+/** Keep a newer trusted SYSTEM release active when an older ZIP ships in a later host build. */
+export function shouldActivateBundledVersion(
+  bundledVersion: string,
+  activeVersion: string | undefined,
+  activeIsTrustedSystem: boolean,
+): boolean {
+  if (!activeVersion || !activeIsTrustedSystem) return true
+  if (!semver.valid(bundledVersion) || !semver.valid(activeVersion)) return true
+  return !semver.gt(activeVersion, bundledVersion)
 }
 
 /** Store management is a phone surface and remains available without glasses. */

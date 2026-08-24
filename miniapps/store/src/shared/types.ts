@@ -43,6 +43,7 @@ export interface InstalledApp {
   system: boolean
   compatibility: {isCompatible: boolean; warnings: string[]}
   storeOwnerPackageName?: string
+  systemStoreOwnerPackageName?: string
 }
 
 export const MENTRA_STORE_PACKAGE_NAME = "com.mentra.store"

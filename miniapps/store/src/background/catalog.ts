@@ -12,7 +12,12 @@ export function parseCatalog(value: unknown): StoreApp[] {
   if (!value || typeof value !== "object" || !Array.isArray((value as {apps?: unknown}).apps)) {
     throw new Error("Store catalog returned an invalid response")
   }
-  return (value as {apps: unknown[]}).apps.filter(isStoreApp)
+  return (value as {apps: unknown[]}).apps.filter(isStoreApp).map((app) => ({
+    ...app,
+    // Compatibility is always recomputed by the host. Never retain a catalog
+    // field with the same name, even transiently between parse and preflight.
+    release: {...app.release, installCompatibility: undefined},
+  }))
 }
 
 export function parseCatalogPage(value: unknown): StoreCatalogPage {
@@ -87,8 +92,7 @@ function isPrivateDevelopmentHost(hostname: string): boolean {
   if (!/^[0-9a-f]{1,4}$/.test(firstIpv6GroupText)) return false
   const firstIpv6Group = Number.parseInt(firstIpv6GroupText, 16)
   return (
-    Number.isInteger(firstIpv6Group) &&
-    ((firstIpv6Group & 0xfe00) === 0xfc00 || (firstIpv6Group & 0xffc0) === 0xfe80)
+    Number.isInteger(firstIpv6Group) && ((firstIpv6Group & 0xfe00) === 0xfc00 || (firstIpv6Group & 0xffc0) === 0xfe80)
   )
 }
 

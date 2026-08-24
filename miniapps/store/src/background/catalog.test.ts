@@ -13,6 +13,18 @@ const app = (packageName: string) => ({
 })
 
 describe("Store catalog", () => {
+  test("discards catalog-supplied host compatibility decisions", () => {
+    const poisoned = app("com.example.poisoned") as ReturnType<typeof app> & {
+      release: ReturnType<typeof app>["release"] & {installCompatibility?: unknown}
+    }
+    poisoned.release.installCompatibility = {
+      compatible: false,
+      blocker: "hardware",
+      reason: "catalog says no",
+    }
+    expect(parseCatalog({apps: [poisoned]})[0]?.release.installCompatibility).toBeUndefined()
+  })
+
   test("accepts only a safe host-provided Core origin", () => {
     expect(trustedCoreOrigin("https://core.dev.example.test/oauth")).toBe("https://core.dev.example.test")
     expect(trustedCoreOrigin("http://localhost:3000")).toBe("http://localhost:3000")

@@ -1,6 +1,6 @@
 import {registerMiniapp, type MiniappSession} from "@mentra/miniapp/background"
 import {isNewerVersion, loadCompleteCatalog, trustedCoreOrigin} from "./catalog"
-import {isAutomaticUpdateCandidate} from "./updates"
+import {isAutomaticUpdateCandidate, isAutomaticUpdateOwnedRelease} from "./updates"
 import type {StoreChannels} from "../shared/channels"
 import {MENTRA_STORE_PACKAGE_NAME, type InstalledApp, type StoreApp, type StoreSnapshot} from "../shared/types"
 
@@ -8,6 +8,7 @@ const FALLBACK_CORE_URL = process.env.MENTRA_PUBLIC_CORE_URL
 
 class StoreController {
   private apps: StoreApp[] = []
+  private automaticApps: StoreApp[] = []
   private snapshot: StoreSnapshot = {
     apps: [],
     installed: [],
@@ -21,6 +22,7 @@ class StoreController {
   private mutationTail: Promise<void> = Promise.resolve()
   private automaticUpdateRunning = false
   private refreshQueued = false
+  private queuedAutomaticRefresh = false
   private queuedQuery = ""
   private lastQuery = ""
   private ui: {
@@ -41,15 +43,15 @@ class StoreController {
     })
     this.ui.onOpen(() => {
       this.send()
-      void this.refresh(this.lastQuery)
+      void this.refresh(this.lastQuery, true)
     })
     this.session.onVisibilityChange((visibility) => {
-      if (visibility === "foreground") void this.refresh(this.lastQuery)
+      if (visibility === "foreground") void this.refresh(this.lastQuery, true)
     })
     let wasConnected = false
     this.session.cloud.onStatusChanged((status) => {
       const connected = status.status === "connected"
-      if (connected && !wasConnected) void this.refresh(this.lastQuery)
+      if (connected && !wasConnected) void this.refresh(this.lastQuery, true)
       wasConnected = connected
     })
     this.ui.handle("store:refresh", ({query}: {query?: string}) => this.refresh(query))
@@ -62,8 +64,8 @@ class StoreController {
     this.ui.handle("store:open", ({packageName, query}: {packageName: string; query?: string}) =>
       this.enqueueMutation(() => this.open(packageName, query)),
     )
-    void this.refresh()
-    setInterval(() => void this.refresh(this.lastQuery), 15 * 60_000)
+    void this.refresh("", true)
+    setInterval(() => void this.refresh(this.lastQuery, true), 15 * 60_000)
   }
 
   private send() {
@@ -78,10 +80,11 @@ class StoreController {
     }
   }
 
-  private refresh(query = ""): Promise<StoreSnapshot> {
+  private refresh(query = "", refreshAutomaticCatalog = false): Promise<StoreSnapshot> {
     this.lastQuery = query
     this.queuedQuery = query
     this.refreshQueued = true
+    this.queuedAutomaticRefresh ||= refreshAutomaticCatalog
     if (this.refreshing) return this.refreshing
     this.refreshing = this.drainRefreshes().finally(() => {
       this.refreshing = null
@@ -92,30 +95,48 @@ class StoreController {
   private async drainRefreshes(): Promise<StoreSnapshot> {
     while (this.refreshQueued) {
       const query = this.queuedQuery
+      const refreshAutomaticCatalog = this.queuedAutomaticRefresh
       this.refreshQueued = false
-      await this.load(query)
+      this.queuedAutomaticRefresh = false
+      await this.load(query, false, refreshAutomaticCatalog)
     }
     return this.snapshot
   }
 
-  private async load(query?: string, clearOperation = false) {
+  private loadCatalog(base: string, query?: string): Promise<StoreApp[]> {
+    return loadCompleteCatalog(async (page) => {
+      const url = new URL("/api/store/apps", base)
+      url.searchParams.set("limit", "50")
+      url.searchParams.set("page", String(page))
+      if (query?.trim()) url.searchParams.set("q", query.trim())
+      const response = await this.session.auth.fetch(url.toString(), {headers: {accept: "application/json"}})
+      if (!response.ok) throw new Error(`Store catalog unavailable (${response.status})`)
+      return response.json()
+    })
+  }
+
+  private async load(query?: string, clearOperation = false, refreshAutomaticCatalog = false) {
     this.snapshot = {...this.snapshot, loading: true, error: null}
     this.send()
     try {
       const base = await this.coreUrl()
-      const [apps, installed] = await Promise.all([
-        loadCompleteCatalog(async (page) => {
-          const url = new URL("/api/store/apps", base)
-          url.searchParams.set("limit", "50")
-          url.searchParams.set("page", String(page))
-          if (query?.trim()) url.searchParams.set("q", query.trim())
-          const response = await this.session.auth.fetch(url.toString(), {headers: {accept: "application/json"}})
-          if (!response.ok) throw new Error(`Store catalog unavailable (${response.status})`)
-          return response.json()
-        }),
+      if (!base) throw new Error("Store Core URL is not configured")
+      const queryIsFiltered = Boolean(query?.trim())
+      const [apps, installed, automaticApps] = await Promise.all([
+        this.loadCatalog(base, query),
         this.session.miniapps.list({includeIncompatible: true}),
+        refreshAutomaticCatalog && queryIsFiltered ? this.loadCatalog(base) : Promise.resolve(null),
       ])
       this.apps = await this.annotateInstallCompatibility(apps)
+      if (!queryIsFiltered) {
+        this.automaticApps = this.apps
+      } else if (automaticApps) {
+        const installedByPackage = new Map(installed.map((app) => [app.packageName, app]))
+        const ownedUpdates = automaticApps.filter((app) =>
+          isAutomaticUpdateOwnedRelease(app, installedByPackage.get(app.packageName), MENTRA_STORE_PACKAGE_NAME),
+        )
+        this.automaticApps = await this.annotateInstallCompatibility(ownedUpdates)
+      }
       this.snapshot = {
         apps: this.apps,
         installed,
@@ -167,7 +188,7 @@ class StoreController {
 
   private automaticUpdateCandidates(): StoreApp[] {
     const installedByPackage = new Map(this.snapshot.installed.map((app) => [app.packageName, app]))
-    return this.apps.filter((app) => {
+    return this.automaticApps.filter((app) => {
       const installed = installedByPackage.get(app.packageName)
       return isAutomaticUpdateCandidate(app, installed, MENTRA_STORE_PACKAGE_NAME)
     })

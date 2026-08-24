@@ -139,7 +139,7 @@ publisher signatures can be enforced later without changing the API.
       the previous artifact after a failed ZIP command.
 - [x] Mentra Miniapp SDK: 272 passed.
 - [x] Installer/SYSTEM security tests, including bundle-name impersonation.
-- [x] Store catalog, automatic-update policy, ownership, and UI-model tests: 16
+- [x] Store catalog, automatic-update policy, ownership, and UI-model tests: 18
       passed.
 - [x] Headless Chromium Store UI E2E at a 390×844 phone viewport: catalog,
       search-query preservation, install, details, verified identity, Installed
@@ -150,13 +150,16 @@ publisher signatures can be enforced later without changing the API.
 - [x] Android ASG and Bluetooth SDK compile checks.
 - [x] Full iOS Simulator native build with code signing disabled.
 - [x] ZIP integrity check. Bundled Store SHA-256:
-      `515599e4dccce2ca8f0b3501f620d0e595db96fbf4d1ff48aba9866b1889f5d6`.
+      `ab04f00d3574575e4886dcaf1b322077ebea72cab8cd7c4c206ed5e377fba696`.
 - [x] Review regressions: bounded streaming inflation and CRC checks in both
       Core and the phone, trusted host-selected Core URL, complete catalog
       pagination, Store-owned uninstall visibility, pre-activation host/SDK
       compatibility gates, running-context retry/rollback around updates,
       required/optional hardware installation gates (including G1 camera
       rejection and Mentra Live acceptance),
+      per-Store SYSTEM update ownership, unfiltered background update
+      reconciliation, preservation of newer trusted SYSTEM releases over older
+      bundled ZIPs, and central rejection of direct/dev SYSTEM replacements,
       unbounded install request correlation, update repair of incompatible
       releases, live detail resolution after catalog refreshes, Expo-native
       bounded response streaming, and rejection of remote preinstalled

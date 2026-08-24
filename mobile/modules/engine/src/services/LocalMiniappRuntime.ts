@@ -80,7 +80,12 @@ import {resolveForegroundLocationPermission} from "./ForegroundLocationPermissio
 import {advanceMiniappPingLiveness} from "./MiniappLiveness"
 import {listPhoneCalendarEvents, PhoneCalendarError} from "./PhoneCalendarService"
 import {LocalMiniappStorage} from "./LocalMiniappStorage"
-import {canStoreUpdateSystemMiniapp, isStoreMiniappPackage, isSystemMiniappPackage} from "./SystemMiniappPolicy"
+import {
+  canStoreUpdateSystemMiniapp,
+  isStoreMiniappPackage,
+  isSystemMiniappPackage,
+  systemMiniappStoreOwner,
+} from "./SystemMiniappPolicy"
 import {installWithRuntimeReload} from "../utils/storeInstallRuntime"
 import {checkMiniappInstallCompatibility} from "./miniappInstallCompatibility"
 
@@ -4188,6 +4193,7 @@ class LocalMiniappRuntime {
     }
     const releaseIdentity =
       app.local && app.version ? appRegistry.getReleaseIdentity(app.packageName, app.version) : null
+    const systemStoreOwnerPackageName = systemMiniappStoreOwner(app.packageName)
     return {
       packageName: app.packageName,
       name: app.name,
@@ -4195,6 +4201,7 @@ class LocalMiniappRuntime {
       running: app.running,
       compatibility,
       system: isSystemMiniappPackage(app.packageName),
+      ...(systemStoreOwnerPackageName ? {systemStoreOwnerPackageName} : {}),
       actions: app.actions ?? [],
       ...((releaseIdentity?.source === "store" || releaseIdentity?.source === "system_store") &&
       releaseIdentity.storePackageName

@@ -34,7 +34,11 @@ export {
   type MiniappReleaseIdentity,
 } from "./services/AppRegistry"
 export {sha256Hex} from "./utils/sha256"
-export {isPreinstalledMiniappPackageAllowed} from "./services/SystemMiniappPolicy"
+export {
+  isHostTrustedSystemMiniapp,
+  isPreinstalledMiniappPackageAllowed,
+  shouldActivateBundledVersion,
+} from "./services/SystemMiniappPolicy"
 export {default as displayProcessor} from "./services/DisplayProcessor"
 export {default as localDisplayManager, type DisplayPayload} from "./services/LocalDisplayManager"
 export {default as localMiniappRuntime, type InstalledMiniappManifest} from "./services/LocalMiniappRuntime"

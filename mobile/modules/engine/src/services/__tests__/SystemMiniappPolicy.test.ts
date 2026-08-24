@@ -3,12 +3,15 @@
 import {afterAll, beforeAll, describe, expect, test} from "bun:test"
 import {configure, resetForTests} from "../../runtime/bootstrap"
 import {
+  canInstallMiniappRelease,
   canStoreUpdateSystemMiniapp,
   isHostTrustedSystemMiniapp,
   isPreinstalledMiniappPackageAllowed,
   isStoreMiniappPackage,
   isSystemMiniappPackage,
   requiresConnectedGlasses,
+  shouldActivateBundledVersion,
+  systemMiniappStoreOwner,
 } from "../SystemMiniappPolicy"
 
 describe("SYSTEM miniapp policy", () => {
@@ -85,14 +88,44 @@ describe("SYSTEM miniapp policy", () => {
 
   test("only the build-selected Store can update a SYSTEM package", () => {
     expect(canStoreUpdateSystemMiniapp("com.mentra.store", "com.mentra.notes")).toBe(true)
+    expect(systemMiniappStoreOwner("com.mentra.notes")).toBe("com.mentra.store")
     expect(canStoreUpdateSystemMiniapp("com.example.store", "com.mentra.notes")).toBe(false)
     expect(canStoreUpdateSystemMiniapp("com.mentra.store", "com.example.weather")).toBe(false)
+  })
+
+  test("rejects direct, dev, remote-bundled, and wrong-Store SYSTEM replacements", () => {
+    expect(canInstallMiniappRelease("com.mentra.notes", {source: "bundled_asset"}, true)).toBe(true)
+    expect(canInstallMiniappRelease("com.mentra.notes", {source: "bundled_asset"}, false)).toBe(false)
+    expect(canInstallMiniappRelease("com.mentra.notes", {source: "direct_download"}, false)).toBe(false)
+    expect(canInstallMiniappRelease("com.mentra.notes", {source: "dev_snapshot"}, false)).toBe(false)
+    expect(
+      canInstallMiniappRelease(
+        "com.mentra.notes",
+        {source: "system_store", storePackageName: "com.mentra.store"},
+        false,
+      ),
+    ).toBe(true)
+    expect(
+      canInstallMiniappRelease(
+        "com.mentra.notes",
+        {source: "system_store", storePackageName: "com.some-oem.store"},
+        false,
+      ),
+    ).toBe(false)
+    expect(canInstallMiniappRelease("com.example.weather", {source: "direct_download"}, false)).toBe(true)
   })
 
   test("prevents the remote preinstalled registry from replacing SYSTEM packages", () => {
     expect(isPreinstalledMiniappPackageAllowed("com.mentra.store")).toBe(false)
     expect(isPreinstalledMiniappPackageAllowed("com.mentra.settings")).toBe(true)
     expect(isPreinstalledMiniappPackageAllowed("com.example.weather")).toBe(true)
+  })
+
+  test("preserves a newer trusted Store-updated SYSTEM release over an older bundle", () => {
+    expect(shouldActivateBundledVersion("2.0.0", "3.0.0", true)).toBe(false)
+    expect(shouldActivateBundledVersion("3.0.0", "2.0.0", true)).toBe(true)
+    expect(shouldActivateBundledVersion("2.0.0", "3.0.0", false)).toBe(true)
+    expect(shouldActivateBundledVersion("2.0.0", "dev-123", false)).toBe(true)
   })
 
   test("keeps Store management available while glasses are disconnected", () => {

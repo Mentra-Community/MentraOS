@@ -23,11 +23,13 @@ import {
   localMiniappRuntime,
   micStateCoordinator,
   miniappLauncher,
+  isHostTrustedSystemMiniapp,
   offlineSpeechModelService,
   phoneLocationService,
   ttsModelManager,
   useAppStatusStore,
   saveLocalAppRunningState,
+  shouldActivateBundledVersion,
 } from "@mentra/engine/internal"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import {useDebugStore} from "@/stores/debug"
@@ -620,7 +622,25 @@ class MantleManager {
           continue
         }
 
-        if (appRegistry.getInstalledVersions(packageName).includes(version)) {
+        const installedVersions = appRegistry.getInstalledVersions(packageName)
+        if (installedVersions.length > 0) {
+          const activeVersion = await appRegistry.getActiveVersion(packageName)
+          const activeIdentity = appRegistry.getReleaseIdentity(packageName, activeVersion)
+          if (
+            !shouldActivateBundledVersion(
+              version,
+              activeVersion,
+              isHostTrustedSystemMiniapp(packageName, activeIdentity),
+            )
+          ) {
+            console.log(
+              `MANTLE: preserving newer trusted SYSTEM miniapp ${packageName}@${activeVersion} over bundled ${version}`,
+            )
+            continue
+          }
+        }
+
+        if (installedVersions.includes(version)) {
           // The directory alone is not enough for privileged bundled apps: an
           // older direct/dev install may have claimed the same package and
           // version. Reinstall once unless host-owned bundled provenance is

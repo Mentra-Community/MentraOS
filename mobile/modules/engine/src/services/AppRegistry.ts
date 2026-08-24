@@ -34,7 +34,7 @@ import {checkManifestVersions} from "./manifestVersionGate"
 import {checkMiniappInstallCompatibility} from "./miniappInstallCompatibility"
 import {normalizeManifestActions} from "./manifestActions"
 import {miniappRunningRegistry} from "./MiniappRunningRegistry"
-import {isSystemMiniappPackage, requiresConnectedGlasses} from "./SystemMiniappPolicy"
+import {canInstallMiniappRelease, isSystemMiniappPackage, requiresConnectedGlasses} from "./SystemMiniappPolicy"
 import {validateInstallBundleArchive} from "./validateInstallBundle"
 
 export {normalizeManifestActions} from "./manifestActions"
@@ -198,6 +198,29 @@ function assertInstallCompatibility(
     hardwareCapabilities: policy.hardwareCapabilities,
   })
   if (!compatibility.compatible) throw new Error(compatibility.reason)
+}
+
+function resolvedReleaseIdentity(
+  version: string,
+  opts: InstallBundleOptions | undefined,
+  localBundledAsset: boolean,
+): MiniappReleaseIdentity {
+  return (
+    opts?.releaseIdentity ??
+    (localBundledAsset
+      ? {source: "bundled_asset"}
+      : {source: version.startsWith("dev-") ? "dev_snapshot" : "direct_download"})
+  )
+}
+
+function assertInstallAuthority(
+  packageName: string,
+  releaseIdentity: MiniappReleaseIdentity,
+  localBundledAsset: boolean,
+): void {
+  if (!canInstallMiniappRelease(packageName, releaseIdentity, localBundledAsset)) {
+    throw new Error(`Protected SYSTEM package ${packageName} can only be updated by its host-selected Store`)
+  }
 }
 
 function releaseIdentityKey(packageName: string, version: string): string {
@@ -432,6 +455,11 @@ async function downloadAndInstallMiniApp(
       version: opts?.expectedVersion,
     })
     if (opts?.compatibilityPolicy) assertInstallCompatibility(manifest, opts.compatibilityPolicy)
+    assertInstallAuthority(
+      manifest.packageName,
+      resolvedReleaseIdentity(opts?.versionOverride ?? manifest.version, opts, false),
+      false,
+    )
     console.log("ZIP: done downloading, starting unzip")
     return await unpackMiniApp(
       downloadedZipPath,
@@ -626,11 +654,7 @@ class AppRegistry {
     return Res.try_async(async () => {
       const {packageName, version} = await downloadAndInstallMiniApp(url, opts)
       console.log("APP_REGISTRY: Downloaded and installed mini app")
-      this.finalizeInstall(
-        packageName,
-        version,
-        opts?.releaseIdentity ?? {source: version.startsWith("dev-") ? "dev_snapshot" : "direct_download"},
-      )
+      this.finalizeInstall(packageName, version, resolvedReleaseIdentity(version, opts, false))
     })
   }
 
@@ -656,6 +680,8 @@ class AppRegistry {
         version: opts?.expectedVersion,
       })
       if (opts?.compatibilityPolicy) assertInstallCompatibility(manifest, opts.compatibilityPolicy)
+      const releaseIdentity = resolvedReleaseIdentity(opts?.versionOverride ?? manifest.version, opts, true)
+      assertInstallAuthority(manifest.packageName, releaseIdentity, true)
       const {packageName, version} = await unpackMiniApp(
         zipPath,
         opts?.versionOverride,
@@ -666,7 +692,7 @@ class AppRegistry {
         opts?.onProgress,
       )
       console.log("APP_REGISTRY: Installed mini app from local zip")
-      this.finalizeInstall(packageName, version, opts?.releaseIdentity ?? {source: "bundled_asset"})
+      this.finalizeInstall(packageName, version, releaseIdentity)
       return {packageName, version}
     })
   }
@@ -715,6 +741,9 @@ class AppRegistry {
       const name = (manifest.name as string | undefined) ?? packageName ?? "Mini app"
       if (!packageName) throw new Error("miniapp.json missing packageName")
       if (!version) throw new Error("miniapp.json missing version")
+      if (isSystemMiniappPackage(packageName)) {
+        throw new Error(`Protected SYSTEM package ${packageName} cannot be installed from a developer URL`)
+      }
 
       const installRes = await appRegistry.installFromUrl(`${trimmed}/bundle.zip`)
       if (installRes.is_error()) throw installRes.error

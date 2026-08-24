@@ -59,7 +59,23 @@ describe("automatic Store updates", () => {
   })
 
   test("updates compatible SYSTEM bundles even before their first Store update", () => {
-    expect(isAutomaticUpdateCandidate(app(), installed({system: true}), storePackageName)).toBe(true)
+    expect(
+      isAutomaticUpdateCandidate(
+        app(),
+        installed({system: true, systemStoreOwnerPackageName: storePackageName}),
+        storePackageName,
+      ),
+    ).toBe(true)
+  })
+
+  test("does not enqueue a SYSTEM package assigned to another Store", () => {
+    expect(
+      isAutomaticUpdateCandidate(
+        app(),
+        installed({system: true, systemStoreOwnerPackageName: "com.some-oem.store"}),
+        storePackageName,
+      ),
+    ).toBe(false)
   })
 
   test("defers incompatible updates until the host becomes compatible", () => {
@@ -69,7 +85,13 @@ describe("automatic Store updates", () => {
         installCompatibility: {compatible: false, blocker: "host", reason: "Requires a newer host"},
       },
     })
-    expect(isAutomaticUpdateCandidate(incompatible, installed({system: true}), storePackageName)).toBe(false)
+    expect(
+      isAutomaticUpdateCandidate(
+        incompatible,
+        installed({system: true, systemStoreOwnerPackageName: storePackageName}),
+        storePackageName,
+      ),
+    ).toBe(false)
   })
 
   test("does not update unrelated, current, or Store-self releases", () => {
