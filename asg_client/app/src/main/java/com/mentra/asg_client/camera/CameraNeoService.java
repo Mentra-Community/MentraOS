@@ -1565,11 +1565,17 @@ public class CameraNeoService extends LifecycleService {
             stopSelf();
         } catch (InterruptedException e) {
             Log.e(TAG, "Interrupted while trying to lock camera", e);
-            photoSession.notifyHostPhotoError("Camera operation interrupted");
+            if (forVideo)
+                notifyVideoError(videoSession.currentVideoId(), "Camera operation interrupted");
+            else photoSession.notifyHostPhotoError("Camera operation interrupted");
             stopSelf();
         } catch (Exception e) {
             Log.e(TAG, "Error setting up camera", e);
-            photoSession.notifyHostPhotoError("Error setting up camera: " + e.getMessage());
+            if (forVideo)
+                notifyVideoError(
+                        videoSession.currentVideoId(),
+                        "Error setting up camera: " + e.getMessage());
+            else photoSession.notifyHostPhotoError("Error setting up camera: " + e.getMessage());
             stopSelf();
         }
     }
