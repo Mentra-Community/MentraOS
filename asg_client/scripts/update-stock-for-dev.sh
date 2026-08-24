@@ -636,6 +636,37 @@ echo "The manifest will be fetched once and pinned for this run."
 echo ""
 
 curl --fail --location --retry 3 --retry-all-errors --output "$MANIFEST_PATH" "$MANIFEST_URL"
+jq -e '
+  .apps["com.mentra.asg_client"] as $app
+  | ($app | type == "object")
+    and ($app.versionCode | type == "number" and . > 0 and floor == .)
+    and ($app.versionName | type == "string" and length > 0)
+    and ($app.apkUrl | type == "string" and test("^https://[^[:space:]]+$"))
+    and ($app.apkSize | type == "number" and . > 0 and floor == .)
+    and ($app.sha256 | type == "string" and test("^[0-9a-fA-F]{64}$"))
+' "$MANIFEST_PATH" >/dev/null || fail "Staging manifest contains invalid stock ASG metadata"
+
+TARGET_VERSION_CODE="$(jq -er '.apps["com.mentra.asg_client"].versionCode' "$MANIFEST_PATH")"
+TARGET_VERSION_NAME="$(jq -er '.apps["com.mentra.asg_client"].versionName' "$MANIFEST_PATH")"
+TARGET_APK_URL="$(jq -er '.apps["com.mentra.asg_client"].apkUrl' "$MANIFEST_PATH")"
+TARGET_APK_SIZE="$(jq -er '.apps["com.mentra.asg_client"].apkSize' "$MANIFEST_PATH")"
+TARGET_APK_SHA256="$(jq -er '.apps["com.mentra.asg_client"].sha256 | ascii_downcase' "$MANIFEST_PATH")"
+
+# Recover an ASG 36 bridge left by an interrupted run before unrelated BES or
+# MTK preflight can fail. The replacement is still pinned to independently
+# validated and hash-checked stock metadata from this run's manifest snapshot.
+download_verified "staging ASG Client" "$TARGET_APK_URL" "$TARGET_APK_SHA256" "$TARGET_APK_SIZE" "$TARGET_APK_PATH"
+INITIAL_STOCK_VERSION_CODE="$(package_version_code "$STOCK_PKG")"
+if [ "$INITIAL_STOCK_VERSION_CODE" = "$BRIDGE_VERSION_CODE" ]; then
+  echo "Found ASG 36 left by an interrupted earlier run; restoring the pinned stock ASG first."
+  DEVICE_MUTATED=true
+  BRIDGE_ACTIVE=true
+  replace_bridge_with_target_stock \
+    || fail "Could not recover the manifest-pinned stock ASG from the interrupted bridge run"
+  enable_stock_runtime \
+    || fail "Recovered the stock ASG package, but could not activate its launcher"
+fi
+
 "$REPO_DIR/.github/scripts/validate-asg-ota-manifest.sh" "$MANIFEST_PATH"
 jq -e '
   .mtk_patches
@@ -646,11 +677,6 @@ jq -e '
       and (.sha256 | type == "string" and test("^[0-9a-fA-F]{64}$")))
 ' "$MANIFEST_PATH" >/dev/null || fail "Staging manifest contains invalid MTK patch metadata"
 
-TARGET_VERSION_CODE="$(jq -er '.apps["com.mentra.asg_client"].versionCode' "$MANIFEST_PATH")"
-TARGET_VERSION_NAME="$(jq -er '.apps["com.mentra.asg_client"].versionName' "$MANIFEST_PATH")"
-TARGET_APK_URL="$(jq -er '.apps["com.mentra.asg_client"].apkUrl' "$MANIFEST_PATH")"
-TARGET_APK_SIZE="$(jq -er '.apps["com.mentra.asg_client"].apkSize' "$MANIFEST_PATH")"
-TARGET_APK_SHA256="$(jq -er '.apps["com.mentra.asg_client"].sha256 | ascii_downcase' "$MANIFEST_PATH")"
 BES_VERSION="$(jq -er '.bes_firmware.version' "$MANIFEST_PATH")"
 BES_URL="$(jq -er '.bes_firmware.url' "$MANIFEST_PATH")"
 BES_SHA256="$(jq -er '.bes_firmware.sha256 | ascii_downcase' "$MANIFEST_PATH")"
@@ -665,21 +691,11 @@ echo "  BES: $BES_VERSION"
 echo "  MTK: $INITIAL_MTK"
 echo ""
 
-# Finish every download and integrity check before replacing any package or
-# beginning any firmware transition.
+# Except for interrupted-bridge recovery above, finish every remaining download
+# and integrity check before replacing any package or beginning a transition.
 download_verified "ASG 36 bridge" "$BRIDGE_APK_URL" "$BRIDGE_APK_SHA256" "$BRIDGE_APK_SIZE" "$BRIDGE_APK_PATH"
-download_verified "staging ASG Client" "$TARGET_APK_URL" "$TARGET_APK_SHA256" "$TARGET_APK_SIZE" "$TARGET_APK_PATH"
 download_verified "BES firmware $BES_VERSION" "$BES_URL" "$BES_SHA256" "" "$BES_PATH"
 build_mtk_plan "$MANIFEST_PATH" "$INITIAL_MTK" "$MTK_PLAN_PATH"
-
-INITIAL_STOCK_VERSION_CODE="$(package_version_code "$STOCK_PKG")"
-if [ "$INITIAL_STOCK_VERSION_CODE" = "$BRIDGE_VERSION_CODE" ]; then
-  echo "Found ASG 36 left by an interrupted earlier run; restoring the pinned stock ASG first."
-  DEVICE_MUTATED=true
-  BRIDGE_ACTIVE=true
-  replace_bridge_with_target_stock \
-    || fail "Could not recover the manifest-pinned stock ASG from the interrupted bridge run"
-fi
 
 echo ""
 echo "All OTA artifacts are downloaded and verified."
