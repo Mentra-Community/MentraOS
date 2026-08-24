@@ -22,6 +22,7 @@ WAIT_SECONDS=20
 MAX_TRIGGER_ATTEMPTS=3
 TRIGGER_RETRY_DELAY_SECONDS=8
 TRIGGER_ACTIVITY_TIMEOUT_SECONDS=15
+MTK_UPDATE_TIMEOUT_SECONDS=900
 SERVE_DIR="$(mktemp -d)"
 PATCH_PATH=""
 START_FIRMWARE_OVERRIDE=""
@@ -94,9 +95,14 @@ monitor_update() {
     local raw_progress=0
     local idle_seconds=0
     local saw_activity=0
+    local update_deadline=$((SECONDS + MTK_UPDATE_TIMEOUT_SECONDS))
 
     exec 3< <(adb logcat -v time)
     while true; do
+        if [ "$SECONDS" -ge "$update_deadline" ]; then
+            exec 3<&-
+            fail "MTK OTA did not complete within $((MTK_UPDATE_TIMEOUT_SECONDS / 60)) minutes"
+        fi
         if IFS= read -r -t 1 line <&3; then
             idle_seconds=0
         else
