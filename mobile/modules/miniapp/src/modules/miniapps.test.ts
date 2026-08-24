@@ -8,13 +8,15 @@ import {MiniappsModule} from "./miniapps"
 
 function mockSession(result?: unknown) {
   const requests: Array<Record<string, unknown>> = []
+  const requestOptions: Array<{timeoutMs?: number} | undefined> = []
   const session = {
-    sendRequest: (payload: Record<string, unknown>) => {
+    sendRequest: (payload: Record<string, unknown>, options?: {timeoutMs?: number}) => {
       requests.push(payload)
+      requestOptions.push(options)
       return Promise.resolve(result)
     },
   } as unknown as MiniappSession
-  return {session, requests}
+  return {session, requests, requestOptions}
 }
 
 describe("MiniappsModule Store operations", () => {
@@ -24,7 +26,7 @@ describe("MiniappsModule Store operations", () => {
       version: "1.2.0",
       installedByStore: "com.mentra.store",
     }
-    const {session, requests} = mockSession(result)
+    const {session, requests, requestOptions} = mockSession(result)
     const miniapps = new MiniappsModule(session)
 
     await expect(
@@ -52,6 +54,7 @@ describe("MiniappsModule Store operations", () => {
         channel: "stable",
       },
     ])
+    expect(requestOptions).toEqual([{timeoutMs: 0}])
   })
 
   test("sends an uninstall request", async () => {

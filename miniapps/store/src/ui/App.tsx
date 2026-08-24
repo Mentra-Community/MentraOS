@@ -8,6 +8,7 @@ import {
   type StoreApp,
   type StoreSnapshot,
 } from "../shared/types"
+import {isStoreActionDisabled, resolveSelectedApp} from "./model"
 
 type Tab = "store" | "installed" | "updates"
 
@@ -31,7 +32,7 @@ export function App() {
   const [snapshot, setSnapshot] = useState(EMPTY)
   const [tab, setTab] = useState<Tab>("store")
   const [query, setQuery] = useState("")
-  const [selected, setSelected] = useState<StoreApp | null>(null)
+  const [selectedPackageName, setSelectedPackageName] = useState<string | null>(null)
 
   useEffect(() => mentra.on("store:snapshot", setSnapshot), [])
   useEffect(() => {
@@ -48,6 +49,7 @@ export function App() {
     () => new Map(snapshot.installed.map((app) => [app.packageName, app])),
     [snapshot.installed],
   )
+  const selected = resolveSelectedApp(snapshot.apps, selectedPackageName)
   const updateApps = useMemo(
     () =>
       snapshot.apps.filter((app) => {
@@ -95,7 +97,7 @@ export function App() {
           app={selected}
           installed={installedByPackage.get(selected.packageName)}
           busy={snapshot.operation?.packageName === selected.packageName}
-          onBack={() => setSelected(null)}
+          onBack={() => setSelectedPackageName(null)}
           onAction={run}
         />
       ) : (
@@ -181,7 +183,7 @@ export function App() {
                       app={app}
                       installed={installedByPackage.get(app.packageName)}
                       busy={Boolean(snapshot.operation)}
-                      onSelect={() => setSelected(app)}
+                      onSelect={() => setSelectedPackageName(app.packageName)}
                       onAction={run}
                     />
                   ))}
@@ -280,7 +282,7 @@ function AppRow({
       </button>
       <button
         className="action"
-        disabled={busy || installed?.compatibility.isCompatible === false}
+        disabled={busy || isStoreActionDisabled(action, installed)}
         onClick={() => void onAction(action, app.packageName)}>
         {label}
       </button>
@@ -332,7 +334,7 @@ function Detail({
           </div>
           <button
             className="action primary"
-            disabled={busy || installed?.compatibility.isCompatible === false}
+            disabled={busy || isStoreActionDisabled(kind, installed)}
             onClick={() => void onAction(kind, app.packageName)}>
             {label}
           </button>

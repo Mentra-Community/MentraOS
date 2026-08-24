@@ -156,10 +156,16 @@ export class MiniappsModule {
    * SYSTEM-only; ordinary miniapps receive NOT_PERMITTED.
    */
   async install(request: InstallMiniappRequest): Promise<InstallMiniappResult> {
-    return this.session.sendRequest<InstallMiniappResult>({
-      ...request,
-      type: MiniappRequestType.MINIAPPS_INSTALL,
-    })
+    return this.session.sendRequest<InstallMiniappResult>(
+      {
+        ...request,
+        type: MiniappRequestType.MINIAPPS_INSTALL,
+      },
+      // Downloading, validating, extracting, and launching a bundle can
+      // legitimately take longer than the SDK's default request timeout.
+      // The request still settles on the host response or session disconnect.
+      {timeoutMs: 0},
+    )
   }
 
   /** Subscribe to host-owned install/update progress. Returns an unsubscribe function. */
