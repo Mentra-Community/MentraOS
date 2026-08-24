@@ -7,6 +7,8 @@ const ConfigSchema = z.object({
   dryRun: z.boolean().default(true),
   reviewModel: z.string().default('claude-opus-4-8'),
   fixModel: z.string().default('claude-opus-4-8'),
+  /** Model for the Codex CLI reviewer slot (only used when OPENAI_API_KEY exists). */
+  codexModel: z.string().default('o4-mini'),
   authors: z
     .object({
       mode: z.enum(['allowlist', 'all', 'label_only']).default('label_only'),

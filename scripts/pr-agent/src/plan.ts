@@ -273,6 +273,7 @@ export async function writePlanOutputs(repoRoot: string, plan: PlanOutput): Prom
   set('run_bugbot', String(plan.runBugbot));
   set('run_standards', String(plan.runStandards));
   set('run_depth', String(plan.runDepth));
+  set('run_codex', String(plan.activePair.includes('codex')));
   set('active_pair', plan.activePair.join(','));
   set('is_dry_run', String(loadConfig(repoRoot).dryRun));
   set('should_handoff', String(plan.shouldHandoff ?? false));

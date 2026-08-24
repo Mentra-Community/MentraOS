@@ -4,12 +4,14 @@ import { MARKER_BUGBOT_VERDICT, MARKER_REVIEW, type PrAgentState, type ReviewSlo
 const SLOT_LABEL: Record<ReviewSlot, string> = {
   standards: 'Claude — standards',
   depth: 'Claude — depth',
+  codex: 'Codex — review',
   bugbot: 'Bugbot',
 };
 
 type ReviewTexts = {
   standards?: string;
   depth?: string;
+  codex?: string;
   bugbot?: string;
 };
 

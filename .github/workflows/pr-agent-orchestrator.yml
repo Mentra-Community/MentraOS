@@ -180,6 +180,7 @@ jobs:
       run_bugbot: ${{ steps.plan.outputs.run_bugbot }}
       run_standards: ${{ steps.plan.outputs.run_standards }}
       run_depth: ${{ steps.plan.outputs.run_depth }}
+      run_codex: ${{ steps.plan.outputs.run_codex }}
       active_pair: ${{ steps.plan.outputs.active_pair }}
       is_dry_run: ${{ steps.plan.outputs.is_dry_run }}
       should_handoff: ${{ steps.plan.outputs.should_handoff }}
@@ -203,6 +204,7 @@ jobs:
           PR_AUTHOR: ${{ needs.resolve-context.outputs.pr_author }}
           PR_IS_FORK: ${{ needs.resolve-context.outputs.pr_is_fork }}
           CI_RECHECK_ONLY: ${{ needs.resolve-context.outputs.ci_recheck_only }}
+          HAS_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY != '' }}
           GITHUB_TOKEN: ${{ secrets.PR_AGENT_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
         run: bun run cli plan
         working-directory: scripts/pr-agent
@@ -292,6 +294,44 @@ jobs:
           path: .pr-agent/review-depth.txt
           if-no-files-found: ignore
 
+  review-codex:
+    name: Review (Codex)
+    needs: [resolve-context, plan]
+    if: needs.plan.outputs.should_skip != 'true' && needs.plan.outputs.recheck_only != 'true' && needs.plan.outputs.run_codex == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-context.outputs.head_sha }}
+          fetch-depth: 0
+
+      - run: git fetch origin ${{ needs.resolve-context.outputs.base_ref }}
+
+      - uses: oven-sh/setup-bun@v1
+
+      - working-directory: scripts/pr-agent
+        run: bun install --frozen-lockfile || bun install
+
+      - name: Install Codex CLI
+        run: npm install -g @openai/codex
+
+      - name: Run codex review
+        working-directory: scripts/pr-agent
+        env:
+          PR_NUMBER: ${{ needs.resolve-context.outputs.pr_number }}
+          BASE_REF: ${{ needs.resolve-context.outputs.base_ref }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.PR_AGENT_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+        run: bun run cli review codex
+
+      - name: Upload review output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-agent-review-codex
+          path: .pr-agent/review-codex.txt
+          if-no-files-found: ignore
+
   review-bugbot:
     name: Review (Bugbot)
     needs: [resolve-context, plan]
@@ -330,6 +370,7 @@ jobs:
       - plan
       - review-standards
       - review-depth
+      - review-codex
       - review-bugbot
     # Require plan.result == success so a cancelled Plan (empty outputs) cannot
     # revive Aggregate — empty should_skip != 'true' used to pass after cancel.
@@ -372,6 +413,7 @@ jobs:
           BUGBOT_COMPLETED: ${{ needs.review-bugbot.outputs.bugbot_completed || 'false' }}
           BUGBOT_SUCCESS: ${{ needs.review-bugbot.outputs.bugbot_success || 'false' }}
           CI_TRIGGER_FAILED: ${{ needs.resolve-context.outputs.ci_trigger_failed }}
+          HAS_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY != '' }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bun run cli aggregate
 
@@ -509,6 +551,7 @@ jobs:
       - plan
       - review-standards
       - review-depth
+      - review-codex
       - review-bugbot
       - aggregate
       - fix

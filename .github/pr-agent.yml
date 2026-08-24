@@ -5,6 +5,10 @@ dryRun: false
 
 reviewModel: claude-opus-4-8
 fixModel: claude-opus-4-8
+# Codex CLI reviewer slot (third-vendor second opinion). Only scheduled when
+# the OPENAI_API_KEY repo secret exists; the rotation falls back to the
+# three-slot roster otherwise.
+codexModel: o4-mini
 
 authors:
   # allowlist | all | label_only

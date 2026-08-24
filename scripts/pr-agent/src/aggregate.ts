@@ -19,6 +19,7 @@ import { isExternalSource, type ExternalFindings } from './external-reviews.js';
 export type ReviewOutputs = {
   standards?: string;
   depth?: string;
+  codex?: string;
   bugbot?: string;
   bugbotCheckCompleted?: boolean;
   bugbotCheckSuccess?: boolean;
@@ -27,8 +28,8 @@ export type ReviewOutputs = {
 };
 
 function slotReviewSucceeded(slot: ReviewSlot, reviews: ReviewOutputs): boolean {
-  if (slot === 'standards' || slot === 'depth') {
-    const text = slot === 'standards' ? reviews.standards : reviews.depth;
+  if (slot === 'standards' || slot === 'depth' || slot === 'codex') {
+    const text = reviews[slot];
     return !!text && !!parseVerdictFromText(text);
   }
   if (reviews.bugbotCheckCompleted !== true) return false;
@@ -95,6 +96,7 @@ export function aggregateCycle(
 
   if (activePair.includes('standards')) ingest(reviews.standards, 'standards');
   if (activePair.includes('depth')) ingest(reviews.depth, 'depth');
+  if (activePair.includes('codex')) ingest(reviews.codex, 'codex');
   if (activePair.includes('bugbot')) {
     if (reviews.bugbotCheckCompleted === true && reviews.bugbot) {
       ingest(reviews.bugbot, 'bugbot', {

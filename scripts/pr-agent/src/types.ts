@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const ReviewSlotSchema = z.enum(['bugbot', 'standards', 'depth']);
+export const ReviewSlotSchema = z.enum(['bugbot', 'standards', 'depth', 'codex']);
 export type ReviewSlot = z.infer<typeof ReviewSlotSchema>;
 
 export const FindingSchema = z.object({

@@ -225,6 +225,7 @@ export function sourceCounts(findings: Finding[]): Record<ReviewSlot, number> {
     bugbot: 0,
     standards: 0,
     depth: 0,
+    codex: 0,
   };
   for (const f of openBlocking(findings)) {
     const s = f.source as ReviewSlot;

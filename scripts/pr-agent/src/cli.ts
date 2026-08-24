@@ -19,6 +19,7 @@ import { buildHandoffComment } from './handoff.js';
 import { runPlan, writePlanOutputs } from './plan.js';
 import { recheckHandoff } from './recheck-handoff.js';
 import { buildReviewComment } from './review-comment.js';
+import { runCodexReview } from './review-codex.js';
 import { runReview } from './review.js';
 import {
   createOctokit,
@@ -45,8 +46,12 @@ async function cmdPlan() {
 
 async function cmdReview(slot: string) {
   const { state } = await loadOrCreateState(createOctokit(), owner, repo, prNumber);
+  if (slot === 'codex') {
+    await runCodexReview(repoRoot, prNumber, baseRef, state);
+    return;
+  }
   if (slot !== 'standards' && slot !== 'depth') {
-    throw new Error('slot must be standards or depth');
+    throw new Error('slot must be standards, depth, or codex');
   }
   await runReview(repoRoot, slot, prNumber, baseRef, state);
 }
@@ -104,6 +109,7 @@ async function cmdAggregate() {
   const reviews = {
     standards: loadReviewOutput(repoRoot, 'standards'),
     depth: loadReviewOutput(repoRoot, 'depth'),
+    codex: loadReviewOutput(repoRoot, 'codex'),
     bugbot: await loadBugbotVerdict(octokit, owner, repo, prNumber),
     bugbotCheckCompleted: process.env.BUGBOT_COMPLETED === 'true',
     bugbotCheckSuccess: process.env.BUGBOT_SUCCESS === 'true',
@@ -117,7 +123,12 @@ async function cmdAggregate() {
   // Always surface the human-readable review to the PR, regardless of verdict.
   const reviewComment = buildReviewComment(
     result.state,
-    { standards: reviews.standards, depth: reviews.depth, bugbot: reviews.bugbot },
+    {
+      standards: reviews.standards,
+      depth: reviews.depth,
+      codex: reviews.codex,
+      bugbot: reviews.bugbot,
+    },
     activePair,
   );
   await upsertMarkerComment(octokit, owner, repo, prNumber, MARKER_REVIEW, reviewComment);
