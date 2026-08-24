@@ -21,6 +21,7 @@ concurrency:
 jobs:
   build:
     runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 90
     env:
       EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID }}
       EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY }}
@@ -337,17 +338,6 @@ jobs:
             pod cache clean --all || true
             pod install --repo-update
           }
-
-      - name: List available simulators
-        run: xcrun simctl list devices available
-
-      - name: Debug - List iOS directory contents
-        working-directory: ./mobile/ios
-        run: |
-          echo "Contents of mobile/ios:"
-          ls -la
-          echo "Workspace files:"
-          ls -la *.xcworkspace || echo "No workspace files found"
 
       - name: Ensure iOS platform is installed
         working-directory: ./mobile/ios
