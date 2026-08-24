@@ -175,6 +175,7 @@ if "${ADB[@]}" shell test -e "$LEGACY_REMOTE_PATH" \
     || "${ADB[@]}" shell test -L "$LEGACY_REMOTE_PATH"; then
     if ! "${ADB[@]}" shell test -f "$LEGACY_REMOTE_PATH"; then
         echo "❌ Compatibility path became a non-regular file: $LEGACY_REMOTE_PATH" >&2
+        "${ADB[@]}" shell rm -f "$REMOTE_PATH" >/dev/null 2>&1 || true
         exit 1
     fi
 fi
