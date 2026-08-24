@@ -330,12 +330,14 @@ function Detail({
   const update = Boolean(installed && isNewerVersion(app.release.version, installed.version))
   const kind = !installed || update ? "install" : "open"
   const installBlocker = kind === "install" && app.release.installCompatibility?.compatible === false
+  const installBlockerKind = app.release.installCompatibility?.blocker
+  const requiresHostUpdate = installBlockerKind === "host" || installBlockerKind === "sdk"
   const label = busy
     ? "Working…"
     : installBlocker
-      ? app.release.installCompatibility?.blocker === "hardware"
+      ? installBlockerKind === "hardware"
         ? "Not compatible"
-        : app.release.installCompatibility?.blocker === "host" || app.release.installCompatibility?.blocker === "sdk"
+        : requiresHostUpdate
           ? "Requires Mentra App update"
           : "Unavailable"
       : update
@@ -369,16 +371,19 @@ function Detail({
         {installed?.compatibility.isCompatible === false && (
           <div className="notice">This miniapp is not compatible with the connected glasses.</div>
         )}
-        {installBlocker && app.release.installCompatibility?.blocker === "hardware" && (
-          <div className="notice">{app.release.installCompatibility.reason}</div>
+        {installBlocker && installBlockerKind === "hardware" && (
+          <div className="notice">{app.release.installCompatibility?.reason}</div>
         )}
-        {installBlocker && app.release.installCompatibility?.blocker !== "hardware" && (
+        {installBlocker && requiresHostUpdate && (
           <div className="notice">
             {update
               ? "This update will install automatically after the Mentra App is updated. "
               : "Update the Mentra App to install this miniapp. "}
             {app.release.installCompatibility?.reason}
           </div>
+        )}
+        {installBlocker && !installBlockerKind && (
+          <div className="notice">Compatibility could not be verified. {app.release.installCompatibility?.reason}</div>
         )}
         <section className="detail-section">
           <h2>About</h2>
