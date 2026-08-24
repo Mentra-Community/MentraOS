@@ -21,6 +21,8 @@ Android application that runs on Mentra Live smart glasses, bridging hardware an
 - [Command processor](features/command-processor.md) — handler registry, protocol detection, ACK/dedup
 - [File manager integration](features/file-manager-integration.md) — package-namespaced media storage
 - [BES MCU firmware OTA](features/bes-ota.md) — pushing new BES firmware over UART
+- [Custom-client firmware maintenance](features/dev-firmware-update.md) — staging baseline,
+  ASG 36 bridge, MTK reboot recovery, and returning to a third-party launcher
 
 ## Testing and characterization
 

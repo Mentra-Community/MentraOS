@@ -19,14 +19,38 @@ source "$REPO_DIR/scripts/lib/glasses-device.sh"
 STOCK_PKG="com.mentra.asg_client"
 DEV_PKG="com.mentra.asg_client.thirdparty"
 RECOVERY_PKG="com.mentra.recovery"
+LEGACY_UPDATER_PKG="com.augmentos.otaupdater"
+LEGACY_STOCK_FILES="/storage/emulated/0/Android/data/$STOCK_PKG/files"
+LEGACY_STOCK_PARENT="/storage/emulated/0/Android/data/$STOCK_PKG"
+LEGACY_STOCK_BACKUP="/storage/emulated/0/asg/dev_setup_stock_files_backup"
 OTA_URL="https://ota.mentraglass.com/prod_live_version_v2.json"
 
 echo "=== Restore Stock MentraOS ==="
 echo ""
 
+if [ -n "${ANDROID_SERIAL:-}" ] && [ -z "${ADB_SERIAL:-}" ]; then
+    ADB_SERIAL="$ANDROID_SERIAL"
+    export ADB_SERIAL
+fi
 resolve_serial
 export ANDROID_SERIAL="$SERIAL"
 echo ""
+
+# Recover stock data staged outside the package-owned tree by an interrupted
+# ASG bridge removal before doing any further package operations.
+if adb shell test -d "$LEGACY_STOCK_BACKUP"; then
+    echo "=== Restoring Preserved Stock Data ==="
+    adb shell mkdir -p "$LEGACY_STOCK_PARENT"
+    adb shell rmdir "$LEGACY_STOCK_FILES" >/dev/null 2>&1 || true
+    if adb shell test -e "$LEGACY_STOCK_FILES"; then
+        echo "ERROR: Both preserved and live stock-data trees exist." >&2
+        echo "Preserved data remains at $LEGACY_STOCK_BACKUP" >&2
+        exit 1
+    fi
+    adb shell mv "$LEGACY_STOCK_BACKUP" "$LEGACY_STOCK_FILES"
+    echo "Preserved stock data restored."
+    echo ""
+fi
 
 # Step 1: Uninstall third-party build
 echo "=== Removing Third-Party Build ==="
@@ -45,6 +69,7 @@ echo ""
 adb shell pm enable "$STOCK_PKG" 2>/dev/null || true
 adb shell cmd package install-existing "$STOCK_PKG" 2>/dev/null || true
 adb shell pm enable "$RECOVERY_PKG" 2>/dev/null || true
+adb shell pm enable "$LEGACY_UPDATER_PKG" 2>/dev/null || true
 echo "Stock app enabled."
 
 echo ""
@@ -84,17 +109,31 @@ echo "=== Checking for Updates ==="
 echo ""
 
 # Get current installed version
-CURRENT_VERSION=$(adb shell dumpsys package "$STOCK_PKG" | grep "versionCode=" | head -1 | sed 's/.*versionCode=//' | cut -d' ' -f1)
-echo "Current installed version: $CURRENT_VERSION"
+CURRENT_VERSION=$(adb shell dumpsys package "$STOCK_PKG" \
+    | grep "versionCode=" \
+    | head -1 \
+    | sed 's/.*versionCode=//' \
+    | cut -d' ' -f1 \
+    || true)
+echo "Current installed version: ${CURRENT_VERSION:-unknown}"
 
 # Fetch latest version info from OTA server
 if command -v curl &> /dev/null; then
     OTA_JSON=$(curl -s "$OTA_URL" 2>/dev/null || echo "")
     if [ -n "$OTA_JSON" ]; then
-        LATEST_VERSION=$(echo "$OTA_JSON" | grep -o '"versionCode": *[0-9]*' | head -1 | grep -o '[0-9]*')
-        APK_URL=$(echo "$OTA_JSON" | grep -o '"apkUrl": *"[^"]*"' | head -1 | sed 's/"apkUrl": *"//' | sed 's/"$//')
+        LATEST_VERSION=$(echo "$OTA_JSON" \
+            | grep -o '"versionCode": *[0-9]*' \
+            | head -1 \
+            | grep -o '[0-9]*' \
+            || true)
+        APK_URL=$(echo "$OTA_JSON" \
+            | grep -o '"apkUrl": *"[^"]*"' \
+            | head -1 \
+            | sed 's/"apkUrl": *"//' \
+            | sed 's/"$//' \
+            || true)
 
-        if [ -n "$LATEST_VERSION" ] && [ -n "$APK_URL" ]; then
+        if [ -n "$CURRENT_VERSION" ] && [ -n "$LATEST_VERSION" ] && [ -n "$APK_URL" ]; then
             echo "Latest available version: $LATEST_VERSION"
 
             if [ "$CURRENT_VERSION" -lt "$LATEST_VERSION" ] 2>/dev/null; then

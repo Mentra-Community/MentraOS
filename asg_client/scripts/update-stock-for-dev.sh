@@ -33,10 +33,14 @@ LEGACY_UPDATER_PKG="com.augmentos.otaupdater"
 STOCK_COMPONENT="$STOCK_PKG/com.mentra.asg_client.MainActivity"
 DEV_COMPONENT="$DEV_PKG/com.mentra.asg_client.MainActivity"
 COMMAND_RECEIVER="$STOCK_PKG/.receiver.IntentCommandReceiver"
+LEGACY_STOCK_FILES="/storage/emulated/0/Android/data/$STOCK_PKG/files"
+LEGACY_STOCK_PARENT="/storage/emulated/0/Android/data/$STOCK_PKG"
+LEGACY_STOCK_BACKUP_PATH="/storage/emulated/0/asg/dev_setup_stock_files_backup"
 
 WORK_DIR=""
 DEVICE_MUTATED=false
 SUCCESS=false
+LEGACY_STOCK_BACKUP=""
 
 usage() {
   echo "Usage: $0 [--manifest-url <https-url>] [--resume-thirdparty]"
@@ -155,11 +159,23 @@ package_version_code() {
 }
 
 enable_stock_runtime() {
-  "${ADB[@]}" shell cmd package install-existing "$STOCK_PKG" >/dev/null 2>&1 || true
-  "${ADB[@]}" shell pm enable "$STOCK_PKG" >/dev/null 2>&1 || true
+  local resolved_home
+  if ! "${ADB[@]}" shell pm path "$STOCK_PKG" 2>/dev/null | tr -d '\r' | grep -q '^package:'; then
+    "${ADB[@]}" shell cmd package install-existing "$STOCK_PKG" >/dev/null \
+      || return 1
+  fi
+  "${ADB[@]}" shell pm enable "$STOCK_PKG" >/dev/null || return 1
   "${ADB[@]}" shell pm clear-package-preferred-activities "$STOCK_PKG" >/dev/null 2>&1 || true
-  "${ADB[@]}" shell cmd package set-home-activity --user 0 "$STOCK_COMPONENT" >/dev/null 2>&1 || true
-  "${ADB[@]}" shell am start -n "$STOCK_COMPONENT" >/dev/null 2>&1 || true
+  "${ADB[@]}" shell cmd package set-home-activity --user 0 "$STOCK_COMPONENT" >/dev/null \
+    || return 1
+  "${ADB[@]}" shell am start -n "$STOCK_COMPONENT" >/dev/null || return 1
+  resolved_home="$("${ADB[@]}" shell cmd package resolve-activity --brief --user 0 \
+    -a android.intent.action.MAIN \
+    -c android.intent.category.HOME 2>/dev/null | tr -d '\r' | tail -n 1)"
+  case "$resolved_home" in
+    "$STOCK_PKG"/*) ;;
+    *) return 1 ;;
+  esac
 }
 
 enable_thirdparty_runtime() {
@@ -190,11 +206,75 @@ enable_thirdparty_runtime() {
   esac
 }
 
+preserve_legacy_stock_files() {
+  local entry_count
+  entry_count="$("${ADB[@]}" shell \
+    "if [ -d '$LEGACY_STOCK_FILES' ]; then find '$LEGACY_STOCK_FILES' -mindepth 1 -print | wc -l; else echo 0; fi" \
+    2>/dev/null | tr -d '\r ' | tail -n 1)"
+  [[ "$entry_count" =~ ^[0-9]+$ ]] \
+    || fail "Could not inventory legacy stock data before uninstall"
+  if [ "$entry_count" -eq 0 ]; then
+    return 0
+  fi
+
+  if "${ADB[@]}" shell test -e "$LEGACY_STOCK_BACKUP_PATH"; then
+    fail "Unrestored legacy stock-data backup already exists at $LEGACY_STOCK_BACKUP_PATH"
+  fi
+  LEGACY_STOCK_BACKUP="$LEGACY_STOCK_BACKUP_PATH"
+  echo "Preserving $entry_count legacy stock-data entries before removing the bridge..."
+  "${ADB[@]}" shell mkdir -p /storage/emulated/0/asg
+  "${ADB[@]}" shell mv "$LEGACY_STOCK_FILES" "$LEGACY_STOCK_BACKUP" \
+    || fail "Could not preserve legacy stock data before uninstall"
+  echo "Legacy stock data staged safely at $LEGACY_STOCK_BACKUP."
+}
+
+recover_orphaned_legacy_stock_files() {
+  if ! "${ADB[@]}" shell test -d "$LEGACY_STOCK_BACKUP_PATH"; then
+    return 0
+  fi
+  echo "Found legacy stock data preserved by an interrupted earlier run."
+  LEGACY_STOCK_BACKUP="$LEGACY_STOCK_BACKUP_PATH"
+  restore_legacy_stock_files \
+    || fail "Could not restore interrupted-run data from $LEGACY_STOCK_BACKUP_PATH"
+}
+
+restore_legacy_stock_files() {
+  if [ -z "$LEGACY_STOCK_BACKUP" ]; then
+    return 0
+  fi
+  if ! "${ADB[@]}" shell test -d "$LEGACY_STOCK_BACKUP"; then
+    LEGACY_STOCK_BACKUP=""
+    return 0
+  fi
+
+  # Package installation may recreate an empty external-files directory. rmdir
+  # refuses a non-empty destination, so this never overwrites newly created data.
+  "${ADB[@]}" shell mkdir -p "$LEGACY_STOCK_PARENT"
+  "${ADB[@]}" shell rmdir "$LEGACY_STOCK_FILES" >/dev/null 2>&1 || true
+  if "${ADB[@]}" shell test -e "$LEGACY_STOCK_FILES"; then
+    echo "Legacy stock data remains safe at $LEGACY_STOCK_BACKUP." >&2
+    return 1
+  fi
+  "${ADB[@]}" shell mv "$LEGACY_STOCK_BACKUP" "$LEGACY_STOCK_FILES" || return 1
+  echo "Restored legacy stock data for migration by the staging ASG Client."
+  LEGACY_STOCK_BACKUP=""
+}
+
 restore_safe_stock_on_failure() {
   if [ "$DEVICE_MUTATED" = true ] && adb_online; then
     echo "Restoring the stock launcher after the failed setup..." >&2
-    enable_stock_runtime
+    "${ADB[@]}" shell am force-stop "$DEV_PKG" >/dev/null 2>&1 || true
+    "${ADB[@]}" shell pm disable-user --user 0 "$DEV_PKG" >/dev/null 2>&1 || true
+    restore_legacy_stock_files || true
+    if enable_stock_runtime; then
+      echo "Stock launcher restored." >&2
+    else
+      echo "Could not fully restore stock automatically; run ./scripts/restore-stock.sh." >&2
+    fi
     "${ADB[@]}" shell pm enable "$RECOVERY_PKG" >/dev/null 2>&1 || true
+    "${ADB[@]}" shell pm enable "$LEGACY_UPDATER_PKG" >/dev/null 2>&1 || true
+  elif [ "$DEVICE_MUTATED" = true ] && [ -n "$LEGACY_STOCK_BACKUP" ]; then
+    echo "Legacy stock data remains safe at $LEGACY_STOCK_BACKUP once ADB reconnects." >&2
   fi
 }
 
@@ -214,54 +294,68 @@ trap cleanup EXIT
 wait_for_boot_after_reboot() {
   local label="$1"
   local previous_boot_id="$2"
-  local start_time now elapsed current_boot_id saw_disconnect=false prompted=false resent_reboot=false
-  start_time="$(date +%s)"
+  local initial_start attempt_start now elapsed current_boot_id
+  local explicit_reboot_attempts=0
+  local saw_disconnect=false prompted=false explicit_reboot_sent=false
+  [ -n "$previous_boot_id" ] || fail "Could not capture the pre-update Android boot ID"
+  initial_start="$(date +%s)"
+  attempt_start="$initial_start"
 
   echo "Waiting for $label reboot..."
   while true; do
+    now="$(date +%s)"
     if adb_online; then
       current_boot_id="$("${ADB[@]}" shell cat /proc/sys/kernel/random/boot_id 2>/dev/null | tr -d '\r\n')"
-      if [ -n "$previous_boot_id" ] && [ -n "$current_boot_id" ] && [ "$current_boot_id" != "$previous_boot_id" ]; then
+      if [ -n "$current_boot_id" ] && [ "$current_boot_id" != "$previous_boot_id" ]; then
         break
       fi
-      if [ "$saw_disconnect" = true ]; then
-        break
+
+      if [ "$explicit_reboot_sent" = true ]; then
+        if [ $((now - attempt_start)) -ge 180 ]; then
+          fail "$label stayed online without completing the explicit ADB reboot"
+        fi
+      elif [ "$saw_disconnect" = true ] || [ $((now - initial_start)) -ge 45 ]; then
+        if [ "$explicit_reboot_attempts" -ge 3 ]; then
+          fail "$label never accepted an explicit ADB reboot after three attempts"
+        fi
+        explicit_reboot_attempts=$((explicit_reboot_attempts + 1))
+        echo "ADB returned without proof of an Android reboot; sending an explicit ADB reboot."
+        if "${ADB[@]}" reboot >/dev/null 2>&1; then
+          explicit_reboot_sent=true
+          attempt_start="$now"
+          saw_disconnect=false
+          prompted=false
+        else
+          saw_disconnect=true
+          attempt_start="$now"
+          sleep 5
+        fi
       fi
     else
       saw_disconnect=true
-    fi
-
-    now="$(date +%s)"
-    elapsed=$((now - start_time))
-    if [ "$elapsed" -ge 45 ] && [ "$saw_disconnect" = false ] && [ "$resent_reboot" = false ]; then
-      echo "The first reboot was not observed; sending one explicit ADB reboot."
-      "${ADB[@]}" reboot >/dev/null 2>&1 || true
-      resent_reboot=true
-      start_time="$(date +%s)"
-      sleep 2
-      continue
-    fi
-    if [ "$elapsed" -ge 45 ] && [ "$saw_disconnect" = true ] && [ "$prompted" = false ]; then
-      echo ""
-      echo "================================================================"
-      if [[ "$SERIAL" == *:* ]]; then
-        echo "Mentra Live rebooted, but Wi-Fi ADB did not reconnect after 45s."
-        echo "Waiting for Wi-Fi ADB device $SERIAL to return..."
-      else
-        echo "Mentra Live rebooted, but USB ADB did not reconnect after 45s."
-        echo "Unplug the Infinity Cable, then plug it back in."
-        echo "The script will resume automatically when ADB returns."
+      elapsed=$((now - attempt_start))
+      if [ "$elapsed" -ge 45 ] && [ "$prompted" = false ]; then
+        echo ""
+        echo "================================================================"
+        if [[ "$SERIAL" == *:* ]]; then
+          echo "Mentra Live rebooted, but Wi-Fi ADB did not reconnect after 45s."
+          echo "Waiting for Wi-Fi ADB device $SERIAL to return..."
+        else
+          echo "Mentra Live rebooted, but USB ADB did not reconnect after 45s."
+          echo "Unplug the Infinity Cable, then plug it back in."
+          echo "The script will resume automatically when ADB returns."
+        fi
+        echo "================================================================"
+        prompted=true
       fi
-      echo "================================================================"
-      prompted=true
     fi
     sleep 2
   done
 
-  start_time="$(date +%s)"
+  attempt_start="$(date +%s)"
   while [ "$("${ADB[@]}" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" != "1" ]; do
     now="$(date +%s)"
-    if [ $((now - start_time)) -ge 180 ]; then
+    if [ $((now - attempt_start)) -ge 180 ]; then
       fail "$label returned over ADB but Android did not finish booting within 3 minutes"
     fi
     sleep 2
@@ -304,8 +398,8 @@ wait_for_bes_success() {
   while [ "$SECONDS" -lt "$deadline" ]; do
     adb_online || fail "ADB disconnected during the BES transfer"
     logs="$("${ADB[@]}" logcat -d 2>/dev/null | tail -n 500 || true)"
-    if printf '%s\n' "$logs" | grep -Eq 'BES firmware update SUCCESS|BES accepted apply'; then
-      echo "BES accepted the firmware and is rebooting."
+    if printf '%s\n' "$logs" | grep -Fq 'BES firmware update SUCCESS! BES will reboot.'; then
+      echo "ASG 36 reports that BES accepted the firmware and is rebooting."
       break
     fi
     if printf '%s\n' "$logs" | grep -Eq 'Apply firmware error|WHOLE CRC32 CHECK FAILED|BES OTA authorization DENIED|Debug BES OTA dispatch failed|BES OTA failed to start|BesOtaManager not initialized'; then
@@ -382,6 +476,8 @@ build_mtk_plan() {
     cursor="$end"
   done
 }
+
+recover_orphaned_legacy_stock_files
 
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/mentra-dev-ota.XXXXXX")"
 MANIFEST_PATH="$WORK_DIR/staging-manifest.json"
@@ -475,14 +571,17 @@ fi
 echo ""
 echo "=== Replacing bridge with staging ASG Client ==="
 "${ADB[@]}" shell am force-stop "$STOCK_PKG" >/dev/null 2>&1 || true
+preserve_legacy_stock_files
 "${ADB[@]}" uninstall "$STOCK_PKG" >/dev/null \
   || fail "Could not remove the ASG 36 update layer"
 "${ADB[@]}" shell cmd package install-existing "$STOCK_PKG" >/dev/null 2>&1 || true
-"${ADB[@]}" shell pm enable "$STOCK_PKG" >/dev/null 2>&1 || true
+"${ADB[@]}" shell pm disable-user --user 0 "$STOCK_PKG" >/dev/null 2>&1 || true
 "${ADB[@]}" install -r "$TARGET_APK_PATH"
 INSTALLED_VERSION_CODE="$(package_version_code "$STOCK_PKG")"
 [ "$INSTALLED_VERSION_CODE" = "$TARGET_VERSION_CODE" ] \
   || fail "Staging ASG install expected versionCode $TARGET_VERSION_CODE, got ${INSTALLED_VERSION_CODE:-unknown}"
+restore_legacy_stock_files \
+  || fail "Staging ASG installed, but preserved legacy stock data could not be restored"
 enable_stock_runtime
 sleep 20
 

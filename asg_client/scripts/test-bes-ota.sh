@@ -13,7 +13,10 @@ FIRMWARE_PATH="${1:-}"
 TARGET_VERSION="${2:-}"
 FOLLOW_LOGS=true
 
-if [ "${3:-}" = "--no-follow" ]; then
+if [ -n "${4:-}" ]; then
+    echo "Unknown option: $4"
+    exit 1
+elif [ "${3:-}" = "--no-follow" ]; then
     FOLLOW_LOGS=false
 elif [ -n "${3:-}" ]; then
     echo "Unknown option: $3"
@@ -62,6 +65,25 @@ fi
 ARTIFACT_ID="adb-${FIRMWARE_SHA256}.bin"
 REMOTE_PATH="/storage/emulated/0/asg/debug_bes_${FIRMWARE_SHA256}.bin"
 LEGACY_REMOTE_PATH="/storage/emulated/0/asg/bes_firmware.bin"
+LEGACY_BACKUP_PATH="/storage/emulated/0/asg/bes_firmware.pre_adb_$$.bin"
+LEGACY_PATH_STAGED=false
+LEGACY_PATH_EXISTED=false
+
+restore_legacy_path() {
+    if [ "$LEGACY_PATH_STAGED" != true ]; then
+        return 0
+    fi
+    "${ADB[@]}" shell rm -f "$LEGACY_REMOTE_PATH" >/dev/null 2>&1 || true
+    if [ "$LEGACY_PATH_EXISTED" = true ]; then
+        "${ADB[@]}" shell mv "$LEGACY_BACKUP_PATH" "$LEGACY_REMOTE_PATH" >/dev/null 2>&1 || {
+            echo "❌ Could not restore pre-existing BES artifact from $LEGACY_BACKUP_PATH" >&2
+            return 1
+        }
+    fi
+    LEGACY_PATH_STAGED=false
+}
+
+trap restore_legacy_path EXIT
 
 echo "=========================================="
 echo "🔧 BES OTA Test"
@@ -83,8 +105,19 @@ if [ "$REMOTE_SHA256" != "$FIRMWARE_SHA256" ]; then
     exit 1
 fi
 
-# ASG 36 predates target/hash extras and always reads this fixed path. Keep both
-# copies so this one broadcast works with the bootstrap client and current ASG.
+# ASG 36 predates target/hash extras and always reads this fixed path. Move any
+# existing phone-owned artifact aside instead of overwriting its inode. ASG 36
+# synchronously loads the debug file into memory during `am broadcast`; current
+# ASG reads the separate hash-addressed path.
+if "${ADB[@]}" shell test -e "$LEGACY_BACKUP_PATH"; then
+    echo "❌ Refusing to overwrite stale compatibility backup: $LEGACY_BACKUP_PATH"
+    exit 1
+fi
+if "${ADB[@]}" shell test -f "$LEGACY_REMOTE_PATH"; then
+    "${ADB[@]}" shell mv "$LEGACY_REMOTE_PATH" "$LEGACY_BACKUP_PATH"
+    LEGACY_PATH_EXISTED=true
+fi
+LEGACY_PATH_STAGED=true
 "${ADB[@]}" shell cp "$REMOTE_PATH" "$LEGACY_REMOTE_PATH"
 LEGACY_REMOTE_SHA256="$("${ADB[@]}" shell sha256sum "$LEGACY_REMOTE_PATH" | awk '{print $1}' | tr -d '\r')"
 if [ "$LEGACY_REMOTE_SHA256" != "$FIRMWARE_SHA256" ]; then
@@ -96,12 +129,21 @@ fi
 echo ""
 echo "🚀 Triggering BES OTA..."
 "${ADB[@]}" logcat -c
-"${ADB[@]}" shell am broadcast \
+set +e
+BROADCAST_OUTPUT="$("${ADB[@]}" shell am broadcast \
     -a com.mentra.DEBUG_BES_OTA \
     --es target_version "$TARGET_VERSION" \
     --es sha256 "$FIRMWARE_SHA256" \
     --es artifact_id "$ARTIFACT_ID" \
-    -n com.mentra.asg_client/.receiver.DebugBesOtaReceiver
+    -n com.mentra.asg_client/.receiver.DebugBesOtaReceiver 2>&1)"
+BROADCAST_STATUS=$?
+set -e
+printf '%s\n' "$BROADCAST_OUTPUT"
+restore_legacy_path
+if [ "$BROADCAST_STATUS" -ne 0 ]; then
+    echo "❌ BES OTA broadcast failed"
+    exit "$BROADCAST_STATUS"
+fi
 
 if [ "$FOLLOW_LOGS" = false ]; then
     echo "✅ BES OTA triggered; log following disabled."
