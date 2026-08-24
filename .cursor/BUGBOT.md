@@ -24,11 +24,15 @@ When the PR agent orchestrator triggers this review, end with a top-level PR com
 3. JSON footer (same schema as the other reviewers):
 
 ```json
-{"verdict":"approve|changes_requested","findings":[{"severity":"blocking|nit","file":"path","line":0,"message":"..."}]}
+{"verdict":"approve|changes_requested","findings":[{"severity":"blocking|nit","file":"path","line":0,"message":"...","ref":"abc123"}]}
 ```
 
 - Use `blocking` only for issues that must be fixed before merge.
 - Use `nit` for style or optional suggestions.
+- `line` is required whenever the issue is anchored to code (line at current HEAD).
+- `ref` is only for re-confirming an existing entry from the orchestrator's
+  open findings: copy that entry's exact `id`. Omit `ref` for anything new.
+  Never invent ids.
 - The orchestrator's `<!-- pr-agent-orchestrator -->` state comment lists prior
   open findings. Treat each as a hypothesis, not a fact: check the current
   code at HEAD before repeating one. If it's already fixed, leave it out of

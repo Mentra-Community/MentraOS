@@ -61,7 +61,10 @@ export function aggregateCycle(
     const verdict = parseVerdictFromText(text);
     if (!verdict) return;
     if (verdict.verdict !== 'approve') allApproved = false;
-    const { blocking: rawBlocking, nits } = verdictToFindings(verdict, source, cycle);
+    const { blocking: rawBlocking, nits } = verdictToFindings(verdict, source, cycle, [
+      ...openFindings,
+      ...nitFindings,
+    ]);
     // Drop findings a human marked as false positive via `agent-resolve`.
     const blocking = rawBlocking.filter((b) => !muted.has(b.fingerprint));
     const mergedOpen = mergeFindings(openFindings, blocking, cycle);

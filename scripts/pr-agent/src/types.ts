@@ -55,6 +55,12 @@ export const VerdictSchema = z.object({
         file: z.string(),
         line: z.number().optional(),
         message: z.string(),
+        /**
+         * Id of an existing open finding the reviewer is re-confirming. The
+         * report then inherits that finding's fingerprint so rewording the
+         * same issue cannot fork it into a duplicate identity.
+         */
+        ref: z.string().optional(),
       }),
     )
     .default([]),
