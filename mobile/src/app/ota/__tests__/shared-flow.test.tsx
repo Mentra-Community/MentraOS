@@ -69,4 +69,24 @@ describe("MentraLiveOtaFlow", () => {
     expect(prepare).toHaveBeenCalledWith(result)
     expect(getByText("Starting update...")).toBeDefined()
   })
+
+  it("reports that progress is inactive when the flow unmounts", () => {
+    useGlassesStore.getState().setGlassesInfo({
+      connection: {state: "connected", fullyBooted: true},
+    })
+    const onFirmwareRestartingChange = jest.fn()
+    const {unmount} = render(
+      <MentraLiveOtaFlow
+        initialPage="progress"
+        initializeRuntime={false}
+        onFinished={jest.fn()}
+        onFirmwareRestartingChange={onFirmwareRestartingChange}
+        onOpenWifiSetup={jest.fn()}
+      />,
+    )
+
+    expect(onFirmwareRestartingChange).toHaveBeenLastCalledWith(false, true)
+    unmount()
+    expect(onFirmwareRestartingChange).toHaveBeenLastCalledWith(false, false)
+  })
 })

@@ -219,6 +219,7 @@ describe("progress.tsx display states", () => {
         await jest.advanceTimersByTimeAsync(750)
       })
       expect(getByText("ota:checkingForUpdates")).toBeDefined()
+      expect(useConnectionOverlayConfig.getState().suppressOverlay).toBe(false)
       expect(replaceSpy).not.toHaveBeenCalledWith("/ota/check-for-updates")
     } finally {
       replaceSpy.mockRestore()
@@ -354,25 +355,32 @@ describe("progress.tsx display states", () => {
   it("stops automatic chaining when leaving a failed pass to change WiFi", () => {
     setGlassesConnected()
     beginOtaAutoChain("initial-offer", false)
-    const {getByText} = render(<OtaProgressScreen />)
+    const pushSpy = jest.spyOn(useNavigationStore.getState(), "push")
+    try {
+      const {getByText} = render(<OtaProgressScreen />)
 
-    act(() => {
-      useGlassesStore.getState().setOtaStatus({
-        sessionId: "s1",
-        totalSteps: 1,
-        currentStep: 1,
-        stepType: "apk",
-        phase: "download",
-        stepPercent: 0,
-        overallPercent: 0,
-        status: "failed",
-        error: "no_internet",
+      act(() => {
+        useGlassesStore.getState().setOtaStatus({
+          sessionId: "s1",
+          totalSteps: 1,
+          currentStep: 1,
+          stepType: "apk",
+          phase: "download",
+          stepPercent: 0,
+          overallPercent: 0,
+          status: "failed",
+          error: "no_internet",
+        })
       })
-    })
 
-    fireEvent.press(getByText("Change WiFi"))
+      fireEvent.press(getByText("Change WiFi"))
 
-    expect(isOtaAutoChainActive()).toBe(false)
+      expect(isOtaAutoChainActive()).toBe(false)
+      expect(useConnectionOverlayConfig.getState().suppressOverlay).toBe(false)
+      expect(pushSpy).toHaveBeenCalledWith("/wifi/scan")
+    } finally {
+      pushSpy.mockRestore()
+    }
   })
 
   it("requires a glasses restart for the existing generic BES install failure", () => {

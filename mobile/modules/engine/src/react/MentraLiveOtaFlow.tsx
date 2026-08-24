@@ -44,10 +44,10 @@ export type MentraLiveOtaFlowProps = {
   initializeRuntime?: boolean
   /** Called after the final check or when the user leaves an optional update. */
   onFinished: () => void
-  /** Host-owned Wi-Fi setup. The OTA page remains mounted underneath it. */
-  onOpenWifiSetup?: () => void
-  /** Lets a host coordinate its global connection overlay with firmware restarts. */
-  onFirmwareRestartingChange?: (restarting: boolean) => void
+  /** Host-owned Wi-Fi setup for glasses that do not support hotspot OTA. */
+  onOpenWifiSetup: () => void
+  /** Lets a host coordinate its global connection overlay with OTA progress and firmware restarts. */
+  onFirmwareRestartingChange?: (restarting: boolean, progressActive: boolean) => void
   /** Enables the existing developer-only escape hatches. */
   allowDevSkip?: boolean
   /** Enables the existing super-mode interrupted-session escape hatch. */
@@ -153,10 +153,9 @@ export function MentraLiveOtaFlow({
   }, [initializeRuntime])
 
   const showCheck = useCallback(() => {
-    onFirmwareRestartingChange?.(false)
     setPage("check")
     setCheckGeneration((generation) => generation + 1)
-  }, [onFirmwareRestartingChange])
+  }, [])
 
   return (
     <SafeAreaView style={[styles.safeArea, {backgroundColor: colors.background}, style]}>
@@ -199,7 +198,7 @@ type CheckPageProps = {
   deviceName: string
   generation: number
   onFinished: () => void
-  onOpenWifiSetup?: () => void
+  onOpenWifiSetup: () => void
   onStartProgress: () => void
   translate: MentraLiveOtaFlowTranslate
 }
@@ -407,7 +406,7 @@ function OtaCheckPage({
       return
     }
     if (!snapshot.wifiConnected && snapshot.hotspotOtaVersion !== 1) {
-      onOpenWifiSetup?.()
+      onOpenWifiSetup()
       return
     }
     ota.installSession.prepare(result)
@@ -509,8 +508,8 @@ function OtaCheckPage({
 
 type ProgressPageProps = {
   colors: MentraLiveOtaFlowTheme
-  onFirmwareRestartingChange?: (restarting: boolean) => void
-  onOpenWifiSetup?: () => void
+  onFirmwareRestartingChange?: (restarting: boolean, progressActive: boolean) => void
+  onOpenWifiSetup: () => void
   onReturnToCheck: () => void
   superMode: boolean
   translate: MentraLiveOtaFlowTranslate
@@ -543,8 +542,15 @@ function OtaProgressPage({
   const firmwareRestarting = (!connected && displayState === "restarting") || versionChangePhase === "restarting"
 
   useEffect(() => {
-    onFirmwareRestartingChange?.(firmwareRestarting)
+    onFirmwareRestartingChange?.(firmwareRestarting, true)
   }, [firmwareRestarting, onFirmwareRestartingChange])
+
+  useEffect(
+    () => () => {
+      onFirmwareRestartingChange?.(false, false)
+    },
+    [onFirmwareRestartingChange],
+  )
 
   useEffect(() => {
     ota.installSession.attach()
@@ -692,7 +698,7 @@ function OtaProgressPage({
               label={requiresGlassesReboot ? "Done" : "Retry"}
               onPress={requiresGlassesReboot ? stopAndCheck : () => ota.installSession.retry()}
             />
-            {showChangeWifi && onOpenWifiSetup ? (
+            {showChangeWifi ? (
               <FlowButton
                 colors={colors}
                 label="Change WiFi"

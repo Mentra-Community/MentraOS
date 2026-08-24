@@ -31,8 +31,10 @@ export function MentraLiveOtaFlowHost({initialPage = "check"}: {initialPage?: Me
   }, [clearHistoryAndGoHome, onboardingLiveCompleted, onboardingOsCompleted, replace])
 
   const handleFirmwareRestartingChange = useCallback(
-    (restarting: boolean) => {
-      if (restarting) {
+    (restarting: boolean, progressActive: boolean) => {
+      if (!progressActive) {
+        clearConfig()
+      } else if (restarting) {
         setConfig({
           customTitle: "Please wait while Mentra Live restarts and automatically reconnects...",
           customMessage: "",
@@ -44,8 +46,13 @@ export function MentraLiveOtaFlowHost({initialPage = "check"}: {initialPage?: Me
         setConfig({suppressOverlay: true})
       }
     },
-    [setConfig],
+    [clearConfig, setConfig],
   )
+
+  const handleOpenWifiSetup = useCallback(() => {
+    clearConfig()
+    push("/wifi/scan")
+  }, [clearConfig, push])
 
   return (
     <MentraLiveOtaFlow
@@ -55,7 +62,7 @@ export function MentraLiveOtaFlowHost({initialPage = "check"}: {initialPage?: Me
       initializeRuntime={false}
       onFinished={handleFinished}
       onFirmwareRestartingChange={handleFirmwareRestartingChange}
-      onOpenWifiSetup={() => push("/wifi/scan")}
+      onOpenWifiSetup={handleOpenWifiSetup}
       superMode={Boolean(superMode)}
       theme={{
         background: theme.colors.background,

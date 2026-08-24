@@ -92,8 +92,9 @@ import {MentraLiveOtaFlow} from "@mentra/engine/react"
 
 The component starts only the glasses-status and OTA projections. A host that
 already called `engine.start()` should pass `initializeRuntime={false}`. Show
-the flow after a Mentra Live connects; `onOpenWifiSetup` is needed only for
-older glasses that cannot provide the OTA hotspot transport.
+the flow after a Mentra Live connects. Hosts must provide `onOpenWifiSetup`;
+the flow invokes it only for older glasses that cannot provide the OTA hotspot
+transport.
 
 ## Imports
 
