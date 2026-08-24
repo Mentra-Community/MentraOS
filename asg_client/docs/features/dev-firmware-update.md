@@ -70,12 +70,13 @@ path, so a later run restores it before staging anything if ADB disappeared duri
 compatibility window.
 
 Modern BES can retain a negotiated 1152000 baud when its ASG process stops, while ASG 36 only
-opens the universal 460800 rendezvous baud. If an installed stock or third-party ASG is new enough
-to have negotiated the fast link, the updater first installs the manifest-pinned stock client,
-proves the existing BES link, sends a BES-only reset, requires confirmation that the reset reached
-UART, and force-stops the current client before it can renegotiate. ASG 36 then starts after BES has
-returned to 460800. Factory-era ASG/BES pairs predate fast-baud negotiation and go directly to the
-bridge.
+opens the universal 460800 rendezvous baud. The updater therefore always installs the
+manifest-pinned stock client first and probes both supported baud rates. When it proves a BES link,
+it sends a BES-only reset, requires confirmation that the reset reached UART, and force-stops the
+current client before it can renegotiate. ASG 36 then starts after BES has returned to 460800. If
+current ASG cannot find BES at either baud, ASG 36 performs the legacy discovery needed by the
+factory BES generation. Any later failure removes the bridge and restores the manifest-pinned
+stock client before selecting stock HOME.
 
 After ASG 36 reports apply success, the updater waits for the BES chip to reboot and repeatedly
 requests `version_info_3`. It does not continue until the reported BES version is at least the
@@ -89,8 +90,8 @@ The updater performs these steps:
 2. Snapshot and validate the staging manifest.
 3. Download and verify ASG 36, target stock ASG, BES firmware, and every MTK patch in the exact
    current-to-terminal path.
-4. Disable the third-party client, recovery sidecar, and legacy updater; when a modern ASG may have
-   negotiated fast UART, use the manifest-pinned stock ASG to reset BES to 460800.
+4. Disable the third-party client, recovery sidecar, and legacy updater; use the manifest-pinned
+   stock ASG to probe both UART bauds and reset a proven BES link to 460800.
 5. Activate ASG 36 and update BES when the device is below the manifest target.
 6. Move the stock package's legacy external-files tree to uninstall-safe shared storage.
 7. Remove the ASG 36 update layer, install the manifest-pinned stock ASG, and restore the legacy
@@ -126,9 +127,12 @@ The safe fallback is signed stock ASG, not the custom client:
 
 - A failure before device mutation leaves the current installation unchanged.
 - A failure after mutation stops/disables a partially activated third-party client, restores any
-  staged legacy stock data, activates stock HOME, and enables available recovery packages.
-- If failure occurs while ADB is offline, reconnect the Infinity Cable and run
-  `./scripts/restore-stock.sh`.
+  staged legacy stock data, removes ASG 36 when it is active, reinstalls the manifest-pinned stock
+  ASG, activates stock HOME, and enables available recovery packages.
+- If failure occurs while ADB is offline, reconnect the Infinity Cable and rerun the same updater.
+  It detects an interrupted ASG 36 installation and restores the manifest-pinned stock ASG before
+  attempting another bridge transition. `./scripts/restore-stock.sh` remains the path for removing
+  the third-party package after stock has been recovered.
 - If returning to the custom client fails after firmware completed, the firmware remains updated
   but stock stays active so the device retains a working launcher.
 

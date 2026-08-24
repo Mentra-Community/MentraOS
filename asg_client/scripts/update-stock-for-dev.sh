@@ -26,10 +26,6 @@ BRIDGE_APK_SHA256="8fbac72d3fb895548cdd2b213eb331f1d7b0e7532e4ad4a2233529a8170b9
 BRIDGE_APK_SIZE="87174306"
 BRIDGE_VERSION_CODE="99999999"
 
-# The first ASG builds that could leave BES at negotiated 1152000 baud used the
-# timestamp-derived versionCode floor from the 2026-07-29 transport rollout.
-FAST_BAUD_ASG_MIN_VERSION_CODE="49693600"
-
 STOCK_PKG="com.mentra.asg_client"
 DEV_PKG="com.mentra.asg_client.thirdparty"
 RECOVERY_PKG="com.mentra.recovery"
@@ -45,6 +41,7 @@ WORK_DIR=""
 DEVICE_MUTATED=false
 SUCCESS=false
 LEGACY_STOCK_BACKUP=""
+BRIDGE_ACTIVE=false
 
 usage() {
   echo "Usage: $0 [--manifest-url <https-url>] [--resume-thirdparty]"
@@ -224,20 +221,23 @@ preserve_legacy_stock_files() {
   entry_count="$("${ADB[@]}" shell \
     "if [ -d '$LEGACY_STOCK_FILES' ]; then find '$LEGACY_STOCK_FILES' -mindepth 1 -print | wc -l; else echo 0; fi" \
     2>/dev/null | tr -d '\r ' | tail -n 1)"
-  [[ "$entry_count" =~ ^[0-9]+$ ]] \
-    || fail "Could not inventory legacy stock data before uninstall"
+  if ! [[ "$entry_count" =~ ^[0-9]+$ ]]; then
+    echo "Could not inventory legacy stock data before uninstall." >&2
+    return 1
+  fi
   if [ "$entry_count" -eq 0 ]; then
     return 0
   fi
 
   if "${ADB[@]}" shell test -e "$LEGACY_STOCK_BACKUP_PATH"; then
-    fail "Unrestored legacy stock-data backup already exists at $LEGACY_STOCK_BACKUP_PATH"
+    echo "Unrestored legacy stock-data backup already exists at $LEGACY_STOCK_BACKUP_PATH." >&2
+    return 1
   fi
   LEGACY_STOCK_BACKUP="$LEGACY_STOCK_BACKUP_PATH"
   echo "Preserving $entry_count legacy stock-data entries before removing the bridge..."
-  "${ADB[@]}" shell mkdir -p /storage/emulated/0/asg
+  "${ADB[@]}" shell mkdir -p /storage/emulated/0/asg || return 1
   "${ADB[@]}" shell mv "$LEGACY_STOCK_FILES" "$LEGACY_STOCK_BACKUP" \
-    || fail "Could not preserve legacy stock data before uninstall"
+    || return 1
   echo "Legacy stock data staged safely at $LEGACY_STOCK_BACKUP."
 }
 
@@ -296,11 +296,36 @@ restore_legacy_stock_files() {
   LEGACY_STOCK_BACKUP=""
 }
 
+replace_bridge_with_target_stock() {
+  local installed_version
+  if [ "$BRIDGE_ACTIVE" != true ]; then
+    return 0
+  fi
+
+  "${ADB[@]}" shell am force-stop "$STOCK_PKG" >/dev/null 2>&1 || true
+  preserve_legacy_stock_files || return 1
+  "${ADB[@]}" uninstall "$STOCK_PKG" >/dev/null || return 1
+  "${ADB[@]}" shell cmd package install-existing "$STOCK_PKG" >/dev/null 2>&1 || true
+  "${ADB[@]}" shell pm disable-user --user 0 "$STOCK_PKG" >/dev/null 2>&1 || true
+  "${ADB[@]}" install -r "$TARGET_APK_PATH" >/dev/null || return 1
+  installed_version="$(package_version_code "$STOCK_PKG")"
+  [ "$installed_version" = "$TARGET_VERSION_CODE" ] || return 1
+  BRIDGE_ACTIVE=false
+  restore_legacy_stock_files || return 1
+}
+
 restore_safe_stock_on_failure() {
   if [ "$DEVICE_MUTATED" = true ] && adb_online; then
     echo "Restoring the stock launcher after the failed setup..." >&2
     "${ADB[@]}" shell am force-stop "$DEV_PKG" >/dev/null 2>&1 || true
     "${ADB[@]}" shell pm disable-user --user 0 "$DEV_PKG" >/dev/null 2>&1 || true
+    if [ "$BRIDGE_ACTIVE" = true ]; then
+      if replace_bridge_with_target_stock; then
+        echo "Removed the ASG 36 bridge and restored the manifest-pinned stock ASG." >&2
+      else
+        echo "Could not fully replace ASG 36 automatically; preserved data remains staged if needed." >&2
+      fi
+    fi
     restore_legacy_stock_files || true
     if enable_stock_runtime; then
       echo "Stock launcher restored." >&2
@@ -309,8 +334,13 @@ restore_safe_stock_on_failure() {
     fi
     "${ADB[@]}" shell pm enable "$RECOVERY_PKG" >/dev/null 2>&1 || true
     "${ADB[@]}" shell pm enable "$LEGACY_UPDATER_PKG" >/dev/null 2>&1 || true
-  elif [ "$DEVICE_MUTATED" = true ] && [ -n "$LEGACY_STOCK_BACKUP" ]; then
-    echo "Legacy stock data remains safe at $LEGACY_STOCK_BACKUP once ADB reconnects." >&2
+  elif [ "$DEVICE_MUTATED" = true ]; then
+    if [ "$BRIDGE_ACTIVE" = true ]; then
+      echo "ASG 36 may still be installed. Reconnect ADB and rerun this updater; it will restore the pinned stock ASG first." >&2
+    fi
+    if [ -n "$LEGACY_STOCK_BACKUP" ]; then
+      echo "Legacy stock data remains safe at $LEGACY_STOCK_BACKUP once ADB reconnects." >&2
+    fi
   fi
 }
 
@@ -425,13 +455,6 @@ query_firmware_versions() {
   return 1
 }
 
-package_may_have_negotiated_fast_baud() {
-  local version_code="$1"
-  [[ "$version_code" =~ ^[0-9]+$ ]] || return 1
-  [ "$version_code" != "$BRIDGE_VERSION_CODE" ] \
-    && [ "$version_code" -ge "$FAST_BAUD_ASG_MIN_VERSION_CODE" ]
-}
-
 return_bes_to_rendezvous_before_bridge() {
   local request_id deadline logs versions bes installed_version
   request_id="devsetup_$$_$RANDOM"
@@ -447,8 +470,15 @@ return_bes_to_rendezvous_before_bridge() {
 
   versions="$(query_firmware_versions || true)"
   bes="${versions%%|*}"
-  [ -n "$bes" ] && valid_bes_version "$bes" \
-    || fail "Current stock ASG could not prove the BES UART before the ASG 36 transition"
+  if [ -z "$bes" ] || ! valid_bes_version "$bes"; then
+    # Current ASG scans both supported bauds. No proof normally identifies the
+    # factory BES generation that needs ASG 36's legacy protocol; stop the
+    # probe client and let the bridge attempt its fail-closed version query.
+    "${ADB[@]}" shell am force-stop "$STOCK_PKG" >/dev/null 2>&1 || true
+    sleep 2
+    echo "Current stock ASG found no BES link at either baud; continuing with ASG 36 legacy discovery."
+    return 0
+  fi
   echo "Current stock ASG proved BES $bes before the bridge transition."
 
   "${ADB[@]}" logcat -c >/dev/null 2>&1 || true
@@ -627,11 +657,12 @@ download_verified "BES firmware $BES_VERSION" "$BES_URL" "$BES_SHA256" "" "$BES_
 build_mtk_plan "$MANIFEST_PATH" "$INITIAL_MTK" "$MTK_PLAN_PATH"
 
 INITIAL_STOCK_VERSION_CODE="$(package_version_code "$STOCK_PKG")"
-INITIAL_DEV_VERSION_CODE="$(package_version_code "$DEV_PKG")"
-MAY_HAVE_FAST_BAUD=false
-if package_may_have_negotiated_fast_baud "$INITIAL_STOCK_VERSION_CODE" \
-  || package_may_have_negotiated_fast_baud "$INITIAL_DEV_VERSION_CODE"; then
-  MAY_HAVE_FAST_BAUD=true
+if [ "$INITIAL_STOCK_VERSION_CODE" = "$BRIDGE_VERSION_CODE" ]; then
+  echo "Found ASG 36 left by an interrupted earlier run; restoring the pinned stock ASG first."
+  DEVICE_MUTATED=true
+  BRIDGE_ACTIVE=true
+  replace_bridge_with_target_stock \
+    || fail "Could not recover the manifest-pinned stock ASG from the interrupted bridge run"
 fi
 
 echo ""
@@ -645,13 +676,10 @@ DEVICE_MUTATED=true
 "${ADB[@]}" shell pm disable-user --user 0 "$RECOVERY_PKG" >/dev/null 2>&1 || true
 "${ADB[@]}" shell am force-stop "$LEGACY_UPDATER_PKG" >/dev/null 2>&1 || true
 "${ADB[@]}" shell pm disable-user --user 0 "$LEGACY_UPDATER_PKG" >/dev/null 2>&1 || true
-if [ "$MAY_HAVE_FAST_BAUD" = true ]; then
-  return_bes_to_rendezvous_before_bridge
-else
-  enable_stock_runtime
-fi
+return_bes_to_rendezvous_before_bridge
 
 echo "=== Installing ASG 36 BES bridge ==="
+BRIDGE_ACTIVE=true
 "${ADB[@]}" install -r "$BRIDGE_APK_PATH"
 INSTALLED_VERSION_CODE="$(package_version_code "$STOCK_PKG")"
 [ "$INSTALLED_VERSION_CODE" = "$BRIDGE_VERSION_CODE" ] \
@@ -689,18 +717,8 @@ fi
 
 echo ""
 echo "=== Replacing bridge with staging ASG Client ==="
-"${ADB[@]}" shell am force-stop "$STOCK_PKG" >/dev/null 2>&1 || true
-preserve_legacy_stock_files
-"${ADB[@]}" uninstall "$STOCK_PKG" >/dev/null \
-  || fail "Could not remove the ASG 36 update layer"
-"${ADB[@]}" shell cmd package install-existing "$STOCK_PKG" >/dev/null 2>&1 || true
-"${ADB[@]}" shell pm disable-user --user 0 "$STOCK_PKG" >/dev/null 2>&1 || true
-"${ADB[@]}" install -r "$TARGET_APK_PATH"
-INSTALLED_VERSION_CODE="$(package_version_code "$STOCK_PKG")"
-[ "$INSTALLED_VERSION_CODE" = "$TARGET_VERSION_CODE" ] \
-  || fail "Staging ASG install expected versionCode $TARGET_VERSION_CODE, got ${INSTALLED_VERSION_CODE:-unknown}"
-restore_legacy_stock_files \
-  || fail "Staging ASG installed, but preserved legacy stock data could not be restored"
+replace_bridge_with_target_stock \
+  || fail "Could not replace ASG 36 with the manifest-pinned stock ASG"
 enable_stock_runtime
 sleep 20
 
