@@ -17,6 +17,7 @@
  *   - subscribe(fn)                         register a refresh listener
  */
 
+import {fetch as expoFetch} from "expo/fetch"
 import {Directory, Paths, File} from "expo-file-system"
 import {unzip} from "react-native-zip-archive"
 import semver from "semver"
@@ -207,7 +208,10 @@ async function downloadMiniAppZip(
   const timeout = setTimeout(() => abortController.abort(), REMOTE_BUNDLE_TIMEOUT_MS)
   try {
     onProgress?.("downloading")
-    const response = await fetch(url, {signal: abortController.signal})
+    // React Native's global fetch polyfill does not expose Response.body.
+    // Expo fetch provides the native ReadableStream required for bounded
+    // downloads without buffering an attacker-controlled response first.
+    const response = await expoFetch(url, {signal: abortController.signal})
     if (!response.ok) throw new Error(`bundle download failed with HTTP ${response.status}`)
     if (new URL(url).protocol === "https:" && response.url && new URL(response.url).protocol !== "https:") {
       throw new Error("bundle download redirected away from HTTPS")

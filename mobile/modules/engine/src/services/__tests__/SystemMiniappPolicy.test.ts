@@ -1,7 +1,12 @@
 /// <reference types="bun-types" />
 
 import {describe, expect, test} from "bun:test"
-import {isHostTrustedSystemMiniapp, isStoreMiniappPackage, isSystemMiniappPackage} from "../SystemMiniappPolicy"
+import {
+  isHostTrustedSystemMiniapp,
+  isPreinstalledMiniappPackageAllowed,
+  isStoreMiniappPackage,
+  isSystemMiniappPackage,
+} from "../SystemMiniappPolicy"
 
 describe("SYSTEM miniapp policy", () => {
   test("trusts the bundled Mentra Store", () => {
@@ -19,5 +24,11 @@ describe("SYSTEM miniapp policy", () => {
     expect(isHostTrustedSystemMiniapp("com.mentra.store", "bundled_asset")).toBe(true)
     expect(isHostTrustedSystemMiniapp("com.mentra.store", "dev_snapshot")).toBe(false)
     expect(isHostTrustedSystemMiniapp("com.mentra.store", "store")).toBe(false)
+  })
+
+  test("prevents the remote preinstalled registry from replacing SYSTEM packages", () => {
+    expect(isPreinstalledMiniappPackageAllowed("com.mentra.store")).toBe(false)
+    expect(isPreinstalledMiniappPackageAllowed("com.mentra.settings")).toBe(false)
+    expect(isPreinstalledMiniappPackageAllowed("com.example.weather")).toBe(true)
   })
 })

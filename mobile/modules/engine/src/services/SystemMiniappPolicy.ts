@@ -30,6 +30,16 @@ export function isStoreMiniappPackage(packageName: string): boolean {
 }
 
 /**
+ * The remotely managed preinstalled registry must never replace a build-owned
+ * SYSTEM package. Supporting remote SYSTEM updates requires a separate signed
+ * host-owned channel; treating ordinary registry provenance as bundled would
+ * let a downloaded replacement inherit privileged APIs.
+ */
+export function isPreinstalledMiniappPackageAllowed(packageName: string): boolean {
+  return !isSystemMiniappPackage(packageName)
+}
+
+/**
  * Bind SYSTEM authority to both the build-owned package allowlist and the
  * host-owned bundle provenance. A dev server or downloaded bundle that copies
  * a SYSTEM package name must never inherit privileged host APIs.

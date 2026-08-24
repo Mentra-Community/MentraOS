@@ -1,5 +1,5 @@
 import type {PreinstalledMiniappRegistryEntry} from "@mentra/cloud-client/react-native"
-import {appRegistry, sha256Hex} from "@mentra/engine/internal"
+import {appRegistry, isPreinstalledMiniappPackageAllowed, sha256Hex} from "@mentra/engine/internal"
 import {Directory, File, Paths} from "expo-file-system"
 import semver from "semver"
 
@@ -43,6 +43,10 @@ function isMobileVersionSupported(entry: PreinstalledMiniappRegistryEntry): bool
 }
 
 function shouldInstall(entry: PreinstalledMiniappRegistryEntry): boolean {
+  if (!isPreinstalledMiniappPackageAllowed(entry.packageName)) {
+    console.warn(`${LOG_TAG}: refusing remote replacement of build-owned SYSTEM package ${entry.packageName}`)
+    return false
+  }
   if (!isMobileVersionSupported(entry)) {
     console.log(
       `${LOG_TAG}: skipping ${entry.packageName}@${entry.version} — mobile ${MOBILE_APP_VERSION} outside [${entry.minMobileVersion ?? "*"}, ${entry.maxMobileVersion ?? "*"}]`,

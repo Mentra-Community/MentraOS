@@ -209,6 +209,12 @@ jest.mock("expo-audio", () => ({
   })),
 }))
 
+// AppRegistry uses Expo's native stream-capable fetch in production. Jest has
+// no ExpoFetchModule native base class, so delegate test calls to Node's fetch.
+jest.mock("expo/fetch", () => ({
+  fetch: jest.fn((input, init) => globalThis.fetch(input, init)),
+}))
+
 // Mock react-native-nitro-bg-timer for non-native Jest runs
 jest.mock("react-native-nitro-bg-timer", () => ({
   BackgroundTimer: {

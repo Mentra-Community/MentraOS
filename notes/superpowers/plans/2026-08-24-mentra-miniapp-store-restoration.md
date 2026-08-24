@@ -127,7 +127,9 @@ publisher signatures can be enforced later without changing the API.
       pagination, Store-owned uninstall visibility, pre-activation host/SDK
       compatibility gates, running-context retry/rollback around updates,
       unbounded install request correlation, update repair of incompatible
-      releases, and live detail resolution after catalog refreshes.
+      releases, live detail resolution after catalog refreshes, Expo-native
+      bounded response streaming, and rejection of remote preinstalled
+      replacements for build-owned SYSTEM packages.
 - [x] Touched-file lint and `git diff --check`.
 - [x] Full Cloud suite audit: 544 passed, 1 skipped. The aggregate invocation
       also reproduces unrelated shared-state/credential baselines (R2 is not
