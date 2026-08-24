@@ -9,7 +9,7 @@ const PACKAGE_NAME_PATTERN = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/
 export async function validateInstallBundleArchive(
   bytes: Uint8Array,
   expected?: {packageName?: string; version?: string},
-): Promise<{packageName: string; version: string}> {
+): Promise<{packageName: string; version: string; sdkVersion?: string; minHostVersion?: string}> {
   inspectCentralDirectory(bytes)
   let zip: JSZip
   try {
@@ -53,6 +53,8 @@ export async function validateInstallBundleArchive(
   const manifest = JSON.parse(manifestText) as Record<string, unknown>
   const packageName = typeof manifest.packageName === "string" ? manifest.packageName : ""
   const version = typeof manifest.version === "string" ? manifest.version : ""
+  const sdkVersion = typeof manifest.sdkVersion === "string" ? manifest.sdkVersion : undefined
+  const minHostVersion = typeof manifest.minHostVersion === "string" ? manifest.minHostVersion : undefined
   if (!PACKAGE_NAME_PATTERN.test(packageName)) throw new Error("bundle manifest has an invalid packageName")
   if (!semver.valid(version)) throw new Error("bundle manifest has an invalid semantic version")
   if (expected?.packageName && expected.packageName !== packageName) {
@@ -71,7 +73,7 @@ export async function validateInstallBundleArchive(
       }
     }
   }
-  return {packageName, version}
+  return {packageName, version, sdkVersion, minHostVersion}
 }
 
 function safePath(path: string): boolean {

@@ -65,7 +65,7 @@ import {
   type MiniappAuthToken,
   type TtsSynthesisResult,
 } from "../runtime/config"
-import {getAnalytics, getUiSeams} from "../runtime/bootstrap"
+import {getAnalytics, getConfigValues, getUiSeams} from "../runtime/bootstrap"
 import {invokeScanQrSeam} from "../runtime/scanQrSeam"
 import {normalizeStreamAudioConfig, normalizeStreamVideoConfig} from "../runtime/streamConfig"
 import {toLanguageHint} from "@mentra/cloud-protocol/languages"
@@ -82,6 +82,7 @@ import {listPhoneCalendarEvents, PhoneCalendarError} from "./PhoneCalendarServic
 import {LocalMiniappStorage} from "./LocalMiniappStorage"
 import {isStoreMiniappPackage, isSystemMiniappPackage} from "./SystemMiniappPolicy"
 import {installWithRuntimeReload} from "../utils/storeInstallRuntime"
+import {checkManifestVersions} from "./manifestVersionGate"
 
 // =============================================================================
 // Types
@@ -4182,6 +4183,8 @@ class LocalMiniappRuntime {
       missingOptional: [],
       warnings: [],
     }
+    const releaseIdentity =
+      app.local && app.version ? appRegistry.getReleaseIdentity(app.packageName, app.version) : null
     return {
       packageName: app.packageName,
       name: app.name,
@@ -4189,6 +4192,9 @@ class LocalMiniappRuntime {
       running: app.running,
       compatibility,
       actions: app.actions ?? [],
+      ...(releaseIdentity?.source === "store" && releaseIdentity.storePackageName
+        ? {storeOwnerPackageName: releaseIdentity.storePackageName}
+        : {}),
     }
   }
 
@@ -4341,6 +4347,8 @@ class LocalMiniappRuntime {
     const version = typeof payload.version === "string" ? payload.version.trim() : ""
     const bundleUrl = typeof payload.bundleUrl === "string" ? payload.bundleUrl.trim() : ""
     const bundleSha256 = typeof payload.bundleSha256 === "string" ? payload.bundleSha256.toLowerCase() : ""
+    const minHostVersion = typeof payload.minHostVersion === "string" ? payload.minHostVersion.trim() : undefined
+    const sdkVersion = typeof payload.sdkVersion === "string" ? payload.sdkVersion.trim() : undefined
     const packageNamePattern = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/
     const versionPattern =
       /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/
@@ -4378,6 +4386,21 @@ class LocalMiniappRuntime {
       if (parsedUrl.protocol !== "https:" && !developmentHttp) {
         throw new Error("bundleUrl must use HTTPS")
       }
+      const {hostVersion, supportedMiniappSdkRange} = getConfigValues()
+      if (!hostVersion || !supportedMiniappSdkRange) {
+        throw new Error("Host miniapp compatibility policy is not configured")
+      }
+      const compatibility = checkManifestVersions(
+        {minHostVersion, sdkVersion},
+        {hostVersion, supportedSdkRange: supportedMiniappSdkRange},
+      )
+      if (!compatibility.ok) {
+        this.sendResult(storePackageName, requestId, false, undefined, {
+          code: MiniappErrorCode.APP_NOT_COMPATIBLE,
+          message: compatibility.reason,
+        })
+        return
+      }
       const activeVersion = await appRegistry.getActiveVersion(target)
       const currentIdentity = activeVersion ? appRegistry.getReleaseIdentity(target, activeVersion) : null
       if (
@@ -4400,6 +4423,7 @@ class LocalMiniappRuntime {
             expectedPackageName: target,
             expectedVersion: version,
             expectedBundleSha256: bundleSha256,
+            compatibilityPolicy: {hostVersion, supportedSdkRange: supportedMiniappSdkRange},
             onProgress: (phase) =>
               this.sendToMiniapp(storePackageName, {
                 type: MiniappResponseType.MINIAPPS_INSTALL_PROGRESS,
@@ -4418,12 +4442,19 @@ class LocalMiniappRuntime {
           if (installed.is_error()) throw installed.error
           return installed
         },
-        (restartError) => {
-          console.warn(
-            `${LOG_TAG}: failed to restore ${target} after Store install: ${
-              (restartError as Error)?.message ?? restartError
-            }`,
-          )
+        {
+          restorePreviousVersion: () => {
+            if (!activeVersion) throw new Error(`No prior active version is available for ${target}`)
+            const restored = appRegistry.setActiveVersion(target, activeVersion)
+            if (restored.is_error()) throw restored.error
+          },
+          onRecoveryError: (recoveryError) => {
+            console.warn(
+              `${LOG_TAG}: failed to restore ${target} after Store install: ${
+                (recoveryError as Error)?.message ?? recoveryError
+              }`,
+            )
+          },
         },
       )
       this.sendToMiniapp(storePackageName, {

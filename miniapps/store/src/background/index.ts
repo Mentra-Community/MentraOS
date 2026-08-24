@@ -162,6 +162,8 @@ class StoreController {
         version: app.release.version,
         bundleUrl: app.release.bundleUrl,
         bundleSha256: app.release.bundleSha256,
+        ...(app.release.minHostVersion ? {minHostVersion: app.release.minHostVersion} : {}),
+        ...(app.release.sdkVersion ? {sdkVersion: app.release.sdkVersion} : {}),
         releaseId: app.release.id,
         channel: "stable",
       })

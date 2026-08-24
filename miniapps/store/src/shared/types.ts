@@ -34,6 +34,13 @@ export interface InstalledApp {
   version: string
   running: boolean
   compatibility: {isCompatible: boolean; warnings: string[]}
+  storeOwnerPackageName?: string
+}
+
+export const MENTRA_STORE_PACKAGE_NAME = "com.mentra.store"
+
+export function isManagedByStore(installed: InstalledApp, storePackageName: string): boolean {
+  return installed.storeOwnerPackageName === storePackageName
 }
 
 export interface StoreSnapshot {

@@ -16,11 +16,18 @@ describe("validateInstallBundleArchive", () => {
     const bytes = await bundle({
       packageName: "com.example.app",
       version: "1.0.0",
+      sdkVersion: "0.3.0",
+      minHostVersion: "2.13.0",
       entry: {background: "background/index.js"},
     })
     await expect(
       validateInstallBundleArchive(bytes, {packageName: "com.example.app", version: "1.0.0"}),
-    ).resolves.toEqual({packageName: "com.example.app", version: "1.0.0"})
+    ).resolves.toEqual({
+      packageName: "com.example.app",
+      version: "1.0.0",
+      sdkVersion: "0.3.0",
+      minHostVersion: "2.13.0",
+    })
     await expect(validateInstallBundleArchive(bytes, {packageName: "com.example.other"})).rejects.toThrow(
       "package mismatch",
     )

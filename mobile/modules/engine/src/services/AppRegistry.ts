@@ -166,6 +166,7 @@ export interface InstallBundleOptions {
   expectedPackageName?: string
   expectedVersion?: string
   expectedBundleSha256?: string
+  compatibilityPolicy?: {hostVersion: string; supportedSdkRange: string}
   onProgress?: (phase: "downloading" | "verifying" | "extracting" | "activating") => void
 }
 
@@ -392,10 +393,14 @@ async function downloadAndInstallMiniApp(
   const downloadedZipPath = await downloadMiniAppZip(url, opts?.expectedBundleSha256, opts?.onProgress)
   const downloadedZip = new File(downloadedZipPath)
   try {
-    await validateInstallBundleArchive(await downloadedZip.bytes(), {
+    const manifest = await validateInstallBundleArchive(await downloadedZip.bytes(), {
       packageName: opts?.expectedPackageName,
       version: opts?.expectedVersion,
     })
+    if (opts?.compatibilityPolicy) {
+      const compatibility = checkManifestVersions(manifest, opts.compatibilityPolicy)
+      if (!compatibility.ok) throw new Error(compatibility.reason)
+    }
     console.log("ZIP: done downloading, starting unzip")
     return await unpackMiniApp(
       downloadedZipPath,
@@ -615,10 +620,14 @@ class AppRegistry {
         const actual = await sha256Hex(await new File(zipPath).bytes())
         if (actual !== expected) throw new Error(`bundle SHA-256 mismatch: expected ${expected}, got ${actual}`)
       }
-      await validateInstallBundleArchive(await new File(zipPath).bytes(), {
+      const manifest = await validateInstallBundleArchive(await new File(zipPath).bytes(), {
         packageName: opts?.expectedPackageName,
         version: opts?.expectedVersion,
       })
+      if (opts?.compatibilityPolicy) {
+        const compatibility = checkManifestVersions(manifest, opts.compatibilityPolicy)
+        if (!compatibility.ok) throw new Error(compatibility.reason)
+      }
       const {packageName, version} = await unpackMiniApp(
         zipPath,
         opts?.versionOverride,

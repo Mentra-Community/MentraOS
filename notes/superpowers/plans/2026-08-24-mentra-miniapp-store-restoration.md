@@ -111,7 +111,7 @@ publisher signatures can be enforced later without changing the API.
       the previous artifact after a failed ZIP command.
 - [x] Mentra Miniapp SDK: 270 passed.
 - [x] Installer/SYSTEM security tests, including bundle-name impersonation.
-- [x] Store controller tests: 6 passed.
+- [x] Store controller and ownership tests: 8 passed.
 - [x] Headless Chromium Store UI E2E at a 390×844 phone viewport: catalog,
       search-query preservation, install, details, verified identity, Installed
       state, and horizontal-overflow assertion.
@@ -121,10 +121,11 @@ publisher signatures can be enforced later without changing the API.
 - [x] Android ASG and Bluetooth SDK compile checks.
 - [x] Full iOS Simulator native build with code signing disabled.
 - [x] ZIP integrity check. Bundled Store SHA-256:
-      `c9689f513e082fbda1a0b4d3f2f0085fe8c0b14ff1101cd241e07b14e406186e`.
+      `1101b7049ad2223f78d116e89b4bd5b33be0e5e720d63ce54ea32e5bbc60560c`.
 - [x] Review regressions: bounded streaming inflation and CRC checks in both
       Core and the phone, trusted host-selected Core URL, complete catalog
-      pagination, and running-context reload around updates.
+      pagination, Store-owned uninstall visibility, pre-activation host/SDK
+      compatibility gates, and running-context retry/rollback around updates.
 - [x] Touched-file lint and `git diff --check`.
 - [x] Full Cloud suite audit: 544 passed, 1 skipped. The aggregate invocation
       also reproduces unrelated shared-state/credential baselines (R2 is not
@@ -133,7 +134,7 @@ publisher signatures can be enforced later without changing the API.
       lifecycle remains green in isolation.
 - [x] No secrets, environment files, build directories, or generated native
       projects are included.
-- [ ] Interactive phone/glasses smoke test. No simulator/browser/device was
+- [ ] Interactive phone/glasses smoke test. No simulator or physical device was
       attached to this workspace; native builds and automated host/UI tests are
       the available pre-review gates.
 

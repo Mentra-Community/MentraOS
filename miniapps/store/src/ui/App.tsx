@@ -1,9 +1,19 @@
 import {useCallback, useEffect, useMemo, useState} from "react"
 import {useColorScheme, useSafeArea} from "@mentra/miniapp/ui"
 import {isNewerVersion} from "../background/catalog"
-import type {InstalledApp, StoreApp, StoreSnapshot} from "../shared/types"
+import {
+  MENTRA_STORE_PACKAGE_NAME,
+  isManagedByStore,
+  type InstalledApp,
+  type StoreApp,
+  type StoreSnapshot,
+} from "../shared/types"
 
 type Tab = "store" | "installed" | "updates"
+
+function isManagedByThisStore(installed: InstalledApp): boolean {
+  return isManagedByStore(installed, MENTRA_STORE_PACKAGE_NAME)
+}
 
 const EMPTY: StoreSnapshot = {
   apps: [],
@@ -229,12 +239,14 @@ function InstalledOnlyRow({
           onClick={() => void onAction("open", installed.packageName)}>
           Open
         </button>
-        <button
-          className="action danger-action"
-          disabled={busy}
-          onClick={() => void onAction("uninstall", installed.packageName)}>
-          Remove
-        </button>
+        {isManagedByThisStore(installed) && (
+          <button
+            className="action danger-action"
+            disabled={busy}
+            onClick={() => void onAction("uninstall", installed.packageName)}>
+            Remove
+          </button>
+        )}
       </div>
     </article>
   )
@@ -353,7 +365,7 @@ function Detail({
             <button onClick={() => window.open(app.privacyPolicyUrl!, "_blank")}>Privacy policy ↗</button>
           )}
           {app.supportUrl && <button onClick={() => window.open(app.supportUrl!, "_blank")}>Support ↗</button>}
-          {installed && (
+          {installed && isManagedByThisStore(installed) && (
             <button className="danger" disabled={busy} onClick={() => void onAction("uninstall", app.packageName)}>
               Uninstall
             </button>

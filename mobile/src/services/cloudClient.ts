@@ -13,6 +13,7 @@
  * delegating shim while construction and runtime wiring live in island.
  */
 import {cloudClientService} from "@mentra/engine/internal"
+import Constants from "expo-constants"
 
 import {SETTINGS, engine} from "@mentra/engine"
 import {devServerHost, METRO_AUTO} from "@/utils/cloudClient/devHost"
@@ -96,6 +97,8 @@ export function cloudConfigValues(): {
   runtimeUrl: string
   audioFrameSizeBytes: number
   devServerHost: () => string | undefined
+  hostVersion: string
+  supportedMiniappSdkRange: string
 } {
   const endpoints = resolvedEndpoints()
   return {
@@ -103,6 +106,8 @@ export function cloudConfigValues(): {
     runtimeUrl: endpoints.runtime,
     audioFrameSizeBytes: lc3FrameSizeBytes(),
     devServerHost,
+    hostVersion: Constants.expoConfig?.version ?? process.env.EXPO_PUBLIC_MENTRAOS_VERSION ?? "0.0.0",
+    supportedMiniappSdkRange: "^0.3.0",
   }
 }
 

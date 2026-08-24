@@ -43,6 +43,8 @@ export interface MiniappInfo {
   version: string
   running: boolean
   compatibility: MiniappCompatibility
+  /** Store package that owns this active release, if it was Store-installed. */
+  storeOwnerPackageName?: string
   /** Declared actions (empty if the miniapp declares none). */
   actions: MiniappActionInfo[]
 }
@@ -58,6 +60,10 @@ export interface InstallMiniappRequest {
   version: string
   bundleUrl: string
   bundleSha256: string
+  /** Minimum Mentra App/host version declared by the release manifest. */
+  minHostVersion?: string
+  /** Mentra Miniapp SDK ABI version declared by the release manifest. */
+  sdkVersion?: string
   releaseId?: string
   channel?: string
   /**
