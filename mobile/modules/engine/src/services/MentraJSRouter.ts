@@ -96,6 +96,7 @@ interface SpawnCache {
   miniappJs: string
   permissions: string[]
   installedManifest?: InstalledMiniappManifest
+  hostTrustedSystem: boolean
 }
 
 export class MentraJSRouter {
@@ -192,13 +193,14 @@ export class MentraJSRouter {
    * (e.g. {@link spawnAndRegister} below, or the host's miniapp launch
    * pipeline) should call this once per spawn.
    */
-  registerApp(packageName: string, installedManifest?: InstalledMiniappManifest): void {
+  registerApp(packageName: string, installedManifest?: InstalledMiniappManifest, hostTrustedSystem = false): void {
     this.runtime.registerApp(
       packageName,
       (raw: string) => {
         this.dispatchBridgeRaw(packageName, raw)
       },
       installedManifest,
+      hostTrustedSystem,
     )
     this.registered.add(packageName)
     // JSContext is the source-of-truth for "miniapp running". The
@@ -218,7 +220,11 @@ export class MentraJSRouter {
   async spawnAndRegister(
     packageName: string,
     miniappJs: string,
-    options?: {permissions?: string[]; installedManifest?: InstalledMiniappManifest},
+    options?: {
+      permissions?: string[]
+      installedManifest?: InstalledMiniappManifest
+      hostTrustedSystem?: boolean
+    },
   ): Promise<boolean> {
     if (!this.crust.mentraJsSpawn) {
       this.logger.warn("mentraJsSpawn not available — host binding missing native function")
@@ -243,7 +249,7 @@ export class MentraJSRouter {
     if (options?.permissions && options.permissions.length > 0) {
       await this.crust.mentraJsSetManifest(packageName, options.permissions)
     }
-    this.registerApp(packageName, options?.installedManifest)
+    this.registerApp(packageName, options?.installedManifest, options?.hostTrustedSystem ?? false)
     // Cache spawn arguments so the crash controller can respawn the
     // same code after a backoff. permissions + manifest are cached too
     // because the native side resets setManifest on every spawn and
@@ -253,6 +259,7 @@ export class MentraJSRouter {
       miniappJs,
       permissions: options?.permissions ?? [],
       installedManifest: options?.installedManifest,
+      hostTrustedSystem: options?.hostTrustedSystem ?? false,
     })
     this.crashController?.onSpawn(packageName)
 
@@ -320,7 +327,7 @@ export class MentraJSRouter {
         if (cached.permissions.length > 0) {
           await this.crust.mentraJsSetManifest(packageName, cached.permissions)
         }
-        this.registerApp(packageName, cached.installedManifest)
+        this.registerApp(packageName, cached.installedManifest, cached.hostTrustedSystem)
         controller.onSpawn(packageName)
         // Re-fire the init envelope so the respawned context's
         // `registerMiniapp` handler runs again.

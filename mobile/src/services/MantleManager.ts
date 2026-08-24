@@ -27,6 +27,7 @@ import {
   phoneLocationService,
   ttsModelManager,
   useAppStatusStore,
+  saveLocalAppRunningState,
 } from "@mentra/engine/internal"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import {useDebugStore} from "@/stores/debug"
@@ -561,6 +562,11 @@ class MantleManager {
     // new mobile binary.
     await preinstalledMiniappSync.sync()
 
+    // The Store is a bundled two-layer miniapp, but its controller is a
+    // system service: keep the background JSContext running headlessly so it
+    // can reconcile catalog/update state without mounting phone UI.
+    saveLocalAppRunningState("com.mentra.store", true)
+
     // Re-spawn local miniapps that were running when the app was last killed.
     // Cloud apps get resurrected by the cloud on reconnect; local (phone-hosted)
     // miniapps have no server to bring them back, so the launcher restarts them
@@ -600,7 +606,12 @@ class MantleManager {
         }
 
         if (appRegistry.getInstalledVersions(packageName).includes(version)) {
-          continue
+          // The directory alone is not enough for privileged bundled apps: an
+          // older direct/dev install may have claimed the same package and
+          // version. Reinstall once unless host-owned bundled provenance is
+          // already recorded, which also migrates pre-provenance installs.
+          const identity = appRegistry.getReleaseIdentity(packageName, version)
+          if (identity?.source === "bundled_asset") continue
         }
 
         let superMode = await engine.settings.get(SETTINGS.super_mode.key)

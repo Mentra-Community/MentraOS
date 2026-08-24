@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { WorkOS } from "@workos-inc/node";
 import { createRemoteJWKSet, jwtVerify } from "jose";
@@ -11,11 +12,7 @@ import {
 import { DeveloperApiKeyService } from "../../services/developer-orgs/developer-api-key.service";
 import { DeveloperOrgInvitationService } from "../../services/developer-orgs/developer-org-invitation.service";
 import { sendOrgInviteEmail } from "../../services/email/email.service";
-import {
-  MiniAppService,
-  MiniAppServiceError,
-  type DeveloperIdentity,
-} from "../../services/miniapps/miniapp.service";
+import { MiniAppService, MiniAppServiceError, type DeveloperIdentity } from "../../services/miniapps/miniapp.service";
 import {
   DeveloperSigningService,
   DeveloperSigningServiceError,
@@ -37,6 +34,19 @@ const apiKeys = new DeveloperApiKeyService();
 const invitations = new DeveloperOrgInvitationService();
 const miniapps = new MiniAppService();
 const signing = new DeveloperSigningService();
+const MAX_RELEASE_BUNDLE_BYTES = 50 * 1024 * 1024;
+const MAX_RELEASE_REQUEST_BODY_BYTES = 72 * 1024 * 1024;
+const releaseBodyLimit = bodyLimit({
+  maxSize: MAX_RELEASE_REQUEST_BODY_BYTES,
+  onError: c =>
+    c.json(
+      {
+        error: "invalid_request",
+        error_description: `release request exceeds ${MAX_RELEASE_REQUEST_BODY_BYTES} bytes`,
+      },
+      413,
+    ),
+});
 
 const upsertDeveloperOrgSchema = z.object({
   displayName: z.string().min(1),
@@ -57,11 +67,30 @@ const createMiniAppSchema = z.object({
   description: z.string().nullable().optional(),
 });
 
+const updateStoreListingSchema = z.object({
+  subtitle: z.string().max(120).nullable().optional(),
+  longDescription: z.string().max(10_000).nullable().optional(),
+  categories: z.array(z.string().max(40)).max(5).optional(),
+  privacyPolicyUrl: z.string().max(2_000).nullable().optional(),
+  supportUrl: z.string().max(2_000).nullable().optional(),
+  websiteUrl: z.string().max(2_000).nullable().optional(),
+});
+
+const createStoreAssetSchema = z.object({
+  role: z.enum(["store_icon", "store_cover", "gallery_screenshot"]),
+  fileName: z.string().min(1).max(120),
+  contentType: z.enum(["image/png", "image/jpeg", "image/webp", "image/avif"]),
+  base64: z.string().min(1).max(14_000_000),
+});
+
 const createReleaseSchema = z.object({
   packageName: z.string().min(1),
   version: z.string().min(1),
   manifest: z.record(z.string(), z.unknown()),
-  bundleBase64: z.string().min(1),
+  bundleBase64: z
+    .string()
+    .min(1)
+    .max(Math.ceil((MAX_RELEASE_BUNDLE_BYTES * 4) / 3) + 4),
   fileName: z.string().min(1).optional(),
   signedBundle: z.object({
     signingKeyId: z.string().min(1),
@@ -76,6 +105,8 @@ const createReleaseSchema = z.object({
   }),
 });
 
+const createReleaseMetadataSchema = createReleaseSchema.omit({ bundleBase64: true });
+
 const registerSigningKeySchema = z.object({
   publicKeyJwk: z.record(z.string(), z.unknown()),
 });
@@ -84,7 +115,7 @@ const createApiTokenSchema = z.object({
   name: z.string().min(1).max(80),
 });
 
-app.get("/health", (c) => c.json({ status: "ok", service: "cloud-core-console" }));
+app.get("/health", c => c.json({ status: "ok", service: "cloud-core-console" }));
 app.get("/auth/login", getLogin);
 app.get("/auth/social/:provider", getSocialLogin);
 app.get("/auth/callback", getCallback);
@@ -102,8 +133,12 @@ app.patch("/org/members/:membershipId", patchOrgMember);
 app.get("/apps", getApps);
 app.post("/apps", postApps);
 app.delete("/apps/:packageName", deleteApp);
+app.get("/apps/:packageName/listing", getStoreListing);
+app.put("/apps/:packageName/listing", putStoreListing);
+app.post("/apps/:packageName/listing/assets", postStoreAsset);
+app.delete("/apps/:packageName/listing/assets/:assetId", deleteStoreAsset);
 app.get("/apps/:packageName/releases", getReleases);
-app.post("/apps/:packageName/releases", postRelease);
+app.post("/apps/:packageName/releases", releaseBodyLimit, postRelease);
 app.post("/apps/:packageName/releases/:releaseId/submit", postSubmitRelease);
 app.get("/signing-keys", getSigningKeys);
 app.post("/signing-keys", postSigningKey);
@@ -120,11 +155,7 @@ function getLogin(c: AppContext) {
 
 function getSocialLogin(c: AppContext) {
   const providerParam = c.req.param("provider");
-  const provider = providerParam === "github"
-    ? "GitHubOAuth"
-    : providerParam === "google"
-      ? "GoogleOAuth"
-      : null;
+  const provider = providerParam === "github" ? "GitHubOAuth" : providerParam === "google" ? "GoogleOAuth" : null;
   if (!provider) throw new InvalidRequest("unsupported social provider");
   return redirectToWorkos(c, provider);
 }
@@ -180,25 +211,13 @@ async function getCallback(c: AppContext) {
   deleteCookie(c, RETURN_TO_COOKIE, { path: "/api/console/auth" });
 
   if (!code) {
-    return redirectToConsoleLoginError(
-      c,
-      "Sign-in could not be completed. Please try again.",
-      returnTo,
-    );
+    return redirectToConsoleLoginError(c, "Sign-in could not be completed. Please try again.", returnTo);
   }
   if (!state || !expectedState || state !== expectedState) {
-    return redirectToConsoleLoginError(
-      c,
-      "Sign-in expired. Please try again.",
-      returnTo,
-    );
+    return redirectToConsoleLoginError(c, "Sign-in expired. Please try again.", returnTo);
   }
   if (!codeVerifier) {
-    return redirectToConsoleLoginError(
-      c,
-      "Sign-in expired. Please try again.",
-      returnTo,
-    );
+    return redirectToConsoleLoginError(c, "Sign-in expired. Please try again.", returnTo);
   }
 
   const config = workosConfig();
@@ -233,11 +252,7 @@ async function getCallback(c: AppContext) {
         setOrganizationSelectionCookie(c, selection, returnTo);
         return c.redirect(`${config.consoleUrl}/select-organization`);
       }
-      return redirectToConsoleLoginError(
-        c,
-        "Sign-in expired or could not be completed. Please try again.",
-        returnTo,
-      );
+      return redirectToConsoleLoginError(c, "Sign-in expired or could not be completed. Please try again.", returnTo);
     }
     throw error;
   }
@@ -286,7 +301,9 @@ async function completeOrganizationSelection(
   responseMode: "json" | "redirect",
 ): Promise<Response> {
   const config = workosConfig();
-  let response: Awaited<ReturnType<ReturnType<typeof workos>["userManagement"]["authenticateWithOrganizationSelection"]>>;
+  let response: Awaited<
+    ReturnType<ReturnType<typeof workos>["userManagement"]["authenticateWithOrganizationSelection"]>
+  >;
   try {
     response = await workos().userManagement.authenticateWithOrganizationSelection({
       organizationId,
@@ -306,7 +323,10 @@ async function completeOrganizationSelection(
       );
       deleteCookie(c, ORG_SELECTION_COOKIE, { path: "/api/console/auth" });
       return new Response(
-        JSON.stringify({ error: body.error, error_description: body.error_description || "Sign-in could not be completed." }),
+        JSON.stringify({
+          error: body.error,
+          error_description: body.error_description || "Sign-in could not be completed.",
+        }),
         {
           status: workosErrorStatus(error),
           headers: { "content-type": "application/json" },
@@ -542,7 +562,10 @@ async function postAcceptInvitation(c: AppContext) {
   try {
     const invite = await invitations.peek(token);
     if (!invite) {
-      return c.json({ error: "invalid_invitation", error_description: "this invitation is invalid or has expired" }, 404);
+      return c.json(
+        { error: "invalid_invitation", error_description: "this invitation is invalid or has expired" },
+        404,
+      );
     }
     // The invite is addressed to a specific email; the signed-in account must match.
     if (authenticatedSession.user.email.trim().toLowerCase() !== invite.email) {
@@ -714,6 +737,70 @@ async function deleteApp(c: AppContext) {
   }
 }
 
+async function getStoreListing(c: AppContext) {
+  const developer = await requireDeveloper(c);
+  if (!developer.ok) return developer.response;
+  const packageName = c.req.param("packageName");
+  if (!packageName) throw new InvalidRequest("packageName is required");
+  try {
+    return c.json({ listing: await miniapps.getStoreListing(developer.value, packageName) });
+  } catch (error) {
+    return serviceError(error);
+  }
+}
+
+async function putStoreListing(c: AppContext) {
+  const developer = await requireDeveloper(c);
+  if (!developer.ok) return developer.response;
+  const packageName = c.req.param("packageName");
+  if (!packageName) throw new InvalidRequest("packageName is required");
+  const parsed = updateStoreListingSchema.safeParse(await readJsonBody(c));
+  if (!parsed.success) throw new InvalidRequest(parsed.error.issues[0]?.message ?? "invalid listing payload");
+  try {
+    return c.json({ listing: await miniapps.updateStoreListing(developer.value, packageName, parsed.data) });
+  } catch (error) {
+    return serviceError(error);
+  }
+}
+
+async function postStoreAsset(c: AppContext) {
+  const developer = await requireDeveloper(c);
+  if (!developer.ok) return developer.response;
+  const packageName = c.req.param("packageName");
+  if (!packageName) throw new InvalidRequest("packageName is required");
+  const parsed = createStoreAssetSchema.safeParse(await readJsonBody(c));
+  if (!parsed.success) throw new InvalidRequest(parsed.error.issues[0]?.message ?? "invalid asset payload");
+  try {
+    const bytes = Uint8Array.from(Buffer.from(parsed.data.base64, "base64"));
+    return c.json(
+      {
+        asset: await miniapps.createStoreAsset(developer.value, packageName, {
+          role: parsed.data.role,
+          fileName: parsed.data.fileName,
+          contentType: parsed.data.contentType,
+          bytes,
+        }),
+      },
+      201,
+    );
+  } catch (error) {
+    return serviceError(error);
+  }
+}
+
+async function deleteStoreAsset(c: AppContext) {
+  const developer = await requireDeveloper(c);
+  if (!developer.ok) return developer.response;
+  const packageName = c.req.param("packageName");
+  const assetId = c.req.param("assetId");
+  if (!packageName || !assetId) throw new InvalidRequest("packageName and assetId are required");
+  try {
+    return c.json(await miniapps.deleteStoreAsset(developer.value, packageName, assetId));
+  } catch (error) {
+    return serviceError(error);
+  }
+}
+
 async function getReleases(c: AppContext) {
   const developer = await requireDeveloper(c);
   if (!developer.ok) return developer.response;
@@ -731,7 +818,27 @@ async function postRelease(c: AppContext) {
   const developer = await requireDeveloper(c);
   if (!developer.ok) return developer.response;
 
-  const parsed = createReleaseSchema.safeParse(await readJsonBody(c));
+  const contentType = c.req.header("content-type") ?? "";
+  let candidate: unknown;
+  let multipartBundle: Uint8Array | undefined;
+  if (contentType.toLowerCase().startsWith("multipart/form-data")) {
+    const form = await c.req.formData();
+    const manifest = parseFormJson(form.get("manifest"), "manifest");
+    const signedBundle = parseFormJson(form.get("signedBundle"), "signedBundle");
+    const bundle = form.get("bundle");
+    if (!(bundle instanceof File)) throw new InvalidRequest("bundle file is required");
+    multipartBundle = new Uint8Array(await bundle.arrayBuffer());
+    candidate = {
+      packageName: form.get("packageName"),
+      version: form.get("version"),
+      fileName: form.get("fileName") || bundle.name,
+      manifest,
+      signedBundle,
+    };
+  } else {
+    candidate = await readJsonBody(c);
+  }
+  const parsed = (multipartBundle ? createReleaseMetadataSchema : createReleaseSchema).safeParse(candidate);
   if (!parsed.success) throw new InvalidRequest(parsed.error.issues[0]?.message ?? "invalid release payload");
   const pathPackageName = c.req.param("packageName");
   if (pathPackageName !== parsed.data.packageName) {
@@ -739,7 +846,9 @@ async function postRelease(c: AppContext) {
   }
 
   try {
-    const bundle = Uint8Array.from(Buffer.from(parsed.data.bundleBase64, "base64"));
+    const bundle =
+      multipartBundle ??
+      Uint8Array.from(Buffer.from((parsed.data as z.infer<typeof createReleaseSchema>).bundleBase64, "base64"));
     assertSignedReleaseMatchesUpload(parsed.data.signedBundle.payload, {
       packageName: parsed.data.packageName,
       version: parsed.data.version,
@@ -758,6 +867,15 @@ async function postRelease(c: AppContext) {
     return c.json({ release }, 201);
   } catch (error) {
     return serviceError(error);
+  }
+}
+
+function parseFormJson(value: string | File | null, field: string): unknown {
+  if (typeof value !== "string") throw new InvalidRequest(`${field} is required`);
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    throw new InvalidRequest(`${field} must be valid JSON`);
   }
 }
 
@@ -889,11 +1007,7 @@ async function ensureWorkosOrgLinked(
   if (org.workosOrgId) return org;
   // Any owner (by role) may bootstrap the WorkOS org, not only the creator.
   if ((await resolveOrgRole(authenticatedSession, org)) !== "owner") {
-    throw new DeveloperOrgServiceError(
-      "team_access_not_ready",
-      "team access is not ready for this org yet",
-      409,
-    );
+    throw new DeveloperOrgServiceError("team_access_not_ready", "team access is not ready for this org yet", 409);
   }
 
   // The WorkOS org is kept only as the auth/SSO context (membership lives in our
@@ -1008,10 +1122,9 @@ export type ConsoleAuthResult =
     }
   | { authenticated: false; reason: string };
 
-async function requireDeveloper(c: AppContext): Promise<
-  | { ok: true; value: DeveloperIdentity }
-  | { ok: false; response: Response }
-> {
+async function requireDeveloper(
+  c: AppContext,
+): Promise<{ ok: true; value: DeveloperIdentity } | { ok: false; response: Response }> {
   const developer = await requireConsoleOrg(c);
   if (!developer.ok) return developer;
 
@@ -1026,7 +1139,9 @@ async function requireDeveloper(c: AppContext): Promise<
   };
 }
 
-async function requireConsoleOrg(c: AppContext): Promise<
+async function requireConsoleOrg(
+  c: AppContext,
+): Promise<
   | { ok: true; auth: Extract<ConsoleAuthResult, { authenticated: true }>; org: DeveloperOrgRecord }
   | { ok: false; response: Response }
 > {
@@ -1041,7 +1156,10 @@ async function requireConsoleOrg(c: AppContext): Promise<
   if (!developerOrg) {
     return {
       ok: false,
-      response: c.json({ error: "organization_required", error_description: "create a developer org before using this API" }, 428),
+      response: c.json(
+        { error: "organization_required", error_description: "create a developer org before using this API" },
+        428,
+      ),
     };
   }
   return { ok: true, auth: authenticatedSession, org: developerOrg };
@@ -1186,31 +1304,22 @@ function bearerToken(c: AppContext): string | null {
 
 function serviceError(error: unknown): Response {
   if (error instanceof MiniAppServiceError) {
-    return new Response(
-      JSON.stringify({ error: error.code, error_description: error.message }),
-      {
-        status: error.status,
-        headers: { "content-type": "application/json" },
-      },
-    );
+    return new Response(JSON.stringify({ error: error.code, error_description: error.message }), {
+      status: error.status,
+      headers: { "content-type": "application/json" },
+    });
   }
   if (error instanceof DeveloperOrgServiceError) {
-    return new Response(
-      JSON.stringify({ error: error.code, error_description: error.message }),
-      {
-        status: error.status,
-        headers: { "content-type": "application/json" },
-      },
-    );
+    return new Response(JSON.stringify({ error: error.code, error_description: error.message }), {
+      status: error.status,
+      headers: { "content-type": "application/json" },
+    });
   }
   if (error instanceof DeveloperSigningServiceError) {
-    return new Response(
-      JSON.stringify({ error: error.code, error_description: error.message }),
-      {
-        status: error.status,
-        headers: { "content-type": "application/json" },
-      },
-    );
+    return new Response(JSON.stringify({ error: error.code, error_description: error.message }), {
+      status: error.status,
+      headers: { "content-type": "application/json" },
+    });
   }
   throw error;
 }
@@ -1300,16 +1409,18 @@ function workosOrganizationSelection(error: unknown): WorkosOrganizationSelectio
     .map(org => {
       if (!org || typeof org !== "object") return null;
       const value = org as { id?: unknown; name?: unknown; organization_id?: unknown; organization_name?: unknown };
-      const id = typeof value.id === "string"
-        ? value.id
-        : typeof value.organization_id === "string"
-          ? value.organization_id
-          : "";
-      const name = typeof value.name === "string"
-        ? value.name
-        : typeof value.organization_name === "string"
-          ? value.organization_name
-          : id;
+      const id =
+        typeof value.id === "string"
+          ? value.id
+          : typeof value.organization_id === "string"
+            ? value.organization_id
+            : "";
+      const name =
+        typeof value.name === "string"
+          ? value.name
+          : typeof value.organization_name === "string"
+            ? value.organization_name
+            : id;
       return id ? { id, name } : null;
     })
     .filter((org): org is WorkosOrganizationChoice => Boolean(org));
@@ -1392,9 +1503,8 @@ function teamAccessError(error: unknown): Response {
   return new Response(
     JSON.stringify({
       error: body.error || "team_access_failed",
-      error_description: body.error_description === "WorkOS request failed"
-        ? "team access request failed"
-        : body.error_description,
+      error_description:
+        body.error_description === "WorkOS request failed" ? "team access request failed" : body.error_description,
     }),
     {
       status: workosErrorStatus(error),
@@ -1509,9 +1619,7 @@ function allowedConsoleOrigins(): Set<string> {
     "http://localhost:5174",
     "http://localhost:5175",
   ].filter((candidate): candidate is string => Boolean(candidate));
-  return new Set(
-    allowedUrls.map(candidate => new URL(candidate).origin),
-  );
+  return new Set(allowedUrls.map(candidate => new URL(candidate).origin));
 }
 
 function shouldUseSecureCookies(): boolean {

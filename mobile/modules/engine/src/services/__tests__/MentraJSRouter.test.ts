@@ -78,6 +78,7 @@ function buildMockRuntime() {
     packageName: string
     sendFn: (raw: string) => void
     installedManifest?: unknown
+    hostTrustedSystem?: boolean
   }> = []
   const handleRawCalls: Array<{packageName: string; raw: string}> = []
   const unregisterCalls: string[] = []
@@ -85,8 +86,13 @@ function buildMockRuntime() {
   const setManifestCalls: Array<{packageName: string; installedManifest: unknown}> = []
   const resetHandshakeCalls: string[] = []
   const runtime = {
-    registerApp(packageName: string, sendFn: (raw: string) => void, installedManifest?: unknown) {
-      registerCalls.push({packageName, sendFn, installedManifest})
+    registerApp(
+      packageName: string,
+      sendFn: (raw: string) => void,
+      installedManifest?: unknown,
+      hostTrustedSystem?: boolean,
+    ) {
+      registerCalls.push({packageName, sendFn, installedManifest, hostTrustedSystem})
     },
     handleRawMessage(packageName: string, raw: string) {
       handleRawCalls.push({packageName, raw})
@@ -300,6 +306,7 @@ describe("MentraJSRouter", () => {
     const ok = await router.spawnAndRegister("com.foo", "console.log(1)", {
       permissions: ["MICROPHONE"],
       installedManifest,
+      hostTrustedSystem: true,
     })
     expect(ok).toBe(true)
     expect(crust.spawnCalls).toEqual([
@@ -310,6 +317,7 @@ describe("MentraJSRouter", () => {
     // installedManifest threads through to LocalMiniappRuntime so the
     // SUBSCRIBE gate matches stream→permission against declared types.
     expect(runtimeMock.registerCalls[0]!.installedManifest).toEqual(installedManifest)
+    expect(runtimeMock.registerCalls[0]!.hostTrustedSystem).toBe(true)
     // The init envelope is what fires registerMiniapp's handler inside
     // the JSContext. Without it, the user's code never runs.
     const initCalls = crust.dispatchCalls.filter((c) => c.envelope.kind === "init")

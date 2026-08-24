@@ -12,6 +12,7 @@ let activeVersion = "1.0.0"
 mock.module("../AppRegistry", () => ({
   default: {
     getActiveVersion: async () => activeVersion,
+    getReleaseIdentity: () => ({source: "bundled_asset"}),
     getMiniappEntryPaths: () => ({background: "file:///bundle/bg.js", ui: "file:///bundle/ui.html"}),
     getMiniappManifest: () => ({permissions: [{type: "MICROPHONE"}], hardwareRequirements: []}),
   },
@@ -60,12 +61,21 @@ beforeAll(async () => {
 // Fresh router (mutable registered set) per test.
 function buildMockRouter() {
   const registered = new Set<string>()
-  const spawnCalls: Array<{packageName: string; src: string; permissions?: string[]}> = []
+  const spawnCalls: Array<{packageName: string; src: string; permissions?: string[]; hostTrustedSystem?: boolean}> = []
   const unregisterCalls: string[] = []
   const router = {
     registeredPackages: () => Array.from(registered),
-    spawnAndRegister: async (packageName: string, src: string, opts?: {permissions?: string[]}) => {
-      spawnCalls.push({packageName, src, permissions: opts?.permissions})
+    spawnAndRegister: async (
+      packageName: string,
+      src: string,
+      opts?: {permissions?: string[]; hostTrustedSystem?: boolean},
+    ) => {
+      spawnCalls.push({
+        packageName,
+        src,
+        permissions: opts?.permissions,
+        hostTrustedSystem: opts?.hostTrustedSystem,
+      })
       registered.add(packageName)
       return true
     },
@@ -103,6 +113,14 @@ describe("MiniappLauncher", () => {
     await miniappLauncher.ensureRunning("com.x")
     await miniappLauncher.ensureRunning("com.x")
     expect(mockRouter.spawnCalls.length).toBe(1)
+  })
+
+  test("marks only a host-bundled allowlisted package as SYSTEM-trusted", async () => {
+    await miniappLauncher.ensureRunning("com.mentra.store")
+    expect(mockRouter.spawnCalls[0].hostTrustedSystem).toBe(true)
+
+    await miniappLauncher.ensureRunning("com.example.store")
+    expect(mockRouter.spawnCalls[1].hostTrustedSystem).toBe(false)
   })
 
   test("coalesces concurrent launches of the same package onto one spawn", async () => {

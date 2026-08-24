@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, copyFileSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, copyFileSync, rmSync, writeFileSync } from 'fs';
 import { resolve, join } from 'path';
 import { buildProduction } from './build.js';
 import { validateManifest } from './manifest.js';
@@ -116,6 +116,11 @@ export async function pack(opts: PackOptions = {}): Promise<string> {
     writeFileSync(selfIgnore, '*\n');
   }
   const outputPath = resolve(outDir, outputName);
+
+  // `zip -r` updates an existing archive and retains files that disappeared
+  // from dist (for example hashed UI chunks from the previous build). Always
+  // start from a fresh archive so release contents exactly match dist/.
+  if (existsSync(outputPath)) rmSync(outputPath);
 
   // Create ZIP using system zip command
   const zipProc = Bun.spawn(['zip', '-r', outputPath, '.'], {

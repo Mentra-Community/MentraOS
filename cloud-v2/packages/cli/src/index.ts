@@ -32,13 +32,14 @@ import { getConfig } from "./config";
 import { clearCredentials, loadCredentials, saveCredentials, type CliCredentials } from "./credentials";
 import { openBrowser } from "./open-browser";
 import { encodeDevAttestation, ensureSigningKey, signBundleMetadata, signDevAttestation } from "./signing";
+import { validatePackedBundle } from "./validate-bundle";
 
 const program = new Command();
+const CLI_VERSION = (
+  JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string }
+).version;
 
-program
-  .name("mentra")
-  .description("Mentra developer CLI")
-  .version("2.0.0-alpha.0");
+program.name("mentra").description("Mentra developer CLI").version(CLI_VERSION);
 
 program
   .command("login")
@@ -83,7 +84,7 @@ program
             ? new Date(storedAt.getTime() + token.expires_in * 1000)
             : expiresAtFromToken(token.access_token)
               ? new Date(expiresAtFromToken(token.access_token)! * 1000)
-            : undefined;
+              : undefined;
         const storage = await saveCredentials({
           token: token.access_token,
           refreshToken: token.refresh_token,
@@ -141,7 +142,7 @@ org
     try {
       const { org: developerOrg } = await getOrg(creds);
       if (!developerOrg) {
-        console.log("No developer org yet. Run `mentra org init --name \"Your Org\" --prefix com.example`.");
+        console.log('No developer org yet. Run `mentra org init --name "Your Org" --prefix com.example`.');
         return;
       }
 
@@ -246,12 +247,17 @@ releases
   .command("list")
   .argument("<packageName>", "package name")
   .description("List releases for a miniapp")
-  .action(async (packageName: string) => {
+  .option("--json", "print machine-readable JSON")
+  .action(async (packageName: string, options: { json?: boolean }) => {
     const creds = await requireCredentials();
     if (!creds) return;
 
     try {
       const { releases: releaseList } = await listReleases(creds, packageName);
+      if (options.json) {
+        console.log(JSON.stringify({ releases: releaseList }, null, 2));
+        return;
+      }
       if (releaseList.length === 0) {
         console.log("No releases yet.");
         return;
@@ -260,6 +266,34 @@ releases
       for (const release of releaseList) {
         const size = release.bundleSizeBytes ? `${Math.round(release.bundleSizeBytes / 1024)} KB` : "no bundle";
         console.log(`${release.version}\t${release.status}\t${size}\t${release.bundleSha256 ?? "no hash"}`);
+        if (release.reviewNotes) console.log(`  Review: ${release.reviewNotes}`);
+      }
+    } catch (error) {
+      fail(error);
+    }
+  });
+
+releases
+  .command("status")
+  .argument("<packageName>", "package name")
+  .argument("[releaseId]", "release id; defaults to the latest release")
+  .option("--json", "print machine-readable JSON")
+  .description("Show release state and review feedback")
+  .action(async (packageName: string, releaseId: string | undefined, options: { json?: boolean }) => {
+    const creds = await requireCredentials();
+    if (!creds) return;
+    try {
+      const { releases: releaseList } = await listReleases(creds, packageName);
+      const release = releaseId ? releaseList.find((item) => item.id === releaseId) : releaseList[0];
+      if (!release) throw new Error(releaseId ? `Release not found: ${releaseId}` : `No releases for ${packageName}`);
+      if (options.json) console.log(JSON.stringify({ release }, null, 2));
+      else {
+        console.log(`${packageName}@${release.version}`);
+        console.log(`Status: ${release.status}`);
+        console.log(`Release: ${release.id}`);
+        if (release.reviewNotes) console.log(`Review: ${release.reviewNotes}`);
+        if (release.bundleSha256) console.log(`Bundle SHA-256: ${release.bundleSha256}`);
+        if (release.manifestSha256) console.log(`Manifest SHA-256: ${release.manifestSha256}`);
       }
     } catch (error) {
       fail(error);
@@ -301,9 +335,7 @@ admin
     }
   });
 
-const preinstall = admin
-  .command("preinstall")
-  .description("Manage the internal preinstalled miniapp registry");
+const preinstall = admin.command("preinstall").description("Manage the internal preinstalled miniapp registry");
 
 preinstall
   .command("releases")
@@ -315,9 +347,7 @@ preinstall
     if (!creds) return;
 
     try {
-      const environment = options.environment
-        ? parseEnvironment(options.environment)
-        : inferEnvironment(creds.coreUrl);
+      const environment = options.environment ? parseEnvironment(options.environment) : inferEnvironment(creds.coreUrl);
       const { releases: releaseList } = await listAdminPreinstallReleases(creds);
       if (releaseList.length === 0) {
         console.log("No publishable releases.");
@@ -337,7 +367,9 @@ preinstall
       }
       console.log("");
       console.log("Publish with:");
-      console.log(`  ${commandNameForCoreUrl(creds.coreUrl)} admin preinstall publish --release ${groups[0]?.packageName}@${groups[0]?.latest.version} --environment ${environment}`);
+      console.log(
+        `  ${commandNameForCoreUrl(creds.coreUrl)} admin preinstall publish --release ${groups[0]?.packageName}@${groups[0]?.latest.version} --environment ${environment}`,
+      );
     } catch (error) {
       fail(error);
     }
@@ -352,11 +384,9 @@ preinstall
     if (!creds) return;
 
     try {
-      const environment = options.environment
-        ? parseEnvironment(options.environment)
-        : inferEnvironment(creds.coreUrl);
+      const environment = options.environment ? parseEnvironment(options.environment) : inferEnvironment(creds.coreUrl);
       const { registries } = await listAdminRegistries(creds);
-      const registry = registries.find(item => item.environment === environment && item.name === "default");
+      const registry = registries.find((item) => item.environment === environment && item.name === "default");
       if (!registry) {
         console.log(`No active ${environment} preinstall registry.`);
         return;
@@ -371,7 +401,7 @@ preinstall
       }
 
       const { revisions } = await listAdminRegistryRevisions(creds, registry.id);
-      const active = revisions.find(revision => revision.id === registry.activeRevisionId);
+      const active = revisions.find((revision) => revision.id === registry.activeRevisionId);
       console.log(`Active revision: ${registry.activeRevisionId}`);
       if (!active || active.entries.length === 0) {
         console.log("No preinstalled releases.");
@@ -379,7 +409,7 @@ preinstall
       }
 
       const { releases: releaseList } = await listAdminPreinstallReleases(creds);
-      const byId = new Map(releaseList.map(release => [release.id, release]));
+      const byId = new Map(releaseList.map((release) => [release.id, release]));
       for (const entry of active.entries) {
         const release = byId.get(entry.releaseId);
         const label = release ? `${release.packageName}@${release.version}` : entry.releaseId;
@@ -401,9 +431,7 @@ preinstall
     try {
       const environment = options.environment ? parseEnvironment(options.environment) : null;
       const { registries } = await listAdminRegistries(creds);
-      const filtered = environment
-        ? registries.filter(registry => registry.environment === environment)
-        : registries;
+      const filtered = environment ? registries.filter((registry) => registry.environment === environment) : registries;
       if (filtered.length === 0) {
         console.log("No preinstall registries.");
         return;
@@ -413,7 +441,7 @@ preinstall
         console.log(formatRegistry(registry));
         if (registry.activeRevisionId) {
           const { revisions } = await listAdminRegistryRevisions(creds, registry.id);
-          const active = revisions.find(revision => revision.id === registry.activeRevisionId);
+          const active = revisions.find((revision) => revision.id === registry.activeRevisionId);
           if (active) {
             console.log(`  active revision: ${active.id}`);
             for (const entry of active.entries) {
@@ -436,50 +464,52 @@ preinstall
   .option("--required", "mark entries required")
   .option("--reason <reason>", "audit reason")
   .option("--yes", "confirm prod registry replacement")
-  .action(async (options: {
-    release: string[];
-    environment?: string;
-    policy: string;
-    required?: boolean;
-    reason?: string;
-    yes?: boolean;
-  }) => {
-    const creds = await requireCredentials();
-    if (!creds) return;
+  .action(
+    async (options: {
+      release: string[];
+      environment?: string;
+      policy: string;
+      required?: boolean;
+      reason?: string;
+      yes?: boolean;
+    }) => {
+      const creds = await requireCredentials();
+      if (!creds) return;
 
-    try {
-      const environment = options.environment
-        ? parseEnvironment(options.environment)
-        : inferEnvironment(creds.coreUrl);
-      const installPolicy = parsePolicy(options.policy);
-      if (environment === "prod" && !options.yes) {
-        throw new Error("prod preinstall publish requires --yes");
+      try {
+        const environment = options.environment
+          ? parseEnvironment(options.environment)
+          : inferEnvironment(creds.coreUrl);
+        const installPolicy = parsePolicy(options.policy);
+        if (environment === "prod" && !options.yes) {
+          throw new Error("prod preinstall publish requires --yes");
+        }
+
+        const { releases: releaseList } = await listAdminPreinstallReleases(creds);
+        const selected = resolveReleaseRefs(options.release, releaseList);
+        const { registry } = await ensureAdminRegistry(creds, { environment });
+        const { revision } = await createAdminRegistryRevision(creds, registry.id, {
+          reason: options.reason ?? `Admin preinstall registry publish for ${environment}`,
+          entries: selected.map((release, index) => ({
+            releaseId: release.id,
+            required: Boolean(options.required),
+            installPolicy,
+            priority: index,
+          })),
+        });
+        const promoted = await promoteAdminRegistryRevision(creds, registry.id, revision.id);
+
+        console.log(`Published ${selected.length} release(s) to ${environment} preinstall registry.`);
+        console.log(`Registry: ${promoted.registry.id}`);
+        console.log(`Revision: ${promoted.revision.id}`);
+        for (const release of selected) {
+          console.log(`- ${release.packageName}@${release.version}\t${release.id}`);
+        }
+      } catch (error) {
+        fail(error);
       }
-
-      const { releases: releaseList } = await listAdminPreinstallReleases(creds);
-      const selected = resolveReleaseRefs(options.release, releaseList);
-      const { registry } = await ensureAdminRegistry(creds, { environment });
-      const { revision } = await createAdminRegistryRevision(creds, registry.id, {
-        reason: options.reason ?? `Admin preinstall registry publish for ${environment}`,
-        entries: selected.map((release, index) => ({
-          releaseId: release.id,
-          required: Boolean(options.required),
-          installPolicy,
-          priority: index,
-        })),
-      });
-      const promoted = await promoteAdminRegistryRevision(creds, registry.id, revision.id);
-
-      console.log(`Published ${selected.length} release(s) to ${environment} preinstall registry.`);
-      console.log(`Registry: ${promoted.registry.id}`);
-      console.log(`Revision: ${promoted.revision.id}`);
-      for (const release of selected) {
-        console.log(`- ${release.packageName}@${release.version}\t${release.id}`);
-      }
-    } catch (error) {
-      fail(error);
-    }
-  });
+    },
+  );
 
 program
   .command("dev")
@@ -494,19 +524,19 @@ program
       const name = stringField(manifest, "name") || packageName;
       const description = typeof manifest.description === "string" ? manifest.description : null;
       const creds = await loadFreshCredentials(getConfig());
-      let signer:
-        | ((input: { packageName: string; devServerUrl: string }) => string)
-        | undefined;
+      let signer: ((input: { packageName: string; devServerUrl: string }) => string) | undefined;
 
       if (creds) {
         await ensureMiniappRecord(creds, { packageName, displayName: name, description });
         const signingKey = await ensureSigningKey(creds);
         signer = ({ packageName: signedPackageName, devServerUrl }) =>
-          encodeDevAttestation(signDevAttestation({
-            signingKey,
-            packageName: signedPackageName,
-            devServerUrl,
-          }));
+          encodeDevAttestation(
+            signDevAttestation({
+              signingKey,
+              packageName: signedPackageName,
+              devServerUrl,
+            }),
+          );
         console.log(`Dev auto-auth enabled for ${packageName}`);
       } else if (options.auth) {
         throw new Error("Not signed in. Run `mentra login` before `mentra dev --auth`.");
@@ -551,7 +581,9 @@ program
   .option("--cwd <path>", "miniapp project directory", process.cwd())
   .option("--no-build", "skip running bun run build before packing")
   .option("--no-pack", "skip running bun run pack and upload the existing build zip")
-  .action(async (options: { cwd: string; build: boolean; pack: boolean }) => {
+  .option("--no-submit", "upload as draft without submitting for review")
+  .option("--json", "print machine-readable JSON")
+  .action(async (options: { cwd: string; build: boolean; pack: boolean; submit: boolean; json?: boolean }) => {
     const creds = await requireCredentials();
     if (!creds) return;
 
@@ -576,6 +608,7 @@ program
         throw new Error(`Release bundle not found: ${zipPath}`);
       }
       const bundle = readFileSync(zipPath);
+      await validatePackedBundle(bundle, manifest);
       const signingKey = await ensureSigningKey(creds);
       const signedBundle = signBundleMetadata({
         signingKey,
@@ -588,17 +621,26 @@ program
         packageName,
         version,
         manifest,
-        bundleBase64: bundle.toString("base64"),
+        bundle,
         fileName: basename(zipPath),
         signedBundle,
       });
-      const submitted = await submitRelease(creds, {
-        packageName,
-        releaseId: release.id,
-      });
+      const submitted = options.submit
+        ? await submitRelease(creds, { packageName, releaseId: release.id })
+        : { release };
       const sizeKb = Math.round(statSync(zipPath).size / 1024);
-      console.log(`Published ${packageName}@${release.version}`);
-      console.log(`Release: ${submitted.release.status}`);
+      if (options.json) {
+        console.log(
+          JSON.stringify(
+            { release: submitted.release, bundle: basename(zipPath), signingKeyId: signedBundle.signingKeyId },
+            null,
+            2,
+          ),
+        );
+        return;
+      }
+      console.log(`Uploaded ${packageName}@${release.version}`);
+      console.log(`Status: ${submitted.release.status}`);
       console.log(`Bundle: ${basename(zipPath)} (${sizeKb} KB)`);
       console.log(`Signing key: ${signedBundle.signingKeyId}`);
       if (release.bundleSha256) console.log(`SHA-256: ${release.bundleSha256}`);
@@ -676,7 +718,9 @@ function shouldRefresh(creds: CliCredentials): boolean {
 
 function expiresAtFromToken(token: string): number {
   try {
-    const payload = JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString("utf8")) as { exp?: unknown };
+    const payload = JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString("utf8")) as {
+      exp?: unknown;
+    };
     return typeof payload.exp === "number" ? payload.exp : 0;
   } catch {
     return 0;
@@ -716,7 +760,7 @@ async function ensureMiniappRecord(
   }
 
   const { apps } = await listApps(creds);
-  const existing = apps.find(app => app.packageName === input.packageName && app.status !== "archived");
+  const existing = apps.find((app) => app.packageName === input.packageName && app.status !== "archived");
   if (!existing) {
     throw new Error(`Package ${input.packageName} is already claimed by another developer org.`);
   }
@@ -757,16 +801,16 @@ function parsePolicy(value: string): PreinstallPolicy {
 }
 
 function resolveReleaseRefs(refs: string[], releases: AdminReleaseSummary[]): AdminReleaseSummary[] {
-  const selected = refs.map(ref => {
+  const selected = refs.map((ref) => {
     const trimmed = ref.trim();
-    const byId = releases.find(release => release.id === trimmed);
+    const byId = releases.find((release) => release.id === trimmed);
     if (byId) return byId;
 
     const atIndex = trimmed.lastIndexOf("@");
     if (atIndex > 0) {
       const packageName = trimmed.slice(0, atIndex);
       const version = trimmed.slice(atIndex + 1);
-      const matches = releases.filter(release => release.packageName === packageName && release.version === version);
+      const matches = releases.filter((release) => release.packageName === packageName && release.version === version);
       if (matches.length === 1) return matches[0];
       if (matches.length > 1) throw new Error(`release ref ${trimmed} matched more than one release`);
     }
@@ -796,11 +840,11 @@ async function activePreinstallReleaseIds(
   environment: PreinstallEnvironment,
 ): Promise<Set<string>> {
   const { registries } = await listAdminRegistries(credentials);
-  const registry = registries.find(item => item.environment === environment && item.name === "default");
+  const registry = registries.find((item) => item.environment === environment && item.name === "default");
   if (!registry?.activeRevisionId) return new Set();
   const { revisions } = await listAdminRegistryRevisions(credentials, registry.id);
-  const active = revisions.find(revision => revision.id === registry.activeRevisionId);
-  return new Set(active?.entries.map(entry => entry.releaseId) ?? []);
+  const active = revisions.find((revision) => revision.id === registry.activeRevisionId);
+  return new Set(active?.entries.map((entry) => entry.releaseId) ?? []);
 }
 
 interface AdminReleaseGroup {
@@ -811,29 +855,28 @@ interface AdminReleaseGroup {
   releases: AdminReleaseSummary[];
 }
 
-function groupAdminReleases(
-  releases: AdminReleaseSummary[],
-  activeReleaseIds: Set<string>,
-): AdminReleaseGroup[] {
+function groupAdminReleases(releases: AdminReleaseSummary[], activeReleaseIds: Set<string>): AdminReleaseGroup[] {
   const groups = new Map<string, AdminReleaseSummary[]>();
   for (const release of releases) {
     groups.set(release.packageName, [...(groups.get(release.packageName) ?? []), release]);
   }
 
-  return [...groups.values()].map(groupReleases => {
-    const sorted = [...groupReleases].sort(compareReleaseRecency);
-    return {
-      packageName: sorted[0]!.packageName,
-      displayName: sorted[0]!.displayName,
-      latest: sorted[0]!,
-      current: sorted.find(release => activeReleaseIds.has(release.id)) ?? null,
-      releases: sorted,
-    };
-  }).sort((a, b) => {
-    if (a.current && !b.current) return -1;
-    if (!a.current && b.current) return 1;
-    return a.packageName.localeCompare(b.packageName);
-  });
+  return [...groups.values()]
+    .map((groupReleases) => {
+      const sorted = [...groupReleases].sort(compareReleaseRecency);
+      return {
+        packageName: sorted[0]!.packageName,
+        displayName: sorted[0]!.displayName,
+        latest: sorted[0]!,
+        current: sorted.find((release) => activeReleaseIds.has(release.id)) ?? null,
+        releases: sorted,
+      };
+    })
+    .sort((a, b) => {
+      if (a.current && !b.current) return -1;
+      if (!a.current && b.current) return 1;
+      return a.packageName.localeCompare(b.packageName);
+    });
 }
 
 function compareReleaseRecency(a: AdminReleaseSummary, b: AdminReleaseSummary): number {
@@ -847,9 +890,10 @@ function formatAdminReleaseGroup(group: AdminReleaseGroup): string {
   const marker = group.current ? "ACTIVE" : "      ";
   const current = group.current?.version ?? "none";
   const latest = group.latest.version;
-  const label = group.displayName && group.displayName !== group.packageName
-    ? `${group.displayName} (${group.packageName})`
-    : group.packageName;
+  const label =
+    group.displayName && group.displayName !== group.packageName
+      ? `${group.displayName} (${group.packageName})`
+      : group.packageName;
   return `${marker} ${label}\tcurrent=${current}\tlatest=${latest}\tversions=${group.releases.length}`;
 }
 

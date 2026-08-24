@@ -31,6 +31,7 @@ import appRegistry, {getLocalAppRunningState, saveLocalAppRunningState} from "./
 import devServerBridge from "./DevServerBridge"
 import localMiniappRuntime, {type InstalledMiniappManifest} from "./LocalMiniappRuntime"
 import type {MentraJSRouter} from "./MentraJSRouter"
+import {isHostTrustedSystemMiniapp} from "./SystemMiniappPolicy"
 
 interface LauncherDeps {
   /** The host-constructed router (needs the native Crust binding). */
@@ -51,6 +52,8 @@ export interface ResolvedBundle {
   uiBaseDir: string | null
   declaredPermissions: string[]
   installedManifest?: InstalledMiniappManifest
+  /** Build-owned SYSTEM trust derived from install provenance, never the manifest. */
+  hostTrustedSystem: boolean
   /** Set for dev miniapps (HTTP off the dev server); null for released. */
   devUrl: string | null
   devPort: number | null
@@ -149,6 +152,7 @@ class MiniappLauncher {
         uiBaseDir: uiUri ? uiUri.replace(/\/[^/]+$/, "/") : null,
         declaredPermissions,
         installedManifest,
+        hostTrustedSystem: false,
         devUrl: route.resolvedUrl,
         devPort: this.resolveDevPort(hints?.devPort, packageName),
       }
@@ -189,6 +193,7 @@ class MiniappLauncher {
           actions: manifest.actions,
         }
       : undefined
+    const releaseIdentity = appRegistry.getReleaseIdentity(packageName, version)
 
     let bgSource: string
     try {
@@ -203,6 +208,7 @@ class MiniappLauncher {
       uiBaseDir: entryPaths.ui ? entryPaths.ui.replace(/\/[^/]+$/, "/") : null,
       declaredPermissions,
       installedManifest,
+      hostTrustedSystem: isHostTrustedSystemMiniapp(packageName, releaseIdentity?.source),
       devUrl: null,
       devPort: null,
     }
@@ -257,6 +263,7 @@ class MiniappLauncher {
       const ok = await router.spawnAndRegister(packageName, resolved.bgSource, {
         permissions: resolved.declaredPermissions,
         installedManifest: resolved.installedManifest,
+        hostTrustedSystem: resolved.hostTrustedSystem,
       })
       if (!ok) {
         throw new Error(`MiniappLauncher: spawn failed for ${packageName}`)

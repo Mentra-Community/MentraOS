@@ -24,12 +24,15 @@ import {AsyncResult, Result, result as Res} from "typesafe-ts"
 
 import type {AppletPermission, AppPermissionType, AppletType, ClientApp} from "../types/applet"
 import {HardwareRequirement, HardwareRequirementLevel, HardwareType} from "../types"
+import {readBoundedByteStream} from "../utils/boundedByteStream"
 import {configuredDevHost} from "../utils/configuredDevHost"
 import {storage} from "../utils/storage/storage"
 import {printDirectory} from "../utils/storage/zip"
+import {sha256Hex} from "../utils/sha256"
 import {checkManifestVersions} from "./manifestVersionGate"
 import {normalizeManifestActions} from "./manifestActions"
 import {miniappRunningRegistry} from "./MiniappRunningRegistry"
+import {validateInstallBundleArchive} from "./validateInstallBundle"
 
 export {normalizeManifestActions} from "./manifestActions"
 
@@ -140,11 +143,24 @@ interface InstalledLma {
 }
 
 export interface MiniappReleaseIdentity {
-  source: "direct_download" | "bundled_asset" | "preinstalled_registry" | "dev_snapshot"
+  source: "direct_download" | "bundled_asset" | "preinstalled_registry" | "dev_snapshot" | "store"
   releaseId?: string
   bundleSha256?: string
   channel?: string
+  storePackageName?: string
 }
+
+export interface InstallBundleOptions {
+  versionOverride?: string
+  releaseIdentity?: MiniappReleaseIdentity
+  expectedPackageName?: string
+  expectedVersion?: string
+  expectedBundleSha256?: string
+  onProgress?: (phase: "downloading" | "verifying" | "extracting" | "activating") => void
+}
+
+const MAX_REMOTE_BUNDLE_BYTES = 50 * 1024 * 1024
+const REMOTE_BUNDLE_TIMEOUT_MS = 45_000
 
 function releaseIdentityKey(packageName: string, version: string): string {
   return `miniapp_release_identity:${packageName}:${version}`
@@ -157,7 +173,11 @@ function releaseIdentityKey(packageName: string, version: string): string {
  * (dev server, store). Bundled-asset installs already have a local zip and
  * should call {@link unpackMiniApp} directly.
  */
-async function downloadMiniAppZip(url: string): Promise<string> {
+async function downloadMiniAppZip(
+  url: string,
+  expectedSha256?: string,
+  onProgress?: InstallBundleOptions["onProgress"],
+): Promise<string> {
   const downloadDir = new Directory(Paths.cache, "lma_downloads")
   try {
     if (!downloadDir.exists) {
@@ -168,27 +188,49 @@ async function downloadMiniAppZip(url: string): Promise<string> {
     throw "CREATE_DOWNLOAD_DIR_FAILED"
   }
 
-  // Pre-delete any cached file with the same name. Both `mentra-miniapp dev`
-  // and `mentra-miniapp release` serve their zip at /bundle.zip, so URLs
-  // collide on the cache filename. Without this delete, a stale dev-snapshot
-  // (containing the project source tree) gets unzipped instead of the
-  // release build → white screen because index.html points at TSX files.
-  const targetFileName = url.split("/").pop() ?? "bundle.zip"
-  const existingFile = new File(downloadDir, targetFileName)
-  if (existingFile.exists) {
-    try {
-      existingFile.delete()
-    } catch (e) {
-      console.warn("ZIP: failed to delete stale cached download:", e)
-    }
-  }
-
+  // Use a unique host-owned cache name. Never derive a filesystem path from
+  // an untrusted URL, and never let two simultaneous dev/Store downloads
+  // alias the same bundle.zip cache entry.
+  const output = new File(downloadDir, `bundle-${Date.now()}-${Math.random().toString(36).slice(2, 10)}.zip`)
+  const abortController = new AbortController()
+  const timeout = setTimeout(() => abortController.abort(), REMOTE_BUNDLE_TIMEOUT_MS)
   try {
-    const output = await File.downloadFileAsync(url, downloadDir)
+    onProgress?.("downloading")
+    const response = await fetch(url, {signal: abortController.signal})
+    if (!response.ok) throw new Error(`bundle download failed with HTTP ${response.status}`)
+    if (new URL(url).protocol === "https:" && response.url && new URL(response.url).protocol !== "https:") {
+      throw new Error("bundle download redirected away from HTTPS")
+    }
+    const declaredSize = Number(response.headers.get("content-length"))
+    if (Number.isFinite(declaredSize) && declaredSize > MAX_REMOTE_BUNDLE_BYTES) {
+      throw new Error(`bundle exceeds ${MAX_REMOTE_BUNDLE_BYTES} bytes`)
+    }
+    if (!response.body) throw new Error("bundle download returned no response body")
+    const bytes = await readBoundedByteStream(response.body, MAX_REMOTE_BUNDLE_BYTES)
+    if (bytes.byteLength === 0) {
+      throw new Error(`bundle must be between 1 and ${MAX_REMOTE_BUNDLE_BYTES} bytes`)
+    }
+    output.write(bytes)
+    if (expectedSha256) {
+      onProgress?.("verifying")
+      const expected = expectedSha256.toLowerCase()
+      if (!/^[a-f0-9]{64}$/.test(expected)) throw new Error("expected bundle SHA-256 is invalid")
+      const actual = await sha256Hex(bytes)
+      if (actual !== expected) {
+        output.delete()
+        throw new Error(`bundle SHA-256 mismatch: expected ${expected}, got ${actual}`)
+      }
+    }
     return output.uri
   } catch (error) {
     console.error("ZIP: Error downloading zip file", error)
-    throw "DOWNLOAD_FAILED"
+    if (output.exists) output.delete()
+    if (abortController.signal.aborted) {
+      throw new Error(`bundle download timed out after ${REMOTE_BUNDLE_TIMEOUT_MS}ms`)
+    }
+    throw error instanceof Error ? error : new Error("bundle download failed")
+  } finally {
+    clearTimeout(timeout)
   }
 }
 
@@ -208,6 +250,8 @@ async function downloadMiniAppZip(url: string): Promise<string> {
 async function unpackMiniApp(
   zipPath: string,
   versionOverride?: string,
+  expected?: {packageName?: string; version?: string},
+  onProgress?: InstallBundleOptions["onProgress"],
 ): Promise<{packageName: string; version: string}> {
   const unzipDir = new Directory(Paths.cache, "lma_unzip")
   try {
@@ -219,6 +263,7 @@ async function unpackMiniApp(
   }
 
   try {
+    onProgress?.("extracting")
     console.log("ZIP: unzipping", zipPath)
     await unzip(zipPath, unzipDir.uri)
   } catch (error) {
@@ -244,6 +289,12 @@ async function unpackMiniApp(
     console.error("Error reading miniapp.json from zip:", error)
     throw "READ_MANIFEST_FAILED"
   }
+  if (expected?.packageName && packageName !== expected.packageName) {
+    throw new Error(`bundle package mismatch: expected ${expected.packageName}, got ${packageName}`)
+  }
+  if (expected?.version && manifestVersion !== expected.version) {
+    throw new Error(`bundle version mismatch: expected ${expected.version}, got ${manifestVersion}`)
+  }
   const version = versionOverride ?? manifestVersion
   console.log(`ZIP: installing ${packageName} as version ${version}`)
 
@@ -258,26 +309,48 @@ async function unpackMiniApp(
   }
 
   const versionDir = new Directory(basePackageDir, version)
+  const stagingDir = new Directory(basePackageDir, `.staging-${version}-${Date.now()}`)
+  const backupDir = new Directory(basePackageDir, `.backup-${version}-${Date.now()}`)
   try {
-    if (!versionDir.exists) {
-      versionDir.create()
-    } else {
-      versionDir.delete()
-      versionDir.create()
-    }
+    stagingDir.create()
   } catch (error) {
-    console.error("Error creating the version directory", error)
+    console.error("Error creating the staging directory", error)
     throw "CREATE_VERSION_DIR_FAILED"
   }
 
   try {
     const contents = appDir.list()
     for (const item of contents) {
-      item.move(versionDir)
+      item.move(stagingDir)
     }
   } catch (error) {
     console.error("Error moving the contents of the folder to the destination directory", error)
+    if (stagingDir.exists) stagingDir.delete()
     throw "INSTALL_CONTENTS_FAILED"
+  }
+
+  // Swap only after the complete bundle is staged. If activation fails,
+  // restore a previous same-version directory instead of leaving a partial
+  // installation behind.
+  let movedExisting = false
+  try {
+    onProgress?.("activating")
+    if (versionDir.exists) {
+      versionDir.move(backupDir)
+      movedExisting = true
+    }
+    stagingDir.move(versionDir)
+    if (backupDir.exists) backupDir.delete()
+  } catch (error) {
+    console.error("Error activating the staged miniapp", error)
+    try {
+      if (versionDir.exists) versionDir.delete()
+      if (movedExisting && backupDir.exists) backupDir.move(versionDir)
+      if (stagingDir.exists) stagingDir.delete()
+    } catch (rollbackError) {
+      console.error("Error restoring the previous miniapp version", rollbackError)
+    }
+    throw "ACTIVATE_VERSION_FAILED"
   }
 
   console.log("ZIP: local mini app installed at", versionDir.uri)
@@ -297,11 +370,28 @@ async function unpackMiniApp(
  */
 async function downloadAndInstallMiniApp(
   url: string,
-  versionOverride?: string,
+  opts?: InstallBundleOptions,
 ): Promise<{packageName: string; version: string}> {
-  const downloadedZipPath = await downloadMiniAppZip(url)
-  console.log("ZIP: done downloading, starting unzip")
-  return unpackMiniApp(downloadedZipPath, versionOverride)
+  const downloadedZipPath = await downloadMiniAppZip(url, opts?.expectedBundleSha256, opts?.onProgress)
+  const downloadedZip = new File(downloadedZipPath)
+  try {
+    await validateInstallBundleArchive(await downloadedZip.bytes(), {
+      packageName: opts?.expectedPackageName,
+      version: opts?.expectedVersion,
+    })
+    console.log("ZIP: done downloading, starting unzip")
+    return await unpackMiniApp(
+      downloadedZipPath,
+      opts?.versionOverride,
+      {
+        packageName: opts?.expectedPackageName,
+        version: opts?.expectedVersion,
+      },
+      opts?.onProgress,
+    )
+  } finally {
+    if (downloadedZip.exists) downloadedZip.delete()
+  }
 }
 
 type Listener = () => void
@@ -442,12 +532,9 @@ class AppRegistry {
    *   of `manifest.version`. The dev caching path uses `dev-<ms>` so multiple
    *   snapshots can coexist alongside semver-installed versions.
    */
-  public installFromUrl(
-    url: string,
-    opts?: {versionOverride?: string; releaseIdentity?: MiniappReleaseIdentity},
-  ): AsyncResult<void, Error> {
+  public installFromUrl(url: string, opts?: InstallBundleOptions): AsyncResult<void, Error> {
     return Res.try_async(async () => {
-      const {packageName, version} = await downloadAndInstallMiniApp(url, opts?.versionOverride)
+      const {packageName, version} = await downloadAndInstallMiniApp(url, opts)
       console.log("APP_REGISTRY: Downloaded and installed mini app")
       this.finalizeInstall(
         packageName,
@@ -466,10 +553,27 @@ class AppRegistry {
    */
   public installFromLocalZip(
     zipPath: string,
-    opts?: {versionOverride?: string; releaseIdentity?: MiniappReleaseIdentity},
+    opts?: InstallBundleOptions,
   ): AsyncResult<{packageName: string; version: string}, Error> {
     return Res.try_async(async () => {
-      const {packageName, version} = await unpackMiniApp(zipPath, opts?.versionOverride)
+      if (opts?.expectedBundleSha256) {
+        const expected = opts.expectedBundleSha256.toLowerCase()
+        const actual = await sha256Hex(await new File(zipPath).bytes())
+        if (actual !== expected) throw new Error(`bundle SHA-256 mismatch: expected ${expected}, got ${actual}`)
+      }
+      await validateInstallBundleArchive(await new File(zipPath).bytes(), {
+        packageName: opts?.expectedPackageName,
+        version: opts?.expectedVersion,
+      })
+      const {packageName, version} = await unpackMiniApp(
+        zipPath,
+        opts?.versionOverride,
+        {
+          packageName: opts?.expectedPackageName,
+          version: opts?.expectedVersion,
+        },
+        opts?.onProgress,
+      )
       console.log("APP_REGISTRY: Installed mini app from local zip")
       this.finalizeInstall(packageName, version, opts?.releaseIdentity ?? {source: "bundled_asset"})
       return {packageName, version}
@@ -964,7 +1068,6 @@ export interface DevAppRecord {
 const DEV_APPS_INDEX_KEY = "dev_apps_index"
 const DEV_APP_ICONS_DIR = "dev-miniapp-icons"
 
-
 function isPrivateLanHost(hostname: string): boolean {
   return (
     hostname === "localhost" ||
@@ -1128,8 +1231,7 @@ export async function registerDevApp(record: DevAppRecord): Promise<void> {
   // Relaunch paths (developer-URL screen, loadDevMiniapp) omit mdnsHost, so an
   // omitted field keeps whatever the QR scan stored instead of wiping the
   // `.local` failover host.
-  const mdnsHost =
-    record.mdnsHost !== undefined ? record.mdnsHost.trim() || undefined : readStoredMdnsHost(packageName)
+  const mdnsHost = record.mdnsHost !== undefined ? record.mdnsHost.trim() || undefined : readStoredMdnsHost(packageName)
   const devRecord: DevAppRecord = {
     ...record,
     packageName,

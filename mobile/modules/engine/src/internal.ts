@@ -30,8 +30,10 @@ export {
   getDevAppAttestation,
   DEV_APP_PACKAGE_NAME,
   type DevAppRecord,
+  type InstallBundleOptions,
   type MiniappReleaseIdentity,
 } from "./services/AppRegistry"
+export {sha256Hex} from "./utils/sha256"
 export {default as displayProcessor} from "./services/DisplayProcessor"
 export {default as localDisplayManager, type DisplayPayload} from "./services/LocalDisplayManager"
 export {default as localMiniappRuntime, type InstalledMiniappManifest} from "./services/LocalMiniappRuntime"
@@ -151,7 +153,6 @@ export {logBuffer, type LogEntry} from "./utils/devLogging"
 // when one exists; this remains an escape hatch for app-only compatibility
 // needs (its event TYPES stay on the main entry).
 export {default as BluetoothSdk} from "@mentra/bluetooth-sdk/internal"
-
 
 // Engine-owned MMKV instance + debug helper.
 export {storage, printDirectory} from "./utils/storage"

@@ -49,6 +49,7 @@ function wireDevServerRespawnBackground(router: MentraJSRouter, uiRouter: Mentra
       const ok = await router.spawnAndRegister(packageName, resolved.bgSource, {
         permissions: resolved.declaredPermissions,
         installedManifest: resolved.installedManifest,
+        hostTrustedSystem: resolved.hostTrustedSystem,
       })
       if (!ok) {
         console.warn(`MentraJS: respawn-bg failed for ${packageName}`)

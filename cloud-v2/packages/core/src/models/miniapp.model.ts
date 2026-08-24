@@ -2,6 +2,24 @@ import { Schema, type InferSchemaType } from "mongoose";
 import { registerModel } from "./register-model";
 
 export const MINIAPP_STATUSES = ["active", "archived", "suspended"] as const;
+export const MINIAPP_REVIEW_TIERS = ["community", "verified"] as const;
+
+const StoreListingSchema = new Schema(
+  {
+    subtitle: { type: String, default: null },
+    longDescription: { type: String, default: null },
+    categories: { type: [String], default: [] },
+    privacyPolicyUrl: { type: String, default: null },
+    supportUrl: { type: String, default: null },
+    websiteUrl: { type: String, default: null },
+    reviewTier: { type: String, enum: MINIAPP_REVIEW_TIERS, default: "community" },
+    featured: { type: Boolean, default: false },
+    iconAssetId: { type: String, default: null },
+    coverAssetId: { type: String, default: null },
+    screenshotAssetIds: { type: [String], default: [] },
+  },
+  { _id: false },
+);
 
 const MiniAppSchema = new Schema(
   {
@@ -9,6 +27,7 @@ const MiniAppSchema = new Schema(
     packageName: { type: String, required: true, unique: true },
     displayName: { type: String, required: true },
     description: { type: String, default: null },
+    storeListing: { type: StoreListingSchema, default: () => ({}) },
     status: { type: String, enum: MINIAPP_STATUSES, default: "active", index: true },
     activeReleaseId: { type: String, default: null },
     createdBy: { type: String, required: true },

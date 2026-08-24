@@ -44,6 +44,7 @@
       "dependencies": {
         "@mentra/miniapp-cli": "file:../../../sdk/miniapp-cli",
         "commander": "^14.0.2",
+        "jszip": "^3.10.1",
         "qrcode": "^1.5.4",
       },
       "devDependencies": {
@@ -77,6 +78,7 @@
         "@workos-inc/node": "^10.3.0",
         "hono": "^4.11.1",
         "jose": "^5.9.6",
+        "jszip": "^3.10.1",
         "mongoose": "^8.8.4",
         "ulid": "^3.0.2",
         "zod": "^3.24.1",
@@ -250,6 +252,20 @@
         "bun-plugin-tailwind": "^0.1.2",
       },
     },
+    "miniapps/store": {
+      "name": "@mentra/store-miniapp",
+      "dependencies": {
+        "@mentra/miniapp": "workspace:*",
+        "react": "^19.0.0",
+        "react-dom": "^19.0.0",
+      },
+      "devDependencies": {
+        "@mentra/miniapp-cli": "workspace:*",
+        "@types/react": "^19.1.6",
+        "@types/react-dom": "^19.1.6",
+        "bun-types": "^1.3.14",
+      },
+    },
     "miniapps/teleprompter": {
       "name": "teleprompter-miniapp",
       "dependencies": {
@@ -411,6 +427,8 @@
     "@mentra/miniapp": ["@mentra/miniapp@workspace:mobile/modules/miniapp"],
 
     "@mentra/miniapp-cli": ["@mentra/miniapp-cli@workspace:sdk/miniapp-cli"],
+
+    "@mentra/store-miniapp": ["@mentra/store-miniapp@workspace:miniapps/store"],
 
     "@mentra/types": ["@mentra/types@1.0.0-beta.2", "", {}, "sha512-yn0H7oYId8TSOGlSDmstds4nnmZbXyDncFy3FC1h4dWpDx6o4BmBehAJd2Otp9gr1bWwIL0yEp6JK60I8TBUGw=="],
 

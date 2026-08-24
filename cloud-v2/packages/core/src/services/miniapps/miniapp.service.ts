@@ -4,6 +4,7 @@ import { MiniAppAssetModel } from "../../models/miniapp-asset.model";
 import { MiniAppModel } from "../../models/miniapp.model";
 import { MiniAppReleaseModel } from "../../models/miniapp-release.model";
 import { createStorageService, sha256Hex } from "../storage/storage.service";
+import { BundleManifestError, parseCanonicalBundleManifest } from "./bundle-manifest";
 import type { SignedBundleMetadata } from "./developer-signing.service";
 import { notifyMiniAppSubmissionSlack } from "./miniapp-slack.service";
 
@@ -31,6 +32,25 @@ export interface CreateReleaseInput {
   signedBundle?: SignedBundleMetadata;
 }
 
+export interface UpdateStoreListingInput {
+  subtitle?: string | null;
+  longDescription?: string | null;
+  categories?: string[];
+  privacyPolicyUrl?: string | null;
+  supportUrl?: string | null;
+  websiteUrl?: string | null;
+}
+
+export interface CreateStoreAssetInput {
+  role: "store_icon" | "store_cover" | "gallery_screenshot";
+  fileName: string;
+  contentType: string;
+  bytes: Uint8Array;
+}
+
+const MAX_STORE_ASSET_BYTES = 10 * 1024 * 1024;
+const STORE_ASSET_CONTENT_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/avif"]);
+
 export interface AdminReleaseDecisionInput {
   releaseId: string;
   adminId: string;
@@ -45,15 +65,15 @@ export class MiniAppService {
       .sort({ createdAt: -1 })
       .lean();
 
-    const appIds = apps.map(app => app._id.toString());
+    const appIds = apps.map((app) => app._id.toString());
     const releases = await MiniAppReleaseModel.find({ miniAppId: { $in: appIds } })
       .sort({ createdAt: -1 })
       .lean();
 
-    return apps.map(app => {
-      const appReleases = releases.filter(release => release.miniAppId === app._id.toString());
+    return apps.map((app) => {
+      const appReleases = releases.filter((release) => release.miniAppId === app._id.toString());
       const activeRelease = app.activeReleaseId
-        ? appReleases.find(release => release._id.toString() === app.activeReleaseId)
+        ? appReleases.find((release) => release._id.toString() === app.activeReleaseId)
         : null;
       const latestRelease = appReleases[0] ?? null;
       return {
@@ -61,6 +81,7 @@ export class MiniAppService {
         packageName: app.packageName,
         name: app.displayName,
         description: app.description ?? null,
+        storeListing: serializeStoreListing(app.storeListing),
         status: app.status,
         activeRelease: activeRelease ? serializeRelease(activeRelease) : null,
         latestRelease: latestRelease ? serializeRelease(latestRelease) : null,
@@ -107,9 +128,7 @@ export class MiniAppService {
 
   async listReleases(developer: DeveloperIdentity, packageName: string) {
     const app = await this.requireMiniApp(developer, normalizePackageName(packageName));
-    const releases = await MiniAppReleaseModel.find({ miniAppId: app._id.toString() })
-      .sort({ createdAt: -1 })
-      .lean();
+    const releases = await MiniAppReleaseModel.find({ miniAppId: app._id.toString() }).sort({ createdAt: -1 }).lean();
     return releases.map(serializeRelease);
   }
 
@@ -156,11 +175,11 @@ export class MiniAppService {
     })
       .sort({ submittedAt: -1, createdAt: -1 })
       .lean();
-    const appIds = [...new Set(releases.map(release => release.miniAppId))];
+    const appIds = [...new Set(releases.map((release) => release.miniAppId))];
     const apps = await MiniAppModel.find({ _id: { $in: appIds } }).lean();
-    const appsById = new Map(apps.map(app => [app._id.toString(), app]));
+    const appsById = new Map(apps.map((app) => [app._id.toString(), app]));
 
-    return releases.map(release => {
+    return releases.map((release) => {
       const app = appsById.get(release.miniAppId);
       return {
         ...serializeRelease(release),
@@ -228,6 +247,29 @@ export class MiniAppService {
   async createRelease(developer: DeveloperIdentity, input: CreateReleaseInput) {
     const packageName = normalizePackageName(input.packageName);
     assertPackagePrefix(developer, packageName);
+    let canonical;
+    try {
+      canonical = await parseCanonicalBundleManifest(input.bundle, input.manifest);
+    } catch (error) {
+      if (error instanceof BundleManifestError) {
+        throw new MiniAppServiceError(error.code, error.message, 400);
+      }
+      throw error;
+    }
+    if (canonical.packageName !== packageName) {
+      throw new MiniAppServiceError(
+        "bundle_package_mismatch",
+        "bundle miniapp.json packageName does not match the release package",
+        400,
+      );
+    }
+    if (canonical.version !== input.version) {
+      throw new MiniAppServiceError(
+        "bundle_version_mismatch",
+        "bundle miniapp.json version does not match the release version",
+        400,
+      );
+    }
     const app = await this.requireMiniApp(developer, packageName);
     const existing = await MiniAppReleaseModel.findOne({
       miniAppId: app._id.toString(),
@@ -243,8 +285,8 @@ export class MiniAppService {
       packageName,
       version: input.version,
       status: "draft",
-      manifest: input.manifest,
-      manifestSha256: input.signedBundle?.payload.manifestSha256 ?? null,
+      manifest: canonical.manifest,
+      manifestSha256: canonical.manifestSha256,
       signedBundlePayload: input.signedBundle?.payload ?? null,
       signingKeyId: input.signedBundle?.signingKeyId ?? null,
       bundleSignature: input.signedBundle?.signature ?? null,
@@ -259,13 +301,7 @@ export class MiniAppService {
     let storedKey: string | undefined;
     let assetId: string | undefined;
     try {
-      const storageKey = [
-        "miniapps",
-        packageName,
-        "releases",
-        input.version,
-        `${ulid()}-bundle.zip`,
-      ].join("/");
+      const storageKey = ["miniapps", packageName, "releases", input.version, `${ulid()}-bundle.zip`].join("/");
       const stored = await storage.putObject({
         key: storageKey,
         body: input.bundle,
@@ -301,21 +337,152 @@ export class MiniAppService {
       const releaseId = release._id.toString();
       // Best-effort compensation. Log each failure with context so blocked
       // retries or orphaned artifacts stay diagnosable rather than silent.
-      await MiniAppReleaseModel.deleteOne({ _id: release._id }).catch(cleanupError => {
-        logger.error({ cleanupError, releaseId, packageName, version: input.version }, "failed to roll back release row after createRelease failure");
+      await MiniAppReleaseModel.deleteOne({ _id: release._id }).catch((cleanupError) => {
+        logger.error(
+          { cleanupError, releaseId, packageName, version: input.version },
+          "failed to roll back release row after createRelease failure",
+        );
       });
       if (assetId) {
-        await MiniAppAssetModel.deleteOne({ _id: assetId }).catch(cleanupError => {
-          logger.error({ cleanupError, releaseId, assetId }, "failed to roll back asset row after createRelease failure");
+        await MiniAppAssetModel.deleteOne({ _id: assetId }).catch((cleanupError) => {
+          logger.error(
+            { cleanupError, releaseId, assetId },
+            "failed to roll back asset row after createRelease failure",
+          );
         });
       }
       if (storedKey) {
-        await storage.deleteObject(storedKey).catch(cleanupError => {
-          logger.error({ cleanupError, releaseId, storageKey: storedKey }, "failed to delete stored bundle after createRelease failure");
+        await storage.deleteObject(storedKey).catch((cleanupError) => {
+          logger.error(
+            { cleanupError, releaseId, storageKey: storedKey },
+            "failed to delete stored bundle after createRelease failure",
+          );
         });
       }
       throw error;
     }
+  }
+
+  async getStoreListing(developer: DeveloperIdentity, packageName: string) {
+    const app = await this.requireMiniApp(developer, normalizePackageName(packageName));
+    const assets = await MiniAppAssetModel.find({
+      miniAppId: app._id.toString(),
+      role: { $in: ["store_icon", "store_cover", "gallery_screenshot"] },
+    })
+      .sort({ role: 1, sortOrder: 1, createdAt: 1 })
+      .lean();
+    return {
+      ...serializeStoreListing(app.storeListing),
+      assets: assets.map(serializeStoreAsset),
+    };
+  }
+
+  async updateStoreListing(developer: DeveloperIdentity, packageName: string, input: UpdateStoreListingInput) {
+    const app = await this.requireMiniApp(developer, normalizePackageName(packageName));
+    const categories = input.categories?.map((category) => category.trim().toLowerCase()).filter(Boolean);
+    if (categories && (categories.length > 5 || categories.some((category) => category.length > 40))) {
+      throw new MiniAppServiceError("invalid_categories", "use at most five categories of 40 characters", 400);
+    }
+    const normalizeUrl = (value: string | null | undefined) => {
+      if (value === undefined) return undefined;
+      if (value === null || !value.trim()) return null;
+      let url: URL;
+      try {
+        url = new URL(value.trim());
+      } catch {
+        throw new MiniAppServiceError("invalid_url", "listing links must be valid HTTPS URLs", 400);
+      }
+      if (url.protocol !== "https:") {
+        throw new MiniAppServiceError("invalid_url", "listing links must use HTTPS", 400);
+      }
+      return url.toString();
+    };
+    const listing = app.storeListing ?? {};
+    if (input.subtitle !== undefined) listing.subtitle = cleanText(input.subtitle, 120);
+    if (input.longDescription !== undefined) listing.longDescription = cleanText(input.longDescription, 10_000);
+    if (categories !== undefined) listing.categories = [...new Set(categories)];
+    const privacyPolicyUrl = normalizeUrl(input.privacyPolicyUrl);
+    const supportUrl = normalizeUrl(input.supportUrl);
+    const websiteUrl = normalizeUrl(input.websiteUrl);
+    if (privacyPolicyUrl !== undefined) listing.privacyPolicyUrl = privacyPolicyUrl;
+    if (supportUrl !== undefined) listing.supportUrl = supportUrl;
+    if (websiteUrl !== undefined) listing.websiteUrl = websiteUrl;
+    app.storeListing = listing;
+    await app.save();
+    return this.getStoreListing(developer, packageName);
+  }
+
+  async createStoreAsset(developer: DeveloperIdentity, packageName: string, input: CreateStoreAssetInput) {
+    const app = await this.requireMiniApp(developer, normalizePackageName(packageName));
+    if (!STORE_ASSET_CONTENT_TYPES.has(input.contentType)) {
+      throw new MiniAppServiceError("invalid_asset_type", "Store assets must be PNG, JPEG, WebP, or AVIF images", 400);
+    }
+    if (input.bytes.byteLength === 0 || input.bytes.byteLength > MAX_STORE_ASSET_BYTES) {
+      throw new MiniAppServiceError("invalid_asset_size", "Store assets must be between 1 byte and 10 MB", 400);
+    }
+    if (!matchesImageSignature(input.bytes, input.contentType)) {
+      throw new MiniAppServiceError(
+        "invalid_asset_content",
+        "Store asset bytes do not match the declared image content type",
+        400,
+      );
+    }
+    const safeFileName = input.fileName.replace(/[^a-zA-Z0-9._-]/g, "-").slice(0, 120) || "asset";
+    const storageKey = ["miniapps", app.packageName, "store", `${ulid()}-${safeFileName}`].join("/");
+    const stored = await storage.putObject({ key: storageKey, body: input.bytes, contentType: input.contentType });
+    let asset;
+    try {
+      const sortOrder =
+        input.role === "gallery_screenshot"
+          ? await MiniAppAssetModel.countDocuments({ miniAppId: app._id.toString(), role: input.role })
+          : null;
+      asset = await MiniAppAssetModel.create({
+        orgId: developer.orgId,
+        miniAppId: app._id.toString(),
+        releaseId: null,
+        role: input.role,
+        storageKey,
+        fileName: safeFileName,
+        contentType: stored.contentType,
+        sizeBytes: stored.sizeBytes,
+        sha256: stored.sha256,
+        sortOrder,
+        createdBy: developer.developerId,
+      });
+      const listing = app.storeListing ?? {};
+      if (input.role === "store_icon") listing.iconAssetId = asset._id.toString();
+      if (input.role === "store_cover") listing.coverAssetId = asset._id.toString();
+      if (input.role === "gallery_screenshot") {
+        listing.screenshotAssetIds = [...(listing.screenshotAssetIds ?? []), asset._id.toString()].slice(0, 10);
+      }
+      app.storeListing = listing;
+      await app.save();
+      return serializeStoreAsset(asset.toObject());
+    } catch (error) {
+      await storage.deleteObject(storageKey).catch(() => {});
+      if (asset) await MiniAppAssetModel.deleteOne({ _id: asset._id }).catch(() => {});
+      throw error;
+    }
+  }
+
+  async deleteStoreAsset(developer: DeveloperIdentity, packageName: string, assetId: string) {
+    const app = await this.requireMiniApp(developer, normalizePackageName(packageName));
+    const asset = await MiniAppAssetModel.findOne({
+      _id: assetId,
+      orgId: developer.orgId,
+      miniAppId: app._id.toString(),
+      role: { $in: ["store_icon", "store_cover", "gallery_screenshot"] },
+    });
+    if (!asset) throw new MiniAppServiceError("not_found", "Store asset not found", 404);
+    await storage.deleteObject(asset.storageKey);
+    await asset.deleteOne();
+    const listing = app.storeListing ?? {};
+    if (listing.iconAssetId === assetId) listing.iconAssetId = null;
+    if (listing.coverAssetId === assetId) listing.coverAssetId = null;
+    listing.screenshotAssetIds = (listing.screenshotAssetIds ?? []).filter((id) => id !== assetId);
+    app.storeListing = listing;
+    await app.save();
+    return { ok: true };
   }
 
   private async getMiniAppById(developer: DeveloperIdentity, id: string) {
@@ -326,6 +493,7 @@ export class MiniAppService {
       packageName: app.packageName,
       name: app.displayName,
       description: app.description ?? null,
+      storeListing: serializeStoreListing(app.storeListing),
       status: app.status,
       activeRelease: null,
       latestRelease: null,
@@ -336,13 +504,17 @@ export class MiniAppService {
   }
 
   private async getMiniAppByPackageName(developer: DeveloperIdentity, packageName: string) {
-    const app = await MiniAppModel.findOne({ packageName: normalizePackageName(packageName), orgId: developer.orgId }).lean();
+    const app = await MiniAppModel.findOne({
+      packageName: normalizePackageName(packageName),
+      orgId: developer.orgId,
+    }).lean();
     if (!app) throw new MiniAppServiceError("not_found", "miniapp not found", 404);
     return {
       id: app._id.toString(),
       packageName: app.packageName,
       name: app.displayName,
       description: app.description ?? null,
+      storeListing: serializeStoreListing(app.storeListing),
       status: app.status,
       activeRelease: null,
       latestRelease: null,
@@ -403,6 +575,7 @@ function serializeRelease(release: {
   bundleSha256?: string | null;
   bundleSizeBytes?: number | null;
   manifestSha256?: string | null;
+  manifest?: unknown;
   signingKeyId?: string | null;
   signedAt?: Date | null;
   reviewedBy?: string | null;
@@ -418,6 +591,7 @@ function serializeRelease(release: {
     bundleSha256: release.bundleSha256 ?? null,
     bundleSizeBytes: release.bundleSizeBytes ?? null,
     manifestSha256: release.manifestSha256 ?? null,
+    manifest: release.manifest ?? null,
     signingKeyId: release.signingKeyId ?? null,
     signedAt: release.signedAt?.toISOString() ?? null,
     reviewedBy: release.reviewedBy ?? null,
@@ -425,4 +599,63 @@ function serializeRelease(release: {
     createdAt: release.createdAt?.toISOString() ?? null,
     updatedAt: release.updatedAt?.toISOString() ?? null,
   };
+}
+
+function cleanText(value: string | null, maxLength: number): string | null {
+  if (value === null) return null;
+  const cleaned = value.trim();
+  if (cleaned.length > maxLength) {
+    throw new MiniAppServiceError("text_too_long", `listing text cannot exceed ${maxLength} characters`, 400);
+  }
+  return cleaned || null;
+}
+
+function serializeStoreListing(listing: any) {
+  return {
+    subtitle: listing?.subtitle ?? null,
+    longDescription: listing?.longDescription ?? null,
+    categories: listing?.categories ?? [],
+    privacyPolicyUrl: listing?.privacyPolicyUrl ?? null,
+    supportUrl: listing?.supportUrl ?? null,
+    websiteUrl: listing?.websiteUrl ?? null,
+    reviewTier: listing?.reviewTier ?? "community",
+    featured: listing?.featured === true,
+    iconAssetId: listing?.iconAssetId ?? null,
+    coverAssetId: listing?.coverAssetId ?? null,
+    screenshotAssetIds: listing?.screenshotAssetIds ?? [],
+  };
+}
+
+function serializeStoreAsset(asset: any) {
+  return {
+    id: String(asset._id),
+    role: asset.role,
+    fileName: asset.fileName,
+    contentType: asset.contentType,
+    sizeBytes: asset.sizeBytes,
+    sha256: asset.sha256,
+    sortOrder: asset.sortOrder ?? null,
+    createdAt: asset.createdAt?.toISOString() ?? null,
+  };
+}
+
+function matchesImageSignature(bytes: Uint8Array, contentType: string): boolean {
+  const startsWith = (...signature: number[]) => signature.every((value, index) => bytes[index] === value);
+  if (contentType === "image/png") return startsWith(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a);
+  if (contentType === "image/jpeg") return startsWith(0xff, 0xd8, 0xff);
+  if (contentType === "image/webp") {
+    return (
+      startsWith(0x52, 0x49, 0x46, 0x46) &&
+      bytes[8] === 0x57 &&
+      bytes[9] === 0x45 &&
+      bytes[10] === 0x42 &&
+      bytes[11] === 0x50
+    );
+  }
+  if (contentType === "image/avif") {
+    if (bytes[4] !== 0x66 || bytes[5] !== 0x74 || bytes[6] !== 0x79 || bytes[7] !== 0x70) return false;
+    const header = Buffer.from(bytes.subarray(8, Math.min(bytes.length, 40))).toString("ascii");
+    return header.includes("avif") || header.includes("avis");
+  }
+  return false;
 }

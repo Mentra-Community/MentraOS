@@ -163,7 +163,7 @@ export async function startLogin(config: CliConfig): Promise<DeviceAuthorization
   const body = new URLSearchParams({ client_id: config.workosClientId });
   const response = await fetch(`${config.workosApiBaseUrl}/user_management/authorize/device`, {
     method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
+    headers: { "content-type": "application/x-www-form-urlencoded", "accept": "application/json" },
     body,
   });
   if (!response.ok) throw new Error(await errorMessage(response));
@@ -182,11 +182,11 @@ export async function pollLoginToken(
   });
   const response = await fetch(`${config.workosApiBaseUrl}/user_management/authenticate`, {
     method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
+    headers: { "content-type": "application/x-www-form-urlencoded", "accept": "application/json" },
     body,
   });
   if (response.status === 400 || response.status === 403) {
-    const result = await response.json().catch(() => ({})) as { error?: string; error_description?: string };
+    const result = (await response.json().catch(() => ({}))) as { error?: string; error_description?: string };
     if (result.error === "authorization_pending") return { status: "pending" };
     if (result.error === "slow_down") return { status: "slow_down" };
     throw new Error(result.error_description || result.error || `HTTP ${response.status}`);
@@ -210,7 +210,7 @@ export async function refreshLoginToken(
 
   const response = await fetch(`${config.workosApiBaseUrl}/user_management/authenticate`, {
     method: "POST",
-    headers: { "content-type": "application/json", accept: "application/json" },
+    headers: { "content-type": "application/json", "accept": "application/json" },
     body: JSON.stringify(body),
   });
   if (!response.ok) throw new Error(await errorMessage(response));
@@ -221,7 +221,9 @@ export async function listApps(credentials: CliCredentials): Promise<{ apps: Dev
   return coreRequest(credentials, "/api/console/apps");
 }
 
-export async function getAdminMe(credentials: CliCredentials): Promise<{ authenticated: true; admin: true; user: AdminUser | null }> {
+export async function getAdminMe(
+  credentials: CliCredentials,
+): Promise<{ authenticated: true; admin: true; user: AdminUser | null }> {
   return coreRequest(credentials, "/api/admin/me");
 }
 
@@ -328,14 +330,21 @@ export async function createRelease(
     packageName: string;
     version: string;
     manifest: Record<string, unknown>;
-    bundleBase64: string;
+    bundle: Uint8Array;
     fileName?: string;
     signedBundle: SignedBundleMetadata;
   },
 ): Promise<{ release: DeveloperRelease }> {
+  const form = new FormData();
+  form.set("packageName", input.packageName);
+  form.set("version", input.version);
+  form.set("manifest", JSON.stringify(input.manifest));
+  form.set("signedBundle", JSON.stringify(input.signedBundle));
+  form.set("fileName", input.fileName ?? "bundle.zip");
+  form.set("bundle", new Blob([input.bundle], { type: "application/zip" }), input.fileName ?? "bundle.zip");
   return coreRequest(credentials, `/api/console/apps/${encodeURIComponent(input.packageName)}/releases`, {
     method: "POST",
-    body: JSON.stringify(input),
+    body: form,
   });
 }
 
@@ -367,22 +376,18 @@ export async function submitRelease(
   );
 }
 
-async function coreRequest<T>(
-  credentials: CliCredentials,
-  path: string,
-  init?: RequestInit,
-): Promise<T> {
+async function coreRequest<T>(credentials: CliCredentials, path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${credentials.coreUrl}${path}`, {
     ...init,
     headers: {
       accept: "application/json",
       authorization: `Bearer ${credentials.token}`,
-      ...(init?.body ? { "content-type": "application/json" } : {}),
+      ...(typeof init?.body === "string" ? { "content-type": "application/json" } : {}),
       ...init?.headers,
     },
   });
   if (!response.ok) throw new Error(await errorMessage(response));
-  return await response.json() as T;
+  return (await response.json()) as T;
 }
 
 function assertWorkosClientId(config: CliConfig): void {

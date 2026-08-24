@@ -1,0 +1,18 @@
+{
+  "$schema": "./node_modules/@mentra/miniapp-cli/schema/miniapp.schema.json",
+  "packageName": "com.mentra.store",
+  "version": "1.0.0",
+  "name": "Mentra Miniapp Store",
+  "description": "Discover, install, update, and manage Mentra miniapps.",
+  "icon": "icon.png",
+  "type": "standard",
+  "sdkVersion": "0.3.0",
+  "minHostVersion": "2.13.0",
+  "entry": {
+    "background": "background/index.js",
+    "ui": "ui/index.html"
+  },
+  "permissions": [],
+  "hardwareRequirements": [],
+  "port": 3170
+}

@@ -36,6 +36,7 @@ import accountApi from "./account/account.api";
 import accountOauth from "./account/oauth.api";
 import consoleAuth from "./console/cli-auth.api";
 import portalEnterprise from "./portal/enterprise.api";
+import storeCatalog from "./store/catalog.api";
 import wellKnown from "./well-known.api";
 
 const logger = createLogger("core").child({ service: "app" });
@@ -89,6 +90,7 @@ export function createApp(opts: CreateAppOptions): Hono<AppEnv> {
   app.route("/api/account/oauth", accountOauth);
   app.route("/api/console", consoleAuth);
   app.route("/api/portal", portalEnterprise);
+  app.route("/api/store", storeCatalog);
   app.route("/api/admin", adminPreinstalled);
 
   // Global error translator.
@@ -106,10 +108,7 @@ export function createApp(opts: CreateAppOptions): Hono<AppEnv> {
     // is correlated to the originating request.
     const log = c.var.logger ?? logger;
     log.error({ err }, "unhandled error");
-    return c.json(
-      { error: "server_error", error_description: "internal server error" },
-      500,
-    );
+    return c.json({ error: "server_error", error_description: "internal server error" }, 500);
   });
 
   return app;

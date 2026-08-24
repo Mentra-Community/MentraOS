@@ -66,6 +66,7 @@
   "dependencies": {
     "buffer": "^6.0.3",
     "events": "^3.3.0",
+    "jszip": "^3.10.1",
     "semver": "^7.7.4",
     "typesafe-ts": "^1.7.1"
   },

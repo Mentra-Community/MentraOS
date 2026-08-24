@@ -75,11 +75,12 @@ import ttsModelManager from "./TTSModelManager"
 import {NavigationHandlers} from "./NavigationHandlers"
 import type {ClientApp} from "../types/applet"
 import {useAppStatusStore} from "../stores/apps"
-import {getDevAppAttestation, getDevAppSourcePackage} from "./AppRegistry"
+import appRegistry, {getDevAppAttestation, getDevAppSourcePackage} from "./AppRegistry"
 import {resolveForegroundLocationPermission} from "./ForegroundLocationPermission"
 import {advanceMiniappPingLiveness} from "./MiniappLiveness"
 import {listPhoneCalendarEvents, PhoneCalendarError} from "./PhoneCalendarService"
 import {LocalMiniappStorage} from "./LocalMiniappStorage"
+import {isSystemMiniappPackage, SYSTEM_MINIAPP_PACKAGES} from "./SystemMiniappPolicy"
 
 // =============================================================================
 // Types
@@ -112,6 +113,8 @@ interface ConnectedMiniapp {
   lastPongAt: number
   unansweredPingRounds: number
   installedManifest?: InstalledMiniappManifest
+  /** Host-derived provenance bit; never sourced from miniapp.json. */
+  hostTrustedSystem: boolean
   authRefreshTimerId: number | null
   /**
    * Backoff timer for re-attempting the INITIAL miniapp-token mint after it
@@ -194,17 +197,6 @@ function diagnosticStringList(values: Iterable<string>): string[] {
     .slice(0, DIAGNOSTIC_MAX_LIST_ITEMS)
 }
 
-const SYSTEM_MINIAPP_PACKAGES = new Set([
-  "com.mentra.camera",
-  "com.mentra.gallery",
-  "com.mentra.settings",
-  "com.mentra.simulated",
-  "com.mentra.mirror",
-  "com.mentra.ai",
-  "cloud.augmentos.notify",
-  "com.mentra.feedback",
-  "com.mentra.miniappdev",
-])
 const PING_INTERVAL_MS = 5_000
 const MINIAPP_AUTH_REFRESH_HEADROOM_MS = 5 * 60 * 1000
 const MINIAPP_AUTH_REFRESH_MIN_DELAY_MS = 5_000
@@ -723,6 +715,7 @@ class LocalMiniappRuntime {
     packageName: string,
     sendFn: (raw: string) => void,
     installedManifest?: InstalledMiniappManifest,
+    hostTrustedSystem = false,
   ): void {
     console.log(`${LOG_TAG}: registerApp(${packageName})`)
     this.clearForegroundProbe(packageName)
@@ -767,6 +760,7 @@ class LocalMiniappRuntime {
       lastPongAt: Date.now(),
       unansweredPingRounds: 0,
       installedManifest,
+      hostTrustedSystem,
       authRefreshTimerId: null,
       authRetryTimerId: null,
       authDelivered: false,
@@ -1320,6 +1314,12 @@ class LocalMiniappRuntime {
         break
       case MiniappRequestType.MINIAPPS_STOP:
         void this.handleMiniappsStop(packageName, payload, requestId)
+        break
+      case MiniappRequestType.MINIAPPS_INSTALL:
+        void this.handleMiniappsInstall(packageName, payload, requestId)
+        break
+      case MiniappRequestType.MINIAPPS_UNINSTALL:
+        void this.handleMiniappsUninstall(packageName, payload, requestId)
         break
       case MiniappRequestType.ACTION_INVOKE:
         void this.handleActionInvoke(packageName, payload, requestId)
@@ -2536,7 +2536,9 @@ class LocalMiniappRuntime {
       const permission = await resolveForegroundLocationPermission(Location, () => AppState.currentState)
       const {status} = permission
       console.log(
-        `${LOG_TAG}: location poll permission status=${status} appState=${AppState.currentState} elapsed=${Date.now() - permissionStartedAt}ms`,
+        `${LOG_TAG}: location poll permission status=${status} appState=${AppState.currentState} elapsed=${
+          Date.now() - permissionStartedAt
+        }ms`,
       )
       if (status !== "granted") {
         this.sendResult(packageName, requestId, false, undefined, {
@@ -3097,11 +3099,7 @@ class LocalMiniappRuntime {
    * session.system.scanQr — host camera overlay. Must not clear miniapp
    * foreground; the host seam is responsible for presenting a Modal on top.
    */
-  private async handleScanQr(
-    packageName: string,
-    payload: Record<string, unknown>,
-    requestId?: string,
-  ): Promise<void> {
+  private async handleScanQr(packageName: string, payload: Record<string, unknown>, requestId?: string): Promise<void> {
     try {
       const result = await invokeScanQrSeam(getUiSeams().scanQr, payload)
       this.sendResult(packageName, requestId, true, result)
@@ -4115,14 +4113,14 @@ class LocalMiniappRuntime {
     {callerPackageName: string; targetPackageName: string; callerRequestId?: string; timer: number}
   >()
   private actionCallSeq = 0
+  private storeMutationInFlight: string | null = null
 
   private interopApps(): ClientApp[] {
     return useAppStatusStore.getState().apps
   }
 
   private isSystemPackage(packageName: string): boolean {
-    if (SYSTEM_MINIAPP_PACKAGES.has(packageName)) return true
-    return this.interopApps().find((app) => app.packageName === packageName)?.isMiniappDev === true
+    return isSystemMiniappPackage(packageName) && this.connectedApps.get(packageName)?.hostTrustedSystem === true
   }
 
   private async startInteropApp(packageName: string): Promise<boolean> {
@@ -4259,6 +4257,9 @@ class LocalMiniappRuntime {
       // launch or the background context failed to spawn — don't report success.
       const started = await this.startInteropApp(target)
       if (started) {
+        if (payload.foreground === true && app.local) {
+          await useAppStatusStore.getState().setForeground(target)
+        }
         this.sendResult(packageName, requestId, true)
         this.auditInterop({caller: packageName, op: "start", target, ok: true})
       } else {
@@ -4312,6 +4313,191 @@ class LocalMiniappRuntime {
         code: MiniappErrorCode.INTERNAL,
         message: (e as Error)?.message ?? "stop failed",
       })
+    }
+  }
+
+  private async handleMiniappsInstall(
+    storePackageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    const target = typeof payload.packageName === "string" ? payload.packageName : undefined
+    if (
+      !SYSTEM_MINIAPP_PACKAGES.has(storePackageName) ||
+      !this.connectedApps.get(storePackageName)?.hostTrustedSystem
+    ) {
+      this.sendResult(storePackageName, requestId, false, undefined, {
+        code: MiniappErrorCode.NOT_PERMITTED,
+        message: "Installing miniapps is restricted to bundled system Stores",
+      })
+      this.auditInterop({
+        caller: storePackageName,
+        op: "install",
+        target,
+        ok: false,
+        errorCode: MiniappErrorCode.NOT_PERMITTED,
+      })
+      return
+    }
+
+    const version = typeof payload.version === "string" ? payload.version.trim() : ""
+    const bundleUrl = typeof payload.bundleUrl === "string" ? payload.bundleUrl.trim() : ""
+    const bundleSha256 = typeof payload.bundleSha256 === "string" ? payload.bundleSha256.toLowerCase() : ""
+    const packageNamePattern = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/
+    const versionPattern =
+      /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/
+    if (
+      !target ||
+      !packageNamePattern.test(target) ||
+      !versionPattern.test(version) ||
+      !bundleUrl ||
+      !/^[a-f0-9]{64}$/.test(bundleSha256)
+    ) {
+      this.sendResult(storePackageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INVALID_ARGUMENT,
+        message: "install requires packageName, version, bundleUrl, and a SHA-256 hash",
+      })
+      return
+    }
+    if (SYSTEM_MINIAPP_PACKAGES.has(target)) {
+      this.sendResult(storePackageName, requestId, false, undefined, {
+        code: MiniappErrorCode.NOT_PERMITTED,
+        message: "Store APIs cannot replace bundled system miniapps",
+      })
+      return
+    }
+    if (this.storeMutationInFlight) {
+      this.sendResult(storePackageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INSTALL_IN_PROGRESS,
+        message: `Another Store operation is already in progress for ${this.storeMutationInFlight}`,
+      })
+      return
+    }
+    this.storeMutationInFlight = target
+    try {
+      const parsedUrl = new URL(bundleUrl)
+      const developmentHttp = __DEV__ && parsedUrl.protocol === "http:"
+      if (parsedUrl.protocol !== "https:" && !developmentHttp) {
+        throw new Error("bundleUrl must use HTTPS")
+      }
+      const activeVersion = await appRegistry.getActiveVersion(target)
+      const currentIdentity = activeVersion ? appRegistry.getReleaseIdentity(target, activeVersion) : null
+      if (
+        currentIdentity?.source === "store" &&
+        currentIdentity.storePackageName &&
+        currentIdentity.storePackageName !== storePackageName
+      ) {
+        this.sendResult(storePackageName, requestId, false, undefined, {
+          code: MiniappErrorCode.STORE_OWNERSHIP_CONFLICT,
+          message: `${target} is managed by ${currentIdentity.storePackageName}`,
+        })
+        return
+      }
+
+      const result = await appRegistry.installFromUrl(bundleUrl, {
+        expectedPackageName: target,
+        expectedVersion: version,
+        expectedBundleSha256: bundleSha256,
+        onProgress: (phase) =>
+          this.sendToMiniapp(storePackageName, {
+            type: MiniappResponseType.MINIAPPS_INSTALL_PROGRESS,
+            packageName: target,
+            version,
+            phase,
+          }),
+        releaseIdentity: {
+          source: "store",
+          storePackageName,
+          bundleSha256,
+          ...(typeof payload.releaseId === "string" ? {releaseId: payload.releaseId} : {}),
+          ...(typeof payload.channel === "string" ? {channel: payload.channel} : {}),
+        },
+      })
+      if (result.is_error()) throw result.error
+      this.sendToMiniapp(storePackageName, {
+        type: MiniappResponseType.MINIAPPS_INSTALL_PROGRESS,
+        packageName: target,
+        version,
+        phase: "complete",
+      })
+      await useAppStatusStore.getState().refresh()
+      this.sendResult(storePackageName, requestId, true, {
+        packageName: target,
+        version,
+        installedByStore: storePackageName,
+      })
+      this.auditInterop({caller: storePackageName, op: "install", target, ok: true})
+    } catch (error) {
+      this.sendResult(storePackageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INSTALL_FAILED,
+        message: (error as Error)?.message ?? "miniapp installation failed",
+      })
+      this.auditInterop({
+        caller: storePackageName,
+        op: "install",
+        target,
+        ok: false,
+        errorCode: MiniappErrorCode.INSTALL_FAILED,
+      })
+    } finally {
+      this.storeMutationInFlight = null
+    }
+  }
+
+  private async handleMiniappsUninstall(
+    storePackageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    const target = typeof payload.packageName === "string" ? payload.packageName : undefined
+    if (
+      !SYSTEM_MINIAPP_PACKAGES.has(storePackageName) ||
+      !this.connectedApps.get(storePackageName)?.hostTrustedSystem
+    ) {
+      this.sendResult(storePackageName, requestId, false, undefined, {
+        code: MiniappErrorCode.NOT_PERMITTED,
+        message: "Uninstalling miniapps is restricted to bundled system Stores",
+      })
+      return
+    }
+    if (!target || SYSTEM_MINIAPP_PACKAGES.has(target)) {
+      this.sendResult(storePackageName, requestId, false, undefined, {
+        code: MiniappErrorCode.NOT_PERMITTED,
+        message: "A Store cannot uninstall a bundled system miniapp",
+      })
+      return
+    }
+    if (this.storeMutationInFlight) {
+      this.sendResult(storePackageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INSTALL_IN_PROGRESS,
+        message: `Another Store operation is already in progress for ${this.storeMutationInFlight}`,
+      })
+      return
+    }
+    this.storeMutationInFlight = target
+    try {
+      const activeVersion = await appRegistry.getActiveVersion(target)
+      const identity = activeVersion ? appRegistry.getReleaseIdentity(target, activeVersion) : null
+      if (identity?.source === "store" && identity.storePackageName !== storePackageName) {
+        this.sendResult(storePackageName, requestId, false, undefined, {
+          code: MiniappErrorCode.STORE_OWNERSHIP_CONFLICT,
+          message: `${target} is managed by ${identity.storePackageName ?? "another Store"}`,
+        })
+        return
+      }
+      const app = this.interopApps().find((candidate) => candidate.packageName === target)
+      if (app?.running) await this.stopInteropApp(target)
+      const result = await useAppStatusStore.getState().uninstall(target)
+      if (result.is_error()) throw result.error
+      this.sendResult(storePackageName, requestId, true)
+      this.auditInterop({caller: storePackageName, op: "uninstall", target, ok: true})
+    } catch (error) {
+      this.sendResult(storePackageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: (error as Error)?.message ?? "miniapp uninstall failed",
+      })
+    } finally {
+      this.storeMutationInFlight = null
     }
   }
 
