@@ -41,4 +41,25 @@ describe("createGalleryLoadCoordinator", () => {
     refreshed.resolve()
     await postSyncLoad
   })
+
+  it("does not let a lifecycle coalesce replace a queued storage refresh", async () => {
+    const coordinator = createGalleryLoadCoordinator()
+    const initial = deferred()
+    const refreshed = deferred()
+    const initialLoad = jest.fn(() => initial.promise)
+    const postSyncLoad = jest.fn(() => refreshed.promise)
+    const staleFocusLoad = jest.fn(() => Promise.resolve())
+
+    const request = coordinator.run(initialLoad, {refreshAfterCurrent: false})
+    coordinator.run(postSyncLoad)
+    coordinator.run(staleFocusLoad, {refreshAfterCurrent: false})
+
+    initial.resolve()
+    await Promise.resolve()
+    expect(postSyncLoad).toHaveBeenCalledTimes(1)
+    expect(staleFocusLoad).not.toHaveBeenCalled()
+
+    refreshed.resolve()
+    await request
+  })
 })
