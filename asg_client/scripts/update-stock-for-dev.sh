@@ -200,10 +200,14 @@ load_preserved_stock_update() {
   state="$("${ADB[@]}" shell cat "$PRESERVED_STOCK_STATE_PATH" 2>/dev/null | tr -d '\r\n')"
   IFS=: read -r PRESERVED_STOCK_VERSION_CODE expected_sha <<< "$state"
   if ! [[ "$PRESERVED_STOCK_VERSION_CODE" =~ ^[0-9]+$ ]] \
-    || [ "$PRESERVED_STOCK_VERSION_CODE" -le "$TARGET_VERSION_CODE" ] \
     || ! [[ "$expected_sha" =~ ^[0-9a-f]{64}$ ]]; then
     echo "Invalid preserved stock-ASG update metadata." >&2
     return 1
+  fi
+  if [ "$PRESERVED_STOCK_VERSION_CODE" -le "$TARGET_VERSION_CODE" ]; then
+    echo "Discarding preserved stock ASG $PRESERVED_STOCK_VERSION_CODE because manifest target $TARGET_VERSION_CODE is at least as new."
+    clear_preserved_stock_update
+    return 0
   fi
 
   PRESERVED_STOCK_APK_PATH="$WORK_DIR/preserved-newer-stock.apk"
@@ -758,20 +762,33 @@ TARGET_APK_SHA256="$(jq -er '.apps["com.mentra.asg_client"].sha256 | ascii_downc
 # otherwise use the independently validated stock target from this snapshot.
 download_verified "staging ASG Client" "$TARGET_APK_URL" "$TARGET_APK_SHA256" "$TARGET_APK_SIZE" "$TARGET_APK_PATH"
 INITIAL_STOCK_VERSION_CODE="$(package_version_code "$STOCK_PKG")"
+load_preserved_stock_update \
+  || fail "Could not validate the stock ASG preserved by an interrupted bridge run"
 if [ "$INITIAL_STOCK_VERSION_CODE" = "$BRIDGE_VERSION_CODE" ]; then
   echo "Found ASG 36 left by an interrupted earlier run; restoring a safe stock ASG first."
-  load_preserved_stock_update \
-    || fail "Could not validate the newer stock ASG preserved by the interrupted bridge run"
   DEVICE_MUTATED=true
   BRIDGE_ACTIVE=true
   replace_bridge_with_target_stock \
     || fail "Could not recover a safe stock ASG from the interrupted bridge run"
   enable_stock_runtime \
     || fail "Recovered the stock ASG package, but could not activate its launcher"
-else
-  # A durable copy can remain if an earlier run stopped before installing the
-  # bridge. The still-installed package is authoritative in that case.
-  clear_preserved_stock_update
+elif [ -n "$PRESERVED_STOCK_APK_PATH" ]; then
+  if [[ "$INITIAL_STOCK_VERSION_CODE" =~ ^[0-9]+$ ]] \
+    && [ "$INITIAL_STOCK_VERSION_CODE" -ge "$PRESERVED_STOCK_VERSION_CODE" ]; then
+    echo "Installed stock ASG $INITIAL_STOCK_VERSION_CODE is at least as new as preserved update $PRESERVED_STOCK_VERSION_CODE; removing the stale recovery copy."
+    clear_preserved_stock_update
+  else
+    echo "Bridge removal was interrupted after exposing stock ASG ${INITIAL_STOCK_VERSION_CODE:-unknown}; restoring preserved update $PRESERVED_STOCK_VERSION_CODE first."
+    DEVICE_MUTATED=true
+    "${ADB[@]}" install -r "$PRESERVED_STOCK_APK_PATH" >/dev/null \
+      || fail "Could not restore the preserved stock ASG update"
+    INITIAL_STOCK_VERSION_CODE="$(package_version_code "$STOCK_PKG")"
+    [ "$INITIAL_STOCK_VERSION_CODE" = "$PRESERVED_STOCK_VERSION_CODE" ] \
+      || fail "Preserved stock ASG restore expected versionCode $PRESERVED_STOCK_VERSION_CODE, got ${INITIAL_STOCK_VERSION_CODE:-unknown}"
+    clear_preserved_stock_update
+    enable_stock_runtime \
+      || fail "Restored the preserved stock ASG package, but could not activate its launcher"
+  fi
 fi
 
 "$REPO_DIR/.github/scripts/validate-asg-ota-manifest.sh" "$MANIFEST_PATH"

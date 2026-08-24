@@ -85,7 +85,10 @@ newer than the manifest target at `/storage/emulated/0/asg/dev_setup_newer_stock
 its version and SHA-256. The copy survives an ADB disconnect and is restored before the staging
 target after bridge removal. A split-APK stock install fails closed because a single APK backup
 could not reproduce it exactly. Built-in stock versions do not need a copy because uninstalling
-the bridge reveals them again.
+the bridge reveals them again. On the next run, the updater compares the installed, preserved,
+and current manifest versions: it restores the preserved update when bridge removal exposed an
+older package, keeps an installed version that is at least as new, and discards the copy when the
+rolling manifest target has caught up.
 
 After ASG 36 reports apply success, the updater waits for the BES chip to reboot and repeatedly
 requests `version_info_3`. It does not continue until the reported BES version is at least the
