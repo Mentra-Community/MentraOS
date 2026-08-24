@@ -311,10 +311,16 @@ replace_bridge_with_target_stock() {
   preserve_legacy_stock_files || return 1
   "${ADB[@]}" uninstall "$STOCK_PKG" >/dev/null || return 1
   "${ADB[@]}" shell cmd package install-existing "$STOCK_PKG" >/dev/null 2>&1 || true
-  "${ADB[@]}" shell pm disable-user --user 0 "$STOCK_PKG" >/dev/null 2>&1 || true
-  "${ADB[@]}" install -r "$TARGET_APK_PATH" >/dev/null || return 1
   installed_version="$(package_version_code "$STOCK_PKG")"
-  [ "$installed_version" = "$TARGET_VERSION_CODE" ] || return 1
+  if [[ "$installed_version" =~ ^[0-9]+$ ]] \
+    && [ "$installed_version" -gt "$TARGET_VERSION_CODE" ]; then
+    echo "Built-in stock ASG $installed_version is newer than staging target $TARGET_VERSION_CODE; retaining it after bridge removal."
+  else
+    "${ADB[@]}" shell pm disable-user --user 0 "$STOCK_PKG" >/dev/null 2>&1 || true
+    "${ADB[@]}" install -r "$TARGET_APK_PATH" >/dev/null || return 1
+    installed_version="$(package_version_code "$STOCK_PKG")"
+    [ "$installed_version" = "$TARGET_VERSION_CODE" ] || return 1
+  fi
   BRIDGE_ACTIVE=false
   restore_legacy_stock_files || return 1
 }
@@ -777,9 +783,18 @@ if [ -s "$MTK_PLAN_PATH" ]; then
 fi
 
 FINAL_MTK="$("${ADB[@]}" shell getprop ro.custom.ota.version 2>/dev/null | tr -d '\r\n')"
+FINAL_STOCK_VERSION_CODE="$(package_version_code "$STOCK_PKG")"
+[[ "$FINAL_STOCK_VERSION_CODE" =~ ^[0-9]+$ ]] \
+  || fail "Could not verify the stock ASG version after firmware updates"
+[ "$FINAL_STOCK_VERSION_CODE" -ge "$TARGET_VERSION_CODE" ] \
+  || fail "Stock ASG versionCode $FINAL_STOCK_VERSION_CODE is below manifest target $TARGET_VERSION_CODE"
 echo ""
 echo "Stock firmware baseline is ready:"
-echo "  ASG: $TARGET_VERSION_NAME ($TARGET_VERSION_CODE)"
+if [ "$FINAL_STOCK_VERSION_CODE" = "$TARGET_VERSION_CODE" ]; then
+  echo "  ASG: $TARGET_VERSION_NAME ($TARGET_VERSION_CODE)"
+else
+  echo "  ASG: versionCode $FINAL_STOCK_VERSION_CODE (newer than manifest target $TARGET_VERSION_CODE)"
+fi
 echo "  BES: $BES_VERSION or newer"
 echo "  MTK: $FINAL_MTK"
 
