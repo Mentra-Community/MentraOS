@@ -225,13 +225,18 @@ preserve_legacy_stock_files() {
     echo "Could not inventory legacy stock data before uninstall." >&2
     return 1
   fi
-  if [ "$entry_count" -eq 0 ]; then
-    return 0
-  fi
 
   if "${ADB[@]}" shell test -e "$LEGACY_STOCK_BACKUP_PATH"; then
-    echo "Unrestored legacy stock-data backup already exists at $LEGACY_STOCK_BACKUP_PATH." >&2
+    LEGACY_STOCK_BACKUP="$LEGACY_STOCK_BACKUP_PATH"
+    if [ "$entry_count" -eq 0 ]; then
+      echo "Reusing preserved legacy stock data from $LEGACY_STOCK_BACKUP_PATH."
+      return 0
+    fi
+    echo "Both preserved and live legacy stock data exist; refusing to overwrite either tree." >&2
     return 1
+  fi
+  if [ "$entry_count" -eq 0 ]; then
+    return 0
   fi
   LEGACY_STOCK_BACKUP="$LEGACY_STOCK_BACKUP_PATH"
   echo "Preserving $entry_count legacy stock-data entries before removing the bridge..."
@@ -315,7 +320,12 @@ replace_bridge_with_target_stock() {
 }
 
 restore_safe_stock_on_failure() {
+  local installed_version
   if [ "$DEVICE_MUTATED" = true ] && adb_online; then
+    installed_version="$(package_version_code "$STOCK_PKG" || true)"
+    if [ "$installed_version" = "$BRIDGE_VERSION_CODE" ]; then
+      BRIDGE_ACTIVE=true
+    fi
     echo "Restoring the stock launcher after the failed setup..." >&2
     "${ADB[@]}" shell am force-stop "$DEV_PKG" >/dev/null 2>&1 || true
     "${ADB[@]}" shell pm disable-user --user 0 "$DEV_PKG" >/dev/null 2>&1 || true
@@ -679,11 +689,11 @@ DEVICE_MUTATED=true
 return_bes_to_rendezvous_before_bridge
 
 echo "=== Installing ASG 36 BES bridge ==="
-BRIDGE_ACTIVE=true
 "${ADB[@]}" install -r "$BRIDGE_APK_PATH"
 INSTALLED_VERSION_CODE="$(package_version_code "$STOCK_PKG")"
 [ "$INSTALLED_VERSION_CODE" = "$BRIDGE_VERSION_CODE" ] \
   || fail "ASG 36 bridge installation did not produce versionCode $BRIDGE_VERSION_CODE"
+BRIDGE_ACTIVE=true
 "${ADB[@]}" shell am start -n "$STOCK_COMPONENT" >/dev/null
 sleep 20
 
