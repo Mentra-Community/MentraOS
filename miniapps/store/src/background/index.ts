@@ -88,23 +88,28 @@ export class StoreController {
     this.queuedAutomaticRefresh ||= refreshAutomaticCatalog
     this.queuedClearOperation ||= clearOperation
     if (this.refreshing) return this.refreshing
-    this.refreshing = this.drainRefreshes().finally(() => {
-      this.refreshing = null
-    })
+    this.refreshing = this.drainRefreshes()
     return this.refreshing
   }
 
   private async drainRefreshes(): Promise<StoreSnapshot> {
-    while (this.refreshQueued) {
-      const query = this.queuedQuery
-      const refreshAutomaticCatalog = this.queuedAutomaticRefresh
-      const clearOperation = this.queuedClearOperation
-      this.refreshQueued = false
-      this.queuedAutomaticRefresh = false
-      this.queuedClearOperation = false
-      await this.load(query, clearOperation, refreshAutomaticCatalog)
+    try {
+      while (this.refreshQueued) {
+        const query = this.queuedQuery
+        const refreshAutomaticCatalog = this.queuedAutomaticRefresh
+        const clearOperation = this.queuedClearOperation
+        this.refreshQueued = false
+        this.queuedAutomaticRefresh = false
+        this.queuedClearOperation = false
+        await this.load(query, clearOperation, refreshAutomaticCatalog)
+      }
+      return this.snapshot
+    } finally {
+      // Clear the in-flight marker in the same synchronous continuation that
+      // observes an empty queue. A refresh cannot be stranded between the
+      // final queue check and a later Promise.finally callback.
+      this.refreshing = null
     }
-    return this.snapshot
   }
 
   private loadCatalog(base: string, query?: string): Promise<StoreApp[]> {

@@ -7,6 +7,7 @@ interface TestController {
   install(packageName: string, query?: string, selectedApp?: StoreApp): Promise<StoreSnapshot>
   load(query?: string, clearOperation?: boolean, refreshAutomaticCatalog?: boolean): Promise<StoreSnapshot>
   refresh(query?: string, refreshAutomaticCatalog?: boolean, clearOperation?: boolean): Promise<StoreSnapshot>
+  refreshing: Promise<StoreSnapshot> | null
   snapshot: StoreSnapshot
 }
 
@@ -57,5 +58,6 @@ describe("StoreController refresh serialization", () => {
       {clearOperation: false, query: "before"},
       {clearOperation: true, query: "after"},
     ])
+    expect(controller.refreshing).toBeNull()
   })
 })

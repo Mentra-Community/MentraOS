@@ -151,7 +151,7 @@ publisher signatures can be enforced later without changing the API.
 - [x] Android ASG and Bluetooth SDK compile checks.
 - [x] Full iOS Simulator native build with code signing disabled.
 - [x] ZIP integrity check. Bundled Store SHA-256:
-      `3959276b78adad75e1174b2119dfd26e3fcbbae5302fdb58d155229de3332fc4`.
+      `e18fdc3b66776db7b50b9ed349c1f343f831dc97bfd58983d40c9c1e5878bcad`.
 - [x] Review regressions: bounded streaming inflation and CRC checks in both
       Core and the phone, trusted host-selected Core URL, complete catalog
       pagination, Store-owned uninstall visibility, pre-activation host/SDK
