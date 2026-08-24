@@ -3,7 +3,7 @@ import * as Sentry from "@sentry/react-native"
 import {Stack} from "expo-router"
 import {PostHogProvider, usePostHog} from "posthog-react-native"
 import {Suspense, FunctionComponent, PropsWithChildren, useEffect, useMemo, useRef} from "react"
-import {AppState, Platform, View} from "react-native"
+import {Platform, View} from "react-native"
 import ErrorBoundary from "react-native-error-boundary"
 import {GestureHandlerRootView} from "react-native-gesture-handler"
 import {KeyboardProvider} from "react-native-keyboard-controller"
@@ -25,7 +25,6 @@ import {SaferAreaProvider, useSaferAreaInsets} from "@/contexts/SaferAreaContext
 import CoreStatusBar from "@/components/dev/CoreStatusBar"
 import {useShallow} from "zustand/shallow"
 import {useNavigationStore} from "@/stores/navigation"
-import {captureMentraAppActive} from "@/utils/analytics/mentraAppAnalytics"
 // JsStack imports commented out - were used for Android-specific navigation (currently disabled)
 // import {getAnimation, JsStack, woltScreenOptions} from "@/components/navigation/JsStack"
 
@@ -220,11 +219,9 @@ function PostHogIdentityBridge({children}: PropsWithChildren) {
   const posthog = usePostHog()
   const {user, loading} = useAuth()
   const identifiedThisSession = useRef(false)
-  const identifiedUserId = useRef<string | null>(null)
 
   useEffect(() => {
     if (loading) return
-    if (!user?.id) identifiedUserId.current = null
     let cancelled = false
     void (async () => {
       // getDistinctId() returns "" until PostHog hydrates its persisted
@@ -237,30 +234,18 @@ function PostHogIdentityBridge({children}: PropsWithChildren) {
         // first-party address server-side and owns that PostHog person property.
         posthog.identify(user.id)
         identifiedThisSession.current = true
-        identifiedUserId.current = user.id
-        captureMentraAppActive(posthog)
       } else if (identifiedThisSession.current || !isAnonymousDistinctId(posthog.getDistinctId())) {
         // Reset only a still-identified session (sign-out, or a boot that kept a
         // prior identity from any auth provider). Resetting on every signed-out
         // boot would mint a fresh anonymous PostHog person each time the app opens.
         posthog.reset()
         identifiedThisSession.current = false
-        identifiedUserId.current = null
-      } else {
-        identifiedUserId.current = null
       }
     })()
     return () => {
       cancelled = true
     }
   }, [loading, posthog, user?.id])
-
-  useEffect(() => {
-    const subscription = AppState.addEventListener("change", (state) => {
-      if (state === "active" && identifiedUserId.current) captureMentraAppActive(posthog)
-    })
-    return () => subscription.remove()
-  }, [posthog])
 
   return <>{children}</>
 }
