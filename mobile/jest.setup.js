@@ -306,6 +306,9 @@ const mockIslandEntries = () => {
   const realGallerySyncClock = jest.requireActual("./modules/engine/src/services/gallerySyncClock")
   const realOtaManifestUrl = jest.requireActual("./modules/engine/src/services/otaManifestUrl")
   const realOtaUpdateCheck = jest.requireActual("./modules/engine/src/services/OtaUpdateCheckService")
+  // SYSTEM identity is a pure build-owned policy. Host surfaces use the real
+  // predicate so test behavior cannot drift from AppRegistry enforcement.
+  const realSystemMiniappPolicy = jest.requireActual("./modules/engine/src/services/SystemMiniappPolicy")
   // OTA install policy constants + display-state derivation + the install state
   // machine (WP 8B) — real implementations so the host shim
   // (@/app/ota/otaProgressTimeouts), the OTA screens and their tests exercise the
@@ -365,6 +368,7 @@ const mockIslandEntries = () => {
     // implementations, consumed by the host otaProgressTimeouts shim + OTA tests.
     ...realOtaInstallPolicy,
     deriveDisplayState: realOtaDisplayState.deriveDisplayState,
+    isSystemMiniappPackage: realSystemMiniappPolicy.isSystemMiniappPackage,
     // Settings contract on the public entry (real store-backed): SETTINGS registry,
     // per-key hook, and the pure device-model key helpers.
     SETTINGS: realSettings.SETTINGS,

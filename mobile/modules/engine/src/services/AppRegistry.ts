@@ -33,7 +33,7 @@ import {sha256Hex} from "../utils/sha256"
 import {checkManifestVersions} from "./manifestVersionGate"
 import {normalizeManifestActions} from "./manifestActions"
 import {miniappRunningRegistry} from "./MiniappRunningRegistry"
-import {requiresConnectedGlasses} from "./SystemMiniappPolicy"
+import {isSystemMiniappPackage, requiresConnectedGlasses} from "./SystemMiniappPolicy"
 import {validateInstallBundleArchive} from "./validateInstallBundle"
 
 export {normalizeManifestActions} from "./manifestActions"
@@ -181,6 +181,10 @@ const REMOTE_BUNDLE_TIMEOUT_MS = 45_000
 
 function releaseIdentityKey(packageName: string, version: string): string {
   return `miniapp_release_identity:${packageName}:${version}`
+}
+
+function userUninstalledKey(packageName: string): string {
+  return `miniapp_user_uninstalled:${packageName}`
 }
 
 /**
@@ -670,6 +674,9 @@ class AppRegistry {
 
     this.setActiveVersion(packageName, version)
     storage.save(releaseIdentityKey(packageName, version), releaseIdentity)
+    // Any explicit successful install (Store, preinstall, dev, or a new
+    // build-owned bundle) reverses a prior user-uninstalled tombstone.
+    storage.remove(userUninstalledKey(packageName))
     this.refreshNeeded = true
     this.notify()
   }
@@ -765,6 +772,14 @@ class AppRegistry {
 
   public uninstall(packageName: string, version?: string): AsyncResult<void, Error> {
     return Res.try_async(async () => {
+      // SYSTEM identity is build-owned, so enforce non-removability at the
+      // registry boundary rather than relying on whichever UI or system
+      // miniapp initiated the uninstall. Users may still hide a SYSTEM app
+      // from Home through setHiddenStatus; only its installed bundle is
+      // protected here.
+      if (isSystemMiniappPackage(packageName)) {
+        throw new Error(`SYSTEM miniapp ${packageName} cannot be uninstalled; remove it from Home instead`)
+      }
       if (version) {
         const lmaDir = new Directory(Paths.document, "lmas", packageName, version)
         // Guard exists: a dev miniapp loads over HTTP and has no on-disk dir,
@@ -790,9 +805,19 @@ class AppRegistry {
       // backed by storage records (_dev_meta + dev_apps_index), not the disk
       // dir, so without this the projected tile reappears on the next refresh.
       this.clearDevArtifacts(packageName)
+      if (!version) {
+        const saved = storage.save(userUninstalledKey(packageName), true)
+        if (saved.is_error()) throw saved.error
+      }
       this.refreshNeeded = true
       this.notify()
     })
+  }
+
+  /** Whether the user explicitly removed this package after it was installed. */
+  public wasUserUninstalled(packageName: string): boolean {
+    const result = storage.load<boolean>(userUninstalledKey(packageName))
+    return result.is_ok() && result.value === true
   }
 
   public getPackageNames(): string[] {

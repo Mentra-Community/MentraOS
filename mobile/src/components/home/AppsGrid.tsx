@@ -24,10 +24,9 @@ import {BlurView} from "expo-blur"
 import {Icon, Text} from "@/components/ignite"
 import AppIcon from "@/components/home/AppIcon"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {DUMMY_APPLET, HardwareType, getAppsOrder, saveAppsOrder, sortAppsByPackageNamePriority, engine, type ClientApp, type OrderMap, useSetForeground, useStart, useStop} from "@mentra/engine"
+import {DUMMY_APPLET, HardwareType, getAppsOrder, isSystemMiniappPackage, saveAppsOrder, sortAppsByPackageNamePriority, engine, type ClientApp, type OrderMap, useSetForeground, useStart, useStop} from "@mentra/engine"
 
 import {isOfflineHosted} from "@/components/miniapp/offlineHostedPackages"
-import {SYSTEM_APPS} from "@/constants/miniapps"
 import {useForegroundApps} from "@/hooks/useAppsExtras"
 import {uninstallAppUI} from "@/utils/uninstallAppUI"
 import {askPermissionsUI, checkPermissionsUI} from "@/utils/PermissionsUtils"
@@ -672,7 +671,7 @@ export function AppsGrid({
             }
           },
         },
-        !SYSTEM_APPS.includes(liveSelectedApp?.packageName || "") && {
+        !isSystemMiniappPackage(liveSelectedApp?.packageName || "") && {
           label: translate("appInfo:settings"),
           icon: "exclamation-circle",
           onPress: () => {
@@ -701,7 +700,7 @@ export function AppsGrid({
             }
           },
         },
-        !SYSTEM_APPS.includes(liveSelectedApp?.packageName || "") && {
+        !isSystemMiniappPackage(liveSelectedApp?.packageName || "") && {
           label: translate("appInfo:uninstall"),
           icon: "trash",
           destructive: true,

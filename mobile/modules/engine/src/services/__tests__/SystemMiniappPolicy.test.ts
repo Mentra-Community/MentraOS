@@ -12,8 +12,24 @@ import {
 describe("SYSTEM miniapp policy", () => {
   test("trusts the bundled Mentra Store", () => {
     expect(isSystemMiniappPackage("com.mentra.store")).toBe(true)
+    expect(isSystemMiniappPackage("com.mentra.miniappdev")).toBe(true)
     expect(isStoreMiniappPackage("com.mentra.store")).toBe(true)
     expect(isStoreMiniappPackage("com.mentra.settings")).toBe(false)
+  })
+
+  test.each([
+    "com.mentra.ai",
+    "com.mentra.captions",
+    "com.mentra.livestreamer",
+    "com.mentra.merge",
+    "com.mentra.navigation",
+    "com.mentra.notes",
+    "com.mentra.recorder",
+    "com.mentra.store",
+    "com.mentra.teleprompter",
+    "com.mentra.translation",
+  ])("keeps the currently shipped bundle %s build-owned", (packageName) => {
+    expect(isSystemMiniappPackage(packageName)).toBe(true)
   })
 
   test.each(["com.example.store", "com.mentra.store.fake", "com.example.dev"])(

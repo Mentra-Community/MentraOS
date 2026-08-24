@@ -53,6 +53,10 @@ function shouldInstall(entry: PreinstalledMiniappRegistryEntry): boolean {
     )
     return false
   }
+  // install_once is an initial-delivery policy, not a permanent mandate. If
+  // the user later removes it, preserve that choice. keep_updated/mandatory
+  // remain admin-enforced policies and may restore a missing package.
+  if (entry.installPolicy === "install_once" && appRegistry.wasUserUninstalled(entry.packageName)) return false
   const installedVersions = appRegistry.getInstalledVersions(entry.packageName)
   if (installedVersions.includes(entry.version)) return false
   if (entry.installPolicy === "install_once") return installedVersions.length === 0

@@ -10,9 +10,7 @@ import {RouteButton} from "@/components/ui/RouteButton"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n/translate"
-import {sortAppsByLastOpenTime, useApps, type ClientApp} from "@mentra/engine"
-
-import {SYSTEM_APPS} from "@/constants/miniapps"
+import {isSystemMiniappPackage, sortAppsByLastOpenTime, useApps, type ClientApp} from "@mentra/engine"
 import {SETTINGS, useSetting} from "@mentra/engine"
 import {buildMenuItems, filterCompatibleMenuItems, getDefaultMenuApps, type GlassesMenuItem} from "@/utils/glassesMenu"
 
@@ -79,7 +77,7 @@ export default function GlassesMenuScreen() {
     (app) =>
       !app.hidden &&
       app.compatibility?.isCompatible !== false &&
-      !SYSTEM_APPS.includes(app.packageName) &&
+      !isSystemMiniappPackage(app.packageName) &&
       !menuItems.some((item) => item.packageName === app.packageName),
   )
 

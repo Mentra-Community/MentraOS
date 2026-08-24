@@ -13,7 +13,7 @@ import {migrate} from "@/services/Migrations"
 import {buildSpokenNotification} from "@/services/notifications/spokenNotification"
 import {cloudConfigValues} from "@/services/cloudClient"
 import {requestPhoneQrScan} from "@/services/qrScanRequest"
-import {engine, BgTimer, SETTINGS} from "@mentra/engine"
+import {engine, BgTimer, isSystemMiniappPackage, SETTINGS} from "@mentra/engine"
 import {
   appRegistry,
   audioPlaybackService,
@@ -602,6 +602,14 @@ class MantleManager {
 
         // China build: don't install hidden bundled miniapps (e.g. Mentra Map).
         if (isChinaBuild() && CHINA_HIDDEN_APPS.includes(packageName)) {
+          continue
+        }
+
+        // Bundling is an initial-delivery/update channel, not a way to undo a
+        // user's uninstall choice. SYSTEM packages are the deliberate
+        // exception: the build owns them and AppRegistry does not permit their
+        // removal in the first place.
+        if (!isSystemMiniappPackage(packageName) && appRegistry.wasUserUninstalled(packageName)) {
           continue
         }
 

@@ -18,15 +18,3 @@ export const isChinaBuild = (): boolean => process.env.EXPO_PUBLIC_DEPLOYMENT_RE
  * filter that the cloud/local merge flows through.
  */
 export const CHINA_HIDDEN_APPS = [navigationPackageName, notifyPackageName, feedbackPackageName]
-
-// these apps cannot be uninstalled:
-export const SYSTEM_APPS = [
-  cameraPackageName,
-  galleryPackageName,
-  settingsPackageName,
-  simulatedPackageName,
-  mirrorPackageName,
-  mentraAiPackageName,
-  notifyPackageName,
-  feedbackPackageName,
-]
