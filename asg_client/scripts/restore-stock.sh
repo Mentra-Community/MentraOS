@@ -47,7 +47,36 @@ if adb shell test -d "$LEGACY_STOCK_BACKUP"; then
         echo "Preserved data remains at $LEGACY_STOCK_BACKUP" >&2
         exit 1
     fi
-    adb shell mv "$LEGACY_STOCK_BACKUP" "$LEGACY_STOCK_FILES"
+    # -T prevents a concurrently recreated files directory from turning the
+    # restore into files/dev_setup_stock_files_backup. Fall back for old
+    # Toybox builds, but detect and undo that nesting race before continuing.
+    if ! adb shell mv -T "$LEGACY_STOCK_BACKUP" "$LEGACY_STOCK_FILES" >/dev/null 2>&1; then
+        NESTED_BACKUP="$LEGACY_STOCK_FILES/${LEGACY_STOCK_BACKUP##*/}"
+        if ! adb shell test -d "$LEGACY_STOCK_BACKUP"; then
+            echo "ERROR: Could not verify the preserved stock-data location." >&2
+            exit 1
+        fi
+        if adb shell test -e "$LEGACY_STOCK_FILES"; then
+            echo "ERROR: The stock-data directory was recreated during restore." >&2
+            echo "Preserved data remains at $LEGACY_STOCK_BACKUP" >&2
+            exit 1
+        fi
+        adb shell mv "$LEGACY_STOCK_BACKUP" "$LEGACY_STOCK_FILES"
+        if adb shell test -d "$NESTED_BACKUP"; then
+            if adb shell mv "$NESTED_BACKUP" "$LEGACY_STOCK_BACKUP"; then
+                echo "ERROR: The stock-data directory was recreated during restore." >&2
+                echo "Preserved data was moved back to $LEGACY_STOCK_BACKUP" >&2
+            else
+                echo "ERROR: Preserved data remains safe at $NESTED_BACKUP" >&2
+            fi
+            exit 1
+        fi
+    fi
+    if adb shell test -e "$LEGACY_STOCK_BACKUP"; then
+        echo "ERROR: The preserved stock-data restore did not complete." >&2
+        echo "Preserved data remains at $LEGACY_STOCK_BACKUP" >&2
+        exit 1
+    fi
     echo "Preserved stock data restored."
     echo ""
 fi
