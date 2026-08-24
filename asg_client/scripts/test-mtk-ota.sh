@@ -290,6 +290,12 @@ if [ -n "$END_FIRMWARE_OVERRIDE" ]; then
 else
     END_FIRMWARE="${START_FIRMWARE%$START_VERSION}$FILE_END_VERSION"
 fi
+if ! END_VERSION="$(extract_version_suffix "$END_FIRMWARE")"; then
+    fail "end_firmware does not end with YYYYMMDD or YYYYMMDD.N: $END_FIRMWARE"
+fi
+if [ "$FILE_END_VERSION" != "$END_VERSION" ]; then
+    fail "Patch end version ($FILE_END_VERSION) does not match end_firmware version ($END_VERSION)"
+fi
 
 if command -v shasum >/dev/null 2>&1; then
     SHA256="$(shasum -a 256 "$PATCH_PATH" | awk '{print $1}')"
