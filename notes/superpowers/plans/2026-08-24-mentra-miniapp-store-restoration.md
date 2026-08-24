@@ -143,9 +143,9 @@ These are not blockers for the approved first-release trust model.
 ## Pull request and review
 
 - [x] Review the complete diff against `origin/dev`.
-- [ ] Commit focused changes without AI attribution.
-- [ ] Push the existing workspace branch without renaming it.
-- [ ] Open a non-draft PR targeting `dev` with test evidence.
+- [x] Commit focused changes without AI attribution.
+- [x] Push the existing workspace branch without renaming it.
+- [x] Open a non-draft PR targeting `dev` with test evidence.
 - [ ] Monitor required checks and automated reviews.
 - [ ] Fix valid findings and rerun affected verification.
 - [ ] Leave the PR ready for human review.
