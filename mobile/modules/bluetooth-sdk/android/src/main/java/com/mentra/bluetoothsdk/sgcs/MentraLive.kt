@@ -77,6 +77,11 @@ import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
 
+internal fun hasRequiredMentraLiveCoreCharacteristics(
+        hasRxCharacteristic: Boolean,
+        hasTxCharacteristic: Boolean,
+): Boolean = hasRxCharacteristic && hasTxCharacteristic
+
 /**
  * Smart Glasses Communicator for Mentra Live (K900) glasses Uses BLE to communicate with the
  * glasses
@@ -2329,21 +2334,32 @@ class MentraLive : SGCManager() {
                             txCharacteristic = service.getCharacteristic(TX_CHAR_UUID)
                             rxCharacteristic = service.getCharacteristic(RX_CHAR_UUID)
 
-                            // Get LC3 characteristics (always supported)
+                            // LC3 audio is optional. Older firmware can still run the core session
+                            // and receive an OTA without these characteristics.
                             lc3ReadCharacteristic = service.getCharacteristic(LC3_READ_UUID)
                             lc3WriteCharacteristic = service.getCharacteristic(LC3_WRITE_UUID)
 
-                            // Check if we have required characteristics
+                            // Match iOS: only the core transport pair is required for readiness.
                             val hasRequiredCharacteristics =
-                                    (rxCharacteristic != null && txCharacteristic != null) &&
-                                            (lc3ReadCharacteristic != null &&
-                                                    lc3WriteCharacteristic != null)
+                                    hasRequiredMentraLiveCoreCharacteristics(
+                                            hasRxCharacteristic = rxCharacteristic != null,
+                                            hasTxCharacteristic = txCharacteristic != null,
+                                    )
+                            val hasLc3AudioCharacteristics =
+                                    lc3ReadCharacteristic != null && lc3WriteCharacteristic != null
 
                             if (hasRequiredCharacteristics) {
+                                if (!hasLc3AudioCharacteristics) {
+                                    Bridge.log(
+                                            "LIVE: ⚠️ LC3 audio characteristics unavailable - continuing with core BLE transport"
+                                    )
+                                }
                                 // BLE connection established, but we still need to wait for glasses
                                 // SOC
                                 Bridge.log(
-                                        "LIVE: 🔌 ✅ BLE reconnection fully ready (Core TX/RX + LC3 TX/RX characteristics verified)"
+                                        "LIVE: 🔌 ✅ BLE reconnection fully ready (Core TX/RX verified, LC3 audio available: " +
+                                                hasLc3AudioCharacteristics +
+                                                ")"
                                 )
                                 markPairingTiming("ble_chars_ready")
                                 Bridge.log("LIVE: 🔄 Waiting for glasses SOC to become ready...")
@@ -2398,13 +2414,6 @@ class MentraLive : SGCManager() {
                                 }
                                 if (txCharacteristic == null) {
                                     Log.e(TAG, "TX characteristic (peripheral's RX) not found")
-                                }
-                                // Log LC3 characteristic errors
-                                if (lc3ReadCharacteristic == null) {
-                                    Log.e(TAG, "LC3_READ characteristic not found")
-                                }
-                                if (lc3WriteCharacteristic == null) {
-                                    Log.e(TAG, "LC3_WRITE characteristic not found")
                                 }
                                 gatt.disconnect()
                             }
