@@ -254,6 +254,10 @@ Wire response type for all video commands: `video_recording_status`.
 
 Same battery constraint as photo. `recording_started` is the successful start status. `already_recording`, `battery_low`, `service_unavailable`, `missing_request_id`, and `error` are emitted with `success: false`.
 
+If a start arrives after a stop has been requested but before the recorder has finished finalizing
+the previous file, ASG queues that start and begins it as soon as camera teardown completes. One
+start may wait behind the active stop; further starts are rejected as `already_recording`.
+
 ```json
 {"type": "video_recording_status", "success": true, "status": "recording_started", "timestamp": 1708963201234}
 ```

@@ -97,7 +97,7 @@ public class MediaCaptureService {
     private final MlKitTextRoiDetector textRoiDetector;
 
     // Track current video recording
-    private boolean isRecordingVideo = false;
+    private volatile boolean isRecordingVideo = false;
     private String currentVideoId = null;
     // volatile: read in the stop prologue (BLE worker / main looper) to derive the upload-target
     // captureId key, while written on the start/callback threads — needs cross-thread visibility.
@@ -140,6 +140,7 @@ public class MediaCaptureService {
     }
 
     private StopReason mCurrentStopReason = null;
+    private final VideoRecordingLifecycle videoRecordingLifecycle = new VideoRecordingLifecycle();
 
     /**
      * Stop-time upload target bound to a specific recording. Empty/null webhook = keep on device.
@@ -1000,36 +1001,42 @@ public class MediaCaptureService {
                     "⚠️ StateManager not initialized - skipping battery check for video recording");
         }
 
-        if (isRecordingVideo) {
+        if (isRecordingVideo && !videoRecordingLifecycle.isStopping()) {
             Log.d(TAG, "Stopping video recording");
             stopVideoRecording();
         } else {
-            Log.d(
-                    TAG,
-                    "Starting video recording with settings: "
-                            + settings
-                            + ", max time: "
-                            + maxRecordingTimeMinutes
-                            + " minutes, battery: "
-                            + initialBatteryLevel
-                            + "%");
-            // Generate IDs for local recording
-            String timeStamp =
-                    new SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(new Date());
-            int randomSuffix = (int) (Math.random() * 1000);
-            String requestId = "local_video_" + timeStamp + "_" + randomSuffix;
-            String captureDir = "VID_" + timeStamp + "_" + randomSuffix;
-            File captureDirFile = new File(fileManager.getDefaultMediaDirectory(), captureDir);
-            captureDirFile.mkdirs();
-            String videoFilePath = new File(captureDirFile, "base.mp4").getAbsolutePath();
-            startVideoRecording(
-                    videoFilePath,
-                    requestId,
-                    settings,
-                    enableFlash,
-                    true,
-                    maxRecordingTimeMinutes,
-                    false);
+            Runnable startAction =
+                    () -> {
+                        Log.d(
+                                TAG,
+                                "Starting video recording with settings: "
+                                        + settings
+                                        + ", max time: "
+                                        + maxRecordingTimeMinutes
+                                        + " minutes, battery: "
+                                        + initialBatteryLevel
+                                        + "%");
+                        String timeStamp =
+                                new SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US)
+                                        .format(new Date());
+                        int randomSuffix = (int) (Math.random() * 1000);
+                        String requestId = "local_video_" + timeStamp + "_" + randomSuffix;
+                        String captureDir = "VID_" + timeStamp + "_" + randomSuffix;
+                        File captureDirFile =
+                                new File(fileManager.getDefaultMediaDirectory(), captureDir);
+                        captureDirFile.mkdirs();
+                        String videoFilePath =
+                                new File(captureDirFile, "base.mp4").getAbsolutePath();
+                        startVideoRecording(
+                                videoFilePath,
+                                requestId,
+                                settings,
+                                enableFlash,
+                                true,
+                                maxRecordingTimeMinutes,
+                                false);
+                    };
+            requestVideoStart(startAction);
         }
     }
 
@@ -1038,10 +1045,11 @@ public class MediaCaptureService {
      *
      * @param requestId Unique request ID for tracking
      * @param save Whether to keep the video on device after upload
+     * @return true when the start was accepted immediately or queued behind recorder teardown
      */
-    public void handleStartVideoCommand(
+    public boolean handleStartVideoCommand(
             String requestId, boolean save, boolean enableFlash, boolean enableSound) {
-        handleStartVideoCommand(requestId, save, null, enableFlash, enableSound);
+        return handleStartVideoCommand(requestId, save, null, enableFlash, enableSound);
     }
 
     /**
@@ -1050,14 +1058,15 @@ public class MediaCaptureService {
      * @param requestId Unique request ID for tracking
      * @param save Whether to keep the video on device after upload
      * @param settings Video settings (resolution, fps) or null for defaults
+     * @return true when the start was accepted immediately or queued behind recorder teardown
      */
-    public void handleStartVideoCommand(
+    public boolean handleStartVideoCommand(
             String requestId,
             boolean save,
             VideoSettings settings,
             boolean enableFlash,
             boolean enableSound) {
-        handleStartVideoCommand(requestId, save, settings, enableFlash, enableSound, 0);
+        return handleStartVideoCommand(requestId, save, settings, enableFlash, enableSound, 0);
     }
 
     /**
@@ -1067,8 +1076,9 @@ public class MediaCaptureService {
      * @param save Whether to keep the video on device after upload
      * @param settings Video settings (resolution, fps) or null for defaults
      * @param maxRecordingTimeMinutes Maximum recording time in minutes (0 = no limit)
+     * @return true when the start was accepted immediately or queued behind recorder teardown
      */
-    public void handleStartVideoCommand(
+    public boolean handleStartVideoCommand(
             String requestId,
             boolean save,
             VideoSettings settings,
@@ -1090,40 +1100,50 @@ public class MediaCaptureService {
                         + ", maxRecordingTimeMinutes: "
                         + maxRecordingTimeMinutes);
 
-        // Check if already recording
-        if (isRecordingVideo) {
-            Log.w(TAG, "Already recording video, ignoring start command");
-            if (mMediaCaptureListener != null) {
-                mMediaCaptureListener.onMediaError(
-                        requestId, "Already recording", MediaUploadQueueManager.MEDIA_TYPE_VIDEO);
-            }
-            return;
+        Runnable startAction =
+                () -> {
+                    String timeStamp =
+                            new SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US)
+                                    .format(new Date());
+                    int randomSuffix = (int) (Math.random() * 1000);
+                    String embeddedRequestId = CaptureRequestId.sanitizeForDirName(requestId);
+                    String captureDir =
+                            "VID_"
+                                    + timeStamp
+                                    + "_"
+                                    + randomSuffix
+                                    + (embeddedRequestId.isEmpty() ? "" : "_" + embeddedRequestId);
+                    File captureDirFile =
+                            new File(fileManager.getDefaultMediaDirectory(), captureDir);
+                    captureDirFile.mkdirs();
+                    String videoFilePath = new File(captureDirFile, "base.mp4").getAbsolutePath();
+
+                    startVideoRecording(
+                            videoFilePath,
+                            requestId,
+                            settings,
+                            enableFlash,
+                            enableSound,
+                            maxRecordingTimeMinutes,
+                            save);
+                };
+        return requestVideoStart(startAction);
+    }
+
+    private boolean requestVideoStart(Runnable startAction) {
+        VideoRecordingLifecycle.StartResult result =
+                videoRecordingLifecycle.requestStart(startAction);
+        if (result == VideoRecordingLifecycle.StartResult.START_NOW) {
+            startAction.run();
+            return true;
+        }
+        if (result == VideoRecordingLifecycle.StartResult.QUEUED) {
+            Log.i(TAG, "Queued video start until the active recording finishes stopping");
+            return true;
         }
 
-        // Generate filename with requestId
-        String timeStamp =
-                new SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(new Date());
-        int randomSuffix = (int) (Math.random() * 1000);
-        String embeddedRequestId = CaptureRequestId.sanitizeForDirName(requestId);
-        String captureDir =
-                "VID_"
-                        + timeStamp
-                        + "_"
-                        + randomSuffix
-                        + (embeddedRequestId.isEmpty() ? "" : "_" + embeddedRequestId);
-        File captureDirFile = new File(fileManager.getDefaultMediaDirectory(), captureDir);
-        captureDirFile.mkdirs();
-        String videoFilePath = new File(captureDirFile, "base.mp4").getAbsolutePath();
-
-        // Start video recording with the provided requestId and settings (or null for defaults)
-        startVideoRecording(
-                videoFilePath,
-                requestId,
-                settings,
-                enableFlash,
-                enableSound,
-                maxRecordingTimeMinutes,
-                save);
+        Log.w(TAG, "Video start rejected because another recording or queued start is active");
+        return false;
     }
 
     /**
@@ -1201,6 +1221,7 @@ public class MediaCaptureService {
                 || SrtStreamingService.isStreaming()
                 || WhipStreamingService.isStreaming()) {
             Log.e(TAG, "Cannot start video - streaming active");
+            videoRecordingLifecycle.startFailed();
             if (mMediaCaptureListener != null) {
                 mMediaCaptureListener.onMediaError(
                         requestId,
@@ -1213,6 +1234,7 @@ public class MediaCaptureService {
         // Check if camera is actively in use (this will return false for kept-alive idle camera)
         if (CameraNeoService.isCameraInUse()) {
             Log.e(TAG, "Cannot start video - camera actively in use");
+            videoRecordingLifecycle.startFailed();
             if (mMediaCaptureListener != null) {
                 mMediaCaptureListener.onMediaError(
                         requestId, "Camera busy", MediaUploadQueueManager.MEDIA_TYPE_VIDEO);
@@ -1223,6 +1245,7 @@ public class MediaCaptureService {
         // Check storage availability before recording
         if (!isExternalStorageAvailable()) {
             Log.e(TAG, "External storage is not available for video capture");
+            videoRecordingLifecycle.startFailed();
             if (mMediaCaptureListener != null) {
                 mMediaCaptureListener.onMediaError(
                         requestId,
@@ -1265,6 +1288,7 @@ public class MediaCaptureService {
                         @Override
                         public void onRecordingStarted(String videoId) {
                             Log.d(TAG, "Video recording started with ID: " + videoId);
+                            videoRecordingLifecycle.recordingStarted();
                             isRecordingVideo = true;
                             recordingStartTime = System.currentTimeMillis();
 
@@ -1397,6 +1421,7 @@ public class MediaCaptureService {
                             isRecordingVideo = false;
                             currentVideoId = null;
                             currentVideoPath = null;
+                            completeVideoTermination();
 
                             if (filePath == null || captureIdFromCallback == null) {
                                 Log.e(
@@ -1614,6 +1639,7 @@ public class MediaCaptureService {
                             // Reset state
                             currentVideoId = null;
                             currentVideoPath = null;
+                            completeVideoTermination();
                         }
 
                         @Override
@@ -1646,6 +1672,34 @@ public class MediaCaptureService {
             clearVideoCaptureSyncBlocks(videoFilePath);
             currentVideoId = null;
             currentVideoPath = null;
+            videoRecordingLifecycle.startFailed();
+        }
+    }
+
+    /** Release one start queued behind MediaRecorder teardown onto the main looper. */
+    private void completeVideoTermination() {
+        final Runnable pendingStart;
+        synchronized (mStopLock) {
+            mCurrentStopReason = null;
+            pendingStart = videoRecordingLifecycle.recordingTerminated();
+        }
+        if (pendingStart == null) {
+            return;
+        }
+
+        boolean posted =
+                mainHandler.post(
+                        () -> {
+                            if (isCleaningUp.get()) {
+                                videoRecordingLifecycle.startFailed();
+                                return;
+                            }
+                            Log.i(TAG, "Starting video queued behind recorder teardown");
+                            pendingStart.run();
+                        });
+        if (!posted) {
+            videoRecordingLifecycle.startFailed();
+            Log.e(TAG, "Could not post video start queued behind recorder teardown");
         }
     }
 
@@ -1688,6 +1742,14 @@ public class MediaCaptureService {
                 return;
             }
 
+            if (!isRecordingVideo || currentVideoId == null) {
+                Log.w(TAG, "⚠️ Not currently recording, nothing to stop");
+                return;
+            }
+            if (!videoRecordingLifecycle.beginStop()) {
+                Log.w(TAG, "⚠️ Video lifecycle is not ready to stop");
+                return;
+            }
             mCurrentStopReason = reason;
         }
         Log.d(TAG, "🛑 Stopping video recording - Reason: " + reason);
@@ -1700,13 +1762,6 @@ public class MediaCaptureService {
         try {
             // Stop battery monitoring first
             stopBatteryMonitoring();
-
-            if (!isRecordingVideo || currentVideoId == null) {
-                Log.w(TAG, "⚠️ Not currently recording, nothing to stop");
-                // No dispatch → no camera callback → nothing was registered for this stop, so
-                // there is nothing to leak (registration happens below, only on dispatch).
-                return;
-            }
 
             // Handle based on reason
             switch (reason) {
@@ -1784,10 +1839,7 @@ public class MediaCaptureService {
                 hardwareManager.setRecordingLedOff();
                 Log.d(TAG, "Recording LED turned OFF (stop error recovery)");
             }
-        } finally {
-            synchronized (mStopLock) {
-                mCurrentStopReason = null; // Reset for next recording
-            }
+            completeVideoTermination();
         }
     }
 
@@ -7004,6 +7056,7 @@ public class MediaCaptureService {
         assertMainThread();
         Log.d(TAG, "🧹 MediaCaptureService cleanup() called");
         isCleaningUp.set(true);
+        videoRecordingLifecycle.cancelPendingStart();
 
         try {
             photoFeedbackController.cleanup();

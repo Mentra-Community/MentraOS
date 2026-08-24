@@ -2,6 +2,8 @@ package com.mentra.asg_client.service.core.handlers;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
@@ -33,17 +35,20 @@ public class VideoCommandHandlerStartValidationTest {
     private static final int MAX_RECORDING_TIME_MINUTES = 24 * 60;
 
     private MediaCaptureService captureService;
+    private IMediaManager streamingManager;
     private VideoCommandHandler handler;
 
     @Before
     public void setUp() {
         AsgClientServiceManager serviceManager = mock(AsgClientServiceManager.class);
-        IMediaManager streamingManager = mock(IMediaManager.class);
+        streamingManager = mock(IMediaManager.class);
         IStateManager stateManager = mock(IStateManager.class);
         captureService = mock(MediaCaptureService.class);
 
         when(serviceManager.getMediaCaptureService()).thenReturn(captureService);
-        when(captureService.isRecordingVideo()).thenReturn(false);
+        when(captureService.handleStartVideoCommand(
+                        anyString(), anyBoolean(), isNull(), anyBoolean(), anyBoolean(), anyInt()))
+                .thenReturn(true);
         // -1 → battery unknown, skip the low-battery rejection so the start path runs.
         when(stateManager.getBatteryLevel()).thenReturn(-1);
 
@@ -105,5 +110,19 @@ public class VideoCommandHandlerStartValidationTest {
                         anyBoolean(),
                         anyBoolean(),
                         eq(5));
+    }
+
+    @Test
+    public void start_whenServiceRejects_returnsAlreadyRecording() throws Exception {
+        when(captureService.handleStartVideoCommand(
+                        anyString(), anyBoolean(), isNull(), anyBoolean(), anyBoolean(), anyInt()))
+                .thenReturn(false);
+
+        boolean handled = handler.handleCommand("start_video_recording", startData(0));
+
+        assertThat(handled).isFalse();
+        verify(streamingManager)
+                .sendVideoRecordingStatusResponse(
+                        "req-1", false, "already_recording", "Already recording video");
     }
 }
