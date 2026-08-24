@@ -66,7 +66,9 @@ export function trustedCoreOrigin(value: string | null | undefined): string | nu
 }
 
 function isPrivateDevelopmentHost(hostname: string): boolean {
-  const host = hostname.toLowerCase().replace(/^\[|\]$/g, "")
+  const normalizedHostname = hostname.toLowerCase()
+  const isBracketedIpv6 = normalizedHostname.startsWith("[") && normalizedHostname.endsWith("]")
+  const host = normalizedHostname.replace(/^\[|\]$/g, "")
   if (host === "localhost" || host === "::1") return true
 
   const ipv4 = host.split(".").map(Number)
@@ -80,7 +82,10 @@ function isPrivateDevelopmentHost(hostname: string): boolean {
     )
   }
 
-  const firstIpv6Group = Number.parseInt(host.split(":", 1)[0] ?? "", 16)
+  if (!isBracketedIpv6) return false
+  const firstIpv6GroupText = host.split(":", 1)[0] ?? ""
+  if (!/^[0-9a-f]{1,4}$/.test(firstIpv6GroupText)) return false
+  const firstIpv6Group = Number.parseInt(firstIpv6GroupText, 16)
   return (
     Number.isInteger(firstIpv6Group) &&
     ((firstIpv6Group & 0xfe00) === 0xfc00 || (firstIpv6Group & 0xffc0) === 0xfe80)

@@ -20,6 +20,8 @@ describe("Store catalog", () => {
     expect(trustedCoreOrigin("http://10.0.2.2:3000")).toBe("http://10.0.2.2:3000")
     expect(trustedCoreOrigin("http://[fd12:3456::1]:3000")).toBe("http://[fd12:3456::1]:3000")
     expect(trustedCoreOrigin("http://evil.example.test")).toBeNull()
+    expect(trustedCoreOrigin("http://fd12.example.test:3000")).toBeNull()
+    expect(trustedCoreOrigin("http://fe80.attacker.test:3000")).toBeNull()
     expect(trustedCoreOrigin("http://user:password@192.168.1.42:3000")).toBeNull()
   })
 

@@ -121,7 +121,7 @@ publisher signatures can be enforced later without changing the API.
 - [x] Android ASG and Bluetooth SDK compile checks.
 - [x] Full iOS Simulator native build with code signing disabled.
 - [x] ZIP integrity check. Bundled Store SHA-256:
-      `79f647c1e6094f05f5d0dfaabfcd355182007016470136d79594109fb5317802`.
+      `413044b0a1c34f117fa955a7b456cb29c676ca744dda594e55695ce9e5d3c5dc`.
 - [x] Review regressions: bounded streaming inflation and CRC checks in both
       Core and the phone, trusted host-selected Core URL, complete catalog
       pagination, Store-owned uninstall visibility, pre-activation host/SDK
@@ -131,7 +131,8 @@ publisher signatures can be enforced later without changing the API.
       bounded response streaming, and rejection of remote preinstalled
       replacements for build-owned SYSTEM packages, Store availability without
       connected glasses, and credential-free private-LAN Local/Auto Core
-      origins without allowing public cleartext catalog traffic.
+      origins without allowing public cleartext catalog traffic (including DNS
+      names that resemble private IPv6 prefixes).
 - [x] Touched-file lint and `git diff --check`.
 - [x] Full Cloud suite audit: 544 passed, 1 skipped. The aggregate invocation
       also reproduces unrelated shared-state/credential baselines (R2 is not
