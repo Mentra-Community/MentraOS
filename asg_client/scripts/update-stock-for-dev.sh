@@ -470,11 +470,17 @@ return_bes_to_rendezvous_before_bridge() {
   request_id="devsetup_$$_$RANDOM"
 
   echo "=== Returning BES UART to the ASG 36 rendezvous baud ==="
-  echo "Installing the manifest-pinned stock ASG as the transition controller..."
-  "${ADB[@]}" install -r "$TARGET_APK_PATH"
   installed_version="$(package_version_code "$STOCK_PKG")"
-  [ "$installed_version" = "$TARGET_VERSION_CODE" ] \
-    || fail "Rendezvous controller expected versionCode $TARGET_VERSION_CODE, got ${installed_version:-unknown}"
+  if [[ "$installed_version" =~ ^[0-9]+$ ]] \
+    && [ "$installed_version" -gt "$TARGET_VERSION_CODE" ]; then
+    echo "Installed stock ASG $installed_version is newer than staging target $TARGET_VERSION_CODE; using it as the transition controller."
+  else
+    echo "Installing the manifest-pinned stock ASG as the transition controller..."
+    "${ADB[@]}" install -r "$TARGET_APK_PATH"
+    installed_version="$(package_version_code "$STOCK_PKG")"
+    [ "$installed_version" = "$TARGET_VERSION_CODE" ] \
+      || fail "Rendezvous controller expected versionCode $TARGET_VERSION_CODE, got ${installed_version:-unknown}"
+  fi
   enable_stock_runtime
   sleep 20
 
