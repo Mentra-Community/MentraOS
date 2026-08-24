@@ -1,7 +1,7 @@
 /// <reference types="bun-types" />
 
 import {describe, expect, test} from "bun:test"
-import {sha256Hex} from "./sha256"
+import {sha256Hex} from "../sha256"
 
 describe("sha256Hex", () => {
   test("matches standard SHA-256 vectors", async () => {

@@ -2,7 +2,7 @@
 
 import {describe, expect, test} from "bun:test"
 
-import {readBoundedByteStream} from "./boundedByteStream"
+import {readBoundedByteStream} from "../boundedByteStream"
 
 describe("readBoundedByteStream", () => {
   test("joins chunks up to the byte ceiling", async () => {
