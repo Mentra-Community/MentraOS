@@ -1,7 +1,10 @@
 package com.mentra.bluetoothsdk
 
+import android.app.Activity
+import android.app.Application
 import android.bluetooth.BluetoothManager
 import android.content.Context
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import com.mentra.bluetoothsdk.utils.ControllerTypes
@@ -30,6 +33,23 @@ class MentraBluetoothSdk private constructor(
     private val discoveredDeviceNames = mutableSetOf<String>()
     private val bridgeEventSinkId: String
     private val storeListenerId: String
+    private val activityLifecycleCallbacks =
+        object : Application.ActivityLifecycleCallbacks {
+            override fun onActivityResumed(activity: Activity) {
+                // Match the Mentra App's OnActivityEntersForeground hook. This runs after
+                // runtime permission dialogs in native host apps, allowing the service to
+                // replace its temporary dataSync type with connectedDevice/microphone/location.
+                deviceManager.refreshForegroundServiceTypes()
+            }
+
+            override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit
+            override fun onActivityStarted(activity: Activity) = Unit
+            override fun onActivityPaused(activity: Activity) = Unit
+            override fun onActivityStopped(activity: Activity) = Unit
+            override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) = Unit
+            override fun onActivityDestroyed(activity: Activity) = Unit
+        }
+    private var activityLifecycleCallbacksRegistered = false
     private var suppressDefaultDeviceEvents = false
     private val streamKeepAliveLock = Any()
     private var activeStreamKeepAlive: ActiveStreamKeepAlive? = null
@@ -57,6 +77,10 @@ class MentraBluetoothSdk private constructor(
         listeners.add(listener)
         Bridge.initialize(appContext)
         deviceManager = DeviceManager.getInstance()
+        (appContext as? Application)?.let { application ->
+            application.registerActivityLifecycleCallbacks(activityLifecycleCallbacks)
+            activityLifecycleCallbacksRegistered = true
+        }
         bridgeEventSinkId = Bridge.addEventSink { eventName, data -> dispatchBridgeEvent(eventName, data) }
         // Baseline the analytics connection state before subscribing to the store:
         // store updates invoke listeners synchronously on the updating thread, so a
@@ -1359,6 +1383,12 @@ class MentraBluetoothSdk private constructor(
 
     override fun close() {
         stopStreamKeepAliveMonitor()
+        if (activityLifecycleCallbacksRegistered) {
+            (appContext as? Application)?.unregisterActivityLifecycleCallbacks(
+                activityLifecycleCallbacks,
+            )
+            activityLifecycleCallbacksRegistered = false
+        }
         Bridge.removeEventSink(bridgeEventSinkId)
         DeviceStore.store.removeListener(storeListenerId)
         analytics.shutdown()
