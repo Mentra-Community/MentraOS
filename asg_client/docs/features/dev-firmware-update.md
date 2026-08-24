@@ -65,7 +65,17 @@ BES generation and its high version code can replace old stock update layers.
 ASG 36 reads `/storage/emulated/0/asg/bes_firmware.bin` and accepts a no-metadata debug broadcast.
 Current ASG reads a hash-addressed debug artifact and validates target/hash metadata. The shared
 `test-bes-ota.sh` stages both forms, but moves any existing phone-owned legacy artifact aside and
-restores it immediately after ASG 36 synchronously loads the debug image.
+restores it immediately after ASG 36 synchronously loads the debug image. The backup uses a stable
+path, so a later run restores it before staging anything if ADB disappeared during the short
+compatibility window.
+
+Modern BES can retain a negotiated 1152000 baud when its ASG process stops, while ASG 36 only
+opens the universal 460800 rendezvous baud. If an installed stock or third-party ASG is new enough
+to have negotiated the fast link, the updater first installs the manifest-pinned stock client,
+proves the existing BES link, sends a BES-only reset, requires confirmation that the reset reached
+UART, and force-stops the current client before it can renegotiate. ASG 36 then starts after BES has
+returned to 460800. Factory-era ASG/BES pairs predate fast-baud negotiation and go directly to the
+bridge.
 
 After ASG 36 reports apply success, the updater waits for the BES chip to reboot and repeatedly
 requests `version_info_3`. It does not continue until the reported BES version is at least the
@@ -79,8 +89,9 @@ The updater performs these steps:
 2. Snapshot and validate the staging manifest.
 3. Download and verify ASG 36, target stock ASG, BES firmware, and every MTK patch in the exact
    current-to-terminal path.
-4. Disable the third-party client, recovery sidecar, and legacy updater; activate stock ASG.
-5. Install ASG 36 and update BES when the device is below the manifest target.
+4. Disable the third-party client, recovery sidecar, and legacy updater; when a modern ASG may have
+   negotiated fast UART, use the manifest-pinned stock ASG to reset BES to 460800.
+5. Activate ASG 36 and update BES when the device is below the manifest target.
 6. Move the stock package's legacy external-files tree to uninstall-safe shared storage.
 7. Remove the ASG 36 update layer, install the manifest-pinned stock ASG, and restore the legacy
    tree so current ASG can migrate captures to `/storage/emulated/0/asg_media`.
@@ -129,13 +140,15 @@ resolves HOME to its `MainActivity`.
 Before changing this flow, test at least:
 
 1. Factory/day-one BES through ASG 36, target BES, target stock ASG, MTK patch, and reboot.
-2. A device already at the manifest BES and MTK targets.
-3. A device newer than the manifest targets to confirm downgrade prevention.
-4. USB ADB failing to return until the Infinity Cable is unplugged and reconnected.
-5. A cable-only reconnect with an unchanged boot ID.
-6. Legacy captures under the stock app-owned external-files tree across bridge removal.
-7. `update-mentra-live.sh` returning to the same third-party APK, data, and HOME activity.
-8. Failures during artifact download, BES transfer, MTK reboot, stock restoration, and third-party
+2. A modern BES already negotiated at 1152000, including the proven reset to 460800 before ASG 36.
+3. A device already at the manifest BES and MTK targets.
+4. A device newer than the manifest targets to confirm downgrade prevention.
+5. USB ADB failing to return until the Infinity Cable is unplugged and reconnected.
+6. A cable-only reconnect with an unchanged boot ID.
+7. Legacy captures under the stock app-owned external-files tree across bridge removal.
+8. An interrupted ASG 36 compatibility-artifact swap recovered by the next run.
+9. `update-mentra-live.sh` returning to the same third-party APK, data, and HOME activity.
+10. Failures during artifact download, BES transfer, MTK reboot, stock restoration, and third-party
    handoff.
 
 The shell scripts can validate manifests, downloads, hashes, and device state, but BES and MTK
