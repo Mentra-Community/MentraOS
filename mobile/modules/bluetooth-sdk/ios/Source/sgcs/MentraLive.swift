@@ -857,20 +857,65 @@ extension MentraLive: CBCentralManagerDelegate {
         }
     }
 
-    func handleDiscoveredPeripheral(_ peripheral: CBPeripheral, rssi: NSNumber? = nil) {
+    func handleDiscoveredPeripheral(
+        _ peripheral: CBPeripheral,
+        advertisementData: [String: Any] = [:],
+        rssi: NSNumber? = nil
+    ) {
         guard let name = peripheral.name else { return }
 
         // Check for compatible device names
         if name == "Xy_A" || name.hasPrefix("XyBLE_") || name.hasPrefix("MENTRA_LIVE_BLE")
             || name.hasPrefix("MENTRA_LIVE_BT") || name.lowercased().hasPrefix("mentra_live")
         {
+            let savedDeviceName = UserDefaults.standard.string(forKey: PREFS_DEVICE_NAME)
+            let isReconnectTarget = savedDeviceName != nil && savedDeviceName == name
+            if !isReconnectTarget && advertisesPairingFlag(advertisementData)
+                && !isPairingDiscoverable(advertisementData)
+            {
+                // Nearby but not pairable: RN uses this for the empty-state hint, not the list.
+                Bridge.log(
+                    "LIVE: Nearby \(name) is secure firmware not in pairing mode — hiding from scan list"
+                )
+                discoveredPeripherals[name] = peripheral
+                cacheAdvPairing(
+                    name,
+                    pairingMode: false,
+                    pairingCode: nil,
+                    securePairingCapable: true
+                )
+                emitDiscoveredDeviceFromCache(
+                    name,
+                    identifier: peripheral.identifier.uuidString,
+                    rssi: rssi?.intValue
+                )
+                return
+            }
+
             let glassType = name == "Xy_A" ? "Standard" : "K900"
-            Bridge.log("Found compatible \(glassType) glasses device: \(name)")
+            let trailer = parseSecurePairingTrailer(advertisementData)
+            Bridge.log(
+                trailer.secureCapable
+                    ? "Found compatible \(glassType) glasses device: \(name) (pairingMode=\(trailer.pairingMode))"
+                    : "Found compatible \(glassType) glasses device: \(name) (legacy firmware, pairable)"
+            )
 
             // Store the peripheral
             discoveredPeripherals[name] = peripheral
 
-            emitDiscoveredDevice(name, identifier: peripheral.identifier.uuidString, rssi: rssi?.intValue)
+            cacheAdvPairing(
+                name,
+                // Field firmware has no pairing flag. Treat it as pairable so the
+                // new Mentra App can still find old glasses.
+                pairingMode: trailer.secureCapable ? trailer.pairingMode : true,
+                pairingCode: trailer.pairingCode,
+                securePairingCapable: trailer.secureCapable
+            )
+            emitDiscoveredDeviceFromCache(
+                name,
+                identifier: peripheral.identifier.uuidString,
+                rssi: rssi?.intValue
+            )
 
             // Check if this is the device we want to connect to
             if let savedDeviceName = UserDefaults.standard.string(forKey: PREFS_DEVICE_NAME),
@@ -887,10 +932,10 @@ extension MentraLive: CBCentralManagerDelegate {
 
     nonisolated func centralManager(
         _: CBCentralManager, didDiscover peripheral: CBPeripheral,
-        advertisementData _: [String: Any], rssi: NSNumber
+        advertisementData: [String: Any], rssi: NSNumber
     ) {
         DispatchQueue.main.async { [weak self] in
-            self?.handleDiscoveredPeripheral(peripheral, rssi: rssi)
+            self?.handleDiscoveredPeripheral(peripheral, advertisementData: advertisementData, rssi: rssi)
         }
     }
 
@@ -939,10 +984,17 @@ extension MentraLive: CBCentralManagerDelegate {
     }
 
     nonisolated func centralManager(
-        _: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error _: Error?
+        _: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?
     ) {
         DispatchQueue.main.async { [weak self] in
-            guard let self, peripheral === self.connectedPeripheral else { return }
+            guard let self else { return }
+            let isCurrent =
+                self.connectedPeripheral === peripheral || self.connectingPeripheral === peripheral
+            if !isCurrent {
+                Bridge.log("LIVE: Ignoring stale disconnect for \(peripheral.identifier)")
+                return
+            }
+            self.connectingPeripheral = nil
             Bridge.log("LIVE: Disconnected from GATT server")
 
             self.isConnecting = false
@@ -962,6 +1014,11 @@ extension MentraLive: CBCentralManagerDelegate {
             self.txCharacteristic = nil
             self.rxCharacteristic = nil
 
+            if self.pairingYieldAwaitingReclaim, Self.isPairingAuthFailure(error) {
+                self.clearSavedGlassesAfterOwnerLoss(reason: "ios_auth_fail")
+                return
+            }
+
             // Attempt reconnection if not killed
             if !self.isKilled {
                 self.handleReconnection()
@@ -969,12 +1026,17 @@ extension MentraLive: CBCentralManagerDelegate {
         }
     }
 
-    nonisolated func centralManager(
-        _: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?
-    ) {
+    nonisolated func centralManager(_: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
         let errorDescription = error?.localizedDescription ?? "Unknown error"
         DispatchQueue.main.async { [weak self] in
-            guard let self, peripheral === self.connectedPeripheral else { return }
+            guard let self else { return }
+            let isCurrent =
+                self.connectedPeripheral === peripheral || self.connectingPeripheral === peripheral
+            if !isCurrent {
+                Bridge.log("LIVE: Ignoring stale connect failure for \(peripheral.identifier)")
+                return
+            }
+            self.connectingPeripheral = nil
             Bridge.log("LIVE: Failed to connect to peripheral: \(errorDescription)")
 
             self.stopConnectionTimeout()
@@ -982,6 +1044,11 @@ extension MentraLive: CBCentralManagerDelegate {
             self.closeL2capFileChannel()
             self.connectedPeripheral = nil
             self.updateConnectionState(ConnTypes.DISCONNECTED)
+
+            if self.pairingYieldAwaitingReclaim, Self.isPairingAuthFailure(error) {
+                self.clearSavedGlassesAfterOwnerLoss(reason: "ios_auth_fail")
+                return
+            }
 
             if !self.isKilled {
                 self.handleReconnection()
@@ -1278,6 +1345,83 @@ class MentraLive: NSObject, SGCManager {
     private let BLOCK_AUDIO_DUPLEX = false
     private static let voiceActivityDetectionSwitchType = 8
     private static let loudnessGateSwitchType = 10
+    private let mentraManufacturerId: UInt16 = 0xB822
+    // Payload-relative offset of the pairing flag, matching Android's index into the
+    // company-id-stripped manufacturer data from getManufacturerSpecificData().
+    private let advManufPairingFlagOffset = 5
+    // CoreBluetooth returns manufacturer data with the 2-byte company id prefix still attached,
+    // whereas Android strips it. Skip the prefix so both platforms read the same payload byte.
+    private let advManufCompanyIdLength = 2
+    private let advPairingDiscoverable: UInt8 = 0x01
+
+    // CoreBluetooth returns manufacturer data prefixed with the 2-byte company id
+    // (little-endian) and does NOT filter by company id itself (unlike Android's
+    // getManufacturerSpecificData(companyId)), so every reader of this data must
+    // verify the company id before trusting any flag/trailer byte.
+    private func mentraManufacturerData(_ advertisementData: [String: Any]) -> Data? {
+        guard let manufData = advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data,
+              manufData.count >= advManufCompanyIdLength
+        else {
+            return nil
+        }
+        let companyId = UInt16(manufData[0]) | (UInt16(manufData[1]) << 8)
+        guard companyId == mentraManufacturerId else {
+            return nil
+        }
+        return manufData
+    }
+
+    /// OS-1615 ads append `flag | version | capability | code_lo | code_hi` after the
+    /// connected byte. Field firmware uses the same 0xB822 company id but then writes
+    /// the XOR'd Classic MAC at those offsets. Length alone is not a pairing flag.
+    private func hasSecurePairingTrailer(_ advertisementData: [String: Any]) -> Bool {
+        let flagIndex = advManufCompanyIdLength + advManufPairingFlagOffset
+        let trailerBase = flagIndex + 1
+        guard let manufData = mentraManufacturerData(advertisementData),
+              manufData.count >= trailerBase + 4
+        else {
+            return false
+        }
+        let version = Int(manufData[trailerBase])
+        let capability = Int(manufData[trailerBase + 1])
+        return (1...15).contains(version) && (capability & 0x01) != 0
+    }
+
+    private func isPairingDiscoverable(_ advertisementData: [String: Any]) -> Bool {
+        guard hasSecurePairingTrailer(advertisementData),
+              let manufData = mentraManufacturerData(advertisementData)
+        else {
+            return false
+        }
+        let flagIndex = advManufCompanyIdLength + advManufPairingFlagOffset
+        return manufData[flagIndex] == advPairingDiscoverable
+    }
+
+    private struct SecurePairingTrailer {
+        let pairingMode: Bool
+        let pairingCode: String?
+        let secureCapable: Bool
+    }
+
+    /// Trailer immediately after pairing flag: version | capability | code_lo | code_hi
+    private func parseSecurePairingTrailer(_ advertisementData: [String: Any]) -> SecurePairingTrailer {
+        guard hasSecurePairingTrailer(advertisementData),
+              let manufData = mentraManufacturerData(advertisementData)
+        else {
+            return SecurePairingTrailer(pairingMode: false, pairingCode: nil, secureCapable: false)
+        }
+        let flagIndex = advManufCompanyIdLength + advManufPairingFlagOffset
+        let trailerBase = flagIndex + 1
+        let pairingMode = manufData[flagIndex] == advPairingDiscoverable
+        let codeLo = Int(manufData[trailerBase + 2])
+        let codeHi = Int(manufData[trailerBase + 3])
+        let code = String(format: "%02X%02X", codeHi, codeLo)
+        return SecurePairingTrailer(pairingMode: pairingMode, pairingCode: code, secureCapable: true)
+    }
+
+    private func advertisesPairingFlag(_ advertisementData: [String: Any]) -> Bool {
+        hasSecurePairingTrailer(advertisementData)
+    }
 
     var connectionState: String = ConnTypes.DISCONNECTED
 
@@ -1347,14 +1491,26 @@ class MentraLive: NSObject, SGCManager {
     func forget() {
         Bridge.log("LIVE: Forgetting Mentra Live glasses")
 
+        // Clear saved device name so the pairing filter is not bypassed on rescan
+        UserDefaults.standard.removeObject(forKey: PREFS_DEVICE_NAME)
+
         // Stop scanning first
         if isScanning {
             stopScan()
             emitStopScanEvent()
         }
 
-        // Then do full cleanup (disconnect + clear all references)
-        destroy()
+        // Then do full cleanup after the unpair write can leave GATT.
+        sendJson(["type": "unpair"], wakeUp: true, requireAck: false)
+        unpairFlushWorkItem?.cancel()
+        unpairFlushPending = true
+        let work = DispatchWorkItem { [self] in
+            self.unpairFlushPending = false
+            self.unpairFlushWorkItem = nil
+            self.destroy()
+        }
+        unpairFlushWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
     }
 
     var type = "Mentra Live"
@@ -1478,6 +1634,8 @@ class MentraLive: NSObject, SGCManager {
     private var centralManager: CBCentralManager?
 
     private var connectedPeripheral: CBPeripheral?
+    /// Peripheral for the in-flight connect; used to ignore stale disconnect/fail callbacks.
+    private var connectingPeripheral: CBPeripheral?
     private var txCharacteristic: CBCharacteristic?
     private var rxCharacteristic: CBCharacteristic?
     private let bes2700MtuLimit = 509
@@ -1487,6 +1645,13 @@ class MentraLive: NSObject, SGCManager {
     private var isScanning = false
     private var isConnecting = false
     private var isKilled = false
+    /// Glasses opened pairing window — stand down without forgetting identity/bonds.
+    private var pairingYieldActive = false
+    private var pairingYieldAwaitingReclaim = false
+    private var pairingYieldEndWorkItem: DispatchWorkItem?
+    /// Hold GATT teardown until the unpair write can leave the phone.
+    private var unpairFlushPending = false
+    private var unpairFlushWorkItem: DispatchWorkItem?
     private var reconnectAttempts = 0
     private var isNewVersion = false
     private var peerWireProtocolVersion = 0
@@ -1605,6 +1770,16 @@ class MentraLive: NSObject, SGCManager {
     // MARK: - React Native Interface
 
     private var discoveredPeripherals = [String: CBPeripheral]() // name -> peripheral
+    /// Last advertisement pairing trailer for a discovered name. Re-emits (already-
+    /// connected / scan replay) must not drop these flags: omitting them makes a
+    /// secure idle unit look like pairable legacy firmware.
+    private var discoveredAdvPairing = [String: CachedAdvPairing]()
+
+    private struct CachedAdvPairing {
+        let pairingMode: Bool
+        let pairingCode: String?
+        let securePairingCapable: Bool
+    }
 
     func findCompatibleDevices() {
         Bridge.log("Finding compatible Mentra Live glasses")
@@ -1626,7 +1801,89 @@ class MentraLive: NSObject, SGCManager {
         }
     }
 
+    func isPairingYieldActive() -> Bool {
+        pairingYieldActive
+    }
+
+    private func enterPairingYield(windowMs: Int) {
+        pairingYieldActive = true
+        pairingYieldAwaitingReclaim = false
+        pairingYieldEndWorkItem?.cancel()
+        if isScanning {
+            stopScan()
+        }
+        // Publish disconnect immediately for Phone A UI. didDisconnectPeripheral may lag
+        // or race with cancelPeripheralConnection; do not wait on it for stand-down.
+        isConnecting = false
+        connected = false
+        fullyBooted = false
+        glassesSessionId = nil
+        readinessCompletedThisBleSession = false
+        rgbLedAuthorityClaimed = false
+        stopAllTimers()
+        closeL2capFileChannel()
+        txCharacteristic = nil
+        rxCharacteristic = nil
+        updateConnectionState(ConnTypes.DISCONNECTED)
+        if let peripheral = connectedPeripheral {
+            centralManager?.cancelPeripheralConnection(peripheral)
+        }
+        connectedPeripheral = nil
+        connectingPeripheral = nil
+        // Stand down for the whole window. Probing GATT during yield races the new
+        // phone for the single BLE slot and is exactly what entering_pairing_mode forbids.
+
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            Bridge.log("LIVE: Pairing yield ended — resume reconnect if still owned")
+            self.pairingYieldActive = false
+            self.pairingYieldAwaitingReclaim = true
+            self.pairingYieldEndWorkItem = nil
+            if !self.isKilled, self.connectedPeripheral == nil {
+                self.handleReconnection()
+            }
+        }
+        pairingYieldEndWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(windowMs), execute: work)
+    }
+
+    /// Pairing/auth failures after yield — CoreBluetooth codes, not localized strings.
+    /// Connection timeouts are not owner-loss.
+    private static func isPairingAuthFailure(_ error: Error?) -> Bool {
+        guard let error = error as NSError? else { return false }
+        if error.domain == CBATTErrorDomain {
+            return error.code == CBATTError.insufficientAuthentication.rawValue
+                || error.code == CBATTError.insufficientEncryption.rawValue
+        }
+        if error.domain == CBErrorDomain {
+            return error.code == CBError.peerRemovedPairingInformation.rawValue
+        }
+        return false
+    }
+
+    private func clearSavedGlassesAfterOwnerLoss(reason: String) {
+        Bridge.log("LIVE: Owner loss (\(reason)) — clearing saved glasses")
+        pairingYieldAwaitingReclaim = false
+        pairingYieldActive = false
+        pairingYieldEndWorkItem?.cancel()
+        pairingYieldEndWorkItem = nil
+        forget()
+        Task { @MainActor in
+            DeviceStore.shared.apply("bluetooth", "default_wearable", "")
+            DeviceStore.shared.apply("bluetooth", "device_name", "")
+            DeviceStore.shared.apply("bluetooth", "device_address", "")
+        }
+        Bridge.saveSetting("default_wearable", "")
+        Bridge.saveSetting("device_name", "")
+        Bridge.saveSetting("device_address", "")
+        Bridge.sendTypedMessage("owner_replaced", body: ["reason": reason])
+    }
+
     func connectById(_ deviceName: String) {
+        if pairingYieldActive {
+            Bridge.log("LIVE: connectById blocked — pairing yield active")
+            return
+        }
         Bridge.log("connectById: \(deviceName)")
         // Save the device name for future reconnection
         UserDefaults.standard.set(deviceName, forKey: PREFS_DEVICE_NAME)
@@ -1651,7 +1908,7 @@ class MentraLive: NSObject, SGCManager {
             {
                 Bridge.log("Found already-connected peripheral: \(name)")
                 discoveredPeripherals[name] = peripheral
-                emitDiscoveredDevice(name)
+                emitDiscoveredDeviceFromCache(name)
 
                 // Check if this is the device we want
                 if let savedDeviceName = UserDefaults.standard.string(
@@ -1677,6 +1934,10 @@ class MentraLive: NSObject, SGCManager {
     }
 
     @objc func disconnect() {
+        if unpairFlushPending {
+            Bridge.log("LIVE: disconnect deferred — waiting for unpair write")
+            return
+        }
         Bridge.log("LIVE: disconnect() -Disconnecting from Mentra Live glasses")
 
         // if rgbLedAuthorityClaimed {
@@ -2098,7 +2359,10 @@ class MentraLive: NSObject, SGCManager {
     // MARK: - BLE Scanning
 
     private func startScan() {
-        // guard !isScanning else { return }
+        if pairingYieldActive {
+            Bridge.log("LIVE: startScan blocked — pairing yield active")
+            return
+        }
 
         guard centralManager!.state == .poweredOn else {
             Bridge.log("Attempting to scan but bluetooth is not powered on.")
@@ -2106,6 +2370,7 @@ class MentraLive: NSObject, SGCManager {
         }
 
         Bridge.log("Starting BLE scan for Mentra Live glasses")
+        discoveredAdvPairing.removeAll()
         isScanning = true
 
         startReadinessCheckLoop()
@@ -2122,11 +2387,9 @@ class MentraLive: NSObject, SGCManager {
 
         centralManager?.scanForPeripherals(withServices: nil, options: scanOptions)
 
-        // emit already discovered peripherals:
-        for (_, peripheral) in discoveredPeripherals {
-            Bridge.log("LIVE: (Already discovered) peripheral: \(peripheral.name ?? "Unknown")")
-            emitDiscoveredDevice(peripheral.name!)
-        }
+        // Fresh advertisements refill pairing metadata. Re-emitting the last scan's
+        // cache would keep a unit pairable after it left pairing mode.
+        emitConnectedDeviceForPairingScan()
 
         // var dName = DeviceManager.shared.deviceName
         // if dName.isEmpty {
@@ -2156,10 +2419,16 @@ class MentraLive: NSObject, SGCManager {
     // MARK: - Connection Management
 
     private func connectToDevice(_ peripheral: CBPeripheral) {
+        if pairingYieldActive {
+            Bridge.log("LIVE: connectToDevice blocked — pairing yield active")
+            isConnecting = false
+            return
+        }
         Bridge.log("LIVE: Connecting to device: \(peripheral.identifier.uuidString)")
 
         isConnecting = true
         updateConnectionState(ConnTypes.CONNECTING)
+        connectingPeripheral = peripheral
         connectedPeripheral = peripheral
         peripheral.delegate = self
 
@@ -2204,6 +2473,11 @@ class MentraLive: NSObject, SGCManager {
             return
         }
 
+        if pairingYieldActive {
+            Bridge.log("LIVE: Reconnection aborted - pairing yield active")
+            return
+        }
+
         // Check if we've exceeded max attempts
         if reconnectAttempts >= MAX_RECONNECT_ATTEMPTS {
             Bridge.log("LIVE: Maximum reconnection attempts reached (\(MAX_RECONNECT_ATTEMPTS))")
@@ -2236,6 +2510,10 @@ class MentraLive: NSObject, SGCManager {
             guard let self = self else { return }
 
             // Use peripheral presence, not connectionState: we stay CONNECTING during backoff until scan/connect.
+            if self.pairingYieldActive {
+                Bridge.log("LIVE: Reconnection aborted - pairing yield active")
+                return
+            }
             if self.connectedPeripheral == nil, !self.isKilled {
                 // Check for last known device name to start scan
                 if let lastDeviceName = UserDefaults.standard.string(
@@ -2465,11 +2743,21 @@ class MentraLive: NSObject, SGCManager {
 
         switch type {
         case "glasses_ready":
+            // A queued glasses_ready from the connection we just cancelled for yield
+            // must not close the pairing window. Only accept readiness on a live GATT.
+            if pairingYieldActive && connectedPeripheral == nil {
+                Bridge.log("LIVE: Ignoring stale glasses_ready during pairing yield")
+                return
+            }
             // glasses_ready is a REMOTE wire-session reset: the glasses ran
             // onTransportReset() before sending it, so their side is back on legacy
             // framing regardless of what this side negotiated earlier. Start a fresh
             // wire epoch (clears v2-active state that would otherwise gate the
             // handshake off), then negotiate from the caps this message advertises.
+            pairingYieldAwaitingReclaim = false
+            pairingYieldActive = false
+            pairingYieldEndWorkItem?.cancel()
+            pairingYieldEndWorkItem = nil
             resetWireNegotiationState()
             parsePeerWireCaps(json)
             maybeSendWireHandshake()
@@ -2620,6 +2908,31 @@ class MentraLive: NSObject, SGCManager {
 
         case "pong":
             Bridge.log("LIVE: Received pong response - connection healthy")
+
+        case "entering_pairing_mode":
+            let windowMs = max(5_000, min(180_000, json["window_ms"] as? Int ?? 120_000))
+            Bridge.log("LIVE: Glasses entering pairing mode — yield \(windowMs)ms (no forget)")
+            enterPairingYield(windowMs: windowMs)
+            var body: [String: Any] = [
+                "window_ms": windowMs,
+                "reason": json["reason"] as? String ?? "user_gesture",
+            ]
+            if let txn = json["txn"] {
+                body["txn"] = txn
+            }
+            Bridge.sendTypedMessage("entering_pairing_mode", body: body)
+
+        case "pairing_info":
+            Bridge.sendPairingInfo(
+                hadPreviousBond: json["had_previous_bond"] as? Bool ?? false,
+                transferId: json["transfer_id"] as? String,
+                pairingCode: json["pairing_code"] as? String,
+                classicBondReady: json["classic_bond_ready"] as? Bool ?? false,
+                // Legacy firmware that omits this field is not secure-capable.
+                securePairingCapable: json["secure_pairing_capable"] as? Bool ?? false,
+                protocolVersion: json["protocol_version"] as? Int ?? 1,
+                binding: json["binding"] as? String
+            )
 
         case "imu_response", "imu_stream_response", "imu_gesture_response",
              "imu_gesture_subscribed", "imu_ack", "imu_error":
@@ -5225,8 +5538,71 @@ class MentraLive: NSObject, SGCManager {
 
     // MARK: - Event Emission
 
-    private func emitDiscoveredDevice(_ name: String, identifier: String = "", rssi: Int? = nil) {
-        Bridge.sendDiscoveredDevice("Mentra Live", name, deviceAddress: identifier, rssi: rssi)
+    /// Pairing scan listens for advertisements. A unit that is already GATT-connected
+    /// has stopped ADV, so emit it as pairable or the scan list stays empty.
+    private func emitConnectedDeviceForPairingScan() {
+        guard connected, let peripheral = connectedPeripheral, let name = peripheral.name,
+              name == "Xy_A" || name.hasPrefix("XyBLE_") || name.hasPrefix("MENTRA_LIVE_BLE")
+              || name.hasPrefix("MENTRA_LIVE_BT") || name.lowercased().hasPrefix("mentra_live")
+        else {
+            return
+        }
+        Bridge.log("LIVE: Pairing scan: already GATT-connected to \(name) — emitting as pairable (ADV off while connected)")
+        emitDiscoveredDevice(
+            name,
+            identifier: peripheral.identifier.uuidString,
+            pairingMode: true,
+            pairingCode: nil,
+            securePairingCapable: discoveredAdvPairing[name]?.securePairingCapable ?? false
+        )
+    }
+
+    private func cacheAdvPairing(
+        _ name: String,
+        pairingMode: Bool,
+        pairingCode: String?,
+        securePairingCapable: Bool
+    ) {
+        discoveredAdvPairing[name] = CachedAdvPairing(
+            pairingMode: pairingMode,
+            pairingCode: pairingCode,
+            securePairingCapable: securePairingCapable
+        )
+    }
+
+    private func emitDiscoveredDeviceFromCache(
+        _ name: String,
+        identifier: String = "",
+        rssi: Int? = nil
+    ) {
+        let cached = discoveredAdvPairing[name]
+        emitDiscoveredDevice(
+            name,
+            identifier: identifier,
+            rssi: rssi,
+            pairingMode: cached?.pairingMode,
+            pairingCode: cached?.pairingCode,
+            securePairingCapable: cached?.securePairingCapable
+        )
+    }
+
+    private func emitDiscoveredDevice(
+        _ name: String,
+        identifier: String = "",
+        rssi: Int? = nil,
+        pairingMode: Bool? = nil,
+        pairingCode: String? = nil,
+        securePairingCapable: Bool? = nil
+    ) {
+        Bridge.sendDiscoveredDevice(
+            "Mentra Live",
+            name,
+            deviceAddress: identifier,
+            rssi: rssi,
+            pairingMode: pairingMode,
+            pairingCode: pairingCode,
+            securePairingCapable: securePairingCapable
+        )
     }
 
     private func emitStopScanEvent() {
@@ -5315,6 +5691,9 @@ class MentraLive: NSObject, SGCManager {
         Bridge.log("Destroying MentraLiveManager")
 
         isKilled = true
+        unpairFlushWorkItem?.cancel()
+        unpairFlushWorkItem = nil
+        unpairFlushPending = false
 
         // Stop scanning
         if isScanning {
@@ -5348,6 +5727,8 @@ class MentraLive: NSObject, SGCManager {
         DeviceStore.shared.apply("glasses", "hotspotGatewayIp", "")
 
         connectedPeripheral = nil
+        discoveredPeripherals.removeAll()
+        discoveredAdvPairing.removeAll()
         centralManager?.delegate = nil
         centralManager = nil
 

@@ -10,6 +10,7 @@ import com.mentra.asg_client.io.peripheral.events.BatteryEvent;
 import com.mentra.asg_client.io.peripheral.events.ButtonEvent;
 import com.mentra.asg_client.io.peripheral.events.McuEvent;
 import com.mentra.asg_client.io.peripheral.events.ShutdownEvent;
+import com.mentra.asg_client.io.peripheral.events.SpeakPairingCodeEvent;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
@@ -75,6 +76,19 @@ public class K900CommandHandlerDispatchTest {
         McuEvent event = dispatchAndCapture(new JSONObject().put("C", "cs_shut"));
 
         assertThat(event).isInstanceOf(ShutdownEvent.class);
+    }
+
+    @Test
+    public void speakPairingCode_publishesSpeakPairingCodeEvent() throws Exception {
+        JSONObject json =
+                new JSONObject()
+                        .put("C", "hm_spkcode")
+                        .put("B", new JSONObject().put("code", "A1B2"));
+
+        McuEvent event = dispatchAndCapture(json);
+
+        assertThat(event).isInstanceOf(SpeakPairingCodeEvent.class);
+        assertThat(((SpeakPairingCodeEvent) event).getCode()).isEqualTo("A1B2");
     }
 
     @Test

@@ -123,6 +123,16 @@ struct ViewState {
         set { DeviceStore.shared.apply("bluetooth", "pending_wearable", newValue) }
     }
 
+    private var pendingDeviceName: String {
+        get { DeviceStore.shared.get("bluetooth", "pending_device_name") as? String ?? "" }
+        set { DeviceStore.shared.apply("bluetooth", "pending_device_name", newValue) }
+    }
+
+    private var pendingDeviceAddress: String {
+        get { DeviceStore.shared.get("bluetooth", "pending_device_address") as? String ?? "" }
+        set { DeviceStore.shared.apply("bluetooth", "pending_device_address", newValue) }
+    }
+
     private var deviceName: String {
         get { DeviceStore.shared.get("bluetooth", "device_name") as? String ?? "" }
         set { DeviceStore.shared.apply("bluetooth", "device_name", newValue) }
@@ -930,6 +940,14 @@ struct ViewState {
         }
         Bridge.log("MAN: handleDeviceReady(): \(sgc.type)")
 
+        if !pendingDeviceName.isEmpty {
+            deviceName = pendingDeviceName
+        }
+        if !pendingDeviceAddress.isEmpty {
+            deviceAddress = pendingDeviceAddress
+        }
+        pendingDeviceName = ""
+        pendingDeviceAddress = ""
         pendingWearable = ""
         defaultWearable = sgc.type
         searching = false
@@ -1631,6 +1649,10 @@ struct ViewState {
             return
         }
         initSGC(defaultWearable)
+        if let live = sgc as? MentraLive, live.isPairingYieldActive() {
+            Bridge.log("MAN: connectDefault skipped — Mentra Live pairing yield active")
+            return
+        }
         searching = true
         sgc?.connectById(reconnectTarget)
         connectDefaultController()
@@ -1680,10 +1702,10 @@ struct ViewState {
             disconnect()
             try? await Task.sleep(nanoseconds: 100 * 1_000_000) // 100ms
             self.searching = true
-            self.deviceName = name
+            self.pendingDeviceName = name
 
             initSGC(self.pendingWearable)
-            sgc?.connectById(self.deviceName)
+            sgc?.connectById(name)
         }
     }
 
@@ -1758,6 +1780,9 @@ struct ViewState {
         defaultWearable = ""
         deviceName = ""
         deviceAddress = ""
+        pendingDeviceName = ""
+        pendingDeviceAddress = ""
+        pendingWearable = ""
         Bridge.saveSetting("default_wearable", "")
         Bridge.saveSetting("device_name", "")
         Bridge.saveSetting("device_address", "")

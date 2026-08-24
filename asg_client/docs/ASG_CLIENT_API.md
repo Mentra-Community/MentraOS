@@ -599,6 +599,26 @@ No response.
 
 ---
 
+### Spoken pairing code
+
+Mentra Live pairing mode speaks a 4-character code over the glasses speaker. BES firmware plays the short "Pairing..." intro from flash; the MTK stitches the four character WAVs into one I2S phrase (`Ay-one-bee-two`) so it does not sound like four announcements.
+
+Inbound K900 command from BES:
+
+```json
+{"C": "hm_spkcode", "B": {"code": "A1B2"}}
+```
+
+JSON command for intent/BLE testing:
+
+```json
+{"type": "speak_pairing_code", "code": "A1B2"}
+```
+
+No response. Clips live under `assets/pairing/` (`letter_a.wav` … `letter_z.wav`, `digit_0.wav` … `digit_9.wav`). Today's pairing code is hex (`0-9A-F`); `G-Z` ship for future-proofing.
+
+---
+
 ### RGB LED control
 
 Controls the RGB LEDs on the glasses themselves (not the local MTK recording LED). See [features/led-control.md](features/led-control.md) for the layered architecture.
@@ -988,6 +1008,7 @@ The K900 microcontroller frames messages as `{"C": "<cmd>", "B": {...}, "V": 1}`
 | `cs_vdo`              | Camera button long press                             | `button_press`                            |
 | `hm_htsp` / `mh_htsp` | Hotspot start request                                | (handled internally)                      |
 | `hm_batv`             | Battery voltage update                               | `battery_status`                          |
+| `hm_spkcode`          | Speak pairing code over I2S                          | (handled internally)                      |
 | `cs_flts`             | File-transfer ACK                                    | (handled internally)                      |
 | `sr_swst`             | Switch status report                                 | `switch_status`                           |
 | `sr_tpevt`            | Touch event report                                   | `touch_event`                             |

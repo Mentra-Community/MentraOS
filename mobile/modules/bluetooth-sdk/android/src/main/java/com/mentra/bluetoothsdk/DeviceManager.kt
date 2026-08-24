@@ -89,6 +89,14 @@ class DeviceManager {
         get() = DeviceStore.store.get("bluetooth", "pending_wearable") as? String ?: ""
         set(value) = DeviceStore.apply("bluetooth", "pending_wearable", value)
 
+    private var pendingDeviceName: String
+        get() = DeviceStore.store.get("bluetooth", "pending_device_name") as? String ?: ""
+        set(value) = DeviceStore.apply("bluetooth", "pending_device_name", value)
+
+    private var pendingDeviceAddress: String
+        get() = DeviceStore.store.get("bluetooth", "pending_device_address") as? String ?: ""
+        set(value) = DeviceStore.apply("bluetooth", "pending_device_address", value)
+
     public var deviceName: String
         get() = DeviceStore.store.get("bluetooth", "device_name") as? String ?: ""
         set(value) = DeviceStore.apply("bluetooth", "device_name", value)
@@ -1271,6 +1279,16 @@ class DeviceManager {
             return
         }
 
+        if (pendingDeviceName.isNotEmpty()) {
+            deviceName = pendingDeviceName
+        }
+        if (pendingDeviceAddress.isNotEmpty()) {
+            deviceAddress = pendingDeviceAddress
+        }
+        pendingDeviceName = ""
+        pendingDeviceAddress = ""
+        pendingWearable = ""
+
         val readyKey = "${sgc?.type}:${deviceName}"
         val now = System.currentTimeMillis()
         if (readyKey == lastReadyHandledKey && now - lastReadyHandledAtMs < 2000) {
@@ -1281,7 +1299,6 @@ class DeviceManager {
         lastReadyHandledAtMs = now
 
         Bridge.log("MAN: handleDeviceReady() ${sgc?.type}")
-        pendingWearable = ""
         defaultWearable = sgc?.type ?: ""
         searching = false
 
@@ -1966,6 +1983,11 @@ class DeviceManager {
             return
         }
         initSGC(defaultWearable)
+        val live = sgc as? MentraLive
+        if (live?.isPairingYieldActive() == true) {
+            Bridge.log("MAN: connectDefault skipped — Mentra Live pairing yield active")
+            return
+        }
         searching = true
         sgc?.connectById(reconnectTarget)
         connectDefaultController()
@@ -2021,10 +2043,10 @@ class DeviceManager {
         disconnect()
         Thread.sleep(100)
         searching = true
-        deviceName = name
+        pendingDeviceName = name
 
         initSGC(pendingWearable)
-        sgc?.connectById(deviceName)
+        sgc?.connectById(name)
     }
 
     fun connectDevice(deviceModel: String, deviceName: String) {
@@ -2095,20 +2117,75 @@ class DeviceManager {
     fun forget() {
         Bridge.log("MAN: Forgetting smart glasses")
 
-        // Call forget first to stop timers/handlers/reconnect logic
-        sgc?.forget()
-
-        // Then disconnect to close connections
-        disconnect()
+        val live = sgc as? MentraLive
+        if (live != null) {
+            // MentraLive.forget() disconnects GATT then removeBond. Do not refuse
+            // during CTKD bonding — Unpair is an explicit user request to drop the pair.
+            live.forget()
+            // MentraLive.forget() already destroyed the SGC. Clear the manager reference and
+            // session state without calling disconnect() again (that would hit a dead instance
+            // and leave a destroyed MentraLive retained for the next scan).
+            sgc = null
+            lastSystemTimeSyncConnectionKey = ""
+            searching = false
+            micEnabled = false
+            updateMicState()
+            shouldSendBootingMessage = true
+            DeviceStore.apply("glasses", "deviceModel", "")
+            DeviceStore.apply("glasses", "serialNumber", "")
+            DeviceStore.apply("glasses", "bluetoothMacAddress", "")
+            DeviceStore.apply("glasses", "leftMacAddress", "")
+            DeviceStore.apply("glasses", "rightMacAddress", "")
+            DeviceStore.apply("glasses", "macAddress", "")
+            DeviceStore.apply("glasses", "fullyBooted", false)
+            DeviceStore.apply("glasses", "connected", false)
+            DeviceStore.apply(
+                    "glasses",
+                    "voiceActivityDetectionEnabled",
+                    BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED,
+            )
+            searchingController = false
+            DeviceStore.apply("glasses", "controllerConnected", false)
+            controller?.disconnect()
+            controller = null
+        } else {
+            // Typical abandonAttempt path: disconnect() already destroyed SGC and nulled
+            // this.sgc, so MentraLive.forget() never ran and Classic bonds stayed up —
+            // glasses keep IBRT ACL and stop BLE advertising. Only tear Live bonds when
+            // the selected/pending wearable is Mentra Live — forgetting G1/G2 must not
+            // unpair an unrelated Live unit.
+            val liveTarget =
+                    defaultWearable == DeviceTypes.LIVE || pendingWearable == DeviceTypes.LIVE
+            if (liveTarget) {
+                val extraAddress =
+                        when {
+                            defaultWearable == DeviceTypes.LIVE ->
+                                    deviceAddress.takeIf { it.isNotEmpty() }
+                            pendingWearable == DeviceTypes.LIVE ->
+                                    pendingDeviceAddress.takeIf { it.isNotEmpty() }
+                            else -> null
+                        }
+                MentraLive.unbondBondedMentraLiveDevices(
+                        Bridge.getContext(),
+                        extraAddress,
+                )
+            }
+            sgc?.forget()
+            disconnect()
+        }
 
         // Clear state
         defaultWearable = ""
         deviceName = ""
         deviceAddress = ""
+        pendingDeviceName = ""
+        pendingDeviceAddress = ""
+        pendingWearable = ""
         Bridge.saveSetting("default_wearable", "")
         Bridge.saveSetting("device_name", "")
         Bridge.saveSetting("device_address", "")
         Bridge.saveSetting("project_name", "")
+        Bridge.saveSetting("pending_wearable", "")
     }
 
     fun forgetController() {

@@ -650,6 +650,28 @@ export type PairFailureEvent = {
   error: string
 }
 
+export type PairingInfoEvent = {
+  had_previous_bond: boolean
+  /** 16-char uppercase hex transfer id when secure pairing is active. */
+  transfer_id?: string
+  pairing_code?: string
+  classic_bond_ready?: boolean
+  secure_pairing_capable?: boolean
+  protocol_version?: number
+  /** Credential binding mode negotiated for this transfer, when reported by the glasses. */
+  binding?: "ctkd" | "temporal" | "none" | string
+}
+
+export type EnteringPairingModeEvent = {
+  window_ms: number
+  reason?: string
+  txn?: number
+}
+
+export type OwnerReplacedEvent = {
+  reason: string
+}
+
 export type AudioPairingNeededEvent = {
   type: "audio_pairing_needed"
   deviceName: string
@@ -897,6 +919,9 @@ export type BluetoothSdkModuleEvents = {
   rgb_led_control_response: (event: RgbLedControlResponseEvent) => void
   settings_ack: (event: SettingsAckEvent) => void
   pair_failure: (event: PairFailureEvent) => void
+  pairing_info: (event: PairingInfoEvent) => void
+  entering_pairing_mode: (event: EnteringPairingModeEvent) => void
+  owner_replaced: (event: OwnerReplacedEvent) => void
   audio_pairing_needed: (event: AudioPairingNeededEvent) => void
   audio_connected: (event: AudioConnectedEvent) => void
   audio_disconnected: (event: AudioDisconnectedEvent) => void
@@ -1001,6 +1026,9 @@ export type BluetoothSdkEventMap = {
   rgb_led_control_response: RgbLedControlResponseEvent
   settings_ack: SettingsAckEvent
   pair_failure: PairFailureEvent
+  pairing_info: PairingInfoEvent
+  entering_pairing_mode: EnteringPairingModeEvent
+  owner_replaced: OwnerReplacedEvent
   audio_pairing_needed: AudioPairingNeededEvent
   audio_connected: AudioConnectedEvent
   audio_disconnected: AudioDisconnectedEvent
@@ -1317,6 +1345,12 @@ export interface Device {
    * appear in a later scan update when the platform reports RSSI metadata.
    */
   rssi?: number
+  /** Mentra Live: unit is currently in pairing mode (adv flag). */
+  pairingMode?: boolean
+  /** Mentra Live: four-character hex spoken pairing code when available. */
+  pairingCode?: string
+  /** Mentra Live: advertisement carries the secure-pairing capability trailer. */
+  securePairingCapable?: boolean
 }
 
 export interface ConnectOptions {

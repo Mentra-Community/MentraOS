@@ -2,6 +2,7 @@ package com.mentra.asg_client.io.peripheral;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.mentra.asg_client.audio.AudioAssets;
 import com.mentra.asg_client.io.peripheral.events.BatteryEvent;
 import com.mentra.asg_client.io.peripheral.events.BesOtaAuthEvent;
 import com.mentra.asg_client.io.peripheral.events.BesVersionEvent;
@@ -12,6 +13,7 @@ import com.mentra.asg_client.io.peripheral.events.FileTransferAckEvent;
 import com.mentra.asg_client.io.peripheral.events.HotspotTriggerEvent;
 import com.mentra.asg_client.io.peripheral.events.McuEvent;
 import com.mentra.asg_client.io.peripheral.events.ShutdownEvent;
+import com.mentra.asg_client.io.peripheral.events.SpeakPairingCodeEvent;
 import com.mentra.asg_client.io.peripheral.events.SwipeVolumeEvent;
 import com.mentra.asg_client.io.peripheral.events.SwitchEvent;
 import com.mentra.asg_client.io.peripheral.events.TouchEvent;
@@ -101,6 +103,44 @@ public class McuEventParserTest {
         BatteryEvent battery = (BatteryEvent) event;
         assertThat(battery.getPercentage()).isEqualTo(-1);
         assertThat(battery.getVoltageMillivolts()).isEqualTo(-1);
+    }
+
+    @Test
+    public void hmSpkcode_mapsToSpeakPairingCodeEvent() throws Exception {
+        McuEvent event =
+                McuEventParser.parse(cmd("hm_spkcode", new JSONObject().put("code", "A1B2")));
+        assertThat(event).isInstanceOf(SpeakPairingCodeEvent.class);
+        assertThat(((SpeakPairingCodeEvent) event).getCode()).isEqualTo("A1B2");
+    }
+
+    @Test
+    public void hmSpkcode_a12b_mapsEachCharToAPairingAsset() throws Exception {
+        McuEvent event =
+                McuEventParser.parse(cmd("hm_spkcode", new JSONObject().put("code", "A12B")));
+        String code = ((SpeakPairingCodeEvent) event).getCode();
+        assertThat(code).isEqualTo("A12B");
+        assertThat(AudioAssets.getPairingCharAsset(code.charAt(0)))
+                .isEqualTo("pairing/letter_a.wav");
+        assertThat(AudioAssets.getPairingCharAsset(code.charAt(1)))
+                .isEqualTo("pairing/digit_1.wav");
+        assertThat(AudioAssets.getPairingCharAsset(code.charAt(2)))
+                .isEqualTo("pairing/digit_2.wav");
+        assertThat(AudioAssets.getPairingCharAsset(code.charAt(3)))
+                .isEqualTo("pairing/letter_b.wav");
+    }
+
+    @Test
+    public void hmSpkcode_preservesLowercaseForTheStitcher() throws Exception {
+        McuEvent event =
+                McuEventParser.parse(cmd("hm_spkcode", new JSONObject().put("code", "a12b")));
+        assertThat(((SpeakPairingCodeEvent) event).getCode()).isEqualTo("a12b");
+        assertThat(AudioAssets.getPairingCharAsset('a')).isEqualTo("pairing/letter_a.wav");
+    }
+
+    @Test
+    public void hmSpkcode_emptyCode_returnsNull() throws Exception {
+        assertThat(McuEventParser.parse(cmd("hm_spkcode", new JSONObject().put("code", "  "))))
+                .isNull();
     }
 
     @Test
@@ -268,6 +308,7 @@ public class McuEventParserTest {
     public void missingBBody_returnsNull_forBodyRequiredCommands() throws Exception {
         // Match legacy K900CommandHandler: handlers only ran when bData was non-null.
         assertThat(McuEventParser.parse(cmd("hm_batv"))).isNull();
+        assertThat(McuEventParser.parse(cmd("hm_spkcode"))).isNull();
         assertThat(McuEventParser.parse(cmd("sr_swst"))).isNull();
         assertThat(McuEventParser.parse(cmd("sr_tpevt"))).isNull();
         assertThat(McuEventParser.parse(cmd("sr_fbvol"))).isNull();

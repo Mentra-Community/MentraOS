@@ -291,25 +291,29 @@ export const pairing = {
       await BluetoothSdk.stopScan()
       return
     }
-    await BluetoothSdk.disconnect()
     if (projectPairingIdentity().kind === "paired") {
       // The persisted settings describe a COMPLETE pairing: restore it to
       // native (the attempt's connect-by-name overwrote the native
       // device_name; and if native somehow lost its default entirely, this
       // repairs the divergence instead of forgetting a real pairing).
       console.log("PairingIdentity: abandonAttempt — preserving pairing; attempt cancelled, native identity re-seeded")
+      await BluetoothSdk.disconnect()
       await pushAllBluetoothSettings()
-    } else if (nativeHasDefault) {
+      return
+    }
+    if (nativeHasDefault) {
       // Mid-relay: native promoted and its echoes are still landing — the
       // incomplete JS snapshot must not be pushed over the fresher native
       // identity (the on-connect replay's race). Native holds the truth.
       console.log("PairingIdentity: abandonAttempt — preserving pairing; JS identity mid-relay, native kept as-is")
-    } else {
-      // Forgetting requires CONSENSUS: no native default AND no complete
-      // persisted pairing — a genuinely partial attempt.
-      console.log("PairingIdentity: abandonAttempt — no pairing on either layer; forgetting the partial attempt")
-      await BluetoothSdk.forget()
+      await BluetoothSdk.disconnect()
+      return
     }
+    // Partial attempt: forget owns teardown. Do NOT disconnect() first — that
+    // nulls the MentraLive SGC and used to skip Classic removeBond, leaving
+    // IBRT ACL up so glasses never re-advertise for the next scan.
+    console.log("PairingIdentity: abandonAttempt — no pairing on either layer; forgetting the partial attempt")
+    await BluetoothSdk.forget()
   },
 
   /** Subscribe to pairing failures; returns an unsubscribe. */

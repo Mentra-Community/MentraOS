@@ -258,6 +258,8 @@ class MentraBluetoothSdk private constructor(
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "device_name", device.name)
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "device_address", device.address ?: "")
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "project_name", device.projectName ?: "")
+            DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_name", "")
+            DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_address", "")
         } finally {
             suppressDefaultDeviceEvents = false
         }
@@ -271,6 +273,8 @@ class MentraBluetoothSdk private constructor(
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "device_name", "")
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "device_address", "")
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "project_name", "")
+            DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_name", "")
+            DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_address", "")
         } finally {
             suppressDefaultDeviceEvents = false
         }
@@ -383,8 +387,24 @@ class MentraBluetoothSdk private constructor(
                 cancelConnectionAttempt()
             }
         }
-        if (options.saveAsDefault && !isController) {
-            setDefaultDevice(device)
+        if (!isController) {
+            if (options.saveAsDefault) {
+                setDefaultDevice(device)
+            } else {
+                // Pairing uses saveAsDefault=false so default identity stays on the
+                // previous owner until handleDeviceReady. Stash the GATT target separately
+                // so MentraLive can connect by MAC without promoting getDefaultDevice().
+                DeviceStore.apply(
+                        ObservableStore.BLUETOOTH_CATEGORY,
+                        "pending_device_name",
+                        device.name,
+                )
+                DeviceStore.apply(
+                        ObservableStore.BLUETOOTH_CATEGORY,
+                        "pending_device_address",
+                        device.address ?: "",
+                )
+            }
         }
         DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_wearable", device.model.deviceType)
         deviceManager.connectByName(device.name)
@@ -408,6 +428,8 @@ class MentraBluetoothSdk private constructor(
     }
 
     fun cancelConnectionAttempt() {
+        DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_name", "")
+        DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_address", "")
         deviceManager.disconnect()
     }
 
@@ -416,6 +438,8 @@ class MentraBluetoothSdk private constructor(
     }
 
     fun disconnect() {
+        DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_name", "")
+        DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_address", "")
         deviceManager.disconnect()
     }
 
@@ -1531,6 +1555,9 @@ class MentraBluetoothSdk private constructor(
                     pendingGalleryStatus?.resolve(event)
                 }
                 dispatchToListeners { it.onGalleryStatus(event) }
+            }
+            "pairing_info" -> {
+                dispatchToListeners { it.onRawEvent(eventName, data) }
             }
             "photo_response" -> {
                 val event = PhotoResponseEvent(data)
