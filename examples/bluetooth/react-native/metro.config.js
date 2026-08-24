@@ -36,6 +36,9 @@ function redirectedSdkModuleName(moduleName) {
   if (moduleName === "@mentra/bluetooth-sdk/react") {
     return path.join(sdkRoot, "src", "react");
   }
+  if (moduleName === "@mentra/bluetooth-sdk/internal") {
+    return path.join(sdkRoot, "src", "_internal.ts");
+  }
   if (moduleName.startsWith("@mentra/bluetooth-sdk/")) {
     return path.join(
       sdkRoot,

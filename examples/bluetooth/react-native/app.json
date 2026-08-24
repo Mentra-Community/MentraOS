@@ -43,6 +43,7 @@
     },
     "plugins": [
       "./plugins/withAndroid16KbPageSize",
+      "@mentra/crust",
       [
         "@mentra/bluetooth-sdk",
         {
@@ -53,7 +54,7 @@
         "expo-build-properties",
         {
           "android": {
-            "minSdkVersion": 28,
+            "minSdkVersion": 33,
             "usesCleartextTraffic": true,
             "packagingOptions": {
               "exclude": [
