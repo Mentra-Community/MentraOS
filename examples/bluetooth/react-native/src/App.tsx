@@ -18,28 +18,24 @@ export default function App() {
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [otaVisible, setOtaVisible] = useState(false);
   const [waitingForWifi, setWaitingForWifi] = useState(false);
-  const otaCompletedConnectionRef = useRef<string | null>(null);
+  const otaCompletedGenerationRef = useRef<number | null>(null);
   const sdk = useBluetoothSdkExample({activeTab: tab});
   const mentraLiveConnected = isMentraLiveRuntime(sdk.glasses);
-  const connectionKey = mentraLiveConnected && sdk.glasses.connected
-    ? [
-        sdk.glasses.device.serialNumber,
-        sdk.glasses.device.bluetoothName,
-        sdk.glasses.device.deviceModel,
-      ].filter(Boolean).join('|') || 'mentra-live'
+  const connectionGeneration = mentraLiveConnected && sdk.glasses.connected
+    ? sdk.glassesConnectionGeneration
     : null;
 
   useEffect(() => {
     const admission = otaFlowAdmission({
-      completedConnectionKey: otaCompletedConnectionRef.current,
-      connectionKey,
+      completedConnectionGeneration: otaCompletedGenerationRef.current,
+      connectionGeneration,
       waitingForWifi,
       wifiConnected: isGlassesWifiConnected(sdk.glasses),
     });
 
     if (admission === 'idle') {
       if (!otaVisible) {
-        otaCompletedConnectionRef.current = null;
+        otaCompletedGenerationRef.current = null;
         setWaitingForWifi(false);
       }
       return;
@@ -51,7 +47,7 @@ export default function App() {
 
     setWaitingForWifi(false);
     setOtaVisible(true);
-  }, [connectionKey, mentraLiveConnected, otaVisible, sdk.glasses, waitingForWifi]);
+  }, [connectionGeneration, mentraLiveConnected, otaVisible, sdk.glasses, waitingForWifi]);
 
   useEffect(() => {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
@@ -65,7 +61,7 @@ export default function App() {
   }, []);
 
   const finishOta = () => {
-    otaCompletedConnectionRef.current = connectionKey;
+    otaCompletedGenerationRef.current = connectionGeneration;
     setOtaVisible(false);
   };
 
@@ -76,7 +72,7 @@ export default function App() {
   };
 
   const openOta = () => {
-    otaCompletedConnectionRef.current = null;
+    otaCompletedGenerationRef.current = null;
     setWaitingForWifi(false);
     setOtaVisible(true);
   };

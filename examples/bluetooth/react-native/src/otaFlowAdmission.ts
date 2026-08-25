@@ -1,17 +1,17 @@
 export type OtaFlowAdmission = 'done' | 'idle' | 'open' | 'wait_for_wifi';
 
 export function otaFlowAdmission({
-  completedConnectionKey,
-  connectionKey,
+  completedConnectionGeneration,
+  connectionGeneration,
   waitingForWifi,
   wifiConnected,
 }: {
-  completedConnectionKey: string | null;
-  connectionKey: string | null;
+  completedConnectionGeneration: number | null;
+  connectionGeneration: number | null;
   waitingForWifi: boolean;
   wifiConnected: boolean;
 }): OtaFlowAdmission {
-  if (!connectionKey) return 'idle';
+  if (connectionGeneration === null) return 'idle';
   if (waitingForWifi) return wifiConnected ? 'open' : 'wait_for_wifi';
-  return completedConnectionKey === connectionKey ? 'done' : 'open';
+  return completedConnectionGeneration === connectionGeneration ? 'done' : 'open';
 }

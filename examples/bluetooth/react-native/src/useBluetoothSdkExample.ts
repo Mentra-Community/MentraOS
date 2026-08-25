@@ -329,6 +329,8 @@ export type BluetoothSdkExampleState = {
   barcodeScan: BarcodeScanDetails;
   cameraButtonNotice: string | null;
   cameraStatus: string;
+  /** Stable for one BLE connection; advances after disconnect before reconnect. */
+  glassesConnectionGeneration: number;
   defaultDevice: Device | null;
   discoveredDevices: Device[];
   events: SdkConsoleEvent[];
@@ -3662,6 +3664,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     galleryServerReachable,
     galleryServerStatus,
     glasses,
+    glassesConnectionGeneration: glassesConnectionGenerationRef.current,
     hotspotEnabled,
     lastAction,
     lastMicBytes,
