@@ -563,6 +563,54 @@ without retaining `-beta` in the production app version. TestFlight notes,
 diagnostics, GitHub artifacts, and release metadata expose the full coordinated
 identity such as `3.1.0-beta.57`.
 
+### App Store Connect promotion
+
+Adding an iOS build to a TestFlight group is not a separate binary publication
+and does not itself promote the build to the App Store. App Store Connect keeps
+one uploaded build, identified by bundle ID, plain marketing version, and
+numeric build number. TestFlight groups only control who may test that build.
+Production later attaches the same build to the corresponding App Store
+version.
+
+For example, coordinated beta `3.1.0-beta.57` is observable under that full
+identity in Mentra release records, but its native App Store coordinates are
+version `3.1.0` and the release plan's numeric build number. The staging
+workflow:
+
+1. uploads that exact signed IPA to App Store Connect;
+2. waits for Apple to finish processing the build; and
+3. assigns it to the existing `Mentra Staging` TestFlight group.
+
+After testing, an operator starts the protected production workflow with the
+completed beta identity. The workflow first verifies the selected beta and its
+artifacts, then requests approval through the
+`coordinated-production-release` GitHub environment. That GitHub approval is
+Mentra's production go/no-go decision. Only after stable package publication
+and the external Engine consumer gate succeed does mobile promotion:
+
+1. locate the exact existing App Store Connect build by bundle ID and build
+   number;
+2. require the App Store version to use that build, failing rather than
+   replacing a different attached build;
+3. submit the existing build to App Review without uploading, rebuilding, or
+   re-signing another IPA; and
+4. verify that App Store Connect retained the exact build and moved the version
+   into the review or release flow.
+
+The current policy submits with `automatic_release: true`. Apple review remains
+an external approval, but after Apple approves the version it is released
+automatically. There is no additional manual App Store Connect release button
+in this policy. Preserving a final human release gate in App Store Connect would
+require changing this setting to `false`; that is a release-policy change and
+must not happen implicitly.
+
+App Store Connect remains the operational surface for TestFlight membership,
+required app metadata, compliance information, review status, rejection
+handling, and exceptional intervention. The automation is retry-safe around
+manual intervention: if the exact build is already in the review or release
+flow, promotion verifies and reuses that state; if the same App Store version
+is attached to a different build, promotion fails closed.
+
 ## Artifact Names
 
 Primary downloadable artifacts use:
