@@ -79,7 +79,7 @@ function npmView(spec, field) {
 }
 
 function parseViewValue(output) {
-  if (output === null) return null
+  if (output === null || output === "") return null
   try {
     return JSON.parse(output)
   } catch {
@@ -87,11 +87,18 @@ function parseViewValue(output) {
   }
 }
 
-function npmViewPublished(spec, field) {
-  for (let attempt = 1; attempt <= 12; attempt += 1) {
-    const value = parseViewValue(npmView(spec, field))
-    if (value !== null) return value
-    if (attempt < 12) execFileSync("sleep", ["5"])
+export function isHttpsRegistryUrl(value) {
+  return typeof value === "string" && value.startsWith("https://")
+}
+
+export function npmViewPublishedTarball(
+  spec,
+  {attempts = 36, view = npmView, sleep = () => execFileSync("sleep", ["5"])} = {},
+) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const value = parseViewValue(view(spec, "dist.tarball"))
+    if (isHttpsRegistryUrl(value)) return value
+    if (attempt < attempts) sleep()
   }
   return null
 }
@@ -354,8 +361,8 @@ export function publishReleaseNpm({
 
     let url = `https://registry.npmjs.org/${encodeURIComponent(name)}`
     if (!dryRun) {
-      const registryUrl = npmViewPublished(coordinate, "dist.tarball")
-      if (typeof registryUrl !== "string" || !registryUrl.startsWith("https://")) {
+      const registryUrl = npmViewPublishedTarball(coordinate)
+      if (!isHttpsRegistryUrl(registryUrl)) {
         throw new Error(`${coordinate} was published but has no HTTPS registry tarball URL`)
       }
       url = registryUrl

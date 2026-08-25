@@ -73,3 +73,13 @@ test("mobile release selects an existing Doppler token for its backend", () => {
   assert.equal([...mobile.matchAll(/prod\) DOPPLER_TOKEN="\$DOPPLER_TOKEN_MOBILE_PRD"/g)].length, 2)
   assert.doesNotMatch(mobile, /DOPPLER_TOKEN_MOBILE_PRD \|\|/)
 })
+
+test("Maven generation builds the Crust config plugin before Expo prebuild", () => {
+  const sdkNative = jobBlock(workflow("reusable-coordinated-sdk-native.yml"), "maven")
+  const pluginBuild = sdkNative.indexOf("bun run build:plugin")
+  const prebuild = sdkNative.indexOf("bun expo prebuild --platform android")
+
+  assert.notEqual(pluginBuild, -1)
+  assert.notEqual(prebuild, -1)
+  assert.ok(pluginBuild < prebuild)
+})
