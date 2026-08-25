@@ -298,10 +298,13 @@ final package coordinate, artifact URL, content hash, attestation, native build
 number, source commit, workflow run, OTA manifest identity, and publication
 result.
 
-The manifest is attached with all human-named assets to a draft GitHub release.
-The release becomes immutable only after the coordinator verifies completeness
-and publishes the draft. A partial release has a release plan and recoverable
-registry state, but never claims to have a completed release manifest.
+The release begins as a draft. After OTA selection, its immutable OTA manifest,
+ASG selection, and portable bundle are attached and the release becomes a public
+prerelease explicitly marked as publication in progress. Finalization adds the
+human-named package artifacts and completed release manifest, then replaces the
+in-progress description. A partial release may expose usable OTA assets and
+recoverable registry state, but it never claims to have a completed release
+manifest.
 
 Sources of truth are intentionally narrow:
 
@@ -335,6 +338,12 @@ Reuse never means renaming, repackaging, or overwriting an ASG artifact. MTK or
 BES promotion and unrelated MentraOS, Engine, documentation, or package changes
 can therefore produce a new OTA manifest and release set while continuing to
 reference the same ASG APK.
+
+Release-specific asset ownership is bounded by identity. A shared
+`mentra-coordinated-asg` release contains only reusable ASG APK/provenance
+pairs. Every coordinated `mentra-vX.Y.Z-<channel>.N` release owns its OTA
+manifest, ASG selection, and portable bundle. Release-specific OTA assets never
+accumulate in one global GitHub release.
 
 The resulting URL is passed as an explicit output to all product builds:
 
@@ -475,6 +484,19 @@ After the OTA bundle and version map exist:
 Independent jobs may run in parallel when the dependency graph permits it. A
 consumer package cannot publish until its referenced versions are publicly
 readable and their hashes/metadata match the release set.
+
+Production deliberately narrows the graph before changing either store:
+
+1. Validate the selected completed beta, its source ancestry, and every recorded
+   artifact.
+2. Request protected approval for that verified candidate.
+3. Publish stable npm, Maven, and SwiftPM packages.
+4. Build the clean external Engine consumer from those public packages.
+5. Promote the exact beta mobile binaries to production.
+6. Finalize public package pointers and the stable release manifest.
+
+Google Play production promotion and App Store submission therefore cannot run
+while package publication or the external consumer proof is still unresolved.
 
 Retries reconcile the same release set. They publish missing targets or verify
 existing identical targets. They never allocate a new suffix and never replace
@@ -679,5 +701,9 @@ cutover that enables the coordinator, so two systems cannot publish the shared
 - Dev and beta builds are immediately distinguishable in TestFlight metadata,
   artifact names, diagnostics, and the release manifest.
 - A workflow retry reconciles the same identity without overwriting bytes.
+- Each prerelease owns its OTA manifest, ASG selection, and portable bundle;
+  the shared ASG release contains only reusable APK/provenance pairs.
 - Production promotes the tested staging mobile and OTA artifacts.
+- Production mobile promotion begins only after stable packages publish and the
+  registry-backed Engine consumer succeeds.
 - Public docs and examples update only after their dependencies are available.

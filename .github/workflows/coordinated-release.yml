@@ -187,6 +187,7 @@ jobs:
     uses: ./.github/workflows/reusable-coordinated-ota.yml
     with:
       release_plan_artifact: ${{ needs.plan.outputs.plan_artifact }}
+      release_id: ${{ needs.plan.outputs.release_id }}
       dry_run: ${{ needs.plan.outputs.dry_run == 'true' }}
     secrets: inherit
 

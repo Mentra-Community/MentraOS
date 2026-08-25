@@ -52,7 +52,7 @@ function fixture() {
     identity,
     releasePlan,
     apkPath,
-    apkUrl: `https://github.com/Mentra-Community/MentraOS/releases/download/mentra-coordinated-ota/${identity.apkAsset}`,
+    apkUrl: `https://github.com/Mentra-Community/MentraOS/releases/download/mentra-coordinated-asg/${identity.apkAsset}`,
     signingCertificateSha256,
   })
   writeFileSync(selectionPath, serializeReleaseRecord(createAsgSelection({releasePlan, identity, provenance})))
@@ -127,10 +127,10 @@ test("creates a release result only for an exact ASG, MTK, and BES selection", (
     selectionUrl: "https://example.com/asg-selection.json",
     selectionStatus: "published",
     manifestPath: fixtureData.manifestPath,
-    manifestUrl: `https://github.com/Mentra-Community/MentraOS/releases/download/mentra-coordinated-ota/${releasePlan.artifactNames.otaManifest}`,
+    manifestUrl: `https://github.com/Mentra-Community/MentraOS/releases/download/mentra-v3.1.0-beta.57/${releasePlan.artifactNames.otaManifest}`,
     bundlePath: fixtureData.bundlePath,
     bundleUrl:
-      "https://github.com/Mentra-Community/MentraOS/releases/download/mentra-coordinated-ota/mentra-live-ota-bundle-3.1.0-beta.57.zip",
+      "https://github.com/Mentra-Community/MentraOS/releases/download/mentra-v3.1.0-beta.57/mentra-live-ota-bundle-3.1.0-beta.57.zip",
     bundleStatus: "published",
     manifestStatus: "reused",
     reused: true,

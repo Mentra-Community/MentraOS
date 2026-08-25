@@ -29,16 +29,21 @@ The ASG APK is rebuilt only when its complete build-input fingerprint changes.
 Otherwise the coordinated OTA workflow reuses the exact previously verified
 APK and records that provenance in the release manifest.
 
+Reusable ASG APK/provenance pairs live in the shared
+`mentra-coordinated-asg` release. Each coordinated prerelease owns its OTA
+manifest, ASG selection, and portable bundle; those release-specific assets do
+not accumulate in a shared release.
+
 ## Production
 
 Run `.github/workflows/coordinated-production-promotion.yml` with a completed
-`X.Y.Z-beta.N` identity. The protected promotion:
+`X.Y.Z-beta.N` identity. The workflow verifies the selected beta before it asks
+for protected approval. After approval it:
 
-1. verifies the selected beta manifest and every recorded artifact;
-2. requires the selected source commit to be present in `main`;
-3. promotes the exact tested mobile and OTA artifacts;
-4. publishes stable SDK and Engine packages from the same source and OTA pin;
-5. moves public package pointers only after all targets succeed.
+1. publishes stable SDK and Engine packages from the same source and OTA pin;
+2. builds a clean external Engine host from those public packages;
+3. promotes the exact tested mobile and OTA artifacts only after that proof;
+4. moves public package pointers only after all targets succeed.
 
 Production does not rebuild the ASG, OTA bundle, IPA, or Android App Bundle.
 

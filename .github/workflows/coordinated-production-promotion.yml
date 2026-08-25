@@ -18,19 +18,13 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  approve:
-    name: Approve selected production candidate
-    runs-on: ubuntu-latest
-    environment:
-      name: coordinated-production-release
-    steps:
-      - run: echo "Approved production promotion of ${{ inputs.beta_identity }}"
-
   plan:
     name: Verify beta and derive stable release intent
-    needs: approve
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
     outputs:
       source_commit: ${{ steps.release.outputs.source_commit }}
       release_identity: ${{ steps.release.outputs.release_identity }}
@@ -40,7 +34,6 @@ jobs:
       ota_manifest_sha256: ${{ steps.release.outputs.ota_manifest_sha256 }}
       npm_artifact: ${{ steps.release.outputs.npm_artifact }}
       npm_candidate_tag: ${{ steps.release.outputs.npm_candidate_tag }}
-      release_id: ${{ steps.release-container.outputs.release_id }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -114,6 +107,50 @@ jobs:
             echo "npm_candidate_tag=$candidate_tag"
           } >> "$GITHUB_OUTPUT"
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.release.outputs.plan_artifact }}
+          path: production-intent
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Summarize verified production candidate
+        run: |
+          {
+            echo "## Verified production candidate"
+            echo ""
+            echo "- Beta: \`${{ inputs.beta_identity }}\`"
+            echo "- Source: \`${{ steps.release.outputs.source_commit }}\`"
+            echo "- Stable identity: \`${{ steps.release.outputs.release_identity }}\`"
+            echo "- OTA manifest: ${{ steps.release.outputs.ota_manifest_url }}"
+            echo ""
+            echo "Protected approval is requested only after these inputs and every beta artifact have been verified."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  approve:
+    name: Approve verified production candidate
+    needs: plan
+    runs-on: ubuntu-latest
+    environment:
+      name: coordinated-production-release
+    permissions:
+      actions: read
+      contents: write
+    outputs:
+      release_id: ${{ steps.release-container.outputs.release_id }}
+    steps:
+      - run: echo "Approved verified production candidate ${{ inputs.beta_identity }}"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.source_commit }}
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.plan.outputs.plan_artifact }}
+          path: production-intent
+
       - name: Allocate or verify the exact stable release container
         id: release-container
         env:
@@ -148,16 +185,9 @@ jobs:
           fi
           echo "release_id=$(jq -er .id <<< "$release")" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ steps.release.outputs.plan_artifact }}
-          path: production-intent
-          if-no-files-found: error
-          retention-days: 90
-
   npm:
     name: Publish stable npm family in dependency order
-    needs: plan
+    needs: [plan, approve]
     uses: ./.github/workflows/reusable-coordinated-npm.yml
     with:
       source_commit: ${{ needs.plan.outputs.source_commit }}
@@ -171,19 +201,19 @@ jobs:
 
   sdk-native:
     name: Publish stable Bluetooth SDK native packages
-    needs: plan
+    needs: [plan, approve]
     uses: ./.github/workflows/reusable-coordinated-sdk-native.yml
     with:
       source_commit: ${{ needs.plan.outputs.source_commit }}
       release_plan_artifact: ${{ needs.plan.outputs.plan_artifact }}
-      release_id: ${{ needs.plan.outputs.release_id }}
+      release_id: ${{ needs.approve.outputs.release_id }}
       ota_manifest_url: ${{ needs.plan.outputs.ota_manifest_url }}
       ota_manifest_sha256: ${{ needs.plan.outputs.ota_manifest_sha256 }}
     secrets: inherit
 
   mobile:
     name: Promote exact beta mobile builds
-    needs: plan
+    needs: [plan, engine-consumer]
     uses: ./.github/workflows/reusable-coordinated-mobile-promotion.yml
     with:
       release_plan_artifact: ${{ needs.plan.outputs.plan_artifact }}
@@ -200,7 +230,7 @@ jobs:
 
   finalize:
     name: Finalize stable release and public package pointers
-    needs: [plan, npm, sdk-native, mobile, engine-consumer]
+    needs: [plan, approve, npm, sdk-native, mobile, engine-consumer]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -270,7 +300,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_COMMIT: ${{ needs.plan.outputs.source_commit }}
-          RELEASE_ID: ${{ needs.plan.outputs.release_id }}
+          RELEASE_ID: ${{ needs.approve.outputs.release_id }}
         run: |
           set -euo pipefail
           tag="${{ steps.release.outputs.tag }}"
@@ -297,7 +327,7 @@ jobs:
             node .github/scripts/publish-immutable-release-asset.mjs \
               --file "finalized-release/$name" \
               --name "$name" \
-              --release-id "${{ needs.plan.outputs.release_id }}" \
+              --release-id "${{ needs.approve.outputs.release_id }}" \
               --repository "${{ github.repository }}"
           done
 
@@ -324,7 +354,7 @@ jobs:
             --arg body "Stable coordinated Mentra release promoted from ${{ inputs.beta_identity }}. Mobile and OTA bytes are the exact completed beta artifacts; stable packages were reproduced from the same source and OTA pin." \
             '{draft: false, prerelease: false, make_latest: "true", name: $name, body: $body}')
           gh api --method PATCH \
-            "repos/${GITHUB_REPOSITORY}/releases/${{ needs.plan.outputs.release_id }}" \
+            "repos/${GITHUB_REPOSITORY}/releases/${{ needs.approve.outputs.release_id }}" \
             --input - <<< "$payload" \
             --jq '.draft == false and .prerelease == false' | grep -qx true
           git fetch --force origin "refs/tags/$tag:refs/tags/$tag"

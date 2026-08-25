@@ -7,6 +7,10 @@ on:
         description: Actions artifact containing release-plan.json and ota-release-inputs.json
         required: true
         type: string
+      release_id:
+        description: Coordinated release container that owns this release set's OTA assets
+        required: false
+        type: string
       dry_run:
         description: Build and verify without publishing GitHub release assets
         required: false
@@ -43,7 +47,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  OTA_RELEASE_TAG: mentra-coordinated-ota
+  ASG_RELEASE_TAG: mentra-coordinated-asg
   ASG_SIGNING_CERT_SHA256: e8f49381d6324f0703d464328a46eaba1f40422be3b39085d521e38885677387
 
 jobs:
@@ -119,9 +123,9 @@ jobs:
           set -euo pipefail
           mkdir -p coordinated-ota-work
           releases=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases?per_page=100" | jq 'add')
-          matches=$(jq --arg tag "$OTA_RELEASE_TAG" '[.[] | select(.tag_name == $tag)]' <<< "$releases")
+          matches=$(jq --arg tag "$ASG_RELEASE_TAG" '[.[] | select(.tag_name == $tag)]' <<< "$releases")
           if [[ "$(jq 'length' <<< "$matches")" -gt 1 ]]; then
-            echo "Found more than one GitHub release for tag $OTA_RELEASE_TAG" >&2
+            echo "Found more than one GitHub release for tag $ASG_RELEASE_TAG" >&2
             exit 1
           fi
           release_id=$(jq -r '.[0].id // empty' <<< "$matches")
@@ -175,17 +179,20 @@ jobs:
           provenance_asset=$(jq -er .provenanceAsset coordinated-ota-work/asg-build-identity.json)
           [[ "$apk_asset" == "${{ steps.existing-asg.outputs.apk_asset }}" ]]
           [[ "$provenance_asset" == "${{ steps.existing-asg.outputs.provenance_asset }}" ]]
-          release_base="https://github.com/${REPOSITORY}/releases/download/${OTA_RELEASE_TAG}"
+          release_tag="mentra-v${release_identity}"
+          asg_release_base="https://github.com/${REPOSITORY}/releases/download/${ASG_RELEASE_TAG}"
+          release_base="https://github.com/${REPOSITORY}/releases/download/${release_tag}"
 
           {
             echo "release_identity=${release_identity}"
             echo "release_set_id=${release_set_id}"
+            echo "release_tag=${release_tag}"
             echo "apk_asset=${apk_asset}"
             echo "provenance_asset=${provenance_asset}"
             echo "manifest_asset=${manifest_asset}"
             echo "selection_asset=${selection_asset}"
             echo "bundle_asset=${bundle_asset}"
-            echo "apk_url=${release_base}/${apk_asset}"
+            echo "apk_url=${asg_release_base}/${apk_asset}"
             echo "manifest_url=${release_base}/${manifest_asset}"
             echo "selection_url=${release_base}/${selection_asset}"
             echo "bundle_url=${release_base}/${bundle_asset}"
@@ -199,7 +206,7 @@ jobs:
           APK_ASSET: ${{ steps.names.outputs.apk_asset }}
           PROVENANCE_ASSET: ${{ steps.names.outputs.provenance_asset }}
         run: |
-          gh release download "$OTA_RELEASE_TAG" --pattern "$APK_ASSET" --pattern "$PROVENANCE_ASSET" --dir coordinated-ota-work
+          gh release download "$ASG_RELEASE_TAG" --pattern "$APK_ASSET" --pattern "$PROVENANCE_ASSET" --dir coordinated-ota-work
           mv "coordinated-ota-work/$APK_ASSET" coordinated-ota-work/asg.apk
           mv "coordinated-ota-work/$PROVENANCE_ASSET" coordinated-ota-work/asg-provenance.json
 
@@ -350,18 +357,19 @@ jobs:
           manifest_status=published
           selection_status=published
           bundle_status=published
-          if gh release view "$OTA_RELEASE_TAG" >/dev/null 2>&1; then
-            release_id=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${OTA_RELEASE_TAG}" --jq .id)
-            assets=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases/${release_id}/assets?per_page=100" | jq 'add')
-            if jq -e --arg name "${{ steps.names.outputs.manifest_asset }}" '.[] | select(.name == $name)' <<< "$assets" >/dev/null; then
-              manifest_status=reused
-            fi
-            if jq -e --arg name "${{ steps.names.outputs.selection_asset }}" '.[] | select(.name == $name)' <<< "$assets" >/dev/null; then
-              selection_status=reused
-            fi
-            if jq -e --arg name "${{ steps.names.outputs.bundle_asset }}" '.[] | select(.name == $name)' <<< "$assets" >/dev/null; then
-              bundle_status=reused
-            fi
+          if [[ -z "${{ inputs.release_id }}" ]]; then
+            echo "A coordinated release container is required outside dry-run mode." >&2
+            exit 1
+          fi
+          assets=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases/${{ inputs.release_id }}/assets?per_page=100" | jq 'add')
+          if jq -e --arg name "${{ steps.names.outputs.manifest_asset }}" '.[] | select(.name == $name)' <<< "$assets" >/dev/null; then
+            manifest_status=reused
+          fi
+          if jq -e --arg name "${{ steps.names.outputs.selection_asset }}" '.[] | select(.name == $name)' <<< "$assets" >/dev/null; then
+            selection_status=reused
+          fi
+          if jq -e --arg name "${{ steps.names.outputs.bundle_asset }}" '.[] | select(.name == $name)' <<< "$assets" >/dev/null; then
+            bundle_status=reused
           fi
           {
             echo "manifest_status=$manifest_status"
@@ -392,37 +400,68 @@ jobs:
           --run-attempt "${{ github.run_attempt }}"
           --output coordinated-ota-work/ota-result.json
 
-      - name: Stage ASG release assets
+      - name: Stage reusable ASG release assets
         run: |
-          cp coordinated-ota-work/asg.apk "coordinated-ota-work/release-assets/${{ steps.names.outputs.apk_asset }}"
-          cp coordinated-ota-work/asg-provenance.json "coordinated-ota-work/release-assets/${{ steps.names.outputs.provenance_asset }}"
+          mkdir -p coordinated-ota-work/asg-release-assets
+          cp coordinated-ota-work/asg.apk "coordinated-ota-work/asg-release-assets/${{ steps.names.outputs.apk_asset }}"
+          cp coordinated-ota-work/asg-provenance.json "coordinated-ota-work/asg-release-assets/${{ steps.names.outputs.provenance_asset }}"
 
-      - name: Publish or reconcile immutable GitHub release assets
+      - name: Publish or reconcile reusable ASG assets
         if: inputs.dry_run != true
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if ! gh release view "$OTA_RELEASE_TAG" >/dev/null 2>&1; then
-            gh release create "$OTA_RELEASE_TAG" --title "Mentra Coordinated OTA Artifacts" --prerelease \
-              --notes "Immutable ASG binaries and OTA manifests selected by coordinated Mentra release sets."
+          if ! gh release view "$ASG_RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$ASG_RELEASE_TAG" --title "Mentra Reusable ASG Artifacts" --prerelease \
+              --notes "Immutable ASG APK and provenance pairs reused by coordinated Mentra release sets."
           fi
-          release_id=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${OTA_RELEASE_TAG}" --jq .id)
-          assets=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases/${release_id}/assets?per_page=100" | jq 'add')
+          release_id=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${ASG_RELEASE_TAG}" --jq .id)
+          for file in coordinated-ota-work/asg-release-assets/*; do
+            name=$(basename "$file")
+            node .github/scripts/publish-immutable-release-asset.mjs \
+              --file "$file" \
+              --name "$name" \
+              --release-id "$release_id" \
+              --repository "${{ github.repository }}"
+          done
+
+      - name: Publish this release set's immutable OTA assets
+        if: inputs.dry_run != true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          release=$(gh api "repos/${GITHUB_REPOSITORY}/releases/${{ inputs.release_id }}")
+          [[ "$(jq -r .tag_name <<< "$release")" == "${{ steps.names.outputs.release_tag }}" ]]
+          [[ "$(jq -r .name <<< "$release")" == "Mentra ${{ steps.names.outputs.release_identity }}" ]]
+          [[ "$(jq -r .prerelease <<< "$release")" == "true" ]]
+          if [[ "$(jq -r .draft <<< "$release")" == "true" ]]; then
+            [[ "$(jq -r .target_commitish <<< "$release")" == "$SOURCE_COMMIT" ]]
+          else
+            tag="${{ steps.names.outputs.release_tag }}"
+            git fetch --force origin "refs/tags/$tag:refs/tags/$tag"
+            [[ "$(git rev-parse "$tag^{commit}")" == "$SOURCE_COMMIT" ]]
+          fi
           for file in coordinated-ota-work/release-assets/*; do
             name=$(basename "$file")
-            asset_id=$(jq -r --arg name "$name" '.[] | select(.name == $name) | .id' <<< "$assets")
-            if [[ -n "$asset_id" ]]; then
-              gh api -H "Accept: application/octet-stream" "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" > coordinated-ota-work/existing-asset
-              if ! cmp -s "$file" coordinated-ota-work/existing-asset; then
-                echo "Refusing to overwrite immutable OTA asset $name with different bytes." >&2
-                exit 1
-              fi
-              echo "Reused immutable release asset $name"
-            else
-              gh release upload "$OTA_RELEASE_TAG" "$file"
-            fi
+            node .github/scripts/publish-immutable-release-asset.mjs \
+              --file "$file" \
+              --name "$name" \
+              --release-id "${{ inputs.release_id }}" \
+              --repository "${{ github.repository }}"
           done
+
+          if [[ "$(jq -r .draft <<< "$release")" == "true" ]]; then
+            payload=$(jq -n \
+              --arg body "Coordinated Mentra release ${{ steps.names.outputs.release_identity }} is in progress. Its immutable OTA assets are available; the completed release manifest is published only after every target succeeds." \
+              '{draft: false, prerelease: true, body: $body}')
+            gh api --method PATCH \
+              "repos/${GITHUB_REPOSITORY}/releases/${{ inputs.release_id }}" \
+              --input - <<< "$payload" \
+              --jq '.draft == false and .prerelease == true' | grep -qx true
+          fi
 
       - name: Verify published OTA manifest
         if: inputs.dry_run != true
