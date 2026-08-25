@@ -526,6 +526,67 @@ describe("miniapp release lifecycle", () => {
     }
   });
 
+  test("publish and reject decisions serialize to one consistent outcome", async () => {
+    const packageName = "com.example.decisionrace";
+    const release = await createAcceptedStoreRelease(packageName);
+
+    const decisions = await Promise.allSettled([
+      miniapps.publishRelease({ releaseId: release.id, adminId: "publisher@mentraglass.com" }),
+      miniapps.rejectRelease({ releaseId: release.id, adminId: "reviewer@mentraglass.com" }),
+    ]);
+    expect(decisions.filter(decision => decision.status === "fulfilled")).toHaveLength(1);
+    expect(decisions.filter(decision => decision.status === "rejected")).toHaveLength(1);
+
+    const [savedRelease, savedApp] = await Promise.all([
+      MiniAppReleaseModel.findById(release.id).lean(),
+      MiniAppModel.findOne({ packageName }).lean(),
+    ]);
+    const catalog = await new StoreCatalogService().list({
+      baseUrl: "https://core.example.test",
+      ...storeUser,
+    });
+    if (savedRelease?.status === "published") {
+      expect(savedApp?.activeReleaseId).toBe(release.id);
+      expect(catalog.apps.map(app => app.packageName)).toContain(packageName);
+    } else {
+      expect(savedRelease?.status).toBe("rejected");
+      expect(savedApp?.activeReleaseId).toBeNull();
+      expect(catalog.apps.map(app => app.packageName)).not.toContain(packageName);
+    }
+  });
+
+  test("publication retries complete an app-first partial commit", async () => {
+    const packageName = "com.example.publishretry";
+    const release = await createAcceptedStoreRelease(packageName);
+    const acceptedRelease = await MiniAppReleaseModel.findById(release.id).lean();
+    await MiniAppModel.updateOne(
+      { packageName },
+      {
+        $set: {
+          activeReleaseId: release.id,
+          publishedStoreListing: acceptedRelease?.reviewedStoreListing,
+        },
+      },
+    );
+
+    const hiddenPartial = await new StoreCatalogService().list({
+      baseUrl: "https://core.example.test",
+      ...storeUser,
+    });
+    expect(hiddenPartial.apps.map(app => app.packageName)).not.toContain(packageName);
+
+    const published = await miniapps.publishRelease({
+      releaseId: release.id,
+      adminId: "admin@mentraglass.com",
+    });
+    expect(published.status).toBe("published");
+    const visibleAfterRetry = await new StoreCatalogService().list({
+      baseUrl: "https://core.example.test",
+      ...storeUser,
+    });
+    expect(visibleAfterRetry.apps.map(app => app.packageName)).toContain(packageName);
+  });
+
   test("stable and beta publish independently and Core selects beta only for the enrolled user", async () => {
     const packageName = "com.example.tracks";
     await miniapps.createMiniApp(developer, {
@@ -652,6 +713,24 @@ async function configurePublishableListing(packageName: string): Promise<void> {
     contentType: "image/png",
     bytes: tinyPng(),
   });
+}
+
+async function createAcceptedStoreRelease(packageName: string) {
+  await miniapps.createMiniApp(developer, {
+    packageName,
+    displayName: "Store decision test",
+    description: "Store decision serialization test",
+  });
+  await configurePublishableListing(packageName);
+  const release = await miniapps.createRelease(developer, {
+    packageName,
+    version: "1.0.0",
+    manifest: { packageName, name: "Store decision test", version: "1.0.0" },
+    bundle: await releaseBundle({ packageName, name: "Store decision test", version: "1.0.0" }),
+  });
+  await miniapps.submitRelease(developer, packageName, release.id);
+  await miniapps.approveRelease({ releaseId: release.id, adminId: "admin@mentraglass.com" });
+  return release;
 }
 
 function tinyPng(): Uint8Array {

@@ -259,45 +259,75 @@ export class MiniAppService {
   }
 
   async approveRelease(input: AdminReleaseDecisionInput) {
-    const release = await MiniAppReleaseModel.findOne({ _id: input.releaseId });
-    if (!release) throw new MiniAppServiceError("not_found", "release not found", 404);
-    if (!["submitted", "in_review"].includes(release.status)) {
-      throw new MiniAppServiceError("invalid_release_state", "release is not awaiting review", 409);
-    }
-    const app = await MiniAppModel.findOne({ _id: release.miniAppId });
-    if (!app || app.status === "archived") throw new MiniAppServiceError("not_found", "miniapp not found", 404);
-    if (!release.submittedStoreListing || typeof release.submittedStoreListing !== "object") {
-      throw new MiniAppServiceError(
-        "listing_not_submitted",
-        "Release must be submitted again before its Store listing can be approved",
-        409,
-      );
-    }
-    release.status = "accepted";
-    release.reviewedAt = new Date();
-    release.reviewedBy = input.adminId;
-    release.reviewNotes = input.notes?.trim() || null;
-    release.reviewedStoreListing = serializeStoreListing(release.submittedStoreListing);
-    await release.save();
-    return serializeRelease(release.toObject());
+    const requestedRelease = await MiniAppReleaseModel.findOne({ _id: input.releaseId }).select("miniAppId").lean();
+    if (!requestedRelease) throw new MiniAppServiceError("not_found", "release not found", 404);
+    return withStoreListingLease(requestedRelease.miniAppId, async lease => {
+      const release = await MiniAppReleaseModel.findOne({ _id: input.releaseId });
+      if (!release) throw new MiniAppServiceError("not_found", "release not found", 404);
+      if (!["submitted", "in_review"].includes(release.status)) {
+        throw new MiniAppServiceError("invalid_release_state", "release is not awaiting review", 409);
+      }
+      const app = await MiniAppModel.findOne({ _id: release.miniAppId });
+      if (!app || app.status === "archived") throw new MiniAppServiceError("not_found", "miniapp not found", 404);
+      if (!release.submittedStoreListing || typeof release.submittedStoreListing !== "object") {
+        throw new MiniAppServiceError(
+          "listing_not_submitted",
+          "Release must be submitted again before its Store listing can be approved",
+          409,
+        );
+      }
+      release.status = "accepted";
+      release.reviewedAt = new Date();
+      release.reviewedBy = input.adminId;
+      release.reviewNotes = input.notes?.trim() || null;
+      release.reviewedStoreListing = serializeStoreListing(release.submittedStoreListing);
+      await lease.assertHeld();
+      await release.save();
+      return serializeRelease(release.toObject());
+    });
   }
 
   async rejectRelease(input: AdminReleaseDecisionInput) {
-    const release = await MiniAppReleaseModel.findOne({ _id: input.releaseId });
-    if (!release) throw new MiniAppServiceError("not_found", "release not found", 404);
-    if (!["submitted", "in_review", "accepted"].includes(release.status)) {
-      throw new MiniAppServiceError("invalid_release_state", "release is not awaiting review", 409);
-    }
-    release.status = "rejected";
-    release.reviewedAt = new Date();
-    release.reviewedBy = input.adminId;
-    release.reviewNotes = input.notes?.trim() || "Rejected by admin review.";
-    // A rejected snapshot is no longer approvable. The developer must submit
-    // again, which freezes a new listing revision and its artwork references.
-    release.submittedStoreListing = null;
-    release.reviewedStoreListing = null;
-    await release.save();
-    return serializeRelease(release.toObject());
+    const requestedRelease = await MiniAppReleaseModel.findOne({ _id: input.releaseId }).select("miniAppId").lean();
+    if (!requestedRelease) throw new MiniAppServiceError("not_found", "release not found", 404);
+    return withStoreListingLease(requestedRelease.miniAppId, async lease => {
+      const release = await MiniAppReleaseModel.findOne({ _id: input.releaseId });
+      if (!release) throw new MiniAppServiceError("not_found", "release not found", 404);
+      if (!["submitted", "in_review", "accepted"].includes(release.status)) {
+        throw new MiniAppServiceError("invalid_release_state", "release is not awaiting review", 409);
+      }
+      const app = await MiniAppModel.findOne({ _id: release.miniAppId });
+      if (!app || app.status === "archived") throw new MiniAppServiceError("not_found", "miniapp not found", 404);
+      release.status = "rejected";
+      release.reviewedAt = new Date();
+      release.reviewedBy = input.adminId;
+      release.reviewNotes = input.notes?.trim() || "Rejected by admin review.";
+      // A rejected snapshot is no longer approvable. The developer must submit
+      // again, which freezes a new listing revision and its artwork references.
+      release.submittedStoreListing = null;
+      release.reviewedStoreListing = null;
+
+      // Recover safely if a prior publication attempt wrote the app pointer
+      // before failing to mark the release published.
+      let appChanged = false;
+      if (release.releaseTrack === "beta" && app.activeBetaReleaseId === release._id.toString()) {
+        app.activeBetaReleaseId = null;
+        app.publishedBetaStoreListing = null;
+        appChanged = true;
+      }
+      if (release.releaseTrack !== "beta" && app.activeReleaseId === release._id.toString()) {
+        app.activeReleaseId = null;
+        app.publishedStoreListing = null;
+        appChanged = true;
+      }
+      await lease.assertHeld();
+      if (appChanged) {
+        await app.save();
+        await lease.assertHeld();
+      }
+      await release.save();
+      return serializeRelease(release.toObject());
+    });
   }
 
   async publishRelease(input: AdminReleaseDecisionInput) {
@@ -373,8 +403,14 @@ export class MiniAppService {
         app.publishedStoreListing = reviewedStoreListing;
       }
 
+      // Commit the public pointer first. Until the release status changes the
+      // catalog treats this state as invisible, and a retry can safely finish
+      // publication. Once the release is published, the pointer is already
+      // durable, so the operation is also idempotent after a lost response.
       await lease.assertHeld();
-      await Promise.all([release.save(), app.save()]);
+      await app.save();
+      await lease.assertHeld();
+      await release.save();
       return serializeRelease(release.toObject());
     });
   }
