@@ -1,7 +1,7 @@
-# Proposed Coordinated Release System
+# Coordinated Release System
 
 > Status: implemented in the consolidated release PR; first release validation pending
-> Updated: 2026-08-24
+> Updated: 2026-08-25
 
 ## Goal
 
@@ -30,9 +30,9 @@ be available to external consumers. The release coordinator must therefore
 publish the explicitly allowed first-party packages needed by Engine before it
 publishes Engine itself.
 
-Engine currently depends deeply on Bluetooth SDK and exposes a limited SDK
-compatibility passthrough through `@mentra/engine/internal`. Phase 0 adds the
-supported `@mentra/engine/bluetooth-sdk` package export. Therefore
+Engine depends deeply on Bluetooth SDK. The supported public integration is the
+identity-preserving `@mentra/engine/bluetooth-sdk` package export; the published
+Engine has no `@mentra/engine/internal` subpath. Therefore
 `@mentra/engine@3.1.0-beta.57` must expose and resolve
 `@mentra/bluetooth-sdk@3.1.0-beta.57`. Allowing those versions to drift would
 make Engine installation and native resolution ambiguous to consumers.
@@ -67,6 +67,15 @@ make Engine installation and native resolution ambiguous to consumers.
    `release-manifest.json` records the finalized bill of materials, artifact
    hashes, registry coordinates, and provenance after publication. Neither is a
    hand-edited version file.
+10. Each prerelease channel keeps one running publication plus its latest
+    pending branch head. Running publication is never canceled, and `dev` and
+    `staging` cannot replace one another's pending work.
+11. Reusable ASG APK/provenance pairs live in the shared
+    `mentra-coordinated-asg` release. Every coordinated prerelease owns its OTA
+    manifest, ASG selection, and portable bundle.
+12. Production validates the selected beta before protected approval. Stable
+    packages and the external Engine consumer must succeed before either mobile
+    store is changed.
 
 ## Phase 0: Fix the Engine Boundary Now
 
@@ -119,6 +128,23 @@ export * from "@mentra/bluetooth-sdk"
 The Engine package export map provides matching `react-native`, `types`, and
 default conditions for each `./bluetooth-sdk` subpath. The SDK `internal`
 entrypoint is never re-exported publicly.
+
+### Private MentraOS host bridge
+
+The release cutover deliberately retains `@mentra/engine-host-internal` as a
+private `0.0.0` workspace package. It is not published, is not part of the
+public release family, and is forbidden in the external OEM fixture. It lets
+MentraOS keep using existing raw stores, service singletons, composition hooks,
+and devtools while the public Engine package exposes only typed commands, read
+models, hooks, pure helpers, and supported subpaths.
+
+This is accepted migration debt for the current release, not a second Engine
+API. Its source-relative re-export of Engine internals may change without
+compatibility guarantees. New MentraOS product logic should use or extend the
+appropriate `engine.*` facade instead of expanding the bridge. Existing imports
+are measured by the mobile runtime boundary check and should be burned down by
+domain; a small private composition/devtools boundary may remain if it has a
+durable host-only responsibility.
 
 ### Generated output
 
@@ -579,22 +605,27 @@ object and records the object's hash, version, signature, and provenance.
 
 ## Promotion
 
-Production selects one completed staging release set. The promotion verifies:
+Production selects one completed staging release set. Before requesting
+protected approval, the read-only validation job verifies:
 
 - the selected source commit is present in `main`;
-- the shared stable family version is available for every publication target;
+- the stable identity and package plan derive deterministically from the
+  selected beta;
 - the staging package graph and mobile artifacts passed required tests;
 - every recorded artifact is still readable and hash-identical;
 - the OTA manifest and every referenced artifact are immutable and valid.
 
-It then:
+After protected approval, it proceeds in this order:
 
-- promotes the exact tested IPA and Android store artifact;
-- publishes stable package versions from the selected source with the same
-  dependency graph and OTA pin;
-- moves npm `latest` and equivalent stable pointers only after all targets are
-  complete;
-- writes a stable release manifest linking back to the selected beta manifest.
+1. Publish stable npm, Maven, and SwiftPM package versions from the selected
+   source with the same dependency graph and OTA pin.
+2. Install the stable public Engine package into a clean external fixture and
+   prove its TypeScript, Metro, native Android, and native iOS integration.
+3. Promote the exact tested IPA and Android store artifact only after the
+   package and consumer gates succeed.
+4. Write the stable release manifest linking back to the selected beta
+   manifest and move npm `latest` and equivalent stable pointers only after all
+   targets are complete.
 
 Stable package metadata cannot literally reuse prerelease package bytes when
 the embedded package version must change. It must be reproduced from the same
@@ -665,17 +696,21 @@ cutover that enables the coordinator, so two systems cannot publish the shared
 4. **Shared derivation:** implement one tested version/channel/sequence library
    used by every workflow.
 5. **OTA workflow:** extract one reusable immutable OTA-bundle publisher with
-   validated ASG build-input fingerprinting and artifact reuse.
+   validated ASG build-input fingerprinting and artifact reuse. Keep reusable
+   ASG pairs in their shared release and publish release-specific OTA assets to
+   the owning coordinated prerelease.
 6. **Coordinator:** generate the version map and immutable `release-plan.json`,
    invoke dependency and product workflows, then finalize
-   `release-manifest.json` only after complete publication.
+   `release-manifest.json` only after complete publication. Isolate `dev` and
+   `staging` queues and coalesce same-channel bursts to the latest pending head.
 7. **Dev and staging:** publish complete coordinated sets and distribute mobile
    builds to their existing TestFlight/Play groups.
 8. **Artifact verification:** inspect every package and mobile artifact for
    version, dependency, source, and OTA-pin provenance, including literal Engine
    tarball metadata and Engine-to-SDK pin equality.
-9. **Production promotion:** select one completed beta set and promote without
-   rebuilding mobile or OTA artifacts.
+9. **Production promotion:** validate one completed beta, request protected
+   approval, prove stable packages through the external Engine consumer, then
+   promote mobile without rebuilding mobile or OTA artifacts.
 10. **Remove old fallback logic:** delete SDK-version URL derivation and mutable
     modern OTA fallbacks once all supported release artifacts carry pins.
 11. **Downstream releases:** automate Starter Kit updates and gate docs on live

@@ -5,13 +5,19 @@ There is no independent SDK branch or automatic SDK publisher.
 
 ## Prereleases
 
-A push to `dev` or `staging` runs
+A selected `dev` or `staging` head runs
 `.github/workflows/coordinated-release.yml` and allocates one shared identity:
 
 | Branch    | Identity       | npm tag | Mobile destination               |
 | --------- | -------------- | ------- | -------------------------------- |
 | `dev`     | `X.Y.Z-dev.N`  | `dev`   | Play internal and TestFlight Dev |
 | `staging` | `X.Y.Z-beta.N` | `beta`  | Play beta and TestFlight Beta    |
+
+Each channel keeps one running publication plus its latest pending head. A new
+same-branch push replaces only an older pending run; it never cancels the
+running publication. `dev` and `staging` have separate groups and cannot replace
+one another. Commit bursts therefore publish the running head and newest
+waiting head, not every intermediate commit.
 
 `staging` names the beta release channel, not the backend. Dev artifacts use
 development services. Beta artifacts use production services because the exact
@@ -92,7 +98,9 @@ Before the first production promotion:
    credentials can use the configured internal and beta tracks.
 3. Complete one `dev` and one `staging` coordinated run. Verify their release
    manifests, public package metadata, OTA manifest bytes, mobile diagnostics,
-   and store destinations before selecting a beta for production.
+   and store destinations before selecting a beta for production. Confirm each
+   prerelease owns its manifest, selection, and bundle, while the shared ASG
+   release contains only reusable APK/provenance pairs.
 4. Confirm the automated external Engine consumer gate installs the exact
    public npm graph and builds its Android and iOS hosts. Once Maven and SwiftPM
    are public, install the coordinated SDK into the Starter Kit examples and
