@@ -241,10 +241,17 @@ jobs:
       - name: Generate exact mobile environment and package metadata
         if: inputs.dry_run == true || needs.prepare.outputs.android_assets_exist != 'true'
         env:
-          DOPPLER_TOKEN: ${{ inputs.backend_environment == 'prod' && secrets.DOPPLER_TOKEN_MOBILE_PRD || secrets.DOPPLER_TOKEN_MOBILE_STG }}
+          BACKEND_ENVIRONMENT: ${{ inputs.backend_environment }}
+          DOPPLER_TOKEN_MOBILE_STG: ${{ secrets.DOPPLER_TOKEN_MOBILE_STG }}
+          DOPPLER_TOKEN_MOBILE_PRD: ${{ secrets.DOPPLER_TOKEN_MOBILE_PRD }}
           MAPBOX_PUBLIC_TOKEN: ${{ secrets.MAPBOX_PUBLIC_TOKEN }}
         run: |
           set -euo pipefail
+          case "$BACKEND_ENVIRONMENT" in
+            dev) DOPPLER_TOKEN="$DOPPLER_TOKEN_MOBILE_STG" ;;
+            prod) DOPPLER_TOKEN="$DOPPLER_TOKEN_MOBILE_PRD" ;;
+            *) echo "Unsupported mobile backend environment: $BACKEND_ENVIRONMENT" >&2; exit 1 ;;
+          esac
           test -n "$DOPPLER_TOKEN"
           test -n "$MAPBOX_PUBLIC_TOKEN"
           response=$(curl --fail --silent --show-error --retry 3 -u "$DOPPLER_TOKEN:" \
@@ -451,10 +458,17 @@ jobs:
       - name: Generate exact mobile environment and package metadata
         if: inputs.dry_run == true || needs.prepare.outputs.ios_asset_exists != 'true'
         env:
-          DOPPLER_TOKEN: ${{ inputs.backend_environment == 'prod' && secrets.DOPPLER_TOKEN_MOBILE_PRD || secrets.DOPPLER_TOKEN_MOBILE_STG }}
+          BACKEND_ENVIRONMENT: ${{ inputs.backend_environment }}
+          DOPPLER_TOKEN_MOBILE_STG: ${{ secrets.DOPPLER_TOKEN_MOBILE_STG }}
+          DOPPLER_TOKEN_MOBILE_PRD: ${{ secrets.DOPPLER_TOKEN_MOBILE_PRD }}
           MAPBOX_PUBLIC_TOKEN: ${{ secrets.MAPBOX_PUBLIC_TOKEN }}
         run: |
           set -euo pipefail
+          case "$BACKEND_ENVIRONMENT" in
+            dev) DOPPLER_TOKEN="$DOPPLER_TOKEN_MOBILE_STG" ;;
+            prod) DOPPLER_TOKEN="$DOPPLER_TOKEN_MOBILE_PRD" ;;
+            *) echo "Unsupported mobile backend environment: $BACKEND_ENVIRONMENT" >&2; exit 1 ;;
+          esac
           test -n "$DOPPLER_TOKEN"
           test -n "$MAPBOX_PUBLIC_TOKEN"
           response=$(curl --fail --silent --show-error --retry 3 -u "$DOPPLER_TOKEN:" \

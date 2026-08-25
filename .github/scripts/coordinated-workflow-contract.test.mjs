@@ -60,9 +60,16 @@ test("mobile release selects an existing Doppler token for its backend", () => {
 
   assert.match(mobile, /DOPPLER_TOKEN_MOBILE_STG:/)
   assert.match(mobile, /DOPPLER_TOKEN_MOBILE_PRD:/)
-  assert.match(
-    mobile,
-    /inputs\.backend_environment == 'prod' && secrets\.DOPPLER_TOKEN_MOBILE_PRD \|\| secrets\.DOPPLER_TOKEN_MOBILE_STG/g,
+  assert.equal(
+    [...mobile.matchAll(/DOPPLER_TOKEN_MOBILE_STG: \$\{\{ secrets\.DOPPLER_TOKEN_MOBILE_STG \}\}/g)].length,
+    2,
   )
-  assert.doesNotMatch(mobile, /secrets\.DOPPLER_TOKEN[^_]/)
+  assert.equal(
+    [...mobile.matchAll(/DOPPLER_TOKEN_MOBILE_PRD: \$\{\{ secrets\.DOPPLER_TOKEN_MOBILE_PRD \}\}/g)].length,
+    2,
+  )
+  assert.equal([...mobile.matchAll(/case "\$BACKEND_ENVIRONMENT" in/g)].length, 2)
+  assert.equal([...mobile.matchAll(/dev\) DOPPLER_TOKEN="\$DOPPLER_TOKEN_MOBILE_STG"/g)].length, 2)
+  assert.equal([...mobile.matchAll(/prod\) DOPPLER_TOKEN="\$DOPPLER_TOKEN_MOBILE_PRD"/g)].length, 2)
+  assert.doesNotMatch(mobile, /DOPPLER_TOKEN_MOBILE_PRD \|\|/)
 })
