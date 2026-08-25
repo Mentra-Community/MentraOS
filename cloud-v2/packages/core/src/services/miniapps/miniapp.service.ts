@@ -156,6 +156,10 @@ export class MiniAppService {
     release.status = "submitted";
     release.submittedAt = new Date();
     release.reviewNotes = null;
+    // Freeze the content entering review. Approval and publication must never
+    // pick up developer edits made after this transition.
+    release.submittedStoreListing = serializeStoreListing(app.storeListing);
+    release.reviewedStoreListing = null;
     await release.save();
 
     // Fire-and-forget: a Slack failure can never delay or fail the submit
@@ -205,7 +209,9 @@ export class MiniAppService {
           ? app?.publishedStoreListing
           : release.status === "accepted"
             ? release.reviewedStoreListing
-            : app?.storeListing;
+            : ["submitted", "in_review"].includes(release.status)
+              ? release.submittedStoreListing
+              : app?.storeListing;
       const listing = serializeStoreListing(listingSource);
       return {
         ...serializeRelease(release),
@@ -220,7 +226,7 @@ export class MiniAppService {
         reviewNotes: release.reviewNotes ?? null,
         storeListing: listing,
         storeAssets: assets.map(serializeStoreAsset),
-        listingReadiness: storeListingReadiness(app, assets),
+        listingReadiness: storeListingReadiness({ description: app?.description, storeListing: listingSource }, assets),
       };
     });
   }
@@ -233,11 +239,18 @@ export class MiniAppService {
     }
     const app = await MiniAppModel.findOne({ _id: release.miniAppId });
     if (!app || app.status === "archived") throw new MiniAppServiceError("not_found", "miniapp not found", 404);
+    if (!release.submittedStoreListing || typeof release.submittedStoreListing !== "object") {
+      throw new MiniAppServiceError(
+        "listing_not_submitted",
+        "Release must be submitted again before its Store listing can be approved",
+        409,
+      );
+    }
     release.status = "accepted";
     release.reviewedAt = new Date();
     release.reviewedBy = input.adminId;
     release.reviewNotes = input.notes?.trim() || null;
-    release.reviewedStoreListing = serializeStoreListing(app.storeListing);
+    release.reviewedStoreListing = serializeStoreListing(release.submittedStoreListing);
     await release.save();
     return serializeRelease(release.toObject());
   }

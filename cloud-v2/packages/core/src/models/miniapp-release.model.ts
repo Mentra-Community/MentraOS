@@ -32,6 +32,8 @@ const MiniAppReleaseSchema = new Schema(
     publishedAt: { type: Date, default: null },
     reviewedBy: { type: String, default: null },
     reviewNotes: { type: String, default: null },
+    /** Exact developer listing frozen when this release enters review. */
+    submittedStoreListing: { type: Schema.Types.Mixed, default: null },
     /** Exact Store listing approved by an admin; publication never reads the mutable developer draft. */
     reviewedStoreListing: { type: Schema.Types.Mixed, default: null },
     createdBy: { type: String, required: true },
