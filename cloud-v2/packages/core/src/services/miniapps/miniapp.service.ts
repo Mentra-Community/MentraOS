@@ -174,7 +174,7 @@ export class MiniAppService {
       // pick up developer edits made after this transition.
       await lease.assertHeld();
       const submitted = await MiniAppReleaseModel.findOneAndUpdate(
-        { _id: release._id, status: { $in: ["draft", "rejected"] } },
+        { _id: release._id, status: { $in: ["draft", "rejected"] }, updatedAt: release.updatedAt },
         {
           $set: {
             status: "submitted",
@@ -288,7 +288,7 @@ export class MiniAppService {
       }
       await lease.assertHeld();
       const accepted = await MiniAppReleaseModel.findOneAndUpdate(
-        { _id: release._id, status: { $in: ["submitted", "in_review"] } },
+        { _id: release._id, status: { $in: ["submitted", "in_review"] }, updatedAt: release.updatedAt },
         {
           $set: {
             status: "accepted",
@@ -322,7 +322,11 @@ export class MiniAppService {
       // again, which freezes a new listing revision and its artwork references.
       await lease.assertHeld();
       const rejected = await MiniAppReleaseModel.findOneAndUpdate(
-        { _id: release._id, status: { $in: ["submitted", "in_review", "accepted"] } },
+        {
+          _id: release._id,
+          status: { $in: ["submitted", "in_review", "accepted"] },
+          updatedAt: release.updatedAt,
+        },
         {
           $set: {
             status: "rejected",
@@ -425,7 +429,7 @@ export class MiniAppService {
       };
       if (input.notes?.trim()) publicationUpdates.reviewNotes = input.notes.trim();
       const publishedRelease = await MiniAppReleaseModel.findOneAndUpdate(
-        { _id: release._id, status: "accepted" },
+        { _id: release._id, status: "accepted", updatedAt: release.updatedAt },
         { $set: publicationUpdates },
         { new: true },
       );
