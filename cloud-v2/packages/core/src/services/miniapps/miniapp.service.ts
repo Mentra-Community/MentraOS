@@ -149,18 +149,10 @@ export class MiniAppService {
   async submitRelease(developer: DeveloperIdentity, packageName: string, releaseId: string) {
     const authorizedApp = await this.requireMiniApp(developer, normalizePackageName(packageName));
     return withStoreListingLease(authorizedApp._id.toString(), async lease => {
-      // Re-read after acquiring the cross-process lease. A deletion that won
-      // the lease first may have removed an artwork reference from the draft.
-      const app = await MiniAppModel.findOne({
-        _id: authorizedApp._id,
-        orgId: developer.orgId,
-        status: { $ne: "archived" },
-      });
-      if (!app) throw new MiniAppServiceError("not_found", "miniapp not found", 404);
       const release = await MiniAppReleaseModel.findOne({
         _id: releaseId,
         orgId: developer.orgId,
-        miniAppId: app._id.toString(),
+        miniAppId: authorizedApp._id.toString(),
       });
       if (!release) throw new MiniAppServiceError("not_found", "release not found", 404);
       if (!release.releaseBundleAssetId || !release.bundleSha256) {
@@ -170,41 +162,97 @@ export class MiniAppService {
         throw new MiniAppServiceError("invalid_release_state", "only draft or rejected releases can be submitted", 409);
       }
 
-      // Freeze the content entering review. Approval and publication must never
-      // pick up developer edits made after this transition.
+      // Claim the release with the same hard deadline as the app-side lease.
+      // The final status transition is then fenced by MongoDB server time, so
+      // a process that resumes after its app lease expired cannot commit an
+      // older listing snapshot after a newer draft write has completed.
       await lease.assertHeld();
-      const submitted = await MiniAppReleaseModel.findOneAndUpdate(
-        { _id: release._id, status: { $in: ["draft", "rejected"] }, updatedAt: release.updatedAt },
+      const claimed = await MiniAppReleaseModel.findOneAndUpdate(
+        {
+          _id: release._id,
+          status: { $in: ["draft", "rejected"] },
+          updatedAt: release.updatedAt,
+          $or: [
+            { storeListingSubmissionLease: null },
+            { storeListingSubmissionLease: { $exists: false } },
+            { $expr: { $lte: ["$storeListingSubmissionLease.expiresAt", "$$NOW"] } },
+          ],
+        },
         {
           $set: {
-            status: "submitted",
-            submittedAt: new Date(),
-            reviewNotes: null,
-            submittedStoreListing: serializeStoreListing(app.storeListing),
-            reviewedStoreListing: null,
+            storeListingSubmissionLease: { token: lease.token, expiresAt: lease.deadline },
           },
         },
         { new: true },
       );
-      if (!submitted) {
+      if (!claimed) {
         throw new MiniAppServiceError("invalid_release_state", "release state changed during submission", 409);
       }
 
-      // Fire-and-forget: a Slack failure can never delay or fail the submit
-      // response, and an unset webhook env var is a silent skip.
-      notifyMiniAppSubmissionSlack({
-        releaseId: release._id.toString(),
-        packageName: release.packageName,
-        version: release.version,
-        releaseTrack: release.releaseTrack === "beta" ? "beta" : "stable",
-        appName: app.displayName,
-        description: app.description ?? null,
-        developerEmail: developer.email ?? null,
-        orgId: developer.orgId,
-        manifest: release.manifest as Record<string, unknown> | null,
-      }).catch(() => {});
+      try {
+        // Read only after the release-side claim. Any listing writer that won
+        // before this submission is therefore included in the frozen copy.
+        const app = await MiniAppModel.findOne({
+          _id: authorizedApp._id,
+          orgId: developer.orgId,
+          status: { $ne: "archived" },
+        });
+        if (!app) throw new MiniAppServiceError("not_found", "miniapp not found", 404);
 
-      return serializeRelease(submitted.toObject());
+        // Freeze the content entering review. Approval and publication must
+        // never pick up developer edits made after this transition.
+        const submitted = await MiniAppReleaseModel.findOneAndUpdate(
+          {
+            _id: claimed._id,
+            status: { $in: ["draft", "rejected"] },
+            updatedAt: claimed.updatedAt,
+            "storeListingSubmissionLease.token": lease.token,
+            $expr: { $gt: ["$storeListingSubmissionLease.expiresAt", "$$NOW"] },
+          },
+          {
+            $set: {
+              status: "submitted",
+              submittedAt: new Date(),
+              reviewNotes: null,
+              submittedStoreListing: serializeStoreListing(app.storeListing),
+              reviewedStoreListing: null,
+              storeListingSubmissionLease: null,
+            },
+          },
+          { new: true },
+        );
+        if (!submitted) {
+          await lease.assertHeld();
+          throw new MiniAppServiceError("invalid_release_state", "release state changed during submission", 409);
+        }
+
+        // Fire-and-forget: a Slack failure can never delay or fail the submit
+        // response, and an unset webhook env var is a silent skip.
+        notifyMiniAppSubmissionSlack({
+          releaseId: claimed._id.toString(),
+          packageName: claimed.packageName,
+          version: claimed.version,
+          releaseTrack: claimed.releaseTrack === "beta" ? "beta" : "stable",
+          appName: app.displayName,
+          description: app.description ?? null,
+          developerEmail: developer.email ?? null,
+          orgId: developer.orgId,
+          manifest: claimed.manifest as Record<string, unknown> | null,
+        }).catch(() => {});
+
+        return serializeRelease(submitted.toObject());
+      } catch (error) {
+        await MiniAppReleaseModel.updateOne(
+          { _id: claimed._id, "storeListingSubmissionLease.token": lease.token },
+          { $set: { storeListingSubmissionLease: null } },
+        ).catch(cleanupError => {
+          logger.error(
+            { cleanupError, releaseId: claimed._id.toString() },
+            "failed to clear Store listing submission claim",
+          );
+        });
+        throw error;
+      }
     });
   }
 
@@ -234,9 +282,15 @@ export class MiniAppService {
     return releases.map(release => {
       const app = appsById.get(release.miniAppId);
       const assets = assetsByAppId.get(release.miniAppId) ?? [];
+      const activeReleaseId = release.releaseTrack === "beta" ? app?.activeBetaReleaseId : app?.activeReleaseId;
+      const isActiveRelease = activeReleaseId === release._id.toString();
+      const activePublishedListing =
+        release.releaseTrack === "beta" ? app?.publishedBetaStoreListing : app?.publishedStoreListing;
       const listingSource =
         release.status === "published"
-          ? release.reviewedStoreListing
+          ? isActiveRelease && activePublishedListing
+            ? activePublishedListing
+            : release.reviewedStoreListing
           : release.status === "accepted"
             ? release.reviewedStoreListing
             : ["submitted", "in_review"].includes(release.status)
@@ -245,7 +299,6 @@ export class MiniAppService {
       const listing = serializeStoreListing(listingSource);
       const referencedAssetIds = storeListingAssetIds(listing);
       const listingAssets = assets.filter(asset => referencedAssetIds.has(String(asset._id)));
-      const activeReleaseId = release.releaseTrack === "beta" ? app?.activeBetaReleaseId : app?.activeReleaseId;
       return {
         ...serializeRelease(release),
         miniAppId: release.miniAppId,
@@ -257,7 +310,7 @@ export class MiniAppService {
         publishedAt: release.publishedAt?.toISOString() ?? null,
         reviewedBy: release.reviewedBy ?? null,
         reviewNotes: release.reviewNotes ?? null,
-        isActiveRelease: activeReleaseId === release._id.toString(),
+        isActiveRelease,
         storeListing: listing,
         storeAssets: listingAssets.map(serializeStoreAsset),
         listingReadiness: storeListingReadiness(
@@ -404,7 +457,7 @@ export class MiniAppService {
         {
           _id: app._id,
           "storeListingOperationLease.token": lease.token,
-          "storeListingOperationLease.expiresAt": { $gt: new Date() },
+          $expr: { $gt: ["$storeListingOperationLease.expiresAt", "$$NOW"] },
           pendingStorePublication: null,
         },
         {
@@ -468,36 +521,33 @@ export class MiniAppService {
     const target = await MiniAppModel.findOne({ packageName, status: { $ne: "archived" } }).select("_id").lean();
     if (!target) throw new MiniAppServiceError("not_found", "miniapp not found", 404);
     return withStoreListingLease(target._id.toString(), async lease => {
+      const current = await MiniAppModel.findOne({ _id: target._id, status: { $ne: "archived" } }).lean();
+      if (!current) throw new MiniAppServiceError("not_found", "miniapp not found", 404);
+      const atomicUpdates = { ...updates };
+      if (current.publishedStoreListing) Object.assign(atomicUpdates, publishedUpdates);
+      if (current.publishedBetaStoreListing) {
+        Object.assign(
+          atomicUpdates,
+          Object.fromEntries(
+            Object.entries(publishedUpdates).map(([key, value]) => [
+              key.replace("publishedStoreListing", "publishedBetaStoreListing"),
+              value,
+            ]),
+          ),
+        );
+      }
       const app = await MiniAppModel.findOneAndUpdate(
-        { _id: target._id, status: { $ne: "archived" } },
-        { $set: updates },
+        {
+          _id: target._id,
+          status: { $ne: "archived" },
+          "storeListingOperationLease.token": lease.token,
+          $expr: { $gt: ["$storeListingOperationLease.expiresAt", "$$NOW"] },
+        },
+        { $set: atomicUpdates },
         { new: true },
       ).lean();
-      if (!app) throw new MiniAppServiceError("not_found", "miniapp not found", 404);
-      if (app.publishedStoreListing && Object.keys(publishedUpdates).length > 0) {
-        await MiniAppModel.updateOne({ _id: app._id }, { $set: publishedUpdates });
-      }
-      if (app.publishedBetaStoreListing && Object.keys(publishedUpdates).length > 0) {
-        const betaUpdates = Object.fromEntries(
-          Object.entries(publishedUpdates).map(([key, value]) => [
-            key.replace("publishedStoreListing", "publishedBetaStoreListing"),
-            value,
-          ]),
-        );
-        await MiniAppModel.updateOne({ _id: app._id }, { $set: betaUpdates });
-      }
-      const activeReleaseIds = [app.activeReleaseId, app.activeBetaReleaseId].filter(
-        (releaseId): releaseId is string => typeof releaseId === "string" && releaseId.length > 0,
-      );
-      if (activeReleaseIds.length > 0) {
-        const releaseUpdates = Object.fromEntries(
-          Object.entries(updates).map(([key, value]) => [key.replace("storeListing", "reviewedStoreListing"), value]),
-        );
-        await lease.assertHeld();
-        await MiniAppReleaseModel.updateMany(
-          { _id: { $in: activeReleaseIds }, status: "published" },
-          { $set: releaseUpdates },
-        );
+      if (!app) {
+        throw new MiniAppServiceError("store_listing_lease_lost", "Store listing operation lease was lost", 409);
       }
       return {
         packageName: app.packageName,
@@ -681,7 +731,7 @@ export class MiniAppService {
             orgId: developer.orgId,
             status: { $ne: "archived" },
             "storeListingOperationLease.token": lease.token,
-            "storeListingOperationLease.expiresAt": { $gt: new Date() },
+            $expr: { $gt: ["$storeListingOperationLease.expiresAt", "$$NOW"] },
           },
           { $set: updates },
         );
@@ -747,7 +797,7 @@ export class MiniAppService {
         const listingReferenceFilter = () => ({
           _id: app._id,
           "storeListingOperationLease.token": lease.token,
-          "storeListingOperationLease.expiresAt": { $gt: new Date() },
+          $expr: { $gt: ["$storeListingOperationLease.expiresAt", "$$NOW"] },
         });
         if (input.role === "store_icon") {
           const updated = await MiniAppModel.updateOne(
@@ -770,10 +820,12 @@ export class MiniAppService {
         if (input.role === "gallery_screenshot") {
           const updated = await MiniAppModel.findOneAndUpdate(
             {
-              ...listingReferenceFilter(),
-              $expr: {
-                $lt: [{ $size: { $ifNull: ["$storeListing.screenshotAssetIds", []] } }, 10],
-              },
+              _id: app._id,
+              "storeListingOperationLease.token": lease.token,
+              $and: [
+                { $expr: { $gt: ["$storeListingOperationLease.expiresAt", "$$NOW"] } },
+                { $expr: { $lt: [{ $size: { $ifNull: ["$storeListing.screenshotAssetIds", []] } }, 10] } },
+              ],
             },
             { $push: { "storeListing.screenshotAssetIds": assetId } },
             { new: true },
@@ -863,7 +915,7 @@ export class MiniAppService {
         {
           _id: app._id,
           "storeListingOperationLease.token": lease.token,
-          "storeListingOperationLease.expiresAt": { $gt: new Date() },
+          $expr: { $gt: ["$storeListingOperationLease.expiresAt", "$$NOW"] },
         },
         [
           {
@@ -1025,6 +1077,8 @@ function cleanText(value: string | null, maxLength: number): string | null {
 
 interface StoreListingLease {
   token: string;
+  /** Hard deadline from initial acquisition; cross-document claims never renew past it. */
+  deadline: Date;
   assertHeld(): Promise<void>;
 }
 
@@ -1036,6 +1090,7 @@ async function withStoreListingLease<T>(
   const waitDeadline = Date.now() + STORE_LISTING_LEASE_WAIT_MS;
   while (Date.now() < waitDeadline) {
     const now = new Date();
+    const leaseDeadline = new Date(now.getTime() + STORE_LISTING_LEASE_MS);
     const locked = await MiniAppModel.findOneAndUpdate(
       {
         _id: miniAppId,
@@ -1049,7 +1104,7 @@ async function withStoreListingLease<T>(
         $set: {
           storeListingOperationLease: {
             token,
-            expiresAt: new Date(now.getTime() + STORE_LISTING_LEASE_MS),
+            expiresAt: leaseDeadline,
           },
         },
       },
@@ -1078,6 +1133,7 @@ async function withStoreListingLease<T>(
       renewalTimer.unref?.();
       const lease: StoreListingLease = {
         token,
+        deadline: leaseDeadline,
         async assertHeld() {
           if (leaseLost) {
             throw new MiniAppServiceError("store_listing_lease_lost", "Store listing operation lease was lost", 409);
@@ -1085,7 +1141,7 @@ async function withStoreListingLease<T>(
           const held = await MiniAppModel.exists({
             _id: miniAppId,
             "storeListingOperationLease.token": token,
-            "storeListingOperationLease.expiresAt": { $gt: new Date() },
+            $expr: { $gt: ["$storeListingOperationLease.expiresAt", "$$NOW"] },
           });
           if (!held) {
             leaseLost = true;
@@ -1135,7 +1191,7 @@ async function reconcilePendingStorePublication(miniAppId: string, lease: StoreL
     {
       _id: miniAppId,
       "storeListingOperationLease.token": lease.token,
-      "storeListingOperationLease.expiresAt": { $gt: new Date() },
+      $expr: { $gt: ["$storeListingOperationLease.expiresAt", "$$NOW"] },
       "pendingStorePublication.releaseId": pending.releaseId,
     },
     { $set: { pendingStorePublication: null } },
@@ -1158,7 +1214,7 @@ async function promotePendingStorePublication(input: {
     {
       _id: input.miniAppId,
       "storeListingOperationLease.token": input.lease.token,
-      "storeListingOperationLease.expiresAt": { $gt: new Date() },
+      $expr: { $gt: ["$storeListingOperationLease.expiresAt", "$$NOW"] },
       "pendingStorePublication.releaseId": input.releaseId,
       "pendingStorePublication.releaseTrack": input.releaseTrack,
     },

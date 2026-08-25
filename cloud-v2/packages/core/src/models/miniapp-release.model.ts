@@ -12,6 +12,14 @@ export const RELEASE_STATUSES = [
 ] as const;
 export const MINIAPP_RELEASE_TRACKS = ["stable", "beta"] as const;
 
+const StoreListingSubmissionLeaseSchema = new Schema(
+  {
+    token: { type: String, required: true },
+    expiresAt: { type: Date, required: true },
+  },
+  { _id: false },
+);
+
 const MiniAppReleaseSchema = new Schema(
   {
     orgId: { type: String, required: true, index: true },
@@ -37,6 +45,11 @@ const MiniAppReleaseSchema = new Schema(
     reviewNotes: { type: String, default: null },
     /** Exact developer listing frozen when this release enters review. */
     submittedStoreListing: { type: Schema.Types.Mixed, default: null },
+    /**
+     * Short-lived claim that fences the cross-document transition from the
+     * mutable app listing to this release's immutable review snapshot.
+     */
+    storeListingSubmissionLease: { type: StoreListingSubmissionLeaseSchema, default: null },
     /** Exact Store listing approved by an admin; publication never reads the mutable developer draft. */
     reviewedStoreListing: { type: Schema.Types.Mixed, default: null },
     createdBy: { type: String, required: true },

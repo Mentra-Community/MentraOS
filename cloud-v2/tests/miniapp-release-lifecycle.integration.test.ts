@@ -618,6 +618,80 @@ describe("miniapp release lifecycle", () => {
     }
   });
 
+  test("an expired submission cannot commit after a newer draft write", async () => {
+    const packageName = "com.example.expiredsubmission";
+    await miniapps.createMiniApp(developer, {
+      packageName,
+      displayName: "Expired Submission",
+      description: "Expired submission fencing test",
+    });
+    await miniapps.updateStoreListing(developer, packageName, { subtitle: "Original subtitle" });
+    const release = await miniapps.createRelease(developer, {
+      packageName,
+      version: "1.0.0",
+      manifest: { packageName, name: "Expired Submission", version: "1.0.0" },
+      bundle: await releaseBundle({ packageName, name: "Expired Submission", version: "1.0.0" }),
+    });
+
+    const originalFindOneAndUpdate = MiniAppReleaseModel.findOneAndUpdate;
+    let markTransitionReached!: () => void;
+    let resumeTransition!: () => void;
+    const transitionReached = new Promise<void>(resolve => {
+      markTransitionReached = resolve;
+    });
+    const transitionGate = new Promise<void>(resolve => {
+      resumeTransition = resolve;
+    });
+    MiniAppReleaseModel.findOneAndUpdate = (async (...args: unknown[]) => {
+      const filter = args[0] as { _id?: unknown } | undefined;
+      const update = args[1] as { $set?: { status?: string } } | undefined;
+      if (String(filter?._id) === release.id && update?.$set?.status === "submitted") {
+        markTransitionReached();
+        await transitionGate;
+      }
+      return (originalFindOneAndUpdate as unknown as (...callArgs: unknown[]) => unknown).apply(
+        MiniAppReleaseModel,
+        args,
+      );
+    }) as typeof MiniAppReleaseModel.findOneAndUpdate;
+
+    try {
+      const submission = miniapps.submitRelease(developer, packageName, release.id);
+      await transitionReached;
+      const [appDocument, releaseDocument] = await Promise.all([
+        MiniAppModel.findOne({ packageName }).select("_id").lean(),
+        MiniAppReleaseModel.findById(release.id).select("_id").lean(),
+      ]);
+      expect(appDocument).toBeTruthy();
+      expect(releaseDocument).toBeTruthy();
+      await Promise.all([
+        MiniAppModel.collection.updateOne(
+          { _id: appDocument!._id },
+          { $set: { "storeListingOperationLease.expiresAt": new Date(0) } },
+        ),
+        MiniAppReleaseModel.collection.updateOne(
+          { _id: releaseDocument!._id },
+          { $set: { "storeListingSubmissionLease.expiresAt": new Date(0) } },
+        ),
+      ]);
+
+      await miniapps.updateStoreListing(developer, packageName, { subtitle: "Replacement subtitle" });
+      resumeTransition();
+      await expect(submission).rejects.toMatchObject({ code: "store_listing_lease_lost", status: 409 });
+
+      const [savedRelease, savedApp] = await Promise.all([
+        MiniAppReleaseModel.findById(release.id).lean(),
+        MiniAppModel.findOne({ packageName }).lean(),
+      ]);
+      expect(savedRelease).toMatchObject({ status: "draft", submittedStoreListing: null });
+      expect(savedRelease?.storeListingSubmissionLease).toBeNull();
+      expect(savedApp?.storeListing?.subtitle).toBe("Replacement subtitle");
+    } finally {
+      resumeTransition();
+      MiniAppReleaseModel.findOneAndUpdate = originalFindOneAndUpdate;
+    }
+  });
+
   test("publish and reject decisions serialize to one consistent outcome", async () => {
     const packageName = "com.example.decisionrace";
     const release = await createAcceptedStoreRelease(packageName);

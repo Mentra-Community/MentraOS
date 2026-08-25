@@ -51,9 +51,8 @@ const MiniAppSchema = new Schema(
     /** Immutable public snapshot paired with the active beta release. */
     publishedBetaStoreListing: { type: StoreListingSchema, default: null },
     /**
-     * Short database-backed lease shared by submission and artwork deletion.
-     * It prevents a frozen review snapshot from racing an object deletion,
-     * including when the operations land on different Core processes.
+     * Database-backed lease shared by draft writes, submission, moderation,
+     * and publication so listing snapshots remain ordered across Core pods.
      */
     storeListingOperationLease: { type: StoreListingOperationLeaseSchema, default: null },
     /** Recoverable journal entry used while promoting a release across documents. */
