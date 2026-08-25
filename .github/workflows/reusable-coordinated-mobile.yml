@@ -56,7 +56,7 @@ on:
         required: false
       MAPBOX_DOWNLOADS_TOKEN:
         required: false
-      DOPPLER_TOKEN_MOBILE_STG:
+      DOPPLER_TOKEN_MOBILE_DEV:
         required: false
       DOPPLER_TOKEN_MOBILE_PRD:
         required: false
@@ -242,13 +242,13 @@ jobs:
         if: inputs.dry_run == true || needs.prepare.outputs.android_assets_exist != 'true'
         env:
           BACKEND_ENVIRONMENT: ${{ inputs.backend_environment }}
-          DOPPLER_TOKEN_MOBILE_STG: ${{ secrets.DOPPLER_TOKEN_MOBILE_STG }}
+          DOPPLER_TOKEN_MOBILE_DEV: ${{ secrets.DOPPLER_TOKEN_MOBILE_DEV }}
           DOPPLER_TOKEN_MOBILE_PRD: ${{ secrets.DOPPLER_TOKEN_MOBILE_PRD }}
           MAPBOX_PUBLIC_TOKEN: ${{ secrets.MAPBOX_PUBLIC_TOKEN }}
         run: |
           set -euo pipefail
           case "$BACKEND_ENVIRONMENT" in
-            dev) DOPPLER_TOKEN="$DOPPLER_TOKEN_MOBILE_STG" ;;
+            dev) DOPPLER_TOKEN="$DOPPLER_TOKEN_MOBILE_DEV" ;;
             prod) DOPPLER_TOKEN="$DOPPLER_TOKEN_MOBILE_PRD" ;;
             *) echo "Unsupported mobile backend environment: $BACKEND_ENVIRONMENT" >&2; exit 1 ;;
           esac
@@ -459,13 +459,13 @@ jobs:
         if: inputs.dry_run == true || needs.prepare.outputs.ios_asset_exists != 'true'
         env:
           BACKEND_ENVIRONMENT: ${{ inputs.backend_environment }}
-          DOPPLER_TOKEN_MOBILE_STG: ${{ secrets.DOPPLER_TOKEN_MOBILE_STG }}
+          DOPPLER_TOKEN_MOBILE_DEV: ${{ secrets.DOPPLER_TOKEN_MOBILE_DEV }}
           DOPPLER_TOKEN_MOBILE_PRD: ${{ secrets.DOPPLER_TOKEN_MOBILE_PRD }}
           MAPBOX_PUBLIC_TOKEN: ${{ secrets.MAPBOX_PUBLIC_TOKEN }}
         run: |
           set -euo pipefail
           case "$BACKEND_ENVIRONMENT" in
-            dev) DOPPLER_TOKEN="$DOPPLER_TOKEN_MOBILE_STG" ;;
+            dev) DOPPLER_TOKEN="$DOPPLER_TOKEN_MOBILE_DEV" ;;
             prod) DOPPLER_TOKEN="$DOPPLER_TOKEN_MOBILE_PRD" ;;
             *) echo "Unsupported mobile backend environment: $BACKEND_ENVIRONMENT" >&2; exit 1 ;;
           esac

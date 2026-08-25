@@ -58,10 +58,10 @@ test("mobile destinations use real TestFlight groups without changing the releas
 test("mobile release selects an existing Doppler token for its backend", () => {
   const mobile = workflow("reusable-coordinated-mobile.yml")
 
-  assert.match(mobile, /DOPPLER_TOKEN_MOBILE_STG:/)
+  assert.match(mobile, /DOPPLER_TOKEN_MOBILE_DEV:/)
   assert.match(mobile, /DOPPLER_TOKEN_MOBILE_PRD:/)
   assert.equal(
-    [...mobile.matchAll(/DOPPLER_TOKEN_MOBILE_STG: \$\{\{ secrets\.DOPPLER_TOKEN_MOBILE_STG \}\}/g)].length,
+    [...mobile.matchAll(/DOPPLER_TOKEN_MOBILE_DEV: \$\{\{ secrets\.DOPPLER_TOKEN_MOBILE_DEV \}\}/g)].length,
     2,
   )
   assert.equal(
@@ -69,7 +69,7 @@ test("mobile release selects an existing Doppler token for its backend", () => {
     2,
   )
   assert.equal([...mobile.matchAll(/case "\$BACKEND_ENVIRONMENT" in/g)].length, 2)
-  assert.equal([...mobile.matchAll(/dev\) DOPPLER_TOKEN="\$DOPPLER_TOKEN_MOBILE_STG"/g)].length, 2)
+  assert.equal([...mobile.matchAll(/dev\) DOPPLER_TOKEN="\$DOPPLER_TOKEN_MOBILE_DEV"/g)].length, 2)
   assert.equal([...mobile.matchAll(/prod\) DOPPLER_TOKEN="\$DOPPLER_TOKEN_MOBILE_PRD"/g)].length, 2)
   assert.doesNotMatch(mobile, /DOPPLER_TOKEN_MOBILE_PRD \|\|/)
 })
