@@ -40,18 +40,11 @@
       "dependencies": []
     },
     {
-      "name": "@mentra/types",
-      "manifest": "cloud/packages/types/package.json",
-      "kind": "package",
-      "publishTargets": ["npm"],
-      "dependencies": []
-    },
-    {
       "name": "@mentra/miniapp",
       "manifest": "mobile/modules/miniapp/package.json",
       "kind": "package",
       "publishTargets": ["npm"],
-      "dependencies": ["@mentra/cloud-protocol", "@mentra/types"]
+      "dependencies": ["@mentra/cloud-protocol"]
     },
     {
       "name": "@mentra/engine",

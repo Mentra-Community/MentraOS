@@ -29,6 +29,10 @@
       "types": "./dist/protocol.d.ts",
       "default": "./dist/protocol.js"
     },
+    "./hardware": {
+      "types": "./dist/hardware.d.ts",
+      "default": "./dist/hardware.js"
+    },
     "./package.json": "./package.json"
   },
   "publishConfig": {
@@ -54,7 +58,6 @@
   },
   "dependencies": {
     "@mentra/cloud-protocol": "3.1.0",
-    "@mentra/types": "3.1.0",
     "eventemitter3": "^5.0.1"
   },
   "devDependencies": {

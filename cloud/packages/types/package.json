@@ -1,6 +1,6 @@
 {
   "name": "@mentra/types",
-  "version": "3.1.0",
+  "version": "1.0.0-beta.2",
   "description": "Shared TypeScript types for MentraOS client and cloud",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -26,14 +26,5 @@
   },
   "files": [
     "dist"
-  ],
-  "publishConfig": {
-    "access": "public",
-    "registry": "https://registry.npmjs.org/"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/Mentra-Community/MentraOS.git",
-    "directory": "cloud/packages/types"
-  }
+  ]
 }

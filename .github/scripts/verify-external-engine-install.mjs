@@ -26,7 +26,11 @@ function engineClosure(plan) {
     const member = plan.members?.[name]
     if (!member) throw new Error(`Release plan is missing ${name}`)
     expected.add(name)
-    for (const dependency of member.dependencies ?? []) visit(dependency)
+    const dependencies = member.dependencies ?? {}
+    if (Array.isArray(dependencies) || typeof dependencies !== "object") {
+      throw new Error(`Release plan dependencies for ${name} must be an object`)
+    }
+    for (const dependency of Object.keys(dependencies)) visit(dependency)
   }
   visit("@mentra/engine")
   return expected

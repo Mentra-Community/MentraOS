@@ -149,7 +149,10 @@ Initial family:
 - `@mentra/cloud-client`.
 - `@mentra/cloud-protocol`.
 - `@mentra/miniapp`.
-- `@mentra/types`.
+
+Miniapp owns the public hardware-requirement contract used by miniapp manifests.
+The legacy cloud `@mentra/types` package and the cloud app SDK remain outside
+this three-product release family.
 
 The exact list must be validated against Engine's runtime imports during Phase 0. A new package joins only through a reviewed manifest entry that specifies
 its base-version source, publication targets, and dependency edges. Private
@@ -197,7 +200,6 @@ mentraos                 3.1.0
 @mentra/cloud-client     3.1.0
 @mentra/cloud-protocol   3.1.0
 @mentra/miniapp          3.1.0
-@mentra/types            3.1.0
 ```
 
 The repository-root `package.json#version` is the canonical family base. The

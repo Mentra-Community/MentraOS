@@ -243,13 +243,6 @@
         "pino-pretty": "^11.3.0",
       },
     },
-    "../cloud/packages/types": {
-      "name": "@mentra/types",
-      "version": "3.1.0",
-      "devDependencies": {
-        "typescript": "^5.0.0",
-      },
-    },
     "modules/bluetooth-sdk": {
       "name": "@mentra/bluetooth-sdk",
       "version": "3.1.0",
@@ -358,7 +351,6 @@
       "version": "3.1.0",
       "dependencies": {
         "@mentra/cloud-protocol": "3.1.0",
-        "@mentra/types": "3.1.0",
         "eventemitter3": "^5.0.1",
       },
       "devDependencies": {
@@ -1008,8 +1000,6 @@
     "@mentra/jspolyfill": ["@mentra/jspolyfill@workspace:modules/jspolyfill"],
 
     "@mentra/miniapp": ["@mentra/miniapp@workspace:modules/miniapp"],
-
-    "@mentra/types": ["@mentra/types@workspace:../cloud/packages/types"],
 
     "@mongodb-js/saslprep": ["@mongodb-js/saslprep@1.4.11", "", { "dependencies": { "sparse-bitfield": "^3.0.3" } }, "sha512-o9rAHc0IpIjuPSxRutWpE1F62x7n+4mVS4rCNHkzhIUMQcc18bb6xEq5wd2NdN0WjepIyXIppRshYI2kQDOZVA=="],
 

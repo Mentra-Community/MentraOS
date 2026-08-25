@@ -183,7 +183,7 @@ export {
 export {HardwareCompatibility, type CompatibilityResult} from "./utils/hardware"
 export {BgTimer, throttle, debounce} from "./utils/timers"
 
-// Types (copied from @mentra/types — keep in sync with cloud/packages/types/src)
+// Hardware types and capability profiles.
 export {
   HardwareType,
   HardwareRequirementLevel,

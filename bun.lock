@@ -122,13 +122,6 @@
         "pino-pretty": "^11.3.0",
       },
     },
-    "cloud/packages/types": {
-      "name": "@mentra/types",
-      "version": "3.1.0",
-      "devDependencies": {
-        "typescript": "^5.0.0",
-      },
-    },
     "miniapps/captions": {
       "name": "local-captions",
       "dependencies": {
@@ -298,7 +291,6 @@
       "version": "3.1.0",
       "dependencies": {
         "@mentra/cloud-protocol": "3.1.0",
-        "@mentra/types": "3.1.0",
         "eventemitter3": "^5.0.1",
       },
       "devDependencies": {
@@ -418,8 +410,6 @@
     "@mentra/miniapp": ["@mentra/miniapp@workspace:mobile/modules/miniapp"],
 
     "@mentra/miniapp-cli": ["@mentra/miniapp-cli@workspace:sdk/miniapp-cli"],
-
-    "@mentra/types": ["@mentra/types@workspace:cloud/packages/types"],
 
     "@mongodb-js/saslprep": ["@mongodb-js/saslprep@1.4.11", "", { "dependencies": { "sparse-bitfield": "^3.0.3" } }, "sha512-o9rAHc0IpIjuPSxRutWpE1F62x7n+4mVS4rCNHkzhIUMQcc18bb6xEq5wd2NdN0WjepIyXIppRshYI2kQDOZVA=="],
 
@@ -1830,8 +1820,6 @@
     "@mentra/miniapp/typescript": ["typescript@5.9.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw=="],
 
     "@mentra/miniapp-cli/typescript": ["typescript@5.9.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw=="],
-
-    "@mentra/types/typescript": ["typescript@5.9.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw=="],
 
     "@typescript-eslint/typescript-estree/minimatch": ["minimatch@9.0.5", "", { "dependencies": { "brace-expansion": "^2.0.1" } }, "sha512-G6T0ZX48xgozx7587koeX9Ys2NYy6Gmv//P89sEte9V9whIapMNF4idKxnW2QtCcLiTWlb/wfCabAtAFWhhBow=="],
 

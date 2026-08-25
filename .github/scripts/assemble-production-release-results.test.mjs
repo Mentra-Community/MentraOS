@@ -52,7 +52,6 @@ test("assembles stable packages with exact promoted beta mobile and OTA bytes", 
     "@mentra/crust",
     "@mentra/cloud-client",
     "@mentra/bluetooth-sdk",
-    "@mentra/types",
     "@mentra/miniapp",
     "@mentra/engine",
   ])

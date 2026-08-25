@@ -37,12 +37,12 @@ test("loads the repository release family and derives dependency-first publicati
 
   assert.equal(family.familyBaseVersion, "3.1.0")
   assert.deepEqual(family.products, ["mentraos", "@mentra/engine", "@mentra/bluetooth-sdk"])
-  assert.equal(family.members.length, 9)
+  assert.equal(family.members.length, 8)
   assert.ok(family.publicationOrder.indexOf("@mentra/jspolyfill") < family.publicationOrder.indexOf("@mentra/crust"))
   assert.ok(
     family.publicationOrder.indexOf("@mentra/bluetooth-sdk") < family.publicationOrder.indexOf("@mentra/engine"),
   )
-  assert.ok(family.publicationOrder.indexOf("@mentra/types") < family.publicationOrder.indexOf("@mentra/miniapp"))
+  assert.equal(family.members.some((member) => member.name === "@mentra/types"), false)
   assert.ok(family.publicationOrder.indexOf("@mentra/engine") < family.publicationOrder.indexOf("mentraos"))
 })
 

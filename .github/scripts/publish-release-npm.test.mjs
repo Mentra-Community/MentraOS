@@ -49,7 +49,7 @@ test("selects the complete npm family in dependency order", () => {
   const family = loadReleaseFamily({rootDir: repositoryRoot})
   const selected = npmMembersInOrder(family, ["all"])
   assert.equal(selected.length, family.members.filter((member) => member.publishTargets.includes("npm")).length)
-  assert.ok(selected.indexOf("@mentra/types") < selected.indexOf("@mentra/miniapp"))
+  assert.equal(selected.includes("@mentra/types"), false)
   assert.equal(selected.at(-1), "@mentra/engine")
 })
 

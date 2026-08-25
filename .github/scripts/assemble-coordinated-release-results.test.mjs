@@ -61,7 +61,6 @@ test("assembles every product target and finalizes one complete release manifest
     "@mentra/crust",
     "@mentra/cloud-client",
     "@mentra/bluetooth-sdk",
-    "@mentra/types",
     "@mentra/miniapp",
     "@mentra/engine",
   ])
@@ -149,7 +148,7 @@ test("assembles every product target and finalizes one complete release manifest
   })
   const manifest = finalizeReleaseManifest({plan, results, completedAt: "2026-08-25T02:00:00.000Z"})
 
-  assert.equal(Object.keys(manifest.publications).length, 9)
+  assert.equal(Object.keys(manifest.publications).length, 8)
   assert.equal(manifest.publications["@mentra/bluetooth-sdk"]["maven-central"].status, "published")
   assert.equal(manifest.publications.mentraos["app-store-connect"].status, "published")
   assert.ok(manifest.artifacts.some((artifact) => artifact.coordinate === plan.artifactNames.asgSelection))
