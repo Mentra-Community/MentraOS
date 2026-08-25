@@ -13,10 +13,17 @@ A push to `dev` or `staging` runs
 | `dev`     | `X.Y.Z-dev.N`  | `dev`   | Play internal and TestFlight Dev |
 | `staging` | `X.Y.Z-beta.N` | `beta`  | Play beta and TestFlight Beta    |
 
+`staging` names the beta release channel, not the backend. Dev artifacts use
+development services. Beta artifacts use production services because the exact
+signed AAB and IPA are promoted through the stores without rebuilding,
+rewriting configuration, or re-signing. A staging-services diagnostic build is
+not a production candidate.
+
 The same identity and immutable OTA manifest pin are embedded in the SDK's npm,
-Maven, and SwiftPM packages. The workflow publishes the Engine dependency
-closure first, then verifies the native and npm SDK packages before publishing
-the Engine and mobile apps.
+Maven, and SwiftPM packages. One npm lane publishes the dependency closure in
+topological order. Native SDK and mobile jobs run in parallel after OTA
+selection. Finalization waits for a clean registry-backed Engine host to resolve
+and build on Android and iOS.
 
 The ASG APK is rebuilt only when its complete build-input fingerprint changes.
 Otherwise the coordinated OTA workflow reuses the exact previously verified
@@ -44,6 +51,11 @@ The coordinated workflows use these repository secrets:
 - `MAVEN_SIGNING_KEY`
 - `MAVEN_SIGNING_PASSWORD`
 - `MENTRA_BLUETOOTH_SDK_IOS_PUSH_TOKEN`
+- `ASG_KEYSTORE_B64`
+- `ASG_STORE_PASSWORD`
+- `ASG_KEY_PASSWORD`
+- `ASG_KEY_ALIAS`
+- `MAPBOX_DOWNLOADS_TOKEN`
 - the existing Android, Google Play, App Store Connect, and Match credentials
 
 Configure required reviewers on the `coordinated-production-release` GitHub
@@ -62,15 +74,17 @@ Before the first production promotion:
 3. Complete one `dev` and one `staging` coordinated run. Verify their release
    manifests, public package metadata, OTA manifest bytes, mobile diagnostics,
    and store destinations before selecting a beta for production.
-4. Once the first coordinated npm, Maven, and SwiftPM packages are public,
-   install them into the external OEM and Starter Kit examples from their real
-   registries. Build the Android and iOS examples before production promotion.
+4. Confirm the automated external Engine consumer gate installs the exact
+   public npm graph and builds its Android and iOS hosts. Once Maven and SwiftPM
+   are public, install the coordinated SDK into the Starter Kit examples and
+   build all three examples before production promotion.
 5. Update public docs and downloadable example links only after those registry
    and example-artifact checks pass.
 
-The source-tree package and OEM gates run before publication, but they cannot
-substitute for the first registry-backed consumer build because the coordinated
-package coordinates do not exist publicly yet.
+Pull-request dry runs use source-tree package and OEM gates. The coordinated
+release's registry-backed consumer gate runs only after publication because the
+new coordinates do not exist publicly before then; failure leaves the GitHub
+release incomplete and prevents release-manifest finalization.
 
 The full contract, artifact naming rules, and verification gates are documented
 in `notes/coordinated-release-system-proposal.md`.

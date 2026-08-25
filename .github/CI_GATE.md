@@ -64,6 +64,7 @@ below. `Recovery Worker Build` is deliberately excluded.
 | Android     | `Mobile App Android Build`  | `mobile/**`                                               |
 | ASG         | `MentraOS ASG Client Build` | `asg_client/**`                                           |
 | Mobile jest | `Mobile App Quality Checks` | `mobile/**`                                               |
+| Release     | `Coordinated Release Family Checks` | coordinated release definitions and workflows      |
 | Lockfiles   | `Bun Lockfile Checks`       | root/mobile/sdk lockfiles and workspace package manifests |
 | Cloud       | `🧪 Test Cloud build`       | all dev PRs (self-skips internally)                       |
 | SDK         | `🧪 Test SDK build`         | all dev PRs (self-skips internally)                       |

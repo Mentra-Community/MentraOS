@@ -4,6 +4,7 @@
   "private": true,
   "workspaces": [
     "cloud-v2/packages/*",
+    "cloud/packages/types",
     "miniapps/*",
     "sdk/miniapp-cli",
     "mobile/modules/miniapp"

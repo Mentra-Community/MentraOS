@@ -54,7 +54,7 @@
   },
   "dependencies": {
     "@mentra/cloud-protocol": "3.1.0",
-    "@mentra/types": "1.0.0-beta.2",
+    "@mentra/types": "3.1.0",
     "eventemitter3": "^5.0.1"
   },
   "devDependencies": {

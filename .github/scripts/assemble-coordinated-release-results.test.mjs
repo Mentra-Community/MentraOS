@@ -55,15 +55,21 @@ test("assembles every product target and finalizes one complete release manifest
   writeFileSync(asgSelectionFile, JSON.stringify(asgSelection))
   const selectionSha = createHash("sha256").update(JSON.stringify(asgSelection)).digest("hex")
   const engineSha = createHash("sha256").update("engine package").digest("hex")
-  const npmRecords = [
-    npmRecord(["@mentra/jspolyfill", "@mentra/cloud-protocol", "@mentra/crust", "@mentra/cloud-client"]),
-    npmRecord(["@mentra/bluetooth-sdk"]),
-    npmRecord(["@mentra/miniapp"]),
-    {
-      releaseSetId: plan.releaseSetId,
-      publications: {"@mentra/engine": {npm: publication(`@mentra/engine@${plan.releaseIdentity}`, engineSha)}},
-    },
-  ]
+  const npmRecordForFamily = npmRecord([
+    "@mentra/jspolyfill",
+    "@mentra/cloud-protocol",
+    "@mentra/crust",
+    "@mentra/cloud-client",
+    "@mentra/bluetooth-sdk",
+    "@mentra/types",
+    "@mentra/miniapp",
+    "@mentra/engine",
+  ])
+  npmRecordForFamily.publications["@mentra/engine"].npm = publication(
+    `@mentra/engine@${plan.releaseIdentity}`,
+    engineSha,
+  )
+  const npmRecords = [npmRecordForFamily]
   const native = {
     releaseSetId: plan.releaseSetId,
     publications: {
@@ -110,7 +116,7 @@ test("assembles every product target and finalizes one complete release manifest
     },
     bundle: {
       status: "published",
-      asset: "mentra-live-ota-bundle.zip",
+      asset: plan.artifactNames.otaBundle,
       url: "https://example.com/ota.zip",
       sha256: "d".repeat(64),
       size: 200,
@@ -143,7 +149,7 @@ test("assembles every product target and finalizes one complete release manifest
   })
   const manifest = finalizeReleaseManifest({plan, results, completedAt: "2026-08-25T02:00:00.000Z"})
 
-  assert.equal(Object.keys(manifest.publications).length, 8)
+  assert.equal(Object.keys(manifest.publications).length, 9)
   assert.equal(manifest.publications["@mentra/bluetooth-sdk"]["maven-central"].status, "published")
   assert.equal(manifest.publications.mentraos["app-store-connect"].status, "published")
   assert.ok(manifest.artifacts.some((artifact) => artifact.coordinate === plan.artifactNames.asgSelection))

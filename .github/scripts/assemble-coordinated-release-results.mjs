@@ -132,9 +132,7 @@ function main() {
   const result = assembleCoordinatedReleaseResults({
     plan: readJson(path.resolve(args.plan)),
     ota: readJson(path.resolve(args.ota)),
-    npmRecords: [args["npm-foundation"], args["npm-sdk"], args["npm-miniapp"], args["npm-engine"]].map((file) =>
-      readJson(path.resolve(file)),
-    ),
+    npmRecords: [readJson(path.resolve(args.npm))],
     native: readJson(path.resolve(args.native)),
     mobile: readJson(path.resolve(args.mobile)),
     asgSelectionFile: path.resolve(args["asg-selection"]),

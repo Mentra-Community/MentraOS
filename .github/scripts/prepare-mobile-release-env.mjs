@@ -35,7 +35,7 @@ function parseEnv(contents) {
   return values
 }
 
-export function prepareMobileReleaseEnvironment({plan, template, cloudEnvironment, otaManifestUrl, publicValues}) {
+export function prepareMobileReleaseEnvironment({plan, template, backendEnvironment, otaManifestUrl, publicValues}) {
   if (plan.releaseSetId !== `mentra-${plan.releaseIdentity}` || plan.products?.mentraos !== plan.releaseIdentity) {
     throw new Error("Release plan does not contain the coordinated MentraOS product")
   }
@@ -45,12 +45,19 @@ export function prepareMobileReleaseEnvironment({plan, template, cloudEnvironmen
   if (plan.native.marketingVersion !== plan.familyBaseVersion) {
     throw new Error("Native marketing version must equal the family base")
   }
-  const cloud = CLOUDS[cloudEnvironment]
-  if (!cloud) throw new Error(`Unsupported mobile cloud environment ${JSON.stringify(cloudEnvironment)}`)
+  const expectedBackend = plan.channel === "dev" ? "dev" : plan.channel === "beta" ? "prod" : null
+  if (!expectedBackend) throw new Error(`Mobile prerelease builds do not support channel ${JSON.stringify(plan.channel)}`)
+  if (backendEnvironment !== expectedBackend) {
+    throw new Error(
+      `${plan.channel} mobile releases must target the ${expectedBackend} backend, not ${JSON.stringify(backendEnvironment)}`,
+    )
+  }
+  const cloud = CLOUDS[backendEnvironment]
+  if (!cloud) throw new Error(`Unsupported mobile backend environment ${JSON.stringify(backendEnvironment)}`)
   const values = parseEnv(template)
   const updates = {
     EXPO_PUBLIC_ASG_OTA_VERSION_URL: requireHttps(otaManifestUrl, "OTA manifest URL"),
-    EXPO_PUBLIC_BUILD_ENV: cloudEnvironment,
+    EXPO_PUBLIC_BUILD_ENV: backendEnvironment,
     EXPO_PUBLIC_CLOUD_CORE_URL: cloud.core,
     EXPO_PUBLIC_CLOUD_RUNTIME_URL: cloud.runtime,
     EXPO_PUBLIC_MENTRAOS_VERSION: plan.releaseIdentity,
@@ -83,7 +90,7 @@ function main() {
   const rendered = prepareMobileReleaseEnvironment({
     plan: JSON.parse(readFileSync(path.resolve(args.plan), "utf8")),
     template: readFileSync(envFile, "utf8"),
-    cloudEnvironment: args["cloud-environment"],
+    backendEnvironment: args["backend-environment"],
     otaManifestUrl: args["ota-manifest-url"],
     publicValues: {
       EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN: args["mapbox-public-token"],

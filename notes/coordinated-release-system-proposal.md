@@ -1,6 +1,6 @@
 # Proposed Coordinated Release System
 
-> Status: accepted design; implementation in progress
+> Status: implemented in the consolidated release PR; first release validation pending
 > Updated: 2026-08-24
 
 ## Goal
@@ -149,6 +149,7 @@ Initial family:
 - `@mentra/cloud-client`.
 - `@mentra/cloud-protocol`.
 - `@mentra/miniapp`.
+- `@mentra/types`.
 
 The exact list must be validated against Engine's runtime imports during Phase 0. A new package joins only through a reviewed manifest entry that specifies
 its base-version source, publication targets, and dependency edges. Private
@@ -196,6 +197,7 @@ mentraos                 3.1.0
 @mentra/cloud-client     3.1.0
 @mentra/cloud-protocol   3.1.0
 @mentra/miniapp          3.1.0
+@mentra/types            3.1.0
 ```
 
 The repository-root `package.json#version` is the canonical family base. The
@@ -449,19 +451,19 @@ is publicly readable, so scaffolder publication cannot race its template pin.
 
 ## Publication Order
 
-After the OTA bundle and version map exist, publish in dependency order:
+After the OTA bundle and version map exist:
 
-1. Leaf first-party packages such as `@mentra/jspolyfill` and
-   `@mentra/cloud-protocol`.
-2. Packages that consume those leaves, such as Crust and Cloud Client.
-3. Bluetooth SDK npm, Maven, and SwiftPM artifacts with the shared OTA pin.
-4. Remaining Engine dependencies such as Miniapp.
-5. Engine, stamped with exact versions from this release set.
-6. MentraOS mobile artifacts, built from local workspaces and stamped with the
-   release-set identity and shared OTA pin.
-7. Starter Kit and OEM example artifacts after all public dependencies resolve
-   from their real registries.
-8. Public documentation after the package and example URLs are live.
+1. One npm lane publishes the complete public package closure in the explicit
+   release-family dependency order, ending with Engine.
+2. Native Bluetooth SDK publication and MentraOS mobile builds run in parallel
+   with that npm lane; they do not depend on registry packages to build.
+3. After npm and native publication, a clean external OEM fixture installs only
+   the exact public Engine package plus host-owned dependencies. It verifies the
+   registry graph, TypeScript, Metro, Expo autolinking, Android, and iOS.
+4. Finalization writes the completed release manifest only after every product
+   lane and the external consumer gate succeeds.
+5. Starter Kit artifacts and public documentation update only after all public
+   dependencies and example downloads are live.
 
 Independent jobs may run in parallel when the dependency graph permits it. A
 consumer package cannot publish until its referenced versions are publicly
@@ -486,6 +488,19 @@ For iOS:
 
 For Android, use equivalent internal/dev and beta tracks before production
 promotion.
+
+Release channel and backend environment are separate concepts:
+
+- `dev` artifacts use development services and are not production candidates.
+- `beta` artifacts built from `staging` use production services. They are the
+  exact signed candidates evaluated in TestFlight and the Play beta track.
+- Production promotes those same IPA and AAB bytes. It does not rewrite cloud
+  configuration, rebuild, or re-sign them.
+
+This matches the immutable promotion model of App Store Connect and Google
+Play. A build that targets staging services is useful for diagnostics, but it
+must be a separately identified, non-promotable artifact. CI rejects a beta
+release whose mobile backend is not `prod`.
 
 Native store marketing versions remain the plain family base, such as `3.1.0`,
 so the exact staging binary can be promoted without rebuilding and
@@ -601,15 +616,13 @@ Each release set must prove:
 Any missing, malformed, mutable, unreachable, or mismatched release input blocks
 publication. There is no fallback to another channel.
 
-## Implementation Order
+## Implementation And Cutover
 
-The stacked migration must not leave the legacy and coordinated publishers
-active at the same time. The foundation change makes the superseded automatic
-package publishers manual-only before any shared `3.1.0` package versions land.
-The final cutover removes those workflows after the coordinator and all reusable
-publishers are present. Therefore every intermediate stack commit is
-fail-closed for automatic package publication; only the completed stack enables
-the coordinated publisher.
+The migration is delivered as one consolidated change, not a stack of partially
+active release systems. The combined tree is reviewed and validated as one
+workflow graph. Legacy automatic publishers are disabled or removed in the same
+cutover that enables the coordinator, so two systems cannot publish the shared
+`3.1.0` coordinates.
 
 1. **Engine boundary:** add the explicit `@mentra/engine/bluetooth-sdk` facade,
    introduce Engine-owned models for Engine concepts, remove SDK-internal paths

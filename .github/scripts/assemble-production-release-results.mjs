@@ -51,7 +51,7 @@ function main() {
   const args = parseArgs(process.argv.slice(2))
   const result = assembleProductionReleaseResults({
     plan: readJson(args.plan),
-    npmRecords: [args["npm-foundation"], args["npm-sdk"], args["npm-miniapp"], args["npm-engine"]].map(readJson),
+    npmRecords: [readJson(args.npm)],
     native: readJson(args.native),
     promotion: readJson(args.promotion),
     enginePackage: path.resolve(args["engine-package"]),

@@ -40,11 +40,18 @@
       "dependencies": []
     },
     {
+      "name": "@mentra/types",
+      "manifest": "cloud/packages/types/package.json",
+      "kind": "package",
+      "publishTargets": ["npm"],
+      "dependencies": []
+    },
+    {
       "name": "@mentra/miniapp",
       "manifest": "mobile/modules/miniapp/package.json",
       "kind": "package",
       "publishTargets": ["npm"],
-      "dependencies": ["@mentra/cloud-protocol"]
+      "dependencies": ["@mentra/cloud-protocol", "@mentra/types"]
     },
     {
       "name": "@mentra/engine",
@@ -71,7 +78,8 @@
         "@mentra/cloud-client",
         "@mentra/jspolyfill",
         "@mentra/miniapp"
-      ]
+      ],
+      "privateWorkspaceDependencies": ["@mentra/engine-host-internal"]
     }
   ]
 }

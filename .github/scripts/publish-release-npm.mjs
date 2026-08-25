@@ -97,6 +97,11 @@ function npmViewPublished(spec, field) {
 }
 
 export function npmMembersInOrder(family, selectedNames) {
+  if (selectedNames.length === 1 && selectedNames[0] === "all") {
+    return family.publicationOrder.filter((name) =>
+      family.members.find((candidate) => candidate.name === name)?.publishTargets.includes("npm"),
+    )
+  }
   const selected = new Set(selectedNames)
   for (const name of selected) {
     const member = family.members.find((candidate) => candidate.name === name)

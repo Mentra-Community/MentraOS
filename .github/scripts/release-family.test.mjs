@@ -37,11 +37,12 @@ test("loads the repository release family and derives dependency-first publicati
 
   assert.equal(family.familyBaseVersion, "3.1.0")
   assert.deepEqual(family.products, ["mentraos", "@mentra/engine", "@mentra/bluetooth-sdk"])
-  assert.equal(family.members.length, 8)
+  assert.equal(family.members.length, 9)
   assert.ok(family.publicationOrder.indexOf("@mentra/jspolyfill") < family.publicationOrder.indexOf("@mentra/crust"))
   assert.ok(
     family.publicationOrder.indexOf("@mentra/bluetooth-sdk") < family.publicationOrder.indexOf("@mentra/engine"),
   )
+  assert.ok(family.publicationOrder.indexOf("@mentra/types") < family.publicationOrder.indexOf("@mentra/miniapp"))
   assert.ok(family.publicationOrder.indexOf("@mentra/engine") < family.publicationOrder.indexOf("mentraos"))
 })
 
@@ -75,6 +76,7 @@ test("creates a deterministic release plan with exact dependency versions", () =
   assert.equal(plan.members["@mentra/engine"].dependencies["@mentra/bluetooth-sdk"], "3.1.0-beta.57")
   assert.equal(plan.members["@mentra/bluetooth-sdk"].publishTargets.length, 3)
   assert.equal(plan.artifactNames.otaManifest, "mentra-live-ota-3.1.0-beta.57.json")
+  assert.equal(plan.artifactNames.otaBundle, "mentra-live-ota-bundle-3.1.0-beta.57.zip")
   assert.equal(plan.artifactNames.asgSelection, "mentra-live-asg-selection-3.1.0-beta.57.json")
   assert.equal(plan.artifactNames.androidStoreApp, "mentraos-3.1.0-beta.57-android.aab")
   assert.equal(plan.artifactNames.iosSdkArchive, "mentra-bluetooth-sdk-ios-3.1.0-beta.57.tar")
@@ -118,6 +120,7 @@ test("serializes records canonically and finalizes only complete release results
     otaManifest: publication(plan.artifactNames.otaManifest),
     artifacts: [
       publication(plan.artifactNames.asgSelection),
+      publication(plan.artifactNames.otaBundle),
       publication(plan.artifactNames.androidApp),
       publication(plan.artifactNames.androidStoreApp),
       publication(plan.artifactNames.iosApp),
@@ -309,4 +312,21 @@ test("rejects family dependencies hidden from the configured graph or declared a
     () => loadReleaseFamily({rootDir: root, requireVersionMirrors: true}),
     /must not declare family member base as a peerDependency/,
   )
+
+  writeFileSync(
+    path.join(root, "packages/product/package.json"),
+    JSON.stringify({
+      name: "product",
+      version: "3.1.0",
+      dependencies: {base: "3.1.0", "@mentra/outside": "workspace:*"},
+    }),
+  )
+  assert.throws(
+    () => loadReleaseFamily({rootDir: root, requireVersionMirrors: true}),
+    /unclassified first-party package @mentra\/outside/,
+  )
+
+  familyDefinition.members[1].privateWorkspaceDependencies = ["@mentra/outside"]
+  writeFileSync(path.join(root, ".github/release-family.json"), JSON.stringify(familyDefinition))
+  assert.doesNotThrow(() => loadReleaseFamily({rootDir: root, requireVersionMirrors: true}))
 })

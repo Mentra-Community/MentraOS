@@ -19,6 +19,7 @@ on:
       - "mobile/modules/engine/scripts/*.mjs"
       - "mobile/modules/jspolyfill/package.json"
       - "mobile/modules/miniapp/package.json"
+      - "cloud/packages/types/package.json"
       - "cloud-v2/packages/cloud-client/package.json"
       - "cloud-v2/packages/protocol/package.json"
 

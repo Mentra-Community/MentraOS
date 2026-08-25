@@ -69,10 +69,17 @@ export function prepareProductionRelease({family, betaPlan, betaManifest, betaMa
     androidAab: exactArtifact(betaManifest, betaPlan.artifactNames.androidStoreApp),
     iosIpa: exactArtifact(betaManifest, betaPlan.artifactNames.iosApp),
   }
-  const otaArtifacts = (betaManifest.artifacts || []).filter(
-    (artifact) => artifact.provenanceUrl === betaManifest.otaManifest.provenanceUrl,
+  const asgArtifacts = (betaManifest.artifacts || []).filter(
+    (artifact) => typeof artifact.signingCertificateSha256 === "string",
   )
-  if (otaArtifacts.length < 2) throw new Error("Completed beta manifest is missing its OTA bundle or ASG artifact")
+  if (asgArtifacts.length !== 1) {
+    throw new Error(`Expected one signed ASG artifact in the completed beta manifest, found ${asgArtifacts.length}`)
+  }
+  const otaArtifacts = [
+    exactArtifact(betaManifest, betaPlan.artifactNames.otaBundle),
+    exactArtifact(betaManifest, betaPlan.artifactNames.asgSelection),
+    asgArtifacts[0],
+  ]
 
   return {
     productionPlan,

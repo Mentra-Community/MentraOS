@@ -5,6 +5,7 @@
   "main": "expo-router/entry",
   "workspaces": [
     "modules/*",
+    "../cloud/packages/types",
     "../cloud-v2/packages/*"
   ],
   "scripts": {

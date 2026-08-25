@@ -9,6 +9,9 @@ on:
       release_plan_artifact:
         required: true
         type: string
+      release_id:
+        required: false
+        type: string
       ota_manifest_url:
         required: true
         type: string
@@ -41,7 +44,7 @@ concurrency:
 
 jobs:
   prepare:
-    name: Prepare exact coordinated GitHub release
+    name: Verify centrally allocated GitHub release
     runs-on: ubuntu-latest
     outputs:
       release_id: ${{ steps.release.outputs.release_id }}
@@ -56,35 +59,22 @@ jobs:
           name: ${{ inputs.release_plan_artifact }}
           path: release-intent
 
-      - name: Create or verify the release container
+      - name: Verify the release container
         id: release
         if: inputs.dry_run != true
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ inputs.release_id }}
           SOURCE_COMMIT: ${{ inputs.source_commit }}
         run: |
           set -euo pipefail
+          test -n "$RELEASE_ID"
           identity=$(jq -er .releaseIdentity release-intent/release-plan.json)
           [[ "$(jq -er .sourceCommit release-intent/release-plan.json)" == "$SOURCE_COMMIT" ]]
           tag="mentra-v$identity"
-          releases=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases?per_page=100" | jq 'add')
-          matches=$(jq --arg tag "$tag" '[.[] | select(.tag_name == $tag)]' <<< "$releases")
-          count=$(jq 'length' <<< "$matches")
-          if [[ "$count" -gt 1 ]]; then
-            echo "GitHub contains multiple releases for $tag." >&2
-            exit 1
-          fi
-          if [[ "$count" == 0 ]]; then
-            payload=$(jq -n \
-              --arg tag "$tag" \
-              --arg source "$SOURCE_COMMIT" \
-              --arg name "Mentra $identity" \
-              --arg body "Coordinated release $identity. Publication is incomplete until the release manifest is attached." \
-              '{tag_name: $tag, target_commitish: $source, name: $name, body: $body, draft: true, prerelease: true}')
-            release=$(gh api --method POST "repos/${GITHUB_REPOSITORY}/releases" --input - <<< "$payload")
-          else
-            release=$(jq '.[0]' <<< "$matches")
-          fi
+          release=$(gh api "repos/${GITHUB_REPOSITORY}/releases/$RELEASE_ID")
+          [[ "$(jq -r .tag_name <<< "$release")" == "$tag" ]]
+          [[ "$(jq -r .name <<< "$release")" == "Mentra $identity" ]]
           if [[ "$(jq -r .draft <<< "$release")" == "true" ]]; then
             [[ "$(jq -r .target_commitish <<< "$release")" == "$SOURCE_COMMIT" ]]
           else
@@ -92,7 +82,7 @@ jobs:
             [[ "$(git rev-parse "$tag^{commit}")" == "$SOURCE_COMMIT" ]]
           fi
           {
-            echo "release_id=$(jq -er .id <<< "$release")"
+            echo "release_id=$RELEASE_ID"
             echo "release_tag=$tag"
           } >> "$GITHUB_OUTPUT"
 

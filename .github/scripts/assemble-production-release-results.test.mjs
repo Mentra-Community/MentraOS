@@ -46,15 +46,21 @@ test("assembles stable packages with exact promoted beta mobile and OTA bytes", 
   const enginePackage = path.join(directory, plan.artifactNames.enginePackage)
   writeFileSync(enginePackage, "stable engine package")
   const engineSha = createHash("sha256").update("stable engine package").digest("hex")
-  const npmRecords = [
-    npmRecord(["@mentra/jspolyfill", "@mentra/cloud-protocol", "@mentra/crust", "@mentra/cloud-client"]),
-    npmRecord(["@mentra/bluetooth-sdk"]),
-    npmRecord(["@mentra/miniapp"]),
-    {
-      releaseSetId: plan.releaseSetId,
-      publications: {"@mentra/engine": {npm: publication(`@mentra/engine@${plan.releaseIdentity}`, engineSha)}},
-    },
-  ]
+  const npmRecordForFamily = npmRecord([
+    "@mentra/jspolyfill",
+    "@mentra/cloud-protocol",
+    "@mentra/crust",
+    "@mentra/cloud-client",
+    "@mentra/bluetooth-sdk",
+    "@mentra/types",
+    "@mentra/miniapp",
+    "@mentra/engine",
+  ])
+  npmRecordForFamily.publications["@mentra/engine"].npm = publication(
+    `@mentra/engine@${plan.releaseIdentity}`,
+    engineSha,
+  )
+  const npmRecords = [npmRecordForFamily]
   const native = {
     releaseSetId: plan.releaseSetId,
     publications: {

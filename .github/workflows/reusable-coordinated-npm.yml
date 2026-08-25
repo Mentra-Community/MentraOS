@@ -22,9 +22,6 @@ on:
       ota_manifest_sha256:
         required: false
         type: string
-      sdk_package_artifact:
-        required: false
-        type: string
       npm_tag:
         description: Optional temporary dist-tag used to defer a coordinated stable latest pointer.
         required: false
@@ -46,27 +43,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - name: Checkout current release tooling
-        uses: actions/checkout@v4
-
       - name: Checkout exact package source
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.source_commit }}
-          path: release-source
 
       - name: Download immutable release plan
         uses: actions/download-artifact@v4
         with:
           name: ${{ inputs.release_plan_artifact }}
           path: release-intent
-
-      - name: Download coordinated SDK package for offline verification
-        if: inputs.sdk_package_artifact != ''
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ inputs.sdk_package_artifact }}
-          path: sdk-package
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -80,17 +66,15 @@ jobs:
           registry-url: https://registry.npmjs.org
 
       - name: Install exact root workspace dependencies
-        working-directory: release-source
         run: bun install --frozen-lockfile --ignore-scripts
 
       - name: Install exact mobile workspace dependencies
-        working-directory: release-source/mobile
+        working-directory: mobile
         run: bun install --frozen-lockfile --ignore-scripts
 
       - name: Stage coordinated package identities
         run: >-
           node .github/scripts/stage-release-family.mjs
-          --root release-source
           --plan release-intent/release-plan.json
 
       - name: Test npm release tooling
@@ -99,7 +83,6 @@ jobs:
       - name: Build, pack, reconcile, and publish in dependency order
         run: |
           args=(
-            --root release-source
             --plan release-intent/release-plan.json
             --members "$RELEASE_MEMBERS"
             --output-dir release-output
@@ -107,14 +90,6 @@ jobs:
           )
           if [[ -n "$OTA_MANIFEST_URL" || -n "$OTA_MANIFEST_SHA256" ]]; then
             args+=(--ota-manifest-url "$OTA_MANIFEST_URL" --ota-manifest-sha256 "$OTA_MANIFEST_SHA256")
-          fi
-          if [[ -n "$SDK_PACKAGE_ARTIFACT" ]]; then
-            mapfile -t sdk_tarballs < <(find sdk-package -type f -name '*.tgz' -print)
-            if (( ${#sdk_tarballs[@]} != 1 )); then
-              echo "::error::SDK package artifact must contain exactly one npm tarball; found ${#sdk_tarballs[@]}"
-              exit 1
-            fi
-            args+=(--sdk-tarball "${sdk_tarballs[0]}")
           fi
           if [[ -n "$NPM_TAG" ]]; then
             args+=(--npm-tag "$NPM_TAG")
@@ -126,7 +101,6 @@ jobs:
           OTA_MANIFEST_SHA256: ${{ inputs.ota_manifest_sha256 }}
           OTA_MANIFEST_URL: ${{ inputs.ota_manifest_url }}
           RELEASE_MEMBERS: ${{ inputs.members }}
-          SDK_PACKAGE_ARTIFACT: ${{ inputs.sdk_package_artifact }}
           NPM_TAG: ${{ inputs.npm_tag }}
 
       - name: Upload exact npm artifacts and publication records

@@ -8,13 +8,10 @@ import {fileURLToPath} from "node:url"
 const BUILD_INPUT_PATHS = [
   "asg_client",
   ".github/scripts/compute-asg-build-identity.mjs",
-  ".github/workflows/reusable-coordinated-ota.yml",
+  ".github/scripts/build-coordinated-asg.sh",
 ]
 const EXCLUDED_PREFIXES = ["asg_client/ota_manifests/"]
-const BUILD_CONTRACT = {
-  androidBuildVariant: "release",
-  javaVersion: "17",
-}
+const BUILD_CONTRACT = {androidBuildVariant: "release", javaVersion: "17"}
 
 function canonicalize(value) {
   if (Array.isArray(value)) return value.map(canonicalize)

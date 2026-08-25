@@ -38,10 +38,7 @@ jobs:
       plan_artifact: ${{ steps.release.outputs.plan_artifact }}
       ota_manifest_url: ${{ steps.release.outputs.ota_manifest_url }}
       ota_manifest_sha256: ${{ steps.release.outputs.ota_manifest_sha256 }}
-      npm_foundation_artifact: ${{ steps.release.outputs.npm_foundation_artifact }}
-      npm_sdk_artifact: ${{ steps.release.outputs.npm_sdk_artifact }}
-      npm_miniapp_artifact: ${{ steps.release.outputs.npm_miniapp_artifact }}
-      npm_engine_artifact: ${{ steps.release.outputs.npm_engine_artifact }}
+      npm_artifact: ${{ steps.release.outputs.npm_artifact }}
       npm_candidate_tag: ${{ steps.release.outputs.npm_candidate_tag }}
       release_id: ${{ steps.release-container.outputs.release_id }}
     steps:
@@ -71,16 +68,17 @@ jobs:
           mv "selected-beta/mentra-release-plan-$BETA_IDENTITY.json" selected-beta/release-plan.json
           mv "selected-beta/mentra-release-$BETA_IDENTITY.json" selected-beta/release-manifest.json
 
-      - name: Verify every immutable beta package, OTA, and downloadable artifact
-        run: node .github/scripts/verify-release-artifacts.mjs --manifest selected-beta/release-manifest.json
-
-      - name: Require the selected beta source in main
+      - name: Require and select the beta source from main
         run: |
           set -euo pipefail
           source_commit=$(jq -er .sourceCommit selected-beta/release-plan.json)
           git fetch origin main
           git cat-file -e "$source_commit^{commit}"
           git merge-base --is-ancestor "$source_commit" origin/main
+          git checkout --detach "$source_commit"
+
+      - name: Verify every immutable beta package, OTA, and downloadable artifact
+        run: node .github/scripts/verify-release-artifacts.mjs --manifest selected-beta/release-manifest.json
 
       - name: Derive deterministic stable plan from selected beta
         run: |
@@ -112,10 +110,7 @@ jobs:
             echo "plan_artifact=coordinated-production-plan-$release_set_id"
             echo "ota_manifest_url=$ota_url"
             echo "ota_manifest_sha256=$ota_sha"
-            echo "npm_foundation_artifact=coordinated-npm-foundation-$release_set_id"
-            echo "npm_sdk_artifact=coordinated-npm-sdk-$release_set_id"
-            echo "npm_miniapp_artifact=coordinated-npm-miniapp-$release_set_id"
-            echo "npm_engine_artifact=coordinated-npm-engine-$release_set_id"
+            echo "npm_artifact=coordinated-npm-$release_set_id"
             echo "npm_candidate_tag=$candidate_tag"
           } >> "$GITHUB_OUTPUT"
 
@@ -160,27 +155,15 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
-  npm-foundation:
-    name: Publish stable leaf npm dependency closure
+  npm:
+    name: Publish stable npm family in dependency order
     needs: plan
     uses: ./.github/workflows/reusable-coordinated-npm.yml
     with:
       source_commit: ${{ needs.plan.outputs.source_commit }}
       release_plan_artifact: ${{ needs.plan.outputs.plan_artifact }}
-      members: "@mentra/jspolyfill,@mentra/cloud-protocol,@mentra/crust,@mentra/cloud-client"
-      result_artifact: ${{ needs.plan.outputs.npm_foundation_artifact }}
-      npm_tag: ${{ needs.plan.outputs.npm_candidate_tag }}
-    secrets: inherit
-
-  npm-sdk:
-    name: Publish stable Bluetooth SDK npm package
-    needs: [plan, npm-foundation]
-    uses: ./.github/workflows/reusable-coordinated-npm.yml
-    with:
-      source_commit: ${{ needs.plan.outputs.source_commit }}
-      release_plan_artifact: ${{ needs.plan.outputs.plan_artifact }}
-      members: "@mentra/bluetooth-sdk"
-      result_artifact: ${{ needs.plan.outputs.npm_sdk_artifact }}
+      members: all
+      result_artifact: ${{ needs.plan.outputs.npm_artifact }}
       ota_manifest_url: ${{ needs.plan.outputs.ota_manifest_url }}
       ota_manifest_sha256: ${{ needs.plan.outputs.ota_manifest_sha256 }}
       npm_tag: ${{ needs.plan.outputs.npm_candidate_tag }}
@@ -188,59 +171,42 @@ jobs:
 
   sdk-native:
     name: Publish stable Bluetooth SDK native packages
-    needs: [plan, npm-foundation]
+    needs: plan
     uses: ./.github/workflows/reusable-coordinated-sdk-native.yml
     with:
       source_commit: ${{ needs.plan.outputs.source_commit }}
       release_plan_artifact: ${{ needs.plan.outputs.plan_artifact }}
+      release_id: ${{ needs.plan.outputs.release_id }}
       ota_manifest_url: ${{ needs.plan.outputs.ota_manifest_url }}
       ota_manifest_sha256: ${{ needs.plan.outputs.ota_manifest_sha256 }}
-    secrets: inherit
-
-  npm-miniapp:
-    name: Publish stable remaining Engine dependency
-    needs: [plan, npm-sdk, sdk-native]
-    uses: ./.github/workflows/reusable-coordinated-npm.yml
-    with:
-      source_commit: ${{ needs.plan.outputs.source_commit }}
-      release_plan_artifact: ${{ needs.plan.outputs.plan_artifact }}
-      members: "@mentra/miniapp"
-      result_artifact: ${{ needs.plan.outputs.npm_miniapp_artifact }}
-      npm_tag: ${{ needs.plan.outputs.npm_candidate_tag }}
-    secrets: inherit
-
-  npm-engine:
-    name: Publish stable Engine with exact SDK closure
-    needs: [plan, npm-sdk, sdk-native, npm-miniapp]
-    uses: ./.github/workflows/reusable-coordinated-npm.yml
-    with:
-      source_commit: ${{ needs.plan.outputs.source_commit }}
-      release_plan_artifact: ${{ needs.plan.outputs.plan_artifact }}
-      members: "@mentra/engine"
-      result_artifact: ${{ needs.plan.outputs.npm_engine_artifact }}
-      ota_manifest_url: ${{ needs.plan.outputs.ota_manifest_url }}
-      ota_manifest_sha256: ${{ needs.plan.outputs.ota_manifest_sha256 }}
-      sdk_package_artifact: ${{ needs.plan.outputs.npm_sdk_artifact }}
-      npm_tag: ${{ needs.plan.outputs.npm_candidate_tag }}
     secrets: inherit
 
   mobile:
     name: Promote exact beta mobile builds
-    needs: [plan, npm-engine, sdk-native]
+    needs: plan
     uses: ./.github/workflows/reusable-coordinated-mobile-promotion.yml
     with:
       release_plan_artifact: ${{ needs.plan.outputs.plan_artifact }}
     secrets: inherit
 
+  engine-consumer:
+    name: Build a clean host from the stable public Engine package
+    needs: [plan, npm, sdk-native]
+    uses: ./.github/workflows/reusable-coordinated-engine-consumer.yml
+    with:
+      source_commit: ${{ needs.plan.outputs.source_commit }}
+      release_plan_artifact: ${{ needs.plan.outputs.plan_artifact }}
+    secrets: inherit
+
   finalize:
     name: Finalize stable release and public package pointers
-    needs: [plan, npm-foundation, npm-sdk, sdk-native, npm-miniapp, npm-engine, mobile]
+    needs: [plan, npm, sdk-native, mobile, engine-consumer]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      # Finalization consumes verified records and does not rebuild the selected
-      # beta source. Keep the current promotion tooling available for old betas.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.source_commit }}
 
       - uses: actions/setup-node@v4
         with:
@@ -254,23 +220,8 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: ${{ needs.plan.outputs.npm_foundation_artifact }}
-          path: release-input/npm-foundation
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: ${{ needs.plan.outputs.npm_sdk_artifact }}
-          path: release-input/npm-sdk
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: ${{ needs.plan.outputs.npm_miniapp_artifact }}
-          path: release-input/npm-miniapp
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: ${{ needs.plan.outputs.npm_engine_artifact }}
-          path: release-input/npm-engine
+          name: ${{ needs.plan.outputs.npm_artifact }}
+          path: release-input/npm
 
       - uses: actions/download-artifact@v4
         with:
@@ -290,14 +241,11 @@ jobs:
           plan=release-input/plan/release-plan.json
           identity=$(jq -er .releaseIdentity "$plan")
           tag="mentra-v$identity"
-          engine_package=$(find release-input/npm-engine -type f -name 'mentra-engine-*.tgz' -print -quit)
+          engine_package=$(find release-input/npm -type f -name 'mentra-engine-*.tgz' -print -quit)
           test -n "$engine_package"
           node .github/scripts/assemble-production-release-results.mjs \
             --plan "$plan" \
-            --npm-foundation release-input/npm-foundation/npm-publications.json \
-            --npm-sdk release-input/npm-sdk/npm-publications.json \
-            --npm-miniapp release-input/npm-miniapp/npm-publications.json \
-            --npm-engine release-input/npm-engine/npm-publications.json \
+            --npm release-input/npm/npm-publications.json \
             --native release-input/sdk-native/sdk-native-publications.json \
             --promotion release-input/promotion/production-promotion-records.json \
             --engine-package "$engine_package" \

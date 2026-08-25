@@ -41,6 +41,8 @@ const betaPlan = {
   publicationOrder: ["mentraos"],
   artifactNames: {
     releaseManifest: "mentra-release-3.1.0-beta.57.json",
+    otaBundle: "mentra-live-ota-bundle-3.1.0-beta.57.zip",
+    asgSelection: "mentra-live-asg-selection-3.1.0-beta.57.json",
     androidApp: "mentraos-3.1.0-beta.57-android.apk",
     androidStoreApp: "mentraos-3.1.0-beta.57-android.aab",
     iosApp: "mentraos-3.1.0-beta.57-ios.ipa",
@@ -70,8 +72,9 @@ function manifest() {
       artifact(betaPlan.artifactNames.androidApp),
       artifact(betaPlan.artifactNames.androidStoreApp),
       artifact(betaPlan.artifactNames.iosApp),
-      artifact("mentra-live-ota-bundle-3.1.0-beta.57.zip", "https://github.com/example/actions/runs/ota"),
-      artifact("mentra-live-asg-100057.apk", "https://github.com/example/actions/runs/ota"),
+      artifact(betaPlan.artifactNames.otaBundle),
+      artifact(betaPlan.artifactNames.asgSelection),
+      {...artifact("mentra-live-asg-100057.apk"), signingCertificateSha256: "e".repeat(64)},
     ],
   }
 }
@@ -89,7 +92,27 @@ test("derives a stable plan while preserving the selected beta bytes and native 
   assert.equal(result.productionPlan.native.buildNumber, betaPlan.native.buildNumber)
   assert.equal(result.selection.mobileArtifacts.androidAab.coordinate, betaPlan.artifactNames.androidStoreApp)
   assert.equal(result.selection.otaManifest.sha256, "c".repeat(64))
-  assert.equal(result.selection.otaArtifacts.length, 2)
+  assert.equal(result.selection.otaArtifacts.length, 3)
+  assert.deepEqual(
+    result.selection.otaArtifacts.map(({coordinate}) => coordinate),
+    [betaPlan.artifactNames.otaBundle, betaPlan.artifactNames.asgSelection, "mentra-live-asg-100057.apk"],
+  )
+})
+
+test("selects OTA artifacts correctly when every job shares one workflow provenance URL", () => {
+  const betaManifest = manifest()
+  const shared = "https://github.com/Mentra-Community/MentraOS/actions/runs/123"
+  betaManifest.otaManifest.provenanceUrl = shared
+  for (const entry of betaManifest.artifacts) entry.provenanceUrl = shared
+
+  const {selection} = prepareProductionRelease({
+    family,
+    betaPlan,
+    betaManifest,
+    betaManifestSha256: "d".repeat(64),
+    repository: "Mentra-Community/MentraOS",
+  })
+  assert.equal(selection.otaArtifacts.length, 3)
 })
 
 test("rejects a beta manifest whose plan digest does not match", () => {

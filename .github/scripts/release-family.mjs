@@ -125,6 +125,9 @@ export function loadReleaseFamily({rootDir = process.cwd(), requireVersionMirror
       if (!PUBLISH_TARGETS.has(target)) fail(`${label}.publishTargets contains unsupported target ${target}`)
     }
     const dependencies = [...requireUniqueStrings(rawMember.dependencies, `${label}.dependencies`)]
+    const privateWorkspaceDependencies = rawMember.privateWorkspaceDependencies
+      ? [...requireUniqueStrings(rawMember.privateWorkspaceDependencies, `${label}.privateWorkspaceDependencies`)]
+      : []
     const packageManifest = readJson(path.join(rootDir, manifest))
     if (packageManifest.name !== name) {
       fail(`${manifest} declares ${JSON.stringify(packageManifest.name)}, expected ${JSON.stringify(name)}`)
@@ -133,7 +136,15 @@ export function loadReleaseFamily({rootDir = process.cwd(), requireVersionMirror
       fail(`${manifest} version ${JSON.stringify(packageManifest.version)} does not mirror ${familyBaseVersion}`)
     }
     packageManifests.set(name, packageManifest)
-    members.push({name, manifest, kind, publishTargets, dependencies, sourceVersion: packageManifest.version})
+    members.push({
+      name,
+      manifest,
+      kind,
+      publishTargets,
+      dependencies,
+      privateWorkspaceDependencies,
+      sourceVersion: packageManifest.version,
+    })
   }
 
   for (const member of members) {
@@ -147,6 +158,7 @@ export function loadReleaseFamily({rootDir = process.cwd(), requireVersionMirror
     for (const member of members) {
       const packageManifest = packageManifests.get(member.name)
       const configuredDependencies = new Set(member.dependencies)
+      const privateWorkspaceDependencies = new Set(member.privateWorkspaceDependencies)
       const expectedRange = member.name === "mentraos" ? "workspace:*" : familyBaseVersion
 
       for (const dependency of member.dependencies) {
@@ -163,6 +175,17 @@ export function loadReleaseFamily({rootDir = process.cwd(), requireVersionMirror
         }
         if (packageManifest.dependencies?.[dependency] !== undefined && !configuredDependencies.has(dependency)) {
           fail(`${member.manifest} depends on ${dependency}, but the release-family graph is missing that edge`)
+        }
+      }
+      for (const dependency of Object.keys(packageManifest.dependencies || {})) {
+        if (
+          dependency.startsWith("@mentra/") &&
+          !names.has(dependency) &&
+          !privateWorkspaceDependencies.has(dependency)
+        ) {
+          fail(
+            `${member.manifest} depends on unclassified first-party package ${dependency}; add it to the release family or privateWorkspaceDependencies`,
+          )
         }
       }
     }
@@ -212,6 +235,7 @@ export function createReleasePlan({family, channel, sequence, sourceCommit, nati
         manifest: member.manifest,
         publishTargets: member.publishTargets,
         dependencies: Object.fromEntries(member.dependencies.map((dependency) => [dependency, releaseIdentity])),
+        privateWorkspaceDependencies: member.privateWorkspaceDependencies,
       },
     ]),
   )
@@ -235,6 +259,7 @@ export function createReleasePlan({family, channel, sequence, sourceCommit, nati
       releasePlan: `mentra-release-plan-${releaseIdentity}.json`,
       releaseManifest: `mentra-release-${releaseIdentity}.json`,
       otaManifest: `mentra-live-ota-${releaseIdentity}.json`,
+      otaBundle: `mentra-live-ota-bundle-${releaseIdentity}.zip`,
       asgSelection: `mentra-live-asg-selection-${releaseIdentity}.json`,
       androidApp: `mentraos-${releaseIdentity}-android.apk`,
       androidStoreApp: `mentraos-${releaseIdentity}-android.aab`,
@@ -317,7 +342,7 @@ function requiredArtifactCoordinates(plan) {
   const keys =
     plan.channel === "production"
       ? ["enginePackage"]
-      : ["asgSelection", "androidApp", "androidStoreApp", "iosApp", "enginePackage"]
+      : ["otaBundle", "asgSelection", "androidApp", "androidStoreApp", "iosApp", "enginePackage"]
   return keys.map((key) => {
     const coordinate = plan.artifactNames?.[key]
     if (typeof coordinate !== "string" || coordinate.length === 0) {

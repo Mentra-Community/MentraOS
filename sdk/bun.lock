@@ -97,6 +97,13 @@
         "pino-pretty": "^11.3.0",
       },
     },
+    "../cloud/packages/types": {
+      "name": "@mentra/types",
+      "version": "3.1.0",
+      "devDependencies": {
+        "typescript": "^5.0.0",
+      },
+    },
     "../miniapps/captions": {
       "name": "local-captions",
       "dependencies": {
@@ -365,7 +372,7 @@
       "version": "3.1.0",
       "dependencies": {
         "@mentra/cloud-protocol": "3.1.0",
-        "@mentra/types": "1.0.0-beta.2",
+        "@mentra/types": "3.1.0",
         "eventemitter3": "^5.0.1",
       },
       "devDependencies": {
@@ -952,7 +959,7 @@
 
     "@mentra/miniapp-cli": ["@mentra/miniapp-cli@workspace:miniapp-cli"],
 
-    "@mentra/types": ["@mentra/types@1.0.0-beta.2", "", {}, "sha512-yn0H7oYId8TSOGlSDmstds4nnmZbXyDncFy3FC1h4dWpDx6o4BmBehAJd2Otp9gr1bWwIL0yEp6JK60I8TBUGw=="],
+    "@mentra/types": ["@mentra/types@workspace:../cloud/packages/types"],
 
     "@mongodb-js/saslprep": ["@mongodb-js/saslprep@1.4.11", "", { "dependencies": { "sparse-bitfield": "^3.0.3" } }, "sha512-o9rAHc0IpIjuPSxRutWpE1F62x7n+4mVS4rCNHkzhIUMQcc18bb6xEq5wd2NdN0WjepIyXIppRshYI2kQDOZVA=="],
 

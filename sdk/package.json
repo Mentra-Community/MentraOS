@@ -5,6 +5,7 @@
     "example-oem-app",
     "miniapp-cli",
     "../cloud-v2/packages/*",
+    "../cloud/packages/types",
     "../mobile/modules/miniapp",
     "../mobile/modules/jspolyfill",
     "../mobile/modules/crust",

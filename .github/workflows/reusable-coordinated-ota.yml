@@ -12,6 +12,15 @@ on:
         required: false
         default: false
         type: boolean
+    secrets:
+      ASG_KEYSTORE_B64:
+        required: false
+      ASG_STORE_PASSWORD:
+        required: false
+      ASG_KEY_PASSWORD:
+        required: false
+      ASG_KEY_ALIAS:
+        required: false
     outputs:
       manifest_url:
         description: Immutable OTA manifest URL selected by every product in the release set
@@ -42,6 +51,11 @@ jobs:
     name: Select ASG and publish immutable OTA bundle
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 90
+    env:
+      # Keep coordinated builds isolated from persistent-runner Gradle state.
+      # A build failure remains a real failure instead of triggering a machine-
+      # wide cache deletion and an indiscriminate retry.
+      GRADLE_USER_HOME: ${{ github.workspace }}/.gradle-coordinated-asg
     outputs:
       manifest_url: ${{ steps.names.outputs.manifest_url }}
       manifest_sha256: ${{ steps.result.outputs.manifest_sha256 }}
@@ -49,7 +63,7 @@ jobs:
       asg_fingerprint: ${{ steps.asg-identity.outputs.fingerprint }}
     steps:
       - name: Clean persistent-runner build outputs
-        run: rm -rf asg_client/app/build asg_client/.gradle asg_client/StreamPackLite coordinated-ota-work
+        run: rm -rf asg_client/app/build asg_client/.gradle asg_client/StreamPackLite coordinated-ota-work "$GRADLE_USER_HOME"
 
       - name: Checkout exact source
         uses: actions/checkout@v4
@@ -155,12 +169,12 @@ jobs:
           release_identity=$(jq -er .releaseIdentity release-intent/release-plan.json)
           release_set_id=$(jq -er .releaseSetId release-intent/release-plan.json)
           manifest_asset=$(jq -er .artifactNames.otaManifest release-intent/release-plan.json)
+          bundle_asset=$(jq -er .artifactNames.otaBundle release-intent/release-plan.json)
           selection_asset=$(jq -er .artifactNames.asgSelection release-intent/release-plan.json)
           apk_asset=$(jq -er .apkAsset coordinated-ota-work/asg-build-identity.json)
           provenance_asset=$(jq -er .provenanceAsset coordinated-ota-work/asg-build-identity.json)
           [[ "$apk_asset" == "${{ steps.existing-asg.outputs.apk_asset }}" ]]
           [[ "$provenance_asset" == "${{ steps.existing-asg.outputs.provenance_asset }}" ]]
-          bundle_asset="mentra-live-ota-bundle-${release_identity}.zip"
           release_base="https://github.com/${REPOSITORY}/releases/download/${OTA_RELEASE_TAG}"
 
           {
@@ -198,36 +212,31 @@ jobs:
       - name: Setup Android SDK for APK verification
         uses: android-actions/setup-android@v3
 
-      - name: Initialize ASG build inputs
+      - name: Restore isolated ASG Gradle cache
         if: steps.existing-asg.outputs.exists != 'true'
-        run: |
-          cp asg_client/.env.example asg_client/.env
-          git submodule update --init asg_client/StreamPackLite
-          chmod +x asg_client/recovery_worker/build_and_deploy.sh
-          (cd asg_client/recovery_worker && ./build_and_deploy.sh)
-          test -f asg_client/app/src/main/assets/recovery_worker.apk
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.gradle-coordinated-asg/caches
+            ${{ github.workspace }}/.gradle-coordinated-asg/wrapper
+          key: coordinated-asg-gradle-${{ runner.os }}-${{ hashFiles('asg_client/**/*.gradle*', 'asg_client/gradle/wrapper/gradle-wrapper.properties') }}
+
+      - name: Inject production ASG signing credentials
+        if: steps.existing-asg.outputs.exists != 'true'
+        uses: ./.github/actions/inject-signing
+        with:
+          asg: "true"
+          asg-keystore-b64: ${{ secrets.ASG_KEYSTORE_B64 }}
+          asg-store-password: ${{ secrets.ASG_STORE_PASSWORD }}
+          asg-key-password: ${{ secrets.ASG_KEY_PASSWORD }}
+          asg-key-alias: ${{ secrets.ASG_KEY_ALIAS }}
 
       - name: Build signed ASG APK once
-        id: asg-build
         if: steps.existing-asg.outputs.exists != 'true'
-        working-directory: asg_client
-        continue-on-error: true
         run: >-
-          ./gradlew
-          -PASG_VERSION_CODE="${{ steps.asg-identity.outputs.version_code }}"
-          -PASG_VERSION_NAME="${{ steps.asg-identity.outputs.version_name }}"
-          assembleRelease --build-cache --parallel
-
-      - name: Retry failed ASG build from a clean Gradle cache
-        if: steps.existing-asg.outputs.exists != 'true' && steps.asg-build.outcome == 'failure'
-        working-directory: asg_client
-        run: |
-          ./gradlew --stop || true
-          rm -rf ~/.gradle/caches ~/.gradle/wrapper
-          ./gradlew \
-            -PASG_VERSION_CODE="${{ steps.asg-identity.outputs.version_code }}" \
-            -PASG_VERSION_NAME="${{ steps.asg-identity.outputs.version_name }}" \
-            assembleRelease --build-cache --parallel
+          .github/scripts/build-coordinated-asg.sh
+          "${{ steps.asg-identity.outputs.version_code }}"
+          "${{ steps.asg-identity.outputs.version_name }}"
 
       - name: Stage newly built ASG APK
         if: steps.existing-asg.outputs.exists != 'true'

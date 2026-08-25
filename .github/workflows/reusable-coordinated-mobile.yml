@@ -9,13 +9,16 @@ on:
       release_plan_artifact:
         required: true
         type: string
+      release_id:
+        required: false
+        type: string
       ota_manifest_url:
         required: true
         type: string
       ota_manifest_sha256:
         required: true
         type: string
-      cloud_environment:
+      backend_environment:
         required: true
         type: string
       play_track:
@@ -139,32 +142,19 @@ jobs:
           [[ "$actual" == "$EXPECTED_SHA256" ]]
           .github/scripts/validate-asg-ota-manifest.sh /tmp/coordinated-mobile-ota.json --check-apk
 
-      - name: Create, verify, and inspect the release container
+      - name: Verify and inspect the centrally allocated release container
         id: container
         if: inputs.dry_run != true
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ inputs.release_id }}
           SOURCE_COMMIT: ${{ inputs.source_commit }}
         run: |
           set -euo pipefail
           tag="${{ steps.release.outputs.release_tag }}"
-          releases=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases?per_page=100" | jq 'add')
-          matches=$(jq --arg tag "$tag" '[.[] | select(.tag_name == $tag)]' <<< "$releases")
-          count=$(jq 'length' <<< "$matches")
-          if [[ "$count" -gt 1 ]]; then
-            echo "GitHub contains multiple releases for $tag." >&2
-            exit 1
-          elif [[ "$count" == 0 ]]; then
-            payload=$(jq -n \
-              --arg tag "$tag" \
-              --arg source "$SOURCE_COMMIT" \
-              --arg name "Mentra ${{ steps.release.outputs.release_identity }}" \
-              --arg body "Coordinated release set ${{ steps.release.outputs.release_set_id }}. This draft is published only after every required target is verified." \
-              '{tag_name: $tag, target_commitish: $source, name: $name, body: $body, draft: true, prerelease: true}')
-            release=$(gh api --method POST "repos/${GITHUB_REPOSITORY}/releases" --input - <<< "$payload")
-          else
-            release=$(jq '.[0]' <<< "$matches")
-          fi
+          test -n "$RELEASE_ID"
+          release=$(gh api "repos/${GITHUB_REPOSITORY}/releases/$RELEASE_ID")
+          [[ "$(jq -r .tag_name <<< "$release")" == "$tag" ]]
           [[ "$(jq -r .name <<< "$release")" == "Mentra ${{ steps.release.outputs.release_identity }}" ]]
           if [[ "$(jq -r .draft <<< "$release")" == "true" ]]; then
             [[ "$(jq -r .target_commitish <<< "$release")" == "$SOURCE_COMMIT" ]]
@@ -173,7 +163,7 @@ jobs:
             [[ "$(git rev-parse "$tag^{commit}")" == "$SOURCE_COMMIT" ]]
           fi
 
-          release_id=$(jq -er .id <<< "$release")
+          release_id="$RELEASE_ID"
           assets=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases/$release_id/assets?per_page=100" | jq 'add')
           asset_id() {
             local name="$1"
@@ -263,7 +253,7 @@ jobs:
           node .github/scripts/prepare-mobile-release-env.mjs \
             --plan release-intent/release-plan.json \
             --env-file mobile/.env \
-            --cloud-environment "${{ inputs.cloud_environment }}" \
+            --backend-environment "${{ inputs.backend_environment }}" \
             --ota-manifest-url "${{ inputs.ota_manifest_url }}" \
             --mapbox-public-token "$MAPBOX_PUBLIC_TOKEN" \
             --sentry-dsn "$sentry_dsn"
@@ -473,7 +463,7 @@ jobs:
           node .github/scripts/prepare-mobile-release-env.mjs \
             --plan release-intent/release-plan.json \
             --env-file mobile/.env \
-            --cloud-environment "${{ inputs.cloud_environment }}" \
+            --backend-environment "${{ inputs.backend_environment }}" \
             --ota-manifest-url "${{ inputs.ota_manifest_url }}" \
             --mapbox-public-token "$MAPBOX_PUBLIC_TOKEN" \
             --sentry-dsn "$sentry_dsn"
