@@ -53,6 +53,18 @@ enum class ScanStopReason {
     ERROR,
 }
 
+/**
+ * Callbacks for `MentraBluetoothSdk.scan`.
+ *
+ * [onError] is not always terminal. A scan that fails to start reports the
+ * failure through [onError] and [onComplete] never runs. A scan that runs to
+ * completion always ends with [onComplete]; when it completes with zero
+ * results while a compatible device is already GATT-connected by another app
+ * on this phone, a non-terminal diagnostic error with code
+ * `device_held_by_other_app` is delivered through [onError] immediately
+ * before that [onComplete]. Discriminate on [BluetoothError.code], not on
+ * [onError] having fired.
+ */
 interface ScanCallback {
     fun onResults(devices: List<Device>) {}
     fun onComplete(devices: List<Device>) {}
