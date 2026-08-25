@@ -51,6 +51,7 @@ export interface DeveloperApp {
   description: string | null;
   status: "active" | "archived" | "suspended";
   activeRelease: DeveloperRelease | null;
+  activeBetaRelease?: DeveloperRelease | null;
   latestRelease: DeveloperRelease | null;
   releaseCount: number;
   createdAt: string | null;
@@ -60,6 +61,7 @@ export interface DeveloperApp {
 export interface DeveloperRelease {
   id: string;
   version: string;
+  releaseTrack: "stable" | "beta";
   status: "draft" | "submitted" | "in_review" | "accepted" | "rejected" | "published" | "suspended";
   releaseBundleAssetId: string | null;
   bundleSha256: string | null;
@@ -132,6 +134,7 @@ export interface AdminReleaseSummary {
   packageName: string;
   displayName: string;
   version: string;
+  releaseTrack: "stable" | "beta";
   status: DeveloperRelease["status"];
   bundleSha256: string | null;
   bundleSizeBytes: number | null;
@@ -329,6 +332,7 @@ export async function createRelease(
   input: {
     packageName: string;
     version: string;
+    releaseTrack: "stable" | "beta";
     manifest: Record<string, unknown>;
     bundle: Uint8Array;
     fileName?: string;
@@ -338,6 +342,7 @@ export async function createRelease(
   const form = new FormData();
   form.set("packageName", input.packageName);
   form.set("version", input.version);
+  form.set("releaseTrack", input.releaseTrack);
   form.set("manifest", JSON.stringify(input.manifest));
   form.set("signedBundle", JSON.stringify(input.signedBundle));
   form.set("fileName", input.fileName ?? "bundle.zip");

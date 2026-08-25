@@ -30,6 +30,7 @@ export interface CreateReleaseInput {
   bundle: Uint8Array;
   fileName?: string;
   signedBundle?: SignedBundleMetadata;
+  releaseTrack?: "stable" | "beta";
 }
 
 export interface UpdateStoreListingInput {
@@ -81,6 +82,9 @@ export class MiniAppService {
       const activeRelease = app.activeReleaseId
         ? appReleases.find(release => release._id.toString() === app.activeReleaseId)
         : null;
+      const activeBetaRelease = app.activeBetaReleaseId
+        ? appReleases.find(release => release._id.toString() === app.activeBetaReleaseId)
+        : null;
       const latestRelease = appReleases[0] ?? null;
       return {
         id: app._id.toString(),
@@ -90,6 +94,7 @@ export class MiniAppService {
         storeListing: serializeStoreListing(app.storeListing),
         status: app.status,
         activeRelease: activeRelease ? serializeRelease(activeRelease) : null,
+        activeBetaRelease: activeBetaRelease ? serializeRelease(activeBetaRelease) : null,
         latestRelease: latestRelease ? serializeRelease(latestRelease) : null,
         releaseCount: appReleases.length,
         createdAt: app.createdAt?.toISOString() ?? null,
@@ -168,6 +173,7 @@ export class MiniAppService {
       releaseId: release._id.toString(),
       packageName: release.packageName,
       version: release.version,
+      releaseTrack: release.releaseTrack === "beta" ? "beta" : "stable",
       appName: app.displayName,
       description: app.description ?? null,
       developerEmail: developer.email ?? null,
@@ -311,11 +317,20 @@ export class MiniAppService {
     release.publishedAt = release.publishedAt ?? new Date();
     release.reviewedBy = input.adminId;
     if (input.notes?.trim()) release.reviewNotes = input.notes.trim();
-    app.activeReleaseId = release._id.toString();
+    const releaseTrack = release.releaseTrack === "beta" ? "beta" : "stable";
+    if (releaseTrack === "beta") {
+      app.activeBetaReleaseId = release._id.toString();
+    } else {
+      app.activeReleaseId = release._id.toString();
+    }
     // The public catalog must never read the developer-editable listing. A
     // publication decision snapshots the exact moderated text and artwork;
     // subsequent developer edits remain private until another publication.
-    app.publishedStoreListing = reviewedStoreListing;
+    if (releaseTrack === "beta") {
+      app.publishedBetaStoreListing = reviewedStoreListing;
+    } else {
+      app.publishedStoreListing = reviewedStoreListing;
+    }
 
     await Promise.all([release.save(), app.save()]);
     return serializeRelease(release.toObject());
@@ -344,6 +359,12 @@ export class MiniAppService {
     if (!app) throw new MiniAppServiceError("not_found", "miniapp not found", 404);
     if (app.publishedStoreListing && Object.keys(publishedUpdates).length > 0) {
       await MiniAppModel.updateOne({ _id: app._id }, { $set: publishedUpdates });
+    }
+    if (app.publishedBetaStoreListing && Object.keys(publishedUpdates).length > 0) {
+      const betaUpdates = Object.fromEntries(
+        Object.entries(publishedUpdates).map(([key, value]) => [key.replace("publishedStoreListing", "publishedBetaStoreListing"), value]),
+      );
+      await MiniAppModel.updateOne({ _id: app._id }, { $set: betaUpdates });
     }
     return {
       packageName: app.packageName,
@@ -392,6 +413,7 @@ export class MiniAppService {
       miniAppId: app._id.toString(),
       packageName,
       version: input.version,
+      releaseTrack: input.releaseTrack ?? "stable",
       status: "draft",
       manifest: canonical.manifest,
       manifestSha256: canonical.manifestSha256,
@@ -618,6 +640,9 @@ export class MiniAppService {
       app.publishedStoreListing?.iconAssetId,
       app.publishedStoreListing?.coverAssetId,
       ...(app.publishedStoreListing?.screenshotAssetIds ?? []),
+      app.publishedBetaStoreListing?.iconAssetId,
+      app.publishedBetaStoreListing?.coverAssetId,
+      ...(app.publishedBetaStoreListing?.screenshotAssetIds ?? []),
     ]);
     if (publishedAssetIds.has(assetId)) {
       throw new MiniAppServiceError(
@@ -653,6 +678,7 @@ export class MiniAppService {
       storeListing: serializeStoreListing(app.storeListing),
       status: app.status,
       activeRelease: null,
+      activeBetaRelease: null,
       latestRelease: null,
       releaseCount: 0,
       createdAt: app.createdAt?.toISOString() ?? null,
@@ -674,6 +700,7 @@ export class MiniAppService {
       storeListing: serializeStoreListing(app.storeListing),
       status: app.status,
       activeRelease: null,
+      activeBetaRelease: null,
       latestRelease: null,
       releaseCount: 0,
       createdAt: app.createdAt?.toISOString() ?? null,
@@ -727,6 +754,7 @@ function assertPackagePrefix(developer: DeveloperIdentity, packageName: string):
 function serializeRelease(release: {
   _id: unknown;
   version: string;
+  releaseTrack?: string | null;
   status: string;
   releaseBundleAssetId?: string | null;
   bundleSha256?: string | null;
@@ -743,6 +771,7 @@ function serializeRelease(release: {
   return {
     id: String(release._id),
     version: release.version,
+    releaseTrack: release.releaseTrack === "beta" ? "beta" : "stable",
     status: release.status,
     releaseBundleAssetId: release.releaseBundleAssetId ?? null,
     bundleSha256: release.bundleSha256 ?? null,

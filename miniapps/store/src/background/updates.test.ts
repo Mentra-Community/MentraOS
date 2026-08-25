@@ -34,9 +34,13 @@ function app(overrides: Partial<StoreApp> = {}): StoreApp {
     iconUrl: null,
     coverUrl: null,
     screenshotUrls: [],
+    selectedTrack: "stable",
+    preferredTrack: "stable",
+    availableTracks: ["stable"],
     release: {
       id: "release-2",
       version: "2.0.0",
+      track: "stable",
       bundleUrl: "https://store.example/weather-2.0.0.zip",
       bundleSha256: "a".repeat(64),
       manifestSha256: null,

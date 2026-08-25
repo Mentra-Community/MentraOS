@@ -52,6 +52,12 @@ function isStoreApp(value: unknown): value is StoreApp {
     Boolean(release) &&
     typeof release?.id === "string" &&
     typeof release?.version === "string" &&
+    (release?.track === "stable" || release?.track === "beta") &&
+    (app.selectedTrack === "stable" || app.selectedTrack === "beta") &&
+    (app.preferredTrack === "stable" || app.preferredTrack === "beta") &&
+    Array.isArray(app.availableTracks) &&
+    app.availableTracks.every((track) => track === "stable" || track === "beta") &&
+    release?.track === app.selectedTrack &&
     typeof release?.bundleUrl === "string" &&
     typeof release?.bundleSha256 === "string" &&
     /^[a-f0-9]{64}$/.test(release.bundleSha256)

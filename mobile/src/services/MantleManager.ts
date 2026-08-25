@@ -38,6 +38,7 @@ import {attemptReconnectToDefaultWearable} from "@/effects/Reconnect"
 import {ensureDevModeForUser} from "@/utils/dev/devModeAllowlist"
 import mentraAuth from "@/utils/auth/authClient"
 import {showAlert} from "@/utils/AlertUtils"
+import type {GlassesMenuItem} from "@/utils/glassesMenu"
 import {Buffer} from "@craftzdog/react-native-buffer"
 
 // Build-time Store trust table. OEM builds may add Store packages here and
@@ -108,6 +109,7 @@ class MantleManager {
   private lastMicDataAt: number = 0
   private subs: Array<any> = []
   private initialized: boolean = false
+  private storePreviewUnsubscribe: (() => void) | null = null
   private activePhoneNotificationId: string | null = null
   /** A notification is being read aloud right now. */
   private speakingNotification: boolean = false
@@ -509,6 +511,8 @@ class MantleManager {
     this.subs.forEach((sub) => sub.remove())
     this.subs = []
     storeUpdateScheduler.stop()
+    this.storePreviewUnsubscribe?.()
+    this.storePreviewUnsubscribe = null
     this.activePhoneNotificationId = null
 
     phoneLocationService.stopPhoneLocation()
@@ -578,6 +582,19 @@ class MantleManager {
     // new mobile binary.
     await preinstalledMiniappSync.sync()
 
+    // The Store ships as a real build-owned SYSTEM miniapp so its trust and
+    // update paths are exercised before launch, but it is a host-gated preview:
+    // normal users get no Home tile, running-tray entry, catalog traffic, or
+    // maintenance warnings. miniapp.json cannot opt into this gate.
+    await this.applyStorePreview(Boolean(engine.settings.get(SETTINGS.miniapp_store_preview_enabled.key)))
+    this.storePreviewUnsubscribe?.()
+    this.storePreviewUnsubscribe = engine.settings.onChanged<boolean>(
+      SETTINGS.miniapp_store_preview_enabled.key,
+      (enabled) => {
+        void this.applyStorePreview(Boolean(enabled))
+      },
+    )
+
     // Re-spawn local miniapps that were running when the app was last killed.
     // Cloud apps get resurrected by the cloud on reconnect; local (phone-hosted)
     // miniapps have no server to bring them back, so the launcher restarts them
@@ -585,11 +602,35 @@ class MantleManager {
     // upgraded bundles are on disk first. Best-effort — never block miniapp
     // init on it.
     miniappLauncher.autostartLocalMiniapps().catch((e) => console.warn("MANTLE: autostartLocalMiniapps failed", e))
+  }
 
-    // Store maintenance is a host-triggered transient action. It wakes each
-    // bundled Store without projecting it into the user's running tray, then
-    // tears the context down after reconciliation unless the user opened it.
-    void storeUpdateScheduler.start(BUNDLED_STORE_MINIAPP_PACKAGES)
+  private async applyStorePreview(enabled: boolean): Promise<void> {
+    for (const packageName of BUNDLED_STORE_MINIAPP_PACKAGES) {
+      engine.miniapps.setHiddenStatus(packageName, !enabled)
+    }
+    if (enabled) {
+      // Store maintenance is a host-triggered transient action. It wakes each
+      // bundled Store without projecting it into the running tray and tears the
+      // context down after reconciliation unless the user opens it.
+      void storeUpdateScheduler.start(BUNDLED_STORE_MINIAPP_PACKAGES)
+      return
+    }
+
+    storeUpdateScheduler.stop()
+    const menuItems = engine.settings.get(SETTINGS.menu_apps.key) as GlassesMenuItem[] | null
+    const visibleMenuItems = menuItems?.filter(
+      (item) => !BUNDLED_STORE_MINIAPP_PACKAGES.some((packageName) => packageName === item.packageName),
+    )
+    if (menuItems && visibleMenuItems && visibleMenuItems.length !== menuItems.length) {
+      await engine.settings.set(SETTINGS.menu_apps.key, visibleMenuItems)
+    }
+    for (const packageName of BUNDLED_STORE_MINIAPP_PACKAGES) {
+      const app = engine.miniapps.list().find((candidate) => candidate.packageName === packageName)
+      if (app?.foregrounded) engine.miniapps.clearForeground()
+      // Also clears the persisted running bit so a Store opened in preview
+      // cannot reappear in the tray after preview is later disabled.
+      if (app) await engine.miniapps.stop(packageName)
+    }
   }
 
   /**

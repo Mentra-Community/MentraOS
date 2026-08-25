@@ -265,7 +265,7 @@ releases
 
       for (const release of releaseList) {
         const size = release.bundleSizeBytes ? `${Math.round(release.bundleSizeBytes / 1024)} KB` : "no bundle";
-        console.log(`${release.version}\t${release.status}\t${size}\t${release.bundleSha256 ?? "no hash"}`);
+        console.log(`${release.version}\t${release.releaseTrack}\t${release.status}\t${size}\t${release.bundleSha256 ?? "no hash"}`);
         if (release.reviewNotes) console.log(`  Review: ${release.reviewNotes}`);
       }
     } catch (error) {
@@ -290,6 +290,7 @@ releases
       else {
         console.log(`${packageName}@${release.version}`);
         console.log(`Status: ${release.status}`);
+        console.log(`Track: ${release.releaseTrack}`);
         console.log(`Release: ${release.id}`);
         if (release.reviewNotes) console.log(`Review: ${release.reviewNotes}`);
         if (release.bundleSha256) console.log(`Bundle SHA-256: ${release.bundleSha256}`);
@@ -311,7 +312,7 @@ releases
 
     try {
       const { release } = await submitRelease(creds, { packageName, releaseId });
-      console.log(`Submitted ${packageName}@${release.version} for review`);
+      console.log(`Submitted ${packageName}@${release.version} (${release.releaseTrack}) for review`);
     } catch (error) {
       fail(error);
     }
@@ -582,13 +583,17 @@ program
   .option("--no-build", "skip running bun run build before packing")
   .option("--no-pack", "skip running bun run pack and upload the existing build zip")
   .option("--no-submit", "upload as draft without submitting for review")
+  .option("--track <track>", "release track: stable or beta", "stable")
   .option("--json", "print machine-readable JSON")
-  .action(async (options: { cwd: string; build: boolean; pack: boolean; submit: boolean; json?: boolean }) => {
+  .action(async (options: { cwd: string; build: boolean; pack: boolean; submit: boolean; track: string; json?: boolean }) => {
     const creds = await requireCredentials();
     if (!creds) return;
 
     const cwd = resolve(options.cwd);
     try {
+      if (options.track !== "stable" && options.track !== "beta") {
+        throw new Error("--track must be either stable or beta");
+      }
       const manifest = readManifest(cwd);
       const packageName = stringField(manifest, "packageName");
       const version = stringField(manifest, "version");
@@ -620,6 +625,7 @@ program
       const { release } = await createRelease(creds, {
         packageName,
         version,
+        releaseTrack: options.track,
         manifest,
         bundle,
         fileName: basename(zipPath),
@@ -641,6 +647,7 @@ program
       }
       console.log(`Uploaded ${packageName}@${release.version}`);
       console.log(`Status: ${submitted.release.status}`);
+      console.log(`Track: ${submitted.release.releaseTrack}`);
       console.log(`Bundle: ${basename(zipPath)} (${sizeKb} KB)`);
       console.log(`Signing key: ${signedBundle.signingKeyId}`);
       if (release.bundleSha256) console.log(`SHA-256: ${release.bundleSha256}`);

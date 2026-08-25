@@ -37,6 +37,26 @@ export const developerAppSchema = z.object({
     .object({
       id: z.string(),
       version: z.string(),
+      releaseTrack: z.enum(["stable", "beta"]),
+      status: z.enum(["draft", "submitted", "in_review", "accepted", "rejected", "published", "suspended"]),
+      releaseBundleAssetId: z.string().nullable(),
+      bundleSha256: z.string().nullable(),
+      bundleSizeBytes: z.number().nullable(),
+      manifestSha256: z.string().nullable().optional(),
+      manifest: z.record(z.string(), z.unknown()).nullable().optional(),
+      signingKeyId: z.string().nullable().optional(),
+      signedAt: z.string().nullable().optional(),
+      reviewedBy: z.string().nullable().optional(),
+      reviewNotes: z.string().nullable().optional(),
+      createdAt: z.string().nullable(),
+      updatedAt: z.string().nullable(),
+    })
+    .nullable(),
+  activeBetaRelease: z
+    .object({
+      id: z.string(),
+      version: z.string(),
+      releaseTrack: z.enum(["stable", "beta"]),
       status: z.enum(["draft", "submitted", "in_review", "accepted", "rejected", "published", "suspended"]),
       releaseBundleAssetId: z.string().nullable(),
       bundleSha256: z.string().nullable(),
@@ -55,6 +75,7 @@ export const developerAppSchema = z.object({
     .object({
       id: z.string(),
       version: z.string(),
+      releaseTrack: z.enum(["stable", "beta"]),
       status: z.enum(["draft", "submitted", "in_review", "accepted", "rejected", "published", "suspended"]),
       releaseBundleAssetId: z.string().nullable(),
       bundleSha256: z.string().nullable(),
@@ -83,6 +104,7 @@ export type DeveloperApp = z.infer<typeof developerAppSchema>;
 export const developerReleaseSchema = z.object({
   id: z.string(),
   version: z.string(),
+  releaseTrack: z.enum(["stable", "beta"]),
   status: z.enum(["draft", "submitted", "in_review", "accepted", "rejected", "published", "suspended"]),
   releaseBundleAssetId: z.string().nullable().optional(),
   bundleSha256: z.string().nullable().optional(),

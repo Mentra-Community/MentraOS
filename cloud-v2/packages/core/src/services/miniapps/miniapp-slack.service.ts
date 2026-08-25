@@ -30,6 +30,7 @@ export interface MiniAppSubmissionSlackNotification {
   releaseId: string;
   packageName: string;
   version: string;
+  releaseTrack: "stable" | "beta";
   appName: string;
   developerEmail?: string | null;
   orgId: string;
@@ -108,7 +109,7 @@ function buildSlackMessage(notification: MiniAppSubmissionSlackNotification): {
   text: string;
   blocks: SlackBlock[];
 } {
-  const { packageName, version, appName, developerEmail, orgId, description } = notification;
+  const { packageName, version, releaseTrack, appName, developerEmail, orgId, description } = notification;
   const env = environmentLabel();
   const appType = extractAppType(notification.manifest);
   const timestamp = new Date().toLocaleString("en-US", {
@@ -121,6 +122,7 @@ function buildSlackMessage(notification: MiniAppSubmissionSlackNotification): {
     { type: "mrkdwn", text: `*App Name:*\n${slackText(appName || "Unnamed", SHORT_TEXT_MAX)}` },
     { type: "mrkdwn", text: `*Package:*\n\`${slackText(packageName, SHORT_TEXT_MAX)}\`` },
     { type: "mrkdwn", text: `*Version:*\n${slackText(version, SHORT_TEXT_MAX)}` },
+    { type: "mrkdwn", text: `*Track:*\n${slackText(releaseTrack, SHORT_TEXT_MAX)}` },
     {
       type: "mrkdwn",
       text: `*Developer:*\n${slackText(developerEmail || "unknown", SHORT_TEXT_MAX)}`,

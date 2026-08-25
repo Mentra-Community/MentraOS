@@ -84,6 +84,56 @@ publisher signatures can be enforced later without changing the API.
 - [x] Cover publish-to-catalog and artwork behavior with Mongo/storage-backed
       integration tests.
 
+## Stable and beta release tracks
+
+Track is release-distribution state, not a Cloud deployment environment.
+Debug/dev/staging/prod continue to select independent Core deployments and
+data; each deployment may publish both stable and beta releases.
+
+- [x] Add an immutable `stable | beta` track to every release. Existing rows
+      default to stable so a deployment needs no data migration before rollout.
+- [x] Maintain independent active stable and beta release pointers and reviewed
+      Store-listing snapshots. Publishing beta must not replace what stable
+      users see.
+- [x] Make stable the default catalog selection. An authenticated user enrolled
+      in a miniapp's beta track receives its newest published beta release, with
+      automatic fallback to stable whenever no beta is published.
+- [x] Persist beta enrollment per `(Mentra user, miniapp)` in Core and expose an
+      authenticated opt-in/leave endpoint. Catalog query parameters alone must
+      never grant beta access.
+- [x] Show beta availability/current selection in the Store detail screen and
+      refresh the catalog after changing tracks.
+- [x] Carry the selected release track through Store install descriptors and
+      active-release provenance so manual and automatic updates remain
+      diagnosable.
+- [x] Add CLI `mentra publish --track stable|beta` support and show track in
+      CLI status/list output, Developer Console release history/detail, and
+      admin review/publication UI.
+- [x] Preserve compatibility gates for both tracks. A beta update requiring a
+      newer Mentra App, Miniapp SDK ABI, or glasses capability remains deferred
+      exactly like a stable update.
+- [x] Leaving beta never forces an automatic downgrade. The installed beta
+      remains until a newer stable version is published or the user explicitly
+      reinstalls.
+- [x] Cover stable defaulting, per-user beta selection/fallback, independent
+      publication, enrollment authorization, Store UI, CLI payloads, and
+      automatic beta updates with tests.
+
+## Prelaunch Store exposure
+
+- [x] Keep `com.mentra.store` bundled and SYSTEM so the install/update trust
+      boundary is exercised by real builds before launch.
+- [x] Add a dedicated host-owned Mentra Miniapp Store preview flag to Debug
+      Settings. It defaults off in every build; `miniapp.json` cannot request
+      or override it.
+- [x] Hide the Store from Home and the glasses menu when preview is off and do not start its
+      transient update scheduler, so normal users see no Store UI, tray entry,
+      catalog traffic, or scheduler warnings.
+- [x] Reveal the Store and start reconciliation when Store preview is enabled;
+      disabling it must hide the Store and stop future scheduled checks without
+      uninstalling it or changing SYSTEM identity.
+- [x] Test cold boot in both modes and live Store-preview transitions.
+
 ## Mentra CLI and Developer Console
 
 - [x] Read the CLI version from its package metadata.
@@ -139,21 +189,22 @@ publisher signatures can be enforced later without changing the API.
       another Store's packages.
 - [x] Keep the Store itself out of its in-process update loop; Store-self update
       remains a future signed host-owned updater concern.
-- [x] Package and integrity-check `com.mentra.store-1.0.5.zip`.
+- [x] Package and integrity-check `com.mentra.store-1.0.6.zip`.
 
 ## Verification
 
 - [x] Cloud typecheck.
 - [x] Developer Console production build.
 - [x] Cloud Store/CLI bundle tests: 16 passed.
-- [x] Publish-to-catalog integration: 7 passed, including concurrent listing
+- [x] Publish-to-catalog integration: 8 passed, including stable/beta isolation,
+      per-user enrollment, concurrent listing
       edits, moderation, artwork privacy, and the 10-screenshot cap.
 - [x] Miniapp packer regressions: 2 passed, including atomic preservation of
       the previous artifact after a failed ZIP command.
 - [x] Mentra Miniapp SDK: 272 passed.
 - [x] Installer/SYSTEM security tests, including bundle-name impersonation.
 - [x] Store action registration, catalog, automatic-update policy, ownership,
-      refresh serialization, and UI-model tests: 21
+      refresh serialization, and UI-model tests: 25
       passed.
 - [x] Transient action lifecycle, invisible running projection, concurrent
       invocation teardown, promotion, host-action non-discovery, and scheduler
@@ -163,12 +214,12 @@ publisher signatures can be enforced later without changing the API.
       search-query preservation, install, details, verified identity, Installed
       state, and horizontal-overflow assertion.
 - [x] Mentra App TypeScript compile.
-- [x] Mentra App Jest: 86 suites passed (1 skipped), 674 tests passed
+- [x] Mentra App Jest: 86 suites passed (1 skipped), 675 tests passed
       (2 skipped).
 - [x] Android ASG and Bluetooth SDK compile checks.
 - [x] Full iOS Simulator native build with code signing disabled.
 - [x] ZIP integrity check. Bundled Store SHA-256:
-      `bfc2da58ee988dcceeb60baf6d673b7e12a46f82b7db8519e0653f67d6022094`.
+      `87f9538dbad0212999cf83ad19282d0f7946aecddeaf74c76baa1b53ce7a7079`.
 - [x] Review regressions: bounded streaming inflation and CRC checks in both
       Core and the phone, trusted host-selected Core URL, complete catalog
       pagination, Store-owned uninstall visibility, pre-activation host/SDK
@@ -187,7 +238,7 @@ publisher signatures can be enforced later without changing the API.
       origins without allowing public cleartext catalog traffic (including DNS
       names that resemble private IPv6 prefixes).
 - [x] Touched-file lint and `git diff --check`.
-- [x] Full Cloud suite audit: 544 passed, 1 skipped. The aggregate invocation
+- [x] Full Cloud suite audit: 559 passed, 1 skipped. The aggregate invocation
       also reproduces unrelated shared-state/credential baselines (R2 is not
       configured; Slack env is captured at import; account/audio suites race
       global Mongo/Redis state). Account auth passes 14/14 in isolation; Store

@@ -10,6 +10,7 @@ export const RELEASE_STATUSES = [
   "published",
   "suspended",
 ] as const;
+export const MINIAPP_RELEASE_TRACKS = ["stable", "beta"] as const;
 
 const MiniAppReleaseSchema = new Schema(
   {
@@ -17,6 +18,8 @@ const MiniAppReleaseSchema = new Schema(
     miniAppId: { type: String, required: true, index: true },
     packageName: { type: String, required: true, index: true },
     version: { type: String, required: true },
+    /** Distribution track is chosen at upload and immutable for this release. */
+    releaseTrack: { type: String, enum: MINIAPP_RELEASE_TRACKS, default: "stable", index: true, immutable: true },
     status: { type: String, enum: RELEASE_STATUSES, default: "draft", index: true },
     manifest: { type: Schema.Types.Mixed, required: true },
     releaseBundleAssetId: { type: String, default: null },

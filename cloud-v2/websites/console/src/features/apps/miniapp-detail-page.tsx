@@ -37,7 +37,8 @@ export function MiniappDetailPage() {
   const app = apps.data?.apps.find(item => item.packageName === packageName);
   const releases = releasesQuery.data?.releases ?? [];
   const packagePrefix = session.data?.packagePrefix;
-  const published = releases.find(release => release.status === "published") ?? app?.activeRelease ?? null;
+  const publishedStable = app?.activeRelease ?? releases.find(release => release.status === "published" && release.releaseTrack === "stable") ?? null;
+  const publishedBeta = app?.activeBetaRelease ?? releases.find(release => release.status === "published" && release.releaseTrack === "beta") ?? null;
   const inReview = releases.find(release => reviewStatuses.has(release.status));
 
   return (
@@ -62,8 +63,9 @@ export function MiniappDetailPage() {
           {app ? <Badge tone={app.status === "active" ? "success" : "neutral"}>{app.status}</Badge> : null}
         </header>
 
-        <div className="mt-6 grid gap-4 sm:grid-cols-2">
-          <ReleaseSummaryCard label="Production channel" release={published} empty="No published release yet" />
+        <div className="mt-6 grid gap-4 sm:grid-cols-3">
+          <ReleaseSummaryCard label="Stable track" release={publishedStable} empty="No stable release yet" />
+          <ReleaseSummaryCard label="Beta track" release={publishedBeta} empty="No beta release yet" />
           <ReleaseSummaryCard label="In review" release={inReview ?? null} empty="Nothing in review" />
         </div>
 
@@ -119,9 +121,7 @@ export function MiniappDetailPage() {
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         <ReleaseStatusBadge status={release.status} />
-                        {release.status === "published" ? (
-                          <span className="text-xs font-medium text-[#a0a3aa]">production channel</span>
-                        ) : null}
+                        <span className="text-xs font-medium text-[#a0a3aa]">{release.releaseTrack} track</span>
                       </div>
                       {release.reviewNotes ? (
                         <p className="mt-1.5 line-clamp-2 text-sm text-[#68746d]">Review: {release.reviewNotes}</p>

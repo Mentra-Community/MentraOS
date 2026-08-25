@@ -31,9 +31,13 @@ function app(version: string, packageName = "com.example.weather", categories: s
     iconUrl: null,
     coverUrl: null,
     screenshotUrls: [],
+    selectedTrack: "stable",
+    preferredTrack: "stable",
+    availableTracks: ["stable"],
     release: {
       id: `release-${version}`,
       version,
+      track: "stable",
       bundleUrl: `https://store.example/weather-${version}.zip`,
       bundleSha256: "a".repeat(64),
       manifestSha256: null,

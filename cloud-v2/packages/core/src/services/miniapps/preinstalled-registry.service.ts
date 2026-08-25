@@ -92,6 +92,7 @@ export class PreinstalledRegistryService {
         packageName: release.packageName,
         displayName: app?.displayName ?? release.packageName,
         version: release.version,
+        releaseTrack: release.releaseTrack === "beta" ? "beta" : "stable",
         status: release.status,
         bundleSha256: release.bundleSha256 ?? null,
         bundleSizeBytes: release.bundleSizeBytes ?? null,

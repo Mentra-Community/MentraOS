@@ -31,8 +31,13 @@ const MiniAppSchema = new Schema(
     storeListing: { type: StoreListingSchema, default: () => ({}) },
     /** Immutable public snapshot from the latest publication decision. */
     publishedStoreListing: { type: StoreListingSchema, default: null },
+    /** Immutable public snapshot paired with the active beta release. */
+    publishedBetaStoreListing: { type: StoreListingSchema, default: null },
     status: { type: String, enum: MINIAPP_STATUSES, default: "active", index: true },
+    /** Active stable release. Kept under the original name for deployed-row compatibility. */
     activeReleaseId: { type: String, default: null },
+    /** Active beta release, independently published from stable. */
+    activeBetaReleaseId: { type: String, default: null },
     createdBy: { type: String, required: true },
   },
   { timestamps: true, collection: "miniapps" },

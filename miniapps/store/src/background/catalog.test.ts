@@ -4,9 +4,13 @@ import {isNewerVersion, loadCompleteCatalog, parseCatalog, trustedCoreOrigin} fr
 const app = (packageName: string) => ({
   packageName,
   name: packageName,
+  selectedTrack: "stable",
+  preferredTrack: "stable",
+  availableTracks: ["stable"],
   release: {
     id: `${packageName}-release`,
     version: "1.0.0",
+    track: "stable",
     bundleUrl: `https://example.test/${packageName}.zip`,
     bundleSha256: "a".repeat(64),
   },
@@ -43,9 +47,13 @@ describe("Store catalog", () => {
         {
           packageName: "com.example.good",
           name: "Good",
+          selectedTrack: "stable",
+          preferredTrack: "stable",
+          availableTracks: ["stable"],
           release: {
             id: "r1",
             version: "1.0.0",
+            track: "stable",
             bundleUrl: "https://example.test/bundle.zip",
             bundleSha256: "a".repeat(64),
           },
@@ -53,7 +61,10 @@ describe("Store catalog", () => {
         {
           packageName: "com.example.bad",
           name: "Bad",
-          release: {id: "r2", version: "1.0.0", bundleUrl: "https://example.test/bundle.zip", bundleSha256: "nope"},
+          selectedTrack: "stable",
+          preferredTrack: "stable",
+          availableTracks: ["stable"],
+          release: {id: "r2", version: "1.0.0", track: "stable", bundleUrl: "https://example.test/bundle.zip", bundleSha256: "nope"},
         },
       ],
     })

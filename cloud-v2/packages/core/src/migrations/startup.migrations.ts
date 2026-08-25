@@ -12,6 +12,8 @@ import { DeveloperOrgMembershipModel } from "../models/developer-org-membership.
 import { RefreshTokenModel } from "../models/refresh-token.model";
 import { UserModel } from "../models/user.model";
 import { OemModel } from "../models/oem.model";
+import { MiniAppReleaseModel } from "../models/miniapp-release.model";
+import { MiniAppTrackEnrollmentModel } from "../models/miniapp-track-enrollment.model";
 
 const logger = createLogger("core").child({ component: "startup-migrations" });
 
@@ -45,6 +47,14 @@ export async function runStartupMigrations(): Promise<void> {
   await UserModel.createIndexes();
   // prevTokenHash recovery-lookup index (OS-1703). Idempotent; sparse.
   await RefreshTokenModel.createIndexes();
+  // Use the raw collection for the one-time backfill because releaseTrack is
+  // immutable at the model layer after creation.
+  await MiniAppReleaseModel.collection.updateMany(
+    { releaseTrack: { $exists: false } },
+    { $set: { releaseTrack: "stable" } },
+  );
+  await MiniAppReleaseModel.createIndexes();
+  await MiniAppTrackEnrollmentModel.createIndexes();
   await dropLegacyMembershipEmailIndex();
   await dropLegacySingleOrgMembershipIndex();
   await dedupeDeveloperOrgMemberships();

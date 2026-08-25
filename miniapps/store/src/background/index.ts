@@ -57,6 +57,11 @@ export class StoreController {
     this.ui.handle("store:open", ({packageName, query}: {packageName: string; query?: string}) =>
       this.enqueueMutation(() => this.open(packageName, query)),
     )
+    this.ui.handle(
+      "store:set-track",
+      ({packageName, track, query}: {packageName: string; track: "stable" | "beta"; query?: string}) =>
+        this.enqueueMutation(() => this.setTrack(packageName, track, query)),
+    )
   }
 
   private async reconcileUpdates(): Promise<{checkedAt: number; candidateCount: number}> {
@@ -258,7 +263,7 @@ export class StoreController {
         ...(app.release.sdkVersion ? {sdkVersion: app.release.sdkVersion} : {}),
         hardwareRequirements: app.release.hardwareRequirements,
         releaseId: app.release.id,
-        channel: "stable",
+        channel: app.release.track,
       })
       return this.refresh(this.lastQuery, false, true)
     } catch (error) {
@@ -288,6 +293,25 @@ export class StoreController {
       this.send()
       return this.snapshot
     }
+  }
+
+  private async setTrack(packageName: string, track: "stable" | "beta", query?: string) {
+    if (query !== undefined) this.lastQuery = query
+    const base = await this.coreUrl()
+    if (!base) throw new Error("Store Core URL is not configured")
+    const url = new URL(`/api/store/apps/${encodeURIComponent(packageName)}/track`, base)
+    const response = await this.session.auth.fetch(url.toString(), {
+      method: "POST",
+      headers: {accept: "application/json", "content-type": "application/json"},
+      body: JSON.stringify({track}),
+    })
+    if (!response.ok) {
+      const body = (await response.json().catch(() => null)) as {error_description?: unknown} | null
+      throw new Error(
+        typeof body?.error_description === "string" ? body.error_description : `Could not change release track (${response.status})`,
+      )
+    }
+    return this.refresh(this.lastQuery, true, true)
   }
 
   private async open(packageName: string, query?: string) {

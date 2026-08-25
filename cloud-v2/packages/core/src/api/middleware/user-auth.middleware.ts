@@ -45,3 +45,16 @@ export const userAuth = createMiddleware<AppEnv>(async (c, next) => {
 
   await next();
 });
+
+/**
+ * Public routes may use this to enrich a response for a signed-in user while
+ * retaining a stable anonymous response. A supplied credential is still
+ * verified strictly; only an entirely absent Authorization header is optional.
+ */
+export const optionalUserAuth = createMiddleware<AppEnv>(async (c, next) => {
+  if (!c.req.header("authorization")) {
+    await next();
+    return;
+  }
+  return userAuth(c, next);
+});

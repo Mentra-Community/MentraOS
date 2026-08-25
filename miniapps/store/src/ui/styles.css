@@ -442,6 +442,45 @@ p {
   line-height: 1.62;
   white-space: pre-wrap;
 }
+.track-section {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+.track-section p {
+  max-width: 310px;
+  margin-top: 6px;
+  color: #68746d;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.track-options {
+  display: flex;
+  flex-shrink: 0;
+  gap: 4px;
+  border-radius: 12px;
+  background: #eef1ed;
+  padding: 4px;
+}
+.track-options button {
+  min-height: 36px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: #68746d;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 750;
+}
+.track-options button.active {
+  background: #fff;
+  color: #087d50;
+  box-shadow: 0 1px 4px rgba(20, 30, 25, 0.12);
+}
+.track-options button:disabled:not(.active) {
+  opacity: 0.55;
+}
 .screenshots {
   display: flex;
   gap: 12px;
@@ -606,6 +645,16 @@ p {
 }
 .app[data-theme="dark"] .detail-section > p {
   color: #b9c0ba;
+}
+.app[data-theme="dark"] .track-section p {
+  color: #aeb5b0;
+}
+.app[data-theme="dark"] .track-options {
+  background: #292d2a;
+}
+.app[data-theme="dark"] .track-options button.active {
+  background: #3a403c;
+  color: #6fe0b1;
 }
 @keyframes spin {
   to {

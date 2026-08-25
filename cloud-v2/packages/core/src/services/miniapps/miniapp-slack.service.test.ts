@@ -60,6 +60,7 @@ describe("notifyMiniAppSubmissionSlack", () => {
     expect(blocksJson).toContain("*App Name:*\\nWeather");
     expect(blocksJson).toContain("*Package:*\\n`com.example.weather`");
     expect(blocksJson).toContain("*Version:*\\n1.2.0");
+    expect(blocksJson).toContain("*Track:*\\nstable");
     expect(blocksJson).toContain("*Developer:*\\ndev@example.com");
     expect(blocksJson).toContain("*Org:*\\n`org_01TEST`");
     expect(blocksJson).toContain("*Env:*\\ntest-env");
@@ -179,6 +180,7 @@ function submissionNotification(
     releaseId: "rel_TEST123",
     packageName: "com.example.weather",
     version: "1.2.0",
+    releaseTrack: "stable",
     appName: "Weather",
     developerEmail: "dev@example.com",
     orgId: "org_01TEST",

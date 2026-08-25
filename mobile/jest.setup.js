@@ -583,6 +583,7 @@ const mockIslandEntries = () => {
         stop: jest.fn((...a) => appStatusState.stop(...a) ?? Promise.resolve()),
         setForeground: jest.fn((...a) => appStatusState.setForeground(...a) ?? Promise.resolve()),
         clearForeground: jest.fn(() => appStatusState.clearForeground()),
+        invokeAction: jest.fn(() => Promise.resolve()),
         stopAll: jest.fn((...a) => appStatusState.stopAll(...a) ?? Promise.resolve({is_ok: () => true})),
         install: jest.fn(() => Promise.resolve({is_ok: () => true})),
         uninstall: jest.fn(() => Promise.resolve({is_ok: () => true})),

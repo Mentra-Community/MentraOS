@@ -1,6 +1,7 @@
 export interface StoreRelease {
   id: string
   version: string
+  track: "stable" | "beta"
   bundleUrl: string
   bundleSha256: string
   manifestSha256: string | null
@@ -31,6 +32,10 @@ export interface StoreApp {
   iconUrl: string | null
   coverUrl: string | null
   screenshotUrls: string[]
+  selectedTrack: "stable" | "beta"
+  /** User preference; may be beta while selectedTrack temporarily falls back to stable. */
+  preferredTrack: "stable" | "beta"
+  availableTracks: Array<"stable" | "beta">
   release: StoreRelease
 }
 

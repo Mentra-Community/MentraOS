@@ -6,6 +6,7 @@ import type {StoreApp, StoreSnapshot} from "../shared/types"
 interface TestController {
   start(): void
   install(packageName: string, query?: string, selectedApp?: StoreApp): Promise<StoreSnapshot>
+  setTrack(packageName: string, track: "stable" | "beta", query?: string): Promise<StoreSnapshot>
   load(query?: string, clearOperation?: boolean, refreshAutomaticCatalog?: boolean): Promise<StoreSnapshot>
   refresh(query?: string, refreshAutomaticCatalog?: boolean, clearOperation?: boolean): Promise<StoreSnapshot>
   automaticUpdateCandidates(): StoreApp[]
@@ -87,6 +88,7 @@ describe("StoreController refresh serialization", () => {
       release: {
         id: "release-1",
         version: "2.0.0",
+        track: "stable",
         bundleUrl: "https://example.com/bundle.zip",
         bundleSha256: "a".repeat(64),
         hardwareRequirements: [],
@@ -149,5 +151,59 @@ describe("StoreController refresh serialization", () => {
 
     expect(loadCalls).toEqual(["initial", "completion"])
     expect(controller.refreshing).toBeNull()
+  })
+
+  test("carries beta through the host install descriptor", async () => {
+    let descriptor: Record<string, unknown> | undefined
+    const session = {
+      miniapps: {
+        install: async (input: Record<string, unknown>) => {
+          descriptor = input
+        },
+      },
+      ui: {send: () => undefined},
+    } as unknown as MiniappSession
+    const controller = new StoreController(session) as unknown as TestController
+    controller.refresh = async () => controller.snapshot
+
+    await controller.install("com.example.preview", "", {
+      packageName: "com.example.preview",
+      release: {
+        id: "release-beta",
+        version: "2.0.0-beta.1",
+        track: "beta",
+        bundleUrl: "https://example.test/preview.zip",
+        bundleSha256: "a".repeat(64),
+        hardwareRequirements: [],
+      },
+    } as unknown as StoreApp)
+
+    expect(descriptor).toMatchObject({releaseId: "release-beta", channel: "beta"})
+  })
+
+  test("changes track through authenticated Core state and refreshes the automatic catalog", async () => {
+    let request: {url: string; init?: RequestInit} | undefined
+    const session = {
+      auth: {
+        getCoreUrl: async () => "https://core.example.test",
+        fetch: async (url: string, init?: RequestInit) => {
+          request = {url, init}
+          return Response.json({app: {}})
+        },
+      },
+      ui: {send: () => undefined},
+    } as unknown as MiniappSession
+    const controller = new StoreController(session) as unknown as TestController
+    let refreshArgs: unknown[] = []
+    controller.refresh = async (...args) => {
+      refreshArgs = args
+      return controller.snapshot
+    }
+
+    await controller.setTrack("com.example.preview", "beta", "preview")
+
+    expect(request?.url).toBe("https://core.example.test/api/store/apps/com.example.preview/track")
+    expect(request?.init).toMatchObject({method: "POST", body: JSON.stringify({track: "beta"})})
+    expect(refreshArgs).toEqual(["preview", true, true])
   })
 })

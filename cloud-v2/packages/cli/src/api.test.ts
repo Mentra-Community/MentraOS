@@ -28,6 +28,7 @@ describe("createRelease", () => {
     await createRelease(credentials, {
       packageName: "com.example.app",
       version: "1.0.0",
+      releaseTrack: "beta",
       manifest: { packageName: "com.example.app", version: "1.0.0", name: "Example" },
       bundle: new Uint8Array([0x50, 0x4b]),
       fileName: "bundle.zip",
@@ -52,6 +53,7 @@ describe("createRelease", () => {
     expect(form.get("bundle")).toBeInstanceOf(File);
     expect(form.get("packageName")).toBe("com.example.app");
     expect(form.get("version")).toBe("1.0.0");
+    expect(form.get("releaseTrack")).toBe("beta");
     expect(form.get("fileName")).toBe("bundle.zip");
     expect(JSON.parse(String(form.get("manifest")))).toMatchObject({
       packageName: "com.example.app",

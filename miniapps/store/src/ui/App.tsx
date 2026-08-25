@@ -39,6 +39,7 @@ export function App() {
   const [confirmUninstall, setConfirmUninstall] = useState<string | null>(null)
   const [updatingAll, setUpdatingAll] = useState(false)
   const [shareMessage, setShareMessage] = useState<string | null>(null)
+  const [changingTrack, setChangingTrack] = useState(false)
 
   useEffect(() => mentra.on("store:snapshot", setSnapshot), [])
   useEffect(() => {
@@ -101,6 +102,24 @@ export function App() {
     }
   }, [run, updateApps])
 
+  const setReleaseTrack = useCallback(
+    async (packageName: string, track: "stable" | "beta") => {
+      setChangingTrack(true)
+      try {
+        const next = (await mentra.request("store:set-track", {packageName, track, query})) as StoreSnapshot
+        setSnapshot(next)
+      } catch (error) {
+        setSnapshot((current) => ({
+          ...current,
+          error: error instanceof Error ? error.message : "Could not change release track",
+        }))
+      } finally {
+        setChangingTrack(false)
+      }
+    },
+    [query],
+  )
+
   const share = useCallback(async (app: StoreApp) => {
     const data = {
       title: app.name,
@@ -142,6 +161,8 @@ export function App() {
           onAction={run}
           onShare={() => void share(selected)}
           onUninstall={() => setConfirmUninstall(selected.packageName)}
+          changingTrack={changingTrack}
+          onSetTrack={(track) => void setReleaseTrack(selected.packageName, track)}
         />
       ) : (
         <>
@@ -413,6 +434,8 @@ function Detail({
   onAction,
   onShare,
   onUninstall,
+  changingTrack,
+  onSetTrack,
 }: {
   app: StoreApp
   installed?: InstalledApp
@@ -422,6 +445,8 @@ function Detail({
   onAction: (kind: "install" | "uninstall" | "open", packageName: string) => Promise<boolean>
   onShare: () => void
   onUninstall: () => void
+  changingTrack: boolean
+  onSetTrack: (track: "stable" | "beta") => void
 }) {
   const update = Boolean(installed && isNewerVersion(app.release.version, installed.version))
   const kind = !installed || update ? "install" : "open"
@@ -501,10 +526,34 @@ function Detail({
         )}
         <section className="detail-section info-grid">
           <Info label="Version" value={app.release.version} />
+          <Info label="Track" value={app.selectedTrack === "beta" ? "Beta" : "Stable"} />
           <Info label="Review" value={app.reviewTier === "verified" ? "Verified" : "Community"} />
           <Info label="Permissions" value={String(app.release.permissions.length)} />
           <Info label="Package" value={app.packageName} />
         </section>
+        {(app.availableTracks.includes("beta") || app.preferredTrack === "beta") && (
+          <section className="detail-section track-section">
+            <div>
+              <h2>Release track</h2>
+              <p>
+                {app.preferredTrack === "beta" && app.selectedTrack === "stable"
+                  ? "You’re enrolled in beta. Stable is shown until the next beta release is available."
+                  : "Beta receives preview releases automatically. You can return to stable at any time."}
+              </p>
+            </div>
+            <div className="track-options" role="group" aria-label="Release track">
+              {(["stable", "beta"] as const).map((track) => (
+                <button
+                  key={track}
+                  className={app.preferredTrack === track ? "active" : ""}
+                  disabled={changingTrack || app.preferredTrack === track || (track === "beta" && !app.availableTracks.includes("beta"))}
+                  onClick={() => onSetTrack(track)}>
+                  {track === "stable" ? "Stable" : "Beta"}
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
         <section className="links">
           {app.privacyPolicyUrl && (
             <button onClick={() => window.open(app.privacyPolicyUrl!, "_blank")}>Privacy policy ↗</button>

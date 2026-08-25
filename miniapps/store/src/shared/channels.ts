@@ -7,6 +7,7 @@ export interface StoreChannels {
   "store:install": Rpc<{packageName: string; query?: string}, StoreSnapshot>
   "store:uninstall": Rpc<{packageName: string; query?: string}, StoreSnapshot>
   "store:open": Rpc<{packageName: string; query?: string}, StoreSnapshot>
+  "store:set-track": Rpc<{packageName: string; track: "stable" | "beta"; query?: string}, StoreSnapshot>
 }
 
 declare global {

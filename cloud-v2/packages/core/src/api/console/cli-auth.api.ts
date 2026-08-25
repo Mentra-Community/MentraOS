@@ -99,6 +99,7 @@ const createStoreAssetSchema = z.object({
 const createReleaseSchema = z.object({
   packageName: z.string().min(1),
   version: z.string().min(1),
+  releaseTrack: z.enum(["stable", "beta"]).default("stable"),
   manifest: z.record(z.string(), z.unknown()),
   bundleBase64: z
     .string()
@@ -877,6 +878,7 @@ async function postRelease(c: AppContext) {
     candidate = {
       packageName: form.get("packageName"),
       version: form.get("version"),
+      releaseTrack: form.get("releaseTrack") || "stable",
       fileName: form.get("fileName") || bundle.name,
       manifest,
       signedBundle,
@@ -905,6 +907,7 @@ async function postRelease(c: AppContext) {
     const release = await miniapps.createRelease(developer.value, {
       packageName: parsed.data.packageName,
       version: parsed.data.version,
+      releaseTrack: parsed.data.releaseTrack,
       manifest: parsed.data.manifest,
       bundle,
       fileName: parsed.data.fileName,

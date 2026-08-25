@@ -19,6 +19,7 @@ import { connectMongo, disconnectMongo } from "../packages/core/src/connections/
 import { MiniAppAssetModel } from "../packages/core/src/models/miniapp-asset.model";
 import { MiniAppModel } from "../packages/core/src/models/miniapp.model";
 import { MiniAppReleaseModel } from "../packages/core/src/models/miniapp-release.model";
+import { MiniAppTrackEnrollmentModel } from "../packages/core/src/models/miniapp-track-enrollment.model";
 import { DeveloperSigningKeyModel } from "../packages/core/src/models/developer-signing-key.model";
 import { PreinstalledRegistryModel } from "../packages/core/src/models/preinstalled-registry.model";
 import { PreinstalledRegistryRevisionModel } from "../packages/core/src/models/preinstalled-registry-revision.model";
@@ -36,6 +37,7 @@ const developer = {
   orgId: "org_release_lifecycle",
   packagePrefix: "com.example",
 };
+const storeUser = { mentraUserId: "mu_store_user", tenantId: "mentra" };
 
 let miniapps: MiniAppService;
 let registries: PreinstalledRegistryService;
@@ -46,6 +48,7 @@ beforeAll(async () => {
   await Promise.all([
     MiniAppModel.syncIndexes(),
     MiniAppReleaseModel.syncIndexes(),
+    MiniAppTrackEnrollmentModel.syncIndexes(),
     DeveloperSigningKeyModel.syncIndexes(),
     MiniAppAssetModel.syncIndexes(),
     PreinstalledRegistryModel.syncIndexes(),
@@ -69,6 +72,7 @@ beforeEach(async () => {
   await Promise.all([
     MiniAppModel.deleteMany({ orgId: developer.orgId }),
     MiniAppReleaseModel.deleteMany({ orgId: developer.orgId }),
+    MiniAppTrackEnrollmentModel.deleteMany({ mentraUserId: /^mu_store_/ }),
     DeveloperSigningKeyModel.deleteMany({ orgId: developer.orgId }),
     MiniAppAssetModel.deleteMany({ orgId: developer.orgId }),
     PreinstalledRegistryModel.deleteMany({ createdBy: "admin@mentraglass.com" }),
@@ -340,7 +344,7 @@ describe("miniapp release lifecycle", () => {
     await miniapps.approveRelease({ releaseId: release.id, adminId: "admin@mentraglass.com" });
     await miniapps.publishRelease({ releaseId: release.id, adminId: "admin@mentraglass.com" });
 
-    const catalog = await new StoreCatalogService().list({ baseUrl: "https://core.example.test" });
+    const catalog = await new StoreCatalogService().list({ baseUrl: "https://core.example.test", ...storeUser });
     expect(catalog.total).toBe(1);
     expect(catalog.apps[0]).toMatchObject({
       packageName: manifest.packageName,
@@ -421,7 +425,7 @@ describe("miniapp release lifecycle", () => {
       bytes: Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01]),
     });
     await miniapps.updateStoreListing(developer, "com.example.artwork", { subtitle: "Unreviewed replacement" });
-    const catalog = await catalogService.list({ baseUrl: "https://core.example.test" });
+    const catalog = await catalogService.list({ baseUrl: "https://core.example.test", ...storeUser });
     expect(catalog.apps[0]?.iconUrl).toContain(icon.id);
     expect(catalog.apps[0]?.subtitle).not.toBe("Unreviewed replacement");
     await expect(catalogService.getPublicAsset(replacement.id)).rejects.toMatchObject({ status: 404 });
@@ -430,6 +434,81 @@ describe("miniapp release lifecycle", () => {
       status: 409,
     });
     await miniapps.deleteStoreAsset(developer, "com.example.artwork", replacement.id);
+  });
+
+  test("stable and beta publish independently and Core selects beta only for the enrolled user", async () => {
+    const packageName = "com.example.tracks";
+    await miniapps.createMiniApp(developer, {
+      packageName,
+      displayName: "Track Test",
+      description: "Track selection",
+    });
+    await configurePublishableListing(packageName);
+    await miniapps.updateStoreListing(developer, packageName, { subtitle: "Stable listing" });
+
+    const stable = await miniapps.createRelease(developer, {
+      packageName,
+      version: "1.0.0",
+      releaseTrack: "stable",
+      manifest: { packageName, name: "Track Test", version: "1.0.0" },
+      bundle: await releaseBundle({ packageName, name: "Track Test", version: "1.0.0" }),
+    });
+    await miniapps.submitRelease(developer, packageName, stable.id);
+    await miniapps.approveRelease({ releaseId: stable.id, adminId: "admin@mentraglass.com" });
+    await miniapps.publishRelease({ releaseId: stable.id, adminId: "admin@mentraglass.com" });
+
+    await miniapps.updateStoreListing(developer, packageName, { subtitle: "Beta listing" });
+    const beta = await miniapps.createRelease(developer, {
+      packageName,
+      version: "1.1.0-beta.1",
+      releaseTrack: "beta",
+      manifest: { packageName, name: "Track Test", version: "1.1.0-beta.1" },
+      bundle: await releaseBundle({ packageName, name: "Track Test", version: "1.1.0-beta.1" }),
+    });
+    await miniapps.submitRelease(developer, packageName, beta.id);
+    await miniapps.approveRelease({ releaseId: beta.id, adminId: "admin@mentraglass.com" });
+    await miniapps.publishRelease({ releaseId: beta.id, adminId: "admin@mentraglass.com" });
+
+    const savedApp = await MiniAppModel.findOne({ packageName }).lean();
+    expect(savedApp?.activeReleaseId).toBe(stable.id);
+    expect(savedApp?.activeBetaReleaseId).toBe(beta.id);
+
+    const catalog = new StoreCatalogService();
+    const defaultResult = await catalog.list({ baseUrl: "https://core.example.test", ...storeUser });
+    expect(defaultResult.apps[0]).toMatchObject({
+      selectedTrack: "stable",
+      availableTracks: ["stable", "beta"],
+      subtitle: "Stable listing",
+      release: { id: stable.id, version: "1.0.0", track: "stable" },
+    });
+    const anonymousResult = await catalog.list({ baseUrl: "https://core.example.test" });
+    expect(anonymousResult.apps[0]?.release.id).toBe(stable.id);
+
+    const selected = await catalog.setReleaseTrack(packageName, "beta", storeUser, "https://core.example.test");
+    expect(selected).toMatchObject({
+      selectedTrack: "beta",
+      preferredTrack: "beta",
+      subtitle: "Beta listing",
+      release: { id: beta.id, version: "1.1.0-beta.1", track: "beta" },
+    });
+    const enrolledResult = await catalog.list({ baseUrl: "https://core.example.test", ...storeUser });
+    expect(enrolledResult.apps[0]?.release.id).toBe(beta.id);
+
+    const otherUser = await catalog.list({
+      baseUrl: "https://core.example.test",
+      mentraUserId: "mu_store_other",
+      tenantId: "mentra",
+    });
+    expect(otherUser.apps[0]?.release.id).toBe(stable.id);
+
+    const returnedToStable = await catalog.setReleaseTrack(
+      packageName,
+      "stable",
+      storeUser,
+      "https://core.example.test",
+    );
+    expect(returnedToStable.release.id).toBe(stable.id);
+    expect(await MiniAppTrackEnrollmentModel.countDocuments({ mentraUserId: storeUser.mentraUserId })).toBe(0);
   });
 });
 

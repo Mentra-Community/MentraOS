@@ -52,6 +52,13 @@ export const SETTINGS: Record<string, Setting> = {
   // feature flags / mantle settings:
   dev_mode: {key: "dev_mode", defaultValue: () => __DEV__, writable: true, saveOnServer: true, persist: true}, // deprecated
   debug_mode: {key: "debug_mode", defaultValue: () => __DEV__, writable: true, saveOnServer: true, persist: true},
+  miniapp_store_preview_enabled: {
+    key: "miniapp_store_preview_enabled",
+    defaultValue: () => false,
+    writable: true,
+    saveOnServer: true,
+    persist: true,
+  },
   android_notification_listener_enabled: {
     key: "android_notification_listener_enabled",
     // Operational kill switch. The listener now runs in a guarded lightweight

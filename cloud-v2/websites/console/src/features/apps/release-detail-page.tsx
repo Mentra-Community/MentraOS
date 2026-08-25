@@ -48,6 +48,9 @@ export function ReleaseDetailPage() {
                 <div className="text-xs font-medium uppercase tracking-[0.1em] text-[#a0a3aa]">Release</div>
                 <h1 className="mt-1 font-mono text-[26px] font-bold text-[#14151b]">{release.version}</h1>
                 <p className="mt-1 font-mono text-sm text-[#68746d]">{packageName}</p>
+                <p className="mt-1 text-xs font-semibold uppercase tracking-[0.1em] text-[#087d50]">
+                  {release.releaseTrack} track
+                </p>
               </div>
               <ReleaseStatus status={release.status} />
             </header>

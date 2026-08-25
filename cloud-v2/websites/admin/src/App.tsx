@@ -29,6 +29,7 @@ interface ReleaseSummary {
   displayName: string;
   description?: string | null;
   version: string;
+  releaseTrack: "stable" | "beta";
   status: ReleaseStatus;
   bundleSha256: string | null;
   bundleSizeBytes?: number | null;
@@ -620,6 +621,7 @@ function SubmissionDetail(props: {
           <DetailGrid
             rows={[
               ["Bundle SHA-256", release.bundleSha256 ? `${release.bundleSha256.slice(0, 16)}…` : "—"],
+              ["Release track", release.releaseTrack],
               ["Bundle size", formatBytes(release.bundleSizeBytes)],
               ["Manifest SHA-256", release.manifestSha256 ? `${release.manifestSha256.slice(0, 16)}…` : "—"],
               ["Signing key", release.signingKeyId ?? "—"],
@@ -1350,6 +1352,7 @@ function ReleaseIdentity({ release, compact = false }: { release: ReleaseSummary
       <div className="mt-1 truncate font-mono text-xs text-[#68746d]">{release.packageName}</div>
       <div className="mt-2 flex flex-wrap gap-2">
         <Tag>{release.version}</Tag>
+        <Tag>{release.releaseTrack}</Tag>
         <StatusTag status={release.status} small />
       </div>
     </div>
