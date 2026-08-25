@@ -96,6 +96,28 @@ test("resumes a publishing deployment without sending another publication reques
   assert.equal(publicationRequests, 0)
 })
 
+test("keeps polling while published deployment PURLs are still propagating", async () => {
+  const purlsByAttempt = [[], expectedPurls]
+  let publicationRequests = 0
+  const result = await publishDeployment({
+    record: record(),
+    token: "token",
+    fetchImpl: async (url) => {
+      if (String(url).includes(`/deployment/${deploymentId}`)) publicationRequests += 1
+      return jsonResponse({
+        deploymentId,
+        deploymentName,
+        deploymentState: "PUBLISHED",
+        purls: purlsByAttempt.shift(),
+      })
+    },
+    sleepImpl: async () => {},
+  })
+
+  assert.equal(publicationRequests, 0)
+  assert.deepEqual(result.purls, expectedPurls)
+})
+
 test("replaces a persisted deployment only after Sonatype reports it failed", async () => {
   const failed = await inspectDeployment({
     record: record(),
@@ -114,6 +136,18 @@ test("replaces a persisted deployment only after Sonatype reports it failed", as
   assert.equal(publishing.disposition, "resume")
 })
 
+test("resumes a published deployment while its PURLs are still propagating", async () => {
+  const result = await inspectDeployment({
+    record: record(),
+    token: "token",
+    fetchImpl: async () =>
+      jsonResponse({deploymentId, deploymentName, deploymentState: "PUBLISHED", purls: [expectedPurls[0]]}),
+  })
+
+  assert.equal(result.disposition, "resume")
+  assert.deepEqual(result.purls, [expectedPurls[0]])
+})
+
 test("rejects a published deployment with the wrong Maven coordinates", async () => {
   await assert.rejects(
     publishDeployment({
@@ -122,6 +156,7 @@ test("rejects a published deployment with the wrong Maven coordinates", async ()
       fetchImpl: async () =>
         jsonResponse({deploymentId, deploymentName, deploymentState: "PUBLISHED", purls: [expectedPurls[0]]}),
       sleepImpl: async () => {},
+      statusAttempts: 2,
     }),
     /missing expected components/,
   )
