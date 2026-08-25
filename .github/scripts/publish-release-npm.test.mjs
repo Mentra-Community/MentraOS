@@ -9,6 +9,7 @@ import {loadReleaseFamily} from "./release-family.mjs"
 import {
   npmMembersInOrder,
   npmReleaseTag,
+  releaseMetadataArgs,
   requireNpmProvenanceSource,
   requirePlanSourceCommit,
   sha512Integrity,
@@ -41,6 +42,12 @@ test("selects npm packages in dependency order", () => {
   ])
 })
 
+test("admits Engine only as the final selected npm package", () => {
+  const family = loadReleaseFamily()
+  const names = npmMembersInOrder(family, ["@mentra/engine", "@mentra/bluetooth-sdk"])
+  assert.deepEqual(names, ["@mentra/bluetooth-sdk", "@mentra/engine"])
+})
+
 test("creates npm-compatible SHA-512 integrity values", () => {
   assert.match(sha512Integrity(Buffer.from("mentra")), /^sha512-[A-Za-z0-9+/]+=*$/)
 })
@@ -64,5 +71,34 @@ test("requires every npm member to identify its exact MentraOS source directory"
         "mobile/modules/crust/package.json",
       ),
     /does not identify mobile\/modules\/crust in MentraOS/,
+  )
+})
+
+test("stamps SDK and Engine packages from the same immutable release metadata", () => {
+  assert.deepEqual(
+    releaseMetadataArgs({
+      plan: {
+        familyBaseVersion: "3.1.0",
+        releaseIdentity: "3.1.0-beta.57",
+        releaseSetId: "mentra-3.1.0-beta.57",
+        sourceCommit: "a".repeat(40),
+      },
+      otaManifestUrl: "https://example.com/ota.json",
+      otaManifestSha256: "b".repeat(64),
+    }),
+    [
+      "--family-base-version",
+      "3.1.0",
+      "--release-identity",
+      "3.1.0-beta.57",
+      "--release-set-id",
+      "mentra-3.1.0-beta.57",
+      "--source-commit",
+      "a".repeat(40),
+      "--ota-manifest-url",
+      "https://example.com/ota.json",
+      "--ota-manifest-sha256",
+      "b".repeat(64),
+    ],
   )
 })

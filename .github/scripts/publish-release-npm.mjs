@@ -98,7 +98,166 @@ export function npmMembersInOrder(family, selectedNames) {
   return family.publicationOrder.filter((name) => selected.has(name))
 }
 
-export function publishReleaseNpm({rootDir, plan, memberNames, outputDir, dryRun}) {
+function requireReleaseMetadata(options) {
+  if (!options.otaManifestUrl || !options.otaManifestSha256) {
+    throw new Error("SDK and Engine publication requires the coordinated OTA manifest URL and SHA-256")
+  }
+}
+
+export function releaseMetadataArgs({plan, otaManifestUrl, otaManifestSha256}) {
+  return [
+    "--family-base-version",
+    plan.familyBaseVersion,
+    "--release-identity",
+    plan.releaseIdentity,
+    "--release-set-id",
+    plan.releaseSetId,
+    "--source-commit",
+    plan.sourceCommit,
+    "--ota-manifest-url",
+    otaManifestUrl,
+    "--ota-manifest-sha256",
+    otaManifestSha256,
+  ]
+}
+
+function transitiveDependencies(family, memberName) {
+  const selected = new Set()
+  function visit(name) {
+    const member = family.members.find((candidate) => candidate.name === name)
+    if (!member) throw new Error(`Unknown release-family dependency ${name}`)
+    for (const dependency of member.dependencies) {
+      selected.add(dependency)
+      visit(dependency)
+    }
+  }
+  visit(memberName)
+  return family.publicationOrder.filter((name) => selected.has(name))
+}
+
+function prepareBluetoothSdkBuild({rootDir, plan, otaManifestUrl, otaManifestSha256}) {
+  requireReleaseMetadata({otaManifestUrl, otaManifestSha256})
+  run("node", ["scripts/write-release-metadata.mjs", ...releaseMetadataArgs({plan, otaManifestUrl, otaManifestSha256})], {
+    cwd: path.join(rootDir, "mobile/modules/bluetooth-sdk"),
+  })
+}
+
+function prepareEngineBuild({rootDir, family, plan, otaManifestUrl, otaManifestSha256}) {
+  requireReleaseMetadata({otaManifestUrl, otaManifestSha256})
+  const metadataArgs = releaseMetadataArgs({plan, otaManifestUrl, otaManifestSha256})
+  prepareBluetoothSdkBuild({rootDir, plan, otaManifestUrl, otaManifestSha256})
+
+  for (const dependencyName of transitiveDependencies(family, "@mentra/engine")) {
+    const dependency = family.members.find((candidate) => candidate.name === dependencyName)
+    const packageDir = path.dirname(path.join(rootDir, dependency.manifest))
+    const packageJson = JSON.parse(readFileSync(path.join(rootDir, dependency.manifest), "utf8"))
+    if (packageJson.scripts?.build) run("bun", ["run", "build"], {cwd: packageDir})
+  }
+
+  run("node", ["scripts/write-release-metadata.mjs", ...metadataArgs], {
+    cwd: path.join(rootDir, "mobile/modules/engine"),
+  })
+}
+
+function verifyBluetoothSdkPackage({rootDir, plan, tarball, outputDir, otaManifestUrl, otaManifestSha256}) {
+  requireReleaseMetadata({otaManifestUrl, otaManifestSha256})
+  const unpacked = path.join(outputDir, "sdk-unpacked")
+  mkdirSync(unpacked, {recursive: true})
+  run("tar", ["-xzf", tarball, "-C", unpacked])
+  run(
+    "node",
+    [
+      "scripts/verify-release-package.mjs",
+      "--package-root",
+      path.join(unpacked, "package"),
+      "--release-identity",
+      plan.releaseIdentity,
+      "--ota-manifest-url",
+      otaManifestUrl,
+      "--ota-manifest-sha256",
+      otaManifestSha256,
+    ],
+    {cwd: path.join(rootDir, "mobile/modules/bluetooth-sdk")},
+  )
+}
+
+function verifyEngineAndSdkPackages({
+  rootDir,
+  plan,
+  engineTarball,
+  outputDir,
+  otaManifestUrl,
+  otaManifestSha256,
+  sdkTarball,
+}) {
+  requireReleaseMetadata({otaManifestUrl, otaManifestSha256})
+  const engineRoot = path.join(outputDir, "engine-unpacked")
+  mkdirSync(engineRoot, {recursive: true})
+  run("tar", ["-xzf", engineTarball, "-C", engineRoot])
+  const common = [
+    "--family-base-version",
+    plan.familyBaseVersion,
+    "--release-identity",
+    plan.releaseIdentity,
+    "--release-set-id",
+    plan.releaseSetId,
+    "--source-commit",
+    plan.sourceCommit,
+    "--ota-manifest-url",
+    otaManifestUrl,
+    "--ota-manifest-sha256",
+    otaManifestSha256,
+  ]
+  run("node", ["scripts/verify-release-package.mjs", "--package-root", path.join(engineRoot, "package"), ...common], {
+    cwd: path.join(rootDir, "mobile/modules/engine"),
+  })
+
+  const sdkOutput = path.join(outputDir, "sdk-registry-verification")
+  mkdirSync(sdkOutput, {recursive: true})
+  let selectedSdkTarball = sdkTarball ? path.resolve(sdkTarball) : null
+  if (!selectedSdkTarball) {
+    run("npm", ["pack", `@mentra/bluetooth-sdk@${plan.releaseIdentity}`, "--pack-destination", sdkOutput], {
+      cwd: rootDir,
+    })
+    const sdkTarballs = execFileSync("find", [sdkOutput, "-maxdepth", "1", "-name", "*.tgz", "-print"], {
+      encoding: "utf8",
+    })
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+    if (sdkTarballs.length !== 1) throw new Error(`SDK verification produced ${sdkTarballs.length} tarballs`)
+    selectedSdkTarball = sdkTarballs[0]
+  }
+  const sdkRoot = path.join(sdkOutput, "unpacked")
+  mkdirSync(sdkRoot, {recursive: true})
+  run("tar", ["-xzf", selectedSdkTarball, "-C", sdkRoot])
+  run(
+    "node",
+    [
+      "scripts/verify-release-package.mjs",
+      "--package-root",
+      path.join(sdkRoot, "package"),
+      "--release-identity",
+      plan.releaseIdentity,
+      "--ota-manifest-url",
+      otaManifestUrl,
+      "--ota-manifest-sha256",
+      otaManifestSha256,
+    ],
+    {cwd: path.join(rootDir, "mobile/modules/bluetooth-sdk")},
+  )
+}
+
+export function publishReleaseNpm({
+  rootDir,
+  plan,
+  memberNames,
+  outputDir,
+  dryRun,
+  otaManifestUrl,
+  otaManifestSha256,
+  sdkTarball,
+}) {
   requirePlanSourceCommit(rootDir, plan.sourceCommit)
   const family = loadReleaseFamily({rootDir})
   if (plan.familyBaseVersion !== family.familyBaseVersion)
@@ -106,6 +265,7 @@ export function publishReleaseNpm({rootDir, plan, memberNames, outputDir, dryRun
   const orderedNames = npmMembersInOrder(family, memberNames)
   const tag = npmReleaseTag(plan.channel)
   const publications = {}
+  let selectedSdkTarball = sdkTarball
   mkdirSync(outputDir, {recursive: true})
 
   for (const name of orderedNames) {
@@ -122,6 +282,11 @@ export function publishReleaseNpm({rootDir, plan, memberNames, outputDir, dryRun
       }
     }
 
+    if (name === "@mentra/bluetooth-sdk") {
+      prepareBluetoothSdkBuild({rootDir, plan, otaManifestUrl, otaManifestSha256})
+    } else if (name === "@mentra/engine") {
+      prepareEngineBuild({rootDir, family, plan, otaManifestUrl, otaManifestSha256})
+    }
     if (packageJson.scripts?.build) run("bun", ["run", "build"], {cwd: packageDir})
     const packageOutput = path.join(outputDir, name.replace(/^@/, "").replaceAll("/", "-"))
     mkdirSync(packageOutput, {recursive: true})
@@ -140,6 +305,28 @@ export function publishReleaseNpm({rootDir, plan, memberNames, outputDir, dryRun
     const coordinate = `${name}@${plan.releaseIdentity}`
     const registryIntegrity = parseViewValue(npmView(coordinate, "dist.integrity"))
     let status = "built"
+
+    if (name === "@mentra/bluetooth-sdk") {
+      verifyBluetoothSdkPackage({
+        rootDir,
+        plan,
+        tarball,
+        outputDir: packageOutput,
+        otaManifestUrl,
+        otaManifestSha256,
+      })
+      selectedSdkTarball = tarball
+    } else if (name === "@mentra/engine") {
+      verifyEngineAndSdkPackages({
+        rootDir,
+        plan,
+        engineTarball: tarball,
+        outputDir: packageOutput,
+        otaManifestUrl,
+        otaManifestSha256,
+        sdkTarball: selectedSdkTarball,
+      })
+    }
 
     if (registryIntegrity !== null) {
       if (registryIntegrity !== integrity) {
@@ -189,6 +376,9 @@ function main() {
     memberNames: args.members.split(",").filter(Boolean),
     outputDir: path.resolve(args["output-dir"]),
     dryRun: args["dry-run"] === "true",
+    otaManifestUrl: args["ota-manifest-url"],
+    otaManifestSha256: args["ota-manifest-sha256"],
+    sdkTarball: args["sdk-tarball"],
   })
 }
 

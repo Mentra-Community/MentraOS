@@ -16,6 +16,15 @@ on:
       result_artifact:
         required: true
         type: string
+      ota_manifest_url:
+        required: false
+        type: string
+      ota_manifest_sha256:
+        required: false
+        type: string
+      sdk_package_artifact:
+        required: false
+        type: string
       dry_run:
         required: false
         default: false
@@ -40,6 +49,13 @@ jobs:
         with:
           name: ${{ inputs.release_plan_artifact }}
           path: release-intent
+
+      - name: Download coordinated SDK package for offline verification
+        if: inputs.sdk_package_artifact != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.sdk_package_artifact }}
+          path: sdk-package
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -66,14 +82,32 @@ jobs:
         run: node --test .github/scripts/publish-release-npm.test.mjs
 
       - name: Build, pack, reconcile, and publish in dependency order
-        run: >-
-          node .github/scripts/publish-release-npm.mjs
-          --plan release-intent/release-plan.json
-          --members "${{ inputs.members }}"
-          --output-dir release-output
-          --dry-run "${{ inputs.dry_run }}"
+        run: |
+          args=(
+            --plan release-intent/release-plan.json
+            --members "$RELEASE_MEMBERS"
+            --output-dir release-output
+            --dry-run "$DRY_RUN"
+          )
+          if [[ -n "$OTA_MANIFEST_URL" || -n "$OTA_MANIFEST_SHA256" ]]; then
+            args+=(--ota-manifest-url "$OTA_MANIFEST_URL" --ota-manifest-sha256 "$OTA_MANIFEST_SHA256")
+          fi
+          if [[ -n "$SDK_PACKAGE_ARTIFACT" ]]; then
+            mapfile -t sdk_tarballs < <(find sdk-package -type f -name '*.tgz' -print)
+            if (( ${#sdk_tarballs[@]} != 1 )); then
+              echo "::error::SDK package artifact must contain exactly one npm tarball; found ${#sdk_tarballs[@]}"
+              exit 1
+            fi
+            args+=(--sdk-tarball "${sdk_tarballs[0]}")
+          fi
+          node .github/scripts/publish-release-npm.mjs "${args[@]}"
         env:
+          DRY_RUN: ${{ inputs.dry_run }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          OTA_MANIFEST_SHA256: ${{ inputs.ota_manifest_sha256 }}
+          OTA_MANIFEST_URL: ${{ inputs.ota_manifest_url }}
+          RELEASE_MEMBERS: ${{ inputs.members }}
+          SDK_PACKAGE_ARTIFACT: ${{ inputs.sdk_package_artifact }}
 
       - name: Upload exact npm artifacts and publication records
         uses: actions/upload-artifact@v4

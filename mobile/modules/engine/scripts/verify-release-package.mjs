@@ -6,6 +6,13 @@ import {fileURLToPath} from "node:url"
 import {validateReleaseMetadata} from "./write-release-metadata.mjs"
 
 const METADATA_FILES = ["src/generated/releaseMetadata.ts", "build/generated/releaseMetadata.js"]
+const EXACT_FAMILY_DEPENDENCIES = [
+  "@mentra/bluetooth-sdk",
+  "@mentra/cloud-client",
+  "@mentra/cloud-protocol",
+  "@mentra/crust",
+  "@mentra/miniapp",
+]
 
 export function verifyReleasePackage({packageRoot, expected}) {
   const metadata = validateReleaseMetadata(expected)
@@ -17,6 +24,14 @@ export function verifyReleasePackage({packageRoot, expected}) {
   }
   if (packageManifest.version !== metadata.releaseIdentity) {
     throw new Error(`Engine version ${packageManifest.version} does not match ${metadata.releaseIdentity}`)
+  }
+  for (const dependency of EXACT_FAMILY_DEPENDENCIES) {
+    if (packageManifest.dependencies?.[dependency] !== metadata.releaseIdentity) {
+      throw new Error(`Engine dependency ${dependency} must be exactly ${metadata.releaseIdentity}`)
+    }
+    if (packageManifest.peerDependencies?.[dependency] !== undefined) {
+      throw new Error(`Engine dependency ${dependency} must not be published as a peer`)
+    }
   }
 
   for (const relativePath of METADATA_FILES) {

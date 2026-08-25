@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import {mkdirSync, mkdtempSync, writeFileSync} from "node:fs"
+import {mkdirSync, mkdtempSync, readFileSync, writeFileSync} from "node:fs"
 import {tmpdir} from "node:os"
 import path from "node:path"
 import test from "node:test"
@@ -22,7 +22,17 @@ function fixture() {
   mkdirSync(path.join(root, "build/generated"), {recursive: true})
   writeFileSync(
     path.join(root, "package.json"),
-    JSON.stringify({name: "@mentra/engine", version: expected.releaseIdentity}),
+    JSON.stringify({
+      name: "@mentra/engine",
+      version: expected.releaseIdentity,
+      dependencies: {
+        "@mentra/bluetooth-sdk": expected.releaseIdentity,
+        "@mentra/cloud-client": expected.releaseIdentity,
+        "@mentra/cloud-protocol": expected.releaseIdentity,
+        "@mentra/crust": expected.releaseIdentity,
+        "@mentra/miniapp": expected.releaseIdentity,
+      },
+    }),
   )
   const source = renderReleaseMetadata(expected)
   writeFileSync(path.join(root, "src/generated/releaseMetadata.ts"), source)
@@ -44,4 +54,14 @@ test("rejects a package whose built metadata drifted", () => {
     () => verifyReleasePackage({packageRoot: root, expected}),
     /does not contain expected familyBaseVersion/,
   )
+})
+
+test("rejects a packed Engine with a drifting family dependency", () => {
+  const root = fixture()
+  const manifestPath = path.join(root, "package.json")
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"))
+  manifest.dependencies["@mentra/bluetooth-sdk"] = "^3.1.0-beta.57"
+  writeFileSync(manifestPath, JSON.stringify(manifest))
+
+  assert.throws(() => verifyReleasePackage({packageRoot: root, expected}), /must be exactly/)
 })
