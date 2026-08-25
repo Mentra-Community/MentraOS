@@ -29,6 +29,15 @@ const StoreListingOperationLeaseSchema = new Schema(
   { _id: false },
 );
 
+const PendingStorePublicationSchema = new Schema(
+  {
+    releaseId: { type: String, required: true },
+    releaseTrack: { type: String, enum: ["stable", "beta"], required: true },
+    storeListing: { type: StoreListingSchema, required: true },
+  },
+  { _id: false },
+);
+
 const MiniAppSchema = new Schema(
   {
     orgId: { type: String, required: true, index: true },
@@ -47,6 +56,8 @@ const MiniAppSchema = new Schema(
      * including when the operations land on different Core processes.
      */
     storeListingOperationLease: { type: StoreListingOperationLeaseSchema, default: null },
+    /** Recoverable journal entry used while promoting a release across documents. */
+    pendingStorePublication: { type: PendingStorePublicationSchema, default: null },
     status: { type: String, enum: MINIAPP_STATUSES, default: "active", index: true },
     /** Active stable release. Kept under the original name for deployed-row compatibility. */
     activeReleaseId: { type: String, default: null },

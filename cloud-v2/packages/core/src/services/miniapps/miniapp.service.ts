@@ -307,24 +307,7 @@ export class MiniAppService {
       release.submittedStoreListing = null;
       release.reviewedStoreListing = null;
 
-      // Recover safely if a prior publication attempt wrote the app pointer
-      // before failing to mark the release published.
-      let appChanged = false;
-      if (release.releaseTrack === "beta" && app.activeBetaReleaseId === release._id.toString()) {
-        app.activeBetaReleaseId = null;
-        app.publishedBetaStoreListing = null;
-        appChanged = true;
-      }
-      if (release.releaseTrack !== "beta" && app.activeReleaseId === release._id.toString()) {
-        app.activeReleaseId = null;
-        app.publishedStoreListing = null;
-        appChanged = true;
-      }
       await lease.assertHeld();
-      if (appChanged) {
-        await app.save();
-        await lease.assertHeld();
-      }
       await release.save();
       return serializeRelease(release.toObject());
     });
@@ -389,28 +372,28 @@ export class MiniAppService {
       release.publishedAt = release.publishedAt ?? new Date();
       release.reviewedBy = input.adminId;
       if (input.notes?.trim()) release.reviewNotes = input.notes.trim();
-      if (releaseTrack === "beta") {
-        app.activeBetaReleaseId = release._id.toString();
-      } else {
-        app.activeReleaseId = release._id.toString();
-      }
-      // The public catalog must never read the developer-editable listing. A
-      // publication decision snapshots the exact moderated text and artwork;
-      // subsequent developer edits remain private until another publication.
-      if (releaseTrack === "beta") {
-        app.publishedBetaStoreListing = reviewedStoreListing;
-      } else {
-        app.publishedStoreListing = reviewedStoreListing;
-      }
-
-      // Commit the public pointer first. Until the release status changes the
-      // catalog treats this state as invisible, and a retry can safely finish
-      // publication. Once the release is published, the pointer is already
-      // durable, so the operation is also idempotent after a lost response.
+      // Journal the candidate without disturbing the currently active release.
+      // Once the release status is durable, the journal can be promoted by
+      // this request or recovered by the next lease holder after a crash.
+      app.pendingStorePublication = {
+        releaseId: release._id.toString(),
+        releaseTrack,
+        storeListing: reviewedStoreListing,
+      };
       await lease.assertHeld();
       await app.save();
       await lease.assertHeld();
       await release.save();
+      if (releaseTrack === "beta") {
+        app.activeBetaReleaseId = release._id.toString();
+        app.publishedBetaStoreListing = reviewedStoreListing;
+      } else {
+        app.activeReleaseId = release._id.toString();
+        app.publishedStoreListing = reviewedStoreListing;
+      }
+      app.pendingStorePublication = null;
+      await lease.assertHeld();
+      await app.save();
       return serializeRelease(release.toObject());
     });
   }
@@ -1016,6 +999,7 @@ async function withStoreListingLease<T>(
         },
       };
       try {
+        await reconcilePendingStorePublication(miniAppId, lease);
         return await operation(lease);
       } finally {
         clearInterval(renewalTimer);
@@ -1032,6 +1016,26 @@ async function withStoreListingLease<T>(
     "Store listing is busy; retry the operation",
     409,
   );
+}
+
+async function reconcilePendingStorePublication(miniAppId: string, lease: StoreListingLease): Promise<void> {
+  const app = await MiniAppModel.findById(miniAppId);
+  const pending = app?.pendingStorePublication;
+  if (!app || !pending) return;
+  const release = await MiniAppReleaseModel.findById(pending.releaseId).lean();
+  if (release?.status === "published") {
+    const listing = serializeStoreListing(pending.storeListing);
+    if (pending.releaseTrack === "beta") {
+      app.activeBetaReleaseId = pending.releaseId;
+      app.publishedBetaStoreListing = listing;
+    } else {
+      app.activeReleaseId = pending.releaseId;
+      app.publishedStoreListing = listing;
+    }
+  }
+  app.pendingStorePublication = null;
+  await lease.assertHeld();
+  await app.save();
 }
 
 function serializeStoreListing(listing: any) {

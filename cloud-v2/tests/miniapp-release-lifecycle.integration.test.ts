@@ -555,28 +555,44 @@ describe("miniapp release lifecycle", () => {
     }
   });
 
-  test("publication retries complete an app-first partial commit", async () => {
+  test("publication retries promote a journaled commit without replacing the active release early", async () => {
     const packageName = "com.example.publishretry";
-    const release = await createAcceptedStoreRelease(packageName);
-    const acceptedRelease = await MiniAppReleaseModel.findById(release.id).lean();
+    const activeRelease = await createAcceptedStoreRelease(packageName);
+    await miniapps.publishRelease({ releaseId: activeRelease.id, adminId: "admin@mentraglass.com" });
+    const replacement = await miniapps.createRelease(developer, {
+      packageName,
+      version: "1.1.0",
+      manifest: { packageName, name: "Store decision test", version: "1.1.0" },
+      bundle: await releaseBundle({ packageName, name: "Store decision test", version: "1.1.0" }),
+    });
+    await miniapps.submitRelease(developer, packageName, replacement.id);
+    await miniapps.approveRelease({ releaseId: replacement.id, adminId: "admin@mentraglass.com" });
+    const acceptedReplacement = await MiniAppReleaseModel.findById(replacement.id).lean();
+    await MiniAppReleaseModel.updateOne(
+      { _id: replacement.id },
+      { $set: { status: "published", publishedAt: new Date() } },
+    );
     await MiniAppModel.updateOne(
       { packageName },
       {
         $set: {
-          activeReleaseId: release.id,
-          publishedStoreListing: acceptedRelease?.reviewedStoreListing,
+          pendingStorePublication: {
+            releaseId: replacement.id,
+            releaseTrack: "stable",
+            storeListing: acceptedReplacement?.reviewedStoreListing,
+          },
         },
       },
     );
 
-    const hiddenPartial = await new StoreCatalogService().list({
+    const catalogDuringPartial = await new StoreCatalogService().list({
       baseUrl: "https://core.example.test",
       ...storeUser,
     });
-    expect(hiddenPartial.apps.map(app => app.packageName)).not.toContain(packageName);
+    expect(catalogDuringPartial.apps.find(app => app.packageName === packageName)?.release.id).toBe(activeRelease.id);
 
     const published = await miniapps.publishRelease({
-      releaseId: release.id,
+      releaseId: replacement.id,
       adminId: "admin@mentraglass.com",
     });
     expect(published.status).toBe("published");
@@ -584,7 +600,7 @@ describe("miniapp release lifecycle", () => {
       baseUrl: "https://core.example.test",
       ...storeUser,
     });
-    expect(visibleAfterRetry.apps.map(app => app.packageName)).toContain(packageName);
+    expect(visibleAfterRetry.apps.find(app => app.packageName === packageName)?.release.id).toBe(replacement.id);
   });
 
   test("stable and beta publish independently and Core selects beta only for the enrolled user", async () => {
