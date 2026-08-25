@@ -652,20 +652,15 @@ export type PairFailureEvent = {
 
 export type PairingInfoEvent = {
   had_previous_bond: boolean
-  /** 16-char uppercase hex transfer id when secure pairing is active. */
-  transfer_id?: string
   pairing_code?: string
   classic_bond_ready?: boolean
   secure_pairing_capable?: boolean
   protocol_version?: number
-  /** Credential binding mode negotiated for this transfer, when reported by the glasses. */
-  binding?: "ctkd" | "temporal" | "none" | string
 }
 
 export type EnteringPairingModeEvent = {
   window_ms: number
   reason?: string
-  txn?: number
 }
 
 export type OwnerReplacedEvent = {

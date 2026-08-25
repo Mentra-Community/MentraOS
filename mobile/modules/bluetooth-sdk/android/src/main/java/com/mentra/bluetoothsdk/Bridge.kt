@@ -148,21 +148,17 @@ public class Bridge private constructor() {
         @JvmStatic
         fun sendPairingInfo(
             hadPreviousBond: Boolean,
-            transferId: String? = null,
             pairingCode: String? = null,
             classicBondReady: Boolean = false,
             securePairingCapable: Boolean = true,
             protocolVersion: Int = 1,
-            binding: String? = null,
         ) {
             val data = HashMap<String, Any>()
             data["had_previous_bond"] = hadPreviousBond
-            if (transferId != null) data["transfer_id"] = transferId
             if (pairingCode != null) data["pairing_code"] = pairingCode
             data["classic_bond_ready"] = classicBondReady
             data["secure_pairing_capable"] = securePairingCapable
             data["protocol_version"] = protocolVersion
-            if (binding != null) data["binding"] = binding
             sendTypedMessage("pairing_info", data as Map<String, Any>)
         }
 
@@ -912,4 +908,3 @@ public class Bridge private constructor() {
         }
     }
 }
-

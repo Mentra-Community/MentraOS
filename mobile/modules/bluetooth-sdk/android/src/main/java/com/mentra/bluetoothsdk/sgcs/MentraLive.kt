@@ -3783,19 +3783,16 @@ class MentraLive : SGCManager() {
                 val body = HashMap<String, Any>()
                 body["window_ms"] = windowMs
                 body["reason"] = json.optString("reason", "user_gesture")
-                if (json.has("txn")) body["txn"] = json.optInt("txn")
                 Bridge.sendTypedMessage("entering_pairing_mode", body)
             }
             "pairing_info" ->
                     Bridge.sendPairingInfo(
                             json.optBoolean("had_previous_bond", false),
-                            jsonNullableString(json, "transfer_id"),
                             jsonNullableString(json, "pairing_code"),
                             json.optBoolean("classic_bond_ready", false),
                             // Legacy firmware that omits this field is not secure-capable.
                             json.optBoolean("secure_pairing_capable", false),
                             json.optInt("protocol_version", 1),
-                            jsonNullableString(json, "binding"),
                     )
             "imu_response",
             "imu_stream_response",
