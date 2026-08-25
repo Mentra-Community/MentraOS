@@ -44,3 +44,25 @@ test("production validates before approval and proves packages before mobile pro
     /^    needs: \[plan, approve, npm, sdk-native, mobile, engine-consumer\]$/m,
   )
 })
+
+test("mobile destinations use real TestFlight groups without changing the release channel", () => {
+  const coordinator = workflow("coordinated-release.yml")
+  const mobile = workflow("reusable-coordinated-mobile.yml")
+
+  assert.match(coordinator, /testflight_group=Mentra Dev/)
+  assert.match(coordinator, /testflight_group=Mentra Staging/)
+  assert.match(mobile, /MENTRA_COORDINATED_RELEASE_CHANNEL=\$\(jq -er \.channel release-intent\/release-plan\.json\)/)
+  assert.doesNotMatch(mobile, /MENTRA_COORDINATED_RELEASE_CHANNEL=\$\{\{ inputs\.testflight_group \}\}/)
+})
+
+test("mobile release selects an existing Doppler token for its backend", () => {
+  const mobile = workflow("reusable-coordinated-mobile.yml")
+
+  assert.match(mobile, /DOPPLER_TOKEN_MOBILE_STG:/)
+  assert.match(mobile, /DOPPLER_TOKEN_MOBILE_PRD:/)
+  assert.match(
+    mobile,
+    /inputs\.backend_environment == 'prod' && secrets\.DOPPLER_TOKEN_MOBILE_PRD \|\| secrets\.DOPPLER_TOKEN_MOBILE_STG/g,
+  )
+  assert.doesNotMatch(mobile, /secrets\.DOPPLER_TOKEN[^_]/)
+})

@@ -536,8 +536,8 @@ source hashes in its BOM.
 
 For iOS:
 
-- `dev` builds go to the existing Dev TestFlight group.
-- `staging` builds go to the existing Beta TestFlight group.
+- `dev` builds go to the existing `Mentra Dev` TestFlight group.
+- `staging` builds go to the existing `Mentra Staging` TestFlight group.
 - Production promotes the exact tested staging binary through App Store
   Connect.
 

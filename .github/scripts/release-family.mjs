@@ -325,8 +325,8 @@ function expectedPublicationCoordinate(plan, memberName, target) {
   if (target === "maven-central") return `com.mentraglass:bluetooth-sdk:${version}`
   if (target === "swift-package-manager") return `Mentra-Community/mentra-bluetooth-sdk-ios@${version}`
   const channels = {
-    dev: {play: "internal", appStore: "Dev"},
-    beta: {play: "beta", appStore: "Beta"},
+    dev: {play: "internal", appStore: "Mentra Dev"},
+    beta: {play: "beta", appStore: "Mentra Staging"},
     production: {play: "production", appStore: "App Store"},
   }
   const selected = channels[plan.channel]

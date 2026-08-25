@@ -43,7 +43,7 @@ test("records and merges exact mobile store and downloadable artifacts", () => {
     plan,
     ipa,
     ipaUrl: `${base}/${plan.artifactNames.iosApp}`,
-    testflightGroup: "Beta",
+    testflightGroup: "Mentra Staging",
     storeStatus: "reused",
     provenanceUrl,
   })

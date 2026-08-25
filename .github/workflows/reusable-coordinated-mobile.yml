@@ -56,7 +56,9 @@ on:
         required: false
       MAPBOX_DOWNLOADS_TOKEN:
         required: false
-      DOPPLER_TOKEN:
+      DOPPLER_TOKEN_MOBILE_STG:
+        required: false
+      DOPPLER_TOKEN_MOBILE_PRD:
         required: false
       SENTRY_AUTH_TOKEN:
         required: false
@@ -239,7 +241,7 @@ jobs:
       - name: Generate exact mobile environment and package metadata
         if: inputs.dry_run == true || needs.prepare.outputs.android_assets_exist != 'true'
         env:
-          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+          DOPPLER_TOKEN: ${{ inputs.backend_environment == 'prod' && secrets.DOPPLER_TOKEN_MOBILE_PRD || secrets.DOPPLER_TOKEN_MOBILE_STG }}
           MAPBOX_PUBLIC_TOKEN: ${{ secrets.MAPBOX_PUBLIC_TOKEN }}
         run: |
           set -euo pipefail
@@ -269,7 +271,7 @@ jobs:
           node mobile/modules/bluetooth-sdk/scripts/write-release-metadata.mjs "${metadata[@]}"
           node mobile/modules/engine/scripts/write-release-metadata.mjs "${metadata[@]}"
           grep -E '^(EXPO_PUBLIC_|MENTRAOS_NATIVE_MARKETING_VERSION|MENTRAOS_PINNED_BUILD_NUMBER)=' mobile/.env >> "$GITHUB_ENV"
-          echo "MENTRA_COORDINATED_RELEASE_CHANNEL=${{ inputs.play_track }}" >> "$GITHUB_ENV"
+          echo "MENTRA_COORDINATED_RELEASE_CHANNEL=$(jq -er .channel release-intent/release-plan.json)" >> "$GITHUB_ENV"
 
       - name: Inject Android signing and Play credentials
         uses: ./.github/actions/inject-signing
@@ -449,7 +451,7 @@ jobs:
       - name: Generate exact mobile environment and package metadata
         if: inputs.dry_run == true || needs.prepare.outputs.ios_asset_exists != 'true'
         env:
-          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+          DOPPLER_TOKEN: ${{ inputs.backend_environment == 'prod' && secrets.DOPPLER_TOKEN_MOBILE_PRD || secrets.DOPPLER_TOKEN_MOBILE_STG }}
           MAPBOX_PUBLIC_TOKEN: ${{ secrets.MAPBOX_PUBLIC_TOKEN }}
         run: |
           set -euo pipefail
@@ -479,7 +481,7 @@ jobs:
           node mobile/modules/bluetooth-sdk/scripts/write-release-metadata.mjs "${metadata[@]}"
           node mobile/modules/engine/scripts/write-release-metadata.mjs "${metadata[@]}"
           grep -E '^(EXPO_PUBLIC_|MENTRAOS_NATIVE_MARKETING_VERSION|MENTRAOS_PINNED_BUILD_NUMBER)=' mobile/.env >> "$GITHUB_ENV"
-          echo "MENTRA_COORDINATED_RELEASE_CHANNEL=${{ inputs.testflight_group }}" >> "$GITHUB_ENV"
+          echo "MENTRA_COORDINATED_RELEASE_CHANNEL=$(jq -er .channel release-intent/release-plan.json)" >> "$GITHUB_ENV"
 
       - name: Configure Mapbox SwiftPM credentials
         if: inputs.dry_run == true || needs.prepare.outputs.ios_asset_exists != 'true'

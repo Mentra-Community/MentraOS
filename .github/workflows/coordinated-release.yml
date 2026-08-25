@@ -58,7 +58,7 @@ jobs:
             dev)
               echo "backend_environment=dev" >> "$GITHUB_OUTPUT"
               echo "play_track=internal" >> "$GITHUB_OUTPUT"
-              echo "testflight_group=Dev" >> "$GITHUB_OUTPUT"
+              echo "testflight_group=Mentra Dev" >> "$GITHUB_OUTPUT"
               ;;
             staging)
               # Beta is the exact production candidate promoted by App Store
@@ -66,7 +66,7 @@ jobs:
               # at production services.
               echo "backend_environment=prod" >> "$GITHUB_OUTPUT"
               echo "play_track=beta" >> "$GITHUB_OUTPUT"
-              echo "testflight_group=Beta" >> "$GITHUB_OUTPUT"
+              echo "testflight_group=Mentra Staging" >> "$GITHUB_OUTPUT"
               ;;
             *)
               echo "Coordinated prereleases only run from dev or staging, not $BRANCH." >&2

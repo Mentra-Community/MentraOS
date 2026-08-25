@@ -10,8 +10,8 @@ A selected `dev` or `staging` head runs
 
 | Branch    | Identity       | npm tag | Mobile destination               |
 | --------- | -------------- | ------- | -------------------------------- |
-| `dev`     | `X.Y.Z-dev.N`  | `dev`   | Play internal and TestFlight Dev |
-| `staging` | `X.Y.Z-beta.N` | `beta`  | Play beta and TestFlight Beta    |
+| `dev`     | `X.Y.Z-dev.N`  | `dev`   | Play internal and TestFlight `Mentra Dev` |
+| `staging` | `X.Y.Z-beta.N` | `beta`  | Play beta and TestFlight `Mentra Staging` |
 
 Each channel keeps one running publication plus its latest pending head. A new
 same-branch push replaces only an older pending run; it never cancels the
@@ -78,7 +78,8 @@ The coordinated workflows use these repository secrets:
 - `MATCH_PASSWORD`
 - `MATCH_GIT_BASIC_AUTHORIZATION`
 - `MAPBOX_PUBLIC_TOKEN`
-- `DOPPLER_TOKEN`
+- `DOPPLER_TOKEN_MOBILE_STG`
+- `DOPPLER_TOKEN_MOBILE_PRD`
 - `SENTRY_AUTH_TOKEN`
 - `EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID`
 - `EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY`
@@ -94,8 +95,8 @@ Before the first production promotion:
    its required reviewers. The workflow deliberately references this exact name
    and must remain blocked until the environment protection exists.
 2. Confirm the App Store Connect API key can upload builds and distribute them
-   to the existing `Dev` and `Beta` TestFlight groups. Confirm the Google Play
-   credentials can use the configured internal and beta tracks.
+   to the existing `Mentra Dev` and `Mentra Staging` TestFlight groups. Confirm
+   the Google Play credentials can use the configured internal and beta tracks.
 3. Complete one `dev` and one `staging` coordinated run. Verify their release
    manifests, public package metadata, OTA manifest bytes, mobile diagnostics,
    and store destinations before selecting a beta for production. Confirm each

@@ -85,7 +85,7 @@ test("assembles every product target and finalizes one complete release manifest
       mentraos: {
         "google-play": publication(`com.mentra.mentra:${plan.native.buildNumber}:beta`),
         "app-store-connect": publication(
-          `com.mentra.mentra:${plan.native.marketingVersion}:${plan.native.buildNumber}:Beta`,
+          `com.mentra.mentra:${plan.native.marketingVersion}:${plan.native.buildNumber}:Mentra Staging`,
         ),
       },
     },

@@ -41,20 +41,23 @@ test("fails when App Store Connect marks a build invalid", async () => {
 
 test("idempotently adds a build to exactly one TestFlight group", async () => {
   const api = client([
-    {data: [{id: "group-1", attributes: {name: "Beta"}}]},
+    {data: [{id: "group-1", attributes: {name: "Mentra Staging"}}]},
     {data: []},
     null,
     {data: [{type: "builds", id: "build-1"}]},
   ])
-  const result = await assignBuildToGroup(api, {appId: "app-1", buildId: "build-1", groupName: "Beta"})
+  const result = await assignBuildToGroup(api, {appId: "app-1", buildId: "build-1", groupName: "Mentra Staging"})
   assert.equal(result.reused, false)
   assert.equal(api.calls[2].options.method, "POST")
   assert.deepEqual(JSON.parse(api.calls[2].options.body), {data: [{type: "builds", id: "build-1"}]})
 })
 
 test("does not post when the group already contains the build", async () => {
-  const api = client([{data: [{id: "group-1", attributes: {name: "Dev"}}]}, {data: [{type: "builds", id: "build-1"}]}])
-  const result = await assignBuildToGroup(api, {appId: "app-1", buildId: "build-1", groupName: "Dev"})
+  const api = client([
+    {data: [{id: "group-1", attributes: {name: "Mentra Dev"}}]},
+    {data: [{type: "builds", id: "build-1"}]},
+  ])
+  const result = await assignBuildToGroup(api, {appId: "app-1", buildId: "build-1", groupName: "Mentra Dev"})
   assert.equal(result.reused, true)
   assert.equal(api.calls.length, 2)
 })
