@@ -411,6 +411,9 @@ jobs:
   build-mobile-ios:
     name: Build Mobile App (iOS)
     runs-on: [self-hosted, macOS, ARM64]
+    concurrency:
+      group: mentra-ios-signing-runner
+      cancel-in-progress: false
     env:
       EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID }}
       EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY }}

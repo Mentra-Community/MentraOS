@@ -1,11 +1,20 @@
+require "json"
+
 default_platform(:android)
 
 platform :android do
-  desc "Upload AAB to Google Play internal track"
+  desc "Read version codes from the selected Google Play track"
+  lane :track_version_codes do
+    output = ENV.fetch("GOOGLE_PLAY_VERSION_CODES_OUTPUT")
+    codes = google_play_track_version_codes(track: ENV.fetch("GOOGLE_PLAY_TRACK", "internal"))
+    File.write(output, JSON.generate(codes))
+  end
+
+  desc "Upload AAB to the selected Google Play track"
   lane :google_play do
     upload_to_play_store(
-      track: "internal",
-      aab: "app/build/outputs/bundle/release/app-release.aab",
+      track: ENV.fetch("GOOGLE_PLAY_TRACK", "internal"),
+      aab: ENV.fetch("GOOGLE_PLAY_AAB", "app/build/outputs/bundle/release/app-release.aab"),
       skip_upload_apk: true,
       skip_upload_metadata: true,
       skip_upload_images: true,

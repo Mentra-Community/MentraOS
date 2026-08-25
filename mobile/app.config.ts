@@ -91,7 +91,10 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
     ...config,
     name: appName,
     slug: "Mentra",
-    version: process.env.EXPO_PUBLIC_MENTRAOS_VERSION || "2.9.1",
+    // Coordinated prereleases expose their full identity (for example,
+    // 3.1.0-beta.57) to shipped JavaScript while stores retain the plain
+    // marketing version so the exact tested binary can be promoted.
+    version: process.env.MENTRAOS_NATIVE_MARKETING_VERSION || process.env.EXPO_PUBLIC_MENTRAOS_VERSION || "2.9.1",
     scheme: "com.mentra",
     orientation: "portrait",
     userInterfaceStyle: "automatic",
