@@ -291,7 +291,7 @@ jobs:
           plan=release-input/plan/release-plan.json
           identity=$(jq -er .releaseIdentity "$plan")
           tag="mentra-v$identity"
-          asg_selection="release-input/ota/$(jq -er .artifactNames.asgSelection "$plan")"
+          asg_selection="release-input/ota/release-assets/$(jq -er .artifactNames.asgSelection "$plan")"
           test -f "$asg_selection"
           engine_package=$(find release-input/npm -type f -name 'mentra-engine-*.tgz' -print -quit)
           test -n "$engine_package"
