@@ -1,0 +1,67 @@
+name: Coordinated Release Family Checks
+
+on:
+  pull_request:
+    branches: [dev, staging, main]
+    paths:
+      - ".github/release-family.json"
+      - ".github/scripts/*.mjs"
+      - ".github/workflows/coordinated-*.yml"
+      - ".github/workflows/release-family-checks.yml"
+      - ".github/workflows/reusable-coordinated-*.yml"
+      - "asg_client/ota_manifests/firmware_live.json"
+      - "package.json"
+      - "mobile/package.json"
+      - "mobile/modules/bluetooth-sdk/package.json"
+      - "mobile/modules/bluetooth-sdk/scripts/*.mjs"
+      - "mobile/modules/crust/package.json"
+      - "mobile/modules/engine/package.json"
+      - "mobile/modules/engine/scripts/*.mjs"
+      - "mobile/modules/jspolyfill/package.json"
+      - "mobile/modules/miniapp/package.json"
+      - "cloud-v2/packages/cloud-client/package.json"
+      - "cloud-v2/packages/protocol/package.json"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate release family
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject unresolved conflict markers
+        run: |
+          if git grep -nE '^(<<<<<<< |\|\|\|\|\|\|\| parent of |>>>>>>> )'; then
+            exit 1
+          fi
+      - name: Test coordinated release tooling
+        run: |
+          set -euo pipefail
+          mapfile -t tests < <(find \
+            .github/scripts \
+            mobile/modules/bluetooth-sdk/scripts \
+            mobile/modules/engine/scripts \
+            -maxdepth 1 -name '*.test.mjs' -print | sort)
+          test "${#tests[@]}" -gt 0
+          node --test "${tests[@]}"
+      - name: Validate repository definition
+        run: node .github/scripts/release-family-cli.mjs validate --require-version-mirrors
+      - name: Validate release plan inputs
+        run: |
+          set -euo pipefail
+          ota_inputs="$RUNNER_TEMP/ota-release-inputs.json"
+          release_plan="$RUNNER_TEMP/release-plan.json"
+          node .github/scripts/collect-ota-release-inputs.mjs \
+            asg_client/ota_manifests/firmware_live.json \
+            "$ota_inputs"
+          node .github/scripts/create-release-plan.mjs \
+            --branch dev \
+            --sequence 1 \
+            --source-commit "$(git rev-parse HEAD)" \
+            --native-build-number 310000001 \
+            --ota-inputs "$ota_inputs" \
+            --require-version-mirrors true \
+            --output "$release_plan"

@@ -1,7 +1,7 @@
 import {checkCurrentGlassesForUpdate} from "../../modules/engine/src/services/OtaUpdateCheckService"
 import {useGlassesStore} from "../../modules/engine/src/stores/glasses"
 import {SETTINGS} from "@mentra/engine"
-import {useSettingsStore} from "@mentra/engine/internal"
+import {useSettingsStore} from "@mentra/engine-host-internal"
 import {resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
 
 describe("OtaUpdateCheckService", () => {

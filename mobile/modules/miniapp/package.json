@@ -1,6 +1,6 @@
 {
   "name": "@mentra/miniapp",
-  "version": "0.3.0-dev.1",
+  "version": "3.1.0",
   "description": "SDK for building MentraOS local miniapps (browser/WebView)",
   "author": "Mentra Labs",
   "license": "MIT",
@@ -53,7 +53,7 @@
     }
   },
   "dependencies": {
-    "@mentra/cloud-protocol": "workspace:*",
+    "@mentra/cloud-protocol": "3.1.0",
     "@mentra/types": "1.0.0-beta.2",
     "eventemitter3": "^5.0.1"
   },

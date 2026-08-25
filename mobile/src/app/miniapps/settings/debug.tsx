@@ -14,7 +14,7 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import {SETTINGS, useSetting} from "@mentra/engine"
-import {navigationService} from "@mentra/engine/internal"
+import {navigationService} from "@mentra/engine-host-internal"
 import showAlert from "@/utils/AlertUtils"
 
 // Hardcoded test destination for the nav POC. SF Ferry Building.

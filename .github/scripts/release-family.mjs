@@ -1,0 +1,416 @@
+import {readFileSync} from "node:fs"
+import {createHash} from "node:crypto"
+import path from "node:path"
+
+const STABLE_VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
+const COMMIT_PATTERN = /^[0-9a-f]{40}$/
+const CHANNELS = new Set(["dev", "beta", "production"])
+const KINDS = new Set(["package", "product"])
+const PUBLISH_TARGETS = new Set(["app-store-connect", "google-play", "maven-central", "npm", "swift-package-manager"])
+const PUBLICATION_STATUSES = new Set(["promoted", "published", "reused"])
+const SHA256_PATTERN = /^[0-9a-f]{64}$/
+
+function fail(message) {
+  throw new Error(`Invalid release family: ${message}`)
+}
+
+function readJson(file) {
+  try {
+    return JSON.parse(readFileSync(file, "utf8"))
+  } catch (error) {
+    throw new Error(`Could not read JSON from ${file}: ${error.message}`)
+  }
+}
+
+function requireString(value, label) {
+  if (typeof value !== "string" || value.length === 0) fail(`${label} must be a non-empty string`)
+  return value
+}
+
+function requireUniqueStrings(values, label) {
+  if (!Array.isArray(values)) fail(`${label} must be an array`)
+  const seen = new Set()
+  for (const value of values) {
+    requireString(value, `${label} entry`)
+    if (seen.has(value)) fail(`${label} contains duplicate ${value}`)
+    seen.add(value)
+  }
+  return seen
+}
+
+export function validateFamilyBaseVersion(version) {
+  if (typeof version !== "string" || !STABLE_VERSION_PATTERN.test(version)) {
+    fail(`family base version ${JSON.stringify(version)} must be a plain X.Y.Z version`)
+  }
+  return version
+}
+
+export function channelForBranch(branch) {
+  if (branch === "dev") return "dev"
+  if (branch === "staging") return "beta"
+  if (branch === "main") return "production"
+  throw new Error(`Branch ${JSON.stringify(branch)} is not a coordinated release branch`)
+}
+
+export function deriveReleaseIdentity(familyBaseVersion, channel, sequence) {
+  validateFamilyBaseVersion(familyBaseVersion)
+  if (!CHANNELS.has(channel)) throw new Error(`Unknown release channel ${JSON.stringify(channel)}`)
+
+  if (channel === "production") {
+    if (sequence !== undefined && sequence !== null) {
+      throw new Error("Production release identities do not accept a prerelease sequence")
+    }
+    return familyBaseVersion
+  }
+
+  if (!Number.isSafeInteger(sequence) || sequence < 1) {
+    throw new Error(`${channel} release sequence must be a positive safe integer`)
+  }
+  return `${familyBaseVersion}-${channel}.${sequence}`
+}
+
+export function releaseSetId(releaseIdentity) {
+  return `mentra-${releaseIdentity}`
+}
+
+export function dependencyOrder(members) {
+  const byName = new Map(members.map((member) => [member.name, member]))
+  const permanent = new Set()
+  const temporary = new Set()
+  const ordered = []
+
+  function visit(name, trail = []) {
+    if (permanent.has(name)) return
+    if (temporary.has(name)) fail(`dependency cycle: ${[...trail, name].join(" -> ")}`)
+    const member = byName.get(name)
+    if (!member) fail(`dependency graph references unknown member ${name}`)
+    temporary.add(name)
+    for (const dependency of member.dependencies) visit(dependency, [...trail, name])
+    temporary.delete(name)
+    permanent.add(name)
+    ordered.push(name)
+  }
+
+  for (const member of members) visit(member.name)
+  return ordered
+}
+
+export function loadReleaseFamily({rootDir = process.cwd(), requireVersionMirrors = false} = {}) {
+  const definitionPath = path.join(rootDir, ".github/release-family.json")
+  const definition = readJson(definitionPath)
+  if (definition.schemaVersion !== 1) fail(`unsupported schemaVersion ${JSON.stringify(definition.schemaVersion)}`)
+  requireString(definition.family, "family")
+  const versionSource = requireString(definition.versionSource, "versionSource")
+  const familyBaseVersion = validateFamilyBaseVersion(readJson(path.join(rootDir, versionSource)).version)
+
+  if (!Array.isArray(definition.members) || definition.members.length === 0) fail("members must not be empty")
+  const members = []
+  const names = new Set()
+  const manifests = new Set()
+  const packageManifests = new Map()
+
+  for (const [index, rawMember] of definition.members.entries()) {
+    const label = `members[${index}]`
+    const name = requireString(rawMember?.name, `${label}.name`)
+    const manifest = requireString(rawMember?.manifest, `${label}.manifest`)
+    const kind = requireString(rawMember?.kind, `${label}.kind`)
+    if (!KINDS.has(kind)) fail(`${label}.kind ${JSON.stringify(kind)} is unsupported`)
+    if (names.has(name)) fail(`duplicate member name ${name}`)
+    if (manifests.has(manifest)) fail(`duplicate member manifest ${manifest}`)
+    names.add(name)
+    manifests.add(manifest)
+
+    const publishTargets = [...requireUniqueStrings(rawMember.publishTargets, `${label}.publishTargets`)]
+    for (const target of publishTargets) {
+      if (!PUBLISH_TARGETS.has(target)) fail(`${label}.publishTargets contains unsupported target ${target}`)
+    }
+    const dependencies = [...requireUniqueStrings(rawMember.dependencies, `${label}.dependencies`)]
+    const packageManifest = readJson(path.join(rootDir, manifest))
+    if (packageManifest.name !== name) {
+      fail(`${manifest} declares ${JSON.stringify(packageManifest.name)}, expected ${JSON.stringify(name)}`)
+    }
+    if (requireVersionMirrors && packageManifest.version !== familyBaseVersion) {
+      fail(`${manifest} version ${JSON.stringify(packageManifest.version)} does not mirror ${familyBaseVersion}`)
+    }
+    packageManifests.set(name, packageManifest)
+    members.push({name, manifest, kind, publishTargets, dependencies, sourceVersion: packageManifest.version})
+  }
+
+  for (const member of members) {
+    for (const dependency of member.dependencies) {
+      if (!names.has(dependency)) fail(`${member.name} depends on unknown family member ${dependency}`)
+      if (dependency === member.name) fail(`${member.name} cannot depend on itself`)
+    }
+  }
+
+  if (requireVersionMirrors) {
+    for (const member of members) {
+      const packageManifest = packageManifests.get(member.name)
+      const configuredDependencies = new Set(member.dependencies)
+      const expectedRange = member.name === "mentraos" ? "workspace:*" : familyBaseVersion
+
+      for (const dependency of member.dependencies) {
+        const actualRange = packageManifest.dependencies?.[dependency]
+        if (actualRange !== expectedRange) {
+          fail(
+            `${member.manifest} dependencies.${dependency} is ${JSON.stringify(actualRange)}, expected ${JSON.stringify(expectedRange)}`,
+          )
+        }
+      }
+      for (const dependency of names) {
+        if (packageManifest.peerDependencies?.[dependency] !== undefined) {
+          fail(`${member.manifest} must not declare family member ${dependency} as a peerDependency`)
+        }
+        if (packageManifest.dependencies?.[dependency] !== undefined && !configuredDependencies.has(dependency)) {
+          fail(`${member.manifest} depends on ${dependency}, but the release-family graph is missing that edge`)
+        }
+      }
+    }
+  }
+
+  const products = [...requireUniqueStrings(definition.products, "products")]
+  for (const product of products) {
+    const member = members.find((candidate) => candidate.name === product)
+    if (!member) fail(`products contains unknown family member ${product}`)
+    if (member.kind !== "product") fail(`${product} is listed as a product but has kind ${member.kind}`)
+  }
+  const productSet = new Set(products)
+  for (const member of members) {
+    if (member.kind === "product" && !productSet.has(member.name))
+      fail(`${member.name} has kind product but is not listed in products`)
+  }
+
+  const publicationOrder = dependencyOrder(members)
+  return {
+    schemaVersion: definition.schemaVersion,
+    family: definition.family,
+    familyBaseVersion,
+    versionSource,
+    products,
+    members,
+    publicationOrder,
+  }
+}
+
+export function createReleasePlan({family, channel, sequence, sourceCommit, nativeBuildNumber, otaInputs = {}}) {
+  if (!family?.members || !family?.familyBaseVersion) throw new Error("A validated release family is required")
+  if (!CHANNELS.has(channel)) throw new Error(`Unknown release channel ${JSON.stringify(channel)}`)
+  if (typeof sourceCommit !== "string" || !COMMIT_PATTERN.test(sourceCommit)) {
+    throw new Error("sourceCommit must be a full lowercase Git commit SHA")
+  }
+  if (!Number.isSafeInteger(nativeBuildNumber) || nativeBuildNumber < 1) {
+    throw new Error("nativeBuildNumber must be a positive safe integer")
+  }
+
+  const releaseIdentity = deriveReleaseIdentity(family.familyBaseVersion, channel, sequence)
+  const members = Object.fromEntries(
+    family.members.map((member) => [
+      member.name,
+      {
+        version: releaseIdentity,
+        kind: member.kind,
+        manifest: member.manifest,
+        publishTargets: member.publishTargets,
+        dependencies: Object.fromEntries(member.dependencies.map((dependency) => [dependency, releaseIdentity])),
+      },
+    ]),
+  )
+
+  return {
+    schemaVersion: 1,
+    releaseSetId: releaseSetId(releaseIdentity),
+    familyBaseVersion: family.familyBaseVersion,
+    releaseIdentity,
+    channel,
+    sequence: channel === "production" ? null : sequence,
+    sourceCommit,
+    native: {
+      marketingVersion: family.familyBaseVersion,
+      buildNumber: nativeBuildNumber,
+    },
+    products: Object.fromEntries(family.products.map((product) => [product, releaseIdentity])),
+    members,
+    publicationOrder: family.publicationOrder,
+    artifactNames: {
+      releasePlan: `mentra-release-plan-${releaseIdentity}.json`,
+      releaseManifest: `mentra-release-${releaseIdentity}.json`,
+      otaManifest: `mentra-live-ota-${releaseIdentity}.json`,
+      asgSelection: `mentra-live-asg-selection-${releaseIdentity}.json`,
+      androidApp: `mentraos-${releaseIdentity}-android.apk`,
+      androidStoreApp: `mentraos-${releaseIdentity}-android.aab`,
+      iosApp: `mentraos-${releaseIdentity}-ios.ipa`,
+      iosSdkArchive: `mentra-bluetooth-sdk-ios-${releaseIdentity}.tar`,
+      enginePackage: `mentra-engine-${releaseIdentity}.tgz`,
+    },
+    otaInputs,
+  }
+}
+
+function canonicalize(value) {
+  if (Array.isArray(value)) return value.map(canonicalize)
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((key) => [key, canonicalize(value[key])]),
+    )
+  }
+  return value
+}
+
+export function serializeReleaseRecord(record) {
+  return `${JSON.stringify(canonicalize(record), null, 2)}\n`
+}
+
+export function releaseRecordSha256(record) {
+  return createHash("sha256").update(serializeReleaseRecord(record)).digest("hex")
+}
+
+export function requirePublicHttpsUrl(value, label) {
+  let parsed
+  try {
+    parsed = new URL(value)
+  } catch {
+    throw new Error(`${label} must be a valid URL`)
+  }
+  if (parsed.protocol !== "https:") throw new Error(`${label} must use HTTPS`)
+  if (parsed.username || parsed.password || parsed.hash) {
+    throw new Error(`${label} must be credential-free HTTPS without a fragment`)
+  }
+  return parsed.toString()
+}
+
+function validatePublication(publication, label) {
+  if (!publication || typeof publication !== "object") throw new Error(`${label} is missing`)
+  if (!PUBLICATION_STATUSES.has(publication.status)) {
+    throw new Error(`${label}.status must be promoted, published, or reused`)
+  }
+  requireString(publication.coordinate, `${label}.coordinate`)
+  requirePublicHttpsUrl(publication.url, `${label}.url`)
+  requirePublicHttpsUrl(publication.provenanceUrl, `${label}.provenanceUrl`)
+  if (!SHA256_PATTERN.test(publication.sha256)) {
+    throw new Error(`${label}.sha256 must be a lowercase SHA-256 digest`)
+  }
+  return publication
+}
+
+function expectedPublicationCoordinate(plan, memberName, target) {
+  const version = plan.members[memberName].version
+  if (target === "npm") return `${memberName}@${version}`
+  if (target === "maven-central") return `com.mentraglass:bluetooth-sdk:${version}`
+  if (target === "swift-package-manager") return `Mentra-Community/mentra-bluetooth-sdk-ios@${version}`
+  const channels = {
+    dev: {play: "internal", appStore: "Dev"},
+    beta: {play: "beta", appStore: "Beta"},
+    production: {play: "production", appStore: "App Store"},
+  }
+  const selected = channels[plan.channel]
+  if (!selected) throw new Error(`Unknown release channel ${JSON.stringify(plan.channel)}`)
+  if (target === "google-play") return `com.mentra.mentra:${plan.native.buildNumber}:${selected.play}`
+  if (target === "app-store-connect") {
+    return `com.mentra.mentra:${plan.native.marketingVersion}:${plan.native.buildNumber}:${selected.appStore}`
+  }
+  throw new Error(`Unknown publication target ${JSON.stringify(target)}`)
+}
+
+function requiredArtifactCoordinates(plan) {
+  const keys =
+    plan.channel === "production"
+      ? ["enginePackage"]
+      : ["asgSelection", "androidApp", "androidStoreApp", "iosApp", "enginePackage"]
+  return keys.map((key) => {
+    const coordinate = plan.artifactNames?.[key]
+    if (typeof coordinate !== "string" || coordinate.length === 0) {
+      throw new Error(`Release plan is missing required artifact name ${key}`)
+    }
+    return coordinate
+  })
+}
+
+export function finalizeReleaseManifest({plan, results, completedAt}) {
+  if (!plan?.releaseSetId || !plan?.members) throw new Error("A generated release plan is required")
+  if (results?.releaseSetId !== plan.releaseSetId) throw new Error("Publication results do not match the release set")
+  const completed = new Date(completedAt)
+  if (!completedAt || Number.isNaN(completed.valueOf()) || completed.toISOString() !== completedAt) {
+    throw new Error("completedAt must be an ISO-8601 UTC timestamp")
+  }
+  if (
+    plan.native?.marketingVersion !== plan.familyBaseVersion ||
+    !Number.isSafeInteger(plan.native?.buildNumber) ||
+    plan.native.buildNumber < 1
+  ) {
+    throw new Error("Release plan has invalid native build identity")
+  }
+
+  const publications = {}
+  for (const [memberName, member] of Object.entries(plan.members)) {
+    const memberResults = results.publications?.[memberName]
+    if (!memberResults || typeof memberResults !== "object") {
+      throw new Error(`Missing publication results for ${memberName}`)
+    }
+    publications[memberName] = {}
+    for (const target of member.publishTargets) {
+      const label = `publications.${memberName}.${target}`
+      const publication = validatePublication(memberResults[target], label)
+      const expected = expectedPublicationCoordinate(plan, memberName, target)
+      if (publication.coordinate !== expected) {
+        throw new Error(`${label}.coordinate must be ${expected}`)
+      }
+      publications[memberName][target] = publication
+    }
+  }
+
+  const otaManifest = validatePublication(results.otaManifest, "otaManifest")
+  if (plan.channel === "production" && otaManifest.status !== "promoted") {
+    throw new Error("Production OTA manifest must be promoted from the selected beta")
+  }
+  if (plan.channel !== "production" && otaManifest.coordinate !== plan.artifactNames.otaManifest) {
+    throw new Error(`otaManifest.coordinate must be ${plan.artifactNames.otaManifest}`)
+  }
+  if (!Array.isArray(results.artifacts)) throw new Error("artifacts must be an array")
+  const artifacts = results.artifacts.map((artifact, index) => validatePublication(artifact, `artifacts[${index}]`))
+  const artifactCoordinates = new Set()
+  for (const artifact of artifacts) {
+    if (artifactCoordinates.has(artifact.coordinate)) {
+      throw new Error(`artifacts contains duplicate coordinate ${artifact.coordinate}`)
+    }
+    artifactCoordinates.add(artifact.coordinate)
+  }
+  for (const coordinate of requiredArtifactCoordinates(plan)) {
+    if (!artifactCoordinates.has(coordinate)) throw new Error(`Missing required artifact ${coordinate}`)
+  }
+
+  let promotion
+  if (plan.channel === "production") {
+    promotion = results.promotion
+    if (
+      !promotion ||
+      promotion.selectedBetaReleaseSetId !== plan.promotion?.selectedBetaReleaseSetId ||
+      promotion.selectedBetaIdentity !== plan.promotion?.selectedBetaIdentity ||
+      promotion.selectedBetaManifest?.url !== plan.promotion?.selectedBetaManifest?.url ||
+      promotion.selectedBetaManifest?.sha256 !== plan.promotion?.selectedBetaManifest?.sha256
+    ) {
+      throw new Error("Production release is missing its exact selected beta provenance")
+    }
+    requirePublicHttpsUrl(promotion.selectedBetaManifest.url, "promotion.selectedBetaManifest.url")
+    if (!SHA256_PATTERN.test(promotion.selectedBetaManifest.sha256)) {
+      throw new Error("promotion.selectedBetaManifest.sha256 must be a lowercase SHA-256 digest")
+    }
+  }
+
+  return {
+    schemaVersion: 1,
+    releaseSetId: plan.releaseSetId,
+    familyBaseVersion: plan.familyBaseVersion,
+    releaseIdentity: plan.releaseIdentity,
+    channel: plan.channel,
+    sourceCommit: plan.sourceCommit,
+    native: plan.native,
+    completedAt,
+    releasePlanSha256: releaseRecordSha256(plan),
+    publications,
+    otaManifest,
+    artifacts,
+    ...(promotion ? {promotion} : {}),
+  }
+}

@@ -10,7 +10,7 @@
 // target hint) lives on the full surface, not the public entry (same reason
 // the glasses facade imports internal).
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
-import type {ConnectOptions, Device, PairFailureEvent, GlassesNotReadyEvent} from "@mentra/bluetooth-sdk"
+import type {ConnectOptions, Device, DeviceModel, PairFailureEvent, GlassesNotReadyEvent} from "@mentra/bluetooth-sdk"
 import {useCoreStore} from "../stores/core"
 import {useGlassesStore} from "../stores/glasses"
 import {hasDefaultDevice} from "../services/DeviceStoreHydration"
@@ -206,7 +206,7 @@ export const pairing = {
   markPendingSelection: (model: string) => markPendingSelection(model),
 
   /** Start scanning for nearby glasses. Results land on `searchResults()`/`onFound()`. */
-  scan: (...args: Parameters<typeof BluetoothSdk.startScan>) => BluetoothSdk.startScan(...args),
+  scan: (model: DeviceModel): Promise<void> => BluetoothSdk.startScan(model),
   /** Whether a scan is currently in progress. */
   scanning: (): boolean => useCoreStore.getState().searching,
   /** Subscribe to scan-in-progress changes; fires only when it changes. Returns an unsubscribe. */
@@ -226,7 +226,7 @@ export const pairing = {
   // leak as mutable references into the store.
   searchResults: () => useCoreStore.getState().searchResults.map((result) => ({...result})),
   /** Subscribe to scan-result changes; fires only when they change. Returns an unsubscribe. */
-  onFound: (cb: (results: ReturnType<typeof useCoreStore.getState>["searchResults"]) => void): (() => void) => {
+  onFound: (cb: (results: Device[]) => void): (() => void) => {
     let last = JSON.stringify(useCoreStore.getState().searchResults)
     return useCoreStore.subscribe(() => {
       const results = useCoreStore.getState().searchResults
@@ -250,7 +250,7 @@ export const pairing = {
     return BluetoothSdk.connect(device, {...options, saveAsDefault: false})
   },
   /** Set a device as the default for subsequent `glasses.connectDefault()`. */
-  setDefault: (...args: Parameters<typeof BluetoothSdk.setDefaultDevice>) => BluetoothSdk.setDefaultDevice(...args),
+  setDefault: (device: Device | null): Promise<void> => BluetoothSdk.setDefaultDevice(device),
   /**
    * Prime the native Bluetooth Classic audio watcher with the picked device.
    * The iOS Mentra Live flow pairs Classic audio BEFORE any BLE connect

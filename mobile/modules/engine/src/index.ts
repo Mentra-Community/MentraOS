@@ -6,8 +6,7 @@
  * renders with (decision functions, sort/order helpers, policy constants,
  * capability tables, timers). Judgment rule: read models, commands, pure
  * functions and types belong here; anything that mutates runtime state or
- * exposes a raw store/service lives on `@mentra/engine/internal`
- * (migration-era surface) or `@mentra/engine/devtools` (debug-only) instead.
+ * exposes a raw store/service remains private to the MentraOS host.
  * See cloud-v2/docs/issues/020-glasses-status-boundary/integration-review.md §D.
  */
 
@@ -47,12 +46,7 @@ export {MENTRA_LIVE_SETTING_KEYS, getBluetoothSettingKeysForDevice} from "./stor
 
 // Runtime-shared constants and contract DTOs.
 export {ISLAND_SETTINGS_KEYS} from "./runtime/config"
-export type {
-  CloudClientStatusSnapshot,
-  MiniappAuthToken,
-  InteropAuditEvent,
-  TtsSynthesisResult,
-} from "./runtime/config"
+export type {CloudClientStatusSnapshot, MiniappAuthToken, InteropAuditEvent, TtsSynthesisResult} from "./runtime/config"
 
 // Pure readiness predicates over glasses connection state.
 export {
@@ -132,11 +126,19 @@ export {
 export type {GalleryNotice, GalleryNoticeCode} from "./services/asg/galleryNotices"
 export {MediaLibraryPermissions} from "./utils/permissions/MediaLibraryPermissions"
 export {deriveGalleryDisplayName} from "./utils/permissions/galleryDisplayName"
-export type {PhotoInfo, CaptureFile, CaptureGroup, GalleryResponse, ServerStatus, HealthResponse, GalleryEvent} from "./types/asg"
+export type {
+  PhotoInfo,
+  CaptureFile,
+  CaptureGroup,
+  GalleryResponse,
+  ServerStatus,
+  HealthResponse,
+  GalleryEvent,
+} from "./types/asg"
 
 // Bluetooth SDK event types host UI subscribes to via engine facades (the
 // BluetoothSdk singleton passthrough itself is internal).
-export type {PairFailureEvent, GlassesNotReadyEvent} from "@mentra/bluetooth-sdk/internal"
+export type {PairFailureEvent, GlassesNotReadyEvent} from "@mentra/bluetooth-sdk"
 
 // Cloud connection status enum (read model; the connection store is internal).
 export {WebSocketStatus} from "./stores/connection"

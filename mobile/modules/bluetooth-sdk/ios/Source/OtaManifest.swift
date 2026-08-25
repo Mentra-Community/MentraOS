@@ -1,21 +1,19 @@
 import Foundation
 
 enum OtaManifestDefaults {
-    private static let sdkOtaReleaseBaseUrl = "https://github.com/Mentra-Community/MentraOS/releases/download/bluetooth-sdk-ota"
     // ASG builds before 39 ignore ota_start.ota_version_url, so SDK checks must
     // use the same legacy production manifest those glasses will install from.
     static let legacyProdOtaVersionUrl = "https://ota.mentraglass.com/prod_live_version.json"
 
     static func defaultOtaVersionUrl() throws -> String {
-        guard let sdkVersion = BluetoothSdkDefaults.sdkVersion,
-              !sdkVersion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        else {
+        let manifestUrl = GeneratedReleaseMetadata.otaManifestUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !manifestUrl.isEmpty else {
             throw BluetoothSdkError(
-                code: "missing_sdk_version",
-                message: "Cannot determine Bluetooth SDK version for the default OTA manifest URL."
+                code: "ota_manifest_unconfigured",
+                message: "This source-built Bluetooth SDK has no embedded OTA manifest. Configure one with the debug API."
             )
         }
-        return "\(sdkOtaReleaseBaseUrl)/bluetooth-sdk-\(sdkVersion)-version.json"
+        return manifestUrl
     }
 }
 
