@@ -1,6 +1,9 @@
 import {ScrollView, View} from "react-native"
 
+import {SETTINGS, useSetting} from "@mentra/engine"
+
 import {Button, Header, Screen, Text} from "@/components/ignite"
+import ToggleSetting from "@/components/settings/ToggleSetting"
 import GlassView from "@/components/ui/GlassView"
 import {Group} from "@/components/ui/Group"
 import {RouteButton} from "@/components/ui/RouteButton"
@@ -15,6 +18,7 @@ const DOCS_URL = "https://docs.mentraglass.com"
 export default function MiniappDeveloperSettingsScreen() {
   const {theme} = useAppTheme()
   const {goBack, push} = useNavigationStore.getState()
+  const [showOnHomeScreen, setShowOnHomeScreen] = useSetting(SETTINGS.miniapp_dev_mode.key)
 
   return (
     <Screen preset="fixed">
@@ -32,6 +36,15 @@ export default function MiniappDeveloperSettingsScreen() {
               flexContainer={false}
             />
           </GlassView>
+
+          <Group title={translate("miniappDevSettings:preferencesTitle")}>
+            <ToggleSetting
+              label={translate("miniappDevSettings:showOnHomeScreenLabel")}
+              subtitle={translate("miniappDevSettings:showOnHomeScreenSubtitle")}
+              value={showOnHomeScreen}
+              onValueChange={setShowOnHomeScreen}
+            />
+          </Group>
 
           <Group title={translate("miniappDevSettings:toolsTitle")}>
             <RouteButton
