@@ -301,68 +301,82 @@ export class MiniAppService {
   }
 
   async publishRelease(input: AdminReleaseDecisionInput) {
-    const release = await MiniAppReleaseModel.findOne({ _id: input.releaseId });
-    if (!release) throw new MiniAppServiceError("not_found", "release not found", 404);
-    if (!["accepted", "published"].includes(release.status)) {
-      throw new MiniAppServiceError("invalid_release_state", "only accepted releases can be published", 409);
-    }
+    const requestedRelease = await MiniAppReleaseModel.findOne({ _id: input.releaseId }).lean();
+    if (!requestedRelease) throw new MiniAppServiceError("not_found", "release not found", 404);
+    return withStoreListingLease(requestedRelease.miniAppId, async lease => {
+      const release = await MiniAppReleaseModel.findOne({ _id: input.releaseId });
+      if (!release) throw new MiniAppServiceError("not_found", "release not found", 404);
+      if (!["accepted", "published"].includes(release.status)) {
+        throw new MiniAppServiceError("invalid_release_state", "only accepted releases can be published", 409);
+      }
 
-    const app = await MiniAppModel.findOne({ _id: release.miniAppId });
-    if (!app || app.status === "archived") throw new MiniAppServiceError("not_found", "miniapp not found", 404);
-    const assets = await MiniAppAssetModel.find({
-      miniAppId: app._id.toString(),
-      role: { $in: ["store_icon", "store_cover", "gallery_screenshot"] },
-    }).lean();
-    if (!release.reviewedStoreListing || typeof release.reviewedStoreListing !== "object") {
-      throw new MiniAppServiceError(
-        "listing_not_reviewed",
-        "Store listing must be approved again before this release can be published",
-        409,
+      const app = await MiniAppModel.findOne({ _id: release.miniAppId });
+      if (!app || app.status === "archived") throw new MiniAppServiceError("not_found", "miniapp not found", 404);
+      const releaseTrack = release.releaseTrack === "beta" ? "beta" : "stable";
+      const activeReleaseId = releaseTrack === "beta" ? app.activeBetaReleaseId : app.activeReleaseId;
+      if (release.status === "published") {
+        if (activeReleaseId === release._id.toString()) return serializeRelease(release.toObject());
+        throw new MiniAppServiceError(
+          "invalid_release_state",
+          "a historical published release cannot replace the active release",
+          409,
+        );
+      }
+      const assets = await MiniAppAssetModel.find({
+        miniAppId: app._id.toString(),
+        role: { $in: ["store_icon", "store_cover", "gallery_screenshot"] },
+      }).lean();
+      if (!release.reviewedStoreListing || typeof release.reviewedStoreListing !== "object") {
+        throw new MiniAppServiceError(
+          "listing_not_reviewed",
+          "Store listing must be approved again before this release can be published",
+          409,
+        );
+      }
+      const reviewedStoreListing = {
+        ...serializeStoreListing(release.reviewedStoreListing),
+        // These fields are admin-only and may be adjusted safely after approval.
+        reviewTier: app.storeListing?.reviewTier ?? "community",
+        featured: app.storeListing?.featured === true,
+      };
+      const readiness = storeListingReadiness(
+        { description: app.description, storeListing: reviewedStoreListing },
+        assets,
       );
-    }
-    const reviewedStoreListing = {
-      ...serializeStoreListing(release.reviewedStoreListing),
-      // These fields are admin-only and may be adjusted safely after approval.
-      reviewTier: app.storeListing?.reviewTier ?? "community",
-      featured: app.storeListing?.featured === true,
-    };
-    const readiness = storeListingReadiness(
-      { description: app.description, storeListing: reviewedStoreListing },
-      assets,
-    );
-    if (!readiness.ready) {
-      throw new MiniAppServiceError(
-        "store_listing_incomplete",
-        `Store listing is incomplete: ${readiness.missing.join(", ")}`,
-        409,
-      );
-    }
+      if (!readiness.ready) {
+        throw new MiniAppServiceError(
+          "store_listing_incomplete",
+          `Store listing is incomplete: ${readiness.missing.join(", ")}`,
+          409,
+        );
+      }
 
-    release.status = "published";
-    // Persist the complete publication revision on the release itself so
-    // historical admin rows do not drift when a newer release on this track
-    // replaces the app-level active snapshot.
-    release.reviewedStoreListing = reviewedStoreListing;
-    release.publishedAt = release.publishedAt ?? new Date();
-    release.reviewedBy = input.adminId;
-    if (input.notes?.trim()) release.reviewNotes = input.notes.trim();
-    const releaseTrack = release.releaseTrack === "beta" ? "beta" : "stable";
-    if (releaseTrack === "beta") {
-      app.activeBetaReleaseId = release._id.toString();
-    } else {
-      app.activeReleaseId = release._id.toString();
-    }
-    // The public catalog must never read the developer-editable listing. A
-    // publication decision snapshots the exact moderated text and artwork;
-    // subsequent developer edits remain private until another publication.
-    if (releaseTrack === "beta") {
-      app.publishedBetaStoreListing = reviewedStoreListing;
-    } else {
-      app.publishedStoreListing = reviewedStoreListing;
-    }
+      release.status = "published";
+      // Persist the complete publication revision on the release itself so
+      // historical admin rows do not drift when a newer release on this track
+      // replaces the app-level active snapshot.
+      release.reviewedStoreListing = reviewedStoreListing;
+      release.publishedAt = release.publishedAt ?? new Date();
+      release.reviewedBy = input.adminId;
+      if (input.notes?.trim()) release.reviewNotes = input.notes.trim();
+      if (releaseTrack === "beta") {
+        app.activeBetaReleaseId = release._id.toString();
+      } else {
+        app.activeReleaseId = release._id.toString();
+      }
+      // The public catalog must never read the developer-editable listing. A
+      // publication decision snapshots the exact moderated text and artwork;
+      // subsequent developer edits remain private until another publication.
+      if (releaseTrack === "beta") {
+        app.publishedBetaStoreListing = reviewedStoreListing;
+      } else {
+        app.publishedStoreListing = reviewedStoreListing;
+      }
 
-    await Promise.all([release.save(), app.save()]);
-    return serializeRelease(release.toObject());
+      await lease.assertHeld();
+      await Promise.all([release.save(), app.save()]);
+      return serializeRelease(release.toObject());
+    });
   }
 
   async updateStoreModeration(input: AdminStoreModerationInput) {
@@ -380,38 +394,46 @@ export class MiniAppService {
     if (Object.keys(updates).length === 0) {
       throw new MiniAppServiceError("invalid_request", "reviewTier or featured is required", 400);
     }
-    const app = await MiniAppModel.findOneAndUpdate(
-      { packageName, status: { $ne: "archived" } },
-      { $set: updates },
-      { new: true },
-    ).lean();
-    if (!app) throw new MiniAppServiceError("not_found", "miniapp not found", 404);
-    if (app.publishedStoreListing && Object.keys(publishedUpdates).length > 0) {
-      await MiniAppModel.updateOne({ _id: app._id }, { $set: publishedUpdates });
-    }
-    if (app.publishedBetaStoreListing && Object.keys(publishedUpdates).length > 0) {
-      const betaUpdates = Object.fromEntries(
-        Object.entries(publishedUpdates).map(([key, value]) => [key.replace("publishedStoreListing", "publishedBetaStoreListing"), value]),
+    const target = await MiniAppModel.findOne({ packageName, status: { $ne: "archived" } }).select("_id").lean();
+    if (!target) throw new MiniAppServiceError("not_found", "miniapp not found", 404);
+    return withStoreListingLease(target._id.toString(), async lease => {
+      const app = await MiniAppModel.findOneAndUpdate(
+        { _id: target._id, status: { $ne: "archived" } },
+        { $set: updates },
+        { new: true },
+      ).lean();
+      if (!app) throw new MiniAppServiceError("not_found", "miniapp not found", 404);
+      if (app.publishedStoreListing && Object.keys(publishedUpdates).length > 0) {
+        await MiniAppModel.updateOne({ _id: app._id }, { $set: publishedUpdates });
+      }
+      if (app.publishedBetaStoreListing && Object.keys(publishedUpdates).length > 0) {
+        const betaUpdates = Object.fromEntries(
+          Object.entries(publishedUpdates).map(([key, value]) => [
+            key.replace("publishedStoreListing", "publishedBetaStoreListing"),
+            value,
+          ]),
+        );
+        await MiniAppModel.updateOne({ _id: app._id }, { $set: betaUpdates });
+      }
+      const activeReleaseIds = [app.activeReleaseId, app.activeBetaReleaseId].filter(
+        (releaseId): releaseId is string => typeof releaseId === "string" && releaseId.length > 0,
       );
-      await MiniAppModel.updateOne({ _id: app._id }, { $set: betaUpdates });
-    }
-    const activeReleaseIds = [app.activeReleaseId, app.activeBetaReleaseId].filter(
-      (releaseId): releaseId is string => typeof releaseId === "string" && releaseId.length > 0,
-    );
-    if (activeReleaseIds.length > 0) {
-      const releaseUpdates = Object.fromEntries(
-        Object.entries(updates).map(([key, value]) => [key.replace("storeListing", "reviewedStoreListing"), value]),
-      );
-      await MiniAppReleaseModel.updateMany(
-        { _id: { $in: activeReleaseIds }, status: "published" },
-        { $set: releaseUpdates },
-      );
-    }
-    return {
-      packageName: app.packageName,
-      reviewTier: app.storeListing?.reviewTier ?? "community",
-      featured: app.storeListing?.featured === true,
-    };
+      if (activeReleaseIds.length > 0) {
+        const releaseUpdates = Object.fromEntries(
+          Object.entries(updates).map(([key, value]) => [key.replace("storeListing", "reviewedStoreListing"), value]),
+        );
+        await lease.assertHeld();
+        await MiniAppReleaseModel.updateMany(
+          { _id: { $in: activeReleaseIds }, status: "published" },
+          { $set: releaseUpdates },
+        );
+      }
+      return {
+        packageName: app.packageName,
+        reviewTier: app.storeListing?.reviewTier ?? "community",
+        featured: app.storeListing?.featured === true,
+      };
+    });
   }
 
   async createRelease(developer: DeveloperIdentity, input: CreateReleaseInput) {

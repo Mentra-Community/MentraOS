@@ -617,6 +617,10 @@ describe("miniapp release lifecycle", () => {
     expect(adminHistory.find(row => row.id === secondBeta.id)?.storeListing.subtitle).toBe("Second beta listing");
     expect(adminHistory.find(row => row.id === beta.id)?.isActiveRelease).toBe(false);
     expect(adminHistory.find(row => row.id === secondBeta.id)?.isActiveRelease).toBe(true);
+    await expect(
+      miniapps.publishRelease({ releaseId: beta.id, adminId: "admin@mentraglass.com" }),
+    ).rejects.toMatchObject({ code: "invalid_release_state", status: 409 });
+    expect((await MiniAppModel.findOne({ packageName }).lean())?.activeBetaReleaseId).toBe(secondBeta.id);
   });
 });
 
