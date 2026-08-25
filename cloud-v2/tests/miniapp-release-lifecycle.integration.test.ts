@@ -118,6 +118,10 @@ describe("miniapp release lifecycle", () => {
       miniapps.publishRelease({ releaseId: release.id, adminId: "admin@mentraglass.com" }),
     ).rejects.toMatchObject({ code: "store_listing_incomplete" });
     await configurePublishableListing("com.example.weather");
+    await expect(
+      miniapps.publishRelease({ releaseId: release.id, adminId: "admin@mentraglass.com" }),
+    ).rejects.toMatchObject({ code: "store_listing_incomplete" });
+    await miniapps.approveRelease({ releaseId: release.id, adminId: "admin@mentraglass.com" });
 
     const published = await miniapps.publishRelease({
       releaseId: release.id,
@@ -326,6 +330,9 @@ describe("miniapp release lifecycle", () => {
     });
     await miniapps.submitRelease(developer, manifest.packageName, release.id);
     await miniapps.approveRelease({ releaseId: release.id, adminId: "admin@mentraglass.com" });
+    await miniapps.updateStoreListing(developer, manifest.packageName, {
+      subtitle: "Unreviewed post-approval text",
+    });
     await miniapps.publishRelease({ releaseId: release.id, adminId: "admin@mentraglass.com" });
 
     const catalog = await new StoreCatalogService().list({ baseUrl: "https://core.example.test" });
@@ -345,6 +352,7 @@ describe("miniapp release lifecycle", () => {
         permissions: manifest.permissions,
       },
     });
+    expect(catalog.apps[0]?.subtitle).not.toBe("Unreviewed post-approval text");
     expect(catalog.apps[0]?.release.bundleUrl).toContain("/api/client/miniapps/bundles/");
   });
 
@@ -391,12 +399,12 @@ describe("miniapp release lifecycle", () => {
       bundle: await releaseBundle({ packageName: "com.example.artwork", name: "Artwork", version: "1.0.0" }),
     });
     await miniapps.submitRelease(developer, "com.example.artwork", release.id);
-    await miniapps.approveRelease({ releaseId: release.id, adminId: "admin@mentraglass.com" });
     await miniapps.updateStoreListing(developer, "com.example.artwork", {
       longDescription: "Artwork Store description",
       privacyPolicyUrl: "https://example.com/privacy",
       supportUrl: "https://example.com/support",
     });
+    await miniapps.approveRelease({ releaseId: release.id, adminId: "admin@mentraglass.com" });
     await miniapps.publishRelease({ releaseId: release.id, adminId: "admin@mentraglass.com" });
 
     const publicAsset = await catalogService.getPublicAsset(icon.id);

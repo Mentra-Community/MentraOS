@@ -200,7 +200,13 @@ export class MiniAppService {
     return releases.map(release => {
       const app = appsById.get(release.miniAppId);
       const assets = assetsByAppId.get(release.miniAppId) ?? [];
-      const listing = serializeStoreListing(app?.storeListing);
+      const listingSource =
+        release.status === "published"
+          ? app?.publishedStoreListing
+          : release.status === "accepted"
+            ? release.reviewedStoreListing
+            : app?.storeListing;
+      const listing = serializeStoreListing(listingSource);
       return {
         ...serializeRelease(release),
         miniAppId: release.miniAppId,
@@ -222,13 +228,16 @@ export class MiniAppService {
   async approveRelease(input: AdminReleaseDecisionInput) {
     const release = await MiniAppReleaseModel.findOne({ _id: input.releaseId });
     if (!release) throw new MiniAppServiceError("not_found", "release not found", 404);
-    if (!["submitted", "in_review", "rejected"].includes(release.status)) {
+    if (!["submitted", "in_review", "accepted", "rejected"].includes(release.status)) {
       throw new MiniAppServiceError("invalid_release_state", "release is not awaiting review", 409);
     }
+    const app = await MiniAppModel.findOne({ _id: release.miniAppId });
+    if (!app || app.status === "archived") throw new MiniAppServiceError("not_found", "miniapp not found", 404);
     release.status = "accepted";
     release.reviewedAt = new Date();
     release.reviewedBy = input.adminId;
     release.reviewNotes = input.notes?.trim() || null;
+    release.reviewedStoreListing = serializeStoreListing(app.storeListing);
     await release.save();
     return serializeRelease(release.toObject());
   }
@@ -260,7 +269,23 @@ export class MiniAppService {
       miniAppId: app._id.toString(),
       role: { $in: ["store_icon", "store_cover", "gallery_screenshot"] },
     }).lean();
-    const readiness = storeListingReadiness(app.toObject(), assets);
+    if (!release.reviewedStoreListing || typeof release.reviewedStoreListing !== "object") {
+      throw new MiniAppServiceError(
+        "listing_not_reviewed",
+        "Store listing must be approved again before this release can be published",
+        409,
+      );
+    }
+    const reviewedStoreListing = {
+      ...serializeStoreListing(release.reviewedStoreListing),
+      // These fields are admin-only and may be adjusted safely after approval.
+      reviewTier: app.storeListing?.reviewTier ?? "community",
+      featured: app.storeListing?.featured === true,
+    };
+    const readiness = storeListingReadiness(
+      { description: app.description, storeListing: reviewedStoreListing },
+      assets,
+    );
     if (!readiness.ready) {
       throw new MiniAppServiceError(
         "store_listing_incomplete",
@@ -277,7 +302,7 @@ export class MiniAppService {
     // The public catalog must never read the developer-editable listing. A
     // publication decision snapshots the exact moderated text and artwork;
     // subsequent developer edits remain private until another publication.
-    app.publishedStoreListing = app.storeListing;
+    app.publishedStoreListing = reviewedStoreListing;
 
     await Promise.all([release.save(), app.save()]);
     return serializeRelease(release.toObject());
