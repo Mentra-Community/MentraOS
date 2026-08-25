@@ -62,6 +62,7 @@ interface ReleaseSummary {
   submittedAt?: string | null;
   reviewedAt?: string | null;
   publishedAt?: string | null;
+  isActiveRelease?: boolean;
 }
 
 interface RegistryRevision {
@@ -813,26 +814,32 @@ function StoreListingReview(props: {
         <div>Support: {listing.supportUrl || "missing"}</div>
         <div>Website: {listing.websiteUrl || "not provided"}</div>
       </div>
-      <div className="mt-4 flex flex-wrap gap-2 border-t border-[#eceeeb] pt-4">
-        <Button
-          variant="outline"
-          className="rounded-full"
-          disabled={props.pending}
-          onClick={() =>
-            props.onModerate(listing.reviewTier === "verified" ? "community" : "verified", listing.featured)
-          }
-        >
-          {listing.reviewTier === "verified" ? "Set community" : "Mark verified"}
-        </Button>
-        <Button
-          variant="outline"
-          className="rounded-full"
-          disabled={props.pending}
-          onClick={() => props.onModerate(listing.reviewTier, !listing.featured)}
-        >
-          {listing.featured ? "Remove featured" : "Feature miniapp"}
-        </Button>
-      </div>
+      {props.release.status !== "published" || props.release.isActiveRelease ? (
+        <div className="mt-4 flex flex-wrap gap-2 border-t border-[#eceeeb] pt-4">
+          <Button
+            variant="outline"
+            className="rounded-full"
+            disabled={props.pending}
+            onClick={() =>
+              props.onModerate(listing.reviewTier === "verified" ? "community" : "verified", listing.featured)
+            }
+          >
+            {listing.reviewTier === "verified" ? "Set community" : "Mark verified"}
+          </Button>
+          <Button
+            variant="outline"
+            className="rounded-full"
+            disabled={props.pending}
+            onClick={() => props.onModerate(listing.reviewTier, !listing.featured)}
+          >
+            {listing.featured ? "Remove featured" : "Feature miniapp"}
+          </Button>
+        </div>
+      ) : (
+        <p className="mt-4 border-t border-[#eceeeb] pt-4 text-xs text-[#879088]">
+          This historical publication is immutable. Moderate the active release instead.
+        </p>
+      )}
     </div>
   );
 }

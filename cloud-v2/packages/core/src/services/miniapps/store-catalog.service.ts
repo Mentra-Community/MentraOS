@@ -70,7 +70,7 @@ export class StoreCatalogService {
     if (!app) throw new StoreCatalogError("not_found", "miniapp not found", 404);
 
     if (releaseTrack === "beta") {
-      if (!app.activeBetaReleaseId) {
+      if (!app.activeBetaReleaseId || !app.publishedBetaStoreListing) {
         throw new StoreCatalogError("beta_unavailable", "this miniapp has no published beta release", 409);
       }
       const published = await MiniAppReleaseModel.exists({ _id: app.activeBetaReleaseId, status: "published" });
@@ -88,6 +88,11 @@ export class StoreCatalogService {
         { upsert: true },
       );
     } else {
+      if (!app.activeReleaseId || !app.publishedStoreListing) {
+        throw new StoreCatalogError("stable_unavailable", "this miniapp has no published stable release", 409);
+      }
+      const published = await MiniAppReleaseModel.exists({ _id: app.activeReleaseId, status: "published" });
+      if (!published) throw new StoreCatalogError("stable_unavailable", "this miniapp has no published stable release", 409);
       await MiniAppTrackEnrollmentModel.deleteOne({
         mentraUserId: identity.mentraUserId,
         miniAppId: app._id.toString(),
@@ -138,6 +143,7 @@ export class StoreCatalogService {
       _id: { $in: enrolledAppIds },
       status: "active",
       activeBetaReleaseId: { $in: publishedReleaseIds },
+      publishedBetaStoreListing: { $ne: null },
     });
     return new Set(selected.map(String));
   }
@@ -159,7 +165,11 @@ export class StoreCatalogService {
   private catalogFilter(input: StoreCatalogQuery, publishedReleaseIds: string[], betaAppIds: Set<string>) {
     const selectedBetaIds = [...betaAppIds];
     const betaClause = this.selectionClause(
-      { _id: { $in: selectedBetaIds }, activeBetaReleaseId: { $in: publishedReleaseIds } },
+      {
+        _id: { $in: selectedBetaIds },
+        activeBetaReleaseId: { $in: publishedReleaseIds },
+        publishedBetaStoreListing: { $ne: null },
+      },
       "publishedBetaStoreListing",
       input,
     );
@@ -167,6 +177,7 @@ export class StoreCatalogService {
       {
         ...(selectedBetaIds.length > 0 ? { _id: { $nin: selectedBetaIds } } : {}),
         activeReleaseId: { $in: publishedReleaseIds },
+        publishedStoreListing: { $ne: null },
       },
       "publishedStoreListing",
       input,
@@ -220,9 +231,14 @@ export class StoreCatalogService {
       const releaseId = selectedTrack === "beta" ? app.activeBetaReleaseId : app.activeReleaseId;
       const release = releasesById.get(releaseId ?? "");
       if (!release?.releaseBundleAssetId || !release.bundleSha256) return [];
-      const listing = selectedTrack === "beta" ? app.publishedBetaStoreListing ?? {} : app.publishedStoreListing ?? {};
-      const hasPublishedBeta = Boolean(app.activeBetaReleaseId && publishedIds.has(String(app.activeBetaReleaseId)));
-      const hasPublishedStable = Boolean(app.activeReleaseId && publishedIds.has(String(app.activeReleaseId)));
+      const listing = selectedTrack === "beta" ? app.publishedBetaStoreListing : app.publishedStoreListing;
+      if (!listing) return [];
+      const hasPublishedBeta = Boolean(
+        app.publishedBetaStoreListing && app.activeBetaReleaseId && publishedIds.has(String(app.activeBetaReleaseId)),
+      );
+      const hasPublishedStable = Boolean(
+        app.publishedStoreListing && app.activeReleaseId && publishedIds.has(String(app.activeReleaseId)),
+      );
       const assetUrl = (id?: string | null) => (id ? `${normalizedBase}/api/store/assets/${id}` : null);
       const manifest = (release.manifest ?? {}) as Record<string, unknown>;
       return [

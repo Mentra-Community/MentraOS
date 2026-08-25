@@ -51,7 +51,8 @@ export interface CreateStoreAssetInput {
 
 const MAX_STORE_ASSET_BYTES = 10 * 1024 * 1024;
 const STORE_ASSET_CONTENT_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/avif"]);
-const STORE_LISTING_LEASE_MS = 60_000;
+const STORE_LISTING_LEASE_MS = 5 * 60_000;
+const STORE_LISTING_LEASE_RENEW_MS = 30_000;
 const STORE_LISTING_LEASE_WAIT_MS = 10_000;
 
 export interface AdminReleaseDecisionInput {
@@ -147,7 +148,7 @@ export class MiniAppService {
 
   async submitRelease(developer: DeveloperIdentity, packageName: string, releaseId: string) {
     const authorizedApp = await this.requireMiniApp(developer, normalizePackageName(packageName));
-    return withStoreListingLease(authorizedApp._id.toString(), async () => {
+    return withStoreListingLease(authorizedApp._id.toString(), async lease => {
       // Re-read after acquiring the cross-process lease. A deletion that won
       // the lease first may have removed an artwork reference from the draft.
       const app = await MiniAppModel.findOne({
@@ -176,6 +177,7 @@ export class MiniAppService {
       // pick up developer edits made after this transition.
       release.submittedStoreListing = serializeStoreListing(app.storeListing);
       release.reviewedStoreListing = null;
+      await lease.assertHeld();
       await release.save();
 
       // Fire-and-forget: a Slack failure can never delay or fail the submit
@@ -233,6 +235,7 @@ export class MiniAppService {
       const listing = serializeStoreListing(listingSource);
       const referencedAssetIds = storeListingAssetIds(listing);
       const listingAssets = assets.filter(asset => referencedAssetIds.has(String(asset._id)));
+      const activeReleaseId = release.releaseTrack === "beta" ? app?.activeBetaReleaseId : app?.activeReleaseId;
       return {
         ...serializeRelease(release),
         miniAppId: release.miniAppId,
@@ -244,6 +247,7 @@ export class MiniAppService {
         publishedAt: release.publishedAt?.toISOString() ?? null,
         reviewedBy: release.reviewedBy ?? null,
         reviewNotes: release.reviewNotes ?? null,
+        isActiveRelease: activeReleaseId === release._id.toString(),
         storeListing: listing,
         storeAssets: listingAssets.map(serializeStoreAsset),
         listingReadiness: storeListingReadiness(
@@ -390,6 +394,18 @@ export class MiniAppService {
         Object.entries(publishedUpdates).map(([key, value]) => [key.replace("publishedStoreListing", "publishedBetaStoreListing"), value]),
       );
       await MiniAppModel.updateOne({ _id: app._id }, { $set: betaUpdates });
+    }
+    const activeReleaseIds = [app.activeReleaseId, app.activeBetaReleaseId].filter(
+      (releaseId): releaseId is string => typeof releaseId === "string" && releaseId.length > 0,
+    );
+    if (activeReleaseIds.length > 0) {
+      const releaseUpdates = Object.fromEntries(
+        Object.entries(updates).map(([key, value]) => [key.replace("storeListing", "reviewedStoreListing"), value]),
+      );
+      await MiniAppReleaseModel.updateMany(
+        { _id: { $in: activeReleaseIds }, status: "published" },
+        { $set: releaseUpdates },
+      );
     }
     return {
       packageName: app.packageName,
@@ -654,7 +670,7 @@ export class MiniAppService {
 
   async deleteStoreAsset(developer: DeveloperIdentity, packageName: string, assetId: string) {
     const authorizedApp = await this.requireMiniApp(developer, normalizePackageName(packageName));
-    return withStoreListingLease(authorizedApp._id.toString(), async () => {
+    return withStoreListingLease(authorizedApp._id.toString(), async lease => {
       const app = await MiniAppModel.findOne({
         _id: authorizedApp._id,
         orgId: developer.orgId,
@@ -702,19 +718,31 @@ export class MiniAppService {
           409,
         );
       }
+      // Fence the destructive object-store write by detaching every draft
+      // reference in the same database write that proves this lease is still
+      // ours. Even if this process pauses past the lease expiry while S3 is
+      // deleting the object, a later submission can no longer freeze a
+      // snapshot that references it.
+      const detached = await MiniAppModel.updateOne(
+        {
+          _id: app._id,
+          "storeListingOperationLease.token": lease.token,
+          "storeListingOperationLease.expiresAt": { $gt: new Date() },
+        },
+        {
+          $set: {
+            "storeListing.iconAssetId": app.storeListing?.iconAssetId === assetId ? null : app.storeListing?.iconAssetId,
+            "storeListing.coverAssetId":
+              app.storeListing?.coverAssetId === assetId ? null : app.storeListing?.coverAssetId,
+          },
+          $pull: { "storeListing.screenshotAssetIds": assetId },
+        },
+      );
+      if (detached.matchedCount !== 1) {
+        throw new MiniAppServiceError("store_listing_lease_lost", "Store listing operation lease was lost", 409);
+      }
       await storage.deleteObject(asset.storageKey);
       await asset.deleteOne();
-      await Promise.all([
-        MiniAppModel.updateOne(
-          { "_id": app._id, "storeListing.iconAssetId": assetId },
-          { $set: { "storeListing.iconAssetId": null } },
-        ),
-        MiniAppModel.updateOne(
-          { "_id": app._id, "storeListing.coverAssetId": assetId },
-          { $set: { "storeListing.coverAssetId": null } },
-        ),
-        MiniAppModel.updateOne({ _id: app._id }, { $pull: { "storeListing.screenshotAssetIds": assetId } }),
-      ]);
       return { ok: true };
     });
   }
@@ -848,7 +876,15 @@ function cleanText(value: string | null, maxLength: number): string | null {
   return cleaned || null;
 }
 
-async function withStoreListingLease<T>(miniAppId: string, operation: () => Promise<T>): Promise<T> {
+interface StoreListingLease {
+  token: string;
+  assertHeld(): Promise<void>;
+}
+
+async function withStoreListingLease<T>(
+  miniAppId: string,
+  operation: (lease: StoreListingLease) => Promise<T>,
+): Promise<T> {
   const token = ulid();
   const waitDeadline = Date.now() + STORE_LISTING_LEASE_WAIT_MS;
   while (Date.now() < waitDeadline) {
@@ -873,9 +909,47 @@ async function withStoreListingLease<T>(miniAppId: string, operation: () => Prom
       { new: true },
     );
     if (locked) {
+      let leaseLost = false;
+      let renewalPending = false;
+      const renew = async () => {
+        if (renewalPending || leaseLost) return;
+        renewalPending = true;
+        try {
+          const renewed = await MiniAppModel.updateOne(
+            { _id: miniAppId, "storeListingOperationLease.token": token },
+            { $set: { "storeListingOperationLease.expiresAt": new Date(Date.now() + STORE_LISTING_LEASE_MS) } },
+          );
+          if (renewed.matchedCount !== 1) leaseLost = true;
+        } catch (error) {
+          leaseLost = true;
+          logger.error({ error, miniAppId }, "failed to renew Store listing operation lease");
+        } finally {
+          renewalPending = false;
+        }
+      };
+      const renewalTimer = setInterval(() => void renew(), STORE_LISTING_LEASE_RENEW_MS);
+      renewalTimer.unref?.();
+      const lease: StoreListingLease = {
+        token,
+        async assertHeld() {
+          if (leaseLost) {
+            throw new MiniAppServiceError("store_listing_lease_lost", "Store listing operation lease was lost", 409);
+          }
+          const held = await MiniAppModel.exists({
+            _id: miniAppId,
+            "storeListingOperationLease.token": token,
+            "storeListingOperationLease.expiresAt": { $gt: new Date() },
+          });
+          if (!held) {
+            leaseLost = true;
+            throw new MiniAppServiceError("store_listing_lease_lost", "Store listing operation lease was lost", 409);
+          }
+        },
+      };
       try {
-        return await operation();
+        return await operation(lease);
       } finally {
+        clearInterval(renewalTimer);
         await MiniAppModel.updateOne(
           { _id: miniAppId, "storeListingOperationLease.token": token },
           { $set: { storeListingOperationLease: null } },

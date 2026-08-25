@@ -369,6 +369,38 @@ describe("miniapp release lifecycle", () => {
     });
     expect(catalog.apps[0]?.subtitle).not.toBe("Unreviewed post-submission text");
     expect(catalog.apps[0]?.release.bundleUrl).toContain("/api/client/miniapps/bundles/");
+
+    await miniapps.updateStoreModeration({
+      packageName: manifest.packageName,
+      reviewTier: "community",
+      featured: false,
+    });
+    const moderatedRows = await miniapps.listAdminSubmissions();
+    expect(moderatedRows.find(row => row.id === release.id)?.storeListing).toMatchObject({
+      reviewTier: "community",
+      featured: false,
+    });
+    const moderatedCatalog = await new StoreCatalogService().get(
+      manifest.packageName,
+      "https://core.example.test",
+      storeUser,
+    );
+    expect(moderatedCatalog).toMatchObject({ reviewTier: "community", featured: false });
+
+    // An active published release ID alone is not a Store publication gate.
+    // Legacy/preinstall rows without a moderated listing snapshot stay private.
+    await MiniAppModel.updateOne(
+      { packageName: manifest.packageName },
+      { $set: { publishedStoreListing: null } },
+    );
+    const hiddenWithoutListing = await new StoreCatalogService().list({
+      baseUrl: "https://core.example.test",
+      ...storeUser,
+    });
+    expect(hiddenWithoutListing.total).toBe(0);
+    await expect(
+      new StoreCatalogService().get(manifest.packageName, "https://core.example.test", storeUser),
+    ).rejects.toMatchObject({ code: "not_found", status: 404 });
   });
 
   test("Store artwork is type-checked and only referenced assets are public", async () => {
@@ -583,6 +615,8 @@ describe("miniapp release lifecycle", () => {
     const adminHistory = await miniapps.listAdminSubmissions();
     expect(adminHistory.find(row => row.id === beta.id)?.storeListing.subtitle).toBe("Beta listing");
     expect(adminHistory.find(row => row.id === secondBeta.id)?.storeListing.subtitle).toBe("Second beta listing");
+    expect(adminHistory.find(row => row.id === beta.id)?.isActiveRelease).toBe(false);
+    expect(adminHistory.find(row => row.id === secondBeta.id)?.isActiveRelease).toBe(true);
   });
 });
 
