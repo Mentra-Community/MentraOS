@@ -111,11 +111,12 @@ The example's `app.json` already includes the Mentra SDK plugin:
 ]
 ```
 
-The plugins configure the native project so Expo can register the SDK and engine peer modules. The example uses `expo-build-properties` to set Android `minSdkVersion` to `33` and add native library `pickFirst` rules for `libc++_shared.so`, `libonnxruntime.so`, and `libonnxruntime4j_jni.so`. Android native builds also require a Mapbox Downloads token because `@mentra/engine` includes the Crust navigation peer:
+The plugins configure the native project so Expo can register the SDK modules. The example uses `expo-build-properties` to set Android `minSdkVersion` to `33` and add native library `pickFirst` rules for `libc++_shared.so`, `libonnxruntime.so`, and `libonnxruntime4j_jni.so`.
 
-```bash
-export MAPBOX_DOWNLOADS_TOKEN="your-downloads-read-token"
-```
+`@mentra/engine` declares `@mentra/crust` as a peer for its full runtime, but the
+`@mentra/engine/ota` entry does not use Crust. This OTA-only host excludes Crust
+from Expo autolinking so it does not package the unrelated navigation and
+miniapp-runtime native libraries.
 
 For production Expo apps that need BLE or microphone behavior while iOS is backgrounded or locked, see [Background Operation On iOS](../../docs/getting-started.md#background-operation-on-ios).
 

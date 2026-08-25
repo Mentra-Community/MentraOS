@@ -43,7 +43,6 @@
     },
     "plugins": [
       "./plugins/withAndroid16KbPageSize",
-      "@mentra/crust",
       [
         "@mentra/bluetooth-sdk",
         {
