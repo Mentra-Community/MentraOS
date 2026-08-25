@@ -27,13 +27,13 @@ import BluetoothSdk, {
   type VersionInfoResult,
   type VideoRecordingStatusEvent,
   type VoiceActivityDetectionStatusEvent,
-} from '@mentra/bluetooth-sdk';
+} from '@mentra/engine/bluetooth-sdk';
 import {
   useMentraBluetooth,
   type DefaultDeviceStorage,
   type GlassesRuntimeState,
   type PhoneSdkRuntimeState,
-} from '@mentra/bluetooth-sdk/react';
+} from '@mentra/engine/bluetooth-sdk/react';
 import MentraBarcodeScanner, {
   type BarcodeScanResult,
   type ImageFovEstimate,
@@ -42,7 +42,7 @@ import MentraPhotoReceiver, {
   type PhotoReceiverResult,
   type PhotoReceiverStatusEvent,
   type PhotoReceiverUploadEvent,
-} from '@mentra/bluetooth-sdk/photo-receiver';
+} from '@mentra/engine/bluetooth-sdk/photo-receiver';
 import MentraVideoStreamReceiver, {
   type VideoStreamFrameEvent,
   type VideoStreamFirstFrameEvent,

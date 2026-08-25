@@ -1,5 +1,5 @@
-import type {Device, HotspotStatus, WifiStatus} from '@mentra/bluetooth-sdk';
-import type {GlassesRuntimeState, PhoneSdkRuntimeState} from '@mentra/bluetooth-sdk/react';
+import type {Device, HotspotStatus, WifiStatus} from '@mentra/engine/bluetooth-sdk';
+import type {GlassesRuntimeState, PhoneSdkRuntimeState} from '@mentra/engine/bluetooth-sdk/react';
 
 export function connectionLabel(glasses: GlassesRuntimeState) {
   return glasses.connection.state.toUpperCase();

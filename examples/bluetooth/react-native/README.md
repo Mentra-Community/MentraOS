@@ -2,7 +2,7 @@
 
 Expo development-build reference app for the Mentra Bluetooth SDK.
 
-This example installs `@mentra/bluetooth-sdk` and `@mentra/engine`. It demonstrates the same Device, Camera, Stream, System, and Console flows as the native Android and iOS examples, plus the shared full-page Mentra Live OTA flow from the Mentra App.
+This example installs `@mentra/bluetooth-sdk` and `@mentra/engine`. App code imports the SDK through the curated `@mentra/engine/bluetooth-sdk` entry points, which omit the SDK's debug and devtools-only namespaces. The direct SDK dependency supplies its Expo config plugin and native modules. The example demonstrates the same Device, Camera, Stream, System, and Console flows as the native Android and iOS examples, plus the shared full-page Mentra Live OTA flow from the Mentra App.
 
 Expo Go cannot load the SDK because the package contains native Android and iOS code. Use `bunx expo run:ios`, `bun run android:dev`, EAS development builds, or production native builds.
 
@@ -24,8 +24,8 @@ bun install
 The example depends on the SDK version pinned in `package.json`, for example:
 
 ```json
-"@mentra/bluetooth-sdk": "0.1.21-beta.5",
-"@mentra/engine": "0.1.0-dev.1"
+"@mentra/bluetooth-sdk": "3.1.0-dev.7",
+"@mentra/engine": "3.1.0-dev.7"
 ```
 
 Use compatible SDK and Engine versions published by Mentra. When validating
@@ -46,7 +46,7 @@ Run on a physical iPhone for Bluetooth testing. Simulators are useful only for U
 The React Native example uses the SDK photo receiver plus local native modules for direct phone receiving:
 
 - `@mentra/react-native-barcode-scanner` scans the latest photo preview for barcodes.
-- `@mentra/bluetooth-sdk/photo-receiver` starts a small phone-local photo upload server for direct JPEG uploads.
+- `@mentra/engine/bluetooth-sdk/photo-receiver` starts a small phone-local photo upload server for direct JPEG uploads.
 - `@mentra/react-native-video-stream-receiver` starts the phone-local WebRTC preview receiver.
 
 Only the video stream receiver needs GStreamer. On iOS, `bun run ios:setup` downloads the GStreamer package from `gstreamer.freedesktop.org`, verifies the published SHA-256 checksum, and installs it to `~/Library/Developer/GStreamer/iPhone.sdk`. Rerun this setup command after a fresh clone or whenever the local GStreamer SDK is missing from the default location.

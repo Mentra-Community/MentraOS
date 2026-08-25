@@ -13,7 +13,7 @@ This example installs the SDK as the `MentraBluetoothSDK` Swift package. No path
 
 ## SDK Version
 
-The Xcode project pins the public Swift package to `0.1.21-beta.5`:
+The Xcode project pins the public Swift package to `3.1.0-dev.7`:
 
 ```text
 https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git
