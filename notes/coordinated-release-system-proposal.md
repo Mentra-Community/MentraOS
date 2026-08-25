@@ -537,9 +537,11 @@ It then:
 
 Stable package metadata cannot literally reuse prerelease package bytes when
 the embedded package version must change. It must be reproduced from the same
-source and inputs, with only approved channel/version metadata differences, and
-the workflow must compare normalized contents. The ASG, MTK, BES, OTA manifest,
-IPA, and Android store artifact are not rebuilt.
+source commit and OTA pin. The existing package-specific release validators
+inspect the stable npm, Maven, and SwiftPM outputs for the exact stable version,
+dependency graph, source commit, and OTA metadata. A second generic archive
+normalization system is deliberately out of scope. The ASG, MTK, BES, OTA
+manifest, IPA, and Android store artifact are not rebuilt.
 
 ## Starter Kit and Documentation
 

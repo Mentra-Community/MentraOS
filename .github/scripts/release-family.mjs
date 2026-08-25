@@ -380,6 +380,24 @@ export function finalizeReleaseManifest({plan, results, completedAt}) {
     if (!artifactCoordinates.has(coordinate)) throw new Error(`Missing required artifact ${coordinate}`)
   }
 
+  let promotion
+  if (plan.channel === "production") {
+    promotion = results.promotion
+    if (
+      !promotion ||
+      promotion.selectedBetaReleaseSetId !== plan.promotion?.selectedBetaReleaseSetId ||
+      promotion.selectedBetaIdentity !== plan.promotion?.selectedBetaIdentity ||
+      promotion.selectedBetaManifest?.url !== plan.promotion?.selectedBetaManifest?.url ||
+      promotion.selectedBetaManifest?.sha256 !== plan.promotion?.selectedBetaManifest?.sha256
+    ) {
+      throw new Error("Production release is missing its exact selected beta provenance")
+    }
+    requirePublicHttpsUrl(promotion.selectedBetaManifest.url, "promotion.selectedBetaManifest.url")
+    if (!SHA256_PATTERN.test(promotion.selectedBetaManifest.sha256)) {
+      throw new Error("promotion.selectedBetaManifest.sha256 must be a lowercase SHA-256 digest")
+    }
+  }
+
   return {
     schemaVersion: 1,
     releaseSetId: plan.releaseSetId,
@@ -393,5 +411,6 @@ export function finalizeReleaseManifest({plan, results, completedAt}) {
     publications,
     otaManifest,
     artifacts,
+    ...(promotion ? {promotion} : {}),
   }
 }

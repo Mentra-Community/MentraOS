@@ -25,6 +25,10 @@ on:
       sdk_package_artifact:
         required: false
         type: string
+      npm_tag:
+        description: Optional temporary dist-tag used to defer a coordinated stable latest pointer.
+        required: false
+        type: string
       dry_run:
         required: false
         default: false
@@ -42,10 +46,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - name: Checkout exact release source
+      - name: Checkout current release tooling
+        uses: actions/checkout@v4
+
+      - name: Checkout exact package source
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.source_commit }}
+          path: release-source
 
       - name: Download immutable release plan
         uses: actions/download-artifact@v4
@@ -72,14 +80,18 @@ jobs:
           registry-url: https://registry.npmjs.org
 
       - name: Install exact root workspace dependencies
+        working-directory: release-source
         run: bun install --frozen-lockfile --ignore-scripts
 
       - name: Install exact mobile workspace dependencies
-        working-directory: mobile
+        working-directory: release-source/mobile
         run: bun install --frozen-lockfile --ignore-scripts
 
       - name: Stage coordinated package identities
-        run: node .github/scripts/stage-release-family.mjs --plan release-intent/release-plan.json
+        run: >-
+          node .github/scripts/stage-release-family.mjs
+          --root release-source
+          --plan release-intent/release-plan.json
 
       - name: Test npm release tooling
         run: node --test .github/scripts/publish-release-npm.test.mjs
@@ -87,6 +99,7 @@ jobs:
       - name: Build, pack, reconcile, and publish in dependency order
         run: |
           args=(
+            --root release-source
             --plan release-intent/release-plan.json
             --members "$RELEASE_MEMBERS"
             --output-dir release-output
@@ -103,6 +116,9 @@ jobs:
             fi
             args+=(--sdk-tarball "${sdk_tarballs[0]}")
           fi
+          if [[ -n "$NPM_TAG" ]]; then
+            args+=(--npm-tag "$NPM_TAG")
+          fi
           node .github/scripts/publish-release-npm.mjs "${args[@]}"
         env:
           DRY_RUN: ${{ inputs.dry_run }}
@@ -111,6 +127,7 @@ jobs:
           OTA_MANIFEST_URL: ${{ inputs.ota_manifest_url }}
           RELEASE_MEMBERS: ${{ inputs.members }}
           SDK_PACKAGE_ARTIFACT: ${{ inputs.sdk_package_artifact }}
+          NPM_TAG: ${{ inputs.npm_tag }}
 
       - name: Upload exact npm artifacts and publication records
         uses: actions/upload-artifact@v4

@@ -123,6 +123,58 @@ export async function assignBuildToGroup(client, {appId, buildId, groupName}) {
   return {group, reused: false}
 }
 
+export async function findAppStoreVersion(client, {appId, versionString}) {
+  const response = await client.request(
+    query("/v1/appStoreVersions", {
+      "filter[app]": appId,
+      "filter[platform]": "IOS",
+      "filter[versionString]": versionString,
+      "limit": "2",
+    }),
+  )
+  if (!Array.isArray(response?.data) || response.data.length === 0) return null
+  return exactlyOne(response, `iOS App Store version ${versionString}`)
+}
+
+const SUBMITTED_APP_STORE_STATES = new Set([
+  "WAITING_FOR_REVIEW",
+  "IN_REVIEW",
+  "PENDING_DEVELOPER_RELEASE",
+  "PROCESSING_FOR_APP_STORE",
+  "PROCESSING_FOR_DISTRIBUTION",
+  "PENDING_APPLE_RELEASE",
+  "READY_FOR_DISTRIBUTION",
+  "READY_FOR_SALE",
+])
+
+export async function productionSubmissionStatus(client, {appId, versionString, buildId}) {
+  const version = await findAppStoreVersion(client, {appId, versionString})
+  if (!version) return {version: null, state: "ABSENT", attachedBuildId: null, promoted: false}
+  const relationship = await client.request(`/v1/appStoreVersions/${version.id}/relationships/build`)
+  const attachedBuildId = relationship?.data?.id || null
+  if (attachedBuildId && attachedBuildId !== buildId) {
+    throw new Error(`App Store version ${versionString} is attached to unexpected build ${attachedBuildId}`)
+  }
+  const state = version.attributes?.appStoreState || version.attributes?.appVersionState
+  if (!state) throw new Error(`App Store version ${versionString} has no state`)
+  if (SUBMITTED_APP_STORE_STATES.has(state) && attachedBuildId !== buildId) {
+    throw new Error(`Submitted App Store version ${versionString} is not attached to build ${buildId}`)
+  }
+  return {version, state, attachedBuildId, promoted: SUBMITTED_APP_STORE_STATES.has(state)}
+}
+
+export async function waitForProductionSubmission(
+  client,
+  {appId, versionString, buildId, attempts = 30, delay = 10_000},
+) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const status = await productionSubmissionStatus(client, {appId, versionString, buildId})
+    if (status.promoted) return status
+    if (attempt < attempts) await new Promise((resolve) => setTimeout(resolve, delay))
+  }
+  throw new Error(`App Store version ${versionString} did not enter the review or release flow`)
+}
+
 function parseArgs(args) {
   const values = {}
   for (let index = 0; index < args.length; index += 2) {
@@ -161,6 +213,23 @@ async function main() {
     console.log(
       `${result.reused ? "Verified" : "Added"} build ${args["build-number"]} in TestFlight group ${result.group.attributes?.name || args["group-name"]}`,
     )
+    return
+  }
+  if (command === "production-status" || command === "wait-production") {
+    const build = await waitForProcessedBuild(client, {appId: app.id, buildNumber: args["build-number"]})
+    const options = {appId: app.id, versionString: args["app-version"], buildId: build.id}
+    const status =
+      command === "wait-production"
+        ? await waitForProductionSubmission(client, options)
+        : await productionSubmissionStatus(client, options)
+    if (process.env.GITHUB_OUTPUT) {
+      const {appendFileSync} = await import("node:fs")
+      appendFileSync(
+        process.env.GITHUB_OUTPUT,
+        `promoted=${status.promoted}\nstate=${status.state}\nversion_id=${status.version?.id || ""}\nbuild_id=${build.id}\n`,
+      )
+    }
+    console.log(`App Store version ${args["app-version"]} is ${status.state} with build ${args["build-number"]}`)
     return
   }
   throw new Error(`Unknown command ${JSON.stringify(command)}`)

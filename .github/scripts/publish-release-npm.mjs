@@ -14,6 +14,14 @@ export function npmReleaseTag(channel) {
   throw new Error(`Unsupported npm release channel ${JSON.stringify(channel)}`)
 }
 
+export function resolveNpmReleaseTag(channel, override) {
+  if (!override) return npmReleaseTag(channel)
+  if (!/^[a-z][a-z0-9._-]*$/.test(override) || /^v?\d+\.\d+\.\d+/.test(override)) {
+    throw new Error(`Invalid npm dist-tag override ${JSON.stringify(override)}`)
+  }
+  return override
+}
+
 export function sha512Integrity(bytes) {
   return `sha512-${createHash("sha512").update(bytes).digest("base64")}`
 }
@@ -257,13 +265,14 @@ export function publishReleaseNpm({
   otaManifestUrl,
   otaManifestSha256,
   sdkTarball,
+  npmTagOverride,
 }) {
   requirePlanSourceCommit(rootDir, plan.sourceCommit)
   const family = loadReleaseFamily({rootDir})
   if (plan.familyBaseVersion !== family.familyBaseVersion)
     throw new Error("Release plan does not match source family base")
   const orderedNames = npmMembersInOrder(family, memberNames)
-  const tag = npmReleaseTag(plan.channel)
+  const tag = resolveNpmReleaseTag(plan.channel, npmTagOverride)
   const publications = {}
   let selectedSdkTarball = sdkTarball
   mkdirSync(outputDir, {recursive: true})
@@ -379,6 +388,7 @@ function main() {
     otaManifestUrl: args["ota-manifest-url"],
     otaManifestSha256: args["ota-manifest-sha256"],
     sdkTarball: args["sdk-tarball"],
+    npmTagOverride: args["npm-tag"],
   })
 }
 

@@ -5,6 +5,8 @@ import {
   assignBuildToGroup,
   collectPaginatedData,
   findProcessedBuild,
+  productionSubmissionStatus,
+  waitForProductionSubmission,
   waitForProcessedBuild,
 } from "./app-store-connect-build.mjs"
 
@@ -65,4 +67,49 @@ test("follows every TestFlight relationship page before posting", async () => {
   const data = await collectPaginatedData(api, "/v1/betaGroups/group-1/relationships/builds?limit=200")
   assert.deepEqual(data, [{type: "builds", id: "build-1"}])
   assert.equal(api.calls.length, 2)
+})
+
+test("recognizes the exact build after App Store submission", async () => {
+  const api = client([
+    {data: [{id: "version-1", attributes: {appStoreState: "WAITING_FOR_REVIEW"}}]},
+    {data: {type: "builds", id: "build-1"}},
+  ])
+  const status = await productionSubmissionStatus(api, {
+    appId: "app-1",
+    versionString: "3.1.0",
+    buildId: "build-1",
+  })
+  assert.equal(status.promoted, true)
+  assert.equal(status.state, "WAITING_FOR_REVIEW")
+})
+
+test("recognizes a build that App Store Connect is processing for distribution", async () => {
+  const api = client([
+    {data: [{id: "version-1", attributes: {appStoreState: "PROCESSING_FOR_DISTRIBUTION"}}]},
+    {data: {type: "builds", id: "build-1"}},
+  ])
+  const status = await productionSubmissionStatus(api, {
+    appId: "app-1",
+    versionString: "3.1.0",
+    buildId: "build-1",
+  })
+  assert.equal(status.promoted, true)
+  assert.equal(status.state, "PROCESSING_FOR_DISTRIBUTION")
+})
+
+test("waits for the App Store version to leave preparation", async () => {
+  const api = client([
+    {data: [{id: "version-1", attributes: {appStoreState: "PREPARE_FOR_SUBMISSION"}}]},
+    {data: {type: "builds", id: "build-1"}},
+    {data: [{id: "version-1", attributes: {appStoreState: "IN_REVIEW"}}]},
+    {data: {type: "builds", id: "build-1"}},
+  ])
+  const status = await waitForProductionSubmission(api, {
+    appId: "app-1",
+    versionString: "3.1.0",
+    buildId: "build-1",
+    attempts: 2,
+    delay: 0,
+  })
+  assert.equal(status.state, "IN_REVIEW")
 })
