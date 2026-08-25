@@ -245,7 +245,6 @@ describe("pairing loading screen", () => {
       emitBluetoothSdkEvent("pairing_info", {
         had_previous_bond: false,
         secure_pairing_capable: true,
-        transfer_id: "ABCDEF0123456789",
       })
     })
     act(() => {
@@ -298,7 +297,6 @@ describe("pairing loading screen", () => {
       emitBluetoothSdkEvent("pairing_info", {
         had_previous_bond: true,
         secure_pairing_capable: true,
-        transfer_id: "ABCDEF0123456789",
         classic_bond_ready: true,
       })
     })
@@ -322,7 +320,6 @@ describe("pairing loading screen", () => {
       emitBluetoothSdkEvent("pairing_info", {
         had_previous_bond: true,
         secure_pairing_capable: true,
-        transfer_id: "ABCDEF0123456789",
         classic_bond_ready: true,
       })
     })

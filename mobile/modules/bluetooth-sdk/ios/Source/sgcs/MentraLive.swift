@@ -2890,25 +2890,20 @@ class MentraLive: NSObject, SGCManager {
             let windowMs = max(5_000, min(180_000, json["window_ms"] as? Int ?? 120_000))
             Bridge.log("LIVE: Glasses entering pairing mode — yield \(windowMs)ms (no forget)")
             enterPairingYield(windowMs: windowMs)
-            var body: [String: Any] = [
+            let body: [String: Any] = [
                 "window_ms": windowMs,
                 "reason": json["reason"] as? String ?? "user_gesture",
             ]
-            if let txn = json["txn"] {
-                body["txn"] = txn
-            }
             Bridge.sendTypedMessage("entering_pairing_mode", body: body)
 
         case "pairing_info":
             Bridge.sendPairingInfo(
                 hadPreviousBond: json["had_previous_bond"] as? Bool ?? false,
-                transferId: json["transfer_id"] as? String,
                 pairingCode: json["pairing_code"] as? String,
                 classicBondReady: json["classic_bond_ready"] as? Bool ?? false,
                 // Legacy firmware that omits this field is not secure-capable.
                 securePairingCapable: json["secure_pairing_capable"] as? Bool ?? false,
-                protocolVersion: json["protocol_version"] as? Int ?? 1,
-                binding: json["binding"] as? String
+                protocolVersion: json["protocol_version"] as? Int ?? 1
             )
 
         case "imu_response", "imu_stream_response", "imu_gesture_response",
