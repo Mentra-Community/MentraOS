@@ -228,6 +228,11 @@ jobs:
       - name: Install Android build tools used for artifact verification
         run: sdkmanager "build-tools;36.0.0"
 
+      - uses: ruby/setup-ruby@v1
+        if: inputs.dry_run != true
+        with:
+          ruby-version: "3.3"
+
       - uses: oven-sh/setup-bun@v2
         if: inputs.dry_run == true || needs.prepare.outputs.android_assets_exist != 'true'
         with:
@@ -367,7 +372,8 @@ jobs:
           mkdir -p mobile-play/fastlane
           cp mobile/ci/fastlane-android/Fastfile mobile-play/fastlane/Fastfile
           cp mobile/ci/fastlane-android/Appfile mobile-play/fastlane/Appfile
-          cp mobile/ci/fastlane-android/Gemfile mobile-play/Gemfile
+          cp mobile/Gemfile mobile-play/Gemfile
+          cp mobile/Gemfile.lock mobile-play/Gemfile.lock
 
       - name: Install Google Play upload tooling
         if: inputs.dry_run != true
