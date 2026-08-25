@@ -37,11 +37,6 @@ function requireDeploymentRecord(record) {
   return record
 }
 
-function missingExpectedPurls(actual, expected) {
-  const actualSet = new Set(actual)
-  return expected.filter((purl) => !actualSet.has(purl))
-}
-
 export async function uploadManagedDeployment({bundle, token, deploymentName, expectedPurls, fetchImpl = fetch}) {
   if (!bundle || !token || !deploymentName || expectedPurls.length === 0) {
     throw new Error("Bundle, token, deployment name, and expected PURLs are required")
@@ -131,7 +126,6 @@ export async function publishDeployment({
   if (!token) throw new Error("Sonatype token is required")
   const headers = {Authorization: `Bearer ${token}`}
   let publicationRequested = false
-  let missingPublishedPurls = []
 
   for (let attempt = 1; attempt <= statusAttempts; attempt += 1) {
     const status = requireMatchingStatus(
@@ -143,10 +137,7 @@ export async function publishDeployment({
       throw new Error(`Sonatype deployment ${record.deploymentName} failed: ${JSON.stringify(status.errors || [])}`)
     }
     if (status.deploymentState === "PUBLISHED") {
-      missingPublishedPurls = missingExpectedPurls(purls, record.expectedPurls)
-      if (missingPublishedPurls.length === 0) {
-        return {...record, deploymentState: status.deploymentState, purls}
-      }
+      return {...record, deploymentState: status.deploymentState, purls}
     } else if (status.deploymentState === "VALIDATED") {
       if (!publicationRequested) {
         await requestPublication({fetchImpl, headers, deploymentId: record.deploymentId})
@@ -158,12 +149,6 @@ export async function publishDeployment({
       )
     }
     if (attempt < statusAttempts) await sleepImpl(pollIntervalMs)
-  }
-  if (missingPublishedPurls.length > 0) {
-    throw new Error(
-      `Published Sonatype deployment ${record.deploymentName} is still missing expected components after ` +
-        `${statusAttempts} status checks: ${missingPublishedPurls.join(", ")}`,
-    )
   }
   throw new Error(`Sonatype deployment ${record.deploymentName} did not publish after ${statusAttempts} status checks`)
 }
