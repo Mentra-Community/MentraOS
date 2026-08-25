@@ -58,6 +58,23 @@ export class DeveloperOrgService {
     return org ? serializeDeveloperOrg(org) : null;
   }
 
+  /** All organizations the user can access, ordered deterministically. */
+  async listOrgsForUser(user: ConsoleUserIdentity): Promise<DeveloperOrgRecord[]> {
+    const memberships = await DeveloperOrgMembershipModel.find({ userId: user.id })
+      .select({ orgId: 1 })
+      .lean<Array<{ orgId: string }>>();
+    const membershipOrgIds = memberships.map(row => row.orgId);
+    const orgs = await DeveloperOrgModel.find({
+      $or: [
+        { ownerUserId: user.id },
+        ...(membershipOrgIds.length > 0 ? [{ orgId: { $in: membershipOrgIds } }] : []),
+      ],
+    })
+      .sort({ createdAt: 1, orgId: 1 })
+      .lean();
+    return orgs.map(serializeDeveloperOrg);
+  }
+
   /** Create the caller's first org (onboarding) and seed them as its owner. */
   async createPrimaryOrg(user: ConsoleUserIdentity, input: UpsertDeveloperOrgInput): Promise<DeveloperOrgRecord> {
     const displayName = normalizeDisplayName(input.displayName);
@@ -280,13 +297,6 @@ export class DeveloperOrgService {
       },
       { upsert: true },
     );
-  }
-
-  /** The orgId a user belongs to via a membership row (one org per user). */
-  async getMembershipOrgId(userId: string): Promise<string | null> {
-    if (!userId) return null;
-    const row = await DeveloperOrgMembershipModel.findOne({ userId }).sort({ createdAt: 1 }).lean();
-    return row?.orgId ?? null;
   }
 
   /** Full roster of an org, for the member list. */

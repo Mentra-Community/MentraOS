@@ -29,6 +29,7 @@ const STATE_COOKIE = "mentra_console_state";
 const PKCE_VERIFIER_COOKIE = "mentra_console_pkce_verifier";
 const RETURN_TO_COOKIE = "mentra_console_return_to";
 const ORG_SELECTION_COOKIE = "mentra_console_org_selection";
+const DEVELOPER_ORG_COOKIE = "mentra_console_developer_org";
 const developerOrgs = new DeveloperOrgService();
 const apiKeys = new DeveloperApiKeyService();
 const invitations = new DeveloperOrgInvitationService();
@@ -135,6 +136,7 @@ app.get("/auth/callback", getCallback);
 app.get("/auth/organization-selection", getOrganizationSelection);
 app.post("/auth/organization-selection", postOrganizationSelection);
 app.get("/auth/me", getMe);
+app.post("/auth/developer-organization", postDeveloperOrganizationSelection);
 app.get("/org", getOrg);
 app.put("/org", putOrg);
 app.get("/org/access", getOrgAccess);
@@ -149,6 +151,7 @@ app.delete("/apps/:packageName", deleteApp);
 app.get("/apps/:packageName/listing", getStoreListing);
 app.put("/apps/:packageName/listing", putStoreListing);
 app.post("/apps/:packageName/listing/assets", storeAssetBodyLimit, postStoreAsset);
+app.get("/apps/:packageName/listing/assets/:assetId", getStoreAsset);
 app.delete("/apps/:packageName/listing/assets/:assetId", deleteStoreAsset);
 app.get("/apps/:packageName/releases", getReleases);
 app.post("/apps/:packageName/releases", releaseBodyLimit, postRelease);
@@ -425,7 +428,8 @@ async function getMe(c: AppContext) {
   if (!authenticatedSession.authenticated) {
     return c.json({ authenticated: false, reason: authenticatedSession.reason }, 401);
   }
-  const developerOrg = await resolveDeveloperOrgForSession(authenticatedSession);
+  const accessibleOrgs = await developerOrgs.listOrgsForUser(authenticatedSession.user);
+  const developerOrg = await resolveDeveloperOrgForRequest(c, authenticatedSession, accessibleOrgs);
   // Keep the roster fresh: ensure a membership row for the current human user
   // and backfill their profile fields (skips API-key principals).
   if (developerOrg && !authenticatedSession.user.id.startsWith("api_key:")) {
@@ -457,21 +461,24 @@ async function getMe(c: AppContext) {
     organizationId: developerOrg?.id ?? null,
     packagePrefix: developerOrg?.packagePrefix ?? null,
     packagePrefixStatus: developerOrg?.packagePrefixStatus ?? null,
-    organizations: developerOrg
-      ? [
-          {
-            id: developerOrg.id,
-            ownerUserId: developerOrg.ownerUserId,
-            workosOrgId: developerOrg.workosOrgId,
-            name: developerOrg.name,
-            packagePrefix: developerOrg.packagePrefix,
-            packagePrefixStatus: developerOrg.packagePrefixStatus,
-            createdAt: developerOrg.createdAt,
-            updatedAt: developerOrg.updatedAt,
-          },
-        ]
-      : [],
+    organizations: accessibleOrgs,
   });
+}
+
+async function postDeveloperOrganizationSelection(c: AppContext) {
+  const authenticatedSession = await authenticateConsoleSession(c);
+  if (!authenticatedSession.authenticated || authenticatedSession.developerOrgId) {
+    return c.json({ error: "unauthorized", error_description: "interactive console session required" }, 401);
+  }
+  const body = await readJsonBody(c);
+  const organizationId = typeof body.organizationId === "string" ? body.organizationId : "";
+  const organizations = await developerOrgs.listOrgsForUser(authenticatedSession.user);
+  const organization = organizations.find(candidate => candidate.id === organizationId);
+  if (!organization) {
+    return c.json({ error: "forbidden", error_description: "you do not have access to that organization" }, 403);
+  }
+  setDeveloperOrgCookie(c, organization.id);
+  return c.json({ ok: true, organizationId: organization.id });
 }
 
 async function getOrg(c: AppContext) {
@@ -480,7 +487,7 @@ async function getOrg(c: AppContext) {
     return c.json({ error: "unauthorized", error_description: "console session required" }, 401);
   }
 
-  const org = await resolveDeveloperOrgForSession(authenticatedSession);
+  const org = await resolveDeveloperOrgForRequest(c, authenticatedSession);
   return c.json({ org });
 }
 
@@ -494,7 +501,7 @@ async function putOrg(c: AppContext) {
   if (!parsed.success) throw new InvalidRequest(parsed.error.issues[0]?.message ?? "invalid organization payload");
 
   try {
-    const existingOrg = await resolveDeveloperOrgForSession(authenticatedSession);
+    const existingOrg = await resolveDeveloperOrgForRequest(c, authenticatedSession);
     let org: DeveloperOrgRecord;
     if (existingOrg) {
       // Editing an existing org is owner-only, gated on the role not the
@@ -518,6 +525,7 @@ async function putOrg(c: AppContext) {
       org = await developerOrgs.createPrimaryOrg(authenticatedSession.user, parsed.data);
     }
     const linkedOrg = await ensureWorkosOrgLinked(authenticatedSession, org);
+    setDeveloperOrgCookie(c, linkedOrg.id);
     await syncWorkosOrgName(linkedOrg);
     return c.json({ org: linkedOrg });
   } catch (error) {
@@ -596,12 +604,6 @@ async function postAcceptInvitation(c: AppContext) {
         403,
       );
     }
-    // One org per user: block joining a second org (re-accepting the same one is fine).
-    const ownedOrg = await developerOrgs.getPrimaryOrgForUser(authenticatedSession.user);
-    const currentOrgId = ownedOrg?.id ?? (await developerOrgs.getMembershipOrgId(authenticatedSession.user.id));
-    if (currentOrgId && currentOrgId !== invite.orgId) {
-      return c.json({ error: "already_in_org", error_description: "you already belong to an organization" }, 409);
-    }
     // Single-use: atomically claim the invite before creating the membership so
     // two concurrent accepts can't both enroll.
     if (!(await invitations.claim(invite.invitationId))) {
@@ -619,6 +621,7 @@ async function postAcceptInvitation(c: AppContext) {
       await invitations.unclaim(invite.invitationId);
       throw err;
     }
+    setDeveloperOrgCookie(c, invite.orgId);
     return c.json({ ok: true, org: await developerOrgs.getOrgById(invite.orgId) });
   } catch (error) {
     return serviceError(error);
@@ -818,6 +821,27 @@ async function deleteStoreAsset(c: AppContext) {
   if (!packageName || !assetId) throw new InvalidRequest("packageName and assetId are required");
   try {
     return c.json(await miniapps.deleteStoreAsset(developer.value, packageName, assetId));
+  } catch (error) {
+    return serviceError(error);
+  }
+}
+
+async function getStoreAsset(c: AppContext) {
+  const developer = await requireDeveloper(c);
+  if (!developer.ok) return developer.response;
+  const packageName = c.req.param("packageName");
+  const assetId = c.req.param("assetId");
+  if (!packageName || !assetId) throw new InvalidRequest("packageName and assetId are required");
+  try {
+    const { asset, bytes } = await miniapps.getStoreAsset(developer.value, packageName, assetId);
+    return new Response(bytes, {
+      headers: {
+        "content-type": asset.contentType,
+        "content-length": String(asset.sizeBytes),
+        "cache-control": "private, max-age=300",
+        "x-content-type-options": "nosniff",
+      },
+    });
   } catch (error) {
     return serviceError(error);
   }
@@ -1174,7 +1198,7 @@ async function requireConsoleOrg(
       response: c.json({ error: "unauthorized", error_description: "console session required" }, 401),
     };
   }
-  const developerOrg = await resolveDeveloperOrgForSession(authenticatedSession);
+  const developerOrg = await resolveDeveloperOrgForRequest(c, authenticatedSession);
   if (!developerOrg) {
     return {
       ok: false,
@@ -1187,8 +1211,10 @@ async function requireConsoleOrg(
   return { ok: true, auth: authenticatedSession, org: developerOrg };
 }
 
-async function resolveDeveloperOrgForSession(
+async function resolveDeveloperOrgForRequest(
+  c: AppContext,
   authenticatedSession: Extract<ConsoleAuthResult, { authenticated: true }>,
+  knownOrganizations?: DeveloperOrgRecord[],
 ): Promise<DeveloperOrgRecord | null> {
   // API-key principals carry their org directly.
   if (authenticatedSession.developerOrgId) {
@@ -1196,16 +1222,18 @@ async function resolveDeveloperOrgForSession(
     if (keyOrg) return keyOrg;
   }
 
-  // The org this user created.
-  const ownedOrg = await developerOrgs.getPrimaryOrgForUser(authenticatedSession.user);
-  if (ownedOrg) return ownedOrg;
+  const organizations = knownOrganizations ?? (await developerOrgs.listOrgsForUser(authenticatedSession.user));
+  const selectedId = getCookie(c, DEVELOPER_ORG_COOKIE);
+  const selected = organizations.find(org => org.id === selectedId);
+  if (selected) return selected;
 
-  // The org this user is a member of (our roster, no WorkOS lookup).
-  const membershipOrgId = await developerOrgs.getMembershipOrgId(authenticatedSession.user.id);
-  if (membershipOrgId) {
-    const memberOrg = await developerOrgs.getOrgById(membershipOrgId);
-    if (memberOrg) return memberOrg;
-  }
+  // A WorkOS-selected organization is the best initial choice when it maps to
+  // an accessible developer org. Subsequent in-console selection uses the
+  // separately validated developer-org cookie above.
+  const workosSelected = organizations.find(org => org.workosOrgId === authenticatedSession.organizationId);
+  if (workosSelected) return workosSelected;
+
+  if (organizations[0]) return organizations[0];
 
   // NOTE: access requires a roster row (or being the creator). We intentionally
   // do NOT auto-join from a WorkOS org_id here — that would resurrect removed
@@ -1349,6 +1377,7 @@ function serviceError(error: unknown): Response {
 async function postLogout(c: AppContext) {
   const sessionData = getCookie(c, SESSION_COOKIE);
   deleteCookie(c, SESSION_COOKIE, { path: "/" });
+  deleteCookie(c, DEVELOPER_ORG_COOKIE, { path: "/" });
   if (!sessionData) return c.json({ ok: true, logoutUrl: null });
 
   const session = workos().userManagement.loadSealedSession({
@@ -1367,6 +1396,16 @@ function workos(): WorkOS {
 function setSessionCookie(c: AppContext, sealedSession: string | undefined): void {
   if (!sealedSession) throw new OauthServerError("WorkOS did not return a sealed session");
   setCookie(c, SESSION_COOKIE, sealedSession, {
+    path: "/",
+    httpOnly: true,
+    sameSite: "Lax",
+    secure: shouldUseSecureCookies(),
+    maxAge: 30 * 24 * 60 * 60,
+  });
+}
+
+function setDeveloperOrgCookie(c: AppContext, organizationId: string): void {
+  setCookie(c, DEVELOPER_ORG_COOKIE, organizationId, {
     path: "/",
     httpOnly: true,
     sameSite: "Lax",

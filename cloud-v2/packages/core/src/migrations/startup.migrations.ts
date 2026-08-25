@@ -20,6 +20,7 @@ const REFRESH_TOKENS_COLLECTION = "refreshTokens";
 const LEGACY_USER_IDENTITY_INDEX = "oemId_1_oemUserId_1";
 const DEVELOPER_ORG_MEMBERSHIPS_COLLECTION = "developer_org_memberships";
 const LEGACY_MEMBERSHIP_EMAIL_INDEX = "orgId_1_email_1";
+const LEGACY_SINGLE_ORG_MEMBERSHIP_INDEX = "userId_1";
 const DEVELOPER_ORGS_COLLECTION = "developer_orgs";
 const DEVELOPER_ORG_INVITATIONS_COLLECTION = "developer_org_invitations";
 const LEGACY_INVITATION_EMAIL_INDEX = "orgId_1_email_1";
@@ -45,6 +46,7 @@ export async function runStartupMigrations(): Promise<void> {
   // prevTokenHash recovery-lookup index (OS-1703). Idempotent; sparse.
   await RefreshTokenModel.createIndexes();
   await dropLegacyMembershipEmailIndex();
+  await dropLegacySingleOrgMembershipIndex();
   await dedupeDeveloperOrgMemberships();
   // Build the unique index BEFORE any upserts so concurrent Core startups can't
   // race in duplicate (orgId,userId) rows.
@@ -193,6 +195,28 @@ async function dropLegacyMembershipEmailIndex(): Promise<void> {
   );
 }
 
+// The first Console implementation limited each user to one developer org with
+// a unique userId index. Organization switching requires memberships in more
+// than one org, while (orgId,userId) remains the authorization boundary.
+async function dropLegacySingleOrgMembershipIndex(): Promise<void> {
+  const collection = mongoose.connection.collection(DEVELOPER_ORG_MEMBERSHIPS_COLLECTION);
+  let indexes;
+  try {
+    indexes = await collection.indexes();
+  } catch {
+    return;
+  }
+  const legacy = indexes.find(
+    index => index.name === LEGACY_SINGLE_ORG_MEMBERSHIP_INDEX && index.unique === true,
+  );
+  if (!legacy) return;
+  await collection.dropIndex(LEGACY_SINGLE_ORG_MEMBERSHIP_INDEX);
+  logger.info(
+    { collection: DEVELOPER_ORG_MEMBERSHIPS_COLLECTION, index: LEGACY_SINGLE_ORG_MEMBERSHIP_INDEX },
+    "dropped legacy single-organization membership index",
+  );
+}
+
 // Ownership is a membership role now, not the DeveloperOrg.ownerUserId scalar.
 // Seed each org's creator as an owner so existing orgs keep at least one owner
 // once the scalar stops granting the role. Idempotent; skips orgs that already
@@ -295,15 +319,6 @@ async function backfillMembersFromWorkos(): Promise<void> {
           after,
         });
         for (const membership of page.data) {
-          // One org per user: skip anyone already on another org's roster.
-          if (
-            await DeveloperOrgMembershipModel.exists({
-              userId: membership.userId,
-              orgId: { $ne: orgId },
-            })
-          ) {
-            continue;
-          }
           let email: string | null = null;
           let name: string | null = null;
           try {

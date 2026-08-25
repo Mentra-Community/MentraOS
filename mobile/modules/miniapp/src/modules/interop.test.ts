@@ -38,7 +38,7 @@ describe("MiniappsModule (session.miniapps)", () => {
           {
             id: "add_todo",
             description: "Add a todo.",
-            activation: "user",
+            lifecycle: "persistent",
             parameters: {type: "object"},
             outputSchema: {type: "object", properties: {added: {type: "string"}}},
           },

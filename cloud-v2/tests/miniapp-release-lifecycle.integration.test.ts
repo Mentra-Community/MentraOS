@@ -114,6 +114,11 @@ describe("miniapp release lifecycle", () => {
     expect(accepted.status).toBe("accepted");
     expect(accepted.reviewedBy).toBe("admin@mentraglass.com");
 
+    await expect(
+      miniapps.publishRelease({ releaseId: release.id, adminId: "admin@mentraglass.com" }),
+    ).rejects.toMatchObject({ code: "store_listing_incomplete" });
+    await configurePublishableListing("com.example.weather");
+
     const published = await miniapps.publishRelease({
       releaseId: release.id,
       adminId: "admin@mentraglass.com",
@@ -300,6 +305,12 @@ describe("miniapp release lifecycle", () => {
       reviewTier: "verified",
       featured: true,
     });
+    await miniapps.createStoreAsset(developer, "com.example.catalog", {
+      role: "store_icon",
+      fileName: "icon.png",
+      contentType: "image/png",
+      bytes: tinyPng(),
+    });
     const manifest = {
       packageName: "com.example.catalog",
       name: "Catalog App",
@@ -341,6 +352,7 @@ describe("miniapp release lifecycle", () => {
     await miniapps.createMiniApp(developer, {
       packageName: "com.example.artwork",
       displayName: "Artwork",
+      description: "Artwork description",
     });
     await expect(
       miniapps.createStoreAsset(developer, "com.example.artwork", {
@@ -380,6 +392,11 @@ describe("miniapp release lifecycle", () => {
     });
     await miniapps.submitRelease(developer, "com.example.artwork", release.id);
     await miniapps.approveRelease({ releaseId: release.id, adminId: "admin@mentraglass.com" });
+    await miniapps.updateStoreListing(developer, "com.example.artwork", {
+      longDescription: "Artwork Store description",
+      privacyPolicyUrl: "https://example.com/privacy",
+      supportUrl: "https://example.com/support",
+    });
     await miniapps.publishRelease({ releaseId: release.id, adminId: "admin@mentraglass.com" });
 
     const publicAsset = await catalogService.getPublicAsset(icon.id);
@@ -403,4 +420,22 @@ function canonicalJson(value: unknown): string {
     .sort()
     .map(key => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
     .join(",")}}`;
+}
+
+async function configurePublishableListing(packageName: string): Promise<void> {
+  await miniapps.updateStoreListing(developer, packageName, {
+    longDescription: "A complete Store description.",
+    privacyPolicyUrl: "https://example.com/privacy",
+    supportUrl: "https://example.com/support",
+  });
+  await miniapps.createStoreAsset(developer, packageName, {
+    role: "store_icon",
+    fileName: "icon.png",
+    contentType: "image/png",
+    bytes: tinyPng(),
+  });
+}
+
+function tinyPng(): Uint8Array {
+  return Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
 }

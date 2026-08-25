@@ -188,11 +188,11 @@ export function generateSchema(): Record<string, unknown> {
               type: 'object',
               description: 'JSON-Schema descriptor for the structured action result (MCP outputSchema).',
             },
-            activation: {
+            lifecycle: {
               type: 'string',
-              enum: ['user', 'transient'],
+              enum: ['persistent', 'transient'],
               description:
-                "Action lifecycle. 'user' opens or preserves the miniapp as user-visible activity; 'transient' may run in an invisible context that is released after the invocation.",
+                "Action lifecycle. 'persistent' opens or preserves normal user-visible activity; 'transient' may run in an invisible context that is released after the invocation.",
             },
             audience: {
               type: 'string',

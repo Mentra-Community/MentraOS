@@ -12,7 +12,7 @@ export function normalizeManifestActions(raw: unknown): DeclaredAction[] {
     description?: unknown
     parameters?: unknown
     outputSchema?: unknown
-    activation?: unknown
+    lifecycle?: unknown
     audience?: unknown
   }>) {
     if (a && typeof a.id === "string" && typeof a.description === "string") {
@@ -25,7 +25,7 @@ export function normalizeManifestActions(raw: unknown): DeclaredAction[] {
         ...(a.outputSchema && typeof a.outputSchema === "object" && !Array.isArray(a.outputSchema)
           ? {outputSchema: a.outputSchema as Record<string, unknown>}
           : {}),
-        activation: a.activation === "transient" ? "transient" : "user",
+        lifecycle: a.lifecycle === "transient" ? "transient" : "persistent",
         audience: a.audience === "host" ? "host" : "system",
       })
     }

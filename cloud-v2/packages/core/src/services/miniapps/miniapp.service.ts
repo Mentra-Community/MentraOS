@@ -184,9 +184,23 @@ export class MiniAppService {
     const appIds = [...new Set(releases.map(release => release.miniAppId))];
     const apps = await MiniAppModel.find({ _id: { $in: appIds } }).lean();
     const appsById = new Map(apps.map(app => [app._id.toString(), app]));
+    const storeAssets = await MiniAppAssetModel.find({
+      miniAppId: { $in: appIds },
+      role: { $in: ["store_icon", "store_cover", "gallery_screenshot"] },
+    })
+      .sort({ role: 1, sortOrder: 1, createdAt: 1 })
+      .lean();
+    const assetsByAppId = new Map<string, typeof storeAssets>();
+    for (const asset of storeAssets) {
+      const assets = assetsByAppId.get(asset.miniAppId) ?? [];
+      assets.push(asset);
+      assetsByAppId.set(asset.miniAppId, assets);
+    }
 
     return releases.map(release => {
       const app = appsById.get(release.miniAppId);
+      const assets = assetsByAppId.get(release.miniAppId) ?? [];
+      const listing = serializeStoreListing(app?.storeListing);
       return {
         ...serializeRelease(release),
         miniAppId: release.miniAppId,
@@ -198,6 +212,9 @@ export class MiniAppService {
         publishedAt: release.publishedAt?.toISOString() ?? null,
         reviewedBy: release.reviewedBy ?? null,
         reviewNotes: release.reviewNotes ?? null,
+        storeListing: listing,
+        storeAssets: assets.map(serializeStoreAsset),
+        listingReadiness: storeListingReadiness(app, assets),
       };
     });
   }
@@ -239,6 +256,18 @@ export class MiniAppService {
 
     const app = await MiniAppModel.findOne({ _id: release.miniAppId });
     if (!app || app.status === "archived") throw new MiniAppServiceError("not_found", "miniapp not found", 404);
+    const assets = await MiniAppAssetModel.find({
+      miniAppId: app._id.toString(),
+      role: { $in: ["store_icon", "store_cover", "gallery_screenshot"] },
+    }).lean();
+    const readiness = storeListingReadiness(app.toObject(), assets);
+    if (!readiness.ready) {
+      throw new MiniAppServiceError(
+        "store_listing_incomplete",
+        `Store listing is incomplete: ${readiness.missing.join(", ")}`,
+        409,
+      );
+    }
 
     release.status = "published";
     release.publishedAt = release.publishedAt ?? new Date();
@@ -512,6 +541,18 @@ export class MiniAppService {
     }
   }
 
+  async getStoreAsset(developer: DeveloperIdentity, packageName: string, assetId: string) {
+    const app = await this.requireMiniApp(developer, normalizePackageName(packageName));
+    const asset = await MiniAppAssetModel.findOne({
+      _id: assetId,
+      orgId: developer.orgId,
+      miniAppId: app._id.toString(),
+      role: { $in: ["store_icon", "store_cover", "gallery_screenshot"] },
+    }).lean();
+    if (!asset) throw new MiniAppServiceError("not_found", "Store asset not found", 404);
+    return { asset, bytes: await storage.getObject(asset.storageKey) };
+  }
+
   async deleteStoreAsset(developer: DeveloperIdentity, packageName: string, assetId: string) {
     const app = await this.requireMiniApp(developer, normalizePackageName(packageName));
     const asset = await MiniAppAssetModel.findOne({
@@ -676,6 +717,20 @@ function serializeStoreListing(listing: any) {
     coverAssetId: listing?.coverAssetId ?? null,
     screenshotAssetIds: listing?.screenshotAssetIds ?? [],
   };
+}
+
+function storeListingReadiness(
+  app: { description?: string | null; storeListing?: any } | null | undefined,
+  assets: Array<{ _id: unknown; role: string }>,
+): { ready: boolean; missing: string[] } {
+  const listing = serializeStoreListing(app?.storeListing);
+  const assetIds = new Set(assets.map(asset => String(asset._id)));
+  const missing: string[] = [];
+  if (!listing.iconAssetId || !assetIds.has(listing.iconAssetId)) missing.push("icon");
+  if (!listing.longDescription?.trim()) missing.push("description");
+  if (!listing.privacyPolicyUrl) missing.push("privacy policy URL");
+  if (!listing.supportUrl) missing.push("support URL");
+  return { ready: missing.length === 0, missing };
 }
 
 function serializeStoreAsset(asset: any) {

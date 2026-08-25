@@ -227,7 +227,7 @@ describe('validateManifest', () => {
           {
             id: 'add_todo',
             description: 'Add an item to the user\'s todo list.',
-            activation: 'transient',
+            lifecycle: 'transient',
             audience: 'host',
             parameters: {
               type: 'object',
@@ -252,13 +252,13 @@ describe('validateManifest', () => {
       expect(valid).toBe(true);
     });
 
-    test('rejects unknown action activation and audience values', () => {
+    test('rejects unknown action lifecycle and audience values', () => {
       const {valid, errors} = validateManifest({
         ...minimalValid,
-        actions: [{id: 'sync', description: 'Sync.', activation: 'daemon', audience: 'everyone'}],
+        actions: [{id: 'sync', description: 'Sync.', lifecycle: 'daemon', audience: 'everyone'}],
       });
       expect(valid).toBe(false);
-      expect(errors.some((e) => e.includes('activation'))).toBe(true);
+      expect(errors.some((e) => e.includes('lifecycle'))).toBe(true);
       expect(errors.some((e) => e.includes('audience'))).toBe(true);
     });
 

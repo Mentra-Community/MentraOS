@@ -37,9 +37,9 @@ describe('generateSchema', () => {
     expect(schema.properties.actions.items.properties.outputSchema.type).toBe('object');
   });
 
-  test('actions expose activation and audience metadata', () => {
+  test('actions expose lifecycle and audience metadata', () => {
     const schema = generateSchema() as any;
-    expect(schema.properties.actions.items.properties.activation.enum).toEqual(['user', 'transient']);
+    expect(schema.properties.actions.items.properties.lifecycle.enum).toEqual(['persistent', 'transient']);
     expect(schema.properties.actions.items.properties.audience.enum).toEqual(['system', 'host']);
   });
 

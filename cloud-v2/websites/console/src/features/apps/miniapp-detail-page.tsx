@@ -133,6 +133,13 @@ export function MiniappDetailPage() {
                     </div>
                     <div className="flex items-center gap-2 md:flex-col md:items-end">
                       <div className="text-sm text-[#747780]">{formatDate(release.createdAt)}</div>
+                      <Link
+                        to="/apps/$packageName/releases/$releaseId"
+                        params={{ packageName, releaseId: release.id }}
+                        className="text-sm font-semibold text-[#087d50] hover:text-[#065f3e]"
+                      >
+                        View details
+                      </Link>
                       {release.status === "draft" || release.status === "rejected" ? (
                         <Button
                           size="sm"

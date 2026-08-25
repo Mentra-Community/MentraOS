@@ -96,11 +96,11 @@ export interface ManifestAction {
   /** JSON-Schema descriptor for the structured value returned by the handler. */
   outputSchema?: Record<string, unknown>;
   /**
-   * Runtime lifecycle after a headless invocation. `user` starts normal,
+   * Runtime lifecycle after a headless invocation. `persistent` starts normal,
    * user-visible miniapp activity; `transient` keeps the wake invisible and
-   * tears it down after the invocation settles. Defaults to `user`.
+   * tears it down after the invocation settles. Defaults to `persistent`.
    */
-  activation?: 'user' | 'transient';
+  lifecycle?: 'persistent' | 'transient';
   /** Restrict an internal action to direct host invocation. Defaults to `system`. */
   audience?: 'system' | 'host';
 }
@@ -336,8 +336,8 @@ export function validateManifest(manifest: unknown): { valid: boolean; errors: s
         ) {
           errors.push(`actions[${i}].outputSchema must be a JSON-Schema object when set`);
         }
-        if (a.activation !== undefined && a.activation !== 'user' && a.activation !== 'transient') {
-          errors.push(`actions[${i}].activation must be "user" or "transient" when set`);
+        if (a.lifecycle !== undefined && a.lifecycle !== 'persistent' && a.lifecycle !== 'transient') {
+          errors.push(`actions[${i}].lifecycle must be "persistent" or "transient" when set`);
         }
         if (a.audience !== undefined && a.audience !== 'system' && a.audience !== 'host') {
           errors.push(`actions[${i}].audience must be "system" or "host" when set`);

@@ -112,7 +112,7 @@ export interface InstalledMiniappManifest {
     description?: unknown
     parameters?: unknown
     outputSchema?: unknown
-    activation?: unknown
+    lifecycle?: unknown
     audience?: unknown
   }>
 }
@@ -4549,6 +4549,7 @@ class LocalMiniappRuntime {
           },
         },
       )
+      appRegistry.gcReleaseVersions(target, [version, ...(activeVersion ? [activeVersion] : [])])
       this.sendToMiniapp(storePackageName, {
         type: MiniappResponseType.MINIAPPS_INSTALL_PROGRESS,
         packageName: target,
@@ -4702,7 +4703,7 @@ class LocalMiniappRuntime {
 
     let releaseWake: (() => Promise<void>) | undefined
     try {
-      if (action.activation === "transient") {
+      if (action.lifecycle === "transient") {
         if (!app.local) {
           throw this.actionError(
             MiniappErrorCode.WAKE_FAILED,

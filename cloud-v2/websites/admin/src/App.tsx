@@ -27,9 +27,36 @@ interface ReleaseSummary {
   id: string;
   packageName: string;
   displayName: string;
+  description?: string | null;
   version: string;
   status: ReleaseStatus;
   bundleSha256: string | null;
+  bundleSizeBytes?: number | null;
+  manifestSha256?: string | null;
+  manifest?: Record<string, unknown> | null;
+  signingKeyId?: string | null;
+  signedAt?: string | null;
+  storeListing?: {
+    subtitle: string | null;
+    longDescription: string | null;
+    categories: string[];
+    privacyPolicyUrl: string | null;
+    supportUrl: string | null;
+    websiteUrl: string | null;
+    reviewTier: "community" | "verified";
+    featured: boolean;
+    iconAssetId: string | null;
+    coverAssetId: string | null;
+    screenshotAssetIds: string[];
+  };
+  storeAssets?: Array<{
+    id: string;
+    role: "store_icon" | "store_cover" | "gallery_screenshot";
+    fileName: string;
+    contentType: string;
+    sizeBytes: number;
+  }>;
+  listingReadiness?: { ready: boolean; missing: string[] };
   reviewNotes?: string | null;
   submittedAt?: string | null;
   reviewedAt?: string | null;
@@ -237,6 +264,19 @@ function AdminPage() {
       ]);
     },
   });
+  const moderationMutation = useMutation({
+    mutationFn: (input: { packageName: string; reviewTier: "community" | "verified"; featured: boolean }) =>
+      api(`/api/admin/apps/${encodeURIComponent(input.packageName)}/store-moderation`, {
+        method: "PATCH",
+        body: { reviewTier: input.reviewTier, featured: input.featured },
+      }),
+    onSuccess: async () => {
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["admin-submissions"] }),
+        qc.invalidateQueries({ queryKey: ["admin-audit"] }),
+      ]);
+    },
+  });
 
   const publishRegistry = useMutation({
     mutationFn: async () => {
@@ -386,10 +426,13 @@ function AdminPage() {
         <SubmissionDetail
           release={detailRelease}
           history={submissionList.filter(r => r.packageName === detailRelease.packageName)}
-          pending={reviewMutation.isPending}
-          error={reviewMutation.error}
+          pending={reviewMutation.isPending || moderationMutation.isPending}
+          error={reviewMutation.error ?? moderationMutation.error}
           onClose={() => setDetailReleaseId(null)}
           onAction={(action, notes) => reviewMutation.mutate({ releaseId: detailRelease.id, action, notes })}
+          onModerate={(reviewTier, featured) =>
+            moderationMutation.mutate({ packageName: detailRelease.packageName, reviewTier, featured })
+          }
         />
       ) : null}
     </AppShell>
@@ -545,6 +588,7 @@ function SubmissionDetail(props: {
   error: unknown;
   onClose: () => void;
   onAction: (action: "approve" | "reject" | "publish", notes: string) => void;
+  onModerate: (reviewTier: "community" | "verified", featured: boolean) => void;
 }) {
   const { release } = props;
   const [notes, setNotes] = useState("");
@@ -576,10 +620,21 @@ function SubmissionDetail(props: {
           <DetailGrid
             rows={[
               ["Bundle SHA-256", release.bundleSha256 ? `${release.bundleSha256.slice(0, 16)}…` : "—"],
+              ["Bundle size", formatBytes(release.bundleSizeBytes)],
+              ["Manifest SHA-256", release.manifestSha256 ? `${release.manifestSha256.slice(0, 16)}…` : "—"],
+              ["Signing key", release.signingKeyId ?? "—"],
+              ["Signed", formatDate(release.signedAt)],
               ["Submitted", formatDate(release.submittedAt)],
               ["Reviewed", formatDate(release.reviewedAt)],
               ["Published", formatDate(release.publishedAt)],
             ]}
+          />
+
+          <ManifestReview manifest={release.manifest} />
+          <StoreListingReview
+            release={release}
+            pending={props.pending}
+            onModerate={props.onModerate}
           />
 
           {release.reviewNotes ? (
@@ -645,16 +700,136 @@ function SubmissionDetail(props: {
               {release.status === "accepted" ? (
                 <Button
                   className="rounded-full bg-[#111217] text-white hover:bg-[#25262c]"
-                  disabled={props.pending}
+                  disabled={props.pending || release.listingReadiness?.ready === false}
                   onClick={() => props.onAction("publish", notes.trim() || "Published")}
                 >
                   Publish to store
                 </Button>
               ) : null}
+              {release.listingReadiness?.ready === false ? (
+                <p className="w-full text-xs text-[#a64235]">
+                  Publishing blocked until the developer adds: {release.listingReadiness.missing.join(", ")}.
+                </p>
+              ) : null}
               {props.pending ? <Loader2 className="size-5 animate-spin self-center text-[#68746d]" /> : null}
             </div>
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function ManifestReview({ manifest }: { manifest?: Record<string, unknown> | null }) {
+  if (!manifest) {
+    return (
+      <div className="rounded-[18px] border border-[#f0d2cc] bg-[#fff7f5] p-5 text-sm text-[#a64235]">
+        Canonical manifest is unavailable for this release.
+      </div>
+    );
+  }
+  const permissions = Array.isArray(manifest.permissions) ? manifest.permissions : [];
+  const hardware = Array.isArray(manifest.hardwareRequirements) ? manifest.hardwareRequirements : [];
+  return (
+    <div className="rounded-[18px] border border-[#e0e4de] bg-white p-5">
+      <div className="text-xs font-medium uppercase tracking-[0.1em] text-[#a0a3aa]">Canonical manifest</div>
+      <div className="mt-4 grid gap-4 sm:grid-cols-2">
+        <ManifestList title="Permissions" values={permissions} empty="No permissions declared" />
+        <ManifestList title="Hardware requirements" values={hardware} empty="No hardware requirements" />
+      </div>
+      <details className="mt-4">
+        <summary className="cursor-pointer text-sm font-semibold text-[#087d50]">View complete signed manifest</summary>
+        <pre className="mt-3 max-h-[320px] overflow-auto rounded-[12px] bg-[#151816] p-4 text-xs leading-5 text-[#dce5de]">
+          {JSON.stringify(manifest, null, 2)}
+        </pre>
+      </details>
+    </div>
+  );
+}
+
+function ManifestList({ title, values, empty }: { title: string; values: unknown[]; empty: string }) {
+  return (
+    <div>
+      <div className="text-sm font-semibold text-[#1c1d22]">{title}</div>
+      {values.length > 0 ? (
+        <div className="mt-2 space-y-2">
+          {values.map((value, index) => (
+            <div key={index} className="rounded-[10px] bg-[#f5f7f4] px-3 py-2 font-mono text-xs text-[#4f5d54]">
+              {typeof value === "string" ? value : JSON.stringify(value)}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="mt-2 text-sm text-[#879088]">{empty}</p>
+      )}
+    </div>
+  );
+}
+
+function StoreListingReview(props: {
+  release: ReleaseSummary;
+  pending: boolean;
+  onModerate: (reviewTier: "community" | "verified", featured: boolean) => void;
+}) {
+  const listing = props.release.storeListing;
+  if (!listing) return null;
+  const assets = props.release.storeAssets ?? [];
+  return (
+    <div className="rounded-[18px] border border-[#e0e4de] bg-white p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="text-xs font-medium uppercase tracking-[0.1em] text-[#a0a3aa]">Store listing</div>
+          <div className="mt-1 text-sm font-semibold text-[#1c1d22]">{listing.subtitle || "No subtitle"}</div>
+        </div>
+        <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+          props.release.listingReadiness?.ready ? "bg-[#e9f8f1] text-[#087d50]" : "bg-[#fff3f1] text-[#a64235]"
+        }`}>
+          {props.release.listingReadiness?.ready ? "Ready" : "Incomplete"}
+        </span>
+      </div>
+      <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-[#4f5d54]">
+        {listing.longDescription || props.release.description || "No description provided."}
+      </p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {listing.categories.map(category => <Tag key={category}>{category}</Tag>)}
+      </div>
+      <div className="mt-4 grid grid-cols-3 gap-2">
+        {assets.map(asset => (
+          <figure key={asset.id} className="overflow-hidden rounded-[12px] border border-[#e0e4de] bg-[#f5f7f4]">
+            <img
+              src={`/api/admin/apps/${encodeURIComponent(props.release.packageName)}/store-assets/${encodeURIComponent(asset.id)}`}
+              alt={asset.role.replaceAll("_", " ")}
+              className="aspect-square w-full object-cover"
+            />
+            <figcaption className="truncate px-2 py-1.5 text-[10px] text-[#68746d]">{asset.fileName}</figcaption>
+          </figure>
+        ))}
+      </div>
+      {assets.length === 0 ? <p className="mt-3 text-sm text-[#879088]">No Store artwork uploaded.</p> : null}
+      <div className="mt-4 space-y-1 text-xs text-[#68746d]">
+        <div>Privacy: {listing.privacyPolicyUrl || "missing"}</div>
+        <div>Support: {listing.supportUrl || "missing"}</div>
+        <div>Website: {listing.websiteUrl || "not provided"}</div>
+      </div>
+      <div className="mt-4 flex flex-wrap gap-2 border-t border-[#eceeeb] pt-4">
+        <Button
+          variant="outline"
+          className="rounded-full"
+          disabled={props.pending}
+          onClick={() =>
+            props.onModerate(listing.reviewTier === "verified" ? "community" : "verified", listing.featured)
+          }
+        >
+          {listing.reviewTier === "verified" ? "Set community" : "Mark verified"}
+        </Button>
+        <Button
+          variant="outline"
+          className="rounded-full"
+          disabled={props.pending}
+          onClick={() => props.onModerate(listing.reviewTier, !listing.featured)}
+        >
+          {listing.featured ? "Remove featured" : "Feature miniapp"}
+        </Button>
       </div>
     </div>
   );
@@ -1161,7 +1336,8 @@ function reportSummaryText(report: ReportSummary): string {
   return report.trigger?.reason ?? "—";
 }
 
-function formatBytes(bytes: number): string {
+function formatBytes(bytes: number | null | undefined): string {
+  if (bytes == null) return "—";
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;

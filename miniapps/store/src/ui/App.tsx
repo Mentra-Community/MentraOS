@@ -9,8 +9,11 @@ import {
   type StoreSnapshot,
 } from "../shared/types"
 import {isStoreActionDisabled, resolveSelectedApp} from "./model"
+import arrowLeftIcon from "./assets/arrow-left.svg"
+import shareIcon from "./assets/share.svg"
 
 type Tab = "store" | "installed" | "updates"
+type OperationPhase = NonNullable<StoreSnapshot["operation"]>["phase"]
 
 function isManagedByThisStore(installed: InstalledApp): boolean {
   return isManagedByStore(installed, MENTRA_STORE_PACKAGE_NAME)
@@ -32,7 +35,11 @@ export function App() {
   const [snapshot, setSnapshot] = useState(EMPTY)
   const [tab, setTab] = useState<Tab>("store")
   const [query, setQuery] = useState("")
+  const [category, setCategory] = useState<string | null>(null)
   const [selectedPackageName, setSelectedPackageName] = useState<string | null>(null)
+  const [confirmUninstall, setConfirmUninstall] = useState<string | null>(null)
+  const [updatingAll, setUpdatingAll] = useState(false)
+  const [shareMessage, setShareMessage] = useState<string | null>(null)
 
   useEffect(() => mentra.on("store:snapshot", setSnapshot), [])
   useEffect(() => {
@@ -58,12 +65,17 @@ export function App() {
       }),
     [snapshot.apps, installedByPackage],
   )
-  const visible =
+  const categories = useMemo(
+    () => [...new Set(snapshot.apps.flatMap((app) => app.categories))].sort((a, b) => a.localeCompare(b)),
+    [snapshot.apps],
+  )
+  const tabApps =
     tab === "installed"
       ? snapshot.apps.filter((app) => installedByPackage.has(app.packageName))
       : tab === "updates"
         ? updateApps
         : snapshot.apps
+  const visible = category && tab === "store" ? tabApps.filter((app) => app.categories.includes(category)) : tabApps
   const orphanedInstalled =
     tab === "installed" && !query.trim()
       ? snapshot.installed.filter(
@@ -76,12 +88,45 @@ export function App() {
       try {
         const next = (await mentra.request(`store:${kind}`, {packageName, query})) as StoreSnapshot
         setSnapshot(next)
+        return true
       } catch (error) {
         setSnapshot((current) => ({...current, error: error instanceof Error ? error.message : `${kind} failed`}))
+        return false
       }
     },
     [query],
   )
+
+  const updateAll = useCallback(async () => {
+    setUpdatingAll(true)
+    try {
+      for (const app of updateApps) await run("install", app.packageName)
+    } finally {
+      setUpdatingAll(false)
+    }
+  }, [run, updateApps])
+
+  const share = useCallback(async (app: StoreApp) => {
+    const data = {
+      title: app.name,
+      text: `Check out ${app.name} in the Mentra Miniapp Store (${app.packageName}).`,
+      ...(app.websiteUrl ? {url: app.websiteUrl} : {}),
+    }
+    try {
+      if (navigator.share) {
+        await navigator.share(data)
+      } else {
+        await navigator.clipboard.writeText([data.text, data.url].filter(Boolean).join(" "))
+        setShareMessage("Miniapp link copied")
+        window.setTimeout(() => setShareMessage(null), 2200)
+      }
+    } catch (error) {
+      if ((error as {name?: string}).name !== "AbortError") {
+        setShareMessage("Could not share this miniapp")
+        window.setTimeout(() => setShareMessage(null), 2200)
+      }
+    }
+  }, [])
 
   const style = {
     paddingTop: insets.top,
@@ -97,8 +142,11 @@ export function App() {
           app={selected}
           installed={installedByPackage.get(selected.packageName)}
           busy={snapshot.operation?.packageName === selected.packageName}
+          phase={snapshot.operation?.packageName === selected.packageName ? snapshot.operation.phase : undefined}
           onBack={() => setSelectedPackageName(null)}
           onAction={run}
+          onShare={() => void share(selected)}
+          onUninstall={() => setConfirmUninstall(selected.packageName)}
         />
       ) : (
         <>
@@ -108,15 +156,14 @@ export function App() {
               <h1>Miniapp Store</h1>
             </div>
             <button
-              className="icon-button"
+              className="refresh-button"
               aria-label="Refresh Store"
               onClick={() => void mentra.request("store:refresh", {query}).then(setSnapshot)}>
-              ↻
+              Refresh
             </button>
           </header>
 
           <div className="search-wrap">
-            <span aria-hidden="true">⌕</span>
             <input
               aria-label="Search miniapps"
               value={query}
@@ -129,6 +176,17 @@ export function App() {
               </button>
             )}
           </div>
+
+          {tab === "store" && !query.trim() && categories.length > 0 ? (
+            <div className="category-list" aria-label="Store categories">
+              <button className={category === null ? "active" : ""} onClick={() => setCategory(null)}>All</button>
+              {categories.map((item) => (
+                <button key={item} className={category === item ? "active" : ""} onClick={() => setCategory(item)}>
+                  {item}
+                </button>
+              ))}
+            </div>
+          ) : null}
 
           {snapshot.error && (
             <div className="notice" role="alert">
@@ -148,7 +206,7 @@ export function App() {
               </div>
             ) : visible.length === 0 && orphanedInstalled.length === 0 ? (
               <div className="state">
-                <div className="state-icon">◇</div>
+                <div className="state-icon" aria-hidden="true" />
                 <h2>
                   {tab === "updates"
                     ? "You’re up to date"
@@ -175,6 +233,11 @@ export function App() {
                         : "Available updates"}
                   </h2>
                   <span>{visible.length}</span>
+                  {tab === "updates" && updateApps.length > 1 ? (
+                    <button className="update-all" disabled={updatingAll || Boolean(snapshot.operation)} onClick={() => void updateAll()}>
+                      {updatingAll ? "Updating…" : "Update all"}
+                    </button>
+                  ) : null}
                 </div>
                 <div className="app-list">
                   {visible.map((app) => (
@@ -182,7 +245,9 @@ export function App() {
                       key={app.packageName}
                       app={app}
                       installed={installedByPackage.get(app.packageName)}
-                      busy={Boolean(snapshot.operation)}
+                      busy={snapshot.operation?.packageName === app.packageName}
+                      disabled={Boolean(snapshot.operation)}
+                      phase={snapshot.operation?.packageName === app.packageName ? snapshot.operation.phase : undefined}
                       onSelect={() => setSelectedPackageName(app.packageName)}
                       onAction={run}
                     />
@@ -191,7 +256,8 @@ export function App() {
                     <InstalledOnlyRow
                       key={installed.packageName}
                       installed={installed}
-                      busy={Boolean(snapshot.operation)}
+                      disabled={Boolean(snapshot.operation)}
+                      onRequestUninstall={() => setConfirmUninstall(installed.packageName)}
                       onAction={run}
                     />
                   ))}
@@ -203,7 +269,6 @@ export function App() {
           <nav className="tabs" aria-label="Store sections">
             {(["store", "installed", "updates"] as Tab[]).map((item) => (
               <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>
-                <span aria-hidden="true">{item === "store" ? "⌂" : item === "installed" ? "✓" : "↑"}</span>
                 {item[0].toUpperCase() + item.slice(1)}
                 {item === "updates" && updateApps.length ? ` (${updateApps.length})` : ""}
               </button>
@@ -211,18 +276,38 @@ export function App() {
           </nav>
         </>
       )}
+      {shareMessage ? <div className="toast" role="status">{shareMessage}</div> : null}
+      {confirmUninstall ? (
+        <ConfirmDialog
+          name={
+            snapshot.apps.find((app) => app.packageName === confirmUninstall)?.name ??
+            snapshot.installed.find((app) => app.packageName === confirmUninstall)?.name ??
+            confirmUninstall
+          }
+          busy={snapshot.operation?.packageName === confirmUninstall}
+          onCancel={() => setConfirmUninstall(null)}
+          onConfirm={async () => {
+            if (await run("uninstall", confirmUninstall)) {
+              setConfirmUninstall(null)
+              if (selectedPackageName === confirmUninstall) setSelectedPackageName(null)
+            }
+          }}
+        />
+      ) : null}
     </div>
   )
 }
 
 function InstalledOnlyRow({
   installed,
-  busy,
+  disabled,
+  onRequestUninstall,
   onAction,
 }: {
   installed: InstalledApp
-  busy: boolean
-  onAction: (kind: "install" | "uninstall" | "open", packageName: string) => Promise<void>
+  disabled: boolean
+  onRequestUninstall: () => void
+  onAction: (kind: "install" | "uninstall" | "open", packageName: string) => Promise<boolean>
 }) {
   return (
     <article className="app-row">
@@ -237,16 +322,16 @@ function InstalledOnlyRow({
       <div className="installed-actions">
         <button
           className="action"
-          disabled={busy || installed.compatibility.isCompatible === false}
+          disabled={disabled || installed.compatibility.isCompatible === false}
           onClick={() => void onAction("open", installed.packageName)}>
           Open
         </button>
         {!installed.system && isManagedByThisStore(installed) && (
           <button
             className="action danger-action"
-            disabled={busy}
-            onClick={() => void onAction("uninstall", installed.packageName)}>
-            Remove
+            disabled={disabled}
+            onClick={onRequestUninstall}>
+            Uninstall
           </button>
         )}
       </div>
@@ -258,20 +343,24 @@ function AppRow({
   app,
   installed,
   busy,
+  disabled,
+  phase,
   onSelect,
   onAction,
 }: {
   app: StoreApp
   installed?: InstalledApp
   busy: boolean
+  disabled: boolean
+  phase?: OperationPhase
   onSelect: () => void
-  onAction: (kind: "install" | "uninstall" | "open", packageName: string) => Promise<void>
+  onAction: (kind: "install" | "uninstall" | "open", packageName: string) => Promise<boolean>
 }) {
   const update = Boolean(installed && isNewerVersion(app.release.version, installed.version))
   const action = !installed || update ? "install" : "open"
   const installBlocker = action === "install" && app.release.installCompatibility?.compatible === false
   const label = busy
-    ? "Working…"
+    ? operationLabel(phase)
     : installBlocker
       ? app.release.installCompatibility?.blocker === "hardware"
         ? "Not compatible"
@@ -295,7 +384,7 @@ function AppRow({
       </button>
       <button
         className="action"
-        disabled={busy || isStoreActionDisabled(action, installed, app.release.installCompatibility)}
+        disabled={disabled || isStoreActionDisabled(action, installed, app.release.installCompatibility)}
         title={installBlocker ? app.release.installCompatibility?.reason : undefined}
         onClick={() => void onAction(action, app.packageName)}>
         {label}
@@ -318,14 +407,20 @@ function Detail({
   app,
   installed,
   busy,
+  phase,
   onBack,
   onAction,
+  onShare,
+  onUninstall,
 }: {
   app: StoreApp
   installed?: InstalledApp
   busy: boolean
+  phase?: OperationPhase
   onBack: () => void
-  onAction: (kind: "install" | "uninstall" | "open", packageName: string) => Promise<void>
+  onAction: (kind: "install" | "uninstall" | "open", packageName: string) => Promise<boolean>
+  onShare: () => void
+  onUninstall: () => void
 }) {
   const update = Boolean(installed && isNewerVersion(app.release.version, installed.version))
   const kind = !installed || update ? "install" : "open"
@@ -333,7 +428,7 @@ function Detail({
   const installBlockerKind = app.release.installCompatibility?.blocker
   const requiresHostUpdate = installBlockerKind === "host" || installBlockerKind === "sdk"
   const label = busy
-    ? "Working…"
+    ? operationLabel(phase)
     : installBlocker
       ? installBlockerKind === "hardware"
         ? "Not compatible"
@@ -349,24 +444,28 @@ function Detail({
     <div className="detail">
       <header className="detail-nav">
         <button onClick={onBack} aria-label="Back to Store">
-          ‹
+          <img src={arrowLeftIcon} alt="" />
         </button>
-        <span>Miniapp details</span>
-        <span className="nav-space" />
       </header>
       <main>
         <section className="hero">
           <AppIcon app={app} />
-          <div>
+          <div className="hero-copy">
             <h1>{app.name}</h1>
             <p>{app.categories.join(" · ") || "Mentra miniapp"}</p>
+            <div className="hero-actions">
+              <button
+                className="action primary"
+                disabled={busy || isStoreActionDisabled(kind, installed, app.release.installCompatibility)}
+                onClick={() => void onAction(kind, app.packageName)}>
+                {label}
+              </button>
+              <button className="share-action" onClick={onShare}>
+                <img src={shareIcon} alt="" />
+                Share
+              </button>
+            </div>
           </div>
-          <button
-            className="action primary"
-            disabled={busy || isStoreActionDisabled(kind, installed, app.release.installCompatibility)}
-            onClick={() => void onAction(kind, app.packageName)}>
-            {label}
-          </button>
         </section>
         {installed?.compatibility.isCompatible === false && (
           <div className="notice">This miniapp is not compatible with the connected glasses.</div>
@@ -411,12 +510,43 @@ function Detail({
           )}
           {app.supportUrl && <button onClick={() => window.open(app.supportUrl!, "_blank")}>Support ↗</button>}
           {installed && !installed.system && isManagedByThisStore(installed) && (
-            <button className="danger" disabled={busy} onClick={() => void onAction("uninstall", app.packageName)}>
+            <button className="danger" disabled={busy} onClick={onUninstall}>
               Uninstall
             </button>
           )}
         </section>
       </main>
+    </div>
+  )
+}
+
+function operationLabel(phase?: OperationPhase): string {
+  return phase ? `${phase[0]?.toUpperCase()}${phase.slice(1)}…` : "Working…"
+}
+
+function ConfirmDialog({
+  name,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  name: string
+  busy: boolean
+  onCancel: () => void
+  onConfirm: () => Promise<void>
+}) {
+  return (
+    <div className="dialog-backdrop" role="presentation" onClick={onCancel}>
+      <section className="dialog" role="dialog" aria-modal="true" aria-labelledby="uninstall-title" onClick={(event) => event.stopPropagation()}>
+        <h2 id="uninstall-title">Uninstall {name}?</h2>
+        <p>The miniapp and its local data will be removed from this device. You can install it again later.</p>
+        <div>
+          <button disabled={busy} onClick={onCancel}>Cancel</button>
+          <button className="danger" disabled={busy} onClick={() => void onConfirm()}>
+            {busy ? "Uninstalling…" : "Uninstall"}
+          </button>
+        </div>
+      </section>
     </div>
   )
 }

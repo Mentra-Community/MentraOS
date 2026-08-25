@@ -97,6 +97,11 @@ publisher signatures can be enforced later without changing the API.
 - [x] Add Developer Console listing fields and Store artwork management.
 - [x] Display canonical manifest data, release history, review status/notes, and
       signing-key identity in the existing release detail workflow.
+- [x] Make organization switching authoritative: one user may belong to several
+      developer organizations, and every private Console request validates the
+      selected organization against that user's memberships.
+- [x] Preview private Store artwork and show the exact publication-readiness
+      requirements before admin review.
 - [x] Build and typecheck the CLI and Developer Console.
 
 ## Mentra Miniapp Store
@@ -134,7 +139,7 @@ publisher signatures can be enforced later without changing the API.
       another Store's packages.
 - [x] Keep the Store itself out of its in-process update loop; Store-self update
       remains a future signed host-owned updater concern.
-- [x] Package and integrity-check `com.mentra.store-1.0.2.zip`.
+- [x] Package and integrity-check `com.mentra.store-1.0.4.zip`.
 
 ## Verification
 
@@ -163,7 +168,7 @@ publisher signatures can be enforced later without changing the API.
 - [x] Android ASG and Bluetooth SDK compile checks.
 - [x] Full iOS Simulator native build with code signing disabled.
 - [x] ZIP integrity check. Bundled Store SHA-256:
-      `a44145d3dcbcf455b72f288be4765b8fb1422f946e4961f99cca54063bbb3a4b`.
+      `bfc2da58ee988dcceeb60baf6d673b7e12a46f82b7db8519e0653f67d6022094`.
 - [x] Review regressions: bounded streaming inflation and CRC checks in both
       Core and the phone, trusted host-selected Core URL, complete catalog
       pagination, Store-owned uninstall visibility, pre-activation host/SDK
@@ -219,21 +224,21 @@ work remains before describing the overall Store program as production-ready:
       blindly without canonical local bundles and publisher identities.
 - [ ] Merge and deploy the Core catalog route; the production
       `/api/store/apps` endpoint returns 404 until this change is deployed.
-- [ ] Resolve the remaining browser Developer Console scope in Linear OS-1443.
-      The Console now manages listings, shows the canonical manifest and
-      release history, and can submit/re-submit CLI-uploaded drafts. Direct ZIP
-      upload remains intentionally CLI-only so publisher signing keys stay on
-      the developer's machine; the Linear acceptance text should be updated if
-      that is the final product decision.
+- [x] Complete the browser Developer Console release workflow from Linear
+      OS-1443: organization switching, miniapp creation, listing/artwork
+      management, publication readiness, release history/detail, manifest and
+      signing identity, review feedback, and draft/rejected submission. Direct
+      ZIP upload remains intentionally CLI-only so publisher signing keys stay
+      on the developer's machine.
 - [x] Make the published Cloud V2 `mentra` CLI default to production and
       discover the selected Core's public WorkOS client id, while retaining
       environment overrides for dev/staging/OEM deployments.
-- [ ] Expand the admin review UI to show the canonical manifest permissions,
+- [x] Expand the admin review UI to show the canonical manifest permissions,
       hardware requirements, Store listing/artwork, and moderation controls
       before publication.
-- [ ] Decide and enforce Store-listing completeness requirements (at minimum
-      icon, description, privacy/support information) before publication.
-- [ ] Add successful-update garbage collection for obsolete semver bundle
+- [x] Decide and enforce Store-listing completeness requirements (icon,
+      description, privacy/support information) before publication.
+- [x] Add successful-update garbage collection for obsolete semver bundle
       directories while preserving the rollback version.
 - [ ] Verify the full flow on attached iOS and Android devices, including
       install, runtime restart, rollback, offline recovery, update, uninstall,

@@ -1,6 +1,6 @@
 import { useEffect, useState, type ChangeEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ImagePlus, Trash2 } from "lucide-react";
+import { CheckCircle2, CircleAlert, ImagePlus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -87,6 +87,14 @@ export function StoreListingCard({ packageName }: { packageName: string }) {
 
   const error = listingQuery.error ?? save.error ?? upload.error ?? remove.error;
   const assets = listingQuery.data?.listing.assets ?? [];
+  const iconAssetId = listingQuery.data?.listing.iconAssetId;
+  const missing = [
+    !iconAssetId || !assets.some(asset => asset.id === iconAssetId) ? "Store icon" : null,
+    !description.trim() ? "Long description" : null,
+    !privacyPolicyUrl.trim() ? "Privacy policy URL" : null,
+    !supportUrl.trim() ? "Support URL" : null,
+  ].filter((value): value is string => value !== null);
+  const ready = missing.length === 0 && !dirty;
 
   return (
     <Card className="mt-6 rounded-[16px] border-[#e0e4de] bg-white shadow-[0_1px_2px_rgba(20,21,27,0.06)] sm:rounded-[18px]">
@@ -103,6 +111,31 @@ export function StoreListingCard({ packageName }: { packageName: string }) {
             {error.message}
           </p>
         ) : null}
+        <div
+          className={`flex items-start gap-3 rounded-xl border p-3 text-sm ${
+            ready
+              ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+              : "border-amber-200 bg-amber-50 text-amber-900"
+          }`}
+        >
+          {ready ? (
+            <CheckCircle2 className="mt-0.5 size-4 shrink-0" />
+          ) : (
+            <CircleAlert className="mt-0.5 size-4 shrink-0" />
+          )}
+          <div>
+            <div className="font-semibold">
+              {ready ? "Ready for publication" : dirty ? "Save listing changes" : "Publication requirements incomplete"}
+            </div>
+            <div className="mt-0.5 opacity-80">
+              {ready
+                ? "An accepted release can be published to the Mentra Miniapp Store."
+                : dirty
+                  ? "Publication readiness is checked against the last saved listing."
+                : `Still required: ${missing.join(", ")}.`}
+            </div>
+          </div>
+        </div>
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Subtitle">
             <Input value={subtitle} maxLength={120} onChange={event => edit(setSubtitle, event.target.value)} />
@@ -150,6 +183,7 @@ export function StoreListingCard({ packageName }: { packageName: string }) {
               <AssetRow
                 key={asset.id}
                 asset={asset}
+                packageName={packageName}
                 deleting={remove.isPending}
                 onDelete={() => remove.mutate(asset.id)}
               />
@@ -175,14 +209,32 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-function AssetRow({ asset, deleting, onDelete }: { asset: StoreAsset; deleting: boolean; onDelete: () => void }) {
+function AssetRow({
+  asset,
+  packageName,
+  deleting,
+  onDelete,
+}: {
+  asset: StoreAsset;
+  packageName: string;
+  deleting: boolean;
+  onDelete: () => void;
+}) {
+  const previewUrl = `/api/console/apps/${encodeURIComponent(packageName)}/listing/assets/${encodeURIComponent(asset.id)}`;
   return (
     <div className="flex items-center justify-between gap-3 rounded-lg border border-[#e5e8e3] px-3 py-2 text-sm">
-      <div className="min-w-0">
-        <span className="font-semibold">{asset.role.replaceAll("_", " ")}</span>
-        <span className="ml-2 text-[#747780]">
-          {asset.fileName} · {formatBytes(asset.sizeBytes)}
-        </span>
+      <div className="flex min-w-0 items-center gap-3">
+        <img
+          src={previewUrl}
+          alt=""
+          className="size-12 shrink-0 rounded-lg border border-[#eceeeb] bg-[#f4f7f4] object-cover"
+        />
+        <div className="min-w-0">
+          <div className="font-semibold capitalize">{asset.role.replaceAll("_", " ")}</div>
+          <div className="truncate text-[#747780]">
+            {asset.fileName} · {formatBytes(asset.sizeBytes)}
+          </div>
+        </div>
       </div>
       <button
         aria-label={`Delete ${asset.fileName}`}

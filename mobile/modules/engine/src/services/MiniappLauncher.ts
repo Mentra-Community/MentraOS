@@ -189,7 +189,7 @@ class MiniappLauncher {
         description?: unknown
         parameters?: unknown
         outputSchema?: unknown
-        activation?: unknown
+        lifecycle?: unknown
         audience?: unknown
       }>
     } | null

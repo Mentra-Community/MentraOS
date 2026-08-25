@@ -6,6 +6,8 @@ import adminSupportProfiles from "./support-profiles.api";
 import { PREINSTALLED_INSTALL_POLICIES } from "../../models/preinstalled-registry-revision.model";
 import { PREINSTALLED_REGISTRY_ENVIRONMENTS } from "../../models/preinstalled-registry.model";
 import { AdminActionAuditLogModel } from "../../models/admin-action-audit-log.model";
+import { MiniAppAssetModel } from "../../models/miniapp-asset.model";
+import { MiniAppModel } from "../../models/miniapp.model";
 import {
   PreinstalledRegistryService,
   PreinstalledRegistryServiceError,
@@ -14,10 +16,12 @@ import {
 import { MiniAppService, MiniAppServiceError } from "../../services/miniapps/miniapp.service";
 import type { AppContext, AppEnv } from "../../types/hono.types";
 import { InvalidRequest } from "../../types/oauth.types";
+import { createStorageService } from "../../services/storage/storage.service";
 
 const app = new Hono<AppEnv>();
 const service = new PreinstalledRegistryService();
 const miniapps = new MiniAppService();
+const storage = createStorageService();
 
 const ensureRegistrySchema = z.object({
   environment: z.enum(PREINSTALLED_REGISTRY_ENVIRONMENTS),
@@ -66,6 +70,7 @@ app.post("/submissions/:releaseId/approve", postApproveSubmission);
 app.post("/submissions/:releaseId/reject", postRejectSubmission);
 app.post("/submissions/:releaseId/publish", postPublishSubmission);
 app.patch("/apps/:packageName/store-moderation", patchStoreModeration);
+app.get("/apps/:packageName/store-assets/:assetId", getStoreAsset);
 app.get("/preinstalled/registries", getRegistries);
 app.post("/preinstalled/registries", postRegistry);
 app.get("/preinstalled/releases", getReleases);
@@ -132,6 +137,28 @@ async function patchStoreModeration(c: AppContext) {
   } catch (error) {
     return serviceError(error);
   }
+}
+
+async function getStoreAsset(c: AppContext) {
+  const packageName = requiredParam(c, "packageName");
+  const assetId = requiredParam(c, "assetId");
+  const appRow = await MiniAppModel.findOne({ packageName, status: { $ne: "archived" } }).lean();
+  if (!appRow) return c.json({ error: "not_found" }, 404);
+  const asset = await MiniAppAssetModel.findOne({
+    _id: assetId,
+    miniAppId: appRow._id.toString(),
+    role: { $in: ["store_icon", "store_cover", "gallery_screenshot"] },
+  }).lean();
+  if (!asset) return c.json({ error: "not_found" }, 404);
+  const bytes = await storage.getObject(asset.storageKey);
+  return new Response(bytes, {
+    headers: {
+      "content-type": asset.contentType,
+      "content-length": String(asset.sizeBytes),
+      "cache-control": "private, max-age=300",
+      "x-content-type-options": "nosniff",
+    },
+  });
 }
 
 async function getRegistries(c: AppContext) {

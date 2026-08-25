@@ -23,7 +23,7 @@ export interface MiniappActionInfo {
   /** JSON-Schema descriptor for the structured value returned by the action. */
   outputSchema?: Record<string, unknown>
   /** Whether invocation leaves normal user-visible miniapp activity running. */
-  activation: "user" | "transient"
+  lifecycle: "persistent" | "transient"
 }
 
 /**

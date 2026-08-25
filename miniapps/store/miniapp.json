@@ -1,7 +1,7 @@
 {
   "$schema": "./node_modules/@mentra/miniapp-cli/schema/miniapp.schema.json",
   "packageName": "com.mentra.store",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "name": "Mentra Miniapp Store",
   "description": "Discover, install, update, and manage Mentra miniapps.",
   "icon": "icon.png",
@@ -18,7 +18,7 @@
     {
       "id": "reconcile_updates",
       "description": "Check the Store catalog and install every eligible update owned by this Store.",
-      "activation": "transient",
+      "lifecycle": "transient",
       "audience": "host",
       "parameters": {
         "type": "object",
@@ -27,10 +27,17 @@
       "outputSchema": {
         "type": "object",
         "properties": {
-          "checkedAt": {"type": "number"},
-          "candidateCount": {"type": "number"}
+          "checkedAt": {
+            "type": "number"
+          },
+          "candidateCount": {
+            "type": "number"
+          }
         },
-        "required": ["checkedAt", "candidateCount"]
+        "required": [
+          "checkedAt",
+          "candidateCount"
+        ]
       }
     }
   ],

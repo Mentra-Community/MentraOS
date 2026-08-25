@@ -33,6 +33,7 @@ import {sha256Hex} from "../utils/sha256"
 import {checkManifestVersions} from "./manifestVersionGate"
 import {checkMiniappInstallCompatibility} from "./miniappInstallCompatibility"
 import {normalizeManifestActions} from "./manifestActions"
+import {selectReleaseVersionsForGarbageCollection} from "./releaseVersionGc"
 import {miniappRunningRegistry} from "./MiniappRunningRegistry"
 import {canInstallMiniappRelease, isSystemMiniappPackage, requiresConnectedGlasses} from "./SystemMiniappPolicy"
 import {validateInstallBundleArchive} from "./validateInstallBundle"
@@ -814,6 +815,40 @@ class AppRegistry {
     }
   }
 
+  /**
+   * Remove obsolete semver release directories after a Store update has been
+   * activated successfully. Callers retain the new active version and the
+   * immediately previous version for rollback; dev snapshots are untouched.
+   */
+  public gcReleaseVersions(packageName: string, keepVersions: readonly string[]): void {
+    const keep = new Set(keepVersions.filter(Boolean))
+    try {
+      const pkgDir = new Directory(Paths.document, "lmas", packageName)
+      if (!pkgDir.exists) return
+      const obsolete = selectReleaseVersionsForGarbageCollection(
+        pkgDir
+          .list()
+          .filter((entry): entry is Directory => entry instanceof Directory)
+          .map((entry) => entry.name),
+        keep,
+      )
+      for (const version of obsolete) {
+        try {
+          new Directory(pkgDir, version).delete()
+          storage.remove(releaseIdentityKey(packageName, version))
+        } catch (error) {
+          console.warn(`APP_REGISTRY: failed to garbage-collect ${packageName}@${version}:`, error)
+        }
+      }
+      if (obsolete.length > 0) {
+        this.refreshNeeded = true
+        this.notify()
+      }
+    } catch (error) {
+      console.warn(`APP_REGISTRY: release garbage collection failed for ${packageName}:`, error)
+    }
+  }
+
   public uninstall(packageName: string, version?: string): AsyncResult<void, Error> {
     return Res.try_async(async () => {
       // SYSTEM identity is build-owned, so enforce non-removability at the
@@ -995,7 +1030,7 @@ class AppRegistry {
             description?: unknown
             parameters?: unknown
             outputSchema?: unknown
-            activation?: unknown
+            lifecycle?: unknown
             audience?: unknown
           }>
         } | null
@@ -1210,7 +1245,7 @@ export interface DevAppRecord {
     description?: unknown
     parameters?: unknown
     outputSchema?: unknown
-    activation?: unknown
+    lifecycle?: unknown
     audience?: unknown
   }>
   /** Legacy single-slot migration field. New records use the real packageName directly. */

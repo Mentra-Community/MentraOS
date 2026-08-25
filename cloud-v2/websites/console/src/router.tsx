@@ -3,6 +3,7 @@ import { LoginPage } from "@/components/login-page";
 import { OrganizationSelectionPage } from "@/components/organization-selection-page";
 import { AppsPage } from "@/features/apps/apps-page";
 import { MiniappDetailPage } from "@/features/apps/miniapp-detail-page";
+import { ReleaseDetailPage } from "@/features/apps/release-detail-page";
 import { DashboardPage } from "@/features/dashboard/dashboard-page";
 import { InviteAcceptPage } from "@/features/org/invite-accept-page";
 import { OrganizationPage } from "@/features/org/organization-page";
@@ -46,6 +47,12 @@ const miniappDetailRoute = createRoute({
   component: MiniappDetailPage,
 });
 
+const releaseDetailRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/apps/$packageName/releases/$releaseId",
+  component: ReleaseDetailPage,
+});
+
 const tokensRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/tokens",
@@ -70,6 +77,7 @@ const routeTree = rootRoute.addChildren([
   dashboardRoute,
   appsRoute,
   miniappDetailRoute,
+  releaseDetailRoute,
   tokensRoute,
   organizationRoute,
   inviteAcceptRoute,
