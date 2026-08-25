@@ -751,14 +751,25 @@ export class MiniAppService {
           "storeListingOperationLease.token": lease.token,
           "storeListingOperationLease.expiresAt": { $gt: new Date() },
         },
-        {
-          $set: {
-            "storeListing.iconAssetId": app.storeListing?.iconAssetId === assetId ? null : app.storeListing?.iconAssetId,
-            "storeListing.coverAssetId":
-              app.storeListing?.coverAssetId === assetId ? null : app.storeListing?.coverAssetId,
+        [
+          {
+            $set: {
+            "storeListing.iconAssetId": {
+              $cond: [{ $eq: ["$storeListing.iconAssetId", assetId] }, null, "$storeListing.iconAssetId"],
+            },
+            "storeListing.coverAssetId": {
+              $cond: [{ $eq: ["$storeListing.coverAssetId", assetId] }, null, "$storeListing.coverAssetId"],
+            },
+            "storeListing.screenshotAssetIds": {
+              $filter: {
+                input: { $ifNull: ["$storeListing.screenshotAssetIds", []] },
+                as: "screenshotAssetId",
+                cond: { $ne: ["$$screenshotAssetId", assetId] },
+              },
+            },
+            },
           },
-          $pull: { "storeListing.screenshotAssetIds": assetId },
-        },
+        ],
       );
       if (detached.matchedCount !== 1) {
         throw new MiniAppServiceError("store_listing_lease_lost", "Store listing operation lease was lost", 409);
