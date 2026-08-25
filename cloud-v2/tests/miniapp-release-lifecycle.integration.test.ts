@@ -692,6 +692,88 @@ describe("miniapp release lifecycle", () => {
     }
   });
 
+  test("a fast Core clock cannot steal a MongoDB-live submission lease", async () => {
+    const packageName = "com.example.clockskew";
+    await miniapps.createMiniApp(developer, {
+      packageName,
+      displayName: "Clock Skew",
+      description: "MongoDB lease clock test",
+    });
+    await miniapps.updateStoreListing(developer, packageName, { subtitle: "Original subtitle" });
+    const release = await miniapps.createRelease(developer, {
+      packageName,
+      version: "1.0.0",
+      manifest: { packageName, name: "Clock Skew", version: "1.0.0" },
+      bundle: await releaseBundle({ packageName, name: "Clock Skew", version: "1.0.0" }),
+    });
+
+    const originalFindOneAndUpdate = MiniAppReleaseModel.findOneAndUpdate;
+    const NativeDate = Date;
+    let markTransitionReached!: () => void;
+    let resumeTransition!: () => void;
+    const transitionReached = new Promise<void>(resolve => {
+      markTransitionReached = resolve;
+    });
+    const transitionGate = new Promise<void>(resolve => {
+      resumeTransition = resolve;
+    });
+    MiniAppReleaseModel.findOneAndUpdate = (async (...args: unknown[]) => {
+      const filter = args[0] as { _id?: unknown } | undefined;
+      const update = args[1] as { $set?: { status?: string } } | undefined;
+      if (String(filter?._id) === release.id && update?.$set?.status === "submitted") {
+        markTransitionReached();
+        await transitionGate;
+      }
+      return (originalFindOneAndUpdate as unknown as (...callArgs: unknown[]) => unknown).apply(
+        MiniAppReleaseModel,
+        args,
+      );
+    }) as typeof MiniAppReleaseModel.findOneAndUpdate;
+
+    const completionOrder: string[] = [];
+    try {
+      const submission = miniapps.submitRelease(developer, packageName, release.id).then(result => {
+        completionOrder.push("submission");
+        return result;
+      });
+      await transitionReached;
+
+      const FastDate = new Proxy(NativeDate, {
+        construct(target, args) {
+          return Reflect.construct(target, args.length === 0 ? [NativeDate.now() + 10 * 60_000] : args, target);
+        },
+        get(target, property, receiver) {
+          if (property === "now") return () => NativeDate.now() + 10 * 60_000;
+          return Reflect.get(target, property, receiver);
+        },
+      });
+      globalThis.Date = FastDate as DateConstructor;
+      const listingWrite = miniapps
+        .updateStoreListing(developer, packageName, { subtitle: "Replacement subtitle" })
+        .then(result => {
+          completionOrder.push("listing");
+          return result;
+        });
+
+      await new Promise(resolve => setTimeout(resolve, 50));
+      expect(completionOrder).toEqual([]);
+      resumeTransition();
+      await Promise.all([submission, listingWrite]);
+      expect(completionOrder[0]).toBe("submission");
+
+      const [savedRelease, savedApp] = await Promise.all([
+        MiniAppReleaseModel.findById(release.id).lean(),
+        MiniAppModel.findOne({ packageName }).lean(),
+      ]);
+      expect(savedRelease?.submittedStoreListing?.subtitle).toBe("Original subtitle");
+      expect(savedApp?.storeListing?.subtitle).toBe("Replacement subtitle");
+    } finally {
+      resumeTransition();
+      globalThis.Date = NativeDate;
+      MiniAppReleaseModel.findOneAndUpdate = originalFindOneAndUpdate;
+    }
+  });
+
   test("publish and reject decisions serialize to one consistent outcome", async () => {
     const packageName = "com.example.decisionrace";
     const release = await createAcceptedStoreRelease(packageName);

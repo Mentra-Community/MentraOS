@@ -1089,28 +1089,32 @@ async function withStoreListingLease<T>(
   const token = ulid();
   const waitDeadline = Date.now() + STORE_LISTING_LEASE_WAIT_MS;
   while (Date.now() < waitDeadline) {
-    const now = new Date();
-    const leaseDeadline = new Date(now.getTime() + STORE_LISTING_LEASE_MS);
     const locked = await MiniAppModel.findOneAndUpdate(
       {
         _id: miniAppId,
         $or: [
           { storeListingOperationLease: null },
           { storeListingOperationLease: { $exists: false } },
-          { "storeListingOperationLease.expiresAt": { $lte: now } },
+          { $expr: { $lte: ["$storeListingOperationLease.expiresAt", "$$NOW"] } },
         ],
       },
-      {
-        $set: {
-          storeListingOperationLease: {
-            token,
-            expiresAt: leaseDeadline,
+      [
+        {
+          $set: {
+            storeListingOperationLease: {
+              token,
+              expiresAt: { $add: ["$$NOW", STORE_LISTING_LEASE_MS] },
+            },
           },
         },
-      },
+      ],
       { new: true },
     );
     if (locked) {
+      const leaseDeadline = locked.storeListingOperationLease?.expiresAt;
+      if (!(leaseDeadline instanceof Date)) {
+        throw new MiniAppServiceError("store_listing_lease_lost", "Store listing lease deadline is invalid", 409);
+      }
       let leaseLost = false;
       let renewalPending = false;
       const renew = async () => {
@@ -1118,8 +1122,18 @@ async function withStoreListingLease<T>(
         renewalPending = true;
         try {
           const renewed = await MiniAppModel.updateOne(
-            { _id: miniAppId, "storeListingOperationLease.token": token },
-            { $set: { "storeListingOperationLease.expiresAt": new Date(Date.now() + STORE_LISTING_LEASE_MS) } },
+            {
+              _id: miniAppId,
+              "storeListingOperationLease.token": token,
+              $expr: { $gt: ["$storeListingOperationLease.expiresAt", "$$NOW"] },
+            },
+            [
+              {
+                $set: {
+                  "storeListingOperationLease.expiresAt": { $add: ["$$NOW", STORE_LISTING_LEASE_MS] },
+                },
+              },
+            ],
           );
           if (renewed.matchedCount !== 1) leaseLost = true;
         } catch (error) {
