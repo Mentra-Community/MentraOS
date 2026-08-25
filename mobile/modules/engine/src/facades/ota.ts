@@ -65,8 +65,8 @@ export const ota = {
   },
   /**
    * Start the firmware install with the resolved OTA manifest URL. Progress lands on
-   * `status()`/`onStatus()`. (The host resolves the manifest URL — dev-override/env/prod
-   * resolution stays with the OTA config; the host-side stuck/retry watchdog is its own
+   * `status()`/`onStatus()`. (The host resolves the manifest URL — developer override,
+   * host pin, or Engine release pin resolution stays with the OTA config; the stuck/retry watchdog is its own
    * resilience layer on top of this command.)
    */
   install: (...args: Parameters<typeof BluetoothSdk.startOtaUpdate>) => BluetoothSdk.startOtaUpdate(...args),

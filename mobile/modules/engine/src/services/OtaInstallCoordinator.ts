@@ -1492,6 +1492,9 @@ class OtaInstallCoordinator {
         otaVersionUrl = this.hotspotManifestUrl
         this.maybeArmStuckWatchdog()
       }
+      if (!otaVersionUrl) {
+        throw new Error("OTA is disabled because this build has no immutable manifest pin")
+      }
       console.log(`[OTA_PROGRESS] sending ota_start with ${this.selectedTransport} manifest URL: ${otaVersionUrl}`)
       nativeStartAttempted = true
       await BluetoothSdk.startOtaUpdate(otaVersionUrl)

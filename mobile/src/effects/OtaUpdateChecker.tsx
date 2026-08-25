@@ -174,6 +174,7 @@ export function OtaUpdateChecker() {
     const pollManifest = async () => {
       if (!manifestBaselineRef.current) return // no completed check yet to compare against
       const url = engine.ota.snapshot().manifestUrl
+      if (!url) return
       const versionJson = await fetchVersionInfo(url)
       if (cancelled || !versionJson) return
       // Re-read after the await: a check completing mid-fetch refreshes the baseline.

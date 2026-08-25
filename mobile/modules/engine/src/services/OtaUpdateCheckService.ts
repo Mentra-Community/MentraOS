@@ -1,9 +1,8 @@
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import type {OtaUpdateInfo} from "@mentra/bluetooth-sdk/internal"
 import {getGlassesSystemTimeMs, isGlassesConnected, useGlassesStore, waitForGlassesState} from "../stores/glasses"
-import {SETTINGS, useSettingsStore} from "../stores/settings"
 import {maybeFixGlassesClockFromVersionInfo} from "./glassesClockSync"
-import {resolveOtaManifestUrl} from "./otaManifestUrl"
+import {hasConfiguredModernOtaManifestPin, resolveOtaManifestUrl} from "./otaManifestUrl"
 
 /**
  * Phone-side mirror of ASG's `DOWNGRADE_FLOOR_VERSION_CODE`. Set to the versionCode of the first
@@ -127,7 +126,10 @@ async function fetchVersionInfoDetailed(url: string): Promise<ManifestFetchResul
       // 4xx: the manifest does not exist (or is gone) — permanent for this app
       // build, retrying cannot help. Everything else is transient server/network
       // trouble and retryable.
-      return {json: null, failureReason: response.status >= 400 && response.status < 500 ? "pin_unavailable" : "network"}
+      return {
+        json: null,
+        failureReason: response.status >= 400 && response.status < 500 ? "pin_unavailable" : "network",
+      }
     }
     try {
       return {json: await response.json()}
@@ -194,12 +196,7 @@ export function getApkUpdateDirection(
   // Downgrades require an exact pin AND a target at/above the enabled floor. A non-positive floor
   // disables downgrades entirely, matching ASG's fail-closed DowngradeGate — so the phone never
   // offers what the glasses would refuse.
-  if (
-    serverVersion < currentVersion &&
-    exactPin &&
-    floorVersionCode > 0 &&
-    serverVersion >= floorVersionCode
-  ) {
+  if (serverVersion < currentVersion && exactPin && floorVersionCode > 0 && serverVersion >= floorVersionCode) {
     return "downgrade"
   }
   return null
@@ -403,16 +400,9 @@ export async function checkCurrentGlassesForUpdate(
     return emptyCheckResult("disconnected")
   }
 
-  const embeddedManifestUrl = process.env.EXPO_PUBLIC_ASG_OTA_VERSION_URL?.trim()
-  const superMode = useSettingsStore.getState().getSetting(SETTINGS.super_mode.key)
-  const overrideUrl = useSettingsStore.getState().getSetting(SETTINGS.ota_version_url.key)
-  const overrideActive = superMode && typeof overrideUrl === "string" && overrideUrl.trim() !== ""
-  if (!embeddedManifestUrl && !overrideActive) {
-    console.log("OTA: check skipped - mobile app has no embedded OTA manifest pin")
+  if (!hasConfiguredModernOtaManifestPin()) {
+    console.log("OTA: check skipped - this app or Engine package has no embedded OTA manifest pin")
     return emptyCheckResult("dev_build")
-  }
-  if (!embeddedManifestUrl) {
-    console.log("OTA: no embedded manifest pin, but super-mode manifest override is active - checking anyway")
   }
 
   if (refreshVersionInfo) {
@@ -472,7 +462,17 @@ export async function checkCurrentGlassesForUpdate(
   }
 
   const manifestUrl = resolveOtaManifestUrl(useGlassesStore.getState().otaVersionUrl, buildNumber)
-  const result = await checkForOtaUpdate(manifestUrl, buildNumber, mtkFirmwareVersion, besFirmwareVersion, floorVersionCode)
+  if (!manifestUrl) {
+    console.log("OTA: check skipped - no OTA manifest pin resolved")
+    return emptyCheckResult("dev_build")
+  }
+  const result = await checkForOtaUpdate(
+    manifestUrl,
+    buildNumber,
+    mtkFirmwareVersion,
+    besFirmwareVersion,
+    floorVersionCode,
+  )
 
   if (!result.hasCheckCompleted) {
     return {

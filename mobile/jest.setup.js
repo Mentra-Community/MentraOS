@@ -1,3 +1,9 @@
+// Most OTA integration tests model a released MentraOS host. Tests for an
+// unpinned source build delete this value explicitly before exercising the
+// fail-closed path.
+process.env.EXPO_PUBLIC_ASG_OTA_VERSION_URL ??=
+  "https://github.com/Mentra-Community/MentraOS/releases/download/bluetooth-sdk-ota/bluetooth-sdk-0.0.0-test-version.json"
+
 // Mock react-native-permissions
 jest.mock("react-native-permissions", () => require("react-native-permissions/mock"))
 // Requires its native module at import time (island gallery sync uses it for the
