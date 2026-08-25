@@ -79,6 +79,7 @@ function buildMockRuntime() {
     sendFn: (raw: string) => void
     installedManifest?: unknown
     hostTrustedSystem?: boolean
+    userVisible?: boolean
   }> = []
   const handleRawCalls: Array<{packageName: string; raw: string}> = []
   const unregisterCalls: string[] = []
@@ -91,8 +92,9 @@ function buildMockRuntime() {
       sendFn: (raw: string) => void,
       installedManifest?: unknown,
       hostTrustedSystem?: boolean,
+      userVisible?: boolean,
     ) {
-      registerCalls.push({packageName, sendFn, installedManifest, hostTrustedSystem})
+      registerCalls.push({packageName, sendFn, installedManifest, hostTrustedSystem, userVisible})
     },
     handleRawMessage(packageName: string, raw: string) {
       handleRawCalls.push({packageName, raw})
@@ -109,6 +111,7 @@ function buildMockRuntime() {
     resetHandshake(packageName: string) {
       resetHandshakeCalls.push(packageName)
     },
+    onUserActivated: jest.fn(),
   } as unknown as LocalMiniappRuntime
   return {runtime, registerCalls, handleRawCalls, unregisterCalls, probeCalls, setManifestCalls, resetHandshakeCalls}
 }
@@ -318,6 +321,7 @@ describe("MentraJSRouter", () => {
     // SUBSCRIBE gate matches stream→permission against declared types.
     expect(runtimeMock.registerCalls[0]!.installedManifest).toEqual(installedManifest)
     expect(runtimeMock.registerCalls[0]!.hostTrustedSystem).toBe(true)
+    expect(runtimeMock.registerCalls[0]!.userVisible).toBe(true)
     // The init envelope is what fires registerMiniapp's handler inside
     // the JSContext. Without it, the user's code never runs.
     const initCalls = crust.dispatchCalls.filter((c) => c.envelope.kind === "init")
@@ -331,6 +335,17 @@ describe("MentraJSRouter", () => {
     expect(ok).toBe(true)
     expect(runtimeMock.registerCalls).toHaveLength(1)
     expect(runtimeMock.registerCalls[0]!.installedManifest).toBeUndefined()
+  })
+
+  test("transient contexts stay out of running projection until promoted", async () => {
+    await router.spawnAndRegister("com.transient", "console.log(1)", {projectRunning: false})
+    expect(router.isProjectedRunning("com.transient")).toBe(false)
+    expect(runtimeMock.registerCalls[0]!.userVisible).toBe(false)
+
+    router.projectRunning("com.transient")
+    expect(router.isProjectedRunning("com.transient")).toBe(true)
+    expect((runtimeMock.runtime.onUserActivated as jest.Mock)).toHaveBeenCalledWith("com.transient")
+    await router.unregister("com.transient")
   })
 
   test("probeForegroundLiveness only probes registered packages", async () => {

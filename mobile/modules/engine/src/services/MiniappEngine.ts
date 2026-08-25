@@ -45,11 +45,13 @@ function wireDevServerRespawnBackground(router: MentraJSRouter, uiRouter: Mentra
       }
       // Force a respawn (kill + spawn) rather than launcher.ensureRunning,
       // which is idempotent and would no-op an already-registered context.
+      const projectRunning = router.isProjectedRunning(packageName)
       await router.unregister(packageName)
       const ok = await router.spawnAndRegister(packageName, resolved.bgSource, {
         permissions: resolved.declaredPermissions,
         installedManifest: resolved.installedManifest,
         hostTrustedSystem: resolved.hostTrustedSystem,
+        projectRunning,
       })
       if (!ok) {
         console.warn(`MentraJS: respawn-bg failed for ${packageName}`)

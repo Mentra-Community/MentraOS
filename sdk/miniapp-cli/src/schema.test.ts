@@ -37,6 +37,12 @@ describe('generateSchema', () => {
     expect(schema.properties.actions.items.properties.outputSchema.type).toBe('object');
   });
 
+  test('actions expose activation and audience metadata', () => {
+    const schema = generateSchema() as any;
+    expect(schema.properties.actions.items.properties.activation.enum).toEqual(['user', 'transient']);
+    expect(schema.properties.actions.items.properties.audience.enum).toEqual(['system', 'host']);
+  });
+
   test('top-level allows extras for forward-compat', () => {
     const schema = generateSchema() as any;
     expect(schema.additionalProperties).toBe(true);

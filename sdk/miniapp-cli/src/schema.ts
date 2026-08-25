@@ -188,6 +188,17 @@ export function generateSchema(): Record<string, unknown> {
               type: 'object',
               description: 'JSON-Schema descriptor for the structured action result (MCP outputSchema).',
             },
+            activation: {
+              type: 'string',
+              enum: ['user', 'transient'],
+              description:
+                "Action lifecycle. 'user' opens or preserves the miniapp as user-visible activity; 'transient' may run in an invisible context that is released after the invocation.",
+            },
+            audience: {
+              type: 'string',
+              enum: ['system', 'host'],
+              description: 'Who may invoke the action. Host actions are omitted from miniapp action discovery.',
+            },
           },
         },
       },
@@ -222,4 +233,3 @@ export function regenerateSchemaFile(): void {
   writeSchemaFile(target);
   process.stdout.write(`Wrote ${target}\n`);
 }
-

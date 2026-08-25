@@ -20,7 +20,7 @@ export class StoreController {
   }
   private refreshing: Promise<StoreSnapshot> | null = null
   private mutationTail: Promise<void> = Promise.resolve()
-  private automaticUpdateRunning = false
+  private automaticUpdatePromise: Promise<void> | null = null
   private refreshQueued = false
   private queuedAutomaticRefresh = false
   private queuedClearOperation = false
@@ -44,17 +44,9 @@ export class StoreController {
     })
     this.ui.onOpen(() => {
       this.send()
-      void this.refresh(this.lastQuery, true)
+      void this.reconcileUpdates()
     })
-    this.session.onVisibilityChange((visibility) => {
-      if (visibility === "foreground") void this.refresh(this.lastQuery, true)
-    })
-    let wasConnected = false
-    this.session.cloud.onStatusChanged((status) => {
-      const connected = status.status === "connected"
-      if (connected && !wasConnected) void this.refresh(this.lastQuery, true)
-      wasConnected = connected
-    })
+    this.session.actions.handle("reconcile_updates", () => this.reconcileUpdates())
     this.ui.handle("store:refresh", ({query}: {query?: string}) => this.refresh(query))
     this.ui.handle("store:install", ({packageName, query}: {packageName: string; query?: string}) =>
       this.enqueueMutation(() => this.install(packageName, query)),
@@ -65,8 +57,13 @@ export class StoreController {
     this.ui.handle("store:open", ({packageName, query}: {packageName: string; query?: string}) =>
       this.enqueueMutation(() => this.open(packageName, query)),
     )
-    void this.refresh("", true)
-    setInterval(() => void this.refresh(this.lastQuery, true), 15 * 60_000)
+  }
+
+  private async reconcileUpdates(): Promise<{checkedAt: number; candidateCount: number}> {
+    await this.refresh("", true)
+    const candidateCount = this.automaticUpdateCandidates().length
+    await this.scheduleAutomaticUpdates()
+    return {checkedAt: Date.now(), candidateCount}
   }
 
   private send() {
@@ -165,7 +162,7 @@ export class StoreController {
       }
     }
     this.send()
-    if (!this.snapshot.offline) this.scheduleAutomaticUpdates()
+    if (!this.snapshot.offline) void this.scheduleAutomaticUpdates()
     return this.snapshot
   }
 
@@ -203,30 +200,32 @@ export class StoreController {
     })
   }
 
-  private scheduleAutomaticUpdates(): void {
-    if (this.automaticUpdateRunning) return
+  private scheduleAutomaticUpdates(): Promise<void> {
+    if (this.automaticUpdatePromise) return this.automaticUpdatePromise
     const candidates = this.automaticUpdateCandidates()
-    if (candidates.length === 0) return
-    this.automaticUpdateRunning = true
-    void this.enqueueMutation(async () => {
-      try {
-        for (const app of candidates) {
-          const installed = this.snapshot.installed.find((candidate) => candidate.packageName === app.packageName)
-          if (!installed || !isNewerVersion(app.release.version, installed.version)) continue
-          await this.install(app.packageName, undefined, app)
-        }
-      } finally {
-        this.automaticUpdateRunning = false
+    if (candidates.length === 0) return Promise.resolve()
+    const updateRun = this.enqueueMutation(async () => {
+      for (const app of candidates) {
+        const installed = this.snapshot.installed.find((candidate) => candidate.packageName === app.packageName)
+        if (!installed || !isNewerVersion(app.release.version, installed.version)) continue
+        await this.install(app.packageName, undefined, app)
       }
       return this.snapshot
-    }).catch((error) => {
-      this.snapshot = {
-        ...this.snapshot,
-        operation: null,
-        error: error instanceof Error ? error.message : "Automatic update failed",
-      }
-      this.send()
     })
+      .then(() => undefined)
+      .catch((error) => {
+        this.snapshot = {
+          ...this.snapshot,
+          operation: null,
+          error: error instanceof Error ? error.message : "Automatic update failed",
+        }
+        this.send()
+      })
+      .finally(() => {
+        this.automaticUpdatePromise = null
+      })
+    this.automaticUpdatePromise = updateRun
+    return updateRun
   }
 
   private requireApp(packageName: string) {

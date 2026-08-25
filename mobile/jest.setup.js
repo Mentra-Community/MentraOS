@@ -99,6 +99,11 @@ jest.mock("react-native-localize", () => ({
   removeEventListener: jest.fn(),
 }))
 
+jest.mock("react-native-share", () => ({
+  __esModule: true,
+  default: {open: jest.fn(() => Promise.resolve({success: true}))},
+}))
+
 // Mock native WebView for Jest runs. Several service tests import screens
 // transitively; they only need the module to load, not a native webview.
 jest.mock("react-native-webview", () => {
@@ -988,6 +993,10 @@ global.__reanimatedWorkletInit = jest.fn()
 // subscription, and session state into the next test in the same file. detach()
 // after every test (a no-op when not attached) so each test starts clean.
 afterEach(() => {
+  // Tests that replace @mentra/engine with a file-local mock never initialize
+  // the shared real-engine facade, so there is no island state to clean. Do
+  // not force-load native-backed engine modules solely from global teardown.
+  if (!mockIslandEntriesCache) return
   jest.requireActual("./modules/engine/src/services/OtaInstallCoordinator").otaInstallCoordinator.detach()
   // The pairing mocks above delegate identity reads/writes to the REAL
   // PairingIdentity over the shared settings store; scrub the identity keys so

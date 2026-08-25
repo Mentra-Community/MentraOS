@@ -4,14 +4,52 @@ import {StoreController} from "./index"
 import type {StoreApp, StoreSnapshot} from "../shared/types"
 
 interface TestController {
+  start(): void
   install(packageName: string, query?: string, selectedApp?: StoreApp): Promise<StoreSnapshot>
   load(query?: string, clearOperation?: boolean, refreshAutomaticCatalog?: boolean): Promise<StoreSnapshot>
   refresh(query?: string, refreshAutomaticCatalog?: boolean, clearOperation?: boolean): Promise<StoreSnapshot>
+  automaticUpdateCandidates(): StoreApp[]
+  scheduleAutomaticUpdates(): Promise<void>
   refreshing: Promise<StoreSnapshot> | null
   snapshot: StoreSnapshot
 }
 
 describe("StoreController refresh serialization", () => {
+  test("registers host reconciliation as an invocation-scoped action", async () => {
+    let actionId = ""
+    let actionHandler: (() => Promise<unknown>) | undefined
+    const session = {
+      miniapps: {onInstallProgress: () => () => undefined},
+      actions: {
+        handle: (id: string, handler: () => Promise<unknown>) => {
+          actionId = id
+          actionHandler = handler
+          return () => undefined
+        },
+      },
+      ui: {
+        send: () => undefined,
+        onOpen: () => () => undefined,
+        handle: () => () => undefined,
+      },
+    } as unknown as MiniappSession
+    const controller = new StoreController(session) as unknown as TestController
+    let scheduled = 0
+    controller.refresh = async () => controller.snapshot
+    controller.automaticUpdateCandidates = () => [{}, {}] as StoreApp[]
+    controller.scheduleAutomaticUpdates = async () => {
+      scheduled += 1
+    }
+
+    controller.start()
+    const result = (await actionHandler?.()) as {checkedAt: number; candidateCount: number}
+
+    expect(actionId).toBe("reconcile_updates")
+    expect(result.candidateCount).toBe(2)
+    expect(result.checkedAt).toBeGreaterThan(0)
+    expect(scheduled).toBe(1)
+  })
+
   test("queues a post-install reload behind an in-flight background refresh", async () => {
     let finishFirstLoad: (() => void) | undefined
     const firstLoadGate = new Promise<void>((resolve) => {

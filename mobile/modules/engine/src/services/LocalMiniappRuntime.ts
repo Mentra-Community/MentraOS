@@ -88,6 +88,8 @@ import {
 } from "./SystemMiniappPolicy"
 import {installWithRuntimeReload} from "../utils/storeInstallRuntime"
 import {checkMiniappInstallCompatibility} from "./miniappInstallCompatibility"
+import {TransientActionWakeCoordinator} from "./TransientActionWakeCoordinator"
+import {projectSystemActions} from "./manifestActions"
 
 // =============================================================================
 // Types
@@ -105,7 +107,14 @@ export interface InstalledMiniappManifest {
   entry?: {background?: string; ui?: string}
   permissions?: Array<{type: string; required?: boolean; description?: string}>
   hardwareRequirements?: Array<{type: string; level: string; description?: string}>
-  actions?: Array<{id?: unknown; description?: unknown; parameters?: unknown; outputSchema?: unknown}>
+  actions?: Array<{
+    id?: unknown
+    description?: unknown
+    parameters?: unknown
+    outputSchema?: unknown
+    activation?: unknown
+    audience?: unknown
+  }>
 }
 
 type SpeakerStateValue = "idle" | "loading" | "playing" | "stopped" | "error"
@@ -216,6 +225,7 @@ const MINIAPP_AUTH_RETRY_BASE_MS = 1_000
 const MINIAPP_AUTH_RETRY_MAX_MS = 15_000
 const FOREGROUND_LIVENESS_PROBE_TIMEOUT_MS = 2_500
 const REQUEST_WIFI_SETUP_TYPE = "miniapp_request_wifi_setup"
+const HOST_ACTION_CALLER = "__mentra_host__"
 // Unregister after this many missed pongs. Generous on purpose: a busy
 // context (heavy interim translation traffic) or OS scheduling while idle can
 // delay pongs well past one interval, and killing a healthy-but-busy script
@@ -435,6 +445,14 @@ class LocalMiniappRuntime {
   private usedTokens = new Set<string>()
 
   private constructor() {}
+
+  private readonly transientActionWakes = new TransientActionWakeCoordinator({
+    isContextRunning: (packageName) => miniappLauncher.isRunning(packageName),
+    isProjectedRunning: (packageName) => miniappLauncher.isProjectedRunning(packageName),
+    ensureConnectedHidden: (packageName) =>
+      miniappLauncher.ensureConnected(packageName, 10_000, undefined, {projectRunning: false}),
+    stopContext: (packageName) => miniappLauncher.stop(packageName),
+  })
 
   /** Snapshot of miniapps actively subscribed to hardware button events. */
   public getButtonPressSubscribers(): string[] {
@@ -723,6 +741,7 @@ class LocalMiniappRuntime {
     sendFn: (raw: string) => void,
     installedManifest?: InstalledMiniappManifest,
     hostTrustedSystem = false,
+    userVisible = true,
   ): void {
     console.log(`${LOG_TAG}: registerApp(${packageName})`)
     this.clearForegroundProbe(packageName)
@@ -786,7 +805,14 @@ class LocalMiniappRuntime {
     // window ends early once this app pushes its first display (see
     // LocalDisplayManager.request), or after ~1.5s. Fires once per spawn —
     // including a crash-respawn, since each spawn is a fresh "app is starting".
-    localDisplayManager.onMount(packageName, installedManifest?.name ?? packageName)
+    if (userVisible) localDisplayManager.onMount(packageName, installedManifest?.name ?? packageName)
+  }
+
+  /** A transiently-woken context became normal user-visible activity. */
+  public onUserActivated(packageName: string): void {
+    const app = this.connectedApps.get(packageName)
+    if (!app) return
+    localDisplayManager.onMount(packageName, app.installedManifest?.name ?? packageName)
   }
 
   /**
@@ -887,6 +913,16 @@ class LocalMiniappRuntime {
 
   public unregisterApp(packageName: string): void {
     console.log(`${LOG_TAG}: unregisterApp(${packageName})`)
+    this.transientActionWakes.forget(packageName)
+    for (const [callId, pending] of this.actionCalls) {
+      if (pending.targetPackageName !== packageName) continue
+      void this.finalizeActionCall(
+        callId,
+        false,
+        undefined,
+        this.actionError(MiniappErrorCode.WAKE_FAILED, `${packageName} disconnected during action execution`),
+      )
+    }
     const releasedMicGateOverride = micStateCoordinator.clearMiniappGateOverrides(packageName)
     this.clearForegroundProbe(packageName)
     this.clearMiniappAuthRefresh(packageName)
@@ -4120,7 +4156,13 @@ class LocalMiniappRuntime {
   /** Outstanding action invocations, keyed by host-generated callId. */
   private actionCalls = new Map<
     string,
-    {callerPackageName: string; targetPackageName: string; callerRequestId?: string; timer: number}
+    {
+      targetPackageName: string
+      timer: number
+      resolve: (value: unknown) => void
+      reject: (error: Error & {code?: string}) => void
+      releaseWake?: () => Promise<void>
+    }
   >()
   private actionCallSeq = 0
   private storeMutationInFlight: string | null = null
@@ -4137,6 +4179,8 @@ class LocalMiniappRuntime {
     const app = this.interopApps().find((a) => a.packageName === packageName)
     if (!app) return false
     if (app.local) {
+      const started = await useAppStatusStore.getState().start(app, {skipNavigation: true})
+      if (!started) return false
       await miniappLauncher.ensureConnected(packageName)
       return true
     }
@@ -4145,10 +4189,6 @@ class LocalMiniappRuntime {
 
   private stopInteropApp(packageName: string): Promise<void> {
     return useAppStatusStore.getState().stop(packageName)
-  }
-
-  private wakeInteropApp(packageName: string): Promise<void> {
-    return miniappLauncher.ensureConnected(packageName)
   }
 
   /** Emit an interop audit event (best-effort — never let telemetry break a call). */
@@ -4202,7 +4242,7 @@ class LocalMiniappRuntime {
       compatibility,
       system: isSystemMiniappPackage(app.packageName),
       ...(systemStoreOwnerPackageName ? {systemStoreOwnerPackageName} : {}),
-      actions: app.actions ?? [],
+      actions: projectSystemActions(app.actions ?? []),
       ...((releaseIdentity?.source === "store" || releaseIdentity?.source === "system_store") &&
       releaseIdentity.storePackageName
         ? {storeOwnerPackageName: releaseIdentity.storePackageName}
@@ -4618,58 +4658,30 @@ class LocalMiniappRuntime {
     }
   }
 
+  private actionError(code: string, message: string): Error & {code: string} {
+    return Object.assign(new Error(message), {code})
+  }
+
   /**
-   * session.actions.invoke → wake the target headlessly, deliver an ACTION_CALL,
-   * and correlate its ACTION_RESULT back to the caller's pending request.
+   * Shared action broker used by both session.actions.invoke and direct host
+   * scheduling. Transient declarations receive an invisible invocation lease;
+   * normal declarations use the ordinary user-start lifecycle.
    */
-  private async handleActionInvoke(
+  private async invokeDeclaredAction(
     callerPackageName: string,
-    payload: Record<string, unknown>,
-    requestId?: string,
-  ): Promise<void> {
-    const targetForGate = payload.targetPackageName as string | undefined
-    if (!this.requireSystemCaller(callerPackageName, requestId, "invoke", targetForGate)) return
-
-    const target = payload.targetPackageName as string | undefined
-    const actionId = payload.actionId as string | undefined
-    const params = (payload.params as Record<string, unknown> | undefined) ?? {}
-    // Floor the timeout at 6s so the host never rejects with ACTION_TIMEOUT before
-    // the target SDK's handler-registration window closes. A freshly-woken miniapp
-    // buffers an undelivered ACTION_CALL for HANDLER_WAIT_MS (5s in @mentra/miniapp's
-    // actions module) waiting for session.actions.handle; a shorter host timeout
-    // could fire while the target is still registering, then the action would run
-    // with no caller left to receive its result. 6s = that 5s buffer + 1s for the
-    // ACTION_RESULT/NO_ACTION_HANDLER reply to travel back. Keep these in sync.
-    const timeoutMs = Math.min(Math.max(Number(payload.timeoutMs) || 30_000, 6_000), 120_000)
-
+    target: string,
+    actionId: string,
+    params: Record<string, unknown>,
+    timeoutMs: number,
+    allowHostAudience: boolean,
+  ): Promise<unknown> {
     if (this.actionPayloadTooLarge(params)) {
-      this.sendResult(callerPackageName, requestId, false, undefined, {
-        code: MiniappErrorCode.PAYLOAD_TOO_LARGE,
-        message: "action params exceeded the 256 KB cap",
-      })
-      return
+      throw this.actionError(MiniappErrorCode.PAYLOAD_TOO_LARGE, "action params exceeded the 256 KB cap")
     }
 
-    const app = target ? this.interopApps().find((a) => a.packageName === target) : undefined
-    if (!target || !app) {
-      this.sendResult(callerPackageName, requestId, false, undefined, {
-        code: MiniappErrorCode.APP_NOT_FOUND,
-        message: `Miniapp not found: ${target ?? "(missing targetPackageName)"}`,
-      })
-      return
-    }
-    if (!actionId) {
-      this.sendResult(callerPackageName, requestId, false, undefined, {
-        code: MiniappErrorCode.ACTION_NOT_FOUND,
-        message: "invoke requires an actionId",
-      })
-      return
-    }
+    const app = this.interopApps().find((candidate) => candidate.packageName === target)
+    if (!app) throw this.actionError(MiniappErrorCode.APP_NOT_FOUND, `Miniapp not found: ${target}`)
     if (app.compatibility && app.compatibility.isCompatible === false) {
-      this.sendResult(callerPackageName, requestId, false, undefined, {
-        code: MiniappErrorCode.APP_NOT_COMPATIBLE,
-        message: `${target} is not compatible with the connected glasses`,
-      })
       islandNotifications.emit({
         kind: "version_incompatible",
         packageName: target,
@@ -4677,99 +4689,169 @@ class LocalMiniappRuntime {
         metadata: {missingRequired: app.compatibility.missingRequired ?? [], via: "miniapps.invoke"},
         timestamp: Date.now(),
       })
-      return
-    }
-    // Declared-action gate — only once the host populates app.actions (Phase 2);
-    // until then app.actions is undefined and we fall through to NO_ACTION_HANDLER.
-    if (!(app.actions ?? []).some((a) => a.id === actionId)) {
-      this.sendResult(callerPackageName, requestId, false, undefined, {
-        code: MiniappErrorCode.ACTION_NOT_FOUND,
-        message: `${target} does not declare action "${actionId}"`,
-      })
-      return
+      throw this.actionError(
+        MiniappErrorCode.APP_NOT_COMPATIBLE,
+        `${target} is not compatible with the connected glasses`,
+      )
     }
 
-    // Headless wake + wait for CONNECT (idempotent / fast if already connected).
+    const action = (app.actions ?? []).find((candidate) => candidate.id === actionId)
+    if (!action || (action.audience === "host" && !allowHostAudience)) {
+      throw this.actionError(MiniappErrorCode.ACTION_NOT_FOUND, `${target} does not declare action "${actionId}"`)
+    }
+
+    let releaseWake: (() => Promise<void>) | undefined
     try {
-      await this.wakeInteropApp(target)
-    } catch (e) {
-      this.sendResult(callerPackageName, requestId, false, undefined, {
-        code: MiniappErrorCode.WAKE_FAILED,
-        message: (e as Error)?.message ?? `failed to wake ${target}`,
-      })
-      return
+      if (action.activation === "transient") {
+        if (!app.local) {
+          throw this.actionError(
+            MiniappErrorCode.WAKE_FAILED,
+            `transient action wake is unavailable for non-local miniapp ${target}`,
+          )
+        }
+        releaseWake = await this.transientActionWakes.acquire(target)
+      } else {
+        const started = await this.startInteropApp(target)
+        if (!started) {
+          throw this.actionError(MiniappErrorCode.WAKE_FAILED, `failed to start ${target}`)
+        }
+      }
+    } catch (error) {
+      if ((error as {code?: string}).code) throw error
+      throw this.actionError(MiniappErrorCode.WAKE_FAILED, (error as Error)?.message ?? `failed to wake ${target}`)
     }
 
-    // The wake waited for CONNECT, but the target could have dropped in the gap
-    // before delivery — fail fast rather than arming a timer for a call that
-    // sendToMiniapp would silently drop (the caller would otherwise wait the
-    // full invoke timeout for an ACTION_CALL that was never delivered).
     if (!this.connectedApps.has(target)) {
-      this.sendResult(callerPackageName, requestId, false, undefined, {
-        code: MiniappErrorCode.WAKE_FAILED,
-        message: `${target} disconnected before the action could be delivered`,
-      })
-      this.auditInterop({
-        caller: callerPackageName,
-        op: "invoke",
-        target,
-        actionId,
-        ok: false,
-        errorCode: MiniappErrorCode.WAKE_FAILED,
-      })
-      return
+      await releaseWake?.()
+      throw this.actionError(
+        MiniappErrorCode.WAKE_FAILED,
+        `${target} disconnected before the action could be delivered`,
+      )
     }
 
-    // Deliver the call and arm the handler timeout; ACTION_RESULT resolves it.
     const callId = `act-${Date.now().toString(36)}-${this.actionCallSeq++}`
-    const timer = BgTimer.setTimeout(() => {
-      this.actionCalls.delete(callId)
-      this.sendResult(callerPackageName, requestId, false, undefined, {
-        code: MiniappErrorCode.ACTION_TIMEOUT,
-        message: `action "${actionId}" timed out after ${timeoutMs}ms`,
+    return new Promise<unknown>((resolve, reject) => {
+      const timer = BgTimer.setTimeout(() => {
+        void this.finalizeActionCall(
+          callId,
+          false,
+          undefined,
+          this.actionError(MiniappErrorCode.ACTION_TIMEOUT, `action "${actionId}" timed out after ${timeoutMs}ms`),
+        )
+      }, timeoutMs)
+      this.actionCalls.set(callId, {targetPackageName: target, timer, resolve, reject, releaseWake})
+      this.sendToMiniapp(target, {
+        type: MiniappResponseType.ACTION_CALL,
+        callId,
+        actionId,
+        params,
+        callerPackageName,
       })
-    }, timeoutMs)
-    this.actionCalls.set(callId, {callerPackageName, targetPackageName: target, callerRequestId: requestId, timer})
-    this.sendToMiniapp(target, {
-      type: MiniappResponseType.ACTION_CALL,
-      callId,
-      actionId,
-      params,
-      callerPackageName,
     })
-    this.auditInterop({caller: callerPackageName, op: "invoke", target, actionId, ok: true})
   }
 
-  /** Target → host: forward an ACTION_RESULT back to the caller's pending invoke. */
+  /** Host-owned scheduler entry. The host is not represented as a fake miniapp. */
+  public invokeActionFromHost(
+    targetPackageName: string,
+    actionId: string,
+    params: Record<string, unknown> = {},
+    timeoutMs = 10 * 60_000,
+  ): Promise<unknown> {
+    const boundedTimeout = Math.min(Math.max(timeoutMs, 6_000), 15 * 60_000)
+    return this.invokeDeclaredAction(
+      HOST_ACTION_CALLER,
+      targetPackageName,
+      actionId,
+      params,
+      boundedTimeout,
+      true,
+    )
+  }
+
+  /** session.actions.invoke adapter around the shared broker. */
+  private async handleActionInvoke(
+    callerPackageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    const target = payload.targetPackageName as string | undefined
+    if (!this.requireSystemCaller(callerPackageName, requestId, "invoke", target)) return
+    const actionId = payload.actionId as string | undefined
+    if (!target || !actionId) {
+      this.sendResult(callerPackageName, requestId, false, undefined, {
+        code: !target ? MiniappErrorCode.APP_NOT_FOUND : MiniappErrorCode.ACTION_NOT_FOUND,
+        message: !target ? "invoke requires a targetPackageName" : "invoke requires an actionId",
+      })
+      return
+    }
+    // Keep this in sync with the SDK's 5-second handler registration buffer.
+    const timeoutMs = Math.min(Math.max(Number(payload.timeoutMs) || 30_000, 6_000), 120_000)
+    const params = (payload.params as Record<string, unknown> | undefined) ?? {}
+    try {
+      const result = await this.invokeDeclaredAction(callerPackageName, target, actionId, params, timeoutMs, false)
+      this.sendResult(callerPackageName, requestId, true, result ?? null)
+      this.auditInterop({caller: callerPackageName, op: "invoke", target, actionId, ok: true})
+    } catch (error) {
+      const code = (error as {code?: string}).code ?? MiniappErrorCode.INTERNAL
+      this.sendResult(callerPackageName, requestId, false, undefined, {
+        code,
+        message: (error as Error)?.message ?? "action invocation failed",
+      })
+      this.auditInterop({caller: callerPackageName, op: "invoke", target, actionId, ok: false, errorCode: code})
+    }
+  }
+
+  private async finalizeActionCall(
+    callId: string,
+    ok: boolean,
+    result?: unknown,
+    error?: Error & {code?: string},
+  ): Promise<void> {
+    const pending = this.actionCalls.get(callId)
+    if (!pending) return
+    this.actionCalls.delete(callId)
+    BgTimer.clearTimeout(pending.timer)
+    try {
+      await pending.releaseWake?.()
+    } catch (releaseError) {
+      console.warn(`${LOG_TAG}: failed to release transient action wake`, releaseError)
+    }
+    if (ok) pending.resolve(result ?? null)
+    else pending.reject(error ?? this.actionError(MiniappErrorCode.INTERNAL, "action handler error"))
+  }
+
+  /** Target → host: resolve the correlated action invocation. */
   private handleActionResult(targetPackageName: string, payload: Record<string, unknown>): void {
     const callId = payload.callId as string | undefined
     if (!callId) return
     const pending = this.actionCalls.get(callId)
-    if (!pending) return
-    // Only the invoked target may resolve this call. callIds are guessable
-    // (timestamp + seq), so a different connected miniapp must not be able to
-    // spoof a result/error for someone else's invoke.
-    if (pending.targetPackageName !== targetPackageName) return
-    this.actionCalls.delete(callId)
-    BgTimer.clearTimeout(pending.timer)
+    if (!pending || pending.targetPackageName !== targetPackageName) return
 
     if (payload.ok === true) {
       const result = payload.result
       if (this.actionPayloadTooLarge(result)) {
-        this.sendResult(pending.callerPackageName, pending.callerRequestId, false, undefined, {
-          code: MiniappErrorCode.PAYLOAD_TOO_LARGE,
-          message: "action result exceeded the 256 KB cap",
-        })
+        void this.finalizeActionCall(
+          callId,
+          false,
+          undefined,
+          this.actionError(MiniappErrorCode.PAYLOAD_TOO_LARGE, "action result exceeded the 256 KB cap"),
+        )
         return
       }
-      this.sendResult(pending.callerPackageName, pending.callerRequestId, true, result ?? null)
-    } else {
-      const error = (payload.error as ({code: string; message: string} & Record<string, unknown>) | undefined) ?? {
-        code: MiniappErrorCode.INTERNAL,
-        message: "action handler error",
-      }
-      this.sendResult(pending.callerPackageName, pending.callerRequestId, false, undefined, error)
+      void this.finalizeActionCall(callId, true, result)
+      return
     }
+
+    const payloadError = payload.error as {code?: string; message?: string} | undefined
+    void this.finalizeActionCall(
+      callId,
+      false,
+      undefined,
+      this.actionError(
+        payloadError?.code ?? MiniappErrorCode.INTERNAL,
+        payloadError?.message ?? "action handler error",
+      ),
+    )
   }
 
   private sendResult(

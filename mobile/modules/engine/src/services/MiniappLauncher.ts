@@ -45,6 +45,11 @@ export interface LaunchHints {
   devPort?: string
 }
 
+export interface RuntimeLaunchOptions {
+  /** False for an invocation-scoped wake that must not enter the running tray. */
+  projectRunning?: boolean
+}
+
 /** Everything the launcher resolved for a package — bg source + UI entry. */
 export interface ResolvedBundle {
   bgSource: string
@@ -92,6 +97,11 @@ class MiniappLauncher {
   /** True iff the package's background JS context is currently spawned. */
   isRunning(packageName: string): boolean {
     return this.deps?.router.registeredPackages().includes(packageName) ?? false
+  }
+
+  /** True iff the live context is projected as normal user activity. */
+  isProjectedRunning(packageName: string): boolean {
+    return this.deps?.router.isProjectedRunning(packageName) ?? false
   }
 
   /**
@@ -174,7 +184,14 @@ class MiniappLauncher {
       entry?: {background?: string; ui?: string}
       permissions?: Array<{type: string; required?: boolean; description?: string}>
       hardwareRequirements?: Array<{type: string; level: string; description?: string}>
-      actions?: Array<{id?: unknown; description?: unknown; parameters?: unknown; outputSchema?: unknown}>
+      actions?: Array<{
+        id?: unknown
+        description?: unknown
+        parameters?: unknown
+        outputSchema?: unknown
+        activation?: unknown
+        audience?: unknown
+      }>
     } | null
     const declaredPermissions = (manifest?.permissions ?? [])
       .map((p) => p.type)
@@ -225,22 +242,32 @@ class MiniappLauncher {
    * messages (the action broker) follow up with
    * {@link LocalMiniappRuntime.waitForConnect}.
    */
-  async ensureRunning(packageName: string, hints?: LaunchHints): Promise<LaunchResult> {
+  async ensureRunning(
+    packageName: string,
+    hints?: LaunchHints,
+    runtimeOptions?: RuntimeLaunchOptions,
+  ): Promise<LaunchResult> {
     const router = this.requireRouter()
+    const projectRunning = runtimeOptions?.projectRunning ?? true
 
     // Already spawned: best-effort resolve for the UI entry, never throw —
     // a headless caller that doesn't need UI gets {null, null} fast even if
     // the dev server has since dropped.
     if (router.registeredPackages().includes(packageName)) {
+      if (projectRunning) router.projectRunning(packageName)
       const existing = await this.resolveBundle(packageName, hints).catch(() => null)
       return {uiUri: existing?.uiUri ?? null, uiBaseDir: existing?.uiBaseDir ?? null}
     }
 
     // Coalesce concurrent launches of the same package onto one promise.
     const pending = this.inFlight.get(packageName)
-    if (pending) return pending
+    if (pending) {
+      const result = await pending
+      if (projectRunning) router.projectRunning(packageName)
+      return result
+    }
 
-    const launch = this.spawn(packageName, hints)
+    const launch = this.spawn(packageName, hints, {projectRunning})
     this.inFlight.set(packageName, launch)
     try {
       return await launch
@@ -250,7 +277,11 @@ class MiniappLauncher {
   }
 
   /** Resolve the bundle and spawn the context. Serialized via {@link inFlight}. */
-  private async spawn(packageName: string, hints?: LaunchHints): Promise<LaunchResult> {
+  private async spawn(
+    packageName: string,
+    hints?: LaunchHints,
+    runtimeOptions?: RuntimeLaunchOptions,
+  ): Promise<LaunchResult> {
     const router = this.requireRouter()
     const resolved = await this.resolveBundle(packageName, hints)
     if (!resolved) {
@@ -259,11 +290,14 @@ class MiniappLauncher {
 
     // Re-check after the async resolve: a different path may have spawned it
     // while we were fetching/reading the bundle.
-    if (!router.registeredPackages().includes(packageName)) {
+    if (router.registeredPackages().includes(packageName)) {
+      if (runtimeOptions?.projectRunning ?? true) router.projectRunning(packageName)
+    } else {
       const ok = await router.spawnAndRegister(packageName, resolved.bgSource, {
         permissions: resolved.declaredPermissions,
         installedManifest: resolved.installedManifest,
         hostTrustedSystem: resolved.hostTrustedSystem,
+        projectRunning: runtimeOptions?.projectRunning ?? true,
       })
       if (!ok) {
         throw new Error(`MiniappLauncher: spawn failed for ${packageName}`)
@@ -331,8 +365,13 @@ class MiniappLauncher {
    * Used by the action broker, which must not deliver to a context that hasn't
    * come up yet. Throws on spawn failure or connect timeout.
    */
-  async ensureConnected(packageName: string, connectTimeoutMs = 10_000, hints?: LaunchHints): Promise<void> {
-    await this.ensureRunning(packageName, hints)
+  async ensureConnected(
+    packageName: string,
+    connectTimeoutMs = 10_000,
+    hints?: LaunchHints,
+    runtimeOptions?: RuntimeLaunchOptions,
+  ): Promise<void> {
+    await this.ensureRunning(packageName, hints, runtimeOptions)
     await localMiniappRuntime.waitForConnect(packageName, connectTimeoutMs)
   }
 

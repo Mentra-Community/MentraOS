@@ -50,6 +50,8 @@ publisher signatures can be enforced later without changing the API.
 - [x] Allow an OEM build to add one or more bundled Store package names to the
       build-owned allowlist while reusing the same SDK/host contract and any
       backend.
+- [x] Use the same build-time Store trust list for install authority and host
+      update scheduling, so multiple Mentra/OEM Store miniapps can coexist.
 
 ## Canonical release bundles
 
@@ -108,8 +110,14 @@ publisher signatures can be enforced later without changing the API.
 - [x] Implement Get, install progress, Open, Update, Uninstall, loading, empty,
       offline, incompatible, failure, retry, and delisted-installed states.
 - [x] Add labels, focus styling, safe-area handling, and reduced motion.
-- [x] Run the controller headlessly and refresh on startup, Store open,
-      foreground, connectivity restoration, and a bounded background interval.
+- [x] Expose Store reconciliation as a host-only, transient miniapp action and
+      trigger it on startup, Store open, foreground, connectivity restoration,
+      and a bounded background interval.
+- [x] Keep transient action contexts out of the running tray and display mount
+      lifecycle, release them after all concurrent invocations settle, and
+      promote the same context without respawning if the user opens the Store.
+- [x] Keep ordinary actions user-visible by default so existing miniapp action
+      behavior remains backwards compatible.
 - [x] Coalesce refreshes and serialize host mutations to prevent races/loops.
 - [x] Prevent downgrades by offering only strict semantic-version upgrades.
 - [x] Preflight update `minHostVersion` and `sdkVersion` against the current
@@ -126,7 +134,7 @@ publisher signatures can be enforced later without changing the API.
       another Store's packages.
 - [x] Keep the Store itself out of its in-process update loop; Store-self update
       remains a future signed host-owned updater concern.
-- [x] Package and integrity-check `com.mentra.store-1.0.1.zip`.
+- [x] Package and integrity-check `com.mentra.store-1.0.2.zip`.
 
 ## Verification
 
@@ -139,19 +147,23 @@ publisher signatures can be enforced later without changing the API.
       the previous artifact after a failed ZIP command.
 - [x] Mentra Miniapp SDK: 272 passed.
 - [x] Installer/SYSTEM security tests, including bundle-name impersonation.
-- [x] Store catalog, automatic-update policy, ownership, refresh serialization,
-      and UI-model tests: 20
+- [x] Store action registration, catalog, automatic-update policy, ownership,
+      refresh serialization, and UI-model tests: 21
       passed.
+- [x] Transient action lifecycle, invisible running projection, concurrent
+      invocation teardown, promotion, host-action non-discovery, and scheduler
+      trigger tests: 49 passed.
+- [x] CLI action manifest/schema lifecycle tests: 47 passed.
 - [x] Headless Chromium Store UI E2E at a 390×844 phone viewport: catalog,
       search-query preservation, install, details, verified identity, Installed
       state, and horizontal-overflow assertion.
 - [x] Mentra App TypeScript compile.
-- [x] Mentra App Jest: 85 suites passed (1 skipped), 672 tests passed
+- [x] Mentra App Jest: 86 suites passed (1 skipped), 674 tests passed
       (2 skipped).
 - [x] Android ASG and Bluetooth SDK compile checks.
 - [x] Full iOS Simulator native build with code signing disabled.
 - [x] ZIP integrity check. Bundled Store SHA-256:
-      `e18fdc3b66776db7b50b9ed349c1f343f831dc97bfd58983d40c9c1e5878bcad`.
+      `a44145d3dcbcf455b72f288be4765b8fb1422f946e4961f99cca54063bbb3a4b`.
 - [x] Review regressions: bounded streaming inflation and CRC checks in both
       Core and the phone, trusted host-selected Core URL, complete catalog
       pagination, Store-owned uninstall visibility, pre-activation host/SDK

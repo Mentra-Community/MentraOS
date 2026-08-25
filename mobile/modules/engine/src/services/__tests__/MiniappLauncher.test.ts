@@ -77,27 +77,39 @@ afterAll(resetForTests)
 // Fresh router (mutable registered set) per test.
 function buildMockRouter() {
   const registered = new Set<string>()
-  const spawnCalls: Array<{packageName: string; src: string; permissions?: string[]; hostTrustedSystem?: boolean}> = []
+  const projected = new Set<string>()
+  const spawnCalls: Array<{
+    packageName: string
+    src: string
+    permissions?: string[]
+    hostTrustedSystem?: boolean
+    projectRunning?: boolean
+  }> = []
   const unregisterCalls: string[] = []
   const router = {
     registeredPackages: () => Array.from(registered),
     spawnAndRegister: async (
       packageName: string,
       src: string,
-      opts?: {permissions?: string[]; hostTrustedSystem?: boolean},
+      opts?: {permissions?: string[]; hostTrustedSystem?: boolean; projectRunning?: boolean},
     ) => {
       spawnCalls.push({
         packageName,
         src,
         permissions: opts?.permissions,
         hostTrustedSystem: opts?.hostTrustedSystem,
+        projectRunning: opts?.projectRunning,
       })
       registered.add(packageName)
+      if (opts?.projectRunning ?? true) projected.add(packageName)
       return true
     },
+    projectRunning: (packageName: string) => projected.add(packageName),
+    isProjectedRunning: (packageName: string) => projected.has(packageName),
     unregister: async (packageName: string) => {
       unregisterCalls.push(packageName)
       registered.delete(packageName)
+      projected.delete(packageName)
     },
   } as unknown as MentraJSRouter
   return {router, registered, spawnCalls, unregisterCalls}
@@ -167,6 +179,20 @@ describe("MiniappLauncher", () => {
     await miniappLauncher.ensureConnected("com.x", 5000)
     expect(mockRouter.spawnCalls.length).toBe(1)
     expect(waitForConnectCalls).toEqual(["com.x"])
+  })
+
+  test("a transient wake does not project into user-visible running state", async () => {
+    await miniappLauncher.ensureConnected("com.x", 5000, undefined, {projectRunning: false})
+    expect(mockRouter.spawnCalls[0].projectRunning).toBe(false)
+    expect(miniappLauncher.isRunning("com.x")).toBe(true)
+    expect(miniappLauncher.isProjectedRunning("com.x")).toBe(false)
+  })
+
+  test("a user open promotes an existing transient context without a second spawn", async () => {
+    await miniappLauncher.ensureConnected("com.x", 5000, undefined, {projectRunning: false})
+    await miniappLauncher.ensureRunning("com.x")
+    expect(mockRouter.spawnCalls).toHaveLength(1)
+    expect(miniappLauncher.isProjectedRunning("com.x")).toBe(true)
   })
 
   test("ensureRunning rejects when the bundle cannot be resolved", async () => {

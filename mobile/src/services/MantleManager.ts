@@ -6,6 +6,7 @@ import {router} from "expo-router"
 
 import {bootstrapMentraJS} from "@/services/mentraJsBootstrap"
 import {preinstalledMiniappSync} from "@/services/miniapps/preinstalledMiniappSync"
+import {storeUpdateScheduler} from "@/services/miniapps/storeUpdateScheduler"
 import builtInMiniappCatalog from "@/services/miniapps/BuiltInMiniappCatalog"
 import {BUNDLED_MINIAPPS, BUNDLED_SYSTEM_MINIAPP_PACKAGES} from "@/generated/bundledMiniapps"
 import {CHINA_HIDDEN_APPS, isChinaBuild, notifyPackageName} from "@/constants/miniapps"
@@ -28,7 +29,6 @@ import {
   phoneLocationService,
   ttsModelManager,
   useAppStatusStore,
-  saveLocalAppRunningState,
   shouldActivateBundledVersion,
 } from "@mentra/engine/internal"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
@@ -39,6 +39,14 @@ import {ensureDevModeForUser} from "@/utils/dev/devModeAllowlist"
 import mentraAuth from "@/utils/auth/authClient"
 import {showAlert} from "@/utils/AlertUtils"
 import {Buffer} from "@craftzdog/react-native-buffer"
+
+// Build-time Store trust table. OEM builds may add Store packages here and
+// assign SYSTEM bundle ownership below; the same list configures install
+// authority and invisible update scheduling so multiple Stores can coexist.
+const BUNDLED_STORE_MINIAPP_PACKAGES = ["com.mentra.store"] as const
+const BUNDLED_SYSTEM_MINIAPP_STORE_OWNERS = Object.fromEntries(
+  BUNDLED_SYSTEM_MINIAPP_PACKAGES.map((packageName) => [packageName, "com.mentra.store"]),
+)
 
 /**
  * Miniapp bundles shipped inside the app binary, installed on first launch by
@@ -405,10 +413,8 @@ class MantleManager {
       config: {
         ...cloudConfigValues(),
         bundledSystemMiniappPackages: BUNDLED_SYSTEM_MINIAPP_PACKAGES,
-        bundledStoreMiniappPackages: ["com.mentra.store"],
-        bundledSystemMiniappStoreOwners: Object.fromEntries(
-          BUNDLED_SYSTEM_MINIAPP_PACKAGES.map((packageName) => [packageName, "com.mentra.store"]),
-        ),
+        bundledStoreMiniappPackages: BUNDLED_STORE_MINIAPP_PACKAGES,
+        bundledSystemMiniappStoreOwners: BUNDLED_SYSTEM_MINIAPP_STORE_OWNERS,
       },
       // Named host-UI seams: island dispatches the miniapp request, the host
       // owns the screen (branding/navigation).
@@ -502,6 +508,7 @@ class MantleManager {
     // Remove all event subscriptions
     this.subs.forEach((sub) => sub.remove())
     this.subs = []
+    storeUpdateScheduler.stop()
     this.activePhoneNotificationId = null
 
     phoneLocationService.stopPhoneLocation()
@@ -571,11 +578,6 @@ class MantleManager {
     // new mobile binary.
     await preinstalledMiniappSync.sync()
 
-    // The Store is a bundled two-layer miniapp, but its controller is a
-    // system service: keep the background JSContext running headlessly so it
-    // can reconcile catalog/update state without mounting phone UI.
-    saveLocalAppRunningState("com.mentra.store", true)
-
     // Re-spawn local miniapps that were running when the app was last killed.
     // Cloud apps get resurrected by the cloud on reconnect; local (phone-hosted)
     // miniapps have no server to bring them back, so the launcher restarts them
@@ -583,6 +585,11 @@ class MantleManager {
     // upgraded bundles are on disk first. Best-effort — never block miniapp
     // init on it.
     miniappLauncher.autostartLocalMiniapps().catch((e) => console.warn("MANTLE: autostartLocalMiniapps failed", e))
+
+    // Store maintenance is a host-triggered transient action. It wakes each
+    // bundled Store without projecting it into the user's running tray, then
+    // tears the context down after reconciliation unless the user opened it.
+    void storeUpdateScheduler.start(BUNDLED_STORE_MINIAPP_PACKAGES)
   }
 
   /**

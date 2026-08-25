@@ -990,7 +990,14 @@ class AppRegistry {
           permissions?: Array<string | {type: string; required?: boolean; description?: string}>
           hardwareRequirements?: Array<{type: string; level: string; description?: string}>
           type?: string
-          actions?: Array<{id?: unknown; description?: unknown; parameters?: unknown; outputSchema?: unknown}>
+          actions?: Array<{
+            id?: unknown
+            description?: unknown
+            parameters?: unknown
+            outputSchema?: unknown
+            activation?: unknown
+            audience?: unknown
+          }>
         } | null
 
         const permissions = normalizeManifestPermissions(manifest?.permissions)
@@ -1198,7 +1205,14 @@ export interface DevAppRecord {
   permissions?: Array<string | {type: string; required?: boolean; description?: string}>
   hardwareRequirements?: Array<{type: string; level: string; description?: string}>
   /** Manifest-declared actions — so dev-sideloaded miniapps can be invoked too. */
-  actions?: Array<{id?: unknown; description?: unknown; parameters?: unknown; outputSchema?: unknown}>
+  actions?: Array<{
+    id?: unknown
+    description?: unknown
+    parameters?: unknown
+    outputSchema?: unknown
+    activation?: unknown
+    audience?: unknown
+  }>
   /** Legacy single-slot migration field. New records use the real packageName directly. */
   sourcePackageName?: string
   /**
