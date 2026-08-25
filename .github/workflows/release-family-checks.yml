@@ -1,0 +1,33 @@
+name: Coordinated Release Family Checks
+
+on:
+  pull_request:
+    branches: [dev, staging, main]
+    paths:
+      - ".github/release-family.json"
+      - ".github/scripts/release-family*.mjs"
+      - ".github/workflows/release-family-checks.yml"
+      - "package.json"
+      - "mobile/package.json"
+      - "mobile/modules/bluetooth-sdk/package.json"
+      - "mobile/modules/crust/package.json"
+      - "mobile/modules/engine/package.json"
+      - "mobile/modules/jspolyfill/package.json"
+      - "mobile/modules/miniapp/package.json"
+      - "cloud-v2/packages/cloud-client/package.json"
+      - "cloud-v2/packages/protocol/package.json"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate release family
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test release-family contract
+        run: node --test .github/scripts/release-family.test.mjs
+      - name: Validate repository definition
+        run: node .github/scripts/release-family-cli.mjs validate

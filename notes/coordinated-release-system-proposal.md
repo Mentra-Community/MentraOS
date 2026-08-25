@@ -1,0 +1,636 @@
+# Proposed Coordinated Release System
+
+> Status: accepted design; implementation in progress
+> Updated: 2026-08-24
+
+## Goal
+
+Release MentraOS, Mentra Engine, and the Bluetooth SDK as one traceable product
+family. Every build in a family must identify the exact source, package graph,
+mobile binaries, and Mentra Live OTA bundle that were tested together.
+
+The system should require one family base-version decision per release train,
+not separate product versions or manual package-version edits on every commit.
+
+## Products
+
+The coordinated system has three products:
+
+1. **MentraOS**: the iOS and Android application.
+2. **Mentra Engine**: the independently consumable `@mentra/engine` package.
+3. **Bluetooth SDK**: npm, Maven, and SwiftPM distributions of the Mentra Live
+   SDK.
+
+MentraOS builds workspace source directly into its mobile artifacts. It does
+not need registry releases of Engine, Bluetooth SDK, Crust, or other workspace
+packages in order to build.
+
+The independently published Engine does need its runtime dependency closure to
+be available to external consumers. The release coordinator must therefore
+publish the explicitly allowed first-party packages needed by Engine before it
+publishes Engine itself.
+
+Engine currently depends deeply on Bluetooth SDK and exposes a limited SDK
+compatibility passthrough through `@mentra/engine/internal`. Phase 0 adds the
+supported `@mentra/engine/bluetooth-sdk` package export. Therefore
+`@mentra/engine@3.1.0-beta.57` must expose and resolve
+`@mentra/bluetooth-sdk@3.1.0-beta.57`. Allowing those versions to drift would
+make Engine installation and native resolution ambiguous to consumers.
+
+## Hard Decisions
+
+1. The release family owns one plain future-production base version in source.
+   MentraOS, Engine, Bluetooth SDK, and every coordinated public package use the
+   same base. The current proposed train is `3.1.0`.
+2. CI derives prerelease versions. Developers do not edit package versions for
+   ordinary `dev` or `staging` commits.
+3. One coordinated run allocates one release identity, such as
+   `3.1.0-dev.184` or `3.1.0-beta.57`. Public package versions and diagnostics
+   use it directly; native store fields use their platform-valid representation
+   of the same release.
+4. One release set references one immutable Mentra Live OTA manifest and one
+   exact ASG, MTK, and BES artifact set. A release set may reuse an already
+   validated ASG APK when its complete ASG build-input fingerprint is unchanged.
+5. MentraOS consumes local workspaces. Engine's standalone distribution uses an
+   explicit, exact, published dependency closure.
+6. Engine owns its Engine-specific contract and re-exports exactly the same
+   family version of Bluetooth SDK at `@mentra/engine/bluetooth-sdk`. It must not
+   expose accidental Bluetooth SDK `/internal` imports as public API.
+7. Automatic OTA is enabled by an explicit embedded immutable manifest pin, not
+   by a package version, a generic CI flag, or the connected glasses version.
+   Source-built Expo hosts keep the current explicit
+   `EXPO_PUBLIC_ASG_OTA_VERSION_URL` opt-in; an unset source build has OTA
+   disabled.
+8. Production promotes a completed staging release set. It does not rebuild the
+   ASG, OTA bundle, IPA, or Android store artifact.
+9. `release-plan.json` records immutable release intent before publication.
+   `release-manifest.json` records the finalized bill of materials, artifact
+   hashes, registry coordinates, and provenance after publication. Neither is a
+   hand-edited version file.
+
+## Phase 0: Fix the Engine Boundary Now
+
+This is an initial requirement, not future cleanup.
+
+### Public API ownership and SDK boundary
+
+Before publishing through the coordinated pipeline:
+
+- Add `@mentra/engine/bluetooth-sdk` as a supported Engine package subpath.
+- Implement it as a thin, identity-preserving re-export of the public
+  `@mentra/bluetooth-sdk` root entrypoint: no wrapper, copied singleton, or
+  alternate state.
+- Mirror the complete supported Bluetooth SDK surface through
+  `@mentra/engine/bluetooth-sdk`, `@mentra/engine/bluetooth-sdk/react`,
+  `@mentra/engine/bluetooth-sdk/types`,
+  `@mentra/engine/bluetooth-sdk/photo-receiver`, and
+  `@mentra/engine/bluetooth-sdk/debug`.
+- Source all re-exported SDK functionality and SDK-owned types from public
+  Bluetooth SDK entrypoints, never from `@mentra/bluetooth-sdk/internal`.
+- Replace Engine-specific root exports currently sourced from
+  `@mentra/bluetooth-sdk/internal` with Engine-owned models where they represent
+  Engine concepts.
+- Translate Bluetooth SDK events and values into Engine-owned models at the
+  Engine boundary when Engine changes their semantics or lifecycle.
+- Ensure public Engine method signatures, callbacks, stores, and generated
+  declarations refer only to Engine public types, intentionally exposed
+  Bluetooth SDK public types, or deliberately public third-party types.
+- Treat every exported package subpath as public. Remove
+  `@mentra/engine/internal` from the published Engine export map before the
+  `3.1.0` family is released. Move MentraOS-only compatibility access into a
+  private, non-published workspace package rather than relying on a publicly
+  addressable subpath named `internal`.
+- Add an API-surface test that fails when the public declaration output contains
+  `@mentra/bluetooth-sdk/internal` or an undeclared workspace source path.
+
+Engine implementation files may use the Bluetooth SDK's internal entrypoint
+behind this boundary while the modules live in one repository. That is an
+implementation dependency, not an implicit Engine consumer contract. It must be
+pinned to the exact same Engine release version and must never leak through
+declarations. The supported SDK contract is the explicit public facade.
+
+The intended source entrypoint is equivalent to:
+
+```ts
+export {default} from "@mentra/bluetooth-sdk"
+export * from "@mentra/bluetooth-sdk"
+```
+
+The Engine package export map provides matching `react-native`, `types`, and
+default conditions for each `./bluetooth-sdk` subpath. The SDK `internal`
+entrypoint is never re-exported publicly.
+
+### Generated output
+
+`build/` is generated package output, not architectural source:
+
+- React Native resolves Engine's `react-native` exports to `src/*.ts`.
+- TypeScript reads generated declarations from `build/*.d.ts`.
+- Default non-React-Native consumers may load generated `build/*.js`.
+- Engine source must never import from its own `build/` directory.
+- `build/` is regenerated in a clean checkout before packing and is inspected
+  as release output, not trusted from a developer checkout.
+
+The directory could later be renamed `dist/`, but that name does not change the
+dependency model and is not required for this release redesign.
+
+## Release Family
+
+The release family is an explicit allowlist with explicit dependency edges. It
+must not be inferred from a `mobile/modules/*` or `cloud-v2/packages/*` glob.
+
+Initial family:
+
+- MentraOS for iOS and Android.
+- `@mentra/engine`.
+- `@mentra/bluetooth-sdk` for npm, Maven, and SwiftPM.
+- `@mentra/crust`.
+- `@mentra/jspolyfill`.
+- `@mentra/cloud-client`.
+- `@mentra/cloud-protocol`.
+- `@mentra/miniapp`.
+
+The exact list must be validated against Engine's runtime imports during Phase 0. A new package joins only through a reviewed manifest entry that specifies
+its base-version source, publication targets, and dependency edges. Private
+cloud services and unrelated tools remain outside the family.
+
+## Dependency Policy
+
+For the first implementation, do not introduce a JavaScript bundling step for
+Engine's first-party dependencies. Publish its allowlisted dependency closure.
+This gives all packages one consistent model and avoids pretending native Expo
+modules can be hidden inside an Engine JavaScript tarball.
+
+- Bluetooth SDK and Crust remain separately published native packages.
+- Pure TypeScript first-party packages also remain separately published in the
+  initial system.
+- Every first-party package imported or re-exported by Engine is an exact regular
+  `dependency` at the shared coordinated version, not a peer dependency, `*`, or
+  a broad prerelease range.
+- If Engine is `3.1.0-beta.57`, its Bluetooth SDK dependency is exactly
+  `3.1.0-beta.57`. CI fails if another SDK version is resolved anywhere in the
+  external fixture application's JavaScript or native dependency graphs.
+- React, React Native, Expo, and host-owned singleton/framework packages remain
+  peer dependencies with documented supported ranges.
+- CI inspects npm, Metro, Expo Autolinking, Gradle, and CocoaPods/SwiftPM
+  resolution and fails if more than one Bluetooth SDK or Crust native module is
+  present.
+- A clean external fixture app installs only the documented Engine integration
+  dependencies and verifies native autolinking, iOS resolution, Android
+  resolution, Metro resolution, and TypeScript declarations.
+
+This is more packages to publish, but CI owns the work. It avoids a second
+packaging architecture while the public boundary is still being stabilized.
+
+## Version Model
+
+The release family uses fixed, lockstep versioning. Each product or public
+package stores the same plain stable base version in its own `package.json`:
+
+```text
+mentraos                 3.1.0
+@mentra/engine           3.1.0
+@mentra/bluetooth-sdk    3.1.0
+@mentra/crust            3.1.0
+@mentra/jspolyfill       3.1.0
+@mentra/cloud-client     3.1.0
+@mentra/cloud-protocol   3.1.0
+@mentra/miniapp          3.1.0
+```
+
+The repository-root `package.json#version` is the canonical family base. The
+root package is private and represents the release family rather than one of the
+three products. Every coordinated package's own `package.json#version` is a
+required, validated mirror of that value, not an independent version authority.
+MentraOS should migrate its version authority from duplicated environment
+configuration to this family version. Build scripts may inject a derived runtime
+value, but they must derive it from the root `package.json`.
+
+This intentionally makes SemVer describe the compatibility and release state of
+the Mentra product family, not the independent amount of change in each package.
+An unchanged package receives the new family version when the family is
+released. If a package later needs an independent cadence, removing it from the
+fixed family is a deliberate release-model change rather than a one-off version
+exception.
+
+At release-train creation, the family base must still be unused for every
+product and package target. If `3.1.0` has shipped for any coordinated package,
+the entire next train moves to a new shared base. There are no package-specific
+base exceptions inside a train.
+
+The coordinator allocates one monotonically increasing sequence and derives:
+
+```text
+dev:      3.1.0-dev.<sequence>
+staging:  3.1.0-beta.<sequence>
+main:     3.1.0
+```
+
+Example coordinated staging set:
+
+```text
+MentraOS                 3.1.0-beta.57
+@mentra/engine           3.1.0-beta.57
+@mentra/bluetooth-sdk    3.1.0-beta.57
+@mentra/crust            3.1.0-beta.57
+```
+
+The family base and release identity are shared. Their encoding is
+ecosystem-specific:
+
+| Surface                                 | `3.1.0-beta.57` release set            |
+| --------------------------------------- | -------------------------------------- |
+| npm, Maven, SwiftPM packages            | `3.1.0-beta.57`                        |
+| MentraOS iOS marketing version          | `3.1.0`                                |
+| MentraOS iOS build number               | Monotonically increasing numeric value |
+| MentraOS Android `versionName`          | `3.1.0`                                |
+| MentraOS Android `versionCode`          | Monotonically increasing integer       |
+| In-app diagnostics and release metadata | `3.1.0-beta.57`                        |
+
+A release set may not combine different family bases or release identities.
+
+Use the coordinator workflow's `github.run_number` initially. Pass it unchanged
+to all reusable workflows. A rerun keeps the sequence; `run_attempt` never
+enters a version. Replacing or renaming the coordinator in a way that resets the
+sequence requires an explicit migration and registry collision checks.
+
+## Release Records
+
+The coordinator generates two records with different lifecycles.
+
+### Release plan
+
+`release-plan.json` is created before publication and is immutable. Its minimum
+content is:
+
+```json
+{
+  "releaseSetId": "mentra-3.1.0-beta.57",
+  "familyBaseVersion": "3.1.0",
+  "releaseIdentity": "3.1.0-beta.57",
+  "channel": "beta",
+  "sequence": 57,
+  "sourceCommit": "<full git sha>",
+  "products": {
+    "mentraos": "3.1.0-beta.57",
+    "@mentra/engine": "3.1.0-beta.57",
+    "@mentra/bluetooth-sdk": "3.1.0-beta.57",
+    "@mentra/crust": "3.1.0-beta.57"
+  },
+  "dependencies": {},
+  "otaInputs": {}
+}
+```
+
+It declares intended versions, dependency edges, source, OTA inputs, native
+build numbers, publication targets, and artifact names. A retry consumes the
+same plan and never edits or reallocates it.
+
+### Release manifest
+
+`release-manifest.json` is created only after every required target has been
+built, validated, and published. It contains the release-plan digest plus every
+final package coordinate, artifact URL, content hash, attestation, native build
+number, source commit, workflow run, OTA manifest identity, and publication
+result.
+
+The manifest is attached with all human-named assets to a draft GitHub release.
+The release becomes immutable only after the coordinator verifies completeness
+and publishes the draft. A partial release has a release plan and recoverable
+registry state, but never claims to have a completed release manifest.
+
+Sources of truth are intentionally narrow:
+
+- Repository-root `package.json#version`: the one future stable family base.
+- Coordinated package manifests: validated mirrors of that shared family base.
+- Coordinator inputs: branch/channel and allocated sequence.
+- `firmware_live.json`: promoted MTK and BES inputs when the set is assembled.
+- Generated `release-plan.json`: immutable intended release.
+- Generated `release-manifest.json`: exact completed result.
+
+## OTA Bundle
+
+One reusable workflow builds or selects the ASG artifact and creates one
+immutable OTA manifest for the release set. The manifest pins exact ASG, MTK,
+and BES identities and hashes.
+
+The workflow preserves the current ASG reuse behavior:
+
+1. Compute a fingerprint over all effective ASG build inputs, including source,
+   build configuration, dependency and submodule revisions, toolchain inputs,
+   and injected build metadata.
+2. If a previously published ASG artifact has the same fingerprint, valid
+   provenance, expected signing identity, and matching recorded hash, reuse that
+   exact immutable APK.
+3. If the fingerprint changed or prior validation cannot be reproduced, build,
+   validate, attest, and publish a new ASG artifact exactly once.
+4. Record the selected artifact, its fingerprint, hash, provenance, and any
+   originating release set in the new release manifest.
+
+Reuse never means renaming, repackaging, or overwriting an ASG artifact. MTK or
+BES promotion and unrelated MentraOS, Engine, documentation, or package changes
+can therefore produce a new OTA manifest and release set while continuing to
+reference the same ASG APK.
+
+The resulting URL is passed as an explicit output to all product builds:
+
+- MentraOS embeds it directly in the iOS and Android JavaScript bundles.
+- Bluetooth SDK npm, Maven, and SwiftPM artifacts embed the same URL through
+  their platform-specific generated release metadata.
+- Engine embeds the same literal pin in generated release metadata inside its
+  npm tarball and depends on the exact Bluetooth SDK from the set. It does not
+  independently derive a URL from its package version.
+
+### Engine release pin
+
+Current `dev` Engine packages are not independently pinned: Engine first reads
+the consuming app's `EXPO_PUBLIC_ASG_OTA_VERSION_URL`, then asks Bluetooth SDK
+to derive a pin from the SDK version, and can fall through to glasses-reported
+or mutable production URLs. The coordinated release removes that ambiguity.
+
+The Engine package job must:
+
+1. Receive the immutable OTA manifest URL and SHA-256 directly from the
+   coordinator output.
+2. Generate an Engine source module in the isolated release checkout containing
+   at least the family version, release-set identity, source commit, manifest
+   URL, and manifest hash.
+3. Build and pack both the React Native source condition and generated default
+   JavaScript/declarations from that same metadata.
+4. Inspect the completed npm tarball and fail unless its literal URL and hash
+   exactly match the coordinator output and contain no unresolved placeholder.
+5. Compare the Engine pin with the pin embedded in the exact coordinated
+   Bluetooth SDK package and fail publication on any mismatch.
+
+The metadata must be a generated literal included in the tarball, not a
+`process.env` lookup deferred until the customer's Metro build. Source checkouts
+carry an unpinned development default; only release packaging writes the release
+pin into an isolated checkout.
+
+Engine OTA resolution for modern glasses is:
+
+```text
+active developer override
+  -> explicit host-app release pin
+  -> embedded Engine release pin
+  -> OTA disabled as an unpinned build
+```
+
+Engine does not silently use the SDK pin as a fallback. It verifies that the SDK
+pin matches its own embedded pin. Calls made directly through
+`@mentra/engine/bluetooth-sdk` use the SDK's matching embedded pin.
+
+Runtime policy for modern glasses is:
+
+```text
+explicit developer override, when developer mode is active
+  -> embedded host release pin
+  -> embedded product release pin (Engine or standalone SDK)
+  -> OTA disabled as an unpinned build
+```
+
+There is no mutable production fallback and no SDK-version-to-URL construction
+after the migration. Pre-39 glasses retain their explicit legacy protocol path
+because they cannot honor a phone-provided modern manifest URL.
+
+The selected URL is latched for an OTA session so check, start, reconnect,
+resume, retry, and completion all use the same manifest.
+
+### Source-built developer hosts
+
+Source-built hosts do not receive an automatic release-channel manifest:
+
+- Expo and React Native hosts enable OTA explicitly with the existing
+  `EXPO_PUBLIC_ASG_OTA_VERSION_URL` build variable.
+- Native Android and iOS hosts use the existing debug `setOtaVersionUrl`
+  configuration surface.
+- Missing, blank, malformed, or unreachable developer pins fail closed and do
+  not fall back to a package-derived or mutable production URL.
+- The active developer pin is visible in diagnostics so a locally built app can
+  always explain which OTA bundle it is using.
+
+Release CI supplies and verifies its own immutable release pin. Developer
+configuration is an explicit local opt-in and never becomes a default embedded
+in source-built SDK artifacts.
+
+## Branches and Triggers
+
+All three products use `dev` -> `staging` -> `main` as source lines.
+
+- Pull requests run validation and package dry-runs only. They never publish.
+- Every selected push to `dev` creates a coordinated `dev.N` release set.
+- Every selected push to `staging` creates a coordinated `beta.N` release set.
+- Production is a protected action or one coordinated
+  `mentra/v<family-base>` tag selecting a completed staging set whose source
+  is contained in `main`.
+- Do not use separate product tags as release decisions. npm, Maven, and SwiftPM
+  package tags are generated outputs of the coordinated production release.
+
+Bug fixes may land on `staging` first and must be merged back into `dev`.
+Features land on `dev` and move to `staging` only when selected for the release
+candidate. Do not merge all of `dev` into `staging` merely to produce a build.
+
+The coordinator has no path filters: every selected branch release gets an
+auditable identity. Every public product and package in that set is published
+under the shared version, even when its source is unchanged. Jobs may reuse
+verified intermediate build outputs, but they may not substitute a package from
+a different family version. Do not configure concurrency to cancel or replace
+an older publication once immutable artifacts or store uploads have begun.
+Mutable channel heads move only toward a greater sequence.
+
+## Publication Order
+
+After the OTA bundle and version map exist, publish in dependency order:
+
+1. Leaf first-party packages such as `@mentra/jspolyfill` and
+   `@mentra/cloud-protocol`.
+2. Packages that consume those leaves, such as Crust and Cloud Client.
+3. Bluetooth SDK npm, Maven, and SwiftPM artifacts with the shared OTA pin.
+4. Remaining Engine dependencies such as Miniapp.
+5. Engine, stamped with exact versions from this release set.
+6. MentraOS mobile artifacts, built from local workspaces and stamped with the
+   release-set identity and shared OTA pin.
+7. Starter Kit and OEM example artifacts after all public dependencies resolve
+   from their real registries.
+8. Public documentation after the package and example URLs are live.
+
+Independent jobs may run in parallel when the dependency graph permits it. A
+consumer package cannot publish until its referenced versions are publicly
+readable and their hashes/metadata match the release set.
+
+Retries reconcile the same release set. They publish missing targets or verify
+existing identical targets. They never allocate a new suffix and never replace
+different bytes at an existing version.
+
+## MentraOS Distribution
+
+MentraOS builds local workspace sources, so its release does not wait for npm or
+Maven to compile. It still records the exact workspace package versions and
+source hashes in its BOM.
+
+For iOS:
+
+- `dev` builds go to the existing Dev TestFlight group.
+- `staging` builds go to the existing Beta TestFlight group.
+- Production promotes the exact tested staging binary through App Store
+  Connect.
+
+For Android, use equivalent internal/dev and beta tracks before production
+promotion.
+
+Native store marketing versions remain the plain family base, such as `3.1.0`,
+so the exact staging binary can be promoted without rebuilding and
+without retaining `-beta` in the production app version. TestFlight notes,
+diagnostics, GitHub artifacts, and release metadata expose the full coordinated
+identity such as `3.1.0-beta.57`.
+
+## Artifact Names
+
+Primary downloadable artifacts use:
+
+```text
+<product>-<derived-version>[-<platform>].<extension>
+```
+
+Examples:
+
+```text
+mentraos-3.1.0-dev.184-android.apk
+mentraos-3.1.0-beta.57-ios.ipa
+mentra-live-ota-3.1.0-beta.57.json
+mentra-live-asg-3.1.0-beta.57.apk
+mentra-release-3.1.0-beta.57.json
+bluetooth-sdk-3.1.0-beta.57.aar
+bluetooth-sdk-3.1.0-beta.57.xcframework.zip
+mentra-engine-3.1.0-beta.57.tgz
+```
+
+Do not put dates, unexplained counters, `_Beta_N`, ASG version codes, or workflow
+run IDs in primary names. Native store build numbers and source SHAs remain in
+the release manifest and diagnostics.
+
+Artifact filenames remain human-readable and version-based. Content hashes are
+recorded in `release-manifest.json` and attestations; they are never used as
+filenames. The semantic prerelease sequence in `3.1.0-beta.57` is intentional,
+not a random artifact identifier. When production promotes the exact tested
+candidate, it may continue to reference that immutable candidate URL rather than
+renaming or copying the artifact for cosmetic reasons.
+
+## Promotion
+
+Production selects one completed staging release set. The promotion verifies:
+
+- the selected source commit is present in `main`;
+- the shared stable family version is available for every publication target;
+- the staging package graph and mobile artifacts passed required tests;
+- every recorded artifact is still readable and hash-identical;
+- the OTA manifest and every referenced artifact are immutable and valid.
+
+It then:
+
+- promotes the exact tested IPA and Android store artifact;
+- publishes stable package versions from the selected source with the same
+  dependency graph and OTA pin;
+- moves npm `latest` and equivalent stable pointers only after all targets are
+  complete;
+- writes a stable release manifest linking back to the selected beta manifest.
+
+Stable package metadata cannot literally reuse prerelease package bytes when
+the embedded package version must change. It must be reproduced from the same
+source and inputs, with only approved channel/version metadata differences, and
+the workflow must compare normalized contents. The ASG, MTK, BES, OTA manifest,
+IPA, and Android store artifact are not rebuilt.
+
+## Starter Kit and Documentation
+
+Starter Kit examples are downstream release consumers, not sources of package
+truth.
+
+1. Wait until npm, Maven, and SwiftPM all expose the coordinated SDK version and
+   Engine's full dependency closure is readable.
+2. Update all three examples to the selected public versions.
+3. Build and publish example APK/IPA artifacts.
+4. Update docs to the new release version and immutable example URLs.
+
+The public docs workflow fails closed if a referenced package or example
+artifact is unavailable. Documentation never advertises a release that cannot
+be installed.
+
+## Verification Gates
+
+Each release set must prove:
+
+- all derived versions share the expected channel and sequence;
+- package manifests contain exact coordinated first-party dependency versions;
+- Engine public declarations do not reference
+  `@mentra/bluetooth-sdk/internal`;
+- `@mentra/engine/bluetooth-sdk` resolves through the supported public SDK root
+  entrypoint at exactly the Engine version and preserves singleton identity;
+- Engine source does not import from its generated `build/` output;
+- clean npm tarballs contain freshly generated output, not stale local files;
+- Maven, SwiftPM, and npm artifacts embed the declared SDK version and OTA pin;
+- the packed Engine React Native source, JavaScript, and declarations contain
+  the declared immutable Engine OTA pin and release-set identity;
+- Engine and its exact Bluetooth SDK dependency contain identical OTA manifest
+  URLs and hashes;
+- MentraOS IPA and Android artifacts embed the release-set identity and OTA pin;
+- mobile artifacts use the expected local workspace source hashes;
+- the OTA manifest's ASG, MTK, and BES URLs, hashes, and versions are valid;
+- an external Engine fixture app resolves, type-checks, autolinks, and builds;
+- Starter Kit examples build only after real registry publication.
+
+Any missing, malformed, mutable, unreachable, or mismatched release input blocks
+publication. There is no fallback to another channel.
+
+## Implementation Order
+
+1. **Engine boundary:** add the explicit `@mentra/engine/bluetooth-sdk` facade,
+   introduce Engine-owned models for Engine concepts, remove SDK-internal paths
+   from all public declarations, and add API-surface, singleton-identity, and
+   resolved-version tests.
+2. **Manifest inventory:** define the explicit release-family allowlist and
+   dependency DAG; classify host peers versus exact first-party dependencies.
+3. **Family version:** introduce one canonical future stable version, set the
+   current train to `3.1.0`, validate every coordinated package manifest against
+   it, and remove the duplicated MentraOS environment authority.
+4. **Shared derivation:** implement one tested version/channel/sequence library
+   used by every workflow.
+5. **OTA workflow:** extract one reusable immutable OTA-bundle publisher with
+   validated ASG build-input fingerprinting and artifact reuse.
+6. **Coordinator:** generate the version map and immutable `release-plan.json`,
+   invoke dependency and product workflows, then finalize
+   `release-manifest.json` only after complete publication.
+7. **Dev and staging:** publish complete coordinated sets and distribute mobile
+   builds to their existing TestFlight/Play groups.
+8. **Artifact verification:** inspect every package and mobile artifact for
+   version, dependency, source, and OTA-pin provenance, including literal Engine
+   tarball metadata and Engine-to-SDK pin equality.
+9. **Production promotion:** select one completed beta set and promote without
+   rebuilding mobile or OTA artifacts.
+10. **Remove old fallback logic:** delete SDK-version URL derivation and mutable
+    modern OTA fallbacks once all supported release artifacts carry pins.
+11. **Downstream releases:** automate Starter Kit updates and gate docs on live
+    packages and example artifacts.
+
+## Acceptance Criteria
+
+- A commit on `dev` or `staging` creates one family base and release identity
+  shared by all three products and their public dependency closure, encoded in
+  platform-valid version fields.
+- No ordinary prerelease commit requires a checked-in version edit.
+- MentraOS builds local workspaces and is not blocked on package registries.
+- A standalone Engine consumer resolves an exact, installable package graph.
+- Engine's public API and declarations contain no Bluetooth SDK internal types.
+- `@mentra/engine/bluetooth-sdk` exposes the public SDK at exactly the Engine
+  version on JavaScript, Android, and iOS and returns the same singleton as a
+  direct import of that SDK version.
+- All release artifacts select one immutable OTA bundle.
+- A released Engine tarball contains its own immutable OTA manifest URL and hash;
+  it does not depend on SDK-version URL derivation or a mutable fallback.
+- An unchanged ASG build-input fingerprint reuses the exact previously validated
+  APK; a changed fingerprint produces one new immutable APK.
+- Dev and beta builds are immediately distinguishable in TestFlight metadata,
+  artifact names, diagnostics, and the release manifest.
+- A workflow retry reconciles the same identity without overwriting bytes.
+- Production promotes the tested staging mobile and OTA artifacts.
+- Public docs and examples update only after their dependencies are available.

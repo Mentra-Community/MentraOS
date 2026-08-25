@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "family": "mentra",
+  "versionSource": "package.json",
+  "products": ["mentraos", "@mentra/engine", "@mentra/bluetooth-sdk"],
+  "members": [
+    {
+      "name": "@mentra/jspolyfill",
+      "manifest": "mobile/modules/jspolyfill/package.json",
+      "kind": "package",
+      "publishTargets": ["npm"],
+      "dependencies": []
+    },
+    {
+      "name": "@mentra/cloud-protocol",
+      "manifest": "cloud-v2/packages/protocol/package.json",
+      "kind": "package",
+      "publishTargets": ["npm"],
+      "dependencies": []
+    },
+    {
+      "name": "@mentra/crust",
+      "manifest": "mobile/modules/crust/package.json",
+      "kind": "package",
+      "publishTargets": ["npm"],
+      "dependencies": ["@mentra/jspolyfill"]
+    },
+    {
+      "name": "@mentra/cloud-client",
+      "manifest": "cloud-v2/packages/cloud-client/package.json",
+      "kind": "package",
+      "publishTargets": ["npm"],
+      "dependencies": ["@mentra/cloud-protocol"]
+    },
+    {
+      "name": "@mentra/bluetooth-sdk",
+      "manifest": "mobile/modules/bluetooth-sdk/package.json",
+      "kind": "product",
+      "publishTargets": ["npm", "maven-central", "swift-package-manager"],
+      "dependencies": []
+    },
+    {
+      "name": "@mentra/miniapp",
+      "manifest": "mobile/modules/miniapp/package.json",
+      "kind": "package",
+      "publishTargets": ["npm"],
+      "dependencies": ["@mentra/cloud-protocol"]
+    },
+    {
+      "name": "@mentra/engine",
+      "manifest": "mobile/modules/engine/package.json",
+      "kind": "product",
+      "publishTargets": ["npm"],
+      "dependencies": [
+        "@mentra/bluetooth-sdk",
+        "@mentra/crust",
+        "@mentra/cloud-client",
+        "@mentra/cloud-protocol",
+        "@mentra/miniapp"
+      ]
+    },
+    {
+      "name": "mentraos",
+      "manifest": "mobile/package.json",
+      "kind": "product",
+      "publishTargets": ["app-store-connect", "google-play"],
+      "dependencies": [
+        "@mentra/engine",
+        "@mentra/bluetooth-sdk",
+        "@mentra/crust",
+        "@mentra/cloud-client",
+        "@mentra/jspolyfill",
+        "@mentra/miniapp"
+      ]
+    }
+  ]
+}

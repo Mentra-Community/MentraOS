@@ -37,9 +37,9 @@ name: Release Miniapp SDK
 # versions (e.g. after a failed or gated run) should heal on the next push.
 # Every push reconciles; the detect job is a few seconds and no-ops when
 # nothing is missing.
+# Migration safety: coordinated releases own automatic publication while this
+# legacy workflow remains available for supervised recovery until cutover.
 on:
-  push:
-    branches: [main, staging, dev]
   workflow_dispatch:
     inputs:
       dry_run:

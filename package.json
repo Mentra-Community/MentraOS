@@ -1,4 +1,7 @@
 {
+  "name": "@mentra/release-family",
+  "version": "3.1.0",
+  "private": true,
   "workspaces": [
     "cloud-v2/packages/*",
     "miniapps/*",
@@ -34,6 +37,8 @@
   },
   "scripts": {
     "prepare": "husky",
+    "release:validate-family": "node .github/scripts/release-family-cli.mjs validate",
+    "release:test-family": "node --test .github/scripts/release-family.test.mjs",
     "generate-licenses": "bun mintlify-docs/generate-licenses.ts",
     "build:miniapp": "cd mobile/modules/miniapp && bun run build",
     "sync-miniapp": "bun scripts/sync-miniapp.mjs",

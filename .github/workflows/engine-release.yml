@@ -35,12 +35,9 @@ name: Release Mentra Engine
 # regularly needs a later, unrelated push to retry (e.g. after its peers'
 # staged versions get approved). Every push reconciles; the detect job is a
 # few seconds and no-ops when nothing is missing.
+# Migration safety: coordinated releases own automatic publication while this
+# legacy workflow remains available for supervised recovery until cutover.
 on:
-  push:
-    branches:
-      - dev
-      - staging
-      - main
   workflow_dispatch:
     inputs:
       dry_run:

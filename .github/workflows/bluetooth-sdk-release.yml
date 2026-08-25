@@ -27,12 +27,9 @@ name: Release Bluetooth SDK
 # No paths filter, deliberately: every push to a channel branch reconciles, and
 # the detect job no-ops in seconds when all stores are complete.
 
+# Migration safety: coordinated releases own automatic publication while this
+# legacy workflow remains available for supervised recovery until cutover.
 on:
-  push:
-    branches:
-      - dev
-      - staging
-      - main-bluetooth-sdk
   workflow_dispatch:
     inputs:
       dry_run:
