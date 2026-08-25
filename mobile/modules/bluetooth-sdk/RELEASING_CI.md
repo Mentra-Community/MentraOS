@@ -56,7 +56,21 @@ The coordinated workflows use these repository secrets:
 - `ASG_KEY_PASSWORD`
 - `ASG_KEY_ALIAS`
 - `MAPBOX_DOWNLOADS_TOKEN`
-- the existing Android, Google Play, App Store Connect, and Match credentials
+- `UPLOAD_KEYSTORE_B64`
+- `MENTRAOS_UPLOAD_STORE_PASSWORD`
+- `MENTRAOS_UPLOAD_KEY_PASSWORD`
+- `MENTRAOS_UPLOAD_KEY_ALIAS`
+- `GOOGLE_PLAY_KEY_JSON`
+- `ASC_API_KEY_P8_B64`
+- `ASC_API_KEY_ID`
+- `ASC_API_ISSUER_ID`
+- `MATCH_PASSWORD`
+- `MATCH_GIT_BASIC_AUTHORIZATION`
+- `MAPBOX_PUBLIC_TOKEN`
+- `DOPPLER_TOKEN`
+- `SENTRY_AUTH_TOKEN`
+- `EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID`
+- `EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY`
 
 Configure required reviewers on the `coordinated-production-release` GitHub
 environment before enabling production promotion.

@@ -424,9 +424,8 @@ All three products use `dev` -> `staging` -> `main` as source lines.
 - Pull requests run validation and package dry-runs only. They never publish.
 - Every selected push to `dev` creates a coordinated `dev.N` release set.
 - Every selected push to `staging` creates a coordinated `beta.N` release set.
-- Production is a protected action or one coordinated
-  `mentra/v<family-base>` tag selecting a completed staging set whose source
-  is contained in `main`.
+- Production is a protected manual workflow selecting a completed staging set
+  whose source is contained in `main`.
 - Do not use separate product tags as release decisions. npm, Maven, and SwiftPM
   package tags are generated outputs of the coordinated production release.
 
