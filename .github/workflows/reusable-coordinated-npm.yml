@@ -41,7 +41,7 @@ jobs:
   publish:
     name: Publish exact npm family closure
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: Checkout exact package source
         uses: actions/checkout@v4

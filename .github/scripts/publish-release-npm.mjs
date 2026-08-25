@@ -93,7 +93,7 @@ export function isHttpsRegistryUrl(value) {
 
 export function npmViewPublishedTarball(
   spec,
-  {attempts = 36, view = npmView, sleep = () => execFileSync("sleep", ["5"])} = {},
+  {attempts = 120, view = npmView, sleep = () => execFileSync("sleep", ["5"])} = {},
 ) {
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     const value = parseViewValue(view(spec, "dist.tarball"))
@@ -157,9 +157,13 @@ function transitiveDependencies(family, memberName) {
 
 function prepareBluetoothSdkBuild({rootDir, plan, otaManifestUrl, otaManifestSha256}) {
   requireReleaseMetadata({otaManifestUrl, otaManifestSha256})
-  run("node", ["scripts/write-release-metadata.mjs", ...releaseMetadataArgs({plan, otaManifestUrl, otaManifestSha256})], {
-    cwd: path.join(rootDir, "mobile/modules/bluetooth-sdk"),
-  })
+  run(
+    "node",
+    ["scripts/write-release-metadata.mjs", ...releaseMetadataArgs({plan, otaManifestUrl, otaManifestSha256})],
+    {
+      cwd: path.join(rootDir, "mobile/modules/bluetooth-sdk"),
+    },
+  )
 }
 
 function prepareEngineBuild({rootDir, family, plan, otaManifestUrl, otaManifestSha256}) {
