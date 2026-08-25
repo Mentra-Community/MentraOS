@@ -375,25 +375,38 @@ export class MiniAppService {
       // Journal the candidate without disturbing the currently active release.
       // Once the release status is durable, the journal can be promoted by
       // this request or recovered by the next lease holder after a crash.
-      app.pendingStorePublication = {
+      const staged = await MiniAppModel.updateOne(
+        {
+          _id: app._id,
+          "storeListingOperationLease.token": lease.token,
+          "storeListingOperationLease.expiresAt": { $gt: new Date() },
+          pendingStorePublication: null,
+        },
+        {
+          $set: {
+            pendingStorePublication: {
+              releaseId: release._id.toString(),
+              releaseTrack,
+              storeListing: reviewedStoreListing,
+            },
+          },
+        },
+      );
+      if (staged.matchedCount !== 1) {
+        throw new MiniAppServiceError("store_listing_lease_lost", "Store listing operation lease was lost", 409);
+      }
+      await lease.assertHeld();
+      await release.save();
+      const promoted = await promotePendingStorePublication({
+        miniAppId: app._id.toString(),
+        lease,
         releaseId: release._id.toString(),
         releaseTrack,
         storeListing: reviewedStoreListing,
-      };
-      await lease.assertHeld();
-      await app.save();
-      await lease.assertHeld();
-      await release.save();
-      if (releaseTrack === "beta") {
-        app.activeBetaReleaseId = release._id.toString();
-        app.publishedBetaStoreListing = reviewedStoreListing;
-      } else {
-        app.activeReleaseId = release._id.toString();
-        app.publishedStoreListing = reviewedStoreListing;
+      });
+      if (!promoted) {
+        throw new MiniAppServiceError("store_listing_lease_lost", "Store listing operation lease was lost", 409);
       }
-      app.pendingStorePublication = null;
-      await lease.assertHeld();
-      await app.save();
       return serializeRelease(release.toObject());
     });
   }
@@ -1019,23 +1032,63 @@ async function withStoreListingLease<T>(
 }
 
 async function reconcilePendingStorePublication(miniAppId: string, lease: StoreListingLease): Promise<void> {
-  const app = await MiniAppModel.findById(miniAppId);
+  const app = await MiniAppModel.findById(miniAppId).lean();
   const pending = app?.pendingStorePublication;
   if (!app || !pending) return;
   const release = await MiniAppReleaseModel.findById(pending.releaseId).lean();
   if (release?.status === "published") {
-    const listing = serializeStoreListing(pending.storeListing);
-    if (pending.releaseTrack === "beta") {
-      app.activeBetaReleaseId = pending.releaseId;
-      app.publishedBetaStoreListing = listing;
-    } else {
-      app.activeReleaseId = pending.releaseId;
-      app.publishedStoreListing = listing;
+    const promoted = await promotePendingStorePublication({
+      miniAppId,
+      lease,
+      releaseId: pending.releaseId,
+      releaseTrack: pending.releaseTrack === "beta" ? "beta" : "stable",
+      storeListing: serializeStoreListing(pending.storeListing),
+    });
+    if (!promoted) {
+      throw new MiniAppServiceError("store_listing_lease_lost", "Store listing operation lease was lost", 409);
     }
+    return;
   }
-  app.pendingStorePublication = null;
-  await lease.assertHeld();
-  await app.save();
+  const discarded = await MiniAppModel.updateOne(
+    {
+      _id: miniAppId,
+      "storeListingOperationLease.token": lease.token,
+      "storeListingOperationLease.expiresAt": { $gt: new Date() },
+      "pendingStorePublication.releaseId": pending.releaseId,
+    },
+    { $set: { pendingStorePublication: null } },
+  );
+  if (discarded.matchedCount !== 1) {
+    throw new MiniAppServiceError("store_listing_lease_lost", "Store listing operation lease was lost", 409);
+  }
+}
+
+async function promotePendingStorePublication(input: {
+  miniAppId: string;
+  lease: StoreListingLease;
+  releaseId: string;
+  releaseTrack: "stable" | "beta";
+  storeListing: ReturnType<typeof serializeStoreListing>;
+}): Promise<boolean> {
+  const activeField = input.releaseTrack === "beta" ? "activeBetaReleaseId" : "activeReleaseId";
+  const listingField = input.releaseTrack === "beta" ? "publishedBetaStoreListing" : "publishedStoreListing";
+  const promoted = await MiniAppModel.updateOne(
+    {
+      _id: input.miniAppId,
+      "storeListingOperationLease.token": input.lease.token,
+      "storeListingOperationLease.expiresAt": { $gt: new Date() },
+      "pendingStorePublication.releaseId": input.releaseId,
+      "pendingStorePublication.releaseTrack": input.releaseTrack,
+    },
+    {
+      $set: {
+        [activeField]: input.releaseId,
+        [listingField]: input.storeListing,
+        pendingStorePublication: null,
+      },
+    },
+  );
+  return promoted.matchedCount === 1;
 }
 
 function serializeStoreListing(listing: any) {
