@@ -457,6 +457,43 @@ describe("miniapp release lifecycle", () => {
     await miniapps.deleteStoreAsset(developer, "com.example.artwork", replacement.id);
   });
 
+  test("submission and artwork deletion serialize without producing a dangling snapshot", async () => {
+    const packageName = "com.example.artworkrace";
+    await miniapps.createMiniApp(developer, {
+      packageName,
+      displayName: "Artwork Race",
+      description: "Artwork race test",
+    });
+    const icon = await miniapps.createStoreAsset(developer, packageName, {
+      role: "store_icon",
+      fileName: "icon.png",
+      contentType: "image/png",
+      bytes: tinyPng(),
+    });
+    const release = await miniapps.createRelease(developer, {
+      packageName,
+      version: "1.0.0",
+      manifest: { packageName, name: "Artwork Race", version: "1.0.0" },
+      bundle: await releaseBundle({ packageName, name: "Artwork Race", version: "1.0.0" }),
+    });
+
+    const [submission, deletion] = await Promise.allSettled([
+      miniapps.submitRelease(developer, packageName, release.id),
+      miniapps.deleteStoreAsset(developer, packageName, icon.id),
+    ]);
+    expect(submission.status).toBe("fulfilled");
+
+    const savedRelease = await MiniAppReleaseModel.findById(release.id).lean();
+    const assetStillExists = Boolean(await MiniAppAssetModel.exists({ _id: icon.id }));
+    const snapshotReferencesIcon = savedRelease?.submittedStoreListing?.iconAssetId === icon.id;
+    expect(snapshotReferencesIcon).toBe(assetStillExists);
+    if (deletion.status === "rejected") {
+      expect(deletion.reason).toMatchObject({ code: "reviewed_asset", status: 409 });
+    } else {
+      expect(snapshotReferencesIcon).toBe(false);
+    }
+  });
+
   test("stable and beta publish independently and Core selects beta only for the enrolled user", async () => {
     const packageName = "com.example.tracks";
     await miniapps.createMiniApp(developer, {
@@ -530,6 +567,22 @@ describe("miniapp release lifecycle", () => {
     );
     expect(returnedToStable.release.id).toBe(stable.id);
     expect(await MiniAppTrackEnrollmentModel.countDocuments({ mentraUserId: storeUser.mentraUserId })).toBe(0);
+
+    await miniapps.updateStoreListing(developer, packageName, { subtitle: "Second beta listing" });
+    const secondBeta = await miniapps.createRelease(developer, {
+      packageName,
+      version: "1.1.0-beta.2",
+      releaseTrack: "beta",
+      manifest: { packageName, name: "Track Test", version: "1.1.0-beta.2" },
+      bundle: await releaseBundle({ packageName, name: "Track Test", version: "1.1.0-beta.2" }),
+    });
+    await miniapps.submitRelease(developer, packageName, secondBeta.id);
+    await miniapps.approveRelease({ releaseId: secondBeta.id, adminId: "admin@mentraglass.com" });
+    await miniapps.publishRelease({ releaseId: secondBeta.id, adminId: "admin@mentraglass.com" });
+
+    const adminHistory = await miniapps.listAdminSubmissions();
+    expect(adminHistory.find(row => row.id === beta.id)?.storeListing.subtitle).toBe("Beta listing");
+    expect(adminHistory.find(row => row.id === secondBeta.id)?.storeListing.subtitle).toBe("Second beta listing");
   });
 });
 

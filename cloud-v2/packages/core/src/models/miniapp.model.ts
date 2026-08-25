@@ -21,6 +21,14 @@ const StoreListingSchema = new Schema(
   { _id: false },
 );
 
+const StoreListingOperationLeaseSchema = new Schema(
+  {
+    token: { type: String, required: true },
+    expiresAt: { type: Date, required: true },
+  },
+  { _id: false },
+);
+
 const MiniAppSchema = new Schema(
   {
     orgId: { type: String, required: true, index: true },
@@ -33,6 +41,12 @@ const MiniAppSchema = new Schema(
     publishedStoreListing: { type: StoreListingSchema, default: null },
     /** Immutable public snapshot paired with the active beta release. */
     publishedBetaStoreListing: { type: StoreListingSchema, default: null },
+    /**
+     * Short database-backed lease shared by submission and artwork deletion.
+     * It prevents a frozen review snapshot from racing an object deletion,
+     * including when the operations land on different Core processes.
+     */
+    storeListingOperationLease: { type: StoreListingOperationLeaseSchema, default: null },
     status: { type: String, enum: MINIAPP_STATUSES, default: "active", index: true },
     /** Active stable release. Kept under the original name for deployed-row compatibility. */
     activeReleaseId: { type: String, default: null },

@@ -51,6 +51,8 @@ export interface CreateStoreAssetInput {
 
 const MAX_STORE_ASSET_BYTES = 10 * 1024 * 1024;
 const STORE_ASSET_CONTENT_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/avif"]);
+const STORE_LISTING_LEASE_MS = 60_000;
+const STORE_LISTING_LEASE_WAIT_MS = 10_000;
 
 export interface AdminReleaseDecisionInput {
   releaseId: string;
@@ -144,44 +146,54 @@ export class MiniAppService {
   }
 
   async submitRelease(developer: DeveloperIdentity, packageName: string, releaseId: string) {
-    const app = await this.requireMiniApp(developer, normalizePackageName(packageName));
-    const release = await MiniAppReleaseModel.findOne({
-      _id: releaseId,
-      orgId: developer.orgId,
-      miniAppId: app._id.toString(),
+    const authorizedApp = await this.requireMiniApp(developer, normalizePackageName(packageName));
+    return withStoreListingLease(authorizedApp._id.toString(), async () => {
+      // Re-read after acquiring the cross-process lease. A deletion that won
+      // the lease first may have removed an artwork reference from the draft.
+      const app = await MiniAppModel.findOne({
+        _id: authorizedApp._id,
+        orgId: developer.orgId,
+        status: { $ne: "archived" },
+      });
+      if (!app) throw new MiniAppServiceError("not_found", "miniapp not found", 404);
+      const release = await MiniAppReleaseModel.findOne({
+        _id: releaseId,
+        orgId: developer.orgId,
+        miniAppId: app._id.toString(),
+      });
+      if (!release) throw new MiniAppServiceError("not_found", "release not found", 404);
+      if (!release.releaseBundleAssetId || !release.bundleSha256) {
+        throw new MiniAppServiceError("missing_bundle", "release must have a bundle before it can be submitted", 409);
+      }
+      if (!["draft", "rejected"].includes(release.status)) {
+        throw new MiniAppServiceError("invalid_release_state", "only draft or rejected releases can be submitted", 409);
+      }
+
+      release.status = "submitted";
+      release.submittedAt = new Date();
+      release.reviewNotes = null;
+      // Freeze the content entering review. Approval and publication must never
+      // pick up developer edits made after this transition.
+      release.submittedStoreListing = serializeStoreListing(app.storeListing);
+      release.reviewedStoreListing = null;
+      await release.save();
+
+      // Fire-and-forget: a Slack failure can never delay or fail the submit
+      // response, and an unset webhook env var is a silent skip.
+      notifyMiniAppSubmissionSlack({
+        releaseId: release._id.toString(),
+        packageName: release.packageName,
+        version: release.version,
+        releaseTrack: release.releaseTrack === "beta" ? "beta" : "stable",
+        appName: app.displayName,
+        description: app.description ?? null,
+        developerEmail: developer.email ?? null,
+        orgId: developer.orgId,
+        manifest: release.manifest as Record<string, unknown> | null,
+      }).catch(() => {});
+
+      return serializeRelease(release.toObject());
     });
-    if (!release) throw new MiniAppServiceError("not_found", "release not found", 404);
-    if (!release.releaseBundleAssetId || !release.bundleSha256) {
-      throw new MiniAppServiceError("missing_bundle", "release must have a bundle before it can be submitted", 409);
-    }
-    if (!["draft", "rejected"].includes(release.status)) {
-      throw new MiniAppServiceError("invalid_release_state", "only draft or rejected releases can be submitted", 409);
-    }
-
-    release.status = "submitted";
-    release.submittedAt = new Date();
-    release.reviewNotes = null;
-    // Freeze the content entering review. Approval and publication must never
-    // pick up developer edits made after this transition.
-    release.submittedStoreListing = serializeStoreListing(app.storeListing);
-    release.reviewedStoreListing = null;
-    await release.save();
-
-    // Fire-and-forget: a Slack failure can never delay or fail the submit
-    // response, and an unset webhook env var is a silent skip.
-    notifyMiniAppSubmissionSlack({
-      releaseId: release._id.toString(),
-      packageName: release.packageName,
-      version: release.version,
-      releaseTrack: release.releaseTrack === "beta" ? "beta" : "stable",
-      appName: app.displayName,
-      description: app.description ?? null,
-      developerEmail: developer.email ?? null,
-      orgId: developer.orgId,
-      manifest: release.manifest as Record<string, unknown> | null,
-    }).catch(() => {});
-
-    return serializeRelease(release.toObject());
   }
 
   async listAdminSubmissions() {
@@ -212,9 +224,7 @@ export class MiniAppService {
       const assets = assetsByAppId.get(release.miniAppId) ?? [];
       const listingSource =
         release.status === "published"
-          ? release.releaseTrack === "beta"
-            ? app?.publishedBetaStoreListing
-            : app?.publishedStoreListing
+          ? release.reviewedStoreListing
           : release.status === "accepted"
             ? release.reviewedStoreListing
             : ["submitted", "in_review"].includes(release.status)
@@ -325,6 +335,10 @@ export class MiniAppService {
     }
 
     release.status = "published";
+    // Persist the complete publication revision on the release itself so
+    // historical admin rows do not drift when a newer release on this track
+    // replaces the app-level active snapshot.
+    release.reviewedStoreListing = reviewedStoreListing;
     release.publishedAt = release.publishedAt ?? new Date();
     release.reviewedBy = input.adminId;
     if (input.notes?.trim()) release.reviewNotes = input.notes.trim();
@@ -639,62 +653,70 @@ export class MiniAppService {
   }
 
   async deleteStoreAsset(developer: DeveloperIdentity, packageName: string, assetId: string) {
-    const app = await this.requireMiniApp(developer, normalizePackageName(packageName));
-    const asset = await MiniAppAssetModel.findOne({
-      _id: assetId,
-      orgId: developer.orgId,
-      miniAppId: app._id.toString(),
-      role: { $in: ["store_icon", "store_cover", "gallery_screenshot"] },
+    const authorizedApp = await this.requireMiniApp(developer, normalizePackageName(packageName));
+    return withStoreListingLease(authorizedApp._id.toString(), async () => {
+      const app = await MiniAppModel.findOne({
+        _id: authorizedApp._id,
+        orgId: developer.orgId,
+        status: { $ne: "archived" },
+      });
+      if (!app) throw new MiniAppServiceError("not_found", "miniapp not found", 404);
+      const asset = await MiniAppAssetModel.findOne({
+        _id: assetId,
+        orgId: developer.orgId,
+        miniAppId: app._id.toString(),
+        role: { $in: ["store_icon", "store_cover", "gallery_screenshot"] },
+      });
+      if (!asset) throw new MiniAppServiceError("not_found", "Store asset not found", 404);
+      const publishedAssetIds = new Set([
+        app.publishedStoreListing?.iconAssetId,
+        app.publishedStoreListing?.coverAssetId,
+        ...(app.publishedStoreListing?.screenshotAssetIds ?? []),
+        app.publishedBetaStoreListing?.iconAssetId,
+        app.publishedBetaStoreListing?.coverAssetId,
+        ...(app.publishedBetaStoreListing?.screenshotAssetIds ?? []),
+      ]);
+      if (publishedAssetIds.has(assetId)) {
+        throw new MiniAppServiceError(
+          "published_asset",
+          "Published Store artwork cannot be deleted until a replacement listing is published",
+          409,
+        );
+      }
+      const reviewSnapshot = await MiniAppReleaseModel.exists({
+        miniAppId: app._id.toString(),
+        status: { $in: ["submitted", "in_review", "accepted", "published"] },
+        $or: [
+          { "submittedStoreListing.iconAssetId": assetId },
+          { "submittedStoreListing.coverAssetId": assetId },
+          { "submittedStoreListing.screenshotAssetIds": assetId },
+          { "reviewedStoreListing.iconAssetId": assetId },
+          { "reviewedStoreListing.coverAssetId": assetId },
+          { "reviewedStoreListing.screenshotAssetIds": assetId },
+        ],
+      });
+      if (reviewSnapshot) {
+        throw new MiniAppServiceError(
+          "reviewed_asset",
+          "Store artwork in a frozen review or publication revision cannot be deleted",
+          409,
+        );
+      }
+      await storage.deleteObject(asset.storageKey);
+      await asset.deleteOne();
+      await Promise.all([
+        MiniAppModel.updateOne(
+          { "_id": app._id, "storeListing.iconAssetId": assetId },
+          { $set: { "storeListing.iconAssetId": null } },
+        ),
+        MiniAppModel.updateOne(
+          { "_id": app._id, "storeListing.coverAssetId": assetId },
+          { $set: { "storeListing.coverAssetId": null } },
+        ),
+        MiniAppModel.updateOne({ _id: app._id }, { $pull: { "storeListing.screenshotAssetIds": assetId } }),
+      ]);
+      return { ok: true };
     });
-    if (!asset) throw new MiniAppServiceError("not_found", "Store asset not found", 404);
-    const publishedAssetIds = new Set([
-      app.publishedStoreListing?.iconAssetId,
-      app.publishedStoreListing?.coverAssetId,
-      ...(app.publishedStoreListing?.screenshotAssetIds ?? []),
-      app.publishedBetaStoreListing?.iconAssetId,
-      app.publishedBetaStoreListing?.coverAssetId,
-      ...(app.publishedBetaStoreListing?.screenshotAssetIds ?? []),
-    ]);
-    if (publishedAssetIds.has(assetId)) {
-      throw new MiniAppServiceError(
-        "published_asset",
-        "Published Store artwork cannot be deleted until a replacement listing is published",
-        409,
-      );
-    }
-    const reviewSnapshot = await MiniAppReleaseModel.exists({
-      miniAppId: app._id.toString(),
-      status: { $in: ["submitted", "in_review", "accepted"] },
-      $or: [
-        { "submittedStoreListing.iconAssetId": assetId },
-        { "submittedStoreListing.coverAssetId": assetId },
-        { "submittedStoreListing.screenshotAssetIds": assetId },
-        { "reviewedStoreListing.iconAssetId": assetId },
-        { "reviewedStoreListing.coverAssetId": assetId },
-        { "reviewedStoreListing.screenshotAssetIds": assetId },
-      ],
-    });
-    if (reviewSnapshot) {
-      throw new MiniAppServiceError(
-        "reviewed_asset",
-        "Store artwork in an active review cannot be deleted until the release is rejected or published",
-        409,
-      );
-    }
-    await storage.deleteObject(asset.storageKey);
-    await asset.deleteOne();
-    await Promise.all([
-      MiniAppModel.updateOne(
-        { "_id": app._id, "storeListing.iconAssetId": assetId },
-        { $set: { "storeListing.iconAssetId": null } },
-      ),
-      MiniAppModel.updateOne(
-        { "_id": app._id, "storeListing.coverAssetId": assetId },
-        { $set: { "storeListing.coverAssetId": null } },
-      ),
-      MiniAppModel.updateOne({ _id: app._id }, { $pull: { "storeListing.screenshotAssetIds": assetId } }),
-    ]);
-    return { ok: true };
   }
 
   private async getMiniAppById(developer: DeveloperIdentity, id: string) {
@@ -824,6 +846,49 @@ function cleanText(value: string | null, maxLength: number): string | null {
     throw new MiniAppServiceError("text_too_long", `listing text cannot exceed ${maxLength} characters`, 400);
   }
   return cleaned || null;
+}
+
+async function withStoreListingLease<T>(miniAppId: string, operation: () => Promise<T>): Promise<T> {
+  const token = ulid();
+  const waitDeadline = Date.now() + STORE_LISTING_LEASE_WAIT_MS;
+  while (Date.now() < waitDeadline) {
+    const now = new Date();
+    const locked = await MiniAppModel.findOneAndUpdate(
+      {
+        _id: miniAppId,
+        $or: [
+          { storeListingOperationLease: null },
+          { storeListingOperationLease: { $exists: false } },
+          { "storeListingOperationLease.expiresAt": { $lte: now } },
+        ],
+      },
+      {
+        $set: {
+          storeListingOperationLease: {
+            token,
+            expiresAt: new Date(now.getTime() + STORE_LISTING_LEASE_MS),
+          },
+        },
+      },
+      { new: true },
+    );
+    if (locked) {
+      try {
+        return await operation();
+      } finally {
+        await MiniAppModel.updateOne(
+          { _id: miniAppId, "storeListingOperationLease.token": token },
+          { $set: { storeListingOperationLease: null } },
+        ).catch(error => logger.error({ error, miniAppId }, "failed to release Store listing operation lease"));
+      }
+    }
+    await new Promise(resolve => setTimeout(resolve, 25));
+  }
+  throw new MiniAppServiceError(
+    "store_listing_busy",
+    "Store listing is busy; retry the operation",
+    409,
+  );
 }
 
 function serializeStoreListing(listing: any) {
