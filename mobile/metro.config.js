@@ -34,6 +34,7 @@ config.resolver.assetExts = [...config.resolver.assetExts, "html"]
 config.watchFolders = [
   path.resolve(__dirname, "./modules/bluetooth-sdk"),
   path.resolve(__dirname, "./modules/engine"),
+  path.resolve(__dirname, "./modules/engine-host-internal"),
   path.resolve(__dirname, "./modules/crust"),
   path.resolve(__dirname, "./modules/miniapp"),
   path.resolve(__dirname, "../cloud/packages/types/src"),
@@ -105,7 +106,9 @@ const MINIAPP_ALIASES = {
 // `undefined`. Forcing these to the app's own copy makes resolution immune to
 // install-layout drift.
 const SINGLETONS = ["react-native", "expo", "react"]
-const singletonPath = Object.fromEntries(SINGLETONS.map((name) => [name, path.resolve(__dirname, "node_modules", name)]))
+const singletonPath = Object.fromEntries(
+  SINGLETONS.map((name) => [name, path.resolve(__dirname, "node_modules", name)]),
+)
 
 const baseResolveRequest = config.resolver.resolveRequest
 config.resolver.resolveRequest = (context, moduleName, platform) => {
@@ -120,23 +123,30 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
   }
   for (const name of SINGLETONS) {
     if (moduleName === name || moduleName.startsWith(`${name}/`)) {
-      const target = moduleName === name ? singletonPath[name] : path.join(singletonPath[name], moduleName.slice(name.length + 1))
+      const target =
+        moduleName === name ? singletonPath[name] : path.join(singletonPath[name], moduleName.slice(name.length + 1))
       return (baseResolveRequest ?? context.resolveRequest)(context, target, platform)
     }
   }
-  // @mentra/engine (+ /internal, /devtools, /react) -> TypeScript SOURCE. The package
+  // @mentra/engine (+ /ota) -> TypeScript SOURCE. The package
   // "default" export points at build/, and Metro will happily bundle that stale
-  // compile if we only alias the root specifier. LocalMiniappRuntime lives on
-  // /internal — that's why miniapp_scan_qr stayed unimplemented until this
-  // alias covered the subpath too.
+  // compile if we only alias the root specifier.
   if (moduleName === "@mentra/engine") {
     return (baseResolveRequest ?? context.resolveRequest)(context, path.join(ENGINE_SRC, "index"), platform)
   }
-  if (moduleName === "@mentra/engine/internal") {
-    return (baseResolveRequest ?? context.resolveRequest)(context, path.join(ENGINE_SRC, "internal"), platform)
+  if (moduleName === "@mentra/engine-host-internal") {
+    return (baseResolveRequest ?? context.resolveRequest)(
+      context,
+      path.join(__dirname, "modules/engine-host-internal/src/index"),
+      platform,
+    )
   }
-  if (moduleName === "@mentra/engine/devtools") {
-    return (baseResolveRequest ?? context.resolveRequest)(context, path.join(ENGINE_SRC, "devtools"), platform)
+  if (moduleName === "@mentra/engine-host-internal/devtools") {
+    return (baseResolveRequest ?? context.resolveRequest)(
+      context,
+      path.join(__dirname, "modules/engine-host-internal/src/devtools"),
+      platform,
+    )
   }
   if (moduleName === "@mentra/engine/ota") {
     return (baseResolveRequest ?? context.resolveRequest)(context, path.join(ENGINE_SRC, "react/index"), platform)

@@ -1,0 +1,168 @@
+name: Reusable Coordinated Mobile Promotion
+
+on:
+  workflow_call:
+    inputs:
+      release_plan_artifact:
+        required: true
+        type: string
+    secrets:
+      GOOGLE_PLAY_KEY_JSON:
+        required: true
+      ASC_API_KEY_P8_B64:
+        required: true
+      ASC_API_KEY_ID:
+        required: true
+      ASC_API_ISSUER_ID:
+        required: true
+    outputs:
+      result_artifact:
+        value: ${{ jobs.promote.outputs.result_artifact }}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: coordinated-production-mobile-promotion
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    name: Promote exact beta mobile binaries
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    outputs:
+      result_artifact: ${{ steps.result.outputs.name }}
+    steps:
+      # This job promotes already-built beta binaries; it does not rebuild from
+      # source. Use the current promotion tooling while the plan job separately
+      # verifies the selected beta source commit and artifact hashes.
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.release_plan_artifact }}
+          path: release-intent
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+
+      - name: Install pinned store promotion tooling
+        working-directory: mobile
+        run: bundle install
+
+      - name: Inject Google Play and App Store Connect credentials
+        uses: ./.github/actions/inject-signing
+        with:
+          play: "true"
+          ios: "true"
+          google-play-key-json: ${{ secrets.GOOGLE_PLAY_KEY_JSON }}
+          asc-api-key-p8-b64: ${{ secrets.ASC_API_KEY_P8_B64 }}
+          asc-api-key-id: ${{ secrets.ASC_API_KEY_ID }}
+          asc-api-issuer-id: ${{ secrets.ASC_API_ISSUER_ID }}
+
+      - name: Download and verify exact beta mobile artifacts
+        run: |
+          set -euo pipefail
+          mkdir -p promotion-input/mobile
+          selection=release-intent/production-selection.json
+          download() {
+            local key="$1" output="$2"
+            local url expected actual
+            url=$(jq -er ".mobileArtifacts.${key}.url" "$selection")
+            expected=$(jq -er ".mobileArtifacts.${key}.sha256" "$selection")
+            curl --fail --silent --show-error --location --retry 3 "$url" -o "$output"
+            actual=$(sha256sum "$output" | awk '{print $1}')
+            [[ "$actual" == "$expected" ]]
+          }
+          download androidApk promotion-input/mobile/app.apk
+          download androidAab promotion-input/mobile/app.aab
+          download iosIpa promotion-input/mobile/app.ipa
+
+      - name: Promote the exact Android version code to production
+        working-directory: mobile
+        env:
+          GOOGLE_PLAY_PROMOTION_OUTPUT: ${{ runner.temp }}/google-play-promotion.json
+          GOOGLE_PLAY_SOURCE_TRACK: beta
+          GOOGLE_PLAY_TARGET_TRACK: production
+        run: |
+          set -euo pipefail
+          export GOOGLE_PLAY_VERSION_CODE
+          GOOGLE_PLAY_VERSION_CODE=$(jq -er .native.buildNumber ../release-intent/release-plan.json)
+          rm -rf fastlane
+          mkdir fastlane
+          cp ci/fastlane-android/Fastfile ci/fastlane-android/Appfile fastlane/
+          bundle exec fastlane promote_google_play
+
+      - name: Resolve App Store Connect credential path
+        id: asc
+        run: |
+          set -euo pipefail
+          key_path=$(sed -n 's/^ASC_API_KEY_PATH=//p' "$MENTRA_ASC_CONFIG_PATH")
+          test -f "$key_path"
+          echo "key_path=$key_path" >> "$GITHUB_OUTPUT"
+
+      - name: Check whether the exact iOS build is already in production review
+        id: app-store
+        run: >-
+          node mobile/scripts/app-store-connect-build.mjs production-status
+          --issuer-id "${{ secrets.ASC_API_ISSUER_ID }}"
+          --key-id "${{ secrets.ASC_API_KEY_ID }}"
+          --key-path "${{ steps.asc.outputs.key_path }}"
+          --bundle-id com.mentra.mentra
+          --app-version "$(jq -er .native.marketingVersion release-intent/release-plan.json)"
+          --build-number "$(jq -er .native.buildNumber release-intent/release-plan.json)"
+
+      - name: Submit the exact existing iOS build to App Review
+        if: steps.app-store.outputs.promoted != 'true'
+        working-directory: mobile
+        env:
+          ASC_API_ISSUER_ID: ${{ secrets.ASC_API_ISSUER_ID }}
+          ASC_API_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+          ASC_API_KEY_PATH: ${{ steps.asc.outputs.key_path }}
+        run: |
+          set -euo pipefail
+          export MENTRA_MARKETING_VERSION MENTRA_BUILD_NUMBER
+          MENTRA_MARKETING_VERSION=$(jq -er .native.marketingVersion ../release-intent/release-plan.json)
+          MENTRA_BUILD_NUMBER=$(jq -er .native.buildNumber ../release-intent/release-plan.json)
+          rm -rf fastlane
+          mkdir fastlane
+          cp ci/fastlane-ios-production/Fastfile fastlane/Fastfile
+          bundle exec fastlane promote_app_store
+
+      - name: Verify iOS entered the production review flow
+        run: >-
+          node mobile/scripts/app-store-connect-build.mjs wait-production
+          --issuer-id "${{ secrets.ASC_API_ISSUER_ID }}"
+          --key-id "${{ secrets.ASC_API_KEY_ID }}"
+          --key-path "${{ steps.asc.outputs.key_path }}"
+          --bundle-id com.mentra.mentra
+          --app-version "$(jq -er .native.marketingVersion release-intent/release-plan.json)"
+          --build-number "$(jq -er .native.buildNumber release-intent/release-plan.json)"
+
+      - name: Record exact promoted mobile and OTA artifacts
+        run: >-
+          node .github/scripts/create-production-promotion-records.mjs
+          --plan release-intent/release-plan.json
+          --selection release-intent/production-selection.json
+          --apk promotion-input/mobile/app.apk
+          --aab promotion-input/mobile/app.aab
+          --ipa promotion-input/mobile/app.ipa
+          --provenance-url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          --output production-promotion-records.json
+
+      - name: Name promotion result artifact
+        id: result
+        run: echo "name=coordinated-production-promotion-${{ github.run_id }}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.result.outputs.name }}
+          path: production-promotion-records.json
+          if-no-files-found: error
+          retention-days: 90

@@ -1,6 +1,6 @@
 {
   "name": "mentraos",
-  "version": "0.0.1",
+  "version": "3.1.0",
   "private": true,
   "main": "expo-router/entry",
   "workspaces": [
@@ -73,6 +73,7 @@
     "@mentra/crust": "workspace:*",
     "@mentra/cloud-client": "workspace:*",
     "@mentra/engine": "workspace:*",
+    "@mentra/engine-host-internal": "workspace:*",
     "@mentra/jspolyfill": "workspace:*",
     "@mentra/miniapp": "workspace:*",
     "@react-native-community/netinfo": "11.5.2",

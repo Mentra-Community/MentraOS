@@ -54,7 +54,8 @@ export async function setBuildEnv() {
   await clearAutolinkingCache()
 
   const gitCommit = (await $`git rev-parse --short HEAD`).stdout.trim()
-  const gitBranch = (await $`git rev-parse --abbrev-ref HEAD`).stdout.trim()
+  const gitBranch =
+    process.env.MENTRA_COORDINATED_RELEASE_CHANNEL || (await $`git rev-parse --abbrev-ref HEAD`).stdout.trim()
   const gitUsername = (await $`git config user.name`).stdout.trim().replace(/ /g, "_")  // format: 2025-11-18_12-00
   const buildTime = new Date()
     .toLocaleString("en-US", {

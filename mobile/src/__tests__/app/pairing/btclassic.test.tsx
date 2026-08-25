@@ -63,7 +63,7 @@ import BtClassicPairingScreen from "@/app/pairing/btclassic"
 import {usePushPrevious} from "@/contexts/NavigationHistoryContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {SETTINGS} from "@mentra/engine"
-import {useSettingsStore} from "@mentra/engine/internal"
+import {useSettingsStore} from "@mentra/engine-host-internal"
 import {useGlassesStore} from "../../../../modules/engine/src/stores/glasses"
 
 const device = {id: "a", model: "Mentra Live", name: "MENTRA_LIVE_BLE_001", address: "a"}

@@ -27,7 +27,7 @@ import {
   phoneLocationService,
   ttsModelManager,
   useAppStatusStore,
-} from "@mentra/engine/internal"
+} from "@mentra/engine-host-internal"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import {useDebugStore} from "@/stores/debug"
 import {checkFeaturePermissions, PermissionFeatures} from "@/utils/PermissionsUtils"

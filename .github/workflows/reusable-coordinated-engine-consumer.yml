@@ -1,0 +1,163 @@
+name: Reusable Coordinated Engine Consumer Gate
+
+on:
+  workflow_call:
+    inputs:
+      source_commit:
+        required: true
+        type: string
+      release_plan_artifact:
+        required: true
+        type: string
+      dry_run:
+        required: false
+        default: false
+        type: boolean
+    secrets:
+      MAPBOX_DOWNLOADS_TOKEN:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  source-only:
+    name: Defer registry gate during a dry run
+    if: inputs.dry_run == true
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Registry-backed consumer validation runs only after public package publication."
+
+  android:
+    name: Install public Engine and build Android host
+    if: inputs.dry_run != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_commit }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.release_plan_artifact }}
+          path: release-intent
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          registry-url: https://registry.npmjs.org
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: temurin
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Require native dependency credentials
+        env:
+          MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
+        run: test -n "$MAPBOX_DOWNLOADS_TOKEN"
+
+      - name: Prepare a clean external Engine host
+        run: |
+          identity=$(jq -er .releaseIdentity release-intent/release-plan.json)
+          node .github/scripts/prepare-external-engine-fixture.mjs \
+            --source sdk/example-oem-app \
+            --output "$RUNNER_TEMP/engine-consumer" \
+            --release-identity "$identity"
+
+      - name: Install only the public Engine entry and its registry closure
+        working-directory: ${{ runner.temp }}/engine-consumer
+        run: npm install --ignore-scripts --no-audit --no-fund
+
+      - name: Verify exact public dependency resolution
+        run: >-
+          node .github/scripts/verify-external-engine-install.mjs
+          --fixture "$RUNNER_TEMP/engine-consumer"
+          --plan release-intent/release-plan.json
+
+      - name: Verify public declarations and Metro resolution
+        working-directory: ${{ runner.temp }}/engine-consumer
+        run: |
+          npx tsc --noEmit
+          npx expo export --platform android --output-dir dist/android
+
+      - name: Prebuild and compile the autolinked Android host
+        working-directory: ${{ runner.temp }}/engine-consumer
+        env:
+          MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
+        run: |
+          npx expo prebuild --clean --no-install --platform android
+          ./android/gradlew -p android :app:assembleDebug --no-daemon --stacktrace
+
+  ios:
+    name: Install public Engine and build iOS host
+    if: inputs.dry_run != true
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_commit }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.release_plan_artifact }}
+          path: release-intent
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          registry-url: https://registry.npmjs.org
+
+      - name: Configure Mapbox package access
+        env:
+          MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$MAPBOX_DOWNLOADS_TOKEN"
+          touch "$HOME/.netrc"
+          chmod 600 "$HOME/.netrc"
+          printf 'machine api.mapbox.com\n  login mapbox\n  password %s\n' "$MAPBOX_DOWNLOADS_TOKEN" >> "$HOME/.netrc"
+
+      - name: Prepare a clean external Engine host
+        run: |
+          identity=$(jq -er .releaseIdentity release-intent/release-plan.json)
+          node .github/scripts/prepare-external-engine-fixture.mjs \
+            --source sdk/example-oem-app \
+            --output "$RUNNER_TEMP/engine-consumer" \
+            --release-identity "$identity"
+
+      - name: Install only the public Engine entry and its registry closure
+        working-directory: ${{ runner.temp }}/engine-consumer
+        run: npm install --ignore-scripts --no-audit --no-fund
+
+      - name: Verify exact public dependency resolution
+        run: >-
+          node .github/scripts/verify-external-engine-install.mjs
+          --fixture "$RUNNER_TEMP/engine-consumer"
+          --plan release-intent/release-plan.json
+
+      - name: Prebuild and resolve the autolinked iOS host
+        working-directory: ${{ runner.temp }}/engine-consumer
+        run: |
+          npx expo prebuild --clean --no-install --platform ios
+          cd ios
+          pod install --repo-update
+
+      - name: Compile the external iOS host without signing
+        working-directory: ${{ runner.temp }}/engine-consumer/ios
+        run: |
+          set -euo pipefail
+          workspace=$(find . -maxdepth 1 -name '*.xcworkspace' -print -quit)
+          test -n "$workspace"
+          scheme=$(xcodebuild -list -json -workspace "$workspace" | jq -er '.workspace.schemes[0]')
+          xcodebuild \
+            -workspace "$workspace" \
+            -scheme "$scheme" \
+            -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO \
+            build

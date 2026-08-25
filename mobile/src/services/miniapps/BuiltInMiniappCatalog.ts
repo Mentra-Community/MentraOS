@@ -9,7 +9,7 @@ import {
   engine,
   type ClientApp,
 } from "@mentra/engine"
-import {appRegistry, installAppStoreHooks} from "@mentra/engine/internal"
+import {appRegistry, installAppStoreHooks} from "@mentra/engine-host-internal"
 
 import {DevIcon} from "@/components/miniapps/DevIcons"
 import {isOfflineHosted} from "@/components/miniapp/offlineHostedPackages"

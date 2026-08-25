@@ -1,6 +1,6 @@
 import {Platform} from "react-native"
 
-import {appRegistry} from "@mentra/engine/internal"
+import {appRegistry} from "@mentra/engine-host-internal"
 
 import {miniappDeveloperPackageName, notifyPackageName} from "@/constants/miniapps"
 import {SETTINGS, engine} from "@mentra/engine"

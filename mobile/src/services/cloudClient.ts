@@ -12,7 +12,7 @@
  * host. Existing `@/services/cloudClient` consumers keep working through this
  * delegating shim while construction and runtime wiring live in island.
  */
-import {cloudClientService} from "@mentra/engine/internal"
+import {cloudClientService} from "@mentra/engine-host-internal"
 
 import {SETTINGS, engine} from "@mentra/engine"
 import {devServerHost, METRO_AUTO} from "@/utils/cloudClient/devHost"
