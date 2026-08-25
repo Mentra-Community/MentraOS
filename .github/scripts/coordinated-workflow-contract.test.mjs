@@ -74,12 +74,28 @@ test("mobile release selects an existing Doppler token for its backend", () => {
   assert.doesNotMatch(mobile, /DOPPLER_TOKEN_MOBILE_PRD \|\|/)
 })
 
-test("Maven generation builds the Crust config plugin before Expo prebuild", () => {
+test("Maven generation builds every local config plugin before Expo prebuild", () => {
   const sdkNative = jobBlock(workflow("reusable-coordinated-sdk-native.yml"), "maven")
-  const pluginBuild = sdkNative.indexOf("bun run build:plugin")
+  const crustPluginBuild = sdkNative.search(
+    /working-directory: mobile\/modules\/crust\n\s+run: bun run build:plugin/,
+  )
+  const bluetoothPluginBuild = sdkNative.search(
+    /working-directory: mobile\/modules\/bluetooth-sdk\n\s+run: bun run build:plugin/,
+  )
   const prebuild = sdkNative.indexOf("bun expo prebuild --platform android")
 
-  assert.notEqual(pluginBuild, -1)
+  assert.notEqual(crustPluginBuild, -1)
+  assert.notEqual(bluetoothPluginBuild, -1)
   assert.notEqual(prebuild, -1)
-  assert.ok(pluginBuild < prebuild)
+  assert.ok(crustPluginBuild < prebuild)
+  assert.ok(bluetoothPluginBuild < prebuild)
+})
+
+test("Android release preserves the Expo-configured marketing version", () => {
+  const androidPlugin = readFileSync(new URL("../../mobile/plugins/android.ts", import.meta.url), "utf8")
+  const mobile = workflow("reusable-coordinated-mobile.yml")
+
+  assert.doesNotMatch(androidPlugin, /replace\([^\n]*versionName/)
+  assert.match(mobile, /version_name=\$\(sed -n "s\/\.\*versionName=/)
+  assert.match(mobile, /Android versionName \$\{version_name:-<missing>\} does not match \$EXPECTED_VERSION/)
 })

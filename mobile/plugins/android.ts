@@ -108,10 +108,7 @@ if (project.hasProperty("sentryUploadEnabled") && project.property("sentryUpload
       )
     }
 
-    // 2. Update versionName to 3.0.0
-    buildGradle = buildGradle.replace(/versionName\s+["'][^"']*["']/, 'versionName "3.0.0"')
-
-    // 3. Add externalNativeBuild configuration in defaultConfig
+    // 2. Add externalNativeBuild configuration in defaultConfig
     if (!buildGradle.includes("externalNativeBuild")) {
       buildGradle = buildGradle.replace(
         /(buildConfigField\s+"String",\s+"REACT_NATIVE_RELEASE_LEVEL"[^}]+)/,
@@ -127,7 +124,7 @@ if (project.hasProperty("sentryUploadEnabled") && project.property("sentryUpload
       )
     }
 
-    // 4. Add additional packagingOptions
+    // 3. Add additional packagingOptions
     if (!buildGradle.includes("pickFirst '**/libjsc.so'")) {
       buildGradle = buildGradle.replace(
         /(packagingOptions\s*{[^}]*jniLibs\s*{[^}]*})/,
