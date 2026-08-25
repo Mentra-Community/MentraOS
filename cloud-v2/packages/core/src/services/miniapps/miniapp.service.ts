@@ -274,6 +274,10 @@ export class MiniAppService {
     release.reviewedBy = input.adminId;
     if (input.notes?.trim()) release.reviewNotes = input.notes.trim();
     app.activeReleaseId = release._id.toString();
+    // The public catalog must never read the developer-editable listing. A
+    // publication decision snapshots the exact moderated text and artwork;
+    // subsequent developer edits remain private until another publication.
+    app.publishedStoreListing = app.storeListing;
 
     await Promise.all([release.save(), app.save()]);
     return serializeRelease(release.toObject());
@@ -282,8 +286,15 @@ export class MiniAppService {
   async updateStoreModeration(input: AdminStoreModerationInput) {
     const packageName = normalizePackageName(input.packageName);
     const updates: Record<string, unknown> = {};
-    if (input.reviewTier !== undefined) updates["storeListing.reviewTier"] = input.reviewTier;
-    if (input.featured !== undefined) updates["storeListing.featured"] = input.featured;
+    const publishedUpdates: Record<string, unknown> = {};
+    if (input.reviewTier !== undefined) {
+      updates["storeListing.reviewTier"] = input.reviewTier;
+      publishedUpdates["publishedStoreListing.reviewTier"] = input.reviewTier;
+    }
+    if (input.featured !== undefined) {
+      updates["storeListing.featured"] = input.featured;
+      publishedUpdates["publishedStoreListing.featured"] = input.featured;
+    }
     if (Object.keys(updates).length === 0) {
       throw new MiniAppServiceError("invalid_request", "reviewTier or featured is required", 400);
     }
@@ -293,6 +304,9 @@ export class MiniAppService {
       { new: true },
     ).lean();
     if (!app) throw new MiniAppServiceError("not_found", "miniapp not found", 404);
+    if (app.publishedStoreListing && Object.keys(publishedUpdates).length > 0) {
+      await MiniAppModel.updateOne({ _id: app._id }, { $set: publishedUpdates });
+    }
     return {
       packageName: app.packageName,
       reviewTier: app.storeListing?.reviewTier ?? "community",
@@ -562,6 +576,18 @@ export class MiniAppService {
       role: { $in: ["store_icon", "store_cover", "gallery_screenshot"] },
     });
     if (!asset) throw new MiniAppServiceError("not_found", "Store asset not found", 404);
+    const publishedAssetIds = new Set([
+      app.publishedStoreListing?.iconAssetId,
+      app.publishedStoreListing?.coverAssetId,
+      ...(app.publishedStoreListing?.screenshotAssetIds ?? []),
+    ]);
+    if (publishedAssetIds.has(assetId)) {
+      throw new MiniAppServiceError(
+        "published_asset",
+        "Published Store artwork cannot be deleted until a replacement listing is published",
+        409,
+      );
+    }
     await storage.deleteObject(asset.storageKey);
     await asset.deleteOne();
     await Promise.all([

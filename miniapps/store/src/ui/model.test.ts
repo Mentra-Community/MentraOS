@@ -3,7 +3,7 @@
 import {describe, expect, test} from "bun:test"
 
 import type {InstalledApp, StoreApp} from "../shared/types"
-import {isStoreActionDisabled, resolveSelectedApp} from "./model"
+import {filterStoreCategory, isStoreActionDisabled, resolveSelectedApp, selectCompatibleUpdates} from "./model"
 
 function installed(isCompatible: boolean): InstalledApp {
   return {
@@ -16,13 +16,13 @@ function installed(isCompatible: boolean): InstalledApp {
   }
 }
 
-function app(version: string): StoreApp {
+function app(version: string, packageName = "com.example.weather", categories: string[] = []): StoreApp {
   return {
-    packageName: "com.example.weather",
+    packageName,
     name: "Weather",
     subtitle: null,
     description: null,
-    categories: [],
+    categories,
     privacyPolicyUrl: null,
     supportUrl: null,
     websiteUrl: null,
@@ -80,5 +80,24 @@ describe("Store UI model", () => {
     expect(resolveSelectedApp([original], original.packageName)?.release.version).toBe("1.0.0")
     expect(resolveSelectedApp([refreshed], original.packageName)?.release.version).toBe("2.0.0")
     expect(resolveSelectedApp([], original.packageName)).toBeNull()
+  })
+
+  test("Update all excludes releases blocked by host, SDK, or hardware compatibility", () => {
+    const current = installed(true)
+    const compatible = app("2.0.0")
+    const blocked = app("3.0.0")
+    blocked.release.installCompatibility = {compatible: false, blocker: "sdk", reason: "newer SDK required"}
+
+    expect(selectCompatibleUpdates([compatible, blocked], new Map([[current.packageName, current]]))).toEqual([
+      compatible,
+    ])
+  })
+
+  test("search spans all categories even when a category chip was previously selected", () => {
+    const productivity = app("1.0.0", "com.example.notes", ["productivity"])
+    const media = app("1.0.0", "com.example.camera", ["media"])
+
+    expect(filterStoreCategory([productivity, media], "productivity", "camera", true)).toEqual([productivity, media])
+    expect(filterStoreCategory([productivity, media], "productivity", "", true)).toEqual([productivity])
   })
 })

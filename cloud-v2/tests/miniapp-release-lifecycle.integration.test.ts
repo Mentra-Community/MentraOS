@@ -401,8 +401,22 @@ describe("miniapp release lifecycle", () => {
 
     const publicAsset = await catalogService.getPublicAsset(icon.id);
     expect(publicAsset.contentType).toBe("image/png");
-    await miniapps.deleteStoreAsset(developer, "com.example.artwork", icon.id);
-    await expect(catalogService.getPublicAsset(icon.id)).rejects.toMatchObject({ status: 404 });
+    const replacement = await miniapps.createStoreAsset(developer, "com.example.artwork", {
+      role: "store_icon",
+      fileName: "replacement.png",
+      contentType: "image/png",
+      bytes: Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01]),
+    });
+    await miniapps.updateStoreListing(developer, "com.example.artwork", { subtitle: "Unreviewed replacement" });
+    const catalog = await catalogService.list({ baseUrl: "https://core.example.test" });
+    expect(catalog.apps[0]?.iconUrl).toContain(icon.id);
+    expect(catalog.apps[0]?.subtitle).not.toBe("Unreviewed replacement");
+    await expect(catalogService.getPublicAsset(replacement.id)).rejects.toMatchObject({ status: 404 });
+    await expect(miniapps.deleteStoreAsset(developer, "com.example.artwork", icon.id)).rejects.toMatchObject({
+      code: "published_asset",
+      status: 409,
+    });
+    await miniapps.deleteStoreAsset(developer, "com.example.artwork", replacement.id);
   });
 });
 

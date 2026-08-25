@@ -1419,6 +1419,15 @@ export async function registerDevApp(record: DevAppRecord): Promise<void> {
   migrateLegacyDevSlot()
   const packageName = record.packageName.trim()
   if (!packageName) throw new Error("Dev miniapp manifest is missing packageName")
+  if (isSystemMiniappPackage(packageName)) {
+    // Clean up records created by older builds before rejecting the new
+    // registration so a protected dev URL can never shadow the bundled app.
+    removeDevRecordKeys(packageName)
+    const index = getDevAppIndex().filter((item) => item !== packageName)
+    storage.save(DEV_APPS_INDEX_KEY, JSON.stringify(index))
+    appRegistry.markRefreshNeeded()
+    throw new Error(`Protected SYSTEM package ${packageName} cannot be registered as a developer miniapp`)
+  }
 
   const iconUrl = await cacheDevAppIcon(packageName, record.iconUrl)
   // Relaunch paths (developer-URL screen, loadDevMiniapp) omit mdnsHost, so an
@@ -1487,7 +1496,15 @@ export function getDevAppAttestation(packageName = DEV_APP_PACKAGE_NAME): string
 export function getDevAppRecords(): DevAppRecord[] {
   migrateLegacyDevSlot()
   const out: DevAppRecord[] = []
-  for (const pkg of getDevAppIndex()) {
+  const index = getDevAppIndex()
+  const allowedPackages = index.filter((pkg) => !isSystemMiniappPackage(pkg))
+  if (allowedPackages.length !== index.length) {
+    for (const pkg of index) {
+      if (isSystemMiniappPackage(pkg)) removeDevRecordKeys(pkg)
+    }
+    storage.save(DEV_APPS_INDEX_KEY, JSON.stringify(allowedPackages))
+  }
+  for (const pkg of allowedPackages) {
     const res = storage.load<string>(`${pkg}_dev_meta`)
     if (!res.is_ok()) continue
     try {

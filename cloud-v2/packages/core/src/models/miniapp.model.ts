@@ -27,7 +27,10 @@ const MiniAppSchema = new Schema(
     packageName: { type: String, required: true, unique: true },
     displayName: { type: String, required: true },
     description: { type: String, default: null },
+    /** Developer-editable draft. Copied to publishedStoreListing only after admin publication. */
     storeListing: { type: StoreListingSchema, default: () => ({}) },
+    /** Immutable public snapshot from the latest publication decision. */
+    publishedStoreListing: { type: StoreListingSchema, default: null },
     status: { type: String, enum: MINIAPP_STATUSES, default: "active", index: true },
     activeReleaseId: { type: String, default: null },
     createdBy: { type: String, required: true },

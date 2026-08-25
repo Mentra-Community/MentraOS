@@ -27,11 +27,11 @@ import {File} from "expo-file-system"
 
 import {decideDevLaunchRoute} from "../utils/devMiniappLaunch"
 import {storage} from "../utils/storage/storage"
-import appRegistry, {getLocalAppRunningState, saveLocalAppRunningState} from "./AppRegistry"
+import appRegistry, {getLocalAppRunningState, saveLocalAppRunningState, unregisterDevApp} from "./AppRegistry"
 import devServerBridge from "./DevServerBridge"
 import localMiniappRuntime, {type InstalledMiniappManifest} from "./LocalMiniappRuntime"
 import type {MentraJSRouter} from "./MentraJSRouter"
-import {isHostTrustedSystemMiniapp} from "./SystemMiniappPolicy"
+import {isHostTrustedSystemMiniapp, isSystemMiniappPackage} from "./SystemMiniappPolicy"
 
 interface LauncherDeps {
   /** The host-constructed router (needs the native Crust binding). */
@@ -112,7 +112,13 @@ class MiniappLauncher {
    * unreachable, missing entry, no installed version).
    */
   async resolveBundle(packageName: string, hints?: LaunchHints): Promise<ResolvedBundle | null> {
-    const devUrl = hints?.devUrl ?? this.storedDevUrl(packageName)
+    // A dev URL must never shadow a package identity owned by the host build,
+    // including explicit launch hints and records persisted by older builds.
+    if (isSystemMiniappPackage(packageName)) {
+      const legacyDevUrl = storage.load<string>(`${packageName}_dev_url`)
+      if (legacyDevUrl.is_ok()) unregisterDevApp(packageName)
+    }
+    const devUrl = isSystemMiniappPackage(packageName) ? undefined : (hints?.devUrl ?? this.storedDevUrl(packageName))
 
     // --- Dev: load directly off the local dev server over HTTP. ---
     if (devUrl) {

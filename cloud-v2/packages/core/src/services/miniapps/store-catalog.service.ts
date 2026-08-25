@@ -26,14 +26,14 @@ export class StoreCatalogService {
         { displayName: { $regex: escaped, $options: "i" } },
         { packageName: { $regex: escaped, $options: "i" } },
         { description: { $regex: escaped, $options: "i" } },
-        { "storeListing.subtitle": { $regex: escaped, $options: "i" } },
+        { "publishedStoreListing.subtitle": { $regex: escaped, $options: "i" } },
       ];
     }
-    if (input.category?.trim()) filter["storeListing.categories"] = input.category.trim().toLowerCase();
+    if (input.category?.trim()) filter["publishedStoreListing.categories"] = input.category.trim().toLowerCase();
 
     const total = await MiniAppModel.countDocuments(filter);
     const apps = await MiniAppModel.find(filter)
-      .sort({ "storeListing.featured": -1, "displayName": 1, "packageName": 1 })
+      .sort({ "publishedStoreListing.featured": -1, "displayName": 1, "packageName": 1 })
       .skip((page - 1) * limit)
       .limit(limit)
       .lean();
@@ -61,9 +61,9 @@ export class StoreCatalogService {
     const publishedRelease = await MiniAppReleaseModel.exists({ _id: app.activeReleaseId, status: "published" });
     if (!publishedRelease) throw new StoreCatalogError("not_found", "asset not found", 404);
     const referenced = [
-      app.storeListing?.iconAssetId,
-      app.storeListing?.coverAssetId,
-      ...(app.storeListing?.screenshotAssetIds ?? []),
+      app.publishedStoreListing?.iconAssetId,
+      app.publishedStoreListing?.coverAssetId,
+      ...(app.publishedStoreListing?.screenshotAssetIds ?? []),
     ].includes(assetId);
     if (!referenced) throw new StoreCatalogError("not_found", "asset not found", 404);
     return asset;
@@ -77,7 +77,7 @@ export class StoreCatalogService {
     return apps.flatMap(app => {
       const release = releasesById.get(app.activeReleaseId ?? "");
       if (!release?.releaseBundleAssetId || !release.bundleSha256) return [];
-      const listing = app.storeListing ?? {};
+      const listing = app.publishedStoreListing ?? {};
       const assetUrl = (id?: string | null) => (id ? `${normalizedBase}/api/store/assets/${id}` : null);
       const manifest = (release.manifest ?? {}) as Record<string, unknown>;
       return [

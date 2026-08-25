@@ -1,6 +1,5 @@
 import {useCallback, useEffect, useMemo, useState} from "react"
 import {useColorScheme, useSafeArea} from "@mentra/miniapp/ui"
-import {isNewerVersion} from "../background/catalog"
 import {
   MENTRA_STORE_PACKAGE_NAME,
   isManagedByStore,
@@ -8,7 +7,7 @@ import {
   type StoreApp,
   type StoreSnapshot,
 } from "../shared/types"
-import {isStoreActionDisabled, resolveSelectedApp} from "./model"
+import {filterStoreCategory, isStoreActionDisabled, resolveSelectedApp, selectCompatibleUpdates} from "./model"
 import arrowLeftIcon from "./assets/arrow-left.svg"
 import shareIcon from "./assets/share.svg"
 
@@ -58,11 +57,7 @@ export function App() {
   )
   const selected = resolveSelectedApp(snapshot.apps, selectedPackageName)
   const updateApps = useMemo(
-    () =>
-      snapshot.apps.filter((app) => {
-        const installed = installedByPackage.get(app.packageName)
-        return installed && isNewerVersion(app.release.version, installed.version)
-      }),
+    () => selectCompatibleUpdates(snapshot.apps, installedByPackage),
     [snapshot.apps, installedByPackage],
   )
   const categories = useMemo(
@@ -75,7 +70,7 @@ export function App() {
       : tab === "updates"
         ? updateApps
         : snapshot.apps
-  const visible = category && tab === "store" ? tabApps.filter((app) => app.categories.includes(category)) : tabApps
+  const visible = filterStoreCategory(tabApps, category, query, tab === "store")
   const orphanedInstalled =
     tab === "installed" && !query.trim()
       ? snapshot.installed.filter(
@@ -179,7 +174,9 @@ export function App() {
 
           {tab === "store" && !query.trim() && categories.length > 0 ? (
             <div className="category-list" aria-label="Store categories">
-              <button className={category === null ? "active" : ""} onClick={() => setCategory(null)}>All</button>
+              <button className={category === null ? "active" : ""} onClick={() => setCategory(null)}>
+                All
+              </button>
               {categories.map((item) => (
                 <button key={item} className={category === item ? "active" : ""} onClick={() => setCategory(item)}>
                   {item}
@@ -234,7 +231,10 @@ export function App() {
                   </h2>
                   <span>{visible.length}</span>
                   {tab === "updates" && updateApps.length > 1 ? (
-                    <button className="update-all" disabled={updatingAll || Boolean(snapshot.operation)} onClick={() => void updateAll()}>
+                    <button
+                      className="update-all"
+                      disabled={updatingAll || Boolean(snapshot.operation)}
+                      onClick={() => void updateAll()}>
                       {updatingAll ? "Updating…" : "Update all"}
                     </button>
                   ) : null}
@@ -276,7 +276,11 @@ export function App() {
           </nav>
         </>
       )}
-      {shareMessage ? <div className="toast" role="status">{shareMessage}</div> : null}
+      {shareMessage ? (
+        <div className="toast" role="status">
+          {shareMessage}
+        </div>
+      ) : null}
       {confirmUninstall ? (
         <ConfirmDialog
           name={
@@ -327,10 +331,7 @@ function InstalledOnlyRow({
           Open
         </button>
         {!installed.system && isManagedByThisStore(installed) && (
-          <button
-            className="action danger-action"
-            disabled={disabled}
-            onClick={onRequestUninstall}>
+          <button className="action danger-action" disabled={disabled} onClick={onRequestUninstall}>
             Uninstall
           </button>
         )}
@@ -537,11 +538,18 @@ function ConfirmDialog({
 }) {
   return (
     <div className="dialog-backdrop" role="presentation" onClick={onCancel}>
-      <section className="dialog" role="dialog" aria-modal="true" aria-labelledby="uninstall-title" onClick={(event) => event.stopPropagation()}>
+      <section
+        className="dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="uninstall-title"
+        onClick={(event) => event.stopPropagation()}>
         <h2 id="uninstall-title">Uninstall {name}?</h2>
         <p>The miniapp and its local data will be removed from this device. You can install it again later.</p>
         <div>
-          <button disabled={busy} onClick={onCancel}>Cancel</button>
+          <button disabled={busy} onClick={onCancel}>
+            Cancel
+          </button>
           <button className="danger" disabled={busy} onClick={() => void onConfirm()}>
             {busy ? "Uninstalling…" : "Uninstall"}
           </button>

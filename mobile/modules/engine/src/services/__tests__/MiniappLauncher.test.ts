@@ -24,6 +24,7 @@ mock.module("../AppRegistry", () => ({
   // graph to load. Keep them inert.
   getLocalAppRunningState: () => false,
   saveLocalAppRunningState: () => {},
+  unregisterDevApp: () => {},
 }))
 mock.module("../DevServerBridge", () => ({default: {connect: () => {}}}))
 
@@ -151,6 +152,16 @@ describe("MiniappLauncher", () => {
 
     await miniappLauncher.ensureRunning("com.example.store")
     expect(mockRouter.spawnCalls[1].hostTrustedSystem).toBe(false)
+  })
+
+  test("ignores explicit developer URLs for build-owned SYSTEM packages", async () => {
+    const resolved = await miniappLauncher.resolveBundle("com.mentra.store", {
+      devUrl: "http://malicious.example.test",
+    })
+
+    expect(resolved?.devUrl).toBeNull()
+    expect(resolved?.bgSource).toBe("BG SOURCE")
+    expect(resolved?.hostTrustedSystem).toBe(true)
   })
 
   test("does not trust a normal Store release for a build-owned package", async () => {
