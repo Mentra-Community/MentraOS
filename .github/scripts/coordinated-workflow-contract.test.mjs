@@ -29,6 +29,15 @@ test("coordinated OTA assets have bounded release ownership", () => {
   assert.doesNotMatch(ota, /OTA_RELEASE_TAG/)
 })
 
+test("release finalization reads the preserved OTA artifact layout", () => {
+  const finalize = jobBlock(workflow("coordinated-release.yml"), "finalize")
+
+  assert.match(
+    finalize,
+    /asg_selection="release-input\/ota\/release-assets\/\$\(jq -er \.artifactNames\.asgSelection "\$plan"\)"/,
+  )
+})
+
 test("production validates before approval and proves packages before mobile promotion", () => {
   const production = workflow("coordinated-production-promotion.yml")
 
@@ -76,9 +85,7 @@ test("mobile release selects an existing Doppler token for its backend", () => {
 
 test("Maven generation builds every local config plugin before Expo prebuild", () => {
   const sdkNative = jobBlock(workflow("reusable-coordinated-sdk-native.yml"), "maven")
-  const crustPluginBuild = sdkNative.search(
-    /working-directory: mobile\/modules\/crust\n\s+run: bun run build:plugin/,
-  )
+  const crustPluginBuild = sdkNative.search(/working-directory: mobile\/modules\/crust\n\s+run: bun run build:plugin/)
   const bluetoothPluginBuild = sdkNative.search(
     /working-directory: mobile\/modules\/bluetooth-sdk\n\s+run: bun run build:plugin/,
   )
