@@ -861,6 +861,11 @@ const mockIslandEntries = () => {
         appStatusState.apps = [...appStatusState.apps.filter((item) => item.packageName !== app.packageName), app]
         return {is_ok: () => true, is_error: () => false, value: app}
       }),
+      setOfflineAppHidden: jest.fn((packageName, hidden) => {
+        appStatusState.apps = appStatusState.apps.map((app) =>
+          app.packageName === packageName ? {...app, hidden} : app,
+        )
+      }),
     },
     configureIsland: jest.fn(),
     webviewBridge: {

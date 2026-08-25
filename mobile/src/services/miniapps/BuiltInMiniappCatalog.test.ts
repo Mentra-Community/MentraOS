@@ -2,7 +2,8 @@ import {Platform} from "react-native"
 
 import {appRegistry} from "@mentra/engine/internal"
 
-import {notifyPackageName} from "@/constants/miniapps"
+import {miniappDeveloperPackageName, notifyPackageName} from "@/constants/miniapps"
+import {SETTINGS, engine} from "@mentra/engine"
 
 import builtInMiniappCatalog from "./BuiltInMiniappCatalog"
 
@@ -31,5 +32,29 @@ describe("BuiltInMiniappCatalog", () => {
         permissions: [{type: "READ_NOTIFICATIONS", required: true}],
       }),
     )
+  })
+
+  it("registers the Miniapp Developer launcher hidden by default and follows its home-screen setting", () => {
+    const developerCall = (appRegistry.installOfflineApp as jest.Mock).mock.calls.find(
+      ([app]) => app.packageName === miniappDeveloperPackageName,
+    )
+
+    expect(developerCall?.[0]).toEqual(
+      expect.objectContaining({
+        packageName: miniappDeveloperPackageName,
+        offlineRoute: "/miniapps/settings/miniapp-dev",
+        hidden: true,
+      }),
+    )
+
+    const settingListener = (engine.settings.onChanged as jest.Mock).mock.calls.find(
+      ([key]) => key === SETTINGS.miniapp_dev_mode.key,
+    )?.[1]
+
+    expect(settingListener).toEqual(expect.any(Function))
+    settingListener(true)
+    expect(appRegistry.setOfflineAppHidden).toHaveBeenLastCalledWith(miniappDeveloperPackageName, false)
+    settingListener(false)
+    expect(appRegistry.setOfflineAppHidden).toHaveBeenLastCalledWith(miniappDeveloperPackageName, true)
   })
 })

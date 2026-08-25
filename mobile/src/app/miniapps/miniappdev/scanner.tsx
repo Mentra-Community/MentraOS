@@ -11,7 +11,6 @@ import showAlert from "@/utils/AlertUtils"
 import {decideDevLaunchRoute, engine} from "@mentra/engine"
 import {appRegistry, registerDevApp, type DevAppRecord} from "@mentra/engine/internal"
 import {askPermissionsUI, checkPermissionsUI, PERMISSION_CONFIG} from "@/utils/PermissionsUtils"
-import {markMiniappDevMode} from "@/utils/miniappDevMode"
 import {storage} from "@/utils/storage/storage"
 import type {AppletInterface, AppletPermission} from "@/../../cloud/packages/types/src"
 
@@ -49,7 +48,6 @@ export default function MiniappDeveloperScannerScreen() {
           ])
           return
         }
-        markMiniappDevMode()
         showAlert("Installed", `${res.value.name} v${res.value.version} is on your home screen.`, [
           {text: "OK", onPress: () => goBack()},
         ])
@@ -126,12 +124,6 @@ export default function MiniappDeveloperScannerScreen() {
       // miniapp remains independently launchable without rescanning. Its icon
       // is copied locally while the server is reachable.
       if (manifest && knownPackageName) {
-        // A fetched manifest means a real dev app loaded — latch the per-account
-        // "this user is a developer" signal (idempotent). Gated on the manifest
-        // so a failed/unreachable scan (decision "offline", no manifest) can't
-        // flip the flag, matching the URL loader's behavior.
-        markMiniappDevMode()
-
         const existing = engine.miniapps.list().find((app) => app.packageName === knownPackageName)
         if (existing?.running) await engine.miniapps.stop(knownPackageName)
         await registerDevApp({

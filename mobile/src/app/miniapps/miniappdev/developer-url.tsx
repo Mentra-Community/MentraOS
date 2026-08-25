@@ -13,7 +13,6 @@ import showAlert from "@/utils/AlertUtils"
 import {decideDevLaunchRoute, engine} from "@mentra/engine"
 import {registerDevApp, type DevAppRecord} from "@mentra/engine/internal"
 import {askPermissionsUI, checkPermissionsUI, PERMISSION_CONFIG} from "@/utils/PermissionsUtils"
-import {markMiniappDevMode} from "@/utils/miniappDevMode"
 import {storage} from "@/utils/storage/storage"
 import type {AppletInterface, AppletPermission} from "@/../../cloud/packages/types/src"
 
@@ -81,12 +80,6 @@ export default function MiniappDeveloperUrlScreen() {
       })
       return
     }
-
-    // Single chokepoint for both entry paths (typed URL + recent-list tap): a
-    // reachable dev server means a real dev app loaded, so latch the per-account
-    // "this user is a developer" signal here (idempotent). Marking after the
-    // offline check keeps a failed/unreachable launch from flipping the flag.
-    markMiniappDevMode()
 
     const packageName = launchResult.manifest.packageName || entry.packageName
     const appName = launchResult.manifest.name || entry.name

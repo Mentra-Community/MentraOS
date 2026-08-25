@@ -5,9 +5,9 @@ import {
   decideDevLaunchRoute,
   HardwareRequirementLevel,
   HardwareType,
+  SETTINGS,
   engine,
   type ClientApp,
-  type StartOptions,
 } from "@mentra/engine"
 import {appRegistry, installAppStoreHooks} from "@mentra/engine/internal"
 
@@ -16,15 +16,14 @@ import {isOfflineHosted} from "@/components/miniapp/offlineHostedPackages"
 import {showAlert} from "@/contexts/ModalContext"
 import {translate} from "@/i18n"
 import {useNavigationStore} from "@/stores/navigation"
-import {SETTINGS} from "@mentra/engine"
 import {getDefaultMenuApps, type GlassesMenuItem} from "@/utils/glassesMenu"
-import {markMiniappDevMode} from "@/utils/miniappDevMode"
 
 import {
   cameraPackageName,
   CHINA_HIDDEN_APPS,
   feedbackPackageName,
   isChinaBuild,
+  miniappDeveloperPackageName,
   mirrorPackageName,
   notifyPackageName,
   settingsPackageName,
@@ -73,6 +72,10 @@ class BuiltInMiniappCatalog {
       void this.syncGlassesMenuApps()
     })
 
+    engine.settings.onChanged<boolean>(SETTINGS.miniapp_dev_mode.key, (showOnHomeScreen) => {
+      appRegistry.setOfflineAppHidden(miniappDeveloperPackageName, !showOnHomeScreen)
+    })
+
     void this.syncGlassesMenuApps()
   }
 
@@ -119,7 +122,6 @@ class BuiltInMiniappCatalog {
       const {packageName, devUrl, name: appName, logoUrl} = app
       decideDevLaunchRoute(packageName, devUrl).then((result) => {
         if (result.decision === "live") {
-          markMiniappDevMode()
           engine.miniapps.setForeground(packageName)
         } else {
           nav.push("/applet/dev-offline", {packageName, name: appName, iconUrl: logoUrl})
@@ -281,27 +283,23 @@ class BuiltInMiniappCatalog {
       })
     }
 
-    if (
-      engine.settings.get(SETTINGS.miniapp_dev_mode.key)
-    ) {
-      apps.push({
-        packageName: "com.mentra.miniappdev",
-        name: translate("miniApps:lmaLoader"),
-        type: "standard",
-        offline: true,
-        offlineRoute: "/miniapps/settings/miniapp-dev",
-        local: false,
-        webviewUrl: "",
-        permissions: [],
-        running: false,
-        loading: false,
-        healthy: true,
-        hidden: false,
-        hardwareRequirements: [],
-        logoUrl: require("@assets/applet-icons/store.png"),
-        iconComponent: createElement(DevIcon),
-      })
-    }
+    apps.push({
+      packageName: miniappDeveloperPackageName,
+      name: translate("miniApps:lmaLoader"),
+      type: "standard",
+      offline: true,
+      offlineRoute: "/miniapps/settings/miniapp-dev",
+      local: false,
+      webviewUrl: "",
+      permissions: [],
+      running: false,
+      loading: false,
+      healthy: true,
+      hidden: !engine.settings.get(SETTINGS.miniapp_dev_mode.key),
+      hardwareRequirements: [],
+      logoUrl: require("@assets/applet-icons/store.png"),
+      iconComponent: createElement(DevIcon),
+    })
 
     return isChinaBuild() ? apps.filter((app) => !CHINA_HIDDEN_APPS.includes(app.packageName)) : apps
   }
