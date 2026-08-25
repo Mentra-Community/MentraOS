@@ -126,6 +126,12 @@ describe("miniapp release lifecycle", () => {
       miniapps.publishRelease({ releaseId: release.id, adminId: "admin@mentraglass.com" }),
     ).rejects.toMatchObject({ code: "store_listing_incomplete" });
     await miniapps.rejectRelease({ releaseId: release.id, adminId: "admin@mentraglass.com" });
+    await expect(
+      miniapps.approveRelease({ releaseId: release.id, adminId: "admin@mentraglass.com" }),
+    ).rejects.toMatchObject({ code: "invalid_release_state", status: 409 });
+    const rejectedRelease = await MiniAppReleaseModel.findById(release.id).lean();
+    expect(rejectedRelease?.submittedStoreListing).toBeNull();
+    expect(rejectedRelease?.reviewedStoreListing).toBeNull();
     await miniapps.submitRelease(developer, "com.example.weather", release.id);
     await miniapps.approveRelease({ releaseId: release.id, adminId: "admin@mentraglass.com" });
 
@@ -413,6 +419,21 @@ describe("miniapp release lifecycle", () => {
       supportUrl: "https://example.com/support",
     });
     await miniapps.submitRelease(developer, "com.example.artwork", release.id);
+    const postSubmissionReplacement = await miniapps.createStoreAsset(developer, "com.example.artwork", {
+      role: "store_icon",
+      fileName: "post-submission.png",
+      contentType: "image/png",
+      bytes: Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x02]),
+    });
+    const submittedRows = await miniapps.listAdminSubmissions();
+    const submittedArtwork = submittedRows.find(row => row.id === release.id);
+    expect(submittedArtwork?.storeAssets.some(asset => asset.id === icon.id)).toBe(true);
+    expect(submittedArtwork?.storeAssets.some(asset => asset.id === postSubmissionReplacement.id)).toBe(false);
+    await expect(miniapps.deleteStoreAsset(developer, "com.example.artwork", icon.id)).rejects.toMatchObject({
+      code: "reviewed_asset",
+      status: 409,
+    });
+    await miniapps.deleteStoreAsset(developer, "com.example.artwork", postSubmissionReplacement.id);
     await miniapps.approveRelease({ releaseId: release.id, adminId: "admin@mentraglass.com" });
     await miniapps.publishRelease({ releaseId: release.id, adminId: "admin@mentraglass.com" });
 

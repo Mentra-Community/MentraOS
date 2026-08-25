@@ -212,13 +212,17 @@ export class MiniAppService {
       const assets = assetsByAppId.get(release.miniAppId) ?? [];
       const listingSource =
         release.status === "published"
-          ? app?.publishedStoreListing
+          ? release.releaseTrack === "beta"
+            ? app?.publishedBetaStoreListing
+            : app?.publishedStoreListing
           : release.status === "accepted"
             ? release.reviewedStoreListing
             : ["submitted", "in_review"].includes(release.status)
               ? release.submittedStoreListing
               : app?.storeListing;
       const listing = serializeStoreListing(listingSource);
+      const referencedAssetIds = storeListingAssetIds(listing);
+      const listingAssets = assets.filter(asset => referencedAssetIds.has(String(asset._id)));
       return {
         ...serializeRelease(release),
         miniAppId: release.miniAppId,
@@ -231,8 +235,11 @@ export class MiniAppService {
         reviewedBy: release.reviewedBy ?? null,
         reviewNotes: release.reviewNotes ?? null,
         storeListing: listing,
-        storeAssets: assets.map(serializeStoreAsset),
-        listingReadiness: storeListingReadiness({ description: app?.description, storeListing: listingSource }, assets),
+        storeAssets: listingAssets.map(serializeStoreAsset),
+        listingReadiness: storeListingReadiness(
+          { description: app?.description, storeListing: listingSource },
+          listingAssets,
+        ),
       };
     });
   }
@@ -240,7 +247,7 @@ export class MiniAppService {
   async approveRelease(input: AdminReleaseDecisionInput) {
     const release = await MiniAppReleaseModel.findOne({ _id: input.releaseId });
     if (!release) throw new MiniAppServiceError("not_found", "release not found", 404);
-    if (!["submitted", "in_review", "accepted", "rejected"].includes(release.status)) {
+    if (!["submitted", "in_review"].includes(release.status)) {
       throw new MiniAppServiceError("invalid_release_state", "release is not awaiting review", 409);
     }
     const app = await MiniAppModel.findOne({ _id: release.miniAppId });
@@ -271,6 +278,10 @@ export class MiniAppService {
     release.reviewedAt = new Date();
     release.reviewedBy = input.adminId;
     release.reviewNotes = input.notes?.trim() || "Rejected by admin review.";
+    // A rejected snapshot is no longer approvable. The developer must submit
+    // again, which freezes a new listing revision and its artwork references.
+    release.submittedStoreListing = null;
+    release.reviewedStoreListing = null;
     await release.save();
     return serializeRelease(release.toObject());
   }
@@ -651,6 +662,25 @@ export class MiniAppService {
         409,
       );
     }
+    const reviewSnapshot = await MiniAppReleaseModel.exists({
+      miniAppId: app._id.toString(),
+      status: { $in: ["submitted", "in_review", "accepted"] },
+      $or: [
+        { "submittedStoreListing.iconAssetId": assetId },
+        { "submittedStoreListing.coverAssetId": assetId },
+        { "submittedStoreListing.screenshotAssetIds": assetId },
+        { "reviewedStoreListing.iconAssetId": assetId },
+        { "reviewedStoreListing.coverAssetId": assetId },
+        { "reviewedStoreListing.screenshotAssetIds": assetId },
+      ],
+    });
+    if (reviewSnapshot) {
+      throw new MiniAppServiceError(
+        "reviewed_asset",
+        "Store artwork in an active review cannot be deleted until the release is rejected or published",
+        409,
+      );
+    }
     await storage.deleteObject(asset.storageKey);
     await asset.deleteOne();
     await Promise.all([
@@ -810,6 +840,13 @@ function serializeStoreListing(listing: any) {
     coverAssetId: listing?.coverAssetId ?? null,
     screenshotAssetIds: listing?.screenshotAssetIds ?? [],
   };
+}
+
+function storeListingAssetIds(listing: ReturnType<typeof serializeStoreListing>): Set<string> {
+  return new Set(
+    [listing.iconAssetId, listing.coverAssetId, ...listing.screenshotAssetIds]
+      .filter((assetId): assetId is string => typeof assetId === "string" && assetId.length > 0),
+  );
 }
 
 function storeListingReadiness(

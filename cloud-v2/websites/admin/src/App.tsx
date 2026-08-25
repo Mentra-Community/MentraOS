@@ -671,7 +671,7 @@ function SubmissionDetail(props: {
             />
             {props.error ? <ErrorText error={props.error} /> : null}
             <div className="mt-4 flex flex-wrap gap-2">
-              {["submitted", "in_review", "rejected"].includes(release.status) ? (
+              {["submitted", "in_review"].includes(release.status) ? (
                 <Button
                   className="rounded-full bg-[#e9f8f1] text-[#087d50] hover:bg-[#dff5eb]"
                   disabled={props.pending}
