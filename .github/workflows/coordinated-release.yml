@@ -17,7 +17,10 @@ permissions:
   id-token: write
 
 concurrency:
-  group: coordinated-mentra-release-publication
+  # Preserve the running publication and coalesce same-branch pushes to the
+  # latest pending head. Separate branch groups prevent dev and staging from
+  # replacing one another's pending release.
+  group: coordinated-mentra-release-publication-${{ github.ref_name }}
   cancel-in-progress: false
 
 jobs:

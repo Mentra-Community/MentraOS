@@ -422,8 +422,8 @@ in source-built SDK artifacts.
 All three products use `dev` -> `staging` -> `main` as source lines.
 
 - Pull requests run validation and package dry-runs only. They never publish.
-- Every selected push to `dev` creates a coordinated `dev.N` release set.
-- Every selected push to `staging` creates a coordinated `beta.N` release set.
+- A selected `dev` head creates a coordinated `dev.N` release set.
+- A selected `staging` head creates a coordinated `beta.N` release set.
 - Production is a protected manual workflow selecting a completed staging set
   whose source is contained in `main`.
 - Do not use separate product tags as release decisions. npm, Maven, and SwiftPM
@@ -437,9 +437,15 @@ The coordinator has no path filters: every selected branch release gets an
 auditable identity. Every public product and package in that set is published
 under the shared version, even when its source is unchanged. Jobs may reuse
 verified intermediate build outputs, but they may not substitute a package from
-a different family version. Do not configure concurrency to cancel or replace
-an older publication once immutable artifacts or store uploads have begun.
-Mutable channel heads move only toward a greater sequence.
+a different family version.
+
+Each prerelease channel keeps at most one running publication plus the latest
+pending branch head. A newer push on the same branch replaces only that branch's
+older pending run; it never cancels a running publication. `dev` and `staging`
+use distinct concurrency groups, so neither channel can replace the other's
+pending release. This intentionally coalesces commit bursts instead of
+publishing every intermediate commit. Mutable channel heads move only toward a
+greater sequence.
 
 The coordinator is the only automatic publisher for MentraOS, Mentra Engine,
 Bluetooth SDK, and the Engine dependency closure. The superseded product,
@@ -655,9 +661,9 @@ cutover that enables the coordinator, so two systems cannot publish the shared
 
 ## Acceptance Criteria
 
-- A commit on `dev` or `staging` creates one family base and release identity
-  shared by all three products and their public dependency closure, encoded in
-  platform-valid version fields.
+- Every selected `dev` or `staging` head creates one family base and release
+  identity shared by all three products and their public dependency closure,
+  encoded in platform-valid version fields.
 - No ordinary prerelease commit requires a checked-in version edit.
 - MentraOS builds local workspaces and is not blocked on package registries.
 - A standalone Engine consumer resolves an exact, installable package graph.
