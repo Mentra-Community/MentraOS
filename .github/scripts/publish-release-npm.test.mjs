@@ -7,8 +7,10 @@ import {fileURLToPath} from "node:url"
 
 import {loadReleaseFamily} from "./release-family.mjs"
 import {
+  isHttpsRegistryUrl,
   npmMembersInOrder,
   npmReleaseTag,
+  npmViewPublishedTarball,
   releaseMetadataArgs,
   requireNpmProvenanceSource,
   requirePlanSourceCommit,
@@ -61,6 +63,29 @@ test("admits Engine only as the final selected npm package", () => {
 
 test("creates npm-compatible SHA-512 integrity values", () => {
   assert.match(sha512Integrity(Buffer.from("mentra")), /^sha512-[A-Za-z0-9+/]+=*$/)
+})
+
+test("accepts only propagated HTTPS npm tarball metadata", () => {
+  assert.equal(isHttpsRegistryUrl("https://registry.npmjs.org/@mentra/crust/-/crust-3.1.0.tgz"), true)
+  assert.equal(isHttpsRegistryUrl(""), false)
+  assert.equal(isHttpsRegistryUrl(null), false)
+  assert.equal(isHttpsRegistryUrl("http://registry.npmjs.org/package.tgz"), false)
+})
+
+test("waits through empty npm metadata until the registry exposes the tarball", () => {
+  const responses = ["", null, '"https://registry.npmjs.org/package/-/package-3.1.0.tgz"']
+  let sleeps = 0
+  assert.equal(
+    npmViewPublishedTarball("package@3.1.0", {
+      attempts: responses.length,
+      view: () => responses.shift(),
+      sleep: () => {
+        sleeps += 1
+      },
+    }),
+    "https://registry.npmjs.org/package/-/package-3.1.0.tgz",
+  )
+  assert.equal(sleeps, 2)
 })
 
 test("requires the package checkout to match the immutable release plan", () => {
