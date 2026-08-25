@@ -145,6 +145,27 @@ public class Bridge private constructor() {
             sendTypedMessage("pair_failure", data as Map<String, Any>)
         }
 
+        @JvmStatic
+        fun sendPairingInfo(
+            hadPreviousBond: Boolean,
+            transferId: String? = null,
+            pairingCode: String? = null,
+            classicBondReady: Boolean = false,
+            securePairingCapable: Boolean = true,
+            protocolVersion: Int = 1,
+            binding: String? = null,
+        ) {
+            val data = HashMap<String, Any>()
+            data["had_previous_bond"] = hadPreviousBond
+            if (transferId != null) data["transfer_id"] = transferId
+            if (pairingCode != null) data["pairing_code"] = pairingCode
+            data["classic_bond_ready"] = classicBondReady
+            data["secure_pairing_capable"] = securePairingCapable
+            data["protocol_version"] = protocolVersion
+            if (binding != null) data["binding"] = binding
+            sendTypedMessage("pairing_info", data as Map<String, Any>)
+        }
+
         /** Send audio connected event - matches iOS implementation for platform parity */
         @JvmStatic
         fun sendAudioConnected(deviceName: String) {
@@ -170,6 +191,14 @@ public class Bridge private constructor() {
         fun sendMicLc3(data: ByteArray) {
             val body = micLc3EventBody(data)
             sendTypedMessage("mic_lc3", body as Map<String, Any>)
+        }
+
+        @JvmStatic
+        internal fun sendMicHealth(health: MicHealth, reason: String) {
+            val body = HashMap(health.toMap())
+            body["reason"] = reason
+            body["timestamp"] = System.currentTimeMillis()
+            sendTypedMessage("mic_health", body)
         }
 
         private fun micPcmEventBody(data: ByteArray): HashMap<String, Any> {
@@ -251,7 +280,10 @@ public class Bridge private constructor() {
                 deviceName: String,
                 deviceAddress: String = "",
                 rssi: Int? = null,
-                projectName: String? = null
+                projectName: String? = null,
+                pairingMode: Boolean? = null,
+                pairingCode: String? = null,
+                securePairingCapable: Boolean? = null,
         ) {
             val searchResults =
                     (DeviceStore.store.getCategory("bluetooth")["searchResults"] as? List<*>)
@@ -274,6 +306,9 @@ public class Bridge private constructor() {
                         }
                         projectName?.takeIf { it.isNotBlank() }?.let { put("projectName", it) }
                         rssi?.let { put("rssi", it) }
+                        pairingMode?.let { put("pairingMode", it) }
+                        pairingCode?.takeIf { it.isNotBlank() }?.let { put("pairingCode", it) }
+                        securePairingCapable?.let { put("securePairingCapable", it) }
                     }
             // Keep the public searchResults array stable as glasses are added or removed.
             // Duplicate discoveries refresh their existing row; only new glasses append.

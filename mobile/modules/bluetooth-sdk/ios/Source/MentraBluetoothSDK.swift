@@ -309,6 +309,8 @@ public final class MentraBluetoothSDK {
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "device_name", device.name)
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "device_address", device.identifier ?? "")
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "project_name", device.projectName ?? "")
+        DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_name", "")
+        DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_address", "")
         finishDefaultDeviceApply(generation: generation)
     }
 
@@ -320,6 +322,8 @@ public final class MentraBluetoothSDK {
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "device_name", "")
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "device_address", "")
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "project_name", "")
+        DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_name", "")
+        DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_address", "")
         finishDefaultDeviceApply(generation: generation)
     }
 
@@ -394,6 +398,9 @@ public final class MentraBluetoothSDK {
         }
         if options.saveAsDefault && !isController {
             setDefaultDevice(device)
+        } else if !isController {
+            DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_name", device.name)
+            DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_address", device.identifier ?? "")
         }
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_wearable", device.model.deviceType)
         DeviceManager.shared.connectByName(device.name)
@@ -418,6 +425,8 @@ public final class MentraBluetoothSDK {
 
     public func cancelConnectionAttempt() {
         clearBluetoothRestoreIntent()
+        DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_name", "")
+        DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_address", "")
         DeviceManager.shared.disconnect()
     }
 
@@ -428,6 +437,8 @@ public final class MentraBluetoothSDK {
 
     public func disconnect() {
         clearBluetoothRestoreIntent()
+        DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_name", "")
+        DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_address", "")
         DeviceManager.shared.disconnect()
     }
 
@@ -1140,6 +1151,36 @@ public final class MentraBluetoothSDK {
         do {
             let timeoutMs = waitForUpload ? videoUploadStopTimeoutMs : 15_000
             let event = try await pending.wait(timeoutMs: timeoutMs)
+            pendingVideoRecordingRequests.removeValue(forKey: requestId)
+            return event
+        } catch {
+            pendingVideoRecordingRequests.removeValue(forKey: requestId)
+            throw error
+        }
+    }
+
+    public func queryVideoRecordingStatus(requestId: String) async throws -> VideoRecordingStatusEvent {
+        guard !requestId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw BluetoothSdkError(
+                code: "missing_request_id",
+                message: "requestId is required to query video recording status."
+            )
+        }
+        try requireGlassesConnected(operation: "query video recording status")
+        let pending = PendingResponse<VideoRecordingStatusEvent>(operation: "query video recording status \(requestId)")
+        guard pendingVideoRecordingRequests[requestId] == nil else {
+            throw BluetoothSdkError(
+                code: "request_in_flight",
+                message: "A video recording command is already waiting for requestId \(requestId)."
+            )
+        }
+        pendingVideoRecordingRequests[requestId] = PendingVideoRecordingRequest(
+            expectedStatus: "recording_status",
+            pending: pending
+        )
+        DeviceManager.shared.queryVideoRecordingStatus(requestId)
+        do {
+            let event = try await pending.wait()
             pendingVideoRecordingRequests.removeValue(forKey: requestId)
             return event
         } catch {
@@ -2066,6 +2107,8 @@ private func dispatchDiscoveredDevices(_ rawSearchResults: Any?) {
             if !event.lc3.isEmpty {
                 delegate?.mentraBluetoothSDK(self, didReceiveMicLc3: event)
             }
+        case "mic_health":
+            delegate?.mentraBluetoothSDK(self, didReceive: .micHealth(MicHealthEvent(values: data)))
         case "local_transcription":
             let event = LocalTranscriptionEvent(
                 text: data["text"] as? String ?? "",
@@ -2114,6 +2157,10 @@ private func dispatchDiscoveredDevices(_ rawSearchResults: Any?) {
             let event = GalleryStatusEvent(values: data)
             pendingGalleryStatus?.resolve(event)
             delegate?.mentraBluetoothSDK(self, didReceive: .raw(name: "gallery_status", values: event.values))
+        case "pairing_info":
+            delegate?.mentraBluetoothSDK(self, didReceive: .raw(name: "pairing_info", values: data))
+        case "entering_pairing_mode", "owner_replaced":
+            delegate?.mentraBluetoothSDK(self, didReceive: .raw(name: eventName, values: data))
         case "photo_response":
             let event = PhotoResponseEvent(values: data)
             handlePhotoResponseForRequests(event)
@@ -2156,7 +2203,13 @@ private func dispatchDiscoveredDevices(_ rawSearchResults: Any?) {
             var resultValues = data
             resultValues["type"] = "ota_status"
             pendingOtaQuery?.resolve(OtaQueryResult(values: resultValues))
-            delegate?.mentraBluetoothSDK(self, didReceive: .otaStatus(OtaStatusEvent(values: resultValues)))
+            let event = OtaStatusEvent(values: resultValues)
+            if let errorCode = otaStartRejectionErrorCode(event) {
+                pendingOtaStart?.reject(
+                    BluetoothSdkError(code: errorCode, message: "Glasses rejected OTA start: \(errorCode)")
+                )
+            }
+            delegate?.mentraBluetoothSDK(self, didReceive: .otaStatus(event))
         case "settings_ack":
             let event = SettingsAckEvent(values: data)
             handleSettingsAckForRequests(event)
@@ -2181,3 +2234,12 @@ private func dispatchDiscoveredDevices(_ rawSearchResults: Any?) {
     }
 }
 
+/// OTA status messages are not request-correlated, so only known pre-ack failures settle a start.
+private func otaStartRejectionErrorCode(_ event: OtaStatusEvent) -> String? {
+    guard event.status.lowercased() == "failed",
+          event.errorMessage?.lowercased() == "battery_low"
+    else {
+        return nil
+    }
+    return "battery_low"
+}

@@ -120,10 +120,30 @@ adb devices
 This script will:
 
 1. Build your debug APK
-2. Install it as `com.mentra.asg_client.thirdparty`, disable the stock app, and set your build as the default launcher
-3. Grant all required permissions
+2. Snapshot the latest staging OTA manifest and update stock ASG, BES, and MTK firmware
+3. Disable the stock app and its recovery agents
+4. Install your build as `com.mentra.asg_client.thirdparty`, grant its permissions, and make it the default launcher
+
+Older Mentra Live firmware may need an explicit reboot after an MTK patch. If USB ADB has not
+returned after 45 seconds, the script asks you to unplug and reconnect the Infinity Cable, then
+continues automatically.
 
 **Warning:** Your fork will not receive OTA updates from Mentra.
+
+### Updating Mentra Live Firmware with a Custom Build Installed
+
+After using `dev-setup.sh`, update the glasses firmware without rebuilding or reinstalling your
+custom ASG Client:
+
+```bash
+./scripts/update-mentra-live.sh
+```
+
+The script preserves the third-party APK and its app data, updates the glasses with Mentra-signed
+firmware, and returns to the existing third-party launcher after verifying the update. If the
+update fails, it leaves the stock launcher active as a safe recovery path. See
+[maintaining customized Mentra Live devices](docs/features/dev-firmware-update.md) for setup,
+firmware update, reconnect, and recovery guidance.
 
 ### Restoring Stock Firmware
 

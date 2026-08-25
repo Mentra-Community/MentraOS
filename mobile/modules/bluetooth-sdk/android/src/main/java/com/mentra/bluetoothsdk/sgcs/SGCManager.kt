@@ -56,6 +56,9 @@ abstract class SGCManager {
     abstract fun stopStream()
     abstract fun sendStreamKeepAlive(message: MutableMap<String, Any>)
     abstract fun startVideoRecording(requestId: String, save: Boolean, sound: Boolean)
+    open fun queryVideoRecordingStatus(requestId: String) {
+        Bridge.log("SGC: queryVideoRecordingStatus operation not supported")
+    }
 
     /**
      * Start video recording with optional per-recording resolution/fps. A width,

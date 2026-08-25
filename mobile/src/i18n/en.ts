@@ -152,6 +152,21 @@ const en = {
       "Your glasses are connected to the app, but the bluetooth audio device is not connected.",
     powerOn: "Power on",
     poweredOn: "Continue",
+    livePairingModeTitle: "Ready to pair",
+    livePairingModeSubtitle: "Put your glasses into pairing mode before you scan.",
+    livePairingModeInfo:
+      "Press the power button 5 times quickly. The LED flashes and the glasses speak a 4-character code (0–9, A–F). Match that code on the scan list if more than one unit appears.",
+    noGlassesFound: "No glasses found",
+    noGlassesFoundHint: "Make sure you pressed the power button 5 times quickly, then try again.",
+    nearbyNotInPairingModeHint:
+      "Nearby Mentra Live glasses were found, but they are not in pairing mode. Press the power button 5 times quickly, then try again.",
+    notInPairingModeLabel: "Not in pairing mode",
+    notInPairingModeAlertTitle: "Enter pairing mode",
+    notInPairingModeAlertMessage:
+      "Press the power button 5 times quickly. The LED flashes and the glasses speak a 4-character code. Then select the glasses again.",
+    tryAgain: "Try Again",
+    pairingCodeLabel: "Code {{code}}",
+    legacyFirmwareLabel: "Legacy firmware",
     ar99Step1: "1. Confirm that the Bluetooth switch of the mobile phone is turned on.",
     ar99Step2: "2. Press and hold the power button for 3 to 5 seconds to turn on the glasses.",
   },
@@ -638,6 +653,8 @@ const en = {
     forgetGlasses: "Unpair glasses",
     forgetGlassesConfirm:
       "To finish the process, make sure to remove your glasses from your phone's Bluetooth settings.",
+    forgetGlassesWhilePairing:
+      "Bluetooth pairing is in progress. Accept or dismiss the system pairing dialog first, then try unpairing again.",
     disconnectGlassesTitle: "Disconnect the glasses?",
     disconnectGlassesConfirm:
       "Are you sure you want to disconnect? If so, please remember to remove your glasses from your phone's Bluetooth settings.",

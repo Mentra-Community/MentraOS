@@ -307,6 +307,8 @@ const mockIslandEntries = () => {
   const realOtaInstallPolicy = jest.requireActual("./modules/engine/src/services/otaInstallPolicy")
   const realOtaDisplayState = jest.requireActual("./modules/engine/src/services/otaDisplayState")
   const realOtaInstallCoordinator = jest.requireActual("./modules/engine/src/services/OtaInstallCoordinator")
+  const realOtaAutoChain = jest.requireActual("./modules/engine/src/services/OtaAutoChain")
+  const realOtaErrorMapping = jest.requireActual("./modules/engine/src/services/OtaErrorMapping")
   const realPhoneNotificationsSync = jest.requireActual("./modules/engine/src/services/PhoneNotificationsSync")
   // The on* event facades (button/touch/pair_failure/glasses_not_ready) are thin
   // addListener wrappers in the real engine, so the mock delegates to the shared
@@ -358,6 +360,8 @@ const mockIslandEntries = () => {
     // OTA install policy (timings + failure copy) + deriveDisplayState — real (pure)
     // implementations, consumed by the host otaProgressTimeouts shim + OTA tests.
     ...realOtaInstallPolicy,
+    ...realOtaAutoChain,
+    ...realOtaErrorMapping,
     deriveDisplayState: realOtaDisplayState.deriveDisplayState,
     // Settings contract on the public entry (real store-backed): SETTINGS registry,
     // per-key hook, and the pure device-model key helpers.

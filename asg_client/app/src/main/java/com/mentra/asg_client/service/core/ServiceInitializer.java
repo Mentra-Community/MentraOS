@@ -24,6 +24,7 @@ import com.mentra.asg_client.service.core.handlers.subscribers.ButtonEventSubscr
 import com.mentra.asg_client.service.core.handlers.subscribers.FactoryResetEventSubscriber;
 import com.mentra.asg_client.service.core.handlers.subscribers.FileTransferAckEventSubscriber;
 import com.mentra.asg_client.service.core.handlers.subscribers.HotspotEventSubscriber;
+import com.mentra.asg_client.service.core.handlers.subscribers.PairingAudioEventSubscriber;
 import com.mentra.asg_client.service.core.handlers.subscribers.ShutdownEventSubscriber;
 import com.mentra.asg_client.service.core.handlers.subscribers.SwipeVolumeEventSubscriber;
 import com.mentra.asg_client.service.core.handlers.subscribers.SwitchEventSubscriber;
@@ -107,6 +108,7 @@ public final class ServiceInitializer {
         IPeripheralBus peripheralBus = new SimplePeripheralBus();
         peripheralBus.subscribe(
                 new BatteryEventSubscriber(hardwareManager, stateManager, serviceManager));
+        peripheralBus.subscribe(new PairingAudioEventSubscriber(context, hardwareManager));
         peripheralBus.subscribe(
                 new ButtonEventSubscriber(
                         serviceManager,

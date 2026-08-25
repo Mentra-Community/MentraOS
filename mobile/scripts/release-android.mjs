@@ -54,7 +54,13 @@ console.log(`versionCode: ${versionCode}`);
 // ── Step 3: Prebuild + bundle ────────────────────────────────────────────────
 
 console.log('\n━━━ Step 3: Prebuild + bundle ━━━');
-process.env.ORG_GRADLE_PROJECT_reactNativeArchitectures = 'arm64-v8a';
+// Default phone-only (arm64). Staging production sets
+// ORG_GRADLE_PROJECT_reactNativeArchitectures to all four ABIs; do not
+// clobber a caller-provided value.
+if (!process.env.ORG_GRADLE_PROJECT_reactNativeArchitectures) {
+  process.env.ORG_GRADLE_PROJECT_reactNativeArchitectures = 'arm64-v8a';
+}
+console.log(`reactNativeArchitectures: ${process.env.ORG_GRADLE_PROJECT_reactNativeArchitectures}`);
 
 // Clean android/ to avoid cached version number issues
 await $({ stdio: 'inherit' })`rm -rf android`;

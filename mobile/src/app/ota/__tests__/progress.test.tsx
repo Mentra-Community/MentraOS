@@ -199,7 +199,7 @@ describe("progress.tsx display states", () => {
     beginOtaAutoChain("initial-offer", false)
     const replaceSpy = jest.spyOn(useNavigationStore.getState(), "replace")
     try {
-      render(<OtaProgressScreen />)
+      const {getByText} = render(<OtaProgressScreen />)
 
       act(() => {
         useGlassesStore.getState().setOtaStatus({
@@ -218,7 +218,9 @@ describe("progress.tsx display states", () => {
       await act(async () => {
         await jest.advanceTimersByTimeAsync(750)
       })
-      expect(replaceSpy).toHaveBeenCalledWith("/ota/check-for-updates")
+      expect(getByText("ota:checkingForUpdates")).toBeDefined()
+      expect(useConnectionOverlayConfig.getState().suppressOverlay).toBe(false)
+      expect(replaceSpy).not.toHaveBeenCalledWith("/ota/check-for-updates")
     } finally {
       replaceSpy.mockRestore()
     }
@@ -239,7 +241,7 @@ describe("progress.tsx display states", () => {
     })
     const replaceSpy = jest.spyOn(useNavigationStore.getState(), "replace")
     try {
-      render(<OtaProgressScreen />)
+      const {getByText} = render(<OtaProgressScreen />)
 
       await act(async () => {
         await jest.advanceTimersByTimeAsync(750)
@@ -252,7 +254,8 @@ describe("progress.tsx display states", () => {
       await act(async () => {
         await jest.advanceTimersByTimeAsync(750)
       })
-      expect(replaceSpy).toHaveBeenCalledWith("/ota/check-for-updates")
+      expect(getByText("ota:checkingForUpdates")).toBeDefined()
+      expect(replaceSpy).not.toHaveBeenCalledWith("/ota/check-for-updates")
     } finally {
       replaceSpy.mockRestore()
     }
@@ -263,7 +266,7 @@ describe("progress.tsx display states", () => {
     beginOtaAutoChain("initial-offer", false)
     const replaceSpy = jest.spyOn(useNavigationStore.getState(), "replace")
     try {
-      render(<OtaProgressScreen />)
+      const {getByText} = render(<OtaProgressScreen />)
       act(() => {
         useGlassesStore.getState().setOtaStatus({
           sessionId: "s1",
@@ -294,16 +297,17 @@ describe("progress.tsx display states", () => {
       await act(async () => {
         await jest.advanceTimersByTimeAsync(750)
       })
-      expect(replaceSpy).toHaveBeenCalledWith("/ota/check-for-updates")
+      expect(getByText("ota:checkingForUpdates")).toBeDefined()
+      expect(replaceSpy).not.toHaveBeenCalledWith("/ota/check-for-updates")
     } finally {
       replaceSpy.mockRestore()
     }
   })
 
-  it("stops automatic chaining when Continue bypasses BES reboot verification", () => {
+  it("stops automatic chaining when Continue bypasses BES reboot verification", async () => {
     setGlassesConnected()
     beginOtaAutoChain("initial-offer", false)
-    const {getByText} = render(<OtaProgressScreen />)
+    const {getByTestId} = render(<OtaProgressScreen />)
 
     act(() => {
       useGlassesStore.getState().setOtaStatus({
@@ -318,8 +322,10 @@ describe("progress.tsx display states", () => {
       })
     })
 
-    fireEvent.press(getByText("Continue"))
-
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(15_000)
+    })
+    fireEvent.press(getByTestId("button-Continue"))
     expect(isOtaAutoChainActive()).toBe(false)
   })
 
@@ -349,6 +355,36 @@ describe("progress.tsx display states", () => {
   it("stops automatic chaining when leaving a failed pass to change WiFi", () => {
     setGlassesConnected()
     beginOtaAutoChain("initial-offer", false)
+    const pushSpy = jest.spyOn(useNavigationStore.getState(), "push")
+    try {
+      const {getByText} = render(<OtaProgressScreen />)
+
+      act(() => {
+        useGlassesStore.getState().setOtaStatus({
+          sessionId: "s1",
+          totalSteps: 1,
+          currentStep: 1,
+          stepType: "apk",
+          phase: "download",
+          stepPercent: 0,
+          overallPercent: 0,
+          status: "failed",
+          error: "no_internet",
+        })
+      })
+
+      fireEvent.press(getByText("Change WiFi"))
+
+      expect(isOtaAutoChainActive()).toBe(false)
+      expect(useConnectionOverlayConfig.getState().suppressOverlay).toBe(false)
+      expect(pushSpy).toHaveBeenCalledWith("/wifi/scan")
+    } finally {
+      pushSpy.mockRestore()
+    }
+  })
+
+  it("restores overlay suppression when retrying after WiFi setup", () => {
+    setGlassesConnected()
     const {getByText} = render(<OtaProgressScreen />)
 
     act(() => {
@@ -366,8 +402,10 @@ describe("progress.tsx display states", () => {
     })
 
     fireEvent.press(getByText("Change WiFi"))
+    expect(useConnectionOverlayConfig.getState().suppressOverlay).toBe(false)
 
-    expect(isOtaAutoChainActive()).toBe(false)
+    fireEvent.press(getByText("Retry"))
+    expect(useConnectionOverlayConfig.getState().suppressOverlay).toBe(true)
   })
 
   it("requires a glasses restart for the existing generic BES install failure", () => {
@@ -416,7 +454,7 @@ describe("progress.tsx display states", () => {
     const {getByText, getByTestId} = render(<OtaProgressScreen />)
     expect(getByText("Skip (super)")).toBeDefined()
     fireEvent.press(getByTestId("button-Skip (super)"))
-    expect(replaceSpy).toHaveBeenCalledWith("/ota/check-for-updates")
+    expect(replaceSpy).toHaveBeenCalled()
     replaceSpy.mockRestore()
   })
 

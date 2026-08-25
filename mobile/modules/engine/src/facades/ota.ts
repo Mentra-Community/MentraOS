@@ -1,8 +1,8 @@
 /**
  * ota facade — `engine.ota`: the OEM-facing OTA read/observe surface. Engine's
  * OtaService projects the glasses' OTA BLE events into the engine store; this facade
- * exposes the snapshot + change subscriptions the host renders its update prompt and
- * progress UI from. No host-injected UI — the host owns all alerts/navigation/i18n.
+ * exposes the snapshot + change subscriptions behind the shared OTA flow exported by
+ * `@mentra/engine/ota`. Hosts retain only their surrounding navigation and theme/i18n adapters.
  *
  * Availability checks live in engine. Install orchestration lives in engine too:
  * `installSession` fronts the OtaInstallCoordinator state machine (WP 8B) — the host
@@ -13,6 +13,8 @@ import type {OtaProgress, OtaProgressStatus, OtaStatus, OtaUpdateInfo} from "@me
 import {isGlassesConnected, useGlassesStore} from "../stores/glasses"
 import {resolveOtaManifestUrl} from "../services/otaManifestUrl"
 import {otaInstallCoordinator, type OtaInstallSnapshot} from "../services/OtaInstallCoordinator"
+import {startGlassesStatusProjection} from "../services/GlassesStatusProjection"
+import {startOtaService} from "../services/OtaService"
 import {
   checkCurrentGlassesForUpdate,
   type OtaCheckCurrentGlassesOptions,
@@ -51,6 +53,16 @@ export type {
 
 export const ota = {
   // --- actions ---
+  /**
+   * Start the device-status and OTA projections without starting the authenticated
+   * cloud/miniapp runtime. This is the explicit entry point for Bluetooth-only hosts.
+   * Idempotent and safe when the full engine runtime is already running.
+   */
+  initialize: async () => {
+    const hydrated = startGlassesStatusProjection()
+    startOtaService()
+    await hydrated
+  },
   /**
    * Start the firmware install with the resolved OTA manifest URL. Progress lands on
    * `status()`/`onStatus()`. (The host resolves the manifest URL — dev-override/env/prod

@@ -44,6 +44,7 @@ import {
   VideoRecordingStartedStatusEvent,
   VideoRecordingSettings,
   VideoRecordingStoppedStatusEvent,
+  VideoRecordingStatusEvent,
   VersionInfoResult,
   WarmUpCameraParams,
   WifiSearchResult,
@@ -181,6 +182,7 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
     webhookUrl?: string,
     authToken?: string,
   ): Promise<VideoRecordingStoppedStatusEvent>
+  queryVideoRecordingStatus(requestId: string): Promise<VideoRecordingStatusEvent>
 
   // Stream Commands
   startStream(params: StreamStartRequest): Promise<StreamStatusEvent>

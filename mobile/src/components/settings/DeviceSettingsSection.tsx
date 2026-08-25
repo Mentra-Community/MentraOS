@@ -103,8 +103,29 @@ export function DeviceSettingsSection() {
       buttons: [{text: translate("common:cancel"), style: "cancel"}, {text: translate("connection:unpair")}],
       options: {allowDismiss: false},
     })
-    if (result === 1) {
-      engine.glasses.forget()
+    if (result !== 1) {
+      return
+    }
+    try {
+      await engine.glasses.forget()
+      await engine.settings.set(SETTINGS.default_wearable.key, "", false)
+      await engine.settings.set(SETTINGS.device_name.key, "", false)
+      await engine.settings.set(SETTINGS.device_address.key, "", false)
+      await engine.settings.set(SETTINGS.pending_wearable.key, "", false)
+      useNavigationStore.getState().clearHistoryAndGoHome()
+    } catch (error) {
+      const code =
+        error && typeof error === "object" && "code" in error ? String((error as {code?: unknown}).code) : ""
+      // Native used to refuse forget() during CTKD bonding; Unpair now proceeds anyway.
+      if (code === "ctkd_bonding_in_progress") {
+        await showAlert({
+          title: translate("settings:forgetGlasses"),
+          message: translate("settings:forgetGlassesWhilePairing"),
+          buttons: [{text: translate("common:ok")}],
+        })
+        return
+      }
+      console.warn("Failed to forget glasses:", error)
     }
   }
 
