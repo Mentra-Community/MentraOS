@@ -60,7 +60,7 @@ export class StoreController {
   }
 
   private async reconcileUpdates(): Promise<{checkedAt: number; candidateCount: number}> {
-    await this.refresh("", true)
+    await this.refresh(this.lastQuery, true)
     const candidateCount = this.automaticUpdateCandidates().length
     await this.scheduleAutomaticUpdates()
     return {checkedAt: Date.now(), candidateCount}

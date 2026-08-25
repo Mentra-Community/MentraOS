@@ -11,6 +11,7 @@ interface TestController {
   automaticUpdateCandidates(): StoreApp[]
   scheduleAutomaticUpdates(): Promise<void>
   refreshing: Promise<StoreSnapshot> | null
+  lastQuery: string
   snapshot: StoreSnapshot
 }
 
@@ -35,7 +36,12 @@ describe("StoreController refresh serialization", () => {
     } as unknown as MiniappSession
     const controller = new StoreController(session) as unknown as TestController
     let scheduled = 0
-    controller.refresh = async () => controller.snapshot
+    const refreshCalls: Array<{query?: string; refreshAutomaticCatalog?: boolean}> = []
+    controller.lastQuery = "camera"
+    controller.refresh = async (query, refreshAutomaticCatalog) => {
+      refreshCalls.push({query, refreshAutomaticCatalog})
+      return controller.snapshot
+    }
     controller.automaticUpdateCandidates = () => [{}, {}] as StoreApp[]
     controller.scheduleAutomaticUpdates = async () => {
       scheduled += 1
@@ -48,6 +54,7 @@ describe("StoreController refresh serialization", () => {
     expect(result.candidateCount).toBe(2)
     expect(result.checkedAt).toBeGreaterThan(0)
     expect(scheduled).toBe(1)
+    expect(refreshCalls).toEqual([{query: "camera", refreshAutomaticCatalog: true}])
   })
 
   test("queues a post-install reload behind an in-flight background refresh", async () => {
