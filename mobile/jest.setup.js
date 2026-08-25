@@ -762,7 +762,7 @@ const mockIslandEntries = () => {
     ISLAND_SETTINGS_KEYS: {},
   }
 
-  // --- "@mentra/engine/internal": raw stores + service singletons ---
+  // --- "@mentra/engine-host-internal": raw stores + service singletons ---
   const internal = {
     __esModule: true,
     // Real glasses store + its selectors/helpers (useGlassesStore, selectors,
@@ -800,7 +800,7 @@ const mockIslandEntries = () => {
     // one tests listen on across the boundary.
     GlobalEventEmitter: jest.requireActual("./modules/engine/src/utils/GlobalEventEmitter").default,
     // Gallery cluster moved into island; host consumers (GalleryScreen, gallery-settings,
-    // NetworkMonitoring, MantleManager) import these from @mentra/engine/internal. Stub
+    // NetworkMonitoring, MantleManager) import these from @mentra/engine-host-internal. Stub
     // them here so those screens/services load under the mock without native deps. The
     // gallery service's own jest test imports the REAL implementations by relative path.
     gallerySyncService: {
@@ -943,7 +943,7 @@ const mockIslandEntries = () => {
     saveLocalAppRunningState: jest.fn(),
   }
 
-  // --- "@mentra/engine/devtools": debug-only singletons ---
+  // --- "@mentra/engine-host-internal/devtools": debug-only singletons ---
   const devtools = {
     __esModule: true,
     miniappRunningRegistry: {
@@ -957,8 +957,8 @@ const mockIslandEntries = () => {
 }
 
 jest.mock("@mentra/engine", () => mockIslandEntries().main)
-jest.mock("@mentra/engine/internal", () => mockIslandEntries().internal)
-jest.mock("@mentra/engine/devtools", () => mockIslandEntries().devtools)
+jest.mock("@mentra/engine-host-internal", () => mockIslandEntries().internal)
+jest.mock("@mentra/engine-host-internal/devtools", () => mockIslandEntries().devtools)
 
 // Mock crust native module to avoid native bridge errors
 jest.mock("@mentra/crust", () => ({

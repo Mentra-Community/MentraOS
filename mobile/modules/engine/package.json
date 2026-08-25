@@ -11,16 +11,6 @@
       "react-native": "./src/index.ts",
       "default": "./build/index.js"
     },
-    "./internal": {
-      "types": "./build/internal.d.ts",
-      "react-native": "./src/internal.ts",
-      "default": "./build/internal.js"
-    },
-    "./devtools": {
-      "types": "./build/devtools.d.ts",
-      "react-native": "./src/devtools.ts",
-      "default": "./build/devtools.js"
-    },
     "./ota": {
       "types": "./build/react/index.d.ts",
       "react-native": "./src/react/index.ts",
@@ -59,6 +49,10 @@
     "build",
     "README.md",
     "src",
+    "!build/devtools.*",
+    "!build/internal.*",
+    "!src/devtools.ts",
+    "!src/internal.ts",
     "!src/**/__tests__",
     "!src/**/*.test.ts"
   ],

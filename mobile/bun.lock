@@ -23,6 +23,7 @@
         "@mentra/cloud-client": "workspace:*",
         "@mentra/crust": "workspace:*",
         "@mentra/engine": "workspace:*",
+        "@mentra/engine-host-internal": "workspace:*",
         "@mentra/jspolyfill": "workspace:*",
         "@mentra/miniapp": "workspace:*",
         "@react-native-community/netinfo": "11.5.2",
@@ -333,6 +334,10 @@
         "react-native-zip-archive": "*",
         "zustand": "*",
       },
+    },
+    "modules/engine-host-internal": {
+      "name": "@mentra/engine-host-internal",
+      "version": "0.0.0",
     },
     "modules/jspolyfill": {
       "name": "@mentra/jspolyfill",
@@ -990,6 +995,8 @@
     "@mentra/crust": ["@mentra/crust@workspace:modules/crust"],
 
     "@mentra/engine": ["@mentra/engine@workspace:modules/engine"],
+
+    "@mentra/engine-host-internal": ["@mentra/engine-host-internal@workspace:modules/engine-host-internal"],
 
     "@mentra/jspolyfill": ["@mentra/jspolyfill@workspace:modules/jspolyfill"],
 

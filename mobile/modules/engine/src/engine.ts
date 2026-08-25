@@ -5,8 +5,8 @@
  * name stays `engine` in code; the public API surface is `engine`.)
  *
  * It grows one facade at a time. The migration-era flat store/service exports
- * live on the `@mentra/engine/internal` entry (and the debug singletons on
- * `@mentra/engine/devtools`); they shrink as screens move onto `engine.*`.
+ * remain in a private MentraOS host package; they shrink as screens move onto
+ * `engine.*`.
  */
 import {configure, start as bootstrapStart, stop as bootstrapStop, updateUiSeams} from "./runtime/bootstrap"
 import {cloudClientService} from "./services/CloudClientService"

@@ -20,11 +20,15 @@ function fixture() {
   const root = mkdtempSync(path.join(tmpdir(), "mentra-engine-package-"))
   mkdirSync(path.join(root, "src/generated"), {recursive: true})
   mkdirSync(path.join(root, "build/generated"), {recursive: true})
+  mkdirSync(path.join(root, "build/public"), {recursive: true})
   writeFileSync(
     path.join(root, "package.json"),
     JSON.stringify({
       name: "@mentra/engine",
       version: expected.releaseIdentity,
+      exports: {
+        ".": {types: "./build/index.d.ts", default: "./build/index.js"},
+      },
       dependencies: {
         "@mentra/bluetooth-sdk": expected.releaseIdentity,
         "@mentra/cloud-client": expected.releaseIdentity,
@@ -35,6 +39,9 @@ function fixture() {
     }),
   )
   const source = renderReleaseMetadata(expected)
+  writeFileSync(path.join(root, "build/index.d.ts"), 'export type {PublicValue} from "./public"\n')
+  writeFileSync(path.join(root, "build/public/index.d.ts"), 'export type {PublicValue} from "./value"\n')
+  writeFileSync(path.join(root, "build/public/value.d.ts"), "export type PublicValue = string\n")
   writeFileSync(path.join(root, "src/generated/releaseMetadata.ts"), source)
   writeFileSync(
     path.join(root, "build/generated/releaseMetadata.js"),
@@ -64,4 +71,31 @@ test("rejects a packed Engine with a drifting family dependency", () => {
   writeFileSync(manifestPath, JSON.stringify(manifest))
 
   assert.throws(() => verifyReleasePackage({packageRoot: root, expected}), /must be exactly/)
+})
+
+test("rejects a published private host export", () => {
+  const root = fixture()
+  const manifestPath = path.join(root, "package.json")
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"))
+  manifest.exports["./internal"] = {types: "./build/internal.d.ts"}
+  writeFileSync(manifestPath, JSON.stringify(manifest))
+
+  assert.throws(() => verifyReleasePackage({packageRoot: root, expected}), /must not publish \.\/internal/)
+})
+
+test("rejects an SDK internal import reachable from a public declaration", () => {
+  const root = fixture()
+  writeFileSync(
+    path.join(root, "build/public/value.d.ts"),
+    'export type {GlassesStatus} from "@mentra/bluetooth-sdk/internal"\n',
+  )
+
+  assert.throws(() => verifyReleasePackage({packageRoot: root, expected}), /leaks forbidden public declaration import/)
+})
+
+test("rejects a declaration import that escapes the package", () => {
+  const root = fixture()
+  writeFileSync(path.join(root, "build/index.d.ts"), 'export type {Outside} from "../../outside"\n')
+
+  assert.throws(() => verifyReleasePackage({packageRoot: root, expected}), /unresolved declaration import/)
 })

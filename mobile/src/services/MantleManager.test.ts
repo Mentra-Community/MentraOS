@@ -10,7 +10,7 @@ import {
   useCoreStore,
   useDisplayStore,
   useSettingsStore,
-} from "@mentra/engine/internal"
+} from "@mentra/engine-host-internal"
 // This test resets the concrete glasses store; the package-level Jest mock does
 // not expose it through @mentra/engine.
 // eslint-disable-next-line no-restricted-imports

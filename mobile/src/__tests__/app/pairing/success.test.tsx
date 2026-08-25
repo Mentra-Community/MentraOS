@@ -1,5 +1,5 @@
 import {engine, SETTINGS} from "@mentra/engine"
-import {useSettingsStore} from "@mentra/engine/internal"
+import {useSettingsStore} from "@mentra/engine-host-internal"
 import {useRoute} from "@react-navigation/native"
 import {fireEvent, render, waitFor} from "@testing-library/react-native"
 import type {ReactNode} from "react"

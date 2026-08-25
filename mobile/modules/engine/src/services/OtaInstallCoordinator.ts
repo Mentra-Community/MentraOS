@@ -18,7 +18,7 @@
  * during React effects scheduled a re-render after the current effect batch.
  */
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
-import type {OtaProgress, OtaStatus} from "@mentra/bluetooth-sdk/internal"
+import type {OtaProgress, OtaStatus} from "@mentra/bluetooth-sdk"
 import GlobalEventEmitter from "../utils/GlobalEventEmitter"
 import {isGlassesConnected, useGlassesStore} from "../stores/glasses"
 import {resolveOtaManifestUrl} from "./otaManifestUrl"

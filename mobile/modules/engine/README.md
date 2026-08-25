@@ -33,15 +33,6 @@ resolve live TypeScript source):
   OTA policy constants, hardware capability tables, `BgTimer`). Judgment rule:
   read models, commands, pure functions and types are main; anything that
   mutates runtime state or exposes a store/service is not.
-- **`@mentra/engine/internal`** (`src/internal.ts`) — the migration-era
-  runtime surface: raw zustand stores (`useCoreStore`, `useSettingsStore`,
-  `useAppStatusStore`, …) and service singletons (`appRegistry`, `restComms`,
-  `cloudClientService`, the gallery cluster, the miniapp engine, …). The
-  host's `@/stores/*` shims re-export from here. New host code should use
-  `engine.*` instead; `scripts/check-mobile-runtime-boundary.sh` counts every
-  `/internal` import in `mobile/src` (report-only) as the burn-down metric.
-- **`@mentra/engine/devtools`** (`src/devtools.ts`) — debug-only singletons
-  (`miniappRunningRegistry`, `devServerBridge`) for the internal dev screens.
 - **`@mentra/engine/ota`** (`src/react/index.ts`) — shared full-screen OTA
   Native experiences. `MentraLiveOtaFlow` owns the complete check, hotspot or
   Wi-Fi install, APK/MTK/BES progress, reboot, retry, and final verification
@@ -70,16 +61,8 @@ sockets.
 ```ts
 import {engine, decideDevLaunchRoute} from "@mentra/engine"
 import BluetoothSdk from "@mentra/engine/bluetooth-sdk"
-import {webviewBridge, buildMiniappGlobalsScript} from "@mentra/engine/internal"
-import {miniappRunningRegistry} from "@mentra/engine/devtools"
 ```
 
-- `webviewBridge` — registers per-package WebView message handlers so any
-  service can `postMessage` JSON into a specific miniapp.
-- `miniappRunningRegistry` — session-scoped set of currently-mounted local
-  miniapp packageNames (foreground + background).
-- `buildMiniappGlobalsScript` — builds the `window.MentraOS` injection script
-  (and CSS variables / console-tap shim) used by every miniapp WebView.
 - `decideDevLaunchRoute` — pre-flight a dev URL's `miniapp.json` to decide
   whether to mount live or take the user to the offline screen.
 

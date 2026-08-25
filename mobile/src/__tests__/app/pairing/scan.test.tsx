@@ -144,10 +144,10 @@ import {focusEffectPreventBack, usePushUnder} from "@/contexts/NavigationHistory
 import {useNavigationStore} from "@/stores/navigation"
 import {requestFeaturePermissions} from "@/utils/PermissionsUtils"
 import SelectGlassesBluetoothScreen from "@/app/pairing/scan"
-import {useCoreStore} from "@mentra/engine/internal"
+import {useCoreStore} from "@mentra/engine-host-internal"
 import {useGlassesStore} from "../../../../modules/engine/src/stores/glasses"
 import {SETTINGS} from "@mentra/engine"
-import {useSettingsStore} from "@mentra/engine/internal"
+import {useSettingsStore} from "@mentra/engine-host-internal"
 import {resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
 
 const originalPlatformOS = Platform.OS

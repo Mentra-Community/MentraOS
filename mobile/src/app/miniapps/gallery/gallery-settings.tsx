@@ -10,7 +10,7 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import {engine, SETTINGS, useSetting} from "@mentra/engine"
-import {cameraRollExportCoordinator, localStorageService} from "@mentra/engine/internal"
+import {cameraRollExportCoordinator, localStorageService} from "@mentra/engine-host-internal"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 

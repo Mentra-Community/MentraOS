@@ -9,7 +9,7 @@
  * progress screen is a pure renderer over its snapshot + attach/detach/retry/finish.
  */
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
-import type {OtaProgress, OtaProgressStatus, OtaStatus, OtaUpdateInfo} from "@mentra/bluetooth-sdk/internal"
+import type {OtaProgress, OtaProgressStatus, OtaStartAckEvent, OtaStatus, OtaUpdateInfo} from "@mentra/bluetooth-sdk"
 import {isGlassesConnected, useGlassesStore} from "../stores/glasses"
 import {resolveOtaManifestUrl} from "../services/otaManifestUrl"
 import {otaInstallCoordinator, type OtaInstallSnapshot} from "../services/OtaInstallCoordinator"
@@ -69,7 +69,7 @@ export const ota = {
    * host pin, or Engine release pin resolution stays with the OTA config; the stuck/retry watchdog is its own
    * resilience layer on top of this command.)
    */
-  install: (...args: Parameters<typeof BluetoothSdk.startOtaUpdate>) => BluetoothSdk.startOtaUpdate(...args),
+  install: (otaVersionUrl?: string | null): Promise<OtaStartAckEvent> => BluetoothSdk.startOtaUpdate(otaVersionUrl),
   // Deferred: this facade entry was intended to become the engine-owned retry/check
   // action, but BluetoothSdk.checkForOtaUpdate() only returns a boolean. Exposing it
   // here would make callers think the rich otaUpdateAvailable read model is refreshed,
