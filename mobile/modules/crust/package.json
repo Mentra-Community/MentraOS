@@ -23,7 +23,11 @@
     "crust",
     "Crust"
   ],
-  "repository": "https://github.com/fossephate/crust",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Mentra-Community/MentraOS.git",
+    "directory": "mobile/modules/crust"
+  },
   "bugs": {
     "url": "https://github.com/fossephate/crust/issues"
   },

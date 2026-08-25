@@ -32,6 +32,11 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+      - name: Reject unresolved conflict markers
+        run: |
+          if git grep -nE '^(<<<<<<< |\|\|\|\|\|\|\| parent of |>>>>>>> )'; then
+            exit 1
+          fi
       - name: Test coordinated release tooling
         run: |
           set -euo pipefail

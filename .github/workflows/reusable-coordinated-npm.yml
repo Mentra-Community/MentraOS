@@ -1,0 +1,84 @@
+name: Reusable Coordinated npm Release
+
+on:
+  workflow_call:
+    inputs:
+      source_commit:
+        required: true
+        type: string
+      release_plan_artifact:
+        required: true
+        type: string
+      members:
+        description: Comma-separated release-family member names.
+        required: true
+        type: string
+      result_artifact:
+        required: true
+        type: string
+      dry_run:
+        required: false
+        default: false
+        type: boolean
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    name: Publish exact npm family closure
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact release source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_commit }}
+
+      - name: Download immutable release plan
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.release_plan_artifact }}
+          path: release-intent
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          registry-url: https://registry.npmjs.org
+
+      - name: Install exact root workspace dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Install exact mobile workspace dependencies
+        working-directory: mobile
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Stage coordinated package identities
+        run: node .github/scripts/stage-release-family.mjs --plan release-intent/release-plan.json
+
+      - name: Test npm release tooling
+        run: node --test .github/scripts/publish-release-npm.test.mjs
+
+      - name: Build, pack, reconcile, and publish in dependency order
+        run: >-
+          node .github/scripts/publish-release-npm.mjs
+          --plan release-intent/release-plan.json
+          --members "${{ inputs.members }}"
+          --output-dir release-output
+          --dry-run "${{ inputs.dry_run }}"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Upload exact npm artifacts and publication records
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.result_artifact }}
+          path: release-output
+          if-no-files-found: error
+          retention-days: 90
