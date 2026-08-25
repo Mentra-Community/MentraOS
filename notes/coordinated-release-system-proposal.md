@@ -438,6 +438,15 @@ a different family version. Do not configure concurrency to cancel or replace
 an older publication once immutable artifacts or store uploads have begun.
 Mutable channel heads move only toward a greater sequence.
 
+The coordinator is the only automatic publisher for MentraOS, Mentra Engine,
+Bluetooth SDK, and the Engine dependency closure. The superseded product,
+staging-build, and SDK release workflows are removed at cutover. Independent
+developer tools such as `@mentra/miniapp-cli`, `create-mentra-miniapp`,
+`@mentra/auth`, and `@mentra/cli` keep their own release workflow and versions;
+they are not silently pulled into the coordinated family. Their workflow is
+manually dispatched only after the coordinated Miniapp package for that channel
+is publicly readable, so scaffolder publication cannot race its template pin.
+
 ## Publication Order
 
 After the OTA bundle and version map exist, publish in dependency order:
@@ -498,7 +507,7 @@ Examples:
 mentraos-3.1.0-dev.184-android.apk
 mentraos-3.1.0-beta.57-ios.ipa
 mentra-live-ota-3.1.0-beta.57.json
-mentra-live-asg-3.1.0-beta.57.apk
+mentra-live-asg-selection-3.1.0-beta.57.json
 mentra-release-3.1.0-beta.57.json
 bluetooth-sdk-3.1.0-beta.57.aar
 bluetooth-sdk-3.1.0-beta.57.xcframework.zip
@@ -509,12 +518,20 @@ Do not put dates, unexplained counters, `_Beta_N`, ASG version codes, or workflo
 run IDs in primary names. Native store build numbers and source SHAs remain in
 the release manifest and diagnostics.
 
-Artifact filenames remain human-readable and version-based. Content hashes are
-recorded in `release-manifest.json` and attestations; they are never used as
-filenames. The semantic prerelease sequence in `3.1.0-beta.57` is intentional,
-not a random artifact identifier. When production promotes the exact tested
-candidate, it may continue to reference that immutable candidate URL rather than
-renaming or copying the artifact for cosmetic reasons.
+Primary artifact filenames remain human-readable and version-based. Content
+hashes are recorded in `release-manifest.json` and attestations. The semantic
+prerelease sequence in `3.1.0-beta.57` is intentional, not a random artifact
+identifier. When production promotes the exact tested candidate, it may
+continue to reference that immutable candidate URL rather than renaming or
+copying the artifact for cosmetic reasons.
+
+The reusable ASG build object is the one technical exception. It uses
+`mentra-live-asg-<version-code>-<build-fingerprint>.apk` plus a matching
+provenance JSON asset because the same verified APK can be selected by more than
+one release set. The fingerprint is the immutable reuse lookup key, not a
+release name. Each release exposes the semantic
+`mentra-live-asg-selection-<derived-version>.json` record that resolves its ASG
+object and records the object's hash, version, signature, and provenance.
 
 ## Promotion
 
@@ -585,6 +602,14 @@ Any missing, malformed, mutable, unreachable, or mismatched release input blocks
 publication. There is no fallback to another channel.
 
 ## Implementation Order
+
+The stacked migration must not leave the legacy and coordinated publishers
+active at the same time. The foundation change makes the superseded automatic
+package publishers manual-only before any shared `3.1.0` package versions land.
+The final cutover removes those workflows after the coordinator and all reusable
+publishers are present. Therefore every intermediate stack commit is
+fail-closed for automatic package publication; only the completed stack enables
+the coordinated publisher.
 
 1. **Engine boundary:** add the explicit `@mentra/engine/bluetooth-sdk` facade,
    introduce Engine-owned models for Engine concepts, remove SDK-internal paths

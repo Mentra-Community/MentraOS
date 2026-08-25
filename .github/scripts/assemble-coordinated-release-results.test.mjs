@@ -149,6 +149,21 @@ test("assembles every product target and finalizes one complete release manifest
   assert.ok(manifest.artifacts.some((artifact) => artifact.coordinate === plan.artifactNames.asgSelection))
   assert.equal(manifest.artifacts.at(-1).coordinate, plan.artifactNames.enginePackage)
 
+  assert.throws(
+    () =>
+      assembleCoordinatedReleaseResults({
+        plan,
+        ota,
+        npmRecords: [...npmRecords, npmRecords[0]],
+        native,
+        mobile,
+        asgSelectionFile,
+        enginePackage,
+        releaseAssetBaseUrl: "https://example.com/release",
+      }),
+    /Duplicate publication record/,
+  )
+
   writeFileSync(asgSelectionFile, `${JSON.stringify(asgSelection)}\n`)
   assert.throws(
     () =>

@@ -5,6 +5,7 @@ import path from "node:path"
 import {fileURLToPath} from "node:url"
 
 import {serializeReleaseRecord} from "./release-family.mjs"
+import {createEnginePackageArtifact, mergeReleaseResultRecords} from "./release-result-records.mjs"
 
 function readJson(file) {
   return JSON.parse(readFileSync(file, "utf8"))
@@ -12,34 +13,6 @@ function readJson(file) {
 
 function provenanceUrl(ota) {
   return `https://github.com/${ota.workflow.repository}/actions/runs/${ota.workflow.runId}`
-}
-
-function mergePublicationRecords(plan, records) {
-  const publications = {}
-  const artifacts = []
-  for (const record of records) {
-    if (record.releaseSetId !== plan.releaseSetId) throw new Error("Publication record belongs to another release set")
-    for (const [member, targets] of Object.entries(record.publications || {})) {
-      publications[member] ||= {}
-      for (const [target, publication] of Object.entries(targets)) {
-        const existing = publications[member][target]
-        if (existing && JSON.stringify(existing) !== JSON.stringify(publication)) {
-          throw new Error(`Conflicting publication records for ${member}:${target}`)
-        }
-        publications[member][target] = publication
-      }
-    }
-    artifacts.push(...(record.artifacts || []))
-  }
-  return {publications, artifacts}
-}
-
-function requirePublicationCoverage(plan, publications) {
-  for (const [member, definition] of Object.entries(plan.members)) {
-    for (const target of definition.publishTargets) {
-      if (!publications[member]?.[target]) throw new Error(`Missing publication result for ${member}:${target}`)
-    }
-  }
 }
 
 function verifyAsgSelection(plan, ota, selectionFile) {
@@ -84,8 +57,7 @@ export function assembleCoordinatedReleaseResults({
   if (plan.releaseSetId !== `mentra-${plan.releaseIdentity}` || ota.releaseSetId !== plan.releaseSetId) {
     throw new Error("Release plan and OTA result do not identify the same release set")
   }
-  const merged = mergePublicationRecords(plan, [...npmRecords, native, mobile])
-  requirePublicationCoverage(plan, merged.publications)
+  const merged = mergeReleaseResultRecords({plan, records: [...npmRecords, native, mobile]})
   const selection = verifyAsgSelection(plan, ota, asgSelectionFile)
   const otaProvenanceUrl = provenanceUrl(ota)
   const artifacts = [
@@ -118,19 +90,14 @@ export function assembleCoordinatedReleaseResults({
   ]
 
   if (enginePackage) {
-    const enginePublication = merged.publications["@mentra/engine"]?.npm
-    if (!enginePublication) throw new Error("Engine package artifact has no matching npm publication")
-    const bytes = readFileSync(enginePackage)
-    const sha256 = createHash("sha256").update(bytes).digest("hex")
-    if (sha256 !== enginePublication.sha256) throw new Error("Engine release asset differs from the npm package")
-    artifacts.push({
-      status: enginePublication.status,
-      coordinate: plan.artifactNames.enginePackage,
-      url: `${releaseAssetBaseUrl}/${plan.artifactNames.enginePackage}`,
-      sha256,
-      size: statSync(enginePackage).size,
-      provenanceUrl: enginePublication.provenanceUrl,
-    })
+    artifacts.push(
+      createEnginePackageArtifact({
+        plan,
+        publications: merged.publications,
+        packageFile: enginePackage,
+        assetBaseUrl: releaseAssetBaseUrl,
+      }),
+    )
   }
 
   return {
