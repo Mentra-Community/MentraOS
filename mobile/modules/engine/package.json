@@ -1,6 +1,6 @@
 {
   "name": "@mentra/engine",
-  "version": "0.1.0-dev.1",
+  "version": "3.1.0",
   "description": "Mentra Engine — miniapp registry, WebView bridge, and miniapp store",
   "main": "build/index.js",
   "react-native": "src/index.ts",
@@ -97,16 +97,17 @@
     "registry": "https://registry.npmjs.org/"
   },
   "dependencies": {
+    "@mentra/bluetooth-sdk": "3.1.0",
+    "@mentra/cloud-client": "3.1.0",
+    "@mentra/cloud-protocol": "3.1.0",
+    "@mentra/crust": "3.1.0",
+    "@mentra/miniapp": "3.1.0",
     "buffer": "^6.0.3",
     "events": "^3.3.0",
     "semver": "^7.7.4",
     "typesafe-ts": "^1.7.1"
   },
   "devDependencies": {
-    "@mentra/bluetooth-sdk": "workspace:*",
-    "@mentra/cloud-client": "workspace:*",
-    "@mentra/cloud-protocol": "workspace:*",
-    "@mentra/miniapp": "workspace:*",
     "@types/semver": "^7.7.1",
     "expo-module-scripts": "^55.0.2",
     "expo-modules-core": "55.0.25",
@@ -147,11 +148,6 @@
     "@react-native-community/netinfo": "*",
     "@dr.pogodin/react-native-fs": "*",
     "@craftzdog/react-native-buffer": "*",
-    "axios": "*",
-    "@mentra/bluetooth-sdk": "*",
-    "@mentra/crust": "^0.1.0-dev.0",
-    "@mentra/cloud-client": "^0.1.0-dev.0",
-    "@mentra/miniapp": "^0.3.0-dev.0",
-    "@mentra/cloud-protocol": "^0.1.0-dev.0"
+    "axios": "*"
   }
 }

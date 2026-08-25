@@ -209,3 +209,103 @@ test("can require package manifests to mirror the family base during activation"
 
   assert.throws(() => loadReleaseFamily({rootDir: root, requireVersionMirrors: true}), /does not mirror 3.1.0/)
 })
+
+test("requires exact regular dependencies between activated public family packages", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "mentra-release-family-"))
+  mkdirSync(path.join(root, ".github"), {recursive: true})
+  mkdirSync(path.join(root, "packages/base"), {recursive: true})
+  mkdirSync(path.join(root, "packages/product"), {recursive: true})
+  writeFileSync(path.join(root, "package.json"), JSON.stringify({version: "3.1.0"}))
+  writeFileSync(path.join(root, "packages/base/package.json"), JSON.stringify({name: "base", version: "3.1.0"}))
+  writeFileSync(
+    path.join(root, "packages/product/package.json"),
+    JSON.stringify({name: "product", version: "3.1.0", dependencies: {base: "^3.1.0"}}),
+  )
+  writeFileSync(
+    path.join(root, ".github/release-family.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      family: "mentra",
+      versionSource: "package.json",
+      products: ["product"],
+      members: [
+        {
+          name: "base",
+          manifest: "packages/base/package.json",
+          kind: "package",
+          publishTargets: ["npm"],
+          dependencies: [],
+        },
+        {
+          name: "product",
+          manifest: "packages/product/package.json",
+          kind: "product",
+          publishTargets: ["npm"],
+          dependencies: ["base"],
+        },
+      ],
+    }),
+  )
+
+  assert.throws(
+    () => loadReleaseFamily({rootDir: root, requireVersionMirrors: true}),
+    /dependencies\.base is "\^3\.1\.0", expected "3\.1\.0"/,
+  )
+})
+
+test("rejects family dependencies hidden from the configured graph or declared as peers", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "mentra-release-family-"))
+  mkdirSync(path.join(root, ".github"), {recursive: true})
+  mkdirSync(path.join(root, "packages/base"), {recursive: true})
+  mkdirSync(path.join(root, "packages/product"), {recursive: true})
+  writeFileSync(path.join(root, "package.json"), JSON.stringify({version: "3.1.0"}))
+  writeFileSync(path.join(root, "packages/base/package.json"), JSON.stringify({name: "base", version: "3.1.0"}))
+  writeFileSync(
+    path.join(root, "packages/product/package.json"),
+    JSON.stringify({name: "product", version: "3.1.0", dependencies: {base: "3.1.0"}}),
+  )
+  const familyDefinition = {
+    schemaVersion: 1,
+    family: "mentra",
+    versionSource: "package.json",
+    products: ["product"],
+    members: [
+      {
+        name: "base",
+        manifest: "packages/base/package.json",
+        kind: "package",
+        publishTargets: ["npm"],
+        dependencies: [],
+      },
+      {
+        name: "product",
+        manifest: "packages/product/package.json",
+        kind: "product",
+        publishTargets: ["npm"],
+        dependencies: [],
+      },
+    ],
+  }
+  writeFileSync(path.join(root, ".github/release-family.json"), JSON.stringify(familyDefinition))
+
+  assert.throws(
+    () => loadReleaseFamily({rootDir: root, requireVersionMirrors: true}),
+    /depends on base, but the release-family graph is missing that edge/,
+  )
+
+  familyDefinition.members[1].dependencies = ["base"]
+  writeFileSync(path.join(root, ".github/release-family.json"), JSON.stringify(familyDefinition))
+  writeFileSync(
+    path.join(root, "packages/product/package.json"),
+    JSON.stringify({
+      name: "product",
+      version: "3.1.0",
+      dependencies: {base: "3.1.0"},
+      peerDependencies: {base: "3.1.0"},
+    }),
+  )
+  assert.throws(
+    () => loadReleaseFamily({rootDir: root, requireVersionMirrors: true}),
+    /must not declare family member base as a peerDependency/,
+  )
+})

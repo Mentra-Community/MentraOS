@@ -43,7 +43,7 @@ jobs:
           test "${#tests[@]}" -gt 0
           node --test "${tests[@]}"
       - name: Validate repository definition
-        run: node .github/scripts/release-family-cli.mjs validate
+        run: node .github/scripts/release-family-cli.mjs validate --require-version-mirrors
       - name: Validate release plan inputs
         run: |
           set -euo pipefail
@@ -58,4 +58,5 @@ jobs:
             --source-commit "$(git rev-parse HEAD)" \
             --native-build-number 310000001 \
             --ota-inputs "$ota_inputs" \
+            --require-version-mirrors true \
             --output "$release_plan"

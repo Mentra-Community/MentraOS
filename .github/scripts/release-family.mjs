@@ -107,6 +107,7 @@ export function loadReleaseFamily({rootDir = process.cwd(), requireVersionMirror
   const members = []
   const names = new Set()
   const manifests = new Set()
+  const packageManifests = new Map()
 
   for (const [index, rawMember] of definition.members.entries()) {
     const label = `members[${index}]`
@@ -131,6 +132,7 @@ export function loadReleaseFamily({rootDir = process.cwd(), requireVersionMirror
     if (requireVersionMirrors && packageManifest.version !== familyBaseVersion) {
       fail(`${manifest} version ${JSON.stringify(packageManifest.version)} does not mirror ${familyBaseVersion}`)
     }
+    packageManifests.set(name, packageManifest)
     members.push({name, manifest, kind, publishTargets, dependencies, sourceVersion: packageManifest.version})
   }
 
@@ -138,6 +140,31 @@ export function loadReleaseFamily({rootDir = process.cwd(), requireVersionMirror
     for (const dependency of member.dependencies) {
       if (!names.has(dependency)) fail(`${member.name} depends on unknown family member ${dependency}`)
       if (dependency === member.name) fail(`${member.name} cannot depend on itself`)
+    }
+  }
+
+  if (requireVersionMirrors) {
+    for (const member of members) {
+      const packageManifest = packageManifests.get(member.name)
+      const configuredDependencies = new Set(member.dependencies)
+      const expectedRange = member.name === "mentraos" ? "workspace:*" : familyBaseVersion
+
+      for (const dependency of member.dependencies) {
+        const actualRange = packageManifest.dependencies?.[dependency]
+        if (actualRange !== expectedRange) {
+          fail(
+            `${member.manifest} dependencies.${dependency} is ${JSON.stringify(actualRange)}, expected ${JSON.stringify(expectedRange)}`,
+          )
+        }
+      }
+      for (const dependency of names) {
+        if (packageManifest.peerDependencies?.[dependency] !== undefined) {
+          fail(`${member.manifest} must not declare family member ${dependency} as a peerDependency`)
+        }
+        if (packageManifest.dependencies?.[dependency] !== undefined && !configuredDependencies.has(dependency)) {
+          fail(`${member.manifest} depends on ${dependency}, but the release-family graph is missing that edge`)
+        }
+      }
     }
   }
 
