@@ -1162,6 +1162,22 @@ class AppRegistry {
   }
 
   /**
+   * Update whether a registered offline app is projected into launcher UIs.
+   *
+   * Offline apps are registered once at host startup, so settings-backed
+   * visibility changes need to update the projection without reinstalling or
+   * duplicating the app. No-op when the app is missing or already matches.
+   */
+  public setOfflineAppHidden(packageName: string, hidden: boolean): void {
+    const app = this.offlineApps.find((candidate) => candidate.packageName === packageName)
+    if (!app || app.hidden === hidden) return
+
+    app.hidden = hidden
+    this.refreshNeeded = true
+    this.notify()
+  }
+
+  /**
    * Registered as needing the on-device STT model before it can start (the
    * host declares this per offline app; the apps store gates start() on it).
    */

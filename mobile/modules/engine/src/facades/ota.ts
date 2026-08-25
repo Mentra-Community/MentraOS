@@ -1,18 +1,20 @@
 /**
  * ota facade — `engine.ota`: the OEM-facing OTA read/observe surface. Engine's
  * OtaService projects the glasses' OTA BLE events into the engine store; this facade
- * exposes the snapshot + change subscriptions the host renders its update prompt and
- * progress UI from. No host-injected UI — the host owns all alerts/navigation/i18n.
+ * exposes the snapshot + change subscriptions behind the shared OTA flow exported by
+ * `@mentra/engine/ota`. Hosts retain only their surrounding navigation and theme/i18n adapters.
  *
  * Availability checks live in engine. Install orchestration lives in engine too:
  * `installSession` fronts the OtaInstallCoordinator state machine (WP 8B) — the host
  * progress screen is a pure renderer over its snapshot + attach/detach/retry/finish.
  */
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
-import type {OtaProgress, OtaProgressStatus, OtaStatus, OtaUpdateInfo} from "@mentra/bluetooth-sdk/internal"
+import type {OtaProgress, OtaProgressStatus, OtaStartAckEvent, OtaStatus, OtaUpdateInfo} from "@mentra/bluetooth-sdk"
 import {isGlassesConnected, useGlassesStore} from "../stores/glasses"
 import {resolveOtaManifestUrl} from "../services/otaManifestUrl"
 import {otaInstallCoordinator, type OtaInstallSnapshot} from "../services/OtaInstallCoordinator"
+import {startGlassesStatusProjection} from "../services/GlassesStatusProjection"
+import {startOtaService} from "../services/OtaService"
 import {
   checkCurrentGlassesForUpdate,
   type OtaCheckCurrentGlassesOptions,
@@ -52,12 +54,22 @@ export type {
 export const ota = {
   // --- actions ---
   /**
+   * Start the device-status and OTA projections without starting the authenticated
+   * cloud/miniapp runtime. This is the explicit entry point for Bluetooth-only hosts.
+   * Idempotent and safe when the full engine runtime is already running.
+   */
+  initialize: async () => {
+    const hydrated = startGlassesStatusProjection()
+    startOtaService()
+    await hydrated
+  },
+  /**
    * Start the firmware install with the resolved OTA manifest URL. Progress lands on
-   * `status()`/`onStatus()`. (The host resolves the manifest URL — dev-override/env/prod
-   * resolution stays with the OTA config; the host-side stuck/retry watchdog is its own
+   * `status()`/`onStatus()`. (The host resolves the manifest URL — developer override,
+   * host pin, or Engine release pin resolution stays with the OTA config; the stuck/retry watchdog is its own
    * resilience layer on top of this command.)
    */
-  install: (...args: Parameters<typeof BluetoothSdk.startOtaUpdate>) => BluetoothSdk.startOtaUpdate(...args),
+  install: (otaVersionUrl?: string | null): Promise<OtaStartAckEvent> => BluetoothSdk.startOtaUpdate(otaVersionUrl),
   // Deferred: this facade entry was intended to become the engine-owned retry/check
   // action, but BluetoothSdk.checkForOtaUpdate() only returns a boolean. Exposing it
   // here would make callers think the rich otaUpdateAvailable read model is refreshed,

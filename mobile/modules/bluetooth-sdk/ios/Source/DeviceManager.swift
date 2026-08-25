@@ -123,6 +123,16 @@ struct ViewState {
         set { DeviceStore.shared.apply("bluetooth", "pending_wearable", newValue) }
     }
 
+    private var pendingDeviceName: String {
+        get { DeviceStore.shared.get("bluetooth", "pending_device_name") as? String ?? "" }
+        set { DeviceStore.shared.apply("bluetooth", "pending_device_name", newValue) }
+    }
+
+    private var pendingDeviceAddress: String {
+        get { DeviceStore.shared.get("bluetooth", "pending_device_address") as? String ?? "" }
+        set { DeviceStore.shared.apply("bluetooth", "pending_device_address", newValue) }
+    }
+
     private var deviceName: String {
         get { DeviceStore.shared.get("bluetooth", "device_name") as? String ?? "" }
         set { DeviceStore.shared.apply("bluetooth", "device_name", newValue) }
@@ -241,6 +251,8 @@ struct ViewState {
     }
 
     private var lastSystemTimeSyncConnectionKey = ""
+    private var pendingSystemTimeSync: DispatchWorkItem?
+    private var systemTimeSyncGeneration = 0
 
     private var systemMicUnavailable: Bool {
         get { DeviceStore.shared.get("bluetooth", "systemMicUnavailable") as? Bool ?? false }
@@ -294,6 +306,11 @@ struct ViewState {
     /// Last time we received an LC3 frame from the glasses (used by the mic
     /// inactivity watchdog).
     private var lastLc3Event: Date?
+    private var sequenceGapEvents: Int64 = 0
+    private var decodeFailures: Int64 = 0
+    private var lastLc3ReceivedAt: Int64?
+    private var lastPcmProducedAt: Int64?
+    private var lastLc3Sequence: Int?
     private var micReinitTimer: Timer?
 
     /// STT:
@@ -396,29 +413,87 @@ struct ViewState {
      * Decodes the glasses LC3 to PCM, then forwards to handlePcm for processing.
      * This matches Android behavior - glasses forward raw LC3, DeviceManager handles encoding.
      */
-    func handleGlassesMicData(_ lc3Data: Data, _ frameSize: Int = 20) {
-        lastLc3Event = Date()
+    func handleGlassesMicData(_ lc3Data: Data, _ frameSize: Int = 20, sequenceNumber: Int? = nil) {
+        recordLc3Packet(sequenceNumber: sequenceNumber)
         guard let lc3Converter = lc3Converter else {
             Bridge.log("MAN: LC3 converter not initialized")
+            recordMicDecodeFailure()
             return
         }
 
         guard lc3Data.count > 2 else {
             Bridge.log("MAN: Received invalid LC3 data size: \(lc3Data.count)")
+            recordMicDecodeFailure()
             return
         }
 
         let pcmData = lc3Converter.decode(lc3Data, frameSize: frameSize) as Data
         guard pcmData.count > 0 else {
             Bridge.log("MAN: Failed to decode glasses LC3 audio")
+            recordMicDecodeFailure()
             return
         }
         // Forward to handlePcm which handles SDK audio events and encoding.
+        lastPcmProducedAt = nowMs()
         handlePcm(pcmData)
     }
 
     func reportGlassesAudioActivity() {
         lastLc3Event = Date()
+        lastPcmProducedAt = nowMs()
+    }
+
+    private func micHealth() -> MicHealth {
+        MicHealth(
+            sequenceGapEvents: sequenceGapEvents,
+            decodeFailures: decodeFailures,
+            lastLc3ReceivedAt: lastLc3ReceivedAt,
+            lastPcmProducedAt: lastPcmProducedAt
+        )
+    }
+
+    func resetMicSequenceBaseline() {
+        lastLc3Sequence = nil
+    }
+
+    private func nowMs() -> Int64 {
+        Int64(Date().timeIntervalSince1970 * 1000)
+    }
+
+    private func resetMicHealth() {
+        sequenceGapEvents = 0
+        decodeFailures = 0
+        lastLc3ReceivedAt = nil
+        lastPcmProducedAt = nil
+        lastLc3Sequence = nil
+        lastLc3Event = nil
+    }
+
+    private func recordLc3Packet(sequenceNumber: Int?) {
+        let receivedAt = nowMs()
+        lastLc3ReceivedAt = receivedAt
+        lastLc3Event = Date()
+        var hasGap = false
+        if let sequenceNumber {
+            let normalized = sequenceNumber & 0xFF
+            if let previous = lastLc3Sequence {
+                let expected = (previous + 1) & 0xFF
+                if normalized != expected {
+                    hasGap = true
+                    sequenceGapEvents += 1
+                    Bridge.log("MAN: LC3 packet sequence mismatch. Expected: \(expected), Got: \(normalized)")
+                }
+            }
+            lastLc3Sequence = normalized
+        }
+        if hasGap {
+            Bridge.sendMicHealth(micHealth(), reason: "sequence_gap")
+        }
+    }
+
+    private func recordMicDecodeFailure() {
+        decodeFailures += 1
+        Bridge.sendMicHealth(micHealth(), reason: "decode_failure")
     }
 
     func handlePcm(_ pcmData: Data) {
@@ -613,7 +688,7 @@ struct ViewState {
             Bridge.log("MAN: Manager already initialized, cleaning up previous sgc")
             sgc?.cleanup()
             sgc = nil
-            lastSystemTimeSyncConnectionKey = ""
+            resetSystemTimeSync()
         }
 
         if sgc != nil {
@@ -929,7 +1004,16 @@ struct ViewState {
             return
         }
         Bridge.log("MAN: handleDeviceReady(): \(sgc.type)")
+        resetMicHealth()
 
+        if !pendingDeviceName.isEmpty {
+            deviceName = pendingDeviceName
+        }
+        if !pendingDeviceAddress.isEmpty {
+            deviceAddress = pendingDeviceAddress
+        }
+        pendingDeviceName = ""
+        pendingDeviceAddress = ""
         pendingWearable = ""
         defaultWearable = sgc.type
         searching = false
@@ -994,9 +1078,30 @@ struct ViewState {
         }
 
         lastSystemTimeSyncConnectionKey = connectionKey
-        let timestampMs = Int64(Date().timeIntervalSince1970 * 1000)
-        Bridge.log("MAN: Syncing glasses system time once for connection: \(timestampMs)")
-        sgc.sendSetSystemTime(timestampMs)
+        pendingSystemTimeSync?.cancel()
+        systemTimeSyncGeneration += 1
+        let generation = systemTimeSyncGeneration
+        let sync = DispatchWorkItem { [weak self] in
+            guard let self,
+                  self.lastSystemTimeSyncConnectionKey == connectionKey,
+                  self.systemTimeSyncGeneration == generation
+            else {
+                return
+            }
+            self.pendingSystemTimeSync = nil
+            let timestampMs = Int64(Date().timeIntervalSince1970 * 1000)
+            Bridge.log("MAN: Syncing glasses system time once for connection: \(timestampMs)")
+            sgc.sendSetSystemTime(timestampMs)
+        }
+        pendingSystemTimeSync = sync
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: sync)
+    }
+
+    private func resetSystemTimeSync() {
+        pendingSystemTimeSync?.cancel()
+        pendingSystemTimeSync = nil
+        systemTimeSyncGeneration += 1
+        lastSystemTimeSyncConnectionKey = ""
     }
 
     func handleControllerReady() {
@@ -1043,7 +1148,8 @@ struct ViewState {
 
     func handleDeviceDisconnected() {
         Bridge.log("MAN: Device disconnected")
-        lastSystemTimeSyncConnectionKey = ""
+        resetSystemTimeSync()
+        resetMicHealth()
         DeviceStore.shared.apply("glasses", "headUp", false)
         DeviceStore.shared.apply("glasses", "voiceActivityDetectionEnabled", BluetoothSdkDefaults.voiceActivityDetectionEnabled)
         // shouldSendBootingMessage = true  // Reset for next first connect
@@ -1511,6 +1617,11 @@ struct ViewState {
         )
     }
 
+    func queryVideoRecordingStatus(_ requestId: String) {
+        Bridge.log("MAN: Querying video recording status: requestId=\(requestId)")
+        sgc?.queryVideoRecordingStatus(requestId: requestId)
+    }
+
     func stopVideoRecording(_ requestId: String, _ webhookUrl: String?, _ authToken: String?) {
         Bridge.log(
             "MAN: onStopVideoRecording: requestId=\(requestId), webhook=\((webhookUrl?.isEmpty ?? true) ? "none" : "set")"
@@ -1631,6 +1742,10 @@ struct ViewState {
             return
         }
         initSGC(defaultWearable)
+        if let live = sgc as? MentraLive, live.isPairingYieldActive() {
+            Bridge.log("MAN: connectDefault skipped — Mentra Live pairing yield active")
+            return
+        }
         searching = true
         sgc?.connectById(reconnectTarget)
         connectDefaultController()
@@ -1680,10 +1795,10 @@ struct ViewState {
             disconnect()
             try? await Task.sleep(nanoseconds: 100 * 1_000_000) // 100ms
             self.searching = true
-            self.deviceName = name
+            self.pendingDeviceName = name
 
             initSGC(self.pendingWearable)
-            sgc?.connectById(self.deviceName)
+            sgc?.connectById(name)
         }
     }
 
@@ -1715,7 +1830,8 @@ struct ViewState {
         sgc?.clearDisplay() // clear the screen
         sgc?.disconnect()
         sgc = nil // Clear the SGC reference after disconnect
-        lastSystemTimeSyncConnectionKey = ""
+        resetSystemTimeSync()
+        resetMicHealth()
         searching = false
         micEnabled = false
         updateMicState()
@@ -1758,6 +1874,9 @@ struct ViewState {
         defaultWearable = ""
         deviceName = ""
         deviceAddress = ""
+        pendingDeviceName = ""
+        pendingDeviceAddress = ""
+        pendingWearable = ""
         Bridge.saveSetting("default_wearable", "")
         Bridge.saveSetting("device_name", "")
         Bridge.saveSetting("device_address", "")

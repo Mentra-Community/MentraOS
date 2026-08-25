@@ -5,8 +5,8 @@
  * name stays `engine` in code; the public API surface is `engine`.)
  *
  * It grows one facade at a time. The migration-era flat store/service exports
- * live on the `@mentra/engine/internal` entry (and the debug singletons on
- * `@mentra/engine/devtools`); they shrink as screens move onto `engine.*`.
+ * remain in a private MentraOS host package; they shrink as screens move onto
+ * `engine.*`.
  */
 import {configure, start as bootstrapStart, stop as bootstrapStop, updateUiSeams} from "./runtime/bootstrap"
 import {cloudClientService} from "./services/CloudClientService"
@@ -62,7 +62,7 @@ export const engine = {
     // Project native device status -> the engine stores (the inbound feed the rest
     // of the runtime reads). Established first so the stores are live before the
     // syncs below react to them.
-    startGlassesStatusProjection()
+    startGlassesStatusProjection((changed) => localMiniappRuntime.forwardEvent("glasses_connection_state", changed))
     // Route the rest of the inbound device events (wifi/hotspot/gallery -> stores+bus,
     // photo/stream -> coordinators, button/touch/accel/head -> miniapps, save_setting ->
     // store, miniapp_selected -> launcher) so a bare OEM gets device data, not just the

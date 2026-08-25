@@ -1,5 +1,5 @@
 import type {PreinstalledMiniappRegistryEntry} from "@mentra/cloud-client/react-native"
-import {appRegistry, isPreinstalledMiniappPackageAllowed, sha256Hex} from "@mentra/engine/internal"
+import {appRegistry, isPreinstalledMiniappPackageAllowed, sha256Hex} from "@mentra/engine-host-internal"
 import {Directory, File, Paths} from "expo-file-system"
 import semver from "semver"
 

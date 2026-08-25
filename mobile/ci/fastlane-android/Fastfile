@@ -1,15 +1,55 @@
+require "json"
+
 default_platform(:android)
 
 platform :android do
-  desc "Upload AAB to Google Play internal track"
+  desc "Read version codes from the selected Google Play track"
+  lane :track_version_codes do
+    output = ENV.fetch("GOOGLE_PLAY_VERSION_CODES_OUTPUT")
+    codes = google_play_track_version_codes(track: ENV.fetch("GOOGLE_PLAY_TRACK", "internal"))
+    File.write(output, JSON.generate(codes))
+  end
+
+  desc "Upload AAB to the selected Google Play track"
   lane :google_play do
     upload_to_play_store(
-      track: "internal",
-      aab: "app/build/outputs/bundle/release/app-release.aab",
+      track: ENV.fetch("GOOGLE_PLAY_TRACK", "internal"),
+      aab: ENV.fetch("GOOGLE_PLAY_AAB", "app/build/outputs/bundle/release/app-release.aab"),
       skip_upload_apk: true,
       skip_upload_metadata: true,
       skip_upload_images: true,
       skip_upload_screenshots: true,
     )
+  end
+
+  desc "Promote one exact existing version code between Google Play tracks"
+  lane :promote_google_play do
+    source = ENV.fetch("GOOGLE_PLAY_SOURCE_TRACK")
+    target = ENV.fetch("GOOGLE_PLAY_TARGET_TRACK", "production")
+    version_code = Integer(ENV.fetch("GOOGLE_PLAY_VERSION_CODE"))
+    output = ENV.fetch("GOOGLE_PLAY_PROMOTION_OUTPUT")
+
+    source_codes = google_play_track_version_codes(track: source).map(&:to_i)
+    UI.user_error!("Version code #{version_code} is absent from Google Play #{source}") unless source_codes.include?(version_code)
+    target_codes = google_play_track_version_codes(track: target).map(&:to_i)
+    reused = target_codes.include?(version_code)
+    unless reused
+      upload_to_play_store(
+        track: source,
+        track_promote_to: target,
+        version_code: version_code,
+        track_promote_release_status: "completed",
+        skip_upload_apk: true,
+        skip_upload_aab: true,
+        skip_upload_metadata: true,
+        skip_upload_changelogs: true,
+        skip_upload_images: true,
+        skip_upload_screenshots: true,
+      )
+    end
+
+    confirmed = google_play_track_version_codes(track: target).map(&:to_i)
+    UI.user_error!("Google Play did not retain version code #{version_code} on #{target}") unless confirmed.include?(version_code)
+    File.write(output, JSON.generate({ versionCode: version_code, source: source, target: target, reused: reused }))
   end
 end

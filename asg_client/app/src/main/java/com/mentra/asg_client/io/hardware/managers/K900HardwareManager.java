@@ -250,6 +250,20 @@ public class K900HardwareManager extends BaseHardwareManager {
     }
 
     @Override
+    public boolean playAudioFile(java.io.File file) {
+        if (audioController == null) {
+            Log.w(TAG, "Audio controller not available");
+            return false;
+        }
+        if (file == null || !file.isFile()) {
+            Log.w(TAG, "playAudioFile skipped: missing file " + file);
+            return false;
+        }
+        audioController.playFile(file);
+        return true;
+    }
+
+    @Override
     public void setTransport(ICompanionTransport transport) {
         if (transport instanceof K900BluetoothManager) {
             this.bluetoothManager = (K900BluetoothManager) transport;

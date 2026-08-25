@@ -5,6 +5,7 @@ export const simulatedPackageName = "com.mentra.simulated"
 export const mirrorPackageName = "com.mentra.mirror"
 export const mentraAiPackageName = "com.mentra.ai"
 export const feedbackPackageName = "com.mentra.feedback"
+export const miniappDeveloperPackageName = "com.mentra.miniappdev"
 export const notifyPackageName = "cloud.augmentos.notify"
 export const navigationPackageName = "com.mentra.navigation" // "Mentra Map"
 

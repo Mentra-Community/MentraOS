@@ -650,6 +650,28 @@ export type PairFailureEvent = {
   error: string
 }
 
+export type PairingInfoEvent = {
+  had_previous_bond: boolean
+  /** 16-char uppercase hex transfer id when secure pairing is active. */
+  transfer_id?: string
+  pairing_code?: string
+  classic_bond_ready?: boolean
+  secure_pairing_capable?: boolean
+  protocol_version?: number
+  /** Credential binding mode negotiated for this transfer, when reported by the glasses. */
+  binding?: "ctkd" | "temporal" | "none" | string
+}
+
+export type EnteringPairingModeEvent = {
+  window_ms: number
+  reason?: string
+  txn?: number
+}
+
+export type OwnerReplacedEvent = {
+  reason: string
+}
+
 export type AudioPairingNeededEvent = {
   type: "audio_pairing_needed"
   deviceName: string
@@ -701,6 +723,17 @@ export type MicLc3Event = {
   bitrate: number
   packetizedFromGlasses: boolean
   voiceActivityDetectionEnabled: boolean
+}
+
+/** Native glasses-microphone diagnostics emitted when the SDK detects a transport or decode issue. */
+export type MicHealthEvent = {
+  type: "mic_health"
+  reason: "sequence_gap" | "decode_failure"
+  sequenceGapEvents: number
+  decodeFailures: number
+  lastLc3ReceivedAt?: number
+  lastPcmProducedAt?: number
+  timestamp: number
 }
 
 export type StreamStatusLifecycleState = "initializing" | "streaming" | "stopping" | "stopped"
@@ -897,6 +930,9 @@ export type BluetoothSdkModuleEvents = {
   rgb_led_control_response: (event: RgbLedControlResponseEvent) => void
   settings_ack: (event: SettingsAckEvent) => void
   pair_failure: (event: PairFailureEvent) => void
+  pairing_info: (event: PairingInfoEvent) => void
+  entering_pairing_mode: (event: EnteringPairingModeEvent) => void
+  owner_replaced: (event: OwnerReplacedEvent) => void
   audio_pairing_needed: (event: AudioPairingNeededEvent) => void
   audio_connected: (event: AudioConnectedEvent) => void
   audio_disconnected: (event: AudioDisconnectedEvent) => void
@@ -905,6 +941,7 @@ export type BluetoothSdkModuleEvents = {
   ws_bin: (event: WsBinEvent) => void
   mic_pcm: (event: MicPcmEvent) => void
   mic_lc3: (event: MicLc3Event) => void
+  mic_health: (event: MicHealthEvent) => void
   stream_status: (event: StreamStatusEvent) => void
   keep_alive_ack: (event: KeepAliveAckEvent) => void
   mtk_update_complete: (event: MtkUpdateCompleteEvent) => void
@@ -1001,11 +1038,15 @@ export type BluetoothSdkEventMap = {
   rgb_led_control_response: RgbLedControlResponseEvent
   settings_ack: SettingsAckEvent
   pair_failure: PairFailureEvent
+  pairing_info: PairingInfoEvent
+  entering_pairing_mode: EnteringPairingModeEvent
+  owner_replaced: OwnerReplacedEvent
   audio_pairing_needed: AudioPairingNeededEvent
   audio_connected: AudioConnectedEvent
   audio_disconnected: AudioDisconnectedEvent
   mic_pcm: MicPcmEvent
   mic_lc3: MicLc3Event
+  mic_health: MicHealthEvent
   stream_status: StreamStatusEvent
   ota_start_ack: OtaStartAckEvent
   ota_status: OtaStatusEvent
@@ -1114,6 +1155,8 @@ export interface BluetoothSdkPublicModule {
     webhookUrl?: string,
     authToken?: string,
   ): Promise<VideoRecordingStoppedStatusEvent>
+  /** Query the glasses for the current recording state and elapsed duration. */
+  queryVideoRecordingStatus(requestId: string): Promise<VideoRecordingStatusEvent>
 
   startStream(params: StreamStartRequest): Promise<StreamStatusEvent>
   stopStream(): Promise<StreamStatusEvent>
@@ -1140,7 +1183,7 @@ export interface BluetoothSdkPublicModule {
    * The URL may point at Mentra's hosted manifest or any customer-controlled HTTP(S) server.
    */
   setOtaVersionUrl(otaVersionUrl: string): void
-  /** Return the configured OTA manifest URL, or this SDK release's default manifest URL. */
+  /** Return the configured or release-embedded OTA manifest URL. Rejects when a source build is unconfigured. */
   getOtaVersionUrl(): string
   /** Fetch the configured OTA manifest and return whether any ASG/BES/MTK update is available. */
   checkForOtaUpdate(): Promise<boolean>
@@ -1149,7 +1192,13 @@ export interface BluetoothSdkPublicModule {
   startAr99OtaFromFile(path: string): Promise<boolean>
   cancelAr99Ota(): Promise<void>
   sendAr99FactoryReset(): Promise<void>
-  buildAr99OtaSignature(secret: string, appName: string, currentVersion: string, serialNumber: string, nonce: string): string
+  buildAr99OtaSignature(
+    secret: string,
+    appName: string,
+    currentVersion: string,
+    serialNumber: string,
+    nonce: string,
+  ): string
 
   // // stt commands (MOVE TO CRUST)
   // setSttModelDetails(path: string, languageCode: string): Promise<void>
@@ -1317,6 +1366,12 @@ export interface Device {
    * appear in a later scan update when the platform reports RSSI metadata.
    */
   rssi?: number
+  /** Mentra Live: unit is currently in pairing mode (adv flag). */
+  pairingMode?: boolean
+  /** Mentra Live: four-character hex spoken pairing code when available. */
+  pairingCode?: string
+  /** Mentra Live: advertisement carries the secure-pairing capability trailer. */
+  securePairingCapable?: boolean
 }
 
 export interface ConnectOptions {

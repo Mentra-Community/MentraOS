@@ -7,26 +7,25 @@ The screen exposes the core miniapp controls:
 
 - **Start miniapp** — launches the first registered app (`useStart`).
 - **Stop miniapp** — stops the running miniapp (`useStop`).
-- **List running miniapps** — reads `miniappRunningRegistry` (from
-  `@mentra/engine/devtools`) and the app registry.
+- **List running miniapps** — reads the public `running` state returned by
+  `useApps`.
 
 Every button routes through an on-screen console (bottom of the screen) so you
 can see each call's result or error without a Metro terminal attached.
 
 > Engine depends on `@mentra/bluetooth-sdk` (its native module + Expo config
 > plugin), so that package is still installed and wired into the native build —
-> but the app's own code imports only `@mentra/engine` (plus the
-> `@mentra/engine/devtools` entry for the running-list demo).
+> but the app's own code imports only `@mentra/engine`.
 
 ## Layout
 
-| File | Purpose |
-| --- | --- |
-| `App.tsx` | Single screen: state, miniapp buttons, console |
-| `src/ui.tsx` | `Section` / `ActionButton` / `StatusRow` presentational helpers |
-| `src/useLog.ts` | Tiny in-memory console hook (`run` wraps an engine call) |
-| `app.json` | Expo config: bluetooth-sdk plugin (native module), build properties |
-| `metro.config.js` | Watches `mobile/modules` so the SDKs resolve from the monorepo |
+| File              | Purpose                                                             |
+| ----------------- | ------------------------------------------------------------------- |
+| `App.tsx`         | Single screen: state, miniapp buttons, console                      |
+| `src/ui.tsx`      | `Section` / `ActionButton` / `StatusRow` presentational helpers     |
+| `src/useLog.ts`   | Tiny in-memory console hook (`run` wraps an engine call)            |
+| `app.json`        | Expo config: bluetooth-sdk plugin (native module), build properties |
+| `metro.config.js` | Watches `mobile/modules` so the SDKs resolve from the monorepo      |
 
 ## Running
 

@@ -1,0 +1,405 @@
+name: Coordinated Mentra Release
+
+on:
+  push:
+    branches: [dev, staging]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Build and verify the selected branch without publishing
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  actions: read
+  contents: write
+  id-token: write
+
+concurrency:
+  # Preserve the running publication and coalesce same-branch pushes to the
+  # latest pending head. Separate branch groups prevent dev and staging from
+  # replacing one another's pending release.
+  group: coordinated-mentra-release-publication-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: Allocate immutable release identity
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      source_commit: ${{ steps.release.outputs.source_commit }}
+      release_identity: ${{ steps.release.outputs.release_identity }}
+      release_set_id: ${{ steps.release.outputs.release_set_id }}
+      plan_artifact: ${{ steps.release.outputs.plan_artifact }}
+      npm_artifact: ${{ steps.release.outputs.npm_artifact }}
+      release_id: ${{ steps.container.outputs.release_id }}
+      backend_environment: ${{ steps.release.outputs.backend_environment }}
+      play_track: ${{ steps.release.outputs.play_track }}
+      testflight_group: ${{ steps.release.outputs.testflight_group }}
+      dry_run: ${{ steps.release.outputs.dry_run }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Resolve branch release channel
+        id: channel
+        env:
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          case "$BRANCH" in
+            dev)
+              echo "backend_environment=dev" >> "$GITHUB_OUTPUT"
+              echo "play_track=internal" >> "$GITHUB_OUTPUT"
+              echo "testflight_group=Mentra Dev" >> "$GITHUB_OUTPUT"
+              ;;
+            staging)
+              # Beta is the exact production candidate promoted by App Store
+              # Connect and Google Play, so its signed bytes must already point
+              # at production services.
+              echo "backend_environment=prod" >> "$GITHUB_OUTPUT"
+              echo "play_track=beta" >> "$GITHUB_OUTPUT"
+              echo "testflight_group=Mentra Staging" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "Coordinated prereleases only run from dev or staging, not $BRANCH." >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Collect promoted firmware inputs
+        run: node .github/scripts/collect-ota-release-inputs.mjs
+
+      - name: Create deterministic release plan
+        run: |
+          set -euo pipefail
+          node .github/scripts/create-release-plan.mjs \
+            --branch "${{ github.ref_name }}" \
+            --sequence "${{ github.run_number }}" \
+            --source-commit "${{ github.sha }}" \
+            --native-build-number "$((310000000 + ${{ github.run_number }}))" \
+            --ota-inputs ota-release-inputs.json \
+            --require-version-mirrors true \
+            --output release-plan.json
+          cp release-plan.json release-plan.first.json
+          node .github/scripts/create-release-plan.mjs \
+            --branch "${{ github.ref_name }}" \
+            --sequence "${{ github.run_number }}" \
+            --source-commit "${{ github.sha }}" \
+            --native-build-number "$((310000000 + ${{ github.run_number }}))" \
+            --ota-inputs ota-release-inputs.json \
+            --require-version-mirrors true \
+            --output release-plan.json
+          cmp release-plan.first.json release-plan.json
+
+      - name: Export immutable release coordinates
+        id: release
+        env:
+          BACKEND_ENVIRONMENT: ${{ steps.channel.outputs.backend_environment }}
+          PLAY_TRACK: ${{ steps.channel.outputs.play_track }}
+          TESTFLIGHT_GROUP: ${{ steps.channel.outputs.testflight_group }}
+        run: |
+          set -euo pipefail
+          identity=$(jq -er .releaseIdentity release-plan.json)
+          release_set_id=$(jq -er .releaseSetId release-plan.json)
+          dry_run=false
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.dry_run }}" == "true" ]]; then
+            dry_run=true
+          fi
+          {
+            echo "source_commit=${{ github.sha }}"
+            echo "release_identity=$identity"
+            echo "release_set_id=$release_set_id"
+            echo "plan_artifact=coordinated-release-plan-$release_set_id"
+            echo "npm_artifact=coordinated-npm-$release_set_id"
+            echo "backend_environment=$BACKEND_ENVIRONMENT"
+            echo "play_track=$PLAY_TRACK"
+            echo "testflight_group=$TESTFLIGHT_GROUP"
+            echo "dry_run=$dry_run"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Allocate the release container once
+        id: container
+        if: steps.release.outputs.dry_run != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          identity=$(jq -er .releaseIdentity release-plan.json)
+          tag="mentra-v$identity"
+          name="Mentra $identity"
+          releases=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases?per_page=100" | jq 'add')
+          matches=$(jq --arg tag "$tag" '[.[] | select(.tag_name == $tag)]' <<< "$releases")
+          [[ "$(jq 'length' <<< "$matches")" -le 1 ]]
+          if [[ "$(jq 'length' <<< "$matches")" == 0 ]]; then
+            payload=$(jq -n \
+              --arg tag "$tag" \
+              --arg source "$SOURCE_COMMIT" \
+              --arg name "$name" \
+              --arg body "Coordinated release $identity. Publication is incomplete until the release manifest is attached." \
+              '{tag_name: $tag, target_commitish: $source, name: $name, body: $body, draft: true, prerelease: true}')
+            release=$(gh api --method POST "repos/${GITHUB_REPOSITORY}/releases" --input - <<< "$payload")
+          else
+            release=$(jq '.[0]' <<< "$matches")
+          fi
+          [[ "$(jq -r .name <<< "$release")" == "$name" ]]
+          if [[ "$(jq -r .draft <<< "$release")" == "true" ]]; then
+            [[ "$(jq -r .target_commitish <<< "$release")" == "$SOURCE_COMMIT" ]]
+          else
+            git fetch --force origin "refs/tags/$tag:refs/tags/$tag"
+            [[ "$(git rev-parse "$tag^{commit}")" == "$SOURCE_COMMIT" ]]
+          fi
+          echo "release_id=$(jq -er .id <<< "$release")" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.release.outputs.plan_artifact }}
+          path: |
+            release-plan.json
+            ota-release-inputs.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Summarize release intent
+        run: |
+          {
+            echo "## Coordinated release intent"
+            echo ""
+            echo "- Release: \`${{ steps.release.outputs.release_identity }}\`"
+            echo "- Source: \`${{ github.sha }}\`"
+            echo "- Mobile backend: \`${{ steps.release.outputs.backend_environment }}\`"
+            echo "- Google Play: \`${{ steps.release.outputs.play_track }}\`"
+            echo "- TestFlight: \`${{ steps.release.outputs.testflight_group }}\`"
+            echo "- Dry run: \`${{ steps.release.outputs.dry_run }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  ota:
+    name: Publish immutable Mentra Live OTA set
+    needs: plan
+    uses: ./.github/workflows/reusable-coordinated-ota.yml
+    with:
+      release_plan_artifact: ${{ needs.plan.outputs.plan_artifact }}
+      release_id: ${{ needs.plan.outputs.release_id }}
+      dry_run: ${{ needs.plan.outputs.dry_run == 'true' }}
+    secrets: inherit
+
+  npm:
+    name: Publish npm family in dependency order
+    needs: [plan, ota]
+    uses: ./.github/workflows/reusable-coordinated-npm.yml
+    with:
+      source_commit: ${{ needs.plan.outputs.source_commit }}
+      release_plan_artifact: ${{ needs.plan.outputs.plan_artifact }}
+      members: all
+      result_artifact: ${{ needs.plan.outputs.npm_artifact }}
+      ota_manifest_url: ${{ needs.ota.outputs.manifest_url }}
+      ota_manifest_sha256: ${{ needs.ota.outputs.manifest_sha256 }}
+      dry_run: ${{ needs.plan.outputs.dry_run == 'true' }}
+    secrets: inherit
+
+  sdk-native:
+    name: Publish Bluetooth SDK native packages
+    needs: [plan, ota]
+    uses: ./.github/workflows/reusable-coordinated-sdk-native.yml
+    with:
+      source_commit: ${{ needs.plan.outputs.source_commit }}
+      release_plan_artifact: ${{ needs.plan.outputs.plan_artifact }}
+      release_id: ${{ needs.plan.outputs.release_id }}
+      ota_manifest_url: ${{ needs.ota.outputs.manifest_url }}
+      ota_manifest_sha256: ${{ needs.ota.outputs.manifest_sha256 }}
+      dry_run: ${{ needs.plan.outputs.dry_run == 'true' }}
+    secrets: inherit
+
+  mobile:
+    name: Build and distribute MentraOS mobile apps
+    needs: [plan, ota]
+    uses: ./.github/workflows/reusable-coordinated-mobile.yml
+    with:
+      source_commit: ${{ needs.plan.outputs.source_commit }}
+      release_plan_artifact: ${{ needs.plan.outputs.plan_artifact }}
+      release_id: ${{ needs.plan.outputs.release_id }}
+      ota_manifest_url: ${{ needs.ota.outputs.manifest_url }}
+      ota_manifest_sha256: ${{ needs.ota.outputs.manifest_sha256 }}
+      backend_environment: ${{ needs.plan.outputs.backend_environment }}
+      play_track: ${{ needs.plan.outputs.play_track }}
+      testflight_group: ${{ needs.plan.outputs.testflight_group }}
+      dry_run: ${{ needs.plan.outputs.dry_run == 'true' }}
+    secrets: inherit
+
+  engine-consumer:
+    name: Build a clean host from the public Engine package
+    needs: [plan, npm, sdk-native]
+    uses: ./.github/workflows/reusable-coordinated-engine-consumer.yml
+    with:
+      source_commit: ${{ needs.plan.outputs.source_commit }}
+      release_plan_artifact: ${{ needs.plan.outputs.plan_artifact }}
+      dry_run: ${{ needs.plan.outputs.dry_run == 'true' }}
+    secrets: inherit
+
+  finalize:
+    name: Finalize immutable release bill of materials
+    needs: [plan, ota, npm, sdk-native, mobile, engine-consumer]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.source_commit }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.plan.outputs.plan_artifact }}
+          path: release-input/plan
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.ota.outputs.result_artifact }}
+          path: release-input/ota
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.plan.outputs.npm_artifact }}
+          path: release-input/npm
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.sdk-native.outputs.result_artifact }}
+          path: release-input/sdk-native
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.mobile.outputs.result_artifact }}
+          path: release-input/mobile
+
+      - name: Assemble complete publication evidence
+        id: results
+        run: |
+          set -euo pipefail
+          mkdir -p finalized-release
+          plan=release-input/plan/release-plan.json
+          identity=$(jq -er .releaseIdentity "$plan")
+          tag="mentra-v$identity"
+          asg_selection="release-input/ota/$(jq -er .artifactNames.asgSelection "$plan")"
+          test -f "$asg_selection"
+          engine_package=$(find release-input/npm -type f -name 'mentra-engine-*.tgz' -print -quit)
+          test -n "$engine_package"
+          node .github/scripts/assemble-coordinated-release-results.mjs \
+            --plan "$plan" \
+            --ota release-input/ota/ota-result.json \
+            --npm release-input/npm/npm-publications.json \
+            --native release-input/sdk-native/sdk-native-publications.json \
+            --mobile release-input/mobile/mobile-publications.json \
+            --asg-selection "$asg_selection" \
+            --engine-package "$engine_package" \
+            --release-asset-base-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/$tag" \
+            --output finalized-release/publication-results.json
+          cp "$plan" "finalized-release/$(jq -er .artifactNames.releasePlan "$plan")"
+          cp "$engine_package" "finalized-release/$(jq -er .artifactNames.enginePackage "$plan")"
+          {
+            echo "tag=$tag"
+            echo "identity=$identity"
+            echo "plan_name=$(jq -er .artifactNames.releasePlan "$plan")"
+            echo "manifest_name=$(jq -er .artifactNames.releaseManifest "$plan")"
+            echo "engine_name=$(jq -er .artifactNames.enginePackage "$plan")"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Resolve and verify the exact release container
+        id: release-container
+        if: needs.plan.outputs.dry_run != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_COMMIT: ${{ needs.plan.outputs.source_commit }}
+        run: |
+          set -euo pipefail
+          tag="${{ steps.results.outputs.tag }}"
+          release=$(gh api "repos/${GITHUB_REPOSITORY}/releases/${{ needs.plan.outputs.release_id }}")
+          [[ "$(jq -r .tag_name <<< "$release")" == "$tag" ]]
+          [[ "$(jq -r .name <<< "$release")" == "Mentra ${{ steps.results.outputs.identity }}" ]]
+          if [[ "$(jq -r .draft <<< "$release")" == "true" ]]; then
+            [[ "$(jq -r .target_commitish <<< "$release")" == "$SOURCE_COMMIT" ]]
+          else
+            git fetch --force origin "refs/tags/$tag:refs/tags/$tag"
+            [[ "$(git rev-parse "$tag^{commit}")" == "$SOURCE_COMMIT" ]]
+          fi
+          echo "release_id=${{ needs.plan.outputs.release_id }}" >> "$GITHUB_OUTPUT"
+
+      - name: Finalize release manifest
+        if: needs.plan.outputs.dry_run != 'true'
+        run: >-
+          node .github/scripts/finalize-release-manifest.mjs
+          --plan release-input/plan/release-plan.json
+          --results finalized-release/publication-results.json
+          --completed-at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
+          --output "finalized-release/${{ steps.results.outputs.manifest_name }}"
+
+      - name: Publish immutable plan, package, and manifest assets
+        if: needs.plan.outputs.dry_run != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for name in \
+            "${{ steps.results.outputs.plan_name }}" \
+            "${{ steps.results.outputs.engine_name }}" \
+            "${{ steps.results.outputs.manifest_name }}"; do
+            node .github/scripts/publish-immutable-release-asset.mjs \
+              --file "finalized-release/$name" \
+              --name "$name" \
+              --release-id "${{ steps.release-container.outputs.release_id }}" \
+              --repository "${{ github.repository }}"
+          done
+
+      - name: Publish completed release set
+        if: needs.plan.outputs.dry_run != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${{ steps.results.outputs.tag }}"
+          payload=$(jq -n \
+            --arg name "Mentra ${{ steps.results.outputs.identity }}" \
+            --arg body "Coordinated Mentra release ${{ steps.results.outputs.identity }} from ${{ needs.plan.outputs.source_commit }}. Every required target is recorded in ${{ steps.results.outputs.manifest_name }}." \
+            '{draft: false, prerelease: true, name: $name, body: $body}')
+          gh api --method PATCH \
+            "repos/${GITHUB_REPOSITORY}/releases/${{ steps.release-container.outputs.release_id }}" \
+            --input - <<< "$payload" \
+            --jq '.draft == false and .prerelease == true' | grep -qx true
+          git fetch --force origin "refs/tags/$tag:refs/tags/$tag"
+          [[ "$(git rev-parse "$tag^{commit}")" == "${{ needs.plan.outputs.source_commit }}" ]]
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/$tag/${{ steps.results.outputs.manifest_name }}"
+          node .github/scripts/verify-public-release-asset.mjs \
+            --file "finalized-release/${{ steps.results.outputs.manifest_name }}" \
+            --url "$url"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coordinated-release-result-${{ needs.plan.outputs.release_set_id }}
+          path: finalized-release
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Summarize completed release
+        run: |
+          {
+            echo "## Coordinated release result"
+            echo ""
+            echo "- Release: \`${{ steps.results.outputs.identity }}\`"
+            echo "- Source: \`${{ needs.plan.outputs.source_commit }}\`"
+            echo "- OTA manifest: ${{ needs.ota.outputs.manifest_url }}"
+            echo "- Dry run: \`${{ needs.plan.outputs.dry_run }}\`"
+            if [[ "${{ needs.plan.outputs.dry_run }}" != "true" ]]; then
+              echo "- GitHub release: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${{ steps.results.outputs.tag }}"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

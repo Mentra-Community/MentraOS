@@ -98,6 +98,27 @@ class Bridge {
         Bridge.sendTypedMessage("pair_failure", body: data)
     }
 
+    static func sendPairingInfo(
+        hadPreviousBond: Bool,
+        transferId: String? = nil,
+        pairingCode: String? = nil,
+        classicBondReady: Bool = false,
+        securePairingCapable: Bool = true,
+        protocolVersion: Int = 1,
+        binding: String? = nil
+    ) {
+        var body: [String: Any] = [
+            "had_previous_bond": hadPreviousBond,
+            "classic_bond_ready": classicBondReady,
+            "secure_pairing_capable": securePairingCapable,
+            "protocol_version": protocolVersion,
+        ]
+        if let transferId { body["transfer_id"] = transferId }
+        if let pairingCode { body["pairing_code"] = pairingCode }
+        if let binding { body["binding"] = binding }
+        Bridge.sendTypedMessage("pairing_info", body: body)
+    }
+
     @MainActor
     static func sendMicPcm(_ data: Data) {
         Bridge.sendTypedMessage("mic_pcm", body: micPcmEventBody(data))
@@ -106,6 +127,14 @@ class Bridge {
     @MainActor
     static func sendMicLc3(_ data: Data) {
         Bridge.sendTypedMessage("mic_lc3", body: micLc3EventBody(data))
+    }
+
+    @MainActor
+    static func sendMicHealth(_ health: MicHealth, reason: String) {
+        var body = health.dictionary
+        body["reason"] = reason
+        body["timestamp"] = Int64(Date().timeIntervalSince1970 * 1000)
+        Bridge.sendTypedMessage("mic_health", body: body)
     }
 
     @MainActor
@@ -178,7 +207,10 @@ class Bridge {
         _ deviceName: String,
         deviceAddress: String = "",
         rssi: Int? = nil,
-        projectName: String? = nil
+        projectName: String? = nil,
+        pairingMode: Bool? = nil,
+        pairingCode: String? = nil,
+        securePairingCapable: Bool? = nil
     ) {
         Task {
             await MainActor.run {
@@ -199,6 +231,15 @@ class Bridge {
                 }
                 if let rssi {
                     newResult["rssi"] = rssi
+                }
+                if let pairingMode {
+                    newResult["pairingMode"] = pairingMode
+                }
+                if let pairingCode, !pairingCode.isEmpty {
+                    newResult["pairingCode"] = pairingCode
+                }
+                if let securePairingCapable {
+                    newResult["securePairingCapable"] = securePairingCapable
                 }
                 // Keep the public searchResults array stable as glasses are added or removed.
                 // Duplicate discoveries refresh their existing row; only new glasses append.

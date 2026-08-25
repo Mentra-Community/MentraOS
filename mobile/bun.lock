@@ -23,6 +23,7 @@
         "@mentra/cloud-client": "workspace:*",
         "@mentra/crust": "workspace:*",
         "@mentra/engine": "workspace:*",
+        "@mentra/engine-host-internal": "workspace:*",
         "@mentra/jspolyfill": "workspace:*",
         "@mentra/miniapp": "workspace:*",
         "@react-native-community/netinfo": "11.5.2",
@@ -168,15 +169,15 @@
         "qrcode": "^1.5.4",
       },
       "devDependencies": {
-        "@types/bun": "latest",
+        "@types/bun": "1.3.14",
         "@types/qrcode": "^1.5.5",
       },
     },
     "../cloud-v2/packages/cloud-client": {
       "name": "@mentra/cloud-client",
-      "version": "0.1.0-dev.0",
+      "version": "3.1.0",
       "dependencies": {
-        "@mentra/cloud-protocol": "^0.1.0-dev.0",
+        "@mentra/cloud-protocol": "3.1.0",
         "tweetnacl": "^1.0.3",
       },
       "devDependencies": {
@@ -206,7 +207,7 @@
     },
     "../cloud-v2/packages/protocol": {
       "name": "@mentra/cloud-protocol",
-      "version": "0.1.0-dev.0",
+      "version": "3.1.0",
       "dependencies": {
         "zod": "^3.24.1",
       },
@@ -222,7 +223,7 @@
       "name": "@mentra/cloud-runtime",
       "version": "0.0.0",
       "dependencies": {
-        "@mentra/cloud-protocol": "^0.1.0-dev.0",
+        "@mentra/cloud-protocol": "^3.1.0",
         "@mentra/cloud-shared": "workspace:*",
         "@soniox/node": "^2.1.0",
         "hono": "^4.11.1",
@@ -246,7 +247,7 @@
     },
     "modules/bluetooth-sdk": {
       "name": "@mentra/bluetooth-sdk",
-      "version": "0.1.21-dev.6",
+      "version": "3.1.0",
       "devDependencies": {
         "@types/node": "^25.9.3",
         "expo-module-scripts": "^55.0.2",
@@ -262,9 +263,9 @@
     },
     "modules/crust": {
       "name": "@mentra/crust",
-      "version": "0.1.0-dev.1",
+      "version": "3.1.0",
       "dependencies": {
-        "@mentra/jspolyfill": "^0.1.0-dev.0",
+        "@mentra/jspolyfill": "3.1.0",
       },
       "devDependencies": {
         "@expo/config-plugins": ">=8.0.0",
@@ -280,8 +281,13 @@
     },
     "modules/engine": {
       "name": "@mentra/engine",
-      "version": "0.1.0-dev.0",
+      "version": "3.1.0",
       "dependencies": {
+        "@mentra/bluetooth-sdk": "3.1.0",
+        "@mentra/cloud-client": "3.1.0",
+        "@mentra/cloud-protocol": "3.1.0",
+        "@mentra/crust": "3.1.0",
+        "@mentra/miniapp": "3.1.0",
         "buffer": "^6.0.3",
         "events": "^3.3.0",
         "jszip": "^3.10.1",
@@ -289,10 +295,6 @@
         "typesafe-ts": "^1.7.1",
       },
       "devDependencies": {
-        "@mentra/bluetooth-sdk": "workspace:*",
-        "@mentra/cloud-client": "workspace:*",
-        "@mentra/cloud-protocol": "workspace:*",
-        "@mentra/miniapp": "workspace:*",
         "@types/semver": "^7.7.1",
         "expo-module-scripts": "^55.0.2",
         "expo-modules-core": "55.0.25",
@@ -302,26 +304,21 @@
       "peerDependencies": {
         "@craftzdog/react-native-buffer": "*",
         "@dr.pogodin/react-native-fs": "*",
-        "@mentra/bluetooth-sdk": "*",
-        "@mentra/cloud-client": "^0.1.0-dev.0",
-        "@mentra/cloud-protocol": "^0.1.0-dev.0",
-        "@mentra/crust": "^0.1.0-dev.0",
-        "@mentra/miniapp": "^0.3.0-dev.0",
         "@react-native-community/netinfo": "*",
         "@types/react": "*",
         "axios": "*",
-        "expo": "*",
-        "expo-audio": "*",
-        "expo-battery": "*",
-        "expo-calendar": "*",
-        "expo-clipboard": "*",
-        "expo-constants": "*",
-        "expo-device": "*",
-        "expo-file-system": "*",
-        "expo-location": "*",
-        "expo-modules-core": "*",
-        "expo-notifications": "*",
-        "expo-task-manager": "*",
+        "expo": "~55.0.24",
+        "expo-audio": "~55.0.14",
+        "expo-battery": "^55.0.13",
+        "expo-calendar": "~55.0.14",
+        "expo-clipboard": "~55.0.13",
+        "expo-constants": "~55.0.16",
+        "expo-device": "~55.0.17",
+        "expo-file-system": "~55.0.20",
+        "expo-location": "~55.1.10",
+        "expo-modules-core": "~55.0.25",
+        "expo-notifications": "~55.0.23",
+        "expo-task-manager": "~55.0.16",
         "react": "*",
         "react-native": "*",
         "react-native-ble-manager": "*",
@@ -330,27 +327,33 @@
         "react-native-nitro-bg-timer": "*",
         "react-native-nitro-modules": "*",
         "react-native-permissions": "*",
-        "react-native-reanimated": "*",
+        "react-native-reanimated": "4.2.1",
+        "react-native-safe-area-context": "*",
         "react-native-share": "*",
+        "react-native-svg": "*",
         "react-native-udp": "*",
         "react-native-wifi-reborn": "*",
+        "react-native-worklets": "0.7.4",
         "react-native-zip-archive": "*",
         "zustand": "*",
       },
     },
+    "modules/engine-host-internal": {
+      "name": "@mentra/engine-host-internal",
+      "version": "0.0.0",
+    },
     "modules/jspolyfill": {
       "name": "@mentra/jspolyfill",
-      "version": "0.1.0-dev.0",
+      "version": "3.1.0",
       "devDependencies": {
         "esbuild": "^0.23.0",
       },
     },
     "modules/miniapp": {
       "name": "@mentra/miniapp",
-      "version": "0.3.0-dev.1",
+      "version": "3.1.0",
       "dependencies": {
-        "@mentra/cloud-protocol": "workspace:*",
-        "@mentra/types": "1.0.0-beta.2",
+        "@mentra/cloud-protocol": "3.1.0",
         "eventemitter3": "^5.0.1",
       },
       "devDependencies": {
@@ -995,11 +998,11 @@
 
     "@mentra/engine": ["@mentra/engine@workspace:modules/engine"],
 
+    "@mentra/engine-host-internal": ["@mentra/engine-host-internal@workspace:modules/engine-host-internal"],
+
     "@mentra/jspolyfill": ["@mentra/jspolyfill@workspace:modules/jspolyfill"],
 
     "@mentra/miniapp": ["@mentra/miniapp@workspace:modules/miniapp"],
-
-    "@mentra/types": ["@mentra/types@1.0.0-beta.2", "", {}, "sha512-yn0H7oYId8TSOGlSDmstds4nnmZbXyDncFy3FC1h4dWpDx6o4BmBehAJd2Otp9gr1bWwIL0yEp6JK60I8TBUGw=="],
 
     "@mongodb-js/saslprep": ["@mongodb-js/saslprep@1.4.11", "", { "dependencies": { "sparse-bitfield": "^3.0.3" } }, "sha512-o9rAHc0IpIjuPSxRutWpE1F62x7n+4mVS4rCNHkzhIUMQcc18bb6xEq5wd2NdN0WjepIyXIppRshYI2kQDOZVA=="],
 
@@ -3215,7 +3218,7 @@
 
     "@livekit/react-native-webrtc/debug": ["debug@4.3.4", "", { "dependencies": { "ms": "2.1.2" } }, "sha512-PRWFHuSU3eDtQJPvnNY7Jcket1j0t5OuOsFzPPzsekD52Zl8qUfFIPEiswXqIvHWGVHOgX+7G/vCNNhehwxfkQ=="],
 
-    "@mentra/cli/@mentra/miniapp-cli": ["@mentra/miniapp-cli@file:../sdk/miniapp-cli", { "dependencies": { "@clack/prompts": "^1.2.0", "jszip": "^3.10.1", "qrcode": "^1.5.4", "typescript": "^5.0.0" }, "devDependencies": { "@types/qrcode": "^1.5.5", "bun-types": "^1.3.14" }, "bin": { "mentra-miniapp": "./src/index.ts" } }],
+    "@mentra/cli/@mentra/miniapp-cli": ["@mentra/miniapp-cli@file:../sdk/miniapp-cli", { "dependencies": { "@clack/prompts": "^1.2.0", "jszip": "^3.10.1", "qrcode": "^1.5.4", "typescript": "^5.0.0" }, "devDependencies": { "@types/qrcode": "^1.5.5", "bun-types": "1.3.14" }, "bin": { "mentra-miniapp": "./src/index.ts" } }],
 
     "@react-native/codegen/glob": ["glob@7.2.3", "", { "dependencies": { "fs.realpath": "^1.0.0", "inflight": "^1.0.4", "inherits": "2", "minimatch": "^3.1.1", "once": "^1.3.0", "path-is-absolute": "^1.0.0" } }, "sha512-nFR0zLpU2YCaRxwoCJvL6UvCH2JFyFVIvwTLsIf21AuHlMskA1hhTdk+LlYJtOlYt9v6dvszD2BGRqBL+iQK9Q=="],
 

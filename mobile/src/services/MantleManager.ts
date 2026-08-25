@@ -28,9 +28,8 @@ import {
   offlineSpeechModelService,
   phoneLocationService,
   ttsModelManager,
-  useAppStatusStore,
   shouldActivateBundledVersion,
-} from "@mentra/engine/internal"
+} from "@mentra/engine-host-internal"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import {useDebugStore} from "@/stores/debug"
 import {checkFeaturePermissions, PermissionFeatures} from "@/utils/PermissionsUtils"
@@ -131,9 +130,7 @@ class MantleManager {
   private constructor() {}
 
   private isNotifyRunning(): boolean {
-    return useAppStatusStore
-      .getState()
-      .apps.some((miniapp) => miniapp.packageName === notifyPackageName && miniapp.running)
+    return engine.miniapps.list().some((miniapp) => miniapp.packageName === notifyPackageName && miniapp.running)
   }
 
   /**
@@ -778,8 +775,7 @@ class MantleManager {
     // core owner projected from the app store so a notification can briefly
     // replace Captions and then restore the latest caption frame.
     let notifyWasRunning = this.isNotifyRunning()
-    const syncAppPresentationState = () => {
-      const apps = useAppStatusStore.getState().apps
+    const syncAppPresentationState = (apps = engine.miniapps.list()) => {
       const coreApp = apps.find((app) => app.running && (app.type === "standard" || !app.type))
       localDisplayManager.onCoreAppChange(coreApp?.packageName ?? null)
 
@@ -790,7 +786,7 @@ class MantleManager {
       notifyWasRunning = notifyIsRunning
     }
     syncAppPresentationState()
-    const unsubscribeAppPresentationState = useAppStatusStore.subscribe(syncAppPresentationState)
+    const unsubscribeAppPresentationState = engine.miniapps.onChanged(syncAppPresentationState)
     this.subs.push({remove: unsubscribeAppPresentationState})
 
     // A remembered speaker-capable model survives disconnects, but its audio

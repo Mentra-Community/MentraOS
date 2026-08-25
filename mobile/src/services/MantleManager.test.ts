@@ -11,7 +11,7 @@ import {
   useCoreStore,
   useDisplayStore,
   useSettingsStore,
-} from "@mentra/engine/internal"
+} from "@mentra/engine-host-internal"
 // This test resets the concrete glasses store; the package-level Jest mock does
 // not expose it through @mentra/engine.
 // eslint-disable-next-line no-restricted-imports
@@ -121,7 +121,7 @@ describe("MantleManager", () => {
     }))
     await mantle.init()
     requestWifiSetup = (engine.configure as jest.Mock).mock.calls[0][0].ui.requestWifiSetup
-    syncCoreDisplayOwner = (useAppStatusStore.subscribe as jest.Mock).mock.calls.at(-1)![0]
+    syncCoreDisplayOwner = (engine.miniapps.onChanged as jest.Mock).mock.calls.at(-1)![0]
     syncGlassesPresentationState = (engine.glasses.onStatus as jest.Mock).mock.calls.at(-1)![0]
   })
 

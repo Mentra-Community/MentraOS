@@ -1,5 +1,6 @@
 /**
- * `@mentra/engine/internal` — the migration-era runtime surface.
+ * MentraOS-only migration surface, re-exported by the private
+ * `@mentra/engine-host-internal` workspace package.
  *
  * Raw zustand stores and service singletons that the Mentra app's host-side
  * services (and the `@/stores/*` / `@/utils/*` shims) still reach into while
@@ -78,20 +79,9 @@ export {
 export {default as localSttFallbackCoordinator} from "./services/LocalSttFallbackCoordinator"
 export {default as micStateCoordinator} from "./services/MicStateCoordinator"
 export {default as audioPlaybackService} from "./services/AudioPlaybackService"
-export {
-  default as sttModelManager,
-  STTModelManager,
-  type LanguageInfo as SttLanguageInfo,
-  type LanguageConfig as SttLanguageConfig,
-  type DownloadProgress as SttDownloadProgress,
-  type ExtractionProgress as SttExtractionProgress,
-} from "./services/STTModelManager"
+export {default as sttModelManager, STTModelManager} from "./services/STTModelManager"
 export {default as ttsModelManager, TTSModelManager} from "./services/TTSModelManager"
-export {
-  default as offlineSpeechModelService,
-  type DownloadStatus as OfflineModelDownloadStatus,
-  type DownloadStage as OfflineModelDownloadStage,
-} from "./services/OfflineSpeechModelService"
+export {default as offlineSpeechModelService} from "./services/OfflineSpeechModelService"
 
 export {default as navigationService} from "./services/NavigationService"
 // Phone GPS — the background location task + tier control. Importing this

@@ -92,4 +92,18 @@ describe("GlassesStatusProjection", () => {
 
     expect(useGlassesStore.getState()).toEqual(expect.objectContaining({hotspotOtaVersion: 0, wifiStatusKnown: false}))
   })
+
+  it("adds full-runtime event forwarding after OTA-only initialization", () => {
+    const forward = jest.fn()
+    startGlassesStatusProjection()
+    startGlassesStatusProjection(forward)
+
+    const changed = {
+      connection: {state: "connected", fullyBooted: true} as const,
+      deviceModel: "Mentra Live",
+    }
+    emitBluetoothSdkEvent("glasses_status", changed)
+
+    expect(forward).toHaveBeenCalledWith(changed)
+  })
 })

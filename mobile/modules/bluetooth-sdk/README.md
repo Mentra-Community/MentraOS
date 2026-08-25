@@ -330,6 +330,8 @@ Settings commands that return `SettingsAckSuccessEvent` reject when the ASG repo
 WiFi, hotspot, and version-info commands resolve from the ASG response path, not local dispatch:
 `requestWifiScan()` resolves from the ASG `wifi_scan_result` completion response with the updated scan list, including `[]` when no networks are found. Intermediate `wifi_scan_result` events can arrive with `scanComplete: false` while the glasses stream discovered networks; the final event uses `scanComplete: true`. If older glasses stream non-empty scan results but never send the completion event, the request resolves with the accumulated scan list when the request times out. `sendWifiCredentials()` resolves when the requested SSID is connected, `forgetWifiNetwork()` resolves when that SSID is no longer connected, `setHotspotState()` resolves when the requested hotspot state is reported, and `requestVersionInfo()` resolves from the ASG `version_info` response instead of local store changes.
 
+The SDK automatically sends the phone wall clock once shortly after a glasses connection becomes ready. It waits for the initial command burst to drain before timestamping the command so startup queue delay does not become clock skew. The once-per-connection guard resets after disconnect, so every successful reconnect synchronizes again. The SDK does not periodically verify or correct clock skew during a long-lived connection; apps that require periodic reconciliation can compare `requestVersionInfo().systemTimeMs` with the phone clock.
+
 React Native narrows returned values to success shapes where the raw listener event can also report errors:
 
 | API | Returned Value After `await` | Error Path |
@@ -337,6 +339,7 @@ React Native narrows returned values to success shapes where the raw listener ev
 | `requestPhoto(...)` | Terminal `PhotoSuccessResponseEvent` with `state: "success"` after capture and delivery finish. `uploadUrl` is always present; webhook JSON metadata such as `photoUrl`, `statusUrl`, `contentType`, or `fileSizeBytes` is included when the receiver returns it. | Rejects when raw `photo_response.state === "error"`, the SDK cannot send the command, or the terminal photo response times out. |
 | `startVideoRecording(...)` | `VideoRecordingStartedStatusEvent` with `success: true` and `status: "recording_started"`. | Rejects on `success: false` statuses such as `already_recording`, send failure, or timeout. |
 | `stopVideoRecording(...)` | `VideoRecordingStoppedStatusEvent` with `success: true` and `status: "recording_stopped"`. When a webhook URL is supplied, resolves after the video upload succeeds. | Rejects on `success: false` statuses such as `not_recording`, webhook upload failure, send failure, or timeout. |
+| `queryVideoRecordingStatus(requestId)` | `VideoRecordingStatusEvent` with the current `recording` state and elapsed `duration_ms` when available. | Rejects when disconnected, another video command uses the same request ID, or the response times out. |
 | `rgbLedControl(...)` | `RgbLedControlSuccessResponseEvent` with `state: "success"`. | Rejects when raw `rgb_led_control_response.state === "error"` or the response times out. |
 | `checkForOtaUpdate()` | `boolean`, true when the configured OTA manifest has an ASG APK, MTK, or BES update for the connected glasses; false only when the manifest was checked successfully and no update is available. | Rejects when the glasses are disconnected, version info is unavailable, the manifest cannot be fetched, or the manifest response is invalid/missing required ASG app version fields. |
 
@@ -402,6 +405,8 @@ automatically.
 
 OTA requires Mentra Live glasses firmware that supports the ASG OTA protocol and network access from the glasses. During install, normal BLE traffic can be interrupted and the glasses may restart; keep the app connected and avoid sending unrelated commands until `ota_status.status` is `complete` or `failed`.
 
+Mentra Live also rejects `ota_start` before acknowledgement when its known battery level is below 5%, emitting a failed `ota_status` with `error_message: "battery_low"`. Unknown battery state remains fail-open, so apps should keep their own (typically stricter) user-facing battery policy.
+
 ## Photo Upload
 
 ```ts
@@ -427,7 +432,7 @@ Use `setCameraFov({fov, roiPosition})` to configure Mentra Live camera field of 
 
 The missing/factory persistent FOV base is 102 degrees with centered ROI; existing saved values are not migrated. Use `setCameraFovOverride({leaseId, fov, roiPosition, ttlMs})` for a memory-only crop and `releaseCameraFovOverride(leaseId)` to restore the persistent base. A stale release is a safe no-op, and refreshing the same lease/config extends its TTL without another HAL restart.
 
-`startVideoRecording(...)` resolves from the ASG `video_recording_status` event whose status is `recording_started`. `stopVideoRecording(...)` without a webhook resolves from `recording_stopped`; with a webhook it waits for `recording_stopped` plus a video `media_success`, and rejects on `media_error`. Raw `video_recording_status`, `media_success`, and `media_error` events remain available through listeners.
+`startVideoRecording(...)` resolves from the ASG `video_recording_status` event whose status is `recording_started`. `stopVideoRecording(...)` without a webhook resolves from `recording_stopped`; with a webhook it waits for `recording_stopped` plus a video `media_success`, and rejects on `media_error`. Use `queryVideoRecordingStatus(requestId)` after a timeout, reconnect, or app resume to fetch the glasses' current `recording` state and elapsed `duration_ms`. Raw `video_recording_status`, `media_success`, and `media_error` events remain available through listeners.
 
 ## Streaming
 
@@ -464,6 +469,9 @@ export function HardwareEventLogger() {
     console.log(event.sampleRate, event.bitsPerSample, event.channels, event.encoding)
     console.log(event.pcm)
   })
+  useBluetoothEvent('mic_health', (event) => {
+    console.log(event.reason, event.sequenceGapEvents, event.decodeFailures)
+  })
 
   return null
 }
@@ -471,9 +479,11 @@ export function HardwareEventLogger() {
 
 For non-React modules, `BluetoothSdk.addListener(...)` is the low-level subscription API. Keep the returned subscription and call `remove()` when the listener is no longer needed.
 
-Common event names include `button_press`, `touch_event`, `head_up`, `battery_status`, `wifi_status_change`, `wifi_scan_result`, `hotspot_status_change`, `photo_status`, `photo_response`, `gallery_status`, `settings_ack`, `version_info`, `stream_status`, `ota_start_ack`, `ota_status`, `mic_pcm`, `mic_lc3`, `local_transcription`, `rgb_led_control_response`, `audio_connected`, `audio_disconnected`, and `log`.
+Common event names include `button_press`, `touch_event`, `head_up`, `battery_status`, `wifi_status_change`, `wifi_scan_result`, `hotspot_status_change`, `photo_status`, `photo_response`, `gallery_status`, `settings_ack`, `version_info`, `stream_status`, `ota_start_ack`, `ota_status`, `mic_pcm`, `mic_lc3`, `mic_health`, `local_transcription`, `rgb_led_control_response`, `audio_connected`, `audio_disconnected`, and `log`.
 
 React Native event payload fields usually use camelCase. OTA events intentionally mirror the glasses firmware field names, such as `overall_percent` and `version_name`. For example, `touch_event` includes `gestureName`, `wifi_scan_result` includes `networks` and `scanComplete`, `version_info` matches the `requestVersionInfo()` result shape, `photo_response` success includes `uploadUrl` and may include webhook-returned `photoUrl`, `statusUrl`, `contentType`, and `fileSizeBytes`, and `gallery_status` includes `hasContent`, `cameraBusy`, and optional `cameraBusyReason`. `photo_status` reports intermediate photo states such as `accepted`, `queued`, `configuring`, `capturing`, `captured`, `compressing`, `ble_fallback_compression`, `uploading`, `ready_for_transfer`, `transferring`, and `failed`; the `configuring` event includes `resolvedConfig` with the effective JPEG dimensions, quality, requested size, transfer method, compression, and manual exposure fields when present. The `capturing` event may include `requestedCaptureConfig` and `meteredPreview`; the `captured` event may include `captureMetadata` with the HAL-applied exposure, ISO, frame duration, and AE state. `mic_pcm` includes `sampleRate`, `bitsPerSample`, `channels`, and `encoding`; `mic_lc3` includes `sampleRate`, `channels`, `encoding`, `frameDurationMs`, `frameSizeBytes`, `bitrate`, and `packetizedFromGlasses`.
+
+`mic_health` emits a snapshot when native code detects a glasses LC3 `sequence_gap` or `decode_failure`. Each event includes cumulative `sequenceGapEvents` and `decodeFailures` counters for the current connection plus `lastLc3ReceivedAt`, `lastPcmProducedAt`, and `timestamp` in Unix milliseconds when available. These failures occur before React Native receives PCM and cannot be reconstructed from `mic_pcm` alone. The existing `mic_pcm` and `mic_lc3` streams remain unchanged.
 
 Photo status metadata is tied to the capture stage where the glasses know it:
 

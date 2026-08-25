@@ -3,4 +3,4 @@
  * in @mentra/engine (island owns cloud-v2 credential storage). Kept so existing
  * `@/utils/cloudClient/MmkvSecureStore` imports resolve unchanged.
  */
-export {cloudSecureStore} from "@mentra/engine/internal"
+export {cloudSecureStore} from "@mentra/engine-host-internal"
