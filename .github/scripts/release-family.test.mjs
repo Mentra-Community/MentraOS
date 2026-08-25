@@ -10,10 +10,27 @@ import {
   createReleasePlan,
   dependencyOrder,
   deriveReleaseIdentity,
+  finalizeReleaseManifest,
   loadReleaseFamily,
+  releaseRecordSha256,
+  requirePublicHttpsUrl,
+  serializeReleaseRecord,
 } from "./release-family.mjs"
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
+
+test("accepts only credential-free public HTTPS URLs without fragments", () => {
+  assert.equal(requirePublicHttpsUrl("https://artifacts.example.com/file?q=1", "artifact"), "https://artifacts.example.com/file?q=1")
+  assert.throws(() => requirePublicHttpsUrl("http://artifacts.example.com/file", "artifact"), /must use HTTPS/)
+  assert.throws(
+    () => requirePublicHttpsUrl("https://token@artifacts.example.com/file", "artifact"),
+    /credential-free HTTPS/,
+  )
+  assert.throws(
+    () => requirePublicHttpsUrl("https://artifacts.example.com/file#sha256", "artifact"),
+    /without a fragment/,
+  )
+})
 
 test("loads the repository release family and derives dependency-first publication order", () => {
   const family = loadReleaseFamily({rootDir: repositoryRoot})
@@ -55,8 +72,99 @@ test("creates a deterministic release plan with exact dependency versions", () =
   assert.equal(plan.native.marketingVersion, "3.1.0")
   assert.equal(plan.native.buildNumber, 3100057)
   assert.equal(plan.products["@mentra/engine"], "3.1.0-beta.57")
-  assert.equal(plan.dependencies["@mentra/engine"]["@mentra/bluetooth-sdk"], "3.1.0-beta.57")
+  assert.equal(plan.members["@mentra/engine"].dependencies["@mentra/bluetooth-sdk"], "3.1.0-beta.57")
+  assert.equal(plan.members["@mentra/bluetooth-sdk"].publishTargets.length, 3)
+  assert.equal(plan.artifactNames.otaManifest, "mentra-live-ota-3.1.0-beta.57.json")
+  assert.equal(plan.artifactNames.asgSelection, "mentra-live-asg-selection-3.1.0-beta.57.json")
+  assert.equal(plan.artifactNames.androidStoreApp, "mentraos-3.1.0-beta.57-android.aab")
   assert.equal(plan.otaInputs.firmwareManifest, "firmware_live.json")
+})
+
+test("serializes records canonically and finalizes only complete release results", () => {
+  const family = loadReleaseFamily({rootDir: repositoryRoot})
+  const plan = createReleasePlan({
+    family,
+    channel: "beta",
+    sequence: 57,
+    sourceCommit: "a".repeat(40),
+    nativeBuildNumber: 3100057,
+  })
+  const publication = (coordinate) => ({
+    status: "published",
+    coordinate,
+    url: `https://artifacts.example.com/${encodeURIComponent(coordinate)}`,
+    sha256: "b".repeat(64),
+    provenanceUrl: "https://github.com/Mentra-Community/MentraOS/attestations/123",
+  })
+  const expectedCoordinates = {
+    "npm": (name) => `${name}@${plan.releaseIdentity}`,
+    "maven-central": () => `com.mentraglass:bluetooth-sdk:${plan.releaseIdentity}`,
+    "swift-package-manager": () => `Mentra-Community/mentra-bluetooth-sdk-ios@${plan.releaseIdentity}`,
+    "google-play": () => `com.mentra.mentra:${plan.native.buildNumber}:beta`,
+    "app-store-connect": () => `com.mentra.mentra:${plan.native.marketingVersion}:${plan.native.buildNumber}:Beta`,
+  }
+  const publications = Object.fromEntries(
+    Object.entries(plan.members).map(([name, member]) => [
+      name,
+      Object.fromEntries(
+        member.publishTargets.map((target) => [target, publication(expectedCoordinates[target](name))]),
+      ),
+    ]),
+  )
+  const results = {
+    releaseSetId: plan.releaseSetId,
+    publications,
+    otaManifest: publication(plan.artifactNames.otaManifest),
+    artifacts: [
+      publication(plan.artifactNames.asgSelection),
+      publication(plan.artifactNames.androidApp),
+      publication(plan.artifactNames.androidStoreApp),
+      publication(plan.artifactNames.iosApp),
+      publication(plan.artifactNames.enginePackage),
+    ],
+  }
+
+  const manifest = finalizeReleaseManifest({plan, results, completedAt: "2026-08-24T20:00:00.000Z"})
+  assert.equal(manifest.releasePlanSha256, releaseRecordSha256(plan))
+  assert.equal(manifest.publications["@mentra/engine"].npm.coordinate, "@mentra/engine@3.1.0-beta.57")
+  assert.deepEqual(manifest.native, plan.native)
+  assert.equal(serializeReleaseRecord({z: 1, a: 2}), '{\n  "a": 2,\n  "z": 1\n}\n')
+
+  const incompletePlan = structuredClone(plan)
+  delete incompletePlan.artifactNames.androidStoreApp
+  assert.throws(
+    () => finalizeReleaseManifest({plan: incompletePlan, results, completedAt: "2026-08-24T20:00:00.000Z"}),
+    /missing required artifact name androidStoreApp/,
+  )
+
+  delete results.publications["@mentra/bluetooth-sdk"]["maven-central"]
+  assert.throws(
+    () => finalizeReleaseManifest({plan, results, completedAt: "2026-08-24T20:00:00.000Z"}),
+    /publications\.@mentra\/bluetooth-sdk\.maven-central is missing/,
+  )
+
+  results.publications["@mentra/bluetooth-sdk"]["maven-central"] = publication(
+    "com.mentraglass:bluetooth-sdk:3.1.0-beta.56",
+  )
+  assert.throws(
+    () => finalizeReleaseManifest({plan, results, completedAt: "2026-08-24T20:00:00.000Z"}),
+    /coordinate must be com\.mentraglass:bluetooth-sdk:3\.1\.0-beta\.57/,
+  )
+
+  results.publications["@mentra/bluetooth-sdk"]["maven-central"] = publication(
+    "com.mentraglass:bluetooth-sdk:3.1.0-beta.57",
+  )
+  results.artifacts = results.artifacts.filter((artifact) => artifact.coordinate !== plan.artifactNames.iosApp)
+  assert.throws(
+    () => finalizeReleaseManifest({plan, results, completedAt: "2026-08-24T20:00:00.000Z"}),
+    new RegExp(`Missing required artifact ${plan.artifactNames.iosApp}`),
+  )
+
+  results.artifacts.push(publication(plan.artifactNames.iosApp), publication(plan.artifactNames.iosApp))
+  assert.throws(
+    () => finalizeReleaseManifest({plan, results, completedAt: "2026-08-24T20:00:00.000Z"}),
+    new RegExp(`artifacts contains duplicate coordinate ${plan.artifactNames.iosApp}`),
+  )
 })
 
 test("rejects unknown dependencies and dependency cycles", () => {

@@ -1,4 +1,5 @@
 import {readFileSync} from "node:fs"
+import {createHash} from "node:crypto"
 import path from "node:path"
 
 const STABLE_VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
@@ -6,6 +7,8 @@ const COMMIT_PATTERN = /^[0-9a-f]{40}$/
 const CHANNELS = new Set(["dev", "beta", "production"])
 const KINDS = new Set(["package", "product"])
 const PUBLISH_TARGETS = new Set(["app-store-connect", "google-play", "maven-central", "npm", "swift-package-manager"])
+const PUBLICATION_STATUSES = new Set(["promoted", "published", "reused"])
+const SHA256_PATTERN = /^[0-9a-f]{64}$/
 
 function fail(message) {
   throw new Error(`Invalid release family: ${message}`)
@@ -173,11 +176,16 @@ export function createReleasePlan({family, channel, sequence, sourceCommit, nati
   }
 
   const releaseIdentity = deriveReleaseIdentity(family.familyBaseVersion, channel, sequence)
-  const products = Object.fromEntries(family.members.map((member) => [member.name, releaseIdentity]))
-  const dependencies = Object.fromEntries(
+  const members = Object.fromEntries(
     family.members.map((member) => [
       member.name,
-      Object.fromEntries(member.dependencies.map((dependency) => [dependency, releaseIdentity])),
+      {
+        version: releaseIdentity,
+        kind: member.kind,
+        manifest: member.manifest,
+        publishTargets: member.publishTargets,
+        dependencies: Object.fromEntries(member.dependencies.map((dependency) => [dependency, releaseIdentity])),
+      },
     ]),
   )
 
@@ -193,9 +201,170 @@ export function createReleasePlan({family, channel, sequence, sourceCommit, nati
       marketingVersion: family.familyBaseVersion,
       buildNumber: nativeBuildNumber,
     },
-    products,
-    dependencies,
+    products: Object.fromEntries(family.products.map((product) => [product, releaseIdentity])),
+    members,
     publicationOrder: family.publicationOrder,
+    artifactNames: {
+      releasePlan: `mentra-release-plan-${releaseIdentity}.json`,
+      releaseManifest: `mentra-release-${releaseIdentity}.json`,
+      otaManifest: `mentra-live-ota-${releaseIdentity}.json`,
+      asgSelection: `mentra-live-asg-selection-${releaseIdentity}.json`,
+      androidApp: `mentraos-${releaseIdentity}-android.apk`,
+      androidStoreApp: `mentraos-${releaseIdentity}-android.aab`,
+      iosApp: `mentraos-${releaseIdentity}-ios.ipa`,
+      iosSdkArchive: `mentra-bluetooth-sdk-ios-${releaseIdentity}.tar`,
+      enginePackage: `mentra-engine-${releaseIdentity}.tgz`,
+    },
     otaInputs,
+  }
+}
+
+function canonicalize(value) {
+  if (Array.isArray(value)) return value.map(canonicalize)
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((key) => [key, canonicalize(value[key])]),
+    )
+  }
+  return value
+}
+
+export function serializeReleaseRecord(record) {
+  return `${JSON.stringify(canonicalize(record), null, 2)}\n`
+}
+
+export function releaseRecordSha256(record) {
+  return createHash("sha256").update(serializeReleaseRecord(record)).digest("hex")
+}
+
+export function requirePublicHttpsUrl(value, label) {
+  let parsed
+  try {
+    parsed = new URL(value)
+  } catch {
+    throw new Error(`${label} must be a valid URL`)
+  }
+  if (parsed.protocol !== "https:") throw new Error(`${label} must use HTTPS`)
+  if (parsed.username || parsed.password || parsed.hash) {
+    throw new Error(`${label} must be credential-free HTTPS without a fragment`)
+  }
+  return parsed.toString()
+}
+
+function validatePublication(publication, label) {
+  if (!publication || typeof publication !== "object") throw new Error(`${label} is missing`)
+  if (!PUBLICATION_STATUSES.has(publication.status)) {
+    throw new Error(`${label}.status must be promoted, published, or reused`)
+  }
+  requireString(publication.coordinate, `${label}.coordinate`)
+  requirePublicHttpsUrl(publication.url, `${label}.url`)
+  requirePublicHttpsUrl(publication.provenanceUrl, `${label}.provenanceUrl`)
+  if (!SHA256_PATTERN.test(publication.sha256)) {
+    throw new Error(`${label}.sha256 must be a lowercase SHA-256 digest`)
+  }
+  return publication
+}
+
+function expectedPublicationCoordinate(plan, memberName, target) {
+  const version = plan.members[memberName].version
+  if (target === "npm") return `${memberName}@${version}`
+  if (target === "maven-central") return `com.mentraglass:bluetooth-sdk:${version}`
+  if (target === "swift-package-manager") return `Mentra-Community/mentra-bluetooth-sdk-ios@${version}`
+  const channels = {
+    dev: {play: "internal", appStore: "Dev"},
+    beta: {play: "beta", appStore: "Beta"},
+    production: {play: "production", appStore: "App Store"},
+  }
+  const selected = channels[plan.channel]
+  if (!selected) throw new Error(`Unknown release channel ${JSON.stringify(plan.channel)}`)
+  if (target === "google-play") return `com.mentra.mentra:${plan.native.buildNumber}:${selected.play}`
+  if (target === "app-store-connect") {
+    return `com.mentra.mentra:${plan.native.marketingVersion}:${plan.native.buildNumber}:${selected.appStore}`
+  }
+  throw new Error(`Unknown publication target ${JSON.stringify(target)}`)
+}
+
+function requiredArtifactCoordinates(plan) {
+  const keys =
+    plan.channel === "production"
+      ? ["enginePackage"]
+      : ["asgSelection", "androidApp", "androidStoreApp", "iosApp", "enginePackage"]
+  return keys.map((key) => {
+    const coordinate = plan.artifactNames?.[key]
+    if (typeof coordinate !== "string" || coordinate.length === 0) {
+      throw new Error(`Release plan is missing required artifact name ${key}`)
+    }
+    return coordinate
+  })
+}
+
+export function finalizeReleaseManifest({plan, results, completedAt}) {
+  if (!plan?.releaseSetId || !plan?.members) throw new Error("A generated release plan is required")
+  if (results?.releaseSetId !== plan.releaseSetId) throw new Error("Publication results do not match the release set")
+  const completed = new Date(completedAt)
+  if (!completedAt || Number.isNaN(completed.valueOf()) || completed.toISOString() !== completedAt) {
+    throw new Error("completedAt must be an ISO-8601 UTC timestamp")
+  }
+  if (
+    plan.native?.marketingVersion !== plan.familyBaseVersion ||
+    !Number.isSafeInteger(plan.native?.buildNumber) ||
+    plan.native.buildNumber < 1
+  ) {
+    throw new Error("Release plan has invalid native build identity")
+  }
+
+  const publications = {}
+  for (const [memberName, member] of Object.entries(plan.members)) {
+    const memberResults = results.publications?.[memberName]
+    if (!memberResults || typeof memberResults !== "object") {
+      throw new Error(`Missing publication results for ${memberName}`)
+    }
+    publications[memberName] = {}
+    for (const target of member.publishTargets) {
+      const label = `publications.${memberName}.${target}`
+      const publication = validatePublication(memberResults[target], label)
+      const expected = expectedPublicationCoordinate(plan, memberName, target)
+      if (publication.coordinate !== expected) {
+        throw new Error(`${label}.coordinate must be ${expected}`)
+      }
+      publications[memberName][target] = publication
+    }
+  }
+
+  const otaManifest = validatePublication(results.otaManifest, "otaManifest")
+  if (plan.channel === "production" && otaManifest.status !== "promoted") {
+    throw new Error("Production OTA manifest must be promoted from the selected beta")
+  }
+  if (plan.channel !== "production" && otaManifest.coordinate !== plan.artifactNames.otaManifest) {
+    throw new Error(`otaManifest.coordinate must be ${plan.artifactNames.otaManifest}`)
+  }
+  if (!Array.isArray(results.artifacts)) throw new Error("artifacts must be an array")
+  const artifacts = results.artifacts.map((artifact, index) => validatePublication(artifact, `artifacts[${index}]`))
+  const artifactCoordinates = new Set()
+  for (const artifact of artifacts) {
+    if (artifactCoordinates.has(artifact.coordinate)) {
+      throw new Error(`artifacts contains duplicate coordinate ${artifact.coordinate}`)
+    }
+    artifactCoordinates.add(artifact.coordinate)
+  }
+  for (const coordinate of requiredArtifactCoordinates(plan)) {
+    if (!artifactCoordinates.has(coordinate)) throw new Error(`Missing required artifact ${coordinate}`)
+  }
+
+  return {
+    schemaVersion: 1,
+    releaseSetId: plan.releaseSetId,
+    familyBaseVersion: plan.familyBaseVersion,
+    releaseIdentity: plan.releaseIdentity,
+    channel: plan.channel,
+    sourceCommit: plan.sourceCommit,
+    native: plan.native,
+    completedAt,
+    releasePlanSha256: releaseRecordSha256(plan),
+    publications,
+    otaManifest,
+    artifacts,
   }
 }
