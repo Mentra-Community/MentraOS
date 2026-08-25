@@ -170,15 +170,25 @@ export class MiniAppService {
         throw new MiniAppServiceError("invalid_release_state", "only draft or rejected releases can be submitted", 409);
       }
 
-      release.status = "submitted";
-      release.submittedAt = new Date();
-      release.reviewNotes = null;
       // Freeze the content entering review. Approval and publication must never
       // pick up developer edits made after this transition.
-      release.submittedStoreListing = serializeStoreListing(app.storeListing);
-      release.reviewedStoreListing = null;
       await lease.assertHeld();
-      await release.save();
+      const submitted = await MiniAppReleaseModel.findOneAndUpdate(
+        { _id: release._id, status: { $in: ["draft", "rejected"] } },
+        {
+          $set: {
+            status: "submitted",
+            submittedAt: new Date(),
+            reviewNotes: null,
+            submittedStoreListing: serializeStoreListing(app.storeListing),
+            reviewedStoreListing: null,
+          },
+        },
+        { new: true },
+      );
+      if (!submitted) {
+        throw new MiniAppServiceError("invalid_release_state", "release state changed during submission", 409);
+      }
 
       // Fire-and-forget: a Slack failure can never delay or fail the submit
       // response, and an unset webhook env var is a silent skip.
@@ -194,7 +204,7 @@ export class MiniAppService {
         manifest: release.manifest as Record<string, unknown> | null,
       }).catch(() => {});
 
-      return serializeRelease(release.toObject());
+      return serializeRelease(submitted.toObject());
     });
   }
 
@@ -276,14 +286,24 @@ export class MiniAppService {
           409,
         );
       }
-      release.status = "accepted";
-      release.reviewedAt = new Date();
-      release.reviewedBy = input.adminId;
-      release.reviewNotes = input.notes?.trim() || null;
-      release.reviewedStoreListing = serializeStoreListing(release.submittedStoreListing);
       await lease.assertHeld();
-      await release.save();
-      return serializeRelease(release.toObject());
+      const accepted = await MiniAppReleaseModel.findOneAndUpdate(
+        { _id: release._id, status: { $in: ["submitted", "in_review"] } },
+        {
+          $set: {
+            status: "accepted",
+            reviewedAt: new Date(),
+            reviewedBy: input.adminId,
+            reviewNotes: input.notes?.trim() || null,
+            reviewedStoreListing: serializeStoreListing(release.submittedStoreListing),
+          },
+        },
+        { new: true },
+      );
+      if (!accepted) {
+        throw new MiniAppServiceError("invalid_release_state", "release state changed during approval", 409);
+      }
+      return serializeRelease(accepted.toObject());
     });
   }
 
@@ -298,18 +318,27 @@ export class MiniAppService {
       }
       const app = await MiniAppModel.findOne({ _id: release.miniAppId });
       if (!app || app.status === "archived") throw new MiniAppServiceError("not_found", "miniapp not found", 404);
-      release.status = "rejected";
-      release.reviewedAt = new Date();
-      release.reviewedBy = input.adminId;
-      release.reviewNotes = input.notes?.trim() || "Rejected by admin review.";
       // A rejected snapshot is no longer approvable. The developer must submit
       // again, which freezes a new listing revision and its artwork references.
-      release.submittedStoreListing = null;
-      release.reviewedStoreListing = null;
-
       await lease.assertHeld();
-      await release.save();
-      return serializeRelease(release.toObject());
+      const rejected = await MiniAppReleaseModel.findOneAndUpdate(
+        { _id: release._id, status: { $in: ["submitted", "in_review", "accepted"] } },
+        {
+          $set: {
+            status: "rejected",
+            reviewedAt: new Date(),
+            reviewedBy: input.adminId,
+            reviewNotes: input.notes?.trim() || "Rejected by admin review.",
+            submittedStoreListing: null,
+            reviewedStoreListing: null,
+          },
+        },
+        { new: true },
+      );
+      if (!rejected) {
+        throw new MiniAppServiceError("invalid_release_state", "release state changed during rejection", 409);
+      }
+      return serializeRelease(rejected.toObject());
     });
   }
 
@@ -364,14 +393,6 @@ export class MiniAppService {
         );
       }
 
-      release.status = "published";
-      // Persist the complete publication revision on the release itself so
-      // historical admin rows do not drift when a newer release on this track
-      // replaces the app-level active snapshot.
-      release.reviewedStoreListing = reviewedStoreListing;
-      release.publishedAt = release.publishedAt ?? new Date();
-      release.reviewedBy = input.adminId;
-      if (input.notes?.trim()) release.reviewNotes = input.notes.trim();
       // Journal the candidate without disturbing the currently active release.
       // Once the release status is durable, the journal can be promoted by
       // this request or recovered by the next lease holder after a crash.
@@ -396,7 +417,21 @@ export class MiniAppService {
         throw new MiniAppServiceError("store_listing_lease_lost", "Store listing operation lease was lost", 409);
       }
       await lease.assertHeld();
-      await release.save();
+      const publicationUpdates: Record<string, unknown> = {
+        status: "published",
+        reviewedStoreListing,
+        publishedAt: release.publishedAt ?? new Date(),
+        reviewedBy: input.adminId,
+      };
+      if (input.notes?.trim()) publicationUpdates.reviewNotes = input.notes.trim();
+      const publishedRelease = await MiniAppReleaseModel.findOneAndUpdate(
+        { _id: release._id, status: "accepted" },
+        { $set: publicationUpdates },
+        { new: true },
+      );
+      if (!publishedRelease) {
+        throw new MiniAppServiceError("invalid_release_state", "release state changed during publication", 409);
+      }
       const promoted = await promotePendingStorePublication({
         miniAppId: app._id.toString(),
         lease,
@@ -407,7 +442,7 @@ export class MiniAppService {
       if (!promoted) {
         throw new MiniAppServiceError("store_listing_lease_lost", "Store listing operation lease was lost", 409);
       }
-      return serializeRelease(release.toObject());
+      return serializeRelease(publishedRelease.toObject());
     });
   }
 
