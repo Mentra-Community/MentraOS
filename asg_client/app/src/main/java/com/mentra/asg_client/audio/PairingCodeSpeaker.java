@@ -5,6 +5,8 @@ import android.util.Log;
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
 import com.mentra.asg_client.utils.WakeLockManager;
 import java.io.File;
+import java.util.Locale;
+import java.util.regex.Pattern;
 
 /**
  * Stitches a pairing code into one I2S WAV and plays it. Used by the MCU {@code hm_spkcode} path
@@ -14,6 +16,7 @@ public final class PairingCodeSpeaker {
 
     private static final String TAG = "PairingCodeSpeaker";
     private static final long WAKE_LOCK_MS = 8000L;
+    private static final Pattern PAIRING_CODE = Pattern.compile("[0-9A-F]{4}");
 
     private PairingCodeSpeaker() {}
 
@@ -22,9 +25,11 @@ public final class PairingCodeSpeaker {
             Log.w(TAG, "speak skipped: missing context, hardware, or code");
             return false;
         }
-        String normalized = code.trim();
-        if (normalized.isEmpty()) {
-            Log.w(TAG, "speak skipped: empty pairing code");
+        String normalized = code.trim().toUpperCase(Locale.US);
+        if (!PAIRING_CODE.matcher(normalized).matches()) {
+            Log.w(
+                    TAG,
+                    "speak skipped: pairing code must contain exactly four hexadecimal characters");
             return false;
         }
         if (!hardwareManager.supportsAudioPlayback()) {
@@ -38,15 +43,13 @@ public final class PairingCodeSpeaker {
             boolean played = hardwareManager.playAudioFile(wav);
             Log.i(
                     TAG,
-                    "pairing code playback code="
-                            + normalized
-                            + " file="
+                    "pairing code playback file="
                             + wav.getAbsolutePath()
                             + " playAudioFile="
                             + played);
             return played;
         } catch (Exception e) {
-            Log.e(TAG, "failed to speak pairing code " + normalized, e);
+            Log.e(TAG, "failed to speak pairing code", e);
             return false;
         }
     }

@@ -44,6 +44,11 @@ let package = Package(
       cSettings: [
         .headerSearchPath(".")
       ]
+    ),
+    .testTarget(
+      name: "MentraBluetoothSDKTests",
+      dependencies: ["MentraBluetoothSDK"],
+      path: "ios/Tests"
     )
   ]
 )
