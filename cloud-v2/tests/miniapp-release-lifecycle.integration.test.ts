@@ -526,6 +526,98 @@ describe("miniapp release lifecycle", () => {
     }
   });
 
+  test("draft listing and artwork writes cannot complete through a submission snapshot", async () => {
+    const packageName = "com.example.draftwriterace";
+    await miniapps.createMiniApp(developer, {
+      packageName,
+      displayName: "Draft Write Race",
+      description: "Draft write serialization test",
+    });
+    await miniapps.updateStoreListing(developer, packageName, { subtitle: "Original subtitle" });
+    const originalIcon = await miniapps.createStoreAsset(developer, packageName, {
+      role: "store_icon",
+      fileName: "original.png",
+      contentType: "image/png",
+      bytes: tinyPng(),
+    });
+    const release = await miniapps.createRelease(developer, {
+      packageName,
+      version: "1.0.0",
+      manifest: { packageName, name: "Draft Write Race", version: "1.0.0" },
+      bundle: await releaseBundle({ packageName, name: "Draft Write Race", version: "1.0.0" }),
+    });
+
+    const originalFindOneAndUpdate = MiniAppReleaseModel.findOneAndUpdate;
+    let markTransitionReached!: () => void;
+    let resumeTransition!: () => void;
+    const transitionReached = new Promise<void>(resolve => {
+      markTransitionReached = resolve;
+    });
+    const transitionGate = new Promise<void>(resolve => {
+      resumeTransition = resolve;
+    });
+    MiniAppReleaseModel.findOneAndUpdate = (async (...args: unknown[]) => {
+      const filter = args[0] as { _id?: unknown } | undefined;
+      const update = args[1] as { $set?: { status?: string } } | undefined;
+      if (String(filter?._id) === release.id && update?.$set?.status === "submitted") {
+        markTransitionReached();
+        await transitionGate;
+      }
+      return (originalFindOneAndUpdate as unknown as (...callArgs: unknown[]) => unknown).apply(
+        MiniAppReleaseModel,
+        args,
+      );
+    }) as typeof MiniAppReleaseModel.findOneAndUpdate;
+
+    const completionOrder: string[] = [];
+    try {
+      const submission = miniapps.submitRelease(developer, packageName, release.id).then(result => {
+        completionOrder.push("submission");
+        return result;
+      });
+      await transitionReached;
+      const listingWrite = miniapps
+        .updateStoreListing(developer, packageName, { subtitle: "Replacement subtitle" })
+        .then(result => {
+          completionOrder.push("listing");
+          return result;
+        });
+      const artworkWrite = miniapps
+        .createStoreAsset(developer, packageName, {
+          role: "store_icon",
+          fileName: "replacement.png",
+          contentType: "image/png",
+          bytes: tinyPng(),
+        })
+        .then(result => {
+          completionOrder.push("artwork");
+          return result;
+        });
+
+      await new Promise(resolve => setTimeout(resolve, 50));
+      expect(completionOrder).toEqual([]);
+      resumeTransition();
+      const [, , replacementIcon] = await Promise.all([submission, listingWrite, artworkWrite]);
+
+      expect(completionOrder[0]).toBe("submission");
+      const [savedRelease, savedApp] = await Promise.all([
+        MiniAppReleaseModel.findById(release.id).lean(),
+        MiniAppModel.findOne({ packageName }).lean(),
+      ]);
+      expect(savedRelease?.submittedStoreListing).toMatchObject({
+        subtitle: "Original subtitle",
+        iconAssetId: originalIcon.id,
+      });
+      expect(savedApp?.storeListing).toMatchObject({
+        subtitle: "Replacement subtitle",
+        iconAssetId: replacementIcon.id,
+      });
+    } finally {
+      resumeTransition();
+      MiniAppReleaseModel.findOneAndUpdate = originalFindOneAndUpdate;
+    }
+  });
+
   test("publish and reject decisions serialize to one consistent outcome", async () => {
     const packageName = "com.example.decisionrace";
     const release = await createAcceptedStoreRelease(packageName);

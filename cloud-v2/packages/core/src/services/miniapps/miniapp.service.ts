@@ -642,7 +642,7 @@ export class MiniAppService {
   }
 
   async updateStoreListing(developer: DeveloperIdentity, packageName: string, input: UpdateStoreListingInput) {
-    const app = await this.requireMiniApp(developer, normalizePackageName(packageName));
+    const authorizedApp = await this.requireMiniApp(developer, normalizePackageName(packageName));
     const categories = input.categories?.map(category => category.trim().toLowerCase()).filter(Boolean);
     if (categories && (categories.length > 5 || categories.some(category => category.length > 40))) {
       throw new MiniAppServiceError("invalid_categories", "use at most five categories of 40 characters", 400);
@@ -673,14 +673,30 @@ export class MiniAppService {
     if (privacyPolicyUrl !== undefined) updates["storeListing.privacyPolicyUrl"] = privacyPolicyUrl;
     if (supportUrl !== undefined) updates["storeListing.supportUrl"] = supportUrl;
     if (websiteUrl !== undefined) updates["storeListing.websiteUrl"] = websiteUrl;
-    if (Object.keys(updates).length > 0) {
-      await MiniAppModel.updateOne({ _id: app._id, orgId: developer.orgId }, { $set: updates });
-    }
-    return this.getStoreListing(developer, packageName);
+    return withStoreListingLease(authorizedApp._id.toString(), async lease => {
+      if (Object.keys(updates).length > 0) {
+        const updated = await MiniAppModel.updateOne(
+          {
+            _id: authorizedApp._id,
+            orgId: developer.orgId,
+            status: { $ne: "archived" },
+            "storeListingOperationLease.token": lease.token,
+            "storeListingOperationLease.expiresAt": { $gt: new Date() },
+          },
+          { $set: updates },
+        );
+        if (updated.matchedCount !== 1) {
+          throw new MiniAppServiceError("store_listing_lease_lost", "Store listing operation lease was lost", 409);
+        }
+      } else {
+        await lease.assertHeld();
+      }
+      return this.getStoreListing(developer, packageName);
+    });
   }
 
   async createStoreAsset(developer: DeveloperIdentity, packageName: string, input: CreateStoreAssetInput) {
-    const app = await this.requireMiniApp(developer, normalizePackageName(packageName));
+    const authorizedApp = await this.requireMiniApp(developer, normalizePackageName(packageName));
     if (!STORE_ASSET_CONTENT_TYPES.has(input.contentType)) {
       throw new MiniAppServiceError("invalid_asset_type", "Store assets must be PNG, JPEG, WebP, or AVIF images", 400);
     }
@@ -694,59 +710,86 @@ export class MiniAppService {
         400,
       );
     }
-    if (input.role === "gallery_screenshot" && (app.storeListing?.screenshotAssetIds?.length ?? 0) >= 10) {
-      throw new MiniAppServiceError("too_many_screenshots", "Store listings can have at most 10 screenshots", 400);
-    }
     const safeFileName = input.fileName.replace(/[^a-zA-Z0-9._-]/g, "-").slice(0, 120) || "asset";
-    const storageKey = ["miniapps", app.packageName, "store", `${ulid()}-${safeFileName}`].join("/");
-    const stored = await storage.putObject({ key: storageKey, body: input.bytes, contentType: input.contentType });
-    let asset;
-    try {
-      const sortOrder =
-        input.role === "gallery_screenshot"
-          ? await MiniAppAssetModel.countDocuments({ miniAppId: app._id.toString(), role: input.role })
-          : null;
-      asset = await MiniAppAssetModel.create({
+    return withStoreListingLease(authorizedApp._id.toString(), async lease => {
+      const app = await MiniAppModel.findOne({
+        _id: authorizedApp._id,
         orgId: developer.orgId,
-        miniAppId: app._id.toString(),
-        releaseId: null,
-        role: input.role,
-        storageKey,
-        fileName: safeFileName,
-        contentType: stored.contentType,
-        sizeBytes: stored.sizeBytes,
-        sha256: stored.sha256,
-        sortOrder,
-        createdBy: developer.developerId,
+        status: { $ne: "archived" },
       });
-      const assetId = asset._id.toString();
-      if (input.role === "store_icon") {
-        await MiniAppModel.updateOne({ _id: app._id }, { $set: { "storeListing.iconAssetId": assetId } });
+      if (!app) throw new MiniAppServiceError("not_found", "miniapp not found", 404);
+      if (input.role === "gallery_screenshot" && (app.storeListing?.screenshotAssetIds?.length ?? 0) >= 10) {
+        throw new MiniAppServiceError("too_many_screenshots", "Store listings can have at most 10 screenshots", 400);
       }
-      if (input.role === "store_cover") {
-        await MiniAppModel.updateOne({ _id: app._id }, { $set: { "storeListing.coverAssetId": assetId } });
-      }
-      if (input.role === "gallery_screenshot") {
-        const updated = await MiniAppModel.findOneAndUpdate(
-          {
-            _id: app._id,
-            $expr: {
-              $lt: [{ $size: { $ifNull: ["$storeListing.screenshotAssetIds", []] } }, 10],
-            },
-          },
-          { $push: { "storeListing.screenshotAssetIds": assetId } },
-          { new: true },
-        );
-        if (!updated) {
-          throw new MiniAppServiceError("too_many_screenshots", "Store listings can have at most 10 screenshots", 400);
+
+      const storageKey = ["miniapps", app.packageName, "store", `${ulid()}-${safeFileName}`].join("/");
+      const stored = await storage.putObject({ key: storageKey, body: input.bytes, contentType: input.contentType });
+      let asset;
+      try {
+        const sortOrder =
+          input.role === "gallery_screenshot"
+            ? await MiniAppAssetModel.countDocuments({ miniAppId: app._id.toString(), role: input.role })
+            : null;
+        asset = await MiniAppAssetModel.create({
+          orgId: developer.orgId,
+          miniAppId: app._id.toString(),
+          releaseId: null,
+          role: input.role,
+          storageKey,
+          fileName: safeFileName,
+          contentType: stored.contentType,
+          sizeBytes: stored.sizeBytes,
+          sha256: stored.sha256,
+          sortOrder,
+          createdBy: developer.developerId,
+        });
+        const assetId = asset._id.toString();
+        const listingReferenceFilter = () => ({
+          _id: app._id,
+          "storeListingOperationLease.token": lease.token,
+          "storeListingOperationLease.expiresAt": { $gt: new Date() },
+        });
+        if (input.role === "store_icon") {
+          const updated = await MiniAppModel.updateOne(
+            listingReferenceFilter(),
+            { $set: { "storeListing.iconAssetId": assetId } },
+          );
+          if (updated.matchedCount !== 1) {
+            throw new MiniAppServiceError("store_listing_lease_lost", "Store listing operation lease was lost", 409);
+          }
         }
+        if (input.role === "store_cover") {
+          const updated = await MiniAppModel.updateOne(
+            listingReferenceFilter(),
+            { $set: { "storeListing.coverAssetId": assetId } },
+          );
+          if (updated.matchedCount !== 1) {
+            throw new MiniAppServiceError("store_listing_lease_lost", "Store listing operation lease was lost", 409);
+          }
+        }
+        if (input.role === "gallery_screenshot") {
+          const updated = await MiniAppModel.findOneAndUpdate(
+            {
+              ...listingReferenceFilter(),
+              $expr: {
+                $lt: [{ $size: { $ifNull: ["$storeListing.screenshotAssetIds", []] } }, 10],
+              },
+            },
+            { $push: { "storeListing.screenshotAssetIds": assetId } },
+            { new: true },
+          );
+          if (!updated) {
+            await lease.assertHeld();
+            throw new MiniAppServiceError("too_many_screenshots", "Store listings can have at most 10 screenshots", 400);
+          }
+        }
+        return serializeStoreAsset(asset.toObject());
+      } catch (error) {
+        await storage.deleteObject(storageKey).catch(() => {});
+        if (asset) await MiniAppAssetModel.deleteOne({ _id: asset._id }).catch(() => {});
+        throw error;
       }
-      return serializeStoreAsset(asset.toObject());
-    } catch (error) {
-      await storage.deleteObject(storageKey).catch(() => {});
-      if (asset) await MiniAppAssetModel.deleteOne({ _id: asset._id }).catch(() => {});
-      throw error;
-    }
+    });
   }
 
   async getStoreAsset(developer: DeveloperIdentity, packageName: string, assetId: string) {
