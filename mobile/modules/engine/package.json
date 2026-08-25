@@ -26,6 +26,31 @@
       "react-native": "./src/react/index.ts",
       "default": "./build/react/index.js"
     },
+    "./bluetooth-sdk": {
+      "types": "./build/bluetooth-sdk/index.d.ts",
+      "react-native": "./src/bluetooth-sdk/index.ts",
+      "default": "./build/bluetooth-sdk/index.js"
+    },
+    "./bluetooth-sdk/react": {
+      "types": "./build/bluetooth-sdk/react.d.ts",
+      "react-native": "./src/bluetooth-sdk/react.ts",
+      "default": "./build/bluetooth-sdk/react.js"
+    },
+    "./bluetooth-sdk/types": {
+      "types": "./build/bluetooth-sdk/types.d.ts",
+      "react-native": "./src/bluetooth-sdk/types.ts",
+      "default": "./build/bluetooth-sdk/types.js"
+    },
+    "./bluetooth-sdk/photo-receiver": {
+      "types": "./build/bluetooth-sdk/photo-receiver.d.ts",
+      "react-native": "./src/bluetooth-sdk/photo-receiver.ts",
+      "default": "./build/bluetooth-sdk/photo-receiver.js"
+    },
+    "./bluetooth-sdk/debug": {
+      "types": "./build/bluetooth-sdk/debug.d.ts",
+      "react-native": "./src/bluetooth-sdk/debug.ts",
+      "default": "./build/bluetooth-sdk/debug.js"
+    },
     "./build/*": null,
     "./src/*": null,
     "./package.json": "./package.json"
@@ -42,6 +67,7 @@
     "clean": "expo-module clean",
     "lint": "expo-module lint",
     "test": "./scripts/test.sh",
+    "test:public-api": "bun test src/bluetooth-sdk/__tests__/publicApi.test.ts",
     "build:module": "expo-module prepare",
     "prepublishOnly": "expo-module prepublishOnly",
     "expo-module": "expo-module"

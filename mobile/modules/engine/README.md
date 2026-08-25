@@ -21,7 +21,8 @@ npm install @mentra/engine
 
 ## Entry points
 
-The package exposes four entry points (declared in `package.json` `exports`,
+The package exposes its Engine entry points and a supported Bluetooth SDK
+facade (declared in `package.json` `exports`,
 with the `react-native` condition pointing at `src/` so Metro, tsc and jest
 resolve live TypeScript source):
 
@@ -45,6 +46,11 @@ resolve live TypeScript source):
   Native experiences. `MentraLiveOtaFlow` owns the complete check, hotspot or
   Wi-Fi install, APK/MTK/BES progress, reboot, retry, and final verification
   flow so hosts do not implement their own OTA state machines.
+- **`@mentra/engine/bluetooth-sdk`** (`src/bluetooth-sdk/index.ts`) — the
+  complete public Bluetooth SDK surface, re-exported without a wrapper so it
+  has the same singleton identity as `@mentra/bluetooth-sdk`. The supported
+  SDK `react`, `types`, `photo-receiver`, and `debug` subpaths are mirrored
+  below this path. The SDK's `internal` entrypoint is deliberately not exposed.
 
 See `cloud-v2/docs/issues/020-glasses-status-boundary/integration-review.md`
 §D for the burn-down plan.
@@ -63,6 +69,7 @@ sockets.
 
 ```ts
 import {engine, decideDevLaunchRoute} from "@mentra/engine"
+import BluetoothSdk from "@mentra/engine/bluetooth-sdk"
 import {webviewBridge, buildMiniappGlobalsScript} from "@mentra/engine/internal"
 import {miniappRunningRegistry} from "@mentra/engine/devtools"
 ```
@@ -84,10 +91,7 @@ the authenticated cloud/miniapp runtime:
 ```tsx
 import {MentraLiveOtaFlow} from "@mentra/engine/ota"
 
-<MentraLiveOtaFlow
-  onFinished={() => setShowOta(false)}
-  onOpenWifiSetup={() => setShowWifiSetup(true)}
-/>
+;<MentraLiveOtaFlow onFinished={() => setShowOta(false)} onOpenWifiSetup={() => setShowWifiSetup(true)} />
 ```
 
 The component starts only the glasses-status and OTA projections. A host that
@@ -117,4 +121,4 @@ combined run. Per-file processes give every suite an isolated registry.
 
 The same rule applies when writing tests: it is fine to `mock.module` any
 specifier your suite needs, but never rely on a mock installed by a
-*different* test file — each file must set up everything it imports.
+_different_ test file — each file must set up everything it imports.
