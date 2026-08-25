@@ -77,6 +77,7 @@ test("creates a deterministic release plan with exact dependency versions", () =
   assert.equal(plan.artifactNames.otaManifest, "mentra-live-ota-3.1.0-beta.57.json")
   assert.equal(plan.artifactNames.asgSelection, "mentra-live-asg-selection-3.1.0-beta.57.json")
   assert.equal(plan.artifactNames.androidStoreApp, "mentraos-3.1.0-beta.57-android.aab")
+  assert.equal(plan.artifactNames.iosSdkArchive, "mentra-bluetooth-sdk-ios-3.1.0-beta.57.tar")
   assert.equal(plan.otaInputs.firmwareManifest, "firmware_live.json")
 })
 

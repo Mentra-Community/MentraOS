@@ -1,0 +1,614 @@
+name: Reusable Coordinated Bluetooth SDK Native Release
+
+on:
+  workflow_call:
+    inputs:
+      source_commit:
+        required: true
+        type: string
+      release_plan_artifact:
+        required: true
+        type: string
+      ota_manifest_url:
+        required: true
+        type: string
+      ota_manifest_sha256:
+        required: true
+        type: string
+      dry_run:
+        required: false
+        default: false
+        type: boolean
+    secrets:
+      MAVEN_CENTRAL_TOKEN_BASE64:
+        required: false
+      MAVEN_SIGNING_KEY:
+        required: false
+      MAVEN_SIGNING_PASSWORD:
+        required: false
+      MENTRA_BLUETOOTH_SDK_IOS_PUSH_TOKEN:
+        required: false
+    outputs:
+      result_artifact:
+        value: ${{ jobs.result.outputs.result_artifact }}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: coordinated-sdk-native-publication
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Prepare exact coordinated GitHub release
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.release.outputs.release_id }}
+      release_tag: ${{ steps.release.outputs.release_tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_commit }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.release_plan_artifact }}
+          path: release-intent
+
+      - name: Create or verify the release container
+        id: release
+        if: inputs.dry_run != true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        run: |
+          set -euo pipefail
+          identity=$(jq -er .releaseIdentity release-intent/release-plan.json)
+          [[ "$(jq -er .sourceCommit release-intent/release-plan.json)" == "$SOURCE_COMMIT" ]]
+          tag="mentra-v$identity"
+          releases=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases?per_page=100" | jq 'add')
+          matches=$(jq --arg tag "$tag" '[.[] | select(.tag_name == $tag)]' <<< "$releases")
+          count=$(jq 'length' <<< "$matches")
+          if [[ "$count" -gt 1 ]]; then
+            echo "GitHub contains multiple releases for $tag." >&2
+            exit 1
+          fi
+          if [[ "$count" == 0 ]]; then
+            payload=$(jq -n \
+              --arg tag "$tag" \
+              --arg source "$SOURCE_COMMIT" \
+              --arg name "Mentra $identity" \
+              --arg body "Coordinated release $identity. Publication is incomplete until the release manifest is attached." \
+              '{tag_name: $tag, target_commitish: $source, name: $name, body: $body, draft: true, prerelease: true}')
+            release=$(gh api --method POST "repos/${GITHUB_REPOSITORY}/releases" --input - <<< "$payload")
+          else
+            release=$(jq '.[0]' <<< "$matches")
+          fi
+          if [[ "$(jq -r .draft <<< "$release")" == "true" ]]; then
+            [[ "$(jq -r .target_commitish <<< "$release")" == "$SOURCE_COMMIT" ]]
+          else
+            git fetch --force origin "refs/tags/$tag:refs/tags/$tag"
+            [[ "$(git rev-parse "$tag^{commit}")" == "$SOURCE_COMMIT" ]]
+          fi
+          {
+            echo "release_id=$(jq -er .id <<< "$release")"
+            echo "release_tag=$tag"
+          } >> "$GITHUB_OUTPUT"
+
+  maven:
+    name: Publish and verify Maven Central SDK
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_commit }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.release_plan_artifact }}
+          path: release-intent
+
+      - name: Resolve exact Maven coordinates
+        id: release
+        env:
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        run: |
+          set -euo pipefail
+          version=$(jq -er '.releaseIdentity' release-intent/release-plan.json)
+          source=$(jq -er '.sourceCommit' release-intent/release-plan.json)
+          [[ "$source" == "$SOURCE_COMMIT" ]]
+          base="https://repo.maven.apache.org/maven2/com/mentraglass"
+          {
+            echo "version=$version"
+            echo "deployment_name=mentra-$version-android-sdk"
+            echo "deployment_asset=mentra-$version-sonatype-deployment.json"
+            echo "sdk_purl=pkg:maven/com.mentraglass/bluetooth-sdk@$version"
+            echo "lc3_purl=pkg:maven/com.mentraglass/lc3Lib@$version"
+            echo "sdk_url=$base/bluetooth-sdk/$version/bluetooth-sdk-$version.aar"
+            echo "sdk_pom_url=$base/bluetooth-sdk/$version/bluetooth-sdk-$version.pom"
+            echo "lc3_url=$base/lc3Lib/$version/lc3Lib-$version.aar"
+            echo "lc3_pom_url=$base/lc3Lib/$version/lc3Lib-$version.pom"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: temurin
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+
+      - name: Install exact mobile dependencies
+        working-directory: mobile
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Stage the coordinated family version and OTA pin
+        run: |
+          node .github/scripts/stage-release-family.mjs --plan release-intent/release-plan.json
+          node mobile/modules/bluetooth-sdk/scripts/write-release-metadata.mjs \
+            --family-base-version "$(jq -er .familyBaseVersion release-intent/release-plan.json)" \
+            --release-identity "${{ steps.release.outputs.version }}" \
+            --release-set-id "$(jq -er .releaseSetId release-intent/release-plan.json)" \
+            --source-commit "${{ inputs.source_commit }}" \
+            --ota-manifest-url "${{ inputs.ota_manifest_url }}" \
+            --ota-manifest-sha256 "${{ inputs.ota_manifest_sha256 }}"
+
+      - name: Prepare generated Android project
+        working-directory: mobile
+        run: |
+          cp .env.example .env
+          bun expo prebuild --platform android
+
+      - name: Inspect public Maven state
+        id: existing
+        env:
+          LC3_POM_URL: ${{ steps.release.outputs.lc3_pom_url }}
+          SDK_POM_URL: ${{ steps.release.outputs.sdk_pom_url }}
+        run: |
+          set -euo pipefail
+          status() {
+            curl --silent --show-error --head --location --output /dev/null --write-out '%{http_code}' "$1" || true
+          }
+          sdk_status=$(status "$SDK_POM_URL")
+          lc3_status=$(status "$LC3_POM_URL")
+          if [[ "$sdk_status" == "200" && "$lc3_status" == "200" ]]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          elif [[ "$sdk_status" == "404" && "$lc3_status" == "404" ]]; then
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          elif [[ "$sdk_status" == "200" || "$lc3_status" == "200" ]]; then
+            echo "Maven Central contains only part of the coordinated Android SDK release." >&2
+            exit 1
+          else
+            echo "Unexpected Maven Central status (SDK $sdk_status, LC3 $lc3_status); refusing to guess registry state." >&2
+            exit 1
+          fi
+
+      - name: Build both Maven artifacts locally
+        working-directory: mobile/android
+        env:
+          MENTRA_MAVEN_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          ./gradlew \
+            :lc3Lib:publishToMavenLocal \
+            :mentra-bluetooth-sdk:publishToMavenLocal \
+            -PmentraPublicSdk=true \
+            --no-daemon \
+            --stacktrace
+
+      - name: Locate and verify locally built AARs
+        id: local
+        env:
+          OTA_MANIFEST_SHA256: ${{ inputs.ota_manifest_sha256 }}
+          OTA_MANIFEST_URL: ${{ inputs.ota_manifest_url }}
+          RELEASE_IDENTITY: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          sdk="$HOME/.m2/repository/com/mentraglass/bluetooth-sdk/$RELEASE_IDENTITY/bluetooth-sdk-$RELEASE_IDENTITY.aar"
+          lc3="$HOME/.m2/repository/com/mentraglass/lc3Lib/$RELEASE_IDENTITY/lc3Lib-$RELEASE_IDENTITY.aar"
+          test -f "$sdk"
+          test -f "$lc3"
+          unzip -p "$sdk" classes.jar > /tmp/mentra-sdk-classes.jar
+          javap -classpath /tmp/mentra-sdk-classes.jar -p -constants com.mentra.bluetoothsdk.GeneratedReleaseMetadata > /tmp/mentra-sdk-metadata.txt
+          javap -classpath /tmp/mentra-sdk-classes.jar -p -constants com.mentra.bluetoothsdk.BuildConfig >> /tmp/mentra-sdk-metadata.txt
+          grep -F "$RELEASE_IDENTITY" /tmp/mentra-sdk-metadata.txt
+          grep -F "$OTA_MANIFEST_URL" /tmp/mentra-sdk-metadata.txt
+          grep -F "$OTA_MANIFEST_SHA256" /tmp/mentra-sdk-metadata.txt
+          {
+            echo "sdk=$sdk"
+            echo "lc3=$lc3"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Require Maven Central credentials
+        if: inputs.dry_run != true && steps.existing.outputs.exists != 'true'
+        env:
+          MAVEN_CENTRAL_TOKEN_BASE64: ${{ secrets.MAVEN_CENTRAL_TOKEN_BASE64 }}
+        run: |
+          set -euo pipefail
+          test -n "$MAVEN_CENTRAL_TOKEN_BASE64"
+
+      - name: Recover persisted Sonatype deployment
+        id: deployment
+        if: inputs.dry_run != true && steps.existing.outputs.exists != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MAVEN_CENTRAL_TOKEN_BASE64: ${{ secrets.MAVEN_CENTRAL_TOKEN_BASE64 }}
+          RELEASE_ID: ${{ needs.prepare.outputs.release_id }}
+          ASSET_NAME: ${{ steps.release.outputs.deployment_asset }}
+        run: |
+          set -euo pipefail
+          mkdir -p native-result/maven
+          assets=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases/$RELEASE_ID/assets?per_page=100" | jq 'add')
+          matches=$(jq --arg name "$ASSET_NAME" '[.[] | select(.name == $name)]' <<< "$assets")
+          count=$(jq 'length' <<< "$matches")
+          if [[ "$count" -gt 1 ]]; then
+            echo "Release contains duplicate Sonatype deployment records." >&2
+            exit 1
+          fi
+          if [[ "$count" == 1 ]]; then
+            asset_id=$(jq -er '.[0].id' <<< "$matches")
+            gh api -H "Accept: application/octet-stream" \
+              "repos/${GITHUB_REPOSITORY}/releases/assets/$asset_id" > native-result/maven/sonatype-deployment.json
+            [[ "$(jq -er .deploymentName native-result/maven/sonatype-deployment.json)" == "${{ steps.release.outputs.deployment_name }}" ]]
+            jq -e \
+              --arg sdk "${{ steps.release.outputs.sdk_purl }}" \
+              --arg lc3 "${{ steps.release.outputs.lc3_purl }}" \
+              '.expectedPurls | sort == ([$sdk, $lc3] | sort)' \
+              native-result/maven/sonatype-deployment.json >/dev/null
+            node .github/scripts/sonatype-central-deployment.mjs inspect \
+              --record native-result/maven/sonatype-deployment.json \
+              --output native-result/maven/sonatype-inspection.json
+            if [[ "$(jq -er .disposition native-result/maven/sonatype-inspection.json)" == "replace" ]]; then
+              gh api --method DELETE "repos/${GITHUB_REPOSITORY}/releases/assets/$asset_id"
+              rm native-result/maven/sonatype-deployment.json
+              echo "exists=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "exists=true" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Require Maven signing credentials for a new deployment
+        if: inputs.dry_run != true && steps.existing.outputs.exists != 'true' && steps.deployment.outputs.exists != 'true'
+        env:
+          SIGNING_KEY: ${{ secrets.MAVEN_SIGNING_KEY }}
+          SIGNING_PASSWORD: ${{ secrets.MAVEN_SIGNING_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "$SIGNING_KEY"
+          test -n "$SIGNING_PASSWORD"
+
+      - name: Build signed Maven Central bundle
+        if: inputs.dry_run != true && steps.existing.outputs.exists != 'true' && steps.deployment.outputs.exists != 'true'
+        working-directory: mobile/android
+        env:
+          MAVEN_CENTRAL_TOKEN_BASE64: ${{ secrets.MAVEN_CENTRAL_TOKEN_BASE64 }}
+          MENTRA_MAVEN_STAGING_REPOSITORY_URL: file://${{ runner.temp }}/mentra-central-bundle
+          MENTRA_MAVEN_VERSION: ${{ steps.release.outputs.version }}
+          SIGNING_KEY: ${{ secrets.MAVEN_SIGNING_KEY }}
+          SIGNING_PASSWORD: ${{ secrets.MAVEN_SIGNING_PASSWORD }}
+        run: |
+          set -euo pipefail
+          rm -rf "$RUNNER_TEMP/mentra-central-bundle"
+          ./gradlew \
+            :lc3Lib:publishReleasePublicationToSonatypeCentralRepository \
+            :mentra-bluetooth-sdk:publishReleasePublicationToSonatypeCentralRepository \
+            -PmentraPublicSdk=true \
+            --no-daemon \
+            --stacktrace
+          find "$RUNNER_TEMP/mentra-central-bundle/com" -name 'maven-metadata.xml*' -delete
+          mkdir -p "$GITHUB_WORKSPACE/native-result/maven"
+          (
+            cd "$RUNNER_TEMP/mentra-central-bundle"
+            zip -q -r "$GITHUB_WORKSPACE/native-result/maven/central-bundle.zip" com
+          )
+
+      - name: Upload and persist a user-managed Sonatype deployment
+        if: inputs.dry_run != true && steps.existing.outputs.exists != 'true' && steps.deployment.outputs.exists != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MAVEN_CENTRAL_TOKEN_BASE64: ${{ secrets.MAVEN_CENTRAL_TOKEN_BASE64 }}
+          RELEASE_ID: ${{ needs.prepare.outputs.release_id }}
+          ASSET_NAME: ${{ steps.release.outputs.deployment_asset }}
+        run: |
+          set -euo pipefail
+          node .github/scripts/sonatype-central-deployment.mjs upload \
+            --bundle native-result/maven/central-bundle.zip \
+            --name "${{ steps.release.outputs.deployment_name }}" \
+            --expected-purls "${{ steps.release.outputs.sdk_purl }},${{ steps.release.outputs.lc3_purl }}" \
+            --output native-result/maven/sonatype-deployment.json
+          encoded_name=$(jq -rn --arg value "$ASSET_NAME" '$value | @uri')
+          gh api \
+            --method POST \
+            -H "Content-Type: application/octet-stream" \
+            --input native-result/maven/sonatype-deployment.json \
+            "https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/$RELEASE_ID/assets?name=$encoded_name" >/dev/null
+
+      - name: Publish or resume the persisted Sonatype deployment
+        if: inputs.dry_run != true && steps.existing.outputs.exists != 'true'
+        env:
+          MAVEN_CENTRAL_TOKEN_BASE64: ${{ secrets.MAVEN_CENTRAL_TOKEN_BASE64 }}
+        run: |
+          node .github/scripts/sonatype-central-deployment.mjs publish \
+            --record native-result/maven/sonatype-deployment.json \
+            --output native-result/maven/sonatype-result.json
+
+      - name: Wait for and download public Maven artifacts
+        id: public
+        if: inputs.dry_run != true
+        env:
+          LC3_URL: ${{ steps.release.outputs.lc3_url }}
+          SDK_URL: ${{ steps.release.outputs.sdk_url }}
+        run: |
+          set -euo pipefail
+          mkdir -p native-result/maven
+          for attempt in {1..180}; do
+            if curl --fail --silent --show-error --location "$SDK_URL" -o native-result/maven/bluetooth-sdk.aar \
+              && curl --fail --silent --show-error --location "$LC3_URL" -o native-result/maven/lc3Lib.aar; then
+              exit 0
+            fi
+            echo "Waiting for Maven Central propagation (attempt $attempt/180)"
+            sleep 10
+          done
+          echo "Maven Central did not expose the complete coordinated SDK within 30 minutes." >&2
+          exit 1
+
+      - name: Verify public Maven SDK metadata
+        if: inputs.dry_run != true
+        env:
+          OTA_MANIFEST_SHA256: ${{ inputs.ota_manifest_sha256 }}
+          OTA_MANIFEST_URL: ${{ inputs.ota_manifest_url }}
+          RELEASE_IDENTITY: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          unzip -p native-result/maven/bluetooth-sdk.aar classes.jar > /tmp/mentra-public-sdk-classes.jar
+          javap -classpath /tmp/mentra-public-sdk-classes.jar -p -constants com.mentra.bluetoothsdk.GeneratedReleaseMetadata > /tmp/mentra-public-sdk-metadata.txt
+          javap -classpath /tmp/mentra-public-sdk-classes.jar -p -constants com.mentra.bluetoothsdk.BuildConfig >> /tmp/mentra-public-sdk-metadata.txt
+          grep -F "$RELEASE_IDENTITY" /tmp/mentra-public-sdk-metadata.txt
+          grep -F "$OTA_MANIFEST_URL" /tmp/mentra-public-sdk-metadata.txt
+          grep -F "$OTA_MANIFEST_SHA256" /tmp/mentra-public-sdk-metadata.txt
+
+      - name: Stage dry-run Maven artifacts
+        if: inputs.dry_run == true
+        run: |
+          mkdir -p native-result/maven
+          cp "${{ steps.local.outputs.sdk }}" native-result/maven/bluetooth-sdk.aar
+          cp "${{ steps.local.outputs.lc3 }}" native-result/maven/lc3Lib.aar
+
+      - name: Write Maven publication record
+        env:
+          STATUS: ${{ inputs.dry_run && 'built' || ((steps.existing.outputs.exists == 'true' || steps.deployment.outputs.exists == 'true') && 'reused' || 'published') }}
+        run: >-
+          node .github/scripts/coordinated-sdk-native-records.mjs create-maven
+          --plan release-intent/release-plan.json
+          --sdk-aar native-result/maven/bluetooth-sdk.aar
+          --sdk-url "${{ steps.release.outputs.sdk_url }}"
+          --lc3-aar native-result/maven/lc3Lib.aar
+          --lc3-url "${{ steps.release.outputs.lc3_url }}"
+          --provenance-url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          --status "$STATUS"
+          --output native-result/maven-publication.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coordinated-sdk-maven-${{ github.run_id }}
+          path: native-result
+          if-no-files-found: error
+          retention-days: 90
+
+  swiftpm:
+    name: Publish and verify SwiftPM SDK
+    needs: prepare
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_commit }}
+          path: MentraOS
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.release_plan_artifact }}
+          path: MentraOS/release-intent
+
+      - name: Require SwiftPM mirror credential
+        if: inputs.dry_run != true
+        env:
+          PUSH_TOKEN: ${{ secrets.MENTRA_BLUETOOTH_SDK_IOS_PUSH_TOKEN }}
+        run: test -n "$PUSH_TOKEN"
+
+      - uses: actions/checkout@v4
+        with:
+          repository: Mentra-Community/mentra-bluetooth-sdk-ios
+          path: mentra-bluetooth-sdk-ios
+          token: ${{ secrets.MENTRA_BLUETOOTH_SDK_IOS_PUSH_TOKEN || github.token }}
+          fetch-depth: 0
+
+      - name: Resolve SwiftPM release
+        id: release
+        working-directory: MentraOS
+        env:
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        run: |
+          set -euo pipefail
+          version=$(jq -er .releaseIdentity release-intent/release-plan.json)
+          archive_name=$(jq -er .artifactNames.iosSdkArchive release-intent/release-plan.json)
+          [[ "$(jq -er .sourceCommit release-intent/release-plan.json)" == "$SOURCE_COMMIT" ]]
+          {
+            echo "version=$version"
+            echo "archive_name=$archive_name"
+            echo "release_tag=mentra-v$version"
+            echo "archive_url=https://github.com/${{ github.repository }}/releases/download/mentra-v$version/$archive_name"
+            echo "tag_url=https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios/tree/$version"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check public SwiftPM tag
+        id: existing
+        working-directory: mentra-bluetooth-sdk-ios
+        run: |
+          set -euo pipefail
+          git fetch --tags origin
+          if git rev-parse -q --verify "refs/tags/${{ steps.release.outputs.version }}^{commit}" >/dev/null; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            git checkout --detach "refs/tags/${{ steps.release.outputs.version }}"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Stage coordinated Swift package source
+        if: steps.existing.outputs.exists != 'true'
+        working-directory: MentraOS
+        run: |
+          npm --prefix mobile/modules/bluetooth-sdk pkg set version="${{ steps.release.outputs.version }}"
+          node mobile/modules/bluetooth-sdk/scripts/write-release-metadata.mjs \
+            --family-base-version "$(jq -er .familyBaseVersion release-intent/release-plan.json)" \
+            --release-identity "${{ steps.release.outputs.version }}" \
+            --release-set-id "$(jq -er .releaseSetId release-intent/release-plan.json)" \
+            --source-commit "${{ inputs.source_commit }}" \
+            --ota-manifest-url "${{ inputs.ota_manifest_url }}" \
+            --ota-manifest-sha256 "${{ inputs.ota_manifest_sha256 }}"
+          scripts/export-bluetooth-sdk-ios-spm.sh \
+            --target "$GITHUB_WORKSPACE/mentra-bluetooth-sdk-ios" \
+            --verify
+
+      - name: Commit exact SwiftPM export locally
+        if: steps.existing.outputs.exists != 'true'
+        working-directory: mentra-bluetooth-sdk-ios
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Package.swift README.md LICENSE ios .gitignore
+          if ! git diff --cached --quiet; then
+            git commit -m "Release MentraBluetoothSDK ${{ steps.release.outputs.version }}" \
+              -m "Exported from MentraOS ${{ inputs.source_commit }}."
+          fi
+
+      - name: Verify selected SwiftPM package and archive
+        id: selected
+        working-directory: mentra-bluetooth-sdk-ios
+        run: |
+          set -euo pipefail
+          mirror_sha=$(git rev-parse HEAD)
+          node "$GITHUB_WORKSPACE/MentraOS/.github/scripts/coordinated-sdk-native-records.mjs" verify-swiftpm \
+            --plan "$GITHUB_WORKSPACE/MentraOS/release-intent/release-plan.json" \
+            --package-root "$GITHUB_WORKSPACE/mentra-bluetooth-sdk-ios" \
+            --ota-manifest-url "${{ inputs.ota_manifest_url }}" \
+            --ota-manifest-sha256 "${{ inputs.ota_manifest_sha256 }}"
+          mkdir -p "$GITHUB_WORKSPACE/native-result/swiftpm"
+          git archive --format=tar "$mirror_sha" > "$GITHUB_WORKSPACE/native-result/swiftpm/${{ steps.release.outputs.archive_name }}"
+          echo "mirror_sha=$mirror_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Publish verified SwiftPM commit and tag
+        if: inputs.dry_run != true && steps.existing.outputs.exists != 'true'
+        working-directory: mentra-bluetooth-sdk-ios
+        run: |
+          set -euo pipefail
+          mirror_sha="${{ steps.selected.outputs.mirror_sha }}"
+          git push origin "${mirror_sha}:refs/heads/main"
+          git tag "${{ steps.release.outputs.version }}" "$mirror_sha"
+          git push origin "refs/tags/${{ steps.release.outputs.version }}"
+
+      - name: Publish exact SwiftPM archive as immutable release asset
+        if: inputs.dry_run != true
+        working-directory: MentraOS
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARCHIVE: ${{ github.workspace }}/native-result/swiftpm/${{ steps.release.outputs.archive_name }}
+          ARCHIVE_NAME: ${{ steps.release.outputs.archive_name }}
+          RELEASE_ID: ${{ needs.prepare.outputs.release_id }}
+        run: |
+          set -euo pipefail
+          assets=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases/$RELEASE_ID/assets?per_page=100" | jq 'add')
+          matches=$(jq --arg name "$ARCHIVE_NAME" '[.[] | select(.name == $name)]' <<< "$assets")
+          count=$(jq 'length' <<< "$matches")
+          if [[ "$count" -gt 1 ]]; then
+            echo "Release contains duplicate SwiftPM archives." >&2
+            exit 1
+          elif [[ "$count" == 1 ]]; then
+            asset_id=$(jq -er '.[0].id' <<< "$matches")
+            gh api -H "Accept: application/octet-stream" \
+              "repos/${GITHUB_REPOSITORY}/releases/assets/$asset_id" > "$RUNNER_TEMP/existing-swiftpm.tar"
+            cmp "$ARCHIVE" "$RUNNER_TEMP/existing-swiftpm.tar"
+          else
+            encoded_name=$(jq -rn --arg value "$ARCHIVE_NAME" '$value | @uri')
+            gh api \
+              --method POST \
+              -H "Content-Type: application/octet-stream" \
+              --input "$ARCHIVE" \
+              "https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/$RELEASE_ID/assets?name=$encoded_name" >/dev/null
+          fi
+
+      - name: Write SwiftPM publication record
+        working-directory: MentraOS
+        env:
+          STATUS: ${{ inputs.dry_run && 'built' || (steps.existing.outputs.exists == 'true' && 'reused' || 'published') }}
+        run: >-
+          node .github/scripts/coordinated-sdk-native-records.mjs create-swiftpm
+          --plan release-intent/release-plan.json
+          --archive "$GITHUB_WORKSPACE/native-result/swiftpm/${{ steps.release.outputs.archive_name }}"
+          --archive-url "${{ steps.release.outputs.archive_url }}"
+          --tag-url "${{ steps.release.outputs.tag_url }}"
+          --mirror-commit "${{ steps.selected.outputs.mirror_sha }}"
+          --provenance-url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          --status "$STATUS"
+          --output "$GITHUB_WORKSPACE/native-result/swiftpm-publication.json"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coordinated-sdk-swiftpm-${{ github.run_id }}
+          path: native-result
+          if-no-files-found: error
+          retention-days: 90
+
+  result:
+    name: Assemble native SDK result
+    needs: [maven, swiftpm]
+    runs-on: ubuntu-latest
+    outputs:
+      result_artifact: ${{ steps.name.outputs.value }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_commit }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.release_plan_artifact }}
+          path: release-intent
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: coordinated-sdk-maven-${{ github.run_id }}
+          path: result/maven
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: coordinated-sdk-swiftpm-${{ github.run_id }}
+          path: result/swiftpm
+
+      - name: Merge exact native publication records
+        run: >-
+          node .github/scripts/coordinated-sdk-native-records.mjs merge
+          --plan release-intent/release-plan.json
+          --maven result/maven/maven-publication.json
+          --swiftpm result/swiftpm/swiftpm-publication.json
+          --output result/sdk-native-publications.json
+
+      - name: Name final result
+        id: name
+        run: echo "value=coordinated-sdk-native-$(jq -er .releaseSetId release-intent/release-plan.json)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.name.outputs.value }}
+          path: result
+          if-no-files-found: error
+          retention-days: 90
