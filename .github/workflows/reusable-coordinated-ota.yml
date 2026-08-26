@@ -155,12 +155,27 @@ jobs:
             echo "provenance_asset=$(jq -r .provenanceAsset coordinated-ota-work/asg-allocation.json)"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Resolve ASG version name
+        id: asg-version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROVENANCE_ASSET: ${{ steps.existing-asg.outputs.provenance_asset }}
+        run: |
+          version_name=$(jq -er .releaseIdentity release-intent/release-plan.json)
+          if [[ "${{ steps.existing-asg.outputs.exists }}" == "true" ]]; then
+            gh release download "$ASG_RELEASE_TAG" --pattern "$PROVENANCE_ASSET" --dir coordinated-ota-work
+            mv "coordinated-ota-work/$PROVENANCE_ASSET" coordinated-ota-work/asg-provenance.json
+            version_name=$(jq -er .versionName coordinated-ota-work/asg-provenance.json)
+          fi
+          echo "version_name=$version_name" >> "$GITHUB_OUTPUT"
+
       - name: Finalize effective ASG build identity
         id: asg-identity
         run: >-
           node .github/scripts/compute-asg-build-identity.mjs
           --source-commit "${{ github.sha }}"
           --version-code "${{ steps.existing-asg.outputs.version_code }}"
+          --version-name "${{ steps.asg-version.outputs.version_name }}"
           --output coordinated-ota-work/asg-build-identity.json
 
       - name: Prepare immutable asset names
@@ -199,16 +214,14 @@ jobs:
             echo "result_artifact=coordinated-ota-${release_set_id}"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Download reusable ASG artifact and provenance
+      - name: Download reusable ASG artifact
         if: steps.existing-asg.outputs.exists == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           APK_ASSET: ${{ steps.names.outputs.apk_asset }}
-          PROVENANCE_ASSET: ${{ steps.names.outputs.provenance_asset }}
         run: |
-          gh release download "$ASG_RELEASE_TAG" --pattern "$APK_ASSET" --pattern "$PROVENANCE_ASSET" --dir coordinated-ota-work
+          gh release download "$ASG_RELEASE_TAG" --pattern "$APK_ASSET" --dir coordinated-ota-work
           mv "coordinated-ota-work/$APK_ASSET" coordinated-ota-work/asg.apk
-          mv "coordinated-ota-work/$PROVENANCE_ASSET" coordinated-ota-work/asg-provenance.json
 
       - name: Setup Java for ASG build and APK verification
         uses: actions/setup-java@v4
