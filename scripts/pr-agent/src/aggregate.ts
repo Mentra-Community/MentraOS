@@ -14,22 +14,32 @@ import { frozenPairFromFindings } from './rotate.js';
 import { listAllIssueComments } from './state.js';
 import { MARKER_BUGBOT_VERDICT, type AggregateOutput, type PrAgentState, type ReviewSlot } from './types.js';
 import { isCiFailed, isCiGreen, type CiCheckStatus } from './ci-gates.js';
+import { isExternalSource, type ExternalFindings } from './external-reviews.js';
 
 export type ReviewOutputs = {
   standards?: string;
   depth?: string;
+  codex?: string;
   bugbot?: string;
   bugbotCheckCompleted?: boolean;
   bugbotCheckSuccess?: boolean;
+  /** Normalized live inline comments from allowlisted external bots. */
+  external?: ExternalFindings;
 };
 
-function slotReviewSucceeded(slot: ReviewSlot, reviews: ReviewOutputs): boolean {
-  if (slot === 'standards' || slot === 'depth') {
-    const text = slot === 'standards' ? reviews.standards : reviews.depth;
+export function slotReviewSucceeded(slot: ReviewSlot, reviews: ReviewOutputs): boolean {
+  if (slot === 'standards' || slot === 'depth' || slot === 'codex') {
+    const text = reviews[slot];
     return !!text && !!parseVerdictFromText(text);
   }
   if (reviews.bugbotCheckCompleted !== true) return false;
-  return !!reviews.bugbot && !!parseVerdictFromText(reviews.bugbot);
+  if (reviews.bugbot && parseVerdictFromText(reviews.bugbot)) return true;
+  // Native Cursor Bugbot posts a GitHub review, not our marker comment.
+  const reviewers = reviews.external?.reviewers ?? [];
+  if (reviewers.includes('cursor[bot]')) return true;
+  return (reviews.external?.current ?? []).some(
+    (f) => String(f.source) === 'external:cursor[bot]',
+  );
 }
 
 export function aggregateCycle(
@@ -58,7 +68,10 @@ export function aggregateCycle(
     const verdict = parseVerdictFromText(text);
     if (!verdict) return;
     if (verdict.verdict !== 'approve') allApproved = false;
-    const { blocking: rawBlocking, nits } = verdictToFindings(verdict, source, cycle);
+    const { blocking: rawBlocking, nits } = verdictToFindings(verdict, source, cycle, [
+      ...openFindings,
+      ...nitFindings,
+    ]);
     // Drop findings a human marked as false positive via `agent-resolve`.
     const blocking = rawBlocking.filter((b) => !muted.has(b.fingerprint));
     const mergedOpen = mergeFindings(openFindings, blocking, cycle);
@@ -89,6 +102,7 @@ export function aggregateCycle(
 
   if (activePair.includes('standards')) ingest(reviews.standards, 'standards');
   if (activePair.includes('depth')) ingest(reviews.depth, 'depth');
+  if (activePair.includes('codex')) ingest(reviews.codex, 'codex');
   if (activePair.includes('bugbot')) {
     if (reviews.bugbotCheckCompleted === true && reviews.bugbot) {
       ingest(reviews.bugbot, 'bugbot', {
@@ -100,12 +114,74 @@ export function aggregateCycle(
     }
   }
 
+  // External bot inline comments (Bugbot native, cubic, …) become findings so
+  // the fixer addresses them without a human copy/pasting them into the loop.
+  // They do not increment newBlockingFingerprints or stagnation counters
+  // (external bots re-review on their own schedule). Live blocking comments
+  // do flip allApproved so a native Bugbot defect cannot look like a clean
+  // cycle. Lifecycle: live comment => open finding; outdated/deleted => resolved.
+  if (reviews.external) {
+    const extBlocking = reviews.external.current.filter(
+      (f) => f.severity === 'blocking' && !muted.has(f.fingerprint),
+    );
+    const extNits = reviews.external.current.filter(
+      (f) => f.severity === 'nit' && !muted.has(f.fingerprint),
+    );
+    if (extBlocking.length > 0) allApproved = false;
+    openFindings = mergeFindings(openFindings, extBlocking, cycle).merged;
+    nitFindings = mergeFindings(nitFindings, extNits, cycle).merged;
+
+    const liveFingerprints = new Set(reviews.external.current.map((f) => f.fingerprint));
+    const extSources = new Set([
+      ...reviews.external.sources,
+      ...openFindings.map((f) => String(f.source)).filter(isExternalSource),
+    ]);
+    for (const source of extSources) {
+      const stale = resolveStaleFindingsFromSource(
+        openFindings,
+        resolvedFindings,
+        source,
+        liveFingerprints,
+        cycle,
+      );
+      openFindings = stale.open;
+      resolvedFindings = stale.resolved;
+    }
+  }
+
   const allSlotsSucceeded = activePair.every((slot) => slotReviewSucceeded(slot, reviews));
 
   const newBlockingCount = newBlockingFingerprints.length;
   const ciFailed =
     isCiFailed(ciChecks) || process.env.CI_TRIGGER_FAILED === 'true';
   const ciGreen = isCiGreen(ciChecks);
+
+  // A cycle where reviewers were scheduled but none produced a usable verdict
+  // (agent run failed, artifact missing, Bugbot never completed) carries zero
+  // review signal. Consuming cycle budget or stagnation counters here produced
+  // false diverging/budget_exhausted exits (#3716 cycle 4: "No model reviews
+  // ran this cycle" still bumped both). Persist any external-comment ledger
+  // updates, but leave every convergence counter untouched and schedule
+  // nothing — the next genuine cycle re-runs the same pair.
+  const anyReviewIngested = activePair.some((slot) => slotReviewSucceeded(slot, reviews));
+  if (activePair.length > 0 && !anyReviewIngested) {
+    return {
+      state: {
+        ...state,
+        openFindings,
+        resolvedFindings,
+        nitFindings,
+        lastPair: activePair,
+      },
+      shouldFix: false,
+      shouldHandoff: false,
+      handoffReason: undefined,
+      ciFailed,
+      newBlockingCount: 0,
+      newBlockingFindings: [],
+      emptyCycle: true,
+    };
+  }
 
   let consecutiveNoNewReviews = state.consecutiveNoNewReviews;
   if (newBlockingCount === 0 && allApproved && allSlotsSucceeded) {
@@ -130,16 +206,22 @@ export function aggregateCycle(
   // Stagnation tracks the *fixer* failing to reduce open findings. It is only
   // meaningful when the fixer actually runs — never accumulate it in dry run,
   // where unchanged findings across review cycles are expected (no fixes land).
+  // External findings are excluded: their resolution depends on GitHub marking
+  // the underlying comment outdated, which lags our cycles and must not be
+  // read as the fixer stalling.
+  const internalOpenCount = openBlocking(openFindings).filter(
+    (f) => !isExternalSource(String(f.source)),
+  ).length;
   let stagnationFixRounds = state.stagnationFixRounds;
   if (config.dryRun) {
     stagnationFixRounds = 0;
   } else if (
     state.lastOpenCount !== undefined &&
-    openCount === state.lastOpenCount &&
-    openCount > 0
+    internalOpenCount === state.lastOpenCount &&
+    internalOpenCount > 0
   ) {
     stagnationFixRounds += 1;
-  } else if (openCount < (state.lastOpenCount ?? openCount)) {
+  } else if (internalOpenCount < (state.lastOpenCount ?? internalOpenCount)) {
     stagnationFixRounds = 0;
   }
 
@@ -161,7 +243,7 @@ export function aggregateCycle(
   } else if (newBlockingCount >= config.limits.maxNewBlockingPerCycle) {
     status = 'diverging';
     handoffReason = 'diverging';
-  } else if (stagnationFixRounds >= 2 && openCount > 0) {
+  } else if (stagnationFixRounds >= 2 && internalOpenCount > 0) {
     status = 'diverging';
     handoffReason = 'diverging';
   } else if (newBlockingCount >= 3 && state.fixRound >= 2) {
@@ -202,8 +284,13 @@ export function aggregateCycle(
     lastPair: activePair,
     status,
     stagnationFixRounds,
-    lastOpenCount: openCount,
+    lastOpenCount: internalOpenCount,
   };
+
+  const newFingerprintSet = new Set(newBlockingFingerprints);
+  const newBlockingFindings = openFindings.filter(
+    (f) => newFingerprintSet.has(f.fingerprint) && f.status === 'open',
+  );
 
   return {
     state: nextState,
@@ -212,6 +299,7 @@ export function aggregateCycle(
     handoffReason,
     ciFailed,
     newBlockingCount,
+    newBlockingFindings,
   };
 }
 

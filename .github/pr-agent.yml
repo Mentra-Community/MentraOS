@@ -5,6 +5,10 @@ dryRun: false
 
 reviewModel: claude-opus-4-8
 fixModel: claude-opus-4-8
+# Codex CLI reviewer slot (third-vendor second opinion). Only scheduled when
+# the OPENAI_API_KEY repo secret exists; the rotation falls back to the
+# three-slot roster otherwise.
+codexModel: o4-mini
 
 authors:
   # allowlist | all | label_only
@@ -23,7 +27,22 @@ limits:
   maxNewBlockingPerCycle: 5
   maxFixAgentTurns: 80
   consecutiveNoNewReviewsForHandoff: 2
-  discoveryCycles: 1
+
+# External review-bot ingestion: live inline PR review comments from these bot
+# logins are normalized into ledger findings automatically, so the fixer
+# addresses them without a human copy/pasting them into the loop. A comment
+# counts as blocking when it matches the built-in severity patterns
+# (High / Critical / Medium Severity, or the word "blocking"). Low Severity
+# stays a nit. Override per bot via blockingPatterns when a vendor uses
+# different labels (e.g. P0).
+externalReviewers:
+  enabled: true
+  bots:
+    - "cursor[bot]"
+    - "cubic-dev-ai[bot]"
+  # blockingPatterns:
+  #   "cubic-dev-ai[bot]":
+  #     - "\\bP0\\b"
 
 # Path-scoped required CI check names (must match workflow `name:` fields)
 ciGates:

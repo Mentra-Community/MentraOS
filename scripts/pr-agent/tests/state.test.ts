@@ -1,10 +1,61 @@
 import { describe, expect, test } from 'bun:test';
 import {
   formatStateComment,
+  loadOrCreateState,
   parseStateFromComment,
   saveState,
 } from '../src/state.js';
 import { makeState } from './helpers.js';
+
+describe('loadOrCreateState duplicate recovery', () => {
+  test('adopts the highest-revision state comment and deletes duplicates', async () => {
+    const real = formatStateComment(makeState({ cycle: 3, revision: 12 }));
+    const rogue = formatStateComment(makeState({ cycle: 0, revision: 1 }));
+    const deleted: number[] = [];
+    const octokit = {
+      issues: {
+        listComments: async ({ page }: { page: number }) => ({
+          data:
+            page === 1
+              ? [
+                  { id: 1, body: 'unrelated' },
+                  { id: 2, body: real },
+                  { id: 3, body: rogue },
+                ]
+              : [],
+        }),
+        deleteComment: async ({ comment_id }: { comment_id: number }) => {
+          deleted.push(comment_id);
+        },
+      },
+    } as any;
+
+    const { state, commentId } = await loadOrCreateState(octokit, 'o', 'r', 1);
+    expect(state.cycle).toBe(3);
+    expect(state.revision).toBe(12);
+    expect(commentId).toBe(2);
+    expect(deleted).toEqual([3]);
+  });
+
+  test('unparseable marker comment falls back to default only after a retry', async () => {
+    let listCalls = 0;
+    const octokit = {
+      issues: {
+        listComments: async () => {
+          listCalls++;
+          return {
+            data: [{ id: 5, body: '<!-- pr-agent-orchestrator -->\n```json\n{corrupted' }],
+          };
+        },
+      },
+    } as any;
+
+    const { state, commentId } = await loadOrCreateState(octokit, 'o', 'r', 1);
+    expect(listCalls).toBe(2);
+    expect(state.cycle).toBe(0);
+    expect(commentId).toBeUndefined();
+  }, 15_000);
+});
 
 describe('saveState revision CAS', () => {
   test('refuses to overwrite a newer remote revision', async () => {
