@@ -65,8 +65,10 @@ const prepare = mock(() => "hotspot" as const)
 const attach = mock(() => {})
 const detach = mock(() => {})
 const retry = mock(() => {})
-const finish = mock(() => {})
+let finishPromise = Promise.resolve()
+const finish = mock(() => finishPromise)
 const discard = mock(() => {})
+let autoChainActive = false
 
 const fakeOta = {
   initialize: mock(() => Promise.resolve()),
@@ -97,7 +99,7 @@ mock.module("../../facades/ota", () => ({ota: fakeOta}))
 mock.module("../../services/OtaAutoChain", () => ({
   beginOtaAutoChain: mock(() => {}),
   clearOtaAutoChainReconnectWait: mock(() => {}),
-  isOtaAutoChainActive: () => false,
+  isOtaAutoChainActive: () => autoChainActive,
   otaAutoChainFingerprint: () => "fingerprint",
   otaAutoChainReconnectWaitRemaining: () => null,
   stopOtaAutoChain: mock(() => {}),
@@ -137,6 +139,9 @@ describe("useMentraLiveOta", () => {
     retry.mockClear()
     finish.mockClear()
     discard.mockClear()
+    fakeOta.checkForUpdates.mockClear()
+    autoChainActive = false
+    finishPromise = Promise.resolve()
     installSnapshot = {
       displayState: "starting",
       errorMsg: "",
@@ -208,6 +213,37 @@ describe("useMentraLiveOta", () => {
     })
     latestController.retryInstall()
     expect(retry).toHaveBeenCalledTimes(1)
+    await act(async () => renderer.unmount())
+  })
+
+  test("keeps confirmed completion visible until hotspot teardown finishes", async () => {
+    autoChainActive = true
+    let resolveFinish!: () => void
+    finishPromise = new Promise<void>((resolve) => {
+      resolveFinish = resolve
+    })
+    const renderer = await renderProbe()
+    installSnapshot = {...installSnapshot, displayState: "complete"}
+    await act(async () => {
+      installListeners.forEach((listener) => listener())
+    })
+
+    expect(latestController.state.screen).toBe("complete")
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 800))
+    })
+
+    expect(finish).toHaveBeenCalledTimes(1)
+    expect(fakeOta.checkForUpdates).not.toHaveBeenCalled()
+    expect(latestController.state.screen).toBe("complete")
+
+    await act(async () => {
+      resolveFinish()
+      await finishPromise
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(fakeOta.checkForUpdates).toHaveBeenCalledTimes(1)
     await act(async () => renderer.unmount())
   })
 })

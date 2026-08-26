@@ -717,9 +717,11 @@ export class RecorderController {
 
   private async exportRecording(id: string): Promise<void> {
     try {
-      await this.session.blob.share(id)
+      const result = await this.session.blob.share(id)
+      if (!result.success && !result.cancelled) this.ui.send("rec:share-failed", {id})
     } catch (err) {
       console.log("Recorder: export failed", err)
+      this.ui.send("rec:share-failed", {id})
     }
   }
 

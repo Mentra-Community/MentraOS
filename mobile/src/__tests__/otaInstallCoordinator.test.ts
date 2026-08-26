@@ -669,6 +669,35 @@ describe("OtaInstallCoordinator MTK completion", () => {
 })
 
 describe("OtaInstallCoordinator finish()", () => {
+  it("does not resolve until hotspot transport teardown finishes", async () => {
+    useGlassesStore.getState().setGlassesInfo({
+      connection: {state: "connected", fullyBooted: true},
+      hotspotOtaVersion: 1,
+      wifi: {state: "disconnected"},
+    })
+    otaInstallCoordinator.prepare(checkResult())
+    let resolveTeardown!: () => void
+    mockHotspotTeardown.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveTeardown = resolve
+        }),
+    )
+
+    let finished = false
+    const finishPromise = otaInstallCoordinator.finish().then(() => {
+      finished = true
+    })
+    await Promise.resolve()
+
+    expect(mockHotspotTeardown).toHaveBeenCalledTimes(1)
+    expect(finished).toBe(false)
+
+    resolveTeardown()
+    await finishPromise
+    expect(finished).toBe(true)
+  })
+
   it("after an APK step clears the update prompt and the stale build number", () => {
     setGlassesConnected()
     useGlassesStore.getState().setGlassesInfo({buildNumber: "40"})
@@ -879,6 +908,19 @@ describe("OtaInstallCoordinator legacy ota_progress normalization (WP 8C-a)", ()
     useGlassesStore.getState().setOtaStatus(null)
     await jest.advanceTimersByTimeAsync(QUERY_REPLY_TIMEOUT_MS)
     expect(bluetoothSdkMock.startOtaUpdate).not.toHaveBeenCalled()
+  })
+
+  it("swallows a concurrent status-query rejection after an ASG session restart", async () => {
+    setGlassesConnected()
+    otaInstallCoordinator.attach()
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+    useGlassesStore.getState().setOtaStatus(inProgressStatus({phase: "install", stepPercent: 0, overallPercent: 100}))
+    bluetoothSdkMock.queryOtaStatus.mockClear().mockRejectedValueOnce(new Error("request_in_flight"))
+
+    GlobalEventEmitter.emit("glasses_session_changed", {previousSid: "old", sid: "new"})
+    await jest.advanceTimersByTimeAsync(0)
+
+    expect(bluetoothSdkMock.queryOtaStatus).toHaveBeenCalledTimes(1)
   })
 
   it("glasses_session_changed after APK completion queries the ASG-owned session without sending ota_start", async () => {

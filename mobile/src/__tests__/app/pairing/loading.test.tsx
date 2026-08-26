@@ -218,17 +218,23 @@ describe("pairing loading screen", () => {
     })
   })
 
-  it("fails closed when recovered target capability is unknown", () => {
+  it("fails closed when recovered target capability is unknown instead of loading forever", async () => {
     render(<GlassesPairingLoadingScreen />)
 
     act(() => {
       useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
     })
     act(() => {
-      jest.advanceTimersByTime(60_000)
+      jest.advanceTimersByTime(5_000)
     })
 
-    expect(replace).not.toHaveBeenCalled()
+    await waitFor(() => {
+      expect(engine.pairing.abandonAttempt).toHaveBeenCalled()
+      expect(replace).toHaveBeenCalledWith("/pairing/failure", {
+        error: "errors:pairingCouldNotStart",
+        deviceModel: "Mentra Live",
+      })
+    })
   })
 
   it("uses the legacy pairing_info fallback when scan already reported non-secure firmware", async () => {
@@ -275,7 +281,7 @@ describe("pairing loading screen", () => {
     })
   })
 
-  it("does not fall through to success on the legacy timeout when the scan result already reported secure-capable firmware", async () => {
+  it("fails secure-capable firmware when pairing_info never arrives", async () => {
     ;(useRoute as jest.Mock).mockReturnValue({
       params: {deviceModel: "Mentra Live", deviceName: "MENTRA_LIVE_BLE_001", securePairingCapable: true},
     })
@@ -285,12 +291,16 @@ describe("pairing loading screen", () => {
       useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
     })
 
-    // pairing_info is merely delayed, not absent — known-secure firmware must keep waiting for
-    // it rather than let the legacy timeout mark pairing successful underneath it.
     act(() => {
-      jest.advanceTimersByTime(60_000)
+      jest.advanceTimersByTime(5_000)
     })
-    expect(replace).not.toHaveBeenCalled()
+
+    await waitFor(() => {
+      expect(replace).toHaveBeenCalledWith("/pairing/failure", {
+        error: "errors:pairingCouldNotStart",
+        deviceModel: "Mentra Live",
+      })
+    })
 
     act(() => {
       emitBluetoothSdkEvent("pairing_info", {had_previous_bond: false, secure_pairing_capable: true})
@@ -300,7 +310,7 @@ describe("pairing loading screen", () => {
     })
 
     await waitFor(() => {
-      expect(replace).toHaveBeenCalledWith("/pairing/success", {deviceModel: "Mentra Live"})
+      expect(replace).not.toHaveBeenCalledWith("/pairing/success", {deviceModel: "Mentra Live"})
     })
   })
 

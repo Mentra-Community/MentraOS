@@ -1478,10 +1478,11 @@ class MentraLive : SGCManager() {
                                         advertisesPairingFlag(result) &&
                                         !isPairingDiscoverable(result)
                         ) {
-                            // Tell RN a nearby unit is advertising but not pairable so the
-                            // empty-state hint can fire. The scan list never shows these.
+                            // Tell RN a nearby unit is advertising but not pairable. The scan
+                            // screen keeps it visible with pairing-mode guidance but blocks the
+                            // connection until a pairable advertisement arrives.
                             Bridge.log(
-                                    "LIVE: Nearby $deviceName is secure firmware not in pairing mode — hiding from scan list"
+                                    "LIVE: Nearby $deviceName is secure firmware not in pairing mode — exposing as non-pairable"
                             )
                             Bridge.sendDiscoveredDevice(
                                     DeviceTypes.LIVE,
@@ -6854,12 +6855,21 @@ class MentraLive : SGCManager() {
                         ")"
         )
         markPairingTiming("ctkd_initiate", "bondState=${device.bondState}")
-        if (device.bondState == BluetoothDevice.BOND_BONDED) {
-            Bridge.log("LIVE: CTKD: Device is already bonded - connecting A2DP audio profile")
-            markPairingTiming("ctkd_already_bonded")
-            connectA2dpProfile(device)
-        } else {
-            createBond(device)
+        when (device.bondState) {
+            BluetoothDevice.BOND_BONDED -> {
+                Bridge.log(
+                        "LIVE: CTKD: Device is already bonded - connecting A2DP audio profile"
+                )
+                markPairingTiming("ctkd_already_bonded")
+                connectA2dpProfile(device)
+            }
+            BluetoothDevice.BOND_BONDING -> {
+                // Secure pairing firmware may request SMP as soon as GATT connects.
+                // Let that in-flight procedure finish instead of calling createBond twice.
+                Bridge.log("LIVE: CTKD: Bonding already in progress - waiting for completion")
+                markPairingTiming("ctkd_bonding_already_in_progress")
+            }
+            else -> createBond(device)
         }
     }
 

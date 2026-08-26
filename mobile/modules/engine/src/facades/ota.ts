@@ -135,9 +135,9 @@ export const ota = {
     detach: () => otaInstallCoordinator.detach(),
     /** Retry after a failure: clear state and re-send ota_start (if connected). */
     retry: () => otaInstallCoordinator.retry(),
-    /** Terminal cleanup for Continue/Done (navigation stays in the screen). */
+    /** Terminal cleanup for Continue/Done, including hotspot route teardown. */
     finish: () => otaInstallCoordinator.finish(),
-    /** Abandon an interrupted session (super-mode skip): finish() + drop the session's status/progress. */
+    /** Abandon an interrupted session: await finish() then drop the session's status/progress. */
     discard: () => otaInstallCoordinator.discard(),
     /** Current install read model (displayState/errorMsg/lockout + glasses OTA data). */
     snapshot: (): OtaInstallSnapshot => otaInstallCoordinator.snapshot(),
