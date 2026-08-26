@@ -233,6 +233,7 @@ function OtaFlowContent({
         icon="check"
         title={translate("ota:upToDate")}>
         <BodyText colors={colors}>{translate("ota:noUpdatesAvailable")}</BodyText>
+        <ChangelogList changelogs={state.changelogs} colors={colors} />
       </FlowPage>
     )
   }

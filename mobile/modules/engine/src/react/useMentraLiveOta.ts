@@ -6,6 +6,7 @@ import {
   clearOtaAutoChainReconnectWait,
   isOtaAutoChainActive,
   otaAutoChainFingerprint,
+  otaAutoChainReleaseRange,
   otaAutoChainReconnectWaitRemaining,
   stopOtaAutoChain,
   tryAdvanceOtaAutoChain,
@@ -118,6 +119,20 @@ type CheckState = "checking" | "update_available" | "no_update" | "dev_build" | 
 const AUTO_CHAIN_NETWORK_RETRY_DELAY_MS = 5000
 const AUTO_CHAIN_COMPLETE_DELAY_MS = 750
 
+function targetVersion(result: OtaCheckCurrentGlassesResult): string | null {
+  return result.updateInfo?.versionName ?? result.latestVersionInfo?.versionName ?? null
+}
+
+function releaseChangelogsForActiveChain(): ReleaseChangelog[] {
+  const range = otaAutoChainReleaseRange()
+  if (!range?.toVersion) return []
+  try {
+    return ota.getReleaseChangelogs(range.fromVersion, range.toVersion)
+  } catch {
+    return []
+  }
+}
+
 function installProgress(snapshot: OtaInstallSnapshot): number | null {
   if (snapshot.displayState !== "updating") return null
   const {otaStatus} = snapshot
@@ -172,6 +187,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
   const [isVersionChange, setIsVersionChange] = useState(false)
   const [errorKind, setErrorKind] = useState<"network" | "pin_unavailable">("network")
   const [updateFingerprint, setUpdateFingerprint] = useState<string | null>(null)
+  const [completedChangelogs, setCompletedChangelogs] = useState<ReleaseChangelog[]>([])
   const [checkGeneration, setCheckGeneration] = useState(0)
   const performCheckGenerationRef = useRef(0)
   const activeCheckKeyRef = useRef<string | null>(null)
@@ -180,8 +196,6 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
   const selectedCheckResultRef = useRef<OtaCheckCurrentGlassesResult | null>(null)
   const autoChainAdvancedRef = useRef(false)
   const installActionPendingRef = useRef(false)
-  const changelogStartVersionRef = useRef<string | null>(null)
-  const changelogTargetVersionRef = useRef<string | null>(null)
   const onFinishedRef = useRef(onFinished)
   const onOpenWifiSetupRef = useRef(onOpenWifiSetup)
   const onFirmwareRestartingChangeRef = useRef(onFirmwareRestartingChange)
@@ -324,7 +338,11 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
             if (!snapshot.wifiConnected && snapshot.hotspotOtaVersion !== 1) {
               stopOtaAutoChain()
             } else {
-              const admission = tryAdvanceOtaAutoChain(fingerprint, result.updateInfo.isDowngrade === true)
+              const admission = tryAdvanceOtaAutoChain(
+                fingerprint,
+                result.updateInfo.isDowngrade === true,
+                targetVersion(result),
+              )
               if (admission.advance) {
                 checkCompletedRef.current = true
                 ota.installSession.prepare(result)
@@ -337,6 +355,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
           setCheckState("update_available")
           return
         }
+        if (isOtaAutoChainActive()) setCompletedChangelogs(releaseChangelogsForActiveChain())
         stopOtaAutoChain()
         checkCompletedRef.current = true
         ota.clearUpdateAvailable()
@@ -402,6 +421,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
   }, [installSnapshot.connected, installSnapshot.displayState, page, returnToCheck])
 
   const check = useCallback(() => {
+    setCompletedChangelogs([])
     setPage("check")
     setCheckState("checking")
     setCheckGeneration((generation) => generation + 1)
@@ -425,9 +445,13 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
       return
     }
     ota.installSession.prepare(result)
-    changelogStartVersionRef.current ??= snapshot.appVersion
-    changelogTargetVersionRef.current = result.updateInfo?.versionName ?? result.latestVersionInfo?.versionName ?? null
-    if (updateFingerprint) beginOtaAutoChain(updateFingerprint, isVersionChange)
+    setCompletedChangelogs([])
+    if (updateFingerprint) {
+      beginOtaAutoChain(updateFingerprint, isVersionChange, {
+        fromVersion: snapshot.appVersion,
+        toVersion: targetVersion(result),
+      })
+    }
     navigateToProgress()
   }, [check, isVersionChange, navigateToProgress, page, updateFingerprint])
 
@@ -450,8 +474,6 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
     )
     if (requiresGlassesReboot) stopOtaAutoChain()
     await ota.installSession.finish()
-    changelogStartVersionRef.current = null
-    changelogTargetVersionRef.current = null
     returnToCheck()
   }, [installSnapshot, page, returnToCheck])
 
@@ -459,8 +481,6 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
     if (page !== "progress") return
     stopOtaAutoChain()
     await ota.installSession.discard()
-    changelogStartVersionRef.current = null
-    changelogTargetVersionRef.current = null
     returnToCheck()
   }, [page, returnToCheck])
 
@@ -555,7 +575,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
         canDiscard: false,
         canOpenWifiSetup: screen === "wifi_required",
         continueDisabled: false,
-        changelogs: [],
+        changelogs: screen === "up_to_date" ? completedChangelogs : [],
       }
     }
 
@@ -581,18 +601,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
           }
         : null
     const totalSteps = installSnapshot.otaStatus?.totalSteps ?? null
-    let changelogs: ReleaseChangelog[] = []
-    if (screen === "complete") {
-      try {
-        changelogs = ota.getReleaseChangelogs(changelogStartVersionRef.current, changelogTargetVersionRef.current)
-      } catch {
-        try {
-          changelogs = ota.getReleaseChangelogs(null, changelogTargetVersionRef.current)
-        } catch {
-          changelogs = []
-        }
-      }
-    }
+    const changelogs = screen === "complete" ? releaseChangelogsForActiveChain() : []
     return {
       screen,
       connected: installSnapshot.connected,
@@ -628,6 +637,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
     }
   }, [
     checkState,
+    completedChangelogs,
     errorKind,
     firmwareRestarting,
     installSnapshot,
