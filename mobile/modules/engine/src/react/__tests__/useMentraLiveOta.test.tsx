@@ -166,6 +166,7 @@ describe("useMentraLiveOta", () => {
     finish.mockClear()
     discard.mockClear()
     getReleaseChangelogs.mockClear()
+    getReleaseChangelogs.mockImplementation(() => [{version: "3.1.0", markdown: "Release notes"}])
     fakeOta.checkForUpdates.mockClear()
     beginAutoChain.mockClear()
     stopAutoChain.mockClear()
@@ -173,6 +174,7 @@ describe("useMentraLiveOta", () => {
     autoChainActive = false
     autoChainRange = null
     currentCheckResult = checkResult
+    otaSnapshot = {...otaSnapshot, appVersion: "3.0.0"}
     finishPromise = Promise.resolve()
     installSnapshot = {
       displayState: "starting",
@@ -303,6 +305,38 @@ describe("useMentraLiveOta", () => {
 
     expect(latestController.state.screen).toBe("up_to_date")
     expect(latestController.state.changelogs).toEqual([{version: "3.1.0", markdown: "Release notes"}])
+    await act(async () => renderer.unmount())
+  })
+
+  test("falls back to target notes when legacy glasses report a numeric version", async () => {
+    otaSnapshot = {...otaSnapshot, appVersion: "40"}
+    getReleaseChangelogs.mockImplementation((fromVersion) => {
+      if (fromVersion === "40") throw new Error("legacy version is not coordinated semver")
+      return [{version: "3.1.0", markdown: "Release notes"}]
+    })
+    const renderer = await renderProbe("check")
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1_150))
+    })
+    await act(async () => latestController.install())
+    currentCheckResult = {...checkResult, updateAvailable: false, updateInfo: null, updates: []}
+    installSnapshot = {...installSnapshot, displayState: "complete"}
+    await act(async () => {
+      installListeners.forEach((listener) => listener())
+    })
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 800))
+    })
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1_150))
+    })
+
+    expect(getReleaseChangelogs).toHaveBeenCalledWith("40", "3.1.0-dev.8")
+    expect(getReleaseChangelogs).toHaveBeenCalledWith(null, "3.1.0-dev.8")
+    expect(latestController.state).toMatchObject({
+      screen: "up_to_date",
+      changelogs: [{version: "3.1.0", markdown: "Release notes"}],
+    })
     await act(async () => renderer.unmount())
   })
 

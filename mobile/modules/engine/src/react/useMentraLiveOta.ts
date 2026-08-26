@@ -129,7 +129,11 @@ function releaseChangelogsForActiveChain(): ReleaseChangelog[] {
   try {
     return ota.getReleaseChangelogs(range.fromVersion, range.toVersion)
   } catch {
-    return []
+    try {
+      return ota.getReleaseChangelogs(null, range.toVersion)
+    } catch {
+      return []
+    }
   }
 }
 
