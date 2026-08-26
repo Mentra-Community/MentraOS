@@ -137,7 +137,8 @@ export class StoreController {
   private async loadCatalogApp(base: string, packageName: string): Promise<StoreApp> {
     const url = new URL(`/api/store/apps/${encodeURIComponent(packageName)}`, base)
     const response = await this.session.auth.fetch(url.toString(), {headers: {accept: "application/json"}})
-    if (!response.ok) throw new Error(response.status === 404 ? "Miniapp not found" : `Store catalog unavailable (${response.status})`)
+    if (!response.ok)
+      throw new Error(response.status === 404 ? "Miniapp not found" : `Store catalog unavailable (${response.status})`)
     const body = (await response.json()) as {app?: unknown}
     const app = parseCatalog({apps: [body.app]})[0]
     if (!app || app.packageName !== packageName) throw new Error("Store returned an invalid miniapp record")
@@ -170,7 +171,10 @@ export class StoreController {
       this.session.miniapps.list({includeIncompatible: true}),
     ])
     return {
-      ...this.actionSummary(app, installed.find((candidate) => candidate.packageName === packageName)),
+      ...this.actionSummary(
+        app,
+        installed.find((candidate) => candidate.packageName === packageName),
+      ),
       description: app.description,
       categories: app.categories,
       permissions: app.release.permissions,
@@ -194,6 +198,9 @@ export class StoreController {
     ])
     const current = installedBefore.find((candidate) => candidate.packageName === packageName)
     if (updateOnly && !current) throw new Error(`${app.name} is not installed`)
+    if (!app.release.installable) {
+      throw new Error(`Join the ${app.betaAccess === "invited" ? "private " : ""}beta before installing ${app.name}`)
+    }
     if (current && !isNewerVersion(app.release.version, current.version)) {
       return {status: "up_to_date", packageName, version: current.version}
     }
@@ -225,13 +232,16 @@ export class StoreController {
   }
 
   private actionSummary(app: StoreApp, installed?: InstalledApp) {
-    const updateAvailable = Boolean(installed && isNewerVersion(app.release.version, installed.version))
+    const updateAvailable = Boolean(
+      app.release.installable && installed && isNewerVersion(app.release.version, installed.version),
+    )
     return {
       packageName: app.packageName,
       name: app.name,
       subtitle: app.subtitle,
       version: app.release.version,
       track: app.release.track,
+      installable: app.release.installable,
       reviewTier: app.reviewTier,
       installed: Boolean(installed),
       installedVersion: installed?.version ?? null,
@@ -366,6 +376,9 @@ export class StoreController {
   private async install(packageName: string, query?: string, selectedApp?: StoreApp) {
     if (query !== undefined) this.lastQuery = query
     const app = selectedApp ?? this.requireApp(packageName)
+    if (!app.release.installable || !app.release.bundleUrl || !app.release.bundleSha256) {
+      throw new Error(`Join the ${app.betaAccess === "invited" ? "private " : ""}beta before installing ${app.name}`)
+    }
     this.snapshot = {...this.snapshot, operation: {packageName, kind: "install", phase: "downloading"}, error: null}
     this.send()
     try {
@@ -417,13 +430,15 @@ export class StoreController {
     const url = new URL(`/api/store/apps/${encodeURIComponent(packageName)}/track`, base)
     const response = await this.session.auth.fetch(url.toString(), {
       method: "POST",
-      headers: {accept: "application/json", "content-type": "application/json"},
+      headers: {"accept": "application/json", "content-type": "application/json"},
       body: JSON.stringify({track}),
     })
     if (!response.ok) {
       const body = (await response.json().catch(() => null)) as {error_description?: unknown} | null
       throw new Error(
-        typeof body?.error_description === "string" ? body.error_description : `Could not change release track (${response.status})`,
+        typeof body?.error_description === "string"
+          ? body.error_description
+          : `Could not change release track (${response.status})`,
       )
     }
     return this.refresh(this.lastQuery, true, true)

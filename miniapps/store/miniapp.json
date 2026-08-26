@@ -1,7 +1,7 @@
 {
   "$schema": "./node_modules/@mentra/miniapp-cli/schema/miniapp.schema.json",
   "packageName": "com.mentra.store",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "name": "Mentra Miniapp Store",
   "description": "Discover, install, update, and manage Mentra miniapps.",
   "icon": "icon.png",
@@ -42,7 +42,7 @@
     },
     {
       "id": "search_miniapps",
-      "description": "Search the Mentra Miniapp Store. Use when the user asks what miniapps are available or wants a miniapp for a task. Returns compatible catalog results with package names and installation state.",
+      "description": "Search the Mentra Miniapp Store. Use when the user asks what miniapps are available or wants a miniapp for a task. Returns compatible catalog results with package names, installation state, and whether a beta offer is installable yet.",
       "lifecycle": "transient",
       "audience": "system",
       "parameters": {
@@ -100,7 +100,7 @@
     },
     {
       "id": "install_miniapp",
-      "description": "Install a miniapp from the Mentra Miniapp Store. Use when the user asks to install a specific result. Pass only the exact package name; the Store resolves and validates the current compatible release.",
+      "description": "Install a miniapp from the Mentra Miniapp Store. Use when the user asks to install a specific installable result. Pass only the exact package name; the Store resolves and validates the current compatible release. A beta-only offer must first be joined in the Store.",
       "lifecycle": "transient",
       "audience": "system",
       "parameters": {

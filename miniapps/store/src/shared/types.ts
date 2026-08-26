@@ -2,8 +2,10 @@ export interface StoreRelease {
   id: string
   version: string
   track: "stable" | "beta"
-  bundleUrl: string
-  bundleSha256: string
+  /** False for a discoverable beta offer until the signed-in user explicitly enrolls. */
+  installable: boolean
+  bundleUrl: string | null
+  bundleSha256: string | null
   manifestSha256: string | null
   publishedAt: string | null
   permissions: Array<string | {type: string; required?: boolean; description?: string}>

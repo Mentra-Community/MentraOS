@@ -42,6 +42,7 @@ function app(overrides: Partial<StoreApp> = {}): StoreApp {
       id: "release-2",
       version: "2.0.0",
       track: "stable",
+      installable: true,
       bundleUrl: "https://store.example/weather-2.0.0.zip",
       bundleSha256: "a".repeat(64),
       manifestSha256: null,
@@ -96,6 +97,15 @@ describe("automatic Store updates", () => {
         installed({system: true, systemStoreOwnerPackageName: storePackageName}),
         storePackageName,
       ),
+    ).toBe(false)
+  })
+
+  test("does not enqueue a beta offer before enrollment", () => {
+    const offer = app({
+      release: {...app().release, installable: false, bundleUrl: null, bundleSha256: null},
+    })
+    expect(
+      isAutomaticUpdateCandidate(offer, installed({storeOwnerPackageName: storePackageName}), storePackageName),
     ).toBe(false)
   })
 

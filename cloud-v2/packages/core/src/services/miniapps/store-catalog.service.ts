@@ -29,11 +29,13 @@ export class StoreCatalogService {
     const betaAuthorizedAppIds = await this.betaAuthorizedAppIds(input);
     const betaEnrollmentAppIds = await this.betaEnrollmentAppIds(input, undefined, betaAuthorizedAppIds);
     const betaAppIds = await this.betaSelectedAppIds(input, publishedReleaseIds, betaAuthorizedAppIds);
-    const filter = this.catalogFilter(input, publishedReleaseIds, betaAppIds);
+    const betaOfferAppIds = await this.betaOfferAppIds(publishedReleaseIds, betaAuthorizedAppIds, betaAppIds);
+    const betaDisplayAppIds = new Set([...betaAppIds, ...betaOfferAppIds]);
+    const filter = this.catalogFilter(input, publishedReleaseIds, betaDisplayAppIds);
 
     const total = await MiniAppModel.countDocuments(filter);
     const offset = (page - 1) * limit;
-    const featuredFilter = this.featuredFilter(filter, betaAppIds, true);
+    const featuredFilter = this.featuredFilter(filter, betaDisplayAppIds, true);
     const featuredCount = await MiniAppModel.countDocuments(featuredFilter);
     const apps = await MiniAppModel.find(featuredFilter)
       .sort({ displayName: 1, packageName: 1 })
@@ -41,7 +43,7 @@ export class StoreCatalogService {
       .limit(limit)
       .lean();
     if (apps.length < limit) {
-      const regularApps = await MiniAppModel.find(this.featuredFilter(filter, betaAppIds, false))
+      const regularApps = await MiniAppModel.find(this.featuredFilter(filter, betaDisplayAppIds, false))
         .sort({ displayName: 1, packageName: 1 })
         .skip(Math.max(0, offset - featuredCount))
         .limit(limit - apps.length)
@@ -52,6 +54,7 @@ export class StoreCatalogService {
       apps,
       input.baseUrl,
       betaAppIds,
+      betaOfferAppIds,
       undefined,
       betaEnrollmentAppIds,
       betaAuthorizedAppIds,
@@ -70,10 +73,14 @@ export class StoreCatalogService {
     const betaAppIds = identity
       ? await this.betaSelectedAppIds(identity, publishedReleaseIds, betaAuthorizedAppIds, [app._id.toString()])
       : new Set<string>();
+    const betaOfferAppIds = identity
+      ? await this.betaOfferAppIds(publishedReleaseIds, betaAuthorizedAppIds, betaAppIds, [app._id.toString()])
+      : new Set<string>();
     const [serialized] = await this.serializeApps(
       [app],
       baseUrl,
       betaAppIds,
+      betaOfferAppIds,
       publishedReleaseIds,
       betaEnrollmentAppIds,
       betaAuthorizedAppIds,
@@ -139,11 +146,8 @@ export class StoreCatalogService {
         throw new StoreCatalogError("beta_invitation_required", "this private beta requires a developer invitation", 403);
       }
     } else {
-      if (!app.activeReleaseId || !app.publishedStoreListing) {
-        throw new StoreCatalogError("stable_unavailable", "this miniapp has no published stable release", 409);
-      }
-      const published = await MiniAppReleaseModel.exists({ _id: app.activeReleaseId, status: "published" });
-      if (!published) throw new StoreCatalogError("stable_unavailable", "this miniapp has no published stable release", 409);
+      // For a beta-only miniapp, choosing stable means leaving the beta. The
+      // catalog remains discoverable as a non-installable offer afterward.
       await MiniAppTrackEnrollmentModel.deleteOne({
         mentraUserId: identity.mentraUserId,
         miniAppId: app._id.toString(),
@@ -186,10 +190,12 @@ export class StoreCatalogService {
     if (!app) throw new StoreCatalogError("not_found", "bundle not found", 404);
 
     if (release.releaseTrack === "beta") {
+      const appId = app._id.toString();
       if (
         app.activeBetaReleaseId !== release._id.toString() ||
         !app.publishedBetaStoreListing ||
-        !(await this.betaAuthorizedAppIds(identity, [app._id.toString()])).has(app._id.toString())
+        !(await this.betaAuthorizedAppIds(identity, [appId])).has(appId) ||
+        !(await this.betaEnrollmentAppIds(identity, [appId])).has(appId)
       ) {
         throw new StoreCatalogError("not_found", "bundle not found", 404);
       }
@@ -222,17 +228,33 @@ export class StoreCatalogService {
     };
     const enrolledAppIds = await MiniAppTrackEnrollmentModel.distinct("miniAppId", enrollmentFilter);
     const selected = await MiniAppModel.distinct("_id", {
+      _id: { $in: enrolledAppIds },
+      status: "active",
+      activeBetaReleaseId: { $in: publishedReleaseIds },
+      publishedBetaStoreListing: { $ne: null },
+    });
+    return new Set(selected.map(String));
+  }
+
+  /** Beta-only listings remain discoverable, but carry no install capability until enrollment. */
+  private async betaOfferAppIds(
+    publishedReleaseIds: string[],
+    authorizedAppIds: Set<string>,
+    selectedAppIds: Set<string>,
+    restrictToAppIds?: string[],
+  ): Promise<Set<string>> {
+    const eligibleAppIds = restrictToAppIds
+      ? restrictToAppIds.filter(id => authorizedAppIds.has(id) && !selectedAppIds.has(id))
+      : [...authorizedAppIds].filter(id => !selectedAppIds.has(id));
+    if (eligibleAppIds.length === 0) return new Set();
+    const offers = await MiniAppModel.distinct("_id", {
       _id: { $in: eligibleAppIds },
       status: "active",
       activeBetaReleaseId: { $in: publishedReleaseIds },
       publishedBetaStoreListing: { $ne: null },
-      $or: [
-        { _id: { $in: enrolledAppIds } },
-        { activeReleaseId: { $nin: publishedReleaseIds } },
-        { publishedStoreListing: null },
-      ],
+      $or: [{ activeReleaseId: { $nin: publishedReleaseIds } }, { publishedStoreListing: null }],
     });
-    return new Set(selected.map(String));
+    return new Set(offers.map(String));
   }
 
   private async betaEnrollmentAppIds(
@@ -348,19 +370,23 @@ export class StoreCatalogService {
     apps: Array<any>,
     baseUrl: string,
     betaAppIds: Set<string>,
+    betaOfferAppIds: Set<string>,
     knownPublishedReleaseIds?: string[],
     betaEnrollmentAppIds: Set<string> = betaAppIds,
     betaAuthorizedAppIds: Set<string> = betaAppIds,
   ) {
+    const betaDisplayAppIds = new Set([...betaAppIds, ...betaOfferAppIds]);
     const releaseIds = apps
-      .map(app => (betaAppIds.has(app._id.toString()) ? app.activeBetaReleaseId : app.activeReleaseId))
+      .map(app => (betaDisplayAppIds.has(app._id.toString()) ? app.activeBetaReleaseId : app.activeReleaseId))
       .filter(Boolean);
     const releases = await MiniAppReleaseModel.find({ _id: { $in: releaseIds }, status: "published" }).lean();
     const releasesById = new Map(releases.map(release => [release._id.toString(), release]));
     const publishedIds = new Set(knownPublishedReleaseIds ?? (await this.publishedReleaseIds()));
     const normalizedBase = baseUrl.replace(/\/$/, "");
     return apps.flatMap(app => {
-      const selectedTrack: StoreReleaseTrack = betaAppIds.has(app._id.toString()) ? "beta" : "stable";
+      const appId = app._id.toString();
+      const selectedTrack: StoreReleaseTrack = betaDisplayAppIds.has(appId) ? "beta" : "stable";
+      const installable = !betaOfferAppIds.has(appId);
       const releaseId = selectedTrack === "beta" ? app.activeBetaReleaseId : app.activeReleaseId;
       const release = releasesById.get(releaseId ?? "");
       if (!release?.releaseBundleAssetId || !release.bundleSha256) return [];
@@ -391,7 +417,7 @@ export class StoreCatalogService {
           coverUrl: assetUrl(listing.coverAssetId),
           screenshotUrls: (listing.screenshotAssetIds ?? []).map((id: string) => assetUrl(id)),
           selectedTrack,
-          preferredTrack: betaEnrollmentAppIds.has(app._id.toString()) ? "beta" : "stable",
+          preferredTrack: betaEnrollmentAppIds.has(appId) ? "beta" : "stable",
           betaAccess: canAccessBeta ? (app.betaAccessMode === "public" ? "public" : "invited") : null,
           availableTracks: [
             ...(hasPublishedStable ? ["stable"] : []),
@@ -401,8 +427,11 @@ export class StoreCatalogService {
             id: release._id.toString(),
             version: release.version,
             track: selectedTrack,
-            bundleUrl: `${normalizedBase}/api/store/bundles/${release.releaseBundleAssetId}/download`,
-            bundleSha256: release.bundleSha256,
+            installable,
+            bundleUrl: installable
+              ? `${normalizedBase}/api/store/bundles/${release.releaseBundleAssetId}/download`
+              : null,
+            bundleSha256: installable ? release.bundleSha256 : null,
             manifestSha256: release.manifestSha256 ?? null,
             publishedAt: release.publishedAt?.toISOString() ?? null,
             permissions: manifest.permissions ?? [],

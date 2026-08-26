@@ -1078,8 +1078,9 @@ describe("miniapp release lifecycle", () => {
       betaAccess: "public",
       availableTracks: ["stable", "beta"],
     });
-    expect((await catalog.getBundleAsset(betaBundleAssetId, otherUser))._id.toString()).toBe(betaBundleAssetId);
+    await expect(catalog.getBundleAsset(betaBundleAssetId, otherUser)).rejects.toMatchObject({ status: 404 });
     await catalog.setReleaseTrack(packageName, "beta", otherUser, "https://core.example.test");
+    expect((await catalog.getBundleAsset(betaBundleAssetId, otherUser))._id.toString()).toBe(betaBundleAssetId);
     await miniappBetas.setAccessMode(developer, packageName, "private");
     expect(await MiniAppTrackEnrollmentModel.exists({ mentraUserId: otherUser.mentraUserId })).toBeNull();
   });
@@ -1115,15 +1116,41 @@ describe("miniapp release lifecycle", () => {
       preferredTrack: "stable",
       betaAccess: "invited",
       availableTracks: ["beta"],
-      release: { version: "0.9.0", track: "beta" },
+      release: { version: "0.9.0", track: "beta", installable: false, bundleUrl: null, bundleSha256: null },
     });
+    await expect(catalog.getBundleAsset(beta.releaseBundleAssetId!, storeUser)).rejects.toMatchObject({ status: 404 });
     expect(
       (await catalog.list({ ...storeUser, baseUrl: "https://core.example.test" })).apps.map(app => app.packageName),
     ).toContain(packageName);
 
     const joined = await catalog.setReleaseTrack(packageName, "beta", storeUser, "https://core.example.test");
-    expect(joined).toMatchObject({ selectedTrack: "beta", preferredTrack: "beta" });
+    expect(joined).toMatchObject({
+      selectedTrack: "beta",
+      preferredTrack: "beta",
+      release: { installable: true, bundleUrl: expect.any(String), bundleSha256: expect.any(String) },
+    });
+    expect((await catalog.getBundleAsset(beta.releaseBundleAssetId!, storeUser))._id.toString()).toBe(
+      beta.releaseBundleAssetId,
+    );
+    const left = await catalog.setReleaseTrack(packageName, "stable", storeUser, "https://core.example.test");
+    expect(left).toMatchObject({
+      selectedTrack: "beta",
+      preferredTrack: "stable",
+      release: { installable: false },
+    });
     expect(await MiniAppBetaInvitationModel.exists({ miniAppId: created.id, status: "accepted" })).not.toBeNull();
+
+    await miniappBetas.setAccessMode(developer, packageName, "public");
+    const publicUser = { mentraUserId: "mu_store_other", tenantId: "mentra" };
+    expect(await catalog.get(packageName, "https://core.example.test", publicUser)).toMatchObject({
+      betaAccess: "public",
+      preferredTrack: "stable",
+      release: { installable: false, bundleUrl: null },
+    });
+    await expect(catalog.getBundleAsset(beta.releaseBundleAssetId!, publicUser)).rejects.toMatchObject({ status: 404 });
+    expect(
+      await catalog.setReleaseTrack(packageName, "beta", publicUser, "https://core.example.test"),
+    ).toMatchObject({ preferredTrack: "beta", release: { installable: true } });
   });
 });
 

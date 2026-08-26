@@ -25,6 +25,7 @@ export function selectCompatibleUpdates(
     const installed = installedByPackage.get(app.packageName)
     return (
       installed !== undefined &&
+      app.release.installable &&
       isNewerVersion(app.release.version, installed.version) &&
       !isStoreActionDisabled("install", installed, app.release.installCompatibility)
     )

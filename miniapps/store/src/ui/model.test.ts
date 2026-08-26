@@ -39,6 +39,7 @@ function app(version: string, packageName = "com.example.weather", categories: s
       id: `release-${version}`,
       version,
       track: "stable",
+      installable: true,
       bundleUrl: `https://store.example/weather-${version}.zip`,
       bundleSha256: "a".repeat(64),
       manifestSha256: null,
@@ -96,6 +97,12 @@ describe("Store UI model", () => {
     expect(selectCompatibleUpdates([compatible, blocked], new Map([[current.packageName, current]]))).toEqual([
       compatible,
     ])
+  })
+
+  test("Update all excludes a discoverable beta until the user enrolls", () => {
+    const offer = app("2.0.0")
+    offer.release = {...offer.release, installable: false, bundleUrl: null, bundleSha256: null}
+    expect(selectCompatibleUpdates([offer], new Map([[offer.packageName, installed(true)]]))).toEqual([])
   })
 
   test("search spans all categories even when a category chip was previously selected", () => {

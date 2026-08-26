@@ -88,6 +88,7 @@ describe("StoreController refresh serialization", () => {
         id: "release-notes",
         version: "2.0.0",
         track: "stable",
+        installable: true,
         bundleUrl: "https://core.example.test/notes.zip",
         bundleSha256: "a".repeat(64),
         manifestSha256: null,
@@ -100,15 +101,17 @@ describe("StoreController refresh serialization", () => {
     }
     const installedRows = () =>
       installed
-        ? [{
-            packageName: catalogApp.packageName,
-            name: catalogApp.name,
-            version: catalogApp.release.version,
-            running: false,
-            system: false,
-            compatibility: {isCompatible: true, warnings: []},
-            storeOwnerPackageName: "com.mentra.store",
-          }]
+        ? [
+            {
+              packageName: catalogApp.packageName,
+              name: catalogApp.name,
+              version: catalogApp.release.version,
+              running: false,
+              system: false,
+              compatibility: {isCompatible: true, warnings: []},
+              storeOwnerPackageName: "com.mentra.store",
+            },
+          ]
         : []
     const session = {
       auth: {
@@ -145,10 +148,9 @@ describe("StoreController refresh serialization", () => {
     expect(search.results[0]).toMatchObject({packageName: catalogApp.packageName, installed: false, compatible: true})
     expect(search.results[0]).not.toHaveProperty("bundleUrl")
 
-    const details = (await actionHandlers.get("get_miniapp_details")?.({packageName: catalogApp.packageName})) as Record<
-      string,
-      unknown
-    >
+    const details = (await actionHandlers.get("get_miniapp_details")?.({
+      packageName: catalogApp.packageName,
+    })) as Record<string, unknown>
     expect(details).toMatchObject({packageName: catalogApp.packageName, description: catalogApp.description})
     expect(details).not.toHaveProperty("bundleUrl")
 
@@ -195,6 +197,7 @@ describe("StoreController refresh serialization", () => {
         id: "release-1",
         version: "2.0.0",
         track: "stable",
+        installable: true,
         bundleUrl: "https://example.com/bundle.zip",
         bundleSha256: "a".repeat(64),
         hardwareRequirements: [],
@@ -278,6 +281,7 @@ describe("StoreController refresh serialization", () => {
         id: "release-beta",
         version: "2.0.0-beta.1",
         track: "beta",
+        installable: true,
         bundleUrl: "https://example.test/preview.zip",
         bundleSha256: "a".repeat(64),
         hardwareRequirements: [],
@@ -285,6 +289,37 @@ describe("StoreController refresh serialization", () => {
     } as unknown as StoreApp)
 
     expect(descriptor).toMatchObject({releaseId: "release-beta", channel: "beta"})
+  })
+
+  test("does not install a discoverable beta offer before enrollment", async () => {
+    let installs = 0
+    const session = {
+      miniapps: {
+        install: async () => {
+          installs += 1
+        },
+      },
+      ui: {send: () => undefined},
+    } as unknown as MiniappSession
+    const controller = new StoreController(session) as unknown as TestController
+
+    await expect(
+      controller.install("com.example.preview", "", {
+        packageName: "com.example.preview",
+        name: "Preview",
+        betaAccess: "invited",
+        release: {
+          id: "release-beta",
+          version: "2.0.0-beta.1",
+          track: "beta",
+          installable: false,
+          bundleUrl: null,
+          bundleSha256: null,
+        },
+      } as unknown as StoreApp),
+    ).rejects.toThrow("Join the private beta")
+
+    expect(installs).toBe(0)
   })
 
   test("changes track through authenticated Core state and refreshes the automatic catalog", async () => {

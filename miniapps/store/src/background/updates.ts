@@ -7,7 +7,7 @@ export function isAutomaticUpdateOwnedRelease(
   installed: InstalledApp | undefined,
   storePackageName: string,
 ): boolean {
-  if (!installed || app.packageName === storePackageName) return false
+  if (!installed || !app.release.installable || app.packageName === storePackageName) return false
   if (!isNewerVersion(app.release.version, installed.version)) return false
   return installed.system
     ? installed.systemStoreOwnerPackageName === storePackageName

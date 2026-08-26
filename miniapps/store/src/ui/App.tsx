@@ -1,5 +1,6 @@
 import {useCallback, useEffect, useMemo, useState} from "react"
 import {useColorScheme, useSafeArea} from "@mentra/miniapp/ui"
+import {isNewerVersion} from "../background/catalog"
 import {
   MENTRA_STORE_PACKAGE_NAME,
   isManagedByStore,
@@ -378,22 +379,27 @@ function AppRow({
   onSelect: () => void
   onAction: (kind: "install" | "uninstall" | "open", packageName: string) => Promise<boolean>
 }) {
-  const update = Boolean(installed && isNewerVersion(app.release.version, installed.version))
+  const betaOffer = !installed && !app.release.installable
+  const update = Boolean(app.release.installable && installed && isNewerVersion(app.release.version, installed.version))
   const action = !installed || update ? "install" : "open"
   const installBlocker = action === "install" && app.release.installCompatibility?.compatible === false
-  const label = busy
-    ? operationLabel(phase)
-    : installBlocker
-      ? app.release.installCompatibility?.blocker === "hardware"
-        ? "Not compatible"
-        : app.release.installCompatibility?.blocker === "host" || app.release.installCompatibility?.blocker === "sdk"
-          ? "Requires update"
-          : "Unavailable"
-      : update
-        ? "Update"
-        : installed
-          ? "Open"
-          : "Get"
+  const label = betaOffer
+    ? app.betaAccess === "invited"
+      ? "View invite"
+      : "View beta"
+    : busy
+      ? operationLabel(phase)
+      : installBlocker
+        ? app.release.installCompatibility?.blocker === "hardware"
+          ? "Not compatible"
+          : app.release.installCompatibility?.blocker === "host" || app.release.installCompatibility?.blocker === "sdk"
+            ? "Requires update"
+            : "Unavailable"
+        : update
+          ? "Update"
+          : installed
+            ? "Open"
+            : "Get"
   return (
     <article className="app-row">
       <button className="app-main" onClick={onSelect} aria-label={`View ${app.name}`}>
@@ -406,9 +412,11 @@ function AppRow({
       </button>
       <button
         className="action"
-        disabled={disabled || isStoreActionDisabled(action, installed, app.release.installCompatibility)}
+        disabled={
+          disabled || (!betaOffer && isStoreActionDisabled(action, installed, app.release.installCompatibility))
+        }
         title={installBlocker ? app.release.installCompatibility?.reason : undefined}
-        onClick={() => void onAction(action, app.packageName)}>
+        onClick={() => (betaOffer ? onSelect() : void onAction(action, app.packageName))}>
         {label}
       </button>
     </article>
@@ -448,24 +456,29 @@ function Detail({
   changingTrack: boolean
   onSetTrack: (track: "stable" | "beta") => void
 }) {
-  const update = Boolean(installed && isNewerVersion(app.release.version, installed.version))
+  const betaOffer = !installed && !app.release.installable
+  const update = Boolean(app.release.installable && installed && isNewerVersion(app.release.version, installed.version))
   const kind = !installed || update ? "install" : "open"
   const installBlocker = kind === "install" && app.release.installCompatibility?.compatible === false
   const installBlockerKind = app.release.installCompatibility?.blocker
   const requiresHostUpdate = installBlockerKind === "host" || installBlockerKind === "sdk"
-  const label = busy
-    ? operationLabel(phase)
-    : installBlocker
-      ? installBlockerKind === "hardware"
-        ? "Not compatible"
-        : requiresHostUpdate
-          ? "Requires Mentra App update"
-          : "Unavailable"
-      : update
-        ? "Update"
-        : installed
-          ? "Open"
-          : "Get"
+  const label = betaOffer
+    ? app.betaAccess === "invited"
+      ? "Join private beta"
+      : "Join public beta"
+    : busy
+      ? operationLabel(phase)
+      : installBlocker
+        ? installBlockerKind === "hardware"
+          ? "Not compatible"
+          : requiresHostUpdate
+            ? "Requires Mentra App update"
+            : "Unavailable"
+        : update
+          ? "Update"
+          : installed
+            ? "Open"
+            : "Get"
   return (
     <div className="detail">
       <header className="detail-nav">
@@ -482,8 +495,12 @@ function Detail({
             <div className="hero-actions">
               <button
                 className="action primary"
-                disabled={busy || isStoreActionDisabled(kind, installed, app.release.installCompatibility)}
-                onClick={() => void onAction(kind, app.packageName)}>
+                disabled={
+                  busy ||
+                  changingTrack ||
+                  (!betaOffer && isStoreActionDisabled(kind, installed, app.release.installCompatibility))
+                }
+                onClick={() => (betaOffer ? onSetTrack("beta") : void onAction(kind, app.packageName))}>
                 {label}
               </button>
               <button className="share-action" onClick={onShare}>
@@ -550,7 +567,11 @@ function Detail({
                 <button
                   key={track}
                   className={app.preferredTrack === track ? "active" : ""}
-                  disabled={changingTrack || app.preferredTrack === track || (track === "beta" && !app.availableTracks.includes("beta"))}
+                  disabled={
+                    changingTrack ||
+                    app.preferredTrack === track ||
+                    (track === "beta" && !app.availableTracks.includes("beta"))
+                  }
                   onClick={() => onSetTrack(track)}>
                   {track === "stable"
                     ? app.preferredTrack === "beta"

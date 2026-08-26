@@ -107,11 +107,14 @@ data; each deployment may publish both stable and beta releases.
       caller-provided email or catalog query.
 - [x] Make beta-only launches usable: an authorized tester can discover a
       published beta before the first stable release exists, while every
-      uninvited user continues to see no private-beta listing or bundle.
+      uninvited user continues to see no private-beta listing or bundle. A
+      discoverable offer redacts its download capability and cannot be
+      installed or automatically updated until the user explicitly enrolls.
 - [x] Re-authorize Store bundle bytes on every download. Private-beta URLs stop
       working immediately after revocation, protected responses are never
       shared-cacheable, and historical/archived releases cannot be fetched by
-      retaining an old asset URL.
+      retaining an old asset URL. Public and private beta downloads both require
+      a current enrollment in addition to beta access.
 - [x] Show beta availability/current selection in the Store detail screen and
       refresh the catalog after changing tracks.
 - [x] Carry the selected release track through Store install descriptors and

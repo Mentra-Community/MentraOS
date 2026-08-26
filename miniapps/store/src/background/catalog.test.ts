@@ -12,6 +12,7 @@ const app = (packageName: string) => ({
     id: `${packageName}-release`,
     version: "1.0.0",
     track: "stable",
+    installable: true,
     bundleUrl: `https://example.test/${packageName}.zip`,
     bundleSha256: "a".repeat(64),
   },
@@ -42,9 +43,25 @@ describe("Store catalog", () => {
     expect(trustedCoreOrigin("http://user:password@192.168.1.42:3000")).toBeNull()
   })
 
-  test("keeps only installable catalog entries", () => {
+  test("keeps valid installable releases and redacted beta offers", () => {
     const apps = parseCatalog({
       apps: [
+        {
+          packageName: "com.example.offer",
+          name: "Offer",
+          selectedTrack: "beta",
+          preferredTrack: "stable",
+          betaAccess: "invited",
+          availableTracks: ["beta"],
+          release: {
+            id: "r-offer",
+            version: "0.9.0",
+            track: "beta",
+            installable: false,
+            bundleUrl: null,
+            bundleSha256: null,
+          },
+        },
         {
           packageName: "com.example.good",
           name: "Good",
@@ -56,6 +73,7 @@ describe("Store catalog", () => {
             id: "r1",
             version: "1.0.0",
             track: "stable",
+            installable: true,
             bundleUrl: "https://example.test/bundle.zip",
             bundleSha256: "a".repeat(64),
           },
@@ -67,11 +85,18 @@ describe("Store catalog", () => {
           preferredTrack: "stable",
           betaAccess: null,
           availableTracks: ["stable"],
-          release: {id: "r2", version: "1.0.0", track: "stable", bundleUrl: "https://example.test/bundle.zip", bundleSha256: "nope"},
+          release: {
+            id: "r2",
+            version: "1.0.0",
+            track: "stable",
+            installable: true,
+            bundleUrl: "https://example.test/bundle.zip",
+            bundleSha256: "nope",
+          },
         },
       ],
     })
-    expect(apps.map((app) => app.packageName)).toEqual(["com.example.good"])
+    expect(apps.map((app) => app.packageName)).toEqual(["com.example.offer", "com.example.good"])
   })
 
   test("rejects a malformed response", () => {
