@@ -4,8 +4,9 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 
-/** Virtual-time {@link CaptureWatchdog.Scheduler} for JVM tests. */
-final class FakeCaptureScheduler implements CaptureWatchdog.Scheduler {
+/** Virtual-time scheduler for {@link CaptureWatchdog} and {@link PhotoPromptOccupancy} JVM tests. */
+final class FakeCaptureScheduler
+        implements CaptureWatchdog.Scheduler, PhotoPromptOccupancy.Scheduler {
 
     private static final class Scheduled {
         final Runnable runnable;
