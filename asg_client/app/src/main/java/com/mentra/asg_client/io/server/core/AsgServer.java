@@ -100,8 +100,10 @@ public abstract class AsgServer extends NanoHTTPD {
 
     /**
      * Start the server with enhanced error handling and extended timeout for large files.
+     *
+     * @return true when the listener bound successfully, otherwise false
      */
-    public void startServer() {
+    public boolean startServer() {
         logger.info(getTag(), "🚀 =========================================");
         logger.info(getTag(), "🚀 STARTING " + config.getServerName());
         logger.info(getTag(), "🚀 =========================================");
@@ -123,8 +125,10 @@ public abstract class AsgServer extends NanoHTTPD {
             } catch (Exception e) {
                 logger.warn(getTag(), "🌐 Could not determine server URL: " + e.getMessage());
             }
+            return true;
         } catch (IOException e) {
             logger.error(getTag(), "❌ Failed to start " + config.getServerName() + ": " + e.getMessage(), e);
+            return false;
         }
     }
 

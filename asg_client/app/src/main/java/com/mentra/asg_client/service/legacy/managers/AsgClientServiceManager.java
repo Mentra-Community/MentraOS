@@ -673,7 +673,12 @@ public class AsgClientServiceManager {
                 serverManager.registerServer("camera", cameraServer);
                 Log.d(TAG, "📝 Camera server registered with server manager");
 
-                cameraServer.startServer();
+                if (!cameraServer.startServer()) {
+                    Log.e(TAG, "💥 Camera web server failed to bind; clearing it for retry");
+                    serverManager.stopServer("camera");
+                    cameraServer = null;
+                    return;
+                }
                 Log.d(TAG, "🚀 Camera web server started");
 
                 Log.i(TAG, "✅ Camera web server initialized and started successfully");
@@ -735,6 +740,11 @@ public class AsgClientServiceManager {
                 "📸 getMediaCaptureService() called - returning: "
                         + (mediaCaptureService != null ? "valid" : "null"));
         return mediaCaptureService;
+    }
+
+    /** Get the shared media file manager independently of the hotspot server lifecycle. */
+    public FileManager getFileManager() {
+        return fileManager;
     }
 
     public ImuManager getImuManager() {
