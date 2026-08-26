@@ -27,11 +27,13 @@ export function App() {
   const {developerMode, holdHandlers} = useDeveloperMode()
   const {
     settings,
+    canPosition,
     updateLanguage,
     updateHints,
     updateUseOfflineStt,
     updateDisplayLines,
     updateDisplayWidth,
+    updateCaptionPosition,
     updateWordBreaking,
     updateCaptionTimeoutSeconds,
   } = useSettings()
@@ -106,12 +108,14 @@ export function App() {
           ) : activeTab === "settings" ? (
             <Settings
               settings={settings}
+              canPosition={canPosition}
               displayPreview={displayPreview}
               accentColor={presentation.accentColor}
               accentForeground={presentation.accentForeground}
               onUpdateUseOfflineStt={updateUseOfflineStt}
               onUpdateDisplayLines={updateDisplayLines}
               onUpdateDisplayWidth={updateDisplayWidth}
+              onUpdateCaptionPosition={updateCaptionPosition}
               onUpdateWordBreaking={updateWordBreaking}
               onUpdateCaptionTimeoutSeconds={updateCaptionTimeoutSeconds}
             />

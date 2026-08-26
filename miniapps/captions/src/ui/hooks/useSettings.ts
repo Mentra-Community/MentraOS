@@ -1,6 +1,6 @@
 import {useEffect, useRef, useState} from "react"
 
-import type {CaptionSettings} from "../../shared/types"
+import type {CaptionPosition, CaptionSettings, CaptionsDisplayCapabilities} from "../../shared/types"
 
 export type {CaptionSettings} from "../../shared/types"
 
@@ -15,6 +15,7 @@ export type {CaptionSettings} from "../../shared/types"
  */
 export function useSettings() {
   const [settings, setSettings] = useState<CaptionSettings | null>(null)
+  const [canPosition, setCanPosition] = useState(false)
   const [loading, setLoading] = useState(true)
   const mountedRef = useRef(true)
 
@@ -26,8 +27,20 @@ export function useSettings() {
     offs.push(
       on("captions:snapshot", (payload) => {
         if (!mountedRef.current) return
-        setSettings((payload as {settings: CaptionSettings}).settings)
+        const snapshot = payload as {
+          settings: CaptionSettings
+          displayCapabilities?: CaptionsDisplayCapabilities
+        }
+        setSettings(snapshot.settings)
+        setCanPosition(snapshot.displayCapabilities?.canPosition === true)
         setLoading(false)
+      }),
+    )
+
+    offs.push(
+      on("captions:display-capabilities", (payload) => {
+        if (!mountedRef.current) return
+        setCanPosition((payload as CaptionsDisplayCapabilities).canPosition === true)
       }),
     )
 
@@ -75,6 +88,12 @@ export function useSettings() {
     return true
   }
 
+  const updateCaptionPosition = async (position: CaptionPosition): Promise<boolean> => {
+    setSettings((prev) => (prev ? {...prev, captionPosition: position} : prev))
+    mentra.send("captions:set-caption-position", {position})
+    return true
+  }
+
   const updateWordBreaking = async (enabled: boolean): Promise<boolean> => {
     setSettings((prev) => (prev ? {...prev, wordBreaking: enabled} : prev))
     mentra.send("captions:set-word-breaking", {enabled})
@@ -89,6 +108,7 @@ export function useSettings() {
 
   return {
     settings,
+    canPosition,
     loading,
     error: null as string | null,
     updateLanguage,
@@ -96,6 +116,7 @@ export function useSettings() {
     updateUseOfflineStt,
     updateDisplayLines,
     updateDisplayWidth,
+    updateCaptionPosition,
     updateWordBreaking,
     updateCaptionTimeoutSeconds,
   }
