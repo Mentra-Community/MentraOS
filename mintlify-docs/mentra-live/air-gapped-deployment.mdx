@@ -23,8 +23,8 @@ Mentra publishes coordinated releases. One release identity, such as `X.Y.Z` or
 | React Native / Expo SDK  | `@mentra/bluetooth-sdk@<release-identity>`         |
 | Android SDK              | `com.mentraglass:bluetooth-sdk:<release-identity>` |
 | iOS SDK                  | SwiftPM tag `<release-identity>`                   |
-| Hosted OTA manifest      | `mentra-live-ota-<release-identity>.json`          |
-| Self-hosted OTA bundle   | `mentra-live-ota-bundle-<release-identity>.zip`    |
+| Hosted OTA manifest      | Recorded in the completed release record           |
+| Self-hosted OTA bundle   | Recorded in the completed release record           |
 | Completed release record | `mentra-release-<release-identity>.json`           |
 
 Each release has its own GitHub page:
@@ -147,24 +147,42 @@ iOS apps can instead set `MentraBluetoothSdkAnalyticsDisabled` to `true` in
   </Tab>
 </Tabs>
 
-## 3. Download And Verify The OTA Bundle
+## 3. Resolve, Download, And Verify The OTA Bundle
 
-From the completed release page, download these two assets:
+First download the completed release record from the selected release page:
 
 ```text
-mentra-live-ota-bundle-<release-identity>.zip
 mentra-release-<release-identity>.json
 ```
 
-You can download them in a browser or with the GitHub CLI after replacing the
+You can download it in a browser or with the GitHub CLI after replacing the
 example identity:
 
 ```bash
 RELEASE_IDENTITY=X.Y.Z
 gh release download "mentra-v${RELEASE_IDENTITY}" \
   --repo Mentra-Community/MentraOS \
-  --pattern "mentra-live-ota-bundle-${RELEASE_IDENTITY}.zip" \
   --pattern "mentra-release-${RELEASE_IDENTITY}.json"
+```
+
+Treat that record as the authority for the selected bundle's filename and URL.
+A prerelease normally points at a same-version bundle on its own release page. A
+stable release intentionally promotes the exact tested beta OTA bytes, so its
+record can point at a beta-named bundle on the beta release page instead.
+
+Resolve and download exactly the bundle selected by the record:
+
+```bash
+RELEASE_RECORD="mentra-release-${RELEASE_IDENTITY}.json"
+BUNDLE=$(jq -er '
+  .artifacts
+  | map(select(.coordinate | startswith("mentra-live-ota-bundle-") and endswith(".zip")))
+  | if length == 1 then .[0].coordinate else error("expected exactly one OTA bundle") end
+' "$RELEASE_RECORD")
+BUNDLE_URL=$(jq -er --arg bundle "$BUNDLE" \
+  '.artifacts[] | select(.coordinate == $bundle) | .url' \
+  "$RELEASE_RECORD")
+curl --fail --location --output "$BUNDLE" "$BUNDLE_URL"
 ```
 
 The ZIP contains:
@@ -181,8 +199,6 @@ the hosted OTA manifest, and the published SDK coordinates. Find the expected
 bundle checksum in the release record:
 
 ```bash
-BUNDLE="mentra-live-ota-bundle-${RELEASE_IDENTITY}.zip"
-RELEASE_RECORD="mentra-release-${RELEASE_IDENTITY}.json"
 EXPECTED_SHA256=$(jq -r --arg bundle "$BUNDLE" \
   '.artifacts[] | select(.coordinate == $bundle) | .sha256' \
   "$RELEASE_RECORD")
@@ -317,13 +333,14 @@ Treat each release identity as immutable:
 
 1. Select another completed coordinated release.
 2. Update the app to that exact Bluetooth SDK version.
-3. Import and verify that release's matching OTA bundle.
+3. Import and verify the OTA bundle selected by that release's completed record.
 4. Host it under a new versioned directory.
 5. Point the new app build at the new internal `version.json`.
 6. Keep older directories available while older app versions remain deployed.
 
-Never combine an SDK from one release identity with the OTA bundle from another.
-The shared identity and completed release record are the correlation mechanism.
+Never select a bundle from its filename alone. Use the bundle referenced by the
+completed release record; that record is the correlation mechanism, including
+when a stable SDK release promotes an exact beta-tested OTA bundle.
 
 ## What This Does Not Self-Host
 

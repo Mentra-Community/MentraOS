@@ -359,8 +359,8 @@ Mentra Live firmware owns the OTA flow. The SDK mirrors the MentraOS app command
 - `startOtaUpdate()` sends `ota_start` with the same configured manifest URL and resolves with the ASG start ack after your app presents the update and the user accepts it.
 
 Release CI embeds an immutable manifest URL and checksum into every published
-SDK distribution. The SDK package, manifest, and OTA bundle all share the same
-coordinated Mentra release identity. A completed release is available at
+SDK distribution. The completed coordinated release record correlates the SDK
+package with its exact manifest and OTA bundle. A completed release is available at
 `https://github.com/Mentra-Community/MentraOS/releases/tag/mentra-v<releaseIdentity>`
 and contains `mentra-release-<releaseIdentity>.json`, which records the exact
 package coordinates, asset URLs, sizes, checksums, and build provenance.
@@ -390,8 +390,10 @@ if (hasUpdate) {
 }
 ```
 
-Each coordinated release also publishes
-`mentra-live-ota-bundle-<releaseIdentity>.zip`. The archive contains
+Each coordinated prerelease publishes a portable OTA bundle. Stable releases
+promote the exact beta-tested OTA bytes, so always resolve the bundle coordinate
+and URL from `mentra-release-<releaseIdentity>.json` rather than constructing a
+filename. The selected archive contains
 `version.template.json`, every referenced ASG/MTK/BES artifact, `SHA256SUMS`,
 and a dependency-free configuration script. After unpacking it, generate the
 final manifest for its exact hosting URL:

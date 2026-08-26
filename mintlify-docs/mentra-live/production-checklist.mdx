@@ -64,7 +64,8 @@ Use this checklist before shipping an app with the Mentra Bluetooth SDK.
 ## Restricted-Network Deployments
 
 - The app pins one exact completed Mentra release identity rather than a moving package tag.
-- The SDK package and self-hosted OTA bundle use the same release identity.
+- The self-hosted OTA bundle is the exact bundle selected by the completed
+  release record for the pinned SDK release.
 - Mentra SDK analytics are disabled before native SDK startup.
 - The imported OTA ZIP matches the SHA-256 recorded in the completed release record.
 - The final `version.json` and every artifact are reachable from both the phone and Mentra Live.
