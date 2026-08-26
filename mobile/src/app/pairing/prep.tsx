@@ -249,6 +249,7 @@ export default function PairingPrepScreen() {
         title: translate("pairing:livePairingModeTitle"),
         subtitle: translate("pairing:livePairingModeSubtitle"),
         info: translate("pairing:livePairingModeInfo"),
+        compactHeader: true,
       },
     ]
 

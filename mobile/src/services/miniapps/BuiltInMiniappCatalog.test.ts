@@ -46,6 +46,7 @@ describe("BuiltInMiniappCatalog", () => {
         hidden: true,
       }),
     )
+    expect(engine.miniapps.setHiddenStatus).toHaveBeenCalledWith(miniappDeveloperPackageName, true)
 
     const settingListener = (engine.settings.onChanged as jest.Mock).mock.calls.find(
       ([key]) => key === SETTINGS.miniapp_dev_mode.key,
@@ -54,7 +55,12 @@ describe("BuiltInMiniappCatalog", () => {
     expect(settingListener).toEqual(expect.any(Function))
     settingListener(true)
     expect(appRegistry.setOfflineAppHidden).toHaveBeenLastCalledWith(miniappDeveloperPackageName, false)
+    expect(engine.miniapps.setHiddenStatus).toHaveBeenLastCalledWith(miniappDeveloperPackageName, false)
     settingListener(false)
     expect(appRegistry.setOfflineAppHidden).toHaveBeenLastCalledWith(miniappDeveloperPackageName, true)
+    expect(engine.miniapps.setHiddenStatus).toHaveBeenLastCalledWith(miniappDeveloperPackageName, true)
+    settingListener(undefined)
+    expect(appRegistry.setOfflineAppHidden).toHaveBeenLastCalledWith(miniappDeveloperPackageName, true)
+    expect(engine.miniapps.setHiddenStatus).toHaveBeenLastCalledWith(miniappDeveloperPackageName, true)
   })
 })
