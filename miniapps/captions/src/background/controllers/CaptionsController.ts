@@ -248,6 +248,16 @@ export class CaptionsController {
       // capabilities change not available — keep default profile.
     }
 
+    // registerMiniapp starts the controller before it calls connect(), so the
+    // first lookup above necessarily sees null capabilities. CONNECT_ACK fills
+    // them without emitting onCapabilitiesChange; explicitly wait and select
+    // the connected profile before settings create the live formatter.
+    await this.session.waitForReady()
+    this.currentProfile = getProfileForModel(getModelName(this.session))
+    this.currentDisplayWidthPx = this.currentProfile.displayWidthPx
+    this.currentMaxLines = this.currentProfile.maxLines
+    this.createFormatter()
+
     // Load persisted settings, then subscribe to transcription accordingly.
     await this.loadSettings()
     this.applySettingsToDisplay()

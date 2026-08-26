@@ -2,8 +2,9 @@
  * Background JSContext entry — Local Captions miniapp.
  *
  * A faithful local (island-runtime) port of the @mentra/captions cloud app.
- * `registerMiniapp(...)` wires the handler to fire after CONNECT lands; the
- * controller constructed here lives for the entire session and survives WebView
+ * `registerMiniapp(...)` wires the handler before CONNECT so it can subscribe
+ * to startup events; the controller then waits for readiness before selecting
+ * the connected display profile. It lives for the entire session and survives WebView
  * open/close cycles. It subscribes to transcription, renders captions on the
  * glasses display via CaptionsFormatter, and talks to the UI WebView over the
  * typed session.ui channel bus (see shared/channels.ts).

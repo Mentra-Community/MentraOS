@@ -5,6 +5,37 @@ import {DEFAULT_CAPTION_TIMEOUT_SECONDS} from "../../shared/types"
 import {calculateCaptionBox, CaptionsController, isSupportedCaptionTimeoutSeconds} from "./CaptionsController"
 
 describe("CaptionsController caption position", () => {
+  test("selects the connected G2 profile after CONNECT_ACK readiness", async () => {
+    const session = {
+      capabilities: null as Record<string, unknown> | null,
+      ui: {
+        send: mock(() => undefined),
+        on: mock(() => () => undefined),
+        onOpen: mock(() => () => undefined),
+      },
+      onCapabilitiesChange: mock(() => () => undefined),
+      waitForReady: mock(async () => {
+        session.capabilities = {
+          modelName: "Even Realities G2",
+          display: {width: 576, height: 288, canPosition: true, maxTextLines: 8},
+        }
+      }),
+      storage: {get: mock(() => Promise.resolve(null))},
+      transcription: {on: mock(() => () => undefined)},
+      cloud: {onStatusChanged: mock(() => () => undefined)},
+      display: {render: mock(() => Promise.resolve({status: "rendered"}))},
+    }
+    const controller = new CaptionsController(session as never) as unknown as {
+      currentProfile: {id: string; lineHeightPx?: number}
+      start: () => Promise<void>
+    }
+
+    await controller.start()
+
+    expect(session.waitForReady).toHaveBeenCalledTimes(1)
+    expect(controller.currentProfile).toMatchObject({id: "even-realities-g2", lineHeightPx: 40})
+  })
+
   test("anchors a fixed three-line G2 band at the top or bottom", () => {
     const base = {
       canvasWidth: 576,
