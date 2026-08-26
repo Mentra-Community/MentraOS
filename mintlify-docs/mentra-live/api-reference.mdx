@@ -457,12 +457,21 @@ Mentra Live has camera, microphone, speaker, Wi-Fi, LED, and OTA capabilities. G
 
 Each Bluetooth SDK release has a matching Mentra Live glasses software release with the same version number. When your app checks for an update, the SDK uses the OTA manifest for its own release. For the current `0.1.21-beta.5` software and complete installation instructions, see [Update Mentra Live](/mentra-live/software-update).
 
+For React Native apps, use Mentra Engine instead of assembling these primitives
+yourself. `MentraLiveOtaFlow` supplies the exact Mentra App pages, and
+`useMentraLiveOta` supports custom presentation over the same tested
+coordinator. See [Update Mentra Live](/mentra-live/software-update#add-the-ota-requirement-to-your-app).
+
+The APIs below are low-level building blocks used by native Android/iOS apps
+and by Mentra Engine. They are not a second React Native OTA coordinator.
+
 Mentra Live OTA installation is glasses-owned. The SDK checks its release-specific manifest on the phone, then sends `ota_start` with that same manifest URL when the user accepts the update:
 
 | API | Purpose |
 | --- | --- |
 | `checkForOtaUpdate()` | Fetch the configured manifest and resolve `true` when an ASG APK, MTK, or BES update is available. |
 | `startOtaUpdate()` | Send `ota_start` with the configured manifest URL after your app presents the update and the user accepts it. Resolves with `OtaStartAckEvent` from the ASG client. |
+| `queryOtaStatus()` | Query and return the active OTA session status after a reconnect or interrupted response. React Native only. |
 
 Use the boolean check result for update prompts and keep `ota_status` listeners/delegates for install progress and terminal `complete` / `failed` state. Availability is exposed through `checkForOtaUpdate()` rather than a public event; React Native receives `ota_start_ack` and `ota_status` events during the install flow. Android listeners receive `onOtaStartAck` and `onOtaStatus`; iOS delegates receive `.otaStartAck` and `.otaStatus` through `BluetoothEvent`.
 
