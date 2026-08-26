@@ -163,20 +163,8 @@ export default function SelectGlassesBluetoothScreen() {
   const shouldShowDeviceList = isMentraLivePairingScan ? listResults.length >= 2 : listResults.length > 0
 
   useEffect(() => {
-    // A secure Mentra Live advertisement tells us the glasses are nearby but idle.
-    // Pause immediately so the required five-press action is visible and the next
-    // scan gets a fresh advertisement carrying the pairing-mode flag and code.
-    if (!hasNearbyNotInPairingMode || pairableResults.length > 0 || scanTimedOut) {
-      return
-    }
-
-    setScanTimedOut(true)
-    void BluetoothSdk.stopScan()
-  }, [hasNearbyNotInPairingMode, pairableResults.length, scanTimedOut])
-
-  useEffect(() => {
-    // Timeout only when no pairable Mentra Live appeared; non-pairing nearby units still count
-    // as "seen" for the empty-state hint but must not auto-connect.
+    // Keep scanning after an idle secure unit appears. Advertisements arrive one
+    // at a time, so another nearby unit may still be pairable or legacy firmware.
     if (!isMentraLivePairingScan || scanTimedOut || pairableResults.length > 0) {
       return
     }
@@ -330,9 +318,11 @@ export default function SelectGlassesBluetoothScreen() {
     void triggerGlassesPairingGuide(pairableResults[0])
   }, [isMentraLivePairingScan, scanTimedOut, pairableResults])
 
-  const handleTryAgain = () => {
-    // Restart scan in place — do not pop back to prep.
-    void startScanAttempt()
+  const handleTryAgain = async () => {
+    // Restart scan in place — do not pop back to prep. Explicitly stop first so
+    // iOS forgets the prior allowDuplicates=false result after pairing mode changes.
+    await BluetoothSdk.stopScan()
+    await startScanAttempt()
   }
 
   const scanTitle = (() => {
@@ -341,15 +331,20 @@ export default function SelectGlassesBluetoothScreen() {
         ? translate("pairing:noGlassesFound")
         : translate("pairing:scanningForGlassesModel", {model: selectedDisplayName})
     }
-    if (scanTimedOut) {
-      return hasNearbyNotInPairingMode
-        ? translate("pairing:livePairingFoundTitle")
-        : translate("pairing:liveScanHelpTitle")
+    if (shouldShowDeviceList) {
+      return translate("pairing:liveChooseGlassesTitle")
     }
-    return shouldShowDeviceList ? translate("pairing:liveChooseGlassesTitle") : translate("pairing:liveScanTitle")
+    if (hasNearbyNotInPairingMode) {
+      return translate("pairing:livePairingFoundTitle")
+    }
+    if (scanTimedOut) {
+      return translate("pairing:liveScanHelpTitle")
+    }
+    return translate("pairing:liveScanTitle")
   })()
 
-  const showLivePairingHelp = isMentraLivePairingScan && scanTimedOut
+  const showLivePairingHelp =
+    isMentraLivePairingScan && (scanTimedOut || (pairableResults.length === 0 && hasNearbyNotInPairingMode))
 
   return (
     <Screen preset="fixed" safeAreaEdges={["bottom"]} extraAndroidInsets>
@@ -379,6 +374,7 @@ export default function SelectGlassesBluetoothScreen() {
                 className="text-center text-sm leading-5 text-muted-foreground"
                 text={translate("pairing:livePairingModeInfo")}
               />
+              {!scanTimedOut ? <ActivityIndicator size="small" color={theme.colors.foreground} /> : null}
               <Button preset="primary" tx="pairing:scanAgain" onPress={handleTryAgain} className="w-full mt-2" />
             </View>
           ) : scanTimedOut ? (

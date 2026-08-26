@@ -25,6 +25,20 @@ struct MentraLiveDevice {
     let address: String
 }
 
+enum MentraLivePendingPairingTarget {
+    static func matches(
+        connectedName: String,
+        connectedIdentifier: String,
+        pendingName: String,
+        pendingIdentifier: String
+    ) -> Bool {
+        if !pendingIdentifier.isEmpty {
+            return connectedIdentifier.caseInsensitiveCompare(pendingIdentifier) == .orderedSame
+        }
+        return !pendingName.isEmpty && connectedName == pendingName
+    }
+}
+
 // MARK: - BlePhotoUploadService
 
 class BlePhotoUploadService {
@@ -1773,6 +1787,7 @@ class MentraLive: NSObject, SGCManager {
             UserDefaults.standard.set("", forKey: PREFS_DEVICE_NAME)
 
             startScan()
+            emitConnectedPendingDeviceForPairingScan()
         }
     }
 
@@ -2363,10 +2378,6 @@ class MentraLive: NSObject, SGCManager {
         // }
 
         centralManager?.scanForPeripherals(withServices: nil, options: scanOptions)
-
-        // Pairing discovery must stay advertisement-driven. An already-connected
-        // peripheral has no current pairing-mode advertisement, so surfacing it here
-        // would make RN treat the owner's glasses as pairable and auto-select them.
 
         // var dName = DeviceManager.shared.deviceName
         // if dName.isEmpty {
@@ -5501,6 +5512,31 @@ class MentraLive: NSObject, SGCManager {
     }
 
     // MARK: - Event Emission
+
+    /// A selected pairing target can stop advertising once GATT connects, before readiness
+    /// promotes it to the default device. Re-emit only that explicit pending target; an
+    /// established owner's connected glasses have no pending identity and remain hidden.
+    private func emitConnectedPendingDeviceForPairingScan() {
+        guard !pairingYieldActive, let peripheral = connectedPeripheral, let name = peripheral.name,
+              MentraLivePendingPairingTarget.matches(
+                  connectedName: name,
+                  connectedIdentifier: peripheral.identifier.uuidString,
+                  pendingName: DeviceStore.shared.get("bluetooth", "pending_device_name") as? String ?? "",
+                  pendingIdentifier: DeviceStore.shared.get("bluetooth", "pending_device_address") as? String ?? ""
+              )
+        else {
+            return
+        }
+
+        Bridge.log("LIVE: Pairing scan: recovering connected pending target \(name) (\(peripheral.identifier))")
+        emitDiscoveredDevice(
+            name,
+            identifier: peripheral.identifier.uuidString,
+            pairingMode: true,
+            pairingCode: nil,
+            securePairingCapable: discoveredAdvPairing[name]?.securePairingCapable ?? false
+        )
+    }
 
     private func cacheAdvPairing(
         _ name: String,

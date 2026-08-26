@@ -82,6 +82,18 @@ internal fun hasRequiredMentraLiveCoreCharacteristics(
         hasTxCharacteristic: Boolean,
 ): Boolean = hasRxCharacteristic && hasTxCharacteristic
 
+internal fun isPendingMentraLivePairingTarget(
+        connectedName: String,
+        connectedAddress: String,
+        pendingName: String,
+        pendingAddress: String,
+): Boolean {
+    if (pendingAddress.isNotEmpty()) {
+        return connectedAddress.equals(pendingAddress, ignoreCase = true)
+    }
+    return pendingName.isNotEmpty() && connectedName == pendingName
+}
+
 /**
  * Smart Glasses Communicator for Mentra Live (K900) glasses Uses BLE to communicate with the
  * glasses
@@ -1265,9 +1277,6 @@ class MentraLive : SGCManager() {
             val generation = ++scanGeneration
             isScanning = true
             bluetoothScanner!!.startScan(filters, settings, scanCallback)
-            // Pairing discovery must stay advertisement-driven. An already-connected
-            // device has no current pairing-mode advertisement, so surfacing it here
-            // would make RN treat the owner's glasses as pairable and auto-select them.
 
             // Set a timeout to stop scanning
             handler.postDelayed(
@@ -1347,6 +1356,36 @@ class MentraLive : SGCManager() {
         val body = HashMap<String, Any>()
         body["deviceModel"] = DeviceTypes.LIVE
         Bridge.sendTypedMessage("compatible_glasses_search_stop", body)
+    }
+
+    /**
+     * A selected pairing target can stop advertising once its GATT link comes up, before
+     * readiness promotes it to the default device. Re-emit only that explicit pending target;
+     * an established owner's connected glasses have no pending name/address and stay hidden.
+     */
+    private fun emitConnectedPendingDeviceForPairingScan() {
+        if (!manualDiscoveryActive || isReconnecting || pairingYieldActive) return
+        val device = connectedDevice ?: bluetoothGatt?.device ?: return
+        val name = safeBondedDeviceName(device)
+        if (!isMentraLiveBluetoothName(name)) return
+
+        val pendingName = DeviceStore.get("bluetooth", "pending_device_name") as? String ?: ""
+        val pendingAddress =
+                DeviceStore.get("bluetooth", "pending_device_address") as? String ?: ""
+        val address = device.address ?: ""
+        if (!isPendingMentraLivePairingTarget(name, address, pendingName, pendingAddress)) return
+
+        Bridge.log(
+                "LIVE: Pairing scan: recovering connected pending target $name ($address)"
+        )
+        Bridge.sendDiscoveredDevice(
+                DeviceTypes.LIVE,
+                name,
+                address,
+                pairingMode = true,
+                pairingCode = null,
+                securePairingCapable = false,
+        )
     }
 
     var seenDevices: MutableSet<String> = HashSet()
@@ -5890,6 +5929,7 @@ class MentraLive : SGCManager() {
 
         // Start scanning for BLE devices
         startScan()
+        handler.post { emitConnectedPendingDeviceForPairingScan() }
     }
 
     private fun releaseStaleClassicForDiscovery() {

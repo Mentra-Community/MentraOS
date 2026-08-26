@@ -81,11 +81,14 @@ describe("preparePairingScan", () => {
   it("preserves the Android permission order before checking connectivity", async () => {
     Object.defineProperty(Platform, "OS", {value: "android", configurable: true})
     Object.defineProperty(Platform, "Version", {value: 33, configurable: true})
-    const requestMultiple = jest.spyOn(PermissionsAndroid, "requestMultiple").mockResolvedValue({
+    const grantedBluetoothPermissions = {
       [PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN]: PermissionsAndroid.RESULTS.GRANTED,
       [PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT]: PermissionsAndroid.RESULTS.GRANTED,
       [PermissionsAndroid.PERMISSIONS.BLUETOOTH_ADVERTISE]: PermissionsAndroid.RESULTS.GRANTED,
-    })
+    } as Awaited<ReturnType<typeof PermissionsAndroid.requestMultiple>>
+    const requestMultiple = jest
+      .spyOn(PermissionsAndroid, "requestMultiple")
+      .mockResolvedValue(grantedBluetoothPermissions)
 
     await expect(preparePairingScan("Mentra Live")).resolves.toBe(true)
 

@@ -3,6 +3,41 @@ import Foundation
 import XCTest
 
 final class MentraLivePairingAdvertisementTests: XCTestCase {
+    func testConnectedPairingRecoveryRequiresExplicitPendingTarget() {
+        XCTAssertFalse(
+            MentraLivePendingPairingTarget.matches(
+                connectedName: "MENTRA_LIVE_BLE_OWNER",
+                connectedIdentifier: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+                pendingName: "",
+                pendingIdentifier: ""
+            )
+        )
+        XCTAssertTrue(
+            MentraLivePendingPairingTarget.matches(
+                connectedName: "MENTRA_LIVE_BLE_TARGET",
+                connectedIdentifier: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+                pendingName: "MENTRA_LIVE_BLE_TARGET",
+                pendingIdentifier: ""
+            )
+        )
+        XCTAssertTrue(
+            MentraLivePendingPairingTarget.matches(
+                connectedName: "MENTRA_LIVE_BLE_TARGET",
+                connectedIdentifier: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+                pendingName: "OTHER",
+                pendingIdentifier: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+            )
+        )
+        XCTAssertFalse(
+            MentraLivePendingPairingTarget.matches(
+                connectedName: "MENTRA_LIVE_BLE_TARGET",
+                connectedIdentifier: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+                pendingName: "MENTRA_LIVE_BLE_TARGET",
+                pendingIdentifier: "11111111-2222-3333-4444-555555555555"
+            )
+        )
+    }
+
     func testConnectionCallbackPolicyRejectsPairingYieldAndStaleAttempts() {
         XCTAssertFalse(
             MentraLiveConnectionAttemptPolicy.shouldAcceptDidConnect(

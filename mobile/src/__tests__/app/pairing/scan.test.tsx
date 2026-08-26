@@ -593,7 +593,7 @@ describe("pairing scan screen", () => {
     expect(push).toHaveBeenCalledTimes(1)
   })
 
-  it("shows pairing-mode instructions immediately when a newer idle Mentra Live is nearby", async () => {
+  it("shows pairing-mode help but keeps scanning for a pairable Mentra Live", async () => {
     setPlatformOS("android")
     useCoreStore.setState({
       searchResults: [
@@ -617,9 +617,46 @@ describe("pairing scan screen", () => {
       expect(getByText("pairing:scanAgain")).toBeTruthy()
     })
     const {bluetoothSdkMock} = require("@/test-utils/mockBluetoothSdk")
-    expect(bluetoothSdkMock.stopScan).toHaveBeenCalled()
+    expect(bluetoothSdkMock.stopScan).not.toHaveBeenCalled()
     expect(queryByText(/IDLE/)).toBeNull()
     expect(push).not.toHaveBeenCalled()
+    ;(engine.pairing.scan as jest.Mock).mockClear()
+    fireEvent.press(getByText("pairing:scanAgain"))
+    await waitFor(() => {
+      expect(bluetoothSdkMock.stopScan).toHaveBeenCalled()
+      expect(engine.pairing.scan).toHaveBeenCalledWith("Mentra Live")
+    })
+
+    act(() => {
+      useCoreStore.setState({
+        searchResults: [
+          {
+            id: "idle",
+            model: "Mentra Live",
+            name: "MENTRA_LIVE_BLE_IDLE",
+            address: "idle",
+            pairingMode: false,
+            securePairingCapable: true,
+          },
+          {
+            id: "target",
+            model: "Mentra Live",
+            name: "MENTRA_LIVE_BLE_TARGET",
+            address: "target",
+            pairingMode: true,
+            pairingCode: "A1B2",
+            securePairingCapable: true,
+          },
+        ],
+      })
+    })
+
+    await waitFor(() => {
+      expect(push).toHaveBeenCalledWith(
+        "/pairing/loading",
+        expect.objectContaining({deviceName: "MENTRA_LIVE_BLE_TARGET"}),
+      )
+    })
   })
 
   it("filters AR99 scan results to the selected AR99 project", async () => {
