@@ -549,6 +549,49 @@ public class AsgClientService extends Service implements NetworkStateListener, T
         }
     }
 
+    /**
+     * Push the photo-prompt occupancy lease to BES. {@code B} is a JSON string so cJSON populates
+     * {@code valuestring}, matching {@link #handleI2SAudioState}.
+     *
+     * @return true if the UART write was accepted
+     */
+    public boolean sendPhotoPromptBusy(boolean busy) {
+        Log.i(TAG, "Photo prompt occupancy: " + (busy ? "busy" : "clear"));
+        try {
+            JSONObject payload = new JSONObject();
+            payload.put("C", "mh_phobsy");
+            payload.put("V", 1);
+            JSONObject body = new JSONObject();
+            body.put("b", busy ? 1 : 0);
+            if (busy) {
+                body.put("ttl", AsgConstants.PHOTO_PROMPT_BUSY_TTL_MS);
+            }
+            payload.put("B", body.toString());
+            return sendK900Command(payload.toString());
+        } catch (JSONException e) {
+            Log.e(TAG, "Failed to construct photo prompt occupancy payload", e);
+            return false;
+        }
+    }
+
+    /**
+     * Republish occupancy after BES/UART link-up so a reboot cannot leave the lease stale for more
+     * than one renewal interval.
+     */
+    public void resyncPhotoPromptOccupancy() {
+        if (serviceInitializer == null || serviceInitializer.getServiceManager() == null) {
+            Log.w(TAG, "Cannot resync photo prompt occupancy; service manager unavailable");
+            return;
+        }
+        MediaCaptureService mediaCaptureService =
+                serviceInitializer.getServiceManager().getMediaCaptureService();
+        if (mediaCaptureService == null) {
+            Log.w(TAG, "Cannot resync photo prompt occupancy; MediaCaptureService unavailable");
+            return;
+        }
+        mediaCaptureService.resyncPhotoPromptOccupancy();
+    }
+
     // ---------------------------------------------
     // Touch/Swipe Event Commands
     // ---------------------------------------------
@@ -1082,6 +1125,9 @@ public class AsgClientService extends Service implements NetworkStateListener, T
 
             Log.d(TAG, "🎯 Enabling swipe volume control on Bluetooth connection");
             handleSwipeVolumeControl(false);
+
+            Log.d(TAG, "📷 Resyncing photo prompt occupancy on Bluetooth connection");
+            resyncPhotoPromptOccupancy();
         } else {
             Log.d(TAG, "📶 Bluetooth disconnected - no additional actions needed");
         }
