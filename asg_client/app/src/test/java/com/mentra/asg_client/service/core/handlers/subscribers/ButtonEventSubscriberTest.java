@@ -1,10 +1,13 @@
 package com.mentra.asg_client.service.core.handlers.subscribers;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -18,6 +21,7 @@ import com.mentra.asg_client.io.peripheral.events.ButtonEvent;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
 import com.mentra.asg_client.settings.AsgSettings;
+import com.mentra.asg_client.settings.VideoSettings;
 import java.util.ArrayDeque;
 import java.util.Queue;
 import org.junit.Before;
@@ -61,7 +65,11 @@ public class ButtonEventSubscriberTest {
         when(bluetoothManager.isConnected()).thenReturn(false);
         when(asgSettings.isSaveInGalleryMode()).thenReturn(false);
         when(asgSettings.getButtonPhotoSize()).thenReturn("medium");
+        when(asgSettings.getButtonVideoSettings()).thenReturn(VideoSettings.getDefault());
+        when(asgSettings.getButtonMaxRecordingTimeMinutes()).thenReturn(10);
         when(captureService.isRecordingVideo()).thenReturn(false);
+        when(captureService.isCaptureInFlight()).thenReturn(false);
+        when(captureService.isPhotoJobInFlight()).thenReturn(false);
 
         subscriber =
                 new ButtonEventSubscriber(
@@ -73,6 +81,10 @@ public class ButtonEventSubscriberTest {
 
     private void shortPress() {
         subscriber.onMcuEvent(new ButtonEvent(ButtonEvent.Type.CAMERA_SHORT_PRESS));
+    }
+
+    private void longPress() {
+        subscriber.onMcuEvent(new ButtonEvent(ButtonEvent.Type.CAMERA_LONG_PRESS));
     }
 
     private void powerShortPress() {
@@ -169,5 +181,87 @@ public class ButtonEventSubscriberTest {
         shortPress();
 
         verify(captureService).takePhotoLocally(anyString(), anyBoolean(), anyBoolean());
+    }
+
+    @Test
+    public void shortPress_whileCaptureInFlight_doesNotTakePhoto() {
+        when(serviceManager.getAsgSettings().isSaveInGalleryMode()).thenReturn(true);
+        when(captureService.isCaptureInFlight()).thenReturn(true);
+
+        shortPress();
+
+        verify(captureService, never()).takePhotoLocally(anyString(), anyBoolean(), anyBoolean());
+        verify(captureService, never())
+                .startVideoRecording(any(), anyBoolean(), anyInt(), anyInt());
+    }
+
+    @Test
+    public void longPress_whileCaptureInFlight_doesNotStartVideo() {
+        when(serviceManager.getAsgSettings().isSaveInGalleryMode()).thenReturn(true);
+        when(captureService.isCaptureInFlight()).thenReturn(true);
+
+        longPress();
+
+        verify(captureService, never())
+                .startVideoRecording(any(), anyBoolean(), anyInt(), anyInt());
+        verify(captureService, never()).takePhotoLocally(anyString(), anyBoolean(), anyBoolean());
+    }
+
+    @Test
+    public void shortPress_whileCaptureInFlightAndRecording_stillStopsRecording() {
+        when(serviceManager.getAsgSettings().isSaveInGalleryMode()).thenReturn(true);
+        when(captureService.isCaptureInFlight()).thenReturn(true);
+        when(captureService.isRecordingVideo()).thenReturn(true);
+
+        shortPress();
+
+        verify(captureService).stopVideoRecording();
+        verify(captureService, never()).takePhotoLocally(anyString(), anyBoolean(), anyBoolean());
+    }
+
+    @Test
+    public void droppedShortPress_stillForwardsButtonPress() {
+        when(serviceManager.getAsgSettings().isSaveInGalleryMode()).thenReturn(true);
+        when(bluetoothManager.isConnected()).thenReturn(true);
+        when(captureService.isCaptureInFlight()).thenReturn(true);
+
+        shortPress();
+
+        verify(bluetoothManager).sendMessage(any(byte[].class));
+        verify(captureService, never()).takePhotoLocally(anyString(), anyBoolean(), anyBoolean());
+    }
+
+    @Test
+    public void droppedLongPress_stillForwardsButtonPress() {
+        when(serviceManager.getAsgSettings().isSaveInGalleryMode()).thenReturn(true);
+        when(bluetoothManager.isConnected()).thenReturn(true);
+        when(captureService.isCaptureInFlight()).thenReturn(true);
+
+        longPress();
+
+        verify(bluetoothManager).sendMessage(any(byte[].class));
+        verify(captureService, never())
+                .startVideoRecording(any(), anyBoolean(), anyInt(), anyInt());
+    }
+
+    @Test
+    public void shortPress_duringSdkUploadTail_doesNotCapture() {
+        when(serviceManager.getAsgSettings().isSaveInGalleryMode()).thenReturn(true);
+        when(captureService.isPhotoJobInFlight()).thenReturn(true);
+
+        shortPress();
+
+        verify(captureService, never()).takePhotoLocally(anyString(), anyBoolean(), anyBoolean());
+    }
+
+    @Test
+    public void duplicateEncoding_secondPressSeesBusy_takesOnePhoto() {
+        when(serviceManager.getAsgSettings().isSaveInGalleryMode()).thenReturn(true);
+        when(captureService.isCaptureInFlight()).thenReturn(false).thenReturn(true);
+
+        shortPress();
+        shortPress();
+
+        verify(captureService, times(1)).takePhotoLocally(anyString(), anyBoolean(), anyBoolean());
     }
 }
