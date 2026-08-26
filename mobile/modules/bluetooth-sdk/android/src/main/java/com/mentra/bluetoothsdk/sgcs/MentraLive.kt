@@ -6854,12 +6854,21 @@ class MentraLive : SGCManager() {
                         ")"
         )
         markPairingTiming("ctkd_initiate", "bondState=${device.bondState}")
-        if (device.bondState == BluetoothDevice.BOND_BONDED) {
-            Bridge.log("LIVE: CTKD: Device is already bonded - connecting A2DP audio profile")
-            markPairingTiming("ctkd_already_bonded")
-            connectA2dpProfile(device)
-        } else {
-            createBond(device)
+        when (device.bondState) {
+            BluetoothDevice.BOND_BONDED -> {
+                Bridge.log(
+                        "LIVE: CTKD: Device is already bonded - connecting A2DP audio profile"
+                )
+                markPairingTiming("ctkd_already_bonded")
+                connectA2dpProfile(device)
+            }
+            BluetoothDevice.BOND_BONDING -> {
+                // Secure pairing firmware may request SMP as soon as GATT connects.
+                // Let that in-flight procedure finish instead of calling createBond twice.
+                Bridge.log("LIVE: CTKD: Bonding already in progress - waiting for completion")
+                markPairingTiming("ctkd_bonding_already_in_progress")
+            }
+            else -> createBond(device)
         }
     }
 
