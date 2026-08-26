@@ -59,9 +59,15 @@ Presence is reported by BES firmware >= 17.26.7.23 (`sr_phble` edges, `phone_ble
 
 `saveInGalleryMode` is **persisted in SharedPreferences** under the key `save_in_gallery_mode` (`AsgSettings.java:22, 215, 229`). It defaults to `true` on first read. The default ensures button presses still capture before the phone has a chance to set the flag explicitly.
 
+## Capture occupancy
+
+A camera-holding capture (button photo, camera web-server photo, or local-save SDK photo) occupies `CaptureBusyGate` until the JPEG is captured. While that signal — or the separate full-job `isPhotoJobInFlight()` lock — is set, further short presses do **not** enqueue another photo and further long presses do **not** start video. The press is still forwarded to the phone. Rapid-fire burst capture from the button is intentionally retired.
+
+A short or long press while video is already recording still **stops** the recording even if a capture is in flight. Upload, gallery sync, and BLE handoff after the JPEG is saved do not occupy the capture gate; an SDK upload tail can still block the button via `isPhotoJobInFlight()` until that job finishes.
+
 ## Short press: photo or stop video
 
-If a video is currently recording, a short press **stops the recording**. Otherwise it **takes a photo**:
+If a video is currently recording, a short press **stops the recording**. Otherwise, if a capture is already in flight, the press is dropped. Otherwise it **takes a photo**:
 
 ```java
 if (captureService.isRecordingVideo()) {
@@ -79,7 +85,7 @@ Settings consulted:
 
 ## Long press: video record / stop
 
-If a video is recording, a long press **stops it**. Otherwise it **starts video recording** with persisted settings, after a battery check:
+If a video is recording, a long press **stops it**. If a photo capture is in flight, the press is dropped (still forwarded). Otherwise it **starts video recording** with persisted settings, after a battery check:
 
 ```java
 if (captureService.isRecordingVideo()) {
