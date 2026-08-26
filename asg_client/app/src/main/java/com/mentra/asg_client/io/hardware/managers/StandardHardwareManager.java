@@ -184,11 +184,21 @@ public class StandardHardwareManager extends BaseHardwareManager {
 
     @Override
     public void playAudioAssetOverlay(String assetName) {
-        playAudioAssetOverlayTracked(assetName);
+        playAudioAssetOverlayTracked(assetName, 1.0f);
+    }
+
+    @Override
+    public void playAudioAssetOverlay(String assetName, float playbackVolume) {
+        playAudioAssetOverlayTracked(assetName, playbackVolume);
     }
 
     @Override
     public long playAudioAssetOverlayTracked(String assetName) {
+        return playAudioAssetOverlayTracked(assetName, 1.0f);
+    }
+
+    @Override
+    public long playAudioAssetOverlayTracked(String assetName, float playbackVolume) {
         long token = nextOverlayToken.getAndIncrement();
         MediaPlayer overlayPlayer = new MediaPlayer();
         synchronized (overlayPlayers) {
@@ -199,6 +209,7 @@ public class StandardHardwareManager extends BaseHardwareManager {
             overlayPlayer.setDataSource(
                     afd.getFileDescriptor(), afd.getStartOffset(), afd.getLength());
             afd.close();
+            overlayPlayer.setVolume(playbackVolume, playbackVolume);
             overlayPlayer.setOnCompletionListener(mp -> releaseOverlayPlayer(token, mp));
             overlayPlayer.setOnErrorListener(
                     (mp, what, extra) -> {
