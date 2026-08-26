@@ -650,18 +650,20 @@ export class BlobStore {
     // file that carries the real display name + extension, share that, then
     // clean it up after the recipient has had time to consume it.
     const shareName = shareFileName(meta)
-    // Copy into a per-share unique subdir so two concurrent shares that resolve
-    // to the same display name can't clobber each other's temp file while
-    // Share.open still references it. The file keeps `shareName` as its basename
-    // so the OS share sheet shows the right name + extension.
+    // Key the cache directory by the immutable stored filename. Repeated or
+    // concurrent shares of the same blob can safely reference the same bytes,
+    // avoiding an extra full-sized cache copy for every share. Different blobs
+    // still get isolated directories even when they use the same display name.
+    // The file keeps `shareName` as its basename so the OS share sheet shows the
+    // right name + extension.
     let tempDir: Directory | null = null
     let handedOff = false
     try {
       this.cleanupShareCache()
-      tempDir = new Directory(Paths.cache, SHARE_DIR_NAME, this.makeId())
-      tempDir.create({intermediates: true})
+      tempDir = new Directory(Paths.cache, SHARE_DIR_NAME, sanitizeSegment(meta.fileName))
+      if (!tempDir.exists) tempDir.create({intermediates: true})
       const temp = new File(tempDir, shareName)
-      file.copy(temp)
+      if (!temp.exists) file.copy(temp)
       await Share.open({
         url: temp.uri,
         type: meta.mimeType || OCTET,
