@@ -1,5 +1,5 @@
 import React from "react"
-import {render, act, fireEvent} from "@testing-library/react-native"
+import {render, act, fireEvent, waitFor} from "@testing-library/react-native"
 
 import {useGlassesStore} from "../../../../modules/engine/src/stores/glasses"
 import {useNavigationStore} from "@/stores/navigation"
@@ -437,7 +437,7 @@ describe("progress.tsx display states", () => {
     expect(getByText("Glasses disconnected")).toBeDefined()
   })
 
-  it("shows Skip (super) when disconnected in super mode", () => {
+  it("shows Skip (super) when disconnected in super mode", async () => {
     setSuperMode(true)
     setGlassesDisconnected()
     useGlassesStore.getState().setOtaStatus({
@@ -454,7 +454,7 @@ describe("progress.tsx display states", () => {
     const {getByText, getByTestId} = render(<OtaProgressScreen />)
     expect(getByText("Skip (super)")).toBeDefined()
     fireEvent.press(getByTestId("button-Skip (super)"))
-    expect(replaceSpy).toHaveBeenCalled()
+    await waitFor(() => expect(replaceSpy).toHaveBeenCalled())
     replaceSpy.mockRestore()
   })
 
