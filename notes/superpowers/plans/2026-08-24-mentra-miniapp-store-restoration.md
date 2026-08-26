@@ -222,7 +222,7 @@ data; each deployment may publish both stable and beta releases.
       another Store's packages.
 - [x] Keep the Store itself out of its in-process update loop; Store-self update
       remains a future signed host-owned updater concern.
-- [x] Package and integrity-check `com.mentra.store-1.0.9.zip`.
+- [x] Package and integrity-check `com.mentra.store-1.0.10.zip`.
 
 ## Verification
 

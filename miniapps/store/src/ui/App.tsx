@@ -556,7 +556,7 @@ function Detail({
                 {app.preferredTrack === "beta" && app.selectedTrack === "stable"
                   ? "You’re enrolled in beta. Stable is shown until the next beta release is available."
                   : app.preferredTrack === "beta"
-                    ? "You’re a beta tester. Preview releases install automatically, and you can leave at any time."
+                    ? "You’re a beta tester. Preview releases install automatically. Leaving stops future beta updates; the installed preview remains until a newer stable release is available."
                     : app.betaAccess === "invited"
                       ? "You’ve been invited to this private beta."
                       : "This developer offers a public beta with preview releases."}

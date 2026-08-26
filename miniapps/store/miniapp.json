@@ -1,7 +1,7 @@
 {
   "$schema": "./node_modules/@mentra/miniapp-cli/schema/miniapp.schema.json",
   "packageName": "com.mentra.store",
-  "version": "1.0.9",
+  "version": "1.0.10",
   "name": "Mentra Miniapp Store",
   "description": "Discover, install, update, and manage Mentra miniapps.",
   "icon": "icon.png",
