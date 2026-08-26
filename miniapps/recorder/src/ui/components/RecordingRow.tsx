@@ -9,6 +9,7 @@ interface Props {
   playing: boolean
   posMs: number
   unavailable: boolean
+  shareFailed: boolean
   onPlay: () => void
   onStopPlay: () => void
   onExport: () => void
@@ -24,6 +25,7 @@ export function RecordingRow({
   playing,
   posMs,
   unavailable,
+  shareFailed,
   onPlay,
   onStopPlay,
   onExport,
@@ -37,7 +39,9 @@ export function RecordingRow({
   const elapsed = playing ? Math.min(posMs, item.durationMs) : 0
 
   return (
-    <div className="rounded-2xl overflow-hidden elev" style={{background: "var(--surface)", border: "1px solid var(--border)"}}>
+    <div
+      className="rounded-2xl overflow-hidden elev"
+      style={{background: "var(--surface)", border: "1px solid var(--border)"}}>
       <div className="flex items-start gap-3 p-3.5">
         <button
           type="button"
@@ -65,7 +69,9 @@ export function RecordingRow({
               {item.title ?? item.name}
             </span>
             {item.truncated ? (
-              <span className="text-[10px] px-1.5 py-0.5 rounded-full shrink-0" style={{background: "var(--rec)", color: "#fff"}}>
+              <span
+                className="text-[10px] px-1.5 py-0.5 rounded-full shrink-0"
+                style={{background: "var(--rec)", color: "#fff"}}>
                 capped
               </span>
             ) : null}
@@ -117,7 +123,9 @@ export function RecordingRow({
           <div className="px-3.5 pb-3.5 pt-0.5">
             <div className="h-px w-full mb-3" style={{background: "var(--border)"}} />
             {hasTranscript ? (
-              <p className="text-[13px] leading-relaxed mb-3 max-h-40 overflow-y-auto scrollbar-hide" style={{color: "var(--text-muted)"}}>
+              <p
+                className="text-[13px] leading-relaxed mb-3 max-h-40 overflow-y-auto scrollbar-hide"
+                style={{color: "var(--text-muted)"}}>
                 {item.transcript}
               </p>
             ) : (
@@ -128,9 +136,18 @@ export function RecordingRow({
             <div className="flex gap-2">
               <RowAction icon={<Share2 className="w-4 h-4" />} label="Share audio" onClick={onExport} />
               {hasTranscript ? (
-                <RowAction icon={<FileText className="w-4 h-4" />} label="Share transcript" onClick={onExportTranscript} />
+                <RowAction
+                  icon={<FileText className="w-4 h-4" />}
+                  label="Share transcript"
+                  onClick={onExportTranscript}
+                />
               ) : null}
             </div>
+            {shareFailed ? (
+              <p className="mt-2 text-center text-[12px] font-semibold" style={{color: "var(--rec)"}}>
+                Couldn’t share this recording. Please try again.
+              </p>
+            ) : null}
           </div>
         </div>
       </div>

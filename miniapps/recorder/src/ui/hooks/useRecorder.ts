@@ -18,6 +18,7 @@ const WAVE_BARS = 56
  *   rec:list          -> recordings + usage after save/delete/clear
  *   rec:playback      -> which recording is playing
  *   rec:audio-missing -> a recording's stored audio is unreadable
+ *   rec:share-failed  -> a recording couldn't be handed to the selected app
  *
  * Playback runs natively in the background via `session.speaker.play` (the file
  * never crosses the bridge). The progress scrubber is driven UI-side off a
@@ -36,8 +37,10 @@ export function useRecorder() {
   const [transcriptLang, setTranscriptLang] = useState("")
   const [playPosMs, setPlayPosMs] = useState(0)
   const [unavailableId, setUnavailableId] = useState<string | null>(null)
+  const [shareFailedId, setShareFailedId] = useState<string | null>(null)
   const mounted = useRef(true)
   const unavailableTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const shareFailedTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Tracks the capture a status belongs to, so we only clear the live transcript
   // + waveform when a genuinely new capture starts — not on a same-capture
   // status (e.g. an early pause that reports ms === 0 before any PCM buffered).
@@ -147,11 +150,23 @@ export function useRecorder() {
         }, 2600)
       }),
     )
+    offs.push(
+      on("rec:share-failed", (p) => {
+        if (!mounted.current) return
+        const {id} = p as {id: string}
+        setShareFailedId(id)
+        if (shareFailedTimer.current) clearTimeout(shareFailedTimer.current)
+        shareFailedTimer.current = setTimeout(() => {
+          if (mounted.current) setShareFailedId(null)
+        }, 4000)
+      }),
+    )
 
     mentra.send("rec:request-snapshot", {})
     return () => {
       mounted.current = false
       if (unavailableTimer.current) clearTimeout(unavailableTimer.current)
+      if (shareFailedTimer.current) clearTimeout(shareFailedTimer.current)
       for (const off of offs) off()
     }
   }, [])
@@ -200,6 +215,7 @@ export function useRecorder() {
     playingId,
     playPosMs,
     unavailableId,
+    shareFailedId,
     hasMic,
     ready,
     isRecording: status !== null,

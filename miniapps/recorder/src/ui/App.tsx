@@ -116,6 +116,7 @@ export function App() {
                     playing={rec.playingId === item.id}
                     posMs={rec.playingId === item.id ? rec.playPosMs : 0}
                     unavailable={rec.unavailableId === item.id}
+                    shareFailed={rec.shareFailedId === item.id}
                     onPlay={() => rec.play(item.id)}
                     onStopPlay={rec.stopPlay}
                     onExport={() => rec.exportRecording(item.id)}
