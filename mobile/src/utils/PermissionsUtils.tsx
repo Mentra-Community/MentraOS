@@ -349,6 +349,20 @@ export const requestFeaturePermissions = async (featureKey: string): Promise<boo
   if (Platform.OS === "ios" && config.ios.length > 0) {
     for (const permission of config.ios) {
       try {
+        // Calendar reads and their permission prompt both belong to
+        // expo-calendar. Keeping the check, request, and eventual reads on
+        // the same EventKit bridge avoids a first-grant race where
+        // react-native-permissions resolves before expo-calendar observes the
+        // updated authorization state.
+        if (permission === PERMISSIONS.IOS.CALENDARS) {
+          const currentPermission = await ExpoCalendar.getCalendarPermissionsAsync()
+          if (currentPermission.status === "denied" && !currentPermission.canAskAgain) {
+            await handlePreviouslyDeniedPermission(config)
+            return false
+          }
+          continue
+        }
+
         // Check current status before requesting
         const currentStatus = await check(permission)
         console.log(`Current status for ${permission}:`, currentStatus)
@@ -469,20 +483,26 @@ export const requestFeaturePermissions = async (featureKey: string): Promise<boo
   if (Platform.OS === "ios" && config.ios.length > 0) {
     for (const permission of config.ios) {
       try {
-        const result = await request(permission)
-        if (result === RESULTS.GRANTED) {
-          // iOS 17+ can resolve a scoped calendar grant (write-only / "Select
-          // Calendars…") as GRANTED without re-reading EventKit. expo-calendar
-          // (what actually reads events) requires full access, so verify
-          // against it before trusting the grant.
-          if (permission === PERMISSIONS.IOS.CALENDARS) {
-            const eventKit = await ExpoCalendar.getCalendarPermissionsAsync()
-            if (eventKit.status !== "granted") {
-              allGranted = false
+        if (permission === PERMISSIONS.IOS.CALENDARS) {
+          // Use the permission response returned by the same native module
+          // that reads calendars. A separate immediate get call can still
+          // observe the pre-prompt state during the app's first session.
+          const eventKit = await ExpoCalendar.requestCalendarPermissionsAsync()
+          if (eventKit.status === "granted") {
+            partiallyGranted = true
+            await markPermissionGranted(featureKey)
+          } else {
+            allGranted = false
+            if (!eventKit.canAskAgain) {
               await handlePreviouslyDeniedPermission(config)
               return false
             }
           }
+          continue
+        }
+
+        const result = await request(permission)
+        if (result === RESULTS.GRANTED) {
           partiallyGranted = true
           await markPermissionGranted(featureKey)
         } else if (result === RESULTS.LIMITED) {
