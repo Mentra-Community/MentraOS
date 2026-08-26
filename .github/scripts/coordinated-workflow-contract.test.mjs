@@ -41,6 +41,7 @@ test("release finalization reads the preserved OTA artifact layout", () => {
 
 test("production validates before approval and proves packages before mobile promotion", () => {
   const production = workflow("coordinated-production-promotion.yml")
+  const sdkNative = jobBlock(workflow("reusable-coordinated-sdk-native.yml"), "prepare")
 
   assert.doesNotMatch(jobBlock(production, "plan"), /^    needs:/m)
   assert.match(jobBlock(production, "approve"), /^    needs: plan$/m)
@@ -52,6 +53,15 @@ test("production validates before approval and proves packages before mobile pro
   assert.match(
     jobBlock(production, "finalize"),
     /^    needs: \[plan, approve, npm, sdk-native, mobile, engine-consumer\]$/m,
+  )
+  assert.match(sdkNative, /channel=\$\(jq -er \.channel release-intent\/release-plan\.json\)/)
+  assert.match(
+    sdkNative,
+    /if \[\[ "\$channel" == "production" \]\]; then\s+\[\[ "\$\(jq -r \.draft <<< "\$release"\)" == "true" \]\]\s+\[\[ "\$\(jq -r \.prerelease <<< "\$release"\)" == "false" \]\]/,
+  )
+  assert.match(
+    sdkNative,
+    /else\s+\[\[ "\$\(jq -r \.draft <<< "\$release"\)" == "false" \]\]\s+\[\[ "\$\(jq -r \.prerelease <<< "\$release"\)" == "true" \]\]/,
   )
 })
 

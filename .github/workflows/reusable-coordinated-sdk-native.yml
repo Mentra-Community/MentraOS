@@ -74,8 +74,14 @@ jobs:
           release=$(gh api "repos/${GITHUB_REPOSITORY}/releases/$RELEASE_ID")
           [[ "$(jq -r .tag_name <<< "$release")" == "$tag" ]]
           [[ "$(jq -r .name <<< "$release")" == "$(jq -er .artifactContainerName release-intent/release-plan.json)" ]]
-          [[ "$(jq -r .draft <<< "$release")" == "false" ]]
-          [[ "$(jq -r .prerelease <<< "$release")" == "true" ]]
+          channel=$(jq -er .channel release-intent/release-plan.json)
+          if [[ "$channel" == "production" ]]; then
+            [[ "$(jq -r .draft <<< "$release")" == "true" ]]
+            [[ "$(jq -r .prerelease <<< "$release")" == "false" ]]
+          else
+            [[ "$(jq -r .draft <<< "$release")" == "false" ]]
+            [[ "$(jq -r .prerelease <<< "$release")" == "true" ]]
+          fi
           {
             echo "release_id=$RELEASE_ID"
             echo "release_tag=$tag"
