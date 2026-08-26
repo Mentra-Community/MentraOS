@@ -145,6 +145,8 @@ import {useNavigationStore} from "@/stores/navigation"
 import {requestFeaturePermissions} from "@/utils/PermissionsUtils"
 import SelectGlassesBluetoothScreen from "@/app/pairing/scan"
 import {useCoreStore} from "@mentra/engine-host-internal"
+// The glasses store is private to the local engine workspace and has no public test export.
+// eslint-disable-next-line no-restricted-imports
 import {useGlassesStore} from "../../../../modules/engine/src/stores/glasses"
 import {SETTINGS} from "@mentra/engine"
 import {useSettingsStore} from "@mentra/engine-host-internal"
@@ -170,9 +172,7 @@ describe("pairing scan screen", () => {
     useSettingsStore.getState().resetAllSettingsLocally()
     // The screen reads scan results through the pairing facade now; delegate the
     // mocked facade to the real core store this test seeds via setState().
-    ;(engine.pairing.searchResults as jest.Mock).mockImplementation(() => [
-      ...useCoreStore.getState().searchResults,
-    ])
+    ;(engine.pairing.searchResults as jest.Mock).mockImplementation(() => [...useCoreStore.getState().searchResults])
     ;(engine.pairing.onFound as jest.Mock).mockImplementation((cb: (results: unknown) => void) =>
       useCoreStore.subscribe((s) => s.searchResults, cb),
     )
@@ -228,11 +228,13 @@ describe("pairing scan screen", () => {
   })
 
   it("marks the chosen model pending on entry", async () => {
-    render(<SelectGlassesBluetoothScreen />)
+    const {getByText} = render(<SelectGlassesBluetoothScreen />)
 
     await waitFor(() => {
       expect(useSettingsStore.getState().getSetting(SETTINGS.pending_wearable.key)).toBe("Mentra Live")
     })
+    expect(getByText("pairing:liveScanTitle")).toBeTruthy()
+    expect(getByText("pairing:liveScanSubtitle")).toBeTruthy()
   })
 
   it("back-out delegates cleanup to the live abandonAttempt and keeps the pending marker", async () => {
@@ -355,8 +357,8 @@ describe("pairing scan screen", () => {
       const {getByText} = render(<SelectGlassesBluetoothScreen />)
 
       await waitFor(() => {
-        expect(getByText("pairing:noGlassesFound")).toBeTruthy()
-        expect(getByText("pairing:tryAgain")).toBeTruthy()
+        expect(getByText("pairing:liveScanHelpTitle")).toBeTruthy()
+        expect(getByText("pairing:scanAgain")).toBeTruthy()
       })
       const {bluetoothSdkMock} = require("@/test-utils/mockBluetoothSdk")
       expect(bluetoothSdkMock.stopScan).toHaveBeenCalled()
@@ -377,13 +379,16 @@ describe("pairing scan screen", () => {
         jest.advanceTimersByTime(15_000)
       })
 
-      expect(getByText("pairing:noGlassesFound")).toBeTruthy()
+      expect(getByText("pairing:liveScanHelpTitle")).toBeTruthy()
+      expect(getByText("pairing:liveScanHelpInfo")).toBeTruthy()
+      expect(getByText("pairing:liveUpdatedGlassesHint")).toBeTruthy()
+      expect(getByText("pairing:livePairingModeInfo")).toBeTruthy()
     } finally {
       jest.useRealTimers()
     }
   })
 
-  it("Try Again restarts scan in place without navigating back", async () => {
+  it("Scan Again restarts scan in place without navigating back", async () => {
     jest.useFakeTimers()
     try {
       setPlatformOS("android")
@@ -393,10 +398,10 @@ describe("pairing scan screen", () => {
       act(() => {
         jest.advanceTimersByTime(15_000)
       })
-      expect(getByText("pairing:noGlassesFound")).toBeTruthy()
+      expect(getByText("pairing:liveScanHelpTitle")).toBeTruthy()
       ;(engine.pairing.scan as jest.Mock).mockClear()
 
-      fireEvent.press(getByText("pairing:tryAgain"))
+      fireEvent.press(getByText("pairing:scanAgain"))
 
       await waitFor(() => {
         expect(engine.pairing.scan).toHaveBeenCalledWith("Mentra Live")
@@ -434,6 +439,7 @@ describe("pairing scan screen", () => {
     const {getByText} = render(<SelectGlassesBluetoothScreen />)
 
     await waitFor(() => {
+      expect(getByText("pairing:liveChooseGlassesTitle")).toBeTruthy()
       expect(getByText(/pairing:pairingCodeLabel:A1B2/)).toBeTruthy()
       expect(getByText(/pairing:pairingCodeLabel:C3D4/)).toBeTruthy()
     })
@@ -587,10 +593,41 @@ describe("pairing scan screen", () => {
     expect(push).toHaveBeenCalledTimes(1)
   })
 
-  it("keeps scanning without a list when only non-pairing Mentra Live units are nearby", async () => {
-    jest.useFakeTimers()
-    try {
-      setPlatformOS("android")
+  it("shows pairing-mode help but keeps scanning for a pairable Mentra Live", async () => {
+    setPlatformOS("android")
+    useCoreStore.setState({
+      searchResults: [
+        {
+          id: "idle",
+          model: "Mentra Live",
+          name: "MENTRA_LIVE_BLE_IDLE",
+          address: "idle",
+          pairingMode: false,
+          securePairingCapable: true,
+        },
+      ],
+    })
+
+    const {getByText, queryByText} = render(<SelectGlassesBluetoothScreen />)
+
+    await waitFor(() => {
+      expect(getByText("pairing:livePairingFoundTitle")).toBeTruthy()
+      expect(getByText("pairing:livePairingFoundSubtitle")).toBeTruthy()
+      expect(getByText("pairing:livePairingModeInfo")).toBeTruthy()
+      expect(getByText("pairing:scanAgain")).toBeTruthy()
+    })
+    const {bluetoothSdkMock} = require("@/test-utils/mockBluetoothSdk")
+    expect(bluetoothSdkMock.stopScan).not.toHaveBeenCalled()
+    expect(queryByText(/IDLE/)).toBeNull()
+    expect(push).not.toHaveBeenCalled()
+    ;(engine.pairing.scan as jest.Mock).mockClear()
+    fireEvent.press(getByText("pairing:scanAgain"))
+    await waitFor(() => {
+      expect(bluetoothSdkMock.stopScan).toHaveBeenCalled()
+      expect(engine.pairing.scan).toHaveBeenCalledWith("Mentra Live")
+    })
+
+    act(() => {
       useCoreStore.setState({
         searchResults: [
           {
@@ -601,24 +638,25 @@ describe("pairing scan screen", () => {
             pairingMode: false,
             securePairingCapable: true,
           },
+          {
+            id: "target",
+            model: "Mentra Live",
+            name: "MENTRA_LIVE_BLE_TARGET",
+            address: "target",
+            pairingMode: true,
+            pairingCode: "A1B2",
+            securePairingCapable: true,
+          },
         ],
       })
+    })
 
-      const {getByText, queryByText} = render(<SelectGlassesBluetoothScreen />)
-
-      expect(queryByText(/IDLE/)).toBeNull()
-      expect(push).not.toHaveBeenCalled()
-
-      act(() => {
-        jest.advanceTimersByTime(15_000)
-      })
-
-      expect(getByText("pairing:noGlassesFound")).toBeTruthy()
-      expect(getByText("pairing:nearbyNotInPairingModeHint")).toBeTruthy()
-      expect(queryByText(/IDLE/)).toBeNull()
-    } finally {
-      jest.useRealTimers()
-    }
+    await waitFor(() => {
+      expect(push).toHaveBeenCalledWith(
+        "/pairing/loading",
+        expect.objectContaining({deviceName: "MENTRA_LIVE_BLE_TARGET"}),
+      )
+    })
   })
 
   it("filters AR99 scan results to the selected AR99 project", async () => {

@@ -311,6 +311,7 @@ public final class MentraBluetoothSDK {
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "project_name", device.projectName ?? "")
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_name", "")
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_address", "")
+        DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_secure_pairing_capable", "")
         finishDefaultDeviceApply(generation: generation)
     }
 
@@ -324,6 +325,7 @@ public final class MentraBluetoothSDK {
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "project_name", "")
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_name", "")
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_address", "")
+        DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_secure_pairing_capable", "")
         finishDefaultDeviceApply(generation: generation)
     }
 
@@ -401,6 +403,11 @@ public final class MentraBluetoothSDK {
         } else if !isController {
             DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_name", device.name)
             DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_address", device.identifier ?? "")
+            DeviceStore.shared.apply(
+                ObservableStore.bluetoothCategory,
+                "pending_device_secure_pairing_capable",
+                device.securePairingCapable ?? ""
+            )
         }
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_wearable", device.model.deviceType)
         DeviceManager.shared.connectByName(device.name)
@@ -427,6 +434,7 @@ public final class MentraBluetoothSDK {
         clearBluetoothRestoreIntent()
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_name", "")
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_address", "")
+        DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_secure_pairing_capable", "")
         DeviceManager.shared.disconnect()
     }
 
@@ -439,6 +447,7 @@ public final class MentraBluetoothSDK {
         clearBluetoothRestoreIntent()
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_name", "")
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_address", "")
+        DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_secure_pairing_capable", "")
         DeviceManager.shared.disconnect()
     }
 

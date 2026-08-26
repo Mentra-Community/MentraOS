@@ -73,9 +73,9 @@ class BuiltInMiniappCatalog {
     })
 
     const syncMiniappDeveloperVisibility = (showOnHomeScreen: boolean | undefined) => {
-      const hidden = !Boolean(showOnHomeScreen)
-      appRegistry.setOfflineAppHidden(miniappDeveloperPackageName, hidden)
-      engine.miniapps.setHiddenStatus(miniappDeveloperPackageName, hidden)
+      const visible = Boolean(showOnHomeScreen)
+      appRegistry.setOfflineAppHidden(miniappDeveloperPackageName, !visible)
+      engine.miniapps.setHiddenStatus(miniappDeveloperPackageName, !visible)
     }
     syncMiniappDeveloperVisibility(Boolean(engine.settings.get(SETTINGS.miniapp_dev_mode.key)))
     engine.settings.onChanged<boolean>(SETTINGS.miniapp_dev_mode.key, syncMiniappDeveloperVisibility)

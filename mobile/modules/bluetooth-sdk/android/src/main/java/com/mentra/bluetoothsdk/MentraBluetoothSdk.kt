@@ -284,6 +284,7 @@ class MentraBluetoothSdk private constructor(
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "project_name", device.projectName ?: "")
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_name", "")
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_address", "")
+            DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_secure_pairing_capable", "")
         } finally {
             suppressDefaultDeviceEvents = false
         }
@@ -299,6 +300,7 @@ class MentraBluetoothSdk private constructor(
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "project_name", "")
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_name", "")
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_address", "")
+            DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_secure_pairing_capable", "")
         } finally {
             suppressDefaultDeviceEvents = false
         }
@@ -428,6 +430,11 @@ class MentraBluetoothSdk private constructor(
                         "pending_device_address",
                         device.address ?: "",
                 )
+                DeviceStore.apply(
+                        ObservableStore.BLUETOOTH_CATEGORY,
+                        "pending_device_secure_pairing_capable",
+                        device.securePairingCapable ?: "",
+                )
             }
         }
         DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_wearable", device.model.deviceType)
@@ -454,6 +461,7 @@ class MentraBluetoothSdk private constructor(
     fun cancelConnectionAttempt() {
         DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_name", "")
         DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_address", "")
+        DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_secure_pairing_capable", "")
         deviceManager.disconnect()
     }
 
@@ -464,6 +472,7 @@ class MentraBluetoothSdk private constructor(
     fun disconnect() {
         DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_name", "")
         DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_address", "")
+        DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_secure_pairing_capable", "")
         deviceManager.disconnect()
     }
 
