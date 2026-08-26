@@ -9,6 +9,17 @@ const MAX_ZIP_ENTRIES = 2_000;
 const PACKAGE_NAME_PATTERN = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/;
 const VERSION_PATTERN =
   /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+// Keep in sync with the public miniapp manifest schema in sdk/miniapp-cli.
+// SYSTEM is host-derived and is intentionally not author-declarable.
+const AUTHOR_DECLARABLE_PERMISSION_TYPES = new Set([
+  "MICROPHONE",
+  "CAMERA",
+  "CALENDAR",
+  "LOCATION",
+  "BACKGROUND_LOCATION",
+  "READ_NOTIFICATIONS",
+  "POST_NOTIFICATIONS",
+]);
 
 export interface CanonicalBundleManifest {
   manifest: Record<string, unknown>;
@@ -92,6 +103,7 @@ export async function parseCanonicalBundleManifest(
     throw new BundleManifestError("invalid_version", "miniapp.json version must be valid semantic version text");
   }
   requiredString(manifest, "name");
+  validateManifestPermissions(manifest.permissions);
   validateManifestEntries(entries, manifest);
 
   if (submittedManifest && canonicalJson(submittedManifest) !== canonicalJson(manifest)) {
@@ -107,6 +119,39 @@ export async function parseCanonicalBundleManifest(
     packageName,
     version,
   };
+}
+
+function validateManifestPermissions(value: unknown): void {
+  if (value === undefined) return;
+  if (!Array.isArray(value)) {
+    throw new BundleManifestError("invalid_manifest_permissions", "miniapp.json permissions must be an array");
+  }
+  value.forEach((candidate, index) => {
+    if (!isRecord(candidate)) {
+      throw new BundleManifestError(
+        "invalid_manifest_permissions",
+        `miniapp.json permissions[${index}] must be an object`,
+      );
+    }
+    if (typeof candidate.type !== "string" || !AUTHOR_DECLARABLE_PERMISSION_TYPES.has(candidate.type)) {
+      throw new BundleManifestError(
+        "invalid_manifest_permissions",
+        `miniapp.json permissions[${index}].type is invalid`,
+      );
+    }
+    if (candidate.required !== undefined && typeof candidate.required !== "boolean") {
+      throw new BundleManifestError(
+        "invalid_manifest_permissions",
+        `miniapp.json permissions[${index}].required must be a boolean`,
+      );
+    }
+    if (candidate.description !== undefined && typeof candidate.description !== "string") {
+      throw new BundleManifestError(
+        "invalid_manifest_permissions",
+        `miniapp.json permissions[${index}].description must be a string`,
+      );
+    }
+  });
 }
 
 export class BundleManifestError extends Error {

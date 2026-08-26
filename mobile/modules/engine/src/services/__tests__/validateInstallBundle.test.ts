@@ -47,6 +47,21 @@ describe("validateInstallBundleArchive", () => {
     ).rejects.toThrow("hardwareRequirements[0].level")
   })
 
+  test("rejects permissions outside the public manifest schema", async () => {
+    for (const permissions of [
+      {type: "MICROPHONE"},
+      ["MICROPHONE"],
+      [{type: "SYSTEM"}],
+      [{type: "MICROPHONE", description: false}],
+    ]) {
+      await expect(
+        validateInstallBundleArchive(
+          await bundle({packageName: "com.example.app", version: "1.0.0", permissions}),
+        ),
+      ).rejects.toThrow("permissions")
+    }
+  })
+
   test("rejects a nested manifest", async () => {
     const zip = new JSZip()
     zip.file("nested/miniapp.json", JSON.stringify({packageName: "com.example.app", version: "1.0.0"}))

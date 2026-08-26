@@ -7,6 +7,15 @@ const MAX_EXPANDED_BYTES = 200 * 1024 * 1024
 const MAX_ENTRIES = 2_000
 const MAX_MANIFEST_BYTES = 256 * 1024
 const PACKAGE_NAME_PATTERN = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/
+const AUTHOR_DECLARABLE_PERMISSION_TYPES = new Set([
+  "MICROPHONE",
+  "CAMERA",
+  "CALENDAR",
+  "LOCATION",
+  "BACKGROUND_LOCATION",
+  "READ_NOTIFICATIONS",
+  "POST_NOTIFICATIONS",
+])
 
 export async function validateInstallBundleArchive(
   bytes: Uint8Array,
@@ -63,6 +72,7 @@ export async function validateInstallBundleArchive(
   const version = typeof manifest.version === "string" ? manifest.version : ""
   const sdkVersion = typeof manifest.sdkVersion === "string" ? manifest.sdkVersion : undefined
   const minHostVersion = typeof manifest.minHostVersion === "string" ? manifest.minHostVersion : undefined
+  validateManifestPermissions(manifest.permissions)
   const hardwareRequirements = validateManifestHardwareRequirements(manifest.hardwareRequirements)
   if (!PACKAGE_NAME_PATTERN.test(packageName)) throw new Error("bundle manifest has an invalid packageName")
   if (!semver.valid(version)) throw new Error("bundle manifest has an invalid semantic version")
@@ -83,6 +93,30 @@ export async function validateInstallBundleArchive(
     }
   }
   return {packageName, version, sdkVersion, minHostVersion, hardwareRequirements}
+}
+
+/** Recheck the public permission schema at the final ZIP activation boundary. */
+export function validateManifestPermissions(value: unknown): void {
+  if (value === undefined) return
+  if (!Array.isArray(value)) throw new Error("bundle manifest permissions must be an array")
+  value.forEach((candidate, index) => {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
+      throw new Error(`bundle manifest permissions[${index}] must be an object`)
+    }
+    const record = candidate as Record<string, unknown>
+    if (
+      typeof record.type !== "string" ||
+      !AUTHOR_DECLARABLE_PERMISSION_TYPES.has(record.type)
+    ) {
+      throw new Error(`bundle manifest permissions[${index}].type is invalid`)
+    }
+    if (record.required !== undefined && typeof record.required !== "boolean") {
+      throw new Error(`bundle manifest permissions[${index}].required must be a boolean`)
+    }
+    if (record.description !== undefined && typeof record.description !== "string") {
+      throw new Error(`bundle manifest permissions[${index}].description must be a string`)
+    }
+  })
 }
 
 const AUTHOR_DECLARABLE_HARDWARE_TYPES = new Set<HardwareType>(

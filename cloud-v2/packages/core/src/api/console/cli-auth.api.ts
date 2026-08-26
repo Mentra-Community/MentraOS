@@ -1290,7 +1290,7 @@ async function requireConsoleOrg(
   const developerOrg = await resolveDeveloperOrgForRequest(c, authenticatedSession, accessibleOrgs);
   if (!developerOrg) {
     const selectionRequired =
-      Boolean(c.req.header("x-mentra-developer-org-id")?.trim()) ||
+      (accessibleOrgs.length > 0 && Boolean(c.req.header("x-mentra-developer-org-id")?.trim())) ||
       (Boolean(bearerToken(c)) && accessibleOrgs.length > 1);
     return {
       ok: false,

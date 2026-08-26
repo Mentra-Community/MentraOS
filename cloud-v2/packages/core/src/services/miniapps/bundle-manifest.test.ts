@@ -68,6 +68,20 @@ describe("parseCanonicalBundleManifest", () => {
     } satisfies Partial<BundleManifestError>);
   });
 
+  test("rejects permissions outside the public manifest schema", async () => {
+    for (const permissions of [
+      { type: "MICROPHONE" },
+      ["MICROPHONE"],
+      [{ type: "SYSTEM" }],
+      [{ type: "MICROPHONE", required: "yes" }],
+    ]) {
+      const invalid = { ...manifest, permissions };
+      await expect(parseCanonicalBundleManifest(await bundle(invalid), invalid)).rejects.toMatchObject({
+        code: "invalid_manifest_permissions",
+      } satisfies Partial<BundleManifestError>);
+    }
+  });
+
   test("rejects duplicate raw ZIP records", async () => {
     const archive = await bundle(manifest, zip => {
       zip.file("one.txt", "one");
