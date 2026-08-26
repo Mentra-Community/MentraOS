@@ -44,6 +44,28 @@ class MentraLivePairingAdvertisementParserTest {
     }
 
     @Test
+    fun connectedPairingRecoveryRequiresActiveGattConnection() {
+        assertFalse(
+                shouldRecoverConnectedMentraLivePairingTarget(
+                        isConnected = false,
+                        connectedName = "MENTRA_LIVE_BLE_TARGET",
+                        connectedAddress = "AA:BB:CC:DD:EE:FF",
+                        pendingName = "MENTRA_LIVE_BLE_TARGET",
+                        pendingAddress = "AA:BB:CC:DD:EE:FF",
+                )
+        )
+        assertTrue(
+                shouldRecoverConnectedMentraLivePairingTarget(
+                        isConnected = true,
+                        connectedName = "MENTRA_LIVE_BLE_TARGET",
+                        connectedAddress = "AA:BB:CC:DD:EE:FF",
+                        pendingName = "MENTRA_LIVE_BLE_TARGET",
+                        pendingAddress = "AA:BB:CC:DD:EE:FF",
+                )
+        )
+    }
+
+    @Test
     fun parsesMarkedSecurePairingAdvertisement() {
         val result = MentraLivePairingAdvertisementParser.parse(securePayload(pairingFlag = 1))
 

@@ -94,6 +94,21 @@ internal fun isPendingMentraLivePairingTarget(
     return pendingName.isNotEmpty() && connectedName == pendingName
 }
 
+internal fun shouldRecoverConnectedMentraLivePairingTarget(
+        isConnected: Boolean,
+        connectedName: String,
+        connectedAddress: String,
+        pendingName: String,
+        pendingAddress: String,
+): Boolean =
+        isConnected &&
+                isPendingMentraLivePairingTarget(
+                        connectedName,
+                        connectedAddress,
+                        pendingName,
+                        pendingAddress,
+                )
+
 /**
  * Smart Glasses Communicator for Mentra Live (K900) glasses Uses BLE to communicate with the
  * glasses
@@ -1373,7 +1388,17 @@ class MentraLive : SGCManager() {
         val pendingAddress =
                 DeviceStore.get("bluetooth", "pending_device_address") as? String ?: ""
         val address = device.address ?: ""
-        if (!isPendingMentraLivePairingTarget(name, address, pendingName, pendingAddress)) return
+        if (
+                !shouldRecoverConnectedMentraLivePairingTarget(
+                        isConnected,
+                        name,
+                        address,
+                        pendingName,
+                        pendingAddress,
+                )
+        ) {
+            return
+        }
 
         Bridge.log(
                 "LIVE: Pairing scan: recovering connected pending target $name ($address)"
