@@ -45,6 +45,7 @@ import localSttFallbackCoordinator from "./LocalSttFallbackCoordinator"
 import micStateCoordinator from "./MicStateCoordinator"
 import {BlobStore} from "./BlobStore"
 import {CloudAudioSubscriptionSync} from "./CloudAudioSubscriptionSync"
+import {resolveCoreDownloadAuthorization} from "./CoreDownloadAuthorization"
 import {phoneCameraFovCoordinator} from "./PhoneCameraFovCoordinator"
 import {phonePhotoCoordinator} from "./PhonePhotoCoordinator"
 import {phoneStreamCoordinator} from "./PhoneStreamCoordinator"
@@ -4509,11 +4510,7 @@ class LocalMiniappRuntime {
         miniappLauncher,
         target,
         async () => {
-          const coreUrl = getConfigValues().coreUrl
-          const downloadAuthorization =
-            coreUrl && parsedUrl.origin === new URL(coreUrl).origin
-              ? await cloudClientService.getCoreDownloadAuthorization()
-              : undefined
+          const downloadAuthorization = await resolveCoreDownloadAuthorization(bundleUrl, cloudClientService)
           const installed = await appRegistry.installFromUrl(bundleUrl, {
             expectedPackageName: target,
             expectedVersion: version,
