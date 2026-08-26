@@ -514,7 +514,10 @@ export class CaptionsController {
   }
 
   private getDisplayCapabilities(): CaptionsDisplayCapabilities {
-    return {canPosition: this.session.capabilities?.display?.canPosition === true}
+    return {
+      canPosition:
+        this.session.capabilities?.display?.canPosition === true && this.currentProfile.lineHeightPx !== undefined,
+    }
   }
 
   private broadcastDisplayCapabilities(): void {
@@ -855,7 +858,7 @@ export class CaptionsController {
     const box = calculateCaptionBox({
       canvasWidth: d?.width ?? 576,
       canvasHeight: d?.height ?? 288,
-      canPosition: d?.canPosition === true,
+      canPosition: this.getDisplayCapabilities().canPosition,
       position: this.settings.captionPosition,
       lineCount: this.currentMaxLines,
       maxTextLines,

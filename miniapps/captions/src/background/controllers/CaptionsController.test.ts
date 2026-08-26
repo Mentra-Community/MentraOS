@@ -76,18 +76,28 @@ describe("CaptionsController caption position", () => {
     ).toEqual({x: 0, y: 88, w: 500, h: 132})
   })
 
-  test("keeps five-line Mentra Display captions positionable", () => {
-    expect(
-      calculateCaptionBox({
-        canvasWidth: 500,
-        canvasHeight: 220,
-        canPosition: true,
-        position: "bottom",
-        lineCount: 5,
-        maxTextLines: 5,
-        lineHeightPx: NEX_PROFILE.lineHeightPx,
-      }),
-    ).toEqual({x: 0, y: 85, w: 500, h: 135})
+  test("keeps uncalibrated positioning displays on the full-canvas fallback", () => {
+    const render = mock(() => Promise.resolve({status: "rendered"}))
+    const controller = new CaptionsController({
+      capabilities: {display: {width: 500, height: 220, canPosition: true, maxTextLines: 5}},
+      display: {render},
+    } as never) as unknown as {
+      currentMaxLines: number
+      currentProfile: typeof NEX_PROFILE
+      settings: {captionPosition: "top" | "bottom"}
+      getDisplayCapabilities: () => {canPosition: boolean}
+      showTextWall: (text: string) => void
+    }
+    controller.currentMaxLines = 5
+    controller.currentProfile = NEX_PROFILE
+    controller.settings.captionPosition = "bottom"
+
+    controller.showTextWall("Mentra Display caption")
+
+    expect(controller.getDisplayCapabilities()).toEqual({canPosition: false})
+    expect(render).toHaveBeenCalledWith([
+      {type: "text", id: "caption", box: {x: 0, y: 0, w: 500, h: 220}, text: "Mentra Display caption"},
+    ])
   })
 
   test("re-renders the active interim when its position changes", async () => {
