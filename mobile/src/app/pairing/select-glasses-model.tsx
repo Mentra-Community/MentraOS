@@ -1,4 +1,5 @@
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
+import {useRef} from "react"
 import {View, TouchableOpacity, Platform, ScrollView, Image} from "react-native"
 
 import {EvenRealitiesLogo} from "@/components/brands/EvenRealitiesLogo"
@@ -14,6 +15,7 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {SETTINGS, useSetting} from "@mentra/engine"
 import {AR99_MODEL_OPTIONS, type Ar99ProjectName, getGlassesImage} from "@/utils/getGlassesImage"
+import {preparePairingScan} from "@/utils/pairing/preparePairingScan"
 import GlassView from "@/components/ui/GlassView"
 
 type GlassesOption = {
@@ -29,6 +31,7 @@ export default function SelectGlassesModelScreen() {
   const {theme} = useAppTheme()
   const {push, goBack} = useNavigationStore.getState()
   const [superMode] = useSetting(SETTINGS.super_mode.key)
+  const pairingStartPending = useRef(false)
 
   const getManufacturerLogo = (option: GlassesOption) => {
     if (option.manufacturerName) {
@@ -83,6 +86,20 @@ export default function SelectGlassesModelScreen() {
   const glassesOptions = Platform.OS === "ios" ? sharedOptions : sharedOptions
 
   const triggerGlassesPairingGuide = async (option: GlassesOption) => {
+    if (option.deviceModel === DeviceTypes.LIVE) {
+      if (pairingStartPending.current) return
+      pairingStartPending.current = true
+      try {
+        const readyToScan = await preparePairingScan(option.deviceModel)
+        if (readyToScan) {
+          push("/pairing/scan", {deviceModel: option.deviceModel})
+        }
+      } finally {
+        pairingStartPending.current = false
+      }
+      return
+    }
+
     push("/pairing/prep", {
       deviceModel: option.deviceModel,
       ar99ProjectName: option.projectName,
@@ -105,7 +122,10 @@ export default function SelectGlassesModelScreen() {
           {glassesOptions
             .filter((glasses) => !SUPER_MODE_ONLY_MODELS.has(glasses.deviceModel) || superMode)
             .map((glasses) => (
-              <TouchableOpacity key={glasses.key} onPress={() => triggerGlassesPairingGuide(glasses)}>
+              <TouchableOpacity
+                key={glasses.key}
+                testID={`pairing-model-${glasses.key}`}
+                onPress={() => triggerGlassesPairingGuide(glasses)}>
                 <GlassView className="bg-primary-foreground flex-col items-center justify-center p-6 rounded-2xl overflow-hidden">
                   <View className="flex-row gap-4">
                     <View className="flex-col flex-1 justify-center">
