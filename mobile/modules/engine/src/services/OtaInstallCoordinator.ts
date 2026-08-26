@@ -450,7 +450,7 @@ class OtaInstallCoordinator {
    * stays in the screen): clear the selected update, and after an APK step
    * clear the stale build number so the next check re-reads version_info.
    */
-  finish(): void {
+  async finish(): Promise<void> {
     if (this.otaStartOwnership?.outcome !== "pending") {
       this.otaStartOwnership = null
     }
@@ -458,7 +458,9 @@ class OtaInstallCoordinator {
     if (this.apkStepSeen) {
       useGlassesStore.getState().setGlassesInfo({buildNumber: ""})
     }
-    void this.teardownHotspotTransport()
+    // The post-install check needs internet again. Do not let callers leave the
+    // terminal screen while Android still owns the no-internet hotspot route.
+    await this.teardownHotspotTransport()
   }
 
   /**
@@ -467,8 +469,8 @@ class OtaInstallCoordinator {
    * deriveDisplayState doesn't resurrect the stale install when the host
    * navigates away and back through /ota routes.
    */
-  discard(): void {
-    this.finish()
+  async discard(): Promise<void> {
+    await this.finish()
     const store = useGlassesStore.getState()
     store.setOtaStatus(null)
     store.setOtaProgress(null)

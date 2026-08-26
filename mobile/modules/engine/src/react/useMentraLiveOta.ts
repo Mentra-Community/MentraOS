@@ -387,10 +387,10 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
     ) {
       return
     }
-    const timeout = setTimeout(() => {
+    const timeout = setTimeout(async () => {
       if (!isOtaAutoChainActive()) return
       autoChainAdvancedRef.current = true
-      ota.installSession.finish()
+      await ota.installSession.finish()
       returnToCheck()
     }, AUTO_CHAIN_COMPLETE_DELAY_MS)
     return () => clearTimeout(timeout)
@@ -430,7 +430,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
     ota.installSession.retry()
   }, [page])
 
-  const finish = useCallback(() => {
+  const finish = useCallback(async () => {
     if (page === "check") {
       onFinishedRef.current?.()
       return
@@ -442,14 +442,14 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
       installSnapshot.errorMsg,
     )
     if (requiresGlassesReboot) stopOtaAutoChain()
-    ota.installSession.finish()
+    await ota.installSession.finish()
     returnToCheck()
   }, [installSnapshot, page, returnToCheck])
 
-  const discard = useCallback(() => {
+  const discard = useCallback(async () => {
     if (page !== "progress") return
     stopOtaAutoChain()
-    ota.installSession.discard()
+    await ota.installSession.discard()
     returnToCheck()
   }, [page, returnToCheck])
 

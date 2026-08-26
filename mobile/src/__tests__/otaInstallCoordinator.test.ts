@@ -669,6 +669,35 @@ describe("OtaInstallCoordinator MTK completion", () => {
 })
 
 describe("OtaInstallCoordinator finish()", () => {
+  it("does not resolve until hotspot transport teardown finishes", async () => {
+    useGlassesStore.getState().setGlassesInfo({
+      connection: {state: "connected", fullyBooted: true},
+      hotspotOtaVersion: 1,
+      wifi: {state: "disconnected"},
+    })
+    otaInstallCoordinator.prepare(checkResult())
+    let resolveTeardown!: () => void
+    mockHotspotTeardown.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveTeardown = resolve
+        }),
+    )
+
+    let finished = false
+    const finishPromise = otaInstallCoordinator.finish().then(() => {
+      finished = true
+    })
+    await Promise.resolve()
+
+    expect(mockHotspotTeardown).toHaveBeenCalledTimes(1)
+    expect(finished).toBe(false)
+
+    resolveTeardown()
+    await finishPromise
+    expect(finished).toBe(true)
+  })
+
   it("after an APK step clears the update prompt and the stale build number", () => {
     setGlassesConnected()
     useGlassesStore.getState().setGlassesInfo({buildNumber: "40"})
