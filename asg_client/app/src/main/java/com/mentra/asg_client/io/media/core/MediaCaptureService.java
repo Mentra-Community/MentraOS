@@ -33,6 +33,7 @@ import com.mentra.asg_client.io.streaming.services.RtmpStreamingService;
 import com.mentra.asg_client.io.streaming.services.SrtStreamingService;
 import com.mentra.asg_client.io.streaming.services.WhipStreamingService;
 import com.mentra.asg_client.logging.BleTraceLogger;
+import com.mentra.asg_client.service.core.AsgClientService;
 import com.mentra.asg_client.service.core.CameraRestartCooldown;
 import com.mentra.asg_client.service.core.constants.BatteryConstants;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
@@ -726,6 +727,23 @@ public class MediaCaptureService {
                     new CaptureBusyTracker(),
                     safetyWatchdog,
                     AsgConstants.CAPTURE_PHASE_SAFETY_TIMEOUT_MS);
+    private final PhotoPromptOccupancy photoPromptOccupancy =
+            new PhotoPromptOccupancy(
+                    busy -> {
+                        AsgClientService service = AsgClientService.getInstance();
+                        return service != null && service.sendPhotoPromptBusy(busy);
+                    },
+                    new PhotoPromptOccupancy.Scheduler() {
+                        @Override
+                        public void postDelayed(Runnable task, long delayMs) {
+                            mainHandler.postDelayed(task, delayMs);
+                        }
+
+                        @Override
+                        public void cancel(Runnable task) {
+                            mainHandler.removeCallbacks(task);
+                        }
+                    });
 
     // Per-request timing instrumentation (gated by AsgConstants.ENABLE_PHOTO_TIMING_LOGS)
     private final Map<String, Map<String, Long>> photoTimings = new ConcurrentHashMap<>();
@@ -1302,6 +1320,7 @@ public class MediaCaptureService {
                             Log.d(TAG, "Video recording started with ID: " + videoId);
                             videoRecordingLifecycle.recordingStarted();
                             isRecordingVideo = true;
+                            publishPromptOccupancy();
                             recordingStartTime = System.currentTimeMillis();
 
                             // Start battery monitoring on main thread (callback runs on background
@@ -1431,6 +1450,7 @@ public class MediaCaptureService {
                             }
 
                             isRecordingVideo = false;
+                            publishPromptOccupancy();
                             currentVideoId = null;
                             currentVideoPath = null;
                             completeVideoTermination();
@@ -1629,6 +1649,7 @@ public class MediaCaptureService {
                             }
 
                             isRecordingVideo = false;
+                            publishPromptOccupancy();
 
                             // Turn off RGB white LED on error (error path may not go through
                             // stopVideoRecording)
@@ -1840,6 +1861,7 @@ public class MediaCaptureService {
             // so drop this recording's upload target here to mirror
             // onRecordingStopped/onRecordingError.
             isRecordingVideo = false;
+            publishPromptOccupancy();
             currentVideoId = null;
             currentVideoPath = null;
             if (captureId != null) {
@@ -2118,7 +2140,7 @@ public class MediaCaptureService {
         // TESTING: Add fake delay for camera capture
         PhotoCaptureTestHooks.addFakeDelay("CAMERA_CAPTURE");
 
-        if (!captureBusyGate.begin(requestId)) {
+        if (!beginCapturePhase(requestId)) {
             photoFeedbackController.stopForFailure(captureFeedbackToken);
             Log.w(
                     TAG,
@@ -2194,7 +2216,7 @@ public class MediaCaptureService {
 
                         @Override
                         public void onPhotoCaptured(String filePath, JSONObject captureMetadata) {
-                            captureBusyGate.end(requestId);
+                            endCapturePhase(requestId);
                             photoLightController.onCaptureBoundary(
                                     captureLightToken, "photo completion fallback");
                             photoFeedbackController.playSnap(
@@ -2246,7 +2268,7 @@ public class MediaCaptureService {
 
                         @Override
                         public void onPhotoError(CameraOperationError error) {
-                            captureBusyGate.end(requestId);
+                            endCapturePhase(requestId);
                             photoFeedbackController.stopForFailure(captureFeedbackToken);
                             Log.e(TAG, "Failed to capture offline photo: " + error.message());
                             sendPhotoStatus(
@@ -2264,7 +2286,7 @@ public class MediaCaptureService {
                         }
                     });
         } catch (Exception e) {
-            captureBusyGate.end(requestId);
+            endCapturePhase(requestId);
             photoFeedbackController.stopForFailure(captureFeedbackToken);
             Log.e(TAG, "Failed to enqueue button photo", e);
             sendPhotoStatus(
@@ -2373,7 +2395,7 @@ public class MediaCaptureService {
         }
         final PhotoFeedbackController.Token captureFeedbackToken = feedbackToken;
 
-        if (!captureBusyGate.begin(requestId)) {
+        if (!beginCapturePhase(requestId)) {
             photoFeedbackController.stopForFailure(captureFeedbackToken);
             Log.w(
                     TAG,
@@ -2460,7 +2482,7 @@ public class MediaCaptureService {
                                 String filePath,
                                 JSONObject captureMetadata,
                                 CapturedPhoto capturedPhoto) {
-                            captureBusyGate.end(requestId);
+                            endCapturePhase(requestId);
                             photoLightController.onCaptureBoundary(
                                     captureLightToken, "photo completion fallback");
                             photoFeedbackController.playSnap(
@@ -2549,7 +2571,7 @@ public class MediaCaptureService {
 
                         @Override
                         public void onPhotoError(CameraOperationError error) {
-                            captureBusyGate.end(requestId);
+                            endCapturePhase(requestId);
                             photoFeedbackController.stopForFailure(captureFeedbackToken);
                             try {
                                 Log.e(
@@ -2573,7 +2595,7 @@ public class MediaCaptureService {
                     });
             return true;
         } catch (Exception e) {
-            captureBusyGate.end(requestId);
+            endCapturePhase(requestId);
             photoFeedbackController.stopForFailure(captureFeedbackToken);
             try {
                 Log.e(TAG, "Error taking local-save photo", e);
@@ -3113,13 +3135,47 @@ public class MediaCaptureService {
         return captureBusyGate.isBusy();
     }
 
+    /**
+     * Re-push the occupancy lease after UART/BES link-up so a reboot mid-recording cannot leave
+     * prompts enabled for more than one renewal interval.
+     */
+    public void resyncPhotoPromptOccupancy() {
+        photoPromptOccupancy.resync(this::samplePromptOccupancy);
+    }
+
+    private boolean beginCapturePhase(String requestId) {
+        boolean started = captureBusyGate.begin(requestId);
+        publishPromptOccupancy();
+        return started;
+    }
+
+    private boolean endCapturePhase(String requestId) {
+        boolean ended = captureBusyGate.end(requestId);
+        publishPromptOccupancy();
+        return ended;
+    }
+
+    private void publishPromptOccupancy() {
+        photoPromptOccupancy.publish(this::samplePromptOccupancy, false);
+    }
+
+    private boolean samplePromptOccupancy() {
+        return PhotoPromptOccupancy.suppressed(
+                captureBusyGate.isBusy(),
+                activePhotoJobRequestId.get() != null,
+                isRecordingVideo);
+    }
+
     private boolean acquirePhotoJob(String requestId) {
-        return activePhotoJobRequestId.compareAndSet(null, requestId);
+        boolean acquired = activePhotoJobRequestId.compareAndSet(null, requestId);
+        publishPromptOccupancy();
+        return acquired;
     }
 
     private void releasePhotoJob(String requestId) {
         if (activePhotoJobRequestId.compareAndSet(requestId, null)) {
             cancelCaptureSafetyTimeout(requestId);
+            publishPromptOccupancy();
         } else {
             Log.w(
                     TAG,
@@ -3144,6 +3200,7 @@ public class MediaCaptureService {
                     if (!activePhotoJobRequestId.compareAndSet(requestId, null)) {
                         return;
                     }
+                    publishPromptOccupancy();
                     photoFeedbackController.stopForTimeout(requestId);
                     Log.e(
                             TAG,
