@@ -2,6 +2,7 @@ import React, { useMemo } from "react";
 import {
   ActivityIndicator,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -63,7 +64,11 @@ export function CustomMentraLiveOtaFlow({
     <SafeAreaView style={styles.safeArea}>
       <Header title="Software Update" />
       <View style={styles.page} testID="custom-mentra-live-ota-flow">
-        <View style={styles.centerContent}>
+        <ScrollView
+          contentContainerStyle={styles.centerContent}
+          showsVerticalScrollIndicator={false}
+          style={styles.contentScroll}
+        >
           <StatusIcon
             accent={palette.accent}
             tone={presentation.tone}
@@ -98,7 +103,7 @@ export function CustomMentraLiveOtaFlow({
           {presentation.detail ? (
             <Text style={styles.detail}>{presentation.detail}</Text>
           ) : null}
-        </View>
+        </ScrollView>
 
         {presentation.primary || presentation.secondary ? (
           <View style={styles.actions}>
@@ -202,12 +207,13 @@ function ActionButton({
 const styles = StyleSheet.create({
   safeArea: { backgroundColor: colors.bg, flex: 1 },
   page: { flex: 1, paddingBottom: 18, paddingHorizontal: 24 },
+  contentScroll: { flex: 1 },
   centerContent: {
     alignItems: "center",
-    flex: 1,
+    flexGrow: 1,
     gap: 16,
     justifyContent: "center",
-    paddingBottom: 8,
+    paddingVertical: 24,
   },
   iconTile: {
     alignItems: "center",

@@ -228,7 +228,9 @@ export function otaPresentation(
           ? {action: 'retryInstall', label: 'Try again'}
           : state.canFinish
             ? {action: 'finish', label: 'Done'}
-            : undefined,
+            : state.canDiscard
+              ? {action: 'discard', label: 'Exit update'}
+              : undefined,
         secondary: state.canOpenWifiSetup
           ? {action: 'openWifiSetup', label: 'Change Wi-Fi'}
           : undefined,

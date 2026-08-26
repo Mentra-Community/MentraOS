@@ -120,6 +120,20 @@ describe('custom OTA presentation', () => {
     expect(presentation.message).toBe('Download failed');
   });
 
+  test('allows a failed version change to be discarded when it cannot retry or finish', () => {
+    const presentation = otaPresentation(otaState({
+      canDiscard: true,
+      error: {code: 'install_failed', message: 'Version change failed'},
+      screen: 'failed',
+      versionChange: true,
+    }));
+
+    expect(presentation.primary).toEqual({
+      action: 'discard',
+      label: 'Exit update',
+    });
+  });
+
   test('finishes only after Engine reports completion', () => {
     const presentation = otaPresentation(otaState({
       canFinish: true,
