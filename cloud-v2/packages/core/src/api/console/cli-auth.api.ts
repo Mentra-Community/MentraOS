@@ -1286,14 +1286,23 @@ async function requireConsoleOrg(
       response: c.json({ error: "unauthorized", error_description: "console session required" }, 401),
     };
   }
-  const developerOrg = await resolveDeveloperOrgForRequest(c, authenticatedSession);
+  const accessibleOrgs = await developerOrgs.listOrgsForUser(authenticatedSession.user);
+  const developerOrg = await resolveDeveloperOrgForRequest(c, authenticatedSession, accessibleOrgs);
   if (!developerOrg) {
+    const selectionRequired =
+      Boolean(c.req.header("x-mentra-developer-org-id")?.trim()) ||
+      (Boolean(bearerToken(c)) && accessibleOrgs.length > 1);
     return {
       ok: false,
-      response: c.json(
-        { error: "organization_required", error_description: "create a developer org before using this API" },
-        428,
-      ),
+      response: selectionRequired
+        ? c.json(
+            { error: "organization_selection_required", error_description: "select a developer organization first" },
+            409,
+          )
+        : c.json(
+            { error: "organization_required", error_description: "create a developer org before using this API" },
+            428,
+          ),
     };
   }
   return { ok: true, auth: authenticatedSession, org: developerOrg };

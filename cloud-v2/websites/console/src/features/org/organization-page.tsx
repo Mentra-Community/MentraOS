@@ -66,13 +66,15 @@ export function OrganizationPage() {
   const orgSave = useMutation({
     mutationFn: saveDeveloperOrg,
     onSuccess: async () => {
-      setCreatingNewOrg(false);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["console-session"] }),
         queryClient.invalidateQueries({ queryKey: ["developer-org"] }),
         queryClient.invalidateQueries({ queryKey: ["developer-org-access"] }),
         queryClient.invalidateQueries({ queryKey: ["developer-apps"] }),
       ]);
+      // Keep the creation form (and not the old org's team controls) visible
+      // until every cookie-selected org query has completed its refetch.
+      setCreatingNewOrg(false);
     },
   });
   const inviteMember = useMutation({
