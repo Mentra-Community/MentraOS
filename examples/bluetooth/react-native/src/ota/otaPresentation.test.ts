@@ -120,6 +120,17 @@ describe('custom OTA presentation', () => {
     expect(presentation.message).toBe('Download failed');
   });
 
+  test('allows a failed update check to be dismissed when Engine permits it', () => {
+    const presentation = otaPresentation(otaState({
+      canDismiss: true,
+      error: {code: 'check_failed', message: 'Network unavailable'},
+      screen: 'check_failed',
+    }));
+
+    expect(presentation.primary?.action).toBe('retryCheck');
+    expect(presentation.secondary).toEqual({action: 'finish', label: 'Later'});
+  });
+
   test('allows a failed version change to be discarded when it cannot retry or finish', () => {
     const presentation = otaPresentation(otaState({
       canDiscard: true,

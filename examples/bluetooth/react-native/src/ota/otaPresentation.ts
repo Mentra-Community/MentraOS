@@ -142,6 +142,9 @@ export function otaPresentation(
       return {
         message: state.error?.message ?? 'The app could not check for updates.',
         primary: {action: 'retryCheck', label: 'Try again'},
+        secondary: state.canDismiss
+          ? {action: 'finish', label: 'Later'}
+          : undefined,
         title: 'Update check failed',
         tone: 'danger',
       };
