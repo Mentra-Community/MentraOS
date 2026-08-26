@@ -142,9 +142,6 @@ export function otaPresentation(
       return {
         message: state.error?.message ?? 'The app could not check for updates.',
         primary: {action: 'retryCheck', label: 'Try again'},
-        secondary: state.canDismiss
-          ? {action: 'finish', label: 'Later'}
-          : undefined,
         title: 'Update check failed',
         tone: 'danger',
       };
@@ -231,9 +228,7 @@ export function otaPresentation(
           ? {action: 'retryInstall', label: 'Try again'}
           : state.canFinish
             ? {action: 'finish', label: 'Done'}
-            : state.canDiscard
-              ? {action: 'discard', label: 'Exit update'}
-              : undefined,
+            : undefined,
         secondary: state.canOpenWifiSetup
           ? {action: 'openWifiSetup', label: 'Change Wi-Fi'}
           : undefined,

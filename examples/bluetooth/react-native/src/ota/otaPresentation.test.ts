@@ -120,29 +120,15 @@ describe('custom OTA presentation', () => {
     expect(presentation.message).toBe('Download failed');
   });
 
-  test('allows a failed update check to be dismissed when Engine permits it', () => {
+  test('keeps a failed update check on the stock retry-only action', () => {
     const presentation = otaPresentation(otaState({
-      canDismiss: true,
+      canRetry: true,
       error: {code: 'check_failed', message: 'Network unavailable'},
       screen: 'check_failed',
     }));
 
-    expect(presentation.primary?.action).toBe('retryCheck');
-    expect(presentation.secondary).toEqual({action: 'finish', label: 'Later'});
-  });
-
-  test('allows a failed version change to be discarded when it cannot retry or finish', () => {
-    const presentation = otaPresentation(otaState({
-      canDiscard: true,
-      error: {code: 'install_failed', message: 'Version change failed'},
-      screen: 'failed',
-      versionChange: true,
-    }));
-
-    expect(presentation.primary).toEqual({
-      action: 'discard',
-      label: 'Exit update',
-    });
+    expect(presentation.primary).toEqual({action: 'retryCheck', label: 'Try again'});
+    expect(presentation.secondary).toBeUndefined();
   });
 
   test('finishes only after Engine reports completion', () => {
