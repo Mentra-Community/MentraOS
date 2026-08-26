@@ -123,6 +123,8 @@ describe("CaptionsController caption position", () => {
       capabilities: {display: {width: 600, height: 300, canPosition: true, maxTextLines: 8}},
       display: {render},
     } as never) as unknown as {
+      activeInterim: {text: string; speakerId?: string; speakerChanged: boolean}
+      createFormatter: () => void
       currentDisplayText: string
       currentMaxLines: number
       currentProfile: typeof G2_PROFILE
@@ -131,12 +133,14 @@ describe("CaptionsController caption position", () => {
       ui: {send: ReturnType<typeof mock>}
       refreshDisplay: () => void
     }
-    controller.currentDisplayText = "still speaking"
-    controller.currentMaxLines = 3
+    controller.activeInterim = {text: "one\ntwo\nthree\nfour\nfive", speakerChanged: false}
+    controller.currentDisplayText = "one\ntwo\nthree\nfour\nfive"
+    controller.currentMaxLines = 2
     controller.currentProfile = G2_PROFILE
+    controller.createFormatter()
     controller.lastDisplayPreview = {
-      text: "still speaking",
-      lines: ["still speaking"],
+      text: "one\ntwo\nthree\nfour\nfive",
+      lines: ["one", "two", "three", "four", "five"],
       isFinal: false,
       timestamp: Date.now(),
     }
@@ -146,9 +150,9 @@ describe("CaptionsController caption position", () => {
     controller.refreshDisplay()
 
     expect(render).toHaveBeenCalledWith([
-      {type: "text", id: "caption", box: {x: 0, y: 180, w: 600, h: 120}, text: "still speaking"},
+      {type: "text", id: "caption", box: {x: 0, y: 220, w: 600, h: 80}, text: "four\nfive"},
     ])
-    expect(controller.lastDisplayPreview).toMatchObject({text: "still speaking", isFinal: false})
+    expect(controller.lastDisplayPreview).toMatchObject({text: "four\nfive", isFinal: false})
   })
 
   test("restores bottom and defaults unknown stored values to top", async () => {

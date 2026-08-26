@@ -209,6 +209,7 @@ export class CaptionsController {
   private lastSpeakerId: string | undefined = undefined
   private lastDisplayPreview: DisplayPreview | null = null
   private currentDisplayText = ""
+  private activeInterim: {text: string; speakerId?: string; speakerChanged: boolean} | null = null
   private cloudStatus: CloudClientStatus = {status: "disconnected", audioTransport: "none"}
 
   constructor(private readonly session: MiniappSession) {}
@@ -794,14 +795,20 @@ export class CaptionsController {
   }
 
   private refreshDisplay(): void {
-    // Interim text is not part of formatter final-history. Preserve the exact
-    // live frame across capability/profile/settings refreshes instead of
-    // replacing it with stale finals or leaving it in the previous geometry.
-    if (this.lastDisplayPreview?.isFinal === false && this.currentDisplayText.trim()) {
-      const text = this.currentDisplayText
-      const lines = text.split("\n")
-      this.showTextWall(text)
-      this.broadcastDisplayPreview(text, lines, false)
+    // Interim text is not part of formatter final-history. Reprocess its raw
+    // frame after capability/profile/settings changes so new width/line limits
+    // take effect without replacing it with stale finalized text.
+    if (this.activeInterim) {
+      const result = this.formatter.processTranscription(
+        this.activeInterim.text,
+        false,
+        this.activeInterim.speakerId,
+        this.activeInterim.speakerChanged,
+      )
+      const cleaned = this.cleanTranscriptText(result.displayText)
+      const lines = cleaned.split("\n")
+      this.showTextWall(cleaned)
+      this.broadcastDisplayPreview(cleaned, lines, false)
       return
     }
 
@@ -824,6 +831,7 @@ export class CaptionsController {
     if (speakerChanged) {
       this.lastSpeakerId = speakerId
     }
+    this.activeInterim = isFinal ? null : {text, speakerId, speakerChanged}
     const result = this.formatter.processTranscription(text, isFinal, speakerId, speakerChanged)
     this.showOnGlasses(result.displayText, isFinal)
     this.resetInactivityTimer()
@@ -882,6 +890,7 @@ export class CaptionsController {
       this.formatter.clear()
       this.lastSpeakerId = undefined
       this.currentDisplayText = ""
+      this.activeInterim = null
       void this.session.display.render([])
     }, this.settings.captionTimeoutSeconds * 1000)
   }
