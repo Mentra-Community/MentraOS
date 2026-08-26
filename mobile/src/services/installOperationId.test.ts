@@ -1,4 +1,5 @@
 import {
+  isInstallScratchDirectoryName,
   nextInstallOperationId,
   runInstallFilesystemTransaction,
 } from "../../modules/engine/src/services/installOperation"
@@ -17,6 +18,13 @@ describe("AppRegistry install operation ids", () => {
     const second = nextInstallOperationId(1_800_000_000_000)
 
     expect(Number(second)).toBe(Number(first) + 1)
+  })
+
+  test("recognizes only host-owned extraction cache directories", () => {
+    expect(isInstallScratchDirectoryName("lma_unzip")).toBe(true)
+    expect(isInstallScratchDirectoryName("lma_unzip-1800000000000")).toBe(true)
+    expect(isInstallScratchDirectoryName("lma_unzip-unrelated")).toBe(false)
+    expect(isInstallScratchDirectoryName("other-1800000000000")).toBe(false)
   })
 
   test("serializes filesystem mutations without poisoning the queue", async () => {

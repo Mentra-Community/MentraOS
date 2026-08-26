@@ -408,13 +408,14 @@ export class StoreController {
       })
       return this.refresh(this.lastQuery, false, true)
     } catch (error) {
+      const failure = error instanceof Error ? error : new Error("Install failed")
       this.snapshot = {
         ...this.snapshot,
         operation: null,
-        error: error instanceof Error ? error.message : "Install failed",
+        error: failure.message,
       }
       this.send()
-      return this.snapshot
+      throw failure
     }
   }
 
@@ -426,13 +427,14 @@ export class StoreController {
       await this.session.miniapps.uninstall(packageName)
       return this.refresh(this.lastQuery, false, true)
     } catch (error) {
+      const failure = error instanceof Error ? error : new Error("Uninstall failed")
       this.snapshot = {
         ...this.snapshot,
         operation: null,
-        error: error instanceof Error ? error.message : "Uninstall failed",
+        error: failure.message,
       }
       this.send()
-      return this.snapshot
+      throw failure
     }
   }
 
@@ -465,9 +467,10 @@ export class StoreController {
       await this.session.miniapps.open(packageName)
       return this.refresh(this.lastQuery, false, true)
     } catch (error) {
-      this.snapshot = {...this.snapshot, operation: null, error: error instanceof Error ? error.message : "Open failed"}
+      const failure = error instanceof Error ? error : new Error("Open failed")
+      this.snapshot = {...this.snapshot, operation: null, error: failure.message}
       this.send()
-      return this.snapshot
+      throw failure
     }
   }
 }

@@ -13,6 +13,11 @@ export function nextInstallOperationId(now = Date.now()): string {
   return String(lastInstallOperationId)
 }
 
+/** Match only host-owned extraction directories, including the legacy name. */
+export function isInstallScratchDirectoryName(name: string): boolean {
+  return /^lma_unzip(?:-\d{10,})?$/.test(name)
+}
+
 /**
  * Serialize extraction and activation across every AppRegistry install path.
  * Downloads and archive validation happen before this transaction, but the

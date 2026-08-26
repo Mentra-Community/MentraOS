@@ -30,7 +30,11 @@ import {configuredDevHost} from "../utils/configuredDevHost"
 import {storage} from "../utils/storage/storage"
 import {printDirectory} from "../utils/storage/zip"
 import {sha256Hex} from "../utils/sha256"
-import {nextInstallOperationId, runInstallFilesystemTransaction} from "./installOperation"
+import {
+  isInstallScratchDirectoryName,
+  nextInstallOperationId,
+  runInstallFilesystemTransaction,
+} from "./installOperation"
 import {checkManifestVersions} from "./manifestVersionGate"
 import {checkMiniappInstallCompatibility} from "./miniappInstallCompatibility"
 import {normalizeManifestActions} from "./manifestActions"
@@ -555,7 +559,24 @@ class AppRegistry {
   private static instance: AppRegistry | null = null
 
   private constructor() {
+    this.cleanupInterruptedInstallCache()
     this.recoverInterruptedActivations()
+  }
+
+  /** Remove cache artifacts left behind when the process died mid-install. */
+  private cleanupInterruptedInstallCache(): void {
+    try {
+      for (const item of Paths.cache.list()) {
+        if (item instanceof Directory && isInstallScratchDirectoryName(item.name)) item.delete()
+      }
+
+      const downloadDir = new Directory(Paths.cache, "lma_downloads")
+      if (downloadDir.exists) {
+        for (const item of downloadDir.list()) item.delete()
+      }
+    } catch (error) {
+      console.warn("APP_REGISTRY: interrupted install cache cleanup failed", error)
+    }
   }
 
   /**

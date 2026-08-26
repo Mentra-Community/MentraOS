@@ -6,6 +6,7 @@ import type {StoreApp, StoreSnapshot} from "../shared/types"
 interface TestController {
   start(): void
   install(packageName: string, query?: string, selectedApp?: StoreApp): Promise<StoreSnapshot>
+  uninstall(packageName: string, query?: string): Promise<StoreSnapshot>
   setTrack(packageName: string, track: "stable" | "beta", query?: string): Promise<StoreSnapshot>
   load(query?: string, clearOperation?: boolean, refreshAutomaticCatalog?: boolean): Promise<StoreSnapshot>
   refresh(query?: string, refreshAutomaticCatalog?: boolean, clearOperation?: boolean): Promise<StoreSnapshot>
@@ -314,6 +315,25 @@ describe("StoreController refresh serialization", () => {
     } as unknown as StoreApp)
 
     expect(descriptor).toMatchObject({releaseId: "release-beta", channel: "beta"})
+  })
+
+  test("rejects failed mutations after publishing the error snapshot", async () => {
+    const snapshots: StoreSnapshot[] = []
+    const session = {
+      miniapps: {
+        uninstall: async () => {
+          throw new Error("Host refused uninstall")
+        },
+      },
+      ui: {
+        send: (_channel: string, snapshot: StoreSnapshot) => snapshots.push(snapshot),
+      },
+    } as unknown as MiniappSession
+    const controller = new StoreController(session) as unknown as TestController
+
+    await expect(controller.uninstall("com.example.notes", "notes")).rejects.toThrow("Host refused uninstall")
+    expect(controller.snapshot).toMatchObject({operation: null, error: "Host refused uninstall"})
+    expect(snapshots.at(-1)).toMatchObject({operation: null, error: "Host refused uninstall"})
   })
 
   test("does not install a discoverable beta offer before enrollment", async () => {
