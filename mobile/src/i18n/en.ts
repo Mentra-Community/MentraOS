@@ -156,6 +156,15 @@ const en = {
     livePairingModeSubtitle: "Put your glasses into pairing mode before you scan.",
     livePairingModeInfo:
       "Press the power button 5 times quickly. The LED flashes and the glasses speak a 4-character code (0–9, A–F). Match that code on the scan list if more than one unit appears.",
+    liveScanTitle: "Turn on your glasses",
+    liveScanSubtitle: "We're looking for your Mentra Live.",
+    livePairingFoundTitle: "Glasses found",
+    livePairingFoundSubtitle: "Put them in pairing mode to continue.",
+    liveScanHelpTitle: "Not showing up?",
+    liveScanHelpInfo: "Make sure your glasses are charged and powered on.",
+    liveUpdatedGlassesHint: "Already updated your glasses?",
+    liveChooseGlassesTitle: "Choose your glasses",
+    scanAgain: "Scan Again",
     noGlassesFound: "No glasses found",
     noGlassesFoundHint: "Make sure you pressed the power button 5 times quickly, then try again.",
     nearbyNotInPairingModeHint:
@@ -432,9 +441,11 @@ const en = {
     versionChangeVerifying: "Verifying your glasses\u2026",
     versionChangeKeepNearby: "Keep your glasses nearby and connected. They will restart on their own.",
     versionChangeComplete: "Version Change Complete",
-    versionChangeCompleteMessage: "Your glasses are now on the required version. Their settings were reset and are being restored automatically.",
+    versionChangeCompleteMessage:
+      "Your glasses are now on the required version. Their settings were reset and are being restored automatically.",
     versionChangeFirmwarePassComplete: "Firmware updated",
-    versionChangeFirmwarePassCompleteMessage: "Your glasses restarted with new firmware. One more step: they'll now continue to the required version.",
+    versionChangeFirmwarePassCompleteMessage:
+      "Your glasses restarted with new firmware. One more step: they'll now continue to the required version.",
     updateComplete: "Update Complete",
     updateCompleteMessage: "Your glasses have been updated successfully.",
     updateFailed: "Update Failed",
@@ -745,8 +756,7 @@ const en = {
     defaultHint: "Point the camera at a QR code",
     checkingPermission: "Checking camera permission\u2026",
     permissionTitle: "Camera access needed",
-    permissionBody:
-      "We need your camera to scan QR codes. The camera is only used while this screen is open.",
+    permissionBody: "We need your camera to scan QR codes. The camera is only used while this screen is open.",
     grantAccess: "Grant Camera Access",
     openSettings: "Open Settings",
     permissionDeniedTitle: "Permission Denied",

@@ -194,6 +194,9 @@ describe("pairing loading screen", () => {
   })
 
   it("navigates to success when firmware never emits pairing_info (legacy fallback)", async () => {
+    ;(useRoute as jest.Mock).mockReturnValue({
+      params: {deviceModel: "Mentra Live", deviceName: "MENTRA_LIVE_BLE_LEGACY", securePairingCapable: false},
+    })
     render(<GlassesPairingLoadingScreen />)
 
     act(() => {
@@ -213,6 +216,19 @@ describe("pairing loading screen", () => {
     await waitFor(() => {
       expect(replace).toHaveBeenCalledWith("/pairing/success", {deviceModel: "Mentra Live"})
     })
+  })
+
+  it("fails closed when recovered target capability is unknown", () => {
+    render(<GlassesPairingLoadingScreen />)
+
+    act(() => {
+      useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+    })
+    act(() => {
+      jest.advanceTimersByTime(60_000)
+    })
+
+    expect(replace).not.toHaveBeenCalled()
   })
 
   it("uses the legacy pairing_info fallback when scan already reported non-secure firmware", async () => {
