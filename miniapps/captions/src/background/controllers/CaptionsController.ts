@@ -794,6 +794,17 @@ export class CaptionsController {
   }
 
   private refreshDisplay(): void {
+    // Interim text is not part of formatter final-history. Preserve the exact
+    // live frame across capability/profile/settings refreshes instead of
+    // replacing it with stale finals or leaving it in the previous geometry.
+    if (this.lastDisplayPreview?.isFinal === false && this.currentDisplayText.trim()) {
+      const text = this.currentDisplayText
+      const lines = text.split("\n")
+      this.showTextWall(text)
+      this.broadcastDisplayPreview(text, lines, false)
+      return
+    }
+
     const history = this.formatter.getFinalTranscriptHistory()
     if (history.length === 0) {
       this.broadcastDisplayPreview("", [""], true)

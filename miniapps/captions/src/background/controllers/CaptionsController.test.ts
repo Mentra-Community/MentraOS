@@ -117,6 +117,40 @@ describe("CaptionsController caption position", () => {
     expect(controller.settings.captionPosition).toBe("bottom")
   })
 
+  test("preserves an active interim when capabilities refresh", () => {
+    const render = mock(() => Promise.resolve({status: "rendered"}))
+    const controller = new CaptionsController({
+      capabilities: {display: {width: 600, height: 300, canPosition: true, maxTextLines: 8}},
+      display: {render},
+    } as never) as unknown as {
+      currentDisplayText: string
+      currentMaxLines: number
+      currentProfile: typeof G2_PROFILE
+      lastDisplayPreview: {text: string; lines: string[]; isFinal: boolean; timestamp: number}
+      settings: {captionPosition: "top" | "bottom"}
+      ui: {send: ReturnType<typeof mock>}
+      refreshDisplay: () => void
+    }
+    controller.currentDisplayText = "still speaking"
+    controller.currentMaxLines = 3
+    controller.currentProfile = G2_PROFILE
+    controller.lastDisplayPreview = {
+      text: "still speaking",
+      lines: ["still speaking"],
+      isFinal: false,
+      timestamp: Date.now(),
+    }
+    controller.settings.captionPosition = "bottom"
+    controller.ui = {send: mock(() => undefined)}
+
+    controller.refreshDisplay()
+
+    expect(render).toHaveBeenCalledWith([
+      {type: "text", id: "caption", box: {x: 0, y: 180, w: 600, h: 120}, text: "still speaking"},
+    ])
+    expect(controller.lastDisplayPreview).toMatchObject({text: "still speaking", isFinal: false})
+  })
+
   test("restores bottom and defaults unknown stored values to top", async () => {
     const bottomController = new CaptionsController({
       storage: {get: mock((key: string) => Promise.resolve(key === "captionPosition" ? "bottom" : null))},
