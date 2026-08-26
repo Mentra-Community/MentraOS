@@ -133,6 +133,8 @@ export const NEX_PROFILE: DisplayProfile = {
   // PLACEHOLDER: Using G1 values until Nex specs confirmed
   displayWidthPx: 576,
   maxLines: 5,
+  // Calibrated line height for positioned Mentra Display text boxes.
+  lineHeightPx: 27,
 
   // BLE constraints
   // PLACEHOLDER: Using G1 values until Nex specs confirmed

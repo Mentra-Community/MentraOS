@@ -1,5 +1,6 @@
 import {afterEach, describe, expect, mock, test} from "bun:test"
 
+import {NEX_PROFILE} from "../../core/CaptionsFormatter"
 import {DEFAULT_CAPTION_TIMEOUT_SECONDS} from "../../shared/types"
 import {calculateCaptionBox, CaptionsController, isSupportedCaptionTimeoutSeconds} from "./CaptionsController"
 
@@ -42,6 +43,20 @@ describe("CaptionsController caption position", () => {
         maxTextLines: 5,
       }),
     ).toEqual({x: 0, y: 88, w: 500, h: 132})
+  })
+
+  test("keeps five-line Mentra Display captions positionable", () => {
+    expect(
+      calculateCaptionBox({
+        canvasWidth: 500,
+        canvasHeight: 220,
+        canPosition: true,
+        position: "bottom",
+        lineCount: 5,
+        maxTextLines: 5,
+        lineHeightPx: NEX_PROFILE.lineHeightPx,
+      }),
+    ).toEqual({x: 0, y: 85, w: 500, h: 135})
   })
 
   test("restores bottom and defaults unknown stored values to top", async () => {
