@@ -208,6 +208,7 @@ export class CaptionsController {
   private currentWidthSetting = 1 // matches default displayWidth (Medium)
   private lastSpeakerId: string | undefined = undefined
   private lastDisplayPreview: DisplayPreview | null = null
+  private currentDisplayText = ""
   private cloudStatus: CloudClientStatus = {status: "disconnected", audioTransport: "none"}
 
   constructor(private readonly session: MiniappSession) {}
@@ -473,7 +474,12 @@ export class CaptionsController {
     if (position !== "top" && position !== "bottom") return
     this.settings.captionPosition = position
     await this.persist(STORAGE_KEYS.captionPosition, position)
-    this.refreshDisplay()
+    // Position changes must preserve an active interim transcript. Rebuilding
+    // from formatter history here would include finals only and could leave the
+    // interim in its old box (or replace it with stale finalized text).
+    if (this.currentDisplayText.trim()) {
+      this.showTextWall(this.currentDisplayText)
+    }
     this.broadcastSettings()
   }
 
@@ -825,6 +831,7 @@ export class CaptionsController {
     // lines never make the content jump vertically. Legacy displays retain the
     // full-canvas text wall and degrade host-side as before.
     const d = this.session.capabilities?.display
+    this.currentDisplayText = text
     const maxTextLines = typeof d?.maxTextLines === "number" ? d.maxTextLines : undefined
     const box = calculateCaptionBox({
       canvasWidth: d?.width ?? 576,
@@ -863,6 +870,7 @@ export class CaptionsController {
       this.inactivityTimer = null
       this.formatter.clear()
       this.lastSpeakerId = undefined
+      this.currentDisplayText = ""
       void this.session.display.render([])
     }, this.settings.captionTimeoutSeconds * 1000)
   }

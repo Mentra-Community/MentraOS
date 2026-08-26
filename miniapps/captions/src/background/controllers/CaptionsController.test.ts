@@ -1,6 +1,6 @@
 import {afterEach, describe, expect, mock, test} from "bun:test"
 
-import {NEX_PROFILE} from "../../core/CaptionsFormatter"
+import {G2_PROFILE, NEX_PROFILE} from "../../core/CaptionsFormatter"
 import {DEFAULT_CAPTION_TIMEOUT_SECONDS} from "../../shared/types"
 import {calculateCaptionBox, CaptionsController, isSupportedCaptionTimeoutSeconds} from "./CaptionsController"
 
@@ -88,6 +88,33 @@ describe("CaptionsController caption position", () => {
         lineHeightPx: NEX_PROFILE.lineHeightPx,
       }),
     ).toEqual({x: 0, y: 85, w: 500, h: 135})
+  })
+
+  test("re-renders the active interim when its position changes", async () => {
+    const render = mock(() => Promise.resolve({status: "rendered"}))
+    const controller = new CaptionsController({
+      capabilities: {display: {width: 576, height: 288, canPosition: true, maxTextLines: 8}},
+      display: {render},
+      storage: {set: mock(() => Promise.resolve())},
+    } as never) as unknown as {
+      currentDisplayText: string
+      currentMaxLines: number
+      currentProfile: typeof G2_PROFILE
+      settings: {captionPosition: string}
+      ui: {send: ReturnType<typeof mock>}
+      setCaptionPosition: (position: "top" | "bottom") => Promise<void>
+    }
+    controller.currentDisplayText = "live interim words"
+    controller.currentMaxLines = 3
+    controller.currentProfile = G2_PROFILE
+    controller.ui = {send: mock(() => undefined)}
+
+    await controller.setCaptionPosition("bottom")
+
+    expect(render).toHaveBeenCalledWith([
+      {type: "text", id: "caption", box: {x: 0, y: 168, w: 576, h: 120}, text: "live interim words"},
+    ])
+    expect(controller.settings.captionPosition).toBe("bottom")
   })
 
   test("restores bottom and defaults unknown stored values to top", async () => {
