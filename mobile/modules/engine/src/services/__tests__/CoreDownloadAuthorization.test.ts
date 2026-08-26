@@ -1,6 +1,14 @@
 import {describe, expect, test} from "bun:test"
 
-import {resolveCoreDownloadAuthorization} from "../CoreDownloadAuthorization"
+import {mintCoreDownloadAuthorization, resolveCoreDownloadAuthorization} from "../CoreDownloadAuthorization"
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((done) => {
+    resolve = done
+  })
+  return {promise, resolve}
+}
 
 describe("resolveCoreDownloadAuthorization", () => {
   test("uses the reconnect-selected Core origin instead of the boot origin", async () => {
@@ -62,5 +70,30 @@ describe("resolveCoreDownloadAuthorization", () => {
     await expect(
       resolveCoreDownloadAuthorization("https://first.example.com/api/store/bundles/asset/download", provider),
     ).rejects.toThrow("Core endpoint changed while authorizing bundle download")
+  })
+
+  test("never relabels a token when the Cloud client reconnects during minting", async () => {
+    const oldToken = deferred<string>()
+    const oldClient = {name: "old"}
+    const newClient = {name: "new"}
+    let snapshot = {
+      client: oldClient,
+      origin: "https://old-core.example.com",
+      getBearerToken: () => oldToken.promise,
+    }
+
+    const pending = mintCoreDownloadAuthorization(() => snapshot)
+    snapshot = {
+      client: newClient,
+      origin: "https://oem-core.example.com",
+      getBearerToken: async () => "new-token",
+    }
+    oldToken.resolve("old-token")
+
+    await expect(pending).rejects.toThrow("Core endpoint changed while minting bundle authorization")
+    await expect(mintCoreDownloadAuthorization(() => snapshot)).resolves.toEqual({
+      origin: "https://oem-core.example.com",
+      bearerToken: "new-token",
+    })
   })
 })

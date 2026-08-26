@@ -31,6 +31,7 @@ import {useCloudClientStatusStore} from "../stores/cloudClientStatus"
 import {islandNotifications} from "./NotificationsEmitter"
 import {BgTimer} from "../utils/timers"
 import {logCloudV2TranscriptMetric} from "./CloudTranscriptE2EMetrics"
+import {mintCoreDownloadAuthorization} from "./CoreDownloadAuthorization"
 import {LocalMiniappUserIdentity} from "./LocalMiniappUserIdentity"
 import {nativeHttpResponseBody} from "./NativeHttpResponse"
 
@@ -558,8 +559,16 @@ export const cloudClientService = {
 
   /** Fresh Core credential for host-owned downloads; never exposed to a miniapp. */
   async getCoreDownloadAuthorization(): Promise<{origin: string; bearerToken: string}> {
-    const bearerToken = await syncCoreAccessTokenToBluetooth()
-    return {origin: new URL(resolveEndpoints().core).origin, bearerToken}
+    if (!client) this.init()
+    return mintCoreDownloadAuthorization(() => {
+      const c = client
+      if (!c) return null
+      return {
+        client: c,
+        origin: resolveEndpoints().core,
+        getBearerToken: () => c.auth.getCoreToken(),
+      }
+    })
   },
 
   /**
