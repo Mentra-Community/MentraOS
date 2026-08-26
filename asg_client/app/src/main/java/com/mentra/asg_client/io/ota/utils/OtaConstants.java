@@ -124,9 +124,8 @@ public class OtaConstants {
      * downgrade-safe contract — most importantly the shared media root
      * ({@code MediaStorage.MEDIA_ROOT_PATH}): older builds capture into the app-owned
      * external-files tree, which the OEM uninstall deletes (hardware-verified 2026-07-21), and
-     * read media from the pre-relocation paths. Must be set to the versionCode of the first
-     * release shipping the media relocation before downgrades are enabled in production; 0 leaves
-     * the floor open for RFC/bench testing only.
+     * read media from the pre-relocation paths. Mentra 3.0 is the first release shipping the
+     * downgrade-safe contract, so production downgrades must never target an older build.
      */
-    public static final long DOWNGRADE_FLOOR_VERSION_CODE = 0L;
+    public static final long DOWNGRADE_FLOOR_VERSION_CODE = 51518114L;
 }

@@ -1,17 +1,23 @@
 package com.mentra.asg_client.io.ota.utils;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
 
 public class DowngradeGateTest {
-    private static final long FLOOR = 49000000L;
+    private static final long FLOOR = OtaConstants.DOWNGRADE_FLOOR_VERSION_CODE;
+
+    @Test
+    public void productionFloorStartsAtMentraThree() {
+        assertEquals(51518114L, FLOOR);
+    }
 
     @Test
     public void lowerPinnedVersionDowngradesWhenAboveFloor() {
-        assertTrue(DowngradeGate.shouldDowngrade(49076573L, 49066528L, FLOOR));
-        assertTrue(DowngradeGate.shouldDowngrade(49076573L, 49000000L, FLOOR));
+        assertTrue(DowngradeGate.shouldDowngrade(51530000L, 51520000L, FLOOR));
+        assertTrue(DowngradeGate.shouldDowngrade(51530000L, FLOOR, FLOOR));
     }
 
     @Test
@@ -40,6 +46,6 @@ public class DowngradeGateTest {
     @Test
     public void targetsBelowTheFloorAreRefusedEvenWhenPinned() {
         // Below the floor: predates the downgrade-safe contract (e.g. media relocation build).
-        assertFalse(DowngradeGate.shouldDowngrade(49076573L, 48999999L, FLOOR));
+        assertFalse(DowngradeGate.shouldDowngrade(51530000L, FLOOR - 1L, FLOOR));
     }
 }
