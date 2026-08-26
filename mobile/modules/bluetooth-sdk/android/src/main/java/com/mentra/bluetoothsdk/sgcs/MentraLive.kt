@@ -1478,10 +1478,11 @@ class MentraLive : SGCManager() {
                                         advertisesPairingFlag(result) &&
                                         !isPairingDiscoverable(result)
                         ) {
-                            // Tell RN a nearby unit is advertising but not pairable so the
-                            // empty-state hint can fire. The scan list never shows these.
+                            // Tell RN a nearby unit is advertising but not pairable. The scan
+                            // screen keeps it visible with pairing-mode guidance but blocks the
+                            // connection until a pairable advertisement arrives.
                             Bridge.log(
-                                    "LIVE: Nearby $deviceName is secure firmware not in pairing mode — hiding from scan list"
+                                    "LIVE: Nearby $deviceName is secure firmware not in pairing mode — exposing as non-pairable"
                             )
                             Bridge.sendDiscoveredDevice(
                                     DeviceTypes.LIVE,
