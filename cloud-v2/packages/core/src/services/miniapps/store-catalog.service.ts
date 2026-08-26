@@ -32,11 +32,22 @@ export class StoreCatalogService {
     const filter = this.catalogFilter(input, publishedReleaseIds, betaAppIds);
 
     const total = await MiniAppModel.countDocuments(filter);
-    const apps = await MiniAppModel.find(filter)
-      .sort({ "publishedStoreListing.featured": -1, "displayName": 1, "packageName": 1 })
-      .skip((page - 1) * limit)
+    const offset = (page - 1) * limit;
+    const featuredFilter = this.featuredFilter(filter, betaAppIds, true);
+    const featuredCount = await MiniAppModel.countDocuments(featuredFilter);
+    const apps = await MiniAppModel.find(featuredFilter)
+      .sort({ displayName: 1, packageName: 1 })
+      .skip(Math.min(offset, featuredCount))
       .limit(limit)
       .lean();
+    if (apps.length < limit) {
+      const regularApps = await MiniAppModel.find(this.featuredFilter(filter, betaAppIds, false))
+        .sort({ displayName: 1, packageName: 1 })
+        .skip(Math.max(0, offset - featuredCount))
+        .limit(limit - apps.length)
+        .lean();
+      apps.push(...regularApps);
+    }
     const entries = await this.serializeApps(
       apps,
       input.baseUrl,
@@ -161,6 +172,33 @@ export class StoreCatalogService {
     return asset;
   }
 
+  /** Resolve a Store bundle while re-checking the user's current track access. */
+  async getBundleAsset(assetId: string, identity: StoreCatalogIdentity) {
+    if (!/^[a-f0-9]{24}$/i.test(assetId)) throw new StoreCatalogError("not_found", "bundle not found", 404);
+    const asset = await MiniAppAssetModel.findOne({ _id: assetId, role: "release_bundle" }).lean();
+    if (!asset) throw new StoreCatalogError("not_found", "bundle not found", 404);
+    const release = await MiniAppReleaseModel.findOne({
+      releaseBundleAssetId: assetId,
+      status: "published",
+    }).lean();
+    if (!release) throw new StoreCatalogError("not_found", "bundle not found", 404);
+    const app = await MiniAppModel.findOne({ _id: release.miniAppId, status: "active" }).lean();
+    if (!app) throw new StoreCatalogError("not_found", "bundle not found", 404);
+
+    if (release.releaseTrack === "beta") {
+      if (
+        app.activeBetaReleaseId !== release._id.toString() ||
+        !app.publishedBetaStoreListing ||
+        !(await this.betaAuthorizedAppIds(identity, [app._id.toString()])).has(app._id.toString())
+      ) {
+        throw new StoreCatalogError("not_found", "bundle not found", 404);
+      }
+    } else if (app.activeReleaseId !== release._id.toString() || !app.publishedStoreListing) {
+      throw new StoreCatalogError("not_found", "bundle not found", 404);
+    }
+    return asset;
+  }
+
   private async publishedReleaseIds(): Promise<string[]> {
     return (await MiniAppReleaseModel.distinct("_id", { status: "published" })).map(String);
   }
@@ -268,6 +306,20 @@ export class StoreCatalogService {
     };
   }
 
+  private featuredFilter(filter: Record<string, unknown>, betaAppIds: Set<string>, featured: boolean) {
+    const selectedBetaIds = [...betaAppIds];
+    const expected = featured ? true : { $ne: true };
+    const clauses: Record<string, unknown>[] = [];
+    if (selectedBetaIds.length > 0) {
+      clauses.push({ _id: { $in: selectedBetaIds }, "publishedBetaStoreListing.featured": expected });
+    }
+    clauses.push({
+      ...(selectedBetaIds.length > 0 ? { _id: { $nin: selectedBetaIds } } : {}),
+      "publishedStoreListing.featured": expected,
+    });
+    return { $and: [filter, { $or: clauses }] };
+  }
+
   private selectionClause(
     availability: Record<string, unknown>,
     listingField: "publishedStoreListing" | "publishedBetaStoreListing",
@@ -349,7 +401,7 @@ export class StoreCatalogService {
             id: release._id.toString(),
             version: release.version,
             track: selectedTrack,
-            bundleUrl: `${normalizedBase}/api/client/miniapps/bundles/${release.releaseBundleAssetId}/download`,
+            bundleUrl: `${normalizedBase}/api/store/bundles/${release.releaseBundleAssetId}/download`,
             bundleSha256: release.bundleSha256,
             manifestSha256: release.manifestSha256 ?? null,
             publishedAt: release.publishedAt?.toISOString() ?? null,

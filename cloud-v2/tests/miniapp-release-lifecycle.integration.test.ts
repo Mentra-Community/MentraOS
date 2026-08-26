@@ -156,7 +156,7 @@ describe("miniapp release lifecycle", () => {
     expect(savedApp?.activeReleaseId).toBe(release.id);
   });
 
-  test("getBundleAsset only serves bundles for accepted or published releases", async () => {
+  test("preinstall bundle downloads require an active registry assignment for the user's tenant", async () => {
     await miniapps.createMiniApp(developer, {
       packageName: "com.example.secret",
       displayName: "Secret",
@@ -172,13 +172,26 @@ describe("miniapp release lifecycle", () => {
     const assetId = release.releaseBundleAssetId!;
 
     // A draft (unreviewed) bundle must not be downloadable by asset id.
-    await expect(registries.getBundleAsset(assetId)).rejects.toMatchObject({ status: 404 });
+    await expect(registries.getBundleAsset(assetId, { tenantId: "mentra" })).rejects.toMatchObject({ status: 404 });
 
-    // Once accepted, the same asset id resolves.
+    // Review alone does not distribute the bundle.
     await miniapps.submitRelease(developer, "com.example.secret", release.id);
     await miniapps.approveRelease({ releaseId: release.id, adminId: "admin@mentraglass.com" });
-    const asset = await registries.getBundleAsset(assetId);
+    await expect(registries.getBundleAsset(assetId, { tenantId: "mentra" })).rejects.toMatchObject({ status: 404 });
+
+    const registry = await registries.ensureRegistry(
+      { adminId: "admin@mentraglass.com" },
+      { environment: "dev", tenantId: "mentra" },
+    );
+    const revision = await registries.createRevision({ adminId: "admin@mentraglass.com" }, registry.id, {
+      entries: [{ releaseId: release.id }],
+    });
+    await registries.promoteRevision({ adminId: "admin@mentraglass.com" }, registry.id, revision.id);
+    const asset = await registries.getBundleAsset(assetId, { tenantId: "mentra" });
     expect(asset._id.toString()).toBe(assetId);
+    await expect(registries.getBundleAsset(assetId, { tenantId: "other-tenant" })).rejects.toMatchObject({
+      status: 404,
+    });
   });
 
   test("developer signing key authorizes dev attestation only for owned package", async () => {
@@ -377,7 +390,7 @@ describe("miniapp release lifecycle", () => {
       },
     });
     expect(catalog.apps[0]?.subtitle).not.toBe("Unreviewed post-submission text");
-    expect(catalog.apps[0]?.release.bundleUrl).toContain("/api/client/miniapps/bundles/");
+    expect(catalog.apps[0]?.release.bundleUrl).toContain("/api/store/bundles/");
 
     await miniapps.updateStoreModeration({
       packageName: manifest.packageName,
@@ -957,6 +970,43 @@ describe("miniapp release lifecycle", () => {
       miniapps.publishRelease({ releaseId: beta.id, adminId: "admin@mentraglass.com" }),
     ).rejects.toMatchObject({ code: "invalid_release_state", status: 409 });
     expect((await MiniAppModel.findOne({ packageName }).lean())?.activeBetaReleaseId).toBe(secondBeta.id);
+
+    // Featured ordering follows the listing for the user's selected track,
+    // not the stable snapshot on the same app.
+    await MiniAppModel.updateOne(
+      { packageName },
+      {
+        $set: {
+          "publishedStoreListing.featured": false,
+          "publishedBetaStoreListing.featured": true,
+        },
+      },
+    );
+    const stablePackage = "com.example.alphabetical";
+    await miniapps.createMiniApp(developer, {
+      packageName: stablePackage,
+      displayName: "Alpha Stable",
+      description: "Non-featured stable app",
+    });
+    await configurePublishableListing(stablePackage);
+    const alphaRelease = await miniapps.createRelease(developer, {
+      packageName: stablePackage,
+      version: "1.0.0",
+      manifest: { packageName: stablePackage, name: "Alpha Stable", version: "1.0.0" },
+      bundle: await releaseBundle({ packageName: stablePackage, name: "Alpha Stable", version: "1.0.0" }),
+    });
+    await miniapps.submitRelease(developer, stablePackage, alphaRelease.id);
+    await miniapps.approveRelease({ releaseId: alphaRelease.id, adminId: "admin@mentraglass.com" });
+    await miniapps.publishRelease({ releaseId: alphaRelease.id, adminId: "admin@mentraglass.com" });
+    await catalog.setReleaseTrack(packageName, "beta", storeUser, "https://core.example.test");
+    const featuredPage = await catalog.list({
+      baseUrl: "https://core.example.test",
+      ...storeUser,
+      page: 1,
+      limit: 1,
+    });
+    expect(featuredPage.apps[0]).toMatchObject({ packageName, selectedTrack: "beta", featured: true });
+    expect(featuredPage.hasMore).toBe(true);
   });
 
   test("private betas stay hidden until invitation and revocation stops future beta selection", async () => {
@@ -968,6 +1018,7 @@ describe("miniapp release lifecycle", () => {
     });
     await configurePublishableListing(packageName);
 
+    let betaBundleAssetId = "";
     for (const releaseInput of [
       { version: "1.0.0", releaseTrack: "stable" as const },
       { version: "1.1.0-beta.1", releaseTrack: "beta" as const },
@@ -981,6 +1032,7 @@ describe("miniapp release lifecycle", () => {
       await miniapps.submitRelease(developer, packageName, release.id);
       await miniapps.approveRelease({ releaseId: release.id, adminId: "admin@mentraglass.com" });
       await miniapps.publishRelease({ releaseId: release.id, adminId: "admin@mentraglass.com" });
+      if (releaseInput.releaseTrack === "beta") betaBundleAssetId = release.releaseBundleAssetId!;
     }
 
     const catalog = new StoreCatalogService();
@@ -989,6 +1041,7 @@ describe("miniapp release lifecycle", () => {
     await expect(
       catalog.setReleaseTrack(packageName, "beta", storeUser, "https://core.example.test"),
     ).rejects.toMatchObject({ code: "beta_invitation_required", status: 403 });
+    await expect(catalog.getBundleAsset(betaBundleAssetId, storeUser)).rejects.toMatchObject({ status: 404 });
 
     const invitation = await miniappBetas.invite(developer, packageName, "tester@example.com");
     const invited = await catalog.get(packageName, "https://core.example.test", storeUser);
@@ -997,6 +1050,7 @@ describe("miniapp release lifecycle", () => {
     expect(selected).toMatchObject({ selectedTrack: "beta", preferredTrack: "beta", betaAccess: "invited" });
     expect((await miniappBetas.getAccess(developer, packageName)).invitations[0]?.state).toBe("accepted");
     expect((await miniappBetas.invite(developer, packageName, "tester@example.com")).state).toBe("accepted");
+    expect((await catalog.getBundleAsset(betaBundleAssetId, storeUser))._id.toString()).toBe(betaBundleAssetId);
     await expect(miniappBetas.invite(developer, packageName, "missing@example.com")).rejects.toMatchObject({
       code: "mentra_user_not_found",
       status: 404,
@@ -1008,6 +1062,7 @@ describe("miniapp release lifecycle", () => {
       betaAccess: null,
       availableTracks: ["stable"],
     });
+    await expect(catalog.getBundleAsset(betaBundleAssetId, otherUser)).rejects.toMatchObject({ status: 404 });
 
     await miniappBetas.revoke(developer, packageName, invitation.id);
     expect(await MiniAppTrackEnrollmentModel.exists({ mentraUserId: storeUser.mentraUserId, packageName })).toBeNull();
@@ -1016,12 +1071,14 @@ describe("miniapp release lifecycle", () => {
       betaAccess: null,
       availableTracks: ["stable"],
     });
+    await expect(catalog.getBundleAsset(betaBundleAssetId, storeUser)).rejects.toMatchObject({ status: 404 });
 
     await miniappBetas.setAccessMode(developer, packageName, "public");
     expect(await catalog.get(packageName, "https://core.example.test", otherUser)).toMatchObject({
       betaAccess: "public",
       availableTracks: ["stable", "beta"],
     });
+    expect((await catalog.getBundleAsset(betaBundleAssetId, otherUser))._id.toString()).toBe(betaBundleAssetId);
     await catalog.setReleaseTrack(packageName, "beta", otherUser, "https://core.example.test");
     await miniappBetas.setAccessMode(developer, packageName, "private");
     expect(await MiniAppTrackEnrollmentModel.exists({ mentraUserId: otherUser.mentraUserId })).toBeNull();

@@ -2249,11 +2249,11 @@ class LocalMiniappRuntime {
       typeof rawText === "string"
         ? [rawText.trim()].filter(Boolean)
         : Array.isArray(rawText)
-          ? rawText
-              .filter((sentence): sentence is string => typeof sentence === "string")
-              .map((sentence) => sentence.trim())
-              .filter(Boolean)
-          : []
+        ? rawText
+            .filter((sentence): sentence is string => typeof sentence === "string")
+            .map((sentence) => sentence.trim())
+            .filter(Boolean)
+        : []
     const enableSanitization = payload.enableSanitization !== false
     const sentences = prepareTtsSentences(rawSentences, enableSanitization)
     if (sentences.length === 0) {
@@ -4509,10 +4509,16 @@ class LocalMiniappRuntime {
         miniappLauncher,
         target,
         async () => {
+          const coreUrl = getConfigValues().coreUrl
+          const downloadAuthorization =
+            coreUrl && parsedUrl.origin === new URL(coreUrl).origin
+              ? await cloudClientService.getCoreDownloadAuthorization()
+              : undefined
           const installed = await appRegistry.installFromUrl(bundleUrl, {
             expectedPackageName: target,
             expectedVersion: version,
             expectedBundleSha256: bundleSha256,
+            downloadAuthorization,
             compatibilityPolicy: {
               hostVersion,
               supportedSdkRange: supportedMiniappSdkRange,
@@ -4764,14 +4770,7 @@ class LocalMiniappRuntime {
     timeoutMs = 10 * 60_000,
   ): Promise<unknown> {
     const boundedTimeout = Math.min(Math.max(timeoutMs, 6_000), 15 * 60_000)
-    return this.invokeDeclaredAction(
-      HOST_ACTION_CALLER,
-      targetPackageName,
-      actionId,
-      params,
-      boundedTimeout,
-      true,
-    )
+    return this.invokeDeclaredAction(HOST_ACTION_CALLER, targetPackageName, actionId, params, boundedTimeout, true)
   }
 
   /** session.actions.invoke adapter around the shared broker. */

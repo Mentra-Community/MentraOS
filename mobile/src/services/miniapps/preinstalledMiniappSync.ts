@@ -1,6 +1,5 @@
 import type {PreinstalledMiniappRegistryEntry} from "@mentra/cloud-client/react-native"
-import {appRegistry, isPreinstalledMiniappPackageAllowed, sha256Hex} from "@mentra/engine-host-internal"
-import {Directory, File, Paths} from "expo-file-system"
+import {appRegistry, isPreinstalledMiniappPackageAllowed} from "@mentra/engine-host-internal"
 import semver from "semver"
 
 import {cloudClient} from "@/services/cloudClient"
@@ -49,7 +48,9 @@ function shouldInstall(entry: PreinstalledMiniappRegistryEntry): boolean {
   }
   if (!isMobileVersionSupported(entry)) {
     console.log(
-      `${LOG_TAG}: skipping ${entry.packageName}@${entry.version} — mobile ${MOBILE_APP_VERSION} outside [${entry.minMobileVersion ?? "*"}, ${entry.maxMobileVersion ?? "*"}]`,
+      `${LOG_TAG}: skipping ${entry.packageName}@${entry.version} — mobile ${MOBILE_APP_VERSION} outside [${
+        entry.minMobileVersion ?? "*"
+      }, ${entry.maxMobileVersion ?? "*"}]`,
     )
     return false
   }
@@ -67,11 +68,12 @@ async function installEntry(entry: PreinstalledMiniappRegistryEntry): Promise<vo
   if (!shouldInstall(entry)) return
 
   console.log(`${LOG_TAG}: installing ${entry.packageName}@${entry.version} (${entry.installPolicy})`)
-  const zipPath = await downloadVerifiedBundle(entry)
-  const result = await appRegistry.installFromLocalZip(zipPath, {
+  const downloadAuthorization = await cloudClient.getCoreDownloadAuthorization()
+  const result = await appRegistry.installFromUrl(entry.bundleUrl, {
     expectedPackageName: entry.packageName,
     expectedVersion: entry.version,
     expectedBundleSha256: entry.bundleSha256,
+    downloadAuthorization,
     releaseIdentity: {
       source: "preinstalled_registry",
       bundleSha256: entry.bundleSha256.toLowerCase(),
@@ -81,33 +83,6 @@ async function installEntry(entry: PreinstalledMiniappRegistryEntry): Promise<vo
   if (result.is_error()) {
     throw result.error
   }
-}
-
-async function downloadVerifiedBundle(entry: PreinstalledMiniappRegistryEntry): Promise<string> {
-  const downloadDir = new Directory(Paths.cache, "preinstalled_miniapps")
-  if (!downloadDir.exists) downloadDir.create()
-
-  const safeName = `${entry.packageName}-${entry.version}.zip`.replace(/[^a-z0-9._-]/gi, "_")
-  const target = new File(downloadDir, safeName)
-  if (target.exists) target.delete()
-
-  let output: File
-  try {
-    output = await File.downloadFileAsync(entry.bundleUrl, target, {idempotent: true})
-  } catch (error) {
-    throw new Error(`bundle download failed: ${(error as Error)?.message ?? error}`)
-  }
-  const bytes = await output.bytes()
-  const actualSha = await sha256Hex(bytes)
-  if (actualSha !== entry.bundleSha256.toLowerCase()) {
-    try {
-      output.delete()
-    } catch {
-      // best effort cleanup
-    }
-    throw new Error(`bundle sha mismatch: expected ${entry.bundleSha256}, got ${actualSha}`)
-  }
-  return output.uri
 }
 
 export const preinstalledMiniappSync = {

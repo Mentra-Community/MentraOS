@@ -108,6 +108,10 @@ data; each deployment may publish both stable and beta releases.
 - [x] Make beta-only launches usable: an authorized tester can discover a
       published beta before the first stable release exists, while every
       uninvited user continues to see no private-beta listing or bundle.
+- [x] Re-authorize Store bundle bytes on every download. Private-beta URLs stop
+      working immediately after revocation, protected responses are never
+      shared-cacheable, and historical/archived releases cannot be fetched by
+      retaining an old asset URL.
 - [x] Show beta availability/current selection in the Store detail screen and
       refresh the catalog after changing tracks.
 - [x] Carry the selected release track through Store install descriptors and
@@ -212,7 +216,11 @@ data; each deployment may publish both stable and beta releases.
 - [x] Cloud Store/CLI bundle tests: 16 passed.
 - [x] Publish-to-catalog integration: 16 passed, including private/public beta
       invitations, beta-only discovery, stable/beta isolation, per-user enrollment, concurrent listing
-      edits, moderation, artwork privacy, and the 10-screenshot cap.
+      edits, selected-track featured ordering, download-time revocation,
+      tenant-scoped preinstall authorization, moderation, artwork privacy, and
+      the 10-screenshot cap.
+- [x] Real Core Store-token integration: 3 passed, including strict Store
+      miniapp audience acceptance and rejection of unrelated miniapp tokens.
 - [x] Miniapp packer regressions: 2 passed, including atomic preservation of
       the previous artifact after a failed ZIP command.
 - [x] Mentra Miniapp SDK: 272 passed.

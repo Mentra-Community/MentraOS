@@ -14,7 +14,7 @@ const storage = createStorageService();
 
 app.get("/", userAuth, listMiniapps);
 app.get("/registry", userAuth, getRegistry);
-app.get("/bundles/:assetId/download", downloadBundle);
+app.get("/bundles/:assetId/download", userAuth, downloadBundle);
 
 async function listMiniapps(c: AppContext) {
   const registry = await loadRegistry(c);
@@ -44,8 +44,10 @@ async function loadRegistry(c: AppContext) {
 async function downloadBundle(c: AppContext) {
   const assetId = c.req.param("assetId");
   if (!assetId) throw new InvalidRequest("missing assetId");
+  const user = c.var.user;
+  if (!user) throw new InvalidRequest("authenticated user missing");
   try {
-    const asset = await registryService.getBundleAsset(assetId);
+    const asset = await registryService.getBundleAsset(assetId, { tenantId: user.tenantId });
     const bytes = await storage.getObject(asset.storageKey);
 
     return new Response(bytes, {
@@ -53,8 +55,9 @@ async function downloadBundle(c: AppContext) {
         "content-type": asset.contentType || "application/zip",
         "content-length": String(asset.sizeBytes),
         "content-disposition": `attachment; filename="${asset.fileName.replace(/"/g, "")}"`,
-        "cache-control": "public, max-age=31536000, immutable",
+        "cache-control": "private, no-store",
         "x-bundle-sha256": asset.sha256,
+        "x-content-type-options": "nosniff",
       },
     });
   } catch (error) {

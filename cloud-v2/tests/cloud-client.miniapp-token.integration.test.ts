@@ -126,6 +126,21 @@ describe("cloud.auth.getMiniappToken (real core)", () => {
     expect(second.token).toBe(first.token);
     expect(second.expiresAt).toBe(first.expiresAt);
   });
+
+  test("Store endpoints accept only the configured Store miniapp audience", async () => {
+    const cloud = await newCloud("store-user");
+    const storeToken = await cloud.auth.getMiniappToken("com.mentra.store");
+    const storeResponse = await fetch(`${coreHandle.url}/api/store/apps`, {
+      headers: { authorization: `Bearer ${storeToken.token}` },
+    });
+    expect(storeResponse.status).toBe(200);
+
+    const unrelatedToken = await cloud.auth.getMiniappToken(TEST_PACKAGE);
+    const unrelatedResponse = await fetch(`${coreHandle.url}/api/store/apps`, {
+      headers: { authorization: `Bearer ${unrelatedToken.token}` },
+    });
+    expect(unrelatedResponse.status).toBe(400);
+  });
 });
 
 // === Helpers ===

@@ -215,18 +215,32 @@ export class PreinstalledRegistryService {
     return { generatedAt: new Date().toISOString(), entries };
   }
 
-  async getBundleAsset(assetId: string) {
+  async getBundleAsset(assetId: string, identity: { tenantId: string }) {
+    if (!/^[a-f0-9]{24}$/i.test(assetId)) {
+      throw new PreinstalledRegistryServiceError("not_found", "bundle asset not found", 404);
+    }
     const asset = await MiniAppAssetModel.findOne({ _id: assetId, role: "release_bundle" }).lean();
     if (!asset) throw new PreinstalledRegistryServiceError("not_found", "bundle asset not found", 404);
-    // Only serve bundles that belong to a release which cleared review
-    // (accepted/published). Without this, any release_bundle asset id resolves to
-    // a downloadable zip, exposing draft/rejected/unpublished bundles to anyone
-    // who has the id. 404 (not 403) so we do not confirm an id exists.
-    const released = await MiniAppReleaseModel.exists({
+    const release = await MiniAppReleaseModel.findOne({
       releaseBundleAssetId: assetId,
       status: { $in: ["accepted", "published"] },
+    }).lean();
+    if (!release) throw new PreinstalledRegistryServiceError("not_found", "bundle asset not found", 404);
+
+    // Preinstall downloads are a separate admin-controlled distribution path.
+    // Possession of an accepted release asset id is insufficient: the release
+    // must be present in an active registry applicable to this user's tenant.
+    const activeRevisionIds = await PreinstalledRegistryModel.distinct("activeRevisionId", {
+      status: "active",
+      activeRevisionId: { $ne: null },
+      tenantId: { $in: [identity.tenantId, null] },
     });
-    if (!released) throw new PreinstalledRegistryServiceError("not_found", "bundle asset not found", 404);
+    const distributed = await PreinstalledRegistryRevisionModel.exists({
+      _id: { $in: activeRevisionIds },
+      status: "active",
+      entries: { $elemMatch: { releaseId: release._id.toString() } },
+    });
+    if (!distributed) throw new PreinstalledRegistryServiceError("not_found", "bundle asset not found", 404);
     return asset;
   }
 

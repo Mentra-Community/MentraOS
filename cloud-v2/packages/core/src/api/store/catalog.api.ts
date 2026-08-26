@@ -4,15 +4,16 @@ import { StoreCatalogError, StoreCatalogService } from "../../services/miniapps/
 import { createStorageService } from "../../services/storage/storage.service";
 import type { AppContext, AppEnv } from "../../types/hono.types";
 import { InvalidRequest } from "../../types/oauth.types";
-import { optionalUserAuth, userAuth } from "../middleware/user-auth.middleware";
+import { optionalStoreUserAuth, storeUserAuth } from "../middleware/store-user-auth.middleware";
 
 const app = new Hono<AppEnv>();
 const catalog = new StoreCatalogService();
 const storage = createStorageService();
 
-app.get("/apps", optionalUserAuth, listApps);
-app.get("/apps/:packageName", optionalUserAuth, getApp);
-app.post("/apps/:packageName/track", userAuth, setTrack);
+app.get("/apps", optionalStoreUserAuth, listApps);
+app.get("/apps/:packageName", optionalStoreUserAuth, getApp);
+app.post("/apps/:packageName/track", storeUserAuth, setTrack);
+app.get("/bundles/:assetId/download", storeUserAuth, getBundle);
 app.get("/assets/:assetId", getAsset);
 
 const trackSchema = z.object({ track: z.enum(["stable", "beta"]) });
@@ -78,6 +79,27 @@ async function getAsset(c: AppContext) {
         "content-type": asset.contentType,
         "content-length": String(asset.sizeBytes),
         "cache-control": "public, max-age=31536000, immutable",
+        "x-content-type-options": "nosniff",
+      },
+    });
+  } catch (error) {
+    return serviceError(error);
+  }
+}
+
+async function getBundle(c: AppContext) {
+  const assetId = c.req.param("assetId");
+  if (!assetId) return c.json({ error: "not_found" }, 404);
+  try {
+    const asset = await catalog.getBundleAsset(assetId, identity(c));
+    const bytes = await storage.getObject(asset.storageKey);
+    return new Response(bytes, {
+      headers: {
+        "content-type": asset.contentType || "application/zip",
+        "content-length": String(asset.sizeBytes),
+        "content-disposition": `attachment; filename="${asset.fileName.replace(/"/g, "")}"`,
+        "cache-control": "private, no-store",
+        "x-bundle-sha256": asset.sha256,
         "x-content-type-options": "nosniff",
       },
     });

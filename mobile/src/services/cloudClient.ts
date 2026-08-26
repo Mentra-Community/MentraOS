@@ -121,6 +121,7 @@ export const cloudClient = {
   init: (): void => cloudClientService.init(),
   reconnect: (): void => cloudClientService.reconnect(resolvedEndpoints()),
   getPreinstalledMiniappRegistry: () => cloudClientService.getPreinstalledMiniappRegistry(),
+  getCoreDownloadAuthorization: () => cloudClientService.getCoreDownloadAuthorization(),
   getMiniappAuthToken: (packageName: string, opts?: {minTtlMs?: number; devAttestation?: string}) =>
     cloudClientService.getMiniappAuthToken(packageName, opts),
   startManagedPhoto: (opts: Record<string, unknown> = {}) => cloudClientService.startManagedPhoto(opts),

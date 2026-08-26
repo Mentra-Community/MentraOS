@@ -179,6 +179,11 @@ export interface InstallBundleOptions {
     supportedSdkRange: string
     hardwareCapabilities?: Capabilities
   }
+  /** Host-owned Core authorization. Never populate this from miniapp input. */
+  downloadAuthorization?: {
+    origin: string
+    bearerToken: string
+  }
   onProgress?: (phase: "downloading" | "verifying" | "extracting" | "activating") => void
 }
 
@@ -243,6 +248,7 @@ async function downloadMiniAppZip(
   url: string,
   expectedSha256?: string,
   onProgress?: InstallBundleOptions["onProgress"],
+  authorization?: InstallBundleOptions["downloadAuthorization"],
 ): Promise<string> {
   const downloadDir = new Directory(Paths.cache, "lma_downloads")
   try {
@@ -265,10 +271,27 @@ async function downloadMiniAppZip(
     // React Native's global fetch polyfill does not expose Response.body.
     // Expo fetch provides the native ReadableStream required for bounded
     // downloads without buffering an attacker-controlled response first.
-    const response = await expoFetch(url, {signal: abortController.signal})
+    const requestUrl = new URL(url)
+    let requestInit: Parameters<typeof expoFetch>[1] = {signal: abortController.signal}
+    if (authorization) {
+      const authorizedOrigin = new URL(authorization.origin).origin
+      if (requestUrl.origin !== authorizedOrigin || !authorization.bearerToken.trim()) {
+        throw new Error("bundle authorization is not valid for this origin")
+      }
+      requestInit = {
+        ...requestInit,
+        headers: {Authorization: `Bearer ${authorization.bearerToken}`},
+        // Do not forward a Core bearer credential through redirects.
+        redirect: "error",
+      }
+    }
+    const response = await expoFetch(url, requestInit)
     if (!response.ok) throw new Error(`bundle download failed with HTTP ${response.status}`)
-    if (new URL(url).protocol === "https:" && response.url && new URL(response.url).protocol !== "https:") {
+    if (requestUrl.protocol === "https:" && response.url && new URL(response.url).protocol !== "https:") {
       throw new Error("bundle download redirected away from HTTPS")
+    }
+    if (authorization && response.url && new URL(response.url).origin !== requestUrl.origin) {
+      throw new Error("authorized bundle download changed origin")
     }
     const declaredSize = Number(response.headers.get("content-length"))
     if (Number.isFinite(declaredSize) && declaredSize > MAX_REMOTE_BUNDLE_BYTES) {
@@ -448,7 +471,12 @@ async function downloadAndInstallMiniApp(
   url: string,
   opts?: InstallBundleOptions,
 ): Promise<{packageName: string; version: string}> {
-  const downloadedZipPath = await downloadMiniAppZip(url, opts?.expectedBundleSha256, opts?.onProgress)
+  const downloadedZipPath = await downloadMiniAppZip(
+    url,
+    opts?.expectedBundleSha256,
+    opts?.onProgress,
+    opts?.downloadAuthorization,
+  )
   const downloadedZip = new File(downloadedZipPath)
   try {
     const manifest = await validateInstallBundleArchive(await downloadedZip.bytes(), {

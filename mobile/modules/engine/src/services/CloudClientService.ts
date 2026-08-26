@@ -556,6 +556,12 @@ export const cloudClientService = {
     return c.core.miniapps.getRegistry()
   },
 
+  /** Fresh Core credential for host-owned downloads; never exposed to a miniapp. */
+  async getCoreDownloadAuthorization(): Promise<{origin: string; bearerToken: string}> {
+    const bearerToken = await syncCoreAccessTokenToBluetooth()
+    return {origin: new URL(resolveEndpoints().core).origin, bearerToken}
+  },
+
   /**
    * Resolve the stable Core-owned Mentra user id.
    *
