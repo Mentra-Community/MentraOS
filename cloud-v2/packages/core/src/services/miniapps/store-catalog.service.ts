@@ -177,13 +177,24 @@ export class StoreCatalogService {
     if (!asset) throw new StoreCatalogError("not_found", "asset not found", 404);
     const app = await MiniAppModel.findOne({ _id: asset.miniAppId, status: "active" }).lean();
     if (!app) throw new StoreCatalogError("not_found", "asset not found", 404);
-    const activeReleaseIds = [app.activeReleaseId, app.activeBetaReleaseId].filter(Boolean);
-    const publishedRelease = await MiniAppReleaseModel.exists({ _id: { $in: activeReleaseIds }, status: "published" });
-    if (!publishedRelease) throw new StoreCatalogError("not_found", "asset not found", 404);
-    const referenced = [app.publishedStoreListing, app.publishedBetaStoreListing].some(listing =>
-      [listing?.iconAssetId, listing?.coverAssetId, ...(listing?.screenshotAssetIds ?? [])].includes(assetId),
+    const activeReleaseIds = [app.activeReleaseId, app.activeBetaReleaseId].filter(
+      (releaseId): releaseId is string => typeof releaseId === "string",
     );
-    if (!referenced) throw new StoreCatalogError("not_found", "asset not found", 404);
+    const publishedReleaseIds = new Set(
+      (await MiniAppReleaseModel.distinct("_id", { _id: { $in: activeReleaseIds }, status: "published" })).map(String),
+    );
+    const referencedBy = (listing: typeof app.publishedStoreListing) =>
+      [listing?.iconAssetId, listing?.coverAssetId, ...(listing?.screenshotAssetIds ?? [])].includes(assetId);
+    const referencedByStable =
+      Boolean(app.activeReleaseId && publishedReleaseIds.has(app.activeReleaseId)) &&
+      referencedBy(app.publishedStoreListing);
+    const referencedByPublicBeta =
+      app.betaAccessMode === "public" &&
+      Boolean(app.activeBetaReleaseId && publishedReleaseIds.has(app.activeBetaReleaseId)) &&
+      referencedBy(app.publishedBetaStoreListing);
+    if (!referencedByStable && !referencedByPublicBeta) {
+      throw new StoreCatalogError("not_found", "asset not found", 404);
+    }
     return asset;
   }
 
@@ -415,6 +426,12 @@ export class StoreCatalogService {
       const hasPublishedStable = Boolean(
         app.publishedStoreListing && app.activeReleaseId && publishedIds.has(String(app.activeReleaseId)),
       );
+      const publicArtworkListing =
+        selectedTrack === "beta" && app.betaAccessMode !== "public"
+          ? hasPublishedStable
+            ? app.publishedStoreListing
+            : null
+          : listing;
       const assetUrl = (id?: string | null) => (id ? `${normalizedBase}/api/store/assets/${id}` : null);
       const manifest = (release.manifest ?? {}) as Record<string, unknown>;
       return [
@@ -429,9 +446,9 @@ export class StoreCatalogService {
           websiteUrl: listing.websiteUrl ?? null,
           reviewTier: listing.reviewTier ?? "community",
           featured: listing.featured === true,
-          iconUrl: assetUrl(listing.iconAssetId),
-          coverUrl: assetUrl(listing.coverAssetId),
-          screenshotUrls: (listing.screenshotAssetIds ?? []).map((id: string) => assetUrl(id)),
+          iconUrl: assetUrl(publicArtworkListing?.iconAssetId),
+          coverUrl: assetUrl(publicArtworkListing?.coverAssetId),
+          screenshotUrls: (publicArtworkListing?.screenshotAssetIds ?? []).map((id: string) => assetUrl(id)),
           selectedTrack,
           preferredTrack: betaEnrollmentAppIds.has(appId) ? "beta" : "stable",
           betaAccess: canAccessBeta ? (app.betaAccessMode === "public" ? "public" : "invited") : null,

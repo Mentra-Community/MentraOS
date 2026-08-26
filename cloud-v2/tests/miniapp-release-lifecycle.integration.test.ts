@@ -511,6 +511,45 @@ describe("miniapp release lifecycle", () => {
     await miniapps.deleteStoreAsset(developer, "com.example.artwork", replacement.id);
   });
 
+  test("private beta-only artwork stays off the unauthenticated asset route", async () => {
+    const packageName = "com.example.privateartwork";
+    await miniapps.createMiniApp(developer, {
+      packageName,
+      displayName: "Private Artwork",
+      description: "Private beta artwork test",
+    });
+    await configurePublishableListing(packageName);
+    const app = await MiniAppModel.findOne({ packageName }).lean();
+    const iconAssetId = app?.storeListing?.iconAssetId;
+    expect(iconAssetId).toBeTruthy();
+
+    const release = await miniapps.createRelease(developer, {
+      packageName,
+      version: "1.0.0-beta.1",
+      releaseTrack: "beta",
+      manifest: { packageName, name: "Private Artwork", version: "1.0.0-beta.1" },
+      bundle: await releaseBundle({ packageName, name: "Private Artwork", version: "1.0.0-beta.1" }),
+    });
+    await miniapps.submitRelease(developer, packageName, release.id);
+    await miniapps.approveRelease({ releaseId: release.id, adminId: "admin@mentraglass.com" });
+    await miniapps.publishRelease({ releaseId: release.id, adminId: "admin@mentraglass.com" });
+
+    const catalog = new StoreCatalogService();
+    await miniappBetas.invite(developer, packageName, "tester@example.com");
+    expect(await catalog.get(packageName, "https://core.example.test", storeUser)).toMatchObject({
+      betaAccess: "invited",
+      iconUrl: null,
+    });
+    await expect(catalog.getPublicAsset(iconAssetId!)).rejects.toMatchObject({ status: 404 });
+
+    await miniappBetas.setAccessMode(developer, packageName, "public");
+    expect(await catalog.get(packageName, "https://core.example.test")).toMatchObject({
+      betaAccess: "public",
+      iconUrl: `https://core.example.test/api/store/assets/${iconAssetId}`,
+    });
+    expect((await catalog.getPublicAsset(iconAssetId!))._id.toString()).toBe(iconAssetId);
+  });
+
   test("submission and artwork deletion serialize without producing a dangling snapshot", async () => {
     const packageName = "com.example.artworkrace";
     await miniapps.createMiniApp(developer, {

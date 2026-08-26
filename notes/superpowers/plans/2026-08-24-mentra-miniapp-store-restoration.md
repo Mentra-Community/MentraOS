@@ -120,6 +120,9 @@ data; each deployment may publish both stable and beta releases.
       retaining an old asset URL. Public and private beta downloads both require
       a current enrollment in addition to beta access, and private-beta
       activation requires an accepted invitation rather than a pending offer.
+- [x] Keep private-beta-only icons, covers, and screenshots off the anonymous
+      cached asset route. Private betas reuse published stable artwork when
+      available; public-beta artwork remains public.
 - [x] Show beta availability/current selection in the Store detail screen and
       refresh the catalog after changing tracks.
 - [x] Carry the selected release track through Store install descriptors and
@@ -225,7 +228,7 @@ data; each deployment may publish both stable and beta releases.
 - [x] Cloud typecheck.
 - [x] Developer Console production build.
 - [x] Cloud Store/CLI bundle tests: 16 passed.
-- [x] Publish-to-catalog integration: 17 passed, including private/public beta
+- [x] Publish-to-catalog integration: 18 passed, including private/public beta
       invitations, beta-only discovery, stable/beta isolation, per-user enrollment, concurrent listing
       edits, publication fencing, selected-track featured ordering, download-time revocation,
       tenant-scoped preinstall authorization, moderation, artwork privacy, and
