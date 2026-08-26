@@ -1,24 +1,25 @@
-import React, {useMemo} from 'react';
+import React, { useMemo } from "react";
 import {
   ActivityIndicator,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   View,
-} from 'react-native';
-import {SafeAreaView} from 'react-native-safe-area-context';
+} from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import Svg, { Circle, Line, Path, Polyline } from "react-native-svg";
 import {
   useMentraLiveOta,
   type MentraLiveOtaFlowPage,
-} from '@mentra/engine/ota';
+} from "@mentra/engine/ota";
 
-import {colors} from '../components/theme';
+import { Header } from "../components/Header";
+import { colors } from "../components/theme";
 import {
   otaPresentation,
   type CustomOtaAction,
   type CustomOtaButton,
-} from './otaPresentation';
+} from "./otaPresentation";
 
 export type CustomMentraLiveOtaFlowProps = {
   deviceName?: string;
@@ -29,15 +30,15 @@ export type CustomMentraLiveOtaFlowProps = {
 };
 
 const toneColors = {
-  active: {accent: colors.greenPrimary, wash: '#EAF8EF'},
-  danger: {accent: colors.red, wash: '#FFF0EE'},
-  neutral: {accent: colors.muted, wash: '#F1F3F0'},
-  success: {accent: colors.greenDeep, wash: '#E7F6EB'},
+  active: { accent: colors.greenPrimary, wash: "rgba(22,163,74,0.10)" },
+  danger: { accent: colors.red, wash: "rgba(255,59,48,0.08)" },
+  neutral: { accent: colors.muted, wash: "rgba(15,42,29,0.05)" },
+  success: { accent: colors.greenDeep, wash: "rgba(52,199,89,0.12)" },
 };
 
 export function CustomMentraLiveOtaFlow({
-  deviceName = 'Mentra Live',
-  initialPage = 'check',
+  deviceName = "Mentra Live",
+  initialPage = "check",
   initializeRuntime = true,
   onFinished,
   onOpenWifiSetup,
@@ -60,39 +61,22 @@ export function CustomMentraLiveOtaFlow({
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.overline}>STARTER KIT · CUSTOM UI</Text>
-          <Text style={styles.headerTitle}>Mentra Live update</Text>
-        </View>
-        <View style={[styles.statusDot, {backgroundColor: palette.accent}]} />
-      </View>
-
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        keyboardShouldPersistTaps="handled">
-        <View style={[styles.card, {borderColor: palette.accent}]}>
-          <View style={[styles.iconRing, {backgroundColor: palette.wash}]}>
-            <Text style={[styles.icon, {color: palette.accent}]}>
-              {presentation.tone === 'success'
-                ? '✓'
-                : presentation.tone === 'danger'
-                  ? '!'
-                  : '↻'}
-            </Text>
-          </View>
-
+      <Header title="Software Update" />
+      <View style={styles.page} testID="custom-mentra-live-ota-flow">
+        <View style={styles.centerContent}>
+          <StatusIcon
+            accent={palette.accent}
+            tone={presentation.tone}
+            wash={palette.wash}
+          />
           <Text style={styles.title}>{presentation.title}</Text>
           <Text style={styles.message}>{presentation.message}</Text>
 
           {presentation.progress !== undefined ? (
             <View style={styles.progressBlock}>
-              <View style={styles.progressRow}>
-                <Text style={styles.progressLabel}>Progress</Text>
-                <Text style={[styles.progressValue, {color: palette.accent}]}>
-                  {Math.round(presentation.progress)}%
-                </Text>
-              </View>
+              <Text style={[styles.progressValue, { color: palette.accent }]}>
+                {Math.round(presentation.progress)}%
+              </Text>
               <View style={styles.progressTrack}>
                 <View
                   style={[
@@ -112,31 +96,75 @@ export function CustomMentraLiveOtaFlow({
           ) : null}
 
           {presentation.detail ? (
-            <View style={[styles.detailBox, {backgroundColor: palette.wash}]}>
-              <Text style={styles.detail}>{presentation.detail}</Text>
-            </View>
+            <Text style={styles.detail}>{presentation.detail}</Text>
           ) : null}
         </View>
-      </ScrollView>
 
-      {presentation.primary || presentation.secondary ? (
-        <View style={styles.actions}>
-          {presentation.primary ? (
-            <ActionButton
-              button={presentation.primary}
-              onPress={runAction}
-              primary
-            />
-          ) : null}
-          {presentation.secondary ? (
-            <ActionButton
-              button={presentation.secondary}
-              onPress={runAction}
-            />
-          ) : null}
-        </View>
-      ) : null}
+        {presentation.primary || presentation.secondary ? (
+          <View style={styles.actions}>
+            {presentation.primary ? (
+              <ActionButton
+                button={presentation.primary}
+                onPress={runAction}
+                primary
+              />
+            ) : null}
+            {presentation.secondary ? (
+              <ActionButton
+                button={presentation.secondary}
+                onPress={runAction}
+              />
+            ) : null}
+          </View>
+        ) : (
+          <View style={styles.actionSpacer} />
+        )}
+      </View>
     </SafeAreaView>
+  );
+}
+
+function StatusIcon({
+  accent,
+  tone,
+  wash,
+}: {
+  accent: string;
+  tone: keyof typeof toneColors;
+  wash: string;
+}) {
+  return (
+    <View style={[styles.iconTile, { backgroundColor: wash }]}>
+      <Svg
+        fill="none"
+        height={28}
+        stroke={accent}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={2.2}
+        viewBox="0 0 24 24"
+        width={28}
+      >
+        {tone === "success" ? (
+          <>
+            <Circle cx={12} cy={12} r={9} />
+            <Polyline points="8 12 11 15 16.5 9.5" />
+          </>
+        ) : tone === "danger" ? (
+          <>
+            <Circle cx={12} cy={12} r={9} />
+            <Line x1={12} x2={12} y1={7.5} y2={13} />
+            <Line x1={12} x2={12.01} y1={16.5} y2={16.5} />
+          </>
+        ) : (
+          <>
+            <Path d="M12 3v12" />
+            <Polyline points="7.5 10.5 12 15 16.5 10.5" />
+            <Path d="M5 19h14" />
+          </>
+        )}
+      </Svg>
+    </View>
   );
 }
 
@@ -154,13 +182,17 @@ function ActionButton({
       accessibilityRole="button"
       disabled={button.disabled}
       onPress={() => onPress(button.action)}
-      style={({pressed}) => [
+      style={({ pressed }) => [
         styles.button,
         primary ? styles.primaryButton : styles.secondaryButton,
-        {opacity: button.disabled ? 0.4 : pressed ? 0.72 : 1},
+        button.disabled && styles.buttonDisabled,
+        pressed && !button.disabled && styles.buttonPressed,
       ]}
-      testID={`custom-ota-${button.action}`}>
-      <Text style={primary ? styles.primaryButtonText : styles.secondaryButtonText}>
+      testID={`custom-ota-${button.action}`}
+    >
+      <Text
+        style={primary ? styles.primaryButtonText : styles.secondaryButtonText}
+      >
         {button.label}
       </Text>
     </Pressable>
@@ -168,71 +200,84 @@ function ActionButton({
 }
 
 const styles = StyleSheet.create({
-  safeArea: {backgroundColor: '#F6F8F5', flex: 1},
-  header: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingHorizontal: 24,
-    paddingVertical: 18,
+  safeArea: { backgroundColor: colors.bg, flex: 1 },
+  page: { flex: 1, paddingBottom: 18, paddingHorizontal: 24 },
+  centerContent: {
+    alignItems: "center",
+    flex: 1,
+    gap: 16,
+    justifyContent: "center",
+    paddingBottom: 8,
   },
-  overline: {
-    color: colors.greenDeep,
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 1.1,
+  iconTile: {
+    alignItems: "center",
+    borderRadius: 18,
+    height: 56,
+    justifyContent: "center",
+    width: 56,
   },
-  headerTitle: {color: colors.ink, fontSize: 18, fontWeight: '700', marginTop: 3},
-  statusDot: {borderRadius: 8, height: 12, width: 12},
-  scrollContent: {flexGrow: 1, justifyContent: 'center', padding: 24},
-  card: {
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderLeftWidth: 5,
-    borderRadius: 24,
-    gap: 18,
-    paddingHorizontal: 24,
-    paddingVertical: 34,
-    shadowColor: colors.greenInk,
-    shadowOffset: {height: 12, width: 0},
-    shadowOpacity: 0.1,
-    shadowRadius: 28,
-    elevation: 5,
+  title: {
+    color: colors.ink,
+    fontSize: 21,
+    fontWeight: "700",
+    letterSpacing: -0.25,
+    maxWidth: 420,
+    textAlign: "center",
   },
-  iconRing: {
-    alignItems: 'center',
-    borderRadius: 36,
-    height: 72,
-    justifyContent: 'center',
-    width: 72,
+  message: {
+    color: colors.muted,
+    fontSize: 14,
+    lineHeight: 20,
+    maxWidth: 420,
+    textAlign: "center",
   },
-  icon: {fontSize: 34, fontWeight: '700', lineHeight: 42},
-  title: {color: colors.ink, fontSize: 25, fontWeight: '700', textAlign: 'center'},
-  message: {color: colors.muted, fontSize: 15, lineHeight: 22, textAlign: 'center'},
-  progressBlock: {gap: 8, maxWidth: 420, width: '100%'},
-  progressRow: {flexDirection: 'row', justifyContent: 'space-between'},
-  progressLabel: {color: colors.muted, fontSize: 13, fontWeight: '600'},
-  progressValue: {fontSize: 16, fontVariant: ['tabular-nums'], fontWeight: '800'},
+  progressBlock: {
+    alignItems: "center",
+    gap: 12,
+    maxWidth: 420,
+    width: "100%",
+  },
+  progressValue: {
+    fontSize: 28,
+    fontVariant: ["tabular-nums"],
+    fontWeight: "800",
+  },
   progressTrack: {
     backgroundColor: colors.hairline,
-    borderRadius: 6,
-    height: 10,
-    overflow: 'hidden',
+    borderRadius: 4,
+    height: 8,
+    overflow: "hidden",
+    width: "100%",
   },
-  progressFill: {borderRadius: 6, height: 10},
-  detailBox: {borderRadius: 14, maxWidth: 420, padding: 14, width: '100%'},
-  detail: {color: colors.ink, fontSize: 13, lineHeight: 19, textAlign: 'center'},
-  actions: {gap: 10, paddingBottom: 18, paddingHorizontal: 24},
+  progressFill: { borderRadius: 4, height: 8 },
+  detail: {
+    color: colors.muted,
+    fontSize: 13,
+    lineHeight: 19,
+    maxWidth: 420,
+    textAlign: "center",
+  },
+  actions: { gap: 10 },
+  actionSpacer: { height: 48 },
   button: {
-    alignItems: 'center',
-    borderRadius: 18,
+    alignItems: "center",
+    borderRadius: 14,
     borderWidth: 1,
-    justifyContent: 'center',
-    minHeight: 54,
+    justifyContent: "center",
+    minHeight: 48,
     paddingHorizontal: 20,
   },
-  primaryButton: {backgroundColor: colors.greenInk, borderColor: colors.greenInk},
-  secondaryButton: {backgroundColor: 'transparent', borderColor: colors.greenInk},
-  primaryButtonText: {color: '#FFFFFF', fontSize: 15, fontWeight: '700'},
-  secondaryButtonText: {color: colors.greenInk, fontSize: 15, fontWeight: '700'},
+  primaryButton: {
+    backgroundColor: colors.greenInk,
+    borderColor: colors.greenInk,
+  },
+  secondaryButton: { backgroundColor: colors.bg, borderColor: "#DBDBDB" },
+  buttonDisabled: { opacity: 0.4 },
+  buttonPressed: { opacity: 0.72, transform: [{ scale: 0.98 }] },
+  primaryButtonText: { color: colors.bg, fontSize: 14, fontWeight: "700" },
+  secondaryButtonText: {
+    color: colors.inkAlt,
+    fontSize: 14,
+    fontWeight: "700",
+  },
 });
