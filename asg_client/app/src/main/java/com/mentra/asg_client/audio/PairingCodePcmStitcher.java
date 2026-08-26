@@ -15,14 +15,14 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Concatenates pairing-character WAVs into one PCM phrase with silence trimmed and a short
- * linear crossfade between clips, so the code is heard as {@code Ay-one-bee-two} rather than four
- * separate announcements.
+ * Concatenates pairing-character WAVs into one PCM phrase with silence trimmed and a short pause
+ * between clips, so each character remains distinct without sounding like four separate
+ * announcements.
  */
 public final class PairingCodePcmStitcher {
 
     private static final String TAG = "PairingCodePcmStitcher";
-    static final int CROSSFADE_MS = 60;
+    static final int INTER_CHARACTER_PAUSE_MS = 140;
     static final int SILENCE_THRESHOLD = 512;
     private static final String CACHE_PREFIX = "pairing_code_";
     private static final String CACHE_SUFFIX = ".wav";
@@ -67,7 +67,10 @@ public final class PairingCodePcmStitcher {
                 throw new IOException(
                         "sample rate mismatch: " + sampleRate + " vs " + next.sampleRate);
             }
-            acc = crossfade(acc, trimSilence(next.samples), msToSamples(CROSSFADE_MS, sampleRate));
+            acc = appendWithSilence(
+                    acc,
+                    trimSilence(next.samples),
+                    msToSamples(INTER_CHARACTER_PAUSE_MS, sampleRate));
         }
         return encodePcmWav(acc, sampleRate);
     }
@@ -92,28 +95,11 @@ public final class PairingCodePcmStitcher {
         return trimmed;
     }
 
-    static short[] crossfade(short[] left, short[] right, int overlap) {
-        int fade = Math.min(overlap, Math.min(left.length, right.length));
-        if (fade <= 0) {
-            short[] out = new short[left.length + right.length];
-            System.arraycopy(left, 0, out, 0, left.length);
-            System.arraycopy(right, 0, out, left.length, right.length);
-            return out;
-        }
-        short[] out = new short[left.length + right.length - fade];
-        System.arraycopy(left, 0, out, 0, left.length - fade);
-        for (int i = 0; i < fade; i++) {
-            float t = (i + 1) / (float) (fade + 1);
-            int mixed =
-                    Math.round(left[left.length - fade + i] * (1f - t) + right[i] * t);
-            if (mixed > Short.MAX_VALUE) {
-                mixed = Short.MAX_VALUE;
-            } else if (mixed < Short.MIN_VALUE) {
-                mixed = Short.MIN_VALUE;
-            }
-            out[left.length - fade + i] = (short) mixed;
-        }
-        System.arraycopy(right, fade, out, left.length, right.length - fade);
+    static short[] appendWithSilence(short[] left, short[] right, int silenceSamples) {
+        int gap = Math.max(0, silenceSamples);
+        short[] out = new short[left.length + gap + right.length];
+        System.arraycopy(left, 0, out, 0, left.length);
+        System.arraycopy(right, 0, out, left.length + gap, right.length);
         return out;
     }
 

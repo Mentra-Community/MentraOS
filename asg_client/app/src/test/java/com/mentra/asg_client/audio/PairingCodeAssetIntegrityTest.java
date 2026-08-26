@@ -20,7 +20,7 @@ import org.robolectric.annotation.Config;
 public class PairingCodeAssetIntegrityTest {
 
     @Test
-    public void stitchCodeToCache_a12b_writesOneShorterPhrase() throws Exception {
+    public void stitchCodeToCache_a12b_writesOneSpacedPhrase() throws Exception {
         Application app = ApplicationProvider.getApplicationContext();
         File wav = PairingCodePcmStitcher.stitchCodeToCache(app, "A12B");
 
@@ -44,8 +44,10 @@ public class PairingCodeAssetIntegrityTest {
                 trimmedSum += PairingCodePcmStitcher.trimSilence(clip.samples).length;
             }
         }
-        assertThat(stitched.samples.length).isLessThan(trimmedSum);
-        assertThat(stitched.samples.length).isGreaterThan(0);
+        int pauseSamples =
+                PairingCodePcmStitcher.msToSamples(
+                        PairingCodePcmStitcher.INTER_CHARACTER_PAUSE_MS, rate);
+        assertThat(stitched.samples.length).isEqualTo(trimmedSum + pauseSamples * 3);
     }
 
     @Test

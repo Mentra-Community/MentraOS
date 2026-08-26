@@ -22,11 +22,17 @@ done
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 output_dir="${PAIRING_AUDIO_OUTPUT_DIR:-$script_dir/../app/src/main/assets/pairing}"
+normalize_script="$script_dir/../app/src/main/assets/normalize-audio.sh"
 model_id="${ELEVENLABS_MODEL_ID:-eleven_flash_v2_5}"
 temporary_dir="$(mktemp -d)"
 trap 'rm -rf "$temporary_dir"' EXIT
 
 mkdir -p "$output_dir"
+
+if [[ ! -x "$normalize_script" ]]; then
+    echo "$normalize_script is required and must be executable" >&2
+    exit 1
+fi
 
 # The spoken forms remove single-character pronunciation ambiguity while keeping each asset to
 # one character name. PairingCodeSpeaker currently accepts hexadecimal codes, but the full
@@ -112,6 +118,8 @@ for clip in "${clips[@]}"; do
         -ar 44100 \
         -c:a pcm_s16le \
         "$wav_path"
+
+    "$normalize_script" "$wav_path"
 done
 
 echo "Generated ${#clips[@]} Mentra Live pairing clips in $output_dir"
