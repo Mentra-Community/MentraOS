@@ -797,13 +797,13 @@ function FlowButton({
       style={({pressed}) => [
         styles.button,
         {
-          backgroundColor: secondary ? colors.background : colors.primary,
-          borderColor: secondary ? colors.border : colors.primary,
+          backgroundColor: secondary ? colors.background : colors.foreground,
+          borderColor: secondary ? colors.border : colors.foreground,
           opacity: disabled ? 0.45 : pressed ? 0.75 : 1,
         },
       ]}
       testID={`button-${label}`}>
-      <Text style={[styles.buttonText, {color: secondary ? colors.foreground : colors.primaryText}]}>{label}</Text>
+      <Text style={[styles.buttonText, {color: secondary ? colors.foreground : colors.background}]}>{label}</Text>
     </Pressable>
   )
 }
@@ -846,11 +846,11 @@ const styles = StyleSheet.create({
   progressFill: {borderRadius: 4, height: 8},
   button: {
     alignItems: "center",
-    borderRadius: 10,
+    borderRadius: 50,
     borderWidth: 1,
     justifyContent: "center",
-    minHeight: 48,
+    minHeight: 44,
     paddingHorizontal: 20,
   },
-  buttonText: {fontSize: 15, fontWeight: "700"},
+  buttonText: {fontSize: 14, fontWeight: "500"},
 })

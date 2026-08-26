@@ -166,7 +166,7 @@ const en = {
       "Press the power button 5 times quickly. The LED flashes and the glasses speak a 4-character code. Then select the glasses again.",
     tryAgain: "Try Again",
     pairingCodeLabel: "Code {{code}}",
-    legacyFirmwareLabel: "Legacy firmware",
+    legacyFirmwareLabel: "Legacy software",
     ar99Step1: "1. Confirm that the Bluetooth switch of the mobile phone is turned on.",
     ar99Step2: "2. Press and hold the power button for 3 to 5 seconds to turn on the glasses.",
   },

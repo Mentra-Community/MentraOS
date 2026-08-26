@@ -25,6 +25,7 @@ import {islandNotifications} from "../services/NotificationsEmitter"
 import sttModelManager from "../services/STTModelManager"
 import {miniappLauncher} from "../services/MiniappLauncher"
 import {miniappRunningRegistry} from "../services/MiniappRunningRegistry"
+import {resolveHiddenStatus} from "./appVisibility"
 import {SETTINGS, useSettingsStore} from "./settings"
 import BluetoothSdk from "@mentra/bluetooth-sdk"
 
@@ -221,7 +222,12 @@ function projectApps(previousState: AppStatusState, localApps: ClientApp[]): Cli
       ...app,
       screenshot: previousByPackage.get(app.packageName)?.screenshot ?? app.screenshot,
       compatibility: HardwareCompatibility.checkCompatibility(app.hardwareRequirements, capabilities),
-      hidden: previousState.getHiddenStatus(app.packageName),
+      // A registry source can force an app off the primary home screen (for
+      // example, Miniapp Developer while its home-screen setting is disabled).
+      // Compose that gate with the user's persisted home-screen layout instead
+      // of replacing it, otherwise a default-false persisted value makes a
+      // source-hidden app visible again during projection.
+      hidden: resolveHiddenStatus(app.hidden, previousState.getHiddenStatus(app.packageName)),
       // Derive the foreground flag from the store's single source of truth
       // (`foregroundedPackage`), NOT from the previous snapshot. Carrying it over
       // per-app meant a refresh that momentarily omitted an app (e.g. the
