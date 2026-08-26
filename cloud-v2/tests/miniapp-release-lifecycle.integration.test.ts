@@ -370,6 +370,22 @@ describe("miniapp release lifecycle", () => {
     expect(submittedForReview?.storeListing.subtitle).toBe("A useful miniapp");
     expect(submittedForReview?.listingReadiness.ready).toBe(true);
     await miniapps.approveRelease({ releaseId: release.id, adminId: "admin@mentraglass.com" });
+    await miniapps.updateStoreModeration({
+      packageName: manifest.packageName,
+      reviewTier: "community",
+      featured: false,
+    });
+    const acceptedRows = await miniapps.listAdminSubmissions();
+    expect(acceptedRows.find(row => row.id === release.id)?.storeListing).toMatchObject({
+      subtitle: "A useful miniapp",
+      reviewTier: "community",
+      featured: false,
+    });
+    await miniapps.updateStoreModeration({
+      packageName: manifest.packageName,
+      reviewTier: "verified",
+      featured: true,
+    });
     await miniapps.publishRelease({ releaseId: release.id, adminId: "admin@mentraglass.com" });
 
     const catalog = await new StoreCatalogService().list({ baseUrl: "https://core.example.test", ...storeUser });

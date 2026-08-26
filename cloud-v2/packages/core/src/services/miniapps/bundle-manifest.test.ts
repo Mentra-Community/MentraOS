@@ -68,6 +68,26 @@ describe("parseCanonicalBundleManifest", () => {
     } satisfies Partial<BundleManifestError>);
   });
 
+  test("rejects malformed SDK and host version requirements", async () => {
+    for (const [key, value] of [
+      ["sdkVersion", "garbage"],
+      ["sdkVersion", 3],
+      ["minHostVersion", ""],
+      ["minHostVersion", "next"],
+    ] as const) {
+      const invalid = { ...manifest, [key]: value };
+      await expect(parseCanonicalBundleManifest(await bundle(invalid), invalid)).rejects.toMatchObject({
+        code: "invalid_manifest_version_requirement",
+      } satisfies Partial<BundleManifestError>);
+    }
+
+    const shorthand = { ...manifest, sdkVersion: "0.3", minHostVersion: "3.1" };
+    await expect(parseCanonicalBundleManifest(await bundle(shorthand), shorthand)).resolves.toMatchObject({
+      packageName: manifest.packageName,
+      version: manifest.version,
+    });
+  });
+
   test("rejects permissions outside the public manifest schema", async () => {
     for (const permissions of [
       { type: "MICROPHONE" },

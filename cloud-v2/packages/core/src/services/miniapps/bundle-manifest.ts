@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import semver from "semver";
 import { canonicalJson } from "./developer-signing.service";
 import { verifyZipArchive, type VerifiedZipEntry } from "./zip-archive";
 
@@ -114,6 +115,8 @@ export async function parseCanonicalBundleManifest(
     throw new BundleManifestError("invalid_version", "miniapp.json version must be valid semantic version text");
   }
   requiredString(manifest, "name");
+  validateOptionalSemanticVersion(manifest, "sdkVersion", "Mentra Miniapp SDK version");
+  validateOptionalSemanticVersion(manifest, "minHostVersion", "minimum Mentra App version");
   validateManifestPermissions(manifest.permissions);
   validateManifestHardwareRequirements(manifest.hardwareRequirements);
   validateManifestEntries(entries, manifest);
@@ -131,6 +134,18 @@ export async function parseCanonicalBundleManifest(
     packageName,
     version,
   };
+}
+
+function validateOptionalSemanticVersion(
+  manifest: Record<string, unknown>,
+  key: "sdkVersion" | "minHostVersion",
+  label: string,
+): void {
+  const value = manifest[key];
+  if (value === undefined) return;
+  if (typeof value !== "string" || value.trim().length === 0 || !semver.valid(semver.coerce(value.trim()))) {
+    throw new BundleManifestError("invalid_manifest_version_requirement", `miniapp.json ${label} is invalid`);
+  }
 }
 
 function validateManifestHardwareRequirements(value: unknown): void {

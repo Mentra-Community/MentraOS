@@ -287,13 +287,14 @@ export class MiniAppService {
       const isActiveRelease = activeReleaseId === release._id.toString();
       const activePublishedListing =
         release.releaseTrack === "beta" ? app?.publishedBetaStoreListing : app?.publishedStoreListing;
+      const acceptedListing = listingWithCurrentModeration(release.reviewedStoreListing, app?.storeListing);
       const listingSource =
         release.status === "published"
           ? isActiveRelease && activePublishedListing
             ? activePublishedListing
             : release.reviewedStoreListing
           : release.status === "accepted"
-            ? release.reviewedStoreListing
+            ? acceptedListing
             : ["submitted", "in_review"].includes(release.status)
               ? release.submittedStoreListing
               : app?.storeListing;
@@ -995,6 +996,17 @@ export class MiniAppService {
     }
     return app;
   }
+}
+
+function listingWithCurrentModeration(listing: unknown, current: unknown) {
+  const reviewed = serializeStoreListing(listing);
+  if (!current || typeof current !== "object" || Array.isArray(current)) return reviewed;
+  const moderation = current as { reviewTier?: unknown; featured?: unknown };
+  return {
+    ...reviewed,
+    reviewTier: moderation.reviewTier === "verified" ? "verified" : "community",
+    featured: moderation.featured === true,
+  };
 }
 
 export class MiniAppServiceError extends Error {
