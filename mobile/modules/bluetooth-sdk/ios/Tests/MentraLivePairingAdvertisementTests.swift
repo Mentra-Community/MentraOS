@@ -38,6 +38,27 @@ final class MentraLivePairingAdvertisementTests: XCTestCase {
         )
     }
 
+    func testConnectedPairingRecoveryRequiresActiveGattConnection() {
+        XCTAssertFalse(
+            MentraLivePendingPairingTarget.shouldRecover(
+                isConnected: false,
+                connectedName: "MENTRA_LIVE_BLE_TARGET",
+                connectedIdentifier: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+                pendingName: "MENTRA_LIVE_BLE_TARGET",
+                pendingIdentifier: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"
+            )
+        )
+        XCTAssertTrue(
+            MentraLivePendingPairingTarget.shouldRecover(
+                isConnected: true,
+                connectedName: "MENTRA_LIVE_BLE_TARGET",
+                connectedIdentifier: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+                pendingName: "MENTRA_LIVE_BLE_TARGET",
+                pendingIdentifier: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"
+            )
+        )
+    }
+
     func testConnectionCallbackPolicyRejectsPairingYieldAndStaleAttempts() {
         XCTAssertFalse(
             MentraLiveConnectionAttemptPolicy.shouldAcceptDidConnect(

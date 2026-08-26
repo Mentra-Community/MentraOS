@@ -37,6 +37,21 @@ enum MentraLivePendingPairingTarget {
         }
         return !pendingName.isEmpty && connectedName == pendingName
     }
+
+    static func shouldRecover(
+        isConnected: Bool,
+        connectedName: String,
+        connectedIdentifier: String,
+        pendingName: String,
+        pendingIdentifier: String
+    ) -> Bool {
+        isConnected && matches(
+            connectedName: connectedName,
+            connectedIdentifier: connectedIdentifier,
+            pendingName: pendingName,
+            pendingIdentifier: pendingIdentifier
+        )
+    }
 }
 
 // MARK: - BlePhotoUploadService
@@ -5518,7 +5533,8 @@ class MentraLive: NSObject, SGCManager {
     /// established owner's connected glasses have no pending identity and remain hidden.
     private func emitConnectedPendingDeviceForPairingScan() {
         guard !pairingYieldActive, let peripheral = connectedPeripheral, let name = peripheral.name,
-              MentraLivePendingPairingTarget.matches(
+              MentraLivePendingPairingTarget.shouldRecover(
+                  isConnected: peripheral.state == .connected,
                   connectedName: name,
                   connectedIdentifier: peripheral.identifier.uuidString,
                   pendingName: DeviceStore.shared.get("bluetooth", "pending_device_name") as? String ?? "",
