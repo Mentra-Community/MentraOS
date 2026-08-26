@@ -1,6 +1,25 @@
 import {engine} from "@mentra/engine"
+import type {Device} from "@mentra/bluetooth-sdk"
 
 import {useNavigationStore} from "@/stores/navigation"
+
+const PAIRING_KICKOFF_DELAY_MS = 2_000
+
+/**
+ * Starts the selected connection after the loading transition, but only if the
+ * user is still on that flow. A plain delayed pair() survives a back action and
+ * can connect glasses or a controller the user explicitly cancelled.
+ */
+export function schedulePairingKickoff(device: Device, targetLabel: "glasses" | "controller") {
+  setTimeout(() => {
+    const {history} = useNavigationStore.getState()
+    if (history[history.length - 1] !== "/pairing/loading") return
+    engine.pairing.pair(device).catch((error) => {
+      console.error(`Failed to connect to ${targetLabel}:`, error)
+      routePairingKickoffFailure(device.model)
+    })
+  }, PAIRING_KICKOFF_DELAY_MS)
+}
 
 /**
  * Routes a pairing/connect KICKOFF rejection to the failure screen.

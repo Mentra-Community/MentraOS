@@ -17,7 +17,7 @@ import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {translate} from "@/i18n"
 import {useNavigationStore} from "@/stores/navigation"
 import showAlert from "@/utils/AlertUtils"
-import {routePairingKickoffFailure} from "@/utils/PairingUtils"
+import {schedulePairingKickoff} from "@/utils/PairingUtils"
 import {PermissionFeatures, requestFeaturePermissions} from "@/utils/PermissionsUtils"
 import {AR99_MODEL_OPTIONS, getAr99DisplayName, getAr99ImageSource, getGlassesOpenImage} from "@/utils/getGlassesImage"
 
@@ -237,17 +237,13 @@ export default function SelectGlassesBluetoothScreen() {
       bluetoothClassicConnected ||
       !deviceTypesWithBtClassic.includes(device.model as DeviceTypes)
     ) {
-      setTimeout(() => {
-        engine.pairing.pair(device).catch((error) => {
-          console.error("Failed to connect to glasses:", error)
-          routePairingKickoffFailure(device.model)
-        })
-      }, 2000)
+      schedulePairingKickoff(device, "glasses")
       push("/pairing/loading", {
         deviceModel: device.model,
         deviceName: device.name,
         ar99ProjectName: resolvedProjectName,
         securePairingCapable: device.securePairingCapable,
+        pairingCode: device.pairingCode,
       })
       return
     }
@@ -258,6 +254,7 @@ export default function SelectGlassesBluetoothScreen() {
       deviceName: device.name,
       ar99ProjectName: resolvedProjectName,
       securePairingCapable: device.securePairingCapable,
+      pairingCode: device.pairingCode,
     })
   }
 

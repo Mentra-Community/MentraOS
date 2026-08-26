@@ -167,6 +167,7 @@ describe("pairing scan screen", () => {
   beforeEach(() => {
     resetBluetoothSdkMock()
     jest.clearAllMocks()
+    ;(engine.pairing.pair as jest.Mock).mockReset().mockResolvedValue(undefined)
     useCoreStore.getState().reset()
     useGlassesStore.getState().reset()
     useSettingsStore.getState().resetAllSettingsLocally()
@@ -339,6 +340,7 @@ describe("pairing scan screen", () => {
 
     expect(replace).not.toHaveBeenCalledWith("/pairing/failure", expect.anything())
     expect(engine.pairing.abandonAttempt).not.toHaveBeenCalled()
+    expect(engine.pairing.pair).not.toHaveBeenCalled()
   })
 
   it("auto-skips directly into pairing when NOTREQUIREDSKIP is discovered", async () => {
@@ -545,6 +547,7 @@ describe("pairing scan screen", () => {
         expect.objectContaining({
           deviceModel: "Mentra Live",
           deviceName: "MENTRA_LIVE_BLE_PAIR_A",
+          pairingCode: "ABCD",
         }),
       )
     })
