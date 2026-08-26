@@ -2,7 +2,7 @@
 
 Expo development-build reference app for the Mentra Bluetooth SDK.
 
-This example installs the SDK as `@mentra/bluetooth-sdk` and is intended to run from a fresh clone once the package is available. It demonstrates the same Device, Camera, Stream, System, and Console flows as the native Android and iOS examples.
+This example installs `@mentra/bluetooth-sdk` and `@mentra/engine`. App code imports the SDK through the curated `@mentra/engine/bluetooth-sdk` entry points, which omit the SDK's debug and devtools-only namespaces. The direct SDK dependency supplies its Expo config plugin and native modules. The example demonstrates the same Device, Camera, Stream, System, and Console flows as the native Android and iOS examples, plus the shared full-page Mentra Live OTA flow from the Mentra App.
 
 Expo Go cannot load the SDK because the package contains native Android and iOS code. Use `bunx expo run:ios`, `bun run android:dev`, EAS development builds, or production native builds.
 
@@ -24,12 +24,13 @@ bun install
 The example depends on the SDK version pinned in `package.json`, for example:
 
 ```json
-"@mentra/bluetooth-sdk": "0.1.21-beta.5"
+"@mentra/bluetooth-sdk": "3.1.0-dev.9",
+"@mentra/engine": "3.1.0-dev.9"
 ```
 
-Use the latest SDK version published by Mentra. When validating unreleased SDK
-changes, use the local source override below so JavaScript, Android, and iOS all
-resolve the same local package.
+Use compatible SDK and Engine versions published by Mentra. When validating
+unreleased SDK changes, use the local source override below so JavaScript,
+Android, and iOS all resolve the same local package.
 
 ## Run On iOS
 
@@ -45,7 +46,7 @@ Run on a physical iPhone for Bluetooth testing. Simulators are useful only for U
 The React Native example uses the SDK photo receiver plus local native modules for direct phone receiving:
 
 - `@mentra/react-native-barcode-scanner` scans the latest photo preview for barcodes.
-- `@mentra/bluetooth-sdk/photo-receiver` starts a small phone-local photo upload server for direct JPEG uploads.
+- `@mentra/engine/bluetooth-sdk/photo-receiver` starts a small phone-local photo upload server for direct JPEG uploads.
 - `@mentra/react-native-video-stream-receiver` starts the phone-local WebRTC preview receiver.
 
 Only the video stream receiver needs GStreamer. On iOS, `bun run ios:setup` downloads the GStreamer package from `gstreamer.freedesktop.org`, verifies the published SHA-256 checksum, and installs it to `~/Library/Developer/GStreamer/iPhone.sdk`. Rerun this setup command after a fresh clone or whenever the local GStreamer SDK is missing from the default location.
@@ -65,6 +66,14 @@ bun run android:dev
 ```
 
 Run on a physical Android phone for Bluetooth testing. Some Android devices require both Nearby Devices and Location permission before BLE scan callbacks are delivered.
+
+Development builds do not install glasses updates unless an OTA manifest is
+supplied explicitly. Set `EXPO_PUBLIC_ASG_OTA_VERSION_URL` when you intentionally
+need to exercise OTA against a development manifest:
+
+```bash
+EXPO_PUBLIC_ASG_OTA_VERSION_URL=https://example.com/pinned-version.json bun run android:dev
+```
 
 `bun run android:dev` starts Metro first, waits for `localhost:8081`, installs the development build without starting a second bundler, forwards the Android device's `localhost:8081` to your computer, and explicitly opens the Expo dev-client URL. This avoids the first-run blank launcher state where you have to manually tap the `localhost:8081` session.
 
@@ -102,7 +111,12 @@ The example's `app.json` already includes the Mentra SDK plugin:
 ]
 ```
 
-The plugin configures the native project so Expo can register the SDK module. The example also uses `expo-build-properties` to set Android `minSdkVersion` to `28` and add native library `pickFirst` rules for `libc++_shared.so`, `libonnxruntime.so`, and `libonnxruntime4j_jni.so`.
+The plugins configure the native project so Expo can register the SDK modules. The example uses `expo-build-properties` to set Android `minSdkVersion` to `33` and add native library `pickFirst` rules for `libc++_shared.so`, `libonnxruntime.so`, and `libonnxruntime4j_jni.so`.
+
+`@mentra/engine` declares `@mentra/crust` as a peer for its full runtime, but the
+`@mentra/engine/ota` entry does not use Crust. This OTA-only host excludes Crust
+from Expo autolinking so it does not package the unrelated navigation and
+miniapp-runtime native libraries.
 
 For production Expo apps that need BLE or microphone behavior while iOS is backgrounded or locked, see [Background Operation On iOS](../../docs/getting-started.md#background-operation-on-ios).
 
@@ -142,7 +156,7 @@ the published package, remove the symlink and run `bun install`.
 
 The example has five tabs:
 
-- **Device**: scan for Mentra Live glasses, connect, disconnect, reconnect to the saved/default device, inspect battery, firmware, Wi-Fi, RSSI, and discovered-device state, and explicitly check/start OTA updates once the glasses are connected to Wi-Fi.
+- **Device**: scan for Mentra Live glasses, connect, disconnect, reconnect to the saved/default device, inspect battery, firmware, Wi-Fi, RSSI, and discovered-device state. Connecting Mentra Live opens the shared full-page OTA flow automatically; the Software Update action opens the same flow manually. Legacy glasses without hotspot OTA support can return to the System tab for Wi-Fi setup and resume the flow afterward.
 - **Camera**: request photo upload to the local demo cloud or directly to this phone, choose automatic or BLE-only photo transfer, record and upload videos to the media webhook, tune manual exposure and ISO, enable **Text Capture Mode** for glasses-side max-resolution capture and text-region cropping, preview received media, or separately scan standard photo previews for barcodes. Text capture and barcode scanning are mutually exclusive; enabling either turns the other off. Direct phone photo is provided by the SDK, while barcode scanning is implemented in a companion local native module.
 - **Stream**: start RTMP, SRT, or WebRTC streams with SDK-managed keep-alives and preview HLS/WebRTC output. Android and iOS can receive WebRTC directly on the phone through the app-hosted GStreamer WHIP receiver.
 - **System**: scan/connect/forget Wi-Fi, toggle hotspot, change gallery mode, receive microphone PCM, and send RGB LED controls.

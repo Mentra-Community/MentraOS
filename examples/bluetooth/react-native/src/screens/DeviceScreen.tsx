@@ -1,10 +1,9 @@
 import React from 'react';
-import { ActivityIndicator, View, Text, ScrollView, Pressable, StyleSheet, Image } from 'react-native';
+import { View, Text, ScrollView, Pressable, StyleSheet, Image } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Circle, Line, Path, Rect } from 'react-native-svg';
-import { DeviceModels } from '@mentra/bluetooth-sdk';
+import { DeviceModels } from '@mentra/engine/bluetooth-sdk';
 import { Header } from '../components/Header';
-import { OfflineNotice } from '../components/OfflineNotice';
 import { useScrollBottomPadding } from '../components/keyboardLayout';
 import { colors } from '../components/theme';
 import {
@@ -17,7 +16,6 @@ import {
   firmwareLabel,
   firmwareSubLabel,
   isGlassesConnected,
-  isGlassesWifiConnected,
   latestEventLabel,
   modelLabel,
   rssiLabel,
@@ -37,7 +35,7 @@ const glassesImages = {
   vuzixZ100: require('../../assets/glasses/vuzix_z100.png'),
 };
 
-export function DeviceScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
+export function DeviceScreen({ sdk, onOpenOta }: { sdk: BluetoothSdkExampleModel; onOpenOta: () => void }) {
   const scrollBottomPadding = useScrollBottomPadding();
   const level = batteryLevel(sdk.glasses);
   const connected = isGlassesConnected(sdk.glasses);
@@ -45,10 +43,7 @@ export function DeviceScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
   const canConnect = !connected && hasConnectionTarget(sdk);
   const hasDefaultTarget = Boolean(sdk.defaultDevice);
   const displaySupported = connected && supportsDisplay(sdk.glasses);
-  const glassesWifiConnected = isGlassesWifiConnected(sdk.glasses);
-  const otaWifiRequired = connected && !glassesWifiConnected;
-  const otaInProgress = isOtaInProgress(sdk);
-  const canCheckOta = connected && glassesWifiConnected && !otaInProgress;
+  const canOpenOta = connected && shouldShowMentraLiveVersions(sdk);
   const connection = connectionLabel(sdk.glasses);
   const latestEvent = sdk.events[0];
 
@@ -99,10 +94,6 @@ export function DeviceScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
             <StatCard label="WI-FI" value={wifiLabel(sdk.glasses)} sub={wifiSubLabel(sdk.glasses)} subColor={colors.muted} bold />
             <StatCard label="RSSI" value={rssiLabel(sdk.glasses)} sub={rssiUpdatedLabel(sdk.glasses)} subColor={colors.greenAccent} bold />
           </View>
-          {(sdk.otaStatus || sdk.otaUpdateAvailable || sdk.otaNoUpdateVisible || sdk.otaPendingAction) ? <OtaCard sdk={sdk} /> : null}
-          {otaWifiRequired ? (
-            <OfflineNotice message="Connect the glasses to Wi-Fi from the System tab before checking or starting OTA updates. OTA downloads run over the glasses network connection." />
-          ) : null}
         </>
       ) : null}
 
@@ -144,17 +135,11 @@ export function DeviceScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
             </Pressable>
           </View>
           <View style={styles.btnRow}>
-            <Pressable disabled={!canCheckOta} style={({ pressed }) => [styles.btnLight, pressed && styles.btnPressed, !canCheckOta && styles.disabled]} onPress={sdk.checkForOtaUpdate}>
+            <Pressable disabled={!canOpenOta} style={({ pressed }) => [styles.btnLight, pressed && styles.btnPressed, !canOpenOta && styles.disabled]} onPress={onOpenOta}>
               <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={colors.inkAlt} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
                 <Path d="M21 12a9 9 0 0 1-15.5 6.2" /><Path d="M3 12a9 9 0 0 1 15.5-6.2" /><Path d="M18 2v4h-4" /><Path d="M6 22v-4h4" />
               </Svg>
-              <Text style={styles.btnTextDark}>{connected && !glassesWifiConnected ? 'Connect Wi-Fi' : 'Check OTA'}</Text>
-            </Pressable>
-            <Pressable disabled={!canStartOta(sdk)} style={({ pressed }) => [styles.btnLight, pressed && styles.btnPressed, !canStartOta(sdk) && styles.disabled]} onPress={sdk.startOtaUpdate}>
-              <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={colors.inkAlt} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
-                <Path d="M12 3v12" /><Path d="m7 10 5 5 5-5" /><Path d="M5 21h14" />
-              </Svg>
-              <Text style={styles.btnTextDark}>{sdk.otaStartPending ? 'Starting OTA...' : 'Start OTA'}</Text>
+              <Text style={styles.btnTextDark}>Software Update</Text>
             </Pressable>
           </View>
           <View style={styles.btnRow}>
@@ -216,7 +201,6 @@ export function DeviceScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
           <StatusRow label="DISCOVERED" value={discoveredLabel(sdk.discoveredDevices)} mono />
           <StatusRow label="PERMISSIONS" value={sdk.permissionStatus} />
           <StatusRow label="CAMERA" value={sdk.cameraStatus} />
-          <StatusRow label="OTA" value={otaStatusLine(sdk)} />
           <StatusRow label="LATEST EVENT" custom={<View style={{ gap: 4 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
               <View style={styles.liveBadge}><View style={{ width: 5, height: 5, borderRadius: 999, backgroundColor: colors.greenPrimary }} /><Text style={styles.liveText}>{latestEvent?.tag ?? 'LIVE'}</Text></View>
@@ -303,162 +287,6 @@ function glassesImageFor(status: BluetoothSdkExampleModel['glasses']) {
     return glassesImages.unknownWearable;
   }
   return glassesImages.mentraLive;
-}
-
-function canStartOta(sdk: BluetoothSdkExampleModel) {
-  if (!isGlassesConnected(sdk.glasses) || !isGlassesWifiConnected(sdk.glasses)) {
-    return false;
-  }
-  return sdk.otaUpdateAvailable && !isOtaInProgress(sdk);
-}
-
-function isOtaInProgress(sdk: BluetoothSdkExampleModel) {
-  return sdk.otaPendingAction !== null || sdk.otaStatus?.status === 'in_progress' || sdk.otaStatus?.status === 'step_complete';
-}
-
-function otaStatusLine(sdk: BluetoothSdkExampleModel) {
-  if (sdk.otaPendingAction === 'verify') {
-    return 'checking for remaining updates';
-  }
-  if (sdk.otaPendingAction === 'start') {
-    return 'starting update';
-  }
-  if (sdk.otaStatus) {
-    return `${sdk.otaStatus.status.replace(/_/g, ' ')} · ${otaDisplayPercent(sdk)}%`;
-  }
-  if (sdk.otaUpdateAvailable) {
-    return 'Firmware update available';
-  }
-  if (sdk.otaStatusMessage) {
-    return sdk.otaStatusMessage;
-  }
-  return isGlassesConnected(sdk.glasses) ? 'Check not run' : 'Connect glasses';
-}
-
-function otaCardTitle(sdk: BluetoothSdkExampleModel) {
-  if (sdk.otaPendingAction === 'verify') {
-    return 'Checking for updates';
-  }
-  if (sdk.otaPendingAction === 'start') {
-    return 'Starting update';
-  }
-  if (sdk.otaStatus?.status === 'failed') {
-    return 'Update failed';
-  }
-  if (isOtaInstalling(sdk)) {
-    return 'Installing update';
-  }
-  if (sdk.otaStatus && isOtaInProgress(sdk)) {
-    return `Updating ${sdk.otaStatus.step_type || 'firmware'}`;
-  }
-  if (sdk.otaUpdateAvailable) {
-    return 'Firmware update available';
-  }
-  if (sdk.otaNoUpdateVisible) {
-    return 'No OTA available';
-  }
-  return 'OTA status';
-}
-
-function otaCardDetail(sdk: BluetoothSdkExampleModel) {
-  if (sdk.otaPendingAction === 'verify') {
-    return 'Checking whether any firmware components still need to be updated.';
-  }
-  if (sdk.otaPendingAction === 'start') {
-    return 'Sending the OTA start request to the glasses.';
-  }
-  if (sdk.otaStatus?.error_message) {
-    return sdk.otaStatus.error_message;
-  }
-  if (isOtaInstalling(sdk)) {
-    return 'The glasses client may restart to finish installation.';
-  }
-  if (sdk.otaStatus) {
-    return `${sdk.otaStatus.phase || 'status'} · step ${sdk.otaStatus.current_step}/${sdk.otaStatus.total_steps}`;
-  }
-  if (sdk.otaUpdateAvailable) {
-    return 'A newer firmware version is available for these glasses.';
-  }
-  if (sdk.otaNoUpdateVisible) {
-    return 'Your glasses firmware is up to date.';
-  }
-  return 'Tap Check OTA to compare the current glasses version with the SDK OTA manifest.';
-}
-
-function otaDisplayPercent(sdk: BluetoothSdkExampleModel) {
-  return sdk.otaDisplayPercent ?? sdk.otaStatus?.overall_percent ?? 0;
-}
-
-function isOtaInstalling(sdk: BluetoothSdkExampleModel) {
-  // Only the APK install is indeterminate (pm install restarts the glasses
-  // client); MTK and BES report flash progress with phase 'install'.
-  return (
-    sdk.otaStatus?.status === 'in_progress' &&
-    sdk.otaStatus.phase === 'install' &&
-    (sdk.otaStatus.step_type ?? 'apk') === 'apk'
-  );
-}
-
-function OtaCard({ sdk }: { sdk: BluetoothSdkExampleModel }) {
-  if (!sdk.otaStatus && !sdk.otaUpdateAvailable && !sdk.otaNoUpdateVisible && sdk.otaPendingAction === null) {
-    return null;
-  }
-  const percent = otaDisplayPercent(sdk);
-  const updateRequired = sdk.otaUpdateAvailable && !sdk.otaStatus;
-  const installing = isOtaInstalling(sdk);
-  return (
-    <View style={[styles.otaCard, updateRequired && styles.otaCardRequired]}>
-      <View style={styles.otaHead}>
-        <View style={styles.otaTitleRow}>
-          {updateRequired ? (
-            <View style={styles.otaWarningIcon}>
-              <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={colors.amber} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
-                <Path d="m21.7 18.6-8.3-14a1.6 1.6 0 0 0-2.8 0l-8.3 14A1.6 1.6 0 0 0 3.7 21h16.6a1.6 1.6 0 0 0 1.4-2.4Z" />
-                <Path d="M12 8v5" />
-                <Path d="M12 17h.01" />
-              </Svg>
-            </View>
-          ) : null}
-          <View style={{ flex: 1 }}>
-            <Text style={[styles.otaEyebrow, updateRequired && styles.otaEyebrowRequired]}>
-              {updateRequired ? 'OTA UPDATE' : 'OTA'}
-            </Text>
-            <Text style={[styles.otaTitle, updateRequired && styles.otaTitleRequired]}>{otaCardTitle(sdk)}</Text>
-          </View>
-        </View>
-        {sdk.otaPendingAction !== null || installing ? (
-          <ActivityIndicator color={colors.greenPrimary} size="small" />
-        ) : sdk.otaStatus ? (
-          <Text style={styles.otaPercent}>{percent}%</Text>
-        ) : null}
-      </View>
-      {sdk.otaStatus && !installing && sdk.otaPendingAction === null ? (
-        <View style={styles.otaTrack}>
-          <View style={[styles.otaFill, { width: `${Math.max(0, Math.min(percent, 100))}%` }]} />
-        </View>
-      ) : null}
-      <Text style={[styles.otaDetail, updateRequired && styles.otaDetailRequired]}>{otaCardDetail(sdk)}</Text>
-      {updateRequired ? (
-        <Pressable
-          disabled={!canStartOta(sdk)}
-          onPress={sdk.startOtaUpdate}
-          style={({ pressed }) => [
-            styles.otaStartButton,
-            pressed && styles.btnPressed,
-            !canStartOta(sdk) && styles.otaStartButtonDisabled,
-          ]}>
-          <Svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
-            <Path d="M12 3v12" />
-            <Path d="m7 10 5 5 5-5" />
-            <Path d="M5 21h14" />
-          </Svg>
-          <Text style={styles.otaStartButtonText}>
-            {sdk.otaStartPending ? 'Starting OTA...' : canStartOta(sdk) ? 'Start OTA' : 'Connect Wi-Fi first'}
-          </Text>
-        </Pressable>
-      ) : null}
-    </View>
-  );
 }
 
 function ScanModelPicker({ sdk, connected }: { sdk: BluetoothSdkExampleModel; connected: boolean }) {
@@ -692,23 +520,6 @@ const styles = StyleSheet.create({
   signalBars: { flexDirection: 'row', alignItems: 'flex-end', gap: 4, paddingBottom: 6 },
   bar: { width: 6, borderRadius: 3 },
   statRow: { flexDirection: 'row', gap: 10, marginHorizontal: 16, marginTop: 12 },
-  otaCard: { marginHorizontal: 16, marginTop: 10, padding: 14, borderRadius: 12, backgroundColor: '#fff', borderWidth: 1, borderColor: colors.hairline, gap: 0 },
-  otaCardRequired: { backgroundColor: '#FFFCF5', borderColor: 'rgba(255,149,0,0.32)' },
-  otaHead: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 },
-  otaTitleRow: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 },
-  otaWarningIcon: { width: 30, height: 30, borderRadius: 7, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,149,0,0.10)' },
-  otaEyebrow: { color: colors.muted, fontSize: 10, fontWeight: '600', letterSpacing: 0, fontFamily: 'Courier' },
-  otaEyebrowRequired: { color: '#9A5A00', fontWeight: '700' },
-  otaTitle: { color: colors.ink, fontSize: 15, fontWeight: '700', marginTop: 2 },
-  otaTitleRequired: { color: colors.ink, fontSize: 16, fontWeight: '700' },
-  otaPercent: { color: colors.greenInk, fontSize: 15, fontWeight: '700', fontVariant: ['tabular-nums'] },
-  otaTrack: { height: 4, borderRadius: 2, overflow: 'hidden', backgroundColor: 'rgba(14,44,26,0.08)', marginTop: 12 },
-  otaFill: { height: 4, borderRadius: 2, backgroundColor: colors.greenPrimary },
-  otaDetail: { color: colors.muted, fontSize: 12, fontWeight: '500', lineHeight: 16, marginTop: 9 },
-  otaDetailRequired: { color: colors.muted, fontSize: 12, fontWeight: '500', lineHeight: 16, marginTop: 9 },
-  otaStartButton: { marginTop: 13, minHeight: 42, borderRadius: 8, backgroundColor: colors.greenInk, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
-  otaStartButtonDisabled: { backgroundColor: colors.mutedSoft },
-  otaStartButtonText: { color: '#fff', fontSize: 13, fontWeight: '700' },
   statCard: {
     flex: 1,
     backgroundColor: '#fff',
