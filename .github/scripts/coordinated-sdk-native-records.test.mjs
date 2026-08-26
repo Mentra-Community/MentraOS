@@ -51,7 +51,7 @@ test("records exact Maven and SwiftPM artifacts and merges them", () => {
     plan,
     archive: files.archive,
     archiveUrl:
-      "https://github.com/Mentra-Community/MentraOS/releases/download/mentra-v3.1.0-beta.57/mentra-bluetooth-sdk-ios-3.1.0-beta.57.tar",
+      "https://github.com/Mentra-Community/MentraOS/releases/download/mentra-builds-v3.1.0/mentra-bluetooth-sdk-ios-3.1.0-beta.57.tar",
     tagUrl: "https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios/tree/3.1.0-beta.57",
     mirrorCommit: "b".repeat(40),
     provenanceUrl,
@@ -63,7 +63,7 @@ test("records exact Maven and SwiftPM artifacts and merges them", () => {
   assert.equal(merged.publications["@mentra/bluetooth-sdk"]["swift-package-manager"].status, "reused")
   assert.equal(
     merged.publications["@mentra/bluetooth-sdk"]["swift-package-manager"].url,
-    "https://github.com/Mentra-Community/MentraOS/releases/download/mentra-v3.1.0-beta.57/mentra-bluetooth-sdk-ios-3.1.0-beta.57.tar",
+    "https://github.com/Mentra-Community/MentraOS/releases/download/mentra-builds-v3.1.0/mentra-bluetooth-sdk-ios-3.1.0-beta.57.tar",
   )
   assert.equal(
     merged.publications["@mentra/bluetooth-sdk"]["swift-package-manager"].sourceTagUrl,

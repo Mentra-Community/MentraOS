@@ -25,7 +25,8 @@ test("coordinated OTA assets have bounded release ownership", () => {
   assert.match(ota, /for file in coordinated-ota-work\/asg-release-assets\/\*/)
   assert.match(ota, /for file in coordinated-ota-work\/release-assets\/\*/)
   assert.match(ota, /--release-id "\$\{\{ inputs\.release_id \}\}"/)
-  assert.match(ota, /\{draft: false, prerelease: true, body: \$body\}/)
+  assert.match(ota, /artifactContainerTag/)
+  assert.doesNotMatch(ota, /draft: false, prerelease: true, body:/)
   assert.doesNotMatch(ota, /OTA_RELEASE_TAG/)
 })
 

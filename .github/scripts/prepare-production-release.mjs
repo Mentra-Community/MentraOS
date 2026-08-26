@@ -45,8 +45,11 @@ export function prepareProductionRelease({family, betaPlan, betaManifest, betaMa
     throw new Error("Selected beta has no valid native build number")
   }
 
-  const betaTag = `mentra-v${betaPlan.releaseIdentity}`
-  const betaAssetBaseUrl = `https://github.com/${repository}/releases/download/${betaTag}`
+  const betaArtifactTag = betaPlan.artifactContainerTag
+  if (betaArtifactTag !== `mentra-builds-v${betaPlan.familyBaseVersion}`) {
+    throw new Error("Selected beta plan does not name its base-version artifact container")
+  }
+  const betaAssetBaseUrl = `https://github.com/${repository}/releases/download/${betaArtifactTag}`
   const betaManifestUrl = `${betaAssetBaseUrl}/${betaPlan.artifactNames.releaseManifest}`
   const productionPlan = createReleasePlan({
     family,

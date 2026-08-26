@@ -129,7 +129,7 @@ jobs:
           [[ "$source" == "$SOURCE_COMMIT" ]]
           identity=$(jq -er .releaseIdentity release-intent/release-plan.json)
           release_set_id=$(jq -er .releaseSetId release-intent/release-plan.json)
-          tag="mentra-v${identity}"
+          tag=$(jq -er .artifactContainerTag release-intent/release-plan.json)
           {
             echo "release_tag=$tag"
             echo "release_identity=$identity"
@@ -160,20 +160,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_ID: ${{ inputs.release_id }}
-          SOURCE_COMMIT: ${{ inputs.source_commit }}
         run: |
           set -euo pipefail
           tag="${{ steps.release.outputs.release_tag }}"
           test -n "$RELEASE_ID"
           release=$(gh api "repos/${GITHUB_REPOSITORY}/releases/$RELEASE_ID")
           [[ "$(jq -r .tag_name <<< "$release")" == "$tag" ]]
-          [[ "$(jq -r .name <<< "$release")" == "Mentra ${{ steps.release.outputs.release_identity }}" ]]
-          if [[ "$(jq -r .draft <<< "$release")" == "true" ]]; then
-            [[ "$(jq -r .target_commitish <<< "$release")" == "$SOURCE_COMMIT" ]]
-          else
-            git fetch --force origin "refs/tags/$tag:refs/tags/$tag"
-            [[ "$(git rev-parse "$tag^{commit}")" == "$SOURCE_COMMIT" ]]
-          fi
+          [[ "$(jq -r .name <<< "$release")" == "$(jq -er .artifactContainerName release-intent/release-plan.json)" ]]
+          [[ "$(jq -r .draft <<< "$release")" == "false" ]]
+          [[ "$(jq -r .prerelease <<< "$release")" == "true" ]]
 
           release_id="$RELEASE_ID"
           assets=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases/$release_id/assets?per_page=100" | jq 'add')

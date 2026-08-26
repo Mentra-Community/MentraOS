@@ -69,18 +69,13 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$RELEASE_ID"
-          identity=$(jq -er .releaseIdentity release-intent/release-plan.json)
           [[ "$(jq -er .sourceCommit release-intent/release-plan.json)" == "$SOURCE_COMMIT" ]]
-          tag="mentra-v$identity"
+          tag=$(jq -er .artifactContainerTag release-intent/release-plan.json)
           release=$(gh api "repos/${GITHUB_REPOSITORY}/releases/$RELEASE_ID")
           [[ "$(jq -r .tag_name <<< "$release")" == "$tag" ]]
-          [[ "$(jq -r .name <<< "$release")" == "Mentra $identity" ]]
-          if [[ "$(jq -r .draft <<< "$release")" == "true" ]]; then
-            [[ "$(jq -r .target_commitish <<< "$release")" == "$SOURCE_COMMIT" ]]
-          else
-            git fetch --force origin "refs/tags/$tag:refs/tags/$tag"
-            [[ "$(git rev-parse "$tag^{commit}")" == "$SOURCE_COMMIT" ]]
-          fi
+          [[ "$(jq -r .name <<< "$release")" == "$(jq -er .artifactContainerName release-intent/release-plan.json)" ]]
+          [[ "$(jq -r .draft <<< "$release")" == "false" ]]
+          [[ "$(jq -r .prerelease <<< "$release")" == "true" ]]
           {
             echo "release_id=$RELEASE_ID"
             echo "release_tag=$tag"
@@ -437,13 +432,14 @@ jobs:
         run: |
           set -euo pipefail
           version=$(jq -er .releaseIdentity release-intent/release-plan.json)
+          artifact_tag=$(jq -er .artifactContainerTag release-intent/release-plan.json)
           archive_name=$(jq -er .artifactNames.iosSdkArchive release-intent/release-plan.json)
           [[ "$(jq -er .sourceCommit release-intent/release-plan.json)" == "$SOURCE_COMMIT" ]]
           {
             echo "version=$version"
             echo "archive_name=$archive_name"
             echo "release_tag=mentra-v$version"
-            echo "archive_url=https://github.com/${{ github.repository }}/releases/download/mentra-v$version/$archive_name"
+            echo "archive_url=https://github.com/${{ github.repository }}/releases/download/$artifact_tag/$archive_name"
             echo "tag_url=https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios/tree/$version"
           } >> "$GITHUB_OUTPUT"
 
