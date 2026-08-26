@@ -25,18 +25,17 @@ MentraOS Manager is a React Native app built with Expo and expo-router for file-
 
 ### Versioning
 
-The user-facing app version (`CFBundleShortVersionString` on iOS,
-`versionName` on Android) comes from `EXPO_PUBLIC_MENTRAOS_VERSION` in
-`.env`. **The CI staging-builds workflow uses `.env.example`** (it does
-`cp .env.example .env` on each runner), so:
+The repository-root `package.json#version` is the release family's canonical
+future-production base version. `mobile/package.json#version` mirrors it and CI
+derives `X.Y.Z-dev.N` or `X.Y.Z-beta.N` identities without source edits.
 
-- Bump `EXPO_PUBLIC_MENTRAOS_VERSION` in **both `.env` and `.env.example`**
-  whenever starting work on a new version (e.g. 2.10 → 2.11). Otherwise
-  CI keeps building the old train and TestFlight will reject with
-  "train is closed for new build submissions" once that train is approved.
-- The build number (`CFBundleVersion` / `versionCode`) is derived at
-  build time from wall-clock seconds — see `mobile/scripts/build-number.mjs`.
-  Nothing to bump manually; just don't downgrade `EXPO_PUBLIC_MENTRAOS_VERSION`.
+- Change the root and coordinated package mirrors together only when starting a
+  new release train. `.env` and `.env.example` are not version authorities.
+- Coordinated CI supplies one pinned numeric build number to both platforms.
+  Local builds use `mobile/scripts/build-number.mjs`.
+- Beta store builds are promotable production candidates and therefore target
+  production services. They are distinguished by release metadata and their
+  TestFlight/Play audience, not by a staging backend.
 - Automatic glasses OTA is enabled only when the mobile bundle contains an
   `EXPO_PUBLIC_ASG_OTA_VERSION_URL` release pin. Local and compile-only builds
   without a pin fail closed; a Super Mode manifest override remains available

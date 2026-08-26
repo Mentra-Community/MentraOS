@@ -6,6 +6,11 @@ icon: "download"
 
 Each Bluetooth SDK release has a matching Mentra Live glasses software release. Your mobile app and glasses must use the same release version.
 
+For coordinated releases, the completed release record correlates the exact SDK
+packages, hosted OTA manifest, and portable OTA bundle selected for one release.
+See [Air-Gapped Bluetooth SDK Deployment](/mentra-live/air-gapped-deployment)
+for release-record resolution, checksum verification, and internal hosting.
+
 The latest matching pair is:
 
 | Mobile app dependency | Required glasses software |
@@ -100,5 +105,7 @@ Every app using the Bluetooth SDK must manage the glasses software release that 
 5. Display progress from `ota_status` until the update reaches `complete` or `failed`.
 6. Avoid sending unrelated SDK commands while the update is running.
 7. Do not enable features that require the matching glasses software until the OTA check succeeds with no update remaining.
+
+Mentra Live rejects `startOtaUpdate()` before `ota_start_ack` when its known battery level is below 5% and emits `ota_status` with `status: "failed"` and `error_message: "battery_low"`. An unknown glasses battery remains fail-open. Keep an app-level battery check as the user-facing policy; the glasses check is defense in depth.
 
 See [OTA Updates in the API Reference](/mentra-live/api-reference#ota-updates) for the Android, iOS, and React Native APIs and events.

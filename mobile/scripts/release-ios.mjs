@@ -8,6 +8,7 @@ import {
   xcodeBuildSettings,
 } from './release-bundle-config.mjs';
 import { getBuildNumber } from './build-number.mjs';
+import { cp, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
 import os from 'os';
@@ -268,6 +269,22 @@ console.log('IPA exported:', ipaPath);
 // build environment into Metro. Refuse to publish that binary anywhere.
 validateReleaseArchive(ipaPath, 'iOS');
 console.log('Verified iOS release JS bundle configuration');
+
+// Coordinated release CI distributes the exact validated IPA and owns its
+// immutable name. Exit before the legacy best-effort TestFlight upload and
+// mutable `_Beta_N` GitHub release path.
+const coordinatedOutputDir = process.env.MENTRA_COORDINATED_OUTPUT_DIR;
+if (coordinatedOutputDir) {
+  const releaseIdentity = process.env.MENTRA_COORDINATED_RELEASE_IDENTITY;
+  if (!releaseIdentity) {
+    throw new Error('MENTRA_COORDINATED_RELEASE_IDENTITY is required with MENTRA_COORDINATED_OUTPUT_DIR');
+  }
+  await mkdir(coordinatedOutputDir, { recursive: true });
+  const coordinatedIpa = path.resolve(coordinatedOutputDir, `mentraos-${releaseIdentity}-ios.ipa`);
+  await cp(ipaPath, coordinatedIpa);
+  console.log(`Coordinated iOS artifact: ${coordinatedIpa}`);
+  process.exit(0);
+}
 
 // ── Step 6: Upload to App Store Connect (TestFlight) ──────────────────────────
 

@@ -1,3 +1,9 @@
+// Most OTA integration tests model a released MentraOS host. Tests for an
+// unpinned source build delete this value explicitly before exercising the
+// fail-closed path.
+process.env.EXPO_PUBLIC_ASG_OTA_VERSION_URL ??=
+  "https://github.com/Mentra-Community/MentraOS/releases/download/bluetooth-sdk-ota/bluetooth-sdk-0.0.0-test-version.json"
+
 // Mock react-native-permissions
 jest.mock("react-native-permissions", () => require("react-native-permissions/mock"))
 // Requires its native module at import time (island gallery sync uses it for the
@@ -307,6 +313,8 @@ const mockIslandEntries = () => {
   const realOtaInstallPolicy = jest.requireActual("./modules/engine/src/services/otaInstallPolicy")
   const realOtaDisplayState = jest.requireActual("./modules/engine/src/services/otaDisplayState")
   const realOtaInstallCoordinator = jest.requireActual("./modules/engine/src/services/OtaInstallCoordinator")
+  const realOtaAutoChain = jest.requireActual("./modules/engine/src/services/OtaAutoChain")
+  const realOtaErrorMapping = jest.requireActual("./modules/engine/src/services/OtaErrorMapping")
   const realPhoneNotificationsSync = jest.requireActual("./modules/engine/src/services/PhoneNotificationsSync")
   // The on* event facades (button/touch/pair_failure/glasses_not_ready) are thin
   // addListener wrappers in the real engine, so the mock delegates to the shared
@@ -358,6 +366,8 @@ const mockIslandEntries = () => {
     // OTA install policy (timings + failure copy) + deriveDisplayState — real (pure)
     // implementations, consumed by the host otaProgressTimeouts shim + OTA tests.
     ...realOtaInstallPolicy,
+    ...realOtaAutoChain,
+    ...realOtaErrorMapping,
     deriveDisplayState: realOtaDisplayState.deriveDisplayState,
     // Settings contract on the public entry (real store-backed): SETTINGS registry,
     // per-key hook, and the pure device-model key helpers.
@@ -752,7 +762,7 @@ const mockIslandEntries = () => {
     ISLAND_SETTINGS_KEYS: {},
   }
 
-  // --- "@mentra/engine/internal": raw stores + service singletons ---
+  // --- "@mentra/engine-host-internal": raw stores + service singletons ---
   const internal = {
     __esModule: true,
     // Real glasses store + its selectors/helpers (useGlassesStore, selectors,
@@ -790,7 +800,7 @@ const mockIslandEntries = () => {
     // one tests listen on across the boundary.
     GlobalEventEmitter: jest.requireActual("./modules/engine/src/utils/GlobalEventEmitter").default,
     // Gallery cluster moved into island; host consumers (GalleryScreen, gallery-settings,
-    // NetworkMonitoring, MantleManager) import these from @mentra/engine/internal. Stub
+    // NetworkMonitoring, MantleManager) import these from @mentra/engine-host-internal. Stub
     // them here so those screens/services load under the mock without native deps. The
     // gallery service's own jest test imports the REAL implementations by relative path.
     gallerySyncService: {
@@ -856,6 +866,11 @@ const mockIslandEntries = () => {
       installOfflineApp: jest.fn((app) => {
         appStatusState.apps = [...appStatusState.apps.filter((item) => item.packageName !== app.packageName), app]
         return {is_ok: () => true, is_error: () => false, value: app}
+      }),
+      setOfflineAppHidden: jest.fn((packageName, hidden) => {
+        appStatusState.apps = appStatusState.apps.map((app) =>
+          app.packageName === packageName ? {...app, hidden} : app,
+        )
       }),
     },
     configureIsland: jest.fn(),
@@ -933,7 +948,7 @@ const mockIslandEntries = () => {
     saveLocalAppRunningState: jest.fn(),
   }
 
-  // --- "@mentra/engine/devtools": debug-only singletons ---
+  // --- "@mentra/engine-host-internal/devtools": debug-only singletons ---
   const devtools = {
     __esModule: true,
     miniappRunningRegistry: {
@@ -947,8 +962,8 @@ const mockIslandEntries = () => {
 }
 
 jest.mock("@mentra/engine", () => mockIslandEntries().main)
-jest.mock("@mentra/engine/internal", () => mockIslandEntries().internal)
-jest.mock("@mentra/engine/devtools", () => mockIslandEntries().devtools)
+jest.mock("@mentra/engine-host-internal", () => mockIslandEntries().internal)
+jest.mock("@mentra/engine-host-internal/devtools", () => mockIslandEntries().devtools)
 
 // Mock crust native module to avoid native bridge errors
 jest.mock("@mentra/crust", () => ({

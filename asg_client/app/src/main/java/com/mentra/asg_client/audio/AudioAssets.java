@@ -62,6 +62,9 @@ public final class AudioAssets {
     /** Video recording stopped notification Same as audio recording stop for consistency */
     public static final String VIDEO_RECORDING_STOP = RECORDING_STOP;
 
+    /** Spoken pairing-code clip folder ({@code letter_a.wav}, {@code digit_0.wav}, ...). */
+    public static final String PAIRING_PREFIX = "pairing/";
+
     /** Battery level announcement audio folder prefix */
     public static final String BATTERY_LEVEL_PREFIX = "battery/";
 
@@ -74,5 +77,22 @@ public final class AudioAssets {
     public static String getBatteryLevelAsset(int percent) {
         int rounded = Math.max(10, Math.min(100, ((percent + 5) / 10) * 10));
         return BATTERY_LEVEL_PREFIX + rounded + ".mp3";
+    }
+
+    /**
+     * Map a pairing-code character to its spoken clip.
+     *
+     * @param c alphanumeric character; letters are case-insensitive
+     * @return asset path like {@code pairing/letter_a.wav}, or {@code null} if unsupported
+     */
+    public static String getPairingCharAsset(char c) {
+        if (c >= '0' && c <= '9') {
+            return PAIRING_PREFIX + "digit_" + c + ".wav";
+        }
+        char lower = Character.toLowerCase(c);
+        if (lower >= 'a' && lower <= 'z') {
+            return PAIRING_PREFIX + "letter_" + lower + ".wav";
+        }
+        return null;
     }
 }

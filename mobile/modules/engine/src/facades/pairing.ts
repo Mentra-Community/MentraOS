@@ -10,7 +10,7 @@
 // target hint) lives on the full surface, not the public entry (same reason
 // the glasses facade imports internal).
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
-import type {ConnectOptions, Device, PairFailureEvent, GlassesNotReadyEvent} from "@mentra/bluetooth-sdk"
+import type {ConnectOptions, Device, DeviceModel, PairFailureEvent, GlassesNotReadyEvent} from "@mentra/bluetooth-sdk"
 import {useCoreStore} from "../stores/core"
 import {useGlassesStore} from "../stores/glasses"
 import {hasDefaultDevice} from "../services/DeviceStoreHydration"
@@ -206,7 +206,7 @@ export const pairing = {
   markPendingSelection: (model: string) => markPendingSelection(model),
 
   /** Start scanning for nearby glasses. Results land on `searchResults()`/`onFound()`. */
-  scan: (...args: Parameters<typeof BluetoothSdk.startScan>) => BluetoothSdk.startScan(...args),
+  scan: (model: DeviceModel): Promise<void> => BluetoothSdk.startScan(model),
   /** Whether a scan is currently in progress. */
   scanning: (): boolean => useCoreStore.getState().searching,
   /** Subscribe to scan-in-progress changes; fires only when it changes. Returns an unsubscribe. */
@@ -226,7 +226,7 @@ export const pairing = {
   // leak as mutable references into the store.
   searchResults: () => useCoreStore.getState().searchResults.map((result) => ({...result})),
   /** Subscribe to scan-result changes; fires only when they change. Returns an unsubscribe. */
-  onFound: (cb: (results: ReturnType<typeof useCoreStore.getState>["searchResults"]) => void): (() => void) => {
+  onFound: (cb: (results: Device[]) => void): (() => void) => {
     let last = JSON.stringify(useCoreStore.getState().searchResults)
     return useCoreStore.subscribe(() => {
       const results = useCoreStore.getState().searchResults
@@ -250,7 +250,7 @@ export const pairing = {
     return BluetoothSdk.connect(device, {...options, saveAsDefault: false})
   },
   /** Set a device as the default for subsequent `glasses.connectDefault()`. */
-  setDefault: (...args: Parameters<typeof BluetoothSdk.setDefaultDevice>) => BluetoothSdk.setDefaultDevice(...args),
+  setDefault: (device: Device | null): Promise<void> => BluetoothSdk.setDefaultDevice(device),
   /**
    * Prime the native Bluetooth Classic audio watcher with the picked device.
    * The iOS Mentra Live flow pairs Classic audio BEFORE any BLE connect
@@ -291,25 +291,29 @@ export const pairing = {
       await BluetoothSdk.stopScan()
       return
     }
-    await BluetoothSdk.disconnect()
     if (projectPairingIdentity().kind === "paired") {
       // The persisted settings describe a COMPLETE pairing: restore it to
       // native (the attempt's connect-by-name overwrote the native
       // device_name; and if native somehow lost its default entirely, this
       // repairs the divergence instead of forgetting a real pairing).
       console.log("PairingIdentity: abandonAttempt — preserving pairing; attempt cancelled, native identity re-seeded")
+      await BluetoothSdk.disconnect()
       await pushAllBluetoothSettings()
-    } else if (nativeHasDefault) {
+      return
+    }
+    if (nativeHasDefault) {
       // Mid-relay: native promoted and its echoes are still landing — the
       // incomplete JS snapshot must not be pushed over the fresher native
       // identity (the on-connect replay's race). Native holds the truth.
       console.log("PairingIdentity: abandonAttempt — preserving pairing; JS identity mid-relay, native kept as-is")
-    } else {
-      // Forgetting requires CONSENSUS: no native default AND no complete
-      // persisted pairing — a genuinely partial attempt.
-      console.log("PairingIdentity: abandonAttempt — no pairing on either layer; forgetting the partial attempt")
-      await BluetoothSdk.forget()
+      await BluetoothSdk.disconnect()
+      return
     }
+    // Partial attempt: forget owns teardown. Do NOT disconnect() first — that
+    // nulls the MentraLive SGC and used to skip Classic removeBond, leaving
+    // IBRT ACL up so glasses never re-advertise for the next scan.
+    console.log("PairingIdentity: abandonAttempt — no pairing on either layer; forgetting the partial attempt")
+    await BluetoothSdk.forget()
   },
 
   /** Subscribe to pairing failures; returns an unsubscribe. */

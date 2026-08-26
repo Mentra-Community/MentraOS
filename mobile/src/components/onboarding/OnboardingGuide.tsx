@@ -942,7 +942,6 @@ export function OnboardingGuide({
             <Text
               className="text-start text-sm font-medium text-muted-foreground mr-5"
               text={step.info}
-              numberOfLines={2}
               style={{lineHeight: 16}}
             />
           </View>

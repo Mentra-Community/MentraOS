@@ -1,5 +1,5 @@
 /** Shared OTA progress watchdog timings (see progress-legacy.tsx / progress.tsx). */
-import type {OtaProgress, OtaStatus} from "@mentra/bluetooth-sdk/internal"
+import type {OtaProgress, OtaStatus} from "@mentra/bluetooth-sdk"
 
 /**
  * First glasses `build_number` (ASG `versionCode`) that uses `progress.tsx` with unified

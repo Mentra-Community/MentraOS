@@ -1,6 +1,6 @@
 {
   "name": "@mentra/engine",
-  "version": "0.1.0-dev.0",
+  "version": "3.1.0",
   "description": "Mentra Engine — miniapp registry, WebView bridge, and miniapp store",
   "main": "build/index.js",
   "react-native": "src/index.ts",
@@ -11,15 +11,35 @@
       "react-native": "./src/index.ts",
       "default": "./build/index.js"
     },
-    "./internal": {
-      "types": "./build/internal.d.ts",
-      "react-native": "./src/internal.ts",
-      "default": "./build/internal.js"
+    "./ota": {
+      "types": "./build/react/index.d.ts",
+      "react-native": "./src/react/index.ts",
+      "default": "./build/react/index.js"
     },
-    "./devtools": {
-      "types": "./build/devtools.d.ts",
-      "react-native": "./src/devtools.ts",
-      "default": "./build/devtools.js"
+    "./bluetooth-sdk": {
+      "types": "./build/bluetooth-sdk/index.d.ts",
+      "react-native": "./src/bluetooth-sdk/index.ts",
+      "default": "./build/bluetooth-sdk/index.js"
+    },
+    "./bluetooth-sdk/react": {
+      "types": "./build/bluetooth-sdk/react.d.ts",
+      "react-native": "./src/bluetooth-sdk/react.ts",
+      "default": "./build/bluetooth-sdk/react.js"
+    },
+    "./bluetooth-sdk/types": {
+      "types": "./build/bluetooth-sdk/types.d.ts",
+      "react-native": "./src/bluetooth-sdk/types.ts",
+      "default": "./build/bluetooth-sdk/types.js"
+    },
+    "./bluetooth-sdk/photo-receiver": {
+      "types": "./build/bluetooth-sdk/photo-receiver.d.ts",
+      "react-native": "./src/bluetooth-sdk/photo-receiver.ts",
+      "default": "./build/bluetooth-sdk/photo-receiver.js"
+    },
+    "./bluetooth-sdk/debug": {
+      "types": "./build/bluetooth-sdk/debug.d.ts",
+      "react-native": "./src/bluetooth-sdk/debug.ts",
+      "default": "./build/bluetooth-sdk/debug.js"
     },
     "./build/*": null,
     "./src/*": null,
@@ -29,6 +49,10 @@
     "build",
     "README.md",
     "src",
+    "!build/devtools.*",
+    "!build/internal.*",
+    "!src/devtools.ts",
+    "!src/internal.ts",
     "!src/**/__tests__",
     "!src/**/*.test.ts"
   ],
@@ -36,7 +60,10 @@
     "build": "expo-module build",
     "clean": "expo-module clean",
     "lint": "expo-module lint",
-    "test": "./scripts/test.sh",
+    "test": "./scripts/test.sh && node --test scripts/*.test.mjs",
+    "write:release-metadata": "node scripts/write-release-metadata.mjs",
+    "verify:release-package": "node scripts/verify-release-package.mjs",
+    "test:public-api": "bun test src/bluetooth-sdk/__tests__/publicApi.test.ts",
     "build:module": "expo-module prepare",
     "prepublishOnly": "expo-module prepublishOnly",
     "expo-module": "expo-module"
@@ -64,16 +91,17 @@
     "registry": "https://registry.npmjs.org/"
   },
   "dependencies": {
+    "@mentra/bluetooth-sdk": "3.1.0",
+    "@mentra/cloud-client": "3.1.0",
+    "@mentra/cloud-protocol": "3.1.0",
+    "@mentra/crust": "3.1.0",
+    "@mentra/miniapp": "3.1.0",
     "buffer": "^6.0.3",
     "events": "^3.3.0",
     "semver": "^7.7.4",
     "typesafe-ts": "^1.7.1"
   },
   "devDependencies": {
-    "@mentra/bluetooth-sdk": "workspace:*",
-    "@mentra/cloud-client": "workspace:*",
-    "@mentra/cloud-protocol": "workspace:*",
-    "@mentra/miniapp": "workspace:*",
     "@types/semver": "^7.7.1",
     "expo-module-scripts": "^55.0.2",
     "expo-modules-core": "55.0.25",
@@ -81,28 +109,31 @@
     "typescript": "~5.9.2"
   },
   "peerDependencies": {
-    "expo": "*",
-    "expo-modules-core": "*",
+    "expo": "~55.0.24",
+    "expo-modules-core": "~55.0.25",
     "react": "*",
     "react-native": "*",
+    "react-native-safe-area-context": "*",
+    "react-native-svg": "*",
     "react-native-udp": "*",
     "@types/react": "*",
     "react-native-mmkv": "*",
     "react-native-nitro-bg-timer": "*",
     "react-native-nitro-modules": "*",
-    "react-native-reanimated": "*",
-    "expo-file-system": "*",
+    "react-native-reanimated": "4.2.1",
+    "react-native-worklets": "0.7.4",
+    "expo-file-system": "~55.0.20",
     "react-native-zip-archive": "*",
     "zustand": "*",
-    "expo-battery": "*",
-    "expo-audio": "*",
-    "expo-clipboard": "*",
-    "expo-calendar": "*",
-    "expo-constants": "*",
-    "expo-device": "*",
-    "expo-location": "*",
-    "expo-task-manager": "*",
-    "expo-notifications": "*",
+    "expo-battery": "^55.0.13",
+    "expo-audio": "~55.0.14",
+    "expo-clipboard": "~55.0.13",
+    "expo-calendar": "~55.0.14",
+    "expo-constants": "~55.0.16",
+    "expo-device": "~55.0.17",
+    "expo-location": "~55.1.10",
+    "expo-task-manager": "~55.0.16",
+    "expo-notifications": "~55.0.23",
     "react-native-share": "*",
     "react-native-localize": "*",
     "react-native-ble-manager": "*",
@@ -111,11 +142,6 @@
     "@react-native-community/netinfo": "*",
     "@dr.pogodin/react-native-fs": "*",
     "@craftzdog/react-native-buffer": "*",
-    "axios": "*",
-    "@mentra/bluetooth-sdk": "*",
-    "@mentra/crust": "^0.1.0-dev.0",
-    "@mentra/cloud-client": "^0.1.0-dev.0",
-    "@mentra/miniapp": "^0.3.0-dev.0",
-    "@mentra/cloud-protocol": "^0.1.0-dev.0"
+    "axios": "*"
   }
 }

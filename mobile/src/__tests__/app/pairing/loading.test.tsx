@@ -1,4 +1,4 @@
-import {act, render, waitFor} from "@testing-library/react-native"
+import {act, fireEvent, render, waitFor} from "@testing-library/react-native"
 import type {ReactNode} from "react"
 
 import {engine} from "@mentra/engine"
@@ -27,6 +27,15 @@ jest.mock("@/contexts/NavigationHistoryContext", () => ({
 
 jest.mock("@/stores/navigation", () => ({
   useNavigationStore: {getState: jest.fn()},
+}))
+
+jest.mock("@/utils/AlertUtils", () => ({
+  __esModule: true,
+  default: jest.fn(),
+}))
+
+jest.mock("@/i18n", () => ({
+  translate: jest.fn((key: string) => key),
 }))
 
 jest.mock("@/components/ignite", () => {
@@ -78,9 +87,16 @@ jest.mock("@/components/glasses/GlassesTroubleshootingModal", () => {
   return MockGlassesTroubleshootingModal
 })
 jest.mock("@/components/glasses/GlassesPairingLoader", () => {
-  const {Text} = require("react-native")
-  function MockGlassesPairingLoader({isBooting}: {isBooting: boolean}) {
-    return <Text>{isBooting ? "booting" : "waiting"}</Text>
+  const {Text, TouchableOpacity} = require("react-native")
+  function MockGlassesPairingLoader({isBooting, onCancel}: {isBooting: boolean; onCancel: () => void}) {
+    return (
+      <>
+        <Text>{isBooting ? "booting" : "waiting"}</Text>
+        <TouchableOpacity onPress={onCancel}>
+          <Text>cancel-pairing</Text>
+        </TouchableOpacity>
+      </>
+    )
   }
   return MockGlassesPairingLoader
 })
@@ -98,6 +114,7 @@ describe("pairing loading screen", () => {
       params: {deviceModel: "Mentra Live", deviceName: "MENTRA_LIVE_BLE_001"},
     })
     ;(useNavigationStore.getState as jest.Mock).mockReturnValue({replace, goBack})
+    ;(engine.pairing.waitForBluetoothClassic as jest.Mock)?.mockResolvedValue?.(true)
   })
 
   afterEach(() => {
@@ -132,6 +149,9 @@ describe("pairing loading screen", () => {
   it("navigates to success after boot and files a timeout report after 35 seconds", async () => {
     const first = render(<GlassesPairingLoadingScreen />)
 
+    act(() => {
+      emitBluetoothSdkEvent("pairing_info", {had_previous_bond: false})
+    })
     act(() => {
       useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
     })
@@ -171,5 +191,142 @@ describe("pairing loading screen", () => {
         signal: expect.any(AbortSignal),
       }),
     )
+  })
+
+  it("navigates to success when firmware never emits pairing_info (legacy fallback)", async () => {
+    render(<GlassesPairingLoadingScreen />)
+
+    act(() => {
+      useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+    })
+
+    // No pairing_info event arrives (field firmware). Without the fallback, pairing hangs forever.
+    expect(replace).not.toHaveBeenCalled()
+
+    act(() => {
+      jest.advanceTimersByTime(5_000)
+    })
+    act(() => {
+      jest.advanceTimersByTime(1_000)
+    })
+
+    await waitFor(() => {
+      expect(replace).toHaveBeenCalledWith("/pairing/success", {deviceModel: "Mentra Live"})
+    })
+  })
+
+  it("uses the legacy pairing_info fallback when scan already reported non-secure firmware", async () => {
+    ;(useRoute as jest.Mock).mockReturnValue({
+      params: {deviceModel: "Mentra Live", deviceName: "MENTRA_LIVE_BLE_LEGACY", securePairingCapable: false},
+    })
+    render(<GlassesPairingLoadingScreen />)
+
+    act(() => {
+      useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+    })
+    expect(replace).not.toHaveBeenCalled()
+
+    act(() => {
+      jest.advanceTimersByTime(5_000)
+    })
+    act(() => {
+      jest.advanceTimersByTime(1_000)
+    })
+
+    await waitFor(() => {
+      expect(replace).toHaveBeenCalledWith("/pairing/success", {deviceModel: "Mentra Live"})
+    })
+  })
+
+  it("does not use pairing_info timeout when secure firmware already reported capable", async () => {
+    render(<GlassesPairingLoadingScreen />)
+
+    act(() => {
+      emitBluetoothSdkEvent("pairing_info", {
+        had_previous_bond: false,
+        secure_pairing_capable: true,
+      })
+    })
+    act(() => {
+      useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+    })
+    act(() => {
+      jest.advanceTimersByTime(1_000)
+    })
+
+    await waitFor(() => {
+      expect(replace).toHaveBeenCalledWith("/pairing/success", {deviceModel: "Mentra Live"})
+    })
+  })
+
+  it("does not fall through to success on the legacy timeout when the scan result already reported secure-capable firmware", async () => {
+    ;(useRoute as jest.Mock).mockReturnValue({
+      params: {deviceModel: "Mentra Live", deviceName: "MENTRA_LIVE_BLE_001", securePairingCapable: true},
+    })
+    render(<GlassesPairingLoadingScreen />)
+
+    act(() => {
+      useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+    })
+
+    // pairing_info is merely delayed, not absent — known-secure firmware must keep waiting for
+    // it rather than let the legacy timeout mark pairing successful underneath it.
+    act(() => {
+      jest.advanceTimersByTime(60_000)
+    })
+    expect(replace).not.toHaveBeenCalled()
+
+    act(() => {
+      emitBluetoothSdkEvent("pairing_info", {had_previous_bond: false, secure_pairing_capable: true})
+    })
+    act(() => {
+      jest.advanceTimersByTime(1_000)
+    })
+
+    await waitFor(() => {
+      expect(replace).toHaveBeenCalledWith("/pairing/success", {deviceModel: "Mentra Live"})
+    })
+  })
+
+  it("ignores had_previous_bond and navigates to success under Design A open reclaim", async () => {
+    const showAlert = require("@/utils/AlertUtils").default as jest.Mock
+
+    render(<GlassesPairingLoadingScreen />)
+
+    act(() => {
+      emitBluetoothSdkEvent("pairing_info", {
+        had_previous_bond: true,
+        secure_pairing_capable: true,
+        classic_bond_ready: true,
+      })
+    })
+    act(() => {
+      useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+    })
+    act(() => {
+      jest.advanceTimersByTime(1_000)
+    })
+
+    await waitFor(() => {
+      expect(replace).toHaveBeenCalledWith("/pairing/success", {deviceModel: "Mentra Live"})
+    })
+    expect(showAlert).not.toHaveBeenCalled()
+  })
+
+  it("cancels pairing with goBack", async () => {
+    const {getByText} = render(<GlassesPairingLoadingScreen />)
+
+    act(() => {
+      emitBluetoothSdkEvent("pairing_info", {
+        had_previous_bond: true,
+        secure_pairing_capable: true,
+        classic_bond_ready: true,
+      })
+    })
+
+    fireEvent.press(getByText("cancel-pairing"))
+
+    expect(goBack).toHaveBeenCalled()
+    expect(replace).not.toHaveBeenCalledWith("/pairing/prep", {deviceModel: "Mentra Live"})
   })
 })

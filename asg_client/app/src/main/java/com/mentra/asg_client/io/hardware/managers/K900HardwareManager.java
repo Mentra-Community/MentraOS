@@ -3,6 +3,7 @@ package com.mentra.asg_client.io.hardware.managers;
 import android.content.Context;
 import android.util.Log;
 
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.audio.I2SAudioController;
 import com.mentra.asg_client.hardware.K900LedController;
 import com.mentra.asg_client.hardware.K900RgbLedController;
@@ -193,7 +194,7 @@ public class K900HardwareManager extends BaseHardwareManager {
     @Override
     public void playAudioAsset(String assetName) {
         if (audioController != null) {
-            audioController.playAsset(assetName);
+            audioController.playAsset(assetName, AsgConstants.AUDIO_PLAYBACK_VOLUME);
         } else {
             Log.w(TAG, "Audio controller not available");
         }
@@ -202,7 +203,8 @@ public class K900HardwareManager extends BaseHardwareManager {
     @Override
     public long playAudioAssetTracked(String assetName) {
         if (audioController != null) {
-            return audioController.playAssetTracked(assetName);
+            return audioController.playAssetTracked(
+                    assetName, AsgConstants.AUDIO_PLAYBACK_VOLUME);
         }
         Log.w(TAG, "Audio controller not available");
         return 0L;
@@ -211,13 +213,23 @@ public class K900HardwareManager extends BaseHardwareManager {
     @Override
     public boolean replaceAudioAssetIfCurrent(long playbackToken, String assetName) {
         return audioController != null
-                && audioController.replaceAssetIfCurrent(playbackToken, assetName);
+                && audioController.replaceAssetIfCurrent(
+                        playbackToken, assetName, AsgConstants.AUDIO_PLAYBACK_VOLUME);
     }
 
     @Override
     public void playAudioAssetOverlay(String assetName) {
         if (audioController != null) {
-            audioController.playOverlayAsset(assetName);
+            audioController.playOverlayAsset(assetName, AsgConstants.AUDIO_PLAYBACK_VOLUME);
+        } else {
+            Log.w(TAG, "Audio controller not available");
+        }
+    }
+
+    @Override
+    public void playAudioAssetOverlay(String assetName, float playbackVolume) {
+        if (audioController != null) {
+            audioController.playOverlayAsset(assetName, playbackVolume);
         } else {
             Log.w(TAG, "Audio controller not available");
         }
@@ -226,7 +238,17 @@ public class K900HardwareManager extends BaseHardwareManager {
     @Override
     public long playAudioAssetOverlayTracked(String assetName) {
         if (audioController != null) {
-            return audioController.playOverlayAssetTracked(assetName);
+            return audioController.playOverlayAssetTracked(
+                    assetName, AsgConstants.AUDIO_PLAYBACK_VOLUME);
+        }
+        Log.w(TAG, "Audio controller not available");
+        return 0L;
+    }
+
+    @Override
+    public long playAudioAssetOverlayTracked(String assetName, float playbackVolume) {
+        if (audioController != null) {
+            return audioController.playOverlayAssetTracked(assetName, playbackVolume);
         }
         Log.w(TAG, "Audio controller not available");
         return 0L;
@@ -247,6 +269,20 @@ public class K900HardwareManager extends BaseHardwareManager {
     @Override
     public boolean stopAudioPlaybackIfCurrent(long playbackToken) {
         return audioController != null && audioController.stopPlaybackIfCurrent(playbackToken);
+    }
+
+    @Override
+    public boolean playAudioFile(java.io.File file) {
+        if (audioController == null) {
+            Log.w(TAG, "Audio controller not available");
+            return false;
+        }
+        if (file == null || !file.isFile()) {
+            Log.w(TAG, "playAudioFile skipped: missing file " + file);
+            return false;
+        }
+        audioController.playFile(file, AsgConstants.AUDIO_PLAYBACK_VOLUME);
+        return true;
     }
 
     @Override

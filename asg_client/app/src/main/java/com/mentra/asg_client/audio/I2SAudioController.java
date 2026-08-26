@@ -10,6 +10,7 @@ import android.util.Log;
 
 import com.mentra.asg_client.service.core.AsgClientService;
 
+import java.io.File;
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
@@ -36,33 +37,34 @@ public class I2SAudioController {
         this.context = context.getApplicationContext();
     }
 
-    public synchronized void playAsset(String assetName) {
-        playAssetTracked(assetName);
+    public synchronized void playAsset(String assetName, float playbackVolume) {
+        playAssetTracked(assetName, playbackVolume);
     }
 
     /** Play a primary asset and return a token that owns that exact playback. */
-    public synchronized long playAssetTracked(String assetName) {
+    public synchronized long playAssetTracked(String assetName, float playbackVolume) {
         long playbackToken = ++playbackGeneration;
-        playPrimaryAsset(assetName);
+        playPrimaryAsset(assetName, playbackVolume);
         return playbackToken;
     }
 
     /** Replace the primary asset only if the supplied token still owns it. */
-    public synchronized boolean replaceAssetIfCurrent(long playbackToken, String assetName) {
+    public synchronized boolean replaceAssetIfCurrent(
+            long playbackToken, String assetName, float playbackVolume) {
         if (playbackToken <= 0L || playbackToken != playbackGeneration || mediaPlayer == null) {
             return false;
         }
-        playAssetTracked(assetName);
+        playAssetTracked(assetName, playbackVolume);
         return true;
     }
 
     /** Play a short overlay without interrupting the current primary asset. */
-    public synchronized void playOverlayAsset(String assetName) {
-        playOverlayAssetTracked(assetName);
+    public synchronized void playOverlayAsset(String assetName, float playbackVolume) {
+        playOverlayAssetTracked(assetName, playbackVolume);
     }
 
     /** Play an independently stoppable overlay without interrupting primary audio. */
-    public synchronized long playOverlayAssetTracked(String assetName) {
+    public synchronized long playOverlayAssetTracked(String assetName, float playbackVolume) {
         Log.i(TAG, "Playing I2S overlay asset: " + assetName);
         isControllingI2S = true;
 
@@ -76,7 +78,9 @@ public class I2SAudioController {
         long overlayToken = ++overlayPlaybackGeneration;
         try (AssetFileDescriptor afd = context.getAssets().openFd(assetName)) {
             overlayPlayer = new MediaPlayer();
-            configurePlayer(overlayPlayer, afd);
+            configurePlayer(overlayPlayer, playbackVolume);
+            overlayPlayer.setDataSource(
+                    afd.getFileDescriptor(), afd.getStartOffset(), afd.getLength());
 
             final MediaPlayer trackedPlayer = overlayPlayer;
             overlayPlayers.put(overlayToken, trackedPlayer);
@@ -140,24 +144,59 @@ public class I2SAudioController {
         return true;
     }
 
-    private void playPrimaryAsset(String assetName) {
-        Log.i(TAG, "Playing I2S asset: " + assetName);
+    /** Play a local WAV/PCM file as a single primary I2S job. */
+    public synchronized void playFile(File file, float playbackVolume) {
+        if (file == null) {
+            Log.w(TAG, "playFile skipped: file is null");
+            return;
+        }
+        Log.i(TAG, "Playing I2S file: " + file.getAbsolutePath());
+        playPrimary(
+                file.getName(),
+                playbackVolume,
+                player -> player.setDataSource(file.getAbsolutePath()));
+    }
 
+    private void playPrimaryAsset(String assetName, float playbackVolume) {
+        Log.i(TAG, "Playing I2S asset: " + assetName);
+        try (AssetFileDescriptor afd = context.getAssets().openFd(assetName)) {
+            playPrimary(
+                    assetName,
+                    playbackVolume,
+                    player ->
+                            player.setDataSource(
+                                    afd.getFileDescriptor(),
+                                    afd.getStartOffset(),
+                                    afd.getLength()));
+        } catch (IOException e) {
+            Log.e(TAG, "Unable to open asset " + assetName, e);
+        }
+    }
+
+    private interface PlayerDataSource {
+        void apply(MediaPlayer player) throws IOException;
+    }
+
+    private void playPrimary(
+            String logName, float playbackVolume, PlayerDataSource source) {
         // Mark that WE are controlling I2S - prevents receiver from reacting to our broadcasts
         isControllingI2S = true;
 
         stopCurrentPlayer();
 
-        if (!notifyI2SState(true)) {
-            Log.w(TAG, "Failed to start I2S path; skipping playback");
+        boolean i2sStarted = notifyI2SState(true);
+        Log.i(TAG, "I2S start for " + logName + " notifyI2SState=" + i2sStarted);
+        if (!i2sStarted) {
+            Log.w(TAG, "Failed to start I2S path; skipping playback of " + logName);
             refreshControlFlag();
             return;
         }
 
         MediaPlayer nextPlayer = null;
-        try (AssetFileDescriptor afd = context.getAssets().openFd(assetName)) {
+        try {
             nextPlayer = new MediaPlayer();
-            configurePlayer(nextPlayer, afd);
+            configurePlayer(nextPlayer, playbackVolume);
+            source.apply(nextPlayer);
 
             final MediaPlayer trackedPlayer = nextPlayer;
             mediaPlayer = trackedPlayer;
@@ -167,7 +206,7 @@ public class I2SAudioController {
                             if (mediaPlayer != mp) {
                                 return;
                             }
-                            Log.d(TAG, "I2S audio playback completed");
+                            Log.d(TAG, "I2S audio playback completed: " + logName);
                             mediaPlayer = null;
                             mp.release();
                             closeI2SIfIdle();
@@ -180,7 +219,14 @@ public class I2SAudioController {
                             if (mediaPlayer != mp) {
                                 return true;
                             }
-                            Log.e(TAG, "MediaPlayer error - what=" + what + ", extra=" + extra);
+                            Log.e(
+                                    TAG,
+                                    "MediaPlayer error for "
+                                            + logName
+                                            + " - what="
+                                            + what
+                                            + ", extra="
+                                            + extra);
                             mediaPlayer = null;
                             mp.release();
                             closeI2SIfIdle();
@@ -191,9 +237,9 @@ public class I2SAudioController {
 
             trackedPlayer.prepare();
             trackedPlayer.start();
-            Log.d(TAG, "I2S audio playback started");
+            Log.d(TAG, "I2S audio playback started: " + logName);
         } catch (Exception e) {
-            Log.e(TAG, "Unable to play asset " + assetName, e);
+            Log.e(TAG, "Unable to play " + logName, e);
             if (nextPlayer != null) {
                 if (mediaPlayer == nextPlayer) {
                     mediaPlayer = null;
@@ -268,11 +314,10 @@ public class I2SAudioController {
         player.release();
     }
 
-    private void configurePlayer(MediaPlayer player, AssetFileDescriptor afd) throws IOException {
+    private void configurePlayer(MediaPlayer player, float playbackVolume) {
         // STREAM_NOTIFICATION routes through system sounds which work with I2S.
         player.setAudioStreamType(AudioManager.STREAM_NOTIFICATION);
-        player.setVolume(0.1f, 0.1f);
-        player.setDataSource(afd.getFileDescriptor(), afd.getStartOffset(), afd.getLength());
+        player.setVolume(playbackVolume, playbackVolume);
     }
 
     private void closeI2SIfIdle() {

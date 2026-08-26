@@ -58,6 +58,8 @@ public class WakeLockManager {
         MTK_OTA,
         /** Battery announcement while asleep (ButtonEventSubscriber). */
         BATTERY_ANNOUNCE,
+        /** Spoken pairing-code playback (PairingAudioEventSubscriber). */
+        PAIRING_CODE,
         /** Boot-time service startup window (BootstrapActivity). */
         BOOTSTRAP,
     }

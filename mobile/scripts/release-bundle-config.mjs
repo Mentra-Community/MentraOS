@@ -34,6 +34,9 @@ function xcodeEnvironmentEntries(env, nodeBinary) {
     .map(([key, value]) => [key, String(value)])
     .sort(([left], [right]) => left.localeCompare(right))
 
+  if (env.MENTRAOS_NATIVE_MARKETING_VERSION) {
+    entries.push(["MENTRAOS_NATIVE_MARKETING_VERSION", String(env.MENTRAOS_NATIVE_MARKETING_VERSION)])
+  }
   if (env.MENTRAOS_PINNED_BUILD_NUMBER) {
     entries.push(["MENTRAOS_PINNED_BUILD_NUMBER", String(env.MENTRAOS_PINNED_BUILD_NUMBER)])
   }

@@ -115,6 +115,7 @@ export const bluetoothSdkMock = {
   setDefaultDevice: jest.fn(() => Promise.resolve()),
   clearDefaultDevice: jest.fn(() => Promise.resolve()),
   startScan: jest.fn(() => Promise.resolve()),
+  stopScan: jest.fn(() => Promise.resolve()),
   connect: jest.fn(() => Promise.resolve()),
   connectDefault: jest.fn(() => Promise.resolve()),
   connectDefaultController: jest.fn(() => Promise.resolve()),

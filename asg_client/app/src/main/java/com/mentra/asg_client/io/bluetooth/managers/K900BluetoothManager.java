@@ -1284,8 +1284,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     }
 
     /**
-     * Queue the phone guard and BES authorization as one outbound FIFO action. The guard is a
-     * normal framed write; only its actual UART success permits the exclusive OTA lease and mh_ota.
+     * Queue the phone guard and BES authorization as one outbound FIFO action. The authorization
+     * lease first waits for a proven rendezvous link, then carries both normal-framed writes. Only
+     * the guard's actual UART success permits durable authorization reservation and mh_ota.
      */
     public boolean queueBesOtaAuthorization(
             byte[] installGuard, byte[] data, BesOtaAuthorizationCallback callback) {
@@ -1299,23 +1300,26 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         byte[] payload = Arrays.copyOf(data, data.length);
         return queueOutboundAction(
                 () -> {
-                    if (guard != null) {
-                        publishOutboundMessage(guard, true);
-                        boolean guardSent =
-                                transportCoordinator.runNormalWrite(
-                                        () -> sendMessageInternalLocked(guard));
-                        if (!guardSent) {
-                            callback.onInstallGuardWriteFailed();
-                            return;
-                        }
-                    }
-
                     BesUartTransportCoordinator.OperationLease lease =
                             transportCoordinator.beginOtaAuthorization();
                     if (lease == null) {
                         callback.onWriteComplete(false, false);
                         return;
                     }
+
+                    if (guard != null) {
+                        publishOutboundMessage(guard, true);
+                        boolean guardSent =
+                                transportCoordinator.runOtaAuthorizationWrite(
+                                        lease,
+                                        () -> sendMessageInternalLocked(guard));
+                        if (!guardSent) {
+                            transportCoordinator.endOta(lease);
+                            callback.onInstallGuardWriteFailed();
+                            return;
+                        }
+                    }
+
                     if (!callback.onLeaseAcquired(lease)) {
                         transportCoordinator.endOta(lease);
                         callback.onWriteComplete(false, false);

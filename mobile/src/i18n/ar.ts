@@ -47,6 +47,25 @@ const ar = {
     hardwareIncompatible: "الأجهزة غير متوافقة",
     hardwareIncompatibleMessage: "{{app}} يتطلب أجهزة غير متوفرة في النظارات المتصلة: {{missing}}",
   },
+  settings: {
+    ...en.settings,
+    forgetGlassesWhilePairing:
+      "اقتران Bluetooth جارٍ. اقبل مربع حوار اقتران النظام أو أغلقه أولاً، ثم حاول إلغاء اقتران النظارات مرة أخرى.",
+  },
+  pairing: {
+    ...en.pairing,
+    nearbyNotInPairingModeHint:
+      "تم العثور على نظارات Mentra Live قريبة، لكنها ليست في وضع الاقتران. اضغط زر الطاقة 5 مرات بسرعة ثم أعد المحاولة.",
+    notInPairingModeLabel: "ليست في وضع الاقتران",
+    notInPairingModeAlertTitle: "ادخل وضع الاقتران",
+    notInPairingModeAlertMessage:
+      "اضغط زر الطاقة 5 مرات بسرعة. يومض المؤشر وتنطق النظارات رمزًا من 4 أحرف. ثم اختر النظارات مرة أخرى.",
+    pairingCodeLabel: "الرمز {{code}}",
+    legacyFirmwareLabel: "برنامج ثابت قديم",
+    livePairingModeInfo:
+      "اضغط زر الطاقة 5 مرات بسرعة. يومض المؤشر وتنطق النظارات رمزًا من 4 أحرف (0–9، A–F). طابق ذلك الرمز في القائمة إذا ظهرت أكثر من وحدة.",
+    noGlassesFoundHint: "تأكد من الضغط على زر الطاقة 5 مرات بسرعة ثم أعد المحاولة.",
+  },
   demoNavigator: {
     componentsTab: "عناصر",
     debugTab: "تصحيح",

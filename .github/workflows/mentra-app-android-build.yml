@@ -24,15 +24,18 @@ permissions:
 
 jobs:
   build:
-    # Blacksmith 4 vCPU Ubuntu: a compile/test check that release-signs with the
-    # upload key injected from secrets (no Play upload). It does not need the mac
-    # runners, so keeping it off them frees self-hosted macOS capacity for iOS +
-    # staging/release builds. Blacksmith (more vCPU + NVMe) is faster than the
-    # free ubuntu-latest tier; same provider we already use for cloud builds.
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    # Blacksmith 8 vCPU / 32 GB: this is the long-pole check on every mobile PR
+    # (~17 min of assembleRelease on 4 vCPU). The Expo plugin already sets
+    # -Xmx8192m, which is tight on the 16 GB box and leaves Gradle
+    # under-paralleled. Stays off the Mac minis so iOS keeps that capacity.
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 40
     env:
       EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID }}
       EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY }}
+      # Compile-check APKs are phone sideloads. Full ABI belongs on the
+      # coordinated release workflow, not on this compile-check workflow.
+      ORG_GRADLE_PROJECT_reactNativeArchitectures: arm64-v8a
 
     steps:
       - name: Update PR comment - Build started
@@ -79,30 +82,8 @@ jobs:
         id: cache-week
         run: echo "week=$(date +%Y-%U)" >> $GITHUB_OUTPUT
 
-      - name: Clean build artifacts (preserve caches)
-        run: |
-          # Only clean build outputs, NOT dependency caches
-          rm -rf mobile/android/build mobile/android/app/build mobile/android/.gradle
-          # Clean node_modules to ensure fresh install (bun is fast anyway)
-          rm -rf mobile/node_modules
-
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Free up disk space
-        # GitHub-hosted ubuntu runners ship with ~14GB free, which a full RN
-        # Android release build (NDK + Gradle + node_modules + bun cache) can
-        # exhaust ("No space left on device"). Drop preinstalled toolchains we
-        # don't use to reclaim ~20GB+.
-        run: |
-          echo "Before:"; df -h / | tail -1
-          # Remove large preinstalled toolchains this build never uses (~15GB+).
-          # Keep the Android SDK — the build needs it.
-          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
-            /usr/local/share/powershell /usr/local/share/chromium \
-            /opt/hostedtoolcache/CodeQL /usr/local/lib/node_modules 2>/dev/null || true
-          sudo docker image prune --all --force 2>/dev/null || true
-          echo "After:"; df -h / | tail -1
 
       - name: Setup Java
         uses: actions/setup-java@v3
@@ -304,7 +285,11 @@ jobs:
       - name: Build Android Release APK
         id: gradle-build
         working-directory: ./mobile/android
-        run: ./gradlew assembleRelease --build-cache --parallel
+        # --max-workers matches the 8 vCPU runner. Do not -x lintVitalAnalyze*
+        # / lintVitalReport*: assembleRelease still runs lintVitalRelease, which
+        # then fails looking for those tasks' output files. Android lint stays
+        # on this job; Mobile App Quality Checks is TypeScript/Jest only.
+        run: ./gradlew assembleRelease --build-cache --parallel --max-workers=8 -x test
         continue-on-error: true
         env:
           SENTRY_DISABLE_AUTO_UPLOAD: "true"
@@ -328,10 +313,11 @@ jobs:
           # Stop Gradle daemons first to release file locks
           ./gradlew --stop || true
           rm -rf ~/.gradle/caches ~/.gradle/wrapper || true
-          ./gradlew assembleRelease --build-cache --parallel
+          ./gradlew assembleRelease --build-cache --parallel --max-workers=8 -x test
         env:
           SENTRY_DISABLE_AUTO_UPLOAD: "true"
           MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
+          RNMAPBOX_MAPS_DOWNLOAD_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
 
       - name: Fail if both builds failed
         if: steps.gradle-build.outcome == 'failure'
