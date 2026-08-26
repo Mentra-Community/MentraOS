@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import android.app.Application;
 import androidx.test.core.app.ApplicationProvider;
+import com.mentra.asg_client.AsgConstants;
 import java.io.File;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -46,7 +47,7 @@ public class PairingCodeAssetIntegrityTest {
         }
         int pauseSamples =
                 PairingCodePcmStitcher.msToSamples(
-                        PairingCodePcmStitcher.INTER_CHARACTER_PAUSE_MS, rate);
+                        AsgConstants.PAIRING_CODE_INTER_CHARACTER_PAUSE_MS, rate);
         assertThat(stitched.samples.length).isEqualTo(trimmedSum + pauseSamples * 3);
     }
 

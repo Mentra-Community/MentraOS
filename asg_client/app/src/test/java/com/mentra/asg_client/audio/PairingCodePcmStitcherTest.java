@@ -3,6 +3,7 @@ package com.mentra.asg_client.audio;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.mentra.asg_client.AsgConstants;
 import java.util.Arrays;
 import java.util.List;
 import org.junit.Test;
@@ -41,7 +42,7 @@ public class PairingCodePcmStitcherTest {
 
         int pause =
                 PairingCodePcmStitcher.msToSamples(
-                        PairingCodePcmStitcher.INTER_CHARACTER_PAUSE_MS, SAMPLE_RATE);
+                        AsgConstants.PAIRING_CODE_INTER_CHARACTER_PAUSE_MS, SAMPLE_RATE);
         assertThat(clip.sampleRate).isEqualTo(SAMPLE_RATE);
         assertThat(clip.samples.length).isEqualTo(tone * 2 + pause);
         assertThat(Arrays.copyOfRange(clip.samples, tone, tone + pause))
