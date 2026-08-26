@@ -96,18 +96,19 @@ export class MiniAppBetaService {
       const matches = await MiniAppBetaInvitationModel.find(selector).select("_id email mentraUserId").lean();
       const emailMatch = matches.find(invitation => invitation.email === normalizedEmail);
       const identityMatch = matches.find(invitation => invitation.mentraUserId === mentraUserId);
+      const previousMentraUserId = emailMatch?.mentraUserId;
+      if (previousMentraUserId && previousMentraUserId !== mentraUserId && app.betaAccessMode !== "public") {
+        await MiniAppTrackEnrollmentModel.deleteOne({
+          miniAppId: app._id.toString(),
+          mentraUserId: previousMentraUserId,
+        });
+      }
       if (emailMatch && identityMatch && emailMatch._id.toString() !== identityMatch._id.toString()) {
-        const removed = await MiniAppBetaInvitationModel.deleteOne({
+        await MiniAppBetaInvitationModel.deleteOne({
           _id: emailMatch._id,
           email: normalizedEmail,
           mentraUserId: emailMatch.mentraUserId,
         });
-        if (removed.deletedCount === 1 && app.betaAccessMode !== "public") {
-          await MiniAppTrackEnrollmentModel.deleteOne({
-            miniAppId: app._id.toString(),
-            mentraUserId: emailMatch.mentraUserId,
-          });
-        }
         continue;
       }
 

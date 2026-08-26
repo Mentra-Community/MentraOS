@@ -1087,6 +1087,17 @@ describe("miniapp release lifecycle", () => {
     const { MiniAppBetaService: RemappedMiniAppBetaService } = await import(
       "../packages/core/src/services/miniapps/miniapp-beta.service"
     );
+    const singlyRemappedBetas = new RemappedMiniAppBetaService(async () => "mu_store_reassigned");
+    expect((await singlyRemappedBetas.invite(developer, packageName, "tester@example.com")).state).toBe("pending");
+    expect(
+      await MiniAppTrackEnrollmentModel.exists({ mentraUserId: storeUser.mentraUserId, packageName }),
+    ).toBeNull();
+    await expect(catalog.getBundleAsset(betaBundleAssetId, storeUser)).rejects.toMatchObject({ status: 404 });
+
+    invitation = await miniappBetas.invite(developer, packageName, "tester@example.com");
+    expect(invitation.state).toBe("pending");
+    await catalog.setReleaseTrack(packageName, "beta", storeUser, "https://core.example.test");
+
     const conflictingInvitation = await miniappBetas.invite(developer, packageName, "other@example.com");
     const remappedBetas = new RemappedMiniAppBetaService(async () => "mu_store_other");
     const mergedInvitation = await remappedBetas.invite(developer, packageName, "tester@example.com");
