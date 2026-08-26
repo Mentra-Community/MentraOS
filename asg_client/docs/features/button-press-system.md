@@ -65,6 +65,27 @@ A camera-holding capture (button photo, camera web-server photo, or local-save S
 
 A short or long press while video is already recording still **stops** the recording even if a capture is in flight. Upload, gallery sync, and BLE handoff after the JPEG is saved do not occupy the capture gate; an SDK upload tail can still block the button via `isPhotoJobInFlight()` until that job finishes.
 
+## Camera-button sounds
+
+BES plays `PHOTO_START` from a local occupancy lease, not a per-press UART verdict. `MediaCaptureService` publishes `mh_phobsy` whenever this suppression predicate changes (and renews it every 20s while it stays true):
+
+```
+suppressed = captureInFlight || photoJobInFlight || recordingVideo
+```
+
+That is exactly the set of locally handled presses that will not become a photo (`STOP_RECORDING` or `DROP_BUSY` in `ButtonCaptureDecision`). Gallery-off + phone-present (`SKIP_LOCAL`) is not part of the predicate: occupancy is press-agnostic.
+
+| Press | Camera state | Sound |
+| --- | --- | --- |
+| Short, camera idle | none of the three flags | BES `PHOTO_START`, then ASG prep clicks and snap |
+| Short, photo in flight | `captureInFlight` or `photoJobInFlight` | silent |
+| Short, video recording | `recordingVideo` | ASG `recording_stop` only |
+| Long press | start or stop | ASG owns start/stop cues; a dropped long press is silent |
+| `SKIP_LOCAL` (gallery off, phone present) | occupancy clear | BES prompt only |
+| Phone/SDK `take_photo` | occupancy pushed | ASG prep/snap only; a button press mid-SDK-photo is silent |
+
+`mh_phobsy` `B` is a JSON **string** (`{"b":1,"ttl":60000}`). `b` must be `0` or `1`. A busy push advertises a 60s TTL and is renewed every 20s so a long recording cannot expire the lease. Failed sends set a dirty bit so the next publish retries. `AsgClientService` resyncs the lease on Bluetooth connect and on the `sr_syvr` proof callback; if a BES reboot does not re-run that handshake, the next renewal tick (≤20s) self-corrects.
+
 ## Short press: photo or stop video
 
 If a video is currently recording, a short press **stops the recording**. Otherwise, if a capture is already in flight, the press is dropped. Otherwise it **takes a photo**:
