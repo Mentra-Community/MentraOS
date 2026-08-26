@@ -205,7 +205,7 @@ upgrade OTA completing).
 2. BES classifies the press and sends `cs_pho` or an equivalent notification over UART.
 3. `K900CommandHandler` forwards a `button_press` event to the phone.
 4. The gallery-mode gate decides whether local capture should occur.
-5. If local capture is enabled, `MediaCaptureService` takes a photo using the configured size and LED setting.
+5. If local capture is enabled and no capture is already in flight, `MediaCaptureService` takes a photo using the configured size and LED setting. A short press while a photo is being captured is forwarded to the phone but does not enqueue another shot.
 6. The media file is stored locally and becomes available through gallery sync / camera web server APIs.
 
 ### Camera button video flow
@@ -213,7 +213,7 @@ upgrade OTA completing).
 1. User long-presses the camera button.
 2. BES sends `cs_vdo` or equivalent over UART.
 3. `asg_client` forwards `button_press` to the phone.
-4. If local capture is permitted and battery is above the minimum threshold, video recording starts with configured resolution/FPS/max duration.
+4. If local capture is permitted, no photo capture is in flight, and battery is above the minimum threshold, video recording starts with configured resolution/FPS/max duration. A long press during an in-flight photo is forwarded to the phone but does not start recording.
 5. LEDs indicate active camera use.
 6. A subsequent short or long press stops the recording, finalizes the file, turns off recording indicators, and exposes the file for sync.
 
