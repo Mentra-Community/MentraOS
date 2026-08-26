@@ -5,3 +5,16 @@ export {
   type MentraLiveOtaFlowTheme,
   type MentraLiveOtaFlowTranslate,
 } from "./MentraLiveOtaFlow"
+export {
+  useMentraLiveOta,
+  type MentraLiveOtaController,
+  type MentraLiveOtaError,
+  type MentraLiveOtaErrorCode,
+  type MentraLiveOtaHotspotPhase,
+  type MentraLiveOtaInstallPhase,
+  type MentraLiveOtaScreen,
+  type MentraLiveOtaState,
+  type MentraLiveOtaStep,
+  type MentraLiveOtaTransport,
+  type UseMentraLiveOtaOptions,
+} from "./useMentraLiveOta"

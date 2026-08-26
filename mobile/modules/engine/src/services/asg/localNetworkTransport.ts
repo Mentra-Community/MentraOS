@@ -1,5 +1,5 @@
 import * as RNFS from "@dr.pogodin/react-native-fs"
-import {MentraLocalNetwork, type LocalNetworkDownloadProgress} from "@mentra/bluetooth-sdk/internal"
+import {otaLocalNetwork, type OtaLocalNetworkDownloadProgress} from "@mentra/bluetooth-sdk/ota-transport"
 import {Buffer} from "buffer"
 import {Platform} from "react-native"
 import WifiManager from "react-native-wifi-reborn"
@@ -17,7 +17,7 @@ export function shouldUseScopedLocalNetwork(os: string, moduleAvailable: boolean
 }
 
 function supportsScopedConnection(): boolean {
-  return shouldUseScopedLocalNetwork(Platform.OS, MentraLocalNetwork != null)
+  return shouldUseScopedLocalNetwork(Platform.OS, otaLocalNetwork.isAvailable())
 }
 
 function normalizeHeaders(headers?: HeadersInit): Record<string, string> {
@@ -48,25 +48,25 @@ export const localNetworkTransport = {
       await WifiManager.connectToProtectedSSID(ssid, password, false, false)
       return undefined
     }
-    const result = await MentraLocalNetwork!.connect(ssid, password)
+    const result = await otaLocalNetwork.connect(ssid, password)
     scopedConnectionActive = true
     return result.localAddress
   },
 
   async disconnect(): Promise<void> {
     if (supportsScopedConnection()) {
-      await MentraLocalNetwork!.disconnect().catch(() => {})
+      await otaLocalNetwork.disconnect().catch(() => {})
     }
     scopedConnectionActive = false
     nativeJobs.clear()
   },
 
   async fetch(url: string | URL | Request, init?: RequestInit, timeoutMs = 30_000): Promise<Response> {
-    if (!scopedConnectionActive || !MentraLocalNetwork || typeof url !== "string") {
+    if (!scopedConnectionActive || !otaLocalNetwork.isAvailable() || typeof url !== "string") {
       return globalThis.fetch(url, init)
     }
 
-    const nativeModule = MentraLocalNetwork
+    const nativeModule = otaLocalNetwork
     const id = requestId("request")
     const signal = init?.signal
     const cancel = () => void nativeModule.cancel(id)
@@ -92,13 +92,13 @@ export const localNetworkTransport = {
   },
 
   downloadFile(options: DownloadOptions): DownloadHandle {
-    if (!scopedConnectionActive || !MentraLocalNetwork) return RNFS.downloadFile(options)
+    if (!scopedConnectionActive || !otaLocalNetwork.isAvailable()) return RNFS.downloadFile(options)
 
     const jobId = nextJobId++
     const id = requestId("download")
     let began = false
     nativeJobs.set(jobId, id)
-    const subscription = MentraLocalNetwork.addListener("downloadProgress", (event: LocalNetworkDownloadProgress) => {
+    const subscription = otaLocalNetwork.onDownloadProgress((event: OtaLocalNetworkDownloadProgress) => {
       if (event.requestId !== id) return
       if (!began) {
         began = true
@@ -116,14 +116,15 @@ export const localNetworkTransport = {
       })
     })
 
-    const promise = MentraLocalNetwork.download(
-      id,
-      options.fromUrl,
-      options.toFile,
-      options.headers || {},
-      options.connectionTimeout || 30_000,
-      options.readTimeout || 30_000,
-    )
+    const promise = otaLocalNetwork
+      .download(
+        id,
+        options.fromUrl,
+        options.toFile,
+        options.headers || {},
+        options.connectionTimeout || 30_000,
+        options.readTimeout || 30_000,
+      )
       .then((result) => {
         if (!began) {
           options.begin?.({
@@ -154,16 +155,16 @@ export const localNetworkTransport = {
 
   stopDownload(jobId: number): void {
     const nativeId = nativeJobs.get(jobId)
-    if (nativeId && MentraLocalNetwork) {
+    if (nativeId && otaLocalNetwork.isAvailable()) {
       cancelledNativeJobs.add(jobId)
-      void MentraLocalNetwork.cancel(nativeId)
+      void otaLocalNetwork.cancel(nativeId)
       return
     }
     RNFS.stopDownload(jobId)
   },
 }
 
-MentraLocalNetwork?.addListener("networkLost", () => {
+otaLocalNetwork.onNetworkLost(() => {
   scopedConnectionActive = false
   nativeJobs.clear()
 })

@@ -86,7 +86,7 @@ beforeEach(() => {
   useGlassesStore.getState().reset()
   useConnectionOverlayConfig.getState().clearConfig()
   mockReplace.mockClear()
-  BluetoothSdk.sendOtaQueryStatus.mockClear()
+  BluetoothSdk.queryOtaStatus.mockClear()
   BluetoothSdk.startOtaUpdate.mockReset().mockResolvedValue(undefined)
   stopOtaAutoChain()
 })
@@ -640,7 +640,7 @@ describe("progress.tsx watchdog timers", () => {
         status: "step_complete",
       })
     })
-    BluetoothSdk.sendOtaQueryStatus.mockClear()
+    BluetoothSdk.queryOtaStatus.mockClear()
     BluetoothSdk.startOtaUpdate.mockClear()
 
     act(() => {
@@ -650,7 +650,7 @@ describe("progress.tsx watchdog timers", () => {
       setGlassesConnected()
     })
 
-    expect(BluetoothSdk.sendOtaQueryStatus).toHaveBeenCalledTimes(1)
+    expect(BluetoothSdk.queryOtaStatus).toHaveBeenCalledTimes(1)
     expect(BluetoothSdk.startOtaUpdate).not.toHaveBeenCalled()
 
     await act(async () => {

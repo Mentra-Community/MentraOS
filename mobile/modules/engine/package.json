@@ -36,6 +36,11 @@
       "react-native": "./src/bluetooth-sdk/photo-receiver.ts",
       "default": "./build/bluetooth-sdk/photo-receiver.js"
     },
+    "./bluetooth-sdk/ota-transport": {
+      "types": "./build/bluetooth-sdk/ota-transport.d.ts",
+      "react-native": "./src/bluetooth-sdk/ota-transport.ts",
+      "default": "./build/bluetooth-sdk/ota-transport.js"
+    },
     "./bluetooth-sdk/debug": {
       "types": "./build/bluetooth-sdk/debug.d.ts",
       "react-native": "./src/bluetooth-sdk/debug.ts",
@@ -64,6 +69,7 @@
     "write:release-metadata": "node scripts/write-release-metadata.mjs",
     "verify:release-package": "node scripts/verify-release-package.mjs",
     "test:public-api": "bun test src/bluetooth-sdk/__tests__/publicApi.test.ts",
+    "test:public-ota-consumer": "tsc --noEmit --strict --skipLibCheck --jsx react-jsx --moduleResolution bundler --module esnext --target es2022 scripts/fixtures/public-ota-consumer.tsx",
     "build:module": "expo-module prepare",
     "prepublishOnly": "expo-module prepublishOnly",
     "expo-module": "expo-module"

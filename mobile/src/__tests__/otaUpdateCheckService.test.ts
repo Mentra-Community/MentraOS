@@ -2,7 +2,7 @@ import {checkCurrentGlassesForUpdate} from "../../modules/engine/src/services/Ot
 import {useGlassesStore} from "../../modules/engine/src/stores/glasses"
 import {SETTINGS} from "@mentra/engine"
 import {useSettingsStore} from "@mentra/engine-host-internal"
-import {resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
+import {bluetoothSdkMock, resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
 
 describe("OtaUpdateCheckService", () => {
   const originalFetch = global.fetch
@@ -160,6 +160,36 @@ describe("OtaUpdateCheckService", () => {
 
     expect(result.skippedReason).toBe("missing_build")
     expect(global.fetch).not.toHaveBeenCalled()
+  })
+
+  it("projects the explicit version response after an APK check clears Engine's cached build", async () => {
+    useGlassesStore.getState().setGlassesInfo({buildNumber: ""})
+    bluetoothSdkMock.requestVersionInfo.mockResolvedValueOnce({
+      androidVersion: "13",
+      firmwareVersion: "firmware",
+      besFirmwareVersion: "17.26.1.14",
+      mtkFirmwareVersion: "20260101",
+      buildNumber: "10",
+      otaVersionUrl: "https://ota.example/version.json",
+      appVersion: "10.0",
+    })
+    global.fetch = jest.fn(() =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({apps: {"com.mentra.asg_client": {versionCode: 10}}}),
+      } as unknown as Response),
+    ) as unknown as typeof fetch
+
+    const result = await checkCurrentGlassesForUpdate({
+      fixClockBeforeCheck: false,
+      waitForBuildNumberMs: 100,
+      waitForBesVersionMs: 0,
+      waitForMtkVersionMs: 0,
+    })
+
+    expect(result.skippedReason).toBeUndefined()
+    expect(result.hasCheckCompleted).toBe(true)
+    expect(useGlassesStore.getState().buildNumber).toBe("10")
   })
 
   it("downgrades default to skippable; explicit isRequired forces them", async () => {
