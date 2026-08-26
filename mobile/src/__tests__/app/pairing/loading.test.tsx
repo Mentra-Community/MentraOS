@@ -5,6 +5,8 @@ import {engine} from "@mentra/engine"
 import {useRoute} from "@react-navigation/native"
 import {useNavigationStore} from "@/stores/navigation"
 import GlassesPairingLoadingScreen from "@/app/pairing/loading"
+// The glasses store is private to the local engine workspace and has no public test export.
+// eslint-disable-next-line no-restricted-imports
 import {useGlassesStore} from "../../../../modules/engine/src/stores/glasses"
 import {emitBluetoothSdkEvent, resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
 
@@ -193,9 +195,9 @@ describe("pairing loading screen", () => {
     )
   })
 
-  it("navigates to success when firmware never emits pairing_info (legacy fallback)", async () => {
+  it("does not wait for pairing_info when the advertisement reports existing pairing behavior", async () => {
     ;(useRoute as jest.Mock).mockReturnValue({
-      params: {deviceModel: "Mentra Live", deviceName: "MENTRA_LIVE_BLE_LEGACY", securePairingCapable: false},
+      params: {deviceModel: "Mentra Live", deviceName: "MENTRA_LIVE_BLE_EXISTING", securePairingCapable: false},
     })
     render(<GlassesPairingLoadingScreen />)
 
@@ -203,12 +205,9 @@ describe("pairing loading screen", () => {
       useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
     })
 
-    // No pairing_info event arrives (field firmware). Without the fallback, pairing hangs forever.
+    // The only remaining delay is the existing one-second transition to the success screen.
     expect(replace).not.toHaveBeenCalled()
 
-    act(() => {
-      jest.advanceTimersByTime(5_000)
-    })
     act(() => {
       jest.advanceTimersByTime(1_000)
     })
@@ -234,29 +233,6 @@ describe("pairing loading screen", () => {
         error: "errors:pairingCouldNotStart",
         deviceModel: "Mentra Live",
       })
-    })
-  })
-
-  it("uses the legacy pairing_info fallback when scan already reported non-secure firmware", async () => {
-    ;(useRoute as jest.Mock).mockReturnValue({
-      params: {deviceModel: "Mentra Live", deviceName: "MENTRA_LIVE_BLE_LEGACY", securePairingCapable: false},
-    })
-    render(<GlassesPairingLoadingScreen />)
-
-    act(() => {
-      useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
-    })
-    expect(replace).not.toHaveBeenCalled()
-
-    act(() => {
-      jest.advanceTimersByTime(5_000)
-    })
-    act(() => {
-      jest.advanceTimersByTime(1_000)
-    })
-
-    await waitFor(() => {
-      expect(replace).toHaveBeenCalledWith("/pairing/success", {deviceModel: "Mentra Live"})
     })
   })
 

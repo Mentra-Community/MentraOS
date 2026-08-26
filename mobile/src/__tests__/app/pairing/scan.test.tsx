@@ -550,15 +550,15 @@ describe("pairing scan screen", () => {
     })
   })
 
-  it("shows a single legacy Mentra Live and waits for the user to choose it", async () => {
+  it("shows existing customer firmware without labeling it as legacy", async () => {
     setPlatformOS("android")
     useCoreStore.setState({
       searchResults: [
         {
-          id: "legacy",
+          id: "existing",
           model: "Mentra Live",
-          name: "MENTRA_LIVE_BLE_LEGACY",
-          address: "legacy",
+          name: "MENTRA_LIVE_BLE_EXISTING",
+          address: "existing",
           pairingMode: false,
           securePairingCapable: false,
         },
@@ -569,25 +569,25 @@ describe("pairing scan screen", () => {
 
     await waitFor(() => {
       expect(getByText("pairing:liveChooseGlassesTitle")).toBeTruthy()
-      expect(getByText(/pairing:legacyFirmwareLabel/)).toBeTruthy()
+      expect(getByText("EXISTING")).toBeTruthy()
     })
     expect(push).not.toHaveBeenCalled()
 
-    fireEvent.press(getByText(/pairing:legacyFirmwareLabel/))
+    fireEvent.press(getByText("EXISTING"))
 
     await waitFor(() => {
       expect(push).toHaveBeenCalledWith(
         "/pairing/loading",
         expect.objectContaining({
           deviceModel: "Mentra Live",
-          deviceName: "MENTRA_LIVE_BLE_LEGACY",
+          deviceName: "MENTRA_LIVE_BLE_EXISTING",
           securePairingCapable: false,
         }),
       )
     })
   })
 
-  it("shows legacy Mentra Live beside an idle secure unit and waits for the user", async () => {
+  it("shows existing customer firmware beside an idle secure unit", async () => {
     setPlatformOS("android")
     useCoreStore.setState({
       searchResults: [
@@ -600,10 +600,10 @@ describe("pairing scan screen", () => {
           securePairingCapable: true,
         },
         {
-          id: "legacy",
+          id: "existing",
           model: "Mentra Live",
-          name: "MENTRA_LIVE_BLE_LEGACY",
-          address: "legacy",
+          name: "MENTRA_LIVE_BLE_EXISTING",
+          address: "existing",
           pairingMode: false,
           securePairingCapable: false,
         },
@@ -615,18 +615,18 @@ describe("pairing scan screen", () => {
     await waitFor(() => {
       expect(getByText("pairing:liveChooseGlassesTitle")).toBeTruthy()
       expect(getByText(/IDLE.*pairing:notInPairingModeLabel/)).toBeTruthy()
-      expect(getByText(/pairing:legacyFirmwareLabel/)).toBeTruthy()
+      expect(getByText("EXISTING")).toBeTruthy()
     })
     expect(push).not.toHaveBeenCalled()
 
-    fireEvent.press(getByText(/pairing:legacyFirmwareLabel/))
+    fireEvent.press(getByText("EXISTING"))
 
     await waitFor(() => {
       expect(push).toHaveBeenCalledWith(
         "/pairing/loading",
         expect.objectContaining({
           deviceModel: "Mentra Live",
-          deviceName: "MENTRA_LIVE_BLE_LEGACY",
+          deviceName: "MENTRA_LIVE_BLE_EXISTING",
           securePairingCapable: false,
         }),
       )
