@@ -17,6 +17,7 @@ process.env.CLOUD_CORE_LOCAL_STORAGE_DIR = join(tmpdir(), `mentra-miniapp-releas
 
 import { connectMongo, disconnectMongo } from "../packages/core/src/connections/mongo.connection";
 import { MiniAppAssetModel } from "../packages/core/src/models/miniapp-asset.model";
+import { MiniAppBetaInvitationModel } from "../packages/core/src/models/miniapp-beta-invitation.model";
 import { MiniAppModel } from "../packages/core/src/models/miniapp.model";
 import { MiniAppReleaseModel } from "../packages/core/src/models/miniapp-release.model";
 import { MiniAppTrackEnrollmentModel } from "../packages/core/src/models/miniapp-track-enrollment.model";
@@ -25,6 +26,7 @@ import { PreinstalledRegistryModel } from "../packages/core/src/models/preinstal
 import { PreinstalledRegistryRevisionModel } from "../packages/core/src/models/preinstalled-registry-revision.model";
 import type { PreinstalledRegistryService } from "../packages/core/src/services/miniapps/preinstalled-registry.service";
 import type { MiniAppService } from "../packages/core/src/services/miniapps/miniapp.service";
+import type { MiniAppBetaService } from "../packages/core/src/services/miniapps/miniapp-beta.service";
 import { StoreCatalogService } from "../packages/core/src/services/miniapps/store-catalog.service";
 import type {
   DeveloperJwk,
@@ -40,6 +42,7 @@ const developer = {
 const storeUser = { mentraUserId: "mu_store_user", tenantId: "mentra" };
 
 let miniapps: MiniAppService;
+let miniappBetas: MiniAppBetaService;
 let registries: PreinstalledRegistryService;
 let signing: DeveloperSigningService;
 
@@ -47,6 +50,7 @@ beforeAll(async () => {
   await connectMongo(process.env.MONGO_URL ?? "mongodb://127.0.0.1:27017/mentra-cloud-v2-test");
   await Promise.all([
     MiniAppModel.syncIndexes(),
+    MiniAppBetaInvitationModel.syncIndexes(),
     MiniAppReleaseModel.syncIndexes(),
     MiniAppTrackEnrollmentModel.syncIndexes(),
     DeveloperSigningKeyModel.syncIndexes(),
@@ -55,11 +59,15 @@ beforeAll(async () => {
     PreinstalledRegistryRevisionModel.syncIndexes(),
   ]);
   const { MiniAppService } = await import("../packages/core/src/services/miniapps/miniapp.service");
+  const { MiniAppBetaService } = await import("../packages/core/src/services/miniapps/miniapp-beta.service");
   const { PreinstalledRegistryService } = await import(
     "../packages/core/src/services/miniapps/preinstalled-registry.service"
   );
   const { DeveloperSigningService } = await import("../packages/core/src/services/miniapps/developer-signing.service");
   miniapps = new MiniAppService();
+  miniappBetas = new MiniAppBetaService(async email =>
+    email === "tester@example.com" ? storeUser.mentraUserId : email === "other@example.com" ? "mu_store_other" : null,
+  );
   registries = new PreinstalledRegistryService();
   signing = new DeveloperSigningService();
 });
@@ -71,6 +79,7 @@ afterAll(async () => {
 beforeEach(async () => {
   await Promise.all([
     MiniAppModel.deleteMany({ orgId: developer.orgId }),
+    MiniAppBetaInvitationModel.deleteMany({ orgId: developer.orgId }),
     MiniAppReleaseModel.deleteMany({ orgId: developer.orgId }),
     MiniAppTrackEnrollmentModel.deleteMany({ mentraUserId: /^mu_store_/ }),
     DeveloperSigningKeyModel.deleteMany({ orgId: developer.orgId }),
@@ -858,6 +867,7 @@ describe("miniapp release lifecycle", () => {
       displayName: "Track Test",
       description: "Track selection",
     });
+    await miniappBetas.setAccessMode(developer, packageName, "public");
     await configurePublishableListing(packageName);
     await miniapps.updateStoreListing(developer, packageName, { subtitle: "Stable listing" });
 
@@ -892,6 +902,7 @@ describe("miniapp release lifecycle", () => {
     const defaultResult = await catalog.list({ baseUrl: "https://core.example.test", ...storeUser });
     expect(defaultResult.apps[0]).toMatchObject({
       selectedTrack: "stable",
+      betaAccess: "public",
       availableTracks: ["stable", "beta"],
       subtitle: "Stable listing",
       release: { id: stable.id, version: "1.0.0", track: "stable" },
@@ -946,6 +957,116 @@ describe("miniapp release lifecycle", () => {
       miniapps.publishRelease({ releaseId: beta.id, adminId: "admin@mentraglass.com" }),
     ).rejects.toMatchObject({ code: "invalid_release_state", status: 409 });
     expect((await MiniAppModel.findOne({ packageName }).lean())?.activeBetaReleaseId).toBe(secondBeta.id);
+  });
+
+  test("private betas stay hidden until invitation and revocation stops future beta selection", async () => {
+    const packageName = "com.example.closedbeta";
+    await miniapps.createMiniApp(developer, {
+      packageName,
+      displayName: "Closed Beta",
+      description: "Private beta test",
+    });
+    await configurePublishableListing(packageName);
+
+    for (const releaseInput of [
+      { version: "1.0.0", releaseTrack: "stable" as const },
+      { version: "1.1.0-beta.1", releaseTrack: "beta" as const },
+    ]) {
+      const release = await miniapps.createRelease(developer, {
+        packageName,
+        ...releaseInput,
+        manifest: { packageName, name: "Closed Beta", version: releaseInput.version },
+        bundle: await releaseBundle({ packageName, name: "Closed Beta", version: releaseInput.version }),
+      });
+      await miniapps.submitRelease(developer, packageName, release.id);
+      await miniapps.approveRelease({ releaseId: release.id, adminId: "admin@mentraglass.com" });
+      await miniapps.publishRelease({ releaseId: release.id, adminId: "admin@mentraglass.com" });
+    }
+
+    const catalog = new StoreCatalogService();
+    const beforeInvite = await catalog.get(packageName, "https://core.example.test", storeUser);
+    expect(beforeInvite).toMatchObject({ selectedTrack: "stable", betaAccess: null, availableTracks: ["stable"] });
+    await expect(
+      catalog.setReleaseTrack(packageName, "beta", storeUser, "https://core.example.test"),
+    ).rejects.toMatchObject({ code: "beta_invitation_required", status: 403 });
+
+    const invitation = await miniappBetas.invite(developer, packageName, "tester@example.com");
+    const invited = await catalog.get(packageName, "https://core.example.test", storeUser);
+    expect(invited).toMatchObject({ betaAccess: "invited", availableTracks: ["stable", "beta"] });
+    const selected = await catalog.setReleaseTrack(packageName, "beta", storeUser, "https://core.example.test");
+    expect(selected).toMatchObject({ selectedTrack: "beta", preferredTrack: "beta", betaAccess: "invited" });
+    expect((await miniappBetas.getAccess(developer, packageName)).invitations[0]?.state).toBe("accepted");
+    expect((await miniappBetas.invite(developer, packageName, "tester@example.com")).state).toBe("accepted");
+    await expect(miniappBetas.invite(developer, packageName, "missing@example.com")).rejects.toMatchObject({
+      code: "mentra_user_not_found",
+      status: 404,
+    });
+
+    const otherUser = { mentraUserId: "mu_store_other", tenantId: "mentra" };
+    expect(await catalog.get(packageName, "https://core.example.test", otherUser)).toMatchObject({
+      selectedTrack: "stable",
+      betaAccess: null,
+      availableTracks: ["stable"],
+    });
+
+    await miniappBetas.revoke(developer, packageName, invitation.id);
+    expect(await MiniAppTrackEnrollmentModel.exists({ mentraUserId: storeUser.mentraUserId, packageName })).toBeNull();
+    expect(await catalog.get(packageName, "https://core.example.test", storeUser)).toMatchObject({
+      selectedTrack: "stable",
+      betaAccess: null,
+      availableTracks: ["stable"],
+    });
+
+    await miniappBetas.setAccessMode(developer, packageName, "public");
+    expect(await catalog.get(packageName, "https://core.example.test", otherUser)).toMatchObject({
+      betaAccess: "public",
+      availableTracks: ["stable", "beta"],
+    });
+    await catalog.setReleaseTrack(packageName, "beta", otherUser, "https://core.example.test");
+    await miniappBetas.setAccessMode(developer, packageName, "private");
+    expect(await MiniAppTrackEnrollmentModel.exists({ mentraUserId: otherUser.mentraUserId })).toBeNull();
+  });
+
+  test("an invited tester can discover a beta before any stable release exists", async () => {
+    const packageName = "com.example.betaonly";
+    const created = await miniapps.createMiniApp(developer, {
+      packageName,
+      displayName: "Beta Only",
+      description: "Private preview",
+    });
+    await configurePublishableListing(packageName);
+    const beta = await miniapps.createRelease(developer, {
+      packageName,
+      version: "0.9.0",
+      releaseTrack: "beta",
+      manifest: { packageName, name: "Beta Only", version: "0.9.0" },
+      bundle: await releaseBundle({ packageName, name: "Beta Only", version: "0.9.0" }),
+    });
+    await miniapps.submitRelease(developer, packageName, beta.id);
+    await miniapps.approveRelease({ releaseId: beta.id, adminId: "admin@mentraglass.com" });
+    await miniapps.publishRelease({ releaseId: beta.id, adminId: "admin@mentraglass.com" });
+
+    const catalog = new StoreCatalogService();
+    await expect(catalog.get(packageName, "https://core.example.test", storeUser)).rejects.toMatchObject({
+      code: "not_found",
+    });
+    await miniappBetas.invite(developer, packageName, "tester@example.com");
+
+    const visible = await catalog.get(packageName, "https://core.example.test", storeUser);
+    expect(visible).toMatchObject({
+      selectedTrack: "beta",
+      preferredTrack: "stable",
+      betaAccess: "invited",
+      availableTracks: ["beta"],
+      release: { version: "0.9.0", track: "beta" },
+    });
+    expect(
+      (await catalog.list({ ...storeUser, baseUrl: "https://core.example.test" })).apps.map(app => app.packageName),
+    ).toContain(packageName);
+
+    const joined = await catalog.setReleaseTrack(packageName, "beta", storeUser, "https://core.example.test");
+    expect(joined).toMatchObject({ selectedTrack: "beta", preferredTrack: "beta" });
+    expect(await MiniAppBetaInvitationModel.exists({ miniAppId: created.id, status: "accepted" })).not.toBeNull();
   });
 });
 

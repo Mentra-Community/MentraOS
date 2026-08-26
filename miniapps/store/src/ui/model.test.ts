@@ -33,6 +33,7 @@ function app(version: string, packageName = "com.example.weather", categories: s
     screenshotUrls: [],
     selectedTrack: "stable",
     preferredTrack: "stable",
+    betaAccess: null,
     availableTracks: ["stable"],
     release: {
       id: `release-${version}`,

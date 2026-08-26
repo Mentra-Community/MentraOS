@@ -98,6 +98,7 @@ export class MiniAppService {
         status: app.status,
         activeRelease: activeRelease ? serializeRelease(activeRelease) : null,
         activeBetaRelease: activeBetaRelease ? serializeRelease(activeBetaRelease) : null,
+        betaAccessMode: app.betaAccessMode === "public" ? "public" : "private",
         latestRelease: latestRelease ? serializeRelease(latestRelease) : null,
         releaseCount: appReleases.length,
         createdAt: app.createdAt?.toISOString() ?? null,

@@ -12,7 +12,9 @@ import { DeveloperOrgMembershipModel } from "../models/developer-org-membership.
 import { RefreshTokenModel } from "../models/refresh-token.model";
 import { UserModel } from "../models/user.model";
 import { OemModel } from "../models/oem.model";
+import { MiniAppModel } from "../models/miniapp.model";
 import { MiniAppReleaseModel } from "../models/miniapp-release.model";
+import { MiniAppBetaInvitationModel } from "../models/miniapp-beta-invitation.model";
 import { MiniAppTrackEnrollmentModel } from "../models/miniapp-track-enrollment.model";
 
 const logger = createLogger("core").child({ component: "startup-migrations" });
@@ -53,7 +55,12 @@ export async function runStartupMigrations(): Promise<void> {
     { releaseTrack: { $exists: false } },
     { $set: { releaseTrack: "stable" } },
   );
+  await MiniAppModel.collection.updateMany(
+    { betaAccessMode: { $exists: false } },
+    { $set: { betaAccessMode: "private" } },
+  );
   await MiniAppReleaseModel.createIndexes();
+  await MiniAppBetaInvitationModel.createIndexes();
   await MiniAppTrackEnrollmentModel.createIndexes();
   await dropLegacyMembershipEmailIndex();
   await dropLegacySingleOrgMembershipIndex();

@@ -52,5 +52,6 @@ describe("normalizeManifestActions", () => {
     expect(projectSystemActions(actions)).toEqual([
       {id: "open", description: "Open.", lifecycle: "persistent"},
     ])
+    expect(projectSystemActions(actions, false)).toEqual([])
   })
 })

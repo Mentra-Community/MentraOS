@@ -6,6 +6,7 @@ const app = (packageName: string) => ({
   name: packageName,
   selectedTrack: "stable",
   preferredTrack: "stable",
+  betaAccess: null,
   availableTracks: ["stable"],
   release: {
     id: `${packageName}-release`,
@@ -49,6 +50,7 @@ describe("Store catalog", () => {
           name: "Good",
           selectedTrack: "stable",
           preferredTrack: "stable",
+          betaAccess: null,
           availableTracks: ["stable"],
           release: {
             id: "r1",
@@ -63,6 +65,7 @@ describe("Store catalog", () => {
           name: "Bad",
           selectedTrack: "stable",
           preferredTrack: "stable",
+          betaAccess: null,
           availableTracks: ["stable"],
           release: {id: "r2", version: "1.0.0", track: "stable", bundleUrl: "https://example.test/bundle.zip", bundleSha256: "nope"},
         },

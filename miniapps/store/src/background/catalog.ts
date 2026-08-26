@@ -55,6 +55,7 @@ function isStoreApp(value: unknown): value is StoreApp {
     (release?.track === "stable" || release?.track === "beta") &&
     (app.selectedTrack === "stable" || app.selectedTrack === "beta") &&
     (app.preferredTrack === "stable" || app.preferredTrack === "beta") &&
+    (app.betaAccess === null || app.betaAccess === "public" || app.betaAccess === "invited") &&
     Array.isArray(app.availableTracks) &&
     app.availableTracks.every((track) => track === "stable" || track === "beta") &&
     release?.track === app.selectedTrack &&

@@ -36,6 +36,7 @@ function app(overrides: Partial<StoreApp> = {}): StoreApp {
     screenshotUrls: [],
     selectedTrack: "stable",
     preferredTrack: "stable",
+    betaAccess: null,
     availableTracks: ["stable"],
     release: {
       id: "release-2",

@@ -69,6 +69,29 @@ export async function sendOrgInviteEmail(opts: {
   return sendEmail({ to: opts.to, subject: `You're invited to ${opts.orgName} on Mentra`, html });
 }
 
+export async function sendMiniappBetaInviteEmail(opts: {
+  to: string;
+  packageName: string;
+  inviterName: string;
+}): Promise<{ ok: boolean; skipped?: boolean }> {
+  const html = `
+    <div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;max-width:480px;margin:0 auto;color:#14151b">
+      <h2 style="font-size:20px;margin:0 0 12px">You're invited to a private miniapp beta</h2>
+      <p style="font-size:15px;line-height:1.6;color:#3c3f46;margin:0 0 20px">
+        ${escapeHtml(opts.inviterName)} invited your Mentra account to test
+        <strong>${escapeHtml(opts.packageName)}</strong>.
+      </p>
+      <p style="font-size:15px;line-height:1.6;color:#3c3f46;margin:0 0 20px">
+        Open this miniapp in the Mentra Miniapp Store and choose <strong>Join private beta</strong>.
+        The invitation is already bound to this email address; no invitation code is required.
+      </p>
+      <p style="font-size:13px;line-height:1.6;color:#8a8d95;margin:0">
+        If you weren't expecting this invitation, you can ignore this message.
+      </p>
+    </div>`;
+  return sendEmail({ to: opts.to, subject: `Private beta invitation for ${opts.packageName}`, html });
+}
+
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, "&amp;")

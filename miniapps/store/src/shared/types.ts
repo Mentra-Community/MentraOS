@@ -35,6 +35,8 @@ export interface StoreApp {
   selectedTrack: "stable" | "beta"
   /** User preference; may be beta while selectedTrack temporarily falls back to stable. */
   preferredTrack: "stable" | "beta"
+  /** Why this signed-in user may join the beta; null keeps private betas undiscoverable. */
+  betaAccess: "public" | "invited" | null
   availableTracks: Array<"stable" | "beta">
   release: StoreRelease
 }

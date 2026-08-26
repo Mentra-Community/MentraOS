@@ -1,4 +1,5 @@
 import { MiniAppAssetModel } from "../../models/miniapp-asset.model";
+import { MiniAppBetaInvitationModel } from "../../models/miniapp-beta-invitation.model";
 import { MiniAppModel } from "../../models/miniapp.model";
 import { MiniAppReleaseModel } from "../../models/miniapp-release.model";
 import { MiniAppTrackEnrollmentModel } from "../../models/miniapp-track-enrollment.model";
@@ -25,8 +26,9 @@ export class StoreCatalogService {
     const limit = Math.min(Math.max(input.limit ?? 24, 1), 50);
     const page = Math.max(input.page ?? 1, 1);
     const publishedReleaseIds = await this.publishedReleaseIds();
-    const betaEnrollmentAppIds = await this.betaEnrollmentAppIds(input);
-    const betaAppIds = await this.betaSelectedAppIds(input, publishedReleaseIds);
+    const betaAuthorizedAppIds = await this.betaAuthorizedAppIds(input);
+    const betaEnrollmentAppIds = await this.betaEnrollmentAppIds(input, undefined, betaAuthorizedAppIds);
+    const betaAppIds = await this.betaSelectedAppIds(input, publishedReleaseIds, betaAuthorizedAppIds);
     const filter = this.catalogFilter(input, publishedReleaseIds, betaAppIds);
 
     const total = await MiniAppModel.countDocuments(filter);
@@ -35,7 +37,14 @@ export class StoreCatalogService {
       .skip((page - 1) * limit)
       .limit(limit)
       .lean();
-    const entries = await this.serializeApps(apps, input.baseUrl, betaAppIds, undefined, betaEnrollmentAppIds);
+    const entries = await this.serializeApps(
+      apps,
+      input.baseUrl,
+      betaAppIds,
+      undefined,
+      betaEnrollmentAppIds,
+      betaAuthorizedAppIds,
+    );
     return { apps: entries, page, limit, total, hasMore: page * limit < total };
   }
 
@@ -43,11 +52,12 @@ export class StoreCatalogService {
     const publishedReleaseIds = await this.publishedReleaseIds();
     const app = await MiniAppModel.findOne({ packageName, status: "active" }).lean();
     if (!app) throw new StoreCatalogError("not_found", "miniapp not found", 404);
+    const betaAuthorizedAppIds = await this.betaAuthorizedAppIds(identity ?? {}, [app._id.toString()]);
     const betaEnrollmentAppIds = identity
-      ? await this.betaEnrollmentAppIds(identity, [app._id.toString()])
+      ? await this.betaEnrollmentAppIds(identity, [app._id.toString()], betaAuthorizedAppIds)
       : new Set<string>();
     const betaAppIds = identity
-      ? await this.betaSelectedAppIds(identity, publishedReleaseIds, [app._id.toString()])
+      ? await this.betaSelectedAppIds(identity, publishedReleaseIds, betaAuthorizedAppIds, [app._id.toString()])
       : new Set<string>();
     const [serialized] = await this.serializeApps(
       [app],
@@ -55,6 +65,7 @@ export class StoreCatalogService {
       betaAppIds,
       publishedReleaseIds,
       betaEnrollmentAppIds,
+      betaAuthorizedAppIds,
     );
     if (!serialized) throw new StoreCatalogError("not_found", "miniapp not found", 404);
     return serialized;
@@ -75,6 +86,27 @@ export class StoreCatalogService {
       }
       const published = await MiniAppReleaseModel.exists({ _id: app.activeBetaReleaseId, status: "published" });
       if (!published) throw new StoreCatalogError("beta_unavailable", "this miniapp has no published beta release", 409);
+      const authorized = await this.betaAuthorizedAppIds(identity, [app._id.toString()]);
+      if (!authorized.has(app._id.toString())) {
+        throw new StoreCatalogError("beta_invitation_required", "this private beta requires a developer invitation", 403);
+      }
+      if (app.betaAccessMode !== "public") {
+        const claimedInvitation = await MiniAppBetaInvitationModel.findOneAndUpdate(
+          {
+            miniAppId: app._id.toString(),
+            mentraUserId: identity.mentraUserId,
+            $or: [
+              { status: "accepted" },
+              { status: "pending", expiresAt: { $gt: new Date() } },
+            ],
+          },
+          { $set: { status: "accepted", acceptedAt: new Date() } },
+          { new: true },
+        );
+        if (!claimedInvitation) {
+          throw new StoreCatalogError("beta_invitation_required", "this private beta requires a developer invitation", 403);
+        }
+      }
       await MiniAppTrackEnrollmentModel.updateOne(
         { mentraUserId: identity.mentraUserId, miniAppId: app._id.toString() },
         {
@@ -87,6 +119,14 @@ export class StoreCatalogService {
         },
         { upsert: true },
       );
+      const stillAuthorized = await this.betaAuthorizedAppIds(identity, [app._id.toString()]);
+      if (!stillAuthorized.has(app._id.toString())) {
+        await MiniAppTrackEnrollmentModel.deleteOne({
+          mentraUserId: identity.mentraUserId,
+          miniAppId: app._id.toString(),
+        });
+        throw new StoreCatalogError("beta_invitation_required", "this private beta requires a developer invitation", 403);
+      }
     } else {
       if (!app.activeReleaseId || !app.publishedStoreListing) {
         throw new StoreCatalogError("stable_unavailable", "this miniapp has no published stable release", 409);
@@ -128,22 +168,31 @@ export class StoreCatalogService {
   private async betaSelectedAppIds(
     identity: Pick<StoreCatalogQuery, "mentraUserId" | "tenantId">,
     publishedReleaseIds: string[],
+    authorizedAppIds: Set<string>,
     restrictToAppIds?: string[],
   ): Promise<Set<string>> {
-    if (!identity.mentraUserId || !identity.tenantId) return new Set();
+    if (!identity.mentraUserId || !identity.tenantId || authorizedAppIds.size === 0) return new Set();
+    const eligibleAppIds = restrictToAppIds
+      ? restrictToAppIds.filter(id => authorizedAppIds.has(id))
+      : [...authorizedAppIds];
+    if (eligibleAppIds.length === 0) return new Set();
     const enrollmentFilter: Record<string, unknown> = {
       mentraUserId: identity.mentraUserId,
       tenantId: identity.tenantId,
       releaseTrack: "beta",
+      miniAppId: { $in: eligibleAppIds },
     };
-    if (restrictToAppIds) enrollmentFilter.miniAppId = { $in: restrictToAppIds };
     const enrolledAppIds = await MiniAppTrackEnrollmentModel.distinct("miniAppId", enrollmentFilter);
-    if (enrolledAppIds.length === 0) return new Set();
     const selected = await MiniAppModel.distinct("_id", {
-      _id: { $in: enrolledAppIds },
+      _id: { $in: eligibleAppIds },
       status: "active",
       activeBetaReleaseId: { $in: publishedReleaseIds },
       publishedBetaStoreListing: { $ne: null },
+      $or: [
+        { _id: { $in: enrolledAppIds } },
+        { activeReleaseId: { $nin: publishedReleaseIds } },
+        { publishedStoreListing: null },
+      ],
     });
     return new Set(selected.map(String));
   }
@@ -151,6 +200,7 @@ export class StoreCatalogService {
   private async betaEnrollmentAppIds(
     identity: Pick<StoreCatalogQuery, "mentraUserId" | "tenantId">,
     restrictToAppIds?: string[],
+    authorizedAppIds?: Set<string>,
   ): Promise<Set<string>> {
     if (!identity.mentraUserId || !identity.tenantId) return new Set();
     const filter: Record<string, unknown> = {
@@ -158,8 +208,38 @@ export class StoreCatalogService {
       tenantId: identity.tenantId,
       releaseTrack: "beta",
     };
-    if (restrictToAppIds) filter.miniAppId = { $in: restrictToAppIds };
+    const eligibleIds = restrictToAppIds
+      ? authorizedAppIds
+        ? restrictToAppIds.filter(id => authorizedAppIds.has(id))
+        : restrictToAppIds
+      : authorizedAppIds
+        ? [...authorizedAppIds]
+        : undefined;
+    if (eligibleIds) filter.miniAppId = { $in: eligibleIds };
     return new Set((await MiniAppTrackEnrollmentModel.distinct("miniAppId", filter)).map(String));
+  }
+
+  private async betaAuthorizedAppIds(
+    identity: Pick<StoreCatalogQuery, "mentraUserId" | "tenantId">,
+    restrictToAppIds?: string[],
+  ): Promise<Set<string>> {
+    const appFilter: Record<string, unknown> = { status: "active", betaAccessMode: "public" };
+    if (restrictToAppIds) appFilter._id = { $in: restrictToAppIds };
+    const authorized = new Set((await MiniAppModel.distinct("_id", appFilter)).map(String));
+    if (!identity.mentraUserId || !identity.tenantId) return authorized;
+
+    const invitationFilter: Record<string, unknown> = {
+      mentraUserId: identity.mentraUserId,
+      $or: [
+        { status: "accepted" },
+        { status: "pending", expiresAt: { $gt: new Date() } },
+      ],
+    };
+    if (restrictToAppIds) invitationFilter.miniAppId = { $in: restrictToAppIds };
+    for (const id of await MiniAppBetaInvitationModel.distinct("miniAppId", invitationFilter)) {
+      authorized.add(String(id));
+    }
+    return authorized;
   }
 
   private catalogFilter(input: StoreCatalogQuery, publishedReleaseIds: string[], betaAppIds: Set<string>) {
@@ -218,6 +298,7 @@ export class StoreCatalogService {
     betaAppIds: Set<string>,
     knownPublishedReleaseIds?: string[],
     betaEnrollmentAppIds: Set<string> = betaAppIds,
+    betaAuthorizedAppIds: Set<string> = betaAppIds,
   ) {
     const releaseIds = apps
       .map(app => (betaAppIds.has(app._id.toString()) ? app.activeBetaReleaseId : app.activeReleaseId))
@@ -236,6 +317,7 @@ export class StoreCatalogService {
       const hasPublishedBeta = Boolean(
         app.publishedBetaStoreListing && app.activeBetaReleaseId && publishedIds.has(String(app.activeBetaReleaseId)),
       );
+      const canAccessBeta = hasPublishedBeta && betaAuthorizedAppIds.has(app._id.toString());
       const hasPublishedStable = Boolean(
         app.publishedStoreListing && app.activeReleaseId && publishedIds.has(String(app.activeReleaseId)),
       );
@@ -258,9 +340,10 @@ export class StoreCatalogService {
           screenshotUrls: (listing.screenshotAssetIds ?? []).map((id: string) => assetUrl(id)),
           selectedTrack,
           preferredTrack: betaEnrollmentAppIds.has(app._id.toString()) ? "beta" : "stable",
+          betaAccess: canAccessBeta ? (app.betaAccessMode === "public" ? "public" : "invited") : null,
           availableTracks: [
             ...(hasPublishedStable ? ["stable"] : []),
-            ...(hasPublishedBeta ? ["beta"] : []),
+            ...(canAccessBeta ? ["beta"] : []),
           ],
           release: {
             id: release._id.toString(),

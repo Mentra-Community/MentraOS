@@ -71,6 +71,7 @@ export const developerAppSchema = z.object({
       updatedAt: z.string().nullable(),
     })
     .nullable(),
+  betaAccessMode: z.enum(["private", "public"]),
   latestRelease: z
     .object({
       id: z.string(),
@@ -123,6 +124,24 @@ export type DeveloperRelease = z.infer<typeof developerReleaseSchema>;
 export type StoreAsset = z.infer<typeof storeAssetSchema>;
 export type StoreListing = z.infer<typeof storeListingSchema> & { assets: StoreAsset[] };
 
+export const betaInvitationSchema = z.object({
+  id: z.string(),
+  email: z.string(),
+  state: z.enum(["pending", "accepted", "revoked"]),
+  expiresAt: z.string().nullable(),
+  acceptedAt: z.string().nullable(),
+  createdAt: z.string().nullable(),
+  updatedAt: z.string().nullable(),
+});
+
+export const betaAccessSchema = z.object({
+  mode: z.enum(["private", "public"]),
+  invitations: z.array(betaInvitationSchema),
+});
+
+export type BetaAccess = z.infer<typeof betaAccessSchema>;
+export type BetaInvitation = z.infer<typeof betaInvitationSchema>;
+
 export function listDeveloperApps(): Promise<{ apps: DeveloperApp[] }> {
   return apiRequest("/console/apps", developerAppsResponseSchema);
 }
@@ -154,6 +173,38 @@ export function submitDeveloperRelease(input: {
     `/console/apps/${encodeURIComponent(input.packageName)}/releases/${encodeURIComponent(input.releaseId)}/submit`,
     z.object({ release: developerAppSchema.shape.latestRelease.unwrap() }),
     { method: "POST" },
+  );
+}
+
+export function getBetaAccess(packageName: string): Promise<BetaAccess> {
+  return apiRequest(`/console/apps/${encodeURIComponent(packageName)}/beta-access`, betaAccessSchema);
+}
+
+export function updateBetaAccess(packageName: string, mode: "private" | "public"): Promise<BetaAccess> {
+  return apiRequest(`/console/apps/${encodeURIComponent(packageName)}/beta-access`, betaAccessSchema, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ mode }),
+  });
+}
+
+export function inviteBetaTester(packageName: string, email: string): Promise<{ invitation: BetaInvitation }> {
+  return apiRequest(
+    `/console/apps/${encodeURIComponent(packageName)}/beta-invitations`,
+    z.object({ invitation: betaInvitationSchema }),
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email }),
+    },
+  );
+}
+
+export function revokeBetaInvitation(packageName: string, invitationId: string): Promise<{ ok: boolean }> {
+  return apiRequest(
+    `/console/apps/${encodeURIComponent(packageName)}/beta-invitations/${encodeURIComponent(invitationId)}`,
+    z.object({ ok: z.boolean() }),
+    { method: "DELETE" },
   );
 }
 

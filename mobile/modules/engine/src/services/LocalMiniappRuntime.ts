@@ -4242,7 +4242,9 @@ class LocalMiniappRuntime {
       compatibility,
       system: isSystemMiniappPackage(app.packageName),
       ...(systemStoreOwnerPackageName ? {systemStoreOwnerPackageName} : {}),
-      actions: projectSystemActions(app.actions ?? []),
+      // A bundled Store hidden by the host's prelaunch gate must not leak its
+      // system-callable actions to Mentra AI or another SYSTEM miniapp.
+      actions: projectSystemActions(app.actions ?? [], !(isStoreMiniappPackage(app.packageName) && app.hidden)),
       ...((releaseIdentity?.source === "store" || releaseIdentity?.source === "system_store") &&
       releaseIdentity.storePackageName
         ? {storeOwnerPackageName: releaseIdentity.storePackageName}
@@ -4682,6 +4684,9 @@ class LocalMiniappRuntime {
 
     const app = this.interopApps().find((candidate) => candidate.packageName === target)
     if (!app) throw this.actionError(MiniappErrorCode.APP_NOT_FOUND, `Miniapp not found: ${target}`)
+    if (!allowHostAudience && isStoreMiniappPackage(target) && app.hidden) {
+      throw this.actionError(MiniappErrorCode.ACTION_NOT_FOUND, `${target} is not available`)
+    }
     if (app.compatibility && app.compatibility.isCompatible === false) {
       islandNotifications.emit({
         kind: "version_incompatible",

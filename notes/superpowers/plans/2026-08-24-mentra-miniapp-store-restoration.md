@@ -101,6 +101,13 @@ data; each deployment may publish both stable and beta releases.
 - [x] Persist beta enrollment per `(Mentra user, miniapp)` in Core and expose an
       authenticated opt-in/leave endpoint. Catalog query parameters alone must
       never grant beta access.
+- [x] Default every beta to private. Let developers invite verified Mentra
+      accounts, revoke access, and explicitly switch a beta to public opt-in.
+      Invitation acceptance is bound to the authenticated Mentra user, not a
+      caller-provided email or catalog query.
+- [x] Make beta-only launches usable: an authorized tester can discover a
+      published beta before the first stable release exists, while every
+      uninvited user continues to see no private-beta listing or bundle.
 - [x] Show beta availability/current selection in the Store detail screen and
       refresh the catalog after changing tracks.
 - [x] Carry the selected release track through Store install descriptors and
@@ -145,6 +152,9 @@ data; each deployment may publish both stable and beta releases.
 - [x] Retain browser login and API-token-compatible noninteractive auth.
 - [x] Ensure repeated packing cannot retain stale files from an older ZIP.
 - [x] Add Developer Console listing fields and Store artwork management.
+- [x] Add Developer Console private/public beta controls, tester invitation
+      status, revocation, and accurate CLI-only package creation/upload
+      guidance.
 - [x] Display canonical manifest data, release history, review status/notes, and
       signing-key identity in the existing release detail workflow.
 - [x] Make organization switching authoritative: one user may belong to several
@@ -168,6 +178,10 @@ data; each deployment may publish both stable and beta releases.
 - [x] Expose Store reconciliation as a host-only, transient miniapp action and
       trigger it on startup, Store open, foreground, connectivity restoration,
       and a bounded background interval.
+- [x] Expose transient SYSTEM actions for catalog search, authoritative details,
+      install, and update so Mentra AI can operate the Store. The Store resolves
+      release URLs/hashes itself; callers supply only search terms or exact
+      package names, and the actions disappear while Store Preview is disabled.
 - [x] Keep transient action contexts out of the running tray and display mount
       lifecycle, release them after all concurrent invocations settle, and
       promote the same context without respawning if the user opens the Store.
@@ -189,22 +203,22 @@ data; each deployment may publish both stable and beta releases.
       another Store's packages.
 - [x] Keep the Store itself out of its in-process update loop; Store-self update
       remains a future signed host-owned updater concern.
-- [x] Package and integrity-check `com.mentra.store-1.0.6.zip`.
+- [x] Package and integrity-check `com.mentra.store-1.0.7.zip`.
 
 ## Verification
 
 - [x] Cloud typecheck.
 - [x] Developer Console production build.
 - [x] Cloud Store/CLI bundle tests: 16 passed.
-- [x] Publish-to-catalog integration: 8 passed, including stable/beta isolation,
-      per-user enrollment, concurrent listing
+- [x] Publish-to-catalog integration: 16 passed, including private/public beta
+      invitations, beta-only discovery, stable/beta isolation, per-user enrollment, concurrent listing
       edits, moderation, artwork privacy, and the 10-screenshot cap.
 - [x] Miniapp packer regressions: 2 passed, including atomic preservation of
       the previous artifact after a failed ZIP command.
 - [x] Mentra Miniapp SDK: 272 passed.
 - [x] Installer/SYSTEM security tests, including bundle-name impersonation.
 - [x] Store action registration, catalog, automatic-update policy, ownership,
-      refresh serialization, and UI-model tests: 25
+      refresh serialization, and UI-model tests: 26
       passed.
 - [x] Transient action lifecycle, invisible running projection, concurrent
       invocation teardown, promotion, host-action non-discovery, and scheduler
@@ -214,12 +228,12 @@ data; each deployment may publish both stable and beta releases.
       search-query preservation, install, details, verified identity, Installed
       state, and horizontal-overflow assertion.
 - [x] Mentra App TypeScript compile.
-- [x] Mentra App Jest: 86 suites passed (1 skipped), 675 tests passed
+- [x] Mentra App Jest: 87 suites passed (1 skipped), 697 tests passed
       (2 skipped).
 - [x] Android ASG and Bluetooth SDK compile checks.
 - [x] Full iOS Simulator native build with code signing disabled.
 - [x] ZIP integrity check. Bundled Store SHA-256:
-      `87f9538dbad0212999cf83ad19282d0f7946aecddeaf74c76baa1b53ce7a7079`.
+      `17c37a092144c4bfa8f5bd86bd63ec1a2998d164469d5fd0becc3506dc4b7a27`.
 - [x] Review regressions: bounded streaming inflation and CRC checks in both
       Core and the phone, trusted host-selected Core URL, complete catalog
       pagination, Store-owned uninstall visibility, pre-activation host/SDK
@@ -238,7 +252,7 @@ data; each deployment may publish both stable and beta releases.
       origins without allowing public cleartext catalog traffic (including DNS
       names that resemble private IPv6 prefixes).
 - [x] Touched-file lint and `git diff --check`.
-- [x] Full Cloud suite audit: 559 passed, 1 skipped. The aggregate invocation
+- [x] Full Cloud suite audit: 567 passed, 1 skipped. The aggregate invocation
       also reproduces unrelated shared-state/credential baselines (R2 is not
       configured; Slack env is captured at import; account/audio suites race
       global Mongo/Redis state). Account auth passes 14/14 in isolation; Store
@@ -281,6 +295,9 @@ work remains before describing the overall Store program as production-ready:
       signing identity, review feedback, and draft/rejected submission. Direct
       ZIP upload remains intentionally CLI-only so publisher signing keys stay
       on the developer's machine.
+- [x] Add closed-beta tester invitations/revocation and an explicit public-beta
+      mode to Core and the Developer Console. Private is the default; there is
+      no general Store-wide beta enrollment button.
 - [x] Make the published Cloud V2 `mentra` CLI default to production and
       discover the selected Core's public WorkOS client id, while retaining
       environment overrides for dev/staging/OEM deployments.

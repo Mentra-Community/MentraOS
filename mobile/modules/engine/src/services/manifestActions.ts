@@ -33,8 +33,12 @@ export function normalizeManifestActions(raw: unknown): DeclaredAction[] {
   return out
 }
 
-/** Project only miniapp-callable actions; host scheduling stays undiscoverable. */
-export function projectSystemActions(actions: readonly DeclaredAction[]): Array<Omit<DeclaredAction, "audience">> {
+/** Project only available miniapp-callable actions; host scheduling stays undiscoverable. */
+export function projectSystemActions(
+  actions: readonly DeclaredAction[],
+  available = true,
+): Array<Omit<DeclaredAction, "audience">> {
+  if (!available) return []
   return actions
     .filter((action) => action.audience === "system")
     .map(({audience: _audience, ...action}) => action)

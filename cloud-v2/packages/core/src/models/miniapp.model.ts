@@ -3,6 +3,7 @@ import { registerModel } from "./register-model";
 
 export const MINIAPP_STATUSES = ["active", "archived", "suspended"] as const;
 export const MINIAPP_REVIEW_TIERS = ["community", "verified"] as const;
+export const MINIAPP_BETA_ACCESS_MODES = ["private", "public"] as const;
 
 const StoreListingSchema = new Schema(
   {
@@ -62,6 +63,8 @@ const MiniAppSchema = new Schema(
     activeReleaseId: { type: String, default: null },
     /** Active beta release, independently published from stable. */
     activeBetaReleaseId: { type: String, default: null },
+    /** Closed by default. Public betas must be an explicit developer choice. */
+    betaAccessMode: { type: String, enum: MINIAPP_BETA_ACCESS_MODES, default: "private" },
     createdBy: { type: String, required: true },
   },
   { timestamps: true, collection: "miniapps" },

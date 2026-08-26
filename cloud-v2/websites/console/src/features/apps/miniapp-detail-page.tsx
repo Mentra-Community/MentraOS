@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { sessionQuery } from "@/features/session/session.queries";
 import { appsQuery } from "./apps.queries";
 import { listDeveloperReleases, submitDeveloperRelease, type DeveloperRelease } from "./apps.api";
+import { BetaAccessCard } from "./beta-access-card";
 import { StoreListingCard } from "./store-listing-card";
 
 const reviewStatuses = new Set(["submitted", "in_review"]);
@@ -70,6 +71,7 @@ export function MiniappDetailPage() {
         </div>
 
         <StoreListingCard packageName={packageName} />
+        <BetaAccessCard packageName={packageName} />
 
         {releases[0]?.manifest ? (
           <Card className="mt-6 rounded-[16px] border-[#e0e4de] bg-white shadow-[0_1px_2px_rgba(20,21,27,0.06)] sm:rounded-[18px]">

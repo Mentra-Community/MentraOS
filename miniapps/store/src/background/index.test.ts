@@ -18,14 +18,12 @@ interface TestController {
 
 describe("StoreController refresh serialization", () => {
   test("registers host reconciliation as an invocation-scoped action", async () => {
-    let actionId = ""
-    let actionHandler: (() => Promise<unknown>) | undefined
+    const actionHandlers = new Map<string, (params: Record<string, unknown>) => Promise<unknown>>()
     const session = {
       miniapps: {onInstallProgress: () => () => undefined},
       actions: {
-        handle: (id: string, handler: () => Promise<unknown>) => {
-          actionId = id
-          actionHandler = handler
+        handle: (id: string, handler: (params: Record<string, unknown>) => Promise<unknown>) => {
+          actionHandlers.set(id, handler)
           return () => undefined
         },
       },
@@ -49,13 +47,121 @@ describe("StoreController refresh serialization", () => {
     }
 
     controller.start()
-    const result = (await actionHandler?.()) as {checkedAt: number; candidateCount: number}
+    const result = (await actionHandlers.get("reconcile_updates")?.({})) as {checkedAt: number; candidateCount: number}
 
-    expect(actionId).toBe("reconcile_updates")
+    expect([...actionHandlers.keys()]).toEqual([
+      "reconcile_updates",
+      "search_miniapps",
+      "get_miniapp_details",
+      "install_miniapp",
+      "update_miniapp",
+    ])
     expect(result.candidateCount).toBe(2)
     expect(result.checkedAt).toBeGreaterThan(0)
     expect(scheduled).toBe(1)
     expect(refreshCalls).toEqual([{query: "camera", refreshAutomaticCatalog: true}])
+  })
+
+  test("exposes catalog-backed search, details, and install actions without accepting bundle metadata", async () => {
+    const actionHandlers = new Map<string, (params: Record<string, unknown>) => Promise<unknown>>()
+    let installed = false
+    let installDescriptor: Record<string, unknown> | undefined
+    const catalogApp = {
+      packageName: "com.example.notes",
+      name: "Notes",
+      subtitle: "Remember things",
+      description: "Capture notes on your glasses.",
+      categories: ["productivity"],
+      privacyPolicyUrl: "https://example.test/privacy",
+      supportUrl: null,
+      websiteUrl: null,
+      reviewTier: "verified",
+      featured: true,
+      iconUrl: null,
+      coverUrl: null,
+      screenshotUrls: [],
+      selectedTrack: "stable",
+      preferredTrack: "stable",
+      betaAccess: null,
+      availableTracks: ["stable"],
+      release: {
+        id: "release-notes",
+        version: "2.0.0",
+        track: "stable",
+        bundleUrl: "https://core.example.test/notes.zip",
+        bundleSha256: "a".repeat(64),
+        manifestSha256: null,
+        publishedAt: null,
+        permissions: [],
+        hardwareRequirements: [],
+        minHostVersion: null,
+        sdkVersion: "0.3.0",
+      },
+    }
+    const installedRows = () =>
+      installed
+        ? [{
+            packageName: catalogApp.packageName,
+            name: catalogApp.name,
+            version: catalogApp.release.version,
+            running: false,
+            system: false,
+            compatibility: {isCompatible: true, warnings: []},
+            storeOwnerPackageName: "com.mentra.store",
+          }]
+        : []
+    const session = {
+      auth: {
+        getCoreUrl: async () => "https://core.example.test",
+        fetch: async (url: string) => {
+          const parsed = new URL(url)
+          return parsed.pathname.endsWith(`/${catalogApp.packageName}`)
+            ? Response.json({app: catalogApp})
+            : Response.json({apps: [catalogApp], page: 1, hasMore: false})
+        },
+      },
+      miniapps: {
+        onInstallProgress: () => () => undefined,
+        checkInstallCompatibility: async () => ({compatible: true}),
+        list: async () => installedRows(),
+        install: async (descriptor: Record<string, unknown>) => {
+          installDescriptor = descriptor
+          installed = true
+        },
+      },
+      actions: {
+        handle: (id: string, handler: (params: Record<string, unknown>) => Promise<unknown>) => {
+          actionHandlers.set(id, handler)
+          return () => undefined
+        },
+      },
+      ui: {send: () => undefined, onOpen: () => () => undefined, handle: () => () => undefined},
+    } as unknown as MiniappSession
+    new StoreController(session).start()
+
+    const search = (await actionHandlers.get("search_miniapps")?.({query: "notes", limit: 3})) as {
+      results: Array<Record<string, unknown>>
+    }
+    expect(search.results[0]).toMatchObject({packageName: catalogApp.packageName, installed: false, compatible: true})
+    expect(search.results[0]).not.toHaveProperty("bundleUrl")
+
+    const details = (await actionHandlers.get("get_miniapp_details")?.({packageName: catalogApp.packageName})) as Record<
+      string,
+      unknown
+    >
+    expect(details).toMatchObject({packageName: catalogApp.packageName, description: catalogApp.description})
+    expect(details).not.toHaveProperty("bundleUrl")
+
+    const result = (await actionHandlers.get("install_miniapp")?.({
+      packageName: catalogApp.packageName,
+      bundleUrl: "https://attacker.invalid/ignored.zip",
+    })) as Record<string, unknown>
+    expect(result).toMatchObject({status: "installed", packageName: catalogApp.packageName, version: "2.0.0"})
+    expect(installDescriptor).toMatchObject({
+      packageName: catalogApp.packageName,
+      bundleUrl: catalogApp.release.bundleUrl,
+      bundleSha256: catalogApp.release.bundleSha256,
+    })
   })
 
   test("queues a post-install reload behind an in-flight background refresh", async () => {

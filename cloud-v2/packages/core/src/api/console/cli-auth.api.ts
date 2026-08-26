@@ -11,7 +11,8 @@ import {
 } from "../../services/developer-orgs/developer-org.service";
 import { DeveloperApiKeyService } from "../../services/developer-orgs/developer-api-key.service";
 import { DeveloperOrgInvitationService } from "../../services/developer-orgs/developer-org-invitation.service";
-import { sendOrgInviteEmail } from "../../services/email/email.service";
+import { sendMiniappBetaInviteEmail, sendOrgInviteEmail } from "../../services/email/email.service";
+import { MiniAppBetaService, MiniAppBetaServiceError } from "../../services/miniapps/miniapp-beta.service";
 import { MiniAppService, MiniAppServiceError, type DeveloperIdentity } from "../../services/miniapps/miniapp.service";
 import {
   DeveloperSigningService,
@@ -34,6 +35,7 @@ const developerOrgs = new DeveloperOrgService();
 const apiKeys = new DeveloperApiKeyService();
 const invitations = new DeveloperOrgInvitationService();
 const miniapps = new MiniAppService();
+const miniappBetas = new MiniAppBetaService();
 const signing = new DeveloperSigningService();
 const MAX_RELEASE_BUNDLE_BYTES = 50 * 1024 * 1024;
 const MAX_RELEASE_REQUEST_BODY_BYTES = 72 * 1024 * 1024;
@@ -129,6 +131,9 @@ const createApiTokenSchema = z.object({
   name: z.string().min(1).max(80),
 });
 
+const updateBetaAccessSchema = z.object({ mode: z.enum(["private", "public"]) });
+const inviteBetaTesterSchema = z.object({ email: z.string().email() });
+
 app.get("/health", c => c.json({ status: "ok", service: "cloud-core-console" }));
 app.get("/auth/cli-config", getCliConfig);
 app.get("/auth/login", getLogin);
@@ -149,6 +154,10 @@ app.patch("/org/members/:membershipId", patchOrgMember);
 app.get("/apps", getApps);
 app.post("/apps", postApps);
 app.delete("/apps/:packageName", deleteApp);
+app.get("/apps/:packageName/beta-access", getBetaAccess);
+app.patch("/apps/:packageName/beta-access", patchBetaAccess);
+app.post("/apps/:packageName/beta-invitations", postBetaInvitation);
+app.delete("/apps/:packageName/beta-invitations/:invitationId", deleteBetaInvitation);
 app.get("/apps/:packageName/listing", getStoreListing);
 app.put("/apps/:packageName/listing", putStoreListing);
 app.post("/apps/:packageName/listing/assets", storeAssetBodyLimit, postStoreAsset);
@@ -763,6 +772,65 @@ async function deleteApp(c: AppContext) {
   }
 }
 
+async function getBetaAccess(c: AppContext) {
+  const developer = await requireDeveloper(c);
+  if (!developer.ok) return developer.response;
+  const packageName = c.req.param("packageName");
+  if (!packageName) throw new InvalidRequest("packageName is required");
+  try {
+    return c.json(await miniappBetas.getAccess(developer.value, packageName));
+  } catch (error) {
+    return serviceError(error);
+  }
+}
+
+async function patchBetaAccess(c: AppContext) {
+  const developer = await requireDeveloper(c);
+  if (!developer.ok) return developer.response;
+  const packageName = c.req.param("packageName");
+  if (!packageName) throw new InvalidRequest("packageName is required");
+  const parsed = updateBetaAccessSchema.safeParse(await readJsonBody(c));
+  if (!parsed.success) throw new InvalidRequest(parsed.error.issues[0]?.message ?? "invalid beta access payload");
+  try {
+    return c.json(await miniappBetas.setAccessMode(developer.value, packageName, parsed.data.mode));
+  } catch (error) {
+    return serviceError(error);
+  }
+}
+
+async function postBetaInvitation(c: AppContext) {
+  const developer = await requireDeveloper(c);
+  if (!developer.ok) return developer.response;
+  const packageName = c.req.param("packageName");
+  if (!packageName) throw new InvalidRequest("packageName is required");
+  const parsed = inviteBetaTesterSchema.safeParse(await readJsonBody(c));
+  if (!parsed.success) throw new InvalidRequest(parsed.error.issues[0]?.message ?? "invalid beta invitation payload");
+  try {
+    const invitation = await miniappBetas.invite(developer.value, packageName, parsed.data.email);
+    void sendMiniappBetaInviteEmail({
+      to: invitation.email,
+      packageName,
+      inviterName: developer.value.email ?? "A Mentra developer",
+    });
+    return c.json({ invitation }, 201);
+  } catch (error) {
+    return serviceError(error);
+  }
+}
+
+async function deleteBetaInvitation(c: AppContext) {
+  const developer = await requireDeveloper(c);
+  if (!developer.ok) return developer.response;
+  const packageName = c.req.param("packageName");
+  const invitationId = c.req.param("invitationId");
+  if (!packageName || !invitationId) throw new InvalidRequest("packageName and invitationId are required");
+  try {
+    return c.json(await miniappBetas.revoke(developer.value, packageName, invitationId));
+  } catch (error) {
+    return serviceError(error);
+  }
+}
+
 async function getStoreListing(c: AppContext) {
   const developer = await requireDeveloper(c);
   if (!developer.ok) return developer.response;
@@ -1356,6 +1424,12 @@ function bearerToken(c: AppContext): string | null {
 }
 
 function serviceError(error: unknown): Response {
+  if (error instanceof MiniAppBetaServiceError) {
+    return new Response(JSON.stringify({ error: error.code, error_description: error.message }), {
+      status: error.status,
+      headers: { "content-type": "application/json" },
+    });
+  }
   if (error instanceof MiniAppServiceError) {
     return new Response(JSON.stringify({ error: error.code, error_description: error.message }), {
       status: error.status,

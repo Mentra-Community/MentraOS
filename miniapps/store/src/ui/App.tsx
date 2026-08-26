@@ -538,7 +538,11 @@ function Detail({
               <p>
                 {app.preferredTrack === "beta" && app.selectedTrack === "stable"
                   ? "You’re enrolled in beta. Stable is shown until the next beta release is available."
-                  : "Beta receives preview releases automatically. You can return to stable at any time."}
+                  : app.preferredTrack === "beta"
+                    ? "You’re a beta tester. Preview releases install automatically, and you can leave at any time."
+                    : app.betaAccess === "invited"
+                      ? "You’ve been invited to this private beta."
+                      : "This developer offers a public beta with preview releases."}
               </p>
             </div>
             <div className="track-options" role="group" aria-label="Release track">
@@ -548,7 +552,13 @@ function Detail({
                   className={app.preferredTrack === track ? "active" : ""}
                   disabled={changingTrack || app.preferredTrack === track || (track === "beta" && !app.availableTracks.includes("beta"))}
                   onClick={() => onSetTrack(track)}>
-                  {track === "stable" ? "Stable" : "Beta"}
+                  {track === "stable"
+                    ? app.preferredTrack === "beta"
+                      ? "Leave beta"
+                      : "Stable"
+                    : app.betaAccess === "invited"
+                      ? "Join private beta"
+                      : "Join public beta"}
                 </button>
               ))}
             </div>

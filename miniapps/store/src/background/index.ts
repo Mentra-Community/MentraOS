@@ -1,5 +1,5 @@
 import {registerMiniapp, type MiniappSession} from "@mentra/miniapp/background"
-import {isNewerVersion, loadCompleteCatalog, trustedCoreOrigin} from "./catalog"
+import {isNewerVersion, loadCompleteCatalog, parseCatalog, trustedCoreOrigin} from "./catalog"
 import {isAutomaticUpdateCandidate, isAutomaticUpdateOwnedRelease} from "./updates"
 import type {StoreChannels} from "../shared/channels"
 import {MENTRA_STORE_PACKAGE_NAME, type InstalledApp, type StoreApp, type StoreSnapshot} from "../shared/types"
@@ -47,6 +47,14 @@ export class StoreController {
       void this.reconcileUpdates()
     })
     this.session.actions.handle("reconcile_updates", () => this.reconcileUpdates())
+    this.session.actions.handle("search_miniapps", (params) => this.searchMiniapps(params))
+    this.session.actions.handle("get_miniapp_details", (params) => this.getMiniappDetails(params))
+    this.session.actions.handle("install_miniapp", (params) =>
+      this.enqueueMutation(() => this.installMiniappAction(params, false)),
+    )
+    this.session.actions.handle("update_miniapp", (params) =>
+      this.enqueueMutation(() => this.installMiniappAction(params, true)),
+    )
     this.ui.handle("store:refresh", ({query}: {query?: string}) => this.refresh(query))
     this.ui.handle("store:install", ({packageName, query}: {packageName: string; query?: string}) =>
       this.enqueueMutation(() => this.install(packageName, query)),
@@ -124,6 +132,113 @@ export class StoreController {
       if (!response.ok) throw new Error(`Store catalog unavailable (${response.status})`)
       return response.json()
     })
+  }
+
+  private async loadCatalogApp(base: string, packageName: string): Promise<StoreApp> {
+    const url = new URL(`/api/store/apps/${encodeURIComponent(packageName)}`, base)
+    const response = await this.session.auth.fetch(url.toString(), {headers: {accept: "application/json"}})
+    if (!response.ok) throw new Error(response.status === 404 ? "Miniapp not found" : `Store catalog unavailable (${response.status})`)
+    const body = (await response.json()) as {app?: unknown}
+    const app = parseCatalog({apps: [body.app]})[0]
+    if (!app || app.packageName !== packageName) throw new Error("Store returned an invalid miniapp record")
+    return (await this.annotateInstallCompatibility([app]))[0]!
+  }
+
+  private async searchMiniapps(params: Record<string, unknown>) {
+    const query = typeof params.query === "string" ? params.query.trim().slice(0, 120) : ""
+    const requestedLimit = typeof params.limit === "number" && Number.isFinite(params.limit) ? params.limit : 5
+    const limit = Math.min(Math.max(Math.trunc(requestedLimit), 1), 10)
+    const base = await this.coreUrl()
+    if (!base) throw new Error("Store Core URL is not configured")
+    const [apps, installed] = await Promise.all([
+      this.loadCatalog(base, query).then((rows) => this.annotateInstallCompatibility(rows)),
+      this.session.miniapps.list({includeIncompatible: true}),
+    ])
+    const installedByPackage = new Map(installed.map((app) => [app.packageName, app]))
+    return {
+      query,
+      results: apps.slice(0, limit).map((app) => this.actionSummary(app, installedByPackage.get(app.packageName))),
+    }
+  }
+
+  private async getMiniappDetails(params: Record<string, unknown>) {
+    const packageName = this.actionPackageName(params)
+    const base = await this.coreUrl()
+    if (!base) throw new Error("Store Core URL is not configured")
+    const [app, installed] = await Promise.all([
+      this.loadCatalogApp(base, packageName),
+      this.session.miniapps.list({includeIncompatible: true}),
+    ])
+    return {
+      ...this.actionSummary(app, installed.find((candidate) => candidate.packageName === packageName)),
+      description: app.description,
+      categories: app.categories,
+      permissions: app.release.permissions,
+      hardwareRequirements: app.release.hardwareRequirements,
+      privacyPolicyUrl: app.privacyPolicyUrl,
+      supportUrl: app.supportUrl,
+      websiteUrl: app.websiteUrl,
+      screenshots: app.screenshotUrls,
+      availableTracks: app.availableTracks,
+      betaAccess: app.betaAccess,
+    }
+  }
+
+  private async installMiniappAction(params: Record<string, unknown>, updateOnly: boolean) {
+    const packageName = this.actionPackageName(params)
+    const base = await this.coreUrl()
+    if (!base) throw new Error("Store Core URL is not configured")
+    const [app, installedBefore] = await Promise.all([
+      this.loadCatalogApp(base, packageName),
+      this.session.miniapps.list({includeIncompatible: true}),
+    ])
+    const current = installedBefore.find((candidate) => candidate.packageName === packageName)
+    if (updateOnly && !current) throw new Error(`${app.name} is not installed`)
+    if (current && !isNewerVersion(app.release.version, current.version)) {
+      return {status: "up_to_date", packageName, version: current.version}
+    }
+    if (app.release.installCompatibility?.compatible === false) {
+      throw new Error(app.release.installCompatibility.reason ?? `${app.name} is not compatible with this device`)
+    }
+
+    await this.install(packageName, undefined, app)
+    const installedAfter = await this.session.miniapps.list({includeIncompatible: true})
+    const installed = installedAfter.find((candidate) => candidate.packageName === packageName)
+    if (!installed || installed.version !== app.release.version) {
+      throw new Error(this.snapshot.error ?? `Could not install ${app.name}`)
+    }
+    return {
+      status: current ? "updated" : "installed",
+      packageName,
+      version: installed.version,
+      name: app.name,
+      track: app.release.track,
+    }
+  }
+
+  private actionPackageName(params: Record<string, unknown>): string {
+    const packageName = typeof params.packageName === "string" ? params.packageName.trim().toLowerCase() : ""
+    if (!/^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/.test(packageName)) {
+      throw new Error("A valid lowercase reverse-DNS packageName is required")
+    }
+    return packageName
+  }
+
+  private actionSummary(app: StoreApp, installed?: InstalledApp) {
+    const updateAvailable = Boolean(installed && isNewerVersion(app.release.version, installed.version))
+    return {
+      packageName: app.packageName,
+      name: app.name,
+      subtitle: app.subtitle,
+      version: app.release.version,
+      track: app.release.track,
+      reviewTier: app.reviewTier,
+      installed: Boolean(installed),
+      installedVersion: installed?.version ?? null,
+      updateAvailable,
+      compatible: app.release.installCompatibility?.compatible !== false,
+      compatibilityReason: app.release.installCompatibility?.reason ?? null,
+    }
   }
 
   private async load(query?: string, clearOperation = false, refreshAutomaticCatalog = false) {
@@ -239,7 +354,7 @@ export class StoreController {
     return app
   }
 
-  private enqueueMutation(run: () => Promise<StoreSnapshot>): Promise<StoreSnapshot> {
+  private enqueueMutation<T>(run: () => Promise<T>): Promise<T> {
     const result = this.mutationTail.then(run, run)
     this.mutationTail = result.then(
       () => undefined,
