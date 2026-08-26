@@ -1147,6 +1147,11 @@ describe("miniapp release lifecycle", () => {
       preferredTrack: "stable",
       release: { installable: false, bundleUrl: null },
     });
+    expect(await catalog.get(packageName, "https://core.example.test")).toMatchObject({
+      betaAccess: "public",
+      preferredTrack: "stable",
+      release: { installable: false, bundleUrl: null },
+    });
     await expect(catalog.getBundleAsset(beta.releaseBundleAssetId!, publicUser)).rejects.toMatchObject({ status: 404 });
     expect(
       await catalog.setReleaseTrack(packageName, "beta", publicUser, "https://core.example.test"),

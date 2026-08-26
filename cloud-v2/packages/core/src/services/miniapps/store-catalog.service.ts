@@ -73,9 +73,9 @@ export class StoreCatalogService {
     const betaAppIds = identity
       ? await this.betaSelectedAppIds(identity, publishedReleaseIds, betaAuthorizedAppIds, [app._id.toString()])
       : new Set<string>();
-    const betaOfferAppIds = identity
-      ? await this.betaOfferAppIds(publishedReleaseIds, betaAuthorizedAppIds, betaAppIds, [app._id.toString()])
-      : new Set<string>();
+    const betaOfferAppIds = await this.betaOfferAppIds(publishedReleaseIds, betaAuthorizedAppIds, betaAppIds, [
+      app._id.toString(),
+    ]);
     const [serialized] = await this.serializeApps(
       [app],
       baseUrl,
