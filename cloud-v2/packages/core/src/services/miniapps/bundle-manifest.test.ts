@@ -68,6 +68,21 @@ describe("parseCanonicalBundleManifest", () => {
     } satisfies Partial<BundleManifestError>);
   });
 
+  test("rejects whitespace around canonical string values", async () => {
+    for (const invalid of [
+      { ...manifest, version: " 1.0.0" },
+      { ...manifest, version: "1.0.0 " },
+      { ...manifest, entry: { ...manifest.entry, background: " background/index.js" } },
+      { ...manifest, entry: { ...manifest.entry, ui: "ui/index.html " } },
+      { ...manifest, sdkVersion: " 0.3" },
+      { ...manifest, minHostVersion: "3.1 " },
+    ]) {
+      await expect(parseCanonicalBundleManifest(await bundle(invalid), invalid)).rejects.toBeInstanceOf(
+        BundleManifestError,
+      );
+    }
+  });
+
   test("rejects malformed SDK and host version requirements", async () => {
     for (const [key, value] of [
       ["sdkVersion", "garbage"],

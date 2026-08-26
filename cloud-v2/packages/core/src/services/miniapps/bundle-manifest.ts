@@ -143,7 +143,12 @@ function validateOptionalSemanticVersion(
 ): void {
   const value = manifest[key];
   if (value === undefined) return;
-  if (typeof value !== "string" || value.trim().length === 0 || !semver.valid(semver.coerce(value.trim()))) {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value !== value.trim() ||
+    !semver.valid(semver.coerce(value))
+  ) {
     throw new BundleManifestError("invalid_manifest_version_requirement", `miniapp.json ${label} is invalid`);
   }
 }
@@ -257,10 +262,10 @@ function validateEntryPath(entries: Map<string, VerifiedZipEntry>, label: string
 
 function requiredString(record: Record<string, unknown>, key: string): string {
   const value = record[key];
-  if (typeof value !== "string" || value.trim().length === 0) {
+  if (typeof value !== "string" || value.length === 0 || value !== value.trim()) {
     throw new BundleManifestError("invalid_manifest", `miniapp.json ${key} must be a non-empty string`);
   }
-  return value.trim();
+  return value;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
