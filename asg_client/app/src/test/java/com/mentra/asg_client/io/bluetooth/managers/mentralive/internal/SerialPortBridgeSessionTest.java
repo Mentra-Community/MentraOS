@@ -1,10 +1,16 @@
 package com.mentra.asg_client.io.bluetooth.managers.mentralive.internal;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.verify;
 
 import android.app.Application;
 import androidx.test.core.app.ApplicationProvider;
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.bluetooth.interfaces.SerialListener;
+import com.mentra.asg_client.service.system.core.SystemControllerFactory;
+import com.mentra.asg_client.service.system.interfaces.ISystemController;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -20,6 +26,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.mockito.MockedStatic;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 
@@ -160,6 +167,32 @@ public class SerialPortBridgeSessionTest {
         assertThat(replacement).isNotNull();
         assertThat(driver.openBauds).containsExactly(SerialPortBridge.DEFAULT_BAUDRATE, 921600);
         bridge.closeSession(replacement);
+    }
+
+    @Test
+    public void successfulOpen_publishesVendorComBaudForFactoryTest() {
+        ISystemController systemController = mock(ISystemController.class);
+        Application app = ApplicationProvider.getApplicationContext();
+        FakeSerialDriver driver =
+                new FakeSerialDriver(
+                        new ByteArrayInputStream(new byte[0]),
+                        new ByteArrayInputStream(new byte[0]));
+        SerialPortBridge bridge = new SerialPortBridge(app, driver, 200);
+
+        try (MockedStatic<SystemControllerFactory> systemControllers =
+                mockStatic(SystemControllerFactory.class)) {
+            systemControllers
+                    .when(() -> SystemControllerFactory.get(app))
+                    .thenReturn(systemController);
+
+            assertThat(bridge.start()).isTrue();
+            verify(systemController).setComBaudrate(SerialPortBridge.DEFAULT_BAUDRATE);
+
+            assertThat(bridge.openAtBaud(AsgConstants.UART_FAST_BAUD)).isNotNull();
+            verify(systemController).setComBaudrate(AsgConstants.UART_FAST_BAUD);
+        }
+
+        bridge.stop();
     }
 
     private static final class FakeSerialDriver implements SerialPortBridge.SerialDriver {

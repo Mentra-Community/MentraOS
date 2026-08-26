@@ -56,6 +56,12 @@ public interface ISystemController {
 
     void installSystemOta(String otaPath);
 
+    /** Set a vendor/system property via the SystemUI {@code setProperty} broadcast. */
+    void setProperty(String name, String value);
+
+    /** Set the MCU UART baud via {@code vendor.com.baud}. */
+    void setComBaudrate(int baudrate);
+
     void setI2SAudioPlayReceiverPackage(String packageName);
 
     /**

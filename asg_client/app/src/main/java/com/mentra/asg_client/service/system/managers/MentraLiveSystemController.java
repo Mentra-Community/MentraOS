@@ -183,6 +183,20 @@ public class MentraLiveSystemController implements ISystemController {
     }
 
     @Override
+    public void setProperty(String name, String value) {
+        Intent nn = new Intent();
+        nn.putExtra("cmd", "setProperty");
+        nn.putExtra("name", name);
+        nn.putExtra("value", value);
+        sendBroadcast(nn);
+    }
+
+    @Override
+    public void setComBaudrate(int baudrate) {
+        setProperty("vendor.com.baud", "" + baudrate);
+    }
+
+    @Override
     public void setI2SAudioPlayReceiverPackage(String packageName) {
         Intent nn = new Intent();
         nn.putExtra("cmd", "i2s_pkname");
