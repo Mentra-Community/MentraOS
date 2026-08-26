@@ -24,6 +24,10 @@ on:
         required: false
         type: boolean
         default: false
+      tool_ref:
+        description: Git ref to pin orchestrator tooling from (defaults to the PR base)
+        required: false
+        type: string
 
 concurrency:
   # For pull_request events: keyed on PR number (stable, deduplicated).
@@ -49,6 +53,9 @@ permissions:
 
 env:
   FORCE_ROTATION: ${{ github.event.inputs.force_rotation || 'false' }}
+  # With a PAT the fixer's pushes trigger CI for real, so the CI gate stops
+  # conceding awaiting-approval workflow runs as green (see ci-gates.ts).
+  PR_AGENT_HAS_PAT: ${{ secrets.PR_AGENT_GITHUB_TOKEN != '' }}
 
 jobs:
   resolve-context:
@@ -63,6 +70,7 @@ jobs:
       pr_is_fork: ${{ steps.ctx.outputs.pr_is_fork }}
       ci_trigger_failed: ${{ steps.ctx.outputs.ci_trigger_failed }}
       ci_recheck_only: ${{ steps.ctx.outputs.ci_recheck_only }}
+      tool_ref: ${{ steps.ctx.outputs.tool_ref }}
     steps:
       - name: Resolve from event
         id: ctx
@@ -162,6 +170,8 @@ jobs:
             core.setOutput('head_sha', workflowRunSha ?? pr.head.sha);
             core.setOutput('head_ref', pr.head.ref);
             core.setOutput('base_ref', pr.base.ref);
+            const toolRef = '${{ github.event.inputs.tool_ref }}'.trim();
+            core.setOutput('tool_ref', toolRef || pr.base.ref);
             core.setOutput('pr_author', pr.user.login);
             core.setOutput(
               'pr_is_fork',
@@ -180,6 +190,7 @@ jobs:
       run_bugbot: ${{ steps.plan.outputs.run_bugbot }}
       run_standards: ${{ steps.plan.outputs.run_standards }}
       run_depth: ${{ steps.plan.outputs.run_depth }}
+      run_codex: ${{ steps.plan.outputs.run_codex }}
       active_pair: ${{ steps.plan.outputs.active_pair }}
       is_dry_run: ${{ steps.plan.outputs.is_dry_run }}
       should_handoff: ${{ steps.plan.outputs.should_handoff }}
@@ -188,6 +199,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ needs.resolve-context.outputs.tool_ref }}
           fetch-depth: 0
 
       - uses: oven-sh/setup-bun@v1
@@ -203,6 +215,7 @@ jobs:
           PR_AUTHOR: ${{ needs.resolve-context.outputs.pr_author }}
           PR_IS_FORK: ${{ needs.resolve-context.outputs.pr_is_fork }}
           CI_RECHECK_ONLY: ${{ needs.resolve-context.outputs.ci_recheck_only }}
+          HAS_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY != '' }}
           GITHUB_TOKEN: ${{ secrets.PR_AGENT_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
         run: bun run cli plan
         working-directory: scripts/pr-agent
@@ -234,6 +247,13 @@ jobs:
           fetch-depth: 0
 
       - run: git fetch origin ${{ needs.resolve-context.outputs.base_ref }}
+
+      - name: Pin orchestrator tooling to base
+        env:
+          TOOL_REF: ${{ needs.resolve-context.outputs.tool_ref }}
+        run: |
+          git fetch origin "$TOOL_REF" --depth=1
+          git checkout FETCH_HEAD -- scripts/pr-agent .github/pr-agent .github/pr-agent.yml
 
       - uses: oven-sh/setup-bun@v1
 
@@ -270,6 +290,13 @@ jobs:
 
       - run: git fetch origin ${{ needs.resolve-context.outputs.base_ref }}
 
+      - name: Pin orchestrator tooling to base
+        env:
+          TOOL_REF: ${{ needs.resolve-context.outputs.tool_ref }}
+        run: |
+          git fetch origin "$TOOL_REF" --depth=1
+          git checkout FETCH_HEAD -- scripts/pr-agent .github/pr-agent .github/pr-agent.yml
+
       - uses: oven-sh/setup-bun@v1
 
       - working-directory: scripts/pr-agent
@@ -292,6 +319,51 @@ jobs:
           path: .pr-agent/review-depth.txt
           if-no-files-found: ignore
 
+  review-codex:
+    name: Review (Codex)
+    needs: [resolve-context, plan]
+    if: needs.plan.outputs.should_skip != 'true' && needs.plan.outputs.recheck_only != 'true' && needs.plan.outputs.run_codex == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-context.outputs.head_sha }}
+          fetch-depth: 0
+
+      - run: git fetch origin ${{ needs.resolve-context.outputs.base_ref }}
+
+      - name: Pin orchestrator tooling to base
+        env:
+          TOOL_REF: ${{ needs.resolve-context.outputs.tool_ref }}
+        run: |
+          git fetch origin "$TOOL_REF" --depth=1
+          git checkout FETCH_HEAD -- scripts/pr-agent .github/pr-agent .github/pr-agent.yml
+
+      - uses: oven-sh/setup-bun@v1
+
+      - working-directory: scripts/pr-agent
+        run: bun install --frozen-lockfile || bun install
+
+      - name: Install Codex CLI
+        run: npm install -g @openai/codex
+
+      - name: Run codex review
+        working-directory: scripts/pr-agent
+        env:
+          PR_NUMBER: ${{ needs.resolve-context.outputs.pr_number }}
+          BASE_REF: ${{ needs.resolve-context.outputs.base_ref }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.PR_AGENT_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+        run: bun run cli review codex
+
+      - name: Upload review output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-agent-review-codex
+          path: .pr-agent/review-codex.txt
+          if-no-files-found: ignore
+
   review-bugbot:
     name: Review (Bugbot)
     needs: [resolve-context, plan]
@@ -302,6 +374,8 @@ jobs:
       bugbot_success: ${{ steps.poll.outputs.bugbot_success }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-context.outputs.tool_ref }}
 
       - uses: oven-sh/setup-bun@v1
 
@@ -330,6 +404,7 @@ jobs:
       - plan
       - review-standards
       - review-depth
+      - review-codex
       - review-bugbot
     # Require plan.result == success so a cancelled Plan (empty outputs) cannot
     # revive Aggregate — empty should_skip != 'true' used to pass after cancel.
@@ -347,7 +422,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.resolve-context.outputs.head_sha }}
+          ref: ${{ needs.resolve-context.outputs.tool_ref }}
 
       - uses: oven-sh/setup-bun@v1
 
@@ -372,6 +447,7 @@ jobs:
           BUGBOT_COMPLETED: ${{ needs.review-bugbot.outputs.bugbot_completed || 'false' }}
           BUGBOT_SUCCESS: ${{ needs.review-bugbot.outputs.bugbot_success || 'false' }}
           CI_TRIGGER_FAILED: ${{ needs.resolve-context.outputs.ci_trigger_failed }}
+          HAS_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY != '' }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bun run cli aggregate
 
@@ -396,16 +472,25 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.PR_AGENT_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
 
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-context.outputs.tool_ref }}
+          path: .pr-agent-tool
+
+      - name: Hide tool checkout from git
+        run: echo ".pr-agent-tool/" >> .git/info/exclude
+
       - uses: oven-sh/setup-bun@v1
 
-      - working-directory: scripts/pr-agent
+      - working-directory: .pr-agent-tool/scripts/pr-agent
         run: bun install --frozen-lockfile || bun install
 
       - name: Run fixer
-        working-directory: scripts/pr-agent
+        working-directory: .pr-agent-tool/scripts/pr-agent
         env:
           PR_NUMBER: ${{ needs.resolve-context.outputs.pr_number }}
           PR_HEAD_REF: ${{ needs.resolve-context.outputs.head_ref }}
+          PR_AGENT_TOOL_ROOT: ${{ github.workspace }}/.pr-agent-tool
           CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
           CI_LOG_EXCERPT: "${{ github.event.workflow_run && format('Failed workflow: {0}', github.event.workflow_run.html_url) || '' }}"
           GITHUB_TOKEN: ${{ secrets.PR_AGENT_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
@@ -425,6 +510,8 @@ jobs:
       ci_green: ${{ steps.wait.outputs.ci_green }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-context.outputs.tool_ref }}
 
       - uses: oven-sh/setup-bun@v1
 
@@ -458,6 +545,8 @@ jobs:
       handoff_reason: ${{ steps.recheck.outputs.handoff_reason }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-context.outputs.tool_ref }}
 
       - uses: oven-sh/setup-bun@v1
 
@@ -487,6 +576,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-context.outputs.tool_ref }}
 
       - uses: oven-sh/setup-bun@v1
 
@@ -509,6 +600,7 @@ jobs:
       - plan
       - review-standards
       - review-depth
+      - review-codex
       - review-bugbot
       - aggregate
       - fix

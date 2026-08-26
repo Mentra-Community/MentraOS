@@ -49,6 +49,31 @@ Edit [`.github/pr-agent.yml`](../.github/pr-agent.yml):
 
 Handoff applies label `ready-for-human-review`. **Humans always merge** — agents never auto-merge.
 
+## Bugbot ingestion
+
+Native Cursor Bugbot posts a GitHub review (`<!-- BUGBOT_REVIEW -->`) plus
+inline comments. The orchestrator treats that as the bugbot-slot verdict —
+it does **not** require `<!-- pr-agent-bugbot-verdict -->`. High / Critical /
+Medium Severity comments are blocking and start the fixer; Low Severity is a
+nit. Per-bot regex overrides live under `externalReviewers.blockingPatterns`
+in [`.github/pr-agent.yml`](../.github/pr-agent.yml).
+
+## Tooling pin
+
+Orchestrator jobs run code from the PR **base** (`tool_ref`, defaulting to
+`base_ref`), not the PR tip. That way a branch cut before an orchestrator
+fix still gets the latest agent, and a fork cannot rewrite the reviewer.
+
+- Plan / aggregate / wait-ci / recheck-handoff / finalize / review-bugbot
+  check out `tool_ref` directly.
+- Model reviewer jobs check out PR `head_sha` for the diff, then overlay
+  `scripts/pr-agent` and `.github/pr-agent*` from `tool_ref`.
+- The fixer checks out the PR branch and a sibling `.pr-agent-tool` tree
+  (hidden via `.git/info/exclude`) so `git add -A` cannot commit tooling.
+
+To self-test an orchestrator PR against its own code, dispatch the workflow
+with `tool_ref` set to the PR head branch.
+
 ## Local development
 
 ```bash

@@ -7,8 +7,21 @@ import {
   type Verdict,
 } from './types.js';
 
-export function fingerprintFinding(file: string, message: string): string {
+/**
+ * Finding identity. Message-hash fingerprints proved too fragile: reviewers
+ * routinely reword the same issue across cycles ("…confirmed against current
+ * API schema…") and the reworded report forked into a duplicate "new" finding
+ * that kept an already-fixed issue open and tripped false diverging exits
+ * (PR #3716). Prefer file + line-bucket (lines rounded to the nearest 10, so
+ * small drifts from surrounding edits still map to the same finding); fall
+ * back to the message hash only when the reviewer gave no usable line.
+ */
+export function fingerprintFinding(file: string, message: string, line?: number): string {
   const normalizedFile = file.replace(/\\/g, '/').toLowerCase();
+  if (typeof line === 'number' && line > 0) {
+    const bucket = Math.round(line / 10) * 10;
+    return `${normalizedFile}:L${bucket}`;
+  }
   const normalizedMessage = message
     .toLowerCase()
     .replace(/[`'"]/g, '')
@@ -30,12 +43,25 @@ export function verdictToFindings(
   verdict: Verdict,
   source: ReviewSlot | string,
   cycle: number,
+  /**
+   * Existing findings (open + nits) keyed for `ref` lookups: when a reviewer
+   * re-confirms a known finding by echoing its id, the report inherits that
+   * finding's fingerprint instead of minting a new identity from its own
+   * (possibly reworded) message.
+   */
+  existingFindings?: Finding[],
 ): { blocking: Finding[]; nits: Finding[] } {
   const blocking: Finding[] = [];
   const nits: Finding[] = [];
+  const byId = new Map(
+    (existingFindings ?? []).map((f) => [f.id.toLowerCase(), f]),
+  );
 
   for (const f of verdict.findings) {
-    const fp = fingerprintFinding(f.file || 'unknown', f.message);
+    const referenced = f.ref ? byId.get(f.ref.toLowerCase()) : undefined;
+    const fp =
+      referenced?.fingerprint ??
+      fingerprintFinding(f.file || 'unknown', f.message, f.line);
     const item: Finding = {
       id: shortId(fp),
       fingerprint: fp,
@@ -199,6 +225,7 @@ export function sourceCounts(findings: Finding[]): Record<ReviewSlot, number> {
     bugbot: 0,
     standards: 0,
     depth: 0,
+    codex: 0,
   };
   for (const f of openBlocking(findings)) {
     const s = f.source as ReviewSlot;

@@ -85,3 +85,45 @@ describe('shouldBlankPrForWorkflowRunHandoff', () => {
     ).toBe(false);
   });
 });
+
+describe('workflow tooling pin', () => {
+  const workflow = readFileSync(workflowPath, 'utf8');
+
+  test('tool_ref dispatch input and resolve-context output exist', () => {
+    expect(workflow).toContain('tool_ref:');
+    expect(workflow).toContain("core.setOutput('tool_ref'");
+    expect(workflow).toContain('github.event.inputs.tool_ref');
+  });
+
+  for (const jobId of [
+    'plan',
+    'aggregate',
+    'wait-ci',
+    'recheck-handoff',
+    'finalize',
+    'review-bugbot',
+  ] as const) {
+    test(`${jobId} checks out tool_ref`, () => {
+      expect(jobBlock(workflow, jobId)).toContain(
+        'needs.resolve-context.outputs.tool_ref',
+      );
+    });
+  }
+
+  for (const jobId of ['review-standards', 'review-depth', 'review-codex'] as const) {
+    test(`${jobId} overlays tooling from tool_ref onto PR HEAD`, () => {
+      const block = jobBlock(workflow, jobId);
+      expect(block).toContain('head_sha');
+      expect(block).toContain('Pin orchestrator tooling to base');
+      expect(block).toContain('needs.resolve-context.outputs.tool_ref');
+    });
+  }
+
+  test('fix job uses a sibling tool checkout hidden from git add -A', () => {
+    const block = jobBlock(workflow, 'fix');
+    expect(block).toContain('.pr-agent-tool');
+    expect(block).toContain('PR_AGENT_TOOL_ROOT');
+    expect(block).toContain('.git/info/exclude');
+    expect(block).toContain('head_ref');
+  });
+});
