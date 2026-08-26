@@ -80,7 +80,7 @@ public class CaptureWatchdogTest {
         AtomicInteger captureFires = new AtomicInteger();
 
         watchdog.arm("job:req", 45, jobFires::incrementAndGet);
-        watchdog.arm(CaptureBusyGate.captureKey("req"), 10, captureFires::incrementAndGet);
+        watchdog.arm(CaptureBusyGate.captureKey(1L), 10, captureFires::incrementAndGet);
 
         scheduler.advance(10);
         assertThat(captureFires).hasValue(1);

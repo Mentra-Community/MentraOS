@@ -3,13 +3,20 @@ package com.mentra.asg_client.io.media.core;
 import java.util.Objects;
 
 /**
- * Camera-holding capture occupancy plus a safety timeout. {@link #begin} arms the watchdog; {@link
- * #end} cancels it; expiry force-clears the tracker so a missed terminal cannot lock the button
- * permanently.
+ * Camera-holding capture occupancy plus a safety timeout. {@link #begin} arms the watchdog and
+ * returns a unique token; {@link #end} cancels that token's watchdog and clears occupancy; expiry
+ * force-clears the tracker so a missed terminal cannot lock the button permanently.
+ *
+ * <p>The watchdog is keyed by the per-capture token rather than the request id, so a late terminal
+ * {@link #end} for a finished capture cannot cancel the safety timer or clear the busy flag of a
+ * newer capture that reused the same request id.
  */
 final class CaptureBusyGate {
 
     static final String CAPTURE_KEY_PREFIX = "capture:";
+
+    /** Returned by {@link #begin} when the slot is already occupied; rejected by {@link #end}. */
+    static final long NO_CAPTURE = CaptureBusyTracker.NO_CAPTURE;
 
     private final CaptureBusyTracker tracker;
     private final CaptureWatchdog watchdog;
@@ -24,17 +31,25 @@ final class CaptureBusyGate {
         this.timeoutMs = timeoutMs;
     }
 
-    boolean begin(String requestId) {
-        if (!tracker.begin(requestId)) {
-            return false;
+    /**
+     * @return a positive token that must be passed to {@link #end}, or {@link #NO_CAPTURE} if
+     *     another capture is already in flight.
+     */
+    long begin(String requestId) {
+        long token = tracker.begin(requestId);
+        if (token == NO_CAPTURE) {
+            return NO_CAPTURE;
         }
-        watchdog.arm(captureKey(requestId), timeoutMs, () -> tracker.end(requestId));
-        return true;
+        watchdog.arm(captureKey(token), timeoutMs, () -> tracker.end(token));
+        return token;
     }
 
-    boolean end(String requestId) {
-        watchdog.cancel(captureKey(requestId));
-        return tracker.end(requestId);
+    boolean end(long token) {
+        if (token == NO_CAPTURE) {
+            return false;
+        }
+        watchdog.cancel(captureKey(token));
+        return tracker.end(token);
     }
 
     boolean isBusy() {
@@ -45,7 +60,7 @@ final class CaptureBusyGate {
         return tracker.activeRequestId();
     }
 
-    static String captureKey(String requestId) {
-        return CAPTURE_KEY_PREFIX + requestId;
+    static String captureKey(long token) {
+        return CAPTURE_KEY_PREFIX + token;
     }
 }
