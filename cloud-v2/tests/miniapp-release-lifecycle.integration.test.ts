@@ -300,11 +300,16 @@ describe("miniapp release lifecycle", () => {
         signature: bundleUrl.searchParams.get("signature") ?? undefined,
       }),
     ).toThrow("bundle asset not found");
+    const expiredAt = Math.floor(Date.now() / 1000) - 1;
+    const expiredSignature = crypto
+      .createHmac("sha256", "test-preinstall-download-secret")
+      .update(`preinstalled-bundle-v1\n${release.releaseBundleAssetId!}\n\n${expiredAt}`)
+      .digest("base64url");
     expect(() =>
       registries.authorizeBundleDownload(release.releaseBundleAssetId!, {
         tenantId: "",
-        expiresAt: "0",
-        signature: bundleUrl.searchParams.get("signature") ?? undefined,
+        expiresAt: String(expiredAt),
+        signature: expiredSignature,
       }),
     ).toThrow("bundle asset not found");
   });
