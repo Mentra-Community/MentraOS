@@ -1359,9 +1359,7 @@ class DeviceManager {
         if (pendingDeviceAddress.isNotEmpty()) {
             deviceAddress = pendingDeviceAddress
         }
-        pendingDeviceName = ""
-        pendingDeviceAddress = ""
-        pendingWearable = ""
+        clearPendingConnection()
 
         val readyKey = "${sgc?.type}:${deviceName}"
         val now = System.currentTimeMillis()
@@ -2137,7 +2135,7 @@ class DeviceManager {
             return
         }
 
-        disconnect()
+        disconnect(clearPendingIdentity = false)
         Thread.sleep(100)
         searching = true
         pendingDeviceName = name
@@ -2170,7 +2168,7 @@ class DeviceManager {
         handleDeviceReady()
     }
 
-    fun disconnect() {
+    fun disconnect(clearPendingIdentity: Boolean = true) {
         sgc?.clearDisplay()
         sgc?.disconnect()
         sgc = null // Clear the SGC reference after disconnect
@@ -2202,6 +2200,15 @@ class DeviceManager {
         DeviceStore.apply("glasses", "controllerConnected", false)
         controller?.disconnect()
         controller = null
+        if (clearPendingIdentity) {
+            clearPendingConnection()
+        }
+    }
+
+    private fun clearPendingConnection() {
+        pendingDeviceName = ""
+        pendingDeviceAddress = ""
+        pendingWearable = ""
     }
 
     fun disconnectController() {
@@ -2276,9 +2283,7 @@ class DeviceManager {
         defaultWearable = ""
         deviceName = ""
         deviceAddress = ""
-        pendingDeviceName = ""
-        pendingDeviceAddress = ""
-        pendingWearable = ""
+        clearPendingConnection()
         Bridge.saveSetting("default_wearable", "")
         Bridge.saveSetting("device_name", "")
         Bridge.saveSetting("device_address", "")

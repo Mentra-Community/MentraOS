@@ -8,7 +8,7 @@ import showAlert from "@/utils/AlertUtils"
 import {translate} from "@/i18n/translate"
 import {usePathname} from "expo-router"
 import {BgTimer, engine, type VersionInfo} from "@mentra/engine"
-import {fetchVersionInfo} from "@mentra/engine/internal"
+import {fetchVersionInfo} from "@mentra/engine-host-internal"
 
 export {
   fetchVersionInfo,
@@ -17,7 +17,7 @@ export {
   findMatchingMtkPatch,
   checkBesUpdate,
   checkForOtaUpdate,
-} from "@mentra/engine/internal"
+} from "@mentra/engine-host-internal"
 
 function areGlassesConnectedNow(): boolean {
   return engine.ota.snapshot().connected
@@ -174,6 +174,7 @@ export function OtaUpdateChecker() {
     const pollManifest = async () => {
       if (!manifestBaselineRef.current) return // no completed check yet to compare against
       const url = engine.ota.snapshot().manifestUrl
+      if (!url) return
       const versionJson = await fetchVersionInfo(url)
       if (cancelled || !versionJson) return
       // Re-read after the await: a check completing mid-fetch refreshes the baseline.

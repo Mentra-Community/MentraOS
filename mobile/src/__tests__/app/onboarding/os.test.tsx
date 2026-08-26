@@ -1,5 +1,5 @@
 import {SETTINGS} from "@mentra/engine"
-import {useSettingsStore} from "@mentra/engine/internal"
+import {useSettingsStore} from "@mentra/engine-host-internal"
 import {act, fireEvent, render} from "@testing-library/react-native"
 import type {ReactNode} from "react"
 import {Linking} from "react-native"

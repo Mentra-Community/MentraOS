@@ -35,11 +35,13 @@ public class PairingCodeSpeakerTest {
         app = ApplicationProvider.getApplicationContext();
         hardware = mock(IHardwareManager.class);
         WakeLockManager.release(WakeOwner.PAIRING_CODE);
+        deletePairingCacheFiles();
     }
 
     @After
     public void tearDown() {
         WakeLockManager.release(WakeOwner.PAIRING_CODE);
+        deletePairingCacheFiles();
     }
 
     @Test
@@ -56,13 +58,22 @@ public class PairingCodeSpeakerTest {
     }
 
     @Test
+    public void speak_malformedCode_returnsFalse() {
+        assertThat(PairingCodeSpeaker.speak(app, hardware, "A-B")).isFalse();
+        assertThat(PairingCodeSpeaker.speak(app, hardware, "12345")).isFalse();
+        assertThat(PairingCodeSpeaker.speak(app, hardware, "12G4")).isFalse();
+        verify(hardware, never()).playAudioFile(any());
+    }
+
+    @Test
     public void speak_playbackUnsupported_skipsStitching() {
         when(hardware.supportsAudioPlayback()).thenReturn(false);
 
         assertThat(PairingCodeSpeaker.speak(app, hardware, "A12B")).isFalse();
         verify(hardware, never()).playAudioFile(any());
-        File cache = new File(app.getCacheDir(), "pairing_code.wav");
-        assertThat(cache).doesNotExist();
+        File[] cache =
+                app.getCacheDir().listFiles((dir, name) -> name.startsWith("pairing_code_"));
+        assertThat(cache).isEmpty();
     }
 
     @Test
@@ -88,7 +99,32 @@ public class PairingCodeSpeakerTest {
 
         ArgumentCaptor<File> file = ArgumentCaptor.forClass(File.class);
         verify(hardware).playAudioFile(file.capture());
-        assertThat(file.getValue().getName()).isEqualTo("pairing_code.wav");
+        assertThat(file.getValue().getName()).startsWith("pairing_code_");
+        assertThat(file.getValue().getName()).endsWith(".wav");
         assertThat(file.getValue()).exists();
+    }
+
+    @Test
+    public void speak_repeatedCode_usesDistinctFiles() {
+        when(hardware.supportsAudioPlayback()).thenReturn(true);
+        when(hardware.playAudioFile(any(File.class))).thenReturn(true);
+
+        assertThat(PairingCodeSpeaker.speak(app, hardware, "A12B")).isTrue();
+        assertThat(PairingCodeSpeaker.speak(app, hardware, "A12B")).isTrue();
+
+        ArgumentCaptor<File> files = ArgumentCaptor.forClass(File.class);
+        verify(hardware, org.mockito.Mockito.times(2)).playAudioFile(files.capture());
+        assertThat(files.getAllValues().get(0)).isNotEqualTo(files.getAllValues().get(1));
+    }
+
+    private void deletePairingCacheFiles() {
+        File[] files =
+                app.getCacheDir().listFiles((dir, name) -> name.startsWith("pairing_code_"));
+        if (files == null) {
+            return;
+        }
+        for (File file : files) {
+            file.delete();
+        }
     }
 }

@@ -388,6 +388,41 @@ public class BesUartTransportCoordinatorTest {
     }
 
     @Test
+    public void otaAuthorization_waitsForStartupDiscoveryBeforeLeasingAndWriting() throws Exception {
+        coordinator.onSerialReady(host.session);
+        assertThat(coordinator.getState())
+                .isEqualTo(BesUartTransportCoordinator.State.DISCOVERING);
+
+        ExecutorService caller = Executors.newSingleThreadExecutor();
+        Future<BesUartTransportCoordinator.OperationLease> leaseFuture =
+                caller.submit(coordinator::beginOtaAuthorization);
+        try {
+            Thread.sleep(50);
+            assertThat(leaseFuture.isDone()).isFalse();
+
+            assertThat(systemVersion("17.26.7.4"))
+                    .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
+            BesUartTransportCoordinator.OperationLease lease = leaseFuture.get(1, TimeUnit.SECONDS);
+
+            assertThat(lease).isNotNull();
+            assertThat(coordinator.getOperation())
+                    .isEqualTo(BesUartTransportCoordinator.Operation.OTA_AUTHORIZATION);
+            assertThat(
+                            coordinator.runOtaAuthorizationWrite(
+                                    lease,
+                                    () -> {
+                                        host.controlCommands.add("install_guard");
+                                        return true;
+                                    }))
+                    .isTrue();
+            assertThat(host.controlCommands).contains("install_guard");
+            coordinator.endOta(lease);
+        } finally {
+            caller.shutdownNow();
+        }
+    }
+
+    @Test
     public void failedOtaEndsInRawFirstRecoveryInsteadOfPermanentQuarantine() throws Exception {
         coordinator.onSerialReady(host.session);
         assertThat(systemVersion("17.26.7.4"))

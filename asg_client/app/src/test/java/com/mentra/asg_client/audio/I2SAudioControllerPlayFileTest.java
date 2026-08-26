@@ -47,13 +47,13 @@ public class I2SAudioControllerPlayFileTest {
 
     @Test
     public void playFile_null_doesNotOpenI2s() {
-        controller.playFile(null);
+        controller.playFile(null, 0.1f);
         assertThat(drainStartedServices()).isEmpty();
     }
 
     @Test
     public void playFile_missingFile_stillClosesI2s() {
-        controller.playFile(new File(app.getCacheDir(), "missing-pairing.wav"));
+        controller.playFile(new File(app.getCacheDir(), "missing-pairing.wav"), 0.1f);
 
         List<Boolean> playing = playingFlags(drainStartedServices());
         assertThat(playing).containsExactly(true, false);
@@ -62,7 +62,7 @@ public class I2SAudioControllerPlayFileTest {
     @Test
     public void playFile_validWav_opensI2s() throws Exception {
         File wav = writeToneWav();
-        controller.playFile(wav);
+        controller.playFile(wav, 0.1f);
 
         List<Boolean> playing = playingFlags(drainStartedServices());
         assertThat(playing).isNotEmpty();

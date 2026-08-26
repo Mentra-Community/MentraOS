@@ -24,7 +24,8 @@ public class PairingCodeAssetIntegrityTest {
         Application app = ApplicationProvider.getApplicationContext();
         File wav = PairingCodePcmStitcher.stitchCodeToCache(app, "A12B");
 
-        assertThat(wav.getName()).isEqualTo("pairing_code.wav");
+        assertThat(wav.getName()).startsWith("pairing_code_");
+        assertThat(wav.getName()).endsWith(".wav");
         assertThat(wav).exists();
 
         PairingCodePcmStitcher.PcmClip stitched =

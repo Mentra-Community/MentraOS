@@ -1,17 +1,9 @@
 /**
- * SDK-pinned OTA manifest URL derivation.
- *
- * Each Bluetooth SDK release publishes an immutable manifest
- * (`bluetooth-sdk-<version>-version.json`) pinning the exact ASG artifact paired with that SDK
- * version. The URL is derived from this package's own version — the version is frozen into the
- * published artifact, so this is equivalent to baking the URL at release time while keeping the
- * manifest itself replaceable as an operational escape hatch (asset moves, CDN migration).
- *
- * Mirrors the native derivation in `OtaManifestDefaults.defaultOtaVersionUrl()` (Kotlin) /
- * `BluetoothSdkDefaults` (Swift).
+ * Release CI embeds one immutable OTA manifest URL into every SDK distribution.
+ * Source builds remain unpinned and must opt in through the debug configuration API.
  */
 
-const SDK_OTA_RELEASE_BASE_URL = "https://github.com/Mentra-Community/MentraOS/releases/download/bluetooth-sdk-ota"
+import {BLUETOOTH_SDK_RELEASE_METADATA} from "../generated/releaseMetadata"
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const packageJson = require("../../package.json") as {version?: string}
@@ -20,12 +12,8 @@ const packageJson = require("../../package.json") as {version?: string}
 export const BLUETOOTH_SDK_VERSION: string = (packageJson.version ?? "").trim()
 
 /**
- * The immutable manifest URL pinning the ASG artifact paired with this SDK version, or null when
- * the package version is unavailable (malformed workspace state).
+ * The immutable manifest URL embedded by release CI, or null for an unpinned source build.
  */
 export function sdkPinnedOtaManifestUrl(): string | null {
-  if (!BLUETOOTH_SDK_VERSION) {
-    return null
-  }
-  return `${SDK_OTA_RELEASE_BASE_URL}/bluetooth-sdk-${BLUETOOTH_SDK_VERSION}-version.json`
+  return BLUETOOTH_SDK_RELEASE_METADATA.otaManifestUrl
 }

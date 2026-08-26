@@ -1,27 +1,25 @@
-name: Release Miniapp SDK
+name: Release Mentra Developer Tools
 
-# Publishes the @mentra/miniapp SDK family + the Cloud V2 developer packages to
-# npm: @mentra/miniapp, @mentra/miniapp-cli, create-mentra-miniapp, @mentra/auth,
-# and @mentra/cli.
+# Publishes developer tooling that is intentionally outside the coordinated
+# Mentra product family: @mentra/miniapp-cli, create-mentra-miniapp,
+# @mentra/auth, and @mentra/cli. The coordinated release workflow exclusively
+# owns @mentra/miniapp and the Engine dependency closure.
 #
-# Channel promotion (see .github/scripts/npm-channel.mjs): git holds one
+# Channel selection (see .github/scripts/npm-channel.mjs): git holds one
 # prerelease base version per package (X.Y.Z-dev.N, only edited on dev) and the
 # branch derives what publishes:
 #   dev      -> X.Y.Z-dev.N   (dev tag)
 #   staging  -> X.Y.Z-beta.N  (beta tag)
 #   main     -> X.Y.Z         (latest tag)
-# Merging up the chain IS the promotion; no version edits ride the branches. A
-# package publishes when its derived version is absent from npm (E404-strict),
-# so re-runs and re-merges are no-ops. First-ever publishes require a
-# supervised workflow_dispatch with force_release=true.
+# The operator dispatches this workflow on the selected branch after the
+# coordinated @mentra/miniapp version for that channel is publicly readable.
+# A package publishes when its derived version is absent from npm (E404-strict),
+# so retries are no-ops. First-ever publishes additionally require
+# force_release=true.
 #
 # Publish mode per channel: dev publishes DIRECTLY (fast internal iteration);
 # beta and latest go through npm's STAGING QUEUE (`npm stage publish`) and a
-# maintainer must approve each version in the npm UI before it goes live. Why:
-# the engine's peer ranges are carets, so a new peer version floats into
-# already-approved engine installs on the same channel — every version that
-# can reach beta/latest therefore needs its own human approval. That approval
-# is the only gate past merge: merging to main IS the go signal.
+# maintainer must approve each version in the npm UI before it goes live.
 #
 # Before packing, manifests are stamped to the channel's derived versions and
 # ranges (stamp-channel-manifests.mjs), then workspace `file:` deps are
@@ -31,15 +29,7 @@ name: Release Miniapp SDK
 # Requires repo secret NPM_TOKEN: an npm *automation* token (bypasses 2FA) for
 # an account with publish rights on the @mentra org. See sdk/PUBLISHING.md.
 
-# No paths filter, deliberately: detection is registry-state ("publish when
-# the derived version is absent from npm"), so the trigger must be too — a
-# promotion merge doesn't necessarily touch any package tree, and missing
-# versions (e.g. after a failed or gated run) should heal on the next push.
-# Every push reconciles; the detect job is a few seconds and no-ops when
-# nothing is missing.
 on:
-  push:
-    branches: [main, staging, dev]
   workflow_dispatch:
     inputs:
       dry_run:
@@ -54,7 +44,7 @@ on:
         type: boolean
 
 concurrency:
-  group: miniapp-sdk-release-${{ github.ref }}
+  group: developer-tools-release-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:
@@ -75,9 +65,9 @@ jobs:
         # Depth 1 is fine: the decision reads the working tree + the npm
         # registry, never git history.
 
-      - name: Decide releases for this channel
+      - name: Decide developer-tool releases for this channel
         id: info
-        run: node .github/scripts/miniapp-sdk-release-info.mjs
+        run: node .github/scripts/developer-tools-release-info.mjs
         env:
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
           FORCE_RELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.force_release || false }}
@@ -89,7 +79,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       # Sequential + dependency-ordered: the scaffolder's template pins
-      # @mentra/miniapp and @mentra/miniapp-cli, so those publish first.
+      # @mentra/miniapp-cli, so it publishes first.
       # fail-fast: the detect script admits a package on the promise that its
       # deps publish earlier in this run — if an upstream job fails, later
       # packages would ship pins to versions that never landed, so the whole
@@ -153,11 +143,27 @@ jobs:
       - name: "Rewrite workspace file: deps"
         run: node .github/scripts/rewrite-file-deps.mjs "${{ matrix.pkg.dir }}"
 
+      - name: Resolve the published Miniapp version for scaffolds
+        if: matrix.pkg.name == 'create-mentra-miniapp'
+        id: miniapp
+        run: |
+          set -euo pipefail
+          case "$GITHUB_REF_NAME" in
+            dev) tag=dev ;;
+            staging) tag=beta ;;
+            main) tag=latest ;;
+            *) exit 1 ;;
+          esac
+          version=$(npm view "@mentra/miniapp" "dist-tags.$tag" --json --registry=https://registry.npmjs.org | jq -er .)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
       # Stamp the scaffolder's template pins to the exact versions being published
       # this run, so a scaffolded project installs on any channel (the caret pins
       # in the repo can't reach -dev prereleases). No-op for packages without a
       # template/package.json. Packed checkout only — never committed.
       - name: Stamp scaffolder template versions
+        env:
+          MENTRA_MINIAPP_VERSION: ${{ steps.miniapp.outputs.version }}
         run: node .github/scripts/stamp-template-versions.mjs "${{ matrix.pkg.dir }}"
 
       - name: Check npm registry
@@ -200,8 +206,7 @@ jobs:
       - name: Bootstrap gate — first publish must be supervised
         # A package that has NEVER been published does not auto-release from a
         # version bump landing on a branch: its first publish is a deliberate
-        # workflow_dispatch with force_release=true (same rule as the engine
-        # release workflow). Established packages auto-release as before.
+        # workflow_dispatch with force_release=true.
         if: needs.detect.outputs.dry_run != 'true' && steps.registry.outputs.exists != 'true' && steps.registry.outputs.package_exists != 'true' && needs.detect.outputs.force_release != 'true'
         run: |
           echo "::notice::${{ matrix.pkg.name }} is not on npm yet — skipping auto-publish. Bootstrap it with a workflow_dispatch (force_release=true)."
@@ -209,10 +214,7 @@ jobs:
       # Direct publish covers the dev channel (fast internal iteration) and
       # bootstraps (npm cannot stage a package that does not exist — those are
       # supervised force_release dispatches anyway). Everything else on
-      # beta/latest goes through the staging queue below: engine peer ranges
-      # are carets, so a new peer version FLOATS into already-approved engine
-      # installs — every version that can reach those channels needs its own
-      # human approval.
+      # beta/latest goes through the staging queue below.
       - name: Publish to npm (dev channel / bootstrap)
         if: needs.detect.outputs.dry_run != 'true' && steps.registry.outputs.exists != 'true' && (github.ref_name == 'dev' || steps.registry.outputs.package_exists != 'true') && (steps.registry.outputs.package_exists == 'true' || needs.detect.outputs.force_release == 'true')
         working-directory: ${{ matrix.pkg.dir }}

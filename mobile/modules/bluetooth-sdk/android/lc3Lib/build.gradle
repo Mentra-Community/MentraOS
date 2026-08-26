@@ -181,10 +181,13 @@ afterEvaluate {
         repositories {
             maven {
                 name = 'sonatypeCentral'
-                url = uri('https://ossrh-staging-api.central.sonatype.com/service/local/staging/deploy/maven2/')
-                credentials {
-                    username = centralUsername()
-                    password = centralPassword()
+                def repositoryUrl = System.getenv('MENTRA_MAVEN_STAGING_REPOSITORY_URL') ?: 'https://ossrh-staging-api.central.sonatype.com/service/local/staging/deploy/maven2/'
+                url = uri(repositoryUrl)
+                if (repositoryUrl.startsWith('http')) {
+                    credentials {
+                        username = centralUsername()
+                        password = centralPassword()
+                    }
                 }
             }
         }

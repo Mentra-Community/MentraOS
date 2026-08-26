@@ -159,59 +159,25 @@ class MentraLive : SGCManager() {
                 10_000L // 10s before first scan after shutdown
 
         private const val MENTRA_MANUFACTURER_ID = 0xB822
-        private const val ADV_MANUF_PAIRING_FLAG_OFFSET = 5
-        private const val ADV_PAIRING_DISCOVERABLE: Byte = 0x01
-        private const val ADV_PAIRING_PROTOCOL_VERSION_MIN = 1
-        private const val ADV_PAIRING_PROTOCOL_VERSION_MAX = 15
 
         private fun manufacturerData(result: ScanResult): ByteArray? {
             return result.scanRecord?.getManufacturerSpecificData(MENTRA_MANUFACTURER_ID)
         }
 
-        /**
-         * OS-1615 ads append `flag | version | capability | code_lo | code_hi` after the
-         * connected byte. Field firmware uses the same 0xB822 company id but then writes the
-         * XOR'd Classic MAC at those offsets. Length alone is not a pairing flag: treating MAC
-         * bytes as version/capability hides every old unit as "secure, not in pairing mode".
-         */
-        private fun hasSecurePairingTrailer(manufData: ByteArray?): Boolean {
-            if (manufData == null) {
-                return false
-            }
-            val trailerBase = ADV_MANUF_PAIRING_FLAG_OFFSET + 1
-            if (manufData.size < trailerBase + 4) {
-                return false
-            }
-            val version = manufData[trailerBase].toInt() and 0xFF
-            val capability = manufData[trailerBase + 1].toInt() and 0xFF
-            return version in ADV_PAIRING_PROTOCOL_VERSION_MIN..ADV_PAIRING_PROTOCOL_VERSION_MAX &&
-                    (capability and 0x01) != 0
-        }
-
         private fun isPairingDiscoverable(result: ScanResult): Boolean {
-            val manufData = manufacturerData(result) ?: return false
-            if (!hasSecurePairingTrailer(manufData)) {
-                return false
-            }
-            return manufData[ADV_MANUF_PAIRING_FLAG_OFFSET] == ADV_PAIRING_DISCOVERABLE
+            return MentraLivePairingAdvertisementParser.parse(manufacturerData(result))?.pairingMode ==
+                    true
         }
 
         private fun advertisesPairingFlag(result: ScanResult): Boolean {
-            return hasSecurePairingTrailer(manufacturerData(result))
+            return MentraLivePairingAdvertisementParser.parse(manufacturerData(result)) != null
         }
 
-        /** Trailer immediately after pairing flag: version | capability | code_lo | code_hi */
         private fun parseSecurePairingTrailer(result: ScanResult): Triple<Boolean, String?, Boolean> {
-            val manufData = manufacturerData(result) ?: return Triple(false, null, false)
-            if (!hasSecurePairingTrailer(manufData)) {
-                return Triple(false, null, false)
-            }
-            val pairingMode = manufData[ADV_MANUF_PAIRING_FLAG_OFFSET] == ADV_PAIRING_DISCOVERABLE
-            val trailerBase = ADV_MANUF_PAIRING_FLAG_OFFSET + 1
-            val codeLo = manufData[trailerBase + 2].toInt() and 0xFF
-            val codeHi = manufData[trailerBase + 3].toInt() and 0xFF
-            val code = String.format("%02X%02X", codeHi, codeLo)
-            return Triple(pairingMode, code, true)
+            val advertisement =
+                    MentraLivePairingAdvertisementParser.parse(manufacturerData(result))
+                            ?: return Triple(false, null, false)
+            return Triple(advertisement.pairingMode, advertisement.pairingCode, true)
         }
 
         fun isMentraLiveBluetoothName(name: String?): Boolean {
@@ -3817,19 +3783,16 @@ class MentraLive : SGCManager() {
                 val body = HashMap<String, Any>()
                 body["window_ms"] = windowMs
                 body["reason"] = json.optString("reason", "user_gesture")
-                if (json.has("txn")) body["txn"] = json.optInt("txn")
                 Bridge.sendTypedMessage("entering_pairing_mode", body)
             }
             "pairing_info" ->
                     Bridge.sendPairingInfo(
                             json.optBoolean("had_previous_bond", false),
-                            jsonNullableString(json, "transfer_id"),
                             jsonNullableString(json, "pairing_code"),
                             json.optBoolean("classic_bond_ready", false),
                             // Legacy firmware that omits this field is not secure-capable.
                             json.optBoolean("secure_pairing_capable", false),
                             json.optInt("protocol_version", 1),
-                            jsonNullableString(json, "binding"),
                     )
             "imu_response",
             "imu_stream_response",

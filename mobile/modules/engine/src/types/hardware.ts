@@ -1,6 +1,4 @@
-/**
- * @mentra/types - Hardware capability types
- */
+/** Hardware capability types used by the Engine. */
 
 import { evenRealitiesG1 } from "./capabilities/even-realities-g1";
 import { evenRealitiesG2 } from "./capabilities/even-realities-g2";
@@ -9,17 +7,9 @@ import { mentraLive } from "./capabilities/mentra-live";
 import { simulatedGlasses } from "./capabilities/simulated-glasses";
 import { vuzixZ100 } from "./capabilities/vuzix-z100";
 import { none } from "./capabilities/none";
-import { DeviceTypes, HardwareRequirementLevel, HardwareType } from "./enums";
+import { DeviceTypes } from "./enums";
 
-/**
- * Hardware requirement for an app
- * Specifies what hardware components an app needs
- */
-export interface HardwareRequirement {
-  type: HardwareType;
-  level: HardwareRequirementLevel;
-  description?: string; // Why this hardware is needed
-}
+export type { HardwareRequirement } from "@mentra/miniapp/hardware";
 
 /**
  * Camera capabilities

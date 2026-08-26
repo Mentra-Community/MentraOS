@@ -652,20 +652,15 @@ export type PairFailureEvent = {
 
 export type PairingInfoEvent = {
   had_previous_bond: boolean
-  /** 16-char uppercase hex transfer id when secure pairing is active. */
-  transfer_id?: string
   pairing_code?: string
   classic_bond_ready?: boolean
   secure_pairing_capable?: boolean
   protocol_version?: number
-  /** Credential binding mode negotiated for this transfer, when reported by the glasses. */
-  binding?: "ctkd" | "temporal" | "none" | string
 }
 
 export type EnteringPairingModeEvent = {
   window_ms: number
   reason?: string
-  txn?: number
 }
 
 export type OwnerReplacedEvent = {
@@ -1183,7 +1178,7 @@ export interface BluetoothSdkPublicModule {
    * The URL may point at Mentra's hosted manifest or any customer-controlled HTTP(S) server.
    */
   setOtaVersionUrl(otaVersionUrl: string): void
-  /** Return the configured OTA manifest URL, or this SDK release's default manifest URL. */
+  /** Return the configured or release-embedded OTA manifest URL. Rejects when a source build is unconfigured. */
   getOtaVersionUrl(): string
   /** Fetch the configured OTA manifest and return whether any ASG/BES/MTK update is available. */
   checkForOtaUpdate(): Promise<boolean>
@@ -1192,7 +1187,13 @@ export interface BluetoothSdkPublicModule {
   startAr99OtaFromFile(path: string): Promise<boolean>
   cancelAr99Ota(): Promise<void>
   sendAr99FactoryReset(): Promise<void>
-  buildAr99OtaSignature(secret: string, appName: string, currentVersion: string, serialNumber: string, nonce: string): string
+  buildAr99OtaSignature(
+    secret: string,
+    appName: string,
+    currentVersion: string,
+    serialNumber: string,
+    nonce: string,
+  ): string
 
   // // stt commands (MOVE TO CRUST)
   // setSttModelDetails(path: string, languageCode: string): Promise<void>

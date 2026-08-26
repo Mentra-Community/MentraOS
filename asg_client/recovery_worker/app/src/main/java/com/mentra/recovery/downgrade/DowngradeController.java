@@ -23,8 +23,8 @@ public final class DowngradeController {
       Context context, long targetVersion, String apkPath, String apkSha256) {
     // Fail closed, mirroring ASG's DowngradeGate: a non-positive floor means downgrades are not
     // enabled for this release channel, so reject regardless of target.
-    if (RecoveryConstants.DOWNGRADE_FLOOR_VERSION_CODE <= 0
-        || targetVersion < RecoveryConstants.DOWNGRADE_FLOOR_VERSION_CODE) {
+    if (!DowngradeTargetPolicy.isAllowed(
+        targetVersion, RecoveryConstants.DOWNGRADE_FLOOR_VERSION_CODE)) {
       Log.e(
           RecoveryConstants.TAG,
           "Rejected downgrade handoff (floor="

@@ -1,6 +1,6 @@
 {
   "name": "@mentra/crust",
-  "version": "0.1.0-dev.1",
+  "version": "3.1.0",
   "description": "Mentra Native Module",
   "main": "build/index.js",
   "types": "build/index.d.ts",
@@ -23,7 +23,11 @@
     "crust",
     "Crust"
   ],
-  "repository": "https://github.com/fossephate/crust",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Mentra-Community/MentraOS.git",
+    "directory": "mobile/modules/crust"
+  },
   "bugs": {
     "url": "https://github.com/fossephate/crust/issues"
   },
@@ -31,7 +35,7 @@
   "license": "MIT",
   "homepage": "https://github.com/fossephate/crust#readme",
   "dependencies": {
-    "@mentra/jspolyfill": "^0.1.0-dev.0"
+    "@mentra/jspolyfill": "3.1.0"
   },
   "devDependencies": {
     "@expo/config-plugins": ">=8.0.0",

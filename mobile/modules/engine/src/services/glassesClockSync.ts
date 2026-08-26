@@ -87,6 +87,10 @@ export async function handleOtaClockSkewFromGlasses(
       lastOtaClockFixAt = Date.now()
       const {buildNumber, otaVersionUrl} = useGlassesStore.getState()
       const manifestUrl = resolveOtaManifestUrl(otaVersionUrl, buildNumber)
+      if (!manifestUrl) {
+        console.warn("[GlassesClockSync] OTA restart skipped because this build has no manifest pin")
+        return false
+      }
       console.log("[GlassesClockSync] ⏰ Restarting OTA with ota_start after clock fix")
       await BluetoothSdk.startOtaUpdate(manifestUrl)
       return true

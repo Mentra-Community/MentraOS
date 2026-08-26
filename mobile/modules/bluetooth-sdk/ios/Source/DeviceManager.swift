@@ -1012,9 +1012,7 @@ struct ViewState {
         if !pendingDeviceAddress.isEmpty {
             deviceAddress = pendingDeviceAddress
         }
-        pendingDeviceName = ""
-        pendingDeviceAddress = ""
-        pendingWearable = ""
+        clearPendingConnection()
         defaultWearable = sgc.type
         searching = false
 
@@ -1792,7 +1790,7 @@ struct ViewState {
         }
 
         Task {
-            disconnect()
+            disconnect(clearPendingConnection: false)
             try? await Task.sleep(nanoseconds: 100 * 1_000_000) // 100ms
             self.searching = true
             self.pendingDeviceName = name
@@ -1826,7 +1824,7 @@ struct ViewState {
         handleDeviceReady()
     }
 
-    func disconnect() {
+    func disconnect(clearPendingConnection: Bool = true) {
         sgc?.clearDisplay() // clear the screen
         sgc?.disconnect()
         sgc = nil // Clear the SGC reference after disconnect
@@ -1855,6 +1853,15 @@ struct ViewState {
         DeviceStore.shared.apply("glasses", "controllerConnected", false)
         controller?.disconnect()
         controller = nil // Clear the controller reference after disconnect
+        if clearPendingConnection {
+            self.clearPendingConnection()
+        }
+    }
+
+    private func clearPendingConnection() {
+        pendingDeviceName = ""
+        pendingDeviceAddress = ""
+        pendingWearable = ""
     }
 
     func disconnectController() {
@@ -1874,9 +1881,7 @@ struct ViewState {
         defaultWearable = ""
         deviceName = ""
         deviceAddress = ""
-        pendingDeviceName = ""
-        pendingDeviceAddress = ""
-        pendingWearable = ""
+        clearPendingConnection()
         Bridge.saveSetting("default_wearable", "")
         Bridge.saveSetting("device_name", "")
         Bridge.saveSetting("device_address", "")

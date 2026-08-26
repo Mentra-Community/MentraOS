@@ -14,7 +14,7 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import {SETTINGS, useSetting} from "@mentra/engine"
-import {navigationService} from "@mentra/engine/internal"
+import {navigationService} from "@mentra/engine-host-internal"
 import showAlert from "@/utils/AlertUtils"
 
 // Hardcoded test destination for the nav POC. SF Ferry Building.
@@ -41,7 +41,6 @@ export default function DebugSettingsScreen() {
   const [reconnectOnAppForeground, setReconnectOnAppForeground] = useSetting(SETTINGS.reconnect_on_app_foreground.key)
   const [enableSquircles, setEnableSquircles] = useSetting(SETTINGS.enable_squircles.key)
   const [appearanceMenuEnabled, setAppearanceMenuEnabled] = useSetting(SETTINGS.appearance_menu_enabled.key)
-  const [miniappDevMode, setMiniappDevMode] = useSetting(SETTINGS.miniapp_dev_mode.key)
   const [appBootExtraInfo, setAppBootExtraInfo] = useSetting(SETTINGS.app_boot_extra_info.key)
   const [debugConsole, setDebugConsole] = useSetting(SETTINGS.debug_console.key)
   const [_onboardingOsCompleted, setOnboardingOsCompleted] = useSetting(SETTINGS.onboarding_os_completed.key)
@@ -112,13 +111,6 @@ export default function DebugSettingsScreen() {
               subtitle="Show the Appearance settings menu"
               value={appearanceMenuEnabled}
               onValueChange={(value) => setAppearanceMenuEnabled(value)}
-            />
-
-            <ToggleSetting
-              label="Miniapp Developer Settings"
-              subtitle="Show the Miniapp Developer settings menu"
-              value={miniappDevMode}
-              onValueChange={(value) => setMiniappDevMode(value)}
             />
 
             <ToggleSetting
