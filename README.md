@@ -36,6 +36,49 @@ MentraOS handles pairing, connection, data streaming, hardware access, and cross
 
 Every component is open source under the MIT license, giving you privacy, freedom, and control.
 
+## Choose the Right SDK
+
+<table>
+  <thead>
+    <tr>
+      <th>What you are building</th>
+      <th>Use this SDK</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>
+        A miniapp that runs inside the Mentra App, with the glasses connection,
+        update flows, text-to-speech, speech-to-text, livestreaming
+        infrastructure, and other platform services provided for you.
+      </td>
+      <td>
+        <strong>Mentra Miniapp SDK</strong><br />
+        <code>@mentra/miniapp</code><br />
+        <a href="https://docs.mentra.glass/app-devs/getting-started/overview">Miniapp SDK docs</a>
+      </td>
+    </tr>
+    <tr>
+      <td>
+        Your own Android, iOS, or React Native mobile app that connects to and
+        controls Mentra Live directly.
+      </td>
+      <td>
+        <strong>Mentra Bluetooth SDK</strong><br />
+        <code>@mentra/bluetooth-sdk</code><br />
+        <a href="https://docs.mentra.glass/mentra-live/overview">Bluetooth SDK docs</a> ·
+        <a href="https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit">Starter Kit</a>
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+> **Already have a mobile app and want to integrate Mentra Live?** Use the
+> [Mentra Bluetooth SDK](https://docs.mentra.glass/mentra-live/overview). Do not
+> copy the Bluetooth implementation out of this monorepo or build a replacement
+> SDK from MentraOS internals—the public SDK already handles scanning, pairing,
+> connection state, protocol compatibility, events, and updates.
+
 ## Supported Smart Glasses
 
 MentraOS works across a growing ecosystem of smart glasses.
