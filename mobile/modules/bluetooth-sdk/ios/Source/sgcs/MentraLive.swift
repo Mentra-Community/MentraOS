@@ -1805,7 +1805,6 @@ class MentraLive: NSObject, SGCManager {
 
             manualDiscoveryActive = true
             startScan()
-            manualDiscoveryActive = isScanning
             emitConnectedPendingDeviceForPairingScan()
         }
     }
