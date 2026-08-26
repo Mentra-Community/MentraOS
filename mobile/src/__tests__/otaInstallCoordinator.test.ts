@@ -910,6 +910,19 @@ describe("OtaInstallCoordinator legacy ota_progress normalization (WP 8C-a)", ()
     expect(bluetoothSdkMock.startOtaUpdate).not.toHaveBeenCalled()
   })
 
+  it("swallows a concurrent status-query rejection after an ASG session restart", async () => {
+    setGlassesConnected()
+    otaInstallCoordinator.attach()
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+    useGlassesStore.getState().setOtaStatus(inProgressStatus({phase: "install", stepPercent: 0, overallPercent: 100}))
+    bluetoothSdkMock.queryOtaStatus.mockClear().mockRejectedValueOnce(new Error("request_in_flight"))
+
+    GlobalEventEmitter.emit("glasses_session_changed", {previousSid: "old", sid: "new"})
+    await jest.advanceTimersByTimeAsync(0)
+
+    expect(bluetoothSdkMock.queryOtaStatus).toHaveBeenCalledTimes(1)
+  })
+
   it("glasses_session_changed after APK completion queries the ASG-owned session without sending ota_start", async () => {
     // The ASG persists and auto-resumes a unified multi-step session after its APK
     // process restart. The phone observes that session; it must not start a second
