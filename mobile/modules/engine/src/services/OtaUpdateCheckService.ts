@@ -405,9 +405,13 @@ export async function checkCurrentGlassesForUpdate(
   }
 
   if (refreshVersionInfo) {
-    void BluetoothSdk.requestVersionInfo().catch((error) => {
-      console.warn("OTA: Failed to request version_info from glasses:", error)
-    })
+    void BluetoothSdk.requestVersionInfo()
+      .then((versionInfo) => {
+        useGlassesStore.getState().setGlassesInfo(versionInfo)
+      })
+      .catch((error) => {
+        console.warn("OTA: Failed to request version_info from glasses:", error)
+      })
   }
 
   let buildNumber = useGlassesStore.getState().buildNumber

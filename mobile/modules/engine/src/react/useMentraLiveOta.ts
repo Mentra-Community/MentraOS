@@ -539,7 +539,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
         canInstall: screen === "update_available" && canInstall,
         canRetry: screen === "check_failed",
         canFinish: screen === "up_to_date" || screen === "dev_build" || screen === "update_info_unavailable",
-        canDismiss: screen === "update_available" && !isUpdateRequired,
+        canDismiss: (screen === "update_available" || screen === "wifi_required") && !isUpdateRequired,
         canDiscard: false,
         canOpenWifiSetup: screen === "wifi_required",
         continueDisabled: false,
