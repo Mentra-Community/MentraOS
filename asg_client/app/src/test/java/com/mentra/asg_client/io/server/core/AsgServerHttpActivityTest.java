@@ -50,6 +50,36 @@ public class AsgServerHttpActivityTest {
         assertThat(activityCount.get()).isEqualTo(2);
     }
 
+    @Test
+    public void bindAddressRestrictsServerAndDeterminesAdvertisedUrl() {
+        ServerConfig config = mock(ServerConfig.class);
+        NetworkProvider networkProvider = mock(NetworkProvider.class);
+        CacheManager cacheManager = mock(CacheManager.class);
+        RateLimiter rateLimiter = mock(RateLimiter.class);
+        Logger logger = mock(Logger.class);
+        when(config.getPort()).thenReturn(0);
+        when(networkProvider.getBestIpAddress()).thenReturn("10.0.0.25");
+
+        TestServer server =
+                new TestServer(
+                        config,
+                        networkProvider,
+                        cacheManager,
+                        rateLimiter,
+                        logger,
+                        "127.0.0.1");
+
+        server.startServer();
+        try {
+            assertThat(server.isAlive()).isTrue();
+            assertThat(server.getHostname()).isEqualTo("127.0.0.1");
+            assertThat(server.getServerUrl())
+                    .isEqualTo("http://127.0.0.1:" + server.getListeningPort());
+        } finally {
+            server.stopServer();
+        }
+    }
+
     private static final class TestServer extends AsgServer {
         TestServer(
                 ServerConfig config,
@@ -58,6 +88,16 @@ public class AsgServerHttpActivityTest {
                 RateLimiter rateLimiter,
                 Logger logger) {
             super(config, networkProvider, cacheManager, rateLimiter, logger);
+        }
+
+        TestServer(
+                ServerConfig config,
+                NetworkProvider networkProvider,
+                CacheManager cacheManager,
+                RateLimiter rateLimiter,
+                Logger logger,
+                String bindAddress) {
+            super(config, networkProvider, cacheManager, rateLimiter, logger, bindAddress);
         }
 
         @Override

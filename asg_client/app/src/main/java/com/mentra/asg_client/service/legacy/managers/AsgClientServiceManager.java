@@ -57,7 +57,7 @@ public class AsgClientServiceManager {
 
     // State tracking
     private boolean isInitialized = false;
-    private boolean isWebServerEnabled = true;
+    private boolean isWebServerEnabled = false;
     private boolean isK900Device = false;
 
     // RGB LED command handler reference
@@ -136,7 +136,10 @@ public class AsgClientServiceManager {
             Log.d(TAG, "📸 Step 6: Initializing media capture service");
             initializeMediaCaptureService();
 
-            Log.d(TAG, "🌐 Step 7: Initializing camera web server");
+            // The gallery server is a hotspot-only service. Re-read the adopted/current state
+            // after the media dependencies are ready, then start it only if the AP is active.
+            isWebServerEnabled = networkManager != null && networkManager.isHotspotEnabled();
+            Log.d(TAG, "🌐 Step 7: Synchronizing camera web server with hotspot state");
             initializeCameraWebServer();
 
             isInitialized = true;
@@ -590,6 +593,22 @@ public class AsgClientServiceManager {
             return;
         }
 
+        if (networkManager == null || !networkManager.isHotspotEnabled()) {
+            Log.w(TAG, "🔒 Hotspot is inactive - refusing to start camera web server");
+            return;
+        }
+
+        if (mediaCaptureService == null) {
+            Log.d(TAG, "⏭️ Media capture service is not ready - deferring camera web server");
+            return;
+        }
+
+        String hotspotGatewayIp = networkManager.getHotspotGatewayIp();
+        if (hotspotGatewayIp == null || hotspotGatewayIp.isEmpty()) {
+            Log.e(TAG, "🔒 Hotspot gateway is unavailable - refusing to start camera web server");
+            return;
+        }
+
         if (serverManager == null) {
             Log.d(TAG, "📦 Creating new AsgServerManager instance");
             serverManager = AsgServerManager.getInstance(context);
@@ -606,8 +625,13 @@ public class AsgClientServiceManager {
                 Log.d(TAG, "📝 Logger created: " + logger.getClass().getSimpleName());
 
                 cameraServer =
-                        DefaultServerFactory.createCameraWebServer(
-                                8089, "CameraWebServer", context, logger, fileManager);
+                        DefaultServerFactory.createHotspotCameraWebServer(
+                                8089,
+                                "CameraWebServer",
+                                context,
+                                logger,
+                                fileManager,
+                                hotspotGatewayIp);
                 Log.d(
                         TAG,
                         "✅ Camera web server created: " + cameraServer.getClass().getSimpleName());
@@ -806,27 +830,27 @@ public class AsgClientServiceManager {
                             + isWebServerEnabled
                             + " to "
                             + enabled);
-            isWebServerEnabled = enabled;
+        }
+        isWebServerEnabled = enabled;
 
-            if (enabled && cameraServer == null) {
-                Log.d(TAG, "🚀 Enabling web server - initializing camera server");
-                initializeCameraWebServer();
-            } else if (!enabled && cameraServer != null) {
-                Log.d(TAG, "🛑 Disabling web server - stopping camera server");
-                if (serverManager != null) {
-                    Log.d(TAG, "📡 Using server manager to stop camera server");
-                    serverManager.stopServer("camera");
-                } else {
-                    Log.d(TAG, "🛑 Directly stopping camera server");
-                    cameraServer.stopServer();
-                }
-                cameraServer = null;
-                Log.d(TAG, "✅ Camera server stopped and nullified");
+        // Reconcile the actual server on every event, even if the cached state already matches.
+        // This keeps repeated hotspot-disable notifications fail-closed.
+        if (enabled && cameraServer == null) {
+            Log.d(TAG, "🚀 Enabling web server - initializing camera server");
+            initializeCameraWebServer();
+        } else if (!enabled && cameraServer != null) {
+            Log.d(TAG, "🛑 Disabling web server - stopping camera server");
+            if (serverManager != null) {
+                Log.d(TAG, "📡 Using server manager to stop camera server");
+                serverManager.stopServer("camera");
             } else {
-                Log.d(TAG, "⏭️ No action needed - web server state already matches desired state");
+                Log.d(TAG, "🛑 Directly stopping camera server");
+                cameraServer.stopServer();
             }
+            cameraServer = null;
+            Log.d(TAG, "✅ Camera server stopped and nullified");
         } else {
-            Log.d(TAG, "⏭️ Web server enabled state unchanged - no action needed");
+            Log.d(TAG, "⏭️ Camera server already matches the hotspot state");
         }
     }
 

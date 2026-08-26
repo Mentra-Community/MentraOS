@@ -65,6 +65,29 @@ public class DefaultServerFactory {
         return new AsgCameraServer(config, networkProvider, cacheManager, rateLimiter, logger, fileManager);
     }
 
+    /** Create a camera web server reachable only through the active hotspot gateway address. */
+    public static AsgCameraServer createHotspotCameraWebServer(
+            int port,
+            String serverName,
+            Context context,
+            Logger logger,
+            FileManager fileManager,
+            String hotspotGatewayIp) {
+        ServerConfig config = createServerConfig(port, serverName, context);
+        NetworkProvider networkProvider = createNetworkProvider(logger);
+        CacheManager cacheManager = createCacheManager(logger);
+        RateLimiter rateLimiter = createRateLimiter(150, 60000, logger);
+
+        return new AsgCameraServer(
+                config,
+                networkProvider,
+                cacheManager,
+                rateLimiter,
+                logger,
+                fileManager,
+                hotspotGatewayIp);
+    }
+
     /**
      * Create a camera web server with custom rate limiting
      */
@@ -77,4 +100,4 @@ public class DefaultServerFactory {
 
         return new AsgCameraServer(config, networkProvider, cacheManager, rateLimiter, logger, fileManager);
     }
-} 
+}

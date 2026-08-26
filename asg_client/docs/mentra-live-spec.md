@@ -112,7 +112,7 @@ Streaming endpoints on the active Mentra Live hotspot subnet are reachable witho
 
 ### Local media sync server
 
-`asg_client` runs an embedded HTTP server that lets the phone enumerate, download, ZIP, and delete captured media. This is used for gallery sync and avoids relying on cloud connectivity for local media transfer.
+While the Mentra Live hotspot is active, `asg_client` runs an embedded HTTP server that lets the phone enumerate, download, ZIP, and delete captured media. The server is stopped with the hotspot and binds only to the hotspot gateway address; it must never expose media through a WiFi network that the glasses join. This is used for gallery sync and avoids relying on cloud connectivity for local media transfer.
 
 ### Audio and microphone
 

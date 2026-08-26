@@ -42,9 +42,20 @@ public abstract class AsgServer extends NanoHTTPD {
      * Constructor for ASG server with dependency injection.
      * Follows Dependency Inversion Principle by depending on abstractions.
      */
-    public AsgServer(ServerConfig config, NetworkProvider networkProvider, 
+    public AsgServer(ServerConfig config, NetworkProvider networkProvider,
                     CacheManager cacheManager, RateLimiter rateLimiter, Logger logger) {
-        super(config.getPort());
+        this(config, networkProvider, cacheManager, rateLimiter, logger, null);
+    }
+
+    /**
+     * Construct a server bound to one local address instead of every network interface.
+     *
+     * @param bindAddress local address to bind, or {@code null} to listen on all interfaces
+     */
+    public AsgServer(ServerConfig config, NetworkProvider networkProvider,
+                    CacheManager cacheManager, RateLimiter rateLimiter, Logger logger,
+                    String bindAddress) {
+        super(bindAddress, config.getPort());
         this.config = config;
         this.networkProvider = networkProvider;
         this.cacheManager = cacheManager;
@@ -71,7 +82,10 @@ public abstract class AsgServer extends NanoHTTPD {
      */
     public String getServerUrl() {
         try {
-            String ipAddress = networkProvider.getBestIpAddress();
+            String ipAddress = getHostname();
+            if (ipAddress == null || ipAddress.isEmpty()) {
+                ipAddress = networkProvider.getBestIpAddress();
+            }
             return "http://" + ipAddress + ":" + getListeningPort();
         } catch (Exception e) {
             logger.error(getTag(), "Error getting server URL: " + e.getMessage(), e);
