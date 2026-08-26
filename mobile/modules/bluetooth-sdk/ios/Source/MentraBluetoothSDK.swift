@@ -1259,6 +1259,14 @@ public final class MentraBluetoothSDK {
         )
     }
 
+    /// Return bundled release changelogs crossed between two coordinated product versions, newest first.
+    public func getReleaseChangelogs(
+        fromVersion: String? = nil,
+        toVersion: String? = nil
+    ) throws -> [ReleaseChangelog] {
+        try ReleaseChangelogCatalog.select(fromVersion: fromVersion, toVersion: toVersion)
+    }
+
     /// Ask connected Mentra Live glasses to report the current OTA install/session status.
     private func queryOtaStatus() async throws -> OtaQueryResult {
         try await performOtaQuery(operation: "OTA status query") {

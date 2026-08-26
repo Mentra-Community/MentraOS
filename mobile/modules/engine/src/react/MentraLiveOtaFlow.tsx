@@ -1,6 +1,15 @@
 /* eslint-disable react-native/no-raw-text -- BodyText and PercentText are local Text wrappers. */
 import React, {useMemo} from "react"
-import {ActivityIndicator, Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle} from "react-native"
+import {
+  ActivityIndicator,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+  type StyleProp,
+  type ViewStyle,
+} from "react-native"
 import {SafeAreaView} from "react-native-safe-area-context"
 import Svg, {Path, Rect} from "react-native-svg"
 
@@ -224,6 +233,7 @@ function OtaFlowContent({
         icon="check"
         title={translate("ota:upToDate")}>
         <BodyText colors={colors}>{translate("ota:noUpdatesAvailable")}</BodyText>
+        <ChangelogList changelogs={state.changelogs} colors={colors} />
       </FlowPage>
     )
   }
@@ -279,10 +289,10 @@ function OtaFlowContent({
       state.hotspotPhase === "downloading"
         ? "Downloading update to phone..."
         : state.hotspotPhase === "starting_hotspot"
-          ? "Starting glasses hotspot..."
-          : state.hotspotPhase === "joining_hotspot"
-            ? "Connecting phone to glasses..."
-            : "Starting update..."
+        ? "Starting glasses hotspot..."
+        : state.hotspotPhase === "joining_hotspot"
+        ? "Connecting phone to glasses..."
+        : "Starting update..."
     return (
       <FlowPage colors={colors} icon="download" title={title}>
         {state.hotspotPhase === "downloading" && state.hotspotArtifactPercent !== null ? (
@@ -334,13 +344,13 @@ function OtaFlowContent({
     const title = state.versionChangeConverged
       ? translate("ota:versionChangeComplete")
       : state.versionChange
-        ? translate("ota:versionChangeFirmwarePassComplete")
-        : "Update complete!"
+      ? translate("ota:versionChangeFirmwarePassComplete")
+      : "Update complete!"
     const message = state.versionChangeConverged
       ? translate("ota:versionChangeCompleteMessage")
       : state.versionChange
-        ? translate("ota:versionChangeFirmwarePassCompleteMessage")
-        : "Your glasses are up to date."
+      ? translate("ota:versionChangeFirmwarePassCompleteMessage")
+      : "Your glasses are up to date."
     return (
       <FlowPage
         actions={
@@ -354,6 +364,7 @@ function OtaFlowContent({
         icon="check"
         title={title}>
         <BodyText colors={colors}>{message}</BodyText>
+        <ChangelogList changelogs={state.changelogs} colors={colors} />
       </FlowPage>
     )
   }
@@ -426,6 +437,30 @@ function PercentText({colors, percent}: {colors: MentraLiveOtaFlowTheme; percent
   return <Text style={[styles.percent, {color: colors.primary}]}>{Math.round(percent)}%</Text>
 }
 
+function ChangelogList({
+  changelogs,
+  colors,
+}: {
+  changelogs: MentraLiveOtaController["state"]["changelogs"]
+  colors: MentraLiveOtaFlowTheme
+}) {
+  if (changelogs.length === 0) return null
+  return (
+    <ScrollView contentContainerStyle={styles.changelogContent} style={styles.changelogList}>
+      {changelogs.map((entry) => (
+        <View key={entry.version} style={styles.changelogEntry}>
+          <Text selectable style={[styles.changelogVersion, {color: colors.foreground}]}>
+            {entry.version}
+          </Text>
+          <Text selectable style={[styles.changelogMarkdown, {color: colors.textDim}]}>
+            {entry.markdown}
+          </Text>
+        </View>
+      ))}
+    </ScrollView>
+  )
+}
+
 function FlowButton({
   colors,
   disabled = false,
@@ -494,6 +529,11 @@ const styles = StyleSheet.create({
   percent: {fontSize: 30, fontVariant: ["tabular-nums"], fontWeight: "700"},
   progressTrack: {borderRadius: 4, height: 8, maxWidth: 420, overflow: "hidden", width: "100%"},
   progressFill: {borderRadius: 4, height: 8},
+  changelogList: {flexShrink: 1, maxHeight: 260, maxWidth: 420, width: "100%"},
+  changelogContent: {gap: 18, paddingVertical: 4},
+  changelogEntry: {gap: 8},
+  changelogVersion: {fontSize: 16, fontWeight: "600"},
+  changelogMarkdown: {fontSize: 14, lineHeight: 20},
   button: {
     alignItems: "center",
     borderRadius: 50,

@@ -9,11 +9,15 @@ on:
       - ".github/workflows/coordinated-*.yml"
       - ".github/workflows/release-family-checks.yml"
       - ".github/workflows/reusable-coordinated-*.yml"
+      - "changelogs/*.md"
       - "asg_client/ota_manifests/firmware_live.json"
       - "package.json"
       - "mobile/package.json"
       - "mobile/modules/bluetooth-sdk/package.json"
       - "mobile/modules/bluetooth-sdk/scripts/*.mjs"
+      - "mobile/modules/bluetooth-sdk/src/generated/changelogCatalog.ts"
+      - "mobile/modules/bluetooth-sdk/android/src/main/java/com/mentra/bluetoothsdk/GeneratedChangelogCatalog.kt"
+      - "mobile/modules/bluetooth-sdk/ios/Source/GeneratedChangelogCatalog.swift"
       - "mobile/modules/crust/package.json"
       - "mobile/modules/engine/package.json"
       - "mobile/modules/engine/scripts/*.mjs"
@@ -50,6 +54,8 @@ jobs:
           node --test "${tests[@]}"
       - name: Validate repository definition
         run: node .github/scripts/release-family-cli.mjs validate --require-version-mirrors
+      - name: Verify generated changelog catalogs
+        run: node .github/scripts/generate-changelog-catalog.mjs --check
       - name: Validate release plan inputs
         run: |
           set -euo pipefail

@@ -1199,6 +1199,8 @@ export interface BluetoothSdkPublicModule {
   getOtaVersionUrl(): string
   /** Fetch the configured OTA manifest and return whether any ASG/BES/MTK update is available. */
   checkForOtaUpdate(): Promise<boolean>
+  /** Return bundled release changelogs crossed between two coordinated product versions, newest first. */
+  getReleaseChangelogs(fromVersion?: string | null, toVersion?: string | null): ReleaseChangelog[]
   /** Start OTA from the configured or explicitly supplied manifest URL. */
   startOtaUpdate(otaVersionUrl?: string | null): Promise<OtaStartAckEvent>
   /** Query the active OTA session and return the correlated status response. */
@@ -1279,6 +1281,13 @@ export interface OtaUpdateInfo {
   besVersion?: string
   /** True when the APK step installs an older build than the glasses currently run (exact-pin manifests only). */
   isDowngrade?: boolean
+}
+
+export interface ReleaseChangelog {
+  /** Base production version, for example `3.1.0`. */
+  version: string
+  /** Markdown body authored in `/changelogs/<version>.md`. */
+  markdown: string
 }
 
 export interface OtaProgress {

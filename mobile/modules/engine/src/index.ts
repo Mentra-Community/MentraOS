@@ -98,6 +98,7 @@ export type {
   OtaProgressStatus,
   OtaStatus,
   OtaUpdateInfo,
+  ReleaseChangelog,
   OtaSnapshot,
   OtaInstallSnapshot,
 } from "./facades/ota"

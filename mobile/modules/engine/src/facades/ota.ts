@@ -9,7 +9,14 @@
  * progress screen is a pure renderer over its snapshot + attach/detach/retry/finish.
  */
 import BluetoothSdk from "@mentra/bluetooth-sdk"
-import type {OtaProgress, OtaProgressStatus, OtaStartAckEvent, OtaStatus, OtaUpdateInfo} from "@mentra/bluetooth-sdk"
+import type {
+  OtaProgress,
+  OtaProgressStatus,
+  OtaStartAckEvent,
+  OtaStatus,
+  OtaUpdateInfo,
+  ReleaseChangelog,
+} from "@mentra/bluetooth-sdk"
 import {isGlassesConnected, useGlassesStore} from "../stores/glasses"
 import {resolveOtaManifestUrl} from "../services/otaManifestUrl"
 import {otaInstallCoordinator, type OtaInstallSnapshot} from "../services/OtaInstallCoordinator"
@@ -26,6 +33,7 @@ function projectSnapshot() {
   return {
     connected: isGlassesConnected(s.connection),
     buildNumber: s.buildNumber || null,
+    appVersion: s.appVersion || null,
     mtkFirmwareVersion: s.mtkFirmwareVersion || null,
     besFirmwareVersion: s.besFirmwareVersion || null,
     hotspotOtaVersion: s.hotspotOtaVersion ?? 0,
@@ -46,6 +54,7 @@ export type {
   OtaProgressStatus,
   OtaStatus,
   OtaUpdateInfo,
+  ReleaseChangelog,
   OtaInstallSnapshot,
   OtaCheckCurrentGlassesOptions,
   OtaCheckCurrentGlassesResult,
@@ -84,6 +93,9 @@ export const ota = {
   ping: () => BluetoothSdk.ping(),
   /** Resolve and compare the current glasses against the OTA manifest, then update the OTA snapshot. */
   checkForUpdates: (options?: OtaCheckCurrentGlassesOptions) => checkCurrentGlassesForUpdate(options),
+  /** Return bundled release changelogs crossed between two coordinated product versions, newest first. */
+  getReleaseChangelogs: (fromVersion?: string | null, toVersion?: string | null): ReleaseChangelog[] =>
+    BluetoothSdk.getReleaseChangelogs(fromVersion, toVersion),
   /** Clear the available-update prompt state. */
   clearUpdateAvailable: () => useGlassesStore.getState().setOtaUpdateAvailable(null),
   /** Clear active progress/status before entering a fresh install flow. */

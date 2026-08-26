@@ -7,6 +7,7 @@ import type {
   PublicGlassesStatus,
   VideoRecordingDefaults,
 } from "./BluetoothSdk.types"
+import {getReleaseChangelogs} from "./changelogs"
 
 const PUBLIC_EVENT_NAMES = new Set<BluetoothSdkEventName>([
   "log",
@@ -159,6 +160,7 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
   setOtaVersionUrl: bindPublicMethod("setOtaVersionUrl"),
   getOtaVersionUrl: bindPublicMethod("getOtaVersionUrl"),
   checkForOtaUpdate: bindPublicMethod("checkForOtaUpdate"),
+  getReleaseChangelogs,
   startOtaUpdate,
   queryOtaStatus,
   startAr99OtaFromFile: bindPublicMethod("startAr99OtaFromFile"),
@@ -246,6 +248,7 @@ export type {
   OtaStatusEvent,
   OtaQueryResult,
   OtaUpdateInfo,
+  ReleaseChangelog,
   MtkUpdateCompleteEvent,
   PairFailureEvent,
   PairingInfoEvent,
