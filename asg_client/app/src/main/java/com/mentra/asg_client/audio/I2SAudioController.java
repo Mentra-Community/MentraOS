@@ -8,6 +8,9 @@ import android.media.MediaPlayer;
 import android.os.Build;
 import android.util.Log;
 
+import androidx.annotation.Nullable;
+
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.service.core.AsgClientService;
 
 import java.io.File;
@@ -77,7 +80,7 @@ public class I2SAudioController {
         long overlayToken = ++overlayPlaybackGeneration;
         try (AssetFileDescriptor afd = context.getAssets().openFd(assetName)) {
             overlayPlayer = new MediaPlayer();
-            configurePlayer(overlayPlayer);
+            configurePlayer(overlayPlayer, playbackVolumeForAsset(assetName));
             overlayPlayer.setDataSource(
                     afd.getFileDescriptor(), afd.getStartOffset(), afd.getLength());
 
@@ -152,6 +155,7 @@ public class I2SAudioController {
         Log.i(TAG, "Playing I2S file: " + file.getAbsolutePath());
         playPrimary(
                 file.getName(),
+                AsgConstants.AUDIO_PLAYBACK_VOLUME,
                 player -> player.setDataSource(file.getAbsolutePath()));
     }
 
@@ -160,6 +164,7 @@ public class I2SAudioController {
         try (AssetFileDescriptor afd = context.getAssets().openFd(assetName)) {
             playPrimary(
                     assetName,
+                    playbackVolumeForAsset(assetName),
                     player ->
                             player.setDataSource(
                                     afd.getFileDescriptor(),
@@ -174,7 +179,8 @@ public class I2SAudioController {
         void apply(MediaPlayer player) throws IOException;
     }
 
-    private void playPrimary(String logName, PlayerDataSource source) {
+    private void playPrimary(
+            String logName, float playbackVolume, PlayerDataSource source) {
         // Mark that WE are controlling I2S - prevents receiver from reacting to our broadcasts
         isControllingI2S = true;
 
@@ -191,7 +197,7 @@ public class I2SAudioController {
         MediaPlayer nextPlayer = null;
         try {
             nextPlayer = new MediaPlayer();
-            configurePlayer(nextPlayer);
+            configurePlayer(nextPlayer, playbackVolume);
             source.apply(nextPlayer);
 
             final MediaPlayer trackedPlayer = nextPlayer;
@@ -310,10 +316,20 @@ public class I2SAudioController {
         player.release();
     }
 
-    private void configurePlayer(MediaPlayer player) {
+    static float playbackVolumeForAsset(@Nullable String assetName) {
+        if (AudioAssets.CAMERA_PREP_CLICK.equals(assetName)) {
+            return AsgConstants.CAMERA_PREP_CLICK_PLAYBACK_VOLUME;
+        }
+        if (AudioAssets.CAMERA_SNAP.equals(assetName)) {
+            return AsgConstants.CAMERA_SNAP_PLAYBACK_VOLUME;
+        }
+        return AsgConstants.AUDIO_PLAYBACK_VOLUME;
+    }
+
+    private void configurePlayer(MediaPlayer player, float playbackVolume) {
         // STREAM_NOTIFICATION routes through system sounds which work with I2S.
         player.setAudioStreamType(AudioManager.STREAM_NOTIFICATION);
-        player.setVolume(0.1f, 0.1f);
+        player.setVolume(playbackVolume, playbackVolume);
     }
 
     private void closeI2SIfIdle() {

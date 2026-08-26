@@ -78,6 +78,15 @@ public class AsgConstants {
     /** Cadence for the short hold-still click while a cold photo spins up the camera. */
     public static final long CAMERA_PREP_CLICK_INTERVAL_MS = 900L;
 
+    /** Baseline linear gain for Mentra Live audio prompts. */
+    public static final float AUDIO_PLAYBACK_VOLUME = 0.1f;
+
+    /** Subtle linear gain for the repeating cold-camera hold-still cue. */
+    public static final float CAMERA_PREP_CLICK_PLAYBACK_VOLUME = 0.09f;
+
+    /** Prominent linear gain for the photo shutter cue. */
+    public static final float CAMERA_SNAP_PLAYBACK_VOLUME = 0.3f;
+
     /** Target lead before the estimated end of sensor exposure for starting the camera snap. */
     public static final long CAMERA_SNAP_TARGET_LEAD_MS = 100L;
 
