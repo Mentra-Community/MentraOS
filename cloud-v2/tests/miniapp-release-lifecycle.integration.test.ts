@@ -1166,13 +1166,79 @@ describe("miniapp release lifecycle", () => {
     // Visibility alone never promotes an unreviewed private artifact into the
     // public catalog. A Mentra approval can explicitly make that release public.
     await miniapps.updateVisibility(developer, packageName, "public");
-    expect((await MiniAppReleaseModel.findById(release.id).lean())?.status).toBe("submitted");
+    expect(await MiniAppReleaseModel.findById(release.id).lean()).toMatchObject({
+      status: "published",
+      publicStoreApprovedAt: null,
+    });
+    expect((await miniapps.listAdminSubmissions()).find(row => row.id === release.id)).toMatchObject({
+      isActiveRelease: true,
+      requiresPublicStoreApproval: true,
+    });
     expect((await catalog.list({ baseUrl: "https://core.example.test" })).apps).toHaveLength(0);
     await miniapps.approveRelease({ releaseId: release.id, adminId: "admin@mentraglass.com" });
-    await miniapps.publishRelease({ releaseId: release.id, adminId: "admin@mentraglass.com" });
+    expect((await miniapps.listAdminSubmissions()).find(row => row.id === release.id)).toMatchObject({
+      requiresPublicStoreApproval: false,
+      publicStoreApprovedAt: expect.any(String),
+    });
     expect((await catalog.list({ baseUrl: "https://core.example.test" })).apps[0]).toMatchObject({
       packageName,
       visibility: "public",
+    });
+  });
+
+  test("making a beta public inside a private miniapp preserves invited access without public exposure", async () => {
+    const packageName = "com.example.privatepublicbeta";
+    await miniapps.createMiniApp(developer, {
+      packageName,
+      displayName: "Private Public Beta",
+      description: "Private app with a beta available to every app invitee",
+    });
+    await miniapps.updateVisibility(developer, packageName, "private");
+    await configurePublishableListing(packageName);
+    const beta = await miniapps.createRelease(developer, {
+      packageName,
+      version: "1.1.0-beta.1",
+      releaseTrack: "beta",
+      manifest: { packageName, name: "Private Public Beta", version: "1.1.0-beta.1" },
+      bundle: await releaseBundle({ packageName, name: "Private Public Beta", version: "1.1.0-beta.1" }),
+    });
+    expect(await miniapps.submitRelease(developer, packageName, beta.id)).toMatchObject({
+      status: "published",
+      publicStoreApprovedAt: null,
+    });
+
+    await miniappAccess.invite(developer, packageName, "tester@example.com");
+    await miniappBetas.invite(developer, packageName, "tester@example.com");
+    const catalog = new StoreCatalogService();
+    await catalog.setReleaseTrack(packageName, "beta", storeUser, "https://core.example.test");
+    expect(await catalog.get(packageName, "https://core.example.test", storeUser)).toMatchObject({
+      visibility: "private",
+      selectedTrack: "beta",
+      betaAccess: "invited",
+      release: { id: beta.id, installable: true },
+    });
+
+    await miniappBetas.setAccessMode(developer, packageName, "public");
+    expect(await MiniAppReleaseModel.findById(beta.id).lean()).toMatchObject({
+      status: "published",
+      publicStoreApprovedAt: null,
+    });
+    expect(await catalog.get(packageName, "https://core.example.test", storeUser)).toMatchObject({
+      visibility: "private",
+      selectedTrack: "beta",
+      betaAccess: "public",
+      release: { id: beta.id, installable: true },
+    });
+    await expect(
+      catalog.get(packageName, "https://core.example.test", {
+        mentraUserId: "mu_store_other",
+        tenantId: "mentra",
+      }),
+    ).rejects.toMatchObject({ code: "not_found" });
+    expect((await catalog.list({ baseUrl: "https://core.example.test" })).apps).toHaveLength(0);
+    expect((await miniapps.listAdminSubmissions()).find(row => row.id === beta.id)).toMatchObject({
+      isActiveRelease: true,
+      requiresPublicStoreApproval: false,
     });
   });
 
@@ -1368,9 +1434,15 @@ describe("miniapp release lifecycle", () => {
     await expect(catalog.get(packageName, "https://core.example.test", publicUser)).rejects.toMatchObject({
       code: "not_found",
     });
-    expect((await MiniAppReleaseModel.findById(beta.id).lean())?.status).toBe("submitted");
+    expect(await MiniAppReleaseModel.findById(beta.id).lean()).toMatchObject({
+      status: "published",
+      publicStoreApprovedAt: null,
+    });
+    expect((await miniapps.listAdminSubmissions()).find(row => row.id === beta.id)).toMatchObject({
+      isActiveRelease: true,
+      requiresPublicStoreApproval: true,
+    });
     await miniapps.approveRelease({ releaseId: beta.id, adminId: "admin@mentraglass.com" });
-    await miniapps.publishRelease({ releaseId: beta.id, adminId: "admin@mentraglass.com" });
     expect(await catalog.get(packageName, "https://core.example.test", publicUser)).toMatchObject({
       betaAccess: "public",
       preferredTrack: "stable",

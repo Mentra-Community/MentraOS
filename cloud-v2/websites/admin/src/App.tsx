@@ -62,7 +62,9 @@ interface ReleaseSummary {
   submittedAt?: string | null;
   reviewedAt?: string | null;
   publishedAt?: string | null;
+  publicStoreApprovedAt?: string | null;
   isActiveRelease?: boolean;
+  requiresPublicStoreApproval?: boolean;
 }
 
 interface RegistryRevision {
@@ -335,7 +337,9 @@ function AdminPage() {
   const releaseList = releases.data?.releases ?? [];
   const revisionList = revisions.data?.revisions ?? [];
   const auditEvents = audit.data?.events ?? [];
-  const pendingReviews = submissionList.filter(release => ["submitted", "in_review"].includes(release.status));
+  const pendingReviews = submissionList.filter(release =>
+    ["submitted", "in_review"].includes(release.status) || needsPublicApproval(release),
+  );
   const selectedReleases = releaseList.filter(release => selectedReleaseIds.has(release.id));
   const detailRelease = [...submissionList, ...releaseList].find(release => release.id === detailReleaseId) ?? null;
 
@@ -616,6 +620,7 @@ function SubmissionDetail(props: {
             <div className="mt-3 flex flex-wrap gap-2">
               <Tag>{release.version}</Tag>
               <StatusTag status={release.status} />
+              {needsPublicApproval(release) ? <Tag>public review pending</Tag> : null}
             </div>
           </div>
 
@@ -630,6 +635,7 @@ function SubmissionDetail(props: {
               ["Submitted", formatDate(release.submittedAt)],
               ["Reviewed", formatDate(release.reviewedAt)],
               ["Published", formatDate(release.publishedAt)],
+              ["Public Store approval", formatDate(release.publicStoreApprovedAt)],
             ]}
           />
 
@@ -672,13 +678,13 @@ function SubmissionDetail(props: {
             />
             {props.error ? <ErrorText error={props.error} /> : null}
             <div className="mt-4 flex flex-wrap gap-2">
-              {["submitted", "in_review"].includes(release.status) ? (
+              {["submitted", "in_review"].includes(release.status) || needsPublicApproval(release) ? (
                 <Button
                   className="rounded-full bg-[#e9f8f1] text-[#087d50] hover:bg-[#dff5eb]"
                   disabled={props.pending}
-                  onClick={() => props.onAction("approve", notes.trim() || "Approved")}
+                  onClick={() => props.onAction("approve", notes.trim() || "Approved for the public Store")}
                 >
-                  <Check className="size-4" /> Approve
+                  <Check className="size-4" /> {needsPublicApproval(release) ? "Approve for public Store" : "Approve"}
                 </Button>
               ) : null}
               {["submitted", "in_review", "accepted"].includes(release.status) ? (
@@ -1368,6 +1374,10 @@ function ReleaseIdentity({ release, compact = false }: { release: ReleaseSummary
 
 function Tag({ children }: { children: React.ReactNode }) {
   return <span className="rounded-full bg-[#f0f2ef] px-2.5 py-1 font-mono text-xs">{children}</span>;
+}
+
+function needsPublicApproval(release: ReleaseSummary): boolean {
+  return release.requiresPublicStoreApproval === true;
 }
 
 function StatusTag({ status, small = false }: { status: ReleaseStatus; small?: boolean }) {

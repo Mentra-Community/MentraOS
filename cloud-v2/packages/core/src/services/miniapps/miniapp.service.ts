@@ -154,49 +154,6 @@ export class MiniAppService {
       });
       if (!current) throw new MiniAppServiceError("not_found", "miniapp not found", 404);
 
-      // A private artifact can never become public merely through a settings
-      // toggle. Move each active public-facing track back into the ordinary
-      // moderation queue while its existing private installation stays local.
-      if (visibility === "public" && current.visibility === "private") {
-        const releaseIds = [
-          current.activeReleaseId,
-          ...(current.betaAccessMode === "public" ? [current.activeBetaReleaseId] : []),
-        ].filter((id): id is string => typeof id === "string");
-        const releases = await MiniAppReleaseModel.find({ _id: { $in: releaseIds } });
-        for (const release of releases) {
-          if (release.status !== "published" || release.publicStoreApprovedAt) continue;
-          const submittedListing = serializeStoreListing(release.reviewedStoreListing ?? current.storeListing);
-          const submitted = await MiniAppReleaseModel.findOneAndUpdate(
-            { _id: release._id, status: "published", publicStoreApprovedAt: null, updatedAt: release.updatedAt },
-            {
-              $set: {
-                status: "submitted",
-                submittedAt: new Date(),
-                submittedStoreListing: submittedListing,
-                reviewedStoreListing: null,
-                reviewedAt: null,
-                reviewedBy: null,
-                reviewNotes: null,
-              },
-            },
-            { new: true },
-          );
-          if (!submitted) {
-            throw new MiniAppServiceError("invalid_release_state", "release changed during visibility update", 409);
-          }
-          notifyMiniAppSubmissionSlack({
-            releaseId: release._id.toString(),
-            packageName: release.packageName,
-            version: release.version,
-            releaseTrack: release.releaseTrack === "beta" ? "beta" : "stable",
-            appName: current.displayName,
-            description: current.description ?? null,
-            developerEmail: developer.email ?? null,
-            orgId: developer.orgId,
-            manifest: release.manifest as Record<string, unknown> | null,
-          }).catch(() => {});
-        }
-      }
       const app = await MiniAppModel.findOneAndUpdate(
         {
           _id: authorizedApp._id,
@@ -209,6 +166,35 @@ export class MiniAppService {
         { new: true },
       ).lean();
       if (!app) throw new MiniAppServiceError("store_listing_lease_lost", "Store visibility update lost its lease", 409);
+
+      // Publication and public approval are deliberately separate. Keep an
+      // active private release immutable and usable by invited users while the
+      // catalog withholds it from everyone else until an admin approves this
+      // exact build. Notify reviewers only after the visibility write succeeds.
+      if (visibility === "public" && current.visibility === "private") {
+        const releaseIds = [
+          app.activeReleaseId,
+          ...(app.betaAccessMode === "public" ? [app.activeBetaReleaseId] : []),
+        ].filter((id): id is string => typeof id === "string");
+        const releases = await MiniAppReleaseModel.find({
+          _id: { $in: releaseIds },
+          status: "published",
+          publicStoreApprovedAt: null,
+        }).lean();
+        for (const release of releases) {
+          notifyMiniAppSubmissionSlack({
+            releaseId: release._id.toString(),
+            packageName: release.packageName,
+            version: release.version,
+            releaseTrack: release.releaseTrack === "beta" ? "beta" : "stable",
+            appName: app.displayName,
+            description: app.description ?? null,
+            developerEmail: developer.email ?? null,
+            orgId: developer.orgId,
+            manifest: release.manifest as Record<string, unknown> | null,
+          }).catch(() => {});
+        }
+      }
       return { visibility: app.visibility === "private" ? "private" as const : "public" as const };
     });
   }
@@ -394,6 +380,12 @@ export class MiniAppService {
       const isActiveRelease = activeReleaseId === release._id.toString();
       const activePublishedListing =
         release.releaseTrack === "beta" ? app?.publishedBetaStoreListing : app?.publishedStoreListing;
+      const requiresPublicStoreApproval =
+        isActiveRelease &&
+        release.status === "published" &&
+        !release.publicStoreApprovedAt &&
+        app?.visibility !== "private" &&
+        (release.releaseTrack !== "beta" || app?.betaAccessMode === "public");
       const acceptedListing = listingWithCurrentModeration(release.reviewedStoreListing, app?.storeListing);
       const listingSource =
         release.status === "published"
@@ -420,6 +412,7 @@ export class MiniAppService {
         reviewedBy: release.reviewedBy ?? null,
         reviewNotes: release.reviewNotes ?? null,
         isActiveRelease,
+        requiresPublicStoreApproval,
         storeListing: listing,
         storeAssets: listingAssets.map(serializeStoreAsset),
         listingReadiness: storeListingReadiness(

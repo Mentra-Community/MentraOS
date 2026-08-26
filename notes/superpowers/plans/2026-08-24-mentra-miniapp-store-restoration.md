@@ -160,9 +160,9 @@ data; each deployment may publish both stable and beta releases.
       background controller before rendering it in the phone UI.
 - [x] Preserve normal non-SYSTEM install, launch, uninstall, and automatic
       update behavior after access-gated discovery.
-- [x] Prevent `private -> public` from exposing an unreviewed artifact: active
-      private releases re-enter the normal Mentra moderation queue before they
-      can appear publicly.
+- [x] Prevent `private -> public` from exposing an unreviewed artifact: keep the
+      active immutable release available to existing private users while the
+      public catalog withholds it until Mentra approves that exact build.
 - [x] Cover private self-publication, invitation acceptance, revocation,
       catalog filtering, protected artifacts, and public-transition review with
       integration tests.

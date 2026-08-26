@@ -57,44 +57,6 @@ export class MiniAppBetaService {
     const authorizedApp = await this.requireApp(developer, packageName);
     return withStoreListingLease(authorizedApp._id.toString(), async lease => {
       const app = await this.requireApp(developer, packageName);
-      let requeuedSubmission: Parameters<typeof notifyMiniAppSubmissionSlack>[0] | null = null;
-      if (mode === "public" && app.betaAccessMode !== "public" && app.activeBetaReleaseId) {
-        const release = await MiniAppReleaseModel.findOne({
-          _id: app.activeBetaReleaseId,
-          miniAppId: app._id.toString(),
-        });
-        if (release?.status === "published" && !release.publicStoreApprovedAt) {
-          const submitted = await MiniAppReleaseModel.findOneAndUpdate(
-            { _id: release._id, status: "published", publicStoreApprovedAt: null, updatedAt: release.updatedAt },
-            {
-              $set: {
-                status: "submitted",
-                submittedAt: new Date(),
-                submittedStoreListing: release.reviewedStoreListing ?? app.storeListing,
-                reviewedStoreListing: null,
-                reviewedAt: null,
-                reviewedBy: null,
-                reviewNotes: null,
-              },
-            },
-            { new: true },
-          );
-          if (!submitted) {
-            throw new MiniAppBetaServiceError("invalid_release_state", "beta release changed during access update", 409);
-          }
-          requeuedSubmission = {
-            releaseId: submitted._id.toString(),
-            packageName: submitted.packageName,
-            version: submitted.version,
-            releaseTrack: "beta",
-            appName: app.displayName,
-            description: app.description ?? null,
-            developerEmail: developer.email ?? null,
-            orgId: developer.orgId,
-            manifest: submitted.manifest as Record<string, unknown> | null,
-          };
-        }
-      }
       await lease.assertHeld();
       const updated = await MiniAppModel.updateOne(
         {
@@ -109,7 +71,35 @@ export class MiniAppBetaService {
         throw new MiniAppBetaServiceError("store_listing_lease_lost", "beta access update lost its lease", 409);
       }
 
-      if (requeuedSubmission) notifyMiniAppSubmissionSlack(requeuedSubmission).catch(() => {});
+      // A public beta within a private app is still private distribution. For
+      // a public app, retain the active published build but ask Mentra to
+      // approve that exact build before the catalog exposes it publicly.
+      if (
+        mode === "public" &&
+        app.betaAccessMode !== "public" &&
+        app.visibility !== "private" &&
+        app.activeBetaReleaseId
+      ) {
+        const release = await MiniAppReleaseModel.findOne({
+          _id: app.activeBetaReleaseId,
+          miniAppId: app._id.toString(),
+          status: "published",
+          publicStoreApprovedAt: null,
+        }).lean();
+        if (release) {
+          notifyMiniAppSubmissionSlack({
+            releaseId: release._id.toString(),
+            packageName: release.packageName,
+            version: release.version,
+            releaseTrack: "beta",
+            appName: app.displayName,
+            description: app.description ?? null,
+            developerEmail: developer.email ?? null,
+            orgId: developer.orgId,
+            manifest: release.manifest as Record<string, unknown> | null,
+          }).catch(() => {});
+        }
+      }
 
       if (mode === "private") {
         const invitedUserIds = await MiniAppBetaInvitationModel.distinct("mentraUserId", {
