@@ -40,8 +40,10 @@ const LOG_TAG = "LocalMiniappRuntime"
 /** Per-app blob quota: 1 GB. */
 export const BLOB_QUOTA_BYTES = 1024 * 1024 * 1024
 const ROOT_DIR_NAME = "mentra_blobs"
-/** Cache dir root holding short-lived, properly-named copies handed to the OS share sheet (one unique subdir per share). */
+/** Cache dir root holding properly-named copies handed to the OS share sheet. */
 const SHARE_DIR_NAME = "mentra_blob_share"
+/** Keep handed-off files available while recipient apps finish reading them. */
+const SHARE_RETENTION_MS = 60 * 60 * 1000
 const META_KEY_ROOT = "mentraos_blobmeta_"
 /** Cap md5 computation so we don't block the JS thread hashing a huge file. */
 const MD5_MAX_BYTES = 50 * 1024 * 1024
@@ -97,6 +99,7 @@ interface ActiveReader {
 export class BlobStore {
   private readonly uploads = new Map<string, ActiveUpload>() // key: `${pkg} ${key}`
   private readonly readers = new Map<string, ActiveReader>() // key: host handle id
+  private readonly activeShareIds = new Set<string>()
   /** user + package → committed usage bytes, cached; invalidated on commit/delete/clear. */
   private readonly usageCache = new Map<string, number>()
 
@@ -156,6 +159,25 @@ export class BlobStore {
 
   private fileFor(packageName: string, fileName: string): File {
     return new File(this.dirFor(packageName), fileName)
+  }
+
+  /** Remove expired share copies without touching files from an active handoff. */
+  private pruneShareExports(now = Date.now()): void {
+    const root = new Directory(Paths.cache, SHARE_DIR_NAME)
+    if (!root.exists) return
+
+    try {
+      for (const entry of root.list()) {
+        if (!(entry instanceof Directory)) continue
+        if (this.activeShareIds.has(entry.name)) continue
+        const createdAt = Number.parseInt(entry.name.split("-", 1)[0], 36)
+        if (Number.isFinite(createdAt) && now - createdAt >= SHARE_RETENTION_MS) {
+          entry.delete()
+        }
+      }
+    } catch (error) {
+      console.warn(`${LOG_TAG}: blob share pruning failed`, {root: root.uri, error})
+    }
   }
 
   /** Public API shape: stored meta + derived file:// uri. */
@@ -615,37 +637,56 @@ export class BlobStore {
     // applies to base64/data payloads, not file:// URLs), so sharing `file.uri`
     // directly would hand the recipient a machine-named file. Copy to a temp
     // file that carries the real display name + extension, share that, then
-    // clean it up.
+    // retain it briefly for asynchronous recipient reads, then prune it.
     const shareName = shareFileName(meta)
     // Copy into a per-share unique subdir so two concurrent shares that resolve
     // to the same display name can't clobber each other's temp file while
     // Share.open still references it. The file keeps `shareName` as its basename
     // so the OS share sheet shows the right name + extension.
     let tempDir: Directory | null = null
+    let shareId: string | null = null
+    let handoffStarted = false
     try {
-      tempDir = new Directory(Paths.cache, SHARE_DIR_NAME, this.makeId())
+      this.pruneShareExports()
+    } catch (error) {
+      console.warn(`${LOG_TAG}: blob share pruning failed`, error)
+    }
+    try {
+      shareId = this.makeId()
+      this.activeShareIds.add(shareId)
+      tempDir = new Directory(Paths.cache, SHARE_DIR_NAME, shareId)
       tempDir.create({intermediates: true})
       const temp = new File(tempDir, shareName)
       file.copy(temp)
-      await Share.open({
+      const shareOptions = {
         url: temp.uri,
         type: meta.mimeType || OCTET,
         filename: shareName,
-      })
+      } as const
+      // Share.open may resolve after the chooser selection, before the
+      // recipient has finished reading the URI. From this point onward the
+      // handoff is ambiguous, including cancellation/rejection, so retain the
+      // file and let the retention policy remove it later.
+      handoffStarted = true
+      await Share.open(shareOptions)
       this.hooks.sendResult(packageName, requestId, true, {success: true})
     } catch (error: any) {
-      if (error?.message?.includes("User did not share")) {
+      const cancelled = error?.message?.includes("User did not share")
+      console.error(`${LOG_TAG}: blob share error:`, error)
+      if (cancelled) {
         this.hooks.sendResult(packageName, requestId, true, {success: false, cancelled: true})
       } else {
-        console.error(`${LOG_TAG}: blob share error:`, error)
         this.hooks.sendResult(packageName, requestId, true, {success: false})
       }
     } finally {
+      if (shareId) this.activeShareIds.delete(shareId)
       if (tempDir) {
         try {
-          if (tempDir.exists) tempDir.delete()
-        } catch {
-          /* ignore */
+          if (!handoffStarted && tempDir.exists) {
+            tempDir.delete()
+          }
+        } catch (error) {
+          console.warn(`${LOG_TAG}: blob share cleanup failed:`, error)
         }
       }
     }
