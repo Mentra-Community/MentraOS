@@ -105,7 +105,8 @@ data; each deployment may publish both stable and beta releases.
       accounts, revoke access, and explicitly switch a beta to public opt-in.
       Invitation acceptance is bound to the authenticated Mentra user, not a
       caller-provided email or catalog query. Re-inviting a tester is atomic
-      and cannot demote an invitation that was accepted concurrently.
+      and cannot demote an invitation that was accepted concurrently or carry
+      acceptance across a changed Mentra user identity.
 - [x] Make beta-only launches usable: an authorized tester can discover a
       published beta before the first stable release exists, while every
       uninvited user continues to see no private-beta listing or bundle. A

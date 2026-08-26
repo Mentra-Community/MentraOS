@@ -93,6 +93,12 @@ export class MiniAppBetaService {
       $or: [{ email: normalizedEmail }, { mentraUserId }],
     };
     const now = new Date();
+    const preservesAcceptedIdentity = {
+      $and: [
+        { $eq: ["$status", "accepted"] },
+        { $eq: ["$mentraUserId", { $literal: common.mentraUserId }] },
+      ],
+    };
     const invitation = await MiniAppBetaInvitationModel.findOneAndUpdate(
       selector,
       [
@@ -106,8 +112,8 @@ export class MiniAppBetaService {
             mentraUserId: { $literal: common.mentraUserId },
             invitedByUserId: { $literal: common.invitedByUserId },
             expiresAt: common.expiresAt,
-            status: { $cond: [{ $eq: ["$status", "accepted"] }, "accepted", "pending"] },
-            acceptedAt: { $cond: [{ $eq: ["$status", "accepted"] }, "$acceptedAt", null] },
+            status: { $cond: [preservesAcceptedIdentity, "accepted", "pending"] },
+            acceptedAt: { $cond: [preservesAcceptedIdentity, "$acceptedAt", null] },
             createdAt: { $ifNull: ["$createdAt", now] },
             updatedAt: now,
           },
