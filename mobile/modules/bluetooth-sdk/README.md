@@ -358,13 +358,17 @@ Mentra Live firmware owns the OTA flow. The SDK mirrors the MentraOS app command
 - `checkForOtaUpdate()` fetches the configured manifest and resolves with `true` when an ASG APK, MTK, or BES update is available.
 - `startOtaUpdate()` sends `ota_start` with the same configured manifest URL and resolves with the ASG start ack after your app presents the update and the user accepts it.
 
-The default manifest is derived from the SDK version:
-`https://github.com/Mentra-Community/MentraOS/releases/download/bluetooth-sdk-ota/bluetooth-sdk-<sdkVersion>-version.json`.
-Each published SDK version points at a durable ASG client APK and firmware
-manifest that were built for that SDK release. Pre-wall-clock ASG builds that
-ignore `ota_start.ota_version_url` are checked against the URL they advertise,
-or the production default if they do not advertise one, so the app does not
-prompt for an update the glasses cannot install.
+Release CI embeds an immutable manifest URL and checksum into every published
+SDK distribution. The completed coordinated release record correlates the SDK
+package with its exact manifest and OTA bundle. A completed release is available at
+`https://github.com/Mentra-Community/MentraOS/releases/tag/mentra-v<releaseIdentity>`
+and contains `mentra-release-<releaseIdentity>.json`, which records the exact
+package coordinates, asset URLs, sizes, checksums, and build provenance.
+
+Pre-wall-clock ASG builds that ignore `ota_start.ota_version_url` are checked
+against the URL they advertise, or the production default if they do not
+advertise one, so the app does not prompt for an update the glasses cannot
+install.
 
 ```ts
 import BluetoothSdk from '@mentra/bluetooth-sdk'
@@ -386,10 +390,13 @@ if (hasUpdate) {
 }
 ```
 
-Bluetooth SDK releases also publish
-`bluetooth-sdk-<sdkVersion>-ota-bundle.zip` beside the default manifest. The archive contains
-`version.template.json`, every referenced ASG/MTK/BES artifact, `SHA256SUMS`, and a dependency-free
-configuration script. After unpacking it, generate the final manifest for its exact hosting URL:
+Each coordinated prerelease publishes a portable OTA bundle. Stable releases
+promote the exact beta-tested OTA bytes, so always resolve the bundle coordinate
+and URL from `mentra-release-<releaseIdentity>.json` rather than constructing a
+filename. The selected archive contains
+`version.template.json`, every referenced ASG/MTK/BES artifact, `SHA256SUMS`,
+and a dependency-free configuration script. After unpacking it, generate the
+final manifest for its exact hosting URL:
 
 ```sh
 node configure.mjs https://updates.example.internal/mentra-live/version.json
@@ -404,6 +411,10 @@ its legacy or factory-supported path. OTA remains host-driven: the SDK does not 
 automatically.
 
 OTA requires Mentra Live glasses firmware that supports the ASG OTA protocol and network access from the glasses. During install, normal BLE traffic can be interrupted and the glasses may restart; keep the app connected and avoid sending unrelated commands until `ota_status.status` is `complete` or `failed`.
+
+For release selection, bundle verification, analytics opt-out, internal server
+requirements, and disconnected validation, see the
+[air-gapped deployment guide](https://docs.mentraglass.com/mentra-live/air-gapped-deployment).
 
 Mentra Live also rejects `ota_start` before acknowledgement when its known battery level is below 5%, emitting a failed `ota_status` with `error_message: "battery_low"`. Unknown battery state remains fail-open, so apps should keep their own (typically stricter) user-facing battery policy.
 

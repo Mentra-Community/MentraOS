@@ -60,3 +60,17 @@ Use this checklist before shipping an app with the Mentra Bluetooth SDK.
 - Hardware settings test for save-in-gallery mode, camera options, LED color/pattern, Wi-Fi, and hotspot behavior.
 - Button/touch event test.
 - Microphone audio/transcription test if enabled.
+
+## Restricted-Network Deployments
+
+- The app pins one exact completed Mentra release identity rather than a moving package tag.
+- The self-hosted OTA bundle is the exact bundle selected by the completed
+  release record for the pinned SDK release.
+- Mentra SDK analytics are disabled before native SDK startup.
+- The imported OTA ZIP matches the SHA-256 recorded in the completed release record.
+- The final `version.json` and every artifact are reachable from both the phone and Mentra Live.
+- The complete update and SDK feature set are tested with public internet access blocked.
+- Older inventory is factory- or legacy-bootstrapped to ASG build 39 or newer.
+
+See [Air-Gapped Bluetooth SDK Deployment](/mentra-live/air-gapped-deployment)
+for the complete procedure.

@@ -150,7 +150,11 @@
           {
             "group": "Release",
             "icon": "clipboard-check",
-            "pages": ["mentra-live/troubleshooting", "mentra-live/production-checklist"]
+            "pages": [
+              "mentra-live/air-gapped-deployment",
+              "mentra-live/troubleshooting",
+              "mentra-live/production-checklist"
+            ]
           }
         ]
       },
