@@ -902,9 +902,10 @@ extension MentraLive: CBCentralManagerDelegate {
             if !isReconnectTarget && advertisesPairingFlag(advertisementData)
                 && !isPairingDiscoverable(advertisementData)
             {
-                // Nearby but not pairable: RN uses this for the empty-state hint, not the list.
+                // Keep nearby secure units visible with pairing-mode guidance, while RN blocks
+                // the connection until a pairable advertisement arrives.
                 Bridge.log(
-                    "LIVE: Nearby \(name) is secure firmware not in pairing mode — hiding from scan list"
+                    "LIVE: Nearby \(name) is secure firmware not in pairing mode — exposing as non-pairable"
                 )
                 discoveredPeripherals[name] = peripheral
                 cacheAdvPairing(

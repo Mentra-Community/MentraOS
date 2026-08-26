@@ -204,11 +204,14 @@ describe("pairing scan screen", () => {
       ],
     })
 
-    render(<SelectGlassesBluetoothScreen />)
+    const {getByText} = render(<SelectGlassesBluetoothScreen />)
 
     await waitFor(() => {
       expect(engine.pairing.scan).toHaveBeenCalledWith("Mentra Live")
+      expect(getByText("001")).toBeTruthy()
     })
+
+    fireEvent.press(getByText("001"))
 
     await waitFor(() => {
       expect(replace).toHaveBeenCalledWith("/pairing/btclassic", {
@@ -271,7 +274,12 @@ describe("pairing scan screen", () => {
       searchResults: [{id: "a", model: "Mentra Live", name: "MENTRA_LIVE_BLE_001", address: "a"}],
     })
 
-    render(<SelectGlassesBluetoothScreen />)
+    const {getByText} = render(<SelectGlassesBluetoothScreen />)
+
+    await waitFor(() => {
+      expect(getByText("001")).toBeTruthy()
+    })
+    fireEvent.press(getByText("001"))
 
     await waitFor(() => {
       expect(push).toHaveBeenCalledWith("/pairing/loading", {
@@ -313,7 +321,12 @@ describe("pairing scan screen", () => {
       searchResults: [{id: "a", model: "Mentra Live", name: "MENTRA_LIVE_BLE_001", address: "a"}],
     })
 
-    render(<SelectGlassesBluetoothScreen />)
+    const {getByText} = render(<SelectGlassesBluetoothScreen />)
+
+    await waitFor(() => {
+      expect(getByText("001")).toBeTruthy()
+    })
+    fireEvent.press(getByText("001"))
 
     await waitFor(() => {
       expect(push).toHaveBeenCalled()
@@ -344,7 +357,7 @@ describe("pairing scan screen", () => {
       })
     })
   })
-  it("shows retry controls when permission denial blocks Mentra Live auto-connect", async () => {
+  it("shows retry controls when permission denial blocks a selected Mentra Live", async () => {
     jest.useFakeTimers()
     try {
       setPlatformOS("android")
@@ -357,8 +370,12 @@ describe("pairing scan screen", () => {
       const {getByText} = render(<SelectGlassesBluetoothScreen />)
 
       await waitFor(() => {
-        expect(getByText("pairing:liveScanHelpTitle")).toBeTruthy()
-        expect(getByText("pairing:scanAgain")).toBeTruthy()
+        expect(getByText("001")).toBeTruthy()
+      })
+      fireEvent.press(getByText("001"))
+
+      await waitFor(() => {
+        expect(getByText("pairing:tryAgain")).toBeTruthy()
       })
       const {bluetoothSdkMock} = require("@/test-utils/mockBluetoothSdk")
       expect(bluetoothSdkMock.stopScan).toHaveBeenCalled()
@@ -445,7 +462,7 @@ describe("pairing scan screen", () => {
     })
   })
 
-  it("hides Mentra Live units that are not in pairing mode from the scan list", async () => {
+  it("shows every Mentra Live and marks units that are not in pairing mode", async () => {
     setPlatformOS("android")
     useCoreStore.setState({
       searchResults: [
@@ -478,16 +495,16 @@ describe("pairing scan screen", () => {
       ],
     })
 
-    const {getByText, queryByText} = render(<SelectGlassesBluetoothScreen />)
+    const {getByText} = render(<SelectGlassesBluetoothScreen />)
 
     await waitFor(() => {
+      expect(getByText(/IDLE.*pairing:notInPairingModeLabel/)).toBeTruthy()
       expect(getByText(/pairing:pairingCodeLabel:ABCD/)).toBeTruthy()
       expect(getByText(/pairing:pairingCodeLabel:EF01/)).toBeTruthy()
     })
-    expect(queryByText(/IDLE/)).toBeNull()
   })
 
-  it("does not show a Mentra Live scan list for a single pairing-mode unit", async () => {
+  it("shows a single pairing-mode Mentra Live and waits for the user to choose it", async () => {
     setPlatformOS("android")
     useCoreStore.setState({
       searchResults: [
@@ -511,7 +528,16 @@ describe("pairing scan screen", () => {
       ],
     })
 
-    const {queryByText} = render(<SelectGlassesBluetoothScreen />)
+    const {getByText} = render(<SelectGlassesBluetoothScreen />)
+
+    await waitFor(() => {
+      expect(getByText("pairing:liveChooseGlassesTitle")).toBeTruthy()
+      expect(getByText(/IDLE.*pairing:notInPairingModeLabel/)).toBeTruthy()
+      expect(getByText(/pairing:pairingCodeLabel:ABCD/)).toBeTruthy()
+    })
+    expect(push).not.toHaveBeenCalled()
+
+    fireEvent.press(getByText(/pairing:pairingCodeLabel:ABCD/))
 
     await waitFor(() => {
       expect(push).toHaveBeenCalledWith(
@@ -522,11 +548,9 @@ describe("pairing scan screen", () => {
         }),
       )
     })
-    expect(queryByText(/pairing:pairingCodeLabel:ABCD/)).toBeNull()
-    expect(queryByText(/IDLE/)).toBeNull()
   })
 
-  it("auto-connects a single legacy Mentra Live even when pairingMode is false", async () => {
+  it("shows a single legacy Mentra Live and waits for the user to choose it", async () => {
     setPlatformOS("android")
     useCoreStore.setState({
       searchResults: [
@@ -541,7 +565,15 @@ describe("pairing scan screen", () => {
       ],
     })
 
-    render(<SelectGlassesBluetoothScreen />)
+    const {getByText} = render(<SelectGlassesBluetoothScreen />)
+
+    await waitFor(() => {
+      expect(getByText("pairing:liveChooseGlassesTitle")).toBeTruthy()
+      expect(getByText(/pairing:legacyFirmwareLabel/)).toBeTruthy()
+    })
+    expect(push).not.toHaveBeenCalled()
+
+    fireEvent.press(getByText(/pairing:legacyFirmwareLabel/))
 
     await waitFor(() => {
       expect(push).toHaveBeenCalledWith(
@@ -555,7 +587,7 @@ describe("pairing scan screen", () => {
     })
   })
 
-  it("auto-connects legacy Mentra Live beside a nearby secure unit that is not in pairing mode", async () => {
+  it("shows legacy Mentra Live beside an idle secure unit and waits for the user", async () => {
     setPlatformOS("android")
     useCoreStore.setState({
       searchResults: [
@@ -578,7 +610,16 @@ describe("pairing scan screen", () => {
       ],
     })
 
-    render(<SelectGlassesBluetoothScreen />)
+    const {getByText} = render(<SelectGlassesBluetoothScreen />)
+
+    await waitFor(() => {
+      expect(getByText("pairing:liveChooseGlassesTitle")).toBeTruthy()
+      expect(getByText(/IDLE.*pairing:notInPairingModeLabel/)).toBeTruthy()
+      expect(getByText(/pairing:legacyFirmwareLabel/)).toBeTruthy()
+    })
+    expect(push).not.toHaveBeenCalled()
+
+    fireEvent.press(getByText(/pairing:legacyFirmwareLabel/))
 
     await waitFor(() => {
       expect(push).toHaveBeenCalledWith(
@@ -593,7 +634,7 @@ describe("pairing scan screen", () => {
     expect(push).toHaveBeenCalledTimes(1)
   })
 
-  it("shows pairing-mode help but keeps scanning for a pairable Mentra Live", async () => {
+  it("shows an idle secure Mentra Live in the list and keeps scanning", async () => {
     setPlatformOS("android")
     useCoreStore.setState({
       searchResults: [
@@ -608,24 +649,24 @@ describe("pairing scan screen", () => {
       ],
     })
 
-    const {getByText, queryByText} = render(<SelectGlassesBluetoothScreen />)
+    const {getByText} = render(<SelectGlassesBluetoothScreen />)
 
     await waitFor(() => {
-      expect(getByText("pairing:livePairingFoundTitle")).toBeTruthy()
-      expect(getByText("pairing:livePairingFoundSubtitle")).toBeTruthy()
-      expect(getByText("pairing:livePairingModeInfo")).toBeTruthy()
-      expect(getByText("pairing:scanAgain")).toBeTruthy()
+      expect(getByText("pairing:liveChooseGlassesTitle")).toBeTruthy()
+      expect(getByText(/IDLE.*pairing:notInPairingModeLabel/)).toBeTruthy()
     })
     const {bluetoothSdkMock} = require("@/test-utils/mockBluetoothSdk")
     expect(bluetoothSdkMock.stopScan).not.toHaveBeenCalled()
-    expect(queryByText(/IDLE/)).toBeNull()
     expect(push).not.toHaveBeenCalled()
-    ;(engine.pairing.scan as jest.Mock).mockClear()
-    fireEvent.press(getByText("pairing:scanAgain"))
-    await waitFor(() => {
-      expect(bluetoothSdkMock.stopScan).toHaveBeenCalled()
-      expect(engine.pairing.scan).toHaveBeenCalledWith("Mentra Live")
-    })
+
+    fireEvent.press(getByText(/IDLE.*pairing:notInPairingModeLabel/))
+    const showAlert = require("@/utils/AlertUtils").default as jest.Mock
+    expect(showAlert).toHaveBeenCalledWith(
+      "pairing:notInPairingModeAlertTitle",
+      "pairing:notInPairingModeAlertMessage",
+      [{text: "OK"}],
+    )
+    expect(push).not.toHaveBeenCalled()
 
     act(() => {
       useCoreStore.setState({
@@ -650,6 +691,14 @@ describe("pairing scan screen", () => {
         ],
       })
     })
+
+    await waitFor(() => {
+      expect(getByText(/IDLE.*pairing:notInPairingModeLabel/)).toBeTruthy()
+      expect(getByText(/pairing:pairingCodeLabel:A1B2/)).toBeTruthy()
+    })
+    expect(push).not.toHaveBeenCalled()
+
+    fireEvent.press(getByText(/pairing:pairingCodeLabel:A1B2/))
 
     await waitFor(() => {
       expect(push).toHaveBeenCalledWith(

@@ -15,8 +15,9 @@ import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
 import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
 
-// Only ads explicitly identified as legacy use this timeout. Unknown capability fails closed.
-const PAIRING_INFO_FALLBACK_MS = 5_000
+// Pairing info should arrive immediately after Mentra Live finishes booting. Legacy firmware
+// may continue without it; secure or unknown firmware fails closed instead of spinning forever.
+const PAIRING_INFO_WAIT_MS = 5_000
 
 /**
  * Design A (open reclaim): five-tap clears prior owner/bonds on the glasses; the first
@@ -139,18 +140,28 @@ export default function GlassesPairingLoadingScreen() {
     if (!isMentraLive || !glassesFullyBooted || pairingInfoReceived || pairingInfoTimedOut) {
       return
     }
-    // Secure-capable firmware must not use the legacy pairing_info timeout fallback.
-    // Wait for the pairing_info readiness signal (not for ownership transfer).
-    if (securePairingCapable !== false || pairingInfoRef.current?.secure_pairing_capable) {
-      return
-    }
     const timer = setTimeout(() => {
-      setPairingInfoTimedOut(true)
-    }, PAIRING_INFO_FALLBACK_MS)
+      if (securePairingCapable === false && pairingInfoRef.current?.secure_pairing_capable !== true) {
+        setPairingInfoTimedOut(true)
+        return
+      }
+
+      hasNavigatedRef.current = true
+      logPairingTiming("pairing_info_timeout", `securePairingCapable=${String(securePairingCapable)}`)
+      handlePairFailure("errors:pairingCouldNotStart")
+    }, PAIRING_INFO_WAIT_MS)
     return () => {
       clearTimeout(timer)
     }
-  }, [isMentraLive, glassesFullyBooted, pairingInfoReceived, pairingInfoTimedOut, securePairingCapable])
+  }, [
+    isMentraLive,
+    glassesFullyBooted,
+    pairingInfoReceived,
+    pairingInfoTimedOut,
+    securePairingCapable,
+    handlePairFailure,
+    logPairingTiming,
+  ])
 
   useEffect(() => {
     if (!glassesFullyBooted) {
