@@ -71,6 +71,16 @@ on:
         value: ${{ jobs.result.outputs.result_artifact }}
       release_tag:
         value: ${{ jobs.prepare.outputs.release_tag }}
+      android_result:
+        value: ${{ jobs.status.outputs.android_result }}
+      ios_result:
+        value: ${{ jobs.status.outputs.ios_result }}
+      apk_name:
+        value: ${{ jobs.status.outputs.apk_name }}
+      ipa_name:
+        value: ${{ jobs.status.outputs.ipa_name }}
+      asset_base_url:
+        value: ${{ jobs.status.outputs.asset_base_url }}
 
 permissions:
   contents: write
@@ -754,3 +764,32 @@ jobs:
           path: result
           if-no-files-found: error
           retention-days: 90
+
+  status:
+    name: Export mobile build status
+    needs: [prepare, android, ios]
+    if: always()
+    runs-on: ubuntu-latest
+    outputs:
+      android_result: ${{ steps.status.outputs.android_result }}
+      ios_result: ${{ steps.status.outputs.ios_result }}
+      apk_name: ${{ steps.status.outputs.apk_name }}
+      ipa_name: ${{ steps.status.outputs.ipa_name }}
+      asset_base_url: ${{ steps.status.outputs.asset_base_url }}
+    steps:
+      - name: Export platform conclusions and artifact coordinates
+        id: status
+        env:
+          ANDROID_RESULT: ${{ needs.android.result }}
+          IOS_RESULT: ${{ needs.ios.result }}
+          APK_NAME: ${{ needs.prepare.outputs.apk_name }}
+          IPA_NAME: ${{ needs.prepare.outputs.ipa_name }}
+          ASSET_BASE_URL: ${{ needs.prepare.outputs.asset_base_url }}
+        run: |
+          {
+            echo "android_result=$ANDROID_RESULT"
+            echo "ios_result=$IOS_RESULT"
+            echo "apk_name=$APK_NAME"
+            echo "ipa_name=$IPA_NAME"
+            echo "asset_base_url=$ASSET_BASE_URL"
+          } >> "$GITHUB_OUTPUT"

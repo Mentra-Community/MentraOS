@@ -38,6 +38,12 @@ on:
       asg_fingerprint:
         description: Effective ASG build-input fingerprint
         value: ${{ jobs.ota.outputs.asg_fingerprint }}
+      asg_apk_name:
+        description: Selected ASG APK asset name
+        value: ${{ jobs.ota.outputs.asg_apk_name }}
+      asg_apk_url:
+        description: Selected ASG APK public URL
+        value: ${{ jobs.ota.outputs.asg_apk_url }}
 
 permissions:
   contents: write
@@ -65,6 +71,8 @@ jobs:
       manifest_sha256: ${{ steps.result.outputs.manifest_sha256 }}
       result_artifact: ${{ steps.names.outputs.result_artifact }}
       asg_fingerprint: ${{ steps.asg-identity.outputs.fingerprint }}
+      asg_apk_name: ${{ steps.names.outputs.apk_asset }}
+      asg_apk_url: ${{ steps.names.outputs.apk_url }}
     steps:
       - name: Clean persistent-runner build outputs
         run: rm -rf asg_client/app/build asg_client/.gradle asg_client/StreamPackLite coordinated-ota-work "$GRADLE_USER_HOME"
