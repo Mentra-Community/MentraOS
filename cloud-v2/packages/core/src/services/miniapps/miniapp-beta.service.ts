@@ -92,21 +92,29 @@ export class MiniAppBetaService {
       miniAppId: app._id.toString(),
       $or: [{ email: normalizedEmail }, { mentraUserId }],
     };
-    const accepted = await MiniAppBetaInvitationModel.findOneAndUpdate(
-      { ...selector, status: "accepted" },
-      { $set: common },
-      { new: true },
-    );
-    const invitation =
-      accepted ??
-      (await MiniAppBetaInvitationModel.findOneAndUpdate(
-        selector,
+    const now = new Date();
+    const invitation = await MiniAppBetaInvitationModel.findOneAndUpdate(
+      selector,
+      [
         {
-          $set: { ...common, status: "pending", acceptedAt: null },
-          $setOnInsert: { invitationId: `binv_${ulid()}`, miniAppId: app._id.toString() },
+          $set: {
+            invitationId: { $ifNull: ["$invitationId", `binv_${ulid()}`] },
+            miniAppId: app._id.toString(),
+            orgId: { $literal: common.orgId },
+            packageName: { $literal: common.packageName },
+            email: { $literal: common.email },
+            mentraUserId: { $literal: common.mentraUserId },
+            invitedByUserId: { $literal: common.invitedByUserId },
+            expiresAt: common.expiresAt,
+            status: { $cond: [{ $eq: ["$status", "accepted"] }, "accepted", "pending"] },
+            acceptedAt: { $cond: [{ $eq: ["$status", "accepted"] }, "$acceptedAt", null] },
+            createdAt: { $ifNull: ["$createdAt", now] },
+            updatedAt: now,
+          },
         },
-        { new: true, upsert: true },
-      ));
+      ],
+      { new: true, upsert: true },
+    );
     if (!invitation) throw new MiniAppBetaServiceError("invite_failed", "Could not create beta invitation", 500);
     return serializeInvitation(invitation.toObject());
   }

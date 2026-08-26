@@ -873,6 +873,39 @@ describe("miniapp release lifecycle", () => {
     expect(visibleAfterRetry.apps.find(app => app.packageName === packageName)?.release.id).toBe(replacement.id);
   });
 
+  test("a new lease fences a stale publisher before discarding its accepted journal", async () => {
+    const packageName = "com.example.publishfence";
+    const release = await createAcceptedStoreRelease(packageName);
+    const accepted = await MiniAppReleaseModel.findById(release.id).lean();
+    expect(accepted?.status).toBe("accepted");
+    await MiniAppModel.updateOne(
+      { packageName },
+      {
+        $set: {
+          pendingStorePublication: {
+            releaseId: release.id,
+            releaseTrack: "stable",
+            storeListing: accepted?.reviewedStoreListing,
+          },
+        },
+      },
+    );
+
+    const staleUpdatedAt = accepted!.updatedAt;
+    await miniapps.updateStoreListing(developer, packageName, { subtitle: "A later draft" });
+    const staleTransition = await MiniAppReleaseModel.findOneAndUpdate(
+      { _id: release.id, status: "accepted", updatedAt: staleUpdatedAt },
+      { $set: { status: "published", publishedAt: new Date() } },
+      { new: true },
+    );
+    expect(staleTransition).toBeNull();
+    expect((await MiniAppModel.findOne({ packageName }).lean())?.pendingStorePublication).toBeNull();
+
+    const published = await miniapps.publishRelease({ releaseId: release.id, adminId: "admin@mentraglass.com" });
+    expect(published.status).toBe("published");
+    expect((await MiniAppModel.findOne({ packageName }).lean())?.activeReleaseId).toBe(release.id);
+  });
+
   test("stable and beta publish independently and Core selects beta only for the enrolled user", async () => {
     const packageName = "com.example.tracks";
     await miniapps.createMiniApp(developer, {

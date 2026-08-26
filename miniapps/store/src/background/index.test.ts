@@ -18,7 +18,10 @@ interface TestController {
 
 describe("StoreController refresh serialization", () => {
   test("registers host reconciliation as an invocation-scoped action", async () => {
-    const actionHandlers = new Map<string, (params: Record<string, unknown>) => Promise<unknown>>()
+    const actionHandlers = new Map<
+      string,
+      (params: Record<string, unknown>, context: {callerPackageName: string}) => Promise<unknown>
+    >()
     const session = {
       miniapps: {onInstallProgress: () => () => undefined},
       actions: {
@@ -133,7 +136,10 @@ describe("StoreController refresh serialization", () => {
         },
       },
       actions: {
-        handle: (id: string, handler: (params: Record<string, unknown>) => Promise<unknown>) => {
+        handle: (
+          id: string,
+          handler: (params: Record<string, unknown>, context: {callerPackageName: string}) => Promise<unknown>,
+        ) => {
           actionHandlers.set(id, handler)
           return () => undefined
         },
@@ -142,22 +148,41 @@ describe("StoreController refresh serialization", () => {
     } as unknown as MiniappSession
     new StoreController(session).start()
 
-    const search = (await actionHandlers.get("search_miniapps")?.({query: "notes", limit: 3})) as {
+    const mentraAi = {callerPackageName: "com.mentra.ai"}
+    const search = (await actionHandlers.get("search_miniapps")?.({query: "notes", limit: 3}, mentraAi)) as {
       results: Array<Record<string, unknown>>
     }
     expect(search.results[0]).toMatchObject({packageName: catalogApp.packageName, installed: false, compatible: true})
     expect(search.results[0]).not.toHaveProperty("bundleUrl")
 
-    const details = (await actionHandlers.get("get_miniapp_details")?.({
-      packageName: catalogApp.packageName,
-    })) as Record<string, unknown>
+    const details = (await actionHandlers.get("get_miniapp_details")?.(
+      {packageName: catalogApp.packageName},
+      mentraAi,
+    )) as Record<string, unknown>
     expect(details).toMatchObject({packageName: catalogApp.packageName, description: catalogApp.description})
     expect(details).not.toHaveProperty("bundleUrl")
 
-    const result = (await actionHandlers.get("install_miniapp")?.({
-      packageName: catalogApp.packageName,
-      bundleUrl: "https://attacker.invalid/ignored.zip",
-    })) as Record<string, unknown>
+    await expect(
+      actionHandlers.get("install_miniapp")?.(
+        {packageName: catalogApp.packageName},
+        {callerPackageName: "com.mentra.notes"},
+      ),
+    ).rejects.toThrow("not authorized")
+    await expect(
+      actionHandlers.get("update_miniapp")?.(
+        {packageName: catalogApp.packageName},
+        {callerPackageName: "com.mentra.notes"},
+      ),
+    ).rejects.toThrow("not authorized")
+    expect(installDescriptor).toBeUndefined()
+
+    const result = (await actionHandlers.get("install_miniapp")?.(
+      {
+        packageName: catalogApp.packageName,
+        bundleUrl: "https://attacker.invalid/ignored.zip",
+      },
+      mentraAi,
+    )) as Record<string, unknown>
     expect(result).toMatchObject({status: "installed", packageName: catalogApp.packageName, version: "2.0.0"})
     expect(installDescriptor).toMatchObject({
       packageName: catalogApp.packageName,

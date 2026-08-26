@@ -1,10 +1,11 @@
-import {registerMiniapp, type MiniappSession} from "@mentra/miniapp/background"
+import {registerMiniapp, type ActionContext, type MiniappSession} from "@mentra/miniapp/background"
 import {isNewerVersion, loadCompleteCatalog, parseCatalog, trustedCoreOrigin} from "./catalog"
 import {isAutomaticUpdateCandidate, isAutomaticUpdateOwnedRelease} from "./updates"
 import type {StoreChannels} from "../shared/channels"
 import {MENTRA_STORE_PACKAGE_NAME, type InstalledApp, type StoreApp, type StoreSnapshot} from "../shared/types"
 
 const FALLBACK_CORE_URL = process.env.MENTRA_PUBLIC_CORE_URL
+const STORE_MUTATION_ACTION_CALLERS = new Set(["com.mentra.ai"])
 
 export class StoreController {
   private apps: StoreApp[] = []
@@ -49,11 +50,17 @@ export class StoreController {
     this.session.actions.handle("reconcile_updates", () => this.reconcileUpdates())
     this.session.actions.handle("search_miniapps", (params) => this.searchMiniapps(params))
     this.session.actions.handle("get_miniapp_details", (params) => this.getMiniappDetails(params))
-    this.session.actions.handle("install_miniapp", (params) =>
-      this.enqueueMutation(() => this.installMiniappAction(params, false)),
+    this.session.actions.handle("install_miniapp", (params, context) =>
+      this.enqueueMutation(() => {
+        this.requireMutationActionCaller(context)
+        return this.installMiniappAction(params, false)
+      }),
     )
-    this.session.actions.handle("update_miniapp", (params) =>
-      this.enqueueMutation(() => this.installMiniappAction(params, true)),
+    this.session.actions.handle("update_miniapp", (params, context) =>
+      this.enqueueMutation(() => {
+        this.requireMutationActionCaller(context)
+        return this.installMiniappAction(params, true)
+      }),
     )
     this.ui.handle("store:refresh", ({query}: {query?: string}) => this.refresh(query))
     this.ui.handle("store:install", ({packageName, query}: {packageName: string; query?: string}) =>
@@ -220,6 +227,12 @@ export class StoreController {
       version: installed.version,
       name: app.name,
       track: app.release.track,
+    }
+  }
+
+  private requireMutationActionCaller(context: ActionContext): void {
+    if (!STORE_MUTATION_ACTION_CALLERS.has(context.callerPackageName)) {
+      throw new Error("This SYSTEM miniapp is not authorized to install or update miniapps")
     }
   }
 

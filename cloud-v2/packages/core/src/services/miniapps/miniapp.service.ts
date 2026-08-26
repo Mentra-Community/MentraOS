@@ -1185,35 +1185,54 @@ async function withStoreListingLease<T>(
 }
 
 async function reconcilePendingStorePublication(miniAppId: string, lease: StoreListingLease): Promise<void> {
-  const app = await MiniAppModel.findById(miniAppId).lean();
-  const pending = app?.pendingStorePublication;
-  if (!app || !pending) return;
-  const release = await MiniAppReleaseModel.findById(pending.releaseId).lean();
-  if (release?.status === "published") {
-    const promoted = await promotePendingStorePublication({
-      miniAppId,
-      lease,
-      releaseId: pending.releaseId,
-      releaseTrack: pending.releaseTrack === "beta" ? "beta" : "stable",
-      storeListing: serializeStoreListing(pending.storeListing),
-    });
-    if (!promoted) {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const app = await MiniAppModel.findById(miniAppId).lean();
+    const pending = app?.pendingStorePublication;
+    if (!app || !pending) return;
+    const release = await MiniAppReleaseModel.findById(pending.releaseId).lean();
+    if (release?.status === "published") {
+      const promoted = await promotePendingStorePublication({
+        miniAppId,
+        lease,
+        releaseId: pending.releaseId,
+        releaseTrack: pending.releaseTrack === "beta" ? "beta" : "stable",
+        storeListing: serializeStoreListing(pending.storeListing),
+      });
+      if (!promoted) {
+        throw new MiniAppServiceError("store_listing_lease_lost", "Store listing operation lease was lost", 409);
+      }
+      return;
+    }
+
+    if (release?.status === "accepted") {
+      // Invalidate the optimistic CAS held by a publisher whose lease expired
+      // after journaling but before changing release status. The new lease may
+      // discard the journal only after that stale transition can no longer win.
+      const previousUpdatedAt = release.updatedAt;
+      const fencedAt = new Date(Math.max(Date.now(), previousUpdatedAt.getTime() + 1));
+      const fenced = await MiniAppReleaseModel.updateOne(
+        { _id: release._id, status: "accepted", updatedAt: previousUpdatedAt },
+        { $set: { updatedAt: fencedAt } },
+        { timestamps: false },
+      );
+      if (fenced.matchedCount !== 1) continue;
+    }
+
+    const discarded = await MiniAppModel.updateOne(
+      {
+        _id: miniAppId,
+        "storeListingOperationLease.token": lease.token,
+        $expr: { $gt: ["$storeListingOperationLease.expiresAt", "$$NOW"] },
+        "pendingStorePublication.releaseId": pending.releaseId,
+      },
+      { $set: { pendingStorePublication: null } },
+    );
+    if (discarded.matchedCount !== 1) {
       throw new MiniAppServiceError("store_listing_lease_lost", "Store listing operation lease was lost", 409);
     }
     return;
   }
-  const discarded = await MiniAppModel.updateOne(
-    {
-      _id: miniAppId,
-      "storeListingOperationLease.token": lease.token,
-      $expr: { $gt: ["$storeListingOperationLease.expiresAt", "$$NOW"] },
-      "pendingStorePublication.releaseId": pending.releaseId,
-    },
-    { $set: { pendingStorePublication: null } },
-  );
-  if (discarded.matchedCount !== 1) {
-    throw new MiniAppServiceError("store_listing_lease_lost", "Store listing operation lease was lost", 409);
-  }
+  throw new MiniAppServiceError("invalid_release_state", "release state changed during publication recovery", 409);
 }
 
 async function promotePendingStorePublication(input: {
