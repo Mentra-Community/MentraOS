@@ -14,7 +14,6 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {translate} from "@/i18n"
 import showAlert from "@/utils/AlertUtils"
-import {schedulePairingKickoff} from "@/utils/PairingUtils"
 import {PermissionFeatures, requestFeaturePermissions} from "@/utils/PermissionsUtils"
 import {getGlassesOpenImage} from "@/utils/getGlassesImage"
 import GlassView from "@/components/ui/GlassView"
@@ -95,8 +94,11 @@ export default function SelectGlassesBluetoothScreen() {
   }
 
   const startPairing = async (device: Device) => {
-    schedulePairingKickoff(device, "controller")
-    replace("/pairing/loading", {deviceModel: device.model, deviceName: device.name})
+    replace("/pairing/loading", {
+      device: JSON.stringify(device),
+      deviceModel: device.model,
+      deviceName: device.name,
+    })
   }
 
   const filterDeviceName = (deviceName: string) => {

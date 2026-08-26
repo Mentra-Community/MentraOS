@@ -17,7 +17,6 @@ import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {translate} from "@/i18n"
 import {useNavigationStore} from "@/stores/navigation"
 import showAlert from "@/utils/AlertUtils"
-import {schedulePairingKickoff} from "@/utils/PairingUtils"
 import {PermissionFeatures, requestFeaturePermissions} from "@/utils/PermissionsUtils"
 import {AR99_MODEL_OPTIONS, getAr99DisplayName, getAr99ImageSource, getGlassesOpenImage} from "@/utils/getGlassesImage"
 
@@ -237,8 +236,8 @@ export default function SelectGlassesBluetoothScreen() {
       bluetoothClassicConnected ||
       !deviceTypesWithBtClassic.includes(device.model as DeviceTypes)
     ) {
-      schedulePairingKickoff(device, "glasses")
       push("/pairing/loading", {
+        device: JSON.stringify(device),
         deviceModel: device.model,
         deviceName: device.name,
         ar99ProjectName: resolvedProjectName,
@@ -250,6 +249,7 @@ export default function SelectGlassesBluetoothScreen() {
 
     replace("/pairing/btclassic", {device: JSON.stringify(device)})
     pushUnder("/pairing/loading", {
+      device: JSON.stringify(device),
       deviceModel: device.model,
       deviceName: device.name,
       ar99ProjectName: resolvedProjectName,
