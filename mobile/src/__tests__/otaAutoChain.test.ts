@@ -51,24 +51,27 @@ it("advances through distinct update offers after the user approves the first pa
   const first = otaAutoChainFingerprint(result())
   const second = otaAutoChainFingerprint(result({buildNumber: "37", updates: ["mtk", "bes"]}))
 
-  beginOtaAutoChain(first, false)
+  beginOtaAutoChain(first, false, {fromVersion: "3.0.0", toVersion: "3.1.0-dev.1"})
 
-  expect(tryAdvanceOtaAutoChain(second, false)).toEqual({advance: true, passCount: 2})
+  expect(tryAdvanceOtaAutoChain(second, false, "3.1.0-dev.2")).toEqual({advance: true, passCount: 2})
   expect(isOtaAutoChainActive()).toBe(true)
 })
 
 it("stops instead of reinstalling the same offer twice", () => {
   const fingerprint = otaAutoChainFingerprint(result())
-  beginOtaAutoChain(fingerprint, false)
+  beginOtaAutoChain(fingerprint, false, {fromVersion: "3.0.0", toVersion: "3.1.0-dev.1"})
 
-  expect(tryAdvanceOtaAutoChain(fingerprint, false)).toEqual({advance: false, reason: "duplicate"})
+  expect(tryAdvanceOtaAutoChain(fingerprint, false, "3.1.0-dev.1")).toEqual({advance: false, reason: "duplicate"})
   expect(isOtaAutoChainActive()).toBe(false)
 })
 
 it("requires separate approval when an upgrade chain encounters a downgrade", () => {
-  beginOtaAutoChain(otaAutoChainFingerprint(result()), false)
+  beginOtaAutoChain(otaAutoChainFingerprint(result()), false, {
+    fromVersion: "3.0.0",
+    toVersion: "3.1.0-dev.1",
+  })
 
-  expect(tryAdvanceOtaAutoChain("downgrade", true)).toEqual({
+  expect(tryAdvanceOtaAutoChain("downgrade", true, "3.0.0")).toEqual({
     advance: false,
     reason: "downgrade_not_approved",
   })
@@ -76,23 +79,26 @@ it("requires separate approval when an upgrade chain encounters a downgrade", ()
 })
 
 it("allows subsequent downgrade passes when the user approved a downgrade initially", () => {
-  beginOtaAutoChain("firmware-first-downgrade", true)
+  beginOtaAutoChain("firmware-first-downgrade", true, {fromVersion: "3.1.0", toVersion: "3.0.1"})
 
-  expect(tryAdvanceOtaAutoChain("downgrade-handoff", true)).toEqual({advance: true, passCount: 2})
+  expect(tryAdvanceOtaAutoChain("downgrade-handoff", true, "3.0.0")).toEqual({advance: true, passCount: 2})
 })
 
 it("bounds the number of automatic passes", () => {
-  beginOtaAutoChain("pass-1", false)
+  beginOtaAutoChain("pass-1", false, {fromVersion: "3.0.0", toVersion: "3.1.0-dev.1"})
   for (let pass = 2; pass <= MAX_OTA_AUTO_CHAIN_PASSES; pass += 1) {
-    expect(tryAdvanceOtaAutoChain(`pass-${pass}`, false).advance).toBe(true)
+    expect(tryAdvanceOtaAutoChain(`pass-${pass}`, false, `3.1.0-dev.${pass}`).advance).toBe(true)
   }
 
-  expect(tryAdvanceOtaAutoChain("one-too-many", false)).toEqual({advance: false, reason: "max_passes"})
+  expect(tryAdvanceOtaAutoChain("one-too-many", false, "3.1.0-dev.9")).toEqual({
+    advance: false,
+    reason: "max_passes",
+  })
   expect(isOtaAutoChainActive()).toBe(false)
 })
 
 it("bounds a reboot reconnect wait without extending it on subsequent renders", () => {
-  beginOtaAutoChain("pass-1", false)
+  beginOtaAutoChain("pass-1", false, {fromVersion: "3.0.0", toVersion: "3.1.0-dev.1"})
 
   expect(otaAutoChainReconnectWaitRemaining(1_000)).toBe(OTA_AUTO_CHAIN_RECONNECT_TIMEOUT_MS)
   expect(otaAutoChainReconnectWaitRemaining(2_000)).toBe(OTA_AUTO_CHAIN_RECONNECT_TIMEOUT_MS - 1_000)
@@ -100,7 +106,7 @@ it("bounds a reboot reconnect wait without extending it on subsequent renders", 
 })
 
 it("starts a fresh bounded wait after a successful reconnect", () => {
-  beginOtaAutoChain("pass-1", false)
+  beginOtaAutoChain("pass-1", false, {fromVersion: "3.0.0", toVersion: "3.1.0-dev.1"})
   expect(otaAutoChainReconnectWaitRemaining(1_000)).toBe(OTA_AUTO_CHAIN_RECONNECT_TIMEOUT_MS)
 
   clearOtaAutoChainReconnectWait()
