@@ -82,6 +82,21 @@ describe("parseCanonicalBundleManifest", () => {
     }
   });
 
+  test("rejects hardware requirements outside the public manifest schema", async () => {
+    for (const hardwareRequirements of [
+      { type: "CAMERA", level: "REQUIRED" },
+      ["CAMERA"],
+      [{ type: "EXIST", level: "REQUIRED" }],
+      [{ type: "CAMERA", level: "MAYBE" }],
+      [{ type: "CAMERA", level: "REQUIRED", description: false }],
+    ]) {
+      const invalid = { ...manifest, hardwareRequirements };
+      await expect(parseCanonicalBundleManifest(await bundle(invalid), invalid)).rejects.toMatchObject({
+        code: "invalid_manifest_hardware_requirements",
+      } satisfies Partial<BundleManifestError>);
+    }
+  });
+
   test("rejects duplicate raw ZIP records", async () => {
     const archive = await bundle(manifest, zip => {
       zip.file("one.txt", "one");

@@ -20,6 +20,17 @@ const AUTHOR_DECLARABLE_PERMISSION_TYPES = new Set([
   "READ_NOTIFICATIONS",
   "POST_NOTIFICATIONS",
 ]);
+const AUTHOR_DECLARABLE_HARDWARE_TYPES = new Set([
+  "CAMERA",
+  "DISPLAY",
+  "MICROPHONE",
+  "SPEAKER",
+  "IMU",
+  "BUTTON",
+  "LIGHT",
+  "WIFI",
+]);
+const HARDWARE_REQUIREMENT_LEVELS = new Set(["REQUIRED", "OPTIONAL"]);
 
 export interface CanonicalBundleManifest {
   manifest: Record<string, unknown>;
@@ -104,6 +115,7 @@ export async function parseCanonicalBundleManifest(
   }
   requiredString(manifest, "name");
   validateManifestPermissions(manifest.permissions);
+  validateManifestHardwareRequirements(manifest.hardwareRequirements);
   validateManifestEntries(entries, manifest);
 
   if (submittedManifest && canonicalJson(submittedManifest) !== canonicalJson(manifest)) {
@@ -119,6 +131,42 @@ export async function parseCanonicalBundleManifest(
     packageName,
     version,
   };
+}
+
+function validateManifestHardwareRequirements(value: unknown): void {
+  if (value === undefined) return;
+  if (!Array.isArray(value)) {
+    throw new BundleManifestError(
+      "invalid_manifest_hardware_requirements",
+      "miniapp.json hardwareRequirements must be an array",
+    );
+  }
+  value.forEach((candidate, index) => {
+    if (!isRecord(candidate)) {
+      throw new BundleManifestError(
+        "invalid_manifest_hardware_requirements",
+        `miniapp.json hardwareRequirements[${index}] must be an object`,
+      );
+    }
+    if (typeof candidate.type !== "string" || !AUTHOR_DECLARABLE_HARDWARE_TYPES.has(candidate.type)) {
+      throw new BundleManifestError(
+        "invalid_manifest_hardware_requirements",
+        `miniapp.json hardwareRequirements[${index}].type is invalid`,
+      );
+    }
+    if (typeof candidate.level !== "string" || !HARDWARE_REQUIREMENT_LEVELS.has(candidate.level)) {
+      throw new BundleManifestError(
+        "invalid_manifest_hardware_requirements",
+        `miniapp.json hardwareRequirements[${index}].level is invalid`,
+      );
+    }
+    if (candidate.description !== undefined && typeof candidate.description !== "string") {
+      throw new BundleManifestError(
+        "invalid_manifest_hardware_requirements",
+        `miniapp.json hardwareRequirements[${index}].description must be a string`,
+      );
+    }
+  });
 }
 
 function validateManifestPermissions(value: unknown): void {
