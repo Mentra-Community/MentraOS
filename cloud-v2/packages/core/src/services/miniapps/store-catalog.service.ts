@@ -27,8 +27,9 @@ export class StoreCatalogService {
     const page = Math.max(input.page ?? 1, 1);
     const publishedReleaseIds = await this.publishedReleaseIds();
     const betaAuthorizedAppIds = await this.betaAuthorizedAppIds(input);
-    const betaEnrollmentAppIds = await this.betaEnrollmentAppIds(input, undefined, betaAuthorizedAppIds);
-    const betaAppIds = await this.betaSelectedAppIds(input, publishedReleaseIds, betaAuthorizedAppIds);
+    const betaInstallAuthorizedAppIds = await this.betaAuthorizedAppIds(input, undefined, true);
+    const betaEnrollmentAppIds = await this.betaEnrollmentAppIds(input, undefined, betaInstallAuthorizedAppIds);
+    const betaAppIds = await this.betaSelectedAppIds(input, publishedReleaseIds, betaInstallAuthorizedAppIds);
     const betaOfferAppIds = await this.betaOfferAppIds(publishedReleaseIds, betaAuthorizedAppIds, betaAppIds);
     const betaDisplayAppIds = new Set([...betaAppIds, ...betaOfferAppIds]);
     const filter = this.catalogFilter(input, publishedReleaseIds, betaDisplayAppIds);
@@ -67,11 +68,21 @@ export class StoreCatalogService {
     const app = await MiniAppModel.findOne({ packageName, status: "active" }).lean();
     if (!app) throw new StoreCatalogError("not_found", "miniapp not found", 404);
     const betaAuthorizedAppIds = await this.betaAuthorizedAppIds(identity ?? {}, [app._id.toString()]);
+    const betaInstallAuthorizedAppIds = await this.betaAuthorizedAppIds(
+      identity ?? {},
+      [app._id.toString()],
+      true,
+    );
     const betaEnrollmentAppIds = identity
-      ? await this.betaEnrollmentAppIds(identity, [app._id.toString()], betaAuthorizedAppIds)
+      ? await this.betaEnrollmentAppIds(identity, [app._id.toString()], betaInstallAuthorizedAppIds)
       : new Set<string>();
     const betaAppIds = identity
-      ? await this.betaSelectedAppIds(identity, publishedReleaseIds, betaAuthorizedAppIds, [app._id.toString()])
+      ? await this.betaSelectedAppIds(
+          identity,
+          publishedReleaseIds,
+          betaInstallAuthorizedAppIds,
+          [app._id.toString()],
+        )
       : new Set<string>();
     const betaOfferAppIds = await this.betaOfferAppIds(publishedReleaseIds, betaAuthorizedAppIds, betaAppIds, [
       app._id.toString(),
@@ -137,7 +148,7 @@ export class StoreCatalogService {
         },
         { upsert: true },
       );
-      const stillAuthorized = await this.betaAuthorizedAppIds(identity, [app._id.toString()]);
+      const stillAuthorized = await this.betaAuthorizedAppIds(identity, [app._id.toString()], true);
       if (!stillAuthorized.has(app._id.toString())) {
         await MiniAppTrackEnrollmentModel.deleteOne({
           mentraUserId: identity.mentraUserId,
@@ -194,7 +205,7 @@ export class StoreCatalogService {
       if (
         app.activeBetaReleaseId !== release._id.toString() ||
         !app.publishedBetaStoreListing ||
-        !(await this.betaAuthorizedAppIds(identity, [appId])).has(appId) ||
+        !(await this.betaAuthorizedAppIds(identity, [appId], true)).has(appId) ||
         !(await this.betaEnrollmentAppIds(identity, [appId])).has(appId)
       ) {
         throw new StoreCatalogError("not_found", "bundle not found", 404);
@@ -282,6 +293,7 @@ export class StoreCatalogService {
   private async betaAuthorizedAppIds(
     identity: Pick<StoreCatalogQuery, "mentraUserId" | "tenantId">,
     restrictToAppIds?: string[],
+    acceptedOnly = false,
   ): Promise<Set<string>> {
     const appFilter: Record<string, unknown> = { status: "active", betaAccessMode: "public" };
     if (restrictToAppIds) appFilter._id = { $in: restrictToAppIds };
@@ -290,10 +302,14 @@ export class StoreCatalogService {
 
     const invitationFilter: Record<string, unknown> = {
       mentraUserId: identity.mentraUserId,
-      $or: [
-        { status: "accepted" },
-        { status: "pending", expiresAt: { $gt: new Date() } },
-      ],
+      ...(acceptedOnly
+        ? { status: "accepted" }
+        : {
+            $or: [
+              { status: "accepted" },
+              { status: "pending", expiresAt: { $gt: new Date() } },
+            ],
+          }),
     };
     if (restrictToAppIds) invitationFilter.miniAppId = { $in: restrictToAppIds };
     for (const id of await MiniAppBetaInvitationModel.distinct("miniAppId", invitationFilter)) {

@@ -118,7 +118,8 @@ data; each deployment may publish both stable and beta releases.
       working immediately after revocation, protected responses are never
       shared-cacheable, and historical/archived releases cannot be fetched by
       retaining an old asset URL. Public and private beta downloads both require
-      a current enrollment in addition to beta access.
+      a current enrollment in addition to beta access, and private-beta
+      activation requires an accepted invitation rather than a pending offer.
 - [x] Show beta availability/current selection in the Store detail screen and
       refresh the catalog after changing tracks.
 - [x] Carry the selected release track through Store install descriptors and

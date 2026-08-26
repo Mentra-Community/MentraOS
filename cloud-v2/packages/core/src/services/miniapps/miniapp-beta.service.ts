@@ -97,18 +97,18 @@ export class MiniAppBetaService {
       const emailMatch = matches.find(invitation => invitation.email === normalizedEmail);
       const identityMatch = matches.find(invitation => invitation.mentraUserId === mentraUserId);
       const previousMentraUserId = emailMatch?.mentraUserId;
-      if (previousMentraUserId && previousMentraUserId !== mentraUserId && app.betaAccessMode !== "public") {
-        await MiniAppTrackEnrollmentModel.deleteOne({
-          miniAppId: app._id.toString(),
-          mentraUserId: previousMentraUserId,
-        });
-      }
       if (emailMatch && identityMatch && emailMatch._id.toString() !== identityMatch._id.toString()) {
-        await MiniAppBetaInvitationModel.deleteOne({
+        const removed = await MiniAppBetaInvitationModel.deleteOne({
           _id: emailMatch._id,
           email: normalizedEmail,
           mentraUserId: emailMatch.mentraUserId,
         });
+        if (removed.deletedCount === 1 && app.betaAccessMode !== "public") {
+          await MiniAppTrackEnrollmentModel.deleteOne({
+            miniAppId: app._id.toString(),
+            mentraUserId: emailMatch.mentraUserId,
+          });
+        }
         continue;
       }
 
@@ -143,6 +143,12 @@ export class MiniAppBetaService {
           { new: true, upsert: true },
         );
         if (!invitation) throw new MiniAppBetaServiceError("invite_failed", "Could not create beta invitation", 500);
+        if (previousMentraUserId && previousMentraUserId !== mentraUserId && app.betaAccessMode !== "public") {
+          await MiniAppTrackEnrollmentModel.deleteOne({
+            miniAppId: app._id.toString(),
+            mentraUserId: previousMentraUserId,
+          });
+        }
         return serializeInvitation(invitation.toObject());
       } catch (error) {
         if (!isDuplicateKeyError(error)) throw error;

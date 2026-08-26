@@ -1094,6 +1094,23 @@ describe("miniapp release lifecycle", () => {
     ).toBeNull();
     await expect(catalog.getBundleAsset(betaBundleAssetId, storeUser)).rejects.toMatchObject({ status: 404 });
 
+    const appAfterRebind = await MiniAppModel.findOne({ packageName }).lean();
+    await MiniAppTrackEnrollmentModel.create({
+      mentraUserId: storeUser.mentraUserId,
+      tenantId: storeUser.tenantId,
+      miniAppId: appAfterRebind!._id.toString(),
+      packageName,
+      releaseTrack: "beta",
+    });
+    const staleEnrollmentBetas = new RemappedMiniAppBetaService(async () => storeUser.mentraUserId);
+    await staleEnrollmentBetas.invite(developer, packageName, "reinvited@example.com");
+    expect(await catalog.get(packageName, "https://core.example.test", storeUser)).toMatchObject({
+      selectedTrack: "stable",
+      preferredTrack: "stable",
+      betaAccess: "invited",
+    });
+    await expect(catalog.getBundleAsset(betaBundleAssetId, storeUser)).rejects.toMatchObject({ status: 404 });
+
     invitation = await miniappBetas.invite(developer, packageName, "tester@example.com");
     expect(invitation.state).toBe("pending");
     await catalog.setReleaseTrack(packageName, "beta", storeUser, "https://core.example.test");
