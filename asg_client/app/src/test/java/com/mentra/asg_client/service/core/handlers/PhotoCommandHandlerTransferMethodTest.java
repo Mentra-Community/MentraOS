@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -149,5 +150,17 @@ public class PhotoCommandHandlerTransferMethodTest {
         assertThat(handler.handleCommand("take_photo", data)).isFalse();
         verify(captureService)
                 .sendPhotoErrorResponse(eq("req-1"), eq("INVALID_TRANSFER_METHOD"), anyString());
+    }
+
+    @Test
+    public void takePhoto_neverConsultsCaptureInFlightFlag() throws Exception {
+        when(captureService.isCaptureInFlight()).thenReturn(true);
+        when(captureService.isPhotoJobInFlight()).thenReturn(false);
+        when(captureService.isRecordingVideo()).thenReturn(false);
+        when(captureService.isBleTransferInProgress()).thenReturn(false);
+
+        assertThat(handler.handleCommand("take_photo", takePhotoData())).isTrue();
+
+        verify(captureService, never()).isCaptureInFlight();
     }
 }
