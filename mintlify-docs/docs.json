@@ -3,7 +3,7 @@
   "theme": "aspen",
   "name": "MentraOS",
   "banner": {
-    "content": "**Beta.** The Mentra Miniapp SDK and these docs are subject to change. Enable it at **Settings → Debug Settings → Miniapp Developer Settings** in the Mentra App. Send feedback with an in-app bug report, on [Discord](https://discord.gg/5ukNvkEAqT), or by [email](mailto:help@mentra.glass).",
+    "content": "**Beta.** The Mentra Miniapp SDK and these docs are subject to change. Open **Settings → Miniapp Developer Settings** in the Mentra App to access the developer tools. Send feedback with an in-app bug report, on [Discord](https://discord.gg/5ukNvkEAqT), or by [email](mailto:help@mentra.glass).",
     "dismissible": false
   },
   "colors": {
