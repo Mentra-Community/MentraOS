@@ -217,6 +217,41 @@ describe("pairing loading screen", () => {
     })
   })
 
+  it("ignores readiness from previously connected glasses until the selected attempt reconnects", async () => {
+    ;(useRoute as jest.Mock).mockReturnValue({
+      params: {deviceModel: "Mentra Live", deviceName: "MENTRA_LIVE_BLE_NEW", securePairingCapable: false},
+    })
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+
+    render(<GlassesPairingLoadingScreen />)
+
+    // The scan screen does not start the selected connection until two seconds
+    // after navigation. The previous glasses' ready state must not win first.
+    act(() => {
+      jest.advanceTimersByTime(2_000)
+    })
+    expect(replace).not.toHaveBeenCalledWith("/pairing/success", expect.anything())
+    expect(engine.pairing.waitForReady).not.toHaveBeenCalled()
+
+    // A real attempt drops the old link, then reports ready for the selected
+    // glasses. Existing customer firmware can succeed immediately from that
+    // attempt-scoped readiness without waiting for pairing_info.
+    act(() => {
+      useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+      useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+    })
+    await waitFor(() => {
+      expect(engine.pairing.waitForReady).toHaveBeenCalled()
+    })
+    act(() => {
+      jest.advanceTimersByTime(1_000)
+    })
+
+    await waitFor(() => {
+      expect(replace).toHaveBeenCalledWith("/pairing/success", {deviceModel: "Mentra Live"})
+    })
+  })
+
   it("fails closed when recovered target capability is unknown instead of loading forever", async () => {
     render(<GlassesPairingLoadingScreen />)
 
