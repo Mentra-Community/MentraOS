@@ -101,6 +101,16 @@ public class AsgConstants {
      */
     public static final long CAPTURE_PHASE_SAFETY_TIMEOUT_MS = 10_000L;
 
+    /**
+     * Occupancy lease TTL advertised to BES on {@code mh_phobsy} {@code b=1}. BES is timer-free and
+     * expires the lease locally; ASG renews at {@link #PHOTO_PROMPT_LEASE_RENEW_MS} so two dropped
+     * renewals cannot expire a long recording.
+     */
+    public static final long PHOTO_PROMPT_BUSY_TTL_MS = 60_000L;
+
+    /** Re-sample and republish interval while the photo-prompt occupancy predicate is true. */
+    public static final long PHOTO_PROMPT_LEASE_RENEW_MS = 20_000L;
+
     /** Safety lease for a miniapp-owned transient FOV override. */
     public static final long CAMERA_FOV_OVERRIDE_DEFAULT_TTL_MS = 300_000L;
 
