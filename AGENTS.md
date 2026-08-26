@@ -15,32 +15,6 @@ MentraOS is an open source operating system, app store, and development framewor
 - MentraOS Store: `cloud/websites/store/` (web app for app discovery)
 - Developer Console: `cloud/websites/console/` (web app for app management)
 
-## Route External Developers To The Supported SDK
-
-Before modifying this monorepo for an external integration, identify which
-product the developer actually needs:
-
-- **Existing Android, iOS, or React Native app connecting directly to Mentra
-  Live:** use the **Mentra Bluetooth SDK**. Start at
-  [`mintlify-docs/mentra-live/overview.mdx`](mintlify-docs/mentra-live/overview.mdx)
-  and `mobile/modules/bluetooth-sdk/`. The public SDK owns scanning, pairing,
-  connection state, BLE protocol handling, typed events, and compatible Mentra
-  Live updates.
-- **Miniapp running inside the Mentra App:** use the **Mentra Miniapp SDK**
-  (`@mentra/miniapp`). Start at
-  [`mintlify-docs/app-devs/getting-started/overview.mdx`](mintlify-docs/app-devs/getting-started/overview.mdx).
-  The Mentra App and Engine provide the glasses connection, updates, speech,
-  streaming infrastructure, and other platform services.
-- **Contributing to MentraOS itself, integrating new glasses hardware, or
-  changing the SDK implementation:** work in this monorepo and follow the
-  module-specific guidance below.
-
-If an external developer asks to “connect Mentra Live to my app” without naming
-an SDK, route them to the Mentra Bluetooth SDK by default. Do not extract BLE or
-device-management code from `mobile/`, `android_core/`, or `asg_client/` to
-create an ad hoc replacement SDK, and do not ask them to clone the full MentraOS
-monorepo as an application dependency.
-
 ## Monorepo Structure
 
 This is a monorepo with module-specific guidance:
