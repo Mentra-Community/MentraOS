@@ -1068,7 +1068,7 @@ class OtaInstallCoordinator {
     if (this.otaStartOwnership?.outcome === "pending") {
       void this.sendOtaStartWithWatchdogs()
     }
-    void BluetoothSdk.queryOtaStatus()
+    void BluetoothSdk.queryOtaStatus().catch(() => {})
     this.armQueryReplyFallback("reconnect")
     return true
   }
@@ -1128,7 +1128,7 @@ class OtaInstallCoordinator {
       void this.sendOtaStartWithWatchdogs()
     } else {
       console.log("[OTA_PROGRESS] initial mount, session exists, sending ota_query_status")
-      void BluetoothSdk.queryOtaStatus()
+      void BluetoothSdk.queryOtaStatus().catch(() => {})
       this.armQueryReplyFallback("initial-mount")
     }
   }
@@ -1157,7 +1157,7 @@ class OtaInstallCoordinator {
     this.clearProgressTimeout()
     this.onFirstActivity()
     this.onFirstNonZeroProgress()
-    void BluetoothSdk.queryOtaStatus()
+    void BluetoothSdk.queryOtaStatus().catch(() => {})
     useGlassesStore.getState().setMtkUpdatedThisSession(true)
   }
 

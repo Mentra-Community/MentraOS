@@ -147,6 +147,26 @@ describe("OtaUpdateCheckService", () => {
     expect(result.checkFailureReason).toBe("network")
   })
 
+  it("keeps a handled network check failure out of the error console", async () => {
+    const consoleError = jest.spyOn(console, "error").mockImplementation(() => {})
+    const consoleWarn = jest.spyOn(console, "warn").mockImplementation(() => {})
+    global.fetch = jest.fn(() => Promise.reject(new Error("network switching"))) as unknown as typeof fetch
+
+    const result = await checkCurrentGlassesForUpdate({
+      refreshVersionInfo: false,
+      fixClockBeforeCheck: false,
+      waitForBesVersionMs: 0,
+      waitForMtkVersionMs: 0,
+    })
+
+    expect(result.hasCheckCompleted).toBe(false)
+    expect(result.checkFailureReason).toBe("network")
+    expect(consoleWarn).toHaveBeenCalledWith("OTA: Error fetching version info:", expect.any(Error))
+    expect(consoleError).not.toHaveBeenCalled()
+    consoleError.mockRestore()
+    consoleWarn.mockRestore()
+  })
+
   it("skips (missing_build) for an unparseable or zero glasses build number", async () => {
     useGlassesStore.getState().setGlassesInfo({buildNumber: "0"})
     global.fetch = jest.fn() as unknown as typeof fetch

@@ -121,7 +121,7 @@ async function fetchVersionInfoDetailed(url: string): Promise<ManifestFetchResul
   try {
     const response = await fetch(url)
     if (!response.ok) {
-      console.error("Failed to fetch version info:", response.status)
+      console.warn("Failed to fetch version info:", response.status)
       // 4xx: the manifest does not exist (or is gone) — permanent for this app
       // build, retrying cannot help. Everything else is transient server/network
       // trouble and retryable.
@@ -133,11 +133,11 @@ async function fetchVersionInfoDetailed(url: string): Promise<ManifestFetchResul
     try {
       return {json: await response.json()}
     } catch (parseError) {
-      console.error("OTA: manifest is not valid JSON:", parseError)
+      console.warn("OTA: manifest is not valid JSON:", parseError)
       return {json: null, failureReason: "pin_unavailable"}
     }
   } catch (error) {
-    console.error("OTA: Error fetching version info:", error)
+    console.warn("OTA: Error fetching version info:", error)
     return {json: null, failureReason: "network"}
   }
 }
