@@ -370,12 +370,12 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
     onFirmwareRestartingChangeRef.current?.(firmwareRestarting, true)
   }, [firmwareRestarting, page])
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    if (page !== "progress") return
+    return () => {
       onFirmwareRestartingChangeRef.current?.(false, false)
-    },
-    [],
-  )
+    }
+  }, [page])
 
   useEffect(() => {
     if (
