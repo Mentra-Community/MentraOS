@@ -1265,11 +1265,9 @@ class MentraLive : SGCManager() {
             val generation = ++scanGeneration
             isScanning = true
             bluetoothScanner!!.startScan(filters, settings, scanCallback)
-            // Connected glasses stop advertising (BLE_CONNECTION_MAX=1). Pairing scan
-            // would otherwise return empty even though GATT is already up.
-            if (!isReconnecting) {
-                handler.post { emitConnectedDeviceForPairingScan() }
-            }
+            // Pairing discovery must stay advertisement-driven. An already-connected
+            // device has no current pairing-mode advertisement, so surfacing it here
+            // would make RN treat the owner's glasses as pairable and auto-select them.
 
             // Set a timeout to stop scanning
             handler.postDelayed(
@@ -1349,33 +1347,6 @@ class MentraLive : SGCManager() {
         val body = HashMap<String, Any>()
         body["deviceModel"] = DeviceTypes.LIVE
         Bridge.sendTypedMessage("compatible_glasses_search_stop", body)
-    }
-
-    /**
-     * Pairing scan listens for advertisements. A unit that is already GATT-connected
-     * (typical after a CTKD retry / back-out on field firmware) has stopped ADV, so
-     * emit it as pairable or the scan list stays empty.
-     */
-    private fun emitConnectedDeviceForPairingScan() {
-        if (!isConnected || isReconnecting || pairingYieldActive) {
-            return
-        }
-        val device = connectedDevice ?: bluetoothGatt?.device ?: return
-        val name = safeBondedDeviceName(device)
-        if (!isMentraLiveBluetoothName(name)) {
-            return
-        }
-        Bridge.log(
-                "LIVE: Pairing scan: already GATT-connected to $name — emitting as pairable (ADV off while connected)"
-        )
-        Bridge.sendDiscoveredDevice(
-                DeviceTypes.LIVE,
-                name,
-                device.address ?: "",
-                pairingMode = true,
-                pairingCode = null,
-                securePairingCapable = false,
-        )
     }
 
     var seenDevices: MutableSet<String> = HashSet()

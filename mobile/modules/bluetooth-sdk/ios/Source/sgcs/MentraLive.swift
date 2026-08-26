@@ -2364,9 +2364,9 @@ class MentraLive: NSObject, SGCManager {
 
         centralManager?.scanForPeripherals(withServices: nil, options: scanOptions)
 
-        // Fresh advertisements refill pairing metadata. Re-emitting the last scan's
-        // cache would keep a unit pairable after it left pairing mode.
-        emitConnectedDeviceForPairingScan()
+        // Pairing discovery must stay advertisement-driven. An already-connected
+        // peripheral has no current pairing-mode advertisement, so surfacing it here
+        // would make RN treat the owner's glasses as pairable and auto-select them.
 
         // var dName = DeviceManager.shared.deviceName
         // if dName.isEmpty {
@@ -5501,25 +5501,6 @@ class MentraLive: NSObject, SGCManager {
     }
 
     // MARK: - Event Emission
-
-    /// Pairing scan listens for advertisements. A unit that is already GATT-connected
-    /// has stopped ADV, so emit it as pairable or the scan list stays empty.
-    private func emitConnectedDeviceForPairingScan() {
-        guard connected, let peripheral = connectedPeripheral, let name = peripheral.name,
-              name == "Xy_A" || name.hasPrefix("XyBLE_") || name.hasPrefix("MENTRA_LIVE_BLE")
-              || name.hasPrefix("MENTRA_LIVE_BT") || name.lowercased().hasPrefix("mentra_live")
-        else {
-            return
-        }
-        Bridge.log("LIVE: Pairing scan: already GATT-connected to \(name) — emitting as pairable (ADV off while connected)")
-        emitDiscoveredDevice(
-            name,
-            identifier: peripheral.identifier.uuidString,
-            pairingMode: true,
-            pairingCode: nil,
-            securePairingCapable: discoveredAdvPairing[name]?.securePairingCapable ?? false
-        )
-    }
 
     private func cacheAdvPairing(
         _ name: String,
