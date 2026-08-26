@@ -77,9 +77,15 @@ function requiredChecks(checks: CiCheckStatus[]): CiCheckStatus[] {
 export function isCiGreen(checks: CiCheckStatus[]): boolean {
   const required = requiredChecks(checks);
   if (required.length === 0) return true;
+  // Without a PAT, fixer commits pushed via GITHUB_TOKEN never trigger CI
+  // (GitHub parks the runs as action_required), so awaiting-approval checks
+  // would block handoff forever — concede them as green and let the human
+  // reviewer approve the workflows. With PR_AGENT_GITHUB_TOKEN configured the
+  // fixer's pushes trigger CI for real, so the concession is dropped and the
+  // gate requires an actual green run.
+  const hasPat = process.env.PR_AGENT_HAS_PAT === 'true';
   return required.every((c) => {
-    // Awaiting approval means a human will trigger it when they review — treat as non-blocking.
-    if (c.awaitingApproval) return true;
+    if (c.awaitingApproval && !hasPat) return true;
     if (['in_progress', 'queued', 'waiting', 'pending'].includes(c.status)) {
       return false;
     }
