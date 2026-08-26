@@ -48,6 +48,7 @@ function isStoreApp(value: unknown): value is StoreApp {
   const release = app.release as Record<string, unknown> | undefined
   return (
     typeof app.packageName === "string" &&
+    (app.visibility === "public" || app.visibility === "private") &&
     typeof app.name === "string" &&
     Boolean(release) &&
     typeof release?.id === "string" &&

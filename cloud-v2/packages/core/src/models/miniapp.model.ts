@@ -4,6 +4,7 @@ import { registerModel } from "./register-model";
 export const MINIAPP_STATUSES = ["active", "archived", "suspended"] as const;
 export const MINIAPP_REVIEW_TIERS = ["community", "verified"] as const;
 export const MINIAPP_BETA_ACCESS_MODES = ["private", "public"] as const;
+export const MINIAPP_VISIBILITIES = ["public", "private"] as const;
 
 const StoreListingSchema = new Schema(
   {
@@ -59,6 +60,8 @@ const MiniAppSchema = new Schema(
     /** Recoverable journal entry used while promoting a release across documents. */
     pendingStorePublication: { type: PendingStorePublicationSchema, default: null },
     status: { type: String, enum: MINIAPP_STATUSES, default: "active", index: true },
+    /** Public listings are globally discoverable; private listings require a per-user invitation. */
+    visibility: { type: String, enum: MINIAPP_VISIBILITIES, default: "public", index: true },
     /** Active stable release. Kept under the original name for deployed-row compatibility. */
     activeReleaseId: { type: String, default: null },
     /** Active beta release, independently published from stable. */

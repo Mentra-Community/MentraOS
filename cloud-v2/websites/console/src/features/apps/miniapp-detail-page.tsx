@@ -11,6 +11,7 @@ import { appsQuery } from "./apps.queries";
 import { listDeveloperReleases, submitDeveloperRelease, type DeveloperRelease } from "./apps.api";
 import { BetaAccessCard } from "./beta-access-card";
 import { StoreListingCard } from "./store-listing-card";
+import { PrivateDistributionCard } from "./private-distribution-card";
 
 const reviewStatuses = new Set(["submitted", "in_review"]);
 
@@ -71,6 +72,7 @@ export function MiniappDetailPage() {
         </div>
 
         <StoreListingCard packageName={packageName} />
+        <PrivateDistributionCard packageName={packageName} />
         <BetaAccessCard packageName={packageName} />
 
         {releases[0]?.manifest ? (
@@ -115,8 +117,11 @@ export function MiniappDetailPage() {
               </div>
             ) : (
               <div className="divide-y divide-[#eceeeb]">
-                {releases.map(release => (
-                  <div
+                {releases.map(release => {
+                  const privatePublication =
+                    app?.visibility === "private" ||
+                    (release.releaseTrack === "beta" && app?.betaAccessMode === "private");
+                  return <div
                     key={release.id}
                     className="grid gap-3 px-4 py-4 sm:px-6 md:grid-cols-[120px_minmax(0,1fr)_140px] md:items-center">
                     <div className="font-mono text-sm font-semibold text-[#1c1d22]">{release.version}</div>
@@ -149,13 +154,17 @@ export function MiniappDetailPage() {
                           disabled={submitRelease.isPending}
                           onClick={() => submitRelease.mutate(release.id)}>
                           {submitRelease.isPending && submitRelease.variables === release.id
-                            ? "Submitting…"
-                            : "Submit for review"}
+                            ? privatePublication
+                              ? "Publishing…"
+                              : "Submitting…"
+                            : privatePublication
+                              ? "Publish privately"
+                              : "Submit for review"}
                         </Button>
                       ) : null}
                     </div>
-                  </div>
-                ))}
+                  </div>;
+                })}
                 {submitRelease.error ? (
                   <div className="px-4 py-3 text-sm text-red-700 sm:px-6">
                     {submitRelease.error instanceof Error ? submitRelease.error.message : "Could not submit release"}

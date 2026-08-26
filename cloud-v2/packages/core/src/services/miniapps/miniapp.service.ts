@@ -59,6 +59,8 @@ export interface AdminReleaseDecisionInput {
   releaseId: string;
   adminId: string;
   notes?: string | null;
+  /** Internal-only escape hatch for private distribution's automated validation path. */
+  publicStoreApproval?: boolean;
 }
 
 export interface AdminStoreModerationInput {
@@ -96,6 +98,7 @@ export class MiniAppService {
         description: app.description ?? null,
         storeListing: serializeStoreListing(app.storeListing),
         status: app.status,
+        visibility: app.visibility === "private" ? "private" : "public",
         activeRelease: activeRelease ? serializeRelease(activeRelease) : null,
         activeBetaRelease: activeBetaRelease ? serializeRelease(activeBetaRelease) : null,
         betaAccessMode: app.betaAccessMode === "public" ? "public" : "private",
@@ -141,6 +144,75 @@ export class MiniAppService {
     return { ok: true };
   }
 
+  async updateVisibility(developer: DeveloperIdentity, packageName: string, visibility: "public" | "private") {
+    const authorizedApp = await this.requireMiniApp(developer, normalizePackageName(packageName));
+    return withStoreListingLease(authorizedApp._id.toString(), async lease => {
+      const current = await MiniAppModel.findOne({
+        _id: authorizedApp._id,
+        orgId: developer.orgId,
+        status: { $ne: "archived" },
+      });
+      if (!current) throw new MiniAppServiceError("not_found", "miniapp not found", 404);
+
+      // A private artifact can never become public merely through a settings
+      // toggle. Move each active public-facing track back into the ordinary
+      // moderation queue while its existing private installation stays local.
+      if (visibility === "public" && current.visibility === "private") {
+        const releaseIds = [
+          current.activeReleaseId,
+          ...(current.betaAccessMode === "public" ? [current.activeBetaReleaseId] : []),
+        ].filter((id): id is string => typeof id === "string");
+        const releases = await MiniAppReleaseModel.find({ _id: { $in: releaseIds } });
+        for (const release of releases) {
+          if (release.status !== "published" || release.publicStoreApprovedAt) continue;
+          const submittedListing = serializeStoreListing(release.reviewedStoreListing ?? current.storeListing);
+          const submitted = await MiniAppReleaseModel.findOneAndUpdate(
+            { _id: release._id, status: "published", publicStoreApprovedAt: null, updatedAt: release.updatedAt },
+            {
+              $set: {
+                status: "submitted",
+                submittedAt: new Date(),
+                submittedStoreListing: submittedListing,
+                reviewedStoreListing: null,
+                reviewedAt: null,
+                reviewedBy: null,
+                reviewNotes: null,
+              },
+            },
+            { new: true },
+          );
+          if (!submitted) {
+            throw new MiniAppServiceError("invalid_release_state", "release changed during visibility update", 409);
+          }
+          notifyMiniAppSubmissionSlack({
+            releaseId: release._id.toString(),
+            packageName: release.packageName,
+            version: release.version,
+            releaseTrack: release.releaseTrack === "beta" ? "beta" : "stable",
+            appName: current.displayName,
+            description: current.description ?? null,
+            developerEmail: developer.email ?? null,
+            orgId: developer.orgId,
+            manifest: release.manifest as Record<string, unknown> | null,
+          }).catch(() => {});
+        }
+      }
+      const app = await MiniAppModel.findOneAndUpdate(
+        {
+          _id: authorizedApp._id,
+          orgId: developer.orgId,
+          status: { $ne: "archived" },
+          "storeListingOperationLease.token": lease.token,
+          $expr: { $gt: ["$storeListingOperationLease.expiresAt", "$$NOW"] },
+        },
+        { $set: { visibility } },
+        { new: true },
+      ).lean();
+      if (!app) throw new MiniAppServiceError("store_listing_lease_lost", "Store visibility update lost its lease", 409);
+      return { visibility: app.visibility === "private" ? "private" as const : "public" as const };
+    });
+  }
+
   async listReleases(developer: DeveloperIdentity, packageName: string) {
     const app = await this.requireMiniApp(developer, normalizePackageName(packageName));
     const releases = await MiniAppReleaseModel.find({ miniAppId: app._id.toString() }).sort({ createdAt: -1 }).lean();
@@ -149,7 +221,7 @@ export class MiniAppService {
 
   async submitRelease(developer: DeveloperIdentity, packageName: string, releaseId: string) {
     const authorizedApp = await this.requireMiniApp(developer, normalizePackageName(packageName));
-    return withStoreListingLease(authorizedApp._id.toString(), async lease => {
+    const submitted = await withStoreListingLease(authorizedApp._id.toString(), async lease => {
       const release = await MiniAppReleaseModel.findOne({
         _id: releaseId,
         orgId: developer.orgId,
@@ -199,6 +271,22 @@ export class MiniAppService {
           status: { $ne: "archived" },
         });
         if (!app) throw new MiniAppServiceError("not_found", "miniapp not found", 404);
+        const privatePublication =
+          app.visibility === "private" || (claimed.releaseTrack === "beta" && app.betaAccessMode !== "public");
+        if (privatePublication) {
+          const assets = await MiniAppAssetModel.find({
+            miniAppId: app._id.toString(),
+            role: { $in: ["store_icon", "store_cover", "gallery_screenshot"] },
+          }).lean();
+          const readiness = storeListingReadiness(app, assets);
+          if (!readiness.ready) {
+            throw new MiniAppServiceError(
+              "store_listing_incomplete",
+              `Store listing is incomplete: ${readiness.missing.join(", ")}`,
+              409,
+            );
+          }
+        }
 
         // Freeze the content entering review. Approval and publication must
         // never pick up developer edits made after this transition.
@@ -229,19 +317,37 @@ export class MiniAppService {
 
         // Fire-and-forget: a Slack failure can never delay or fail the submit
         // response, and an unset webhook env var is a silent skip.
-        notifyMiniAppSubmissionSlack({
-          releaseId: claimed._id.toString(),
-          packageName: claimed.packageName,
-          version: claimed.version,
-          releaseTrack: claimed.releaseTrack === "beta" ? "beta" : "stable",
-          appName: app.displayName,
-          description: app.description ?? null,
-          developerEmail: developer.email ?? null,
-          orgId: developer.orgId,
-          manifest: claimed.manifest as Record<string, unknown> | null,
-        }).catch(() => {});
+        if (!privatePublication) {
+          notifyMiniAppSubmissionSlack({
+            releaseId: claimed._id.toString(),
+            packageName: claimed.packageName,
+            version: claimed.version,
+            releaseTrack: claimed.releaseTrack === "beta" ? "beta" : "stable",
+            appName: app.displayName,
+            description: app.description ?? null,
+            developerEmail: developer.email ?? null,
+            orgId: developer.orgId,
+            manifest: claimed.manifest as Record<string, unknown> | null,
+          }).catch(() => {});
+        }
 
-        return serializeRelease(submitted.toObject());
+        if (!privatePublication) {
+          return { release: serializeRelease(submitted.toObject()), privatePublication };
+        }
+
+        // Keep automated private publication inside the same listing lease as
+        // submission. Visibility and beta-access changes use this lease too,
+        // so an unreviewed artifact cannot become public between validation,
+        // approval, and activation.
+        const privateDecision = {
+          releaseId: submitted._id.toString(),
+          adminId: `private:${developer.developerId}`,
+          notes: "Published through automated private-distribution validation.",
+          publicStoreApproval: false,
+        };
+        await this.approveReleaseWithLease(privateDecision, lease);
+        const published = await this.publishReleaseWithLease(privateDecision, lease);
+        return { release: published, privatePublication };
       } catch (error) {
         await MiniAppReleaseModel.updateOne(
           { _id: claimed._id, "storeListingSubmissionLease.token": lease.token },
@@ -255,6 +361,7 @@ export class MiniAppService {
         throw error;
       }
     });
+    return submitted.release;
   }
 
   async listAdminSubmissions() {
@@ -326,40 +433,59 @@ export class MiniAppService {
   async approveRelease(input: AdminReleaseDecisionInput) {
     const requestedRelease = await MiniAppReleaseModel.findOne({ _id: input.releaseId }).select("miniAppId").lean();
     if (!requestedRelease) throw new MiniAppServiceError("not_found", "release not found", 404);
-    return withStoreListingLease(requestedRelease.miniAppId, async lease => {
-      const release = await MiniAppReleaseModel.findOne({ _id: input.releaseId });
-      if (!release) throw new MiniAppServiceError("not_found", "release not found", 404);
-      if (!["submitted", "in_review"].includes(release.status)) {
-        throw new MiniAppServiceError("invalid_release_state", "release is not awaiting review", 409);
-      }
-      const app = await MiniAppModel.findOne({ _id: release.miniAppId });
-      if (!app || app.status === "archived") throw new MiniAppServiceError("not_found", "miniapp not found", 404);
-      if (!release.submittedStoreListing || typeof release.submittedStoreListing !== "object") {
-        throw new MiniAppServiceError(
-          "listing_not_submitted",
-          "Release must be submitted again before its Store listing can be approved",
-          409,
-        );
-      }
-      await lease.assertHeld();
-      const accepted = await MiniAppReleaseModel.findOneAndUpdate(
-        { _id: release._id, status: { $in: ["submitted", "in_review"] }, updatedAt: release.updatedAt },
+    return withStoreListingLease(requestedRelease.miniAppId, lease => this.approveReleaseWithLease(input, lease));
+  }
+
+  private async approveReleaseWithLease(input: AdminReleaseDecisionInput, lease: StoreListingLease) {
+    const release = await MiniAppReleaseModel.findOne({ _id: input.releaseId });
+    if (!release) throw new MiniAppServiceError("not_found", "release not found", 404);
+    if (release.status === "published" && input.publicStoreApproval !== false) {
+      const approved = await MiniAppReleaseModel.findOneAndUpdate(
+        { _id: release._id, status: "published", updatedAt: release.updatedAt },
         {
           $set: {
-            status: "accepted",
-            reviewedAt: new Date(),
+            publicStoreApprovedAt: release.publicStoreApprovedAt ?? new Date(),
+            reviewedAt: release.reviewedAt ?? new Date(),
             reviewedBy: input.adminId,
-            reviewNotes: input.notes?.trim() || null,
-            reviewedStoreListing: serializeStoreListing(release.submittedStoreListing),
+            ...(input.notes?.trim() ? { reviewNotes: input.notes.trim() } : {}),
           },
         },
         { new: true },
       );
-      if (!accepted) {
-        throw new MiniAppServiceError("invalid_release_state", "release state changed during approval", 409);
-      }
-      return serializeRelease(accepted.toObject());
-    });
+      if (!approved) throw new MiniAppServiceError("invalid_release_state", "release state changed during approval", 409);
+      return serializeRelease(approved.toObject());
+    }
+    if (!["submitted", "in_review"].includes(release.status)) {
+      throw new MiniAppServiceError("invalid_release_state", "release is not awaiting review", 409);
+    }
+    const app = await MiniAppModel.findOne({ _id: release.miniAppId });
+    if (!app || app.status === "archived") throw new MiniAppServiceError("not_found", "miniapp not found", 404);
+    if (!release.submittedStoreListing || typeof release.submittedStoreListing !== "object") {
+      throw new MiniAppServiceError(
+        "listing_not_submitted",
+        "Release must be submitted again before its Store listing can be approved",
+        409,
+      );
+    }
+    await lease.assertHeld();
+    const accepted = await MiniAppReleaseModel.findOneAndUpdate(
+      { _id: release._id, status: { $in: ["submitted", "in_review"] }, updatedAt: release.updatedAt },
+      {
+        $set: {
+          status: "accepted",
+          reviewedAt: new Date(),
+          reviewedBy: input.adminId,
+          reviewNotes: input.notes?.trim() || null,
+          reviewedStoreListing: serializeStoreListing(release.submittedStoreListing),
+          ...(input.publicStoreApproval === false ? {} : { publicStoreApprovedAt: new Date() }),
+        },
+      },
+      { new: true },
+    );
+    if (!accepted) {
+      throw new MiniAppServiceError("invalid_release_state", "release state changed during approval", 409);
+    }
+    return serializeRelease(accepted.toObject());
   }
 
   async rejectRelease(input: AdminReleaseDecisionInput) {
@@ -390,6 +516,7 @@ export class MiniAppService {
             reviewNotes: input.notes?.trim() || "Rejected by admin review.",
             submittedStoreListing: null,
             reviewedStoreListing: null,
+            publicStoreApprovedAt: null,
           },
         },
         { new: true },
@@ -404,105 +531,107 @@ export class MiniAppService {
   async publishRelease(input: AdminReleaseDecisionInput) {
     const requestedRelease = await MiniAppReleaseModel.findOne({ _id: input.releaseId }).lean();
     if (!requestedRelease) throw new MiniAppServiceError("not_found", "release not found", 404);
-    return withStoreListingLease(requestedRelease.miniAppId, async lease => {
-      const release = await MiniAppReleaseModel.findOne({ _id: input.releaseId });
-      if (!release) throw new MiniAppServiceError("not_found", "release not found", 404);
-      if (!["accepted", "published"].includes(release.status)) {
-        throw new MiniAppServiceError("invalid_release_state", "only accepted releases can be published", 409);
-      }
+    return withStoreListingLease(requestedRelease.miniAppId, lease => this.publishReleaseWithLease(input, lease));
+  }
 
-      const app = await MiniAppModel.findOne({ _id: release.miniAppId });
-      if (!app || app.status === "archived") throw new MiniAppServiceError("not_found", "miniapp not found", 404);
-      const releaseTrack = release.releaseTrack === "beta" ? "beta" : "stable";
-      const activeReleaseId = releaseTrack === "beta" ? app.activeBetaReleaseId : app.activeReleaseId;
-      if (release.status === "published") {
-        if (activeReleaseId === release._id.toString()) return serializeRelease(release.toObject());
-        throw new MiniAppServiceError(
-          "invalid_release_state",
-          "a historical published release cannot replace the active release",
-          409,
-        );
-      }
-      const assets = await MiniAppAssetModel.find({
-        miniAppId: app._id.toString(),
-        role: { $in: ["store_icon", "store_cover", "gallery_screenshot"] },
-      }).lean();
-      if (!release.reviewedStoreListing || typeof release.reviewedStoreListing !== "object") {
-        throw new MiniAppServiceError(
-          "listing_not_reviewed",
-          "Store listing must be approved again before this release can be published",
-          409,
-        );
-      }
-      const reviewedStoreListing = {
-        ...serializeStoreListing(release.reviewedStoreListing),
-        // These fields are admin-only and may be adjusted safely after approval.
-        reviewTier: app.storeListing?.reviewTier ?? "community",
-        featured: app.storeListing?.featured === true,
-      };
-      const readiness = storeListingReadiness(
-        { description: app.description, storeListing: reviewedStoreListing },
-        assets,
+  private async publishReleaseWithLease(input: AdminReleaseDecisionInput, lease: StoreListingLease) {
+    const release = await MiniAppReleaseModel.findOne({ _id: input.releaseId });
+    if (!release) throw new MiniAppServiceError("not_found", "release not found", 404);
+    if (!["accepted", "published"].includes(release.status)) {
+      throw new MiniAppServiceError("invalid_release_state", "only accepted releases can be published", 409);
+    }
+
+    const app = await MiniAppModel.findOne({ _id: release.miniAppId });
+    if (!app || app.status === "archived") throw new MiniAppServiceError("not_found", "miniapp not found", 404);
+    const releaseTrack = release.releaseTrack === "beta" ? "beta" : "stable";
+    const activeReleaseId = releaseTrack === "beta" ? app.activeBetaReleaseId : app.activeReleaseId;
+    if (release.status === "published") {
+      if (activeReleaseId === release._id.toString()) return serializeRelease(release.toObject());
+      throw new MiniAppServiceError(
+        "invalid_release_state",
+        "a historical published release cannot replace the active release",
+        409,
       );
-      if (!readiness.ready) {
-        throw new MiniAppServiceError(
-          "store_listing_incomplete",
-          `Store listing is incomplete: ${readiness.missing.join(", ")}`,
-          409,
-        );
-      }
+    }
+    const assets = await MiniAppAssetModel.find({
+      miniAppId: app._id.toString(),
+      role: { $in: ["store_icon", "store_cover", "gallery_screenshot"] },
+    }).lean();
+    if (!release.reviewedStoreListing || typeof release.reviewedStoreListing !== "object") {
+      throw new MiniAppServiceError(
+        "listing_not_reviewed",
+        "Store listing must be approved again before this release can be published",
+        409,
+      );
+    }
+    const reviewedStoreListing = {
+      ...serializeStoreListing(release.reviewedStoreListing),
+      // These fields are admin-only and may be adjusted safely after approval.
+      reviewTier: app.storeListing?.reviewTier ?? "community",
+      featured: app.storeListing?.featured === true,
+    };
+    const readiness = storeListingReadiness(
+      { description: app.description, storeListing: reviewedStoreListing },
+      assets,
+    );
+    if (!readiness.ready) {
+      throw new MiniAppServiceError(
+        "store_listing_incomplete",
+        `Store listing is incomplete: ${readiness.missing.join(", ")}`,
+        409,
+      );
+    }
 
-      // Journal the candidate without disturbing the currently active release.
-      // Once the release status is durable, the journal can be promoted by
-      // this request or recovered by the next lease holder after a crash.
-      const staged = await MiniAppModel.updateOne(
-        {
-          _id: app._id,
-          "storeListingOperationLease.token": lease.token,
-          $expr: { $gt: ["$storeListingOperationLease.expiresAt", "$$NOW"] },
-          pendingStorePublication: null,
-        },
-        {
-          $set: {
-            pendingStorePublication: {
-              releaseId: release._id.toString(),
-              releaseTrack,
-              storeListing: reviewedStoreListing,
-            },
+    // Journal the candidate without disturbing the currently active release.
+    // Once the release status is durable, the journal can be promoted by
+    // this request or recovered by the next lease holder after a crash.
+    const staged = await MiniAppModel.updateOne(
+      {
+        _id: app._id,
+        "storeListingOperationLease.token": lease.token,
+        $expr: { $gt: ["$storeListingOperationLease.expiresAt", "$$NOW"] },
+        pendingStorePublication: null,
+      },
+      {
+        $set: {
+          pendingStorePublication: {
+            releaseId: release._id.toString(),
+            releaseTrack,
+            storeListing: reviewedStoreListing,
           },
         },
-      );
-      if (staged.matchedCount !== 1) {
-        throw new MiniAppServiceError("store_listing_lease_lost", "Store listing operation lease was lost", 409);
-      }
-      await lease.assertHeld();
-      const publicationUpdates: Record<string, unknown> = {
-        status: "published",
-        reviewedStoreListing,
-        publishedAt: release.publishedAt ?? new Date(),
-        reviewedBy: input.adminId,
-      };
-      if (input.notes?.trim()) publicationUpdates.reviewNotes = input.notes.trim();
-      const publishedRelease = await MiniAppReleaseModel.findOneAndUpdate(
-        { _id: release._id, status: "accepted", updatedAt: release.updatedAt },
-        { $set: publicationUpdates },
-        { new: true },
-      );
-      if (!publishedRelease) {
-        throw new MiniAppServiceError("invalid_release_state", "release state changed during publication", 409);
-      }
-      const promoted = await promotePendingStorePublication({
-        miniAppId: app._id.toString(),
-        lease,
-        releaseId: release._id.toString(),
-        releaseTrack,
-        storeListing: reviewedStoreListing,
-      });
-      if (!promoted) {
-        throw new MiniAppServiceError("store_listing_lease_lost", "Store listing operation lease was lost", 409);
-      }
-      return serializeRelease(publishedRelease.toObject());
+      },
+    );
+    if (staged.matchedCount !== 1) {
+      throw new MiniAppServiceError("store_listing_lease_lost", "Store listing operation lease was lost", 409);
+    }
+    await lease.assertHeld();
+    const publicationUpdates: Record<string, unknown> = {
+      status: "published",
+      reviewedStoreListing,
+      publishedAt: release.publishedAt ?? new Date(),
+      reviewedBy: input.adminId,
+    };
+    if (input.notes?.trim()) publicationUpdates.reviewNotes = input.notes.trim();
+    const publishedRelease = await MiniAppReleaseModel.findOneAndUpdate(
+      { _id: release._id, status: "accepted", updatedAt: release.updatedAt },
+      { $set: publicationUpdates },
+      { new: true },
+    );
+    if (!publishedRelease) {
+      throw new MiniAppServiceError("invalid_release_state", "release state changed during publication", 409);
+    }
+    const promoted = await promotePendingStorePublication({
+      miniAppId: app._id.toString(),
+      lease,
+      releaseId: release._id.toString(),
+      releaseTrack,
+      storeListing: reviewedStoreListing,
     });
+    if (!promoted) {
+      throw new MiniAppServiceError("store_listing_lease_lost", "Store listing operation lease was lost", 409);
+    }
+    return serializeRelease(publishedRelease.toObject());
   }
 
   async updateStoreModeration(input: AdminStoreModerationInput) {
@@ -958,6 +1087,8 @@ export class MiniAppService {
       description: app.description ?? null,
       storeListing: serializeStoreListing(app.storeListing),
       status: app.status,
+      visibility: app.visibility === "private" ? "private" : "public",
+      betaAccessMode: app.betaAccessMode === "public" ? "public" : "private",
       activeRelease: null,
       activeBetaRelease: null,
       latestRelease: null,
@@ -980,6 +1111,8 @@ export class MiniAppService {
       description: app.description ?? null,
       storeListing: serializeStoreListing(app.storeListing),
       status: app.status,
+      visibility: app.visibility === "private" ? "private" : "public",
+      betaAccessMode: app.betaAccessMode === "public" ? "public" : "private",
       activeRelease: null,
       activeBetaRelease: null,
       latestRelease: null,
@@ -1057,6 +1190,7 @@ function serializeRelease(release: {
   signedAt?: Date | null;
   reviewedBy?: string | null;
   reviewNotes?: string | null;
+  publicStoreApprovedAt?: Date | null;
   createdAt?: Date;
   updatedAt?: Date;
 }) {
@@ -1074,6 +1208,7 @@ function serializeRelease(release: {
     signedAt: release.signedAt?.toISOString() ?? null,
     reviewedBy: release.reviewedBy ?? null,
     reviewNotes: release.reviewNotes ?? null,
+    publicStoreApprovedAt: release.publicStoreApprovedAt?.toISOString() ?? null,
     createdAt: release.createdAt?.toISOString() ?? null,
     updatedAt: release.updatedAt?.toISOString() ?? null,
   };
@@ -1088,14 +1223,14 @@ function cleanText(value: string | null, maxLength: number): string | null {
   return cleaned || null;
 }
 
-interface StoreListingLease {
+export interface StoreListingLease {
   token: string;
   /** Hard deadline from initial acquisition; cross-document claims never renew past it. */
   deadline: Date;
   assertHeld(): Promise<void>;
 }
 
-async function withStoreListingLease<T>(
+export async function withStoreListingLease<T>(
   miniAppId: string,
   operation: (lease: StoreListingLease) => Promise<T>,
 ): Promise<T> {

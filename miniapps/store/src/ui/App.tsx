@@ -407,6 +407,7 @@ function AppRow({
         <span className="app-copy">
           <strong>{app.name}</strong>
           <span>{app.subtitle ?? app.categories[0] ?? "Mentra miniapp"}</span>
+          {app.visibility === "private" && <small>Private</small>}
           {app.reviewTier === "verified" && <small>✓ Verified</small>}
         </span>
       </button>
@@ -544,6 +545,7 @@ function Detail({
         <section className="detail-section info-grid">
           <Info label="Version" value={app.release.version} />
           <Info label="Track" value={app.selectedTrack === "beta" ? "Beta" : "Stable"} />
+          <Info label="Distribution" value={app.visibility === "private" ? "Private" : "Public"} />
           <Info label="Review" value={app.reviewTier === "verified" ? "Verified" : "Community"} />
           <Info label="Permissions" value={String(app.release.permissions.length)} />
           <Info label="Package" value={app.packageName} />

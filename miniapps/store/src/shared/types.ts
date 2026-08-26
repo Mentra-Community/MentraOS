@@ -22,6 +22,7 @@ export interface StoreRelease {
 
 export interface StoreApp {
   packageName: string
+  visibility: "public" | "private"
   name: string
   subtitle: string | null
   description: string | null

@@ -42,6 +42,8 @@ const MiniAppReleaseSchema = new Schema(
     reviewedAt: { type: Date, default: null },
     publishedAt: { type: Date, default: null },
     reviewedBy: { type: String, default: null },
+    /** Set only by Mentra review. Private stable and closed-beta publication leaves this null. */
+    publicStoreApprovedAt: { type: Date, default: null },
     reviewNotes: { type: String, default: null },
     /** Exact developer listing frozen when this release enters review. */
     submittedStoreListing: { type: Schema.Types.Mixed, default: null },

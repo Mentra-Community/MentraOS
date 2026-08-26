@@ -11,7 +11,12 @@ import {
 } from "../../services/developer-orgs/developer-org.service";
 import { DeveloperApiKeyService } from "../../services/developer-orgs/developer-api-key.service";
 import { DeveloperOrgInvitationService } from "../../services/developer-orgs/developer-org-invitation.service";
-import { sendMiniappBetaInviteEmail, sendOrgInviteEmail } from "../../services/email/email.service";
+import {
+  sendMiniappBetaInviteEmail,
+  sendOrgInviteEmail,
+  sendPrivateMiniappInviteEmail,
+} from "../../services/email/email.service";
+import { MiniAppAccessService, MiniAppAccessServiceError } from "../../services/miniapps/miniapp-access.service";
 import { MiniAppBetaService, MiniAppBetaServiceError } from "../../services/miniapps/miniapp-beta.service";
 import { MiniAppService, MiniAppServiceError, type DeveloperIdentity } from "../../services/miniapps/miniapp.service";
 import {
@@ -35,6 +40,7 @@ const developerOrgs = new DeveloperOrgService();
 const apiKeys = new DeveloperApiKeyService();
 const invitations = new DeveloperOrgInvitationService();
 const miniapps = new MiniAppService();
+const miniappAccess = new MiniAppAccessService();
 const miniappBetas = new MiniAppBetaService();
 const signing = new DeveloperSigningService();
 const MAX_RELEASE_BUNDLE_BYTES = 50 * 1024 * 1024;
@@ -134,6 +140,8 @@ const createApiTokenSchema = z.object({
 
 const updateBetaAccessSchema = z.object({ mode: z.enum(["private", "public"]) });
 const inviteBetaTesterSchema = z.object({ email: z.string().email() });
+const updateMiniappAccessSchema = z.object({ visibility: z.enum(["public", "private"]) });
+const inviteMiniappUserSchema = z.object({ email: z.string().email() });
 
 app.get("/health", c => c.json({ status: "ok", service: "cloud-core-console" }));
 app.get("/auth/cli-config", getCliConfig);
@@ -155,6 +163,10 @@ app.patch("/org/members/:membershipId", patchOrgMember);
 app.get("/apps", getApps);
 app.post("/apps", postApps);
 app.delete("/apps/:packageName", deleteApp);
+app.get("/apps/:packageName/access", getMiniappAccess);
+app.patch("/apps/:packageName/access", patchMiniappAccess);
+app.post("/apps/:packageName/access-invitations", postMiniappAccessInvitation);
+app.delete("/apps/:packageName/access-invitations/:invitationId", deleteMiniappAccessInvitation);
 app.get("/apps/:packageName/beta-access", getBetaAccess);
 app.patch("/apps/:packageName/beta-access", patchBetaAccess);
 app.post("/apps/:packageName/beta-invitations", postBetaInvitation);
@@ -784,6 +796,66 @@ async function deleteApp(c: AppContext) {
 
   try {
     return c.json(await miniapps.deleteMiniApp(developer.value, packageName));
+  } catch (error) {
+    return serviceError(error);
+  }
+}
+
+async function getMiniappAccess(c: AppContext) {
+  const developer = await requireDeveloper(c);
+  if (!developer.ok) return developer.response;
+  const packageName = c.req.param("packageName");
+  if (!packageName) throw new InvalidRequest("packageName is required");
+  try {
+    return c.json(await miniappAccess.getAccess(developer.value, packageName));
+  } catch (error) {
+    return serviceError(error);
+  }
+}
+
+async function patchMiniappAccess(c: AppContext) {
+  const developer = await requireDeveloper(c);
+  if (!developer.ok) return developer.response;
+  const packageName = c.req.param("packageName");
+  if (!packageName) throw new InvalidRequest("packageName is required");
+  const parsed = updateMiniappAccessSchema.safeParse(await readJsonBody(c));
+  if (!parsed.success) throw new InvalidRequest(parsed.error.issues[0]?.message ?? "invalid visibility payload");
+  try {
+    await miniapps.updateVisibility(developer.value, packageName, parsed.data.visibility);
+    return c.json(await miniappAccess.getAccess(developer.value, packageName));
+  } catch (error) {
+    return serviceError(error);
+  }
+}
+
+async function postMiniappAccessInvitation(c: AppContext) {
+  const developer = await requireDeveloper(c);
+  if (!developer.ok) return developer.response;
+  const packageName = c.req.param("packageName");
+  if (!packageName) throw new InvalidRequest("packageName is required");
+  const parsed = inviteMiniappUserSchema.safeParse(await readJsonBody(c));
+  if (!parsed.success) throw new InvalidRequest(parsed.error.issues[0]?.message ?? "invalid invitation payload");
+  try {
+    const invitation = await miniappAccess.invite(developer.value, packageName, parsed.data.email);
+    void sendPrivateMiniappInviteEmail({
+      to: invitation.email,
+      packageName,
+      inviterName: developer.value.email ?? "A Mentra developer",
+    });
+    return c.json({ invitation }, 201);
+  } catch (error) {
+    return serviceError(error);
+  }
+}
+
+async function deleteMiniappAccessInvitation(c: AppContext) {
+  const developer = await requireDeveloper(c);
+  if (!developer.ok) return developer.response;
+  const packageName = c.req.param("packageName");
+  const invitationId = c.req.param("invitationId");
+  if (!packageName || !invitationId) throw new InvalidRequest("packageName and invitationId are required");
+  try {
+    return c.json(await miniappAccess.revoke(developer.value, packageName, invitationId));
   } catch (error) {
     return serviceError(error);
   }
@@ -1463,6 +1535,12 @@ function bearerToken(c: AppContext): string | null {
 }
 
 function serviceError(error: unknown): Response {
+  if (error instanceof MiniAppAccessServiceError) {
+    return new Response(JSON.stringify({ error: error.code, error_description: error.message }), {
+      status: error.status,
+      headers: { "content-type": "application/json" },
+    });
+  }
   if (error instanceof MiniAppBetaServiceError) {
     return new Response(JSON.stringify({ error: error.code, error_description: error.message }), {
       status: error.status,

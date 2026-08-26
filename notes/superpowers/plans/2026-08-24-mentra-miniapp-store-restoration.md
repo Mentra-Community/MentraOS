@@ -142,6 +142,31 @@ data; each deployment may publish both stable and beta releases.
       publication, enrollment authorization, Store UI, CLI payloads, and
       automatic beta updates with tests.
 
+## Private miniapp distribution
+
+- [x] Add an app-level `public | private` visibility setting independent from
+      stable/beta release tracks and SYSTEM identity.
+- [x] Let developers invite and revoke verified Mentra accounts from Developer
+      Console without introducing organization deployment or managed-install
+      policy.
+- [x] Make private stable and private beta releases publish immediately after
+      canonical bundle, signature, manifest, compatibility, and listing
+      validation without Mentra human review.
+- [x] Keep private miniapps absent from anonymous and uninvited Store browse,
+      search, details, actions, artwork, bundle, and update responses.
+- [x] Re-authorize private artwork and bundle downloads against current user
+      access; protected responses use private, non-shared caching.
+- [x] Fetch private artwork through the Store miniapp's authenticated
+      background controller before rendering it in the phone UI.
+- [x] Preserve normal non-SYSTEM install, launch, uninstall, and automatic
+      update behavior after access-gated discovery.
+- [x] Prevent `private -> public` from exposing an unreviewed artifact: active
+      private releases re-enter the normal Mentra moderation queue before they
+      can appear publicly.
+- [x] Cover private self-publication, invitation acceptance, revocation,
+      catalog filtering, protected artifacts, and public-transition review with
+      integration tests.
+
 ## Prelaunch Store exposure
 
 - [x] Keep `com.mentra.store` bundled and SYSTEM so the install/update trust

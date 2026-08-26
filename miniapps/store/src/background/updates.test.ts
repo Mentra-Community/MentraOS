@@ -10,6 +10,7 @@ const storePackageName = "com.mentra.store"
 function installed(overrides: Partial<InstalledApp> = {}): InstalledApp {
   return {
     packageName: "com.example.weather",
+    visibility: "public",
     name: "Weather",
     version: "1.0.0",
     running: false,

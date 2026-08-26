@@ -14,7 +14,7 @@ app.get("/apps", optionalStoreUserAuth, listApps);
 app.get("/apps/:packageName", optionalStoreUserAuth, getApp);
 app.post("/apps/:packageName/track", storeUserAuth, setTrack);
 app.get("/bundles/:assetId/download", storeUserAuth, getBundle);
-app.get("/assets/:assetId", getAsset);
+app.get("/assets/:assetId", optionalStoreUserAuth, getAsset);
 
 const trackSchema = z.object({ track: z.enum(["stable", "beta"]) });
 
@@ -72,7 +72,7 @@ async function getAsset(c: AppContext) {
   const assetId = c.req.param("assetId");
   if (!assetId) return c.json({ error: "not_found" }, 404);
   try {
-    const asset = await catalog.getPublicAsset(assetId);
+    const asset = await catalog.getAsset(assetId, optionalIdentity(c));
     const bytes = await storage.getObject(asset.storageKey);
     return new Response(bytes, {
       headers: {

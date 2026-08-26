@@ -3,6 +3,7 @@ import {isNewerVersion, loadCompleteCatalog, parseCatalog, trustedCoreOrigin} fr
 
 const app = (packageName: string) => ({
   packageName,
+  visibility: "public",
   name: packageName,
   selectedTrack: "stable",
   preferredTrack: "stable",
@@ -48,6 +49,7 @@ describe("Store catalog", () => {
       apps: [
         {
           packageName: "com.example.offer",
+          visibility: "private",
           name: "Offer",
           selectedTrack: "beta",
           preferredTrack: "stable",
@@ -64,6 +66,7 @@ describe("Store catalog", () => {
         },
         {
           packageName: "com.example.good",
+          visibility: "public",
           name: "Good",
           selectedTrack: "stable",
           preferredTrack: "stable",
@@ -80,6 +83,7 @@ describe("Store catalog", () => {
         },
         {
           packageName: "com.example.bad",
+          visibility: "public",
           name: "Bad",
           selectedTrack: "stable",
           preferredTrack: "stable",

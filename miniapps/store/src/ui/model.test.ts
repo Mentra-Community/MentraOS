@@ -19,6 +19,7 @@ function installed(isCompatible: boolean): InstalledApp {
 function app(version: string, packageName = "com.example.weather", categories: string[] = []): StoreApp {
   return {
     packageName,
+    visibility: "public",
     name: "Weather",
     subtitle: null,
     description: null,

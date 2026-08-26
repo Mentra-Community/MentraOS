@@ -33,6 +33,7 @@ export const developerAppSchema = z.object({
   description: z.string().nullable(),
   storeListing: storeListingSchema,
   status: z.enum(["active", "archived", "suspended"]),
+  visibility: z.enum(["public", "private"]),
   activeRelease: z
     .object({
       id: z.string(),
@@ -142,6 +143,14 @@ export const betaAccessSchema = z.object({
 export type BetaAccess = z.infer<typeof betaAccessSchema>;
 export type BetaInvitation = z.infer<typeof betaInvitationSchema>;
 
+export const miniappAccessSchema = z.object({
+  visibility: z.enum(["public", "private"]),
+  invitations: z.array(betaInvitationSchema),
+});
+
+export type MiniappAccess = z.infer<typeof miniappAccessSchema>;
+export type MiniappAccessInvitation = z.infer<typeof betaInvitationSchema>;
+
 export function listDeveloperApps(): Promise<{ apps: DeveloperApp[] }> {
   return apiRequest("/console/apps", developerAppsResponseSchema);
 }
@@ -203,6 +212,44 @@ export function inviteBetaTester(packageName: string, email: string): Promise<{ 
 export function revokeBetaInvitation(packageName: string, invitationId: string): Promise<{ ok: boolean }> {
   return apiRequest(
     `/console/apps/${encodeURIComponent(packageName)}/beta-invitations/${encodeURIComponent(invitationId)}`,
+    z.object({ ok: z.boolean() }),
+    { method: "DELETE" },
+  );
+}
+
+export function getMiniappAccess(packageName: string): Promise<MiniappAccess> {
+  return apiRequest(`/console/apps/${encodeURIComponent(packageName)}/access`, miniappAccessSchema);
+}
+
+export function updateMiniappVisibility(
+  packageName: string,
+  visibility: "public" | "private",
+): Promise<MiniappAccess> {
+  return apiRequest(`/console/apps/${encodeURIComponent(packageName)}/access`, miniappAccessSchema, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ visibility }),
+  });
+}
+
+export function inviteMiniappUser(
+  packageName: string,
+  email: string,
+): Promise<{ invitation: MiniappAccessInvitation }> {
+  return apiRequest(
+    `/console/apps/${encodeURIComponent(packageName)}/access-invitations`,
+    z.object({ invitation: betaInvitationSchema }),
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email }),
+    },
+  );
+}
+
+export function revokeMiniappAccess(packageName: string, invitationId: string): Promise<{ ok: boolean }> {
+  return apiRequest(
+    `/console/apps/${encodeURIComponent(packageName)}/access-invitations/${encodeURIComponent(invitationId)}`,
     z.object({ ok: z.boolean() }),
     { method: "DELETE" },
   );

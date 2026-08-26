@@ -27,6 +27,7 @@ export class StoreController {
   private queuedClearOperation = false
   private queuedQuery = ""
   private lastQuery = ""
+  private artworkCache = new Map<string, Promise<string | null>>()
   private ui: {
     send: <C extends keyof StoreChannels & string>(channel: C, payload: StoreChannels[C]) => void
     handle: <C extends keyof StoreChannels & string>(channel: C, handler: (payload: any) => Promise<any>) => () => void
@@ -129,8 +130,8 @@ export class StoreController {
     }
   }
 
-  private loadCatalog(base: string, query?: string): Promise<StoreApp[]> {
-    return loadCompleteCatalog(async (page) => {
+  private async loadCatalog(base: string, query?: string): Promise<StoreApp[]> {
+    const apps = await loadCompleteCatalog(async (page) => {
       const url = new URL("/api/store/apps", base)
       url.searchParams.set("limit", "50")
       url.searchParams.set("page", String(page))
@@ -139,6 +140,7 @@ export class StoreController {
       if (!response.ok) throw new Error(`Store catalog unavailable (${response.status})`)
       return response.json()
     })
+    return this.hydratePrivateArtwork(apps)
   }
 
   private async loadCatalogApp(base: string, packageName: string): Promise<StoreApp> {
@@ -149,7 +151,46 @@ export class StoreController {
     const body = (await response.json()) as {app?: unknown}
     const app = parseCatalog({apps: [body.app]})[0]
     if (!app || app.packageName !== packageName) throw new Error("Store returned an invalid miniapp record")
-    return (await this.annotateInstallCompatibility([app]))[0]!
+    const [hydrated] = await this.hydratePrivateArtwork([app])
+    return (await this.annotateInstallCompatibility([hydrated!]))[0]!
+  }
+
+  private hydratePrivateArtwork(apps: StoreApp[]): Promise<StoreApp[]> {
+    return Promise.all(
+      apps.map(async (app) => {
+        if (app.visibility !== "private") return app
+        const [iconUrl, coverUrl, screenshotUrls] = await Promise.all([
+          this.loadAuthenticatedArtwork(app.iconUrl),
+          this.loadAuthenticatedArtwork(app.coverUrl),
+          Promise.all(app.screenshotUrls.map((url) => this.loadAuthenticatedArtwork(url))),
+        ])
+        return {
+          ...app,
+          iconUrl,
+          coverUrl,
+          screenshotUrls: screenshotUrls.filter((url): url is string => Boolean(url)),
+        }
+      }),
+    )
+  }
+
+  private loadAuthenticatedArtwork(url: string | null): Promise<string | null> {
+    if (!url) return Promise.resolve(null)
+    const cached = this.artworkCache.get(url)
+    if (cached) return cached
+    const request = this.session.auth
+      .fetch(url, {headers: {accept: "image/avif,image/webp,image/png,image/jpeg"}})
+      .then(async (response) => {
+        if (!response.ok) return null
+        const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase()
+        if (!contentType?.startsWith("image/")) return null
+        const bytes = new Uint8Array(await response.arrayBuffer())
+        if (bytes.byteLength === 0 || bytes.byteLength > 10 * 1024 * 1024) return null
+        return `data:${contentType};base64,${Buffer.from(bytes).toString("base64")}`
+      })
+      .catch(() => null)
+    this.artworkCache.set(url, request)
+    return request
   }
 
   private async searchMiniapps(params: Record<string, unknown>) {

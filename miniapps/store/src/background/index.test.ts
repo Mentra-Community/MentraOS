@@ -9,6 +9,7 @@ interface TestController {
   uninstall(packageName: string, query?: string): Promise<StoreSnapshot>
   setTrack(packageName: string, track: "stable" | "beta", query?: string): Promise<StoreSnapshot>
   load(query?: string, clearOperation?: boolean, refreshAutomaticCatalog?: boolean): Promise<StoreSnapshot>
+  loadCatalog(base: string, query?: string): Promise<StoreApp[]>
   refresh(query?: string, refreshAutomaticCatalog?: boolean, clearOperation?: boolean): Promise<StoreSnapshot>
   automaticUpdateCandidates(): StoreApp[]
   scheduleAutomaticUpdates(): Promise<void>
@@ -18,6 +19,62 @@ interface TestController {
 }
 
 describe("StoreController refresh serialization", () => {
+  test("hydrates private artwork through the authenticated Store background", async () => {
+    const fetched: string[] = []
+    const assetUrl = "https://core.example.test/api/store/assets/0123456789abcdef01234567"
+    const session = {
+      auth: {
+        fetch: async (url: string) => {
+          fetched.push(url)
+          if (url === assetUrl) {
+            return new Response(Uint8Array.from([0x89, 0x50, 0x4e, 0x47]), {
+              headers: {"content-type": "image/png"},
+            })
+          }
+          return Response.json({
+            page: 1,
+            hasMore: false,
+            apps: [
+              {
+                packageName: "com.example.private",
+                visibility: "private",
+                name: "Private",
+                subtitle: null,
+                description: null,
+                categories: [],
+                privacyPolicyUrl: null,
+                supportUrl: null,
+                websiteUrl: null,
+                reviewTier: "community",
+                featured: false,
+                iconUrl: assetUrl,
+                coverUrl: null,
+                screenshotUrls: [],
+                selectedTrack: "stable",
+                preferredTrack: "stable",
+                betaAccess: null,
+                availableTracks: ["stable"],
+                release: {
+                  id: "private-r1",
+                  version: "1.0.0",
+                  track: "stable",
+                  installable: true,
+                  bundleUrl: "https://core.example.test/private.zip",
+                  bundleSha256: "a".repeat(64),
+                },
+              },
+            ],
+          })
+        },
+      },
+    } as unknown as MiniappSession
+    const controller = new StoreController(session) as unknown as TestController
+    const apps = await controller.loadCatalog("https://core.example.test")
+
+    expect(fetched).toEqual(["https://core.example.test/api/store/apps?limit=50&page=1", assetUrl])
+    expect(apps[0]?.iconUrl).toBe("data:image/png;base64,iVBORw==")
+  })
+
   test("registers host reconciliation as an invocation-scoped action", async () => {
     const actionHandlers = new Map<
       string,
@@ -72,6 +129,7 @@ describe("StoreController refresh serialization", () => {
     let installDescriptor: Record<string, unknown> | undefined
     const catalogApp = {
       packageName: "com.example.notes",
+      visibility: "public",
       name: "Notes",
       subtitle: "Remember things",
       description: "Capture notes on your glasses.",

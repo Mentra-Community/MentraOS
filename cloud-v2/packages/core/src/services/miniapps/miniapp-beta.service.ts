@@ -2,10 +2,12 @@ import { ulid } from "ulid";
 import { MiniAppBetaInvitationModel } from "../../models/miniapp-beta-invitation.model";
 import { MiniAppTrackEnrollmentModel } from "../../models/miniapp-track-enrollment.model";
 import { MiniAppModel } from "../../models/miniapp.model";
+import { MiniAppReleaseModel } from "../../models/miniapp-release.model";
 import { UserModel } from "../../models/user.model";
 import { findUserByEmail } from "../account/gotrue.client";
 import { findOrCreateUser } from "../user.service";
-import type { DeveloperIdentity } from "./miniapp.service";
+import { notifyMiniAppSubmissionSlack } from "./miniapp-slack.service";
+import { withStoreListingLease, type DeveloperIdentity } from "./miniapp.service";
 
 export type MiniAppBetaAccessMode = "private" | "public";
 
@@ -52,21 +54,75 @@ export class MiniAppBetaService {
   }
 
   async setAccessMode(developer: DeveloperIdentity, packageName: string, mode: MiniAppBetaAccessMode) {
-    const app = await this.requireApp(developer, packageName);
-    app.betaAccessMode = mode;
-    await app.save();
+    const authorizedApp = await this.requireApp(developer, packageName);
+    return withStoreListingLease(authorizedApp._id.toString(), async lease => {
+      const app = await this.requireApp(developer, packageName);
+      let requeuedSubmission: Parameters<typeof notifyMiniAppSubmissionSlack>[0] | null = null;
+      if (mode === "public" && app.betaAccessMode !== "public" && app.activeBetaReleaseId) {
+        const release = await MiniAppReleaseModel.findOne({
+          _id: app.activeBetaReleaseId,
+          miniAppId: app._id.toString(),
+        });
+        if (release?.status === "published" && !release.publicStoreApprovedAt) {
+          const submitted = await MiniAppReleaseModel.findOneAndUpdate(
+            { _id: release._id, status: "published", publicStoreApprovedAt: null, updatedAt: release.updatedAt },
+            {
+              $set: {
+                status: "submitted",
+                submittedAt: new Date(),
+                submittedStoreListing: release.reviewedStoreListing ?? app.storeListing,
+                reviewedStoreListing: null,
+                reviewedAt: null,
+                reviewedBy: null,
+                reviewNotes: null,
+              },
+            },
+            { new: true },
+          );
+          if (!submitted) {
+            throw new MiniAppBetaServiceError("invalid_release_state", "beta release changed during access update", 409);
+          }
+          requeuedSubmission = {
+            releaseId: submitted._id.toString(),
+            packageName: submitted.packageName,
+            version: submitted.version,
+            releaseTrack: "beta",
+            appName: app.displayName,
+            description: app.description ?? null,
+            developerEmail: developer.email ?? null,
+            orgId: developer.orgId,
+            manifest: submitted.manifest as Record<string, unknown> | null,
+          };
+        }
+      }
+      await lease.assertHeld();
+      const updated = await MiniAppModel.updateOne(
+        {
+          _id: app._id,
+          orgId: developer.orgId,
+          "storeListingOperationLease.token": lease.token,
+          $expr: { $gt: ["$storeListingOperationLease.expiresAt", "$$NOW"] },
+        },
+        { $set: { betaAccessMode: mode } },
+      );
+      if (updated.matchedCount !== 1) {
+        throw new MiniAppBetaServiceError("store_listing_lease_lost", "beta access update lost its lease", 409);
+      }
 
-    if (mode === "private") {
-      const invitedUserIds = await MiniAppBetaInvitationModel.distinct("mentraUserId", {
-        miniAppId: app._id.toString(),
-        status: "accepted",
-      });
-      await MiniAppTrackEnrollmentModel.deleteMany({
-        miniAppId: app._id.toString(),
-        ...(invitedUserIds.length > 0 ? { mentraUserId: { $nin: invitedUserIds } } : {}),
-      });
-    }
-    return this.getAccess(developer, packageName);
+      if (requeuedSubmission) notifyMiniAppSubmissionSlack(requeuedSubmission).catch(() => {});
+
+      if (mode === "private") {
+        const invitedUserIds = await MiniAppBetaInvitationModel.distinct("mentraUserId", {
+          miniAppId: app._id.toString(),
+          status: "accepted",
+        });
+        await MiniAppTrackEnrollmentModel.deleteMany({
+          miniAppId: app._id.toString(),
+          ...(invitedUserIds.length > 0 ? { mentraUserId: { $nin: invitedUserIds } } : {}),
+        });
+      }
+      return this.getAccess(developer, packageName);
+    });
   }
 
   async invite(developer: DeveloperIdentity, packageName: string, email: string) {

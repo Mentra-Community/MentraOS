@@ -15,6 +15,7 @@ import { OemModel } from "../models/oem.model";
 import { MiniAppModel } from "../models/miniapp.model";
 import { MiniAppReleaseModel } from "../models/miniapp-release.model";
 import { MiniAppBetaInvitationModel } from "../models/miniapp-beta-invitation.model";
+import { MiniAppAccessInvitationModel } from "../models/miniapp-access-invitation.model";
 import { MiniAppTrackEnrollmentModel } from "../models/miniapp-track-enrollment.model";
 
 const logger = createLogger("core").child({ component: "startup-migrations" });
@@ -59,8 +60,19 @@ export async function runStartupMigrations(): Promise<void> {
     { betaAccessMode: { $exists: false } },
     { $set: { betaAccessMode: "private" } },
   );
+  await MiniAppModel.collection.updateMany(
+    { visibility: { $exists: false } },
+    { $set: { visibility: "public" } },
+  );
+  // Releases published before private distribution existed necessarily went
+  // through Mentra review and remain eligible for public discovery.
+  await MiniAppReleaseModel.collection.updateMany(
+    { status: "published", publicStoreApprovedAt: { $exists: false } },
+    [{ $set: { publicStoreApprovedAt: { $ifNull: ["$reviewedAt", "$publishedAt"] } } }],
+  );
   await MiniAppReleaseModel.createIndexes();
   await MiniAppBetaInvitationModel.createIndexes();
+  await MiniAppAccessInvitationModel.createIndexes();
   await MiniAppTrackEnrollmentModel.createIndexes();
   await dropLegacyMembershipEmailIndex();
   await dropLegacySingleOrgMembershipIndex();
