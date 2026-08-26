@@ -31,16 +31,16 @@ public class DowngradeGateTest {
     @Test
     public void exactOrNewerPinDoesNotDowngrade() {
         // Equal version: exact pin already satisfied, nothing to do.
-        assertFalse(DowngradeGate.shouldDowngrade(49000000L, 49000000L, FLOOR));
+        assertFalse(DowngradeGate.shouldDowngrade(FLOOR, FLOOR, FLOOR));
         // Higher version: that is the normal upgrade path, not a downgrade.
-        assertFalse(DowngradeGate.shouldDowngrade(49000000L, 49076573L, FLOOR));
+        assertFalse(DowngradeGate.shouldDowngrade(FLOOR, FLOOR + 1L, FLOOR));
     }
 
     @Test
     public void invalidManifestVersionNeverDowngrades() {
         // Zero/negative pins (e.g. the zeroed legacy rescue manifests) are never actionable.
-        assertFalse(DowngradeGate.shouldDowngrade(49076573L, 0L, FLOOR));
-        assertFalse(DowngradeGate.shouldDowngrade(49076573L, -1L, FLOOR));
+        assertFalse(DowngradeGate.shouldDowngrade(FLOOR + 1L, 0L, FLOOR));
+        assertFalse(DowngradeGate.shouldDowngrade(FLOOR + 1L, -1L, FLOOR));
     }
 
     @Test
