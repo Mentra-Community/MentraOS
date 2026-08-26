@@ -48,7 +48,6 @@ function stepLabel(step: MentraLiveOtaStep | null): string {
       return 'software';
   }
 }
-
 function transportDetail(state: MentraLiveOtaState): string | undefined {
   if (state.transport === 'hotspot') {
     return 'The phone will transfer the verified files over the glasses hotspot.';
@@ -71,6 +70,8 @@ export function otaPresentation(
   state: MentraLiveOtaState,
   deviceName = 'Mentra Live',
 ): CustomOtaPresentation {
+  const changelogs = (state as OtaStateWithChangelogs).changelogs ?? [];
+
   if (state.versionChangePhase === 'restarting') {
     return {
       detail: 'The glasses can restart more than once during a version change.',
@@ -135,6 +136,7 @@ export function otaPresentation(
       };
     case 'up_to_date':
       return {
+        changelogs,
         message: 'The glasses app, system software, and firmware match this SDK release.',
         primary: {action: 'finish', label: 'Continue'},
         title: 'Everything is up to date',
@@ -224,7 +226,7 @@ export function otaPresentation(
       };
     case 'complete':
       return {
-        changelogs: (state as OtaStateWithChangelogs).changelogs ?? [],
+        changelogs,
         message: state.versionChange
           ? 'The required software version is installed and the glasses are ready.'
           : 'Your glasses now match this SDK release.',

@@ -155,4 +155,19 @@ describe('custom OTA presentation', () => {
     ]);
     expect(presentation.tone).toBe('success');
   });
+
+  test('keeps changelogs on the stable up-to-date screen', () => {
+    const presentation = otaPresentation(otaState({
+      changelogs: [{version: '3.1.0', markdown: 'Release notes'}],
+      screen: 'up_to_date',
+    }));
+
+    expect(presentation.changelogs).toEqual([
+      {version: '3.1.0', markdown: 'Release notes'},
+    ]);
+    expect(presentation.primary).toEqual({
+      action: 'finish',
+      label: 'Continue',
+    });
+  });
 });
