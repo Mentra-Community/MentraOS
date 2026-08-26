@@ -103,6 +103,17 @@ export function CustomMentraLiveOtaFlow({
           {presentation.detail ? (
             <Text style={styles.detail}>{presentation.detail}</Text>
           ) : null}
+
+          {presentation.changelogs?.map((entry) => (
+            <View key={entry.version} style={styles.changelogEntry}>
+              <Text selectable style={styles.changelogVersion}>
+                {entry.version}
+              </Text>
+              <Text selectable style={styles.changelogBody}>
+                {entry.markdown}
+              </Text>
+            </View>
+          ))}
         </ScrollView>
 
         {presentation.primary || presentation.secondary ? (
@@ -262,6 +273,21 @@ const styles = StyleSheet.create({
     lineHeight: 19,
     maxWidth: 420,
     textAlign: "center",
+  },
+  changelogEntry: {
+    gap: 8,
+    maxWidth: 420,
+    width: "100%",
+  },
+  changelogVersion: {
+    color: colors.ink,
+    fontSize: 16,
+    fontWeight: "700",
+  },
+  changelogBody: {
+    color: colors.muted,
+    fontSize: 14,
+    lineHeight: 20,
   },
   actions: { gap: 10 },
   actionSpacer: { height: 48 },

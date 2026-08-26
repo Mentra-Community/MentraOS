@@ -1,9 +1,16 @@
 import {describe, expect, test} from 'bun:test';
 import type {MentraLiveOtaState} from '@mentra/engine/ota';
 
-import {otaPresentation} from './otaPresentation';
+import {
+  otaPresentation,
+  type CustomOtaChangelog,
+} from './otaPresentation';
 
-const baseState: MentraLiveOtaState = {
+type OtaStateWithChangelogs = MentraLiveOtaState & {
+  changelogs?: CustomOtaChangelog[];
+};
+
+const baseState: OtaStateWithChangelogs = {
   canDiscard: false,
   canDismiss: false,
   canFinish: false,
@@ -33,7 +40,7 @@ const baseState: MentraLiveOtaState = {
   wifiStatusKnown: true,
 };
 
-function otaState(overrides: Partial<MentraLiveOtaState>): MentraLiveOtaState {
+function otaState(overrides: Partial<OtaStateWithChangelogs>): OtaStateWithChangelogs {
   return {...baseState, ...overrides};
 }
 
@@ -134,10 +141,18 @@ describe('custom OTA presentation', () => {
   test('finishes only after Engine reports completion', () => {
     const presentation = otaPresentation(otaState({
       canFinish: true,
+      changelogs: [
+        {version: '3.2.0', markdown: 'Newest notes'},
+        {version: '3.1.0', markdown: 'Earlier notes'},
+      ],
       screen: 'complete',
     }));
 
     expect(presentation.primary).toEqual({action: 'finish', label: 'Done'});
+    expect(presentation.changelogs?.map(({version}) => version)).toEqual([
+      '3.2.0',
+      '3.1.0',
+    ]);
     expect(presentation.tone).toBe('success');
   });
 });

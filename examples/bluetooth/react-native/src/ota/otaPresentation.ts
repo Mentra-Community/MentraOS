@@ -15,7 +15,13 @@ export type CustomOtaButton = {
   label: string;
 };
 
+export type CustomOtaChangelog = {
+  markdown: string;
+  version: string;
+};
+
 export type CustomOtaPresentation = {
+  changelogs?: CustomOtaChangelog[];
   detail?: string;
   indeterminate?: boolean;
   message: string;
@@ -24,6 +30,10 @@ export type CustomOtaPresentation = {
   secondary?: CustomOtaButton;
   title: string;
   tone: 'active' | 'danger' | 'neutral' | 'success';
+};
+
+type OtaStateWithChangelogs = MentraLiveOtaState & {
+  changelogs?: CustomOtaChangelog[];
 };
 
 function stepLabel(step: MentraLiveOtaStep | null): string {
@@ -214,6 +224,7 @@ export function otaPresentation(
       };
     case 'complete':
       return {
+        changelogs: (state as OtaStateWithChangelogs).changelogs ?? [],
         message: state.versionChange
           ? 'The required software version is installed and the glasses are ready.'
           : 'Your glasses now match this SDK release.',
