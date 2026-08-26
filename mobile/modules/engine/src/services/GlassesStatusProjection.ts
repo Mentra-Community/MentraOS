@@ -11,17 +11,18 @@
  *
  * Started by `engine.start()`. Idempotent.
  */
-import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
-import type {GlassesStatus} from "@mentra/bluetooth-sdk/internal"
+import BluetoothSdk, {type PublicGlassesStatus} from "@mentra/bluetooth-sdk"
 import {useCoreStore} from "../stores/core"
 import {useGlassesStore} from "../stores/glasses"
 
 let unsubs: Array<() => void> = []
 let projectionRunId = 0
-let glassesStatusForwarder: ((status: Partial<GlassesStatus>) => void) | null = null
+let glassesStatusForwarder: ((status: Partial<PublicGlassesStatus>) => void) | null = null
 let hydrationPromise: Promise<void> | null = null
 
-export function startGlassesStatusProjection(forwarder?: (status: Partial<GlassesStatus>) => void): Promise<void> {
+export function startGlassesStatusProjection(
+  forwarder?: (status: Partial<PublicGlassesStatus>) => void,
+): Promise<void> {
   if (forwarder) glassesStatusForwarder = forwarder
   if (unsubs.length) return hydrationPromise ?? Promise.resolve()
 
@@ -49,7 +50,7 @@ export function startGlassesStatusProjection(forwarder?: (status: Partial<Glasse
 
   // Bluetooth-adapter status -> core store.
   unsubs.push(
-    BluetoothSdk.onBluetoothStatus((changed) => {
+    BluetoothSdk.subscribeBluetoothStatus((changed) => {
       bluetoothEventSeen = true
       useCoreStore.getState().setCoreInfo(changed)
     }),
@@ -58,7 +59,7 @@ export function startGlassesStatusProjection(forwarder?: (status: Partial<Glasse
   // Glasses status -> glasses store (+ optional full-runtime forwarding to local
   // miniapps; clear any stale OTA-available flag on disconnect).
   unsubs.push(
-    BluetoothSdk.onGlassesStatus((changed) => {
+    BluetoothSdk.subscribeGlassesStatus((changed) => {
       glassesEventSeen = true
       useGlassesStore.getState().setGlassesInfo(changed)
       glassesStatusForwarder?.(changed)

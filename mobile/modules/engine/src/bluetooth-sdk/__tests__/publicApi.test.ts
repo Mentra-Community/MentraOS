@@ -42,6 +42,7 @@ describe("@mentra/engine/bluetooth-sdk", () => {
       "./bluetooth-sdk/react": "react",
       "./bluetooth-sdk/types": "types",
       "./bluetooth-sdk/photo-receiver": "photo-receiver",
+      "./bluetooth-sdk/ota-transport": "ota-transport",
       "./bluetooth-sdk/debug": "debug",
     }
 

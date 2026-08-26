@@ -47,6 +47,36 @@ jest.mock("@mentra/bluetooth-sdk/internal", () => {
   }
 })
 
+jest.mock("@mentra/bluetooth-sdk/ota-transport", () => {
+  const {mentraLocalNetworkMock} = require("./src/test-utils/mockBluetoothSdk")
+  return {
+    otaLocalNetwork: {
+      isAvailable: () => true,
+      connect: mentraLocalNetworkMock.connect,
+      request: mentraLocalNetworkMock.request,
+      download: mentraLocalNetworkMock.download,
+      cancel: mentraLocalNetworkMock.cancel,
+      disconnect: mentraLocalNetworkMock.disconnect,
+      onDownloadProgress: (listener) => mentraLocalNetworkMock.addListener("downloadProgress", listener),
+      onNetworkLost: (listener) => mentraLocalNetworkMock.addListener("networkLost", listener),
+    },
+    otaServer: {
+      start: jest.fn(() =>
+        Promise.resolve({
+          baseUrl: "http://127.0.0.1:8080",
+          host: "127.0.0.1",
+          manifestUrl: "http://127.0.0.1:8080/manifest.json",
+          port: 8080,
+        }),
+      ),
+      stop: jest.fn(() => Promise.resolve()),
+      waitForWifiAddress: jest.fn(() => Promise.resolve("127.0.0.1")),
+      downloadArtifact: jest.fn(() => Promise.resolve({statusCode: 200, bytesWritten: 0})),
+      onArtifactDownloadProgress: jest.fn(() => ({remove: jest.fn()})),
+    },
+  }
+})
+
 jest.mock("@/utils/auth/authClient", () => ({
   __esModule: true,
   default: {

@@ -1,5 +1,4 @@
-import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
-import type {OtaUpdateInfo} from "@mentra/bluetooth-sdk"
+import BluetoothSdk, {type OtaUpdateInfo} from "@mentra/bluetooth-sdk"
 import {getGlassesSystemTimeMs, isGlassesConnected, useGlassesStore, waitForGlassesState} from "../stores/glasses"
 import {maybeFixGlassesClockFromVersionInfo} from "./glassesClockSync"
 import {hasConfiguredModernOtaManifestPin, resolveOtaManifestUrl} from "./otaManifestUrl"
@@ -406,9 +405,13 @@ export async function checkCurrentGlassesForUpdate(
   }
 
   if (refreshVersionInfo) {
-    void BluetoothSdk.requestVersionInfo().catch((error) => {
-      console.warn("OTA: Failed to request version_info from glasses:", error)
-    })
+    void BluetoothSdk.requestVersionInfo()
+      .then((versionInfo) => {
+        useGlassesStore.getState().setGlassesInfo(versionInfo)
+      })
+      .catch((error) => {
+        console.warn("OTA: Failed to request version_info from glasses:", error)
+      })
   }
 
   let buildNumber = useGlassesStore.getState().buildNumber

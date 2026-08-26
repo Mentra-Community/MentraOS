@@ -17,8 +17,7 @@
  * state written mid-pass queues a follow-up pass — the same way a setState
  * during React effects scheduled a re-render after the current effect batch.
  */
-import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
-import type {OtaProgress, OtaStatus} from "@mentra/bluetooth-sdk"
+import BluetoothSdk, {type OtaProgress, type OtaStatus} from "@mentra/bluetooth-sdk"
 import GlobalEventEmitter from "../utils/GlobalEventEmitter"
 import {isGlassesConnected, useGlassesStore} from "../stores/glasses"
 import {resolveOtaManifestUrl} from "./otaManifestUrl"
@@ -170,6 +169,8 @@ export interface OtaInstallSnapshot {
   /** Pre-ota_start phone staging/join state for a hotspot attempt. */
   hotspotPhase: HotspotOtaPhase
   hotspotArtifactPercent: number | null
+  /** Transport selected from the checked glasses capabilities and Wi-Fi state. */
+  transport: "wifi" | "hotspot"
 }
 
 type OtaStartOutcome = "pending" | "acknowledged" | "rejected"
@@ -407,7 +408,7 @@ class OtaInstallCoordinator {
         if (this.otaStartOwnership?.outcome === "pending") {
           void this.sendOtaStartWithWatchdogs()
         } else {
-          void BluetoothSdk.sendOtaQueryStatus().catch(() => {})
+          void BluetoothSdk.queryOtaStatus().catch(() => {})
           this.armQueryReplyFallback("retry")
         }
       }
@@ -455,7 +456,6 @@ class OtaInstallCoordinator {
     }
     useGlassesStore.getState().setOtaUpdateAvailable(null)
     if (this.apkStepSeen) {
-      BluetoothSdk.updateGlasses({buildNumber: ""})
       useGlassesStore.getState().setGlassesInfo({buildNumber: ""})
     }
     void this.teardownHotspotTransport()
@@ -505,6 +505,7 @@ class OtaInstallCoordinator {
       versionChangePhase: this.deriveVersionChangePhase(connected),
       hotspotPhase: this.hotspotPhase,
       hotspotArtifactPercent: this.hotspotArtifactPercent,
+      transport: this.selectedTransport,
     }
   }
 
@@ -1065,7 +1066,7 @@ class OtaInstallCoordinator {
     if (this.otaStartOwnership?.outcome === "pending") {
       void this.sendOtaStartWithWatchdogs()
     }
-    void BluetoothSdk.sendOtaQueryStatus()
+    void BluetoothSdk.queryOtaStatus()
     this.armQueryReplyFallback("reconnect")
     return true
   }
@@ -1109,7 +1110,7 @@ class OtaInstallCoordinator {
     if (noSessionYet) {
       if (!isIdleStatus && this.otaStartOwnership?.outcome === "acknowledged") {
         console.log("[OTA_PROGRESS] initial mount, acknowledged session has no cached status — reconciling")
-        void BluetoothSdk.sendOtaQueryStatus().catch(() => {})
+        void BluetoothSdk.queryOtaStatus().catch(() => {})
         this.armQueryReplyFallback("initial-mount")
         return
       }
@@ -1125,7 +1126,7 @@ class OtaInstallCoordinator {
       void this.sendOtaStartWithWatchdogs()
     } else {
       console.log("[OTA_PROGRESS] initial mount, session exists, sending ota_query_status")
-      void BluetoothSdk.sendOtaQueryStatus()
+      void BluetoothSdk.queryOtaStatus()
       this.armQueryReplyFallback("initial-mount")
     }
   }
@@ -1154,7 +1155,7 @@ class OtaInstallCoordinator {
     this.clearProgressTimeout()
     this.onFirstActivity()
     this.onFirstNonZeroProgress()
-    void BluetoothSdk.sendOtaQueryStatus()
+    void BluetoothSdk.queryOtaStatus()
     useGlassesStore.getState().setMtkUpdatedThisSession(true)
   }
 
@@ -1345,7 +1346,7 @@ class OtaInstallCoordinator {
     const s = useGlassesStore.getState().otaStatus
     if (s?.stepType === "apk" && s.phase === "install" && s.status === "in_progress") {
       this.apkInstallPollInFlight = true
-      void BluetoothSdk.sendOtaQueryStatus()
+      void BluetoothSdk.queryOtaStatus()
         .catch(() => {})
         .finally(() => {
           this.apkInstallPollInFlight = false

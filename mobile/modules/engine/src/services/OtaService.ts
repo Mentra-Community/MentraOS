@@ -10,8 +10,7 @@
  *
  * Started by `engine.start()`. Idempotent.
  */
-import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
-import type {OtaStatus} from "@mentra/bluetooth-sdk/internal"
+import BluetoothSdk, {type OtaStatus} from "@mentra/bluetooth-sdk"
 import GlobalEventEmitter from "../utils/GlobalEventEmitter"
 import {useGlassesStore} from "../stores/glasses"
 import {handleOtaClockSkewFromGlasses} from "./glassesClockSync"
