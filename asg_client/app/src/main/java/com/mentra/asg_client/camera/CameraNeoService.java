@@ -536,6 +536,27 @@ public class CameraNeoService extends LifecycleService {
         return false;
     }
 
+    /** Cancel an active still capture and synchronously tear down its camera session. */
+    public static boolean cancelActivePhotoCapture(String errorMessage) {
+        synchronized (SERVICE_LOCK) {
+            if (sInstance == null) {
+                return false;
+            }
+            boolean cancelledCapture = sInstance.photoSession.cancelActiveCapture(errorMessage);
+            // Always drain deferred persistence so a wipe cannot race a late JPEG write
+            // that cleared activeCapture before the background save finished.
+            boolean cancelledPersistence = sInstance.photoSession.cancelOutstandingPersistence();
+            if (!cancelledCapture && !cancelledPersistence) {
+                return false;
+            }
+            Log.i(TAG, "Cancelling active photo capture");
+            sInstance.cancelKeepAliveTimer();
+            sInstance.closeCamera();
+            sInstance.stopSelf();
+            return true;
+        }
+    }
+
     @Override
     public void onCreate() {
         super.onCreate();
@@ -1565,11 +1586,17 @@ public class CameraNeoService extends LifecycleService {
             stopSelf();
         } catch (InterruptedException e) {
             Log.e(TAG, "Interrupted while trying to lock camera", e);
-            photoSession.notifyHostPhotoError("Camera operation interrupted");
+            if (forVideo)
+                notifyVideoError(videoSession.currentVideoId(), "Camera operation interrupted");
+            else photoSession.notifyHostPhotoError("Camera operation interrupted");
             stopSelf();
         } catch (Exception e) {
             Log.e(TAG, "Error setting up camera", e);
-            photoSession.notifyHostPhotoError("Error setting up camera: " + e.getMessage());
+            if (forVideo)
+                notifyVideoError(
+                        videoSession.currentVideoId(),
+                        "Error setting up camera: " + e.getMessage());
+            else photoSession.notifyHostPhotoError("Error setting up camera: " + e.getMessage());
             stopSelf();
         }
     }

@@ -63,6 +63,7 @@ on:
       - "MentraOS ASG Client Build"
       - "Mobile App Quality Checks"
       - "OEM Host Boundary Gate"
+      - "Coordinated Release Family Checks"
       - "Bun Lockfile Checks"
       - "🧪 Test Cloud build"
       - "🧪 Test SDK build"
@@ -118,6 +119,7 @@ jobs:
               "MentraOS ASG Client Build",
               "Mobile App Quality Checks",
               "OEM Host Boundary Gate",
+              "Coordinated Release Family Checks",
               "Bun Lockfile Checks",
               "🧪 Test Cloud build",
               "🧪 Test SDK build",

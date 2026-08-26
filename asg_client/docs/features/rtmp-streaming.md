@@ -29,7 +29,7 @@ See the [API doc](../ASG_CLIENT_API.md#streaming-rtmp--srt--whip) for fields and
 
 1. **Validate URL.** The URL prefix selects the protocol; an unknown prefix is rejected with `Unknown stream URL protocol`.
 2. **Battery check.** Reject if battery is below `BatteryConstants.MIN_BATTERY_LEVEL` (currently 10%) — `BATTERY_LOW` error.
-3. **WiFi check.** All three protocols require WiFi.
+3. **Network check.** Require either a STA WiFi connection or an endpoint on the active glasses-hosted hotspot subnet.
 4. **Stop any existing stream** to avoid camera contention; brief pause so the camera HAL releases.
 5. **Resolution check (WHIP only).** Reject if requested resolution exceeds the camera's supported output (`WhipCameraFormatSelector`).
 6. **Disable EIS** during streaming to reduce camera HAL thermal load (`SysControl.setEisEnable(context, false)`). Re-enabled on stop.
@@ -71,7 +71,7 @@ If no stream is active, the response is `status: "error"` with `errorDetails: "n
 ## Resource constraints
 
 - **Battery** — start gated at `MIN_BATTERY_LEVEL`. The phone gets `BATTERY_LOW` and the user hears a low-battery audio cue.
-- **WiFi** — required for all three protocols. Mobile data is not used.
+- **Network** — requires either STA WiFi or an endpoint on the active glasses-hosted hotspot subnet. The glasses do not use cellular data.
 - **Camera contention** — only one stream at a time; starting a second stream stops the first. Buffer recording, photos, and video recording all share the same camera and yield to (or reject) streams.
 - **Thermal** — EIS is disabled while streaming.
 

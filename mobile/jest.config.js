@@ -10,10 +10,11 @@ module.exports = {
     "^@mentra/bluetooth-sdk/internal$": "<rootDir>/modules/bluetooth-sdk/src/_internal.ts",
     // Mirror metro: the @mentra/engine entry points resolve to SOURCE, not the
     // (stale) build/ output — tests must exercise the same code the app
-    // bundles. jest.setup.js mocks all three entries.
+    // bundles. jest.setup.js mocks the runtime entries; /ota stays real.
     "^@mentra/engine$": "<rootDir>/modules/engine/src/index.ts",
-    "^@mentra/engine/internal$": "<rootDir>/modules/engine/src/internal.ts",
-    "^@mentra/engine/devtools$": "<rootDir>/modules/engine/src/devtools.ts",
+    "^@mentra/engine-host-internal$": "<rootDir>/modules/engine-host-internal/src/index.ts",
+    "^@mentra/engine-host-internal/devtools$": "<rootDir>/modules/engine-host-internal/src/devtools.ts",
+    "^@mentra/engine/ota$": "<rootDir>/modules/engine/src/react/index.ts",
     "^expo/virtual/env$": "<rootDir>/src/test-utils/expoVirtualEnvMock.ts",
     "^react-native$": "<rootDir>/node_modules/react-native",
     "^crust$": "<rootDir>/modules/crust/src",

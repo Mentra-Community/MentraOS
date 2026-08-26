@@ -23,6 +23,7 @@ import com.mentra.asg_client.audio.AudioAssets;
 import com.mentra.asg_client.camera.CameraNeoService;
 import com.mentra.asg_client.io.hardware.core.HardwareManagerFactory;
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
+import com.mentra.asg_client.io.network.utils.HotspotAwareNetworkChangeDetector;
 import com.mentra.asg_client.io.streaming.config.WhipStreamConfig;
 import com.mentra.asg_client.io.streaming.interfaces.StreamingStatusCallback;
 import com.mentra.asg_client.service.core.constants.BatteryConstants;
@@ -41,6 +42,7 @@ import org.webrtc.IceCandidate;
 import org.webrtc.MediaConstraints;
 import org.webrtc.MediaStream;
 import org.webrtc.MediaStreamTrack;
+import org.webrtc.NetworkMonitor;
 import org.webrtc.PeerConnection;
 import org.webrtc.PeerConnectionFactory;
 import org.webrtc.RtpCapabilities;
@@ -470,6 +472,10 @@ public class WhipStreamingService extends Service {
 
   private void initWebRtc() {
     if (!sPeerConnectionFactoryInitialized) {
+      // ConnectivityManager omits the tethering-side ap0 interface. Supply a detector that also
+      // inventories that local-only network so ICE can gather and bind an AP candidate.
+      NetworkMonitor.getInstance()
+          .setNetworkChangeDetectorFactory(HotspotAwareNetworkChangeDetector::new);
       PeerConnectionFactory.InitializationOptions initOptions =
           PeerConnectionFactory.InitializationOptions.builder(this)
               .setEnableInternalTracer(false)

@@ -127,13 +127,6 @@ public class VideoCommandHandler extends BaseMediaCommandHandler {
                 Log.w(TAG, "⚠️ StateManager not available - skipping battery check");
             }
 
-            if (captureService.isRecordingVideo()) {
-                logCommandResult("start_video_recording", false, "Already recording video");
-                streamingManager.sendVideoRecordingStatusResponse(
-                        requestId, false, "already_recording", "Already recording video");
-                return false;
-            }
-
             // Parse video settings if provided. Any field that is missing or <= 0
             // falls back to the saved button-video default rather than being
             // dropped, so partial overrides (e.g. an fps-only request from a
@@ -217,8 +210,15 @@ public class VideoCommandHandler extends BaseMediaCommandHandler {
                 maxRecordingTimeMinutes = MAX_RECORDING_TIME_MINUTES;
             }
 
-            captureService.handleStartVideoCommand(
-                    requestId, save, videoSettings, flash, sound, maxRecordingTimeMinutes);
+            boolean accepted =
+                    captureService.handleStartVideoCommand(
+                            requestId, save, videoSettings, flash, sound, maxRecordingTimeMinutes);
+            if (!accepted) {
+                logCommandResult("start_video_recording", false, "Already recording video");
+                streamingManager.sendVideoRecordingStatusResponse(
+                        requestId, false, "already_recording", "Already recording video");
+                return false;
+            }
 
             logCommandResult("start_video_recording", true, null);
             return true;

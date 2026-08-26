@@ -356,7 +356,8 @@ public class K900NetworkManager extends BaseNetworkManager {
 
     private String findLocalHotspotGatewayIp() {
         try {
-            NetworkInterface interfaceInfo = NetworkInterface.getByName("ap0");
+            NetworkInterface interfaceInfo =
+                    NetworkInterface.getByName(AsgConstants.MENTRA_LIVE_HOTSPOT_INTERFACE);
             String gatewayIp = findLocalHotspotGatewayIp(interfaceInfo, true);
             if (!gatewayIp.isEmpty()) {
                 return gatewayIp;
@@ -365,7 +366,7 @@ public class K900NetworkManager extends BaseNetworkManager {
             Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
             while (interfaces != null && interfaces.hasMoreElements()) {
                 NetworkInterface candidate = interfaces.nextElement();
-                if ("ap0".equals(candidate.getName())) {
+                if (AsgConstants.MENTRA_LIVE_HOTSPOT_INTERFACE.equals(candidate.getName())) {
                     continue;
                 }
                 gatewayIp = findLocalHotspotGatewayIp(candidate, false);

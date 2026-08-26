@@ -18,7 +18,7 @@
  * during React effects scheduled a re-render after the current effect batch.
  */
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
-import type {OtaProgress, OtaStatus} from "@mentra/bluetooth-sdk/internal"
+import type {OtaProgress, OtaStatus} from "@mentra/bluetooth-sdk"
 import GlobalEventEmitter from "../utils/GlobalEventEmitter"
 import {isGlassesConnected, useGlassesStore} from "../stores/glasses"
 import {resolveOtaManifestUrl} from "./otaManifestUrl"
@@ -1491,6 +1491,9 @@ class OtaInstallCoordinator {
         }
         otaVersionUrl = this.hotspotManifestUrl
         this.maybeArmStuckWatchdog()
+      }
+      if (!otaVersionUrl) {
+        throw new Error("OTA is disabled because this build has no immutable manifest pin")
       }
       console.log(`[OTA_PROGRESS] sending ota_start with ${this.selectedTransport} manifest URL: ${otaVersionUrl}`)
       nativeStartAttempted = true

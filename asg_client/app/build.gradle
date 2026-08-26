@@ -94,6 +94,15 @@ def localKeystoreFile = file("../credentials/asg-keystore.jks")
 def productionKeystoreFile = sharedKeystoreFile.exists() ? sharedKeystoreFile : localKeystoreFile
 def useReleaseKey = productionKeystoreFile.exists() && asgStorePassword ? true : false
 
+def sentryAuthToken = System.getenv("SENTRY_AUTH_TOKEN") ?:
+                     project.hasProperty("sentryAuthToken") ? project.property("sentryAuthToken") : null
+def sentryDsnValue = (envProperties['SENTRY_DSN'] ?: "").toString().trim()
+def isSentryDsnConfigured = !sentryDsnValue.isEmpty() && sentryDsnValue.contains("sentry.io")
+def sentryDisableAutoUpload = System.getenv("SENTRY_DISABLE_AUTO_UPLOAD") == "true"
+// Local `installRelease` is unpinned. Only CI-pinned artifacts should upload symbols.
+// A leftover SENTRY_AUTH_TOKEN must not fail a local install (401 / org limits).
+def enableSentryUpload = isSentryDsnConfigured && sentryAuthToken && isPinnedCiBuild && !sentryDisableAutoUpload
+
 // Print signing configuration status during build
 gradle.taskGraph.whenReady { taskGraph ->
     def isReleaseBuild = taskGraph.allTasks.any { it.name.toLowerCase().contains('release') }
@@ -155,34 +164,22 @@ gradle.taskGraph.whenReady { taskGraph ->
         println "╚════════════════════════════════════════════════════════════════╝"
         println ""
 
-        // Check Sentry configuration status (from .env file)
-        def sentryDsn = envProperties['SENTRY_DSN'] ?: ""
-        def sentryAuthToken = System.getenv("SENTRY_AUTH_TOKEN") ?:
-                             (project.hasProperty("sentryAuthToken") ? project.property("sentryAuthToken") : null)
-
-        def isSentryConfigured = sentryDsn && !sentryDsn.isEmpty() && sentryDsn.contains("sentry.io")
-
         println "╔════════════════════════════════════════════════════════════════╗"
         println "║                    SENTRY ERROR REPORTING                      ║"
         println "╠════════════════════════════════════════════════════════════════╣"
 
-        if (isSentryConfigured) {
+        if (enableSentryUpload) {
             println "║  ✅ SENTRY: ENABLED - Crashes will be reported                 ║"
             println "║     Config: .env file                                         ║"
-            if (sentryAuthToken) {
-                println "║     Source Maps: ✅ Will be uploaded                          ║"
-            } else {
-                println "║     Source Maps: ❌ SENTRY_AUTH_TOKEN not set                 ║"
-            }
+            println "║     Source Maps: ✅ Will be uploaded                          ║"
         } else {
             println "║  ⚠️  SENTRY: DISABLED - Crashes will NOT be reported to cloud  ║"
             println "║                                                               ║"
             println "║  Local file logging is still enabled at:                      ║"
             println "║     /sdcard/mentra_crash_logs/                                ║"
             println "║                                                               ║"
-            println "║  To enable Sentry:                                            ║"
-            println "║  1. Copy .env.example to .env                                 ║"
-            println "║  2. Set SENTRY_DSN=https://xxx@sentry.io/xxx                  ║"
+            println "║  Symbol upload is CI-only. Local installRelease skips it      ║"
+            println "║  so a leftover SENTRY_AUTH_TOKEN cannot fail the build.       ║"
         }
 
         println "╚════════════════════════════════════════════════════════════════╝"
@@ -421,29 +418,20 @@ dependencies {
     androidTestImplementation 'androidx.test.ext:junit:1.1.5'
 }
 
-// Check if Sentry auth token is available
-def sentryAuthToken = System.getenv("SENTRY_AUTH_TOKEN") ?: 
-                     project.hasProperty("sentryAuthToken") ? project.property("sentryAuthToken") : null
-
 sentry {
     org = "mentra-labs"
     projectName = "mentra-asg-client"
 
-    // Only enable Sentry features if auth token is present
-    if (sentryAuthToken) {
-        // this will upload your source code to Sentry to show it as part of the stack traces
+    if (enableSentryUpload) {
         includeSourceContext = true
         uploadNativeSymbols = true
         autoUploadNativeSymbols = true
         autoUploadSourceContext = true
     } else {
-        // Disable all Sentry upload tasks when no auth token
         includeSourceContext = false
         uploadNativeSymbols = false
         autoUploadNativeSymbols = false
         autoUploadSourceContext = false
-        
-        // Don't fail the build if Sentry operations fail
         ignoredBuildTypes = ["release", "debug"]
     }
 }
@@ -497,14 +485,94 @@ tasks.register('checkNoFullyQualifiedMentraTypes') {
     }
 }
 
-// Disable Sentry tasks when auth token is not present
+def resolveAdbExecutable() {
+    def sdk = android.sdkDirectory
+    def unix = new File(sdk, "platform-tools/adb")
+    if (unix.exists()) {
+        return unix
+    }
+    return new File(sdk, "platform-tools/adb.exe")
+}
+
+def listConnectedAdbDeviceLines() {
+    def out = new ByteArrayOutputStream()
+    def err = new ByteArrayOutputStream()
+    exec {
+        commandLine resolveAdbExecutable(), "devices", "-l"
+        standardOutput = out
+        errorOutput = err
+        ignoreExitValue = true
+    }
+    return out.toString().readLines().findAll { line ->
+        line ==~ /.*\s+device(\s+.*)?$/ && !line.startsWith("List of devices")
+    }
+}
+
+def isMentraLiveAdbLine(String line) {
+    def lower = line.toLowerCase()
+    return lower.contains("mentra") || lower.contains("k900") || lower.contains("xy_smart")
+}
+
+def resolveAsgInstallSerials() {
+    def connected = listConnectedAdbDeviceLines()
+    if (connected.isEmpty()) {
+        throw new GradleException(
+                "No connected devices. Plug Mentra Live in with the Infinity Cable (or Wi-Fi ADB) and retry.")
+    }
+    def requested = System.getenv("ANDROID_SERIAL")
+    if (requested) {
+        def match = connected.find { it.startsWith(requested + "\t") || it.startsWith(requested + " ") }
+        if (match == null) {
+            throw new GradleException("ANDROID_SERIAL=${requested} is not connected.\n" + connected.join("\n"))
+        }
+        return [requested]
+    }
+    def glasses = connected.findAll { isMentraLiveAdbLine(it) }
+    if (glasses.isEmpty()) {
+        throw new GradleException(
+                "No Mentra Live connected. asg_client will not install onto a phone (Play Protect rejects it).\n"
+                        + "Connect the glasses, or set ANDROID_SERIAL to the glasses serial.\n"
+                        + connected.join("\n"))
+    }
+    return glasses.collect { it.split(/\s+/)[0] }
+}
+
+// Disable Sentry upload on local installs. Target Mentra Live only so a
+// plugged-in phone cannot fail installRelease with VERIFICATION_FAILURE.
 afterEvaluate {
     tasks.matching { it.name == 'preBuild' }.configureEach {
         dependsOn('checkNoFullyQualifiedMentraTypes')
     }
-    if (!sentryAuthToken) {
+    if (!enableSentryUpload) {
         tasks.matching { it.name.contains("sentry") || it.name.contains("Sentry") }.configureEach {
             enabled = false
+        }
+    } else {
+        tasks.matching { it.name.contains("sentry") || it.name.contains("Sentry") }.configureEach {
+            if (it.hasProperty("ignoreFailures")) {
+                it.ignoreFailures = true
+            }
+        }
+    }
+
+    android.applicationVariants.configureEach { variant ->
+        def installTask = tasks.findByName("install${variant.name.capitalize()}")
+        if (installTask == null) {
+            return
+        }
+        def apkFile = file("${buildDir}/outputs/apk/${variant.name}/app-${variant.name}.apk")
+        installTask.actions.clear()
+        installTask.doLast {
+            def serials = resolveAsgInstallSerials()
+            if (!apkFile.exists()) {
+                throw new GradleException("APK not found: ${apkFile}")
+            }
+            serials.each { serial ->
+                logger.lifecycle("Installing ${apkFile.name} on Mentra Live (${serial})")
+                exec {
+                    commandLine resolveAdbExecutable(), "-s", serial, "install", "-r", "-d", "--no-incremental", apkFile
+                }
+            }
         }
     }
 }

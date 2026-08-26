@@ -50,6 +50,25 @@ const fr = {
     hardwareIncompatibleMessage:
       "{{app}} nécessite du matériel qui n'est pas disponible sur vos lunettes connectées : {{missing}}",
   },
+  settings: {
+    ...en.settings,
+    forgetGlassesWhilePairing:
+      "L'appairage Bluetooth est en cours. Acceptez ou fermez d'abord la boîte de dialogue d'appairage du système, puis essayez à nouveau de dissocier les lunettes.",
+  },
+  pairing: {
+    ...en.pairing,
+    nearbyNotInPairingModeHint:
+      "Des lunettes Mentra Live à proximité ont été trouvées, mais elles ne sont pas en mode d'appairage. Appuyez 5 fois rapidement sur le bouton d'alimentation, puis réessayez.",
+    notInPairingModeLabel: "Pas en mode d'appairage",
+    notInPairingModeAlertTitle: "Activez le mode d'appairage",
+    notInPairingModeAlertMessage:
+      "Appuyez 5 fois rapidement sur le bouton d'alimentation. La LED clignote et les lunettes énoncent un code à 4 caractères. Sélectionnez ensuite les lunettes à nouveau.",
+    pairingCodeLabel: "Code {{code}}",
+    legacyFirmwareLabel: "Firmware hérité",
+    livePairingModeInfo:
+      "Appuyez 5 fois rapidement sur le bouton d'alimentation. La LED clignote et les lunettes énoncent un code à 4 caractères (0–9, A–F). Comparez ce code dans la liste si plusieurs unités apparaissent.",
+    noGlassesFoundHint: "Assurez-vous d'avoir appuyé 5 fois rapidement sur le bouton d'alimentation, puis réessayez.",
+  },
   demoNavigator: {
     componentsTab: "Composants",
     debugTab: "Débogage",

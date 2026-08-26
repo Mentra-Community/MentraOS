@@ -1,7 +1,10 @@
 package com.mentra.bluetoothsdk
 
+import android.app.Activity
+import android.app.Application
 import android.bluetooth.BluetoothManager
 import android.content.Context
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import com.mentra.bluetoothsdk.utils.ControllerTypes
@@ -30,6 +33,23 @@ class MentraBluetoothSdk private constructor(
     private val discoveredDeviceNames = mutableSetOf<String>()
     private val bridgeEventSinkId: String
     private val storeListenerId: String
+    private val activityLifecycleCallbacks =
+        object : Application.ActivityLifecycleCallbacks {
+            override fun onActivityResumed(activity: Activity) {
+                // Match the Mentra App's OnActivityEntersForeground hook. This runs after
+                // runtime permission dialogs in native host apps, allowing the service to
+                // replace its temporary dataSync type with connectedDevice/microphone/location.
+                deviceManager.refreshForegroundServiceTypes()
+            }
+
+            override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit
+            override fun onActivityStarted(activity: Activity) = Unit
+            override fun onActivityPaused(activity: Activity) = Unit
+            override fun onActivityStopped(activity: Activity) = Unit
+            override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) = Unit
+            override fun onActivityDestroyed(activity: Activity) = Unit
+        }
+    private var activityLifecycleCallbacksRegistered = false
     private var suppressDefaultDeviceEvents = false
     private val streamKeepAliveLock = Any()
     private var activeStreamKeepAlive: ActiveStreamKeepAlive? = null
@@ -57,6 +77,10 @@ class MentraBluetoothSdk private constructor(
         listeners.add(listener)
         Bridge.initialize(appContext)
         deviceManager = DeviceManager.getInstance()
+        (appContext as? Application)?.let { application ->
+            application.registerActivityLifecycleCallbacks(activityLifecycleCallbacks)
+            activityLifecycleCallbacksRegistered = true
+        }
         bridgeEventSinkId = Bridge.addEventSink { eventName, data -> dispatchBridgeEvent(eventName, data) }
         // Baseline the analytics connection state before subscribing to the store:
         // store updates invoke listeners synchronously on the updating thread, so a
@@ -258,6 +282,8 @@ class MentraBluetoothSdk private constructor(
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "device_name", device.name)
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "device_address", device.address ?: "")
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "project_name", device.projectName ?: "")
+            DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_name", "")
+            DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_address", "")
         } finally {
             suppressDefaultDeviceEvents = false
         }
@@ -271,6 +297,8 @@ class MentraBluetoothSdk private constructor(
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "device_name", "")
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "device_address", "")
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "project_name", "")
+            DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_name", "")
+            DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_address", "")
         } finally {
             suppressDefaultDeviceEvents = false
         }
@@ -383,8 +411,24 @@ class MentraBluetoothSdk private constructor(
                 cancelConnectionAttempt()
             }
         }
-        if (options.saveAsDefault && !isController) {
-            setDefaultDevice(device)
+        if (!isController) {
+            if (options.saveAsDefault) {
+                setDefaultDevice(device)
+            } else {
+                // Pairing uses saveAsDefault=false so default identity stays on the
+                // previous owner until handleDeviceReady. Stash the GATT target separately
+                // so MentraLive can connect by MAC without promoting getDefaultDevice().
+                DeviceStore.apply(
+                        ObservableStore.BLUETOOTH_CATEGORY,
+                        "pending_device_name",
+                        device.name,
+                )
+                DeviceStore.apply(
+                        ObservableStore.BLUETOOTH_CATEGORY,
+                        "pending_device_address",
+                        device.address ?: "",
+                )
+            }
         }
         DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_wearable", device.model.deviceType)
         deviceManager.connectByName(device.name)
@@ -408,6 +452,8 @@ class MentraBluetoothSdk private constructor(
     }
 
     fun cancelConnectionAttempt() {
+        DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_name", "")
+        DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_address", "")
         deviceManager.disconnect()
     }
 
@@ -416,6 +462,8 @@ class MentraBluetoothSdk private constructor(
     }
 
     fun disconnect() {
+        DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_name", "")
+        DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_address", "")
         deviceManager.disconnect()
     }
 
@@ -1091,6 +1139,25 @@ class MentraBluetoothSdk private constructor(
         }
     }
 
+    suspend fun queryVideoRecordingStatus(requestId: String): VideoRecordingStatusEvent {
+        require(requestId.isNotBlank()) { "requestId is required to query video recording status." }
+        requireGlassesConnected("query video recording status")
+        val pending = PendingResponse<VideoRecordingStatusEvent>("query video recording status")
+        val pendingRequest = PendingVideoRecordingRequest("recording_status", pending)
+        if (pendingVideoRecordingRequests.putIfAbsent(requestId, pendingRequest) != null) {
+            throw BluetoothSdkException(
+                "request_in_flight",
+                "A video recording command is already waiting for requestId $requestId.",
+            )
+        }
+        try {
+            deviceManager.queryVideoRecordingStatus(requestId)
+            return pending.await()
+        } finally {
+            pendingVideoRecordingRequests.remove(requestId, pendingRequest)
+        }
+    }
+
     suspend fun requestVersionInfo(): VersionInfoResult {
         val pending = PendingResponse<VersionInfoResult>("version info request")
         synchronized(oneShotLock) {
@@ -1335,6 +1402,12 @@ class MentraBluetoothSdk private constructor(
 
     override fun close() {
         stopStreamKeepAliveMonitor()
+        if (activityLifecycleCallbacksRegistered) {
+            (appContext as? Application)?.unregisterActivityLifecycleCallbacks(
+                activityLifecycleCallbacks,
+            )
+            activityLifecycleCallbacksRegistered = false
+        }
         Bridge.removeEventSink(bridgeEventSinkId)
         DeviceStore.store.removeListener(storeListenerId)
         analytics.shutdown()
@@ -1532,6 +1605,9 @@ class MentraBluetoothSdk private constructor(
                 }
                 dispatchToListeners { it.onGalleryStatus(event) }
             }
+            "pairing_info" -> {
+                dispatchToListeners { it.onRawEvent(eventName, data) }
+            }
             "photo_response" -> {
                 val event = PhotoResponseEvent(data)
                 handlePhotoResponseForRequests(event)
@@ -1579,10 +1655,19 @@ class MentraBluetoothSdk private constructor(
             }
             "ota_status" -> {
                 val resultValues = data + mapOf("type" to "ota_status")
+                val event = OtaStatusEvent.fromMap(resultValues)
                 synchronized(oneShotLock) {
                     pendingOtaQuery?.resolve(OtaQueryResult(resultValues))
+                    otaStartRejectionErrorCode(event)?.let { errorCode ->
+                        pendingOtaStart?.reject(
+                            BluetoothSdkException(errorCode, "Glasses rejected OTA start: $errorCode")
+                        )
+                    }
                 }
-                dispatchToListeners { it.onOtaStatus(OtaStatusEvent.fromMap(resultValues)) }
+                dispatchToListeners { it.onOtaStatus(event) }
+            }
+            "mic_health" -> {
+                dispatchToListeners { it.onMicHealth(MicHealthEvent.fromMap(data)) }
             }
             "settings_ack" -> {
                 val event = SettingsAckEvent(data)
@@ -2172,3 +2257,14 @@ class MentraBluetoothSdk private constructor(
         }
     }
 }
+
+/** OTA status messages are not request-correlated, so only known pre-ack failures settle a start. */
+internal fun otaStartRejectionErrorCode(event: OtaStatusEvent): String? =
+    if (
+        event.status.equals("failed", ignoreCase = true) &&
+            event.errorMessage.equals("battery_low", ignoreCase = true)
+    ) {
+        "battery_low"
+    } else {
+        null
+    }

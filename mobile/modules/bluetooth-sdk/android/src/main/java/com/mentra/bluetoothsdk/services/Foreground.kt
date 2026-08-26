@@ -20,6 +20,35 @@ class ForegroundService : Service() {
         const val NOTIFICATION_ID = 1001
         const val ACTION_REFRESH_TYPES =
                 "com.mentra.bluetoothsdk.services.action.REFRESH_FOREGROUND_SERVICE_TYPES"
+
+        internal fun bootstrapServiceType(): Int =
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+
+        internal fun preferredServiceType(
+                hasConnectedDeviceAccess: Boolean,
+                hasMicrophoneAccess: Boolean,
+                hasLocationAccess: Boolean,
+                includeMediaPlayback: Boolean = true,
+        ): Int {
+            var serviceType = 0
+
+            if (includeMediaPlayback) {
+                serviceType =
+                        serviceType or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+            }
+            if (hasConnectedDeviceAccess) {
+                serviceType =
+                        serviceType or ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+            }
+            if (hasMicrophoneAccess) {
+                serviceType = serviceType or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+            }
+            if (hasLocationAccess) {
+                serviceType = serviceType or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+            }
+
+            return if (serviceType == 0) bootstrapServiceType() else serviceType
+        }
     }
 
     private var locationTypeRequested = false
@@ -28,7 +57,11 @@ class ForegroundService : Service() {
         super.onCreate()
         Bridge.log("ForegroundService: onCreate() called")
         BleTraceLogger.logLifecycle(this, "ForegroundService", "service_create")
-        startForegroundWithAutoDetectedType()
+        // Enter the foreground immediately with a type that has no runtime
+        // prerequisites. onStartCommand() replaces this bootstrap type with the
+        // eligible long-running types, deliberately omitting dataSync so Android 15's
+        // six-hour dataSync timer no longer applies.
+        startForegroundWithType(bootstrapServiceType())
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -50,8 +83,10 @@ class ForegroundService : Service() {
     }
 
     private fun startForegroundWithAutoDetectedType() {
-        val serviceType = detectServiceType()
+        startForegroundWithType(detectServiceType())
+    }
 
+    private fun startForegroundWithType(serviceType: Int) {
         createNotificationChannel()
 
         val notification =
@@ -65,7 +100,7 @@ class ForegroundService : Service() {
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             Bridge.log(
-                    "ForegroundService: Starting with auto-detected type: ${getServiceTypeName(serviceType)}"
+                    "ForegroundService: Starting with type: ${getServiceTypeName(serviceType)}"
             )
             startForeground(NOTIFICATION_ID, notification, serviceType)
         } else {
@@ -79,14 +114,11 @@ class ForegroundService : Service() {
             return 0 // No service types before Android Q
         }
 
-        var serviceType = 0
-
         // Audio prompts can be initiated by glasses while the host Activity is
         // backgrounded. mediaPlayback has no runtime prerequisite, so keep it
         // active on the existing Mentra service for the entire connected
         // session rather than trying to launch a second service after a wake
         // phrase arrives.
-        serviceType = serviceType or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
         Bridge.log("ForegroundService: Added mediaPlayback (supports background audio)")
 
         // Check Bluetooth permissions
@@ -106,28 +138,32 @@ class ForegroundService : Service() {
                     }
                 }
 
-        // Check CHANGE_NETWORK_STATE permission - this is a "normal" permission that is
-        // auto-granted at install time, but we check it defensively in case this changes.
-        // This permission can satisfy the connectedDevice FGS requirement without needing
-        // BLUETOOTH_CONNECT, which is a "dangerous" permission that users can deny.
-        val hasNetworkStatePermission =
+        // These normal permissions satisfy the connectedDevice FGS prerequisite without
+        // waiting for a runtime Bluetooth grant. CHANGE_WIFI_STATE is declared by the SDK;
+        // CHANGE_NETWORK_STATE is also accepted when a host app already declares it.
+        val hasConnectedDeviceManifestPermission =
                 ContextCompat.checkSelfPermission(
                         this,
                         android.Manifest.permission.CHANGE_NETWORK_STATE
-                ) == PackageManager.PERMISSION_GRANTED
+                ) == PackageManager.PERMISSION_GRANTED ||
+                        ContextCompat.checkSelfPermission(
+                                this,
+                                android.Manifest.permission.CHANGE_WIFI_STATE
+                        ) == PackageManager.PERMISSION_GRANTED
 
-        // Use connectedDevice if we have EITHER Bluetooth OR network state permission.
-        // This avoids falling back to dataSync (which has a 6-hour timeout on Android 14+)
+        // Use connectedDevice if we have either Bluetooth or a qualifying normal permission.
+        // This avoids falling back to dataSync (which has a six-hour timeout on Android 15+)
         // when users deny Bluetooth permissions.
-        if (hasBluetoothPermission || hasNetworkStatePermission) {
-            serviceType = serviceType or ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+        val hasConnectedDeviceAccess =
+                hasBluetoothPermission || hasConnectedDeviceManifestPermission
+        if (hasConnectedDeviceAccess) {
             if (hasBluetoothPermission) {
                 Bridge.log("ForegroundService: Added connectedDevice (has Bluetooth permission)")
             } else {
-                Bridge.log("ForegroundService: Added connectedDevice (has CHANGE_NETWORK_STATE permission)")
+                Bridge.log("ForegroundService: Added connectedDevice (has network control permission)")
             }
         } else {
-            Bridge.log("ForegroundService: No Bluetooth or network state permission for connectedDevice")
+            Bridge.log("ForegroundService: No qualifying permission for connectedDevice")
         }
 
         // Check microphone permission
@@ -136,7 +172,6 @@ class ForegroundService : Service() {
                         PackageManager.PERMISSION_GRANTED
 
         if (hasMicPermission) {
-            serviceType = serviceType or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
             Bridge.log("ForegroundService: Added microphone (has RECORD_AUDIO permission)")
         } else {
             Bridge.log("ForegroundService: No microphone permission")
@@ -154,8 +189,8 @@ class ForegroundService : Service() {
         val locationManager = getSystemService(LocationManager::class.java)
         val isLocationEnabled = locationManager?.isLocationEnabled == true
 
-        if (locationTypeRequested && hasLocationPermission && isLocationEnabled) {
-            serviceType = serviceType or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+        val hasLocationAccess = locationTypeRequested && hasLocationPermission && isLocationEnabled
+        if (hasLocationAccess) {
             Bridge.log("ForegroundService: Added location (has foreground location permission)")
         } else {
             Bridge.log(
@@ -164,15 +199,11 @@ class ForegroundService : Service() {
             )
         }
 
-        // Only use dataSync as absolute last resort fallback if no other types were added.
-        // WARNING: dataSync has a 6-hour timeout on Android 14+ which will crash the app.
-        // This should rarely happen since CHANGE_NETWORK_STATE is a normal permission.
-        if (serviceType == 0) {
-            serviceType = ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-            Bridge.log("ForegroundService: WARNING - Using dataSync as fallback (6-hour timeout on Android 14+)")
-        }
-
-        return serviceType
+        return preferredServiceType(
+                hasConnectedDeviceAccess = hasConnectedDeviceAccess,
+                hasMicrophoneAccess = hasMicPermission,
+                hasLocationAccess = hasLocationAccess,
+        )
     }
 
     private fun getNotificationText(serviceType: Int): String {

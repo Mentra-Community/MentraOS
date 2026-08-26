@@ -111,6 +111,17 @@ android {
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
+        ndk {
+            // Honor reactNativeArchitectures so CI/staging ABI filters apply.
+            // Without this, CMake still builds every ABI on an arm64-only job.
+            def abiList = (findProperty("reactNativeArchitectures") ?: "armeabi-v7a,arm64-v8a,x86,x86_64")
+                .toString()
+                .split(",")
+                .collect { it.trim() }
+                .findAll { !it.isEmpty() }
+            abiFilters(*abiList)
+        }
+
         externalNativeBuild {
             cmake {
                 arguments '-DCMAKE_OBJECT_PATH_MAX=600', '-DANDROID_STL=c++_static'
@@ -170,10 +181,13 @@ afterEvaluate {
         repositories {
             maven {
                 name = 'sonatypeCentral'
-                url = uri('https://ossrh-staging-api.central.sonatype.com/service/local/staging/deploy/maven2/')
-                credentials {
-                    username = centralUsername()
-                    password = centralPassword()
+                def repositoryUrl = System.getenv('MENTRA_MAVEN_STAGING_REPOSITORY_URL') ?: 'https://ossrh-staging-api.central.sonatype.com/service/local/staging/deploy/maven2/'
+                url = uri(repositoryUrl)
+                if (repositoryUrl.startsWith('http')) {
+                    credentials {
+                        username = centralUsername()
+                        password = centralPassword()
+                    }
                 }
             }
         }

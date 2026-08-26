@@ -254,6 +254,10 @@ Wire response type for all video commands: `video_recording_status`.
 
 Same battery constraint as photo. `recording_started` is the successful start status. `already_recording`, `battery_low`, `service_unavailable`, `missing_request_id`, and `error` are emitted with `success: false`.
 
+If a start arrives after a stop has been requested but before the recorder has finished finalizing
+the previous file, ASG queues that start and begins it as soon as camera teardown completes. One
+start may wait behind the active stop; further starts are rejected as `already_recording`.
+
 ```json
 {"type": "video_recording_status", "success": true, "status": "recording_started", "timestamp": 1708963201234}
 ```
@@ -269,7 +273,7 @@ If `requestId` is provided, the capture service validates it matches the active 
 #### `get_video_recording_status`
 
 ```json
-{"type": "get_video_recording_status"}
+{"type": "get_video_recording_status", "requestId": "status_001"}
 ```
 
 Response while recording:
@@ -277,10 +281,14 @@ Response while recording:
 ```json
 {
   "type": "video_recording_status",
+  "requestId": "status_001",
   "success": true,
+  "status": "recording_status",
   "data": {"recording": true, "duration_ms": 15000, "duration_formatted": "00:15"}
 }
 ```
+
+The Bluetooth SDK exposes this command as `queryVideoRecordingStatus(requestId)` and correlates the returned `video_recording_status` with that request ID.
 
 ---
 
@@ -313,7 +321,7 @@ See [features/rtmp-streaming.md](features/rtmp-streaming.md) for stream lifecycl
 | `flash`     | boolean | `true`   | Privacy LED during stream                                                                                                     |
 | `sound`     | boolean | `true`   | Start/stop tones                                                                                                              |
 
-**Constraints:** battery ≥ 10%, WiFi connected. WHIP streams whose requested resolution exceeds the camera's supported output are rejected (`WhipCameraFormatSelector`).
+**Constraints:** battery ≥ 10%, and either STA WiFi is connected or the stream endpoint is on the active glasses-hosted hotspot subnet. WHIP streams whose requested resolution exceeds the camera's supported output are rejected (`WhipCameraFormatSelector`).
 
 **Response wire type:** `stream_status` (new universal type from `MediaManager.sendStreamStatusResponse`). Legacy `rtmp_stream_status` is still produced by `ResponseBuilder` in some paths.
 
@@ -431,7 +439,7 @@ Response:
 
 #### `set_system_time`
 
-Sets the glasses system clock from the phone. Sent only when the phone detects clock skew during gallery sync or OTA version checks (not on every BLE connect).
+Sets the glasses system clock from the phone. The Bluetooth SDK sends this once shortly after every ready connection and again after a reconnect; it does not periodically correct a long-lived connection.
 
 ```json
 {"type": "set_system_time", "timestamp_ms": 1710000000000}
@@ -596,6 +604,26 @@ Both names are aliases; either works. No response.
 ```
 
 No response.
+
+---
+
+### Spoken pairing code
+
+Mentra Live pairing mode speaks a 4-character code over the glasses speaker. BES firmware plays the short "Pairing..." intro from flash; the MTK stitches the four character WAVs into one I2S phrase (`Ay-one-bee-two`) so it does not sound like four announcements.
+
+Inbound K900 command from BES:
+
+```json
+{"C": "hm_spkcode", "B": {"code": "A1B2"}}
+```
+
+JSON command for intent/BLE testing:
+
+```json
+{"type": "speak_pairing_code", "code": "A1B2"}
+```
+
+No response. Clips live under `assets/pairing/` (`letter_a.wav` … `letter_z.wav`, `digit_0.wav` … `digit_9.wav`). Today's pairing code is hex (`0-9A-F`); `G-Z` ship for future-proofing.
 
 ---
 
@@ -903,7 +931,7 @@ Optionally, the phone can supply a custom manifest URL for this install attempt:
 
 When `ota_version_url` is omitted, ASG uses the compiled production default. When provided, it must be a non-empty `http` or `https` URL.
 
-On receipt, ASG sends `ota_start_ack` before version checks or downloads:
+When the known glasses battery level is below 5%, ASG rejects the request before acknowledgement and sends a failed `ota_status` with `error_message: "battery_low"`. Unknown battery state is allowed. Otherwise, ASG sends `ota_start_ack` before version checks or downloads:
 
 ```json
 {"type": "ota_start_ack", "timestamp": 1708963201234}
@@ -988,6 +1016,7 @@ The K900 microcontroller frames messages as `{"C": "<cmd>", "B": {...}, "V": 1}`
 | `cs_vdo`              | Camera button long press                             | `button_press`                            |
 | `hm_htsp` / `mh_htsp` | Hotspot start request                                | (handled internally)                      |
 | `hm_batv`             | Battery voltage update                               | `battery_status`                          |
+| `hm_spkcode`          | Speak pairing code over I2S                          | (handled internally)                      |
 | `cs_flts`             | File-transfer ACK                                    | (handled internally)                      |
 | `sr_swst`             | Switch status report                                 | `switch_status`                           |
 | `sr_tpevt`            | Touch event report                                   | `touch_event`                             |

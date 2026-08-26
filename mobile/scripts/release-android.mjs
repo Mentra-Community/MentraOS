@@ -54,7 +54,13 @@ console.log(`versionCode: ${versionCode}`);
 // ── Step 3: Prebuild + bundle ────────────────────────────────────────────────
 
 console.log('\n━━━ Step 3: Prebuild + bundle ━━━');
-process.env.ORG_GRADLE_PROJECT_reactNativeArchitectures = 'arm64-v8a';
+// Default phone-only (arm64). Staging production sets
+// ORG_GRADLE_PROJECT_reactNativeArchitectures to all four ABIs; do not
+// clobber a caller-provided value.
+if (!process.env.ORG_GRADLE_PROJECT_reactNativeArchitectures) {
+  process.env.ORG_GRADLE_PROJECT_reactNativeArchitectures = 'arm64-v8a';
+}
+console.log(`reactNativeArchitectures: ${process.env.ORG_GRADLE_PROJECT_reactNativeArchitectures}`);
 
 // Clean android/ to avoid cached version number issues
 await $({ stdio: 'inherit' })`rm -rf android`;
@@ -108,6 +114,37 @@ console.log('APK built successfully');
 // from publishing an APK with missing runtime configuration.
 validateReleaseArchive(apkPath, 'Android');
 console.log('Verified Android release JS bundle configuration');
+
+// Coordinated release CI owns immutable artifact naming and distribution. Keep
+// the established build/sign/validation path, but return both store and
+// sideload artifacts before the legacy mutable GitHub release logic runs.
+const coordinatedOutputDir = process.env.MENTRA_COORDINATED_OUTPUT_DIR;
+if (coordinatedOutputDir) {
+  const releaseIdentity = process.env.MENTRA_COORDINATED_RELEASE_IDENTITY;
+  if (!releaseIdentity) {
+    throw new Error('MENTRA_COORDINATED_RELEASE_IDENTITY is required with MENTRA_COORDINATED_OUTPUT_DIR');
+  }
+  console.log('\n━━━ Coordinated release: building AAB ━━━');
+  await withRetry(
+    'gradlew bundleRelease',
+    () => {
+      const p = $({ cwd: 'android' })`./gradlew bundleRelease`;
+      p.stdout.pipe(process.stdout);
+      p.stderr.pipe(process.stderr);
+      return p;
+    },
+    { shouldRetry: isSentryTransientError }
+  );
+  const coordinatedAabPath = path.resolve('android/app/build/outputs/bundle/release/app-release.aab');
+  if (!existsSync(coordinatedAabPath)) throw new Error(`AAB not found at ${coordinatedAabPath}`);
+  await mkdir(coordinatedOutputDir, { recursive: true });
+  const coordinatedApk = path.resolve(coordinatedOutputDir, `mentraos-${releaseIdentity}-android.apk`);
+  const coordinatedAab = path.resolve(coordinatedOutputDir, `mentraos-${releaseIdentity}-android.aab`);
+  await cp(apkPath, coordinatedApk);
+  await cp(coordinatedAabPath, coordinatedAab);
+  console.log(`Coordinated Android artifacts: ${coordinatedApk}, ${coordinatedAab}`);
+  process.exit(0);
+}
 
 // ── Step 6: Determine beta number & rename APK ───────────────────────────────
 
