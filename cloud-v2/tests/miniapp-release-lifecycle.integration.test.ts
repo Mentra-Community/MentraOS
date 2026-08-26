@@ -300,6 +300,13 @@ describe("miniapp release lifecycle", () => {
         signature: bundleUrl.searchParams.get("signature") ?? undefined,
       }),
     ).toThrow("bundle asset not found");
+    expect(() =>
+      registries.authorizeBundleDownload(release.releaseBundleAssetId!, {
+        tenantId: "",
+        expiresAt: "0",
+        signature: bundleUrl.searchParams.get("signature") ?? undefined,
+      }),
+    ).toThrow("bundle asset not found");
   });
 
   test("preinstall registry rejects multiple releases for the same miniapp", async () => {
@@ -1470,6 +1477,9 @@ describe("miniapp release lifecycle", () => {
     await expect(catalog.get(packageName, "https://core.example.test", publicUser)).rejects.toMatchObject({
       code: "not_found",
     });
+    await expect(
+      catalog.setReleaseTrack(packageName, "beta", publicUser, "https://core.example.test"),
+    ).rejects.toMatchObject({ code: "beta_unavailable", status: 409 });
     expect(await MiniAppReleaseModel.findById(beta.id).lean()).toMatchObject({
       status: "published",
       publicStoreApprovedAt: null,
