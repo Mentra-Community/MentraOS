@@ -8,7 +8,7 @@
  * `installSession` fronts the OtaInstallCoordinator state machine (WP 8B) — the host
  * progress screen is a pure renderer over its snapshot + attach/detach/retry/finish.
  */
-import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
+import BluetoothSdk from "@mentra/bluetooth-sdk"
 import type {OtaProgress, OtaProgressStatus, OtaStartAckEvent, OtaStatus, OtaUpdateInfo} from "@mentra/bluetooth-sdk"
 import {isGlassesConnected, useGlassesStore} from "../stores/glasses"
 import {resolveOtaManifestUrl} from "../services/otaManifestUrl"
@@ -113,7 +113,6 @@ export const ota = {
    * @deprecated Legacy progress route (build < 37) only — removed with WP 8D.
    */
   clearBuildNumberForNextCheck: () => {
-    BluetoothSdk.updateGlasses({buildNumber: ""})
     useGlassesStore.getState().setGlassesInfo({buildNumber: ""})
   },
   /**

@@ -2,7 +2,7 @@
  * Push phone time to glasses only when clock skew is detected (gallery sync, OTA, etc.).
  */
 
-import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
+import BluetoothSdk from "@mentra/bluetooth-sdk"
 import {BgTimer} from "../utils/timers"
 import {useGlassesStore} from "../stores/glasses"
 
