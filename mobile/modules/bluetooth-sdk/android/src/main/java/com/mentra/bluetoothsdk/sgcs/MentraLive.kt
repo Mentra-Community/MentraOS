@@ -1387,6 +1387,8 @@ class MentraLive : SGCManager() {
         val pendingName = DeviceStore.get("bluetooth", "pending_device_name") as? String ?: ""
         val pendingAddress =
                 DeviceStore.get("bluetooth", "pending_device_address") as? String ?: ""
+        val pendingSecurePairingCapable =
+                DeviceStore.get("bluetooth", "pending_device_secure_pairing_capable") as? Boolean
         val address = device.address ?: ""
         if (
                 !shouldRecoverConnectedMentraLivePairingTarget(
@@ -1409,7 +1411,7 @@ class MentraLive : SGCManager() {
                 address,
                 pairingMode = true,
                 pairingCode = null,
-                securePairingCapable = false,
+                securePairingCapable = pendingSecurePairingCapable,
         )
     }
 

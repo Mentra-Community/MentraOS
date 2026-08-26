@@ -5556,7 +5556,10 @@ class MentraLive: NSObject, SGCManager {
             identifier: peripheral.identifier.uuidString,
             pairingMode: true,
             pairingCode: nil,
-            securePairingCapable: discoveredAdvPairing[name]?.securePairingCapable ?? false
+            securePairingCapable: DeviceStore.shared.get(
+                "bluetooth",
+                "pending_device_secure_pairing_capable"
+            ) as? Bool
         )
     }
 

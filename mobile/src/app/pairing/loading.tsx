@@ -15,7 +15,7 @@ import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
 import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
 
-// Legacy ads without secure_pairing_capable use this timeout. Secure firmware must not.
+// Only ads explicitly identified as legacy use this timeout. Unknown capability fails closed.
 const PAIRING_INFO_FALLBACK_MS = 5_000
 
 /**
@@ -141,7 +141,7 @@ export default function GlassesPairingLoadingScreen() {
     }
     // Secure-capable firmware must not use the legacy pairing_info timeout fallback.
     // Wait for the pairing_info readiness signal (not for ownership transfer).
-    if (securePairingCapable === true || pairingInfoRef.current?.secure_pairing_capable) {
+    if (securePairingCapable !== false || pairingInfoRef.current?.secure_pairing_capable) {
       return
     }
     const timer = setTimeout(() => {
@@ -165,7 +165,7 @@ export default function GlassesPairingLoadingScreen() {
     }
 
     if (isMentraLive) {
-      const secure = securePairingCapable === true || pairingInfoRef.current?.secure_pairing_capable === true
+      const secure = securePairingCapable !== false || pairingInfoRef.current?.secure_pairing_capable === true
       if (!pairingInfoReceived && !pairingInfoTimedOut) {
         logPairingTiming("waiting_pairing_info")
         return
