@@ -78,7 +78,7 @@ async function getAsset(c: AppContext) {
       headers: {
         "content-type": asset.contentType,
         "content-length": String(asset.sizeBytes),
-        "cache-control": "public, max-age=31536000, immutable",
+        "cache-control": asset.cacheControl,
         "x-content-type-options": "nosniff",
       },
     });

@@ -493,6 +493,7 @@ describe("miniapp release lifecycle", () => {
 
     const publicAsset = await catalogService.getPublicAsset(icon.id);
     expect(publicAsset.contentType).toBe("image/png");
+    expect(publicAsset.cacheControl).toBe("public, max-age=31536000, immutable");
     const replacement = await miniapps.createStoreAsset(developer, "com.example.artwork", {
       role: "store_icon",
       fileName: "replacement.png",
@@ -547,7 +548,9 @@ describe("miniapp release lifecycle", () => {
       betaAccess: "public",
       iconUrl: `https://core.example.test/api/store/assets/${iconAssetId}`,
     });
-    expect((await catalog.getPublicAsset(iconAssetId!))._id.toString()).toBe(iconAssetId);
+    const publicBetaAsset = await catalog.getPublicAsset(iconAssetId!);
+    expect(publicBetaAsset._id.toString()).toBe(iconAssetId);
+    expect(publicBetaAsset.cacheControl).toBe("private, no-store");
   });
 
   test("submission and artwork deletion serialize without producing a dangling snapshot", async () => {

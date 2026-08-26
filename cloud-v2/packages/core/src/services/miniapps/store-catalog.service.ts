@@ -195,7 +195,10 @@ export class StoreCatalogService {
     if (!referencedByStable && !referencedByPublicBeta) {
       throw new StoreCatalogError("not_found", "asset not found", 404);
     }
-    return asset;
+    return {
+      ...asset,
+      cacheControl: referencedByStable ? "public, max-age=31536000, immutable" : "private, no-store",
+    };
   }
 
   /** Resolve a Store bundle while re-checking the user's current track access. */

@@ -122,7 +122,8 @@ data; each deployment may publish both stable and beta releases.
       activation requires an accepted invitation rather than a pending offer.
 - [x] Keep private-beta-only icons, covers, and screenshots off the anonymous
       cached asset route. Private betas reuse published stable artwork when
-      available; public-beta artwork remains public.
+      available; public-beta-only artwork remains public but uses `no-store`
+      so changing the beta back to private takes effect on the next request.
 - [x] Show beta availability/current selection in the Store detail screen and
       refresh the catalog after changing tracks.
 - [x] Carry the selected release track through Store install descriptors and
