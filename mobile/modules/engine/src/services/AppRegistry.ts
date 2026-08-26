@@ -30,6 +30,7 @@ import {configuredDevHost} from "../utils/configuredDevHost"
 import {storage} from "../utils/storage/storage"
 import {printDirectory} from "../utils/storage/zip"
 import {sha256Hex} from "../utils/sha256"
+import {nextInstallOperationId, runInstallFilesystemTransaction} from "./installOperation"
 import {checkManifestVersions} from "./manifestVersionGate"
 import {checkMiniappInstallCompatibility} from "./miniappInstallCompatibility"
 import {normalizeManifestActions} from "./manifestActions"
@@ -345,15 +346,50 @@ async function unpackMiniApp(
   expected?: {packageName?: string; version?: string},
   onProgress?: InstallBundleOptions["onProgress"],
 ): Promise<{packageName: string; version: string}> {
-  const unzipDir = new Directory(Paths.cache, "lma_unzip")
+  return runInstallFilesystemTransaction(() => unpackMiniAppExclusive(zipPath, versionOverride, expected, onProgress))
+}
+
+async function unpackMiniAppExclusive(
+  zipPath: string,
+  versionOverride?: string,
+  expected?: {packageName?: string; version?: string},
+  onProgress?: InstallBundleOptions["onProgress"],
+): Promise<{packageName: string; version: string}> {
+  const operationId = nextInstallOperationId()
+  const unzipDir = new Directory(Paths.cache, `lma_unzip-${operationId}`)
   try {
-    if (unzipDir.exists) unzipDir.delete()
     unzipDir.create()
   } catch (error) {
-    console.error("ZIP: Error creating or deleting the unzip directory", error)
+    console.error("ZIP: Error creating the unzip directory", error)
     throw "CREATE_CACHE_DIR_FAILED"
   }
 
+  try {
+    return await unpackMiniAppFromScratchDirectory(
+      zipPath,
+      unzipDir,
+      operationId,
+      versionOverride,
+      expected,
+      onProgress,
+    )
+  } finally {
+    try {
+      if (unzipDir.exists) unzipDir.delete()
+    } catch (error) {
+      console.warn("ZIP: Error cleaning the unzip directory", error)
+    }
+  }
+}
+
+async function unpackMiniAppFromScratchDirectory(
+  zipPath: string,
+  unzipDir: Directory,
+  operationId: string,
+  versionOverride?: string,
+  expected?: {packageName?: string; version?: string},
+  onProgress?: InstallBundleOptions["onProgress"],
+): Promise<{packageName: string; version: string}> {
   try {
     onProgress?.("extracting")
     console.log("ZIP: unzipping", zipPath)
@@ -401,8 +437,8 @@ async function unpackMiniApp(
   }
 
   const versionDir = new Directory(basePackageDir, version)
-  const stagingDir = new Directory(basePackageDir, `.staging-${version}-${Date.now()}`)
-  const backupDir = new Directory(basePackageDir, `.backup-${version}-${Date.now()}`)
+  const stagingDir = new Directory(basePackageDir, `.staging-${version}-${operationId}`)
+  const backupDir = new Directory(basePackageDir, `.backup-${version}-${operationId}`)
   try {
     stagingDir.create()
   } catch (error) {
