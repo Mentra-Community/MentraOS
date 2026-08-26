@@ -942,10 +942,30 @@ extension MentraLive: CBCentralManagerDelegate {
     nonisolated func centralManager(_: CBCentralManager, didConnect peripheral: CBPeripheral) {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
+            let matchesActiveAttempt = self.connectingPeripheral === peripheral
+            guard MentraLiveConnectionAttemptPolicy.shouldAcceptDidConnect(
+                pairingYieldActive: self.pairingYieldActive,
+                matchesActiveAttempt: matchesActiveAttempt
+            ) else {
+                Bridge.log(
+                    "LIVE: Rejecting stale connection callback during pairing yield or after attempt replacement: \(peripheral.identifier)"
+                )
+                self.stopConnectionTimeout()
+                if self.connectingPeripheral === peripheral {
+                    self.connectingPeripheral = nil
+                }
+                if self.connectedPeripheral === peripheral {
+                    self.connectedPeripheral = nil
+                }
+                self.isConnecting = false
+                self.centralManager?.cancelPeripheralConnection(peripheral)
+                return
+            }
             Bridge.log("Connected to GATT server, discovering services...")
 
             self.stopConnectionTimeout()
             self.isConnecting = false
+            self.connectingPeripheral = nil
             self.connectedPeripheral = peripheral
 
             // Save device name and address for future reconnection
@@ -1345,56 +1365,17 @@ class MentraLive: NSObject, SGCManager {
     private let BLOCK_AUDIO_DUPLEX = false
     private static let voiceActivityDetectionSwitchType = 8
     private static let loudnessGateSwitchType = 10
-    private let mentraManufacturerId: UInt16 = 0xB822
-    // Payload-relative offset of the pairing flag, matching Android's index into the
-    // company-id-stripped manufacturer data from getManufacturerSpecificData().
-    private let advManufPairingFlagOffset = 5
-    // CoreBluetooth returns manufacturer data with the 2-byte company id prefix still attached,
-    // whereas Android strips it. Skip the prefix so both platforms read the same payload byte.
-    private let advManufCompanyIdLength = 2
-    private let advPairingDiscoverable: UInt8 = 0x01
-
-    // CoreBluetooth returns manufacturer data prefixed with the 2-byte company id
-    // (little-endian) and does NOT filter by company id itself (unlike Android's
-    // getManufacturerSpecificData(companyId)), so every reader of this data must
-    // verify the company id before trusting any flag/trailer byte.
-    private func mentraManufacturerData(_ advertisementData: [String: Any]) -> Data? {
-        guard let manufData = advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data,
-              manufData.count >= advManufCompanyIdLength
-        else {
-            return nil
-        }
-        let companyId = UInt16(manufData[0]) | (UInt16(manufData[1]) << 8)
-        guard companyId == mentraManufacturerId else {
-            return nil
-        }
-        return manufData
-    }
-
-    /// OS-1615 ads append `flag | version | capability | code_lo | code_hi` after the
-    /// connected byte. Field firmware uses the same 0xB822 company id but then writes
-    /// the XOR'd Classic MAC at those offsets. Length alone is not a pairing flag.
-    private func hasSecurePairingTrailer(_ advertisementData: [String: Any]) -> Bool {
-        let flagIndex = advManufCompanyIdLength + advManufPairingFlagOffset
-        let trailerBase = flagIndex + 1
-        guard let manufData = mentraManufacturerData(advertisementData),
-              manufData.count >= trailerBase + 4
-        else {
-            return false
-        }
-        let version = Int(manufData[trailerBase])
-        let capability = Int(manufData[trailerBase + 1])
-        return (1...15).contains(version) && (capability & 0x01) != 0
+    private func pairingAdvertisement(
+        _ advertisementData: [String: Any]
+    ) -> MentraLivePairingAdvertisement? {
+        MentraLivePairingAdvertisement.parse(
+            coreBluetoothManufacturerData:
+            advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data
+        )
     }
 
     private func isPairingDiscoverable(_ advertisementData: [String: Any]) -> Bool {
-        guard hasSecurePairingTrailer(advertisementData),
-              let manufData = mentraManufacturerData(advertisementData)
-        else {
-            return false
-        }
-        let flagIndex = advManufCompanyIdLength + advManufPairingFlagOffset
-        return manufData[flagIndex] == advPairingDiscoverable
+        pairingAdvertisement(advertisementData)?.pairingMode == true
     }
 
     private struct SecurePairingTrailer {
@@ -1403,24 +1384,19 @@ class MentraLive: NSObject, SGCManager {
         let secureCapable: Bool
     }
 
-    /// Trailer immediately after pairing flag: version | capability | code_lo | code_hi
     private func parseSecurePairingTrailer(_ advertisementData: [String: Any]) -> SecurePairingTrailer {
-        guard hasSecurePairingTrailer(advertisementData),
-              let manufData = mentraManufacturerData(advertisementData)
-        else {
+        guard let advertisement = pairingAdvertisement(advertisementData) else {
             return SecurePairingTrailer(pairingMode: false, pairingCode: nil, secureCapable: false)
         }
-        let flagIndex = advManufCompanyIdLength + advManufPairingFlagOffset
-        let trailerBase = flagIndex + 1
-        let pairingMode = manufData[flagIndex] == advPairingDiscoverable
-        let codeLo = Int(manufData[trailerBase + 2])
-        let codeHi = Int(manufData[trailerBase + 3])
-        let code = String(format: "%02X%02X", codeHi, codeLo)
-        return SecurePairingTrailer(pairingMode: pairingMode, pairingCode: code, secureCapable: true)
+        return SecurePairingTrailer(
+            pairingMode: advertisement.pairingMode,
+            pairingCode: advertisement.pairingCode,
+            secureCapable: true
+        )
     }
 
     private func advertisesPairingFlag(_ advertisementData: [String: Any]) -> Bool {
-        hasSecurePairingTrailer(advertisementData)
+        pairingAdvertisement(advertisementData) != nil
     }
 
     var connectionState: String = ConnTypes.DISCONNECTED
@@ -2914,25 +2890,20 @@ class MentraLive: NSObject, SGCManager {
             let windowMs = max(5_000, min(180_000, json["window_ms"] as? Int ?? 120_000))
             Bridge.log("LIVE: Glasses entering pairing mode — yield \(windowMs)ms (no forget)")
             enterPairingYield(windowMs: windowMs)
-            var body: [String: Any] = [
+            let body: [String: Any] = [
                 "window_ms": windowMs,
                 "reason": json["reason"] as? String ?? "user_gesture",
             ]
-            if let txn = json["txn"] {
-                body["txn"] = txn
-            }
             Bridge.sendTypedMessage("entering_pairing_mode", body: body)
 
         case "pairing_info":
             Bridge.sendPairingInfo(
                 hadPreviousBond: json["had_previous_bond"] as? Bool ?? false,
-                transferId: json["transfer_id"] as? String,
                 pairingCode: json["pairing_code"] as? String,
                 classicBondReady: json["classic_bond_ready"] as? Bool ?? false,
                 // Legacy firmware that omits this field is not secure-capable.
                 securePairingCapable: json["secure_pairing_capable"] as? Bool ?? false,
-                protocolVersion: json["protocol_version"] as? Int ?? 1,
-                binding: json["binding"] as? String
+                protocolVersion: json["protocol_version"] as? Int ?? 1
             )
 
         case "imu_response", "imu_stream_response", "imu_gesture_response",

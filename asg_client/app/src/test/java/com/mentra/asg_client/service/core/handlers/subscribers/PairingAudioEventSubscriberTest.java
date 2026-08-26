@@ -59,6 +59,8 @@ public class PairingAudioEventSubscriberTest {
 
         ArgumentCaptor<File> file = ArgumentCaptor.forClass(File.class);
         verify(hardware).playAudioFile(file.capture());
-        assertThat(file.getValue().getName()).isEqualTo("pairing_code.wav");
+        assertThat(file.getValue().getName()).startsWith("pairing_code_");
+        assertThat(file.getValue().getName()).endsWith(".wav");
+        assertThat(file.getValue()).exists();
     }
 }

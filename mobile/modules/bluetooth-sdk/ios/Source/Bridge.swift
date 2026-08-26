@@ -100,12 +100,10 @@ class Bridge {
 
     static func sendPairingInfo(
         hadPreviousBond: Bool,
-        transferId: String? = nil,
         pairingCode: String? = nil,
         classicBondReady: Bool = false,
         securePairingCapable: Bool = true,
-        protocolVersion: Int = 1,
-        binding: String? = nil
+        protocolVersion: Int = 1
     ) {
         var body: [String: Any] = [
             "had_previous_bond": hadPreviousBond,
@@ -113,9 +111,7 @@ class Bridge {
             "secure_pairing_capable": securePairingCapable,
             "protocol_version": protocolVersion,
         ]
-        if let transferId { body["transfer_id"] = transferId }
         if let pairingCode { body["pairing_code"] = pairingCode }
-        if let binding { body["binding"] = binding }
         Bridge.sendTypedMessage("pairing_info", body: body)
     }
 
@@ -659,7 +655,6 @@ class Bridge {
         return payload
     }
 }
-
 
 
 

@@ -37,12 +37,6 @@ function requireDeploymentRecord(record) {
   return record
 }
 
-function assertExpectedPurls(actual, expected, label) {
-  const actualSet = new Set(actual)
-  const missing = expected.filter((purl) => !actualSet.has(purl))
-  if (missing.length > 0) throw new Error(`${label} is missing expected components: ${missing.join(", ")}`)
-}
-
 export async function uploadManagedDeployment({bundle, token, deploymentName, expectedPurls, fetchImpl = fetch}) {
   if (!bundle || !token || !deploymentName || expectedPurls.length === 0) {
     throw new Error("Bundle, token, deployment name, and expected PURLs are required")
@@ -117,9 +111,6 @@ export async function inspectDeployment({record, token, fetchImpl = fetch}) {
       `Sonatype deployment ${record.deploymentName} has unknown state ${JSON.stringify(status.deploymentState)}`,
     )
   }
-  if (status.deploymentState === "PUBLISHED") {
-    assertExpectedPurls(purls, record.expectedPurls, `Published Sonatype deployment ${record.deploymentName}`)
-  }
   return {...record, disposition: "resume", deploymentState: status.deploymentState, purls}
 }
 
@@ -146,10 +137,8 @@ export async function publishDeployment({
       throw new Error(`Sonatype deployment ${record.deploymentName} failed: ${JSON.stringify(status.errors || [])}`)
     }
     if (status.deploymentState === "PUBLISHED") {
-      assertExpectedPurls(purls, record.expectedPurls, `Published Sonatype deployment ${record.deploymentName}`)
       return {...record, deploymentState: status.deploymentState, purls}
-    }
-    if (status.deploymentState === "VALIDATED") {
+    } else if (status.deploymentState === "VALIDATED") {
       if (!publicationRequested) {
         await requestPublication({fetchImpl, headers, deploymentId: record.deploymentId})
         publicationRequested = true

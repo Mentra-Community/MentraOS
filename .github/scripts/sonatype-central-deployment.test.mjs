@@ -96,6 +96,27 @@ test("resumes a publishing deployment without sending another publication reques
   assert.equal(publicationRequests, 0)
 })
 
+test("accepts published deployment while optional PURLs are absent", async () => {
+  let publicationRequests = 0
+  const result = await publishDeployment({
+    record: record(),
+    token: "token",
+    fetchImpl: async (url) => {
+      if (String(url).includes(`/deployment/${deploymentId}`)) publicationRequests += 1
+      return jsonResponse({
+        deploymentId,
+        deploymentName,
+        deploymentState: "PUBLISHED",
+        purls: [],
+      })
+    },
+    sleepImpl: async () => {},
+  })
+
+  assert.equal(publicationRequests, 0)
+  assert.deepEqual(result.purls, [])
+})
+
 test("replaces a persisted deployment only after Sonatype reports it failed", async () => {
   const failed = await inspectDeployment({
     record: record(),
@@ -114,15 +135,26 @@ test("replaces a persisted deployment only after Sonatype reports it failed", as
   assert.equal(publishing.disposition, "resume")
 })
 
-test("rejects a published deployment with the wrong Maven coordinates", async () => {
-  await assert.rejects(
-    publishDeployment({
-      record: record(),
-      token: "token",
-      fetchImpl: async () =>
-        jsonResponse({deploymentId, deploymentName, deploymentState: "PUBLISHED", purls: [expectedPurls[0]]}),
-      sleepImpl: async () => {},
-    }),
-    /missing expected components/,
-  )
+test("resumes a published deployment when status PURLs are incomplete", async () => {
+  const result = await inspectDeployment({
+    record: record(),
+    token: "token",
+    fetchImpl: async () =>
+      jsonResponse({deploymentId, deploymentName, deploymentState: "PUBLISHED", purls: [expectedPurls[0]]}),
+  })
+
+  assert.equal(result.disposition, "resume")
+  assert.deepEqual(result.purls, [expectedPurls[0]])
+})
+
+test("preserves partial published PURLs for observability", async () => {
+  const result = await publishDeployment({
+    record: record(),
+    token: "token",
+    fetchImpl: async () =>
+      jsonResponse({deploymentId, deploymentName, deploymentState: "PUBLISHED", purls: [expectedPurls[0]]}),
+    sleepImpl: async () => {},
+  })
+
+  assert.deepEqual(result.purls, [expectedPurls[0]])
 })

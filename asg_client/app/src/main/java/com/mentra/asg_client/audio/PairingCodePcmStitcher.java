@@ -24,7 +24,8 @@ public final class PairingCodePcmStitcher {
     private static final String TAG = "PairingCodePcmStitcher";
     static final int CROSSFADE_MS = 60;
     static final int SILENCE_THRESHOLD = 512;
-    private static final String CACHE_NAME = "pairing_code.wav";
+    private static final String CACHE_PREFIX = "pairing_code_";
+    private static final String CACHE_SUFFIX = ".wav";
 
     private PairingCodePcmStitcher() {}
 
@@ -38,15 +39,13 @@ public final class PairingCodePcmStitcher {
             wavs.add(readAssetBytes(context, asset));
         }
         byte[] stitched = stitchWavs(wavs);
-        File out = new File(context.getCacheDir(), CACHE_NAME);
+        File out = File.createTempFile(CACHE_PREFIX, CACHE_SUFFIX, context.getCacheDir());
         try (FileOutputStream fos = new FileOutputStream(out)) {
             fos.write(stitched);
         }
         Log.i(
                 TAG,
-                "stitched pairing code="
-                        + code
-                        + " clips="
+                "stitched pairing code clips="
                         + wavs.size()
                         + " bytes="
                         + stitched.length

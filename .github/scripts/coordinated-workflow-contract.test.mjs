@@ -29,6 +29,15 @@ test("coordinated OTA assets have bounded release ownership", () => {
   assert.doesNotMatch(ota, /OTA_RELEASE_TAG/)
 })
 
+test("release finalization reads the preserved OTA artifact layout", () => {
+  const finalize = jobBlock(workflow("coordinated-release.yml"), "finalize")
+
+  assert.match(
+    finalize,
+    /asg_selection="release-input\/ota\/release-assets\/\$\(jq -er \.artifactNames\.asgSelection "\$plan"\)"/,
+  )
+})
+
 test("production validates before approval and proves packages before mobile promotion", () => {
   const production = workflow("coordinated-production-promotion.yml")
 
@@ -72,4 +81,28 @@ test("mobile release selects an existing Doppler token for its backend", () => {
   assert.equal([...mobile.matchAll(/dev\) DOPPLER_TOKEN="\$DOPPLER_TOKEN_MOBILE_DEV"/g)].length, 2)
   assert.equal([...mobile.matchAll(/prod\) DOPPLER_TOKEN="\$DOPPLER_TOKEN_MOBILE_PRD"/g)].length, 2)
   assert.doesNotMatch(mobile, /DOPPLER_TOKEN_MOBILE_PRD \|\|/)
+})
+
+test("Maven generation builds every local config plugin before Expo prebuild", () => {
+  const sdkNative = jobBlock(workflow("reusable-coordinated-sdk-native.yml"), "maven")
+  const crustPluginBuild = sdkNative.search(/working-directory: mobile\/modules\/crust\n\s+run: bun run build:plugin/)
+  const bluetoothPluginBuild = sdkNative.search(
+    /working-directory: mobile\/modules\/bluetooth-sdk\n\s+run: bun run build:plugin/,
+  )
+  const prebuild = sdkNative.indexOf("bun expo prebuild --platform android")
+
+  assert.notEqual(crustPluginBuild, -1)
+  assert.notEqual(bluetoothPluginBuild, -1)
+  assert.notEqual(prebuild, -1)
+  assert.ok(crustPluginBuild < prebuild)
+  assert.ok(bluetoothPluginBuild < prebuild)
+})
+
+test("Android release preserves the Expo-configured marketing version", () => {
+  const androidPlugin = readFileSync(new URL("../../mobile/plugins/android.ts", import.meta.url), "utf8")
+  const mobile = workflow("reusable-coordinated-mobile.yml")
+
+  assert.doesNotMatch(androidPlugin, /replace\([^\n]*versionName/)
+  assert.match(mobile, /version_name=\$\(sed -n "s\/\.\*versionName=/)
+  assert.match(mobile, /Android versionName \$\{version_name:-<missing>\} does not match \$EXPECTED_VERSION/)
 })

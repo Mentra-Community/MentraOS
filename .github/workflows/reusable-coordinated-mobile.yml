@@ -228,6 +228,11 @@ jobs:
       - name: Install Android build tools used for artifact verification
         run: sdkmanager "build-tools;36.0.0"
 
+      - uses: ruby/setup-ruby@v1
+        if: inputs.dry_run != true
+        with:
+          ruby-version: "3.3"
+
       - uses: oven-sh/setup-bun@v2
         if: inputs.dry_run == true || needs.prepare.outputs.android_assets_exist != 'true'
         with:
@@ -332,9 +337,17 @@ jobs:
             exit 1
           fi
           "$aapt" dump badging "$apk" > /tmp/mentra-mobile-badging.txt
-          IFS= read -r badging < /tmp/mentra-mobile-badging.txt
-          [[ "$badging" == *"versionCode='$EXPECTED_BUILD'"* ]]
-          [[ "$badging" == *"versionName='$EXPECTED_VERSION'"* ]]
+          badging=$(sed -n '1p' /tmp/mentra-mobile-badging.txt)
+          version_code=$(sed -n "s/.*versionCode='\([^']*\)'.*/\1/p" <<< "$badging")
+          version_name=$(sed -n "s/.*versionName='\([^']*\)'.*/\1/p" <<< "$badging")
+          if [[ "$version_code" != "$EXPECTED_BUILD" ]]; then
+            echo "Android versionCode ${version_code:-<missing>} does not match $EXPECTED_BUILD." >&2
+            exit 1
+          fi
+          if [[ "$version_name" != "$EXPECTED_VERSION" ]]; then
+            echo "Android versionName ${version_name:-<missing>} does not match $EXPECTED_VERSION." >&2
+            exit 1
+          fi
 
       - name: Publish immutable Android release assets
         if: inputs.dry_run != true && needs.prepare.outputs.android_assets_exist != 'true'
@@ -359,7 +372,8 @@ jobs:
           mkdir -p mobile-play/fastlane
           cp mobile/ci/fastlane-android/Fastfile mobile-play/fastlane/Fastfile
           cp mobile/ci/fastlane-android/Appfile mobile-play/fastlane/Appfile
-          cp mobile/ci/fastlane-android/Gemfile mobile-play/Gemfile
+          cp mobile/Gemfile mobile-play/Gemfile
+          cp mobile/Gemfile.lock mobile-play/Gemfile.lock
 
       - name: Install Google Play upload tooling
         if: inputs.dry_run != true

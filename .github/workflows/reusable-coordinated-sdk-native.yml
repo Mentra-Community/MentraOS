@@ -138,6 +138,14 @@ jobs:
         working-directory: mobile
         run: bun install --frozen-lockfile --ignore-scripts
 
+      - name: Build Crust Expo config plugin required by prebuild
+        working-directory: mobile/modules/crust
+        run: bun run build:plugin
+
+      - name: Build Bluetooth SDK Expo config plugin required by prebuild
+        working-directory: mobile/modules/bluetooth-sdk
+        run: bun run build:plugin
+
       - name: Stage the coordinated family version and OTA pin
         run: |
           node .github/scripts/stage-release-family.mjs --plan release-intent/release-plan.json
