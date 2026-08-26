@@ -2051,6 +2051,25 @@ public class MediaCaptureService {
         int randomSuffix = (int) (Math.random() * 1000);
 
         String captureDir = "IMG_" + timeStamp + "_" + randomSuffix;
+
+        // Button captures have no phone-originated requestId; the capture directory name is
+        // their stable ID (it is what gallery sync exposes as capture_id), so status messages
+        // carry it instead of a throwaway local_<timestamp> string.
+        String requestId = captureDir;
+
+        // Claim the camera-holding slot before any user-visible feedback or filesystem work, so a
+        // capture that loses the race never plays sound/LED, emits a queued status, or leaves an
+        // orphan capture directory behind.
+        final long captureToken = beginCapturePhase(requestId);
+        if (captureToken == CaptureBusyGate.NO_CAPTURE) {
+            Log.w(
+                    TAG,
+                    "Local capture rejected - another capture is in flight requestId=" + requestId);
+            sendPhotoStatus(
+                    requestId, "failed", null, "CAMERA_BUSY", "Another capture is in progress");
+            return;
+        }
+
         File captureDirFile = new File(fileManager.getDefaultMediaDirectory(), captureDir);
         captureDirFile.mkdirs();
         String photoFilePath = new File(captureDirFile, "base.jpg").getAbsolutePath();
@@ -2090,14 +2109,11 @@ public class MediaCaptureService {
         // Log test configuration for debugging
         PhotoCaptureTestHooks.logTestConfig();
 
-        // Button captures have no phone-originated requestId; the capture directory name is
-        // their stable ID (it is what gallery sync exposes as capture_id), so status messages
-        // carry it instead of a throwaway local_<timestamp> string.
-        String requestId = captureDir;
         sendPhotoStatus(requestId, "queued");
 
         // TESTING: Check for fake camera initialization failure
         if (PhotoCaptureTestHooks.shouldFail("CAMERA_INIT")) {
+            endCapturePhase(captureToken);
             Log.e(TAG, "TESTING: Simulating camera initialization failure");
             sendPhotoErrorResponse(
                     requestId,
@@ -2128,6 +2144,7 @@ public class MediaCaptureService {
 
         // TESTING: Check for fake camera capture failure
         if (PhotoCaptureTestHooks.shouldFail("CAMERA_CAPTURE")) {
+            endCapturePhase(captureToken);
             photoFeedbackController.stopForFailure(captureFeedbackToken);
             Log.e(TAG, "TESTING: Simulating camera capture failure");
             sendPhotoErrorResponse(
@@ -2139,16 +2156,6 @@ public class MediaCaptureService {
 
         // TESTING: Add fake delay for camera capture
         PhotoCaptureTestHooks.addFakeDelay("CAMERA_CAPTURE");
-
-        if (!beginCapturePhase(requestId)) {
-            photoFeedbackController.stopForFailure(captureFeedbackToken);
-            Log.w(
-                    TAG,
-                    "Local capture rejected - another capture is in flight requestId=" + requestId);
-            sendPhotoStatus(
-                    requestId, "failed", null, "CAMERA_BUSY", "Another capture is in progress");
-            return;
-        }
 
         // Use the new enqueuePhotoRequest for thread-safe rapid capture
         // isFromSdk=false because this is a button-triggered photo (local storage, high quality)
@@ -2216,7 +2223,7 @@ public class MediaCaptureService {
 
                         @Override
                         public void onPhotoCaptured(String filePath, JSONObject captureMetadata) {
-                            endCapturePhase(requestId);
+                            endCapturePhase(captureToken);
                             photoLightController.onCaptureBoundary(
                                     captureLightToken, "photo completion fallback");
                             photoFeedbackController.playSnap(
@@ -2268,7 +2275,7 @@ public class MediaCaptureService {
 
                         @Override
                         public void onPhotoError(CameraOperationError error) {
-                            endCapturePhase(requestId);
+                            endCapturePhase(captureToken);
                             photoFeedbackController.stopForFailure(captureFeedbackToken);
                             Log.e(TAG, "Failed to capture offline photo: " + error.message());
                             sendPhotoStatus(
@@ -2286,7 +2293,7 @@ public class MediaCaptureService {
                         }
                     });
         } catch (Exception e) {
-            endCapturePhase(requestId);
+            endCapturePhase(captureToken);
             photoFeedbackController.stopForFailure(captureFeedbackToken);
             Log.e(TAG, "Failed to enqueue button photo", e);
             sendPhotoStatus(
@@ -2372,6 +2379,22 @@ public class MediaCaptureService {
                         + mode
                         + " path="
                         + photoFilePath);
+        // Claim the camera-holding slot before any user-visible feedback or queued status so a
+        // capture that loses the race never plays sound/LED or emits a misleading queued status.
+        final long captureToken = beginCapturePhase(requestId);
+        if (captureToken == CaptureBusyGate.NO_CAPTURE) {
+            Log.w(
+                    TAG,
+                    "Local-save capture rejected - another capture is in flight requestId="
+                            + requestId);
+            sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Another capture is in progress");
+            if (textModeRequested) {
+                clearPhotoTracking(requestId);
+                releasePhotoJob(requestId);
+            }
+            return false;
+        }
+
         sendPhotoStatus(requestId, "queued");
 
         // The capture directory name is the stable capture_id exposed by gallery sync.
@@ -2394,20 +2417,6 @@ public class MediaCaptureService {
             }
         }
         final PhotoFeedbackController.Token captureFeedbackToken = feedbackToken;
-
-        if (!beginCapturePhase(requestId)) {
-            photoFeedbackController.stopForFailure(captureFeedbackToken);
-            Log.w(
-                    TAG,
-                    "Local-save capture rejected - another capture is in flight requestId="
-                            + requestId);
-            sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Another capture is in progress");
-            if (textModeRequested) {
-                clearPhotoTracking(requestId);
-                releasePhotoJob(requestId);
-            }
-            return false;
-        }
 
         try {
             CameraNeoService.enqueuePhotoRequest(
@@ -2482,7 +2491,7 @@ public class MediaCaptureService {
                                 String filePath,
                                 JSONObject captureMetadata,
                                 CapturedPhoto capturedPhoto) {
-                            endCapturePhase(requestId);
+                            endCapturePhase(captureToken);
                             photoLightController.onCaptureBoundary(
                                     captureLightToken, "photo completion fallback");
                             photoFeedbackController.playSnap(
@@ -2571,7 +2580,7 @@ public class MediaCaptureService {
 
                         @Override
                         public void onPhotoError(CameraOperationError error) {
-                            endCapturePhase(requestId);
+                            endCapturePhase(captureToken);
                             photoFeedbackController.stopForFailure(captureFeedbackToken);
                             try {
                                 Log.e(
@@ -2595,7 +2604,7 @@ public class MediaCaptureService {
                     });
             return true;
         } catch (Exception e) {
-            endCapturePhase(requestId);
+            endCapturePhase(captureToken);
             photoFeedbackController.stopForFailure(captureFeedbackToken);
             try {
                 Log.e(TAG, "Error taking local-save photo", e);
@@ -3143,14 +3152,14 @@ public class MediaCaptureService {
         photoPromptOccupancy.resync(this::samplePromptOccupancy);
     }
 
-    private boolean beginCapturePhase(String requestId) {
-        boolean started = captureBusyGate.begin(requestId);
+    private long beginCapturePhase(String requestId) {
+        long token = captureBusyGate.begin(requestId);
         publishPromptOccupancy();
-        return started;
+        return token;
     }
 
-    private boolean endCapturePhase(String requestId) {
-        boolean ended = captureBusyGate.end(requestId);
+    private boolean endCapturePhase(long token) {
+        boolean ended = captureBusyGate.end(token);
         publishPromptOccupancy();
         return ended;
     }

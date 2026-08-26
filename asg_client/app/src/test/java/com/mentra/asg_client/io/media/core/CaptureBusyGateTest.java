@@ -11,7 +11,7 @@ public class CaptureBusyGateTest {
         FakeCaptureScheduler scheduler = new FakeCaptureScheduler();
         CaptureBusyGate gate = newGate(scheduler);
 
-        assertThat(gate.begin("a")).isTrue();
+        assertThat(gate.begin("a")).isNotEqualTo(CaptureBusyGate.NO_CAPTURE);
         assertThat(gate.isBusy()).isTrue();
         assertThat(gate.activeRequestId()).isEqualTo("a");
     }
@@ -21,8 +21,8 @@ public class CaptureBusyGateTest {
         FakeCaptureScheduler scheduler = new FakeCaptureScheduler();
         CaptureBusyGate gate = newGate(scheduler);
 
-        gate.begin("a");
-        assertThat(gate.end("a")).isTrue();
+        long token = gate.begin("a");
+        assertThat(gate.end(token)).isTrue();
         scheduler.advance(100);
 
         assertThat(gate.isBusy()).isFalse();
@@ -45,10 +45,10 @@ public class CaptureBusyGateTest {
         FakeCaptureScheduler scheduler = new FakeCaptureScheduler();
         CaptureBusyGate gate = newGate(scheduler);
 
-        gate.begin("a");
+        long token = gate.begin("a");
         scheduler.advance(10);
 
-        assertThat(gate.end("a")).isFalse();
+        assertThat(gate.end(token)).isFalse();
         assertThat(gate.isBusy()).isFalse();
     }
 
@@ -57,9 +57,35 @@ public class CaptureBusyGateTest {
         FakeCaptureScheduler scheduler = new FakeCaptureScheduler();
         CaptureBusyGate gate = newGate(scheduler);
 
-        assertThat(gate.begin("a")).isTrue();
-        assertThat(gate.begin("b")).isFalse();
+        assertThat(gate.begin("a")).isNotEqualTo(CaptureBusyGate.NO_CAPTURE);
+        assertThat(gate.begin("b")).isEqualTo(CaptureBusyGate.NO_CAPTURE);
         assertThat(gate.activeRequestId()).isEqualTo("a");
+    }
+
+    @Test
+    public void lateEndAfterExpiry_doesNotDisturbReusedRequestId() {
+        FakeCaptureScheduler scheduler = new FakeCaptureScheduler();
+        CaptureBusyGate gate = newGate(scheduler);
+
+        // First capture times out and is force-cleared by the watchdog.
+        long first = gate.begin("dup");
+        scheduler.advance(10);
+        assertThat(gate.isBusy()).isFalse();
+
+        // A newer capture reuses the identical request id.
+        long second = gate.begin("dup");
+        assertThat(second).isNotEqualTo(first);
+        assertThat(gate.isBusy()).isTrue();
+
+        // The first capture's late terminal end must neither clear the busy flag nor cancel the
+        // newer capture's safety watchdog.
+        assertThat(gate.end(first)).isFalse();
+        assertThat(gate.isBusy()).isTrue();
+        assertThat(gate.activeRequestId()).isEqualTo("dup");
+
+        // The newer capture's watchdog still fires and force-clears it.
+        scheduler.advance(10);
+        assertThat(gate.isBusy()).isFalse();
     }
 
     private static CaptureBusyGate newGate(FakeCaptureScheduler scheduler) {

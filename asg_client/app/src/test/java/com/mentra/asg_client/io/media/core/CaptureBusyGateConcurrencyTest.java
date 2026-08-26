@@ -29,7 +29,7 @@ public class CaptureBusyGateConcurrencyTest {
                             () -> {
                                 try {
                                     start.await(2, TimeUnit.SECONDS);
-                                    if (gate.begin("same")) {
+                                    if (gate.begin("same") != CaptureBusyGate.NO_CAPTURE) {
                                         wins.incrementAndGet();
                                     }
                                 } catch (Throwable t) {
@@ -66,12 +66,16 @@ public class CaptureBusyGateConcurrencyTest {
                             () -> {
                                 try {
                                     Random random = new Random(seed);
+                                    long lastToken = CaptureBusyGate.NO_CAPTURE;
                                     for (int op = 0; op < opsPerThread; op++) {
                                         String id = "req-" + random.nextInt(4);
                                         if (random.nextBoolean()) {
-                                            gate.begin(id);
+                                            long token = gate.begin(id);
+                                            if (token != CaptureBusyGate.NO_CAPTURE) {
+                                                lastToken = token;
+                                            }
                                         } else {
-                                            gate.end(id);
+                                            gate.end(lastToken);
                                         }
                                     }
                                 } catch (Throwable t) {
@@ -88,10 +92,7 @@ public class CaptureBusyGateConcurrencyTest {
         assertThat(done.await(5, TimeUnit.SECONDS)).isTrue();
         assertThat(failures).isEmpty();
 
-        scheduler.advance(100);
-        for (int i = 0; i < 4; i++) {
-            gate.end("req-" + i);
-        }
+        // Any capture still holding the slot is force-cleared once its safety watchdog expires.
         scheduler.advance(100);
 
         assertThat(gate.isBusy()).isFalse();
