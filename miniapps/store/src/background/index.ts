@@ -348,10 +348,23 @@ export class StoreController {
     const candidates = this.automaticUpdateCandidates()
     if (candidates.length === 0) return Promise.resolve()
     const updateRun = this.enqueueMutation(async () => {
+      const failures: string[] = []
       for (const app of candidates) {
         const installed = this.snapshot.installed.find((candidate) => candidate.packageName === app.packageName)
         if (!installed || !isNewerVersion(app.release.version, installed.version)) continue
-        await this.install(app.packageName, undefined, app)
+        try {
+          await this.install(app.packageName, undefined, app)
+        } catch (error) {
+          failures.push(`${app.name}: ${error instanceof Error ? error.message : "update failed"}`)
+        }
+      }
+      if (failures.length > 0) {
+        this.snapshot = {
+          ...this.snapshot,
+          operation: null,
+          error: `Some automatic updates could not be installed: ${failures.join("; ")}`,
+        }
+        this.send()
       }
       return this.snapshot
     })

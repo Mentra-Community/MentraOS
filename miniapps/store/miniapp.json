@@ -1,7 +1,7 @@
 {
   "$schema": "./node_modules/@mentra/miniapp-cli/schema/miniapp.schema.json",
   "packageName": "com.mentra.store",
-  "version": "1.0.11",
+  "version": "1.0.12",
   "name": "Mentra Miniapp Store",
   "description": "Discover, install, update, and manage Mentra miniapps.",
   "icon": "icon.png",
@@ -34,7 +34,10 @@
             "type": "number"
           }
         },
-        "required": ["checkedAt", "candidateCount"]
+        "required": [
+          "checkedAt",
+          "candidateCount"
+        ]
       }
     },
     {
@@ -68,7 +71,10 @@
             }
           }
         },
-        "required": ["query", "results"]
+        "required": [
+          "query",
+          "results"
+        ]
       }
     },
     {
@@ -84,7 +90,9 @@
             "description": "The exact package name returned by search_miniapps."
           }
         },
-        "required": ["packageName"]
+        "required": [
+          "packageName"
+        ]
       },
       "outputSchema": {
         "type": "object"
@@ -103,7 +111,9 @@
             "description": "The exact package name returned by search_miniapps."
           }
         },
-        "required": ["packageName"]
+        "required": [
+          "packageName"
+        ]
       },
       "outputSchema": {
         "type": "object"
@@ -122,7 +132,9 @@
             "description": "The exact installed package name."
           }
         },
-        "required": ["packageName"]
+        "required": [
+          "packageName"
+        ]
       },
       "outputSchema": {
         "type": "object"

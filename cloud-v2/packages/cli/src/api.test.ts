@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { createRelease, startLogin } from "./api";
+import { createRelease, getOrg, startLogin, upsertOrg } from "./api";
 import type { CliConfig } from "./config";
 
 const credentials = {
@@ -95,5 +95,48 @@ describe("startLogin", () => {
       "https://api.workos.test/user_management/authorize/device",
     ]);
     expect(config.workosClientId).toBe("client_public_123");
+  });
+});
+
+describe("developer organization selection", () => {
+  test("sends the selected developer org and can explicitly create another one", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    globalThis.fetch = mock(async (url: string | URL | Request, init?: RequestInit) => {
+      requests.push({ url: String(url), init });
+      return Response.json({
+        org: {
+          id: "dorg_new",
+          ownerUserId: "user",
+          workosOrgId: "org_workos_1",
+          name: "New Org",
+          packagePrefix: "com.neworg",
+          packagePrefixStatus: "unverified",
+          createdAt: null,
+          updatedAt: null,
+        },
+      });
+    }) as unknown as typeof fetch;
+    const selectedCredentials = {
+      ...credentials,
+      organizationId: "org_workos_1",
+      developerOrgId: "dorg_selected",
+    };
+
+    await getOrg(selectedCredentials);
+    await upsertOrg(selectedCredentials, {
+      displayName: "New Org",
+      packagePrefix: "com.neworg",
+      createNew: true,
+    });
+
+    expect(requests[0]?.init?.headers).toMatchObject({
+      authorization: "Bearer token",
+      "x-mentra-developer-org-id": "dorg_selected",
+    });
+    expect(JSON.parse(String(requests[1]?.init?.body))).toEqual({
+      displayName: "New Org",
+      packagePrefix: "com.neworg",
+      createNew: true,
+    });
   });
 });

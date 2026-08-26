@@ -26,8 +26,8 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await Promise.all([
-    DeveloperOrgMembershipModel.deleteMany({ userId: { $in: ["user_a", "user_b", "shared_user"] } }),
-    DeveloperOrgModel.deleteMany({ ownerUserId: { $in: ["user_a", "user_b"] } }),
+    DeveloperOrgMembershipModel.deleteMany({ userId: { $in: ["user_a", "user_b", "shared_user", "invite_first"] } }),
+    DeveloperOrgModel.deleteMany({ ownerUserId: { $in: ["user_a", "user_b", "invite_first"] } }),
   ]);
 });
 
@@ -65,5 +65,22 @@ describe("developer organization membership", () => {
 
     const organizations = await service.listOrgsForUser({ id: "user_a", email: "a@example.com" });
     expect(organizations.map(organization => organization.id)).toEqual([visible.id]);
+  });
+
+  test("an invite-first developer can also own a newly created publisher organization", async () => {
+    const joined = await service.createPrimaryOrg(
+      { id: "user_a", email: "a@example.com" },
+      { displayName: "Joined Team", packagePrefix: "com.testjoined" },
+    );
+    await service.ensureMembership(joined.id, "invite_first", { email: "invite-first@example.com" });
+
+    const created = await service.createPrimaryOrg(
+      { id: "invite_first", email: "invite-first@example.com" },
+      { displayName: "Owned Team", packagePrefix: "com.testowned" },
+    );
+
+    const organizations = await service.listOrgsForUser({ id: "invite_first", email: "invite-first@example.com" });
+    expect(organizations.map(organization => organization.id)).toEqual([joined.id, created.id]);
+    expect(await service.getMemberRole(created.id, "invite_first")).toBe("owner");
   });
 });

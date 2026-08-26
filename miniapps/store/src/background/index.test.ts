@@ -336,6 +336,34 @@ describe("StoreController refresh serialization", () => {
     expect(snapshots.at(-1)).toMatchObject({operation: null, error: "Host refused uninstall"})
   })
 
+  test("continues automatic updates after one candidate fails", async () => {
+    const session = {ui: {send: () => undefined}} as unknown as MiniappSession
+    const controller = new StoreController(session) as unknown as TestController
+    controller.snapshot = {
+      ...controller.snapshot,
+      installed: [
+        {packageName: "com.example.broken", version: "1.0.0"},
+        {packageName: "com.example.healthy", version: "1.0.0"},
+      ] as StoreSnapshot["installed"],
+    }
+    const candidates = [
+      {packageName: "com.example.broken", name: "Broken", release: {version: "2.0.0"}},
+      {packageName: "com.example.healthy", name: "Healthy", release: {version: "2.0.0"}},
+    ] as StoreApp[]
+    controller.automaticUpdateCandidates = () => candidates
+    const attempted: string[] = []
+    controller.install = async (packageName) => {
+      attempted.push(packageName)
+      if (packageName === "com.example.broken") throw new Error("bad bundle")
+      return controller.snapshot
+    }
+
+    await controller.scheduleAutomaticUpdates()
+
+    expect(attempted).toEqual(["com.example.broken", "com.example.healthy"])
+    expect(controller.snapshot.error).toContain("Broken: bad bundle")
+  })
+
   test("does not install a discoverable beta offer before enrollment", async () => {
     let installs = 0
     const session = {

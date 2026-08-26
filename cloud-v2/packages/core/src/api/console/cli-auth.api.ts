@@ -66,6 +66,7 @@ const storeAssetBodyLimit = bodyLimit({
 const upsertDeveloperOrgSchema = z.object({
   displayName: z.string().min(1),
   packagePrefix: z.string().min(1),
+  createNew: z.boolean().optional().default(false),
 });
 
 const inviteOrgMemberSchema = z.object({
@@ -509,9 +510,25 @@ async function putOrg(c: AppContext) {
 
   const parsed = upsertDeveloperOrgSchema.safeParse(await readJsonBody(c));
   if (!parsed.success) throw new InvalidRequest(parsed.error.issues[0]?.message ?? "invalid organization payload");
+  if (parsed.data.createNew && authenticatedSession.developerOrgId) {
+    return c.json(
+      { error: "forbidden", error_description: "an interactive developer login is required to create an organization" },
+      403,
+    );
+  }
 
   try {
-    const existingOrg = await resolveDeveloperOrgForRequest(c, authenticatedSession);
+    const orgInput = { displayName: parsed.data.displayName, packagePrefix: parsed.data.packagePrefix };
+    const accessibleOrgs = await developerOrgs.listOrgsForUser(authenticatedSession.user);
+    const existingOrg = parsed.data.createNew
+      ? null
+      : await resolveDeveloperOrgForRequest(c, authenticatedSession, accessibleOrgs);
+    if (!parsed.data.createNew && !existingOrg && accessibleOrgs.length > 0) {
+      return c.json(
+        { error: "organization_selection_required", error_description: "select a developer organization first" },
+        409,
+      );
+    }
     let org: DeveloperOrgRecord;
     if (existingOrg) {
       // Editing an existing org is owner-only, gated on the role not the
@@ -530,9 +547,9 @@ async function putOrg(c: AppContext) {
       if (role !== "owner") {
         return c.json({ error: "forbidden", error_description: "only owners can update the organization" }, 403);
       }
-      org = await developerOrgs.updateOrg(existingOrg.id, authenticatedSession.user, parsed.data);
+      org = await developerOrgs.updateOrg(existingOrg.id, authenticatedSession.user, orgInput);
     } else {
-      org = await developerOrgs.createPrimaryOrg(authenticatedSession.user, parsed.data);
+      org = await developerOrgs.createPrimaryOrg(authenticatedSession.user, orgInput);
     }
     const linkedOrg = await ensureWorkosOrgLinked(authenticatedSession, org);
     setDeveloperOrgCookie(c, linkedOrg.id);
@@ -1294,6 +1311,15 @@ async function resolveDeveloperOrgForRequest(
   }
 
   const organizations = knownOrganizations ?? (await developerOrgs.listOrgsForUser(authenticatedSession.user));
+
+  // CLI calls carry the developer-org id selected by `mentra org use`.
+  // Validate it against the authenticated user's accessible roster instead of
+  // depending on browser cookies or an arbitrary first-org fallback.
+  const requestedDeveloperOrgId = c.req.header("x-mentra-developer-org-id")?.trim();
+  if (requestedDeveloperOrgId) {
+    return organizations.find(org => org.id === requestedDeveloperOrgId) ?? null;
+  }
+
   const selectedId = getCookie(c, DEVELOPER_ORG_COOKIE);
   const selected = organizations.find(org => org.id === selectedId);
   if (selected) return selected;
@@ -1304,6 +1330,10 @@ async function resolveDeveloperOrgForRequest(
   const workosSelected = organizations.find(org => org.workosOrgId === authenticatedSession.organizationId);
   if (workosSelected) return workosSelected;
 
+  // A bearer caller with multiple accessible orgs must select one through its
+  // developer-org context. Browser sessions retain the deterministic first-org
+  // fallback until the validated developer-org cookie is set.
+  if (bearerToken(c) && organizations.length > 1) return null;
   if (organizations[0]) return organizations[0];
 
   // NOTE: access requires a roster row (or being the creator). We intentionally

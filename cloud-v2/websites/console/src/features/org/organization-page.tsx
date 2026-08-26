@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient, type UseMutationResult } from "@tanstack/react-query";
-import { CheckCircle2, Mail, Trash2, UserPlus, Users } from "lucide-react";
+import { CheckCircle2, Mail, Plus, Trash2, UserPlus, Users } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { AppShell } from "@/components/app-shell";
 import { PackageName } from "@/components/package-name";
@@ -41,6 +41,7 @@ export function OrganizationPage() {
   const [displayName, setDisplayName] = useState(suggested.displayName);
   const [packagePrefix, setPackagePrefix] = useState(suggested.packagePrefix);
   const [inviteEmail, setInviteEmail] = useState("");
+  const [creatingNewOrg, setCreatingNewOrg] = useState(false);
   const accessQuery = useQuery({
     queryKey: ["developer-org-access"],
     queryFn: getOrgAccess,
@@ -48,23 +49,24 @@ export function OrganizationPage() {
   });
 
   useEffect(() => {
-    if (!org) return;
+    if (!org || creatingNewOrg) return;
     setDisplayName(org.name);
     setPackagePrefix(org.packagePrefix);
-  }, [org]);
+  }, [creatingNewOrg, org]);
 
   useEffect(() => {
-    if (org) return;
+    if (org && !creatingNewOrg) return;
     setDisplayName(suggested.displayName);
     setPackagePrefix(suggested.packagePrefix);
-  }, [org, suggested.displayName, suggested.packagePrefix]);
+  }, [creatingNewOrg, org, suggested.displayName, suggested.packagePrefix]);
 
   const normalizedPrefix = normalizePackagePrefix(packagePrefix);
   const previewPackageName = normalizedPrefix ? `${normalizedPrefix}.weather` : "io.acme.weather";
-  const canEditPrefix = !org || org.packagePrefixStatus === "rejected";
+  const canEditPrefix = creatingNewOrg || !org || org.packagePrefixStatus === "rejected";
   const orgSave = useMutation({
     mutationFn: saveDeveloperOrg,
     onSuccess: async () => {
+      setCreatingNewOrg(false);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["console-session"] }),
         queryClient.invalidateQueries({ queryKey: ["developer-org"] }),
@@ -101,13 +103,15 @@ export function OrganizationPage() {
   const viewerRole: OrgRole = accessQuery.data?.viewerRole ?? session.data?.viewerRole ?? "member";
   // Editing an existing org is owner-only (server-enforced); onboarding (no org
   // yet) is always allowed since the creator becomes the owner.
-  const canEditOrg = !org || viewerRole === "owner";
+  const canEditOrg = creatingNewOrg || !org || viewerRole === "owner";
   const canSave =
     canEditOrg &&
     displayName.trim().length >= 2 &&
     isValidPackagePrefix(normalizedPrefix) &&
     !orgSave.isPending &&
-    (displayName.trim() !== org?.name || normalizedPrefix !== org?.packagePrefix);
+    (creatingNewOrg || displayName.trim() !== org?.name || normalizedPrefix !== org?.packagePrefix);
+
+  const isCreating = onboardingRequired || creatingNewOrg;
 
   return (
     <AppShell>
@@ -118,9 +122,22 @@ export function OrganizationPage() {
               <div className="space-y-2">
                 <div className="flex items-center justify-between gap-3">
                   <CardTitle className="font-display text-[20px]">
-                    {onboardingRequired ? "Create your developer org" : "Developer org"}
+                    {isCreating ? "Create your developer org" : "Developer org"}
                   </CardTitle>
-                  {org ? <PrefixStatus status={org.packagePrefixStatus} /> : null}
+                  <div className="flex items-center gap-2">
+                    {org && !creatingNewOrg ? <PrefixStatus status={org.packagePrefixStatus} /> : null}
+                    {org ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="h-9 rounded-full px-3"
+                        onClick={() => setCreatingNewOrg(value => !value)}
+                      >
+                        {creatingNewOrg ? null : <Plus className="size-4" />}
+                        {creatingNewOrg ? "Cancel" : "New organization"}
+                      </Button>
+                    ) : null}
+                  </div>
                 </div>
                 <CardDescription className="max-w-2xl text-[13px] leading-5 sm:text-[14px]">
                   Your org owns a unique package prefix. Every miniapp you create must live under it.
@@ -128,21 +145,22 @@ export function OrganizationPage() {
               </div>
             </CardHeader>
             <CardContent className="space-y-5 p-4 sm:p-6">
-              {onboardingRequired ? (
+              {isCreating ? (
                 <div className="rounded-[14px] border border-[#ccefe2] bg-[#f1fbf6] p-4 text-sm leading-6 text-[#256953]">
-                  Pick a namespace now so package names cannot drift into `com.google.*` or another org's space.
-                  Public store review can verify domain or brand ownership later.
+                  Pick a namespace now so package names cannot drift into `com.google.*` or another org's space. Public
+                  store review can verify domain or brand ownership later.
                 </div>
               ) : null}
 
               <form
                 className="space-y-5"
-                onSubmit={(event) => {
+                onSubmit={event => {
                   event.preventDefault();
                   if (!canSave) return;
                   orgSave.mutate({
                     displayName: displayName.trim(),
                     packagePrefix: normalizedPrefix,
+                    createNew: creatingNewOrg,
                   });
                 }}
               >
@@ -176,12 +194,19 @@ export function OrganizationPage() {
                 </div>
 
                 <div className="rounded-[14px] bg-[#f6f7f5] p-4">
-                  <div className="text-xs font-semibold uppercase tracking-[0.08em] text-[#8a8d95]">Miniapp package preview</div>
+                  <div className="text-xs font-semibold uppercase tracking-[0.08em] text-[#8a8d95]">
+                    Miniapp package preview
+                  </div>
                   <div className="mt-2 truncate text-[15px]">
-                    <PackageName packageName={previewPackageName} packagePrefix={normalizedPrefix} className="text-[15px]" />
+                    <PackageName
+                      packageName={previewPackageName}
+                      packagePrefix={normalizedPrefix}
+                      className="text-[15px]"
+                    />
                   </div>
                   <div className="mt-2 text-sm leading-6 text-[#747780]">
-                    Developers only choose the suffix, like `weather`; the org prefix is added and enforced automatically.
+                    Developers only choose the suffix, like `weather`; the org prefix is added and enforced
+                    automatically.
                   </div>
                 </div>
 
@@ -196,15 +221,18 @@ export function OrganizationPage() {
                   </div>
                 ) : null}
 
-                <Button className="h-10 w-full rounded-full bg-[#111217] px-5 text-white hover:bg-[#25262c] sm:w-auto" disabled={!canSave}>
-                  {orgSave.isPending ? "Saving..." : onboardingRequired ? "Create organization" : "Save changes"}
+                <Button
+                  className="h-10 w-full rounded-full bg-[#111217] px-5 text-white hover:bg-[#25262c] sm:w-auto"
+                  disabled={!canSave}
+                >
+                  {orgSave.isPending ? "Saving..." : isCreating ? "Create organization" : "Save changes"}
                 </Button>
               </form>
             </CardContent>
           </Card>
         </section>
 
-        {org ? (
+        {org && !creatingNewOrg ? (
           <TeamAccessSection
             access={accessQuery.data}
             error={accessQuery.error}

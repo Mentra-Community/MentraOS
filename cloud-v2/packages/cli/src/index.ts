@@ -11,6 +11,7 @@ import {
   deleteApp,
   ensureAdminRegistry,
   getAdminMe,
+  getConsoleSession,
   getOrg,
   listAdminPreinstallReleases,
   listAdminRegistries,
@@ -85,7 +86,7 @@ program
             : expiresAtFromToken(token.access_token)
               ? new Date(expiresAtFromToken(token.access_token)! * 1000)
               : undefined;
-        const storage = await saveCredentials({
+        const credentials: CliCredentials = {
           token: token.access_token,
           refreshToken: token.refresh_token,
           workosUserId: token.user.id,
@@ -95,9 +96,24 @@ program
           coreUrl: config.coreUrl,
           storedAt: storedAt.toISOString(),
           expiresAt: expiresAt?.toISOString(),
-        });
+        };
+        let availableOrgCount = 0;
+        try {
+          const session = await getConsoleSession(credentials);
+          availableOrgCount = session.organizations.length;
+          credentials.developerOrgId = session.organizationId ?? session.organizations[0]?.id ?? null;
+          if (session.organizations.length > 1 && !session.organizationId) credentials.developerOrgId = null;
+        } catch {
+          // Authentication still succeeded. The first Core command will report
+          // any connectivity or organization-selection problem explicitly.
+        }
+        const storage = await saveCredentials(credentials);
         console.log(`Signed in as ${token.user.email}`);
         if (token.organization_id) console.log(`Organization: ${token.organization_id}`);
+        if (credentials.developerOrgId) console.log(`Developer org: ${credentials.developerOrgId}`);
+        if (availableOrgCount > 1 && !credentials.developerOrgId) {
+          console.log("Multiple developer orgs are available. Run `mentra org list`, then `mentra org use <org-id>`.");
+        }
         console.log(`Credentials stored in ${storage === "keychain" ? "OS keychain" : "~/.mentra/cli-v2"}`);
         return;
       }
@@ -126,11 +142,53 @@ program
     console.log(`Email: ${creds.email}`);
     console.log(`WorkOS user: ${creds.workosUserId}`);
     if (creds.organizationId) console.log(`Organization: ${creds.organizationId}`);
+    if (creds.developerOrgId) console.log(`Developer org: ${creds.developerOrgId}`);
     console.log(`Core: ${config.coreUrl}`);
     if (creds.expiresAt) console.log(`Expires: ${new Date(creds.expiresAt).toLocaleString()}`);
   });
 
 const org = program.command("org").description("Manage the current developer organization");
+
+org
+  .command("list")
+  .description("List developer organizations available to this account")
+  .action(async () => {
+    const creds = await requireCredentials();
+    if (!creds) return;
+
+    try {
+      const session = await getConsoleSession(creds);
+      if (session.organizations.length === 0) {
+        console.log("No developer organizations yet.");
+        return;
+      }
+      for (const developerOrg of session.organizations) {
+        const selected = developerOrg.id === creds.developerOrgId || developerOrg.id === session.organizationId;
+        console.log(`${selected ? "*" : " "} ${developerOrg.id}\t${developerOrg.name}\t${developerOrg.packagePrefix}`);
+      }
+    } catch (error) {
+      fail(error);
+    }
+  });
+
+org
+  .command("use")
+  .argument("<organizationId>", "developer organization id from `mentra org list`")
+  .description("Select the developer organization used by future CLI commands")
+  .action(async (organizationId: string) => {
+    const creds = await requireCredentials();
+    if (!creds) return;
+
+    try {
+      const session = await getConsoleSession(creds);
+      const developerOrg = session.organizations.find(candidate => candidate.id === organizationId);
+      if (!developerOrg) throw new Error("You do not have access to that developer organization");
+      await saveCredentials({...creds, developerOrgId: developerOrg.id});
+      console.log(`Using ${developerOrg.name} (${developerOrg.id})`);
+    } catch (error) {
+      fail(error);
+    }
+  });
 
 org
   .command("show")
@@ -142,7 +200,7 @@ org
     try {
       const { org: developerOrg } = await getOrg(creds);
       if (!developerOrg) {
-        console.log('No developer org yet. Run `mentra org init --name "Your Org" --prefix com.example`.');
+        console.log('No developer org selected. Run `mentra org list`, or create one with `mentra org init --new`.');
         return;
       }
 
@@ -160,7 +218,8 @@ org
   .description("Create or update the current developer organization")
   .requiredOption("--name <name>", "organization display name")
   .requiredOption("--prefix <prefix>", "package prefix, e.g. com.example")
-  .action(async (options: { name: string; prefix: string }) => {
+  .option("--new", "create another organization instead of updating the selected organization")
+  .action(async (options: { name: string; prefix: string; new?: boolean }) => {
     const creds = await requireCredentials();
     if (!creds) return;
 
@@ -168,7 +227,9 @@ org
       const { org: developerOrg } = await upsertOrg(creds, {
         displayName: options.name,
         packagePrefix: options.prefix,
+        createNew: options.new === true,
       });
+      await saveCredentials({...creds, developerOrgId: developerOrg.id});
       console.log(`Developer org ready: ${developerOrg.name}`);
       console.log(`Package prefix: ${developerOrg.packagePrefix} (${developerOrg.packagePrefixStatus})`);
       if (developerOrg.workosOrgId) console.log(`WorkOS org: ${developerOrg.workosOrgId}`);
@@ -703,6 +764,7 @@ async function loadFreshCredentials(config = getConfig()): Promise<CliCredential
       workosUserId: refreshed.user.id,
       email: refreshed.user.email,
       organizationId: refreshed.organization_id,
+      developerOrgId: creds.developerOrgId,
       authenticationMethod: refreshed.authentication_method ?? creds.authenticationMethod,
       coreUrl: config.coreUrl,
       storedAt: storedAt.toISOString(),

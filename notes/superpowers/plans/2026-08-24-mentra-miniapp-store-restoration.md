@@ -222,7 +222,7 @@ data; each deployment may publish both stable and beta releases.
       another Store's packages.
 - [x] Keep the Store itself out of its in-process update loop; Store-self update
       remains a future signed host-owned updater concern.
-- [x] Package and integrity-check `com.mentra.store-1.0.11.zip`.
+- [x] Package and integrity-check `com.mentra.store-1.0.12.zip`.
 
 ## Verification
 
@@ -241,7 +241,7 @@ data; each deployment may publish both stable and beta releases.
 - [x] Mentra Miniapp SDK: 272 passed.
 - [x] Installer/SYSTEM security tests, including bundle-name impersonation.
 - [x] Store action registration, catalog, automatic-update policy, ownership,
-      refresh serialization, and UI-model tests: 29
+      refresh serialization, and UI-model tests: 31
       passed.
 - [x] Transient action lifecycle, invisible running projection, concurrent
       invocation teardown, promotion, host-action non-discovery, and scheduler
@@ -251,12 +251,12 @@ data; each deployment may publish both stable and beta releases.
       search-query preservation, install, details, verified identity, Installed
       state, and horizontal-overflow assertion.
 - [x] Mentra App TypeScript compile.
-- [x] Mentra App Jest: 87 suites passed (1 skipped), 697 tests passed
+- [x] Mentra App Jest: 91 suites passed (1 skipped), 710 tests passed
       (2 skipped).
 - [x] Android ASG and Bluetooth SDK compile checks.
 - [x] Full iOS Simulator native build with code signing disabled.
 - [x] ZIP integrity check. Bundled Store SHA-256:
-      `17c37a092144c4bfa8f5bd86bd63ec1a2998d164469d5fd0becc3506dc4b7a27`.
+      `f2734b25372ec761bed48674d1494d9f9f486ad2a42fe0270bf2710261da4fc0`.
 - [x] Review regressions: bounded streaming inflation and CRC checks in both
       Core and the phone, trusted host-selected Core URL, complete catalog
       pagination, Store-owned uninstall visibility, pre-activation host/SDK

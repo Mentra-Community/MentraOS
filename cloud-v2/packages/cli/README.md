@@ -35,6 +35,21 @@ mentra miniapps list      # miniapps owned by your org
 mentra releases submit    # submit an uploaded release for review
 ```
 
+The CLI keeps publishing scoped to one developer organization. When an account
+belongs to more than one, select it explicitly:
+
+```bash
+mentra org list
+mentra org use dorg_...
+```
+
+To create an additional publisher organization after joining an existing team,
+use:
+
+```bash
+mentra org init --new --name "Your Org" --prefix com.example
+```
+
 ## Stable and beta releases
 
 Release tracks are independent of the selected Core environment. `stable` is

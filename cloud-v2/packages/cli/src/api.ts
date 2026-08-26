@@ -86,6 +86,11 @@ export interface DeveloperOrg {
   updatedAt: string | null;
 }
 
+export interface ConsoleSessionResponse {
+  organizationId: string | null;
+  organizations: DeveloperOrg[];
+}
+
 export interface DeveloperSigningKey {
   id: string;
   orgId: string;
@@ -294,9 +299,13 @@ export async function getOrg(credentials: CliCredentials): Promise<{ org: Develo
   return coreRequest(credentials, "/api/console/org");
 }
 
+export async function getConsoleSession(credentials: CliCredentials): Promise<ConsoleSessionResponse> {
+  return coreRequest(credentials, "/api/console/auth/me");
+}
+
 export async function upsertOrg(
   credentials: CliCredentials,
-  input: { displayName: string; packagePrefix: string },
+  input: { displayName: string; packagePrefix: string; createNew?: boolean },
 ): Promise<{ org: DeveloperOrg }> {
   return coreRequest(credentials, "/api/console/org", {
     method: "PUT",
@@ -387,6 +396,7 @@ async function coreRequest<T>(credentials: CliCredentials, path: string, init?: 
     headers: {
       accept: "application/json",
       authorization: `Bearer ${credentials.token}`,
+      ...(credentials.developerOrgId ? { "x-mentra-developer-org-id": credentials.developerOrgId } : {}),
       ...(typeof init?.body === "string" ? { "content-type": "application/json" } : {}),
       ...init?.headers,
     },

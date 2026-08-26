@@ -22,6 +22,7 @@ export interface CliCredentials {
   workosUserId: string;
   email: string;
   organizationId?: string | null;
+  developerOrgId?: string | null;
   authenticationMethod?: string;
   coreUrl: string;
   storedAt: string;
@@ -66,6 +67,7 @@ export async function loadCredentials(coreUrl?: string): Promise<CliCredentials 
       workosUserId: process.env.MENTRA_CLI_WORKOS_USER_ID || "unknown",
       email: process.env.MENTRA_CLI_EMAIL || "unknown",
       organizationId: process.env.MENTRA_CLI_ORGANIZATION_ID,
+      developerOrgId: process.env.MENTRA_CLI_DEVELOPER_ORG_ID,
       coreUrl: targetCoreUrl || process.env.MENTRA_CORE_URL || "http://localhost:3000",
       storedAt: new Date().toISOString(),
     };
