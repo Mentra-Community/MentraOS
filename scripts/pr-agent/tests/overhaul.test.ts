@@ -214,15 +214,15 @@ describe('aggregateCycle', () => {
       st,
       {
         standards: cleanApprove,
-        external: { current: [ext], sources: ['external:cursor[bot]'] },
+        external: { current: [ext], sources: ['external:cursor[bot]'], reviewers: ['cursor[bot]'] },
       },
       [],
       ['standards'],
     );
     expect(out.shouldFix).toBe(true);
     expect(out.newBlockingCount).toBe(0);
-    // consecutive still increments: model reviews were clean
-    expect(out.state.consecutiveNoNewReviews).toBe(1);
+    // Live external blocking findings flip allApproved so this is not a clean cycle.
+    expect(out.state.consecutiveNoNewReviews).toBe(0);
     // external excluded from stagnation baseline
     expect(out.state.lastOpenCount).toBe(0);
     // external excluded from inline-comment candidates
@@ -240,7 +240,7 @@ describe('aggregateCycle', () => {
       st,
       {
         standards: cleanApprove,
-        external: { current: [], sources: ['external:cursor[bot]'] },
+        external: { current: [], sources: ['external:cursor[bot]'], reviewers: [] },
       },
       [],
       ['standards'],
@@ -265,7 +265,7 @@ describe('aggregateCycle', () => {
       st,
       {
         standards: cleanApprove,
-        external: { current: [ext], sources: ['external:cursor[bot]'] },
+        external: { current: [ext], sources: ['external:cursor[bot]'], reviewers: ['cursor[bot]'] },
       },
       [],
       ['standards'],
@@ -293,13 +293,62 @@ describe('aggregateCycle', () => {
       {
         standards:
           'still there\n{"verdict":"changes_requested","findings":[{"severity":"blocking","file":"a.ts","line":10,"message":"still bad"}]}',
-        external: { current: [ext], sources: ['external:cursor[bot]'] },
+        external: { current: [ext], sources: ['external:cursor[bot]'], reviewers: ['cursor[bot]'] },
       },
       [],
       ['standards'],
     );
     expect(out.state.stagnationFixRounds).toBe(1);
     expect(out.state.lastOpenCount).toBe(1);
+  });
+
+  test('native cursor[bot] review satisfies the bugbot slot without a verdict marker', () => {
+    const st = PrAgentStateSchema.parse({ cycle: 0 });
+    const out = aggregateCycle(
+      REPO_ROOT,
+      st,
+      {
+        standards: cleanApprove,
+        bugbotCheckCompleted: true,
+        external: { current: [], sources: [], reviewers: ['cursor[bot]'] },
+      },
+      [],
+      ['bugbot', 'standards'],
+    );
+    expect(out.emptyCycle).toBeUndefined();
+    expect(out.state.consecutiveNoNewReviews).toBe(1);
+    expect(out.shouldFix).toBe(false);
+  });
+
+  test('native Bugbot medium finding is blocking and starts the fixer', () => {
+    const ext = finding({
+      source: 'external:cursor[bot]',
+      fingerprint: 'external:cursor[bot]:3860',
+      severity: 'blocking',
+      file: 'CaptureBusyGate.java',
+      line: 38,
+      message: 'Late end clears reused capture',
+    });
+    const st = PrAgentStateSchema.parse({ cycle: 0 });
+    const out = aggregateCycle(
+      REPO_ROOT,
+      st,
+      {
+        standards: cleanApprove,
+        bugbotCheckCompleted: true,
+        external: {
+          current: [ext],
+          sources: ['external:cursor[bot]'],
+          reviewers: ['cursor[bot]'],
+        },
+      },
+      [],
+      ['bugbot', 'standards'],
+    );
+    expect(out.emptyCycle).toBeUndefined();
+    expect(out.shouldFix).toBe(true);
+    expect(out.state.consecutiveNoNewReviews).toBe(0);
+    expect(out.state.openFindings.some((f) => f.fingerprint === ext.fingerprint)).toBe(true);
   });
 });
 
@@ -338,11 +387,16 @@ describe('fetchExternalFindings', () => {
     in_reply_to_id?: number;
   };
 
-  function octokitWith(comments: Comment[]) {
+  type Review = { user?: { login: string }; state?: string };
+
+  function octokitWith(comments: Comment[], reviews: Review[] = []) {
     return {
       pulls: {
         listReviewComments: async ({ page }: { page: number }) => ({
           data: page === 1 ? comments : [],
+        }),
+        listReviews: async ({ page }: { page: number }) => ({
+          data: page === 1 ? reviews : [],
         }),
       },
     } as never;
@@ -380,6 +434,63 @@ describe('fetchExternalFindings', () => {
     const nit = res.current.find((f) => f.fingerprint.endsWith(':2'))!;
     expect(nit.severity).toBe('nit');
     expect(res.sources).toEqual(['external:cursor[bot]']);
+    expect(res.reviewers).toEqual(['cursor[bot]']);
+  });
+
+  test('Medium Severity is blocking; Low Severity stays a nit', async () => {
+    const res = await fetchExternalFindings(
+      octokitWith([
+        {
+          id: 10,
+          user: { login: 'cursor[bot]' },
+          path: 'Gate.java',
+          line: 38,
+          position: 4,
+          body: '### Late end\n\n**Medium Severity**\n\nlate terminal end',
+        },
+        {
+          id: 11,
+          user: { login: 'cursor[bot]' },
+          path: 'Gate.java',
+          line: 40,
+          position: 5,
+          body: '**Low Severity**\nstyle only',
+        },
+      ]),
+      'o',
+      'r',
+      1,
+      REPO_ROOT,
+      1,
+    );
+    expect(res.current.find((f) => f.fingerprint.endsWith(':10'))!.severity).toBe('blocking');
+    expect(res.current.find((f) => f.fingerprint.endsWith(':11'))!.severity).toBe('nit');
+  });
+
+  test('clean native review with no inline comments still lists the reviewer', async () => {
+    const res = await fetchExternalFindings(
+      octokitWith([], [{ user: { login: 'cursor[bot]' }, state: 'COMMENTED' }]),
+      'o',
+      'r',
+      1,
+      REPO_ROOT,
+      1,
+    );
+    expect(res.current).toEqual([]);
+    expect(res.reviewers).toEqual(['cursor[bot]']);
+    expect(res.sources).toEqual(['external:cursor[bot]']);
+  });
+
+  test('pending reviews are ignored', async () => {
+    const res = await fetchExternalFindings(
+      octokitWith([], [{ user: { login: 'cursor[bot]' }, state: 'PENDING' }]),
+      'o',
+      'r',
+      1,
+      REPO_ROOT,
+      1,
+    );
+    expect(res.reviewers).toEqual([]);
   });
 });
 
@@ -461,5 +572,40 @@ describe('buildReviewComment', () => {
     );
     expect(body).toContain('Codex — review');
     expect(body).toContain('✅ approve');
+  });
+
+  test('native Bugbot findings render a section with agent-resolve ids', () => {
+    const st = PrAgentStateSchema.parse({
+      cycle: 1,
+      openFindings: [
+        finding({
+          id: 'abc123',
+          source: 'external:cursor[bot]',
+          file: 'CaptureBusyGate.java',
+          line: 38,
+          message: 'Late end clears reused capture\n\nMedium Severity',
+        }),
+      ],
+    });
+    const body = buildReviewComment(st, { standards: 'ok\n{"verdict":"approve","findings":[]}' }, [
+      'bugbot',
+      'standards',
+    ]);
+    expect(body).toContain('### Bugbot — ⚠️ changes requested');
+    expect(body).toContain('CaptureBusyGate.java:38');
+    expect(body).toContain('agent-resolve abc123');
+    expect(body).toContain('Native Bugbot review ingested');
+  });
+
+  test('clean native Bugbot review renders approve without a verdict marker', () => {
+    const st = PrAgentStateSchema.parse({ cycle: 1 });
+    const body = buildReviewComment(
+      st,
+      { standards: 'ok\n{"verdict":"approve","findings":[]}' },
+      ['bugbot', 'standards'],
+      { nativeReviewers: ['cursor[bot]'] },
+    );
+    expect(body).toContain('### Bugbot — ✅ approve');
+    expect(body).toContain('no open findings');
   });
 });

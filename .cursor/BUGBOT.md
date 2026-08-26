@@ -17,11 +17,15 @@ When reviewing pull requests (including when triggered via `bugbot run` from the
 
 ## Orchestrator integration
 
-When the PR agent orchestrator triggers this review, end with a top-level PR comment containing:
+The orchestrator ingests this review from the native GitHub review + inline
+comments (`cursor[bot]`). High, Critical, and Medium Severity comments become
+blocking findings; Low Severity stays a nit. Do not rely on a custom issue
+comment — native Bugbot output is the required channel.
 
-1. Human-readable summary
-2. HTML marker `<!-- pr-agent-bugbot-verdict -->`
-3. JSON footer (same schema as the other reviewers):
+Optional enrichment (ignored if omitted): a top-level PR comment containing
+`<!-- pr-agent-bugbot-verdict -->` plus a JSON footer in the same schema as
+the other reviewers. Use it only when you can post it; never skip the native
+review to write this instead.
 
 ```json
 {"verdict":"approve|changes_requested","findings":[{"severity":"blocking|nit","file":"path","line":0,"message":"...","ref":"abc123"}]}

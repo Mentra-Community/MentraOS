@@ -32,7 +32,9 @@ limits:
 # logins are normalized into ledger findings automatically, so the fixer
 # addresses them without a human copy/pasting them into the loop. A comment
 # counts as blocking when it matches the built-in severity patterns
-# ("High/Critical Severity", "blocking"); override per bot via blockingPatterns.
+# (High / Critical / Medium Severity, or the word "blocking"). Low Severity
+# stays a nit. Override per bot via blockingPatterns when a vendor uses
+# different labels (e.g. P0).
 externalReviewers:
   enabled: true
   bots:

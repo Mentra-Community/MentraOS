@@ -27,13 +27,19 @@ export type ReviewOutputs = {
   external?: ExternalFindings;
 };
 
-function slotReviewSucceeded(slot: ReviewSlot, reviews: ReviewOutputs): boolean {
+export function slotReviewSucceeded(slot: ReviewSlot, reviews: ReviewOutputs): boolean {
   if (slot === 'standards' || slot === 'depth' || slot === 'codex') {
     const text = reviews[slot];
     return !!text && !!parseVerdictFromText(text);
   }
   if (reviews.bugbotCheckCompleted !== true) return false;
-  return !!reviews.bugbot && !!parseVerdictFromText(reviews.bugbot);
+  if (reviews.bugbot && parseVerdictFromText(reviews.bugbot)) return true;
+  // Native Cursor Bugbot posts a GitHub review, not our marker comment.
+  const reviewers = reviews.external?.reviewers ?? [];
+  if (reviewers.includes('cursor[bot]')) return true;
+  return (reviews.external?.current ?? []).some(
+    (f) => String(f.source) === 'external:cursor[bot]',
+  );
 }
 
 export function aggregateCycle(
@@ -110,10 +116,10 @@ export function aggregateCycle(
 
   // External bot inline comments (Bugbot native, cubic, …) become findings so
   // the fixer addresses them without a human copy/pasting them into the loop.
-  // They deliberately do NOT touch newBlockingFingerprints, allApproved, or
-  // stagnation counters: external bots re-review on their own schedule, so our
-  // convergence bookkeeping cannot key off their cadence. Their lifecycle is:
-  // live comment => open finding; comment outdated/deleted => resolved.
+  // They do not increment newBlockingFingerprints or stagnation counters
+  // (external bots re-review on their own schedule). Live blocking comments
+  // do flip allApproved so a native Bugbot defect cannot look like a clean
+  // cycle. Lifecycle: live comment => open finding; outdated/deleted => resolved.
   if (reviews.external) {
     const extBlocking = reviews.external.current.filter(
       (f) => f.severity === 'blocking' && !muted.has(f.fingerprint),
@@ -121,6 +127,7 @@ export function aggregateCycle(
     const extNits = reviews.external.current.filter(
       (f) => f.severity === 'nit' && !muted.has(f.fingerprint),
     );
+    if (extBlocking.length > 0) allApproved = false;
     openFindings = mergeFindings(openFindings, extBlocking, cycle).merged;
     nitFindings = mergeFindings(nitFindings, extNits, cycle).merged;
 

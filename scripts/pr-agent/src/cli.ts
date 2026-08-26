@@ -131,6 +131,7 @@ async function cmdAggregate() {
       bugbot: reviews.bugbot,
     },
     activePair,
+    { nativeReviewers: reviews.external?.reviewers },
   );
   await upsertMarkerComment(octokit, owner, repo, prNumber, MARKER_REVIEW, reviewComment);
 

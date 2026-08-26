@@ -7,7 +7,8 @@ import type { Finding } from './types.js';
  * External review ingestion: external bots (Bugbot, cubic, Codex, …) post
  * native inline review comments on the PR, but those never reached the finding
  * ledger — humans had to copy/paste them for the fixer to act. This module
- * normalizes live inline comments from allowlisted bot logins into findings.
+ * normalizes live inline comments from allowlisted bot logins into findings
+ * and records which of those bots submitted a native PR review this cycle.
  */
 
 export const EXTERNAL_SOURCE_PREFIX = 'external:';
@@ -16,10 +17,12 @@ export function isExternalSource(source: string): boolean {
   return source.startsWith(EXTERNAL_SOURCE_PREFIX);
 }
 
+export const BUGBOT_LOGIN = 'cursor[bot]';
+
 /** Default patterns that mark an external comment as blocking (case-insensitive). */
-const DEFAULT_BLOCKING_PATTERNS = [
-  '(high|critical)\\s+severity',
-  '\\bseverity\\s*:\\s*(high|critical)\\b',
+export const DEFAULT_BLOCKING_PATTERNS = [
+  '(high|critical|medium)\\s+severity',
+  '\\bseverity\\s*:\\s*(high|critical|medium)\\b',
   '\\bblocking\\b',
 ];
 
@@ -28,6 +31,12 @@ export type ExternalFindings = {
   current: Finding[];
   /** Every external source encountered, for stale-resolution bookkeeping. */
   sources: string[];
+  /**
+   * Allowlisted bot logins that submitted a native PR review (or a live inline
+   * comment) this cycle. Used so the bugbot slot can succeed without the
+   * custom `<!-- pr-agent-bugbot-verdict -->` issue comment.
+   */
+  reviewers: string[];
 };
 
 function stripHtmlComments(s: string): string {
@@ -37,22 +46,17 @@ function stripHtmlComments(s: string): string {
     .trim();
 }
 
-export async function fetchExternalFindings(
+function emptyFindings(): ExternalFindings {
+  return { current: [], sources: [], reviewers: [] };
+}
+
+async function listAllReviewComments(
   octokit: Octokit,
   owner: string,
   repo: string,
   prNumber: number,
-  repoRoot: string,
-  cycle: number,
-): Promise<ExternalFindings> {
-  const ext = loadConfig(repoRoot).externalReviewers;
-  if (!ext.enabled || ext.bots.length === 0) {
-    return { current: [], sources: [] };
-  }
-
-  const comments: Awaited<
-    ReturnType<Octokit['pulls']['listReviewComments']>
-  >['data'] = [];
+): Promise<Awaited<ReturnType<Octokit['pulls']['listReviewComments']>>['data']> {
+  const comments: Awaited<ReturnType<Octokit['pulls']['listReviewComments']>>['data'] = [];
   let page = 1;
   for (;;) {
     const { data } = await octokit.pulls.listReviewComments({
@@ -66,10 +70,60 @@ export async function fetchExternalFindings(
     if (data.length < 100) break;
     page++;
   }
+  return comments;
+}
+
+async function listAllReviews(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  prNumber: number,
+): Promise<Awaited<ReturnType<Octokit['pulls']['listReviews']>>['data']> {
+  const reviews: Awaited<ReturnType<Octokit['pulls']['listReviews']>>['data'] = [];
+  let page = 1;
+  for (;;) {
+    const { data } = await octokit.pulls.listReviews({
+      owner,
+      repo,
+      pull_number: prNumber,
+      per_page: 100,
+      page,
+    });
+    reviews.push(...data);
+    if (data.length < 100) break;
+    page++;
+  }
+  return reviews;
+}
+
+export async function fetchExternalFindings(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  prNumber: number,
+  repoRoot: string,
+  cycle: number,
+): Promise<ExternalFindings> {
+  const ext = loadConfig(repoRoot).externalReviewers;
+  if (!ext.enabled || ext.bots.length === 0) {
+    return emptyFindings();
+  }
+
+  const comments = await listAllReviewComments(octokit, owner, repo, prNumber);
+  const reviews = await listAllReviews(octokit, owner, repo, prNumber);
 
   const bots = new Set(ext.bots);
   const current: Finding[] = [];
   const sources = new Set<string>();
+  const reviewers = new Set<string>();
+
+  for (const r of reviews) {
+    const login = r.user?.login ?? '';
+    if (!bots.has(login)) continue;
+    if ((r.state ?? '').toUpperCase() === 'PENDING') continue;
+    reviewers.add(login);
+    sources.add(`${EXTERNAL_SOURCE_PREFIX}${login}`);
+  }
 
   for (const c of comments) {
     const login = c.user?.login ?? '';
@@ -86,6 +140,9 @@ export async function fetchExternalFindings(
 
     const body = stripHtmlComments(c.body ?? '');
     if (!body) continue;
+
+    // A live inline comment is itself proof the bot reviewed this cycle.
+    reviewers.add(login);
 
     const patterns = ext.blockingPatterns[login] ?? DEFAULT_BLOCKING_PATTERNS;
     const blocking = patterns.some((p) => {
@@ -113,5 +170,5 @@ export async function fetchExternalFindings(
     });
   }
 
-  return { current, sources: [...sources] };
+  return { current, sources: [...sources], reviewers: [...reviewers] };
 }
