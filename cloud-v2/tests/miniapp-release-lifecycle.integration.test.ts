@@ -76,7 +76,7 @@ beforeAll(async () => {
   miniappAccess = new MiniAppAccessService(async email =>
     email === "tester@example.com" ? storeUser.mentraUserId : email === "other@example.com" ? "mu_store_other" : null,
   );
-  registries = new PreinstalledRegistryService();
+  registries = new PreinstalledRegistryService("test-preinstall-download-secret");
   signing = new DeveloperSigningService();
 });
 
@@ -283,6 +283,23 @@ describe("miniapp release lifecycle", () => {
       bundleSha256: release.bundleSha256,
     });
     expect(clientRegistry.entries[0]?.bundleUrl).toContain("https://core.dev.example/api/client/miniapps/bundles/");
+    const bundleUrl = new URL(clientRegistry.entries[0]!.bundleUrl);
+    const bundleIdentity = registries.authorizeBundleDownload(release.releaseBundleAssetId!, {
+      tenantId: bundleUrl.searchParams.get("tenantId") ?? undefined,
+      expiresAt: bundleUrl.searchParams.get("expiresAt") ?? undefined,
+      signature: bundleUrl.searchParams.get("signature") ?? undefined,
+    });
+    expect(bundleIdentity).toEqual({ tenantId: "" });
+    expect((await registries.getBundleAsset(release.releaseBundleAssetId!, bundleIdentity))._id.toString()).toBe(
+      release.releaseBundleAssetId,
+    );
+    expect(() =>
+      registries.authorizeBundleDownload(release.releaseBundleAssetId!, {
+        tenantId: "different-tenant",
+        expiresAt: bundleUrl.searchParams.get("expiresAt") ?? undefined,
+        signature: bundleUrl.searchParams.get("signature") ?? undefined,
+      }),
+    ).toThrow("bundle asset not found");
   });
 
   test("preinstall registry rejects multiple releases for the same miniapp", async () => {
@@ -1164,7 +1181,10 @@ describe("miniapp release lifecycle", () => {
     await expect(catalog.getBundleAsset(release.releaseBundleAssetId!, storeUser)).rejects.toMatchObject({ status: 404 });
 
     // Visibility alone never promotes an unreviewed private artifact into the
-    // public catalog. A Mentra approval can explicitly make that release public.
+    // public catalog. Existing invitees retain access while a Mentra approval
+    // can explicitly make that exact release public.
+    await miniappAccess.invite(developer, packageName, "other@example.com");
+    const otherUser = { mentraUserId: "mu_store_other", tenantId: "mentra" };
     await miniapps.updateVisibility(developer, packageName, "public");
     expect(await MiniAppReleaseModel.findById(release.id).lean()).toMatchObject({
       status: "published",
@@ -1175,6 +1195,13 @@ describe("miniapp release lifecycle", () => {
       requiresPublicStoreApproval: true,
     });
     expect((await catalog.list({ baseUrl: "https://core.example.test" })).apps).toHaveLength(0);
+    expect(await catalog.get(packageName, "https://core.example.test", otherUser)).toMatchObject({
+      packageName,
+      release: { id: release.id, installable: true },
+    });
+    expect((await catalog.getBundleAsset(release.releaseBundleAssetId!, otherUser))._id.toString()).toBe(
+      release.releaseBundleAssetId,
+    );
     await miniapps.approveRelease({ releaseId: release.id, adminId: "admin@mentraglass.com" });
     expect((await miniapps.listAdminSubmissions()).find(row => row.id === release.id)).toMatchObject({
       requiresPublicStoreApproval: false,
@@ -1429,8 +1456,17 @@ describe("miniapp release lifecycle", () => {
     });
     expect(await MiniAppBetaInvitationModel.exists({ miniAppId: created.id, status: "accepted" })).not.toBeNull();
 
+    await catalog.setReleaseTrack(packageName, "beta", storeUser, "https://core.example.test");
     await miniappBetas.setAccessMode(developer, packageName, "public");
     const publicUser = { mentraUserId: "mu_store_other", tenantId: "mentra" };
+    expect(await catalog.get(packageName, "https://core.example.test", storeUser)).toMatchObject({
+      selectedTrack: "beta",
+      betaAccess: "public",
+      release: { id: beta.id, installable: true },
+    });
+    expect((await catalog.getBundleAsset(beta.releaseBundleAssetId!, storeUser))._id.toString()).toBe(
+      beta.releaseBundleAssetId,
+    );
     await expect(catalog.get(packageName, "https://core.example.test", publicUser)).rejects.toMatchObject({
       code: "not_found",
     });

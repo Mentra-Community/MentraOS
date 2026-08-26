@@ -163,6 +163,8 @@ data; each deployment may publish both stable and beta releases.
 - [x] Prevent `private -> public` from exposing an unreviewed artifact: keep the
       active immutable release available to existing private users while the
       public catalog withholds it until Mentra approves that exact build.
+- [x] Preserve access for existing app/beta invitees during that public-review
+      transition without admitting new uninvited users.
 - [x] Cover private self-publication, invitation acceptance, revocation,
       catalog filtering, protected artifacts, and public-transition review with
       integration tests.
@@ -349,6 +351,9 @@ work remains before describing the overall Store program as production-ready:
 - [x] Make the published Cloud V2 `mentra` CLI default to production and
       discover the selected Core's public WorkOS client id, while retaining
       environment overrides for dev/staging/OEM deployments.
+- [x] Keep preinstall bundle delivery compatible with older Mentra App clients
+      by embedding a short-lived tenant-scoped signed capability in registry
+      URLs; newer clients may also authenticate the same download directly.
 - [x] Expand the admin review UI to show the canonical manifest permissions,
       hardware requirements, Store listing/artwork, and moderation controls
       before publication.

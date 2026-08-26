@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { getConfig } from "./config";
 
 const SERVICE = "mentra-cli-v2";
 const LEGACY_NAME = "credentials";
@@ -68,7 +69,7 @@ export async function loadCredentials(coreUrl?: string): Promise<CliCredentials 
       email: process.env.MENTRA_CLI_EMAIL || "unknown",
       organizationId: process.env.MENTRA_CLI_ORGANIZATION_ID,
       developerOrgId: process.env.MENTRA_CLI_DEVELOPER_ORG_ID,
-      coreUrl: targetCoreUrl || process.env.MENTRA_CORE_URL || "http://localhost:3000",
+      coreUrl: targetCoreUrl || getConfig().coreUrl,
       storedAt: new Date().toISOString(),
     };
   }

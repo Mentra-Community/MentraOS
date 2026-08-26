@@ -1,3 +1,4 @@
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { MiniAppAssetModel } from "../../models/miniapp-asset.model";
 import { MiniAppModel } from "../../models/miniapp.model";
 import { MiniAppReleaseModel } from "../../models/miniapp-release.model";
@@ -40,8 +41,11 @@ export interface ClientRegistryOptions {
 }
 
 const DEFAULT_REGISTRY_NAME = "default";
+const BUNDLE_DOWNLOAD_TTL_SECONDS = 60 * 60;
 
 export class PreinstalledRegistryService {
+  constructor(private readonly downloadSigningSecret?: string) {}
+
   async listRegistries() {
     const registries = await PreinstalledRegistryModel.find({ status: { $ne: "archived" } })
       .sort({ environment: 1, name: 1 })
@@ -191,6 +195,8 @@ export class PreinstalledRegistryService {
     const assetById = new Map(assets.map(asset => [asset._id.toString(), asset]));
 
     const baseUrl = opts.baseUrl.replace(/\/$/, "");
+    const expiresAt = Math.floor(Date.now() / 1000) + BUNDLE_DOWNLOAD_TTL_SECONDS;
+    const tenantId = opts.tenantId ?? "";
     const entries = revision.entries
       .map(entry => {
         const release = releaseById.get(entry.releaseId);
@@ -200,7 +206,7 @@ export class PreinstalledRegistryService {
         return {
           packageName: release.packageName,
           version: release.version,
-          bundleUrl: `${baseUrl}/api/client/miniapps/bundles/${asset._id.toString()}/download`,
+          bundleUrl: this.bundleDownloadUrl(baseUrl, asset._id.toString(), tenantId, expiresAt),
           bundleSha256: release.bundleSha256,
           required: entry.required,
           installPolicy: entry.installPolicy,
@@ -213,6 +219,22 @@ export class PreinstalledRegistryService {
       .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
 
     return { generatedAt: new Date().toISOString(), entries };
+  }
+
+  authorizeBundleDownload(assetId: string, input: { tenantId?: string; expiresAt?: string; signature?: string }) {
+    const tenantId = input.tenantId ?? "";
+    const expiresAt = Number(input.expiresAt);
+    if (!Number.isSafeInteger(expiresAt) || expiresAt < Math.floor(Date.now() / 1000)) {
+      throw new PreinstalledRegistryServiceError("not_found", "bundle asset not found", 404);
+    }
+    const expected = this.bundleDownloadSignature(assetId, tenantId, expiresAt);
+    const actual = input.signature ?? "";
+    const expectedBytes = Buffer.from(expected);
+    const actualBytes = Buffer.from(actual);
+    if (expectedBytes.length !== actualBytes.length || !timingSafeEqual(expectedBytes, actualBytes)) {
+      throw new PreinstalledRegistryServiceError("not_found", "bundle asset not found", 404);
+    }
+    return { tenantId };
   }
 
   async getBundleAsset(assetId: string, identity: { tenantId: string }) {
@@ -242,6 +264,29 @@ export class PreinstalledRegistryService {
     });
     if (!distributed) throw new PreinstalledRegistryServiceError("not_found", "bundle asset not found", 404);
     return asset;
+  }
+
+  private bundleDownloadUrl(baseUrl: string, assetId: string, tenantId: string, expiresAt: number): string {
+    const query = new URLSearchParams({
+      tenantId,
+      expiresAt: String(expiresAt),
+      signature: this.bundleDownloadSignature(assetId, tenantId, expiresAt),
+    });
+    return `${baseUrl}/api/client/miniapps/bundles/${assetId}/download?${query.toString()}`;
+  }
+
+  private bundleDownloadSignature(assetId: string, tenantId: string, expiresAt: number): string {
+    const secret = this.downloadSigningSecret?.trim() || process.env.REFRESH_TOKEN_PEPPER?.trim();
+    if (!secret) {
+      throw new PreinstalledRegistryServiceError(
+        "download_signing_unavailable",
+        "preinstall bundle download signing is not configured",
+        503,
+      );
+    }
+    return createHmac("sha256", secret)
+      .update(`preinstalled-bundle-v1\n${assetId}\n${tenantId}\n${expiresAt}`)
+      .digest("base64url");
   }
 
   private async requireRegistry(registryId: string) {

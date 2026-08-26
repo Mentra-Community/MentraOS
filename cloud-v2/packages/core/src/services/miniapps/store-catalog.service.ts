@@ -29,13 +29,25 @@ export class StoreCatalogService {
     const publishedReleaseIds = await this.publishedReleaseIds();
     const publicApprovedReleaseIds = await this.publicApprovedReleaseIds();
     const privateAuthorizedAppIds = await this.privateAuthorizedAppIds(input);
+    const betaInvitationAppIds = await this.betaInvitationAuthorizedAppIds(input);
+    const transitionAuthorizedBetaAppIds = new Set([...privateAuthorizedAppIds, ...betaInvitationAppIds]);
     const betaAuthorizedAppIds = await this.betaAuthorizedAppIds(input);
     const betaInstallAuthorizedAppIds = await this.betaAuthorizedAppIds(input, undefined, true);
     const betaEnrollmentAppIds = await this.betaEnrollmentAppIds(input, undefined, betaInstallAuthorizedAppIds);
     const betaSelections = await this.betaSelectedAppIds(input, publishedReleaseIds, betaInstallAuthorizedAppIds);
-    const betaAppIds = await this.betaEligibleAppIds(betaSelections, publishedReleaseIds, publicApprovedReleaseIds);
+    const betaAppIds = await this.betaEligibleAppIds(
+      betaSelections,
+      publishedReleaseIds,
+      publicApprovedReleaseIds,
+      transitionAuthorizedBetaAppIds,
+    );
     const betaOffers = await this.betaOfferAppIds(publishedReleaseIds, betaAuthorizedAppIds, betaAppIds);
-    const betaOfferAppIds = await this.betaEligibleAppIds(betaOffers, publishedReleaseIds, publicApprovedReleaseIds);
+    const betaOfferAppIds = await this.betaEligibleAppIds(
+      betaOffers,
+      publishedReleaseIds,
+      publicApprovedReleaseIds,
+      transitionAuthorizedBetaAppIds,
+    );
     const betaDisplayAppIds = new Set([...betaAppIds, ...betaOfferAppIds]);
     const filter = this.catalogFilter(
       input,
@@ -70,6 +82,8 @@ export class StoreCatalogService {
       undefined,
       betaEnrollmentAppIds,
       betaAuthorizedAppIds,
+      privateAuthorizedAppIds,
+      transitionAuthorizedBetaAppIds,
     );
     return { apps: entries, page, limit, total, hasMore: page * limit < total };
   }
@@ -80,6 +94,8 @@ export class StoreCatalogService {
     const app = await MiniAppModel.findOne({ packageName, status: "active" }).lean();
     if (!app) throw new StoreCatalogError("not_found", "miniapp not found", 404);
     const privateAuthorizedAppIds = await this.privateAuthorizedAppIds(identity ?? {}, [app._id.toString()]);
+    const betaInvitationAppIds = await this.betaInvitationAuthorizedAppIds(identity ?? {}, [app._id.toString()]);
+    const transitionAuthorizedBetaAppIds = new Set([...privateAuthorizedAppIds, ...betaInvitationAppIds]);
     if (app.visibility === "private" && !privateAuthorizedAppIds.has(app._id.toString())) {
       throw new StoreCatalogError("not_found", "miniapp not found", 404);
     }
@@ -100,11 +116,21 @@ export class StoreCatalogService {
           [app._id.toString()],
         )
       : new Set<string>();
-    const betaAppIds = await this.betaEligibleAppIds(betaSelections, publishedReleaseIds, publicApprovedReleaseIds);
+    const betaAppIds = await this.betaEligibleAppIds(
+      betaSelections,
+      publishedReleaseIds,
+      publicApprovedReleaseIds,
+      transitionAuthorizedBetaAppIds,
+    );
     const betaOffers = await this.betaOfferAppIds(publishedReleaseIds, betaAuthorizedAppIds, betaAppIds, [
       app._id.toString(),
     ]);
-    const betaOfferAppIds = await this.betaEligibleAppIds(betaOffers, publishedReleaseIds, publicApprovedReleaseIds);
+    const betaOfferAppIds = await this.betaEligibleAppIds(
+      betaOffers,
+      publishedReleaseIds,
+      publicApprovedReleaseIds,
+      transitionAuthorizedBetaAppIds,
+    );
     const [serialized] = await this.serializeApps(
       [app],
       baseUrl,
@@ -113,6 +139,8 @@ export class StoreCatalogService {
       publishedReleaseIds,
       betaEnrollmentAppIds,
       betaAuthorizedAppIds,
+      privateAuthorizedAppIds,
+      transitionAuthorizedBetaAppIds,
     );
     if (!serialized) throw new StoreCatalogError("not_found", "miniapp not found", 404);
     return serialized;
@@ -135,8 +163,20 @@ export class StoreCatalogService {
       if (!app.activeBetaReleaseId || !app.publishedBetaStoreListing) {
         throw new StoreCatalogError("beta_unavailable", "this miniapp has no published beta release", 409);
       }
-      const published = await MiniAppReleaseModel.exists({ _id: app.activeBetaReleaseId, status: "published" });
+      const published = await MiniAppReleaseModel.findOne({
+        _id: app.activeBetaReleaseId,
+        status: "published",
+      }).lean();
       if (!published) throw new StoreCatalogError("beta_unavailable", "this miniapp has no published beta release", 409);
+      if (
+        app.visibility !== "private" &&
+        app.betaAccessMode === "public" &&
+        !published.publicStoreApprovedAt &&
+        !(await this.claimPrivateAccess(identity, appId)) &&
+        !(await this.claimBetaAccess(identity, appId))
+      ) {
+        throw new StoreCatalogError("beta_unavailable", "this beta is awaiting public Store approval", 409);
+      }
       const authorized = await this.betaAuthorizedAppIds(identity, [app._id.toString()]);
       if (!authorized.has(app._id.toString())) {
         throw new StoreCatalogError("beta_invitation_required", "this private beta requires a developer invitation", 403);
@@ -209,29 +249,34 @@ export class StoreCatalogService {
       status: "published",
     }).lean();
     const releaseById = new Map(activeReleases.map(release => [release._id.toString(), release]));
-    const privateAuthorized =
-      app.visibility !== "private" ||
-      (identity && (await this.privateAuthorizedAppIds(identity, [app._id.toString()])).has(app._id.toString()));
+    const appInvitationAuthorized = Boolean(
+      identity && (await this.privateAuthorizedAppIds(identity, [app._id.toString()])).has(app._id.toString()),
+    );
+    const betaInvitationAuthorized = Boolean(
+      identity && (await this.betaInvitationAuthorizedAppIds(identity, [app._id.toString()])).has(app._id.toString()),
+    );
     const stableRelease = app.activeReleaseId ? releaseById.get(app.activeReleaseId) : null;
     const betaRelease = app.activeBetaReleaseId ? releaseById.get(app.activeBetaReleaseId) : null;
     const referencedByStable = Boolean(
       stableRelease &&
-        (app.visibility === "private" ? privateAuthorized : stableRelease.publicStoreApprovedAt) &&
+        (stableRelease.publicStoreApprovedAt || appInvitationAuthorized) &&
         referencedBy(app.publishedStoreListing),
     );
-    const referencedByPublicBeta =
-      app.betaAccessMode === "public" &&
-      Boolean(betaRelease?.publicStoreApprovedAt) &&
-      referencedBy(app.publishedBetaStoreListing);
-    const referencedByPrivateAppBeta =
-      app.visibility === "private" && privateAuthorized && Boolean(betaRelease) && referencedBy(app.publishedBetaStoreListing);
-    if (!referencedByStable && !referencedByPublicBeta && !referencedByPrivateAppBeta) {
+    const betaDistributionAuthorized =
+      app.visibility === "private"
+        ? appInvitationAuthorized
+        : app.betaAccessMode === "public"
+          ? Boolean(betaRelease?.publicStoreApprovedAt) || appInvitationAuthorized || betaInvitationAuthorized
+          : betaInvitationAuthorized;
+    const referencedByBeta =
+      Boolean(betaRelease) && betaDistributionAuthorized && referencedBy(app.publishedBetaStoreListing);
+    if (!referencedByStable && !referencedByBeta) {
       throw new StoreCatalogError("not_found", "asset not found", 404);
     }
     return {
       ...asset,
       cacheControl:
-        app.visibility !== "private" && referencedByStable
+        app.visibility !== "private" && referencedByStable && Boolean(stableRelease?.publicStoreApprovedAt)
           ? "public, max-age=31536000, immutable"
           : "private, no-store",
     };
@@ -255,16 +300,25 @@ export class StoreCatalogService {
     const app = await MiniAppModel.findOne({ _id: release.miniAppId, status: "active" }).lean();
     if (!app) throw new StoreCatalogError("not_found", "bundle not found", 404);
     const appId = app._id.toString();
-    if (app.visibility === "private" && !(await this.claimPrivateAccess(identity, appId))) {
+    const appInvitationAuthorized = await this.claimPrivateAccess(identity, appId);
+    if (app.visibility === "private" && !appInvitationAuthorized) {
       throw new StoreCatalogError("not_found", "bundle not found", 404);
     }
 
     if (release.releaseTrack === "beta") {
+      const betaInvitationAuthorized = (
+        await this.betaInvitationAuthorizedAppIds(identity, [appId], true)
+      ).has(appId);
+      const betaDistributionAuthorized =
+        app.visibility === "private"
+          ? appInvitationAuthorized
+          : app.betaAccessMode === "public"
+            ? Boolean(release.publicStoreApprovedAt) || appInvitationAuthorized || betaInvitationAuthorized
+            : betaInvitationAuthorized;
       if (
         app.activeBetaReleaseId !== release._id.toString() ||
         !app.publishedBetaStoreListing ||
-        (app.visibility !== "private" && app.betaAccessMode === "public" && !release.publicStoreApprovedAt) ||
-        !(await this.betaAuthorizedAppIds(identity, [appId], true)).has(appId) ||
+        !betaDistributionAuthorized ||
         !(await this.betaEnrollmentAppIds(identity, [appId])).has(appId)
       ) {
         throw new StoreCatalogError("not_found", "bundle not found", 404);
@@ -272,7 +326,7 @@ export class StoreCatalogService {
     } else if (
       app.activeReleaseId !== release._id.toString() ||
       !app.publishedStoreListing ||
-      (app.visibility !== "private" && !release.publicStoreApprovedAt)
+      (!release.publicStoreApprovedAt && !appInvitationAuthorized)
     ) {
       throw new StoreCatalogError("not_found", "bundle not found", 404);
     }
@@ -387,6 +441,22 @@ export class StoreCatalogService {
     return authorized;
   }
 
+  private async betaInvitationAuthorizedAppIds(
+    identity: Pick<StoreCatalogQuery, "mentraUserId" | "tenantId">,
+    restrictToAppIds?: string[],
+    acceptedOnly = false,
+  ): Promise<Set<string>> {
+    if (!identity.mentraUserId || !identity.tenantId) return new Set();
+    const invitationFilter: Record<string, unknown> = {
+      mentraUserId: identity.mentraUserId,
+      ...(acceptedOnly
+        ? { status: "accepted" }
+        : { $or: [{ status: "accepted" }, { status: "pending", expiresAt: { $gt: new Date() } }] }),
+    };
+    if (restrictToAppIds) invitationFilter.miniAppId = { $in: restrictToAppIds };
+    return new Set((await MiniAppBetaInvitationModel.distinct("miniAppId", invitationFilter)).map(String));
+  }
+
   private async privateAuthorizedAppIds(
     identity: Pick<StoreCatalogQuery, "mentraUserId" | "tenantId">,
     restrictToAppIds?: string[],
@@ -417,10 +487,25 @@ export class StoreCatalogService {
     );
   }
 
+  private async claimBetaAccess(identity: StoreCatalogIdentity, miniAppId: string): Promise<boolean> {
+    return Boolean(
+      await MiniAppBetaInvitationModel.findOneAndUpdate(
+        {
+          miniAppId,
+          mentraUserId: identity.mentraUserId,
+          $or: [{ status: "accepted" }, { status: "pending", expiresAt: { $gt: new Date() } }],
+        },
+        { $set: { status: "accepted", acceptedAt: new Date() } },
+        { new: true },
+      ).lean(),
+    );
+  }
+
   private async betaEligibleAppIds(
     candidateIds: Set<string>,
     publishedReleaseIds: string[],
     publicApprovedReleaseIds: string[],
+    transitionAuthorizedAppIds: Set<string> = new Set(),
   ): Promise<Set<string>> {
     if (candidateIds.size === 0) return new Set();
     const ids = await MiniAppModel.distinct("_id", {
@@ -431,6 +516,12 @@ export class StoreCatalogService {
         { visibility: "private", activeBetaReleaseId: { $in: publishedReleaseIds } },
         { visibility: { $ne: "private" }, betaAccessMode: "private", activeBetaReleaseId: { $in: publishedReleaseIds } },
         { visibility: { $ne: "private" }, betaAccessMode: "public", activeBetaReleaseId: { $in: publicApprovedReleaseIds } },
+        {
+          _id: { $in: [...transitionAuthorizedAppIds] },
+          visibility: { $ne: "private" },
+          betaAccessMode: "public",
+          activeBetaReleaseId: { $in: publishedReleaseIds },
+        },
       ],
     });
     return new Set(ids.map(String));
@@ -480,6 +571,11 @@ export class StoreCatalogService {
             activeReleaseId: { $in: publishedReleaseIds },
           },
           { visibility: { $ne: "private" }, activeReleaseId: { $in: publicApprovedReleaseIds } },
+          {
+            visibility: { $ne: "private" },
+            _id: { $in: [...privateAuthorizedAppIds] },
+            activeReleaseId: { $in: publishedReleaseIds },
+          },
         ],
       },
       "publishedStoreListing",
@@ -545,6 +641,8 @@ export class StoreCatalogService {
     knownPublishedReleaseIds?: string[],
     betaEnrollmentAppIds: Set<string> = betaAppIds,
     betaAuthorizedAppIds: Set<string> = betaAppIds,
+    privateAuthorizedAppIds: Set<string> = new Set(),
+    transitionAuthorizedBetaAppIds: Set<string> = new Set(),
   ) {
     const betaDisplayAppIds = new Set([...betaAppIds, ...betaOfferAppIds]);
     const releaseIds = apps.flatMap(app => [app.activeReleaseId, app.activeBetaReleaseId]).filter(Boolean);
@@ -559,7 +657,11 @@ export class StoreCatalogService {
       const releaseId = selectedTrack === "beta" ? app.activeBetaReleaseId : app.activeReleaseId;
       const release = releasesById.get(releaseId ?? "");
       if (!release?.releaseBundleAssetId || !release.bundleSha256) return [];
-      const privateDistribution = app.visibility === "private" || (selectedTrack === "beta" && app.betaAccessMode !== "public");
+      const privateDistribution =
+        app.visibility === "private" ||
+        (selectedTrack === "stable" && privateAuthorizedAppIds.has(appId)) ||
+        (selectedTrack === "beta" &&
+          (app.betaAccessMode !== "public" || transitionAuthorizedBetaAppIds.has(appId)));
       if (!privateDistribution && !release.publicStoreApprovedAt) return [];
       const listing = selectedTrack === "beta" ? app.publishedBetaStoreListing : app.publishedStoreListing;
       if (!listing) return [];
@@ -569,14 +671,19 @@ export class StoreCatalogService {
         app.publishedBetaStoreListing &&
           app.activeBetaReleaseId &&
           publishedIds.has(String(app.activeBetaReleaseId)) &&
-          (app.visibility === "private" || app.betaAccessMode !== "public" || betaRelease?.publicStoreApprovedAt),
+          (app.visibility === "private" ||
+            app.betaAccessMode !== "public" ||
+            betaRelease?.publicStoreApprovedAt ||
+            transitionAuthorizedBetaAppIds.has(appId)),
       );
       const canAccessBeta = hasPublishedBeta && betaAuthorizedAppIds.has(app._id.toString());
       const hasPublishedStable = Boolean(
         app.publishedStoreListing &&
           app.activeReleaseId &&
           publishedIds.has(String(app.activeReleaseId)) &&
-          (app.visibility === "private" || stableRelease?.publicStoreApprovedAt),
+          (app.visibility === "private" ||
+            stableRelease?.publicStoreApprovedAt ||
+            privateAuthorizedAppIds.has(appId)),
       );
       const publicArtworkListing =
         app.visibility !== "private" && selectedTrack === "beta" && app.betaAccessMode !== "public"

@@ -6,7 +6,7 @@ import {
 import { createStorageService } from "../../services/storage/storage.service";
 import type { AppContext, AppEnv } from "../../types/hono.types";
 import { InvalidRequest } from "../../types/oauth.types";
-import { userAuth } from "../middleware/user-auth.middleware";
+import { optionalUserAuth, userAuth } from "../middleware/user-auth.middleware";
 
 const app = new Hono<AppEnv>();
 const registryService = new PreinstalledRegistryService();
@@ -14,7 +14,7 @@ const storage = createStorageService();
 
 app.get("/", userAuth, listMiniapps);
 app.get("/registry", userAuth, getRegistry);
-app.get("/bundles/:assetId/download", userAuth, downloadBundle);
+app.get("/bundles/:assetId/download", optionalUserAuth, downloadBundle);
 
 async function listMiniapps(c: AppContext) {
   const registry = await loadRegistry(c);
@@ -44,10 +44,15 @@ async function loadRegistry(c: AppContext) {
 async function downloadBundle(c: AppContext) {
   const assetId = c.req.param("assetId");
   if (!assetId) throw new InvalidRequest("missing assetId");
-  const user = c.var.user;
-  if (!user) throw new InvalidRequest("authenticated user missing");
   try {
-    const asset = await registryService.getBundleAsset(assetId, { tenantId: user.tenantId });
+    const identity = c.var.user
+      ? { tenantId: c.var.user.tenantId }
+      : registryService.authorizeBundleDownload(assetId, {
+          tenantId: c.req.query("tenantId"),
+          expiresAt: c.req.query("expiresAt"),
+          signature: c.req.query("signature"),
+        });
+    const asset = await registryService.getBundleAsset(assetId, identity);
     const bytes = await storage.getObject(asset.storageKey);
 
     return new Response(bytes, {
