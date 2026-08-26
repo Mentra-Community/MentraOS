@@ -81,6 +81,9 @@ public class AsgConstants {
     /** Baseline linear gain for Mentra Live audio prompts. */
     public static final float AUDIO_PLAYBACK_VOLUME = 0.1f;
 
+    /** Silence between spoken pairing-code characters so adjacent sounds remain distinguishable. */
+    public static final int PAIRING_CODE_INTER_CHARACTER_PAUSE_MS = 140;
+
     /** Subtle linear gain for the repeating cold-camera hold-still cue. */
     public static final float CAMERA_PREP_CLICK_PLAYBACK_VOLUME = 0.09f;
 

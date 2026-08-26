@@ -3,6 +3,8 @@ package com.mentra.asg_client.audio;
 import android.content.Context;
 import android.util.Log;
 
+import com.mentra.asg_client.AsgConstants;
+
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
@@ -22,7 +24,6 @@ import java.util.List;
 public final class PairingCodePcmStitcher {
 
     private static final String TAG = "PairingCodePcmStitcher";
-    static final int INTER_CHARACTER_PAUSE_MS = 140;
     static final int SILENCE_THRESHOLD = 512;
     private static final String CACHE_PREFIX = "pairing_code_";
     private static final String CACHE_SUFFIX = ".wav";
@@ -70,7 +71,7 @@ public final class PairingCodePcmStitcher {
             acc = appendWithSilence(
                     acc,
                     trimSilence(next.samples),
-                    msToSamples(INTER_CHARACTER_PAUSE_MS, sampleRate));
+                    msToSamples(AsgConstants.PAIRING_CODE_INTER_CHARACTER_PAUSE_MS, sampleRate));
         }
         return encodePcmWav(acc, sampleRate);
     }
