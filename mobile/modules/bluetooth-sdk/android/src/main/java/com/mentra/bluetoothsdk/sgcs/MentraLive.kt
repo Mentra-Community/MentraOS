@@ -2110,6 +2110,7 @@ class MentraLive : SGCManager() {
                             isConnecting = false
                             isConnected = true
                             connectedDevice = gatt.device
+                            emitConnectedPendingDeviceForPairingScan()
 
                             DeviceStore.apply("glasses", "bluetoothName", connectedDevice!!.name)
                             // Persist MAC so reconnection can use direct GATT instead of scanning

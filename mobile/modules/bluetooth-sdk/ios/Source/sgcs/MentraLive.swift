@@ -996,6 +996,7 @@ extension MentraLive: CBCentralManagerDelegate {
             self.isConnecting = false
             self.connectingPeripheral = nil
             self.connectedPeripheral = peripheral
+            self.emitConnectedPendingDeviceForPairingScan()
 
             // Save device name and address for future reconnection
             if let name = peripheral.name {
@@ -1647,6 +1648,7 @@ class MentraLive: NSObject, SGCManager {
 
     // State Tracking
     private var isScanning = false
+    private var manualDiscoveryActive = false
     private var isConnecting = false
     private var isKilled = false
     /// Glasses opened pairing window — stand down without forgetting identity/bonds.
@@ -1801,7 +1803,9 @@ class MentraLive: NSObject, SGCManager {
             // clear the saved device name:
             UserDefaults.standard.set("", forKey: PREFS_DEVICE_NAME)
 
+            manualDiscoveryActive = true
             startScan()
+            manualDiscoveryActive = isScanning
             emitConnectedPendingDeviceForPairingScan()
         }
     }
@@ -2411,6 +2415,7 @@ class MentraLive: NSObject, SGCManager {
     }
 
     func stopScan() {
+        manualDiscoveryActive = false
         guard isScanning else { return }
 
         centralManager?.stopScan()
@@ -5532,7 +5537,8 @@ class MentraLive: NSObject, SGCManager {
     /// promotes it to the default device. Re-emit only that explicit pending target; an
     /// established owner's connected glasses have no pending identity and remain hidden.
     private func emitConnectedPendingDeviceForPairingScan() {
-        guard !pairingYieldActive, let peripheral = connectedPeripheral, let name = peripheral.name,
+        guard manualDiscoveryActive, !pairingYieldActive, let peripheral = connectedPeripheral,
+              let name = peripheral.name,
               MentraLivePendingPairingTarget.shouldRecover(
                   isConnected: peripheral.state == .connected,
                   connectedName: name,
