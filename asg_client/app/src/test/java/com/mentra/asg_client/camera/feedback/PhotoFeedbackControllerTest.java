@@ -36,9 +36,13 @@ public class PhotoFeedbackControllerTest {
         handler = mock(Handler.class);
         clock = new MutableClock();
         when(hardwareManager.supportsAudioPlayback()).thenReturn(true);
-        when(hardwareManager.playAudioAssetOverlayTracked(AudioAssets.CAMERA_PREP_CLICK))
+        when(hardwareManager.playAudioAssetOverlayTracked(
+                        AudioAssets.CAMERA_PREP_CLICK,
+                        AsgConstants.CAMERA_PREP_CLICK_PLAYBACK_VOLUME))
                 .thenReturn(41L);
-        when(hardwareManager.playAudioAssetOverlayTracked(AudioAssets.CAMERA_SNAP))
+        when(hardwareManager.playAudioAssetOverlayTracked(
+                        AudioAssets.CAMERA_SNAP,
+                        AsgConstants.CAMERA_SNAP_PLAYBACK_VOLUME))
                 .thenReturn(42L);
         controller = new PhotoFeedbackController(hardwareManager, handler, clock);
     }
@@ -51,7 +55,9 @@ public class PhotoFeedbackControllerTest {
 
         assertThat(token).isNotNull();
         verify(hardwareManager)
-                .playAudioAssetOverlayTracked(AudioAssets.CAMERA_PREP_CLICK);
+                .playAudioAssetOverlayTracked(
+                        AudioAssets.CAMERA_PREP_CLICK,
+                        AsgConstants.CAMERA_PREP_CLICK_PLAYBACK_VOLUME);
         verify(handler)
                 .postDelayed(
                         cadenceRunnable.capture(),
@@ -64,13 +70,17 @@ public class PhotoFeedbackControllerTest {
         clearInvocations(hardwareManager);
         cadenceRunnable.getValue().run();
         verify(hardwareManager)
-                .playAudioAssetOverlayTracked(AudioAssets.CAMERA_PREP_CLICK);
+                .playAudioAssetOverlayTracked(
+                        AudioAssets.CAMERA_PREP_CLICK,
+                        AsgConstants.CAMERA_PREP_CLICK_PLAYBACK_VOLUME);
 
         timeoutRunnable.getValue().run();
         clearInvocations(hardwareManager);
         controller.playSnap(token, "late frame");
         verify(hardwareManager, never())
-                .playAudioAssetOverlayTracked(AudioAssets.CAMERA_SNAP);
+                .playAudioAssetOverlayTracked(
+                        AudioAssets.CAMERA_SNAP,
+                        AsgConstants.CAMERA_SNAP_PLAYBACK_VOLUME);
     }
 
     @Test
@@ -85,7 +95,10 @@ public class PhotoFeedbackControllerTest {
 
         verify(handler).postDelayed(snapRunnable.capture(), eq(expectedDelayMs));
         snapRunnable.getValue().run();
-        verify(hardwareManager).playAudioAssetOverlayTracked(AudioAssets.CAMERA_SNAP);
+        verify(hardwareManager)
+                .playAudioAssetOverlayTracked(
+                        AudioAssets.CAMERA_SNAP,
+                        AsgConstants.CAMERA_SNAP_PLAYBACK_VOLUME);
     }
 
     @Test
@@ -113,7 +126,10 @@ public class PhotoFeedbackControllerTest {
         controller.onExposureStarted(
                 token, 0L, AsgConstants.CAMERA_SNAP_TARGET_LEAD_MS * 1_000_000L);
 
-        verify(hardwareManager).playAudioAssetOverlayTracked(AudioAssets.CAMERA_SNAP);
+        verify(hardwareManager)
+                .playAudioAssetOverlayTracked(
+                        AudioAssets.CAMERA_SNAP,
+                        AsgConstants.CAMERA_SNAP_PLAYBACK_VOLUME);
     }
 
     @Test
@@ -132,7 +148,9 @@ public class PhotoFeedbackControllerTest {
         snapRunnable.getValue().run();
 
         verify(hardwareManager, never())
-                .playAudioAssetOverlayTracked(AudioAssets.CAMERA_SNAP);
+                .playAudioAssetOverlayTracked(
+                        AudioAssets.CAMERA_SNAP,
+                        AsgConstants.CAMERA_SNAP_PLAYBACK_VOLUME);
     }
 
     @Test
@@ -145,7 +163,9 @@ public class PhotoFeedbackControllerTest {
 
         assertThat(queued).isNotNull();
         verify(hardwareManager, never())
-                .playAudioAssetOverlayTracked(AudioAssets.CAMERA_PREP_CLICK);
+                .playAudioAssetOverlayTracked(
+                        AudioAssets.CAMERA_PREP_CLICK,
+                        AsgConstants.CAMERA_PREP_CLICK_PLAYBACK_VOLUME);
     }
 
     @Test
@@ -160,7 +180,9 @@ public class PhotoFeedbackControllerTest {
         verify(handler).postDelayed(resumeRunnable.capture(), eq(0L));
         resumeRunnable.getValue().run();
         verify(hardwareManager)
-                .playAudioAssetOverlayTracked(AudioAssets.CAMERA_PREP_CLICK);
+                .playAudioAssetOverlayTracked(
+                        AudioAssets.CAMERA_PREP_CLICK,
+                        AsgConstants.CAMERA_PREP_CLICK_PLAYBACK_VOLUME);
     }
 
     @Test
@@ -172,7 +194,9 @@ public class PhotoFeedbackControllerTest {
         controller.playSnap(token, "late frame");
 
         verify(hardwareManager, never())
-                .playAudioAssetOverlayTracked(AudioAssets.CAMERA_SNAP);
+                .playAudioAssetOverlayTracked(
+                        AudioAssets.CAMERA_SNAP,
+                        AsgConstants.CAMERA_SNAP_PLAYBACK_VOLUME);
     }
 
     @Test
@@ -185,7 +209,9 @@ public class PhotoFeedbackControllerTest {
         controller.start("cold", false);
 
         verify(hardwareManager, never())
-                .playAudioAssetOverlayTracked(AudioAssets.CAMERA_PREP_CLICK);
+                .playAudioAssetOverlayTracked(
+                        AudioAssets.CAMERA_PREP_CLICK,
+                        AsgConstants.CAMERA_PREP_CLICK_PLAYBACK_VOLUME);
         verify(handler)
                 .postDelayed(
                         resumeRunnable.capture(),
@@ -193,7 +219,9 @@ public class PhotoFeedbackControllerTest {
         clock.nowMs = PhotoFeedbackController.SNAP_PREP_RESUME_DELAY_MS;
         resumeRunnable.getValue().run();
         verify(hardwareManager)
-                .playAudioAssetOverlayTracked(AudioAssets.CAMERA_PREP_CLICK);
+                .playAudioAssetOverlayTracked(
+                        AudioAssets.CAMERA_PREP_CLICK,
+                        AsgConstants.CAMERA_PREP_CLICK_PLAYBACK_VOLUME);
     }
 
     @Test
@@ -220,7 +248,9 @@ public class PhotoFeedbackControllerTest {
 
     @Test
     public void laterSnap_doesNotTruncateEarlierSnap() {
-        when(hardwareManager.playAudioAssetOverlayTracked(AudioAssets.CAMERA_SNAP))
+        when(hardwareManager.playAudioAssetOverlayTracked(
+                        AudioAssets.CAMERA_SNAP,
+                        AsgConstants.CAMERA_SNAP_PLAYBACK_VOLUME))
                 .thenReturn(42L, 43L);
         PhotoFeedbackController.Token first = controller.start("first", true);
         controller.playSnap(first, "first");
@@ -230,7 +260,10 @@ public class PhotoFeedbackControllerTest {
         controller.playSnap(second, "second");
 
         verify(hardwareManager, never()).stopAudioOverlayPlayback(42L);
-        verify(hardwareManager).playAudioAssetOverlayTracked(AudioAssets.CAMERA_SNAP);
+        verify(hardwareManager)
+                .playAudioAssetOverlayTracked(
+                        AudioAssets.CAMERA_SNAP,
+                        AsgConstants.CAMERA_SNAP_PLAYBACK_VOLUME);
     }
 
     @Test
@@ -248,7 +281,9 @@ public class PhotoFeedbackControllerTest {
 
         verify(hardwareManager).stopAudioOverlayPlayback(41L);
         verify(hardwareManager, times(0))
-                .playAudioAssetOverlayTracked(AudioAssets.CAMERA_PREP_CLICK);
+                .playAudioAssetOverlayTracked(
+                        AudioAssets.CAMERA_PREP_CLICK,
+                        AsgConstants.CAMERA_PREP_CLICK_PLAYBACK_VOLUME);
     }
 
     private static final class MutableClock implements PhotoFeedbackController.Clock {

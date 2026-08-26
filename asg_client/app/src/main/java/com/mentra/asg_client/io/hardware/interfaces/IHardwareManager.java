@@ -127,12 +127,34 @@ public interface IHardwareManager {
     }
 
     /**
+     * Play a short asset at an explicit linear gain without replacing the primary audio cue.
+     *
+     * <p>The default preserves legacy behavior for hardware without volume control.
+     *
+     * @param assetName Name of the asset in the application's assets directory
+     * @param playbackVolume Linear gain from {@code 0.0f} (silent) to {@code 1.0f} (full scale)
+     */
+    default void playAudioAssetOverlay(String assetName, float playbackVolume) {
+        playAudioAssetOverlay(assetName);
+    }
+
+    /**
      * Play an independently stoppable overlay without replacing primary audio.
      *
      * @return a positive overlay token, or {@code 0} when tracking is unavailable
      */
     default long playAudioAssetOverlayTracked(String assetName) {
         playAudioAssetOverlay(assetName);
+        return 0L;
+    }
+
+    /**
+     * Play an independently stoppable overlay at an explicit linear gain.
+     *
+     * @return a positive overlay token, or {@code 0} when tracking is unavailable
+     */
+    default long playAudioAssetOverlayTracked(String assetName, float playbackVolume) {
+        playAudioAssetOverlay(assetName, playbackVolume);
         return 0L;
     }
 
