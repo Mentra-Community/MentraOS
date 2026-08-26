@@ -40,10 +40,10 @@ const LOG_TAG = "LocalMiniappRuntime"
 /** Per-app blob quota: 1 GB. */
 export const BLOB_QUOTA_BYTES = 1024 * 1024 * 1024
 const ROOT_DIR_NAME = "mentra_blobs"
-/** Cache dir root holding short-lived, properly-named copies handed to the OS share sheet (one unique subdir per share). */
+/** Cache dir root holding short-lived, properly-named copies handed to the OS share sheet (one subdir per stored blob). */
 const SHARE_DIR_NAME = "mentra_blob_share"
 /**
- * Keep successful share handoffs alive long enough for recipient apps to read
+ * Keep prepared share handoffs alive long enough for recipient apps to read
  * them asynchronously (for example, an email composer attaching the file).
  * Stale copies are collected before the next share; the OS may evict cache
  * files sooner under storage pressure.
@@ -605,7 +605,7 @@ export class BlobStore {
 
   // ---- share ---------------------------------------------------------------
 
-  /** Best-effort GC for completed share handoffs retained in the OS cache. */
+  /** Best-effort GC for prepared share handoffs retained in the OS cache. */
   private cleanupShareCache(now = Date.now()): void {
     try {
       const root = new Directory(Paths.cache, SHARE_DIR_NAME)
@@ -657,13 +657,17 @@ export class BlobStore {
     // The file keeps `shareName` as its basename so the OS share sheet shows the
     // right name + extension.
     let tempDir: Directory | null = null
-    let handedOff = false
+    let cacheReady = false
     try {
       this.cleanupShareCache()
       tempDir = new Directory(Paths.cache, SHARE_DIR_NAME, sanitizeSegment(meta.fileName))
       if (!tempDir.exists) tempDir.create({intermediates: true})
       const temp = new File(tempDir, shareName)
-      if (!temp.exists) file.copy(temp)
+      if (!temp.exists || temp.size !== meta.bytes) {
+        if (temp.exists) temp.delete()
+        file.copy(temp)
+      }
+      cacheReady = true
       await Share.open({
         url: temp.uri,
         type: meta.mimeType || OCTET,
@@ -671,7 +675,6 @@ export class BlobStore {
       })
       // Share.open resolves once the OS accepts the handoff. Recipient apps may
       // still read the URI asynchronously, so retain this cache copy for GC.
-      handedOff = true
       this.hooks.sendResult(packageName, requestId, true, {success: true})
     } catch (error: any) {
       if (error?.message?.includes("User did not share")) {
@@ -681,9 +684,11 @@ export class BlobStore {
         this.hooks.sendResult(packageName, requestId, true, {success: false})
       }
     } finally {
-      // A cancelled/failed sheet has no recipient. Successful handoffs are
-      // cleaned by cleanupShareCache after their retention window instead.
-      if (tempDir && !handedOff) {
+      // Once a reusable cache entry is ready, retain it even if this particular
+      // sheet is cancelled or fails: another concurrent/recent share may still
+      // be reading the same file. Only remove an entry whose preparation did
+      // not finish; ready entries are collected after the retention window.
+      if (tempDir && !cacheReady) {
         try {
           if (tempDir.exists) tempDir.delete()
         } catch {
