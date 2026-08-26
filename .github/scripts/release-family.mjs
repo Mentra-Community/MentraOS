@@ -245,6 +245,10 @@ export function createReleasePlan({family, channel, sequence, sourceCommit, nati
     releaseSetId: releaseSetId(releaseIdentity),
     familyBaseVersion: family.familyBaseVersion,
     releaseIdentity,
+    artifactContainerTag:
+      channel === "production" ? `mentra-v${releaseIdentity}` : `mentra-builds-v${family.familyBaseVersion}`,
+    artifactContainerName:
+      channel === "production" ? `Mentra ${releaseIdentity}` : `Mentra ${family.familyBaseVersion} development builds`,
     channel,
     sequence: channel === "production" ? null : sequence,
     sourceCommit,

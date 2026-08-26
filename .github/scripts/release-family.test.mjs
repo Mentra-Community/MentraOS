@@ -70,6 +70,8 @@ test("creates a deterministic release plan with exact dependency versions", () =
   })
 
   assert.equal(plan.releaseSetId, "mentra-3.1.0-beta.57")
+  assert.equal(plan.artifactContainerTag, "mentra-builds-v3.1.0")
+  assert.equal(plan.artifactContainerName, "Mentra 3.1.0 development builds")
   assert.equal(plan.native.marketingVersion, "3.1.0")
   assert.equal(plan.native.buildNumber, 3100057)
   assert.equal(plan.products["@mentra/engine"], "3.1.0-beta.57")
@@ -81,6 +83,15 @@ test("creates a deterministic release plan with exact dependency versions", () =
   assert.equal(plan.artifactNames.androidStoreApp, "mentraos-3.1.0-beta.57-android.aab")
   assert.equal(plan.artifactNames.iosSdkArchive, "mentra-bluetooth-sdk-ios-3.1.0-beta.57.tar")
   assert.equal(plan.otaInputs.firmwareManifest, "firmware_live.json")
+
+  const productionPlan = createReleasePlan({
+    family,
+    channel: "production",
+    sourceCommit: "b".repeat(40),
+    nativeBuildNumber: 3100057,
+  })
+  assert.equal(productionPlan.artifactContainerTag, "mentra-v3.1.0")
+  assert.equal(productionPlan.artifactContainerName, "Mentra 3.1.0")
 })
 
 test("serializes records canonically and finalizes only complete release results", () => {

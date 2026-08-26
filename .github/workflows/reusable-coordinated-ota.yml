@@ -202,7 +202,7 @@ jobs:
           provenance_asset=$(jq -er .provenanceAsset coordinated-ota-work/asg-build-identity.json)
           [[ "$apk_asset" == "${{ steps.existing-asg.outputs.apk_asset }}" ]]
           [[ "$provenance_asset" == "${{ steps.existing-asg.outputs.provenance_asset }}" ]]
-          release_tag="mentra-v${release_identity}"
+          release_tag=$(jq -er .artifactContainerTag release-intent/release-plan.json)
           asg_release_base="https://github.com/${REPOSITORY}/releases/download/${ASG_RELEASE_TAG}"
           release_base="https://github.com/${REPOSITORY}/releases/download/${release_tag}"
 
@@ -451,20 +451,13 @@ jobs:
         if: inputs.dry_run != true
         env:
           GH_TOKEN: ${{ github.token }}
-          SOURCE_COMMIT: ${{ github.sha }}
         run: |
           set -euo pipefail
           release=$(gh api "repos/${GITHUB_REPOSITORY}/releases/${{ inputs.release_id }}")
           [[ "$(jq -r .tag_name <<< "$release")" == "${{ steps.names.outputs.release_tag }}" ]]
-          [[ "$(jq -r .name <<< "$release")" == "Mentra ${{ steps.names.outputs.release_identity }}" ]]
+          [[ "$(jq -r .name <<< "$release")" == "$(jq -er .artifactContainerName release-intent/release-plan.json)" ]]
           [[ "$(jq -r .prerelease <<< "$release")" == "true" ]]
-          if [[ "$(jq -r .draft <<< "$release")" == "true" ]]; then
-            [[ "$(jq -r .target_commitish <<< "$release")" == "$SOURCE_COMMIT" ]]
-          else
-            tag="${{ steps.names.outputs.release_tag }}"
-            git fetch --force origin "refs/tags/$tag:refs/tags/$tag"
-            [[ "$(git rev-parse "$tag^{commit}")" == "$SOURCE_COMMIT" ]]
-          fi
+          [[ "$(jq -r .draft <<< "$release")" == "false" ]]
           for file in coordinated-ota-work/release-assets/*; do
             name=$(basename "$file")
             node .github/scripts/publish-immutable-release-asset.mjs \
@@ -473,16 +466,6 @@ jobs:
               --release-id "${{ inputs.release_id }}" \
               --repository "${{ github.repository }}"
           done
-
-          if [[ "$(jq -r .draft <<< "$release")" == "true" ]]; then
-            payload=$(jq -n \
-              --arg body "Coordinated Mentra release ${{ steps.names.outputs.release_identity }} is in progress. Its immutable OTA assets are available; the completed release manifest is published only after every target succeeds." \
-              '{draft: false, prerelease: true, body: $body}')
-            gh api --method PATCH \
-              "repos/${GITHUB_REPOSITORY}/releases/${{ inputs.release_id }}" \
-              --input - <<< "$payload" \
-              --jq '.draft == false and .prerelease == true' | grep -qx true
-          fi
 
       - name: Verify published OTA manifest
         if: inputs.dry_run != true

@@ -24,6 +24,8 @@ const betaPlan = {
   releaseSetId: "mentra-3.1.0-beta.57",
   familyBaseVersion: "3.1.0",
   releaseIdentity: "3.1.0-beta.57",
+  artifactContainerTag: "mentra-builds-v3.1.0",
+  artifactContainerName: "Mentra 3.1.0 development builds",
   channel: "beta",
   sequence: 57,
   sourceCommit: "a".repeat(40),
@@ -92,6 +94,10 @@ test("derives a stable plan while preserving the selected beta bytes and native 
   assert.equal(result.productionPlan.native.buildNumber, betaPlan.native.buildNumber)
   assert.equal(result.selection.mobileArtifacts.androidAab.coordinate, betaPlan.artifactNames.androidStoreApp)
   assert.equal(result.selection.otaManifest.sha256, "c".repeat(64))
+  assert.equal(
+    result.productionPlan.promotion.selectedBetaManifest.url,
+    "https://github.com/Mentra-Community/MentraOS/releases/download/mentra-builds-v3.1.0/mentra-release-3.1.0-beta.57.json",
+  )
   assert.equal(result.selection.otaArtifacts.length, 3)
   assert.deepEqual(
     result.selection.otaArtifacts.map(({coordinate}) => coordinate),

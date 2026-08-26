@@ -27,7 +27,7 @@ test("records and merges exact mobile store and downloadable artifacts", () => {
   writeFileSync(apk, "apk")
   writeFileSync(aab, "aab")
   writeFileSync(ipa, "ipa")
-  const base = "https://github.com/Mentra-Community/MentraOS/releases/download/mentra-v3.1.0-beta.57"
+  const base = "https://github.com/Mentra-Community/MentraOS/releases/download/mentra-builds-v3.1.0"
   const provenanceUrl = "https://github.com/Mentra-Community/MentraOS/actions/runs/123"
   const android = createAndroidRecord({
     plan,
