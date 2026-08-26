@@ -1225,6 +1225,12 @@ class MentraBluetoothSdk private constructor(
         )
     }
 
+    /** Return bundled release changelogs crossed between two coordinated product versions, newest first. */
+    fun getReleaseChangelogs(
+        fromVersion: String? = null,
+        toVersion: String? = null,
+    ): List<ReleaseChangelog> = ReleaseChangelogCatalog.select(fromVersion, toVersion)
+
     /** Ask connected Mentra Live glasses to report the current OTA install/session status. */
     private suspend fun queryOtaStatus(): OtaQueryResult =
         performOtaQuery("OTA status query") {

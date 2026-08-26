@@ -17,6 +17,7 @@ function fixture() {
     recursive: true,
   })
   cpSync(path.join(repositoryRoot, "package.json"), path.join(root, "package.json"))
+  cpSync(path.join(repositoryRoot, "changelogs"), path.join(root, "changelogs"), {recursive: true})
   const family = loadReleaseFamily({rootDir: repositoryRoot, requireVersionMirrors: true})
   for (const member of family.members) {
     const source = path.join(repositoryRoot, member.manifest)

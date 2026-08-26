@@ -77,6 +77,9 @@ jobs:
       - name: Collect promoted firmware inputs
         run: node .github/scripts/collect-ota-release-inputs.mjs
 
+      - name: Verify generated changelog catalogs
+        run: node .github/scripts/generate-changelog-catalog.mjs --check
+
       - name: Create deterministic release plan
         run: |
           set -euo pipefail

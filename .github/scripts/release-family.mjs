@@ -1,4 +1,4 @@
-import {readFileSync} from "node:fs"
+import {existsSync, readFileSync} from "node:fs"
 import {createHash} from "node:crypto"
 import path from "node:path"
 
@@ -102,6 +102,9 @@ export function loadReleaseFamily({rootDir = process.cwd(), requireVersionMirror
   requireString(definition.family, "family")
   const versionSource = requireString(definition.versionSource, "versionSource")
   const familyBaseVersion = validateFamilyBaseVersion(readJson(path.join(rootDir, versionSource)).version)
+  if (!existsSync(path.join(rootDir, "changelogs", `${familyBaseVersion}.md`))) {
+    fail(`missing changelogs/${familyBaseVersion}.md for the current family base version`)
+  }
 
   if (!Array.isArray(definition.members) || definition.members.length === 0) fail("members must not be empty")
   const members = []

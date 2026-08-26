@@ -12,7 +12,7 @@ const checkResult = {
   updateAvailable: true,
   latestVersionInfo: {
     versionCode: 40,
-    versionName: "40",
+    versionName: "3.1.0-dev.8",
     downloadUrl: "https://example.com/asg.apk",
     apkSize: 1,
     sha256: "a".repeat(64),
@@ -23,13 +23,14 @@ const checkResult = {
   besVersion: null,
   isApkDowngrade: false,
   manifestBody: "{}",
-  updateInfo: {available: true, versionCode: 40, versionName: "40", updates: ["apk"], totalSize: 1},
+  updateInfo: {available: true, versionCode: 40, versionName: "3.1.0-dev.8", updates: ["apk"], totalSize: 1},
   isRequired: true,
 }
 
 let otaSnapshot = {
   connected: true,
   buildNumber: "39",
+  appVersion: "3.0.0",
   mtkFirmwareVersion: "0801",
   besFirmwareVersion: "0808",
   hotspotOtaVersion: 1,
@@ -68,6 +69,7 @@ const retry = mock(() => {})
 let finishPromise = Promise.resolve()
 const finish = mock(() => finishPromise)
 const discard = mock(() => {})
+const getReleaseChangelogs = mock(() => [{version: "3.1.0", markdown: "Release notes"}])
 let autoChainActive = false
 
 const fakeOta = {
@@ -78,6 +80,7 @@ const fakeOta = {
     return () => otaListeners.delete(listener)
   },
   checkForUpdates: mock(() => Promise.resolve(checkResult)),
+  getReleaseChangelogs,
   clearUpdateAvailable: mock(() => {}),
   clearProgress: mock(() => {}),
   installSession: {
@@ -139,6 +142,7 @@ describe("useMentraLiveOta", () => {
     retry.mockClear()
     finish.mockClear()
     discard.mockClear()
+    getReleaseChangelogs.mockClear()
     fakeOta.checkForUpdates.mockClear()
     autoChainActive = false
     finishPromise = Promise.resolve()
@@ -213,6 +217,26 @@ describe("useMentraLiveOta", () => {
     })
     latestController.retryInstall()
     expect(retry).toHaveBeenCalledTimes(1)
+    await act(async () => renderer.unmount())
+  })
+
+  test("exposes crossed release changelogs when an install completes", async () => {
+    const renderer = await renderProbe("check")
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1_150))
+    })
+    expect(latestController.state.screen).toBe("update_available")
+
+    await act(async () => {
+      latestController.install()
+    })
+    installSnapshot = {...installSnapshot, displayState: "complete"}
+    await act(async () => {
+      installListeners.forEach((listener) => listener())
+    })
+
+    expect(getReleaseChangelogs).toHaveBeenCalledWith("3.0.0", "3.1.0-dev.8")
+    expect(latestController.state.changelogs).toEqual([{version: "3.1.0", markdown: "Release notes"}])
     await act(async () => renderer.unmount())
   })
 
