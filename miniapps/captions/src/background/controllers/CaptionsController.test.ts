@@ -1,7 +1,69 @@
 import {afterEach, describe, expect, mock, test} from "bun:test"
 
 import {DEFAULT_CAPTION_TIMEOUT_SECONDS} from "../../shared/types"
-import {CaptionsController, isSupportedCaptionTimeoutSeconds} from "./CaptionsController"
+import {calculateCaptionBox, CaptionsController, isSupportedCaptionTimeoutSeconds} from "./CaptionsController"
+
+describe("CaptionsController caption position", () => {
+  test("anchors a fixed three-line G2 band at the top or bottom", () => {
+    const base = {
+      canvasWidth: 576,
+      canvasHeight: 288,
+      canPosition: true,
+      lineCount: 3,
+      maxTextLines: 8,
+      lineHeightPx: 40,
+    }
+
+    expect(calculateCaptionBox({...base, position: "top"})).toEqual({x: 0, y: 0, w: 576, h: 120})
+    expect(calculateCaptionBox({...base, position: "bottom"})).toEqual({x: 0, y: 168, w: 576, h: 120})
+  })
+
+  test("keeps a full-canvas text wall when positioning is unsupported", () => {
+    expect(
+      calculateCaptionBox({
+        canvasWidth: 576,
+        canvasHeight: 288,
+        canPosition: false,
+        position: "bottom",
+        lineCount: 3,
+        lineHeightPx: 40,
+      }),
+    ).toEqual({x: 0, y: 0, w: 576, h: 288})
+  })
+
+  test("infers a line height when the device has no calibrated profile", () => {
+    expect(
+      calculateCaptionBox({
+        canvasWidth: 500,
+        canvasHeight: 220,
+        canPosition: true,
+        position: "bottom",
+        lineCount: 3,
+        maxTextLines: 5,
+      }),
+    ).toEqual({x: 0, y: 88, w: 500, h: 132})
+  })
+
+  test("restores bottom and defaults unknown stored values to top", async () => {
+    const bottomController = new CaptionsController({
+      storage: {get: mock((key: string) => Promise.resolve(key === "captionPosition" ? "bottom" : null))},
+    } as never) as unknown as {
+      settings: {captionPosition: string}
+      loadSettings: () => Promise<void>
+    }
+    await bottomController.loadSettings()
+    expect(bottomController.settings.captionPosition).toBe("bottom")
+
+    const invalidController = new CaptionsController({
+      storage: {get: mock((key: string) => Promise.resolve(key === "captionPosition" ? "middle" : null))},
+    } as never) as unknown as {
+      settings: {captionPosition: string}
+      loadSettings: () => Promise<void>
+    }
+    await invalidController.loadSettings()
+    expect(invalidController.settings.captionPosition).toBe("top")
+  })
+})
 
 describe("CaptionsController caption timeout", () => {
   const originalSetTimeout = globalThis.setTimeout

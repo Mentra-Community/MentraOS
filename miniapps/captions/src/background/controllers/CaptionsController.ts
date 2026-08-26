@@ -45,6 +45,7 @@ import type {
 import {
   CaptionsFormatter,
   G1_PROFILE,
+  G2_PROFILE,
   Z100_PROFILE,
   NEX_PROFILE,
   type DisplayProfile,
@@ -55,7 +56,9 @@ import type {Channels} from "../../shared/channels"
 import {
   CAPTION_TIMEOUT_OPTIONS_SECONDS,
   DEFAULT_CAPTION_TIMEOUT_SECONDS,
+  type CaptionPosition,
   type CaptionSettings,
+  type CaptionsDisplayCapabilities,
   type CaptionsSnapshot,
   type DisplayPreview,
   type Transcript,
@@ -81,6 +84,7 @@ const DEFAULT_SETTINGS: CaptionSettings = {
   useOfflineStt: false,
   displayLines: 3,
   displayWidth: 1, // 0=Narrow, 1=Medium, 2=Wide
+  captionPosition: "top",
   wordBreaking: false,
   captionTimeoutSeconds: DEFAULT_CAPTION_TIMEOUT_SECONDS,
 }
@@ -91,6 +95,7 @@ const STORAGE_KEYS = {
   useOfflineStt: "useOfflineStt",
   displayLines: "displayLines",
   displayWidth: "displayWidth",
+  captionPosition: "captionPosition",
   wordBreaking: "wordBreaking",
   captionTimeoutSeconds: "captionTimeoutSeconds",
 } as const
@@ -100,6 +105,9 @@ const TRANSCRIPT_TIMING_TELEMETRY = (globalThis as {__DEV__?: boolean}).__DEV__ 
 function getProfileForModel(modelName: string | null | undefined): DisplayProfile {
   if (!modelName) return G1_PROFILE
   const lower = modelName.toLowerCase()
+  if (lower.includes("g2") || lower.includes("even_g2")) {
+    return G2_PROFILE
+  }
   if (lower.includes("g1") || lower.includes("even realities") || lower.includes("even_g1")) {
     return G1_PROFILE
   }
@@ -120,6 +128,51 @@ function getModelName(session: MiniappSession): string | null {
     return typeof m === "string" ? m : null
   } catch {
     return null
+  }
+}
+
+export interface CaptionBoxOptions {
+  canvasWidth: number
+  canvasHeight: number
+  canPosition: boolean
+  position: CaptionPosition
+  lineCount: number
+  maxTextLines?: number
+  lineHeightPx?: number
+}
+
+/** Build a stable top- or bottom-anchored text band for the selected line count. */
+export function calculateCaptionBox({
+  canvasWidth,
+  canvasHeight,
+  canPosition,
+  position,
+  lineCount,
+  maxTextLines,
+  lineHeightPx,
+}: CaptionBoxOptions): {x: number; y: number; w: number; h: number} {
+  const width = Number.isFinite(canvasWidth) && canvasWidth > 0 ? Math.floor(canvasWidth) : 576
+  const height = Number.isFinite(canvasHeight) && canvasHeight > 0 ? Math.floor(canvasHeight) : 288
+
+  if (!canPosition) {
+    return {x: 0, y: 0, w: width, h: height}
+  }
+
+  const lines = Math.max(1, Math.floor(lineCount))
+  const deviceMaxLines =
+    maxTextLines !== undefined && Number.isFinite(maxTextLines) && maxTextLines > 0 ? Math.floor(maxTextLines) : lines
+  const inferredLineHeight = Math.max(1, Math.floor(height / deviceMaxLines))
+  const lineHeight =
+    lineHeightPx !== undefined && Number.isFinite(lineHeightPx) && lineHeightPx > 0
+      ? Math.floor(lineHeightPx)
+      : inferredLineHeight
+  const bandHeight = Math.min(height, Math.max(lineHeight, lines * lineHeight))
+
+  return {
+    x: 0,
+    y: position === "bottom" ? height - bandHeight : 0,
+    w: width,
+    h: bandHeight,
   }
 }
 
@@ -183,7 +236,12 @@ export class CaptionsController {
           const newProfile = getProfileForModel(getModelName(this.session))
           if (newProfile.id !== this.currentProfile.id) {
             this.updateProfile(newProfile)
+          } else {
+            // Canvas dimensions/positioning support can change independently
+            // of the formatter profile (for example after a reconnect).
+            this.refreshDisplay()
           }
+          this.broadcastDisplayCapabilities()
         }),
       )
     } catch {
@@ -270,6 +328,11 @@ export class CaptionsController {
       }),
     )
     this.unsubs.push(
+      this.ui.on("captions:set-caption-position", ({position}) => {
+        void this.setCaptionPosition(position)
+      }),
+    )
+    this.unsubs.push(
       this.ui.on("captions:set-word-breaking", ({enabled}) => {
         void this.setWordBreaking(enabled)
       }),
@@ -292,6 +355,7 @@ export class CaptionsController {
       transcripts: this.publicTranscripts(),
       displayPreview: this.lastDisplayPreview,
       cloudStatus: {...this.cloudStatus},
+      displayCapabilities: this.getDisplayCapabilities(),
     }
     this.ui.send("captions:snapshot", snapshot)
   }
@@ -302,15 +366,17 @@ export class CaptionsController {
 
   private async loadSettings(): Promise<void> {
     try {
-      const [language, hintsRaw, useOfflineSttRaw, linesRaw, widthRaw, wbRaw, timeoutRaw] = await Promise.all([
-        this.session.storage.get(STORAGE_KEYS.language),
-        this.session.storage.get(STORAGE_KEYS.languageHints),
-        this.session.storage.get(STORAGE_KEYS.useOfflineStt),
-        this.session.storage.get(STORAGE_KEYS.displayLines),
-        this.session.storage.get(STORAGE_KEYS.displayWidth),
-        this.session.storage.get(STORAGE_KEYS.wordBreaking),
-        this.session.storage.get(STORAGE_KEYS.captionTimeoutSeconds),
-      ])
+      const [language, hintsRaw, useOfflineSttRaw, linesRaw, widthRaw, positionRaw, wbRaw, timeoutRaw] =
+        await Promise.all([
+          this.session.storage.get(STORAGE_KEYS.language),
+          this.session.storage.get(STORAGE_KEYS.languageHints),
+          this.session.storage.get(STORAGE_KEYS.useOfflineStt),
+          this.session.storage.get(STORAGE_KEYS.displayLines),
+          this.session.storage.get(STORAGE_KEYS.displayWidth),
+          this.session.storage.get(STORAGE_KEYS.captionPosition),
+          this.session.storage.get(STORAGE_KEYS.wordBreaking),
+          this.session.storage.get(STORAGE_KEYS.captionTimeoutSeconds),
+        ])
 
       this.settings.language = language || "auto"
 
@@ -339,6 +405,8 @@ export class CaptionsController {
         if (isNaN(p) || p < 0 || p > 2) return 1
         return p
       })()
+
+      this.settings.captionPosition = positionRaw === "bottom" ? "bottom" : "top"
 
       this.settings.wordBreaking = wbRaw == null ? DEFAULT_SETTINGS.wordBreaking : wbRaw === "true"
 
@@ -391,6 +459,14 @@ export class CaptionsController {
     this.broadcastSettings()
   }
 
+  private async setCaptionPosition(position: CaptionPosition): Promise<void> {
+    if (position !== "top" && position !== "bottom") return
+    this.settings.captionPosition = position
+    await this.persist(STORAGE_KEYS.captionPosition, position)
+    this.refreshDisplay()
+    this.broadcastSettings()
+  }
+
   private async setWordBreaking(enabled: boolean): Promise<void> {
     this.settings.wordBreaking = enabled
     await this.persist(STORAGE_KEYS.wordBreaking, enabled.toString())
@@ -418,6 +494,14 @@ export class CaptionsController {
 
   private broadcastSettings(): void {
     this.ui.send("captions:settings-update", {...this.settings})
+  }
+
+  private getDisplayCapabilities(): CaptionsDisplayCapabilities {
+    return {canPosition: this.session.capabilities?.display?.canPosition === true}
+  }
+
+  private broadcastDisplayCapabilities(): void {
+    this.ui.send("captions:display-capabilities", this.getDisplayCapabilities())
   }
 
   // ───────────────────────────────────────────────────────────────────────
@@ -726,15 +810,22 @@ export class CaptionsController {
   }
 
   private showTextWall(text: string): void {
-    // One full-canvas text element with a stable id: successive captions update
-    // it in place on the glasses (no flicker). Box coordinates are raw device
-    // px — read from capabilities, falling back to the largest canvas (the host
-    // clamps to the real one). render() never throws; it resolves {status:
-    // "blocked"} instead.
+    // One stable scene element: successive captions update in place without
+    // flicker. Positioning displays get a fixed-height band so new transcript
+    // lines never make the content jump vertically. Legacy displays retain the
+    // full-canvas text wall and degrade host-side as before.
     const d = this.session.capabilities?.display
-    void this.session.display.render([
-      {type: "text", id: "caption", box: {x: 0, y: 0, w: d?.width ?? 576, h: d?.height ?? 288}, text},
-    ])
+    const maxTextLines = typeof d?.maxTextLines === "number" ? d.maxTextLines : undefined
+    const box = calculateCaptionBox({
+      canvasWidth: d?.width ?? 576,
+      canvasHeight: d?.height ?? 288,
+      canPosition: d?.canPosition === true,
+      position: this.settings.captionPosition,
+      lineCount: this.currentMaxLines,
+      maxTextLines,
+      lineHeightPx: this.currentProfile.lineHeightPx,
+    })
+    void this.session.display.render([{type: "text", id: "caption", box, text}])
   }
 
   private cleanTranscriptText(text: string): string {

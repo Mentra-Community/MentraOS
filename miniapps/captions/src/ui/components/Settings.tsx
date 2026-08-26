@@ -1,35 +1,44 @@
 import {useState, useEffect} from "react"
 
-import {CAPTION_TIMEOUT_OPTIONS_SECONDS, DEFAULT_CAPTION_TIMEOUT_SECONDS} from "../../shared/types"
+import {
+  CAPTION_TIMEOUT_OPTIONS_SECONDS,
+  DEFAULT_CAPTION_TIMEOUT_SECONDS,
+  type CaptionPosition,
+} from "../../shared/types"
 import type {CaptionSettings} from "../hooks/useSettings"
 import {DisplayPreview} from "../hooks/useTranscripts"
 
 interface SettingsProps {
   settings: CaptionSettings | null
+  canPosition: boolean
   displayPreview: DisplayPreview | null
   accentColor?: string
   accentForeground?: string
   onUpdateUseOfflineStt: (enabled: boolean) => Promise<boolean>
   onUpdateDisplayLines: (lines: number) => Promise<boolean>
   onUpdateDisplayWidth: (width: number) => Promise<boolean>
+  onUpdateCaptionPosition: (position: CaptionPosition) => Promise<boolean>
   onUpdateWordBreaking: (enabled: boolean) => Promise<boolean>
   onUpdateCaptionTimeoutSeconds: (seconds: number) => Promise<boolean>
 }
 
 export function Settings({
   settings,
+  canPosition,
   displayPreview,
   accentColor = "#6DAEA6",
   accentForeground = "#FFFFFF",
   onUpdateUseOfflineStt,
   onUpdateDisplayLines,
   onUpdateDisplayWidth,
+  onUpdateCaptionPosition,
   onUpdateWordBreaking,
   onUpdateCaptionTimeoutSeconds,
 }: SettingsProps) {
   const [useOfflineStt, setUseOfflineStt] = useState(settings?.useOfflineStt ?? false)
   const [displayLines, setDisplayLines] = useState(settings?.displayLines || 3)
   const [displayWidth, setDisplayWidth] = useState(settings?.displayWidth || 1)
+  const [captionPosition, setCaptionPosition] = useState<CaptionPosition>(settings?.captionPosition || "top")
   const [wordBreaking, setWordBreaking] = useState(settings?.wordBreaking ?? false)
   const [captionTimeoutSeconds, setCaptionTimeoutSeconds] = useState(
     settings?.captionTimeoutSeconds ?? DEFAULT_CAPTION_TIMEOUT_SECONDS,
@@ -41,6 +50,7 @@ export function Settings({
       setUseOfflineStt(settings.useOfflineStt)
       setDisplayLines(settings.displayLines)
       setDisplayWidth(settings.displayWidth)
+      setCaptionPosition(settings.captionPosition)
       setWordBreaking(settings.wordBreaking)
       setCaptionTimeoutSeconds(settings.captionTimeoutSeconds)
     }
@@ -69,6 +79,14 @@ export function Settings({
     if (!success) {
       // Revert on failure
       setDisplayWidth(settings?.displayWidth || 1)
+    }
+  }
+
+  const handleCaptionPositionChange = async (position: CaptionPosition) => {
+    setCaptionPosition(position)
+    const success = await onUpdateCaptionPosition(position)
+    if (!success) {
+      setCaptionPosition(settings?.captionPosition || "top")
     }
   }
 
@@ -102,7 +120,10 @@ export function Settings({
       {/* Preview Section */}
       <div className="space-y-3">
         <h3 className="text-base font-semibold text-gray-900 dark:text-zinc-50 font-['Red_Hat_Display']">Preview</h3>
-        <div className="p-4 bg-white dark:bg-zinc-900 rounded-2xl shadow-sm border border-gray-100 dark:border-zinc-800 min-h-[100px] overflow-x-auto">
+        <div
+          className={`p-4 bg-white dark:bg-zinc-900 rounded-2xl shadow-sm border border-gray-100 dark:border-zinc-800 h-[180px] overflow-x-auto overflow-y-hidden flex flex-col ${
+            captionPosition === "bottom" && canPosition ? "justify-end" : "justify-start"
+          }`}>
           {displayPreview?.text ? (
             <div className="space-y-0.5">
               {displayPreview.lines.map((line, i) => (
@@ -249,6 +270,57 @@ export function Settings({
 
           {/* Divider */}
           <div className="h-px bg-gray-100 dark:bg-zinc-800 w-full" />
+
+          {/* Caption Position */}
+          {canPosition && (
+            <>
+              <div className="space-y-3">
+                <div className="flex items-center gap-3">
+                  <svg
+                    width="24"
+                    height="24"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    className="text-gray-900 dark:text-zinc-50">
+                    <path d="M8 6h8" />
+                    <path d="M12 3v6" />
+                    <path d="M8 18h8" />
+                    <path d="M12 15v6" />
+                  </svg>
+                  <div>
+                    <span className="text-base font-medium text-gray-900 dark:text-zinc-50 font-['Red_Hat_Display']">
+                      Caption position
+                    </span>
+                    <p className="text-sm text-gray-500 dark:text-zinc-400 font-['Red_Hat_Display']">
+                      Place captions at the top or bottom of the display
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  {(["top", "bottom"] as const).map((position) => (
+                    <button
+                      key={position}
+                      onClick={() => handleCaptionPositionChange(position)}
+                      className={`py-3 rounded-xl text-base font-medium capitalize font-['Red_Hat_Display'] transition-colors ${
+                        captionPosition === position
+                          ? "shadow-sm"
+                          : "bg-gray-50 dark:bg-zinc-800 text-gray-900 dark:text-zinc-50 hover:bg-gray-100 dark:hover:bg-zinc-700"
+                      }`}
+                      style={
+                        captionPosition === position ? {backgroundColor: accentColor, color: accentForeground} : {}
+                      }>
+                      {position}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="h-px bg-gray-100 dark:bg-zinc-800 w-full" />
+            </>
+          )}
 
           {/* Caption Timeout */}
           <div className="space-y-3">
