@@ -1076,7 +1076,7 @@ describe("miniapp release lifecycle", () => {
     ).rejects.toMatchObject({ code: "beta_invitation_required", status: 403 });
     await expect(catalog.getBundleAsset(betaBundleAssetId, storeUser)).rejects.toMatchObject({ status: 404 });
 
-    const invitation = await miniappBetas.invite(developer, packageName, "tester@example.com");
+    let invitation = await miniappBetas.invite(developer, packageName, "tester@example.com");
     const invited = await catalog.get(packageName, "https://core.example.test", storeUser);
     expect(invited).toMatchObject({ betaAccess: "invited", availableTracks: ["stable", "beta"] });
     const selected = await catalog.setReleaseTrack(packageName, "beta", storeUser, "https://core.example.test");
@@ -1087,17 +1087,28 @@ describe("miniapp release lifecycle", () => {
     const { MiniAppBetaService: RemappedMiniAppBetaService } = await import(
       "../packages/core/src/services/miniapps/miniapp-beta.service"
     );
-    const remappedBetas = new RemappedMiniAppBetaService(async () => "mu_store_reassigned");
-    expect((await remappedBetas.invite(developer, packageName, "tester@example.com")).state).toBe("pending");
+    const conflictingInvitation = await miniappBetas.invite(developer, packageName, "other@example.com");
+    const remappedBetas = new RemappedMiniAppBetaService(async () => "mu_store_other");
+    const mergedInvitation = await remappedBetas.invite(developer, packageName, "tester@example.com");
+    expect(mergedInvitation).toMatchObject({ id: conflictingInvitation.id, state: "pending" });
+    expect(
+      await MiniAppBetaInvitationModel.countDocuments({
+        miniAppId: (await MiniAppModel.findOne({ packageName }))?._id.toString(),
+      }),
+    ).toBe(1);
+    expect(
+      await MiniAppTrackEnrollmentModel.exists({ mentraUserId: storeUser.mentraUserId, packageName }),
+    ).toBeNull();
     await expect(catalog.getBundleAsset(betaBundleAssetId, storeUser)).rejects.toMatchObject({ status: 404 });
     expect(
       await catalog.get(packageName, "https://core.example.test", {
-        mentraUserId: "mu_store_reassigned",
+        mentraUserId: "mu_store_other",
         tenantId: "mentra",
       }),
     ).toMatchObject({ selectedTrack: "stable", betaAccess: "invited" });
 
-    expect((await miniappBetas.invite(developer, packageName, "tester@example.com")).state).toBe("pending");
+    invitation = await miniappBetas.invite(developer, packageName, "tester@example.com");
+    expect(invitation.state).toBe("pending");
     await catalog.setReleaseTrack(packageName, "beta", storeUser, "https://core.example.test");
     expect((await catalog.getBundleAsset(betaBundleAssetId, storeUser))._id.toString()).toBe(betaBundleAssetId);
     await expect(miniappBetas.invite(developer, packageName, "missing@example.com")).rejects.toMatchObject({

@@ -92,37 +92,66 @@ export class MiniAppBetaService {
       miniAppId: app._id.toString(),
       $or: [{ email: normalizedEmail }, { mentraUserId }],
     };
-    const now = new Date();
-    const preservesAcceptedIdentity = {
-      $and: [
-        { $eq: ["$status", "accepted"] },
-        { $eq: ["$mentraUserId", { $literal: common.mentraUserId }] },
-      ],
-    };
-    const invitation = await MiniAppBetaInvitationModel.findOneAndUpdate(
-      selector,
-      [
-        {
-          $set: {
-            invitationId: { $ifNull: ["$invitationId", `binv_${ulid()}`] },
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const matches = await MiniAppBetaInvitationModel.find(selector).select("_id email mentraUserId").lean();
+      const emailMatch = matches.find(invitation => invitation.email === normalizedEmail);
+      const identityMatch = matches.find(invitation => invitation.mentraUserId === mentraUserId);
+      if (emailMatch && identityMatch && emailMatch._id.toString() !== identityMatch._id.toString()) {
+        const removed = await MiniAppBetaInvitationModel.deleteOne({
+          _id: emailMatch._id,
+          email: normalizedEmail,
+          mentraUserId: emailMatch.mentraUserId,
+        });
+        if (removed.deletedCount === 1 && app.betaAccessMode !== "public") {
+          await MiniAppTrackEnrollmentModel.deleteOne({
             miniAppId: app._id.toString(),
-            orgId: { $literal: common.orgId },
-            packageName: { $literal: common.packageName },
-            email: { $literal: common.email },
-            mentraUserId: { $literal: common.mentraUserId },
-            invitedByUserId: { $literal: common.invitedByUserId },
-            expiresAt: common.expiresAt,
-            status: { $cond: [preservesAcceptedIdentity, "accepted", "pending"] },
-            acceptedAt: { $cond: [preservesAcceptedIdentity, "$acceptedAt", null] },
-            createdAt: { $ifNull: ["$createdAt", now] },
-            updatedAt: now,
-          },
-        },
-      ],
-      { new: true, upsert: true },
+            mentraUserId: emailMatch.mentraUserId,
+          });
+        }
+        continue;
+      }
+
+      const now = new Date();
+      const preservesAcceptedIdentity = {
+        $and: [
+          { $eq: ["$status", "accepted"] },
+          { $eq: ["$mentraUserId", { $literal: common.mentraUserId }] },
+        ],
+      };
+      try {
+        const invitation = await MiniAppBetaInvitationModel.findOneAndUpdate(
+          selector,
+          [
+            {
+              $set: {
+                invitationId: { $ifNull: ["$invitationId", `binv_${ulid()}`] },
+                miniAppId: app._id.toString(),
+                orgId: { $literal: common.orgId },
+                packageName: { $literal: common.packageName },
+                email: { $literal: common.email },
+                mentraUserId: { $literal: common.mentraUserId },
+                invitedByUserId: { $literal: common.invitedByUserId },
+                expiresAt: common.expiresAt,
+                status: { $cond: [preservesAcceptedIdentity, "accepted", "pending"] },
+                acceptedAt: { $cond: [preservesAcceptedIdentity, "$acceptedAt", null] },
+                createdAt: { $ifNull: ["$createdAt", now] },
+                updatedAt: now,
+              },
+            },
+          ],
+          { new: true, upsert: true },
+        );
+        if (!invitation) throw new MiniAppBetaServiceError("invite_failed", "Could not create beta invitation", 500);
+        return serializeInvitation(invitation.toObject());
+      } catch (error) {
+        if (!isDuplicateKeyError(error)) throw error;
+      }
+    }
+    throw new MiniAppBetaServiceError(
+      "invite_conflict",
+      "Beta invitation identity changed concurrently; retry the invitation",
+      409,
     );
-    if (!invitation) throw new MiniAppBetaServiceError("invite_failed", "Could not create beta invitation", 500);
-    return serializeInvitation(invitation.toObject());
   }
 
   async revoke(developer: DeveloperIdentity, packageName: string, invitationId: string) {
@@ -180,4 +209,8 @@ function serializeInvitation(row: {
     createdAt: row.createdAt?.toISOString() ?? null,
     updatedAt: row.updatedAt?.toISOString() ?? null,
   };
+}
+
+function isDuplicateKeyError(error: unknown): error is { code: number } {
+  return typeof error === "object" && error !== null && "code" in error && error.code === 11000;
 }
