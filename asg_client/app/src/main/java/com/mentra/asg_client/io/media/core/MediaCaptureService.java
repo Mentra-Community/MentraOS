@@ -6,10 +6,8 @@ import android.net.NetworkCapabilities;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
-
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
-
 import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.audio.AudioAssets;
 import com.mentra.asg_client.camera.CameraNeoService;
@@ -19,7 +17,6 @@ import com.mentra.asg_client.camera.lifecycle.PhotoExifMetadataWriter;
 import com.mentra.asg_client.camera.model.CameraOperationError;
 import com.mentra.asg_client.camera.model.CapturedPhoto;
 import com.mentra.asg_client.camera.model.PhotoCaptureSettings;
-import com.mentra.asg_client.camera.model.QueuedPhotoRequestQueue;
 import com.mentra.asg_client.camera.policy.PhotoMode;
 import com.mentra.asg_client.camera.policy.PhotoSizeTier;
 import com.mentra.asg_client.io.file.core.FileManager;
@@ -44,16 +41,6 @@ import com.mentra.asg_client.settings.VideoSettings;
 import com.mentra.asg_client.utils.CaptureRequestId;
 import com.mentra.asg_client.utils.GalleryStatusHelper;
 import com.mentra.asg_client.utils.GallerySyncFilter;
-
-import okhttp3.MultipartBody;
-import okhttp3.OkHttpClient;
-import okhttp3.Request;
-import okhttp3.RequestBody;
-import okhttp3.Response;
-
-import org.json.JSONException;
-import org.json.JSONObject;
-
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -74,6 +61,13 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import okhttp3.MultipartBody;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.RequestBody;
+import okhttp3.Response;
+import org.json.JSONException;
+import org.json.JSONObject;
 
 /**
  * Service that handles media capturing (photo and video) and uploading functionality. Replaces
@@ -691,6 +685,7 @@ public class MediaCaptureService {
                         t.setDaemon(true);
                         return t;
                     });
+
     private final ConcurrentHashMap<String, VideoThumbnailTask> videoThumbnailTasks =
             new ConcurrentHashMap<>();
     private final Object videoThumbnailLifecycleLock = new Object();
@@ -712,9 +707,25 @@ public class MediaCaptureService {
     // slow webhook upload on flaky WiFi so we don't prematurely free the flag while the upload
     // is still grinding. Force-resets isPhotoJobInFlight if no terminal callback fires.
     private static final long CAPTURE_SAFETY_TIMEOUT_MS = 45000; // 45 seconds
-    private final Object captureSafetyTimeoutLock = new Object();
-    private Runnable captureSafetyTimeout;
-    private String captureSafetyTimeoutRequestId;
+    private static final String JOB_TIMEOUT_KEY_PREFIX = "job:";
+    private final CaptureWatchdog safetyWatchdog =
+            new CaptureWatchdog(
+                    new CaptureWatchdog.Scheduler() {
+                        @Override
+                        public void postDelayed(Runnable task, long delayMs) {
+                            mainHandler.postDelayed(task, delayMs);
+                        }
+
+                        @Override
+                        public void cancel(Runnable task) {
+                            mainHandler.removeCallbacks(task);
+                        }
+                    });
+    private final CaptureBusyGate captureBusyGate =
+            new CaptureBusyGate(
+                    new CaptureBusyTracker(),
+                    safetyWatchdog,
+                    AsgConstants.CAPTURE_PHASE_SAFETY_TIMEOUT_MS);
 
     // Per-request timing instrumentation (gated by AsgConstants.ENABLE_PHOTO_TIMING_LOGS)
     private final Map<String, Map<String, Long>> photoTimings = new ConcurrentHashMap<>();
@@ -1502,19 +1513,19 @@ public class MediaCaptureService {
                                                                         Log.w(
                                                                                 TAG,
                                                                                 "Could not delete"
-                                                                                    + " failed"
-                                                                                    + " video file:"
-                                                                                    + " "
+                                                                                        + " failed"
+                                                                                        + " video file:"
+                                                                                        + " "
                                                                                         + filePath);
                                                                     }
                                                                 } else {
                                                                     Log.w(
                                                                             TAG,
                                                                             "Skipping failed video"
-                                                                                + " deletion"
-                                                                                + " because cleanup"
-                                                                                + " is in"
-                                                                                + " progress");
+                                                                                    + " deletion"
+                                                                                    + " because cleanup"
+                                                                                    + " is in"
+                                                                                    + " progress");
                                                                 }
                                                                 if (mMediaCaptureListener != null) {
                                                                     mMediaCaptureListener
@@ -1522,20 +1533,20 @@ public class MediaCaptureService {
                                                                                     pendingRequestId,
                                                                                     cleaningUp
                                                                                             ? "Video"
-                                                                                                  + " integrity"
-                                                                                                  + " check"
-                                                                                                  + " aborted"
-                                                                                                  + " during"
-                                                                                                  + " cleanup;"
-                                                                                                  + " file"
-                                                                                                  + " preserved"
+                                                                                                    + " integrity"
+                                                                                                    + " check"
+                                                                                                    + " aborted"
+                                                                                                    + " during"
+                                                                                                    + " cleanup;"
+                                                                                                    + " file"
+                                                                                                    + " preserved"
                                                                                             : "Video"
-                                                                                                  + " file"
-                                                                                                  + " failed"
-                                                                                                  + " integrity"
-                                                                                                  + " check"
-                                                                                                  + " and was"
-                                                                                                  + " removed",
+                                                                                                    + " file"
+                                                                                                    + " failed"
+                                                                                                    + " integrity"
+                                                                                                    + " check"
+                                                                                                    + " and was"
+                                                                                                    + " removed",
                                                                                     MediaUploadQueueManager
                                                                                             .MEDIA_TYPE_VIDEO);
                                                                 }
@@ -2009,8 +2020,8 @@ public class MediaCaptureService {
             return;
         }
 
-        // Note: No isCapturingPhoto guard here — button photos enqueue into QueuedPhotoRequestQueue
-        // so rapid presses serialize through CameraNeoService burst reuse (not CAMERA_BUSY).
+        // Occupancy is tracked by CaptureBusyGate for the camera-holding phase only. Button
+        // presses drop while this is set; SDK take_photo still uses the separate job lock.
 
         // Add milliseconds and a random component to ensure uniqueness even in rapid capture
         String timeStamp =
@@ -2085,8 +2096,7 @@ public class MediaCaptureService {
             if (effectiveSound) {
                 // Button photo: isFromSdk=false, auto exposure (null) — matches the
                 // enqueuePhotoRequest call below so the warm/cold prediction lines up.
-                feedbackToken =
-                        startPhotoFeedback(requestId, size, false, null, captureSettings);
+                feedbackToken = startPhotoFeedback(requestId, size, false, null, captureSettings);
             }
             if (enableFlash) {
                 flashPrivacyLedForPhoto(); // Flash privacy LED
@@ -2108,145 +2118,157 @@ public class MediaCaptureService {
         // TESTING: Add fake delay for camera capture
         PhotoCaptureTestHooks.addFakeDelay("CAMERA_CAPTURE");
 
+        if (!captureBusyGate.begin(requestId)) {
+            photoFeedbackController.stopForFailure(captureFeedbackToken);
+            Log.w(
+                    TAG,
+                    "Local capture rejected - another capture is in flight requestId=" + requestId);
+            sendPhotoStatus(
+                    requestId, "failed", null, "CAMERA_BUSY", "Another capture is in progress");
+            return;
+        }
+
         // Use the new enqueuePhotoRequest for thread-safe rapid capture
         // isFromSdk=false because this is a button-triggered photo (local storage, high quality)
         try {
             CameraNeoService.enqueuePhotoRequest(
-                mContext,
-                photoFilePath,
-                size,
-                enableFlash,
-                false, // isFromSdk - button photo, use high quality resolution
-                null, // exposureTimeNs — auto exposure for button photos
-                null,
-                captureSettings,
-                new CameraNeoService.PhotoCaptureCallback() {
-                    @Override
-                    public void onPhotoConfigured(JSONObject resolvedConfig) {
-                        sendPhotoStatus(
-                                requestId,
-                                "configuring",
-                                addPhotoTransferDetails(
-                                        resolvedConfig, true, "local", effectiveCompress),
-                                null,
-                                null);
-                    }
-
-                    @Override
-                    public void onPhotoCapturing(
-                            JSONObject requestedCaptureConfig, JSONObject meteredPreview) {
-                        sendPhotoStatus(
-                                requestId,
-                                "capturing",
-                                null,
-                                null,
-                                null,
-                                requestedCaptureConfig,
-                                meteredPreview,
-                                null);
-                    }
-
-                    @Override
-                    public void onPhotoExposureStarted(
-                            long sensorTimestampNs, long estimatedExposureDurationNs) {
-                        photoLightController.onCaptureBoundary(
-                                captureLightToken,
-                                "sensor exposure",
-                                estimatedExposureDurationNs);
-                        photoFeedbackController.onExposureStarted(
-                                captureFeedbackToken,
-                                sensorTimestampNs,
-                                estimatedExposureDurationNs);
-                    }
-
-                    @Override
-                    public void onPhotoFrameAvailable(long sensorTimestampNs) {
-                        photoLightController.onCaptureBoundary(
-                                captureLightToken, "JPEG frame fallback");
-                        photoFeedbackController.playSnap(
-                                captureFeedbackToken, "JPEG frame available");
-                    }
-
-                    @Override
-                    public void onPhotoCaptured(String filePath) {
-                        onPhotoCaptured(filePath, null);
-                    }
-
-                    @Override
-                    public void onPhotoCaptured(String filePath, JSONObject captureMetadata) {
-                        photoLightController.onCaptureBoundary(
-                                captureLightToken, "photo completion fallback");
-                        photoFeedbackController.playSnap(
-                                captureFeedbackToken, "photo completion fallback");
-
-                        // Calculate end-to-end timing from request to capture
-                        long totalElapsedMs = System.currentTimeMillis() - requestStartTimeMs;
-                        if (AsgConstants.ENABLE_PHOTO_TIMING_LOGS) {
-                            Log.i(
-                                    TAG,
-                                    "⏱️ [TIMING] LOCAL Photo CAPTURED in " + totalElapsedMs + "ms");
-                        }
-
-                        Log.d(TAG, "Local photo captured successfully at: " + filePath);
-                        sendPhotoStatus(
-                                requestId,
-                                "captured",
-                                null,
-                                null,
-                                null,
-                                null,
-                                null,
-                                captureMetadata);
-
-                        // LED is now managed by CameraNeoService and will turn off when camera
-                        // closes
-
-                        // Notify through standard capture listener if set up
-                        if (mMediaCaptureListener != null) {
-                            mMediaCaptureListener.onPhotoCaptured(requestId, filePath);
-                            mMediaCaptureListener.onPhotoUploading(requestId);
-                        }
-
-                        // Send gallery status update to phone after photo capture
-                        sendGalleryStatusUpdate();
-                    }
-
-                    @Override
-                    public void onPhotoFailureDetected() {
-                        photoFeedbackController.stopForFailure(captureFeedbackToken);
-                    }
-
-                    @Override
-                    public void onPhotoError(String errorMessage) {
-                        onPhotoError(CameraOperationError.captureFailed(errorMessage));
-                    }
-
-                    @Override
-                    public void onPhotoError(CameraOperationError error) {
-                        photoFeedbackController.stopForFailure(captureFeedbackToken);
-                        Log.e(TAG, "Failed to capture offline photo: " + error.message());
-                        sendPhotoStatus(requestId, "failed", null, error.code(), error.message());
-
-                        // LED is now managed by CameraNeoService and will turn off when camera
-                        // closes
-
-                        if (mMediaCaptureListener != null) {
-                            mMediaCaptureListener.onMediaError(
+                    mContext,
+                    photoFilePath,
+                    size,
+                    enableFlash,
+                    false, // isFromSdk - button photo, use high quality resolution
+                    null, // exposureTimeNs — auto exposure for button photos
+                    null,
+                    captureSettings,
+                    new CameraNeoService.PhotoCaptureCallback() {
+                        @Override
+                        public void onPhotoConfigured(JSONObject resolvedConfig) {
+                            sendPhotoStatus(
                                     requestId,
-                                    error.message(),
-                                    MediaUploadQueueManager.MEDIA_TYPE_PHOTO);
+                                    "configuring",
+                                    addPhotoTransferDetails(
+                                            resolvedConfig, true, "local", effectiveCompress),
+                                    null,
+                                    null);
                         }
-                    }
-                });
+
+                        @Override
+                        public void onPhotoCapturing(
+                                JSONObject requestedCaptureConfig, JSONObject meteredPreview) {
+                            sendPhotoStatus(
+                                    requestId,
+                                    "capturing",
+                                    null,
+                                    null,
+                                    null,
+                                    requestedCaptureConfig,
+                                    meteredPreview,
+                                    null);
+                        }
+
+                        @Override
+                        public void onPhotoExposureStarted(
+                                long sensorTimestampNs, long estimatedExposureDurationNs) {
+                            photoLightController.onCaptureBoundary(
+                                    captureLightToken,
+                                    "sensor exposure",
+                                    estimatedExposureDurationNs);
+                            photoFeedbackController.onExposureStarted(
+                                    captureFeedbackToken,
+                                    sensorTimestampNs,
+                                    estimatedExposureDurationNs);
+                        }
+
+                        @Override
+                        public void onPhotoFrameAvailable(long sensorTimestampNs) {
+                            photoLightController.onCaptureBoundary(
+                                    captureLightToken, "JPEG frame fallback");
+                            photoFeedbackController.playSnap(
+                                    captureFeedbackToken, "JPEG frame available");
+                        }
+
+                        @Override
+                        public void onPhotoCaptured(String filePath) {
+                            onPhotoCaptured(filePath, null);
+                        }
+
+                        @Override
+                        public void onPhotoCaptured(String filePath, JSONObject captureMetadata) {
+                            captureBusyGate.end(requestId);
+                            photoLightController.onCaptureBoundary(
+                                    captureLightToken, "photo completion fallback");
+                            photoFeedbackController.playSnap(
+                                    captureFeedbackToken, "photo completion fallback");
+
+                            // Calculate end-to-end timing from request to capture
+                            long totalElapsedMs = System.currentTimeMillis() - requestStartTimeMs;
+                            if (AsgConstants.ENABLE_PHOTO_TIMING_LOGS) {
+                                Log.i(
+                                        TAG,
+                                        "⏱️ [TIMING] LOCAL Photo CAPTURED in "
+                                                + totalElapsedMs
+                                                + "ms");
+                            }
+
+                            Log.d(TAG, "Local photo captured successfully at: " + filePath);
+                            sendPhotoStatus(
+                                    requestId,
+                                    "captured",
+                                    null,
+                                    null,
+                                    null,
+                                    null,
+                                    null,
+                                    captureMetadata);
+
+                            // LED is now managed by CameraNeoService and will turn off when camera
+                            // closes
+
+                            // Notify through standard capture listener if set up
+                            if (mMediaCaptureListener != null) {
+                                mMediaCaptureListener.onPhotoCaptured(requestId, filePath);
+                                mMediaCaptureListener.onPhotoUploading(requestId);
+                            }
+
+                            // Send gallery status update to phone after photo capture
+                            sendGalleryStatusUpdate();
+                        }
+
+                        @Override
+                        public void onPhotoFailureDetected() {
+                            photoFeedbackController.stopForFailure(captureFeedbackToken);
+                        }
+
+                        @Override
+                        public void onPhotoError(String errorMessage) {
+                            onPhotoError(CameraOperationError.captureFailed(errorMessage));
+                        }
+
+                        @Override
+                        public void onPhotoError(CameraOperationError error) {
+                            captureBusyGate.end(requestId);
+                            photoFeedbackController.stopForFailure(captureFeedbackToken);
+                            Log.e(TAG, "Failed to capture offline photo: " + error.message());
+                            sendPhotoStatus(
+                                    requestId, "failed", null, error.code(), error.message());
+
+                            // LED is now managed by CameraNeoService and will turn off when camera
+                            // closes
+
+                            if (mMediaCaptureListener != null) {
+                                mMediaCaptureListener.onMediaError(
+                                        requestId,
+                                        error.message(),
+                                        MediaUploadQueueManager.MEDIA_TYPE_PHOTO);
+                            }
+                        }
+                    });
         } catch (Exception e) {
+            captureBusyGate.end(requestId);
             photoFeedbackController.stopForFailure(captureFeedbackToken);
             Log.e(TAG, "Failed to enqueue button photo", e);
             sendPhotoStatus(
-                    requestId,
-                    "failed",
-                    null,
-                    "CAMERA_ERROR",
-                    "Failed to start photo capture");
+                    requestId, "failed", null, "CAMERA_ERROR", "Failed to start photo capture");
             if (mMediaCaptureListener != null) {
                 mMediaCaptureListener.onMediaError(
                         requestId,
@@ -2258,11 +2280,11 @@ public class MediaCaptureService {
 
     /**
      * Capture a photo that is only saved to the gallery: an SDK take_photo with save=true and no
-     * upload target. Ordinary photos bypass the single-flight photo-job gate and enqueue straight
-     * into the camera queue, exactly like button photos. Text mode remains single-flight through
-     * detection and final persistence so bursts cannot retain an unbounded queue of sensor JPEGs.
-     * The terminal photo_response carries the captureId (the requestId-stamped capture directory
-     * name) for sync-time correlation.
+     * upload target. Ordinary photos skip the full-job photo-job gate but occupy {@link
+     * CaptureBusyGate} for the camera-holding phase so the button cannot start another capture.
+     * Text mode remains single-flight through detection and final persistence so bursts cannot
+     * retain an unbounded queue of sensor JPEGs. The terminal photo_response carries the captureId
+     * (the requestId-stamped capture directory name) for sync-time correlation.
      */
     public boolean takePhotoForLocalSave(
             String photoFilePath,
@@ -2343,17 +2365,27 @@ public class MediaCaptureService {
                 // Local-save SDK photo: isFromSdk=true, matching the enqueue below.
                 feedbackToken =
                         startPhotoFeedback(
-                                requestId,
-                                captureSize,
-                                true,
-                                exposureTimeNs,
-                                captureSettings);
+                                requestId, captureSize, true, exposureTimeNs, captureSettings);
             }
             if (enableFlash) {
                 flashPrivacyLedForPhoto();
             }
         }
         final PhotoFeedbackController.Token captureFeedbackToken = feedbackToken;
+
+        if (!captureBusyGate.begin(requestId)) {
+            photoFeedbackController.stopForFailure(captureFeedbackToken);
+            Log.w(
+                    TAG,
+                    "Local-save capture rejected - another capture is in flight requestId="
+                            + requestId);
+            sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Another capture is in progress");
+            if (textModeRequested) {
+                clearPhotoTracking(requestId);
+                releasePhotoJob(requestId);
+            }
+            return false;
+        }
 
         try {
             CameraNeoService.enqueuePhotoRequest(
@@ -2428,6 +2460,7 @@ public class MediaCaptureService {
                                 String filePath,
                                 JSONObject captureMetadata,
                                 CapturedPhoto capturedPhoto) {
+                            captureBusyGate.end(requestId);
                             photoLightController.onCaptureBoundary(
                                     captureLightToken, "photo completion fallback");
                             photoFeedbackController.playSnap(
@@ -2516,6 +2549,7 @@ public class MediaCaptureService {
 
                         @Override
                         public void onPhotoError(CameraOperationError error) {
+                            captureBusyGate.end(requestId);
                             photoFeedbackController.stopForFailure(captureFeedbackToken);
                             try {
                                 Log.e(
@@ -2539,6 +2573,7 @@ public class MediaCaptureService {
                     });
             return true;
         } catch (Exception e) {
+            captureBusyGate.end(requestId);
             photoFeedbackController.stopForFailure(captureFeedbackToken);
             try {
                 Log.e(TAG, "Error taking local-save photo", e);
@@ -2759,11 +2794,7 @@ public class MediaCaptureService {
                     // call below so the warm/cold prediction lines up.
                     feedbackToken =
                             startPhotoFeedback(
-                                    requestId,
-                                    captureSize,
-                                    true,
-                                    exposureTimeNs,
-                                    captureSettings);
+                                    requestId, captureSize, true, exposureTimeNs, captureSettings);
                 }
                 if (enableFlash) {
                     flashPrivacyLedForPhoto();
@@ -3073,6 +3104,15 @@ public class MediaCaptureService {
         return activePhotoJobRequestId.get() != null;
     }
 
+    /**
+     * Whether a local/button (or local-save) capture currently holds the camera. Ends at JPEG
+     * capture, not after upload or gallery sync. The phone/SDK {@code take_photo} path does not
+     * consult this flag.
+     */
+    public boolean isCaptureInFlight() {
+        return captureBusyGate.isBusy();
+    }
+
     private boolean acquirePhotoJob(String requestId) {
         return activePhotoJobRequestId.compareAndSet(null, requestId);
     }
@@ -3097,50 +3137,36 @@ public class MediaCaptureService {
      * upload.
      */
     private void startCaptureSafetyTimeout(String requestId) {
-        Runnable timeout =
-                new Runnable() {
-                    @Override
-                    public void run() {
-                        if (!activePhotoJobRequestId.compareAndSet(requestId, null)) {
-                            return;
-                        }
-                        synchronized (captureSafetyTimeoutLock) {
-                            if (captureSafetyTimeout == this) {
-                                captureSafetyTimeout = null;
-                                captureSafetyTimeoutRequestId = null;
-                            }
-                        }
-                        photoFeedbackController.stopForTimeout(requestId);
-                        Log.e(
-                                TAG,
-                                "⚠️ SAFETY TIMEOUT: isPhotoJobInFlight force-reset after "
-                                        + CAPTURE_SAFETY_TIMEOUT_MS
-                                        + "ms - no terminal callback fired for "
-                                        + requestId);
-                        dumpTimings(requestId);
-                        clearBlePhotoTimingTracking(requestId);
-                        sendPhotoErrorResponse(
-                                requestId,
-                                "CAPTURE_TIMEOUT",
-                                "Photo job timed out on glasses - no terminal callback fired");
+        safetyWatchdog.arm(
+                jobTimeoutKey(requestId),
+                CAPTURE_SAFETY_TIMEOUT_MS,
+                () -> {
+                    if (!activePhotoJobRequestId.compareAndSet(requestId, null)) {
+                        return;
                     }
-                };
-        synchronized (captureSafetyTimeoutLock) {
-            captureSafetyTimeout = timeout;
-            captureSafetyTimeoutRequestId = requestId;
-        }
-        mainHandler.postDelayed(timeout, CAPTURE_SAFETY_TIMEOUT_MS);
+                    photoFeedbackController.stopForTimeout(requestId);
+                    Log.e(
+                            TAG,
+                            "⚠️ SAFETY TIMEOUT: isPhotoJobInFlight force-reset after "
+                                    + CAPTURE_SAFETY_TIMEOUT_MS
+                                    + "ms - no terminal callback fired for "
+                                    + requestId);
+                    dumpTimings(requestId);
+                    clearBlePhotoTimingTracking(requestId);
+                    sendPhotoErrorResponse(
+                            requestId,
+                            "CAPTURE_TIMEOUT",
+                            "Photo job timed out on glasses - no terminal callback fired");
+                });
     }
 
     /** Cancel the capture safety timeout (called when callback fires normally). */
     private void cancelCaptureSafetyTimeout(String requestId) {
-        synchronized (captureSafetyTimeoutLock) {
-            if (captureSafetyTimeout != null && requestId.equals(captureSafetyTimeoutRequestId)) {
-                mainHandler.removeCallbacks(captureSafetyTimeout);
-                captureSafetyTimeout = null;
-                captureSafetyTimeoutRequestId = null;
-            }
-        }
+        safetyWatchdog.cancel(jobTimeoutKey(requestId));
+    }
+
+    private static String jobTimeoutKey(String requestId) {
+        return JOB_TIMEOUT_KEY_PREFIX + requestId;
     }
 
     /**
@@ -5156,11 +5182,7 @@ public class MediaCaptureService {
                 // enqueuePhotoRequest call below so the warm/cold prediction lines up.
                 feedbackToken =
                         startPhotoFeedback(
-                                requestId,
-                                captureSize,
-                                true,
-                                exposureTimeNs,
-                                captureSettings);
+                                requestId, captureSize, true, exposureTimeNs, captureSettings);
             }
             if (enableFlash) {
                 flashPrivacyLedForPhoto();
@@ -7094,11 +7116,8 @@ public class MediaCaptureService {
             }
             try {
                 if (!videoThumbnailExecutor.awaitTermination(
-                        AsgConstants.VIDEO_THUMBNAIL_SHUTDOWN_TIMEOUT_MS,
-                        TimeUnit.MILLISECONDS)) {
-                    videoThumbnailTasks
-                            .values()
-                            .forEach(VideoThumbnailTask::cancelThumbnailWrite);
+                        AsgConstants.VIDEO_THUMBNAIL_SHUTDOWN_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+                    videoThumbnailTasks.values().forEach(VideoThumbnailTask::cancelThumbnailWrite);
                     videoThumbnailExecutor.shutdownNow();
                 }
             } catch (InterruptedException e) {
