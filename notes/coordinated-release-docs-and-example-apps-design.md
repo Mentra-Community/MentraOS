@@ -197,10 +197,12 @@ The workflow:
 4. updates every example and lockfile to the exact coordinated versions;
 5. embeds the exact release identity and OTA pin where the example runtime
    needs observable release metadata;
-6. opens a version-synchronization pull request against the channel branch;
-7. explicitly dispatches the shared build workflow on the exact candidate SHA;
-8. merges the pull request only when the required checks belong to that same
-   head SHA and the target branch still contains the expected base;
+6. waits for MentraOS to open a version-synchronization pull request against the
+   channel branch;
+7. lets the repository's normal pull-request workflow validate the exact
+   candidate SHA;
+8. waits for MentraOS to merge the pull request only after the protected
+   required checks for that same head SHA pass;
 9. computes the filename, size, media type, and SHA-256 of every artifact;
 10. publishes an immutable Starter Kit source tag and uploads the artifacts to
     the base version's release container;
@@ -249,9 +251,11 @@ releases.
 MentraOS dispatches with a GitHub App installation token scoped to the two
 repositories. A personal access token is not part of the final release
 architecture. The App receives only the permissions needed to dispatch
-workflows and read run state in the Starter Kit. The Starter Kit's own
-`GITHUB_TOKEN` creates and merges its synchronization pull request and publishes
-its tag, release, and assets.
+workflows, read run state, create the synchronization pull request, and merge
+the exact validated head in the Starter Kit. This split is required because the
+organization does not permit a repository `GITHUB_TOKEN` to create or approve
+pull requests. The Starter Kit's own `GITHUB_TOKEN` creates the candidate
+commit and publishes its tag, release, and assets after MentraOS merges the PR.
 
 During bootstrap, the implementation may fall back to the existing scoped SDK
 push credential while `STARTER_KIT_COORDINATOR_TOKEN` is being provisioned. The

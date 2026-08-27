@@ -84,6 +84,10 @@ test("coordinated docs publish only after finalization to the matching channel",
   assert.match(starterKit, /^    needs: \[plan, ota, npm, sdk-native, engine-consumer\]$/m)
   assert.match(starterKit, /coordinated-example-release\.yml/)
   assert.match(starterKit, /starter-kit-release-\$identity\.json/)
+  assert.match(starterKit, /gh pr checks "\$pr_url"[^]*--required --json name,bucket/)
+  assert.match(starterKit, /gh pr merge "\$pr_url"[^]*--match-head-commit "\$candidate_sha"/)
+  assert.match(starterKit, /gh pr view "\$pull_request_url"[^]*--json url,state,headRefOid,baseRefName,mergeCommit/)
+  assert.match(starterKit, /git\/ref\/tags\/sdk-\$identity/)
   assert.match(starterKit, /\.digest <<< "\$asset"/)
   assert.match(jobBlock(coordinator, "finalize"), /needs\.starter-kit\.result == 'success'/)
   assert.match(docs, /^    needs: \[plan, starter-kit, finalize\]$/m)
@@ -103,6 +107,7 @@ test("coordinated docs publish only after finalization to the matching channel",
     /^    needs: \[plan, ota, npm, sdk-native, mobile, engine-consumer, starter-kit, finalize, docs\]$/m,
   )
   assert.match(notify, /STARTER_KIT_RESULT: \$\{\{ needs\.starter-kit\.result \}\}/)
+  assert.match(notify, /STARTER_KIT_RUN_URL: \$\{\{ needs\.starter-kit\.outputs\.run_url \}\}/)
   assert.match(notify, /DOCS_RESULT: \$\{\{ needs\.docs\.result \}\}/)
 })
 

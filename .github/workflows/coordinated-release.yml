@@ -326,13 +326,6 @@ jobs:
               expectedStarterKitHead: $expectedStarterKitHead
             }')
 
-          dispatched_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          gh workflow run coordinated-example-release.yml \
-            --repo "$STARTER_KIT_REPOSITORY" \
-            --ref main \
-            -f "channel=$channel" \
-            -f "payload=$payload"
-
           run_title="Coordinated example $channel $identity"
           run_id=""
           run_url=""
@@ -341,40 +334,132 @@ jobs:
           result_url="https://github.com/$STARTER_KIT_REPOSITORY/releases/download/$container_tag/$result_name"
           mkdir -p starter-kit-result
 
-          for _ in {1..420}; do
-            if [[ -z "$run_id" ]]; then
-              run_json=$(gh run list --repo "$STARTER_KIT_REPOSITORY" \
-                --workflow coordinated-example-release.yml --event workflow_dispatch --limit 30 \
-                --json databaseId,displayTitle,createdAt,status,conclusion,url \
-                --jq ".[] | select(.displayTitle == \"$run_title\" and .createdAt >= \"$dispatched_at\")" \
-                | head -1)
-              if [[ -n "$run_json" ]]; then
-                run_id=$(jq -r .databaseId <<< "$run_json")
-                run_url=$(jq -r .url <<< "$run_json")
+          if ! curl --fail --silent --show-error --location "$result_url" \
+            --output "starter-kit-result/$result_name" 2>/dev/null; then
+            rm -f "starter-kit-result/$result_name"
+            dispatched_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+            gh workflow run coordinated-example-release.yml \
+              --repo "$STARTER_KIT_REPOSITORY" \
+              --ref main \
+              -f "channel=$channel" \
+              -f "payload=$payload"
+
+            candidate_branch="coordinated/$identity"
+            candidate_sha=""
+            for _ in {1..180}; do
+              if [[ -z "$run_id" ]]; then
+                run_json=$(gh run list --repo "$STARTER_KIT_REPOSITORY" \
+                  --workflow coordinated-example-release.yml --event workflow_dispatch --limit 30 \
+                  --json databaseId,displayTitle,createdAt,url \
+                  --jq ".[] | select(.displayTitle == \"$run_title\" and .createdAt >= \"$dispatched_at\")" \
+                  | head -1)
+                if [[ -n "$run_json" ]]; then
+                  run_id=$(jq -r .databaseId <<< "$run_json")
+                  run_url=$(jq -r .url <<< "$run_json")
+                  echo "run_url=$run_url" >> "$GITHUB_OUTPUT"
+                fi
+              fi
+              candidate_sha=$(gh api "repos/$STARTER_KIT_REPOSITORY/branches/$candidate_branch" \
+                --jq .commit.sha 2>/dev/null || true)
+              [[ -n "$run_id" && -n "$candidate_sha" ]] && break
+              if [[ -n "$run_id" ]]; then
+                status=$(gh run view "$run_id" --repo "$STARTER_KIT_REPOSITORY" --json status --jq .status)
+                if [[ "$status" == "completed" ]]; then
+                  conclusion=$(gh run view "$run_id" --repo "$STARTER_KIT_REPOSITORY" --json conclusion --jq .conclusion)
+                  echo "Starter Kit run concluded $conclusion before creating $candidate_branch: $run_url" >&2
+                  exit 1
+                fi
+              fi
+              sleep 10
+            done
+            if [[ -z "$run_id" || -z "$candidate_sha" ]]; then
+              echo "Starter Kit did not create $candidate_branch for $identity within 30 minutes." >&2
+              exit 1
+            fi
+
+            pr_json=$(gh pr list --repo "$STARTER_KIT_REPOSITORY" --state all \
+              --base "$target_branch" --head "$candidate_branch" --limit 1 \
+              --json number,url,state,mergedAt,headRefOid)
+            if [[ "$(jq 'length' <<< "$pr_json")" == "0" ]]; then
+              pr_body=$(printf '%s\n\n%s\n%s\n' \
+                "Automated dependency synchronization for coordinated release \`$identity\`." \
+                "Coordinator: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+                "Starter Kit workflow: $run_url")
+              pr_url=$(gh pr create --repo "$STARTER_KIT_REPOSITORY" \
+                --base "$target_branch" \
+                --head "$candidate_branch" \
+                --title "chore(release): synchronize examples to $identity" \
+                --body "$pr_body")
+            else
+              pr_url=$(jq -r '.[0].url' <<< "$pr_json")
+              merged_at=$(jq -r '.[0].mergedAt // empty' <<< "$pr_json")
+              state=$(jq -r '.[0].state' <<< "$pr_json")
+              if [[ "$state" == "CLOSED" && -z "$merged_at" ]]; then
+                echo "Existing coordinator PR $pr_url was closed without merging." >&2
+                exit 1
               fi
             fi
+            [[ "$(gh pr view "$pr_url" --repo "$STARTER_KIT_REPOSITORY" --json headRefOid --jq .headRefOid)" == "$candidate_sha" ]]
 
-            if curl --fail --silent --show-error --location "$result_url" \
-              --output "starter-kit-result/$result_name" 2>/dev/null; then
-              break
+            if [[ -z "${merged_at:-}" ]]; then
+              checks_ready=false
+              for _ in {1..540}; do
+                checks=$(gh pr checks "$pr_url" --repo "$STARTER_KIT_REPOSITORY" \
+                  --required --json name,bucket 2>/dev/null || true)
+                if [[ -n "$checks" && "$(jq 'length' <<< "$checks")" != "0" ]]; then
+                  if jq -e 'any(.[]; .bucket == "fail" or .bucket == "cancel")' <<< "$checks" >/dev/null; then
+                    jq -r '.[] | "\(.bucket)\t\(.name)"' <<< "$checks" >&2
+                    echo "Required Starter Kit validation failed for $pr_url." >&2
+                    exit 1
+                  fi
+                  if jq -e 'all(.[]; .bucket == "pass" or .bucket == "skipping")' <<< "$checks" >/dev/null; then
+                    checks_ready=true
+                    break
+                  fi
+                fi
+                sleep 10
+              done
+              if [[ "$checks_ready" != "true" ]]; then
+                echo "Required Starter Kit validation did not finish within 90 minutes: $pr_url" >&2
+                exit 1
+              fi
+
+              gh pr merge "$pr_url" --repo "$STARTER_KIT_REPOSITORY" \
+                --merge --match-head-commit "$candidate_sha"
             fi
 
-            if [[ -n "$run_id" ]]; then
+            for _ in {1..90}; do
+              if curl --fail --silent --show-error --location "$result_url" \
+                --output "starter-kit-result/$result_name" 2>/dev/null; then
+                break
+              fi
               status=$(gh run view "$run_id" --repo "$STARTER_KIT_REPOSITORY" --json status --jq .status)
               if [[ "$status" == "completed" ]]; then
                 conclusion=$(gh run view "$run_id" --repo "$STARTER_KIT_REPOSITORY" --json conclusion --jq .conclusion)
                 echo "Starter Kit run concluded $conclusion before publishing $result_name: $run_url" >&2
                 exit 1
               fi
-            fi
-            sleep 20
-          done
+              sleep 10
+            done
+          fi
           result="starter-kit-result/$result_name"
           test -s "$result"
           [[ "$(jq -er .releaseSetId "$result")" == "$release_set_id" ]]
           [[ "$(jq -er .releaseIdentity "$result")" == "$identity" ]]
           [[ "$(jq -er .mentraos.sourceCommit "$result")" == "$source_commit" ]]
-          [[ "$(jq -er .starterKit.baseCommit "$result")" == "$expected_head" ]]
+          jq -er '.starterKit.baseCommit | select(test("^[0-9a-f]{40}$"))' "$result" >/dev/null
+          release_commit=$(jq -er '.starterKit.releaseCommit | select(test("^[0-9a-f]{40}$"))' "$result")
+          merge_commit=$(jq -er '.starterKit.mergeCommit | select(test("^[0-9a-f]{40}$"))' "$result")
+          pull_request_url=$(jq -er .starterKit.pullRequestUrl "$result")
+          [[ "$(jq -er .starterKit.sourceTag "$result")" == "sdk-$identity" ]]
+          pr_provenance=$(gh pr view "$pull_request_url" --repo "$STARTER_KIT_REPOSITORY" \
+            --json url,state,headRefOid,baseRefName,mergeCommit)
+          [[ "$(jq -r .url <<< "$pr_provenance")" == "$pull_request_url" ]]
+          [[ "$(jq -r .state <<< "$pr_provenance")" == "MERGED" ]]
+          [[ "$(jq -r .headRefOid <<< "$pr_provenance")" == "$release_commit" ]]
+          [[ "$(jq -r .baseRefName <<< "$pr_provenance")" == "$target_branch" ]]
+          [[ "$(jq -r .mergeCommit.oid <<< "$pr_provenance")" == "$merge_commit" ]]
+          [[ "$(gh api "repos/$STARTER_KIT_REPOSITORY/git/ref/tags/sdk-$identity" --jq .object.sha)" == "$release_commit" ]]
           [[ "$(jq -er '.artifacts | length' "$result")" == "4" ]]
           if [[ -z "$run_url" ]]; then
             run_url=$(jq -er .starterKit.validationRunUrl "$result")

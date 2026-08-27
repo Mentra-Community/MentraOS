@@ -60,10 +60,11 @@ label() {
 artifact_link() {
   local url="$1"
   local name="$2"
+  local fallback_url="${3:-$run_url}"
   if [[ -n "$url" && -n "$name" ]] && curl --fail --silent --head --location --retry 2 "$url" >/dev/null; then
     printf '<%s|%s>' "$url" "$name"
   else
-    printf '<%s|View run logs>' "$run_url"
+    printf '<%s|View run logs>' "$fallback_url"
   fi
 }
 
@@ -82,7 +83,10 @@ fi
 android_detail=$(artifact_link "$apk_url" "${APK_NAME:-Android APK}")
 ios_detail=$(artifact_link "$ipa_url" "${IPA_NAME:-iOS IPA}")
 asg_detail=$(artifact_link "${ASG_APK_URL:-}" "${ASG_APK_NAME:-ASG APK}")
-starter_detail=$(artifact_link "${STARTER_KIT_APK_URL:-}" "${STARTER_KIT_APK_NAME:-React Native example APK}")
+starter_detail=$(artifact_link \
+  "${STARTER_KIT_APK_URL:-}" \
+  "${STARTER_KIT_APK_NAME:-React Native example APK}" \
+  "${STARTER_KIT_RUN_URL:-$run_url}")
 if [[ -n "${STARTER_KIT_RELEASE_URL:-}" ]]; then
   starter_detail+=" - <${STARTER_KIT_RELEASE_URL}|All example builds>"
 fi
