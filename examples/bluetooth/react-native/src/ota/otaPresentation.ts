@@ -4,10 +4,6 @@ import type {
   MentraLiveOtaStep,
 } from '@mentra/engine/ota';
 
-export type CustomOtaState = Omit<MentraLiveOtaState, 'screen'> & {
-  screen: MentraLiveOtaState['screen'] | 'finishing';
-};
-
 export type CustomOtaAction = Exclude<
   keyof MentraLiveOtaController,
   'state'
@@ -79,7 +75,7 @@ function progressDetail(
 }
 
 export function otaPresentation(
-  state: CustomOtaState,
+  state: MentraLiveOtaState,
   deviceName = 'Mentra Live',
 ): CustomOtaPresentation {
   const {changelogs, releaseTransition} = state;

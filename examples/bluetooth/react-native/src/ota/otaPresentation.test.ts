@@ -1,8 +1,9 @@
 import {describe, expect, test} from 'bun:test';
+import type {MentraLiveOtaState} from '@mentra/engine/ota';
 
-import {otaPresentation, type CustomOtaState} from './otaPresentation';
+import {otaPresentation} from './otaPresentation';
 
-const baseState: CustomOtaState = {
+const baseState: MentraLiveOtaState = {
   canDiscard: false,
   canDismiss: false,
   canFinish: false,
@@ -34,7 +35,7 @@ const baseState: CustomOtaState = {
   wifiStatusKnown: true,
 };
 
-function otaState(overrides: Partial<CustomOtaState>): CustomOtaState {
+function otaState(overrides: Partial<MentraLiveOtaState>): MentraLiveOtaState {
   return {...baseState, ...overrides};
 }
 
