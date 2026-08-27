@@ -4,6 +4,10 @@ import type {
   MentraLiveOtaStep,
 } from '@mentra/engine/ota';
 
+export type CustomOtaState = Omit<MentraLiveOtaState, 'screen'> & {
+  screen: MentraLiveOtaState['screen'] | 'finishing';
+};
+
 export type CustomOtaAction = Exclude<
   keyof MentraLiveOtaController,
   'state'
@@ -54,7 +58,7 @@ function stepLabel(step: MentraLiveOtaStep | null): string {
       return 'software';
   }
 }
-function transportDetail(state: MentraLiveOtaState): string | undefined {
+function transportDetail(state: Pick<MentraLiveOtaState, 'transport'>): string | undefined {
   if (state.transport === 'hotspot') {
     return 'The phone will transfer the verified files over the glasses hotspot.';
   }
@@ -64,7 +68,9 @@ function transportDetail(state: MentraLiveOtaState): string | undefined {
   return undefined;
 }
 
-function progressDetail(state: MentraLiveOtaState): string | undefined {
+function progressDetail(
+  state: Pick<MentraLiveOtaState, 'currentStep' | 'step' | 'totalSteps' | 'transport'>,
+): string | undefined {
   if (state.currentStep !== null && state.totalSteps !== null) {
     return `Step ${state.currentStep} of ${state.totalSteps}: ${stepLabel(state.step)}`;
   }
@@ -73,7 +79,7 @@ function progressDetail(state: MentraLiveOtaState): string | undefined {
 }
 
 export function otaPresentation(
-  state: MentraLiveOtaState,
+  state: CustomOtaState,
   deviceName = 'Mentra Live',
 ): CustomOtaPresentation {
   const {changelogs, releaseTransition} = state;
@@ -112,12 +118,19 @@ export function otaPresentation(
         title: `Checking ${deviceName}`,
         tone: 'active',
       };
+    case 'finishing':
+      return {
+        indeterminate: true,
+        message: 'Checking whether your glasses need any additional updates.',
+        title: 'Finishing your update',
+        tone: 'active',
+      };
     case 'update_available':
       return {
         detail: transportDetail(state),
         message: state.versionChange
-          ? 'This SDK release requires a different glasses software version. Settings may be reset and restored automatically.'
-          : 'A matching software update is ready for your glasses.',
+          ? 'This SDK release requires a different glasses software version. Settings may be reset and restored automatically. The glasses may install more than one update and restart several times.'
+          : 'A matching software update is ready. The glasses may install more than one update and restart several times.',
         primary: {
           action: 'install',
           disabled: !state.canInstall,
@@ -146,8 +159,8 @@ export function otaPresentation(
       return {
         changelogs,
         message: 'The glasses app, system software, and firmware match this SDK release.',
-        primary: {action: 'finish', label: 'Continue'},
-        title: 'Everything is up to date',
+        primary: {action: 'finish', label: releaseTransition ? 'Done' : 'Continue'},
+        title: releaseTransition ? 'Update complete' : 'Everything is up to date',
         tone: 'success',
         versionLabel: completedVersionLabel(releaseTransition),
       };

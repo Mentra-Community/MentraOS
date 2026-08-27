@@ -1,9 +1,8 @@
 import {describe, expect, test} from 'bun:test';
-import type {MentraLiveOtaState} from '@mentra/engine/ota';
 
-import {otaPresentation} from './otaPresentation';
+import {otaPresentation, type CustomOtaState} from './otaPresentation';
 
-const baseState: MentraLiveOtaState = {
+const baseState: CustomOtaState = {
   canDiscard: false,
   canDismiss: false,
   canFinish: false,
@@ -35,7 +34,7 @@ const baseState: MentraLiveOtaState = {
   wifiStatusKnown: true,
 };
 
-function otaState(overrides: Partial<MentraLiveOtaState>): MentraLiveOtaState {
+function otaState(overrides: Partial<CustomOtaState>): CustomOtaState {
   return {...baseState, ...overrides};
 }
 
@@ -56,6 +55,7 @@ describe('custom OTA presentation', () => {
     });
     expect(presentation.secondary).toEqual({action: 'finish', label: 'Later'});
     expect(presentation.detail).toContain('glasses hotspot');
+    expect(presentation.message).toContain('more than one update');
   });
 
   test('shows the current and target coordinated releases before installation', () => {
@@ -152,15 +152,29 @@ describe('custom OTA presentation', () => {
     expect(presentation.secondary).toBeUndefined();
   });
 
-  test('finishes only after Engine reports completion', () => {
+  test('keeps intermediate completion in the active finishing state', () => {
     const presentation = otaPresentation(otaState({
-      canFinish: true,
+      changelogs: [{version: '3.1.0', markdown: 'Release notes'}],
+      screen: 'finishing',
+    }));
+
+    expect(presentation).toMatchObject({
+      indeterminate: true,
+      title: 'Finishing your update',
+      tone: 'active',
+    });
+    expect(presentation.primary).toBeUndefined();
+    expect(presentation.changelogs).toBeUndefined();
+  });
+
+  test('finishes only after Engine reports the final up-to-date state', () => {
+    const presentation = otaPresentation(otaState({
       changelogs: [
         {version: '3.2.0', markdown: 'Newest notes'},
         {version: '3.1.0', markdown: 'Earlier notes'},
       ],
       releaseTransition: {fromVersion: '40', toVersion: '3.2.0'},
-      screen: 'complete',
+      screen: 'up_to_date',
     }));
 
     expect(presentation.primary).toEqual({action: 'finish', label: 'Done'});
@@ -169,6 +183,7 @@ describe('custom OTA presentation', () => {
       '3.1.0',
     ]);
     expect(presentation.tone).toBe('success');
+    expect(presentation.title).toBe('Update complete');
     expect(presentation.versionLabel).toBe('Updated to 3.2.0');
   });
 
