@@ -68,16 +68,26 @@ test("production validates before approval and proves packages before mobile pro
 test("mobile destinations use real TestFlight groups without changing the release channel", () => {
   const coordinator = workflow("coordinated-release.yml")
   const mobile = workflow("reusable-coordinated-mobile.yml")
+  const example = workflow("reusable-coordinated-example-testflight.yml")
 
   assert.match(coordinator, /testflight_group=Mentra Dev/)
   assert.match(coordinator, /testflight_group=Mentra Staging/)
   assert.match(mobile, /MENTRA_COORDINATED_RELEASE_CHANNEL=\$\(jq -er \.channel release-intent\/release-plan\.json\)/)
   assert.doesNotMatch(mobile, /MENTRA_COORDINATED_RELEASE_CHANNEL=\$\{\{ inputs\.testflight_group \}\}/)
+  assert.match(example, /EXAMPLE_APP_ID: "6792839366"/)
+  assert.match(example, /EXAMPLE_BUNDLE_ID: com\.mentra\.bluetoothsdk\.example\.reactnative/)
+  assert.match(example, /starterKit\.releaseCommit/)
+  assert.match(example, /runs-on: \[self-hosted, macOS, ARM64\]/)
+  assert.match(example, /app-store-connect-build\.mjs upload/)
+  assert.match(mobile, /app-store-connect-build\.mjs upload/)
+  assert.match(example, /app-store-connect-build\.mjs assign/)
+  assert.match(example, /destination="\$GITHUB_WORKSPACE\/release-output\/mentra-example-react-native-/)
 })
 
 test("coordinated docs publish only after finalization to the matching channel", () => {
   const coordinator = workflow("coordinated-release.yml")
   const starterKit = jobBlock(coordinator, "starter-kit")
+  const exampleTestflight = jobBlock(coordinator, "example-testflight")
   const docs = jobBlock(coordinator, "docs")
   const notify = jobBlock(coordinator, "notify-slack")
 
@@ -94,7 +104,10 @@ test("coordinated docs publish only after finalization to the matching channel",
   assert.match(starterKit, /gh pr view "\$pull_request_url"[^]*--json url,state,headRefOid,baseRefName,mergeCommit/)
   assert.match(starterKit, /git\/ref\/tags\/sdk-\$identity/)
   assert.match(starterKit, /\.digest <<< "\$asset"/)
+  assert.match(exampleTestflight, /^    needs: \[plan, starter-kit\]$/m)
+  assert.match(exampleTestflight, /reusable-coordinated-example-testflight\.yml/)
   assert.match(jobBlock(coordinator, "finalize"), /needs\.starter-kit\.result == 'success'/)
+  assert.match(jobBlock(coordinator, "finalize"), /needs\.example-testflight\.result == 'success'/)
   assert.match(docs, /^    needs: \[plan, starter-kit, finalize\]$/m)
   assert.match(docs, /needs\.starter-kit\.result == 'success'/)
   assert.match(docs, /needs\.finalize\.result == 'success'/)
@@ -109,9 +122,10 @@ test("coordinated docs publish only after finalization to the matching channel",
   assert.match(docs, /grep --fixed-strings --quiet "\$RELEASE_IDENTITY" "\$body"/)
   assert.match(
     notify,
-    /^    needs: \[plan, ota, npm, sdk-native, mobile, engine-consumer, starter-kit, finalize, docs\]$/m,
+    /^    needs: \[plan, ota, npm, sdk-native, mobile, engine-consumer, starter-kit, example-testflight, finalize, docs\]$/m,
   )
   assert.match(notify, /STARTER_KIT_RESULT: \$\{\{ needs\.starter-kit\.result \}\}/)
+  assert.match(notify, /EXAMPLE_TESTFLIGHT_RESULT: \$\{\{ needs\.example-testflight\.result \}\}/)
   assert.match(notify, /STARTER_KIT_RUN_URL: \$\{\{ needs\.starter-kit\.outputs\.run_url \}\}/)
   assert.match(notify, /DOCS_RESULT: \$\{\{ needs\.docs\.result \}\}/)
 })

@@ -1,0 +1,392 @@
+name: Reusable Coordinated Example TestFlight
+
+on:
+  workflow_call:
+    inputs:
+      source_commit:
+        required: true
+        type: string
+      release_plan_artifact:
+        required: true
+        type: string
+      starter_kit_result_artifact:
+        required: true
+        type: string
+      testflight_group:
+        required: true
+        type: string
+    outputs:
+      result_artifact:
+        value: ${{ jobs.ios.outputs.result_artifact }}
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  CI: true
+  GSTREAMER_VERSION: 1.28.2
+  STARTER_KIT_REPOSITORY: Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit
+  EXAMPLE_APP_ID: "6792839366"
+  EXAMPLE_BUNDLE_ID: com.mentra.bluetoothsdk.example.reactnative
+  APPLE_TEAM_ID: T5XXXL6N36
+
+jobs:
+  ios:
+    name: Publish React Native example to TestFlight
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 90
+    concurrency:
+      group: mentra-ios-signing-runner
+      cancel-in-progress: false
+    outputs:
+      result_artifact: ${{ steps.coordinates.outputs.result_artifact }}
+    steps:
+      - name: Checkout MentraOS release source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_commit }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.release_plan_artifact }}
+          path: release-input/plan
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.starter_kit_result_artifact }}
+          path: release-input/starter-kit
+
+      - name: Resolve exact example release coordinates
+        id: coordinates
+        env:
+          TESTFLIGHT_GROUP: ${{ inputs.testflight_group }}
+        run: |
+          set -euo pipefail
+          plan=release-input/plan/release-plan.json
+          starter=$(find release-input/starter-kit -type f -name 'starter-kit-release-*.json' -print -quit)
+          test -n "$starter"
+          release_set_id=$(jq -er .releaseSetId "$plan")
+          release_identity=$(jq -er .releaseIdentity "$plan")
+          source_commit=$(jq -er .sourceCommit "$plan")
+          [[ "$(jq -er .releaseSetId "$starter")" == "$release_set_id" ]]
+          [[ "$(jq -er .releaseIdentity "$starter")" == "$release_identity" ]]
+          [[ "$(jq -er .mentraos.sourceCommit "$starter")" == "$source_commit" ]]
+          release_commit=$(jq -er '.starterKit.releaseCommit | select(test("^[0-9a-f]{40}$"))' "$starter")
+          expected_group=$(jq -er 'if .channel == "dev" then "Mentra Dev" elif .channel == "beta" then "Mentra Staging" else error("unsupported channel") end' "$plan")
+          [[ "$TESTFLIGHT_GROUP" == "$expected_group" ]]
+          {
+            echo "release_set_id=$release_set_id"
+            echo "release_identity=$release_identity"
+            echo "starter_result=$starter"
+            echo "starter_release_commit=$release_commit"
+            echo "marketing_version=$(jq -er .native.marketingVersion "$plan")"
+            echo "build_number=$(jq -er .native.buildNumber "$plan")"
+            echo "result_artifact=coordinated-example-testflight-$release_set_id"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Inject App Store Connect API credential
+        uses: ./.github/actions/inject-signing
+        with:
+          ios: "true"
+          asc-api-key-p8-b64: ${{ secrets.ASC_API_KEY_P8_B64 }}
+          asc-api-key-id: ${{ secrets.ASC_API_KEY_ID }}
+          asc-api-issuer-id: ${{ secrets.ASC_API_ISSUER_ID }}
+
+      - name: Resolve App Store Connect credential path
+        id: asc
+        run: |
+          set -euo pipefail
+          key_path=$(sed -n 's/^ASC_API_KEY_PATH=//p' "$MENTRA_ASC_CONFIG_PATH")
+          test -f "$key_path"
+          echo "key_path=$key_path" >> "$GITHUB_OUTPUT"
+
+      - name: Check exact App Store Connect build number
+        id: app-store
+        run: >-
+          node mobile/scripts/app-store-connect-build.mjs lookup
+          --issuer-id "${{ secrets.ASC_API_ISSUER_ID }}"
+          --key-id "${{ secrets.ASC_API_KEY_ID }}"
+          --key-path "${{ steps.asc.outputs.key_path }}"
+          --bundle-id "$EXAMPLE_BUNDLE_ID"
+          --marketing-version "${{ steps.coordinates.outputs.marketing_version }}"
+          --build-number "${{ steps.coordinates.outputs.build_number }}"
+
+      - name: Verify the App Store Connect app
+        run: |
+          set -euo pipefail
+          [[ "${{ steps.app-store.outputs.app_id }}" == "$EXAMPLE_APP_ID" ]]
+
+      - name: Checkout the exact validated Starter Kit source
+        if: steps.app-store.outputs.exists != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.STARTER_KIT_REPOSITORY }}
+          ref: ${{ steps.coordinates.outputs.starter_release_commit }}
+          token: ${{ secrets.STARTER_KIT_COORDINATOR_TOKEN || secrets.MENTRA_BLUETOOTH_SDK_IOS_PUSH_TOKEN }}
+          path: starter-kit
+
+      - name: Add runner-managed tools to PATH
+        if: steps.app-store.outputs.exists != 'true'
+        run: |
+          {
+            echo "$HOME/.rbenv/shims"
+            echo "$HOME/.rbenv/bin"
+            echo "$HOME/.bun/bin"
+          } >> "$GITHUB_PATH"
+
+      - uses: oven-sh/setup-bun@v2
+        if: steps.app-store.outputs.exists != 'true'
+        with:
+          bun-version: "1.3.11"
+
+      - name: Install React Native example dependencies
+        if: steps.app-store.outputs.exists != 'true'
+        working-directory: starter-kit/examples/react-native
+        run: bun install --frozen-lockfile
+
+      - name: Install GStreamer iOS SDK
+        if: steps.app-store.outputs.exists != 'true'
+        working-directory: starter-kit/examples/react-native
+        run: bash modules/mentra-video-stream-receiver/scripts/setup-gstreamer-ios.sh
+
+      - name: Generate the React Native iOS project
+        if: steps.app-store.outputs.exists != 'true'
+        working-directory: starter-kit/examples/react-native
+        env:
+          MARKETING_VERSION: ${{ steps.coordinates.outputs.marketing_version }}
+          BUILD_NUMBER: ${{ steps.coordinates.outputs.build_number }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import {readFileSync, writeFileSync} from "node:fs"
+          const file = "app.json"
+          const config = JSON.parse(readFileSync(file, "utf8"))
+          config.expo.version = process.env.MARKETING_VERSION
+          config.expo.ios.buildNumber = process.env.BUILD_NUMBER
+          config.expo.ios.infoPlist.ITSAppUsesNonExemptEncryption = false
+          writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`)
+          NODE
+          bunx expo prebuild --platform ios --clean
+
+      - name: Install the shared Apple distribution identity
+        if: steps.app-store.outputs.exists != 'true'
+        working-directory: mobile
+        env:
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+          RAW_MATCH_GIT_BASIC_AUTHORIZATION: ${{ secrets.MATCH_GIT_BASIC_AUTHORIZATION }}
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.rbenv/shims:$HOME/.rbenv/bin:$PATH"
+          previous_keychains="${RUNNER_TEMP}/mentra-example-previous-keychains-${GITHUB_RUN_ID}.txt"
+          previous_default="${RUNNER_TEMP}/mentra-example-previous-default-keychain-${GITHUB_RUN_ID}.txt"
+          security list-keychains -d user \
+            | sed -E 's/^[[:space:]]*"(.*)"[[:space:]]*$/\1/' \
+            > "$previous_keychains"
+          security default-keychain -d user \
+            | sed -E 's/^[[:space:]]*"(.*)"[[:space:]]*$/\1/' \
+            > "$previous_default"
+          echo "MENTRA_PREVIOUS_KEYCHAINS=$previous_keychains" >> "$GITHUB_ENV"
+          echo "MENTRA_PREVIOUS_DEFAULT_KEYCHAIN=$previous_default" >> "$GITHUB_ENV"
+          MATCH_GIT_BASIC_AUTHORIZATION="$(printf '%s' "$RAW_MATCH_GIT_BASIC_AUTHORIZATION" | tr -d '\r\n')"
+          export MATCH_GIT_BASIC_AUTHORIZATION
+          bundle install
+          keychain="mentra-example-${GITHUB_RUN_ID}.keychain-db"
+          password="$(openssl rand -hex 32)"
+          security delete-keychain "$keychain" 2>/dev/null || true
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          for wwdr in G2 G4 G5 G6; do
+            certificate="${RUNNER_TEMP}/AppleWWDRCA${wwdr}.cer"
+            if curl --fail --silent --show-error --location "https://www.apple.com/certificateauthority/AppleWWDRCA${wwdr}.cer" -o "$certificate"; then
+              security import "$certificate" -k "$keychain" -T /usr/bin/codesign 2>&1 | grep -v "already exists" || true
+            fi
+          done
+          keychains=("$keychain")
+          while IFS= read -r existing; do
+            existing="${existing#*\"}"
+            existing="${existing%\"*}"
+            [[ -n "$existing" && "$existing" != "$keychain" ]] && keychains+=("$existing")
+          done < <(security list-keychains -d user)
+          security list-keychains -d user -s "${keychains[@]}"
+          security default-keychain -s "$keychain"
+          bundle exec fastlane match appstore --readonly --keychain_name "$keychain" --keychain_password "$password"
+          echo "MENTRA_CI_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+          echo "MENTRA_CI_KEYCHAIN_PASSWORD=$password" >> "$GITHUB_ENV"
+
+      - name: Archive and export the signed React Native example
+        if: steps.app-store.outputs.exists != 'true'
+        id: ipa
+        working-directory: starter-kit/examples/react-native
+        env:
+          ASC_KEY_PATH: ${{ steps.asc.outputs.key_path }}
+          ASC_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_API_ISSUER_ID }}
+          MARKETING_VERSION: ${{ steps.coordinates.outputs.marketing_version }}
+          BUILD_NUMBER: ${{ steps.coordinates.outputs.build_number }}
+        run: |
+          set -euo pipefail
+          security unlock-keychain -p "$MENTRA_CI_KEYCHAIN_PASSWORD" "$MENTRA_CI_KEYCHAIN"
+          workspace=$(find ios -maxdepth 1 -name '*.xcworkspace' -print -quit)
+          test -n "$workspace"
+          scheme=$(xcodebuild -workspace "$workspace" -list -json | jq -er '.workspace.schemes[0]')
+          archive="$RUNNER_TEMP/mentra-example-react-native.xcarchive"
+          output="$RUNNER_TEMP/mentra-example-react-native-export"
+          rm -rf "$archive" "$output"
+          xcodebuild \
+            -workspace "$workspace" \
+            -scheme "$scheme" \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$archive" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$ASC_KEY_PATH" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
+            CODE_SIGN_STYLE=Automatic \
+            MARKETING_VERSION="$MARKETING_VERSION" \
+            CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+            archive
+          cat > "$RUNNER_TEMP/mentra-example-export-options.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>teamID</key><string>$APPLE_TEAM_ID</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>destination</key><string>export</string>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+            <key>uploadSymbols</key><true/>
+          </dict></plist>
+          PLIST
+          xcodebuild \
+            -exportArchive \
+            -archivePath "$archive" \
+            -exportPath "$output" \
+            -exportOptionsPlist "$RUNNER_TEMP/mentra-example-export-options.plist" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$ASC_KEY_PATH" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+          ipa=$(find "$output" -maxdepth 1 -name '*.ipa' -print -quit)
+          test -n "$ipa"
+          mkdir -p "$GITHUB_WORKSPACE/release-output"
+          destination="$GITHUB_WORKSPACE/release-output/mentra-example-react-native-${{ steps.coordinates.outputs.release_identity }}.ipa"
+          cp "$ipa" "$destination"
+          echo "path=$destination" >> "$GITHUB_OUTPUT"
+
+      - name: Verify signed IPA identity and entitlements
+        if: steps.app-store.outputs.exists != 'true'
+        env:
+          IPA: ${{ steps.ipa.outputs.path }}
+          EXPECTED_VERSION: ${{ steps.coordinates.outputs.marketing_version }}
+          EXPECTED_BUILD: ${{ steps.coordinates.outputs.build_number }}
+        run: |
+          set -euo pipefail
+          app_dir="$RUNNER_TEMP/mentra-example-ipa"
+          rm -rf "$app_dir"
+          mkdir -p "$app_dir"
+          unzip -q "$IPA" -d "$app_dir"
+          app=$(find "$app_dir/Payload" -maxdepth 1 -name '*.app' -print -quit)
+          test -n "$app"
+          codesign --verify --deep --strict "$app"
+          [[ "$(plutil -extract CFBundleIdentifier raw "$app/Info.plist")" == "$EXAMPLE_BUNDLE_ID" ]]
+          [[ "$(plutil -extract CFBundleShortVersionString raw "$app/Info.plist")" == "$EXPECTED_VERSION" ]]
+          [[ "$(plutil -extract CFBundleVersion raw "$app/Info.plist")" == "$EXPECTED_BUILD" ]]
+          codesign -d --entitlements :- "$app" > "$RUNNER_TEMP/mentra-example-entitlements.plist"
+          [[ "$(plutil -extract com.apple.developer.networking.HotspotConfiguration raw "$RUNNER_TEMP/mentra-example-entitlements.plist")" == "true" ]]
+          application_identifier=$(plutil -extract application-identifier raw "$RUNNER_TEMP/mentra-example-entitlements.plist")
+          [[ "$application_identifier" == "$APPLE_TEAM_ID.$EXAMPLE_BUNDLE_ID" ]]
+
+      - name: Upload exact example IPA to App Store Connect
+        if: steps.app-store.outputs.exists != 'true'
+        run: >-
+          node mobile/scripts/app-store-connect-build.mjs upload
+          --issuer-id "${{ secrets.ASC_API_ISSUER_ID }}"
+          --key-id "${{ secrets.ASC_API_KEY_ID }}"
+          --key-path "${{ steps.asc.outputs.key_path }}"
+          --bundle-id "$EXAMPLE_BUNDLE_ID"
+          --marketing-version "${{ steps.coordinates.outputs.marketing_version }}"
+          --build-number "${{ steps.coordinates.outputs.build_number }}"
+          --ipa "${{ steps.ipa.outputs.path }}"
+
+      - name: Wait for processing and assign the example TestFlight group
+        id: testflight
+        run: >-
+          node mobile/scripts/app-store-connect-build.mjs assign
+          --issuer-id "${{ secrets.ASC_API_ISSUER_ID }}"
+          --key-id "${{ secrets.ASC_API_KEY_ID }}"
+          --key-path "${{ steps.asc.outputs.key_path }}"
+          --bundle-id "$EXAMPLE_BUNDLE_ID"
+          --marketing-version "${{ steps.coordinates.outputs.marketing_version }}"
+          --build-number "${{ steps.coordinates.outputs.build_number }}"
+          --group-name "${{ inputs.testflight_group }}"
+          --whats-new "Coordinated example release ${{ steps.coordinates.outputs.release_identity }}."
+
+      - name: Write example TestFlight publication result
+        env:
+          UPLOAD_STATUS: ${{ steps.app-store.outputs.exists == 'true' && 'reused' || 'published' }}
+          IPA: ${{ steps.ipa.outputs.path }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-output
+          args=()
+          [[ -z "$IPA" ]] || args+=(--ipa "$IPA")
+          node .github/scripts/coordinated-example-testflight-record.mjs \
+            --plan release-input/plan/release-plan.json \
+            --starter-kit "${{ steps.coordinates.outputs.starter_result }}" \
+            --app-id "${{ steps.testflight.outputs.app_id }}" \
+            --bundle-id "$EXAMPLE_BUNDLE_ID" \
+            --build-id "${{ steps.testflight.outputs.build_id }}" \
+            --group-id "${{ steps.testflight.outputs.group_id }}" \
+            --group-name "${{ steps.testflight.outputs.group_name }}" \
+            --upload-status "$UPLOAD_STATUS" \
+            --provenance-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            "${args[@]}" \
+            --output release-output/example-testflight-publication.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.coordinates.outputs.result_artifact }}
+          path: release-output
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Summarize example TestFlight publication
+        run: |
+          {
+            echo "## React Native example TestFlight"
+            echo
+            echo "- Release: \`${{ steps.coordinates.outputs.release_identity }}\`"
+            echo "- App: \`$EXAMPLE_BUNDLE_ID\` (\`$EXAMPLE_APP_ID\`)"
+            echo "- Build: \`${{ steps.coordinates.outputs.build_number }}\`"
+            echo "- Group: \`${{ steps.testflight.outputs.group_name }}\` (\`${{ steps.testflight.outputs.group_id }}\`)"
+            echo "- Upload: \`${{ steps.app-store.outputs.exists == 'true' && 'reused' || 'published' }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Clean persistent-runner credentials
+        if: always()
+        run: |
+          if [[ -n "${MENTRA_CI_KEYCHAIN:-}" ]]; then
+            security delete-keychain "$MENTRA_CI_KEYCHAIN" 2>/dev/null || true
+          fi
+          if [[ -f "${MENTRA_PREVIOUS_KEYCHAINS:-}" ]]; then
+            previous_keychains=()
+            while IFS= read -r keychain; do
+              [[ -n "$keychain" ]] && previous_keychains+=("$keychain")
+            done < "$MENTRA_PREVIOUS_KEYCHAINS"
+            if (( ${#previous_keychains[@]} > 0 )); then
+              security list-keychains -d user -s "${previous_keychains[@]}" || true
+            fi
+          fi
+          if [[ -f "${MENTRA_PREVIOUS_DEFAULT_KEYCHAIN:-}" ]]; then
+            previous_default=$(head -1 "$MENTRA_PREVIOUS_DEFAULT_KEYCHAIN")
+            [[ -n "$previous_default" ]] && security default-keychain -d user -s "$previous_default" || true
+          fi
+          rm -rf "${RUNNER_TEMP}/mentra-creds"

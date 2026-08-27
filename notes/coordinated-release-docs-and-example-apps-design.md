@@ -82,8 +82,8 @@ without first building the example would instead create a not-found link.
 ## Goals
 
 1. Make the Starter Kit a verified consumer of each coordinated release.
-2. Keep Starter Kit source, builds, tags, releases, and future TestFlight upload
-   owned by the Starter Kit repository.
+2. Keep Starter Kit source, validation builds, tags, and GitHub releases owned
+   by the Starter Kit repository while MentraOS owns signed TestFlight upload.
 3. Make MentraOS own release identity, ordering, finalization, docs, and the
    channel Slack notification.
 4. Publish docs only after the matching example artifacts are publicly
@@ -93,19 +93,19 @@ without first building the example would instead create a not-found link.
 6. Keep normal Starter Kit feature development possible without duplicating
    release build implementations.
 7. Make retries idempotent and make published tags and bytes immutable.
-8. Later publish the React Native iOS example to the correct TestFlight group
-   from the same coordinated Starter Kit release.
+8. Publish the React Native iOS example to the correct TestFlight group from
+   the same coordinated Starter Kit release.
 
 ## Non-Goals
 
 - MentraOS will not vendor the Starter Kit as a Git submodule.
-- MentraOS will not build or host Starter Kit binaries.
+- MentraOS will not build or host Starter Kit downloadable artifacts; it builds
+  only the signed React Native IPA sent to App Store Connect.
 - The Starter Kit will not allocate Mentra release identities.
 - Pull requests will not publish packages, releases, docs, or TestFlight builds.
-- The first implementation will not publish the example app to TestFlight.
 - This design does not yet submit the example app to the public App Store.
-- The native iOS example remains an unsigned downloadable IPA; the future
-  TestFlight job applies to the React Native example app.
+- The native iOS example remains an unsigned downloadable IPA; TestFlight
+  publication applies to the React Native example app.
 
 ## Ownership Boundary
 
@@ -512,10 +512,12 @@ not depend only on mutable display names.
 
 ### TestFlight job
 
-The Starter Kit adds a dedicated `react-native-ios-testflight` job to the
-coordinated release workflow. It runs on the self-hosted Mac Mini after the
-shared source and dependency checks. It is separate from the native iOS
-unsigned-IPA job.
+MentraOS adds a dedicated reusable React Native example TestFlight workflow to
+the coordinated release. It runs on the existing self-hosted Mac Mini after
+MentraOS has accepted the Starter Kit result. This keeps signing assets and App
+Store Connect credentials in the repository that already owns the Mac runner
+setup while still building the exact validated Starter Kit release commit. It
+is separate from the Starter Kit native iOS unsigned-IPA job.
 
 The job:
 
@@ -527,7 +529,10 @@ The job:
 5. waits for App Store Connect processing;
 6. assigns the exact build to the channel's internal TestFlight group; and
 7. writes App Store app ID, bundle ID, marketing version, build number, upload
-   state, group ID, and processing result into the Starter Kit result.
+   state, group ID, and processing result into a MentraOS publication record;
+   and
+8. enriches the Starter Kit evidence in the finalized Mentra release manifest
+   with that exact TestFlight record.
 
 Apple requires a numeric native version representation. The intended mapping
 is:
@@ -540,9 +545,9 @@ is:
 The numeric build number must remain unique across both dev and staging uploads
 for this App Store app. Channel-local counters are not sufficient.
 
-The first TestFlight implementation is an additional required Starter Kit gate
-for dev and staging after it is enabled. Public App Store submission and stable
-example-app promotion require a separate explicit decision.
+The TestFlight publication is an additional required coordinated-release gate
+for dev and staging. Public App Store submission and stable example-app
+promotion require a separate explicit decision.
 
 ## Security
 
@@ -598,9 +603,8 @@ example-app promotion require a separate explicit decision.
 3. Verify App Store Connect API access to app `6792839366` and pin both internal
    group IDs.
 4. Add archive, upload, processing wait, and group assignment.
-5. Add TestFlight results to the Starter Kit record, Mentra final manifest, and
-   Slack message.
-6. Prove one dev upload and one staging upload before making the job required.
+5. Add TestFlight results to the Mentra final manifest and Slack message.
+6. Prove one dev upload and one staging upload on the required gate.
 
 ## Acceptance Criteria
 

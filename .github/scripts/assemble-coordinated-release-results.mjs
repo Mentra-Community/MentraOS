@@ -44,7 +44,42 @@ function verifyAsgSelection(plan, ota, selectionFile) {
   return {sha256, size: bytes.length}
 }
 
-function verifyStarterKitResult(plan, starterKit, resultUrl) {
+function verifyExampleTestflight(plan, starterKit, exampleTestflight) {
+  const expectedGroup = plan.channel === "dev" ? "Mentra Dev" : "Mentra Staging"
+  if (
+    exampleTestflight?.schemaVersion !== 1 ||
+    exampleTestflight.releaseSetId !== plan.releaseSetId ||
+    exampleTestflight.releaseIdentity !== plan.releaseIdentity ||
+    exampleTestflight.channel !== plan.channel ||
+    exampleTestflight.mentraosSourceCommit !== plan.sourceCommit ||
+    exampleTestflight.starterKitReleaseCommit !== starterKit.starterKit?.releaseCommit ||
+    exampleTestflight.app?.id !== "6792839366" ||
+    exampleTestflight.app?.bundleId !== "com.mentra.bluetoothsdk.example.reactnative" ||
+    exampleTestflight.version?.marketingVersion !== plan.native.marketingVersion ||
+    exampleTestflight.version?.buildNumber !== plan.native.buildNumber ||
+    exampleTestflight.build?.processingState !== "VALID" ||
+    !["published", "reused"].includes(exampleTestflight.build?.uploadStatus) ||
+    typeof exampleTestflight.build?.id !== "string" ||
+    exampleTestflight.build.id.length === 0 ||
+    exampleTestflight.group?.name !== expectedGroup ||
+    typeof exampleTestflight.group?.id !== "string" ||
+    exampleTestflight.group.id.length === 0 ||
+    !/^https:\/\//.test(exampleTestflight.provenanceUrl || "")
+  ) {
+    throw new Error("Example TestFlight result does not match the release plan and Starter Kit source")
+  }
+  if (
+    exampleTestflight.ipa !== undefined &&
+    (!/^[0-9a-f]{64}$/.test(exampleTestflight.ipa.sha256 || "") ||
+      !Number.isSafeInteger(exampleTestflight.ipa.size) ||
+      exampleTestflight.ipa.size < 1)
+  ) {
+    throw new Error("Example TestFlight IPA evidence is invalid")
+  }
+  return exampleTestflight
+}
+
+function verifyStarterKitResult(plan, starterKit, resultUrl, exampleTestflight) {
   if (!starterKit) return undefined
   if (
     starterKit.schemaVersion !== 1 ||
@@ -95,7 +130,10 @@ function verifyStarterKitResult(plan, starterKit, resultUrl) {
   for (const key of ["ios", "reactNative", "reactNativeElevenLabsAudio"]) {
     if (!keys.has(key)) throw new Error(`Starter Kit result is missing ${key}`)
   }
-  return {record: {...starterKit, resultUrl}, artifacts}
+  return {
+    record: {...starterKit, resultUrl, testflight: verifyExampleTestflight(plan, starterKit, exampleTestflight)},
+    artifacts,
+  }
 }
 
 export function assembleCoordinatedReleaseResults({
@@ -106,6 +144,7 @@ export function assembleCoordinatedReleaseResults({
   mobile,
   starterKit,
   starterKitResultUrl,
+  exampleTestflight,
   asgSelectionFile,
   enginePackage,
   releaseAssetBaseUrl,
@@ -115,7 +154,7 @@ export function assembleCoordinatedReleaseResults({
   }
   const merged = mergeReleaseResultRecords({plan, records: [...npmRecords, native, mobile]})
   const selection = verifyAsgSelection(plan, ota, asgSelectionFile)
-  const verifiedStarterKit = verifyStarterKitResult(plan, starterKit, starterKitResultUrl)
+  const verifiedStarterKit = verifyStarterKitResult(plan, starterKit, starterKitResultUrl, exampleTestflight)
   const otaProvenanceUrl = provenanceUrl(ota)
   const artifacts = [
     ...merged.artifacts,
@@ -196,6 +235,7 @@ function main() {
     mobile: readJson(path.resolve(args.mobile)),
     starterKit: args["starter-kit"] ? readJson(path.resolve(args["starter-kit"])) : undefined,
     starterKitResultUrl: args["starter-kit-result-url"],
+    exampleTestflight: args["example-testflight"] ? readJson(path.resolve(args["example-testflight"])) : undefined,
     asgSelectionFile: path.resolve(args["asg-selection"]),
     enginePackage: args["engine-package"] ? path.resolve(args["engine-package"]) : undefined,
     releaseAssetBaseUrl: args["release-asset-base-url"],

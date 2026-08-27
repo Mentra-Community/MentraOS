@@ -385,6 +385,38 @@ function validateStarterKitEvidence(plan, starterKit, artifacts) {
       throw new Error(`Starter Kit artifact ${example.name || "<unknown>"} differs from publication evidence`)
     }
   }
+  const expectedGroup = plan.channel === "dev" ? "Mentra Dev" : "Mentra Staging"
+  const testflight = starterKit.testflight
+  if (
+    testflight?.schemaVersion !== 1 ||
+    testflight.releaseSetId !== plan.releaseSetId ||
+    testflight.releaseIdentity !== plan.releaseIdentity ||
+    testflight.channel !== plan.channel ||
+    testflight.mentraosSourceCommit !== plan.sourceCommit ||
+    testflight.starterKitReleaseCommit !== starterKit.starterKit?.releaseCommit ||
+    testflight.app?.id !== "6792839366" ||
+    testflight.app?.bundleId !== "com.mentra.bluetoothsdk.example.reactnative" ||
+    testflight.version?.marketingVersion !== plan.native.marketingVersion ||
+    testflight.version?.buildNumber !== plan.native.buildNumber ||
+    testflight.build?.processingState !== "VALID" ||
+    !["published", "reused"].includes(testflight.build?.uploadStatus) ||
+    typeof testflight.build?.id !== "string" ||
+    testflight.build.id.length === 0 ||
+    testflight.group?.name !== expectedGroup ||
+    typeof testflight.group?.id !== "string" ||
+    testflight.group.id.length === 0
+  ) {
+    throw new Error("Starter Kit TestFlight evidence does not match the release plan")
+  }
+  if (
+    testflight.ipa !== undefined &&
+    (!SHA256_PATTERN.test(testflight.ipa.sha256 || "") ||
+      !Number.isSafeInteger(testflight.ipa.size) ||
+      testflight.ipa.size < 1)
+  ) {
+    throw new Error("Starter Kit TestFlight IPA evidence is invalid")
+  }
+  requirePublicHttpsUrl(testflight.provenanceUrl, "starterKit.testflight.provenanceUrl")
   return starterKit
 }
 
