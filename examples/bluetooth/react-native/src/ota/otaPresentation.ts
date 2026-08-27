@@ -155,8 +155,8 @@ export function otaPresentation(
       return {
         changelogs,
         message: 'The glasses app, system software, and firmware match this SDK release.',
-        primary: {action: 'finish', label: releaseTransition ? 'Done' : 'Continue'},
-        title: releaseTransition ? 'Update complete' : 'Everything is up to date',
+        primary: {action: 'finish', label: state.completedUpdate ? 'Done' : 'Continue'},
+        title: state.completedUpdate ? 'Update complete' : 'Everything is up to date',
         tone: 'success',
         versionLabel: completedVersionLabel(releaseTransition),
       };

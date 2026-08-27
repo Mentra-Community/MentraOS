@@ -10,6 +10,7 @@ const baseState: MentraLiveOtaState = {
   canInstall: false,
   canOpenWifiSetup: false,
   canRetry: false,
+  completedUpdate: false,
   connected: true,
   continueDisabled: false,
   currentStep: null,
@@ -174,6 +175,7 @@ describe('custom OTA presentation', () => {
         {version: '3.2.0', markdown: 'Newest notes'},
         {version: '3.1.0', markdown: 'Earlier notes'},
       ],
+      completedUpdate: true,
       releaseTransition: {fromVersion: '40', toVersion: '3.2.0'},
       screen: 'up_to_date',
     }));
@@ -201,5 +203,17 @@ describe('custom OTA presentation', () => {
       action: 'finish',
       label: 'Continue',
     });
+  });
+
+  test('shows completed-session copy without requiring a release label', () => {
+    const presentation = otaPresentation(otaState({
+      completedUpdate: true,
+      releaseTransition: null,
+      screen: 'up_to_date',
+    }));
+
+    expect(presentation.primary).toEqual({action: 'finish', label: 'Done'});
+    expect(presentation.title).toBe('Update complete');
+    expect(presentation.versionLabel).toBeUndefined();
   });
 });
