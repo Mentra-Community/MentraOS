@@ -13,6 +13,7 @@ import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import type {ConnectOptions, Device, DeviceModel, PairFailureEvent, GlassesNotReadyEvent} from "@mentra/bluetooth-sdk"
 import {useCoreStore} from "../stores/core"
 import {useGlassesStore} from "../stores/glasses"
+import {SETTINGS, useSettingsStore} from "../stores/settings"
 import {hasDefaultDevice} from "../services/DeviceStoreHydration"
 import {
   markPendingSelection,
@@ -20,18 +21,14 @@ import {
   subscribePairingIdentity,
   type IdentitySnapshot,
 } from "../services/PairingIdentity"
-import {
-  isGlassesConnected,
-  isGlassesLinkLayerBusy,
-  isGlassesReady,
-  waitForGlassesReady,
-} from "../services/GlassesReadiness"
+import {isGlassesConnected, isGlassesLinkLayerBusy, isGlassesReady} from "../services/GlassesReadiness"
 import {
   logAutomaticReportSubmissionStatus,
   toAutomaticReportSubmissionStatus,
   type AutomaticReportSubmissionStatus,
 } from "../services/AutomaticReportResult"
 import {pushAllBluetoothSettings} from "../services/GlassesSettingsSync"
+import {ControllerTypes} from "../types"
 import {submitAutomaticReport} from "./reports"
 
 export type {IdentitySnapshot} from "../services/PairingIdentity"
@@ -58,6 +55,82 @@ function projectReadiness() {
     bluetoothClassicConnected: s.bluetoothClassicConnected,
     nativeLinkBusy: isGlassesLinkLayerBusy(s.connection),
   }
+}
+
+function projectTargetReady(options: Pick<PairingReadyWaitOptions, "deviceModel" | "deviceName">): boolean {
+  const {deviceModel, deviceName} = options
+  const glasses = useGlassesStore.getState()
+
+  if (deviceModel === ControllerTypes.R1) {
+    if (!glasses.controllerConnected || !glasses.controllerFullyBooted) return false
+    const settings = useSettingsStore.getState()
+    const pairedModel = settings.getSetting(SETTINGS.default_controller.key)
+    const pairedName = settings.getSetting(SETTINGS.controller_device_name.key)
+    return (!deviceModel || pairedModel === deviceModel) && (!deviceName || pairedName === deviceName)
+  }
+
+  if (!isGlassesReady(glasses.connection)) return false
+  const identity = projectPairingIdentity()
+  if (!deviceModel && !deviceName) return true
+  return (
+    identity.kind === "paired" &&
+    (!deviceModel || identity.model === deviceModel) &&
+    (!deviceName || identity.name === deviceName)
+  )
+}
+
+function subscribeTargetReady(
+  options: Pick<PairingReadyWaitOptions, "deviceModel" | "deviceName">,
+  cb: (ready: boolean) => void,
+): () => void {
+  let last = projectTargetReady(options)
+  const notify = () => {
+    const ready = projectTargetReady(options)
+    if (ready === last) return
+    last = ready
+    cb(ready)
+  }
+  const unsubscribeGlasses = useGlassesStore.subscribe(notify)
+  const unsubscribeSettings = useSettingsStore.subscribe(notify)
+  return () => {
+    unsubscribeGlasses()
+    unsubscribeSettings()
+  }
+}
+
+async function waitForTargetReady(options: PairingReadyWaitOptions, timeoutMs: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (options.signal?.aborted) {
+      resolve(false)
+      return
+    }
+    if (projectTargetReady(options)) {
+      resolve(true)
+      return
+    }
+
+    let settled = false
+    let timeout: ReturnType<typeof setTimeout> | null = null
+    let unsubscribe: (() => void) | null = null
+    let onAbort: (() => void) | null = null
+    const finish = (ready: boolean) => {
+      if (settled) return
+      settled = true
+      if (timeout) clearTimeout(timeout)
+      if (unsubscribe) unsubscribe()
+      if (onAbort && options.signal) options.signal.removeEventListener("abort", onAbort)
+      resolve(ready)
+    }
+
+    unsubscribe = subscribeTargetReady(options, (ready) => {
+      if (ready) finish(true)
+    })
+    if (options.signal) {
+      onAbort = () => finish(false)
+      options.signal.addEventListener("abort", onAbort)
+    }
+    timeout = setTimeout(() => finish(projectTargetReady(options)), timeoutMs)
+  })
 }
 
 export type PairingReadinessSnapshot = ReturnType<typeof projectReadiness>
@@ -108,12 +181,7 @@ async function waitForReadyDuringPairing(options: PairingReadyWaitOptions = {}):
   })
 
   try {
-    const ready = await waitForGlassesReady({
-      getConnection: () => useGlassesStore.getState().connection,
-      subscribe: (listener) => useGlassesStore.subscribe((state) => state.connection, listener),
-      timeoutMs,
-      signal: options.signal,
-    })
+    const ready = await waitForTargetReady(options, timeoutMs)
 
     if (!ready && !options.signal?.aborted) {
       void submitPairingBootTimeoutReport({
@@ -193,6 +261,14 @@ export const pairing = {
       cb(snap)
     })
   },
+  /** Whether the exact wearable or controller selected on the scan screen is ready. */
+  targetReady: (options: Pick<PairingReadyWaitOptions, "deviceModel" | "deviceName">): boolean =>
+    projectTargetReady(options),
+  /** Subscribe to readiness for the exact selected target, excluding stale devices. */
+  onTargetReady: (
+    options: Pick<PairingReadyWaitOptions, "deviceModel" | "deviceName">,
+    cb: (ready: boolean) => void,
+  ): (() => void) => subscribeTargetReady(options, cb),
 
   // --- pairing-identity lifecycle (the PairingIdentity read-model + the JS-owned
   // identity writes; promotion to `paired` only ever happens natively) ---
