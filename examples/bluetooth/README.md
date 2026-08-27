@@ -39,7 +39,8 @@ source tag identifies the commit that produced it.
 From the release containing your SDK version, such as `sdk-builds-v3.1.0`,
 download the files carrying the same full version:
 
-- `mentra-example-android-<version>.apk` — native Android example
+- `mentra-example-android-<version>.apk` — native Android example, when that
+  exact SDK version is already available from Maven Central
 - `mentra-example-react-native-<version>.apk` — React Native example
 - `mentra-example-rn-elevenlabs-audio-<version>.apk` — React Native ElevenLabs audio example
 - `mentra-example-ios-<version>-unsigned.ipa` — native iOS example

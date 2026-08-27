@@ -56,7 +56,29 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
+      - name: Check exact Maven release availability
+        id: availability
+        env:
+          RELEASE_IDENTITY: ${{ steps.sdk-version.outputs.version }}
+        run: |
+          set -euo pipefail
+          base="https://repo.maven.apache.org/maven2/com/mentraglass"
+          sdk_status=$(curl --silent --show-error --head --location --output /dev/null --write-out '%{http_code}' \
+            "$base/bluetooth-sdk/$RELEASE_IDENTITY/bluetooth-sdk-$RELEASE_IDENTITY.pom" || true)
+          lc3_status=$(curl --silent --show-error --head --location --output /dev/null --write-out '%{http_code}' \
+            "$base/lc3Lib/$RELEASE_IDENTITY/lc3Lib-$RELEASE_IDENTITY.pom" || true)
+          if [[ "$sdk_status" == "200" && "$lc3_status" == "200" ]]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          elif [[ "$sdk_status" == "404" || "$lc3_status" == "404" ]]; then
+              echo "available=false" >> "$GITHUB_OUTPUT"
+              echo "Native Android example skipped because $RELEASE_IDENTITY is not yet available from Maven Central."
+          else
+            echo "Unexpected Maven Central status (SDK $sdk_status, LC3 $lc3_status)." >&2
+            exit 1
+          fi
+
       - name: Set up Java
+        if: steps.availability.outputs.available == 'true'
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -64,9 +86,11 @@ jobs:
           cache: gradle
 
       - name: Set up Android SDK
+        if: steps.availability.outputs.available == 'true'
         uses: android-actions/setup-android@v3
 
       - name: Free disk space
+        if: steps.availability.outputs.available == 'true'
         run: |
           df -h
           sudo apt-get clean
@@ -83,29 +107,34 @@ jobs:
           df -h
 
       - name: Install Android SDK packages
+        if: steps.availability.outputs.available == 'true'
         run: |
           # build-tools;34.0.0 is the AGP 8.7 default; install it up front so
           # Gradle does not have to auto-install it mid-build.
           sdkmanager "platforms;android-35" "build-tools;35.0.0" "build-tools;34.0.0" "ndk;27.1.12297006"
 
       - name: Cache GStreamer Android SDK
+        if: steps.availability.outputs.available == 'true'
         uses: actions/cache@v4
         with:
           path: examples/android/.gstreamer/Android.sdk
           key: gstreamer-android-${{ env.GSTREAMER_VERSION }}
 
       - name: Type check Kotlin
+        if: steps.availability.outputs.available == 'true'
         working-directory: examples/android
         run: |
           chmod +x ./gradlew
           ./gradlew :app:compileDebugKotlin --no-daemon
 
       - name: Build
+        if: steps.availability.outputs.available == 'true'
         working-directory: examples/android
         run: |
           ./gradlew :app:assembleDebug --no-daemon
 
       - name: Collect APK
+        if: steps.availability.outputs.available == 'true'
         id: collect
         env:
           ARTIFACT_SUFFIX: ${{ inputs.artifact_suffix }}
@@ -120,6 +149,7 @@ jobs:
           echo "path=$output" >> "$GITHUB_OUTPUT"
 
       - name: Upload APK artifact
+        if: steps.availability.outputs.available == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: mentra-example-android
