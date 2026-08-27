@@ -2,6 +2,8 @@ import React from "react"
 import {act, fireEvent, render, waitFor} from "@testing-library/react-native"
 
 import {MentraLiveOtaFlow} from "@mentra/engine/ota"
+
+import {stopOtaAutoChain} from "@/services/otaAutoChain"
 import {ota} from "../../../../modules/engine/src/facades/ota"
 import {useGlassesStore} from "../../../../modules/engine/src/stores/glasses"
 
@@ -11,6 +13,7 @@ describe("MentraLiveOtaFlow", () => {
   })
 
   afterEach(() => {
+    stopOtaAutoChain()
     jest.restoreAllMocks()
     jest.useRealTimers()
   })
@@ -66,6 +69,11 @@ describe("MentraLiveOtaFlow", () => {
     })
     expect(getByText("Mentra Live Update Available")).toBeDefined()
     expect(getByText("3.1.0-dev.7 → 3.1.0-dev.8")).toBeDefined()
+    expect(
+      getByText(
+        "Your glasses may install more than one update and restart several times. Keep them nearby until finished.",
+      ),
+    ).toBeDefined()
 
     fireEvent.press(getByTestId("button-Update Now"))
 
