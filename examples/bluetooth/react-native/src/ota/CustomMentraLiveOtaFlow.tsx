@@ -75,7 +75,9 @@ export function CustomMentraLiveOtaFlow({
             wash={palette.wash}
           />
           <Text style={styles.title}>{presentation.title}</Text>
-          <Text style={styles.message}>{presentation.message}</Text>
+          {presentation.message ? (
+            <Text style={styles.message}>{presentation.message}</Text>
+          ) : null}
 
           {presentation.versionLabel ? (
             <View style={styles.versionBadge}>
