@@ -68,7 +68,7 @@ jobs:
           RELEASE_IDENTITY: ${{ steps.release.outputs.releaseIdentity }}
           RELEASE_SET_ID: ${{ fromJSON(inputs.payload).releaseSetId }}
           MENTRAOS_SOURCE_COMMIT: ${{ fromJSON(inputs.payload).mentraos.sourceCommit }}
-          EXPECTED_STARTER_KIT_HEAD: ${{ fromJSON(inputs.payload).expectedStarterKitHead }}
+          TARGET_BRANCH: ${{ steps.release.outputs.targetBranch }}
           ARTIFACT_CONTAINER_TAG: ${{ steps.release.outputs.artifactContainerTag }}
         run: |
           set -euo pipefail
@@ -80,7 +80,18 @@ jobs:
             [[ "$(jq -er .releaseSetId "$result")" == "$RELEASE_SET_ID" ]]
             [[ "$(jq -er .releaseIdentity "$result")" == "$RELEASE_IDENTITY" ]]
             [[ "$(jq -er .mentraos.sourceCommit "$result")" == "$MENTRAOS_SOURCE_COMMIT" ]]
-            [[ "$(jq -er .starterKit.baseCommit "$result")" == "$EXPECTED_STARTER_KIT_HEAD" ]]
+            release_commit=$(jq -er '.starterKit.releaseCommit | select(test("^[0-9a-f]{40}$"))' "$result")
+            merge_commit=$(jq -er '.starterKit.mergeCommit | select(test("^[0-9a-f]{40}$"))' "$result")
+            pull_request_url=$(jq -er .starterKit.pullRequestUrl "$result")
+            [[ "$(jq -er .starterKit.sourceTag "$result")" == "sdk-$RELEASE_IDENTITY" ]]
+            pr_provenance=$(gh pr view "$pull_request_url" \
+              --json url,state,headRefOid,baseRefName,mergeCommit)
+            [[ "$(jq -r .url <<< "$pr_provenance")" == "$pull_request_url" ]]
+            [[ "$(jq -r .state <<< "$pr_provenance")" == "MERGED" ]]
+            [[ "$(jq -r .headRefOid <<< "$pr_provenance")" == "$release_commit" ]]
+            [[ "$(jq -r .baseRefName <<< "$pr_provenance")" == "$TARGET_BRANCH" ]]
+            [[ "$(jq -r .mergeCommit.oid <<< "$pr_provenance")" == "$merge_commit" ]]
+            [[ "$(gh api "repos/$STARTER_KIT_REPOSITORY/git/ref/tags/sdk-$RELEASE_IDENTITY" --jq .object.sha)" == "$release_commit" ]]
             [[ "$(jq -er '.artifacts | length' "$result")" == "4" ]]
             while IFS= read -r url; do
               curl --fail --silent --show-error --location --head "$url" >/dev/null

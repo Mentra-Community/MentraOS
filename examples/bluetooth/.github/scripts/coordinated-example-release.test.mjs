@@ -9,6 +9,8 @@ import {createReleaseResult, synchronizeExampleVersions, validatePayload} from "
 const sha = "a".repeat(40)
 const manifestSha = "b".repeat(64)
 
+const releaseWorkflow = readFileSync(new URL("../workflows/coordinated-example-release.yml", import.meta.url), "utf8")
+
 function payload(identity = "3.1.0-beta.57") {
   const [base, prerelease] = identity.split("-")
   const channel = prerelease?.startsWith("dev.") ? "dev" : prerelease?.startsWith("beta.") ? "beta" : "production"
@@ -43,6 +45,12 @@ test("rejects mismatched package versions", () => {
   const invalid = payload()
   invalid.packages["@mentra/engine"] = "3.1.0-beta.56"
   assert.throws(() => validatePayload(invalid), /must match/)
+})
+
+test("reconciles completed releases from immutable PR and tag provenance", () => {
+  assert.match(releaseWorkflow, /gh pr view "\$pull_request_url"[^]*--json url,state,headRefOid,baseRefName,mergeCommit/)
+  assert.match(releaseWorkflow, /git\/ref\/tags\/sdk-\$RELEASE_IDENTITY/)
+  assert.doesNotMatch(releaseWorkflow, /\.starterKit\.baseCommit "\$result"\)" == "\$EXPECTED_STARTER_KIT_HEAD"/)
 })
 
 test("synchronizes all maintained example manifests", () => {
