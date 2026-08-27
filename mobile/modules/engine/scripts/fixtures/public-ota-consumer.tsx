@@ -17,6 +17,8 @@ function screenLabel(screen: MentraLiveOtaScreen): string {
     case "initializing":
     case "checking":
       return "Checking"
+    case "finishing":
+      return "Finishing update"
     case "update_available":
       return "Update available"
     case "wifi_required":

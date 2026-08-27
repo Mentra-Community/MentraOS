@@ -65,13 +65,19 @@ const DEFAULT_THEME: MentraLiveOtaFlowTheme = {
 
 const ENGLISH_COPY: Record<string, string> = {
   "common:continue": "Continue",
+  "common:done": "Done",
   "ota:checkingForUpdates": "Checking for updates",
   "ota:checkingForUpdatesMessage":
     "Connected devices will perform automatic updates. Automatic updates can be disabled in Device Settings",
+  "ota:finishingUpdate": "Finishing your update",
+  "ota:checkingAdditionalUpdates": "Checking whether your glasses need any additional updates.",
   "ota:updateAvailable": "{{deviceName}} Update Available",
   "ota:updateConnectWifi": "Connect your {{deviceName}} to WiFi to install the update.",
+  "ota:wifiRequiredTitle": "WiFi Needed for Update",
   "ota:updateDescription":
     "A new update is available for your glasses. We recommend updating now for the best experience.",
+  "ota:updateSequenceMessage":
+    "Your glasses may install more than one update and restart several times. Keep them nearby until finished.",
   "ota:releaseTransition": "{{fromVersion}} → {{toVersion}}",
   "ota:releaseTransitionUnknown": "Current version unknown → {{toVersion}}",
   "ota:updatedToVersion": "Updated to {{version}}",
@@ -81,6 +87,7 @@ const ENGLISH_COPY: Record<string, string> = {
   "ota:updateNow": "Update Now",
   "ota:setupWifi": "Setup WiFi",
   "ota:updateLater": "Later",
+  "ota:updateComplete": "Update complete",
   "ota:upToDate": "Up To Date",
   "ota:devBuild": "Development Build",
   "ota:devBuildNoOta":
@@ -185,12 +192,27 @@ function OtaFlowContent({
     )
   }
 
+  if (state.screen === "finishing") {
+    return (
+      <FlowPage colors={colors} icon="download" title={translate("ota:finishingUpdate")}>
+        <BodyText colors={colors}>{translate("ota:checkingAdditionalUpdates")}</BodyText>
+        <ActivityIndicator size="large" color={colors.foreground} />
+      </FlowPage>
+    )
+  }
+
   if (state.screen === "update_available" || state.screen === "wifi_required") {
+    const titleKey =
+      state.screen === "wifi_required"
+        ? "ota:wifiRequiredTitle"
+        : state.versionChange
+          ? "ota:downgradeAvailable"
+          : "ota:updateAvailable"
     return (
       <FlowPage
         colors={colors}
         icon="download"
-        title={translate(state.versionChange ? "ota:downgradeAvailable" : "ota:updateAvailable", {deviceName})}
+        title={translate(titleKey, {deviceName})}
         actions={
           <>
             <FlowButton
@@ -222,6 +244,7 @@ function OtaFlowContent({
             ? translate("ota:updateConnectWifi", {deviceName})
             : translate(state.versionChange ? "ota:downgradeDescription" : "ota:updateDescription")}
         </BodyText>
+        <BodyText colors={colors}>{translate("ota:updateSequenceMessage")}</BodyText>
       </FlowPage>
     )
   }
@@ -239,12 +262,19 @@ function OtaFlowContent({
   }
 
   if (state.screen === "up_to_date") {
+    const completedUpdate = state.releaseTransition !== null
     return (
       <FlowPage
-        actions={<FlowButton colors={colors} label={translate("common:continue")} onPress={controller.finish} />}
+        actions={
+          <FlowButton
+            colors={colors}
+            label={translate(completedUpdate ? "common:done" : "common:continue")}
+            onPress={controller.finish}
+          />
+        }
         colors={colors}
         icon="check"
-        title={translate("ota:upToDate")}>
+        title={translate(completedUpdate ? "ota:updateComplete" : "ota:upToDate")}>
         <BodyText colors={colors}>{translate("ota:noUpdatesAvailable")}</BodyText>
         {state.releaseTransition ? (
           <BodyText colors={colors}>
@@ -307,10 +337,10 @@ function OtaFlowContent({
       state.hotspotPhase === "downloading"
         ? "Downloading update to phone..."
         : state.hotspotPhase === "starting_hotspot"
-        ? "Starting glasses hotspot..."
-        : state.hotspotPhase === "joining_hotspot"
-        ? "Connecting phone to glasses..."
-        : "Starting update..."
+          ? "Starting glasses hotspot..."
+          : state.hotspotPhase === "joining_hotspot"
+            ? "Connecting phone to glasses..."
+            : "Starting update..."
     return (
       <FlowPage colors={colors} icon="download" title={title}>
         {state.hotspotPhase === "downloading" && state.hotspotArtifactPercent !== null ? (
@@ -362,13 +392,13 @@ function OtaFlowContent({
     const title = state.versionChangeConverged
       ? translate("ota:versionChangeComplete")
       : state.versionChange
-      ? translate("ota:versionChangeFirmwarePassComplete")
-      : "Update complete!"
+        ? translate("ota:versionChangeFirmwarePassComplete")
+        : "Update complete!"
     const message = state.versionChangeConverged
       ? translate("ota:versionChangeCompleteMessage")
       : state.versionChange
-      ? translate("ota:versionChangeFirmwarePassCompleteMessage")
-      : "Your glasses are up to date."
+        ? translate("ota:versionChangeFirmwarePassCompleteMessage")
+        : "Your glasses are up to date."
     return (
       <FlowPage
         actions={

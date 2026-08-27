@@ -258,7 +258,7 @@ describe("useMentraLiveOta", () => {
     await act(async () => renderer.unmount())
   })
 
-  test("exposes crossed release changelogs when an install completes", async () => {
+  test("treats an active pass completion as a continuation check", async () => {
     const renderer = await renderProbe("check")
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 1_150))
@@ -277,12 +277,14 @@ describe("useMentraLiveOta", () => {
       installListeners.forEach((listener) => listener())
     })
 
-    expect(getReleaseChangelogs).toHaveBeenCalledWith("3.0.0", "3.1.0-dev.8")
+    expect(latestController.state.screen).toBe("finishing")
     expect(latestController.state.releaseTransition).toEqual({
       fromVersion: "3.0.0",
       toVersion: "3.1.0-dev.8",
     })
-    expect(latestController.state.changelogs).toEqual([{version: "3.1.0", markdown: "Release notes"}])
+    expect(latestController.state.changelogs).toEqual([])
+    expect(latestController.state.canFinish).toBe(false)
+    expect(getReleaseChangelogs).not.toHaveBeenCalled()
     await act(async () => renderer.unmount())
   })
 
@@ -296,9 +298,9 @@ describe("useMentraLiveOta", () => {
 
     installSnapshot = {...installSnapshot, displayState: "complete"}
     const progressRenderer = await renderProbe("progress")
-    expect(getReleaseChangelogs).toHaveBeenCalledWith("3.0.0", "3.1.0-dev.8")
+    expect(latestController.state.screen).toBe("finishing")
     expect(latestController.state.releaseTransition?.toVersion).toBe("3.1.0-dev.8")
-    expect(latestController.state.changelogs).toEqual([{version: "3.1.0", markdown: "Release notes"}])
+    expect(latestController.state.changelogs).toEqual([])
     await act(async () => progressRenderer.unmount())
   })
 
@@ -375,7 +377,29 @@ describe("useMentraLiveOta", () => {
     await act(async () => renderer.unmount())
   })
 
-  test("keeps confirmed completion visible until hotspot teardown finishes", async () => {
+  test("keeps an approved session active when an additional pass needs Wi-Fi", async () => {
+    autoChainActive = true
+    autoChainRange = {
+      fromVersion: "3.0.0",
+      toVersion: "3.1.0-dev.8",
+      releaseVersion: "3.1.0-dev.8",
+    }
+    otaSnapshot = {...otaSnapshot, hotspotOtaVersion: 0, wifiConnected: false}
+    const renderer = await renderProbe("check")
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1_150))
+    })
+
+    expect(latestController.state).toMatchObject({
+      screen: "wifi_required",
+      canDismiss: false,
+      releaseTransition: {fromVersion: "3.0.0", toVersion: "3.1.0-dev.8"},
+    })
+    expect(stopAutoChain).not.toHaveBeenCalled()
+    await act(async () => renderer.unmount())
+  })
+
+  test("keeps continuation checking visible until hotspot teardown finishes", async () => {
     autoChainActive = true
     let resolveFinish!: () => void
     finishPromise = new Promise<void>((resolve) => {
@@ -387,14 +411,14 @@ describe("useMentraLiveOta", () => {
       installListeners.forEach((listener) => listener())
     })
 
-    expect(latestController.state.screen).toBe("complete")
+    expect(latestController.state.screen).toBe("finishing")
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 800))
     })
 
     expect(finish).toHaveBeenCalledTimes(1)
     expect(fakeOta.checkForUpdates).not.toHaveBeenCalled()
-    expect(latestController.state.screen).toBe("complete")
+    expect(latestController.state.screen).toBe("finishing")
 
     await act(async () => {
       resolveFinish()

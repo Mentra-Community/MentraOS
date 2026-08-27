@@ -176,6 +176,9 @@ export function CustomMentraLiveUpdate({onDone, onSetupWifi}: CustomMentraLiveUp
   if (state.screen === "checking" || state.screen === "initializing") {
     return <Text>Checking for updates…</Text>
   }
+  if (state.screen === "finishing") {
+    return <Text>Finishing your update…</Text>
+  }
   if (state.screen === "update_available") {
     return (
       <View>
@@ -220,6 +223,10 @@ fallback. When glasses report their coordinated release identity directly,
 Engine can replace this one source-version lookup without changing customer UI
 code. Engine captures the pair before installation and retains it through
 restarts and final verification.
+
+The `finishing` screen means the approved session is checking for additional
+required passes. Do not render terminal success or release notes until the
+controller reaches `up_to_date`.
 
 Start from the Starter Kit's
 [custom OTA presentation folder](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/tree/main/examples/react-native/src/ota)
