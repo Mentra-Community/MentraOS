@@ -55,6 +55,27 @@ public class PairingCodePcmStitcherTest {
                 .isInstanceOf(java.io.IOException.class);
     }
 
+    @Test
+    public void stitchPairingPhraseWavs_usesLongerPauseAfterIntro() throws Exception {
+        int tone = PairingCodePcmStitcher.msToSamples(100, SAMPLE_RATE);
+        byte[] intro = toneWav(0, tone, 0, (short) 8000);
+        byte[] firstCode = toneWav(0, tone, 0, (short) 6000);
+        byte[] secondCode = toneWav(0, tone, 0, (short) 4000);
+
+        byte[] stitched =
+                PairingCodePcmStitcher.stitchPairingPhraseWavs(
+                        List.of(intro, firstCode, secondCode));
+        PairingCodePcmStitcher.PcmClip clip = PairingCodePcmStitcher.decodePcmWav(stitched);
+
+        int introPause =
+                PairingCodePcmStitcher.msToSamples(
+                        AsgConstants.PAIRING_INTRO_TO_CODE_PAUSE_MS, SAMPLE_RATE);
+        int characterPause =
+                PairingCodePcmStitcher.msToSamples(
+                        AsgConstants.PAIRING_CODE_INTER_CHARACTER_PAUSE_MS, SAMPLE_RATE);
+        assertThat(clip.samples.length).isEqualTo(tone * 3 + introPause + characterPause);
+    }
+
     private static byte[] toneWav(int lead, int tone, int trail, short amplitude) {
         short[] samples = new short[lead + tone + trail];
         Arrays.fill(samples, lead, lead + tone, amplitude);

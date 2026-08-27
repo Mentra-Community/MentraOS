@@ -13,6 +13,7 @@ import GlassesPairingLoader from "@/components/glasses/GlassesPairingLoader"
 import GlassesTroubleshootingModal from "@/components/glasses/GlassesTroubleshootingModal"
 import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
 import {useNavigationStore} from "@/stores/navigation"
+import {isMentraLiveSecurePairingEnabled} from "@/utils/pairing/securePairingFeature"
 
 // Secure pairing info should arrive immediately after Mentra Live finishes booting.
 // Secure or unknown firmware fails closed instead of spinning forever.
@@ -20,7 +21,7 @@ const PAIRING_INFO_WAIT_MS = 5_000
 const PAIRING_KICKOFF_DELAY_MS = 2_000
 
 /**
- * Design A (open reclaim): five-tap clears prior owner/bonds on the glasses; the first
+ * Design A (open reclaim): three presses clear prior owner/bonds on the glasses; the first
  * successful pair wins. Mentra Live pairing does NOT run ownership-transfer finalize/wipe.
  * pairing_info is used only as a secure-firmware readiness signal; the advertised capability
  * lets existing customer firmware proceed without waiting for an event it does not emit.
@@ -66,6 +67,7 @@ export default function GlassesPairingLoadingScreen() {
   const pairingKickoffTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pairingStoppedRef = useRef(false)
   const isMentraLive = deviceModel === DeviceTypes.LIVE
+  const securePairingRequired = isMentraLive && isMentraLiveSecurePairingEnabled() && securePairingCapable !== false
   const pairingTimingStartRef = useRef(Date.now())
   const pairingTimingLastRef = useRef(Date.now())
 
@@ -111,7 +113,7 @@ export default function GlassesPairingLoadingScreen() {
   }, [logPairingTiming])
 
   useEffect(() => {
-    if (!isMentraLive || securePairingCapable === false) {
+    if (!securePairingRequired) {
       return
     }
 
@@ -134,7 +136,7 @@ export default function GlassesPairingLoadingScreen() {
     return () => {
       sub.remove()
     }
-  }, [isMentraLive, securePairingCapable, pairingCode, logPairingTiming])
+  }, [securePairingRequired, pairingCode, logPairingTiming])
 
   const handleGoBack = useCallback(() => {
     pairingStoppedRef.current = true
@@ -235,8 +237,7 @@ export default function GlassesPairingLoadingScreen() {
       !isFocused ||
       pairingStoppedRef.current ||
       !pairingKickoffComplete ||
-      !isMentraLive ||
-      securePairingCapable === false ||
+      !securePairingRequired ||
       !selectedTargetReady ||
       pairingInfoReceived
     ) {
@@ -251,7 +252,7 @@ export default function GlassesPairingLoadingScreen() {
       clearTimeout(timer)
     }
   }, [
-    isMentraLive,
+    securePairingRequired,
     isFocused,
     pairingKickoffComplete,
     securePairingCapable,
@@ -273,7 +274,7 @@ export default function GlassesPairingLoadingScreen() {
       return
     }
 
-    if (isMentraLive && securePairingCapable !== false && !pairingInfoReceived) {
+    if (securePairingRequired && !pairingInfoReceived) {
       logPairingTiming("waiting_secure_pairing_info")
       return
     }
@@ -290,7 +291,7 @@ export default function GlassesPairingLoadingScreen() {
     pairingKickoffComplete,
     replace,
     deviceModel,
-    isMentraLive,
+    securePairingRequired,
     pairingInfoReceived,
     ar99ProjectName,
     securePairingCapable,

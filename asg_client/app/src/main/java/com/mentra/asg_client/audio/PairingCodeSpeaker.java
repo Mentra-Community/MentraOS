@@ -15,7 +15,11 @@ import java.util.regex.Pattern;
 public final class PairingCodeSpeaker {
 
     private static final String TAG = "PairingCodeSpeaker";
-    private static final long WAKE_LOCK_MS = 8000L;
+    /* The longest intro + four-character WAV is a little over six seconds.
+     * Leave enough headroom for stitching, I2S startup, and scheduler latency
+     * so the screen lease cannot expire while the code is still playing. */
+    private static final long PAIRING_CODE_WAKE_LOCK_MS = 15000L;
+    private static final long SHORT_PROMPT_WAKE_LOCK_MS = 8000L;
     private static final Pattern PAIRING_CODE = Pattern.compile("[0-9A-F]{4}");
 
     private PairingCodeSpeaker() {}
@@ -37,7 +41,10 @@ public final class PairingCodeSpeaker {
             return false;
         }
 
-        WakeLockManager.acquireScreen(context, WakeLockManager.WakeOwner.PAIRING_CODE, WAKE_LOCK_MS);
+        WakeLockManager.acquireScreen(
+                context,
+                WakeLockManager.WakeOwner.PAIRING_CODE,
+                PAIRING_CODE_WAKE_LOCK_MS);
         try {
             File wav = PairingCodePcmStitcher.stitchCodeToCache(context, normalized);
             boolean played = hardwareManager.playAudioFile(wav);
@@ -52,5 +59,20 @@ public final class PairingCodeSpeaker {
             Log.e(TAG, "failed to speak pairing code", e);
             return false;
         }
+    }
+
+    /** Plays the one-shot message emitted when BES closes its pairing window. */
+    public static boolean speakPairingEnded(Context context, IHardwareManager hardwareManager) {
+        if (context == null || hardwareManager == null || !hardwareManager.supportsAudioPlayback()) {
+            Log.w(TAG, "pairing-ended playback skipped: audio unavailable");
+            return false;
+        }
+        WakeLockManager.acquireScreen(
+                context,
+                WakeLockManager.WakeOwner.PAIRING_CODE,
+                SHORT_PROMPT_WAKE_LOCK_MS);
+        hardwareManager.playAudioAsset(AudioAssets.PAIRING_EXITED);
+        Log.i(TAG, "pairing-ended asset dispatched");
+        return true;
     }
 }

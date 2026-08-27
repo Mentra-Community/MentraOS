@@ -34,7 +34,13 @@ public class PairingCodeAssetIntegrityTest {
         int rate = stitched.sampleRate;
         assertThat(rate).isGreaterThan(0);
 
-        int trimmedSum = 0;
+        int trimmedSum;
+        try (java.io.InputStream in = app.getAssets().open(AudioAssets.PAIRING_INTRO)) {
+            PairingCodePcmStitcher.PcmClip intro =
+                    PairingCodePcmStitcher.decodePcmWav(in.readAllBytes());
+            assertThat(intro.sampleRate).isEqualTo(rate);
+            trimmedSum = PairingCodePcmStitcher.trimSilence(intro.samples).length;
+        }
         for (char c : "A12B".toCharArray()) {
             String asset = AudioAssets.getPairingCharAsset(c);
             assertThat(asset).isNotNull();
@@ -48,7 +54,11 @@ public class PairingCodeAssetIntegrityTest {
         int pauseSamples =
                 PairingCodePcmStitcher.msToSamples(
                         AsgConstants.PAIRING_CODE_INTER_CHARACTER_PAUSE_MS, rate);
-        assertThat(stitched.samples.length).isEqualTo(trimmedSum + pauseSamples * 3);
+        int introPauseSamples =
+                PairingCodePcmStitcher.msToSamples(
+                        AsgConstants.PAIRING_INTRO_TO_CODE_PAUSE_MS, rate);
+        assertThat(stitched.samples.length)
+                .isEqualTo(trimmedSum + introPauseSamples + pauseSamples * 3);
     }
 
     @Test

@@ -38,6 +38,8 @@ fi
 # one character name. PairingCodeSpeaker currently accepts hexadecimal codes, but the full
 # alphabet stays voice-consistent for future code formats and other character-by-character audio.
 clips=(
+    "pairing_intro|Connect to your Mentra Live in the app. Your code is:"
+    "pairing_exited|Pairing mode ended."
     "digit_0|zero"
     "digit_1|one"
     "digit_2|two"
@@ -76,9 +78,15 @@ clips=(
     "letter_z|zee"
 )
 
+requested_names=" ${PAIRING_AUDIO_NAMES:-} "
+generated_count=0
+
 for clip in "${clips[@]}"; do
     basename="${clip%%|*}"
     spoken_text="${clip#*|}"
+    if [[ -n "${PAIRING_AUDIO_NAMES:-}" && "$requested_names" != *" $basename "* ]]; then
+        continue
+    fi
     mp3_path="$temporary_dir/$basename.mp3"
     wav_path="$output_dir/$basename.wav"
     request_body="$(
@@ -120,6 +128,7 @@ for clip in "${clips[@]}"; do
         "$wav_path"
 
     "$normalize_script" "$wav_path"
+    generated_count=$((generated_count + 1))
 done
 
-echo "Generated ${#clips[@]} Mentra Live pairing clips in $output_dir"
+echo "Generated $generated_count Mentra Live pairing clips in $output_dir"
