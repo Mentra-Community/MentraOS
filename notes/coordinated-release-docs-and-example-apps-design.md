@@ -153,11 +153,12 @@ must carry explicit machine-readable metadata so it cannot trigger a dispatch
 loop.
 
 If a human Starter Kit change reaches `dev` or `staging` without a concurrent
-MentraOS source change, the Starter Kit requests a coordinated release from
-MentraOS. MentraOS still allocates the identity and republishes the complete
-release family, subject to the channel's one-running/latest-pending coalescing
-policy. The callback to Starter Kit identifies the requesting head SHA, and the
-automation sync commit is excluded from generating another request.
+MentraOS source change, it remains validated source until the next coordinated
+Mentra release consumes that branch head. When an example-only change must be
+published immediately, an operator manually dispatches the MentraOS coordinated
+workflow on the corresponding branch. The Starter Kit does not own release
+identity allocation and does not need a reverse cross-repository credential or
+callback loop.
 
 ## Starter Kit Workflow Design
 
