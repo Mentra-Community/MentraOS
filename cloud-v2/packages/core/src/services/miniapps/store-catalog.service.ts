@@ -55,6 +55,7 @@ export class StoreCatalogService {
       publicApprovedReleaseIds,
       privateAuthorizedAppIds,
       betaDisplayAppIds,
+      transitionAuthorizedBetaAppIds,
     );
 
     const total = await MiniAppModel.countDocuments(filter);
@@ -535,6 +536,7 @@ export class StoreCatalogService {
     publicApprovedReleaseIds: string[],
     privateAuthorizedAppIds: Set<string>,
     betaAppIds: Set<string>,
+    transitionAuthorizedBetaAppIds: Set<string>,
   ) {
     const selectedBetaIds = [...betaAppIds];
     const betaClause = this.selectionClause(
@@ -556,6 +558,12 @@ export class StoreCatalogService {
             visibility: { $ne: "private" },
             betaAccessMode: "public",
             activeBetaReleaseId: { $in: publicApprovedReleaseIds },
+          },
+          {
+            _id: { $in: [...transitionAuthorizedBetaAppIds] },
+            visibility: { $ne: "private" },
+            betaAccessMode: "public",
+            activeBetaReleaseId: { $in: publishedReleaseIds },
           },
         ],
       },

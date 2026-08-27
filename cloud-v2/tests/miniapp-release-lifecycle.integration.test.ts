@@ -1544,9 +1544,27 @@ describe("miniapp release lifecycle", () => {
     expect((await catalog.getBundleAsset(beta.releaseBundleAssetId!, storeUser))._id.toString()).toBe(
       beta.releaseBundleAssetId,
     );
+    expect(
+      (
+        await catalog.list({
+          ...storeUser,
+          baseUrl: "https://core.example.test",
+          query: "Beta Only",
+        })
+      ).apps.map(app => app.packageName),
+    ).toEqual([packageName]);
     await expect(catalog.get(packageName, "https://core.example.test", publicUser)).rejects.toMatchObject({
       code: "not_found",
     });
+    expect(
+      (
+        await catalog.list({
+          ...publicUser,
+          baseUrl: "https://core.example.test",
+          query: "Beta Only",
+        })
+      ).apps,
+    ).toHaveLength(0);
     await expect(
       catalog.setReleaseTrack(packageName, "beta", publicUser, "https://core.example.test"),
     ).rejects.toMatchObject({ code: "beta_unavailable", status: 409 });
