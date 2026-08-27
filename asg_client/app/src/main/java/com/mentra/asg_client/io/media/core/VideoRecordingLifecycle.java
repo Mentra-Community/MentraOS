@@ -73,6 +73,16 @@ final class VideoRecordingLifecycle {
         return phase == Phase.STOPPING;
     }
 
+    /**
+     * True whenever video owns the camera, including the asynchronous windows that {@code
+     * isRecordingVideo} does not cover: STARTING, before the recorder's started callback, and
+     * STOPPING, while MediaRecorder finalizes the file. A photo admitted during either window
+     * cannot get the camera, so it never reaches exposure.
+     */
+    synchronized boolean isCameraOccupied() {
+        return phase != Phase.IDLE;
+    }
+
     synchronized void cancelPendingStart() {
         pendingStart = null;
     }

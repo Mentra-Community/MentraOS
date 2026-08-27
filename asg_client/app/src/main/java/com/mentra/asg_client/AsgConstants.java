@@ -78,6 +78,13 @@ public class AsgConstants {
     /** Cadence for the short hold-still click while a cold photo spins up the camera. */
     public static final long CAMERA_PREP_CLICK_INTERVAL_MS = 900L;
 
+    /**
+     * Ceiling on the repeating hold-still cue. A cold start that has not reached sensor exposure by
+     * now is stuck (camera owned elsewhere, HAL wedged), and more clicking only tells the user the
+     * glasses are broken. The capture keeps running under its own timeouts; only the cue stops.
+     */
+    public static final long CAMERA_PREP_CLICK_MAX_DURATION_MS = 5_000L;
+
     /** Baseline linear gain for Mentra Live audio prompts. */
     public static final float AUDIO_PLAYBACK_VOLUME = 0.1f;
 

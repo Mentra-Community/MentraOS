@@ -1164,6 +1164,9 @@ public class MediaCaptureService {
         VideoRecordingLifecycle.StartResult result =
                 videoRecordingLifecycle.requestStart(startAction);
         if (result == VideoRecordingLifecycle.StartResult.START_NOW) {
+            // Publish before the camera open so a button press racing video startup is already
+            // covered by the lease instead of arming a prompt BES cannot take back.
+            publishPromptOccupancy();
             startAction.run();
             return true;
         }
@@ -1174,6 +1177,12 @@ public class MediaCaptureService {
 
         Log.w(TAG, "Video start rejected because another recording or queued start is active");
         return false;
+    }
+
+    /** Releases the camera claim taken by {@code requestStart} and re-publishes occupancy. */
+    private void videoStartFailed() {
+        videoRecordingLifecycle.startFailed();
+        publishPromptOccupancy();
     }
 
     /**
@@ -1251,7 +1260,7 @@ public class MediaCaptureService {
                 || SrtStreamingService.isStreaming()
                 || WhipStreamingService.isStreaming()) {
             Log.e(TAG, "Cannot start video - streaming active");
-            videoRecordingLifecycle.startFailed();
+            videoStartFailed();
             if (mMediaCaptureListener != null) {
                 mMediaCaptureListener.onMediaError(
                         requestId,
@@ -1264,7 +1273,7 @@ public class MediaCaptureService {
         // Check if camera is actively in use (this will return false for kept-alive idle camera)
         if (CameraNeoService.isCameraInUse()) {
             Log.e(TAG, "Cannot start video - camera actively in use");
-            videoRecordingLifecycle.startFailed();
+            videoStartFailed();
             if (mMediaCaptureListener != null) {
                 mMediaCaptureListener.onMediaError(
                         requestId, "Camera busy", MediaUploadQueueManager.MEDIA_TYPE_VIDEO);
@@ -1275,7 +1284,7 @@ public class MediaCaptureService {
         // Check storage availability before recording
         if (!isExternalStorageAvailable()) {
             Log.e(TAG, "External storage is not available for video capture");
-            videoRecordingLifecycle.startFailed();
+            videoStartFailed();
             if (mMediaCaptureListener != null) {
                 mMediaCaptureListener.onMediaError(
                         requestId,
@@ -1705,7 +1714,7 @@ public class MediaCaptureService {
             clearVideoCaptureSyncBlocks(videoFilePath);
             currentVideoId = null;
             currentVideoPath = null;
-            videoRecordingLifecycle.startFailed();
+            videoStartFailed();
         }
     }
 
@@ -1716,6 +1725,7 @@ public class MediaCaptureService {
             mCurrentStopReason = null;
             pendingStart = videoRecordingLifecycle.recordingTerminated();
         }
+        publishPromptOccupancy();
         if (pendingStart == null) {
             return;
         }
@@ -1724,14 +1734,14 @@ public class MediaCaptureService {
                 mainHandler.post(
                         () -> {
                             if (isCleaningUp.get()) {
-                                videoRecordingLifecycle.startFailed();
+                                videoStartFailed();
                                 return;
                             }
                             Log.i(TAG, "Starting video queued behind recorder teardown");
                             pendingStart.run();
                         });
         if (!posted) {
-            videoRecordingLifecycle.startFailed();
+            videoStartFailed();
             Log.e(TAG, "Could not post video start queued behind recorder teardown");
         }
     }
@@ -1995,7 +2005,7 @@ public class MediaCaptureService {
         }
 
         // Check if video recording is active - photos cannot interrupt video recording
-        if (isRecordingVideo) {
+        if (isVideoHoldingCamera()) {
             Log.e(TAG, "Cannot take photo - video recording in progress");
             if (mMediaCaptureListener != null) {
                 mMediaCaptureListener.onMediaError(
@@ -2343,6 +2353,13 @@ public class MediaCaptureService {
         if (CameraRestartCooldown.isActive()) {
             Log.w(TAG, "Cannot take local-save photo - camera HAL restarting after FOV change");
             sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Camera restarting after FOV change");
+            return false;
+        }
+
+        if (isVideoHoldingCamera()) {
+            Log.e(TAG, "Cannot take local-save photo - video recording owns the camera");
+            sendPhotoErrorResponse(
+                    requestId, "CAMERA_BUSY", "Camera busy with video recording");
             return false;
         }
 
@@ -2731,6 +2748,15 @@ public class MediaCaptureService {
         if (CameraRestartCooldown.isActive()) {
             Log.w(TAG, "Cannot take photo - camera HAL restarting after FOV change");
             sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Camera restarting after FOV change");
+            clearPhotoTracking(requestId);
+            return false;
+        }
+
+        // Photos cannot interrupt video recording, including its async start/stop windows
+        if (isVideoHoldingCamera()) {
+            Log.e(TAG, "Cannot take photo - video recording owns the camera");
+            sendPhotoErrorResponse(
+                    requestId, "CAMERA_BUSY", "Camera busy with video recording");
             clearPhotoTracking(requestId);
             return false;
         }
@@ -3172,7 +3198,17 @@ public class MediaCaptureService {
         return PhotoPromptOccupancy.suppressed(
                 captureBusyGate.isBusy(),
                 activePhotoJobRequestId.get() != null,
-                isRecordingVideo);
+                isVideoHoldingCamera());
+    }
+
+    /**
+     * True while video owns the camera. {@code isRecordingVideo} only flips on the recorder's
+     * started callback and clears on its terminal callback, so it leaves the asynchronous start and
+     * stop windows uncovered; the lifecycle phase covers them. A photo admitted in one of those
+     * windows never gets the camera, so it clicks its way to a timeout instead of capturing.
+     */
+    private boolean isVideoHoldingCamera() {
+        return isRecordingVideo || videoRecordingLifecycle.isCameraOccupied();
     }
 
     private boolean acquirePhotoJob(String requestId) {
@@ -5144,6 +5180,16 @@ public class MediaCaptureService {
         if (CameraRestartCooldown.isActive()) {
             Log.w(TAG, "Cannot take photo - camera HAL restarting after FOV change");
             sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Camera restarting after FOV change");
+            clearPhotoTracking(requestId);
+            return false;
+        }
+
+        // Photos cannot interrupt video recording, including its async start/stop windows
+        logBlePhotoStep(requestId, "video_recording_check", "checking video camera ownership");
+        if (isVideoHoldingCamera()) {
+            Log.e(TAG, "Cannot take photo - video recording owns the camera");
+            sendPhotoErrorResponse(
+                    requestId, "CAMERA_BUSY", "Camera busy with video recording");
             clearPhotoTracking(requestId);
             return false;
         }

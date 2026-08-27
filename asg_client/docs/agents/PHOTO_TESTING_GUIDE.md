@@ -172,3 +172,5 @@ Use a Mentra Live device; an emulator cannot validate camera HAL or speaker late
 5. Compare the estimate in the snap log against the actual exposure in the following `MFNR_DIAG` / `still_hal_completed` log. The audible snap should start no more than 250ms before actual exposure end in each lighting condition.
 6. Enable HDR burst and confirm the snap waits for the final bracket's exposure start.
 7. Force a capture failure and confirm only that request's prep clicks stop; unrelated prompts must continue.
+8. Press the camera button immediately after starting a video, and again immediately after stopping one. Both presses must be silent on BES and log `Cannot take photo - video recording owns the camera`. A prep click storm here means the video occupancy window regressed.
+9. Block the camera so a cold capture never reaches exposure and confirm the prep clicks stop after `CAMERA_PREP_CLICK_MAX_DURATION_MS` (`Prep click cap reached`), not after the 45s feedback timeout.

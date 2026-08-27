@@ -50,6 +50,34 @@ public class VideoRecordingLifecycleTest {
     }
 
     @Test
+    public void cameraIsOccupiedFromStartRequestUntilTermination() {
+        VideoRecordingLifecycle lifecycle = new VideoRecordingLifecycle();
+        assertThat(lifecycle.isCameraOccupied()).isFalse();
+
+        lifecycle.requestStart(() -> {});
+        assertThat(lifecycle.isCameraOccupied()).isTrue();
+
+        lifecycle.recordingStarted();
+        assertThat(lifecycle.isCameraOccupied()).isTrue();
+
+        assertThat(lifecycle.beginStop()).isTrue();
+        assertThat(lifecycle.isCameraOccupied()).isTrue();
+
+        lifecycle.recordingTerminated();
+        assertThat(lifecycle.isCameraOccupied()).isFalse();
+    }
+
+    @Test
+    public void failedStart_releasesCameraClaim() {
+        VideoRecordingLifecycle lifecycle = new VideoRecordingLifecycle();
+        lifecycle.requestStart(() -> {});
+
+        lifecycle.startFailed();
+
+        assertThat(lifecycle.isCameraOccupied()).isFalse();
+    }
+
+    @Test
     public void failedStart_returnsToIdle() {
         VideoRecordingLifecycle lifecycle = new VideoRecordingLifecycle();
         assertThat(lifecycle.requestStart(() -> {}))

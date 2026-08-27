@@ -70,16 +70,19 @@ A short or long press while video is already recording still **stops** the recor
 BES plays `PHOTO_START` from a local occupancy lease, not a per-press UART verdict. `MediaCaptureService` publishes `mh_phobsy` whenever this suppression predicate changes (and renews it every 20s while it stays true):
 
 ```
-suppressed = captureInFlight || photoJobInFlight || recordingVideo
+suppressed = captureInFlight || photoJobInFlight || videoHoldingCamera
 ```
 
 That is exactly the set of locally handled presses that will not become a photo (`STOP_RECORDING` or `DROP_BUSY` in `ButtonCaptureDecision`). Gallery-off + phone-present (`SKIP_LOCAL`) is not part of the predicate: occupancy is press-agnostic.
 
+`videoHoldingCamera` is `isRecordingVideo || VideoRecordingLifecycle.isCameraOccupied()`, not the flag alone. The flag flips on the recorder's started callback and clears on its terminal callback, so it misses both async windows: the camera open before recording starts, and the MediaRecorder finalization after a stop is dispatched. A press in either window used to publish nothing, so BES armed a prompt while the photo it belonged to could never get the camera — the capture then clicked at 900ms for the full 45s feedback timeout without ever reaching exposure. The lifecycle phase covers the whole span and every photo entry point rejects across it.
+
 | Press | Camera state | Sound |
 | --- | --- | --- |
 | Short, camera idle | none of the three flags | BES `PHOTO_START`, then ASG prep clicks and snap |
-| Short, photo in flight | `captureInFlight` or `photoJobInFlight` | silent |
+| Short, photo in flight | `captureInFlight` or `photoJobInFlight` | silent (mash). If ASG accepts after the previous capture ends, BES catch-up plays one `PHOTO_START` on the rising-edge `mh_phobsy` `b:1` |
 | Short, video recording | `recordingVideo` | ASG `recording_stop` only |
+| Short, video starting or finalizing | `VideoRecordingLifecycle` occupied | silent; the photo is rejected `CAMERA_BUSY` |
 | Long press | start or stop | ASG owns start/stop cues; a dropped long press is silent |
 | `SKIP_LOCAL` (gallery off, phone present) | occupancy clear | BES prompt only |
 | Phone/SDK `take_photo` | occupancy pushed | ASG prep/snap only; a button press mid-SDK-photo is silent |
