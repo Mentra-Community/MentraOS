@@ -470,10 +470,10 @@ MentraOS retains one running release plus the newest pending head per channel.
 `dev` and `staging` have distinct concurrency groups and cannot cancel or
 replace each other.
 
-Starter Kit coordinated releases also serialize by channel. They do not cancel
-an already running publication. Because MentraOS dispatches only an active
-coordinated run, superseded pending MentraOS heads do not create Starter Kit
-releases.
+Starter Kit coordinated releases serialize by base-version family because dev
+and beta share one grouped release container. They do not cancel an already
+running publication. Because MentraOS dispatches only an active coordinated
+run, superseded pending MentraOS heads do not create Starter Kit releases.
 
 Every boundary uses exact identities and compare-and-swap behavior:
 
