@@ -408,17 +408,27 @@ describe("useMentraLiveOta", () => {
     await act(async () => renderer.unmount())
   })
 
-  test("resumes an approved session when an additional pass gets Wi-Fi", async () => {
+  test("keeps finishing visible until Wi-Fi status can resume an approved session", async () => {
     autoChainActive = true
     autoChainRange = {
       fromVersion: "3.0.0",
       toVersion: "3.1.0-dev.8",
       releaseVersion: "3.1.0-dev.8",
     }
-    otaSnapshot = {...otaSnapshot, hotspotOtaVersion: 0, wifiConnected: false}
+    otaSnapshot = {...otaSnapshot, hotspotOtaVersion: 0, wifiConnected: false, wifiStatusKnown: false}
     const renderer = await renderProbe("check")
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 1_150))
+    })
+
+    expect(latestController.state.screen).toBe("finishing")
+    expect(renderedScreens).not.toContain("update_available")
+    expect(stopAutoChain).not.toHaveBeenCalled()
+    expect(advanceAutoChain).not.toHaveBeenCalled()
+
+    otaSnapshot = {...otaSnapshot, wifiStatusKnown: true}
+    await act(async () => {
+      otaListeners.forEach((listener) => listener())
     })
 
     expect(latestController.state).toMatchObject({
@@ -426,7 +436,6 @@ describe("useMentraLiveOta", () => {
       canDismiss: false,
       releaseTransition: {fromVersion: "3.0.0", toVersion: "3.1.0-dev.8"},
     })
-    expect(stopAutoChain).not.toHaveBeenCalled()
 
     otaSnapshot = {...otaSnapshot, wifiConnected: true}
     await act(async () => {

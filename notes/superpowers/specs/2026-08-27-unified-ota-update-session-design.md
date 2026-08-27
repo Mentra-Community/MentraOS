@@ -87,6 +87,8 @@ auto-chain session remains active while the existing Wi-Fi setup page is shown:
 
 Returning with Wi-Fi available resumes the already approved session. This page
 does not offer **Later** because the user is already inside an update session.
+While the glasses Wi-Fi status is still hydrating after a restart, the flow
+stays on **Finishing your update** instead of flashing a second approval page.
 
 ### Terminal success
 

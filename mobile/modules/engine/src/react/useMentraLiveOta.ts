@@ -391,6 +391,10 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
             const fromVersion = currentReleaseVersion(ota.snapshot().appVersion)
             setOfferedReleaseTransition(result.releaseVersion ? {fromVersion, toVersion: result.releaseVersion} : null)
           }
+          if (isOtaAutoChainActive() && !ota.snapshot().wifiStatusKnown) {
+            checkCompletedRef.current = true
+            return
+          }
           if (continueApprovedChain(result)) return
           checkCompletedRef.current = true
           setCheckState("update_available")
@@ -428,15 +432,19 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
     if (
       !runtimeReady ||
       page !== "check" ||
-      checkState !== "update_available" ||
+      (checkState !== "checking" && checkState !== "update_available") ||
       !otaSnapshot.wifiStatusKnown ||
-      (!otaSnapshot.wifiConnected && otaSnapshot.hotspotOtaVersion !== 1) ||
       !isOtaAutoChainActive()
     ) {
       return
     }
     const result = selectedCheckResultRef.current
-    if (result?.updateAvailable && result.updateInfo) continueApprovedChain(result)
+    if (!result?.updateAvailable || !result.updateInfo) return
+    if (!otaSnapshot.wifiConnected && otaSnapshot.hotspotOtaVersion !== 1) {
+      setCheckState("update_available")
+      return
+    }
+    continueApprovedChain(result)
   }, [
     checkState,
     continueApprovedChain,
