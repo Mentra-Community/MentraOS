@@ -23,7 +23,9 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: coordinated-example-release-${{ inputs.channel }}
+  # Dev and beta for one train share a GitHub release container, so serialize
+  # the family even though their source branches are independent.
+  group: coordinated-example-release-${{ fromJSON(inputs.payload).familyBaseVersion }}
   cancel-in-progress: false
 
 env:
@@ -180,6 +182,7 @@ jobs:
             git add \
               .github/coordinated-example-release.json \
               examples/android/gradle.properties \
+              examples/ios/project.yml \
               examples/ios/MentraExample.xcodeproj/project.pbxproj \
               examples/react-native/package.json \
               examples/react-native/bun.lock \
@@ -259,7 +262,7 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "$(gh pr view "$PR_URL" --json state --jq .state)" != "MERGED" ]]; then
-            gh pr merge "$PR_URL" --merge
+            gh pr merge "$PR_URL" --merge --match-head-commit "$RELEASE_COMMIT"
           fi
           merge_commit=$(gh pr view "$PR_URL" --json mergeCommit --jq .mergeCommit.oid)
           git fetch origin "$TARGET_BRANCH"

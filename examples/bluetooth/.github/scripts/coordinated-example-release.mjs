@@ -125,6 +125,15 @@ export function synchronizeExampleVersions(rootDir, releaseIdentity) {
   )
   writeFileSync(projectPath, updatedProject)
 
+  const projectDefinitionPath = path.join(rootDir, "examples/ios/project.yml")
+  const projectDefinition = replaceExactlyOnce(
+    readFileSync(projectDefinitionPath, "utf8"),
+    /^    exactVersion: .*$/gm,
+    `    exactVersion: ${releaseIdentity}`,
+    "XcodeGen iOS SDK version",
+  )
+  writeFileSync(projectDefinitionPath, projectDefinition)
+
   updateJsonDependency(path.join(rootDir, "examples/react-native/package.json"), {
     "@mentra/bluetooth-sdk": releaseIdentity,
     "@mentra/engine": releaseIdentity,

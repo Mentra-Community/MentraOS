@@ -56,6 +56,7 @@ test("synchronizes all maintained example manifests", () => {
     path.join(root, "examples/ios/MentraExample.xcodeproj/project.pbxproj"),
     'repositoryURL = "https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git";\nrequirement = {\nkind = exactVersion;\nversion = 1.0.0;\n};\n',
   )
+  writeFileSync(path.join(root, "examples/ios/project.yml"), "packages:\n  MentraBluetoothSDK:\n    exactVersion: 1.0.0\n")
   writeFileSync(
     path.join(root, "examples/react-native/package.json"),
     JSON.stringify({dependencies: {"@mentra/bluetooth-sdk": "1.0.0", "@mentra/engine": "1.0.0"}}),
@@ -72,6 +73,7 @@ test("synchronizes all maintained example manifests", () => {
     readFileSync(path.join(root, "examples/ios/MentraExample.xcodeproj/project.pbxproj"), "utf8"),
     /version = 3\.1\.0-dev\.42/,
   )
+  assert.match(readFileSync(path.join(root, "examples/ios/project.yml"), "utf8"), /exactVersion: 3\.1\.0-dev\.42/)
   assert.equal(
     JSON.parse(readFileSync(path.join(root, "examples/react-native/package.json"))).dependencies["@mentra/engine"],
     "3.1.0-dev.42",

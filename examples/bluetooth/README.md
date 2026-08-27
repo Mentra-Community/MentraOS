@@ -29,14 +29,20 @@ Read the first-party [Mentra Live Bluetooth SDK docs](https://docs.mentraglass.c
 
 ## Install Prebuilt Example Apps
 
-Every commit on `main` publishes installable builds of the example apps to [GitHub Releases](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/releases), grouped by Bluetooth SDK version: the `sdk-<version>` release always carries the latest build of each example for that SDK version.
+Each completed coordinated Mentra release publishes matching installable example
+apps to [GitHub Releases](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/releases).
+Development and beta builds for one release train share the
+`sdk-builds-v<X.Y.Z>` release; stable builds use `sdk-<X.Y.Z>`. Every filename
+contains its exact coordinated identity, and the immutable `sdk-<version>`
+source tag identifies the commit that produced it.
 
-From the release matching your SDK version (e.g. `sdk-0.1.20`), download:
+From the release containing your SDK version, such as `sdk-builds-v3.1.0`,
+download the files carrying the same full version:
 
-- `mentra-example-android.apk` — native Android example
-- `mentra-example-react-native.apk` — React Native example
-- `mentra-example-rn-elevenlabs-audio.apk` — React Native ElevenLabs audio example
-- `mentra-example-ios-unsigned.ipa` — native iOS example
+- `mentra-example-android-<version>.apk` — native Android example
+- `mentra-example-react-native-<version>.apk` — React Native example
+- `mentra-example-rn-elevenlabs-audio-<version>.apk` — React Native ElevenLabs audio example
+- `mentra-example-ios-<version>-unsigned.ipa` — native iOS example
 
 Android APKs install directly from the phone browser (enable installs from unknown sources when prompted). The iOS IPA is unsigned; install it with a sideloading tool such as [Sideloadly](https://sideloadly.io/) or [AltStore](https://altstore.io/), which re-signs it with your own Apple ID. Pull-request builds are also available for 90 days as run artifacts on each [workflow run](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/actions/workflows/example-app-builds.yml).
 
