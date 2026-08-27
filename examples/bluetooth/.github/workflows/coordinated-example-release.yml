@@ -20,7 +20,7 @@ run-name: Coordinated example ${{ inputs.channel }} ${{ fromJSON(inputs.payload)
 permissions:
   actions: write
   contents: write
-  pull-requests: write
+  pull-requests: read
 
 concurrency:
   # Dev and beta for one train share a GitHub release container, so serialize
@@ -195,7 +195,7 @@ jobs:
 
           echo "release_commit=$release_commit" >> "$GITHUB_OUTPUT"
 
-      - name: Create or reuse the synchronization pull request
+      - name: Wait for the coordinator synchronization pull request
         if: steps.existing.outputs.already_published != 'true'
         id: pull-request
         env:
@@ -205,21 +205,26 @@ jobs:
           MENTRAOS_RUN_URL: ${{ fromJSON(inputs.payload).mentraos.coordinatorRunUrl }}
         run: |
           set -euo pipefail
-          pr_json=$(gh pr list --state all --base "$TARGET_BRANCH" --head "$CANDIDATE_BRANCH" \
-            --limit 1 --json number,url,state,mergedAt)
-          if [[ "$(jq 'length' <<<"$pr_json")" == "0" ]]; then
-            pr_url=$(gh pr create \
-              --base "$TARGET_BRANCH" \
-              --head "$CANDIDATE_BRANCH" \
-              --title "Synchronize examples to $RELEASE_IDENTITY" \
-              --body "Automated coordinated example release for \`$RELEASE_IDENTITY\`.\n\nMentraOS coordinator: $MENTRAOS_RUN_URL")
-          else
-            pr_url=$(jq -r '.[0].url' <<<"$pr_json")
-            state=$(jq -r '.[0].state' <<<"$pr_json")
-            merged_at=$(jq -r '.[0].mergedAt // empty' <<<"$pr_json")
-            if [[ "$state" == "CLOSED" && -z "$merged_at" ]]; then
-              gh pr reopen "$pr_url"
+          pr_url=""
+          for _ in {1..60}; do
+            pr_json=$(gh pr list --state all --base "$TARGET_BRANCH" --head "$CANDIDATE_BRANCH" \
+              --limit 1 --json number,url,state,mergedAt)
+            if [[ "$(jq 'length' <<<"$pr_json")" != "0" ]]; then
+              pr_url=$(jq -r '.[0].url' <<<"$pr_json")
+              state=$(jq -r '.[0].state' <<<"$pr_json")
+              merged_at=$(jq -r '.[0].mergedAt // empty' <<<"$pr_json")
+              if [[ "$state" == "CLOSED" && -z "$merged_at" ]]; then
+                echo "Coordinator PR $pr_url was closed without merging." >&2
+                exit 1
+              fi
+              break
             fi
+            sleep 10
+          done
+          if [[ -z "$pr_url" ]]; then
+            echo "MentraOS did not create the synchronization PR for $RELEASE_IDENTITY." >&2
+            echo "Coordinator: $MENTRAOS_RUN_URL" >&2
+            exit 1
           fi
           echo "url=$pr_url" >> "$GITHUB_OUTPUT"
 
@@ -252,7 +257,7 @@ jobs:
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
           echo "url=https://github.com/$STARTER_KIT_REPOSITORY/actions/runs/$run_id" >> "$GITHUB_OUTPUT"
 
-      - name: Merge the validated synchronization pull request
+      - name: Wait for the coordinator to merge the validated pull request
         if: steps.existing.outputs.already_published != 'true'
         id: merge
         env:
@@ -261,9 +266,18 @@ jobs:
           TARGET_BRANCH: ${{ steps.release.outputs.targetBranch }}
         run: |
           set -euo pipefail
-          if [[ "$(gh pr view "$PR_URL" --json state --jq .state)" != "MERGED" ]]; then
-            gh pr merge "$PR_URL" --merge --match-head-commit "$RELEASE_COMMIT"
-          fi
+          for _ in {1..60}; do
+            pr_json=$(gh pr view "$PR_URL" --json state,headRefOid,mergeCommit)
+            [[ "$(jq -r .headRefOid <<< "$pr_json")" == "$RELEASE_COMMIT" ]]
+            state=$(jq -r .state <<< "$pr_json")
+            if [[ "$state" == "MERGED" ]]; then break; fi
+            if [[ "$state" == "CLOSED" ]]; then
+              echo "Coordinator closed $PR_URL without merging it." >&2
+              exit 1
+            fi
+            sleep 10
+          done
+          [[ "$state" == "MERGED" ]]
           merge_commit=$(gh pr view "$PR_URL" --json mergeCommit --jq .mergeCommit.oid)
           git fetch origin "$TARGET_BRANCH"
           git merge-base --is-ancestor "$RELEASE_COMMIT" "origin/$TARGET_BRANCH"
