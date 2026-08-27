@@ -128,6 +128,7 @@ function checkResult(): OtaCheckCurrentGlassesResult {
     besVersion: null,
     isApkDowngrade: false,
     manifestBody: "{}",
+    releaseVersion: null,
     updateInfo: null,
     isRequired: true,
   }

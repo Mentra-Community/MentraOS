@@ -165,8 +165,10 @@ describe("pairing scan screen", () => {
   const goBack = jest.fn()
 
   beforeEach(() => {
+    process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_SECURE_PAIRING = "true"
     resetBluetoothSdkMock()
     jest.clearAllMocks()
+    ;(engine.pairing.pair as jest.Mock).mockReset().mockResolvedValue(undefined)
     useCoreStore.getState().reset()
     useGlassesStore.getState().reset()
     useSettingsStore.getState().resetAllSettingsLocally()
@@ -192,6 +194,7 @@ describe("pairing scan screen", () => {
   })
 
   afterEach(() => {
+    delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_SECURE_PAIRING
     jest.useRealTimers()
     setPlatformOS(originalPlatformOS)
   })
@@ -218,6 +221,7 @@ describe("pairing scan screen", () => {
         device: JSON.stringify({id: "a", model: "Mentra Live", name: "MENTRA_LIVE_BLE_001", address: "a"}),
       })
       expect(pushUnder).toHaveBeenCalledWith("/pairing/loading", {
+        device: JSON.stringify({id: "a", model: "Mentra Live", name: "MENTRA_LIVE_BLE_001", address: "a"}),
         deviceModel: "Mentra Live",
         deviceName: "MENTRA_LIVE_BLE_001",
       })
@@ -266,10 +270,9 @@ describe("pairing scan screen", () => {
     expect(goBack).not.toHaveBeenCalled()
   })
 
-  it("routes a pair kickoff rejection to the failure screen instead of leaving loading stuck", async () => {
+  it("hands the exact selected device to loading without connecting from the scan screen", async () => {
     jest.useFakeTimers()
     setPlatformOS("android")
-    ;(engine.pairing.pair as jest.Mock).mockRejectedValueOnce(new Error("bluetooth powered off"))
     useCoreStore.setState({
       searchResults: [{id: "a", model: "Mentra Live", name: "MENTRA_LIVE_BLE_001", address: "a"}],
     })
@@ -283,62 +286,17 @@ describe("pairing scan screen", () => {
 
     await waitFor(() => {
       expect(push).toHaveBeenCalledWith("/pairing/loading", {
+        device: JSON.stringify({id: "a", model: "Mentra Live", name: "MENTRA_LIVE_BLE_001", address: "a"}),
         deviceModel: "Mentra Live",
         deviceName: "MENTRA_LIVE_BLE_001",
       })
     })
 
-    // The pair kickoff fires 2s after navigating to loading; its rejection
-    // must surface as a failure route, not just a console.error.
+    // Loading owns the delayed kickoff so leaving that route can cancel it.
     act(() => {
-      jest.advanceTimersByTime(2_000)
+      jest.advanceTimersByTime(3_000)
     })
-
-    await waitFor(() => {
-      expect(replace).toHaveBeenCalledWith("/pairing/failure", {
-        error: "errors:pairingCouldNotStart",
-        deviceModel: "Mentra Live",
-      })
-    })
-    // Parity with loading.tsx's handlePairFailure: the failed attempt is
-    // cleared before the failure screen shows.
-    expect(engine.pairing.abandonAttempt).toHaveBeenCalled()
-  })
-
-  it("suppresses the kickoff-failure route when the user already left loading", async () => {
-    jest.useFakeTimers()
-    setPlatformOS("android")
-    // The user backed out of /pairing/loading during the 2s kickoff delay —
-    // the stale rejection must not yank them to the failure screen.
-    ;(useNavigationStore.getState as jest.Mock).mockReturnValue({
-      replace,
-      push,
-      goBack,
-      history: ["/pairing/scan"],
-    })
-    ;(engine.pairing.pair as jest.Mock).mockRejectedValueOnce(new Error("bluetooth powered off"))
-    useCoreStore.setState({
-      searchResults: [{id: "a", model: "Mentra Live", name: "MENTRA_LIVE_BLE_001", address: "a"}],
-    })
-
-    const {getByText} = render(<SelectGlassesBluetoothScreen />)
-
-    await waitFor(() => {
-      expect(getByText("001")).toBeTruthy()
-    })
-    fireEvent.press(getByText("001"))
-
-    await waitFor(() => {
-      expect(push).toHaveBeenCalled()
-    })
-
-    act(() => {
-      jest.advanceTimersByTime(2_000)
-    })
-    await act(async () => {})
-
-    expect(replace).not.toHaveBeenCalledWith("/pairing/failure", expect.anything())
-    expect(engine.pairing.abandonAttempt).not.toHaveBeenCalled()
+    expect(engine.pairing.pair).not.toHaveBeenCalled()
   })
 
   it("auto-skips directly into pairing when NOTREQUIREDSKIP is discovered", async () => {
@@ -352,6 +310,7 @@ describe("pairing scan screen", () => {
 
     await waitFor(() => {
       expect(push).toHaveBeenCalledWith("/pairing/loading", {
+        device: JSON.stringify({id: "skip", model: "Mentra Live", name: "NOTREQUIREDSKIP", address: "skip"}),
         deviceModel: "Mentra Live",
         deviceName: "NOTREQUIREDSKIP",
       })
@@ -545,20 +504,21 @@ describe("pairing scan screen", () => {
         expect.objectContaining({
           deviceModel: "Mentra Live",
           deviceName: "MENTRA_LIVE_BLE_PAIR_A",
+          pairingCode: "ABCD",
         }),
       )
     })
   })
 
-  it("shows a single legacy Mentra Live and waits for the user to choose it", async () => {
+  it("shows existing customer firmware without labeling it as legacy", async () => {
     setPlatformOS("android")
     useCoreStore.setState({
       searchResults: [
         {
-          id: "legacy",
+          id: "existing",
           model: "Mentra Live",
-          name: "MENTRA_LIVE_BLE_LEGACY",
-          address: "legacy",
+          name: "MENTRA_LIVE_BLE_EXISTING",
+          address: "existing",
           pairingMode: false,
           securePairingCapable: false,
         },
@@ -569,25 +529,25 @@ describe("pairing scan screen", () => {
 
     await waitFor(() => {
       expect(getByText("pairing:liveChooseGlassesTitle")).toBeTruthy()
-      expect(getByText(/pairing:legacyFirmwareLabel/)).toBeTruthy()
+      expect(getByText("EXISTING")).toBeTruthy()
     })
     expect(push).not.toHaveBeenCalled()
 
-    fireEvent.press(getByText(/pairing:legacyFirmwareLabel/))
+    fireEvent.press(getByText("EXISTING"))
 
     await waitFor(() => {
       expect(push).toHaveBeenCalledWith(
         "/pairing/loading",
         expect.objectContaining({
           deviceModel: "Mentra Live",
-          deviceName: "MENTRA_LIVE_BLE_LEGACY",
+          deviceName: "MENTRA_LIVE_BLE_EXISTING",
           securePairingCapable: false,
         }),
       )
     })
   })
 
-  it("shows legacy Mentra Live beside an idle secure unit and waits for the user", async () => {
+  it("shows existing customer firmware beside an idle secure unit", async () => {
     setPlatformOS("android")
     useCoreStore.setState({
       searchResults: [
@@ -600,10 +560,10 @@ describe("pairing scan screen", () => {
           securePairingCapable: true,
         },
         {
-          id: "legacy",
+          id: "existing",
           model: "Mentra Live",
-          name: "MENTRA_LIVE_BLE_LEGACY",
-          address: "legacy",
+          name: "MENTRA_LIVE_BLE_EXISTING",
+          address: "existing",
           pairingMode: false,
           securePairingCapable: false,
         },
@@ -615,18 +575,18 @@ describe("pairing scan screen", () => {
     await waitFor(() => {
       expect(getByText("pairing:liveChooseGlassesTitle")).toBeTruthy()
       expect(getByText(/IDLE.*pairing:notInPairingModeLabel/)).toBeTruthy()
-      expect(getByText(/pairing:legacyFirmwareLabel/)).toBeTruthy()
+      expect(getByText("EXISTING")).toBeTruthy()
     })
     expect(push).not.toHaveBeenCalled()
 
-    fireEvent.press(getByText(/pairing:legacyFirmwareLabel/))
+    fireEvent.press(getByText("EXISTING"))
 
     await waitFor(() => {
       expect(push).toHaveBeenCalledWith(
         "/pairing/loading",
         expect.objectContaining({
           deviceModel: "Mentra Live",
-          deviceName: "MENTRA_LIVE_BLE_LEGACY",
+          deviceName: "MENTRA_LIVE_BLE_EXISTING",
           securePairingCapable: false,
         }),
       )
@@ -706,6 +666,59 @@ describe("pairing scan screen", () => {
         expect.objectContaining({deviceName: "MENTRA_LIVE_BLE_TARGET"}),
       )
     })
+  })
+
+  it("allows an explicit tap on any discovered Mentra Live when secure pairing is disabled", async () => {
+    process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_SECURE_PAIRING = "false"
+    setPlatformOS("android")
+    useCoreStore.setState({
+      searchResults: [
+        {
+          id: "idle",
+          model: "Mentra Live",
+          name: "MENTRA_LIVE_BLE_IDLE",
+          address: "idle",
+          pairingMode: false,
+          securePairingCapable: true,
+        },
+      ],
+    })
+
+    const {getByText, queryByText} = render(<SelectGlassesBluetoothScreen />)
+
+    await waitFor(() => {
+      expect(getByText("IDLE")).toBeTruthy()
+    })
+    expect(queryByText(/pairing:notInPairingModeLabel/)).toBeNull()
+
+    fireEvent.press(getByText("IDLE"))
+
+    await waitFor(() => {
+      expect(push).toHaveBeenCalledWith(
+        "/pairing/loading",
+        expect.objectContaining({deviceName: "MENTRA_LIVE_BLE_IDLE"}),
+      )
+    })
+  })
+
+  it("does not show pairing-mode instructions after a flag-off scan timeout", async () => {
+    jest.useFakeTimers()
+    try {
+      process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_SECURE_PAIRING = "false"
+      setPlatformOS("android")
+
+      const {getByText, queryByText} = render(<SelectGlassesBluetoothScreen />)
+
+      act(() => {
+        jest.advanceTimersByTime(15_000)
+      })
+
+      expect(getByText("pairing:liveScanHelpInfo")).toBeTruthy()
+      expect(queryByText("pairing:livePairingModeInfo")).toBeNull()
+      expect(queryByText("pairing:liveUpdatedGlassesHint")).toBeNull()
+    } finally {
+      jest.useRealTimers()
+    }
   })
 
   it("filters AR99 scan results to the selected AR99 project", async () => {

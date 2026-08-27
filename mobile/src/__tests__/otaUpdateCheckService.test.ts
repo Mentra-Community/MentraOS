@@ -273,6 +273,7 @@ describe("OtaUpdateCheckService", () => {
         ok: true,
         json: () =>
           Promise.resolve({
+            releaseVersion: "3.1.0-beta.3",
             apps: {
               "com.mentra.asg_client": {
                 versionCode: 11,
@@ -312,6 +313,7 @@ describe("OtaUpdateCheckService", () => {
         hasCheckCompleted: true,
         updateAvailable: true,
         isRequired: false,
+        releaseVersion: "3.1.0-beta.3",
         updates: ["apk", "mtk", "bes"],
       }),
     )

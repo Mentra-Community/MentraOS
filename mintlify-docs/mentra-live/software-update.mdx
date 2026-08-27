@@ -59,7 +59,9 @@ Use the serial shown by `adb devices`. If only one Android device is connected, 
 
 1. Pair and connect the example app to Mentra Live.
 2. The full-screen update flow checks the glasses automatically.
-3. If an update is available, tap **Update Now**. Configure glasses Wi-Fi only if the flow asks for it; supported releases can use the Mentra Live hotspot instead.
+3. If an update is available, tap **Update Now**. Factory-stock glasses require
+   glasses Wi-Fi for their first update; after they run Mentra Live software 3.1
+   or newer, supported phones can use the Mentra Live hotspot instead.
 4. Keep the app connected and avoid using other glasses features while the update is running.
 5. Wait while the flow installs every required component and rechecks the glasses. They may restart during installation.
 6. Continue when the flow reports that the glasses are up to date.
@@ -103,6 +105,15 @@ version verification.
 
 Do not reproduce that sequencing with `checkForOtaUpdate()`,
 `startOtaUpdate()`, and `ota_status` listeners in React Native application code.
+
+<Warning>
+`wifi_required` is only a legacy bootstrap state. Mentra Live software earlier
+than 3.1 does not support hotspot OTA. Factory-stock glasses are delivered in
+this state, so their first update must use a Wi-Fi network configured on the
+glasses. After that update installs Mentra Live software 3.1 or newer,
+subsequent updates can use hotspot OTA and the flow should not require glasses
+Wi-Fi.
+</Warning>
 
 ## Use The Exact Mentra App OTA Pages
 
@@ -166,7 +177,16 @@ export function CustomMentraLiveUpdate({onDone, onSetupWifi}: CustomMentraLiveUp
     return <Text>Checking for updates…</Text>
   }
   if (state.screen === "update_available") {
-    return <Button title="Update now" onPress={ota.install} />
+    return (
+      <View>
+        {state.releaseTransition && (
+          <Text>
+            {state.releaseTransition.fromVersion ?? "Current version unknown"} → {state.releaseTransition.toVersion}
+          </Text>
+        )}
+        <Button title="Update now" onPress={ota.install} />
+      </View>
+    )
   }
   if (state.screen === "wifi_required") {
     return <Button title="Set up Wi-Fi" onPress={ota.openWifiSetup} />
@@ -180,12 +200,26 @@ export function CustomMentraLiveUpdate({onDone, onSetupWifi}: CustomMentraLiveUp
     )
   }
   if (state.screen === "up_to_date" || state.screen === "complete") {
-    return <Button title="Done" onPress={ota.finish} />
+    return (
+      <View>
+        {state.releaseTransition && <Text>Updated to {state.releaseTransition.toVersion}</Text>}
+        <Button title="Done" onPress={ota.finish} />
+      </View>
+    )
   }
 
   return <Text>{state.progress == null ? "Preparing update…" : `${state.progress}%`}</Text>
 }
 ```
+
+`state.releaseTransition` is present when the checked OTA manifest belongs to a
+coordinated Mentra release. `toVersion` is that exact release identity. The
+current `fromVersion` is the ASG client version reported by the glasses and may
+be `null` on older installations, so custom pages should keep an honest unknown
+fallback. When glasses report their coordinated release identity directly,
+Engine can replace this one source-version lookup without changing customer UI
+code. Engine captures the pair before installation and retains it through
+restarts and final verification.
 
 Start from the Starter Kit's
 [custom OTA presentation folder](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/tree/main/examples/react-native/src/ota)

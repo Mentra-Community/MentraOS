@@ -63,7 +63,9 @@ export function customActions(controller: MentraLiveOtaController) {
 
 export function CustomOtaConsumer({onDone, onSetupWifi}: {onDone: () => void; onSetupWifi: () => void}) {
   const controller = useMentraLiveOta({onFinished: onDone, onOpenWifiSetup: onSetupWifi})
-  return React.createElement(React.Fragment, null, screenLabel(controller.state.screen))
+  const transition = controller.state.releaseTransition
+  const releaseLabel = transition ? `${transition.fromVersion ?? "Unknown"} → ${transition.toVersion}` : ""
+  return React.createElement(React.Fragment, null, screenLabel(controller.state.screen), releaseLabel)
 }
 
 // Prove the curated low-level transport types resolve without a private import.

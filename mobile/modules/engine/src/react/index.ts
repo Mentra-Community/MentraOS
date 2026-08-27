@@ -12,6 +12,7 @@ export {
   type MentraLiveOtaErrorCode,
   type MentraLiveOtaHotspotPhase,
   type MentraLiveOtaInstallPhase,
+  type MentraLiveOtaReleaseTransition,
   type MentraLiveOtaScreen,
   type MentraLiveOtaState,
   type MentraLiveOtaStep,

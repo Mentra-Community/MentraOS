@@ -1,11 +1,11 @@
-# MentraOS Manager Guidelines
+# Mentra App Guidelines
 
-RULES:
-READ: ../mintlify-docs/os-devs/contributing/mentraos-manager-guidelines.mdx
+This file is the module-local contributor and agent guidance for work under
+`mobile/`.
 
 ## Overview
 
-MentraOS Manager is a React Native app built with Expo and expo-router for file-based routing. The app was recently migrated from vanilla React Native to Expo.
+The Mentra App is a React Native app built with Expo and expo-router for file-based routing.
 
 ## Build and Test Commands
 
@@ -73,34 +73,118 @@ bun install
 bun ios
 ```
 
-## Architecture Changes (Expo Migration)
+### Expo prebuild safety
+
+This project contains custom native code under `android/` and `ios/` that must
+survive project generation. Never use `--clean` or `--clear` with
+`expo prebuild`; those flags can delete the custom native projects.
+
+```bash
+# Correct: synchronize one generated project in place
+bun expo prebuild --platform android
+bun expo prebuild --platform ios
+
+# Never run these in mobile/
+bun expo prebuild --clean
+bun expo prebuild --clear
+```
+
+This warning is specific to `expo prebuild`. A `--clear` flag on another tool,
+such as Metro or `expo export`, has different semantics.
+
+## Architecture and File Organization
 
 ### Key Changes
 
 - **Routing**: File-based routing with expo-router (no more src/screens folder)
 - **Imports**: Absolute paths instead of relative paths
-- **Components**: Categorized into folders or misc/ folder
-- **Theming**: Components use theme/themed from useAppTheme() hook, but strongly prefer to use tailwindcss
+- **Components**: Reusable components are grouped by feature
+- **Theming**: New UI is Tailwind/Uniwind-first, with `useAppTheme()` for dynamic theme values
 - **Entry Point**: expo-router/entry instead of traditional App.js
+- **State**: React contexts provide app-wide services and Zustand stores hold app state
 
 ### File Structure
 
-- `src/app/` - File-based routes (expo-router)
-- `src/components/` - Reusable components (categorized by feature)
-- `src/contexts/` - React Context providers
-- `src/utils/` - Utility functions and helpers, always put new utilities into an existing folder or make one
-- `src/theme/` - Theme configuration and styling
+- `src/app/` - File-based routes; place screen components here
+- `src/components/` - Reusable components organized by feature
+- `src/contexts/` - React context providers and app-wide services
+- `src/effects/` - App-level effects mounted by the navigation host
+- `src/hooks/` - Reusable React hooks
+- `src/i18n/` - English source strings, locale overrides, and translation helpers
+- `src/services/` - Business logic and platform services
+- `src/stores/` - Zustand state stores
+- `src/utils/` - Utilities grouped into existing or clearly named feature folders
+- `src/theme/` - Theme configuration and typed styling helpers
 
-## Code Style
+Prefer an existing feature directory. Create a new component or utility
+directory only when no current category describes the responsibility.
+
+## UI and Styling
+
+- Prefer Tailwind/Uniwind `className` styles for new UI. Use semantic theme
+  tokens such as `bg-primary-foreground` and `text-muted-foreground` rather
+  than hard-coded colors.
+- Use `useAppTheme()` from `@/contexts/ThemeContext` when a theme value must be
+  passed through a React Native `style` object or a non-style prop such as an
+  icon color. Do not import a runtime theme object to read the active palette.
+- For theme-dependent styles that cannot be expressed with `className`, use
+  `ThemedStyle` with the hook's `themed()` helper. Avoid adding a static
+  `StyleSheet.create` block for theme-dependent values.
+- Importing theme types or static primitives is acceptable; current colors and
+  the selected light/dark variant must come from `useAppTheme()`.
+
+## Navigation
+
+Use the centralized navigation store for route mutations so app history,
+animation, back prevention, and local-miniapp interception remain consistent:
+
+```tsx
+import {useNavigationStore} from "@/stores/navigation"
+
+const {goBack, push, replace} = useNavigationStore.getState()
+push("/settings/profile")
+```
+
+- Do not call expo-router's `router.push`, `router.replace`, or `router.back`
+  directly from screens or ordinary components.
+- Expo-router hooks such as `useLocalSearchParams` and `useFocusEffect` are
+  appropriate for reading route state and reacting to focus.
+- A direct router mutation is reserved for infrastructure that deliberately
+  owns or bypasses the navigation store; document the reason at that boundary.
+
+## Internationalization
+
+- Do not hard-code user-facing copy when it belongs in the translation system.
+- Add source keys to `src/i18n/en.ts`. Locale files inherit English and can
+  override a key when a translation is available.
+- Use the typed `tx` prop on Ignite components for declarative text:
+
+  ```tsx
+  <Text tx="settings:title" />
+  <Button tx="common:ok" />
+  ```
+
+- Use `translate()` from `@/i18n` for imperative strings such as alert titles,
+  messages, and native API arguments.
+
+## Code Style and Type Safety
 
 - TypeScript with React Native and Expo
-- Imports: Absolute paths, group by external/internal, alphabetize within groups
-- Formatting: Prettier with single quotes, no bracket spacing, trailing commas
+- Imports: Group external, `@/` internal, and relative imports; alphabetize
+  within groups
+- Formatting: Use the checked-in Prettier configuration (double quotes, no
+  semicolons, no bracket spacing, trailing commas)
 - Components: Functional components with React hooks
 - Naming: PascalCase for components, camelCase for functions/variables
-- Navigation: File-based routing with expo-router (React Navigation under the hood)
-- State management: Context API for app-wide state
-- Error handling: use typesafe-ts (see RestComms.ts for examples)
+- Type safety: `mobile/tsconfig.json` enables `strict` and `noImplicitAny`; do
+  not add `any` when a concrete or shared domain type can describe the value
+- Untyped boundaries: Validate or narrow external values as soon as they enter
+  typed application code
+- Error handling: Catch failures at I/O and user-action boundaries with
+  meaningful context; use `Result`/`AsyncResult` from `typesafe-ts` in layers
+  that model expected failures that way
+- Performance: Use `memo`, `useMemo`, and `useCallback` for genuinely expensive
+  work or identity-sensitive props, not mechanically on every component
 
 ## Working with MentraOS
 

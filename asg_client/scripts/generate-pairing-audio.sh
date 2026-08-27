@@ -22,16 +22,24 @@ done
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 output_dir="${PAIRING_AUDIO_OUTPUT_DIR:-$script_dir/../app/src/main/assets/pairing}"
+normalize_script="$script_dir/../app/src/main/assets/normalize-audio.sh"
 model_id="${ELEVENLABS_MODEL_ID:-eleven_flash_v2_5}"
 temporary_dir="$(mktemp -d)"
 trap 'rm -rf "$temporary_dir"' EXIT
 
 mkdir -p "$output_dir"
 
+if [[ ! -x "$normalize_script" ]]; then
+    echo "$normalize_script is required and must be executable" >&2
+    exit 1
+fi
+
 # The spoken forms remove single-character pronunciation ambiguity while keeping each asset to
 # one character name. PairingCodeSpeaker currently accepts hexadecimal codes, but the full
 # alphabet stays voice-consistent for future code formats and other character-by-character audio.
 clips=(
+    "pairing_intro|Connect to your Mentra Live in the app. Your code is:"
+    "pairing_exited|Pairing mode ended."
     "digit_0|zero"
     "digit_1|one"
     "digit_2|two"
@@ -70,9 +78,15 @@ clips=(
     "letter_z|zee"
 )
 
+requested_names=" ${PAIRING_AUDIO_NAMES:-} "
+generated_count=0
+
 for clip in "${clips[@]}"; do
     basename="${clip%%|*}"
     spoken_text="${clip#*|}"
+    if [[ -n "${PAIRING_AUDIO_NAMES:-}" && "$requested_names" != *" $basename "* ]]; then
+        continue
+    fi
     mp3_path="$temporary_dir/$basename.mp3"
     wav_path="$output_dir/$basename.wav"
     request_body="$(
@@ -112,6 +126,9 @@ for clip in "${clips[@]}"; do
         -ar 44100 \
         -c:a pcm_s16le \
         "$wav_path"
+
+    "$normalize_script" "$wav_path"
+    generated_count=$((generated_count + 1))
 done
 
-echo "Generated ${#clips[@]} Mentra Live pairing clips in $output_dir"
+echo "Generated $generated_count Mentra Live pairing clips in $output_dir"

@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import android.app.Application;
 import androidx.test.core.app.ApplicationProvider;
+import com.mentra.asg_client.AsgConstants;
 import java.io.File;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -20,7 +21,7 @@ import org.robolectric.annotation.Config;
 public class PairingCodeAssetIntegrityTest {
 
     @Test
-    public void stitchCodeToCache_a12b_writesOneShorterPhrase() throws Exception {
+    public void stitchCodeToCache_a12b_writesOneSpacedPhrase() throws Exception {
         Application app = ApplicationProvider.getApplicationContext();
         File wav = PairingCodePcmStitcher.stitchCodeToCache(app, "A12B");
 
@@ -33,7 +34,13 @@ public class PairingCodeAssetIntegrityTest {
         int rate = stitched.sampleRate;
         assertThat(rate).isGreaterThan(0);
 
-        int trimmedSum = 0;
+        int trimmedSum;
+        try (java.io.InputStream in = app.getAssets().open(AudioAssets.PAIRING_INTRO)) {
+            PairingCodePcmStitcher.PcmClip intro =
+                    PairingCodePcmStitcher.decodePcmWav(in.readAllBytes());
+            assertThat(intro.sampleRate).isEqualTo(rate);
+            trimmedSum = PairingCodePcmStitcher.trimSilence(intro.samples).length;
+        }
         for (char c : "A12B".toCharArray()) {
             String asset = AudioAssets.getPairingCharAsset(c);
             assertThat(asset).isNotNull();
@@ -44,8 +51,14 @@ public class PairingCodeAssetIntegrityTest {
                 trimmedSum += PairingCodePcmStitcher.trimSilence(clip.samples).length;
             }
         }
-        assertThat(stitched.samples.length).isLessThan(trimmedSum);
-        assertThat(stitched.samples.length).isGreaterThan(0);
+        int pauseSamples =
+                PairingCodePcmStitcher.msToSamples(
+                        AsgConstants.PAIRING_CODE_INTER_CHARACTER_PAUSE_MS, rate);
+        int introPauseSamples =
+                PairingCodePcmStitcher.msToSamples(
+                        AsgConstants.PAIRING_INTRO_TO_CODE_PAUSE_MS, rate);
+        assertThat(stitched.samples.length)
+                .isEqualTo(trimmedSum + introPauseSamples + pauseSamples * 3);
     }
 
     @Test

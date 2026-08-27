@@ -43,6 +43,12 @@ public class AsgConstants {
     public static final long STREAM_METRICS_INTERVAL_MS = 1_000L;
 
     /**
+     * Initial WHIP/WebRTC send bitrate before congestion control has measured the network. This
+     * avoids libwebrtc's low default startup estimate while preserving room to adapt.
+     */
+    public static final int WHIP_INITIAL_VIDEO_BITRATE_BPS = 1_500_000;
+
+    /**
      * 1Hz encoder FPS/bitrate/dropped-frame telemetry ({@code [STREAM_QUALITY]} and BLE {@code
      * stream_status.stats}). Lifecycle {@code stream_status} (started/stopped/error) is unaffected.
      * Keep false in production; flip locally to debug the Mentra Call FPS ladder.
@@ -80,6 +86,12 @@ public class AsgConstants {
 
     /** Baseline linear gain for Mentra Live audio prompts. */
     public static final float AUDIO_PLAYBACK_VOLUME = 0.1f;
+
+    /** Silence between spoken pairing-code characters so adjacent sounds remain distinguishable. */
+    public static final int PAIRING_CODE_INTER_CHARACTER_PAUSE_MS = 140;
+
+    /** Pause between the pairing instruction and the first code character. */
+    public static final int PAIRING_INTRO_TO_CODE_PAUSE_MS = 300;
 
     /** Subtle linear gain for the repeating cold-camera hold-still cue. */
     public static final float CAMERA_PREP_CLICK_PLAYBACK_VOLUME = 0.09f;

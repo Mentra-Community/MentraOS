@@ -341,6 +341,7 @@ const mockIslandEntries = () => {
   // implementation (pure: settings store + types only) so host screens/tests
   // exercise the actual three-state read-model, not a parallel stub.
   const realPairingIdentity = jest.requireActual("./modules/engine/src/services/PairingIdentity")
+  const realPairingFacade = jest.requireActual("./modules/engine/src/facades/pairing")
   // Clock-skew utils moved into island; the host gallery sync + OTA checker import them
   // from @mentra/engine, so expose the real (pure) implementations through the mock.
   const realGlassesClockSync = jest.requireActual("./modules/engine/src/services/glassesClockSync")
@@ -573,6 +574,8 @@ const mockIslandEntries = () => {
             cb(readiness)
           })
         }),
+        targetReady: jest.fn((options) => realPairingFacade.pairing.targetReady(options)),
+        onTargetReady: jest.fn((options, cb) => realPairingFacade.pairing.onTargetReady(options, cb)),
         // Identity lifecycle: real projection/writes over the real settings store,
         // so tests observe the same none/pending/paired snapshots the app does.
         identity: jest.fn(() => realPairingIdentity.projectPairingIdentity()),

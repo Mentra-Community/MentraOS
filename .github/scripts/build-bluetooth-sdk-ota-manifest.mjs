@@ -10,7 +10,7 @@ const requiredEnv = [
   'ASG_VERSION_NAME',
   'FIRMWARE_MANIFEST',
   'OUTPUT_PATH',
-  'SDK_VERSION',
+  'RELEASE_VERSION',
 ];
 
 for (const key of requiredEnv) {
@@ -19,9 +19,9 @@ for (const key of requiredEnv) {
   }
 }
 
-const sdkVersion = process.env.SDK_VERSION.trim();
-if (!/^[0-9A-Za-z][0-9A-Za-z._-]*$/.test(sdkVersion)) {
-  throw new Error(`Refusing unsafe SDK version for OTA path: ${sdkVersion}`);
+const releaseVersion = process.env.RELEASE_VERSION.trim();
+if (!/^\d+\.\d+\.\d+(?:-(?:dev|beta)\.[1-9]\d*)?$/.test(releaseVersion)) {
+  throw new Error(`Invalid coordinated release version: ${releaseVersion}`);
 }
 
 const versionCode = Number(process.env.ASG_VERSION_CODE);
@@ -43,6 +43,7 @@ if (!firmware.bes_firmware || typeof firmware.bes_firmware !== 'object' || Array
 }
 
 const manifest = {
+  releaseVersion,
   apps: {
     'com.mentra.asg_client': {
       versionCode,

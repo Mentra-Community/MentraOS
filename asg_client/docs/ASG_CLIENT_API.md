@@ -609,7 +609,7 @@ No response.
 
 ### Spoken pairing code
 
-Mentra Live pairing mode speaks a 4-character code over the glasses speaker. BES firmware plays the short "Pairing..." intro from flash; the MTK stitches the four character WAVs into one I2S phrase (`Ay-one-bee-two`) so it does not sound like four announcements.
+Mentra Live pairing mode speaks one serialized I2S WAV containing “Connect to your Mentra Live in the app. Your code is:” and the 4-character code. BES requests the whole phrase with `hm_spkcode` immediately and every 30 seconds. `hm_pairexit` plays “Pairing mode ended.” once when the firmware closes the pairing window.
 
 Inbound K900 command from BES:
 

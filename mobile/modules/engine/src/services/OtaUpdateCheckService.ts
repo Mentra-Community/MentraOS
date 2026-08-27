@@ -1,7 +1,9 @@
 import BluetoothSdk, {type OtaUpdateInfo} from "@mentra/bluetooth-sdk"
+import {ENGINE_RELEASE_METADATA} from "../generated/releaseMetadata"
 import {getGlassesSystemTimeMs, isGlassesConnected, useGlassesStore, waitForGlassesState} from "../stores/glasses"
 import {maybeFixGlassesClockFromVersionInfo} from "./glassesClockSync"
 import {hasConfiguredModernOtaManifestPin, resolveOtaManifestUrl} from "./otaManifestUrl"
+import {resolveOtaReleaseVersion} from "./otaReleaseVersion"
 
 /**
  * Phone-side mirror of ASG's `DOWNGRADE_FLOOR_VERSION_CODE`. Set to the versionCode of the first
@@ -37,6 +39,7 @@ export interface BesFirmware {
 }
 
 export interface VersionJson {
+  releaseVersion?: string
   apps?: {
     [packageName: string]: VersionInfo
   }
@@ -65,6 +68,8 @@ export interface OtaCheckResult {
    * instead of racing it with a second fetch of the same URL.
    */
   manifestBody: string | null
+  /** Coordinated release identity for the selected OTA pin. */
+  releaseVersion: string | null
   /**
    * Why the check failed, when it did. "network" is retryable (connection/server
    * trouble); "pin_unavailable" is permanent for this app build (manifest 404/gone,
@@ -105,6 +110,7 @@ function emptyCheckResult(skippedReason?: OtaCheckSkippedReason): OtaCheckCurren
     besVersion: null,
     isApkDowngrade: false,
     manifestBody: null,
+    releaseVersion: null,
     updateInfo: null,
     isRequired: true,
     skippedReason,
@@ -297,6 +303,7 @@ export async function checkForOtaUpdate(
         besVersion: null,
         isApkDowngrade: false,
         manifestBody: null,
+        releaseVersion: null,
         checkFailureReason: fetched.failureReason ?? "network",
       }
     }
@@ -328,6 +335,7 @@ export async function checkForOtaUpdate(
         besVersion: null,
         isApkDowngrade: false,
         manifestBody: null,
+        releaseVersion: null,
         checkFailureReason: "pin_unavailable",
       }
     }
@@ -366,6 +374,12 @@ export async function checkForOtaUpdate(
       besVersion: versionJson?.bes_firmware?.version || null,
       isApkDowngrade: apkDirection === "downgrade",
       manifestBody: versionJson ? JSON.stringify(versionJson) : null,
+      releaseVersion: resolveOtaReleaseVersion({
+        manifestReleaseVersion: versionJson.releaseVersion,
+        manifestUrl: otaVersionUrl,
+        packagedManifestUrl: ENGINE_RELEASE_METADATA.otaManifestUrl,
+        packagedReleaseIdentity: ENGINE_RELEASE_METADATA.releaseIdentity,
+      }),
     }
   } catch (error) {
     console.error("Error checking for OTA update:", error)
@@ -378,6 +392,7 @@ export async function checkForOtaUpdate(
       besVersion: null,
       isApkDowngrade: false,
       manifestBody: null,
+      releaseVersion: null,
       checkFailureReason: "network",
     }
   }

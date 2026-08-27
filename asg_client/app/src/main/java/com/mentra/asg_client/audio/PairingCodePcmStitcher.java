@@ -3,6 +3,8 @@ package com.mentra.asg_client.audio;
 import android.content.Context;
 import android.util.Log;
 
+import com.mentra.asg_client.AsgConstants;
+
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
@@ -15,14 +17,12 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Concatenates pairing-character WAVs into one PCM phrase with silence trimmed and a short
- * linear crossfade between clips, so the code is heard as {@code Ay-one-bee-two} rather than four
- * separate announcements.
+ * Concatenates the pairing instruction and character WAVs into one PCM phrase with silence
+ * trimmed and deliberate pauses, so playback is serialized on one I2S file.
  */
 public final class PairingCodePcmStitcher {
 
     private static final String TAG = "PairingCodePcmStitcher";
-    static final int CROSSFADE_MS = 60;
     static final int SILENCE_THRESHOLD = 512;
     private static final String CACHE_PREFIX = "pairing_code_";
     private static final String CACHE_SUFFIX = ".wav";
@@ -31,6 +31,7 @@ public final class PairingCodePcmStitcher {
 
     public static File stitchCodeToCache(Context context, String code) throws IOException {
         List<byte[]> wavs = new ArrayList<>();
+        wavs.add(readAssetBytes(context, AudioAssets.PAIRING_INTRO));
         for (int i = 0; i < code.length(); i++) {
             String asset = AudioAssets.getPairingCharAsset(code.charAt(i));
             if (asset == null) {
@@ -38,7 +39,7 @@ public final class PairingCodePcmStitcher {
             }
             wavs.add(readAssetBytes(context, asset));
         }
-        byte[] stitched = stitchWavs(wavs);
+        byte[] stitched = stitchPairingPhraseWavs(wavs);
         File out = File.createTempFile(CACHE_PREFIX, CACHE_SUFFIX, context.getCacheDir());
         try (FileOutputStream fos = new FileOutputStream(out)) {
             fos.write(stitched);
@@ -55,6 +56,15 @@ public final class PairingCodePcmStitcher {
     }
 
     static byte[] stitchWavs(List<byte[]> wavFiles) throws IOException {
+        return stitchWavs(wavFiles, AsgConstants.PAIRING_CODE_INTER_CHARACTER_PAUSE_MS, false);
+    }
+
+    static byte[] stitchPairingPhraseWavs(List<byte[]> wavFiles) throws IOException {
+        return stitchWavs(wavFiles, AsgConstants.PAIRING_INTRO_TO_CODE_PAUSE_MS, true);
+    }
+
+    private static byte[] stitchWavs(List<byte[]> wavFiles, int firstPauseMs, boolean hasIntro)
+            throws IOException {
         if (wavFiles == null || wavFiles.isEmpty()) {
             throw new IOException("no pairing clips to stitch");
         }
@@ -67,7 +77,14 @@ public final class PairingCodePcmStitcher {
                 throw new IOException(
                         "sample rate mismatch: " + sampleRate + " vs " + next.sampleRate);
             }
-            acc = crossfade(acc, trimSilence(next.samples), msToSamples(CROSSFADE_MS, sampleRate));
+            acc = appendWithSilence(
+                    acc,
+                    trimSilence(next.samples),
+                    msToSamples(
+                            hasIntro && i == 1
+                                    ? firstPauseMs
+                                    : AsgConstants.PAIRING_CODE_INTER_CHARACTER_PAUSE_MS,
+                            sampleRate));
         }
         return encodePcmWav(acc, sampleRate);
     }
@@ -92,28 +109,11 @@ public final class PairingCodePcmStitcher {
         return trimmed;
     }
 
-    static short[] crossfade(short[] left, short[] right, int overlap) {
-        int fade = Math.min(overlap, Math.min(left.length, right.length));
-        if (fade <= 0) {
-            short[] out = new short[left.length + right.length];
-            System.arraycopy(left, 0, out, 0, left.length);
-            System.arraycopy(right, 0, out, left.length, right.length);
-            return out;
-        }
-        short[] out = new short[left.length + right.length - fade];
-        System.arraycopy(left, 0, out, 0, left.length - fade);
-        for (int i = 0; i < fade; i++) {
-            float t = (i + 1) / (float) (fade + 1);
-            int mixed =
-                    Math.round(left[left.length - fade + i] * (1f - t) + right[i] * t);
-            if (mixed > Short.MAX_VALUE) {
-                mixed = Short.MAX_VALUE;
-            } else if (mixed < Short.MIN_VALUE) {
-                mixed = Short.MIN_VALUE;
-            }
-            out[left.length - fade + i] = (short) mixed;
-        }
-        System.arraycopy(right, fade, out, left.length, right.length - fade);
+    static short[] appendWithSilence(short[] left, short[] right, int silenceSamples) {
+        int gap = Math.max(0, silenceSamples);
+        short[] out = new short[left.length + gap + right.length];
+        System.arraycopy(left, 0, out, 0, left.length);
+        System.arraycopy(right, 0, out, left.length + gap, right.length);
         return out;
     }
 
