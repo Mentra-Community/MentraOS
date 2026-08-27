@@ -77,10 +77,17 @@ test("mobile destinations use real TestFlight groups without changing the releas
 
 test("coordinated docs publish only after finalization to the matching channel", () => {
   const coordinator = workflow("coordinated-release.yml")
+  const starterKit = jobBlock(coordinator, "starter-kit")
   const docs = jobBlock(coordinator, "docs")
   const notify = jobBlock(coordinator, "notify-slack")
 
-  assert.match(docs, /^    needs: \[plan, finalize\]$/m)
+  assert.match(starterKit, /^    needs: \[plan, ota, npm, sdk-native, engine-consumer\]$/m)
+  assert.match(starterKit, /coordinated-example-release\.yml/)
+  assert.match(starterKit, /starter-kit-release-\$identity\.json/)
+  assert.match(starterKit, /\.digest <<< "\$asset"/)
+  assert.match(jobBlock(coordinator, "finalize"), /needs\.starter-kit\.result == 'success'/)
+  assert.match(docs, /^    needs: \[plan, starter-kit, finalize\]$/m)
+  assert.match(docs, /needs\.starter-kit\.result == 'success'/)
   assert.match(docs, /needs\.finalize\.result == 'success'/)
   assert.match(docs, /needs\.plan\.outputs\.dry_run != 'true'/)
   assert.match(docs, /project=mentraos-docs-dev/)
@@ -88,9 +95,14 @@ test("coordinated docs publish only after finalization to the matching channel",
   assert.match(docs, /project=mentraos-docs-beta/)
   assert.match(docs, /docs_url=https:\/\/docs-beta\.mentraglass\.com/)
   assert.match(docs, /render-coordinated-docs\.mjs/)
+  assert.match(docs, /--starter-kit/)
   assert.match(docs, /X-Robots-Tag: noindex/)
   assert.match(docs, /grep --fixed-strings --quiet "\$RELEASE_IDENTITY" "\$body"/)
-  assert.match(notify, /^    needs: \[plan, ota, npm, sdk-native, mobile, engine-consumer, finalize, docs\]$/m)
+  assert.match(
+    notify,
+    /^    needs: \[plan, ota, npm, sdk-native, mobile, engine-consumer, starter-kit, finalize, docs\]$/m,
+  )
+  assert.match(notify, /STARTER_KIT_RESULT: \$\{\{ needs\.starter-kit\.result \}\}/)
   assert.match(notify, /DOCS_RESULT: \$\{\{ needs\.docs\.result \}\}/)
 })
 

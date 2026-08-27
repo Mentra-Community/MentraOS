@@ -82,6 +82,10 @@ fi
 android_detail=$(artifact_link "$apk_url" "${APK_NAME:-Android APK}")
 ios_detail=$(artifact_link "$ipa_url" "${IPA_NAME:-iOS IPA}")
 asg_detail=$(artifact_link "${ASG_APK_URL:-}" "${ASG_APK_NAME:-ASG APK}")
+starter_detail=$(artifact_link "${STARTER_KIT_APK_URL:-}" "${STARTER_KIT_APK_NAME:-React Native example APK}")
+if [[ -n "${STARTER_KIT_RELEASE_URL:-}" ]]; then
+  starter_detail+=" - <${STARTER_KIT_RELEASE_URL}|All example builds>"
+fi
 docs_detail="<${run_url}|View run logs>"
 if [[ -n "${DOCS_URL:-}" ]]; then
   docs_detail="<${DOCS_URL}|Open docs>"
@@ -102,8 +106,9 @@ newline=$'\n'
 android_line="*$(icon "$android_result") Android* - $(label "$android_result") - ${android_detail}${newline}Google Play: ${PLAY_TRACK:-unknown}"
 ios_line="*$(icon "$ios_result") iOS* - $(label "$ios_result") - ${ios_detail}${newline}TestFlight: ${TESTFLIGHT_GROUP:-unknown}"
 asg_line="*$(icon "${OTA_RESULT:-unknown}") ASG + OTA* - $(label "${OTA_RESULT:-unknown}") - ${asg_detail}"
+starter_line="*$(icon "${STARTER_KIT_RESULT:-unknown}") Starter Kit* - $(label "${STARTER_KIT_RESULT:-unknown}") - ${starter_detail}"
 docs_line="*$(icon "${DOCS_RESULT:-unknown}") Docs* - $(label "${DOCS_RESULT:-unknown}") - ${docs_detail}"
-checks_line="*Release checks*${newline}Plan: $(icon "${PLAN_RESULT:-unknown}") $(label "${PLAN_RESULT:-unknown}") | Packages: $(icon "${NPM_RESULT:-unknown}") $(label "${NPM_RESULT:-unknown}") | Native SDK: $(icon "${SDK_NATIVE_RESULT:-unknown}") $(label "${SDK_NATIVE_RESULT:-unknown}") | Engine consumer: $(icon "${ENGINE_RESULT:-unknown}") $(label "${ENGINE_RESULT:-unknown}") | Finalize: $(icon "${FINALIZE_RESULT:-unknown}") $(label "${FINALIZE_RESULT:-unknown}")"
+checks_line="*Release checks*${newline}Plan: $(icon "${PLAN_RESULT:-unknown}") $(label "${PLAN_RESULT:-unknown}") | Packages: $(icon "${NPM_RESULT:-unknown}") $(label "${NPM_RESULT:-unknown}") | Native SDK: $(icon "${SDK_NATIVE_RESULT:-unknown}") $(label "${SDK_NATIVE_RESULT:-unknown}") | Engine consumer: $(icon "${ENGINE_RESULT:-unknown}") $(label "${ENGINE_RESULT:-unknown}") | Examples: $(icon "${STARTER_KIT_RESULT:-unknown}") $(label "${STARTER_KIT_RESULT:-unknown}") | Finalize: $(icon "${FINALIZE_RESULT:-unknown}") $(label "${FINALIZE_RESULT:-unknown}")"
 
 payload=$(jq -n \
   --arg header "$header_icon $header_text" \
@@ -112,6 +117,7 @@ payload=$(jq -n \
   --arg android "$android_line" \
   --arg ios "$ios_line" \
   --arg asg "$asg_line" \
+  --arg starter "$starter_line" \
   --arg docs "$docs_line" \
   --arg checks "$checks_line" \
   --arg context "Commit <${commit_url}|\`${commit_short}\`> by ${commit_author} - <${run_url}|View workflow>" \
@@ -124,6 +130,7 @@ payload=$(jq -n \
       {type: "section", text: {type: "mrkdwn", text: $android}},
       {type: "section", text: {type: "mrkdwn", text: $ios}},
       {type: "section", text: {type: "mrkdwn", text: $asg}},
+      {type: "section", text: {type: "mrkdwn", text: $starter}},
       {type: "section", text: {type: "mrkdwn", text: $docs}},
       {type: "section", text: {type: "mrkdwn", text: $checks}},
       {type: "context", elements: [{type: "mrkdwn", text: $context}]}

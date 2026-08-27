@@ -359,6 +359,35 @@ function requiredArtifactCoordinates(plan) {
   })
 }
 
+function validateStarterKitEvidence(plan, starterKit, artifacts) {
+  if (starterKit === undefined) return undefined
+  if (
+    starterKit?.schemaVersion !== 1 ||
+    starterKit.releaseSetId !== plan.releaseSetId ||
+    starterKit.releaseIdentity !== plan.releaseIdentity ||
+    starterKit.familyBaseVersion !== plan.familyBaseVersion ||
+    starterKit.channel !== plan.channel ||
+    starterKit.mentraos?.sourceCommit !== plan.sourceCommit ||
+    !Array.isArray(starterKit.artifacts) ||
+    starterKit.artifacts.length !== 4
+  ) {
+    throw new Error("Starter Kit evidence does not match the release plan")
+  }
+  requirePublicHttpsUrl(starterKit.resultUrl, "starterKit.resultUrl")
+  requirePublicHttpsUrl(starterKit.starterKit?.releaseUrl, "starterKit.starterKit.releaseUrl")
+  requirePublicHttpsUrl(starterKit.starterKit?.pullRequestUrl, "starterKit.starterKit.pullRequestUrl")
+  requirePublicHttpsUrl(starterKit.starterKit?.validationRunUrl, "starterKit.starterKit.validationRunUrl")
+
+  const artifactByCoordinate = new Map(artifacts.map((artifact) => [artifact.coordinate, artifact]))
+  for (const example of starterKit.artifacts) {
+    const artifact = artifactByCoordinate.get(example.name)
+    if (!artifact || artifact.url !== example.url || artifact.sha256 !== example.sha256 || artifact.size !== example.size) {
+      throw new Error(`Starter Kit artifact ${example.name || "<unknown>"} differs from publication evidence`)
+    }
+  }
+  return starterKit
+}
+
 export function finalizeReleaseManifest({plan, results, completedAt}) {
   if (!plan?.releaseSetId || !plan?.members) throw new Error("A generated release plan is required")
   if (results?.releaseSetId !== plan.releaseSetId) throw new Error("Publication results do not match the release set")
@@ -411,6 +440,7 @@ export function finalizeReleaseManifest({plan, results, completedAt}) {
   for (const coordinate of requiredArtifactCoordinates(plan)) {
     if (!artifactCoordinates.has(coordinate)) throw new Error(`Missing required artifact ${coordinate}`)
   }
+  const starterKit = validateStarterKitEvidence(plan, results.starterKit, artifacts)
 
   let promotion
   if (plan.channel === "production") {
@@ -443,6 +473,7 @@ export function finalizeReleaseManifest({plan, results, completedAt}) {
     publications,
     otaManifest,
     artifacts,
+    ...(starterKit ? {starterKit} : {}),
     ...(promotion ? {promotion} : {}),
   }
 }

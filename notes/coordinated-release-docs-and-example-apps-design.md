@@ -197,18 +197,21 @@ The workflow:
 4. updates every example and lockfile to the exact coordinated versions;
 5. embeds the exact release identity and OTA pin where the example runtime
    needs observable release metadata;
-6. calls the shared build workflow for the exact candidate commit;
-7. computes the filename, size, media type, and SHA-256 of every artifact;
-8. publishes an immutable Starter Kit source tag and uploads the artifacts to
-   the base version's release container;
-9. publishes `starter-kit-release-<identity>.json` alongside the binaries;
-10. advances the channel branch to the tested candidate only if its head still
-    equals the dispatch's expected head; and
-11. exposes a correlated success or failure result that MentraOS can poll.
+6. opens a version-synchronization pull request against the channel branch;
+7. explicitly dispatches the shared build workflow on the exact candidate SHA;
+8. merges the pull request only when the required checks belong to that same
+   head SHA and the target branch still contains the expected base;
+9. computes the filename, size, media type, and SHA-256 of every artifact;
+10. publishes an immutable Starter Kit source tag and uploads the artifacts to
+    the base version's release container;
+11. publishes `starter-kit-release-<identity>.json` alongside the binaries; and
+12. exposes a correlated success or failure result that MentraOS can poll.
 
-The branch compare-and-swap is required. A human commit that arrives during the
-build must not be overwritten. In that case, the coordinated example release
-fails clearly and the next coordinator run uses the new branch head.
+The synchronization pull request is the branch compare-and-swap boundary. A
+human commit that arrives during the build is never overwritten: a compatible
+base advance may merge normally, while a conflict or changed candidate head
+fails clearly. The published artifacts always identify the validated candidate
+commit, and the next coordinator run starts from the resulting channel head.
 
 ### Shared build workflow
 
@@ -244,10 +247,17 @@ releases.
 ## Cross-Repository Protocol
 
 MentraOS dispatches with a GitHub App installation token scoped to the two
-repositories. A personal access token is not part of the release architecture.
-The App receives only the permissions needed to dispatch workflows, read run
-state and artifacts, and create the Starter Kit's release commit, tag, and
-release.
+repositories. A personal access token is not part of the final release
+architecture. The App receives only the permissions needed to dispatch
+workflows and read run state in the Starter Kit. The Starter Kit's own
+`GITHUB_TOKEN` creates and merges its synchronization pull request and publishes
+its tag, release, and assets.
+
+During bootstrap, the implementation may fall back to the existing scoped SDK
+push credential while `STARTER_KIT_COORDINATOR_TOKEN` is being provisioned. The
+fallback is explicit migration debt: it is not copied into another secret, and
+it is removed after the GitHub App token has completed one dev and one beta
+dispatch.
 
 GitHub workflow dispatch does not return synchronous outputs. The protocol is:
 
