@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import {readFileSync} from "node:fs"
 import {createPrivateKey, sign} from "node:crypto"
+import {spawnSync} from "node:child_process"
 import path from "node:path"
 import {fileURLToPath} from "node:url"
 
@@ -105,6 +106,48 @@ export async function waitForProcessedBuild(
     if (attempt < attempts) await new Promise((resolve) => setTimeout(resolve, delay))
   }
   throw new Error(`App Store Connect build ${buildNumber} did not finish processing`)
+}
+
+function uploadWithAltool({ipaPath, issuerId, keyId, keyPath}) {
+  const result = spawnSync(
+    "xcrun",
+    ["altool", "--upload-app", "-f", ipaPath, "-t", "ios", "--apiKey", keyId, "--apiIssuer", issuerId],
+    {
+      stdio: "inherit",
+      env: {...process.env, API_PRIVATE_KEYS_DIR: path.dirname(keyPath)},
+    },
+  )
+  if (result.error) throw result.error
+  if (result.status !== 0) throw new Error(`altool exited with status ${result.status}`)
+}
+
+export async function uploadExactBuild(
+  client,
+  {
+    appId,
+    buildNumber,
+    marketingVersion,
+    upload,
+    attempts = 3,
+    delay = 30_000,
+    sleep = (duration) => new Promise((resolve) => setTimeout(resolve, duration)),
+  },
+) {
+  let lastError
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const existing = await findBuild(client, {appId, buildNumber, marketingVersion})
+    if (existing) return {build: existing, reused: true}
+    try {
+      await upload()
+      return {build: null, reused: false}
+    } catch (error) {
+      lastError = error
+      if (attempt < attempts) await sleep(delay)
+    }
+  }
+  const existing = await findBuild(client, {appId, buildNumber, marketingVersion})
+  if (existing) return {build: existing, reused: true}
+  throw lastError
 }
 
 export async function assignBuildToGroup(client, {appId, buildId, groupName}) {
@@ -239,6 +282,27 @@ async function main() {
       )
     }
     console.log(build ? `Found App Store Connect build ${args["build-number"]}` : "Build is absent")
+    return
+  }
+  if (command === "upload") {
+    const keyPath = path.resolve(args["key-path"])
+    const result = await uploadExactBuild(client, {
+      appId: app.id,
+      buildNumber: args["build-number"],
+      marketingVersion: args["marketing-version"],
+      upload: () =>
+        uploadWithAltool({
+          ipaPath: path.resolve(args.ipa),
+          issuerId: args["issuer-id"],
+          keyId: args["key-id"],
+          keyPath,
+        }),
+    })
+    console.log(
+      result.reused
+        ? `Verified App Store Connect already has build ${args["build-number"]}`
+        : `Uploaded App Store Connect build ${args["build-number"]}`,
+    )
     return
   }
   if (command === "assign") {

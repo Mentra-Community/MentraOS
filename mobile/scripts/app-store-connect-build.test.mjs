@@ -7,6 +7,7 @@ import {
   findProcessedBuild,
   productionSubmissionStatus,
   setBetaBuildWhatsNew,
+  uploadExactBuild,
   waitForProductionSubmission,
   waitForProcessedBuild,
 } from "./app-store-connect-build.mjs"
@@ -49,6 +50,44 @@ test("can scope an exact build number to its marketing version", async () => {
 test("fails when App Store Connect marks a build invalid", async () => {
   const api = client([{data: [{id: "build-1", attributes: {processingState: "FAILED"}}]}])
   await assert.rejects(() => findProcessedBuild(api, {appId: "app-1", buildNumber: 12}), /is FAILED/)
+})
+
+test("reconciles an upload accepted before a transient transport failure", async () => {
+  const api = client([{data: []}, {data: [{id: "build-1", attributes: {processingState: "PROCESSING"}}]}])
+  let uploads = 0
+  const result = await uploadExactBuild(api, {
+    appId: "app-1",
+    buildNumber: 310000047,
+    marketingVersion: "3.1.0",
+    attempts: 2,
+    delay: 0,
+    sleep: async () => {},
+    upload: async () => {
+      uploads += 1
+      throw new Error("HTTP 504")
+    },
+  })
+  assert.equal(result.reused, true)
+  assert.equal(result.build.id, "build-1")
+  assert.equal(uploads, 1)
+})
+
+test("retries a failed upload only while the exact build remains absent", async () => {
+  const api = client([{data: []}, {data: []}])
+  let uploads = 0
+  const result = await uploadExactBuild(api, {
+    appId: "app-1",
+    buildNumber: 310000047,
+    attempts: 2,
+    delay: 0,
+    sleep: async () => {},
+    upload: async () => {
+      uploads += 1
+      if (uploads === 1) throw new Error("HTTP 504")
+    },
+  })
+  assert.equal(result.reused, false)
+  assert.equal(uploads, 2)
 })
 
 test("idempotently adds a build to exactly one TestFlight group", async () => {

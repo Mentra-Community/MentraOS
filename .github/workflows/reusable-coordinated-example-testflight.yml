@@ -306,14 +306,15 @@ jobs:
 
       - name: Upload exact example IPA to App Store Connect
         if: steps.app-store.outputs.exists != 'true'
-        env:
-          API_PRIVATE_KEYS_DIR: ${{ runner.temp }}/mentra-creds
         run: >-
-          xcrun altool --upload-app
-          -f "${{ steps.ipa.outputs.path }}"
-          -t ios
-          --apiKey "${{ secrets.ASC_API_KEY_ID }}"
-          --apiIssuer "${{ secrets.ASC_API_ISSUER_ID }}"
+          node mobile/scripts/app-store-connect-build.mjs upload
+          --issuer-id "${{ secrets.ASC_API_ISSUER_ID }}"
+          --key-id "${{ secrets.ASC_API_KEY_ID }}"
+          --key-path "${{ steps.asc.outputs.key_path }}"
+          --bundle-id "$EXAMPLE_BUNDLE_ID"
+          --marketing-version "${{ steps.coordinates.outputs.marketing_version }}"
+          --build-number "${{ steps.coordinates.outputs.build_number }}"
+          --ipa "${{ steps.ipa.outputs.path }}"
 
       - name: Wait for processing and assign the example TestFlight group
         id: testflight
