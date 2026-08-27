@@ -31,6 +31,7 @@ import {pack} from './pack.js'
 import {printQR, writeQRPng} from './qr.js'
 import {getLanIp} from './lan.js'
 import {validateManifest} from './manifest.js'
+import {publisherKeyFingerprint, resolvePackageSigningKey} from './package-signing-key.js'
 
 const DEFAULT_PORT_START = 6789
 const PORT_SCAN_LIMIT = 10
@@ -76,15 +77,17 @@ export async function release(opts: ReleaseOptions = {}): Promise<void> {
   const cacheDir = resolve(cwd, 'build')
   const cachedZipName = `${packageName}-${version}.zip`
   const cachedZipPath = join(cacheDir, cachedZipName)
+  const signingKey = await resolvePackageSigningKey(packageName, {inputPath: opts.signingKeyPath})
+  const expectedPublisherFingerprint = signingKey ? publisherKeyFingerprint(signingKey.publicKeyJwk) : null
 
   let cacheValid = !opts.noCache && isCacheFresh(cachedZipPath, cwd)
   if (cacheValid) {
-    try {
-      const verified = await verifySignedBundleArchive(readFileSync(cachedZipPath))
-      cacheValid = verified.packageName === packageName && verified.version === version
-    } catch {
-      cacheValid = false
-    }
+    cacheValid = await isCachedReleaseBundleValid(
+      readFileSync(cachedZipPath),
+      packageName,
+      version,
+      expectedPublisherFingerprint,
+    )
   }
   if (cacheValid) {
     console.log(`✓ Using cached build (${cachedZipName})`)
@@ -93,7 +96,7 @@ export async function release(opts: ReleaseOptions = {}): Promise<void> {
 
     // Pack into build/<pkg>-<v>.zip
     const packStart = Date.now()
-    const zipPath = await pack({outDir: 'build', silent: true, signingKeyPath: opts.signingKeyPath})
+    const zipPath = await pack({outDir: 'build', silent: true, signingKey: signingKey ?? undefined})
     const sizeKb = Math.round(statSync(zipPath).size / 1024)
     console.log(`✓ Packed ${packageName}@${version} (${sizeKb} KB) in ${((Date.now() - packStart) / 1000).toFixed(1)}s`)
   }
@@ -200,6 +203,24 @@ export async function release(opts: ReleaseOptions = {}): Promise<void> {
     process.on('SIGINT', shutdown)
     process.on('SIGTERM', shutdown)
   })
+}
+
+export async function isCachedReleaseBundleValid(
+  archive: Uint8Array,
+  packageName: string,
+  version: string,
+  expectedPublisherFingerprint: string | null,
+): Promise<boolean> {
+  try {
+    const verified = await verifySignedBundleArchive(archive)
+    return (
+      verified.packageName === packageName &&
+      verified.version === version &&
+      (!expectedPublisherFingerprint || verified.publisherKeyFingerprint === expectedPublisherFingerprint)
+    )
+  } catch {
+    return false
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -4,7 +4,7 @@ import nacl from "tweetnacl"
 import {Buffer} from "buffer"
 
 import {HardwareRequirementLevel, HardwareType, type HardwareRequirement} from "../types"
-import {sha256Hex} from "../utils/sha256"
+import {createIncrementalSha256, sha256Hex} from "../utils/sha256"
 
 const MAX_EXPANDED_BYTES = 200 * 1024 * 1024
 const MAX_ENTRIES = 2_000
@@ -65,8 +65,9 @@ export async function validateInstallBundleArchive(
   const signedFiles: Array<{path: string; size: number; sha256: string}> = []
   for (const entry of entries) {
     const remaining = MAX_EXPANDED_BYTES - actualExpanded
-    const capture = !entry.dir
-    const captured = await verifyEntryStream(
+    const signatureEntry = entry.name === MENTRA_BUNDLE_SIGNATURE_PATH
+    const capture = entry.name === "miniapp.json" || signatureEntry
+    const streamed = await verifyEntryStream(
       entry,
       Math.min(
         remaining,
@@ -77,13 +78,14 @@ export async function validateInstallBundleArchive(
             : Infinity,
       ),
       capture,
+      !entry.dir && !signatureEntry,
     )
     actualExpanded += compressedMetadata(entry).uncompressedSize
-    if (!captured || entry.dir) continue
-    if (entry.name === "miniapp.json") manifestBytes = captured
-    if (entry.name === MENTRA_BUNDLE_SIGNATURE_PATH) signatureBytes = captured
-    if (entry.name !== MENTRA_BUNDLE_SIGNATURE_PATH) {
-      signedFiles.push({path: entry.name, size: captured.byteLength, sha256: await sha256Hex(captured)})
+    if (entry.name === "miniapp.json") manifestBytes = streamed.bytes
+    if (signatureEntry) signatureBytes = streamed.bytes
+    if (!entry.dir && !signatureEntry) {
+      if (!streamed.sha256) throw new Error(`bundle entry hash is missing: ${entry.name}`)
+      signedFiles.push({path: entry.name, size: streamed.size, sha256: streamed.sha256})
     }
   }
   if (!manifestBytes) throw new Error("could not read bundle manifest")
@@ -312,7 +314,8 @@ async function verifyEntryStream(
   entry: JSZip.JSZipObject,
   maxOutputBytes: number,
   capture: boolean,
-): Promise<Uint8Array | undefined> {
+  hash: boolean,
+): Promise<{bytes?: Uint8Array; sha256?: string; size: number}> {
   const expected = compressedMetadata(entry)
   if (expected.uncompressedSize > maxOutputBytes) {
     throw new Error(
@@ -322,6 +325,7 @@ async function verifyEntryStream(
 
   return new Promise((resolve, reject) => {
     const chunks: Uint8Array[] = []
+    const hasher = hash ? createIncrementalSha256() : null
     let length = 0
     let crc = 0xffffffff
     let settled = false
@@ -344,6 +348,7 @@ async function verifyEntryStream(
             return
           }
           crc = updateCrc32(crc, chunk)
+          hasher?.update(chunk)
           if (capture) chunks.push(Uint8Array.from(chunk))
         })
         .on("error", fail)
@@ -358,8 +363,19 @@ async function verifyEntryStream(
             fail(new Error(`bundle entry CRC mismatch: ${entry.name}`))
             return
           }
+          let sha256: string | undefined
+          try {
+            sha256 = hasher?.digestHex()
+          } catch (error) {
+            fail(error)
+            return
+          }
           settled = true
-          resolve(capture ? concatenate(chunks, length) : undefined)
+          resolve({
+            size: length,
+            ...(capture ? {bytes: concatenate(chunks, length)} : {}),
+            ...(sha256 ? {sha256} : {}),
+          })
         })
         .resume()
     } catch (error) {
