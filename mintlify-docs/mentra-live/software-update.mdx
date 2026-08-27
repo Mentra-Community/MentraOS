@@ -206,7 +206,7 @@ export function CustomMentraLiveUpdate({onDone, onSetupWifi}: CustomMentraLiveUp
     return (
       <View>
         {state.releaseTransition && <Text>Updated to {state.releaseTransition.toVersion}</Text>}
-        <Button title="Done" onPress={ota.finish} />
+        <Button title={state.completedUpdate || state.screen === "complete" ? "Done" : "Continue"} onPress={ota.finish} />
       </View>
     )
   }
@@ -227,6 +227,10 @@ restarts and final verification.
 The `finishing` screen means the approved session is checking for additional
 required passes. Do not render terminal success or release notes until the
 controller reaches `up_to_date`.
+
+Use `state.completedUpdate` to distinguish a terminal update session from a
+standalone check that was already up to date. Release metadata is optional, so
+do not infer completion from `state.releaseTransition`.
 
 Start from the Starter Kit's
 [custom OTA presentation folder](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/tree/main/examples/react-native/src/ota)

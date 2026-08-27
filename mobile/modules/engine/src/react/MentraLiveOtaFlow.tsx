@@ -262,19 +262,18 @@ function OtaFlowContent({
   }
 
   if (state.screen === "up_to_date") {
-    const completedUpdate = state.releaseTransition !== null
     return (
       <FlowPage
         actions={
           <FlowButton
             colors={colors}
-            label={translate(completedUpdate ? "common:done" : "common:continue")}
+            label={translate(state.completedUpdate ? "common:done" : "common:continue")}
             onPress={controller.finish}
           />
         }
         colors={colors}
         icon="check"
-        title={translate(completedUpdate ? "ota:updateComplete" : "ota:upToDate")}>
+        title={translate(state.completedUpdate ? "ota:updateComplete" : "ota:upToDate")}>
         <BodyText colors={colors}>{translate("ota:noUpdatesAvailable")}</BodyText>
         {state.releaseTransition ? (
           <BodyText colors={colors}>

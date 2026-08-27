@@ -323,6 +323,7 @@ describe("useMentraLiveOta", () => {
     })
 
     expect(latestController.state.screen).toBe("up_to_date")
+    expect(latestController.state.completedUpdate).toBe(true)
     expect(latestController.state.releaseTransition).toEqual({
       fromVersion: "3.0.0",
       toVersion: "3.1.0-dev.8",
@@ -340,6 +341,33 @@ describe("useMentraLiveOta", () => {
 
     expect(latestController.state).toMatchObject({
       screen: "update_available",
+      releaseTransition: null,
+    })
+    await act(async () => renderer.unmount())
+  })
+
+  test("reports completed session independently of an optional release label", async () => {
+    currentCheckResult = {...checkResult, releaseVersion: null}
+    const renderer = await renderProbe("check")
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1_150))
+    })
+    await act(async () => latestController.install())
+    currentCheckResult = {...checkResult, updateAvailable: false, updateInfo: null, updates: [], releaseVersion: null}
+    installSnapshot = {...installSnapshot, displayState: "complete"}
+    await act(async () => {
+      installListeners.forEach((listener) => listener())
+    })
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 800))
+    })
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1_150))
+    })
+
+    expect(latestController.state).toMatchObject({
+      screen: "up_to_date",
+      completedUpdate: true,
       releaseTransition: null,
     })
     await act(async () => renderer.unmount())
@@ -377,7 +405,7 @@ describe("useMentraLiveOta", () => {
     await act(async () => renderer.unmount())
   })
 
-  test("keeps an approved session active when an additional pass needs Wi-Fi", async () => {
+  test("resumes an approved session when an additional pass gets Wi-Fi", async () => {
     autoChainActive = true
     autoChainRange = {
       fromVersion: "3.0.0",
@@ -396,6 +424,17 @@ describe("useMentraLiveOta", () => {
       releaseTransition: {fromVersion: "3.0.0", toVersion: "3.1.0-dev.8"},
     })
     expect(stopAutoChain).not.toHaveBeenCalled()
+
+    otaSnapshot = {...otaSnapshot, wifiConnected: true}
+    await act(async () => {
+      otaListeners.forEach((listener) => listener())
+    })
+
+    expect(advanceAutoChain).toHaveBeenCalledTimes(1)
+    expect(beginAutoChain).not.toHaveBeenCalled()
+    expect(fakeOta.checkForUpdates).toHaveBeenCalledTimes(1)
+    expect(prepare).toHaveBeenCalledWith(currentCheckResult)
+    expect(latestController.state.screen).toBe("preparing_hotspot")
     await act(async () => renderer.unmount())
   })
 

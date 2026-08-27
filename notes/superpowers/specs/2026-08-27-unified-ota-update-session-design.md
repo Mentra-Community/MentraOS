@@ -123,6 +123,8 @@ For terminal success:
 - The controller copies the active release range and changelogs into completed
   state before stopping the auto-chain.
 - `screen` becomes `up_to_date` after the auto-chain ends.
+- `completedUpdate` is `true` after an approved session reaches this terminal
+  check; it does not depend on optional release metadata.
 - `releaseTransition` and `changelogs` describe the full completed session.
 
 ## Failure and recovery behavior
