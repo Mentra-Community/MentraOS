@@ -1,20 +1,23 @@
 name: Example App Builds
 
 "on":
-  push:
-    branches:
-      - main
   pull_request:
     branches:
       - main
+      - dev
+      - staging
   workflow_dispatch:
+    inputs:
+      artifact_suffix:
+        description: Optional coordinated release identity appended to filenames
+        required: false
+        type: string
 
 permissions:
   contents: read
 
-# Newest run per ref wins: cancels superseded PR builds and prevents an
-# older main run from finishing after a newer one and rolling back the
-# per-SDK-version release assets.
+# Newest validation per ref wins. Coordinated publication has separate
+# non-canceling channel concurrency in coordinated-example-release.yml.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -24,6 +27,16 @@ env:
   GSTREAMER_VERSION: 1.28.2
 
 jobs:
+  release-contract:
+    name: Coordinated release contract
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Test coordinated release scripts
+        run: node --test .github/scripts/coordinated-example-release.test.mjs
+
   android:
     name: Native Android example
     runs-on: ubuntu-latest
@@ -93,13 +106,20 @@ jobs:
           ./gradlew :app:assembleDebug --no-daemon
 
       - name: Collect APK
-        run: cp examples/android/app/build/outputs/apk/debug/app-debug.apk mentra-example-android.apk
+        id: collect
+        env:
+          ARTIFACT_SUFFIX: ${{ inputs.artifact_suffix }}
+        run: |
+          suffix="${ARTIFACT_SUFFIX:+-$ARTIFACT_SUFFIX}"
+          output="mentra-example-android${suffix}.apk"
+          cp examples/android/app/build/outputs/apk/debug/app-debug.apk "$output"
+          echo "path=$output" >> "$GITHUB_OUTPUT"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: mentra-example-android
-          path: mentra-example-android.apk
+          path: ${{ steps.collect.outputs.path }}
           if-no-files-found: error
 
   ios:
@@ -167,7 +187,10 @@ jobs:
             build
 
       - name: Package unsigned IPA
+        id: collect
         working-directory: examples/ios
+        env:
+          ARTIFACT_SUFFIX: ${{ inputs.artifact_suffix }}
         run: |
           app_path=$(find build/Build/Products/Debug-iphoneos -maxdepth 1 -name '*.app' -print -quit)
           if [ -z "$app_path" ]; then
@@ -176,13 +199,16 @@ jobs:
           fi
           mkdir Payload
           cp -R "$app_path" Payload/
-          zip -qry mentra-example-ios-unsigned.ipa Payload
+          suffix="${ARTIFACT_SUFFIX:+-$ARTIFACT_SUFFIX}"
+          output="mentra-example-ios${suffix}-unsigned.ipa"
+          zip -qry "$output" Payload
+          echo "path=examples/ios/$output" >> "$GITHUB_OUTPUT"
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
           name: mentra-example-ios
-          path: examples/ios/mentra-example-ios-unsigned.ipa
+          path: ${{ steps.collect.outputs.path }}
           if-no-files-found: error
 
   react-native:
@@ -276,13 +302,20 @@ jobs:
         run: examples/react-native/scripts/check-android-16kb.sh examples/react-native/android/app/build/outputs/apk/release/app-release.apk
 
       - name: Collect APK
-        run: cp examples/react-native/android/app/build/outputs/apk/release/app-release.apk mentra-example-react-native.apk
+        id: collect
+        env:
+          ARTIFACT_SUFFIX: ${{ inputs.artifact_suffix }}
+        run: |
+          suffix="${ARTIFACT_SUFFIX:+-$ARTIFACT_SUFFIX}"
+          output="mentra-example-react-native${suffix}.apk"
+          cp examples/react-native/android/app/build/outputs/apk/release/app-release.apk "$output"
+          echo "path=$output" >> "$GITHUB_OUTPUT"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: mentra-example-react-native
-          path: mentra-example-react-native.apk
+          path: ${{ steps.collect.outputs.path }}
           if-no-files-found: error
 
   react-native-elevenlabs-audio:
@@ -367,76 +400,18 @@ jobs:
           ./gradlew :app:assembleRelease --no-daemon
 
       - name: Collect APK
-        run: cp examples/react-native-elevenlabs-audio/android/app/build/outputs/apk/release/app-release.apk mentra-example-rn-elevenlabs-audio.apk
+        id: collect
+        env:
+          ARTIFACT_SUFFIX: ${{ inputs.artifact_suffix }}
+        run: |
+          suffix="${ARTIFACT_SUFFIX:+-$ARTIFACT_SUFFIX}"
+          output="mentra-example-rn-elevenlabs-audio${suffix}.apk"
+          cp examples/react-native-elevenlabs-audio/android/app/build/outputs/apk/release/app-release.apk "$output"
+          echo "path=$output" >> "$GITHUB_OUTPUT"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: mentra-example-rn-elevenlabs-audio
-          path: mentra-example-rn-elevenlabs-audio.apk
+          path: ${{ steps.collect.outputs.path }}
           if-no-files-found: error
-
-  publish:
-    name: Publish per-SDK-version release
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    needs:
-      - android
-      - ios
-      - react-native
-      - react-native-elevenlabs-audio
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    env:
-      GH_TOKEN: ${{ github.token }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Download build artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-
-      - name: Publish artifacts to per-version releases
-        run: |
-          set -euo pipefail
-
-          # Each app publishes to the release matching its own pinned SDK
-          # version, so the releases stay correct even if one example
-          # temporarily pins an older SDK than the others.
-          publish() {
-            local version="$1"
-            local file="$2"
-            local tag="sdk-$version"
-
-            if ! gh release view "$tag" --json tagName >/dev/null 2>&1; then
-              gh release create "$tag" \
-                --prerelease \
-                --target "$GITHUB_SHA" \
-                --title "Bluetooth SDK $version example builds" \
-                --notes ""
-            fi
-
-            gh release upload "$tag" "$file" --clobber
-
-            # Re-point the tag at the commit whose artifacts the release now carries.
-            git tag -f "$tag" "$GITHUB_SHA"
-            git push -f origin "refs/tags/$tag"
-
-            local notes
-            notes="Latest example app builds for Mentra Bluetooth SDK $version."
-            notes+=$'\n\n'"Android APKs install directly (allow installs from unknown sources)."
-            notes+=$'\n'"The iOS IPA is unsigned: install it with a sideloading tool such as Sideloadly or AltStore, which re-signs it with your own Apple ID."
-            notes+=$'\n\n'"Assets last updated from commit $GITHUB_SHA on $(date -u +%Y-%m-%d)."
-            gh release edit "$tag" --notes "$notes"
-          }
-
-          publish "${{ needs.android.outputs.sdk-version }}" \
-            artifacts/mentra-example-android/mentra-example-android.apk
-          publish "${{ needs.ios.outputs.sdk-version }}" \
-            artifacts/mentra-example-ios/mentra-example-ios-unsigned.ipa
-          publish "${{ needs.react-native.outputs.sdk-version }}" \
-            artifacts/mentra-example-react-native/mentra-example-react-native.apk
-          publish "${{ needs.react-native-elevenlabs-audio.outputs.sdk-version }}" \
-            artifacts/mentra-example-rn-elevenlabs-audio/mentra-example-rn-elevenlabs-audio.apk

@@ -1,0 +1,358 @@
+name: Coordinated Example Release
+
+"on":
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Coordinated release channel
+        required: true
+        type: choice
+        options:
+          - dev
+          - beta
+          - production
+      payload:
+        description: Compact coordinated example release payload JSON
+        required: true
+        type: string
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: coordinated-example-release-${{ inputs.channel }}
+  cancel-in-progress: false
+
+env:
+  CI: true
+  GH_TOKEN: ${{ github.token }}
+  STARTER_KIT_REPOSITORY: Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit
+
+jobs:
+  release:
+    name: Synchronize, validate, and publish examples
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout the Starter Kit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.11"
+
+      - name: Validate the coordinated payload
+        id: release
+        env:
+          COORDINATED_PAYLOAD: ${{ inputs.payload }}
+          DISPATCH_CHANNEL: ${{ inputs.channel }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$COORDINATED_PAYLOAD" > coordinated-payload.json
+          node .github/scripts/coordinated-example-release.mjs validate \
+            --payload coordinated-payload.json \
+            --github-output "$GITHUB_OUTPUT"
+          [[ "$(jq -er .channel coordinated-payload.json)" == "$DISPATCH_CHANNEL" ]]
+
+      - name: Reconcile an already published result
+        id: existing
+        env:
+          RELEASE_IDENTITY: ${{ steps.release.outputs.releaseIdentity }}
+          RELEASE_SET_ID: ${{ fromJSON(inputs.payload).releaseSetId }}
+          MENTRAOS_SOURCE_COMMIT: ${{ fromJSON(inputs.payload).mentraos.sourceCommit }}
+          EXPECTED_STARTER_KIT_HEAD: ${{ fromJSON(inputs.payload).expectedStarterKitHead }}
+          ARTIFACT_CONTAINER_TAG: ${{ steps.release.outputs.artifactContainerTag }}
+        run: |
+          set -euo pipefail
+          result_name="starter-kit-release-$RELEASE_IDENTITY.json"
+          mkdir -p existing-result
+          if gh release download "$ARTIFACT_CONTAINER_TAG" \
+            --pattern "$result_name" --dir existing-result >/dev/null 2>&1; then
+            result="existing-result/$result_name"
+            [[ "$(jq -er .releaseSetId "$result")" == "$RELEASE_SET_ID" ]]
+            [[ "$(jq -er .releaseIdentity "$result")" == "$RELEASE_IDENTITY" ]]
+            [[ "$(jq -er .mentraos.sourceCommit "$result")" == "$MENTRAOS_SOURCE_COMMIT" ]]
+            [[ "$(jq -er .starterKit.baseCommit "$result")" == "$EXPECTED_STARTER_KIT_HEAD" ]]
+            [[ "$(jq -er '.artifacts | length' "$result")" == "4" ]]
+            while IFS= read -r url; do
+              curl --fail --silent --show-error --location --head "$url" >/dev/null
+            done < <(jq -r '.artifacts[].url' "$result")
+            echo "already_published=true" >> "$GITHUB_OUTPUT"
+            echo "result_url=https://github.com/$STARTER_KIT_REPOSITORY/releases/download/$ARTIFACT_CONTAINER_TAG/$result_name" >> "$GITHUB_OUTPUT"
+          else
+            echo "already_published=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verify public package and OTA inputs
+        if: steps.existing.outputs.already_published != 'true'
+        env:
+          RELEASE_IDENTITY: ${{ steps.release.outputs.releaseIdentity }}
+          OTA_MANIFEST_URL: ${{ fromJSON(inputs.payload).ota.manifestUrl }}
+          OTA_MANIFEST_SHA256: ${{ fromJSON(inputs.payload).ota.manifestSha256 }}
+        run: |
+          set -euo pipefail
+          retry() {
+            local attempts="$1"
+            local delay="$2"
+            shift 2
+            for ((attempt = 1; attempt <= attempts; attempt++)); do
+              if "$@"; then return 0; fi
+              if (( attempt == attempts )); then return 1; fi
+              sleep "$delay"
+            done
+          }
+
+          check_npm() {
+            [[ "$(npm view "@mentra/bluetooth-sdk@$RELEASE_IDENTITY" version 2>/dev/null)" == "$RELEASE_IDENTITY" ]] &&
+              [[ "$(npm view "@mentra/engine@$RELEASE_IDENTITY" version 2>/dev/null)" == "$RELEASE_IDENTITY" ]]
+          }
+          check_maven() {
+            curl --fail --silent --show-error --head \
+              "https://repo1.maven.org/maven2/com/mentraglass/bluetooth-sdk/$RELEASE_IDENTITY/bluetooth-sdk-$RELEASE_IDENTITY.pom" \
+              >/dev/null
+          }
+          check_swiftpm() {
+            git ls-remote --exit-code --tags \
+              https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git \
+              "refs/tags/$RELEASE_IDENTITY" >/dev/null
+          }
+
+          retry 30 20 check_npm
+          retry 30 20 check_maven
+          retry 30 20 check_swiftpm
+          curl --fail --silent --show-error --location "$OTA_MANIFEST_URL" --output ota-manifest.json
+          echo "$OTA_MANIFEST_SHA256  ota-manifest.json" | sha256sum --check --status
+
+      - name: Create or reuse the version synchronization candidate
+        if: steps.existing.outputs.already_published != 'true'
+        id: candidate
+        env:
+          RELEASE_IDENTITY: ${{ steps.release.outputs.releaseIdentity }}
+          TARGET_BRANCH: ${{ steps.release.outputs.targetBranch }}
+          CANDIDATE_BRANCH: ${{ steps.release.outputs.candidateBranch }}
+          EXPECTED_HEAD: ${{ fromJSON(inputs.payload).expectedStarterKitHead }}
+        run: |
+          set -euo pipefail
+          git fetch origin "$TARGET_BRANCH" "$CANDIDATE_BRANCH" 2>/dev/null || git fetch origin "$TARGET_BRANCH"
+          actual_head=$(git rev-parse "origin/$TARGET_BRANCH")
+          candidate_exists=false
+          if git show-ref --verify --quiet "refs/remotes/origin/$CANDIDATE_BRANCH"; then
+            candidate_exists=true
+          fi
+          if [[ "$actual_head" != "$EXPECTED_HEAD" ]]; then
+            if [[ "$candidate_exists" != "true" ]] ||
+              [[ "$(git rev-parse "origin/$CANDIDATE_BRANCH^")" != "$EXPECTED_HEAD" ]] ||
+              ! git merge-base --is-ancestor "origin/$CANDIDATE_BRANCH" "origin/$TARGET_BRANCH"; then
+              echo "Expected $TARGET_BRANCH at $EXPECTED_HEAD, found unrelated head $actual_head" >&2
+              exit 1
+            fi
+          fi
+
+          canonical_payload=$(mktemp)
+          jq --sort-keys . coordinated-payload.json > "$canonical_payload"
+          if [[ "$candidate_exists" == "true" ]]; then
+            release_commit=$(git rev-parse "origin/$CANDIDATE_BRANCH")
+            git show "$release_commit:.github/coordinated-example-release.json" > candidate-payload.json
+            cmp --silent "$canonical_payload" candidate-payload.json
+            [[ "$(git rev-parse "$release_commit^")" == "$EXPECTED_HEAD" ]]
+          else
+            git checkout -b "$CANDIDATE_BRANCH" "origin/$TARGET_BRANCH"
+            node .github/scripts/coordinated-example-release.mjs sync \
+              --root . \
+              --identity "$RELEASE_IDENTITY"
+            (
+              cd examples/react-native
+              bun install --lockfile-only
+            )
+            (
+              cd examples/react-native-elevenlabs-audio
+              bun install --lockfile-only
+            )
+            cp "$canonical_payload" .github/coordinated-example-release.json
+            git config user.name "mentra-release-bot"
+            git config user.email "actions@users.noreply.github.com"
+            git add \
+              .github/coordinated-example-release.json \
+              examples/android/gradle.properties \
+              examples/ios/MentraExample.xcodeproj/project.pbxproj \
+              examples/react-native/package.json \
+              examples/react-native/bun.lock \
+              examples/react-native-elevenlabs-audio/package.json \
+              examples/react-native-elevenlabs-audio/bun.lock
+            git commit -m "chore(release): synchronize examples to $RELEASE_IDENTITY [skip coordinated request]"
+            release_commit=$(git rev-parse HEAD)
+            git push origin "HEAD:refs/heads/$CANDIDATE_BRANCH"
+          fi
+
+          echo "release_commit=$release_commit" >> "$GITHUB_OUTPUT"
+
+      - name: Create or reuse the synchronization pull request
+        if: steps.existing.outputs.already_published != 'true'
+        id: pull-request
+        env:
+          RELEASE_IDENTITY: ${{ steps.release.outputs.releaseIdentity }}
+          TARGET_BRANCH: ${{ steps.release.outputs.targetBranch }}
+          CANDIDATE_BRANCH: ${{ steps.release.outputs.candidateBranch }}
+          MENTRAOS_RUN_URL: ${{ fromJSON(inputs.payload).mentraos.coordinatorRunUrl }}
+        run: |
+          set -euo pipefail
+          pr_json=$(gh pr list --state all --base "$TARGET_BRANCH" --head "$CANDIDATE_BRANCH" \
+            --limit 1 --json number,url,state,mergedAt)
+          if [[ "$(jq 'length' <<<"$pr_json")" == "0" ]]; then
+            pr_url=$(gh pr create \
+              --base "$TARGET_BRANCH" \
+              --head "$CANDIDATE_BRANCH" \
+              --title "Synchronize examples to $RELEASE_IDENTITY" \
+              --body "Automated coordinated example release for \`$RELEASE_IDENTITY\`.\n\nMentraOS coordinator: $MENTRAOS_RUN_URL")
+          else
+            pr_url=$(jq -r '.[0].url' <<<"$pr_json")
+            state=$(jq -r '.[0].state' <<<"$pr_json")
+            merged_at=$(jq -r '.[0].mergedAt // empty' <<<"$pr_json")
+            if [[ "$state" == "CLOSED" && -z "$merged_at" ]]; then
+              gh pr reopen "$pr_url"
+            fi
+          fi
+          echo "url=$pr_url" >> "$GITHUB_OUTPUT"
+
+      - name: Dispatch validation for the candidate commit
+        if: steps.existing.outputs.already_published != 'true'
+        id: validation
+        env:
+          RELEASE_IDENTITY: ${{ steps.release.outputs.releaseIdentity }}
+          CANDIDATE_BRANCH: ${{ steps.release.outputs.candidateBranch }}
+          RELEASE_COMMIT: ${{ steps.candidate.outputs.release_commit }}
+        run: |
+          set -euo pipefail
+          dispatched_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          gh workflow run example-app-builds.yml \
+            --ref "$CANDIDATE_BRANCH" \
+            -f "artifact_suffix=$RELEASE_IDENTITY"
+
+          run_id=""
+          for _ in {1..30}; do
+            run_id=$(gh run list --workflow example-app-builds.yml --branch "$CANDIDATE_BRANCH" \
+              --event workflow_dispatch --limit 20 \
+              --json databaseId,headSha,createdAt \
+              --jq ".[] | select(.headSha == \"$RELEASE_COMMIT\" and .createdAt >= \"$dispatched_at\") | .databaseId" \
+              | head -1)
+            [[ -n "$run_id" ]] && break
+            sleep 2
+          done
+          [[ -n "$run_id" ]]
+          gh run watch "$run_id" --exit-status
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "url=https://github.com/$STARTER_KIT_REPOSITORY/actions/runs/$run_id" >> "$GITHUB_OUTPUT"
+
+      - name: Merge the validated synchronization pull request
+        if: steps.existing.outputs.already_published != 'true'
+        id: merge
+        env:
+          PR_URL: ${{ steps.pull-request.outputs.url }}
+          RELEASE_COMMIT: ${{ steps.candidate.outputs.release_commit }}
+          TARGET_BRANCH: ${{ steps.release.outputs.targetBranch }}
+        run: |
+          set -euo pipefail
+          if [[ "$(gh pr view "$PR_URL" --json state --jq .state)" != "MERGED" ]]; then
+            gh pr merge "$PR_URL" --merge
+          fi
+          merge_commit=$(gh pr view "$PR_URL" --json mergeCommit --jq .mergeCommit.oid)
+          git fetch origin "$TARGET_BRANCH"
+          git merge-base --is-ancestor "$RELEASE_COMMIT" "origin/$TARGET_BRANCH"
+          echo "merge_commit=$merge_commit" >> "$GITHUB_OUTPUT"
+
+      - name: Download validated artifacts
+        if: steps.existing.outputs.already_published != 'true'
+        run: gh run download "${{ steps.validation.outputs.run_id }}" --dir validated-artifacts
+
+      - name: Create source tag and deterministic result
+        if: steps.existing.outputs.already_published != 'true'
+        id: result
+        env:
+          RELEASE_IDENTITY: ${{ steps.release.outputs.releaseIdentity }}
+          SOURCE_TAG: ${{ steps.release.outputs.sourceTag }}
+          RELEASE_COMMIT: ${{ steps.candidate.outputs.release_commit }}
+          MERGE_COMMIT: ${{ steps.merge.outputs.merge_commit }}
+          PR_URL: ${{ steps.pull-request.outputs.url }}
+          VALIDATION_RUN_URL: ${{ steps.validation.outputs.url }}
+        run: |
+          set -euo pipefail
+          if git ls-remote --exit-code --tags origin "refs/tags/$SOURCE_TAG" >/dev/null 2>&1; then
+            [[ "$(git ls-remote --tags origin "refs/tags/$SOURCE_TAG" | cut -f1)" == "$RELEASE_COMMIT" ]]
+          else
+            git tag "$SOURCE_TAG" "$RELEASE_COMMIT"
+            git push origin "refs/tags/$SOURCE_TAG"
+          fi
+
+          result_name="starter-kit-release-$RELEASE_IDENTITY.json"
+          node .github/scripts/coordinated-example-release.mjs result \
+            --payload coordinated-payload.json \
+            --repository "$STARTER_KIT_REPOSITORY" \
+            --release-commit "$RELEASE_COMMIT" \
+            --merge-commit "$MERGE_COMMIT" \
+            --pull-request-url "$PR_URL" \
+            --validation-run-url "$VALIDATION_RUN_URL" \
+            --artifact-dir validated-artifacts \
+            --output "$result_name"
+          echo "name=$result_name" >> "$GITHUB_OUTPUT"
+
+      - name: Publish immutable artifacts and result
+        if: steps.existing.outputs.already_published != 'true'
+        id: publish
+        env:
+          RELEASE_IDENTITY: ${{ steps.release.outputs.releaseIdentity }}
+          FAMILY_BASE_VERSION: ${{ steps.release.outputs.familyBaseVersion }}
+          CHANNEL: ${{ steps.release.outputs.channel }}
+          ARTIFACT_CONTAINER_TAG: ${{ steps.release.outputs.artifactContainerTag }}
+          RELEASE_COMMIT: ${{ steps.candidate.outputs.release_commit }}
+          RESULT_NAME: ${{ steps.result.outputs.name }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "$ARTIFACT_CONTAINER_TAG" >/dev/null 2>&1; then
+            args=(--target "$RELEASE_COMMIT" --title "Bluetooth SDK $FAMILY_BASE_VERSION example builds")
+            if [[ "$CHANNEL" != "production" ]]; then args+=(--prerelease); fi
+            gh release create "$ARTIFACT_CONTAINER_TAG" "${args[@]}" \
+              --notes "Validated example applications for the $FAMILY_BASE_VERSION release family. Asset filenames identify the exact coordinated release."
+          fi
+
+          upload_immutable() {
+            local file="$1"
+            local name
+            name=$(basename "$file")
+            if gh release view "$ARTIFACT_CONTAINER_TAG" --json assets --jq '.assets[].name' | grep -Fxq "$name"; then
+              mkdir -p existing-assets
+              gh release download "$ARTIFACT_CONTAINER_TAG" --pattern "$name" --dir existing-assets
+              cmp --silent "$file" "existing-assets/$name"
+            else
+              gh release upload "$ARTIFACT_CONTAINER_TAG" "$file"
+            fi
+          }
+
+          while IFS= read -r file; do upload_immutable "$file"; done < <(find validated-artifacts -type f | sort)
+          # Publish the result last. Its presence is the cross-repository completion signal.
+          upload_immutable "$RESULT_NAME"
+          result_url="https://github.com/$STARTER_KIT_REPOSITORY/releases/download/$ARTIFACT_CONTAINER_TAG/$RESULT_NAME"
+          curl --fail --silent --show-error --location --head "$result_url" >/dev/null
+          echo "result_url=$result_url" >> "$GITHUB_OUTPUT"
+
+      - name: Summarize the coordinated example release
+        env:
+          RELEASE_IDENTITY: ${{ steps.release.outputs.releaseIdentity }}
+          EXISTING_RESULT_URL: ${{ steps.existing.outputs.result_url }}
+          PUBLISHED_RESULT_URL: ${{ steps.publish.outputs.result_url }}
+        run: |
+          result_url="${PUBLISHED_RESULT_URL:-$EXISTING_RESULT_URL}"
+          {
+            echo "## Coordinated example release"
+            echo
+            echo "- Release: \`$RELEASE_IDENTITY\`"
+            echo "- Result: $result_url"
+            if [[ "${{ steps.existing.outputs.already_published }}" != "true" ]]; then
+              echo "- Pull request: ${{ steps.pull-request.outputs.url }}"
+              echo "- Validation: ${{ steps.validation.outputs.url }}"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
