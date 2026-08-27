@@ -32,17 +32,6 @@ describe("createRelease", () => {
       manifest: { packageName: "com.example.app", version: "1.0.0", name: "Example" },
       bundle: new Uint8Array([0x50, 0x4b]),
       fileName: "bundle.zip",
-      signedBundle: {
-        signingKeyId: "key_1",
-        signature: "signature",
-        payload: {
-          packageName: "com.example.app",
-          version: "1.0.0",
-          bundleSha256: "a".repeat(64),
-          manifestSha256: "b".repeat(64),
-          createdAt: new Date(0).toISOString(),
-        },
-      },
     });
 
     expect(request?.body).toBeInstanceOf(FormData);
@@ -59,7 +48,7 @@ describe("createRelease", () => {
       packageName: "com.example.app",
       version: "1.0.0",
     });
-    expect(JSON.parse(String(form.get("signedBundle")))).toMatchObject({ signingKeyId: "key_1" });
+    expect(form.has("signedBundle")).toBe(false);
     expect(request?.headers).not.toHaveProperty("content-type");
   });
 });

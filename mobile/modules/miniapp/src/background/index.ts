@@ -60,7 +60,6 @@ export type {
   InstallMiniappResult,
   InstallMiniappPhase,
   InstallMiniappProgress,
-  MiniappInstallAuthorization,
   ListMiniappsOptions,
   MiniappInfo,
 } from "../modules/miniapps"

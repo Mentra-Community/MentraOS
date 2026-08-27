@@ -8,7 +8,11 @@ import {bootstrapMentraJS} from "@/services/mentraJsBootstrap"
 import {preinstalledMiniappSync} from "@/services/miniapps/preinstalledMiniappSync"
 import {storeUpdateScheduler} from "@/services/miniapps/storeUpdateScheduler"
 import builtInMiniappCatalog from "@/services/miniapps/BuiltInMiniappCatalog"
-import {BUNDLED_MINIAPPS, BUNDLED_SYSTEM_MINIAPP_PACKAGES} from "@/generated/bundledMiniapps"
+import {
+  BUNDLED_MINIAPPS,
+  BUNDLED_SYSTEM_MINIAPP_PACKAGES,
+  BUNDLED_SYSTEM_MINIAPP_PUBLISHER_KEYS,
+} from "@/generated/bundledMiniapps"
 import {CHINA_HIDDEN_APPS, isChinaBuild, notifyPackageName} from "@/constants/miniapps"
 import {migrate} from "@/services/Migrations"
 import {buildSpokenNotification} from "@/services/notifications/spokenNotification"
@@ -414,6 +418,7 @@ class MantleManager {
         bundledSystemMiniappPackages: BUNDLED_SYSTEM_MINIAPP_PACKAGES,
         bundledStoreMiniappPackages: BUNDLED_STORE_MINIAPP_PACKAGES,
         bundledSystemMiniappStoreOwners: BUNDLED_SYSTEM_MINIAPP_STORE_OWNERS,
+        bundledSystemMiniappPublisherKeys: BUNDLED_SYSTEM_MINIAPP_PUBLISHER_KEYS,
       },
       // Named host-UI seams: island dispatches the miniapp request, the host
       // owns the screen (branding/navigation).
@@ -691,7 +696,13 @@ class MantleManager {
           // version. Reinstall once unless host-owned bundled provenance is
           // already recorded, which also migrates pre-provenance installs.
           const identity = appRegistry.getReleaseIdentity(packageName, version)
-          if (identity?.source === "bundled_asset") continue
+          if (
+            identity?.source === "bundled_asset" &&
+            appRegistry.getPublisherKeyFingerprint(packageName) ===
+              BUNDLED_SYSTEM_MINIAPP_PUBLISHER_KEYS[packageName as keyof typeof BUNDLED_SYSTEM_MINIAPP_PUBLISHER_KEYS]
+          ) {
+            continue
+          }
         }
 
         let superMode = await engine.settings.get(SETTINGS.super_mode.key)

@@ -20,6 +20,7 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@mentra/miniapp-cli": "file:../../../sdk/miniapp-cli",
     "@types/semver": "^7.7.1"
   }
 }

@@ -68,6 +68,9 @@ const MiniAppSchema = new Schema(
     activeBetaReleaseId: { type: String, default: null },
     /** Closed by default. Public betas must be an explicit developer choice. */
     betaAccessMode: { type: String, enum: MINIAPP_BETA_ACCESS_MODES, default: "private" },
+    /** First verified production bundle signer. Immutable without an explicit future rotation flow. */
+    publisherKeyFingerprint: { type: String, default: null, index: true },
+    publisherPublicKeyJwk: { type: Schema.Types.Mixed, default: null },
     createdBy: { type: String, required: true },
   },
   { timestamps: true, collection: "miniapps" },

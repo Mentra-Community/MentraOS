@@ -87,9 +87,9 @@ export function MiniappDetailPage() {
               {releases[0].manifestSha256 ? (
                 <p className="mt-2 break-all font-mono text-xs text-[#747780]">SHA-256 {releases[0].manifestSha256}</p>
               ) : null}
-              {releases[0].signingKeyId ? (
+              {releases[0].publisherKeyFingerprint ? (
                 <p className="mt-1 break-all font-mono text-xs text-[#747780]">
-                  Signing key {releases[0].signingKeyId}
+                  Publisher key {releases[0].publisherKeyFingerprint}
                   {releases[0].signedAt ? ` · signed ${formatDate(releases[0].signedAt)}` : ""}
                 </p>
               ) : null}
@@ -111,9 +111,12 @@ export function MiniappDetailPage() {
                 </div>
                 <h2 className="mt-5 font-display text-[19px] font-bold">No releases yet</h2>
                 <p className="mt-2 max-w-md text-sm leading-6 text-[#747780]">
-                  Build and upload your first release from your project with{" "}
+                  Create and back up this package&apos;s publisher key, then build and upload your first signed release with{" "}
                   <code className="rounded bg-[#f0f2ef] px-1.5 py-0.5 font-mono text-[13px]">mentra publish</code>.
                 </p>
+                <code className="mt-3 rounded bg-[#f0f2ef] px-2 py-1 font-mono text-xs text-[#4f5359]">
+                  mentra miniapps keys create --package {packageName}
+                </code>
               </div>
             ) : (
               <div className="divide-y divide-[#eceeeb]">

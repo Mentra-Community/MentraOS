@@ -67,7 +67,7 @@ export interface DeveloperRelease {
   bundleSha256: string | null;
   bundleSizeBytes: number | null;
   manifestSha256?: string | null;
-  signingKeyId?: string | null;
+  publisherKeyFingerprint?: string | null;
   signedAt?: string | null;
   reviewedBy?: string | null;
   reviewNotes?: string | null;
@@ -100,18 +100,6 @@ export interface DeveloperSigningKey {
   lastUsedAt: string | null;
   createdAt: string | null;
   updatedAt: string | null;
-}
-
-export interface SignedBundleMetadata {
-  signingKeyId: string;
-  signature: string;
-  payload: {
-    packageName: string;
-    version: string;
-    bundleSha256: string;
-    manifestSha256: string;
-    createdAt: string;
-  };
 }
 
 export type PreinstallEnvironment = "debug" | "dev" | "staging" | "prod";
@@ -345,7 +333,6 @@ export async function createRelease(
     manifest: Record<string, unknown>;
     bundle: Uint8Array;
     fileName?: string;
-    signedBundle: SignedBundleMetadata;
   },
 ): Promise<{ release: DeveloperRelease }> {
   const form = new FormData();
@@ -353,7 +340,6 @@ export async function createRelease(
   form.set("version", input.version);
   form.set("releaseTrack", input.releaseTrack);
   form.set("manifest", JSON.stringify(input.manifest));
-  form.set("signedBundle", JSON.stringify(input.signedBundle));
   form.set("fileName", input.fileName ?? "bundle.zip");
   form.set("bundle", new Blob([input.bundle], { type: "application/zip" }), input.fileName ?? "bundle.zip");
   return coreRequest(credentials, `/api/console/apps/${encodeURIComponent(input.packageName)}/releases`, {

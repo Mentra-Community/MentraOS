@@ -1,11 +1,16 @@
 import JSZip from "jszip"
 import semver from "semver"
+import nacl from "tweetnacl"
+import {Buffer} from "buffer"
 
 import {HardwareRequirementLevel, HardwareType, type HardwareRequirement} from "../types"
+import {sha256Hex} from "../utils/sha256"
 
 const MAX_EXPANDED_BYTES = 200 * 1024 * 1024
 const MAX_ENTRIES = 2_000
 const MAX_MANIFEST_BYTES = 256 * 1024
+const MAX_SIGNATURE_BYTES = 16 * 1024
+const MENTRA_BUNDLE_SIGNATURE_PATH = "META-INF/MENTRA.SIG"
 const PACKAGE_NAME_PATTERN = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/
 const AUTHOR_DECLARABLE_PERMISSION_TYPES = new Set([
   "MICROPHONE",
@@ -19,13 +24,14 @@ const AUTHOR_DECLARABLE_PERMISSION_TYPES = new Set([
 
 export async function validateInstallBundleArchive(
   bytes: Uint8Array,
-  expected?: {packageName?: string; version?: string},
+  expected?: {packageName?: string; version?: string; requirePublisherSignature?: boolean},
 ): Promise<{
   packageName: string
   version: string
   sdkVersion?: string
   minHostVersion?: string
   hardwareRequirements: HardwareRequirement[]
+  publisherKeyFingerprint?: string
 }> {
   inspectCentralDirectory(bytes)
   let zip: JSZip
@@ -55,15 +61,30 @@ export async function validateInstallBundleArchive(
   }
   let actualExpanded = 0
   let manifestBytes: Uint8Array | undefined
+  let signatureBytes: Uint8Array | undefined
+  const signedFiles: Array<{path: string; size: number; sha256: string}> = []
   for (const entry of entries) {
     const remaining = MAX_EXPANDED_BYTES - actualExpanded
+    const capture = !entry.dir
     const captured = await verifyEntryStream(
       entry,
-      Math.min(remaining, entry.name === "miniapp.json" ? MAX_MANIFEST_BYTES : Infinity),
-      entry.name === "miniapp.json",
+      Math.min(
+        remaining,
+        entry.name === "miniapp.json"
+          ? MAX_MANIFEST_BYTES
+          : entry.name.toLowerCase() === MENTRA_BUNDLE_SIGNATURE_PATH.toLowerCase()
+            ? MAX_SIGNATURE_BYTES
+            : Infinity,
+      ),
+      capture,
     )
     actualExpanded += compressedMetadata(entry).uncompressedSize
-    if (captured) manifestBytes = captured
+    if (!captured || entry.dir) continue
+    if (entry.name === "miniapp.json") manifestBytes = captured
+    if (entry.name === MENTRA_BUNDLE_SIGNATURE_PATH) signatureBytes = captured
+    if (entry.name !== MENTRA_BUNDLE_SIGNATURE_PATH) {
+      signedFiles.push({path: entry.name, size: captured.byteLength, sha256: await sha256Hex(captured)})
+    }
   }
   if (!manifestBytes) throw new Error("could not read bundle manifest")
   const manifestText = new TextDecoder("utf-8", {fatal: true}).decode(manifestBytes)
@@ -92,7 +113,112 @@ export async function validateInstallBundleArchive(
       }
     }
   }
-  return {packageName, version, sdkVersion, minHostVersion, hardwareRequirements}
+  const requirePublisherSignature = expected?.requirePublisherSignature !== false
+  const publisherKeyFingerprint = signatureBytes
+    ? await verifyPublisherSignature({signatureBytes, signedFiles, manifest, packageName, version})
+    : undefined
+  if (requirePublisherSignature && !publisherKeyFingerprint) {
+    throw new Error(`bundle must contain exactly one ${MENTRA_BUNDLE_SIGNATURE_PATH}`)
+  }
+  return {
+    packageName,
+    version,
+    sdkVersion,
+    minHostVersion,
+    hardwareRequirements,
+    ...(publisherKeyFingerprint ? {publisherKeyFingerprint} : {}),
+  }
+}
+
+async function verifyPublisherSignature(input: {
+  signatureBytes: Uint8Array
+  signedFiles: Array<{path: string; size: number; sha256: string}>
+  manifest: Record<string, unknown>
+  packageName: string
+  version: string
+}): Promise<string> {
+  let envelope: PublisherSignatureEnvelope
+  try {
+    envelope = validatePublisherEnvelope(
+      JSON.parse(new TextDecoder("utf-8", {fatal: true}).decode(input.signatureBytes)) as unknown,
+    )
+  } catch (error) {
+    throw new Error(`bundle signature entry is invalid: ${(error as Error)?.message ?? error}`)
+  }
+  input.signedFiles.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+  const expectedPayload = {
+    packageName: input.packageName,
+    version: input.version,
+    manifestSha256: await sha256Hex(utf8(canonicalJson(input.manifest))),
+    contentSha256: await sha256Hex(utf8(canonicalJson({schemaVersion: 1, files: input.signedFiles}))),
+  }
+  if (canonicalJson(envelope.payload) !== canonicalJson(expectedPayload)) {
+    throw new Error("bundle signature payload does not match the archive contents")
+  }
+  const publicKey = decodeBase64Url(envelope.publicKeyJwk.x)
+  if (publicKey.byteLength !== nacl.sign.publicKeyLength) throw new Error("bundle publisher public key is invalid")
+  const fingerprint = `sha256:${await sha256Hex(publicKey)}`
+  if (fingerprint !== envelope.publisherKeyFingerprint) {
+    throw new Error("bundle publisher fingerprint does not match its public key")
+  }
+  const signature = decodeBase64Url(envelope.signature)
+  if (signature.byteLength !== nacl.sign.signatureLength) throw new Error("bundle publisher signature is invalid")
+  if (!nacl.sign.detached.verify(utf8(canonicalJson(envelope.payload)), signature, publicKey)) {
+    throw new Error("bundle publisher signature is invalid")
+  }
+  return fingerprint
+}
+
+interface PublisherSignatureEnvelope {
+  schemaVersion: 1
+  algorithm: "Ed25519"
+  publicKeyJwk: {kty: "OKP"; crv: "Ed25519"; x: string}
+  publisherKeyFingerprint: string
+  payload: {packageName: string; version: string; manifestSha256: string; contentSha256: string}
+  signature: string
+}
+
+function validatePublisherEnvelope(value: unknown): PublisherSignatureEnvelope {
+  const candidate = value as Partial<PublisherSignatureEnvelope> | null
+  if (
+    !candidate ||
+    candidate.schemaVersion !== 1 ||
+    candidate.algorithm !== "Ed25519" ||
+    candidate.publicKeyJwk?.kty !== "OKP" ||
+    candidate.publicKeyJwk.crv !== "Ed25519" ||
+    typeof candidate.publicKeyJwk.x !== "string" ||
+    typeof candidate.publisherKeyFingerprint !== "string" ||
+    typeof candidate.signature !== "string" ||
+    !candidate.payload ||
+    typeof candidate.payload.packageName !== "string" ||
+    typeof candidate.payload.version !== "string" ||
+    !/^[a-f0-9]{64}$/.test(candidate.payload.manifestSha256) ||
+    !/^[a-f0-9]{64}$/.test(candidate.payload.contentSha256)
+  ) {
+    throw new Error("signature fields are invalid")
+  }
+  return candidate as PublisherSignatureEnvelope
+}
+
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value)
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`
+  const record = value as Record<string, unknown>
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
+    .join(",")}}`
+}
+
+function utf8(value: string): Uint8Array {
+  return new TextEncoder().encode(value)
+}
+
+function decodeBase64Url(value: string): Uint8Array {
+  if (!/^[A-Za-z0-9_-]+$/.test(value)) throw new Error("signature encoding is invalid")
+  const decoded = Buffer.from(value, "base64url")
+  if (decoded.toString("base64url") !== value) throw new Error("signature encoding is not canonical")
+  return Uint8Array.from(decoded)
 }
 
 /** Recheck the public permission schema at the final ZIP activation boundary. */
@@ -104,10 +230,7 @@ export function validateManifestPermissions(value: unknown): void {
       throw new Error(`bundle manifest permissions[${index}] must be an object`)
     }
     const record = candidate as Record<string, unknown>
-    if (
-      typeof record.type !== "string" ||
-      !AUTHOR_DECLARABLE_PERMISSION_TYPES.has(record.type)
-    ) {
+    if (typeof record.type !== "string" || !AUTHOR_DECLARABLE_PERMISSION_TYPES.has(record.type)) {
       throw new Error(`bundle manifest permissions[${index}].type is invalid`)
     }
     if (record.required !== undefined && typeof record.required !== "boolean") {
@@ -287,6 +410,7 @@ function inspectCentralDirectory(bytes: Uint8Array): void {
   if (centralOffset + centralSize !== eocd) throw new Error("bundle ZIP central directory is malformed")
 
   const names = new Set<string>()
+  const foldedNames = new Set<string>()
   let expanded = 0
   let cursor = centralOffset
   for (let index = 0; index < entryCount; index += 1) {
@@ -308,7 +432,9 @@ function inspectCentralDirectory(bytes: Uint8Array): void {
     const name = new TextDecoder("utf-8", {fatal: true}).decode(nameBytes)
     if (!safePath(name)) throw new Error(`bundle contains an unsafe path: ${name}`)
     if (names.has(name)) throw new Error(`bundle contains a duplicate path: ${name}`)
+    if (foldedNames.has(name.toLowerCase())) throw new Error(`bundle contains a case-colliding path: ${name}`)
     names.add(name)
+    foldedNames.add(name.toLowerCase())
     const creatorOs = madeBy >>> 8
     const unixMode = externalAttributes >>> 16
     if (creatorOs === 3 && (unixMode & 0o170000) === 0o120000) {

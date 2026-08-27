@@ -26,6 +26,7 @@ import {readFileSync, existsSync, statSync, readdirSync, unlinkSync} from 'fs'
 import os from 'os'
 import {resolve, join} from 'path'
 import {buildProduction} from './build.js'
+import {verifySignedBundleArchive} from './bundle-signing.js'
 import {pack} from './pack.js'
 import {printQR, writeQRPng} from './qr.js'
 import {getLanIp} from './lan.js'
@@ -41,6 +42,7 @@ const BUNDLE_PATH = '/bundle.zip'
 interface ReleaseOptions {
   noCache?: boolean
   qrOutput?: string
+  signingKeyPath?: string
 }
 
 export async function release(opts: ReleaseOptions = {}): Promise<void> {
@@ -75,7 +77,15 @@ export async function release(opts: ReleaseOptions = {}): Promise<void> {
   const cachedZipName = `${packageName}-${version}.zip`
   const cachedZipPath = join(cacheDir, cachedZipName)
 
-  const cacheValid = !opts.noCache && isCacheFresh(cachedZipPath, cwd)
+  let cacheValid = !opts.noCache && isCacheFresh(cachedZipPath, cwd)
+  if (cacheValid) {
+    try {
+      const verified = await verifySignedBundleArchive(readFileSync(cachedZipPath))
+      cacheValid = verified.packageName === packageName && verified.version === version
+    } catch {
+      cacheValid = false
+    }
+  }
   if (cacheValid) {
     console.log(`✓ Using cached build (${cachedZipName})`)
   } else {
@@ -83,7 +93,7 @@ export async function release(opts: ReleaseOptions = {}): Promise<void> {
 
     // Pack into build/<pkg>-<v>.zip
     const packStart = Date.now()
-    const zipPath = await pack({outDir: 'build', silent: true})
+    const zipPath = await pack({outDir: 'build', silent: true, signingKeyPath: opts.signingKeyPath})
     const sizeKb = Math.round(statSync(zipPath).size / 1024)
     console.log(`✓ Packed ${packageName}@${version} (${sizeKb} KB) in ${((Date.now() - packStart) / 1000).toFixed(1)}s`)
   }

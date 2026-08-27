@@ -29,7 +29,7 @@ bunx @mentra/cli@dev --help
 mentra login              # sign in to the Mentra Developer Console
 mentra dev                # local dev server with a signed Cloud V2 identity
 mentra build              # build the current miniapp
-mentra pack               # zip dist/ into a submittable release
+mentra pack               # sign dist/ into a submittable release ZIP
 mentra publish            # upload + publish a release
 mentra miniapps list      # miniapps owned by your org
 mentra releases submit    # submit an uploaded release for review
@@ -49,6 +49,29 @@ use:
 ```bash
 mentra org init --new --name "Your Org" --prefix com.example
 ```
+
+## Publisher keys and signed bundles
+
+Every production ZIP is signed by a durable Ed25519 key scoped to its package.
+Create and back up the key before the first `pack` or `publish`:
+
+```bash
+mentra miniapps keys create --package com.example.myminiapp
+mentra miniapps keys export --package com.example.myminiapp ./publisher-key.json
+mentra publish
+```
+
+The CLI stores publisher keys in the OS keychain when available and otherwise
+uses mode-`0600` files beneath `~/.mentra/cli-v2/signing-keys/`. Import the same
+key on another machine with
+`mentra miniapps keys import --package com.example.myminiapp <path>`. Losing it
+prevents a later release from updating the established package identity.
+
+CI may pass `--signing-key <path>`, set
+`MENTRA_MINIAPP_SIGNING_KEY_FILE`, or provide the exported JSON through
+`MENTRA_MINIAPP_SIGNING_KEY_JSON`; these inputs are used without persisting the
+key. `--no-pack` accepts only an already signed ZIP and never silently signs it
+during upload.
 
 ## Stable and beta releases
 

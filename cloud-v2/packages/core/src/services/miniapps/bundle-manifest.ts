@@ -1,6 +1,12 @@
 import { createHash } from "node:crypto";
 import semver from "semver";
 import { canonicalJson } from "./developer-signing.service";
+import {
+  MAX_BUNDLE_SIGNATURE_BYTES,
+  MENTRA_BUNDLE_SIGNATURE_PATH,
+  PublisherBundleSignatureError,
+  verifyEmbeddedPublisherSignature,
+} from "./publisher-bundle-signing";
 import { verifyZipArchive, type VerifiedZipEntry } from "./zip-archive";
 
 const MAX_BUNDLE_BYTES = 50 * 1024 * 1024;
@@ -38,6 +44,9 @@ export interface CanonicalBundleManifest {
   manifestSha256: string;
   packageName: string;
   version: string;
+  publisherKeyFingerprint: string;
+  publisherPublicKeyJwk: Record<string, unknown>;
+  contentSha256: string;
 }
 
 /**
@@ -60,8 +69,13 @@ export async function parseCanonicalBundleManifest(
     entries = verifyZipArchive(bundle, {
       maxEntries: MAX_ZIP_ENTRIES,
       maxExpandedBytes: MAX_EXPANDED_BYTES,
-      maxEntryBytes: name => (name === "miniapp.json" ? MAX_MANIFEST_BYTES : undefined),
-      capture: name => name === "miniapp.json",
+      maxEntryBytes: name =>
+        name === "miniapp.json"
+          ? MAX_MANIFEST_BYTES
+          : name.toLowerCase() === MENTRA_BUNDLE_SIGNATURE_PATH.toLowerCase()
+            ? MAX_BUNDLE_SIGNATURE_BYTES
+            : undefined,
+      capture: name => name === "miniapp.json" || name.toLowerCase() === MENTRA_BUNDLE_SIGNATURE_PATH.toLowerCase(),
       validatePath: isSafeZipPath,
     });
   } catch (error) {
@@ -128,11 +142,23 @@ export async function parseCanonicalBundleManifest(
     );
   }
 
+  const manifestSha256 = createHash("sha256").update(canonicalJson(manifest)).digest("hex");
+  let publisher;
+  try {
+    publisher = verifyEmbeddedPublisherSignature({ entries, packageName, version, manifestSha256 });
+  } catch (error) {
+    if (error instanceof PublisherBundleSignatureError) {
+      throw new BundleManifestError(error.code, error.message);
+    }
+    throw error;
+  }
+
   return {
     manifest,
-    manifestSha256: createHash("sha256").update(canonicalJson(manifest)).digest("hex"),
+    manifestSha256,
     packageName,
     version,
+    ...publisher,
   };
 }
 

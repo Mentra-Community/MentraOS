@@ -4,6 +4,7 @@ import {tmpdir} from "node:os"
 import {join} from "node:path"
 import JSZip from "jszip"
 import {pack} from "./pack"
+import {generatePackageSigningKey} from "./package-signing-key"
 
 const dirs: string[] = []
 afterEach(() => {
@@ -26,11 +27,12 @@ describe("pack", () => {
       }),
     )
     writeFileSync(join(cwd, "dist", "old.js"), "old")
-    const zipPath = await pack({cwd, silent: true})
+    const signingKey = generatePackageSigningKey("com.example.pack")
+    const zipPath = await pack({cwd, silent: true, signingKey})
 
     rmSync(join(cwd, "dist", "old.js"))
     writeFileSync(join(cwd, "dist", "new.js"), "new")
-    await pack({cwd, silent: true})
+    await pack({cwd, silent: true, signingKey})
 
     const zip = await JSZip.loadAsync(await Bun.file(zipPath).arrayBuffer())
     expect(zip.file("new.js")).not.toBeNull()
@@ -39,10 +41,13 @@ describe("pack", () => {
 
   test("keeps the previous archive when zip creation fails", async () => {
     const cwd = createProject()
-    const zipPath = await pack({cwd, silent: true})
+    const signingKey = generatePackageSigningKey("com.example.pack")
+    const zipPath = await pack({cwd, silent: true, signingKey})
     const original = readFileSync(zipPath)
 
-    await expect(pack({cwd, silent: true, zipCommand: "/usr/bin/false"})).rejects.toThrow("zip command failed")
+    await expect(pack({cwd, silent: true, zipCommand: "/usr/bin/false", signingKey})).rejects.toThrow(
+      "zip command failed",
+    )
     expect(readFileSync(zipPath)).toEqual(original)
   })
 })

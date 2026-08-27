@@ -12,6 +12,7 @@ import { join } from "node:path";
 import crypto from "node:crypto";
 import JSZip from "jszip";
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { generatePackageSigningKey, signBundleArchive, type PackageSigningKey } from "@mentra/miniapp-cli";
 
 process.env.CLOUD_CORE_LOCAL_STORAGE_DIR = join(tmpdir(), `mentra-miniapp-release-test-${process.pid}`);
 
@@ -48,6 +49,7 @@ let miniappBetas: MiniAppBetaService;
 let miniappAccess: MiniAppAccessService;
 let registries: PreinstalledRegistryService;
 let signing: DeveloperSigningService;
+const publisherKeys = new Map<string, PackageSigningKey>();
 
 beforeAll(async () => {
   await connectMongo(process.env.MONGO_URL ?? "mongodb://127.0.0.1:27017/mentra-cloud-v2-test");
@@ -85,6 +87,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  publisherKeys.clear();
   await Promise.all([
     MiniAppModel.deleteMany({ orgId: developer.orgId }),
     MiniAppAccessInvitationModel.deleteMany({ orgId: developer.orgId }),
@@ -201,6 +204,27 @@ describe("miniapp release lifecycle", () => {
     await expect(registries.getBundleAsset(assetId, { tenantId: "other-tenant" })).rejects.toMatchObject({
       status: 404,
     });
+  });
+
+  test("a package cannot publish a release with a different publisher key", async () => {
+    const packageName = "com.example.continuity";
+    await miniapps.createMiniApp(developer, { packageName, displayName: "Continuity" });
+    await miniapps.createRelease(developer, {
+      packageName,
+      version: "1.0.0",
+      manifest: { packageName, name: "Continuity", version: "1.0.0" },
+      bundle: await releaseBundle({ packageName, name: "Continuity", version: "1.0.0" }),
+    });
+
+    publisherKeys.set(packageName, generatePackageSigningKey(packageName));
+    await expect(
+      miniapps.createRelease(developer, {
+        packageName,
+        version: "2.0.0",
+        manifest: { packageName, name: "Continuity", version: "2.0.0" },
+        bundle: await releaseBundle({ packageName, name: "Continuity", version: "2.0.0" }),
+      }),
+    ).rejects.toMatchObject({ code: "publisher_key_mismatch", status: 409 });
   });
 
   test("developer signing key authorizes dev attestation only for owned package", async () => {
@@ -1597,7 +1621,13 @@ describe("miniapp release lifecycle", () => {
 async function releaseBundle(manifest: Record<string, unknown>): Promise<Uint8Array> {
   const zip = new JSZip();
   zip.file("miniapp.json", JSON.stringify(manifest));
-  return zip.generateAsync({ type: "uint8array" });
+  const packageName = String(manifest.packageName);
+  let key = publisherKeys.get(packageName);
+  if (!key) {
+    key = generatePackageSigningKey(packageName);
+    publisherKeys.set(packageName, key);
+  }
+  return signBundleArchive(await zip.generateAsync({ type: "uint8array" }), key);
 }
 
 function canonicalJson(value: unknown): string {

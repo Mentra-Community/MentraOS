@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { inflateRawSync } from "node:zlib";
 
 const EOCD_SIGNATURE = 0x06054b50;
@@ -9,6 +10,8 @@ const ENCRYPTED_FLAG = 1;
 export interface VerifiedZipEntry {
   name: string;
   directory: boolean;
+  uncompressedSize: number;
+  sha256: string;
   bytes?: Uint8Array;
 }
 
@@ -45,6 +48,7 @@ export function verifyZipArchive(bundle: Uint8Array, options: VerifyZipOptions):
   if (centralOffset + centralSize !== eocdOffset) throw new Error("ZIP central directory is malformed");
 
   const entries = new Map<string, VerifiedZipEntry>();
+  const caseFoldedNames = new Set<string>();
   let cursor = centralOffset;
   let expandedBytes = 0;
   for (let index = 0; index < entryCount; index += 1) {
@@ -74,6 +78,8 @@ export function verifyZipArchive(bundle: Uint8Array, options: VerifyZipOptions):
     const name = decodeName(nameBytes, (flags & UTF8_FLAG) !== 0);
     if (!options.validatePath(name)) throw new Error(`bundle contains an unsafe path: ${name}`);
     if (entries.has(name)) throw new Error(`bundle contains a duplicate path: ${name}`);
+    if (caseFoldedNames.has(name.toLowerCase())) throw new Error(`bundle contains a case-colliding path: ${name}`);
+    caseFoldedNames.add(name.toLowerCase());
     const directory = name.endsWith("/");
     const creatorOs = madeBy >>> 8;
     const unixMode = externalAttributes >>> 16;
@@ -131,6 +137,8 @@ export function verifyZipArchive(bundle: Uint8Array, options: VerifyZipOptions):
     entries.set(name, {
       name,
       directory,
+      uncompressedSize,
+      sha256: createHash("sha256").update(output).digest("hex"),
       ...(options.capture(name) ? { bytes: Uint8Array.from(output) } : {}),
     });
     cursor = nameStart + nameLength + extraLength + entryCommentLength;

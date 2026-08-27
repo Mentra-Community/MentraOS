@@ -14,20 +14,6 @@ export interface RegisterDeveloperSigningKeyInput {
   publicKeyJwk: DeveloperJwk;
 }
 
-export interface BundleSignaturePayload {
-  packageName: string;
-  version: string;
-  bundleSha256: string;
-  manifestSha256: string;
-  createdAt: string;
-}
-
-export interface SignedBundleMetadata {
-  payload: BundleSignaturePayload;
-  signingKeyId: string;
-  signature: string;
-}
-
 export interface DevMiniappAttestation {
   packageName: string;
   devServerUrl: string;
@@ -54,22 +40,6 @@ export class DeveloperSigningService {
       status: "active",
     });
     return serializeSigningKey(created.toObject());
-  }
-
-  async verifyBundleSignature(developer: DeveloperIdentity, metadata: SignedBundleMetadata): Promise<void> {
-    if (!metadata.payload || typeof metadata.payload !== "object") {
-      throw new DeveloperSigningServiceError("invalid_signature_payload", "release signature payload is required", 400);
-    }
-    if (metadata.payload.packageName !== metadata.payload.packageName.trim().toLowerCase()) {
-      throw new DeveloperSigningServiceError("invalid_package_name", "signed packageName must be normalized", 400);
-    }
-    assertPackagePrefix(developer.packagePrefix, metadata.payload.packageName);
-    const key = await this.requireActiveKey(metadata.signingKeyId);
-    if (key.orgId !== developer.orgId) {
-      throw new DeveloperSigningServiceError("signing_key_forbidden", "signing key does not belong to this developer org", 403);
-    }
-    verifySignature(key.publicKeyJwk as DeveloperJwk, metadata.payload, metadata.signature);
-    await DeveloperSigningKeyModel.updateOne({ _id: metadata.signingKeyId }, { $set: { lastUsedAt: new Date() } });
   }
 
   async verifyDevAttestation(packageName: string, attestation: DevMiniappAttestation): Promise<void> {
@@ -166,17 +136,6 @@ function normalizePackageName(packageName: string): string {
     );
   }
   return normalized;
-}
-
-function assertPackagePrefix(prefix: string, packageName: string): void {
-  const normalizedPrefix = prefix.replace(/\.+$/, "").toLowerCase();
-  if (!packageName.startsWith(`${normalizedPrefix}.`)) {
-    throw new DeveloperSigningServiceError(
-      "invalid_package_prefix",
-      `package name must start with ${normalizedPrefix}. for this developer org`,
-      400,
-    );
-  }
 }
 
 function serializeSigningKey(key: {

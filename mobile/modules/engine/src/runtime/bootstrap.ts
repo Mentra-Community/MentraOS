@@ -36,6 +36,8 @@ export interface IslandConfigValues {
   bundledStoreMiniappPackages?: readonly string[]
   /** Build-owned SYSTEM package -> bundled Store package allowed to update it. */
   bundledSystemMiniappStoreOwners?: Readonly<Record<string, string>>
+  /** Build-pinned Ed25519 publisher fingerprint for every bundled SYSTEM package. */
+  bundledSystemMiniappPublisherKeys?: Readonly<Record<string, string>>
   /**
    * LC3 frame size (bytes) the phone's mic encoder emits — announced to the
    * cloud on connect (20 for G1, 40 for G2, …). Defaults to 20 if unset.

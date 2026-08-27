@@ -5,7 +5,6 @@ import { MiniAppModel } from "../../models/miniapp.model";
 import { MiniAppReleaseModel } from "../../models/miniapp-release.model";
 import { createStorageService, sha256Hex } from "../storage/storage.service";
 import { BundleManifestError, parseCanonicalBundleManifest } from "./bundle-manifest";
-import type { SignedBundleMetadata } from "./developer-signing.service";
 import { notifyMiniAppSubmissionSlack } from "./miniapp-slack.service";
 
 const logger = createLogger("core").child({ service: "miniapp.service" });
@@ -29,7 +28,6 @@ export interface CreateReleaseInput {
   manifest: Record<string, unknown>;
   bundle: Uint8Array;
   fileName?: string;
-  signedBundle?: SignedBundleMetadata;
   releaseTrack?: "stable" | "beta";
 }
 
@@ -708,6 +706,13 @@ export class MiniAppService {
       );
     }
     const app = await this.requireMiniApp(developer, packageName);
+    if (app.publisherKeyFingerprint && app.publisherKeyFingerprint !== canonical.publisherKeyFingerprint) {
+      throw new MiniAppServiceError(
+        "publisher_key_mismatch",
+        `release signer does not match the established publisher identity for ${packageName}`,
+        409,
+      );
+    }
     const existing = await MiniAppReleaseModel.findOne({
       miniAppId: app._id.toString(),
       version: input.version,
@@ -725,10 +730,10 @@ export class MiniAppService {
       status: "draft",
       manifest: canonical.manifest,
       manifestSha256: canonical.manifestSha256,
-      signedBundlePayload: input.signedBundle?.payload ?? null,
-      signingKeyId: input.signedBundle?.signingKeyId ?? null,
-      bundleSignature: input.signedBundle?.signature ?? null,
-      signedAt: input.signedBundle?.payload.createdAt ? new Date(input.signedBundle.payload.createdAt) : null,
+      publisherKeyFingerprint: canonical.publisherKeyFingerprint,
+      publisherPublicKeyJwk: canonical.publisherPublicKeyJwk,
+      contentSha256: canonical.contentSha256,
+      signedAt: new Date(),
       createdBy: developer.developerId,
     });
 
@@ -769,6 +774,34 @@ export class MiniAppService {
       release.bundleSha256 = stored.sha256;
       release.bundleSizeBytes = stored.sizeBytes;
       await release.save();
+
+      // Bind publisher identity only after the complete release artifact is
+      // durable. The conditional update makes first-publish races safe: two
+      // releases signed by the same key may proceed, while a conflicting key
+      // loses the claim and its release/artifacts are compensated below.
+      const signerBinding = await MiniAppModel.updateOne(
+        {
+          _id: app._id,
+          $or: [
+            { publisherKeyFingerprint: null },
+            { publisherKeyFingerprint: { $exists: false } },
+            { publisherKeyFingerprint: canonical.publisherKeyFingerprint },
+          ],
+        },
+        {
+          $set: {
+            publisherKeyFingerprint: canonical.publisherKeyFingerprint,
+            publisherPublicKeyJwk: canonical.publisherPublicKeyJwk,
+          },
+        },
+      );
+      if (signerBinding.matchedCount !== 1) {
+        throw new MiniAppServiceError(
+          "publisher_key_mismatch",
+          `release signer does not match the established publisher identity for ${packageName}`,
+          409,
+        );
+      }
 
       return serializeRelease(release.toObject());
     } catch (error) {
@@ -1179,7 +1212,7 @@ function serializeRelease(release: {
   bundleSizeBytes?: number | null;
   manifestSha256?: string | null;
   manifest?: unknown;
-  signingKeyId?: string | null;
+  publisherKeyFingerprint?: string | null;
   signedAt?: Date | null;
   reviewedBy?: string | null;
   reviewNotes?: string | null;
@@ -1197,7 +1230,7 @@ function serializeRelease(release: {
     bundleSizeBytes: release.bundleSizeBytes ?? null,
     manifestSha256: release.manifestSha256 ?? null,
     manifest: release.manifest ?? null,
-    signingKeyId: release.signingKeyId ?? null,
+    publisherKeyFingerprint: release.publisherKeyFingerprint ?? null,
     signedAt: release.signedAt?.toISOString() ?? null,
     reviewedBy: release.reviewedBy ?? null,
     reviewNotes: release.reviewNotes ?? null,

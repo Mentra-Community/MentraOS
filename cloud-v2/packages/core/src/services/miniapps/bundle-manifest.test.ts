@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import JSZip from "jszip";
+import { generatePackageSigningKey, signBundleArchive } from "@mentra/miniapp-cli";
 import { BundleManifestError, parseCanonicalBundleManifest } from "./bundle-manifest";
 
 const manifest = {
@@ -16,7 +17,13 @@ async function bundle(value: Record<string, unknown> = manifest, extra?: (zip: J
   zip.file("background/index.js", "export {};");
   zip.file("ui/index.html", "<!doctype html>");
   extra?.(zip);
-  return zip.generateAsync({ type: "uint8array" });
+  const archive = await zip.generateAsync({ type: "uint8array" });
+  const packageName = typeof value.packageName === "string" ? value.packageName : "";
+  const version = typeof value.version === "string" ? value.version : "";
+  if (/^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/.test(packageName) && /^\d+\.\d+\.\d+/.test(version)) {
+    return signBundleArchive(archive, generatePackageSigningKey(packageName));
+  }
+  return archive;
 }
 
 describe("parseCanonicalBundleManifest", () => {
@@ -26,6 +33,27 @@ describe("parseCanonicalBundleManifest", () => {
     expect(parsed.version).toBe("1.0.0");
     expect(parsed.manifest).toEqual(manifest);
     expect(parsed.manifestSha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(parsed.publisherKeyFingerprint).toMatch(/^sha256:[a-f0-9]{64}$/);
+  });
+
+  test("rejects an unsigned production bundle", async () => {
+    const zip = new JSZip();
+    zip.file("miniapp.json", JSON.stringify(manifest));
+    zip.file("background/index.js", "export {};");
+    zip.file("ui/index.html", "<!doctype html>");
+
+    await expect(parseCanonicalBundleManifest(await zip.generateAsync({ type: "uint8array" }))).rejects.toMatchObject({
+      code: "missing_bundle_signature",
+    } satisfies Partial<BundleManifestError>);
+  });
+
+  test("rejects executable content changed after publisher signing", async () => {
+    const zip = await JSZip.loadAsync(await bundle());
+    zip.file("background/index.js", "export const changed = true;");
+
+    await expect(parseCanonicalBundleManifest(await zip.generateAsync({ type: "uint8array" }))).rejects.toMatchObject({
+      code: "bundle_signature_payload_mismatch",
+    } satisfies Partial<BundleManifestError>);
   });
 
   test("rejects submitted metadata that differs from the ZIP manifest", async () => {

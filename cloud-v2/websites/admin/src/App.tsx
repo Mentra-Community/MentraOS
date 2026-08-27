@@ -35,7 +35,7 @@ interface ReleaseSummary {
   bundleSizeBytes?: number | null;
   manifestSha256?: string | null;
   manifest?: Record<string, unknown> | null;
-  signingKeyId?: string | null;
+  publisherKeyFingerprint?: string | null;
   signedAt?: string | null;
   storeListing?: {
     subtitle: string | null;
@@ -630,7 +630,7 @@ function SubmissionDetail(props: {
               ["Release track", release.releaseTrack],
               ["Bundle size", formatBytes(release.bundleSizeBytes)],
               ["Manifest SHA-256", release.manifestSha256 ? `${release.manifestSha256.slice(0, 16)}…` : "—"],
-              ["Signing key", release.signingKeyId ?? "—"],
+              ["Publisher key", release.publisherKeyFingerprint ?? "—"],
               ["Signed", formatDate(release.signedAt)],
               ["Submitted", formatDate(release.submittedAt)],
               ["Reviewed", formatDate(release.reviewedAt)],

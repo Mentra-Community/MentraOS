@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import JSZip from "jszip";
+import { generatePackageSigningKey, signBundleArchive } from "@mentra/miniapp-cli";
 import { validatePackedBundle } from "./validate-bundle";
 
 const manifest = {
@@ -13,7 +14,10 @@ async function bundle(value = manifest) {
   const zip = new JSZip();
   zip.file("miniapp.json", JSON.stringify(value));
   zip.file("background/index.js", "export {};");
-  return zip.generateAsync({ type: "uint8array" });
+  return signBundleArchive(
+    await zip.generateAsync({ type: "uint8array" }),
+    generatePackageSigningKey(String(value.packageName)),
+  );
 }
 
 describe("validatePackedBundle", () => {
@@ -30,9 +34,15 @@ describe("validatePackedBundle", () => {
   test("rejects missing entry files", async () => {
     const zip = new JSZip();
     zip.file("miniapp.json", JSON.stringify(manifest));
-    await expect(validatePackedBundle(await zip.generateAsync({ type: "uint8array" }), manifest)).rejects.toThrow(
-      "missing",
-    );
+    await expect(
+      validatePackedBundle(
+        await signBundleArchive(
+          await zip.generateAsync({ type: "uint8array" }),
+          generatePackageSigningKey("com.example.app"),
+        ),
+        manifest,
+      ),
+    ).rejects.toThrow("missing");
   });
 
   test("rejects traversal entry paths", async () => {
@@ -45,7 +55,10 @@ describe("validatePackedBundle", () => {
     zip.file("miniapp.json", JSON.stringify(manifest));
     zip.file("background/index.js", "target", { unixPermissions: 0o120777 });
     await expect(
-      validatePackedBundle(await zip.generateAsync({ type: "uint8array", platform: "UNIX" }), manifest),
+      signBundleArchive(
+        await zip.generateAsync({ type: "uint8array", platform: "UNIX" }),
+        generatePackageSigningKey("com.example.app"),
+      ),
     ).rejects.toThrow("symbolic link");
   });
 });

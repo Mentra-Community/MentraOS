@@ -1,7 +1,16 @@
 #!/usr/bin/env bun
 
 import { Command } from "commander";
-import { buildProduction as buildMiniappProduction, dev as devMiniapp, pack as packMiniapp } from "@mentra/miniapp-cli";
+import {
+  buildProduction as buildMiniappProduction,
+  createAndSavePackageSigningKey,
+  dev as devMiniapp,
+  exportPackageSigningKey,
+  importPackageSigningKey,
+  loadPackageSigningKey,
+  pack as packMiniapp,
+  publisherKeyFingerprint,
+} from "@mentra/miniapp-cli";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import {
@@ -32,8 +41,8 @@ import {
 import { getConfig } from "./config";
 import { clearCredentials, loadCredentials, saveCredentials, type CliCredentials } from "./credentials";
 import { openBrowser } from "./open-browser";
-import { encodeDevAttestation, ensureSigningKey, signBundleMetadata, signDevAttestation } from "./signing";
-import { validatePackedBundle } from "./validate-bundle";
+import { encodeDevAttestation, ensureSigningKey, signDevAttestation } from "./signing";
+import { verifyPackedBundle } from "./validate-bundle";
 
 const program = new Command();
 const CLI_VERSION = (
@@ -239,6 +248,66 @@ org
   });
 
 const miniapps = program.command("miniapps").description("Manage miniapp package records");
+
+const miniappKeys = miniapps.command("keys").description("Manage durable publisher signing keys");
+
+miniappKeys
+  .command("create")
+  .requiredOption("--package <packageName>", "package name")
+  .description("Create a package-scoped publisher signing key")
+  .action(async (options: { package: string }) => {
+    try {
+      const { key, storage } = await createAndSavePackageSigningKey(options.package);
+      console.log(`Publisher key: ${publisherKeyFingerprint(key.publicKeyJwk)}`);
+      console.log(`Stored in: ${storage === "keychain" ? "OS keychain" : "~/.mentra/cli-v2"}`);
+      console.log("Back this key up before publishing. Losing it prevents future updates.");
+    } catch (error) {
+      fail(error);
+    }
+  });
+
+miniappKeys
+  .command("show")
+  .requiredOption("--package <packageName>", "package name")
+  .description("Show the package publisher key fingerprint")
+  .action(async (options: { package: string }) => {
+    try {
+      const key = await loadPackageSigningKey(options.package);
+      if (!key) throw new Error(`No publisher signing key exists for ${options.package}`);
+      console.log(publisherKeyFingerprint(key.publicKeyJwk));
+    } catch (error) {
+      fail(error);
+    }
+  });
+
+miniappKeys
+  .command("import")
+  .argument("<path>", "publisher key backup")
+  .requiredOption("--package <packageName>", "package name")
+  .option("--replace", "replace a different locally stored key")
+  .description("Import a package publisher signing key")
+  .action(async (path: string, options: { package: string; replace?: boolean }) => {
+    try {
+      const { key, storage } = await importPackageSigningKey(options.package, path, { overwrite: options.replace });
+      console.log(`Imported ${publisherKeyFingerprint(key.publicKeyJwk)} into ${storage}`);
+    } catch (error) {
+      fail(error);
+    }
+  });
+
+miniappKeys
+  .command("export")
+  .argument("<path>", "new backup file path")
+  .requiredOption("--package <packageName>", "package name")
+  .description("Export a package publisher signing key backup")
+  .action(async (path: string, options: { package: string }) => {
+    try {
+      console.log(`Exported private publisher key to ${await exportPackageSigningKey(options.package, path)}`);
+      console.log("Keep this file secret and store it in your organization's secure backup system.");
+    } catch (error) {
+      fail(error);
+    }
+  });
 
 miniapps
   .command("list")
@@ -629,9 +698,10 @@ program
   .description("Pack the current miniapp into build/<packageName>-<version>.zip")
   .option("--cwd <path>", "miniapp project directory", process.cwd())
   .option("--no-build", "skip production build before packing")
-  .action(async (options: { cwd: string; build: boolean }) => {
+  .option("--signing-key <path>", "publisher signing key file (CI/non-persistent use)")
+  .action(async (options: { cwd: string; build: boolean; signingKey?: string }) => {
     try {
-      await packMiniapp({ cwd: resolve(options.cwd), build: options.build });
+      await packMiniapp({ cwd: resolve(options.cwd), build: options.build, signingKeyPath: options.signingKey });
     } catch (error) {
       fail(error);
     }
@@ -645,8 +715,17 @@ program
   .option("--no-pack", "skip running bun run pack and upload the existing build zip")
   .option("--no-submit", "upload as draft without submitting for review")
   .option("--track <track>", "release track: stable or beta", "stable")
+  .option("--signing-key <path>", "publisher signing key file (CI/non-persistent use)")
   .option("--json", "print machine-readable JSON")
-  .action(async (options: { cwd: string; build: boolean; pack: boolean; submit: boolean; track: string; json?: boolean }) => {
+  .action(async (options: {
+    cwd: string;
+    build: boolean;
+    pack: boolean;
+    submit: boolean;
+    track: string;
+    signingKey?: string;
+    json?: boolean;
+  }) => {
     const creds = await requireCredentials();
     if (!creds) return;
 
@@ -664,7 +743,12 @@ program
       await ensureMiniappRecord(creds, { packageName, displayName: name, description });
 
       if (options.pack) {
-        await packMiniapp({ cwd, build: options.build, silent: options.json });
+        await packMiniapp({
+          cwd,
+          build: options.build,
+          silent: options.json,
+          signingKeyPath: options.signingKey,
+        });
       } else if (options.build) {
         await buildMiniappProduction(cwd, { silent: options.json });
       }
@@ -674,15 +758,7 @@ program
         throw new Error(`Release bundle not found: ${zipPath}`);
       }
       const bundle = readFileSync(zipPath);
-      await validatePackedBundle(bundle, manifest);
-      const signingKey = await ensureSigningKey(creds);
-      const signedBundle = signBundleMetadata({
-        signingKey,
-        packageName,
-        version,
-        manifest,
-        bundle,
-      });
+      const signedBundle = await verifyPackedBundle(bundle, manifest);
       const { release } = await createRelease(creds, {
         packageName,
         version,
@@ -690,7 +766,6 @@ program
         manifest,
         bundle,
         fileName: basename(zipPath),
-        signedBundle,
       });
       const submitted = options.submit
         ? await submitRelease(creds, { packageName, releaseId: release.id })
@@ -699,7 +774,11 @@ program
       if (options.json) {
         console.log(
           JSON.stringify(
-            { release: submitted.release, bundle: basename(zipPath), signingKeyId: signedBundle.signingKeyId },
+            {
+              release: submitted.release,
+              bundle: basename(zipPath),
+              publisherKeyFingerprint: signedBundle.publisherKeyFingerprint,
+            },
             null,
             2,
           ),
@@ -710,7 +789,7 @@ program
       console.log(`Status: ${submitted.release.status}`);
       console.log(`Track: ${submitted.release.releaseTrack}`);
       console.log(`Bundle: ${basename(zipPath)} (${sizeKb} KB)`);
-      console.log(`Signing key: ${signedBundle.signingKeyId}`);
+      console.log(`Publisher key: ${signedBundle.publisherKeyFingerprint}`);
       if (release.bundleSha256) console.log(`SHA-256: ${release.bundleSha256}`);
     } catch (error) {
       fail(error);

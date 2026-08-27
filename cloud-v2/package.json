@@ -36,6 +36,7 @@
     "test": "bun test"
   },
   "devDependencies": {
+    "@mentra/miniapp-cli": "file:../sdk/miniapp-cli",
     "@types/bun": "latest",
     "jszip": "^3.10.1",
     "typescript": "^5.7.0"

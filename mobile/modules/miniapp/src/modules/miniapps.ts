@@ -74,23 +74,6 @@ export interface InstallMiniappRequest {
   hardwareRequirements?: MiniappHardwareRequirement[]
   releaseId?: string
   channel?: string
-  /**
-   * Reserved signed-descriptor envelope for federated/OEM Stores. Current
-   * hosts use the SYSTEM caller + package/version/hash MVP while preserving
-   * the wire shape needed for issuer and publisher verification later.
-   */
-  authorization?: MiniappInstallAuthorization
-}
-
-export interface MiniappInstallAuthorization {
-  schemaVersion: 1
-  manifestSha256: string
-  publisherKeyId: string
-  publisherSignature: string
-  storeIssuer: string
-  issuedAt: string
-  expiresAt: string
-  storeAuthorization: string
 }
 
 export interface InstallMiniappResult {

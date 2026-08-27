@@ -74,16 +74,16 @@ flowchart LR
 
 ### Component responsibilities
 
-| Component | Responsibility |
-|---|---|
-| Cloud Core | Publisher identity, organizations, releases, canonical manifests, Store listings, tracks, review, publication, invitations, enrollments, assets, and download authorization. |
-| Developer Console | Human-facing management of organizations, API keys, listings, artwork, releases, distribution visibility, beta access, invitations, and review feedback. |
-| Admin Console | Review of public submissions, canonical permissions and requirements, artwork, moderation fields, acceptance, rejection, and publication. |
-| `mentra` CLI | Browser/API-key authentication, organization selection, package reservation, local signing, canonical packing and validation, upload, submission, and status inspection. |
-| Store miniapp | Catalog UI, selected-track behavior, install/update intent, automatic reconciliation, and Store actions. It never receives native filesystem access. |
-| Mentra Miniapp SDK | Typed SYSTEM-only APIs for listing/opening miniapps, compatibility preflight, installation, update progress, and uninstall, plus the actions API. |
-| Mentra App host | Build trust, SYSTEM identity, Store ownership, downloads, ZIP validation, compatibility enforcement, extraction, atomic activation, rollback, garbage collection, and running lifecycle. |
-| Cloud Runtime | Runs cloud-connected miniapp sessions. It does not own Store catalog or release distribution state. |
+| Component          | Responsibility                                                                                                                                                                           |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Cloud Core         | Publisher identity, organizations, releases, canonical manifests, Store listings, tracks, review, publication, invitations, enrollments, assets, and download authorization.             |
+| Developer Console  | Human-facing management of organizations, API keys, listings, artwork, releases, distribution visibility, beta access, invitations, and review feedback.                                 |
+| Admin Console      | Review of public submissions, canonical permissions and requirements, artwork, moderation fields, acceptance, rejection, and publication.                                                |
+| `mentra` CLI       | Browser/API-key authentication, organization selection, package reservation, local signing, canonical packing and validation, upload, submission, and status inspection.                 |
+| Store miniapp      | Catalog UI, selected-track behavior, install/update intent, automatic reconciliation, and Store actions. It never receives native filesystem access.                                     |
+| Mentra Miniapp SDK | Typed SYSTEM-only APIs for listing/opening miniapps, compatibility preflight, installation, update progress, and uninstall, plus the actions API.                                        |
+| Mentra App host    | Build trust, SYSTEM identity, Store ownership, downloads, ZIP validation, compatibility enforcement, extraction, atomic activation, rollback, garbage collection, and running lifecycle. |
+| Cloud Runtime      | Runs cloud-connected miniapp sessions. It does not own Store catalog or release distribution state.                                                                                      |
 
 ## Core design principles
 
@@ -105,6 +105,9 @@ flowchart LR
    owned by another Store.
 9. **Maintenance need not become visible activity.** Transient actions may run
    a miniapp context without placing it in the running tray.
+10. **Publisher identity travels with the artifact.** Every production ZIP is
+    developer-signed; Core and the host independently verify the same embedded
+    identity, and updates must retain it.
 
 ## Identity and trust model
 
@@ -157,19 +160,34 @@ The first release authorizes an install using:
 - The expected bundle SHA-256.
 - Store and package ownership policy.
 - The canonical manifest found inside the ZIP.
+- The developer's Ed25519 publisher signature embedded in that ZIP.
 
-The SDK request reserves an optional versioned authorization envelope containing
-manifest hash, publisher key identity and signature, Store issuer, issuance and
-expiry, and Store authorization. Store-backend signatures, a build-time issuer
-key table, publisher-key continuity, rotation, and revocation are deferred
-hardening. Their fields can be added without redesigning the install API.
+The first valid, durably stored Core release upload atomically binds the package
+record to the derived publisher-key fingerprint. The first authorized non-SYSTEM install
+binds that package on the device. Every later Core release and host update must
+match the established fingerprint. Bundled SYSTEM packages are stricter: the
+build-generated catalog pins their expected publisher fingerprints, so neither
+a new Store install nor a legacy device record can choose their identity.
+
+Publisher identity and Store provenance are separate. The publisher signature
+answers who produced the bytes; build trust and `storeOwnerPackageName` answer
+which Store may manage them. Core does not sign miniapps or installation
+descriptors in v1.
 
 ## Canonical release artifact
 
-A release is a ZIP with exactly one canonical root `miniapp.json`. Core reads
-that manifest during upload and binds the release record to the actual archive.
-Developers do not separately type compatibility or identity metadata into the
-Store.
+A release is a ZIP with exactly one canonical root `miniapp.json` and one
+reserved `META-INF/MENTRA.SIG` entry. The signature envelope contains the
+developer's Ed25519 public key, its derived fingerprint, package/version,
+canonical manifest SHA-256, canonical complete-file-index SHA-256, and the
+signature over that payload. The file index covers every non-directory archive
+entry except the signature itself. The final ZIP SHA-256 separately protects
+transport without creating a circular embedded hash.
+
+Core reads and verifies the archive during upload and binds the release record
+to the actual ZIP. Developers do not separately type compatibility or identity
+metadata into the Store. Removing the signature or changing the manifest,
+executable code, or assets invalidates the production artifact.
 
 The canonical release record includes:
 
@@ -207,16 +225,25 @@ The normal workflow is:
 1. Run `mentra login`, or configure an organization API key for CI.
 2. Select the developer organization.
 3. Reserve a package identity with `mentra miniapps create`.
-4. Build and publish from the project using `mentra publish`, selecting
+4. Create or import its durable package publisher key with
+   `mentra miniapps keys create --package ...` or
+   `mentra miniapps keys import --package ... <path>`.
+5. Back up the private key. It uses the CLI's existing OS-keychain-first
+   storage policy with mode-`0600` files under
+   `~/.mentra/cli-v2/signing-keys/` as fallback. CI may provide an explicit
+   key file or secret JSON without importing it.
+6. Build and publish from the project using `mentra publish`, selecting
    `stable` or `beta` and optionally leaving the release as a draft.
-5. Core validates the ZIP, manifest, signature, package ownership, version, and
+7. `pack` creates the final signed ZIP; `publish` verifies and uploads that
+   exact artifact without detached or Core-side signing.
+8. Core validates the ZIP, manifest, signature, package ownership, version, and
    track before storing the draft release.
-6. Open the package in the Developer Console to edit its Store listing,
+9. Open the package in the Developer Console to edit its Store listing,
    artwork, visibility, beta policy, and invitations.
-7. Submit a public release for review, or publish a private release after
-   automated validation.
-8. Inspect release status, immutable manifest, hashes, signing identity, and
-   review feedback in the Console or CLI.
+10. Submit a public release for review, or publish a private release after
+    automated validation.
+11. Inspect release status, immutable manifest, hashes, signing identity, and
+    review feedback in the Console or CLI.
 
 Package creation and signed bundle upload are clearly described as CLI-only in
 the Console. Once created or uploaded, the package and releases appear in the
@@ -269,13 +296,13 @@ The previous active release remains catalog-visible until promotion completes.
 
 Visibility and release track are separate dimensions.
 
-| Miniapp visibility | Release track | Who can discover/install | Review behavior |
-|---|---|---|---|
-| Public | Stable | All Store users after publication | Mentra review required. |
-| Public | Private beta | Invited verified Mentra accounts | Invitees may access the beta; public stable remains unchanged. |
-| Public | Public beta | Signed-in users may opt in after public approval; existing invitees retain transition access while approval is pending | Mentra review required before general beta exposure. |
-| Private | Stable | Invited verified Mentra accounts | Automated validation; no Mentra content review. |
-| Private | Beta | App invitees with beta entitlement | Automated validation; app privacy always remains the outer gate. |
+| Miniapp visibility | Release track | Who can discover/install                                                                                               | Review behavior                                                  |
+| ------------------ | ------------- | ---------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| Public             | Stable        | All Store users after publication                                                                                      | Mentra review required.                                          |
+| Public             | Private beta  | Invited verified Mentra accounts                                                                                       | Invitees may access the beta; public stable remains unchanged.   |
+| Public             | Public beta   | Signed-in users may opt in after public approval; existing invitees retain transition access while approval is pending | Mentra review required before general beta exposure.             |
+| Private            | Stable        | Invited verified Mentra accounts                                                                                       | Automated validation; no Mentra content review.                  |
+| Private            | Beta          | App invitees with beta entitlement                                                                                     | Automated validation; app privacy always remains the outer gate. |
 
 ### Private miniapps
 
@@ -351,20 +378,19 @@ The Store calls a backend-neutral SDK request with this effective v1 shape:
 
 ```ts
 interface InstallMiniappRequest {
-  packageName: string;
-  version: string;
-  bundleUrl: string;
-  bundleSha256: string;
-  minHostVersion?: string;
-  sdkVersion?: string;
+  packageName: string
+  version: string
+  bundleUrl: string
+  bundleSha256: string
+  minHostVersion?: string
+  sdkVersion?: string
   hardwareRequirements?: Array<{
-    type: string;
-    level: string;
-    description?: string;
-  }>;
-  releaseId?: string;
-  channel?: string;
-  authorization?: MiniappInstallAuthorization;
+    type: string
+    level: string
+    description?: string
+  }>
+  releaseId?: string
+  channel?: string
 }
 ```
 
@@ -380,12 +406,17 @@ manifest. An install transaction is:
 6. Reject credential-bearing redirects and never expose the Core token to the
    Store miniapp.
 7. Verify SHA-256, archive limits, package, and version.
-8. Read the ZIP's canonical `miniapp.json`.
-9. Re-run host, SDK, permissions, and hardware admission against that manifest.
-10. Extract into an isolated staging directory.
-11. Atomically activate the new release and update registry provenance.
-12. Reload or restart the runtime as needed.
-13. Restore the prior release and running state on failure.
+8. Read the ZIP's canonical `miniapp.json` and `META-INF/MENTRA.SIG`.
+9. Recompute the canonical manifest/file digests and verify the embedded
+   Ed25519 signature and derived fingerprint.
+10. Require that fingerprint to match the installed package identity and, for
+    SYSTEM packages, the build-generated identity pin.
+11. Re-run host, SDK, permissions, and hardware admission against that manifest.
+12. Extract into an isolated staging directory.
+13. Persist package/release identity before atomically activating the new
+    release.
+14. Reload or restart the runtime as needed.
+15. Restore the prior release and running state on failure.
 
 Other installation sources—bundled synchronization, preinstall registries, and
 developer URLs—share serialized AppRegistry transactions so they cannot race a
@@ -481,13 +512,13 @@ action policy.
 
 The Store declares:
 
-| Action | Audience | Purpose |
-|---|---|---|
-| `reconcile_updates` | Host | Refresh the full catalog and install eligible updates invisibly. |
-| `search_miniapps` | SYSTEM | Search compatible catalog results for Mentra AI. |
-| `get_miniapp_details` | SYSTEM | Resolve authoritative current details for an exact package. |
-| `install_miniapp` | SYSTEM | Install an exact package after the Store resolves the current release. |
-| `update_miniapp` | SYSTEM | Update an installed exact package to its eligible current release. |
+| Action                | Audience | Purpose                                                                |
+| --------------------- | -------- | ---------------------------------------------------------------------- |
+| `reconcile_updates`   | Host     | Refresh the full catalog and install eligible updates invisibly.       |
+| `search_miniapps`     | SYSTEM   | Search compatible catalog results for Mentra AI.                       |
+| `get_miniapp_details` | SYSTEM   | Resolve authoritative current details for an exact package.            |
+| `install_miniapp`     | SYSTEM   | Install an exact package after the Store resolves the current release. |
+| `update_miniapp`      | SYSTEM   | Update an installed exact package to its eligible current release.     |
 
 Search and details are read-only. Install and update accept only an exact
 package name from the caller; they do not accept bundle URLs, hashes, or a
@@ -555,7 +586,8 @@ The installation API contains no Mentra-specific catalog dependency. An OEM may:
 - Bundle its own Store package as SYSTEM.
 - Add that exact Store package to its build trust configuration.
 - Assign that Store ownership of selected bundled SYSTEM packages.
-- Implement the same catalog/install descriptor contract on its own backend.
+- Implement the same catalog and host install-request contract on its own
+  backend.
 - Run alongside the Mentra Store or another OEM Store.
 
 The host applies the same package, URL, hash, archive, manifest, compatibility,
@@ -591,11 +623,14 @@ The implementation is acceptable when:
 4. Only a build-trusted Store can reach install/uninstall host mutations.
 5. Cross-Store adoption and unauthorized SYSTEM replacement fail.
 6. The host validates the canonical ZIP and compatibility before activation.
-7. Compatible owned updates apply automatically; incompatible updates defer.
-8. Transient Store work never appears in the running tray and promotes cleanly
+7. Core and the host reject unsigned, tampered, or differently signed package
+   replacements, including Store-delivered SYSTEM updates.
+8. Compatible owned updates apply automatically; incompatible updates defer.
+9. Transient Store work never appears in the running tray and promotes cleanly
    if the user opens the Store.
-9. Private URL reuse and revoked access fail at byte-serving time.
-10. Failed updates roll back without losing the prior runnable release.
+10. Private URL reuse and revoked access fail at byte-serving time.
+11. Failed updates roll back without losing the prior runnable release or its
+    publisher identity.
 
 Automated verification covers Core release/catalog integration, real Store
 token boundaries, CLI authentication and bundle validation, Console/admin/Store
@@ -612,10 +647,10 @@ install/update/rollback/offline/uninstall smoke test remains a launch gate.
 The following are compatible with this architecture but are not part of the
 first release:
 
-- Store-issuer signature verification and build-time backend public-key table.
-- Publisher signature verification again on-device and publisher-key continuity
-  across updates.
-- Issuer and publisher key rotation/revocation UI.
+- Publisher-key rotation, old-key-authorized signer lineage, revocation, and
+  lost-key recovery policy.
+- Store-backend-signed installation capabilities or an issuer public-key table;
+  build-owned Store identity remains the v1 installer authority.
 - Updating the Store itself outside a new Mentra App build.
 - Organization-wide mandatory installation or MDM-style deployment.
 - Analytics, crash metrics, billing, staged percentage rollout, and browser
@@ -623,7 +658,6 @@ first release:
 - Production catalog seeding/migration and public Store enablement.
 - Promotion of the new CLI package from prerelease.
 
-These are not required to merge the hidden Store foundation. Signed federation
-hardening is required before treating arbitrary third-party Store backends as
-trusted without build ownership.
-
+These are not required to merge the hidden Store foundation. Arbitrary Store
+packages or backends still cannot become trusted without explicit build
+ownership/configuration.

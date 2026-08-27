@@ -1,10 +1,11 @@
 import JSZip from "jszip";
-import { canonicalJson } from "./signing";
+import { canonicalJson, verifySignedBundleArchive, type VerifiedSignedBundle } from "@mentra/miniapp-cli";
 
 export async function validatePackedBundle(
   bundle: Uint8Array,
   submittedManifest: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
+  await verifySignedBundleArchive(bundle);
   let zip: JSZip;
   try {
     zip = await JSZip.loadAsync(bundle, { checkCRC32: true });
@@ -47,6 +48,14 @@ export async function validatePackedBundle(
     }
   }
   return manifest;
+}
+
+export async function verifyPackedBundle(
+  bundle: Uint8Array,
+  submittedManifest: Record<string, unknown>,
+): Promise<VerifiedSignedBundle> {
+  await validatePackedBundle(bundle, submittedManifest);
+  return verifySignedBundleArchive(bundle);
 }
 
 function isSafeBundlePath(path: string, directory = false): boolean {

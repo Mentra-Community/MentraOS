@@ -58,7 +58,7 @@ export function ReleaseDetailPage() {
             <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <Fact label="Uploaded" value={formatDate(release.createdAt)} />
               <Fact label="Bundle size" value={formatBytes(release.bundleSizeBytes)} />
-              <Fact label="Signing key" value={release.signingKeyId ?? "—"} mono />
+              <Fact label="Publisher key" value={release.publisherKeyFingerprint ?? "—"} mono />
               <Fact label="Signed" value={formatDate(release.signedAt)} />
             </div>
 

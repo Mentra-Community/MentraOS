@@ -144,7 +144,6 @@ export type {
   InstallMiniappResult,
   InstallMiniappPhase,
   InstallMiniappProgress,
-  MiniappInstallAuthorization,
 } from "./modules/miniapps"
 export type {ActionContext, ActionHandler, InvokeOptions} from "./modules/actions"
 

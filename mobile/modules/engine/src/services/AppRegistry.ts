@@ -23,6 +23,7 @@ import {unzip} from "react-native-zip-archive"
 import semver from "semver"
 import {AsyncResult, Result, result as Res} from "typesafe-ts"
 
+import {getConfigValues} from "../runtime/bootstrap"
 import type {AppletPermission, AppPermissionType, AppletType, ClientApp} from "../types/applet"
 import {type Capabilities, HardwareRequirement, HardwareRequirementLevel, HardwareType} from "../types"
 import {readBoundedByteStream} from "../utils/boundedByteStream"
@@ -39,6 +40,7 @@ import {checkManifestVersions} from "./manifestVersionGate"
 import {checkMiniappInstallCompatibility} from "./miniappInstallCompatibility"
 import {normalizeManifestActions} from "./manifestActions"
 import {selectReleaseVersionsForGarbageCollection} from "./releaseVersionGc"
+import {assertPublisherIdentityPolicy} from "./publisherIdentityPolicy"
 import {miniappRunningRegistry} from "./MiniappRunningRegistry"
 import {canInstallMiniappRelease, isSystemMiniappPackage, requiresConnectedGlasses} from "./SystemMiniappPolicy"
 import {validateInstallBundleArchive} from "./validateInstallBundle"
@@ -171,6 +173,8 @@ export interface MiniappReleaseIdentity {
   bundleSha256?: string
   channel?: string
   storePackageName?: string
+  /** Verified Ed25519 publisher identity embedded in the production ZIP. */
+  publisherKeyFingerprint?: string
 }
 
 export interface InstallBundleOptions {
@@ -240,6 +244,27 @@ function releaseIdentityKey(packageName: string, version: string): string {
 
 function userUninstalledKey(packageName: string): string {
   return `miniapp_user_uninstalled:${packageName}`
+}
+
+function publisherIdentityKey(packageName: string): string {
+  return `miniapp_publisher_identity:${packageName}`
+}
+
+function assertPublisherContinuity(
+  packageName: string,
+  publisherKeyFingerprint: string | undefined,
+  releaseIdentity: MiniappReleaseIdentity,
+): void {
+  const buildPinned = getConfigValues().bundledSystemMiniappPublisherKeys?.[packageName]
+  const installed = storage.load<string>(publisherIdentityKey(packageName))
+  assertPublisherIdentityPolicy({
+    packageName,
+    source: releaseIdentity.source,
+    candidateFingerprint: publisherKeyFingerprint,
+    installedFingerprint: installed.is_ok() ? installed.value : null,
+    buildPinnedFingerprint: buildPinned,
+    system: isSystemMiniappPackage(packageName),
+  })
 }
 
 /**
@@ -510,7 +535,7 @@ async function unpackMiniAppFromScratchDirectory(
 async function downloadAndInstallMiniApp(
   url: string,
   opts?: InstallBundleOptions,
-): Promise<{packageName: string; version: string}> {
+): Promise<{packageName: string; version: string; publisherKeyFingerprint?: string}> {
   const downloadedZipPath = await downloadMiniAppZip(
     url,
     opts?.expectedBundleSha256,
@@ -522,15 +547,17 @@ async function downloadAndInstallMiniApp(
     const manifest = await validateInstallBundleArchive(await downloadedZip.bytes(), {
       packageName: opts?.expectedPackageName,
       version: opts?.expectedVersion,
+      requirePublisherSignature: !opts?.versionOverride?.startsWith("dev-"),
     })
     if (opts?.compatibilityPolicy) assertInstallCompatibility(manifest, opts.compatibilityPolicy)
-    assertInstallAuthority(
-      manifest.packageName,
-      resolvedReleaseIdentity(opts?.versionOverride ?? manifest.version, opts, false),
-      false,
-    )
+    const releaseIdentity = {
+      ...resolvedReleaseIdentity(opts?.versionOverride ?? manifest.version, opts, false),
+      ...(manifest.publisherKeyFingerprint ? {publisherKeyFingerprint: manifest.publisherKeyFingerprint} : {}),
+    }
+    assertInstallAuthority(manifest.packageName, releaseIdentity, false)
+    assertPublisherContinuity(manifest.packageName, manifest.publisherKeyFingerprint, releaseIdentity)
     console.log("ZIP: done downloading, starting unzip")
-    return await unpackMiniApp(
+    const installed = await unpackMiniApp(
       downloadedZipPath,
       opts?.versionOverride,
       {
@@ -539,6 +566,10 @@ async function downloadAndInstallMiniApp(
       },
       opts?.onProgress,
     )
+    return {
+      ...installed,
+      ...(manifest.publisherKeyFingerprint ? {publisherKeyFingerprint: manifest.publisherKeyFingerprint} : {}),
+    }
   } finally {
     if (downloadedZip.exists) downloadedZip.delete()
   }
@@ -738,9 +769,12 @@ class AppRegistry {
    */
   public installFromUrl(url: string, opts?: InstallBundleOptions): AsyncResult<void, Error> {
     return Res.try_async(async () => {
-      const {packageName, version} = await downloadAndInstallMiniApp(url, opts)
+      const {packageName, version, publisherKeyFingerprint} = await downloadAndInstallMiniApp(url, opts)
       console.log("APP_REGISTRY: Downloaded and installed mini app")
-      this.finalizeInstall(packageName, version, resolvedReleaseIdentity(version, opts, false))
+      this.finalizeInstall(packageName, version, {
+        ...resolvedReleaseIdentity(version, opts, false),
+        ...(publisherKeyFingerprint ? {publisherKeyFingerprint} : {}),
+      })
     })
   }
 
@@ -767,7 +801,9 @@ class AppRegistry {
       })
       if (opts?.compatibilityPolicy) assertInstallCompatibility(manifest, opts.compatibilityPolicy)
       const releaseIdentity = resolvedReleaseIdentity(opts?.versionOverride ?? manifest.version, opts, true)
+      if (manifest.publisherKeyFingerprint) releaseIdentity.publisherKeyFingerprint = manifest.publisherKeyFingerprint
       assertInstallAuthority(manifest.packageName, releaseIdentity, true)
+      assertPublisherContinuity(manifest.packageName, manifest.publisherKeyFingerprint, releaseIdentity)
       const {packageName, version} = await unpackMiniApp(
         zipPath,
         opts?.versionOverride,
@@ -789,6 +825,18 @@ class AppRegistry {
    * installed bundle, and notify subscribers to refresh.
    */
   private finalizeInstall(packageName: string, version: string, releaseIdentity: MiniappReleaseIdentity): void {
+    // Persist the verified package identity before making the new version
+    // active. If durable storage fails, the staged files remain inert instead
+    // of running without the continuity pin that protects their next update.
+    if (releaseIdentity.publisherKeyFingerprint) {
+      const savedPublisher = storage.save(publisherIdentityKey(packageName), releaseIdentity.publisherKeyFingerprint)
+      if (savedPublisher.is_error()) throw savedPublisher.error
+    }
+    const savedRelease = storage.save(releaseIdentityKey(packageName, version), releaseIdentity)
+    if (savedRelease.is_error()) throw savedRelease.error
+    const activated = this.setActiveVersion(packageName, version)
+    if (activated.is_error()) throw activated.error
+
     // If this is a release install (semver, not dev-*) of a package that
     // currently has dev-* snapshots, clear the dev state so the swap to
     // "released" is clean. Otherwise the dev version would keep winning
@@ -798,9 +846,6 @@ class AppRegistry {
     if (!isDevInstall) {
       this.clearDevArtifacts(packageName)
     }
-
-    this.setActiveVersion(packageName, version)
-    storage.save(releaseIdentityKey(packageName, version), releaseIdentity)
     // Any explicit successful install (Store, preinstall, dev, or a new
     // build-owned bundle) reverses a prior user-uninstalled tombstone.
     storage.remove(userUninstalledKey(packageName))
@@ -810,6 +855,11 @@ class AppRegistry {
 
   public getReleaseIdentity(packageName: string, version: string): MiniappReleaseIdentity | null {
     const result = storage.load<MiniappReleaseIdentity>(releaseIdentityKey(packageName, version))
+    return result.is_ok() ? result.value : null
+  }
+
+  public getPublisherKeyFingerprint(packageName: string): string | null {
+    const result = storage.load<string>(publisherIdentityKey(packageName))
     return result.is_ok() ? result.value : null
   }
 
@@ -957,6 +1007,7 @@ class AppRegistry {
         const packageDir = new Directory(Paths.document, "lmas", packageName)
         if (packageDir.exists && packageDir.list().length === 0) {
           packageDir.delete()
+          storage.remove(publisherIdentityKey(packageName))
         }
       } else {
         for (const installedVersion of this.getInstalledVersions(packageName)) {
@@ -966,6 +1017,7 @@ class AppRegistry {
         if (packageDir.exists) {
           packageDir.delete()
         }
+        storage.remove(publisherIdentityKey(packageName))
         console.log("APP_REGISTRY: Uninstalled all versions of mini app", packageName)
       }
       // Always clear dev artifacts: for HTTP-direct dev miniapps the tile is

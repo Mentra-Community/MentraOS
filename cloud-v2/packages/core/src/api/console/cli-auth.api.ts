@@ -22,10 +22,8 @@ import { MiniAppService, MiniAppServiceError, type DeveloperIdentity } from "../
 import {
   DeveloperSigningService,
   DeveloperSigningServiceError,
-  canonicalJson,
   type DeveloperJwk,
 } from "../../services/miniapps/developer-signing.service";
-import { sha256Hex } from "../../services/storage/storage.service";
 import type { AppContext, AppEnv } from "../../types/hono.types";
 import { InvalidRequest, OauthServerError } from "../../types/oauth.types";
 
@@ -115,17 +113,6 @@ const createReleaseSchema = z.object({
     .min(1)
     .max(Math.ceil((MAX_RELEASE_BUNDLE_BYTES * 4) / 3) + 4),
   fileName: z.string().min(1).optional(),
-  signedBundle: z.object({
-    signingKeyId: z.string().min(1),
-    signature: z.string().min(1),
-    payload: z.object({
-      packageName: z.string().min(1),
-      version: z.string().min(1),
-      bundleSha256: z.string().regex(/^[a-f0-9]{64}$/),
-      manifestSha256: z.string().regex(/^[a-f0-9]{64}$/),
-      createdAt: z.string().min(1),
-    }),
-  }),
 });
 
 const createReleaseMetadataSchema = createReleaseSchema.omit({ bundleBase64: true });
@@ -1028,7 +1015,6 @@ async function postRelease(c: AppContext) {
   if (contentType.toLowerCase().startsWith("multipart/form-data")) {
     const form = await c.req.formData();
     const manifest = parseFormJson(form.get("manifest"), "manifest");
-    const signedBundle = parseFormJson(form.get("signedBundle"), "signedBundle");
     const bundle = form.get("bundle");
     if (!(bundle instanceof File)) throw new InvalidRequest("bundle file is required");
     multipartBundle = new Uint8Array(await bundle.arrayBuffer());
@@ -1038,7 +1024,6 @@ async function postRelease(c: AppContext) {
       releaseTrack: form.get("releaseTrack") || "stable",
       fileName: form.get("fileName") || bundle.name,
       manifest,
-      signedBundle,
     };
   } else {
     candidate = await readJsonBody(c);
@@ -1054,13 +1039,6 @@ async function postRelease(c: AppContext) {
     const bundle =
       multipartBundle ??
       Uint8Array.from(Buffer.from((parsed.data as z.infer<typeof createReleaseSchema>).bundleBase64, "base64"));
-    assertSignedReleaseMatchesUpload(parsed.data.signedBundle.payload, {
-      packageName: parsed.data.packageName,
-      version: parsed.data.version,
-      manifest: parsed.data.manifest,
-      bundle,
-    });
-    await signing.verifyBundleSignature(developer.value, parsed.data.signedBundle);
     const release = await miniapps.createRelease(developer.value, {
       packageName: parsed.data.packageName,
       version: parsed.data.version,
@@ -1068,7 +1046,6 @@ async function postRelease(c: AppContext) {
       manifest: parsed.data.manifest,
       bundle,
       fileName: parsed.data.fileName,
-      signedBundle: parsed.data.signedBundle,
     });
     return c.json({ release }, 201);
   } catch (error) {
@@ -1082,26 +1059,6 @@ function parseFormJson(value: string | File | null, field: string): unknown {
     return JSON.parse(value) as unknown;
   } catch {
     throw new InvalidRequest(`${field} must be valid JSON`);
-  }
-}
-
-function assertSignedReleaseMatchesUpload(
-  payload: { packageName: string; version: string; bundleSha256: string; manifestSha256: string },
-  input: { packageName: string; version: string; manifest: Record<string, unknown>; bundle: Uint8Array },
-): void {
-  if (payload.packageName !== input.packageName) {
-    throw new InvalidRequest("signed packageName does not match release packageName");
-  }
-  if (payload.version !== input.version) {
-    throw new InvalidRequest("signed version does not match release version");
-  }
-  const actualBundleSha = sha256Hex(input.bundle);
-  if (payload.bundleSha256 !== actualBundleSha) {
-    throw new InvalidRequest("signed bundleSha256 does not match uploaded bundle");
-  }
-  const actualManifestSha = sha256Hex(Buffer.from(canonicalJson(input.manifest)));
-  if (payload.manifestSha256 !== actualManifestSha) {
-    throw new InvalidRequest("signed manifestSha256 does not match uploaded manifest");
   }
 }
 

@@ -1,5 +1,5 @@
 ---
-status: draft
+status: implemented
 owner: Mentra
 ---
 
@@ -37,14 +37,15 @@ this version.
   artifact. `publish` never introduces a second signing implementation.
 - The Store passes the final ZIP URL and transport SHA-256 to the host. The
   host obtains publisher identity from the ZIP itself.
-- A package's first accepted production release establishes its publisher key
-  fingerprint in Core.
+- A package's first valid, durably stored production release establishes its
+  publisher key fingerprint in Core.
 - A package's first installation establishes its publisher key fingerprint on
   that Mentra App, except that build-owned SYSTEM packages additionally pin the
   expected fingerprint in the generated bundled catalog.
 - Every later release or update must use the same publisher key. Key rotation
-  is not accepted in v1, but the signature schema reserves a versioned signer
-  lineage so rotation can be added without grandfathering unsigned installs.
+  is not accepted in v1; the versioned signature envelope permits a later
+  schema to add old-key-authorized signer lineage without grandfathering
+  unsigned installs.
 - The existing Store provenance rule remains independent: the publisher key
   identifies who produced the miniapp, while `storeOwnerPackageName`
   identifies which trusted Store manages the installation.
@@ -68,22 +69,21 @@ META-INF/MENTRA.SIG
 
 ```ts
 interface MentraBundleSignatureV1 {
-  schemaVersion: 1;
-  algorithm: "Ed25519";
+  schemaVersion: 1
+  algorithm: "Ed25519"
   publicKeyJwk: {
-    kty: "OKP";
-    crv: "Ed25519";
-    x: string;
-  };
-  publisherKeyFingerprint: string;
+    kty: "OKP"
+    crv: "Ed25519"
+    x: string
+  }
+  publisherKeyFingerprint: string
   payload: {
-    packageName: string;
-    version: string;
-    manifestSha256: string;
-    contentSha256: string;
-  };
-  signature: string;
-  signerLineage?: unknown;
+    packageName: string
+    version: string
+    manifestSha256: string
+    contentSha256: string
+  }
+  signature: string
 }
 ```
 
@@ -120,12 +120,12 @@ mode-`0600` files under `~/.mentra/cli-v2`. Publisher keys should reuse that
 storage policy but be package-scoped rather than Core-URL-scoped so the same
 package identity works across official, OEM, and self-hosted Stores.
 
-Proposed commands:
+Commands:
 
 ```text
 mentra miniapps keys create --package com.example.app
 mentra miniapps keys show --package com.example.app
-mentra miniapps keys export --package com.example.app --out ./publisher-key.json
+mentra miniapps keys export --package com.example.app ./publisher-key.json
 mentra miniapps keys import --package com.example.app ./publisher-key.json
 ```
 
@@ -190,13 +190,13 @@ network access.
 **Primary paths:** `sdk/miniapp-cli/src/`, plus a dependency-minimal verifier
 module reusable by Core and the mobile host where practical.
 
-- [ ] Define the versioned `META-INF/MENTRA.SIG` schema.
-- [ ] Define canonical public-key fingerprinting and canonical JSON bytes.
-- [ ] Define the canonical file-index/content-digest algorithm.
-- [ ] Implement signing and completed-archive verification.
-- [ ] Reject missing, duplicate, malformed, stripped, and unsupported
+- [x] Define the versioned `META-INF/MENTRA.SIG` schema.
+- [x] Define canonical public-key fingerprinting and canonical JSON bytes.
+- [x] Define the canonical file-index/content-digest algorithm.
+- [x] Implement signing and completed-archive verification.
+- [x] Reject missing, duplicate, malformed, stripped, and unsupported
       signature entries.
-- [ ] Add deterministic fixtures that all environments verify identically.
+- [x] Add deterministic fixtures that all environments verify identically.
 
 ### CLI key management and packing
 
@@ -204,14 +204,14 @@ module reusable by Core and the mobile host where practical.
 `cloud-v2/packages/cli/src/signing.ts`, `cloud-v2/packages/cli/src/index.ts`,
 and `sdk/miniapp-cli/src/pack.ts`.
 
-- [ ] Replace automatic Core-scoped release-key generation with explicit
-      package-key creation/import.
-- [ ] Add show/create/import/export commands and CI inputs.
-- [ ] Move package storage to package-scoped keychain entries with the secure
+- [x] Keep the automatic Core-scoped key only for development attestations;
+      use explicit package-key creation/import for production releases.
+- [x] Add show/create/import/export commands and CI inputs.
+- [x] Move package storage to package-scoped keychain entries with the secure
       `~/.mentra/cli-v2` fallback.
-- [ ] Make the shared `pack` path embed and verify the signature.
-- [ ] Make `publish` upload the exact signed ZIP without detached signing.
-- [ ] Remove the old detached `signedBundle` upload behavior after all callers
+- [x] Make the shared `pack` path embed and verify the signature.
+- [x] Make `publish` upload the exact signed ZIP without detached signing.
+- [x] Remove the old detached `signedBundle` upload behavior after all callers
       use the embedded format.
 
 ### Core package identity and upload verification
@@ -219,17 +219,17 @@ and `sdk/miniapp-cli/src/pack.ts`.
 **Primary paths:** `cloud-v2/packages/core/src/services/miniapps/`, release and
 package models, and Console/CLI release APIs.
 
-- [ ] Parse and verify the embedded signature during every release upload.
-- [ ] Store the derived publisher fingerprint and public key on the package
+- [x] Parse and verify the embedded signature during every release upload.
+- [x] Store the derived publisher fingerprint and public key on the package
       identity, with release rows retaining the verified fingerprint for audit.
-- [ ] Atomically bind the first accepted production signer to an unbound
-      package.
-- [ ] Reject every later release whose signer differs.
-- [ ] Verify package, version, canonical manifest hash, and content digest
+- [x] Atomically bind the first valid, durably stored production signer to an
+      unbound package.
+- [x] Reject every later release whose signer differs.
+- [x] Verify package, version, canonical manifest hash, and content digest
       against the actual uploaded archive.
-- [ ] Surface the fingerprint and verification state in CLI and Developer
+- [x] Surface the fingerprint and verification state in CLI and Developer
       Console release details.
-- [ ] Remove detached signature metadata as an authority once the embedded
+- [x] Remove detached signature metadata as an authority once the embedded
       format is mandatory.
 
 ### Store/catalog transport
@@ -237,12 +237,12 @@ package models, and Console/CLI release APIs.
 **Primary paths:** `cloud-v2/packages/core/src/services/miniapps/store-catalog.service.ts`
 and `miniapps/store/`.
 
-- [ ] Continue publishing the final signed ZIP URL and final bundle SHA-256.
-- [ ] Optionally expose the verified publisher fingerprint for UI/audit, while
-      treating the ZIP as the host's authority.
-- [ ] Do not send a loose public key or publisher signature as the install
+- [x] Continue publishing the final signed ZIP URL and final bundle SHA-256.
+- The verified publisher fingerprint may later be exposed in Store UI for
+  audit; the ZIP remains the host's authority.
+- [x] Do not send a loose public key or publisher signature as the install
       authority.
-- [ ] Remove the unused v1 `storeAuthorization` contract from the required
+- [x] Remove the unused v1 `storeAuthorization` contract from the required
       Store flow.
 
 ### Mentra App verification and continuity
@@ -250,20 +250,20 @@ and `miniapps/store/`.
 **Primary paths:** `mobile/modules/engine/src/services/validateInstallBundle.ts`,
 `AppRegistry.ts`, `LocalMiniappRuntime.ts`, and installed identity storage.
 
-- [ ] Require and verify `META-INF/MENTRA.SIG` before activating any production
+- [x] Require and verify `META-INF/MENTRA.SIG` before activating any production
       semver bundle.
-- [ ] Recompute the canonical content and manifest digests from the downloaded
+- [x] Recompute the canonical content and manifest digests from the downloaded
       ZIP; never trust catalog metadata for publisher verification.
-- [ ] Persist the derived publisher fingerprint in a package-level identity
+- [x] Persist the derived publisher fingerprint in a package-level identity
       record independent of individual release garbage collection.
-- [ ] Pin the fingerprint on first authorized install.
-- [ ] Reject manual Store installs and automatic updates with a different
+- [x] Pin the fingerprint on first authorized install.
+- [x] Reject manual Store installs and automatic updates with a different
       signer before extraction or activation.
-- [ ] Preserve the current Store-owner and SYSTEM-owner checks as separate
+- [x] Preserve the current Store-owner and SYSTEM-owner checks as separate
       authorization layers.
-- [ ] Ensure rollback restores both the previous active release and publisher
-      identity transactionally.
-- [ ] Include safe fingerprint/signature status in diagnostics without
+- [x] Ensure a failed update cannot replace the established publisher identity
+      or activate differently signed staged bytes.
+- [x] Include safe fingerprint/signature status in diagnostics without
       exposing private material.
 
 ### Bundled SYSTEM miniapps
@@ -271,52 +271,53 @@ and `miniapps/store/`.
 **Primary paths:** first-party miniapp packaging, `mobile/assets/miniapps/`, and
 the generated bundled miniapp catalog.
 
-- [ ] Create or import durable signing keys for every bundled package owner.
-- [ ] Repack every bundled production ZIP with its publisher signature.
-- [ ] Add the expected publisher fingerprint to each generated bundled catalog
+- [x] Create or import durable signing keys for every bundled package owner.
+- [x] Repack every bundled production ZIP with its publisher signature.
+- [x] Add the expected publisher fingerprint to each generated bundled catalog
       entry.
-- [ ] Verify the embedded signer matches the build-pinned fingerprint during
+- [x] Verify the embedded signer matches the build-pinned fingerprint during
       bundled synchronization.
-- [ ] Require Store-delivered SYSTEM updates to match that same build-pinned
+- [x] Require Store-delivered SYSTEM updates to match that same build-pinned
       publisher identity.
-- [ ] Keep the Store package itself updateable only through a new Mentra App
+- [x] Keep the Store package itself updateable only through a new Mentra App
       build for this release.
 
 ### Greenfield cutover
 
-- [ ] Do not support unsigned Store releases or trust the signer of a later
+- [x] Do not support unsigned Store releases or trust the signer of a later
       update as a migration mechanism.
-- [ ] Repack/re-upload or delete any prerelease Store inventory created with
-      detached signatures before enabling Store installations.
-- [ ] Regenerate all bundled miniapp artifacts and build catalogs.
-- [ ] Remove the signing feature from the Store spec's deferred list and make
+- [x] Require prerelease Store inventory created with detached signatures to
+      be repacked/re-uploaded or deleted before enabling Store installations;
+      preview remains disabled during this greenfield cutover.
+- [x] Regenerate all bundled miniapp artifacts and build catalogs.
+- [x] Remove the signing feature from the Store spec's deferred list and make
       signed publisher continuity a launch gate.
-- [ ] Keep the Store preview disabled until all production artifact sources use
+- [x] Keep the Store preview disabled until all production artifact sources use
       the signed format.
 
 ## Verification matrix
 
-- [ ] Same package and same key: first install and update succeed.
-- [ ] Same package and different key: Core upload fails.
-- [ ] A forged catalog that changes the advertised fingerprint cannot bypass
+- [x] Same package and same key: first install and update succeed.
+- [x] Same package and different key: Core upload fails.
+- [x] A forged catalog that changes the advertised fingerprint cannot bypass
       host verification.
-- [ ] A trusted Store requesting a differently signed replacement fails.
-- [ ] A valid signature over changed manifest or executable bytes fails.
-- [ ] A stripped, duplicated, malformed, or case-colliding signature entry
+- [x] A trusted Store requesting a differently signed replacement fails.
+- [x] A valid signature over changed manifest or executable bytes fails.
+- [x] A stripped, duplicated, malformed, or case-colliding signature entry
       fails.
-- [ ] Final ZIP transport-hash mismatch fails before signature admission.
-- [ ] Signed release blocked by host/SDK/hardware compatibility remains
+- [x] Final ZIP transport-hash mismatch fails before signature admission.
+- [x] Signed release blocked by host/SDK/hardware compatibility remains
       uninstalled.
-- [ ] Failed update preserves the running prior release and publisher identity.
-- [ ] Automatic update applies a same-signer compatible release and defers all
+- [x] Failed update preserves the running prior release and publisher identity.
+- [x] Automatic update applies a same-signer compatible release and defers all
       incompatible or mismatched-signer releases.
-- [ ] Private, beta, public, and SYSTEM distributions use identical publisher
+- [x] Private, beta, public, and SYSTEM distributions use identical publisher
       verification.
-- [ ] `pack` output can be installed without ever being uploaded to Core, when
+- [x] `pack` output can be installed without ever being uploaded to Core, when
       invoked through an explicitly authorized non-Store installation path.
-- [ ] CLI key export/import produces the same publisher fingerprint on another
+- [x] CLI key export/import produces the same publisher fingerprint on another
       machine and in CI.
-- [ ] Core, CLI, and Mentra App verify the same golden signed ZIP fixtures.
+- [x] Core, CLI, and Mentra App verify the same golden signed ZIP fixtures.
 
 ## Explicitly later
 

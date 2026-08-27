@@ -3,8 +3,14 @@
 import {describe, expect, test} from "bun:test"
 import JSZip from "jszip"
 import {validateInstallBundleArchive} from "../validateInstallBundle"
+import {signedBundleFixture} from "./signedBundleFixture"
 
 async function bundle(manifest: Record<string, unknown>) {
+  const packageName = typeof manifest.packageName === "string" ? manifest.packageName : ""
+  const version = typeof manifest.version === "string" ? manifest.version : ""
+  if (/^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/.test(packageName) && /^\d+\.\d+\.\d+/.test(version)) {
+    return signedBundleFixture(manifest, (zip) => zip.file("background/index.js", "export {}"))
+  }
   const zip = new JSZip()
   zip.file("miniapp.json", JSON.stringify(manifest))
   zip.file("background/index.js", "export {}")
@@ -29,9 +35,33 @@ describe("validateInstallBundleArchive", () => {
       sdkVersion: "0.3.0",
       minHostVersion: "2.13.0",
       hardwareRequirements: [{type: "CAMERA", level: "REQUIRED"}],
+      publisherKeyFingerprint: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
     })
     await expect(validateInstallBundleArchive(bytes, {packageName: "com.example.other"})).rejects.toThrow(
       "package mismatch",
+    )
+  })
+
+  test("requires signed production bundles but permits unsigned development snapshots", async () => {
+    const zip = new JSZip()
+    zip.file("miniapp.json", JSON.stringify({packageName: "com.example.app", version: "1.0.0"}))
+    zip.file("background/index.js", "export {}")
+    const unsigned = await zip.generateAsync({type: "uint8array"})
+
+    await expect(validateInstallBundleArchive(unsigned)).rejects.toThrow("META-INF/MENTRA.SIG")
+    await expect(validateInstallBundleArchive(unsigned, {requirePublisherSignature: false})).resolves.toMatchObject({
+      packageName: "com.example.app",
+      version: "1.0.0",
+    })
+  })
+
+  test("rejects executable content changed after publisher signing", async () => {
+    const signed = await bundle({packageName: "com.example.app", version: "1.0.0"})
+    const zip = await JSZip.loadAsync(signed)
+    zip.file("background/index.js", "export const changed = true")
+
+    await expect(validateInstallBundleArchive(await zip.generateAsync({type: "uint8array"}))).rejects.toThrow(
+      "does not match",
     )
   })
 
@@ -55,9 +85,7 @@ describe("validateInstallBundleArchive", () => {
       [{type: "MICROPHONE", description: false}],
     ]) {
       await expect(
-        validateInstallBundleArchive(
-          await bundle({packageName: "com.example.app", version: "1.0.0", permissions}),
-        ),
+        validateInstallBundleArchive(await bundle({packageName: "com.example.app", version: "1.0.0", permissions})),
       ).rejects.toThrow("permissions")
     }
   })
