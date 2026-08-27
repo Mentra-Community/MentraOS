@@ -166,7 +166,16 @@ export function CustomMentraLiveUpdate({onDone, onSetupWifi}: CustomMentraLiveUp
     return <Text>Checking for updates…</Text>
   }
   if (state.screen === "update_available") {
-    return <Button title="Update now" onPress={ota.install} />
+    return (
+      <View>
+        {state.releaseTransition && (
+          <Text>
+            {state.releaseTransition.fromVersion ?? "Current version unknown"} → {state.releaseTransition.toVersion}
+          </Text>
+        )}
+        <Button title="Update now" onPress={ota.install} />
+      </View>
+    )
   }
   if (state.screen === "wifi_required") {
     return <Button title="Set up Wi-Fi" onPress={ota.openWifiSetup} />
@@ -180,12 +189,26 @@ export function CustomMentraLiveUpdate({onDone, onSetupWifi}: CustomMentraLiveUp
     )
   }
   if (state.screen === "up_to_date" || state.screen === "complete") {
-    return <Button title="Done" onPress={ota.finish} />
+    return (
+      <View>
+        {state.releaseTransition && <Text>Updated to {state.releaseTransition.toVersion}</Text>}
+        <Button title="Done" onPress={ota.finish} />
+      </View>
+    )
   }
 
   return <Text>{state.progress == null ? "Preparing update…" : `${state.progress}%`}</Text>
 }
 ```
+
+`state.releaseTransition` is present when the checked OTA manifest belongs to a
+coordinated Mentra release. `toVersion` is that exact release identity. The
+current `fromVersion` is the ASG client version reported by the glasses and may
+be `null` on older installations, so custom pages should keep an honest unknown
+fallback. When glasses report their coordinated release identity directly,
+Engine can replace this one source-version lookup without changing customer UI
+code. Engine captures the pair before installation and retains it through
+restarts and final verification.
 
 Start from the Starter Kit's
 [custom OTA presentation folder](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/tree/main/examples/react-native/src/ota)

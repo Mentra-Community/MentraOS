@@ -13,7 +13,7 @@ const checkResult: OtaCheckCurrentGlassesResult = {
   updateAvailable: true,
   latestVersionInfo: {
     versionCode: 40,
-    versionName: "3.1.0-dev.8",
+    versionName: "asg.40",
     downloadUrl: "https://example.com/asg.apk",
     apkSize: 1,
     sha256: "a".repeat(64),
@@ -24,7 +24,8 @@ const checkResult: OtaCheckCurrentGlassesResult = {
   besVersion: null,
   isApkDowngrade: false,
   manifestBody: "{}",
-  updateInfo: {available: true, versionCode: 40, versionName: "3.1.0-dev.8", updates: ["apk"], totalSize: 1},
+  releaseVersion: "3.1.0-dev.8",
+  updateInfo: {available: true, versionCode: 40, versionName: "asg.40", updates: ["apk"], totalSize: 1},
   isRequired: true,
 }
 let currentCheckResult = checkResult
@@ -73,12 +74,16 @@ const finish = mock(() => finishPromise)
 const discard = mock(() => {})
 const getReleaseChangelogs = mock(() => [{version: "3.1.0", markdown: "Release notes"}])
 let autoChainActive = false
-let autoChainRange: {fromVersion: string | null; toVersion: string | null} | null = null
+let autoChainRange: {
+  fromVersion: string | null
+  toVersion: string | null
+  releaseVersion?: string | null
+} | null = null
 const beginAutoChain = mock(
   (
     _fingerprint: string,
     _approvedDowngrade: boolean,
-    range: {fromVersion: string | null; toVersion: string | null},
+    range: {fromVersion: string | null; toVersion: string | null; releaseVersion?: string | null},
   ) => {
     autoChainActive = true
     autoChainRange = {...range}
@@ -88,11 +93,14 @@ const stopAutoChain = mock(() => {
   autoChainActive = false
   autoChainRange = null
 })
-const advanceAutoChain = mock((_fingerprint: string, _isDowngrade: boolean, targetVersion: string | null) => {
-  if (!autoChainRange) return {advance: false as const, reason: "inactive" as const}
-  if (targetVersion) autoChainRange.toVersion = targetVersion
-  return {advance: true as const, passCount: 2}
-})
+const advanceAutoChain = mock(
+  (_fingerprint: string, _isDowngrade: boolean, targetVersion: string | null, releaseVersion: string | null) => {
+    if (!autoChainRange) return {advance: false as const, reason: "inactive" as const}
+    if (targetVersion) autoChainRange.toVersion = targetVersion
+    if (releaseVersion) autoChainRange.releaseVersion = releaseVersion
+    return {advance: true as const, passCount: 2}
+  },
+)
 
 const fakeOta = {
   initialize: mock(() => Promise.resolve()),
@@ -256,6 +264,10 @@ describe("useMentraLiveOta", () => {
       await new Promise((resolve) => setTimeout(resolve, 1_150))
     })
     expect(latestController.state.screen).toBe("update_available")
+    expect(latestController.state.releaseTransition).toEqual({
+      fromVersion: "3.0.0",
+      toVersion: "3.1.0-dev.8",
+    })
 
     await act(async () => {
       latestController.install()
@@ -266,6 +278,10 @@ describe("useMentraLiveOta", () => {
     })
 
     expect(getReleaseChangelogs).toHaveBeenCalledWith("3.0.0", "3.1.0-dev.8")
+    expect(latestController.state.releaseTransition).toEqual({
+      fromVersion: "3.0.0",
+      toVersion: "3.1.0-dev.8",
+    })
     expect(latestController.state.changelogs).toEqual([{version: "3.1.0", markdown: "Release notes"}])
     await act(async () => renderer.unmount())
   })
@@ -281,6 +297,7 @@ describe("useMentraLiveOta", () => {
     installSnapshot = {...installSnapshot, displayState: "complete"}
     const progressRenderer = await renderProbe("progress")
     expect(getReleaseChangelogs).toHaveBeenCalledWith("3.0.0", "3.1.0-dev.8")
+    expect(latestController.state.releaseTransition?.toVersion).toBe("3.1.0-dev.8")
     expect(latestController.state.changelogs).toEqual([{version: "3.1.0", markdown: "Release notes"}])
     await act(async () => progressRenderer.unmount())
   })
@@ -304,7 +321,25 @@ describe("useMentraLiveOta", () => {
     })
 
     expect(latestController.state.screen).toBe("up_to_date")
+    expect(latestController.state.releaseTransition).toEqual({
+      fromVersion: "3.0.0",
+      toVersion: "3.1.0-dev.8",
+    })
     expect(latestController.state.changelogs).toEqual([{version: "3.1.0", markdown: "Release notes"}])
+    await act(async () => renderer.unmount())
+  })
+
+  test("does not invent a coordinated target for a legacy manifest", async () => {
+    currentCheckResult = {...checkResult, releaseVersion: null}
+    const renderer = await renderProbe("check")
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1_150))
+    })
+
+    expect(latestController.state).toMatchObject({
+      screen: "update_available",
+      releaseTransition: null,
+    })
     await act(async () => renderer.unmount())
   })
 

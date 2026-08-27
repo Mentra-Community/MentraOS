@@ -72,6 +72,9 @@ const ENGLISH_COPY: Record<string, string> = {
   "ota:updateConnectWifi": "Connect your {{deviceName}} to WiFi to install the update.",
   "ota:updateDescription":
     "A new update is available for your glasses. We recommend updating now for the best experience.",
+  "ota:releaseTransition": "{{fromVersion}} → {{toVersion}}",
+  "ota:releaseTransitionUnknown": "Current version unknown → {{toVersion}}",
+  "ota:updatedToVersion": "Updated to {{version}}",
   "ota:downgradeAvailable": "{{deviceName}} Version Change Required",
   "ota:downgradeDescription":
     "This app requires an earlier glasses software version. Your photos and videos will be preserved, but glasses settings will be reset and restored automatically after the change.",
@@ -204,6 +207,16 @@ function OtaFlowContent({
             ) : null}
           </>
         }>
+        {state.releaseTransition ? (
+          <BodyText colors={colors}>
+            {state.releaseTransition.fromVersion
+              ? translate("ota:releaseTransition", {
+                  fromVersion: state.releaseTransition.fromVersion,
+                  toVersion: state.releaseTransition.toVersion,
+                })
+              : translate("ota:releaseTransitionUnknown", {toVersion: state.releaseTransition.toVersion})}
+          </BodyText>
+        ) : null}
         <BodyText colors={colors}>
           {state.screen === "wifi_required"
             ? translate("ota:updateConnectWifi", {deviceName})
@@ -233,6 +246,11 @@ function OtaFlowContent({
         icon="check"
         title={translate("ota:upToDate")}>
         <BodyText colors={colors}>{translate("ota:noUpdatesAvailable")}</BodyText>
+        {state.releaseTransition ? (
+          <BodyText colors={colors}>
+            {translate("ota:updatedToVersion", {version: state.releaseTransition.toVersion})}
+          </BodyText>
+        ) : null}
         <ChangelogList changelogs={state.changelogs} colors={colors} />
       </FlowPage>
     )
@@ -364,6 +382,11 @@ function OtaFlowContent({
         icon="check"
         title={title}>
         <BodyText colors={colors}>{message}</BodyText>
+        {state.releaseTransition ? (
+          <BodyText colors={colors}>
+            {translate("ota:updatedToVersion", {version: state.releaseTransition.toVersion})}
+          </BodyText>
+        ) : null}
         <ChangelogList changelogs={state.changelogs} colors={colors} />
       </FlowPage>
     )
