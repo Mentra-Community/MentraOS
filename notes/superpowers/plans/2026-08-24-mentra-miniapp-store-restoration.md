@@ -5,6 +5,9 @@ owner: Mentra
 
 # Mentra Miniapp Store restoration checklist
 
+Design source of truth:
+[Mentra Miniapp Store restoration design](../specs/2026-08-26-mentra-miniapp-store-restoration-design.md).
+
 ## Outcome
 
 Restore the Mentra Miniapp Store as the bundled `com.mentra.store` miniapp for
