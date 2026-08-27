@@ -65,6 +65,12 @@ public final class AudioAssets {
     /** Spoken pairing-code clip folder ({@code letter_a.wav}, {@code digit_0.wav}, ...). */
     public static final String PAIRING_PREFIX = "pairing/";
 
+    /** “Connect to your Mentra Live in the app. Your code is:” */
+    public static final String PAIRING_INTRO = PAIRING_PREFIX + "pairing_intro.wav";
+
+    /** Spoken confirmation after the glasses leave pairing mode. */
+    public static final String PAIRING_EXITED = PAIRING_PREFIX + "pairing_exited.wav";
+
     /** Battery level announcement audio folder prefix */
     public static final String BATTERY_LEVEL_PREFIX = "battery/";
 

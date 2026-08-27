@@ -9,6 +9,7 @@ import com.mentra.asg_client.io.peripheral.events.FactoryResetEvent;
 import com.mentra.asg_client.io.peripheral.events.FileTransferAckEvent;
 import com.mentra.asg_client.io.peripheral.events.HotspotTriggerEvent;
 import com.mentra.asg_client.io.peripheral.events.McuEvent;
+import com.mentra.asg_client.io.peripheral.events.PairingModeExitEvent;
 import com.mentra.asg_client.io.peripheral.events.ShutdownEvent;
 import com.mentra.asg_client.io.peripheral.events.SpeakPairingCodeEvent;
 import com.mentra.asg_client.io.peripheral.events.SwipeVolumeEvent;
@@ -70,6 +71,9 @@ public final class McuEventParser {
                 }
                 String code = b.optString("code", "").trim();
                 return code.isEmpty() ? null : new SpeakPairingCodeEvent(code);
+
+            case "hm_pairexit":
+                return new PairingModeExitEvent(b == null ? "unknown" : b.optString("reason", "unknown"));
 
             case "sr_swst":
                 if (b == null) {

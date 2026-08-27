@@ -17,9 +17,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Concatenates pairing-character WAVs into one PCM phrase with silence trimmed and a short pause
- * between clips, so each character remains distinct without sounding like four separate
- * announcements.
+ * Concatenates the pairing instruction and character WAVs into one PCM phrase with silence
+ * trimmed and deliberate pauses, so playback is serialized on one I2S file.
  */
 public final class PairingCodePcmStitcher {
 
@@ -32,6 +31,7 @@ public final class PairingCodePcmStitcher {
 
     public static File stitchCodeToCache(Context context, String code) throws IOException {
         List<byte[]> wavs = new ArrayList<>();
+        wavs.add(readAssetBytes(context, AudioAssets.PAIRING_INTRO));
         for (int i = 0; i < code.length(); i++) {
             String asset = AudioAssets.getPairingCharAsset(code.charAt(i));
             if (asset == null) {
@@ -39,7 +39,7 @@ public final class PairingCodePcmStitcher {
             }
             wavs.add(readAssetBytes(context, asset));
         }
-        byte[] stitched = stitchWavs(wavs);
+        byte[] stitched = stitchPairingPhraseWavs(wavs);
         File out = File.createTempFile(CACHE_PREFIX, CACHE_SUFFIX, context.getCacheDir());
         try (FileOutputStream fos = new FileOutputStream(out)) {
             fos.write(stitched);
@@ -56,6 +56,15 @@ public final class PairingCodePcmStitcher {
     }
 
     static byte[] stitchWavs(List<byte[]> wavFiles) throws IOException {
+        return stitchWavs(wavFiles, AsgConstants.PAIRING_CODE_INTER_CHARACTER_PAUSE_MS, false);
+    }
+
+    static byte[] stitchPairingPhraseWavs(List<byte[]> wavFiles) throws IOException {
+        return stitchWavs(wavFiles, AsgConstants.PAIRING_INTRO_TO_CODE_PAUSE_MS, true);
+    }
+
+    private static byte[] stitchWavs(List<byte[]> wavFiles, int firstPauseMs, boolean hasIntro)
+            throws IOException {
         if (wavFiles == null || wavFiles.isEmpty()) {
             throw new IOException("no pairing clips to stitch");
         }
@@ -71,7 +80,11 @@ public final class PairingCodePcmStitcher {
             acc = appendWithSilence(
                     acc,
                     trimSilence(next.samples),
-                    msToSamples(AsgConstants.PAIRING_CODE_INTER_CHARACTER_PAUSE_MS, sampleRate));
+                    msToSamples(
+                            hasIntro && i == 1
+                                    ? firstPauseMs
+                                    : AsgConstants.PAIRING_CODE_INTER_CHARACTER_PAUSE_MS,
+                            sampleRate));
         }
         return encodePcmWav(acc, sampleRate);
     }

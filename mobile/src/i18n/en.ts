@@ -155,7 +155,7 @@ const en = {
     livePairingModeTitle: "Ready to pair",
     livePairingModeSubtitle: "Put your glasses into pairing mode before you scan.",
     livePairingModeInfo:
-      "Press the power button 5 times quickly. The LED flashes and the glasses speak a 4-character code (0–9, A–F). Match that code on the scan list if more than one unit appears.",
+      "Press the power button 3 times quickly. The LED flashes and the glasses speak a 4-character code (0–9, A–F). Match that code on the scan list if more than one unit appears.",
     liveScanTitle: "Turn on your glasses",
     liveScanSubtitle: "We're looking for your Mentra Live.",
     livePairingFoundTitle: "Glasses found",
@@ -166,13 +166,13 @@ const en = {
     liveChooseGlassesTitle: "Choose your glasses",
     scanAgain: "Scan Again",
     noGlassesFound: "No glasses found",
-    noGlassesFoundHint: "Make sure you pressed the power button 5 times quickly, then try again.",
+    noGlassesFoundHint: "Make sure you pressed the power button 3 times quickly, then try again.",
     nearbyNotInPairingModeHint:
-      "Nearby Mentra Live glasses were found, but they are not in pairing mode. Press the power button 5 times quickly, then try again.",
+      "Nearby Mentra Live glasses were found, but they are not in pairing mode. Press the power button 3 times quickly, then try again.",
     notInPairingModeLabel: "Not in pairing mode",
     notInPairingModeAlertTitle: "Enter pairing mode",
     notInPairingModeAlertMessage:
-      "Press the power button 5 times quickly. The LED flashes and the glasses speak a 4-character code. Then select the glasses again.",
+      "Press the power button 3 times quickly. The LED flashes and the glasses speak a 4-character code. Then select the glasses again.",
     tryAgain: "Try Again",
     pairingCodeLabel: "Code {{code}}",
     legacyFirmwareLabel: "Legacy software",

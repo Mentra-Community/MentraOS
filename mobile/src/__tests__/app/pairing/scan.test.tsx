@@ -165,6 +165,7 @@ describe("pairing scan screen", () => {
   const goBack = jest.fn()
 
   beforeEach(() => {
+    process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_SECURE_PAIRING = "true"
     resetBluetoothSdkMock()
     jest.clearAllMocks()
     ;(engine.pairing.pair as jest.Mock).mockReset().mockResolvedValue(undefined)
@@ -193,6 +194,7 @@ describe("pairing scan screen", () => {
   })
 
   afterEach(() => {
+    delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_SECURE_PAIRING
     jest.useRealTimers()
     setPlatformOS(originalPlatformOS)
   })
@@ -664,6 +666,59 @@ describe("pairing scan screen", () => {
         expect.objectContaining({deviceName: "MENTRA_LIVE_BLE_TARGET"}),
       )
     })
+  })
+
+  it("allows an explicit tap on any discovered Mentra Live when secure pairing is disabled", async () => {
+    process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_SECURE_PAIRING = "false"
+    setPlatformOS("android")
+    useCoreStore.setState({
+      searchResults: [
+        {
+          id: "idle",
+          model: "Mentra Live",
+          name: "MENTRA_LIVE_BLE_IDLE",
+          address: "idle",
+          pairingMode: false,
+          securePairingCapable: true,
+        },
+      ],
+    })
+
+    const {getByText, queryByText} = render(<SelectGlassesBluetoothScreen />)
+
+    await waitFor(() => {
+      expect(getByText("IDLE")).toBeTruthy()
+    })
+    expect(queryByText(/pairing:notInPairingModeLabel/)).toBeNull()
+
+    fireEvent.press(getByText("IDLE"))
+
+    await waitFor(() => {
+      expect(push).toHaveBeenCalledWith(
+        "/pairing/loading",
+        expect.objectContaining({deviceName: "MENTRA_LIVE_BLE_IDLE"}),
+      )
+    })
+  })
+
+  it("does not show pairing-mode instructions after a flag-off scan timeout", async () => {
+    jest.useFakeTimers()
+    try {
+      process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_SECURE_PAIRING = "false"
+      setPlatformOS("android")
+
+      const {getByText, queryByText} = render(<SelectGlassesBluetoothScreen />)
+
+      act(() => {
+        jest.advanceTimersByTime(15_000)
+      })
+
+      expect(getByText("pairing:liveScanHelpInfo")).toBeTruthy()
+      expect(queryByText("pairing:livePairingModeInfo")).toBeNull()
+      expect(queryByText("pairing:liveUpdatedGlassesHint")).toBeNull()
+    } finally {
+      jest.useRealTimers()
+    }
   })
 
   it("filters AR99 scan results to the selected AR99 project", async () => {
