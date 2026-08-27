@@ -149,9 +149,11 @@ mock.module("../../services/OtaErrorMapping", () => ({
 const {useMentraLiveOta} = require("../useMentraLiveOta") as typeof import("../useMentraLiveOta")
 
 let latestController: ReturnType<typeof useMentraLiveOta>
+let renderedScreens: string[] = []
 
 function Probe({initialPage = "progress"}: {initialPage?: "check" | "progress"}) {
   latestController = useMentraLiveOta({initialPage, initializeRuntime: false})
+  renderedScreens.push(latestController.state.screen)
   return null
 }
 
@@ -179,6 +181,7 @@ describe("useMentraLiveOta", () => {
     beginAutoChain.mockClear()
     stopAutoChain.mockClear()
     advanceAutoChain.mockClear()
+    renderedScreens = []
     autoChainActive = false
     autoChainRange = null
     currentCheckResult = checkResult
@@ -458,6 +461,7 @@ describe("useMentraLiveOta", () => {
     expect(finish).toHaveBeenCalledTimes(1)
     expect(fakeOta.checkForUpdates).not.toHaveBeenCalled()
     expect(latestController.state.screen).toBe("finishing")
+    const screenCountBeforeReturn = renderedScreens.length
 
     await act(async () => {
       resolveFinish()
@@ -466,6 +470,7 @@ describe("useMentraLiveOta", () => {
     })
 
     expect(fakeOta.checkForUpdates).toHaveBeenCalledTimes(1)
+    expect(renderedScreens.slice(screenCountBeforeReturn)).not.toContain("update_available")
     await act(async () => renderer.unmount())
   })
 })

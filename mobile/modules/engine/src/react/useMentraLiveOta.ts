@@ -253,6 +253,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
   const returnToCheck = useCallback(() => {
     installActionPendingRef.current = false
     autoChainAdvancedRef.current = false
+    setCheckState("checking")
     setPage("check")
     setCheckGeneration((generation) => generation + 1)
   }, [])
