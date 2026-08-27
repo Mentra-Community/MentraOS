@@ -1,7 +1,7 @@
 # Coordinated Release System
 
-> Status: implemented in the consolidated release PR; first release validation pending
-> Updated: 2026-08-25
+> Status: implemented; coordinated channel documentation added
+> Updated: 2026-08-27
 
 ## Goal
 
@@ -76,6 +76,9 @@ make Engine installation and native resolution ambiguous to consumers.
 12. Production validates the selected beta before protected approval. Stable
     packages and the external Engine consumer must succeed before either mobile
     store is changed.
+13. Dev and beta documentation is a post-finalization release output. The docs
+    show the exact coordinated release identity and are never published ahead
+    of the completed release manifest.
 
 ## Phase 0: Fix the Engine Boundary Now
 
@@ -504,8 +507,10 @@ After the OTA bundle and version map exist:
    registry graph, TypeScript, Metro, Expo autolinking, Android, and iOS.
 4. Finalization writes the completed release manifest only after every product
    lane and the external consumer gate succeeds.
-5. Starter Kit artifacts and public documentation update only after all public
-   dependencies and example downloads are live.
+5. Dev and beta documentation publishes after finalization from the exact
+   source commit and release plan. Starter Kit artifacts remain a separate
+   downstream publication because their example binaries are not produced by
+   this repository.
 
 Independent jobs may run in parallel when the dependency graph permits it. A
 consumer package cannot publish until its referenced versions are publicly
@@ -651,6 +656,50 @@ release name. Each release exposes the semantic
 `mentra-live-asg-selection-<derived-version>.json` record that resolves its ASG
 object and records the object's hash, version, signature, and provenance.
 
+## Documentation Channels
+
+Documentation has the same release-channel identity as the products it
+describes:
+
+| Source channel | Published docs | Cloudflare Pages project | Injected version |
+| -------------- | -------------- | ------------------------ | ---------------- |
+| `dev` | `https://docs-dev.mentraglass.com` | `mentraos-docs-dev` | Exact `X.Y.Z-dev.N` identity |
+| `staging` | `https://docs-beta.mentraglass.com` | `mentraos-docs-beta` | Exact `X.Y.Z-beta.N` identity |
+| `main` | `https://docs.mentraglass.com` | Mintlify Git deployment | Stable `X.Y.Z` family base |
+
+`mintlify-docs/docs.json` uses Mintlify's native global variables. The checked-in
+`release-version` and production release-artifact URL use the stable family
+base, so the `main` branch remains directly buildable by Mintlify. Current
+release references throughout `mintlify-docs/mentra-live/` use those variables
+instead of copied literals.
+
+The coordinated `dev` and `staging` workflow does not edit the checkout. After
+release finalization succeeds, it:
+
+1. checks out the release plan's exact source commit;
+2. copies `mintlify-docs/` into a temporary directory;
+3. updates `release-version` and `release-artifacts-url` in that copy using a
+   structured JSON renderer;
+4. exports the copied tree with Mintlify;
+5. adds `X-Robots-Tag: noindex`, deploys it to the channel's Pages project, and
+   verifies the custom domain contains the exact release identity; and
+6. reports the documentation URL and pass/fail state in the channel's Slack
+   release notification.
+
+The previous independent push-triggered dev-docs workflow is removed. It could
+race a coordinated release and replace exact `dev.N` documentation with the
+checked-in stable base version. A docs deployment failure leaves the previously
+published site online, fails the docs job, and makes Slack report the otherwise
+finalized release as incomplete. It does not rewrite or roll back an immutable
+release manifest.
+
+Starter Kit example applications keep separate `example-app-version` and
+`example-app-url` variables until the Starter Kit joins the coordinated release
+pipeline. Coordinated docs must not construct a nonexistent example download
+from the MentraOS release identity. Production remains a Mintlify deployment
+from `main`; changing that external branch setting from `staging` to `main` is
+an operator action, not part of the dev/beta Pages workflow.
+
 ## Promotion
 
 Production selects one completed staging release set. Before requesting
@@ -692,11 +741,14 @@ truth.
    Engine's full dependency closure is readable.
 2. Update all three examples to the selected public versions.
 3. Build and publish example APK/IPA artifacts.
-4. Update docs to the new release version and immutable example URLs.
+4. Update the independently versioned example variables after its artifacts are
+   public. Coordinated dev and beta package/glasses versions are already
+   supplied by their release workflow.
 
-The public docs workflow fails closed if a referenced package or example
-artifact is unavailable. Documentation never advertises a release that cannot
-be installed.
+The Starter Kit publication fails closed if a referenced package is
+unavailable. Documentation labels the separately published example version
+explicitly and never claims that its download matches a newer coordinated
+release.
 
 ## Verification Gates
 
@@ -783,6 +835,8 @@ cutover that enables the coordinator, so two systems cannot publish the shared
   APK; a changed fingerprint produces one new immutable APK.
 - Dev and beta builds are immediately distinguishable in TestFlight metadata,
   artifact names, diagnostics, and the release manifest.
+- Dev and beta docs show the exact finalized release identity on their own
+  domains, remain non-indexable, and report their result in release Slack.
 - A workflow retry reconciles the same identity without overwriting bytes.
 - Each prerelease owns its OTA manifest, ASG selection, and portable bundle;
   the shared ASG release contains only reusable APK/provenance pairs.
