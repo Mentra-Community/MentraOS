@@ -13,7 +13,12 @@ import {
 import {SafeAreaView} from "react-native-safe-area-context"
 import Svg, {Path, Rect} from "react-native-svg"
 
-import {useMentraLiveOta, type MentraLiveOtaController, type MentraLiveOtaFlowPage} from "./useMentraLiveOta"
+import {
+  MINIMUM_OTA_BATTERY_LEVEL,
+  useMentraLiveOta,
+  type MentraLiveOtaController,
+  type MentraLiveOtaFlowPage,
+} from "./useMentraLiveOta"
 
 export type {MentraLiveOtaFlowPage} from "./useMentraLiveOta"
 
@@ -72,6 +77,10 @@ const ENGLISH_COPY: Record<string, string> = {
   "ota:finishingUpdate": "Finishing your update",
   "ota:checkingAdditionalUpdates": "Checking whether your glasses need any additional updates.",
   "ota:updateAvailable": "{{deviceName}} Update Available",
+  "ota:batteryRequiredTitle": "Charge {{deviceName}} to Update",
+  "ota:batteryRequiredMessage":
+    "{{deviceName}} is currently at {{batteryLevel}}%. Charge it to at least {{minimumBatteryLevel}}% before updating.",
+  "ota:batteryRequiredLiveUpdate": "This screen will update automatically as the battery charges.",
   "ota:updateConnectWifi": "Connect your {{deviceName}} to WiFi to install the update.",
   "ota:wifiRequiredTitle": "WiFi Needed for Update",
   "ota:updateDescription":
@@ -188,6 +197,32 @@ function OtaFlowContent({
       <FlowPage colors={colors} icon="download" title={translate("ota:checkingForUpdates")}>
         <BodyText colors={colors}>{translate("ota:checkingForUpdatesMessage")}</BodyText>
         <ActivityIndicator size="large" color={colors.foreground} />
+      </FlowPage>
+    )
+  }
+
+  if (state.screen === "battery_required") {
+    return (
+      <FlowPage
+        actions={
+          <>
+            <FlowButton colors={colors} disabled label={translate("ota:updateNow")} onPress={controller.install} />
+            {state.canDismiss ? (
+              <FlowButton colors={colors} label={translate("ota:updateLater")} onPress={controller.finish} secondary />
+            ) : null}
+          </>
+        }
+        colors={colors}
+        icon="alert"
+        title={translate("ota:batteryRequiredTitle", {deviceName})}>
+        <BodyText colors={colors}>
+          {translate("ota:batteryRequiredMessage", {
+            batteryLevel: String(state.batteryLevel),
+            deviceName,
+            minimumBatteryLevel: String(MINIMUM_OTA_BATTERY_LEVEL),
+          })}
+        </BodyText>
+        <BodyText colors={colors}>{translate("ota:batteryRequiredLiveUpdate")}</BodyText>
       </FlowPage>
     )
   }

@@ -410,6 +410,10 @@ const en = {
     finishingUpdate: "Finishing your update",
     checkingAdditionalUpdates: "Checking whether your glasses need any additional updates.",
     updateAvailable: "{{deviceName}} Update Available",
+    batteryRequiredTitle: "Charge {{deviceName}} to Update",
+    batteryRequiredMessage:
+      "{{deviceName}} is currently at {{batteryLevel}}%. Charge it to at least {{minimumBatteryLevel}}% before updating.",
+    batteryRequiredLiveUpdate: "This screen will update automatically as the battery charges.",
     updateReadyToInstall: "Version {{version}} for {{deviceName}} is ready to install.",
     updateConnectWifi: "Connect your {{deviceName}} to WiFi to install the update.",
     wifiRequiredTitle: "WiFi Needed for Update",
