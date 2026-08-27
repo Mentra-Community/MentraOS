@@ -1,7 +1,10 @@
 name: Coordinated Example Release
-run-name: Coordinated example ${{ inputs.channel }} ${{ fromJSON(inputs.payload).releaseIdentity }}
+run-name: Coordinated example ${{ inputs.channel || github.event.client_payload.channel }} ${{ fromJSON(inputs.payload || github.event.client_payload.payload).releaseIdentity }}
 
 "on":
+  repository_dispatch:
+    types:
+      - coordinated_example_release
   workflow_dispatch:
     inputs:
       channel:
@@ -25,11 +28,13 @@ permissions:
 concurrency:
   # Dev and beta for one train share a GitHub release container, so serialize
   # the family even though their source branches are independent.
-  group: coordinated-example-release-${{ fromJSON(inputs.payload).familyBaseVersion }}
+  group: coordinated-example-release-${{ fromJSON(inputs.payload || github.event.client_payload.payload).familyBaseVersion }}
   cancel-in-progress: false
 
 env:
   CI: true
+  COORDINATED_CHANNEL: ${{ inputs.channel || github.event.client_payload.channel }}
+  COORDINATED_PAYLOAD: ${{ inputs.payload || github.event.client_payload.payload }}
   GH_TOKEN: ${{ github.token }}
   STARTER_KIT_REPOSITORY: Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit
 
@@ -52,8 +57,7 @@ jobs:
       - name: Validate the coordinated payload
         id: release
         env:
-          COORDINATED_PAYLOAD: ${{ inputs.payload }}
-          DISPATCH_CHANNEL: ${{ inputs.channel }}
+          DISPATCH_CHANNEL: ${{ env.COORDINATED_CHANNEL }}
         run: |
           set -euo pipefail
           printf '%s' "$COORDINATED_PAYLOAD" > coordinated-payload.json
@@ -66,8 +70,8 @@ jobs:
         id: existing
         env:
           RELEASE_IDENTITY: ${{ steps.release.outputs.releaseIdentity }}
-          RELEASE_SET_ID: ${{ fromJSON(inputs.payload).releaseSetId }}
-          MENTRAOS_SOURCE_COMMIT: ${{ fromJSON(inputs.payload).mentraos.sourceCommit }}
+          RELEASE_SET_ID: ${{ fromJSON(env.COORDINATED_PAYLOAD).releaseSetId }}
+          MENTRAOS_SOURCE_COMMIT: ${{ fromJSON(env.COORDINATED_PAYLOAD).mentraos.sourceCommit }}
           TARGET_BRANCH: ${{ steps.release.outputs.targetBranch }}
           ARTIFACT_CONTAINER_TAG: ${{ steps.release.outputs.artifactContainerTag }}
         run: |
@@ -106,8 +110,8 @@ jobs:
         if: steps.existing.outputs.already_published != 'true'
         env:
           RELEASE_IDENTITY: ${{ steps.release.outputs.releaseIdentity }}
-          OTA_MANIFEST_URL: ${{ fromJSON(inputs.payload).ota.manifestUrl }}
-          OTA_MANIFEST_SHA256: ${{ fromJSON(inputs.payload).ota.manifestSha256 }}
+          OTA_MANIFEST_URL: ${{ fromJSON(env.COORDINATED_PAYLOAD).ota.manifestUrl }}
+          OTA_MANIFEST_SHA256: ${{ fromJSON(env.COORDINATED_PAYLOAD).ota.manifestSha256 }}
         run: |
           set -euo pipefail
           retry() {
@@ -143,7 +147,7 @@ jobs:
           RELEASE_IDENTITY: ${{ steps.release.outputs.releaseIdentity }}
           TARGET_BRANCH: ${{ steps.release.outputs.targetBranch }}
           CANDIDATE_BRANCH: ${{ steps.release.outputs.candidateBranch }}
-          EXPECTED_HEAD: ${{ fromJSON(inputs.payload).expectedStarterKitHead }}
+          EXPECTED_HEAD: ${{ fromJSON(env.COORDINATED_PAYLOAD).expectedStarterKitHead }}
         run: |
           set -euo pipefail
           git fetch origin "$TARGET_BRANCH" "$CANDIDATE_BRANCH" 2>/dev/null || git fetch origin "$TARGET_BRANCH"
@@ -207,7 +211,7 @@ jobs:
           RELEASE_IDENTITY: ${{ steps.release.outputs.releaseIdentity }}
           TARGET_BRANCH: ${{ steps.release.outputs.targetBranch }}
           CANDIDATE_BRANCH: ${{ steps.release.outputs.candidateBranch }}
-          MENTRAOS_RUN_URL: ${{ fromJSON(inputs.payload).mentraos.coordinatorRunUrl }}
+          MENTRAOS_RUN_URL: ${{ fromJSON(env.COORDINATED_PAYLOAD).mentraos.coordinatorRunUrl }}
         run: |
           set -euo pipefail
           pr_url=""
