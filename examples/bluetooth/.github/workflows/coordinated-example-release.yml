@@ -18,7 +18,7 @@ run-name: Coordinated example ${{ inputs.channel }} ${{ fromJSON(inputs.payload)
         type: string
 
 permissions:
-  actions: write
+  actions: read
   contents: write
   pull-requests: read
 
@@ -228,7 +228,7 @@ jobs:
           fi
           echo "url=$pr_url" >> "$GITHUB_OUTPUT"
 
-      - name: Dispatch validation for the candidate commit
+      - name: Wait for pull request validation of the candidate commit
         if: steps.existing.outputs.already_published != 'true'
         id: validation
         env:
@@ -237,20 +237,15 @@ jobs:
           RELEASE_COMMIT: ${{ steps.candidate.outputs.release_commit }}
         run: |
           set -euo pipefail
-          dispatched_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          gh workflow run example-app-builds.yml \
-            --ref "$CANDIDATE_BRANCH" \
-            -f "artifact_suffix=$RELEASE_IDENTITY"
-
           run_id=""
-          for _ in {1..30}; do
+          for _ in {1..60}; do
             run_id=$(gh run list --workflow example-app-builds.yml --branch "$CANDIDATE_BRANCH" \
-              --event workflow_dispatch --limit 20 \
-              --json databaseId,headSha,createdAt \
-              --jq ".[] | select(.headSha == \"$RELEASE_COMMIT\" and .createdAt >= \"$dispatched_at\") | .databaseId" \
+              --event pull_request --limit 20 \
+              --json databaseId,headSha \
+              --jq ".[] | select(.headSha == \"$RELEASE_COMMIT\") | .databaseId" \
               | head -1)
             [[ -n "$run_id" ]] && break
-            sleep 2
+            sleep 10
           done
           [[ -n "$run_id" ]]
           gh run watch "$run_id" --exit-status
