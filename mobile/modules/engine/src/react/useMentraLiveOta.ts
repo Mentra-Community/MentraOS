@@ -30,6 +30,7 @@ export type MentraLiveOtaScreen =
   | "checking"
   | "finishing"
   | "update_available"
+  | "battery_required"
   | "wifi_required"
   | "up_to_date"
   | "dev_build"
@@ -70,6 +71,7 @@ export type MentraLiveOtaReleaseTransition = {
 export type MentraLiveOtaState = {
   screen: MentraLiveOtaScreen
   connected: boolean
+  batteryLevel: number | null
   transport: MentraLiveOtaTransport | null
   updateRequired: boolean
   versionChange: boolean
@@ -131,6 +133,7 @@ type CheckState = "checking" | "update_available" | "no_update" | "dev_build" | 
 
 const AUTO_CHAIN_NETWORK_RETRY_DELAY_MS = 5000
 const AUTO_CHAIN_COMPLETE_DELAY_MS = 750
+export const MINIMUM_OTA_BATTERY_LEVEL = 25
 
 function releaseRangeTargetVersion(result: OtaCheckCurrentGlassesResult): string | null {
   return result.releaseVersion ?? result.updateInfo?.versionName ?? result.latestVersionInfo?.versionName ?? null
@@ -220,6 +223,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
   )
   const [completedUpdate, setCompletedUpdate] = useState(false)
   const [completedChangelogs, setCompletedChangelogs] = useState<ReleaseChangelog[]>([])
+  const [batteryBlocked, setBatteryBlocked] = useState(false)
   const [checkGeneration, setCheckGeneration] = useState(0)
   const performCheckGenerationRef = useRef(0)
   const activeCheckKeyRef = useRef<string | null>(null)
@@ -498,6 +502,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
   }, [installSnapshot.connected, installSnapshot.displayState, page, returnToCheck])
 
   const check = useCallback(() => {
+    setBatteryBlocked(false)
     setOfferedReleaseTransition(null)
     setCompletedReleaseTransition(null)
     setCompletedUpdate(false)
@@ -516,6 +521,10 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
       return
     }
     const snapshot = ota.snapshot()
+    if (snapshot.batteryLevel !== null && snapshot.batteryLevel < MINIMUM_OTA_BATTERY_LEVEL) {
+      setBatteryBlocked(true)
+      return
+    }
     if (!snapshot.wifiStatusKnown) {
       check()
       return
@@ -525,6 +534,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
       return
     }
     ota.installSession.prepare(result)
+    setBatteryBlocked(false)
     setCompletedUpdate(false)
     setCompletedChangelogs([])
     if (updateFingerprint) {
@@ -539,6 +549,15 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
     }
     navigateToProgress()
   }, [check, isVersionChange, navigateToProgress, offeredReleaseTransition, page, updateFingerprint])
+
+  useEffect(() => {
+    if (
+      batteryBlocked &&
+      (otaSnapshot.batteryLevel === null || otaSnapshot.batteryLevel >= MINIMUM_OTA_BATTERY_LEVEL)
+    ) {
+      setBatteryBlocked(false)
+    }
+  }, [batteryBlocked, otaSnapshot.batteryLevel])
 
   const retryInstall = useCallback(() => {
     if (page !== "progress") return
@@ -582,6 +601,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
       return {
         screen: "initializing",
         connected: otaSnapshot.connected,
+        batteryLevel: otaSnapshot.batteryLevel,
         transport: null,
         updateRequired: isUpdateRequired,
         versionChange: isVersionChange,
@@ -617,8 +637,9 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
       const wifiRequired = otaSnapshot.wifiStatusKnown && !otaSnapshot.wifiConnected && !hotspotSupported
       let screen: MentraLiveOtaScreen
       if (checkState === "checking") screen = autoChainActive ? "finishing" : "checking"
-      else if (checkState === "update_available") screen = wifiRequired ? "wifi_required" : "update_available"
-      else if (checkState === "no_update") screen = "up_to_date"
+      else if (checkState === "update_available") {
+        screen = wifiRequired ? "wifi_required" : batteryBlocked ? "battery_required" : "update_available"
+      } else if (checkState === "no_update") screen = "up_to_date"
       else if (checkState === "dev_build") screen = "dev_build"
       else screen = errorKind === "pin_unavailable" ? "update_info_unavailable" : "check_failed"
 
@@ -634,6 +655,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
       return {
         screen,
         connected: otaSnapshot.connected,
+        batteryLevel: otaSnapshot.batteryLevel,
         transport: otaSnapshot.wifiConnected ? "wifi" : hotspotSupported ? "hotspot" : null,
         updateRequired: isUpdateRequired,
         versionChange: isVersionChange,
@@ -656,7 +678,9 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
         canRetry: screen === "check_failed",
         canFinish: screen === "up_to_date" || screen === "dev_build" || screen === "update_info_unavailable",
         canDismiss:
-          (screen === "update_available" || screen === "wifi_required") && !isUpdateRequired && !autoChainActive,
+          (screen === "update_available" || screen === "wifi_required" || screen === "battery_required") &&
+          !isUpdateRequired &&
+          !autoChainActive,
         canDiscard: false,
         canOpenWifiSetup: screen === "wifi_required",
         continueDisabled: false,
@@ -700,6 +724,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
     return {
       screen,
       connected: installSnapshot.connected,
+      batteryLevel: otaSnapshot.batteryLevel,
       transport: installSnapshot.transport,
       updateRequired: isUpdateRequired,
       versionChange: installSnapshot.isVersionChange,
@@ -734,6 +759,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
     }
   }, [
     checkState,
+    batteryBlocked,
     completedChangelogs,
     completedReleaseTransition,
     completedUpdate,
