@@ -2,7 +2,7 @@
 
 Expo development-build reference app for the Mentra Bluetooth SDK.
 
-This example installs `@mentra/bluetooth-sdk` and `@mentra/engine`. App code imports the SDK through the curated `@mentra/engine/bluetooth-sdk` entry points, which omit the SDK's debug and devtools-only namespaces. The direct SDK dependency supplies its Expo config plugin and native modules. The example demonstrates the same Device, Camera, Stream, System, and Console flows as the native Android and iOS examples, plus the shared full-page Mentra Live OTA flow from the Mentra App.
+This example installs `@mentra/bluetooth-sdk` and `@mentra/engine`. App code imports the SDK through the curated `@mentra/engine/bluetooth-sdk` entry points, which omit the SDK's debug and devtools-only namespaces. The direct SDK dependency supplies its Expo config plugin and native modules. The example demonstrates the same Device, Camera, Stream, System, and Console flows as the native Android and iOS examples. Its full-page Mentra Live update UI is intentionally app-owned and uses `useMentraLiveOta`; Mentra Engine still owns the complete OTA coordinator underneath it.
 
 Expo Go cannot load the SDK because the package contains native Android and iOS code. Use `bunx expo run:ios`, `bun run android:dev`, EAS development builds, or production native builds.
 
@@ -24,8 +24,8 @@ bun install
 The example depends on the SDK version pinned in `package.json`, for example:
 
 ```json
-"@mentra/bluetooth-sdk": "3.1.0-dev.9",
-"@mentra/engine": "3.1.0-dev.9"
+"@mentra/bluetooth-sdk": "3.1.0-dev.27",
+"@mentra/engine": "3.1.0-dev.27"
 ```
 
 Use compatible SDK and Engine versions published by Mentra. When validating
@@ -156,7 +156,7 @@ the published package, remove the symlink and run `bun install`.
 
 The example has five tabs:
 
-- **Device**: scan for Mentra Live glasses, connect, disconnect, reconnect to the saved/default device, inspect battery, firmware, Wi-Fi, RSSI, and discovered-device state. Connecting Mentra Live opens the shared full-page OTA flow automatically; the Software Update action opens the same flow manually. Legacy glasses without hotspot OTA support can return to the System tab for Wi-Fi setup and resume the flow afterward.
+- **Device**: scan for Mentra Live glasses, connect, disconnect, reconnect to the saved/default device, inspect battery, firmware, Wi-Fi, RSSI, and discovered-device state. Connecting Mentra Live opens the custom full-page OTA presentation in `src/ota` automatically; the Software Update action opens the same flow manually. The presentation calls only `useMentraLiveOta` actions, renders the controller's release transition and changelogs, and leaves hotspot/Wi-Fi transport, APK/MTK/BES sequencing, retries, restarts, and verification in Engine. Legacy glasses without hotspot OTA support can return to the System tab for Wi-Fi setup and resume the flow afterward.
 - **Camera**: request photo upload to the local demo cloud or directly to this phone, choose automatic or BLE-only photo transfer, record and upload videos to the media webhook, tune manual exposure and ISO, enable **Text Capture Mode** for glasses-side max-resolution capture and text-region cropping, preview received media, or separately scan standard photo previews for barcodes. Text capture and barcode scanning are mutually exclusive; enabling either turns the other off. Direct phone photo is provided by the SDK, while barcode scanning is implemented in a companion local native module.
 - **Stream**: start RTMP, SRT, or WebRTC streams with SDK-managed keep-alives and preview HLS/WebRTC output. Android and iOS can receive WebRTC directly on the phone through the app-hosted GStreamer WHIP receiver.
 - **System**: scan/connect/forget Wi-Fi, toggle hotspot, change gallery mode, receive microphone PCM, and send RGB LED controls.
@@ -183,6 +183,7 @@ Do not use `localhost` in the app. The glasses, phone, and computer must be on a
 ## Key Files
 
 - `src/useBluetoothSdkExample.ts`: example-app orchestration for SDK lifecycle, event subscriptions, scan/connect, camera, stream, Wi-Fi, microphone, and LED commands.
+- `src/ota/`: custom update pages driven only by the public `useMentraLiveOta` controller.
 - `src/screens/`: Device, Camera, Stream, System, and Console screens.
 - `src/sdkFormat.ts`: shared status/event formatting.
 - `app.json`: permissions, SDK plugin, and Android native-library packaging rules.

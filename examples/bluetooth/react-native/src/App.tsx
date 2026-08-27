@@ -1,9 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Keyboard, Platform, View, StyleSheet, StatusBar } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
-import { MentraLiveOtaFlow } from '@mentra/engine/ota';
 import { KeyboardVisibleContext } from './components/keyboardLayout';
 import { TabBar, TabKey } from './components/TabBar';
+import { CustomMentraLiveOtaFlow } from './ota/CustomMentraLiveOtaFlow';
 import { DeviceScreen } from './screens/DeviceScreen';
 import { CameraScreen } from './screens/CameraScreen';
 import { StreamScreen } from './screens/StreamScreen';
@@ -82,7 +82,7 @@ export default function App() {
       <StatusBar barStyle="dark-content" />
       <KeyboardVisibleContext.Provider value={keyboardVisible}>
         {otaVisible ? (
-          <MentraLiveOtaFlow
+          <CustomMentraLiveOtaFlow
             deviceName="Mentra Live"
             onFinished={finishOta}
             onOpenWifiSetup={openWifiSetup}
