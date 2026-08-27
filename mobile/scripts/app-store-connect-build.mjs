@@ -79,25 +79,28 @@ export async function findApp(client, bundleId) {
   )
 }
 
-export async function findBuild(client, {appId, buildNumber}) {
-  const response = await client.request(
-    query("/v1/builds", {"filter[app]": appId, "filter[version]": String(buildNumber), "limit": "2"}),
-  )
+export async function findBuild(client, {appId, buildNumber, marketingVersion}) {
+  const filters = {"filter[app]": appId, "filter[version]": String(buildNumber), "limit": "2"}
+  if (marketingVersion) filters["filter[preReleaseVersion.version]"] = marketingVersion
+  const response = await client.request(query("/v1/builds", filters))
   if (!Array.isArray(response?.data) || response.data.length === 0) return null
   return exactlyOne(response, `build ${buildNumber}`)
 }
 
-export async function findProcessedBuild(client, {appId, buildNumber}) {
-  const build = await findBuild(client, {appId, buildNumber})
+export async function findProcessedBuild(client, {appId, buildNumber, marketingVersion}) {
+  const build = await findBuild(client, {appId, buildNumber, marketingVersion})
   if (!build) return null
   const state = build.attributes?.processingState
   if (state === "FAILED" || state === "INVALID") throw new Error(`App Store Connect build ${buildNumber} is ${state}`)
   return state === "VALID" ? build : null
 }
 
-export async function waitForProcessedBuild(client, {appId, buildNumber, attempts = 120, delay = 10_000}) {
+export async function waitForProcessedBuild(
+  client,
+  {appId, buildNumber, marketingVersion, attempts = 120, delay = 10_000},
+) {
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const build = await findProcessedBuild(client, {appId, buildNumber})
+    const build = await findProcessedBuild(client, {appId, buildNumber, marketingVersion})
     if (build) return build
     if (attempt < attempts) await new Promise((resolve) => setTimeout(resolve, delay))
   }
@@ -223,7 +226,11 @@ async function main() {
   })
   const app = await findApp(client, args["bundle-id"])
   if (command === "lookup") {
-    const build = await findBuild(client, {appId: app.id, buildNumber: args["build-number"]})
+    const build = await findBuild(client, {
+      appId: app.id,
+      buildNumber: args["build-number"],
+      marketingVersion: args["marketing-version"],
+    })
     if (process.env.GITHUB_OUTPUT) {
       const {appendFileSync} = await import("node:fs")
       appendFileSync(
@@ -235,7 +242,11 @@ async function main() {
     return
   }
   if (command === "assign") {
-    const build = await waitForProcessedBuild(client, {appId: app.id, buildNumber: args["build-number"]})
+    const build = await waitForProcessedBuild(client, {
+      appId: app.id,
+      buildNumber: args["build-number"],
+      marketingVersion: args["marketing-version"],
+    })
     if (args["whats-new"]) {
       await setBetaBuildWhatsNew(client, {buildId: build.id, whatsNew: args["whats-new"]})
     }

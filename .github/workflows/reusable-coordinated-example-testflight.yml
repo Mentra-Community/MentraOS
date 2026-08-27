@@ -113,6 +113,7 @@ jobs:
           --key-id "${{ secrets.ASC_API_KEY_ID }}"
           --key-path "${{ steps.asc.outputs.key_path }}"
           --bundle-id "$EXAMPLE_BUNDLE_ID"
+          --marketing-version "${{ steps.coordinates.outputs.marketing_version }}"
           --build-number "${{ steps.coordinates.outputs.build_number }}"
 
       - name: Verify the App Store Connect app
@@ -322,6 +323,7 @@ jobs:
           --key-id "${{ secrets.ASC_API_KEY_ID }}"
           --key-path "${{ steps.asc.outputs.key_path }}"
           --bundle-id "$EXAMPLE_BUNDLE_ID"
+          --marketing-version "${{ steps.coordinates.outputs.marketing_version }}"
           --build-number "${{ steps.coordinates.outputs.build_number }}"
           --group-name "${{ inputs.testflight_group }}"
           --whats-new "Coordinated example release ${{ steps.coordinates.outputs.release_identity }}."

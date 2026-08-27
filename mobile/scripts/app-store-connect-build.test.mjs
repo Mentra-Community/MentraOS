@@ -35,6 +35,17 @@ test("waits for an uploaded build to finish processing", async () => {
   assert.match(api.calls[0].resource, /filter%5Bversion%5D=310000057/)
 })
 
+test("can scope an exact build number to its marketing version", async () => {
+  const api = client([{data: [{id: "build-1", attributes: {processingState: "VALID"}}]}])
+  await waitForProcessedBuild(api, {
+    appId: "app-1",
+    buildNumber: 310000057,
+    marketingVersion: "3.1.0",
+    attempts: 1,
+  })
+  assert.match(api.calls[0].resource, /filter%5BpreReleaseVersion.version%5D=3.1.0/)
+})
+
 test("fails when App Store Connect marks a build invalid", async () => {
   const api = client([{data: [{id: "build-1", attributes: {processingState: "FAILED"}}]}])
   await assert.rejects(() => findProcessedBuild(api, {appId: "app-1", buildNumber: 12}), /is FAILED/)
