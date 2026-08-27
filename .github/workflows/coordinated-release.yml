@@ -338,7 +338,7 @@ jobs:
             --output "starter-kit-result/$result_name" 2>/dev/null; then
             rm -f "starter-kit-result/$result_name"
             run_json=$(gh run list --repo "$STARTER_KIT_REPOSITORY" \
-              --workflow coordinated-example-release.yml --event workflow_dispatch --limit 100 \
+              --workflow coordinated-example-release.yml --event repository_dispatch --limit 100 \
               --json databaseId,displayTitle,status,url \
               --jq ".[] | select(.displayTitle == \"$run_title\" and .status != \"completed\")" \
               | head -1)
@@ -349,11 +349,14 @@ jobs:
               echo "run_url=$run_url" >> "$GITHUB_OUTPUT"
             else
               dispatched_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-              gh workflow run coordinated-example-release.yml \
-                --repo "$STARTER_KIT_REPOSITORY" \
-                --ref main \
-                -f "channel=$channel" \
-                -f "payload=$payload"
+              dispatch=$(jq -cn \
+                --arg channel "$channel" \
+                --arg payload "$payload" \
+                '{
+                  event_type: "coordinated_example_release",
+                  client_payload: {channel: $channel, payload: $payload}
+                }')
+              gh api --method POST "repos/$STARTER_KIT_REPOSITORY/dispatches" --input - <<< "$dispatch"
             fi
 
             candidate_branch="coordinated/$identity"
@@ -362,7 +365,7 @@ jobs:
             for _ in {1..180}; do
               if [[ -z "$run_id" ]]; then
                 run_json=$(gh run list --repo "$STARTER_KIT_REPOSITORY" \
-                  --workflow coordinated-example-release.yml --event workflow_dispatch --limit 30 \
+                  --workflow coordinated-example-release.yml --event repository_dispatch --limit 30 \
                   --json databaseId,displayTitle,createdAt,url \
                   --jq ".[] | select(.displayTitle == \"$run_title\" and .createdAt >= \"$dispatched_at\")" \
                   | head -1)
