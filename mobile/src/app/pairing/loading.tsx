@@ -64,7 +64,7 @@ export default function GlassesPairingLoadingScreen() {
   const [pairingKickoffComplete, setPairingKickoffComplete] = useState(false)
   const pairingKickoffStartedRef = useRef(false)
   const pairingKickoffTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const pairingCancelledRef = useRef(false)
+  const pairingStoppedRef = useRef(false)
   const isMentraLive = deviceModel === DeviceTypes.LIVE
   const pairingTimingStartRef = useRef(Date.now())
   const pairingTimingLastRef = useRef(Date.now())
@@ -91,7 +91,7 @@ export default function GlassesPairingLoadingScreen() {
       if (!ready && navigationTimerRef.current) {
         clearTimeout(navigationTimerRef.current)
         navigationTimerRef.current = null
-        if (!pairingCancelledRef.current) hasNavigatedRef.current = false
+        if (!pairingStoppedRef.current) hasNavigatedRef.current = false
       }
     }
     const unsubscribe = engine.pairing.onTargetReady(target, observeReadiness)
@@ -137,7 +137,7 @@ export default function GlassesPairingLoadingScreen() {
   }, [isMentraLive, securePairingCapable, pairingCode, logPairingTiming])
 
   const handleGoBack = useCallback(() => {
-    pairingCancelledRef.current = true
+    pairingStoppedRef.current = true
     hasNavigatedRef.current = true
     if (pairingKickoffTimerRef.current) {
       clearTimeout(pairingKickoffTimerRef.current)
@@ -155,6 +155,16 @@ export default function GlassesPairingLoadingScreen() {
 
   const handlePairFailure = useCallback(
     (error: string) => {
+      pairingStoppedRef.current = true
+      hasNavigatedRef.current = true
+      if (pairingKickoffTimerRef.current) {
+        clearTimeout(pairingKickoffTimerRef.current)
+        pairingKickoffTimerRef.current = null
+      }
+      if (navigationTimerRef.current) {
+        clearTimeout(navigationTimerRef.current)
+        navigationTimerRef.current = null
+      }
       void engine.pairing.abandonAttempt().catch((cleanupError) => {
         console.warn("Pairing failure cleanup failed:", cleanupError)
       })
@@ -181,7 +191,7 @@ export default function GlassesPairingLoadingScreen() {
 
     const timer = setTimeout(() => {
       pairingKickoffTimerRef.current = null
-      if (pairingCancelledRef.current) return
+      if (pairingStoppedRef.current) return
       pairingKickoffStartedRef.current = true
       logPairingTiming("pairing_kickoff")
       void engine.pairing
@@ -191,8 +201,7 @@ export default function GlassesPairingLoadingScreen() {
         })
         .catch((error) => {
           console.error("Failed to connect to selected device:", error)
-          if (pairingCancelledRef.current || hasNavigatedRef.current) return
-          hasNavigatedRef.current = true
+          if (pairingStoppedRef.current || hasNavigatedRef.current) return
           handlePairFailure("errors:pairingCouldNotStart")
         })
     }, PAIRING_KICKOFF_DELAY_MS)
@@ -224,7 +233,7 @@ export default function GlassesPairingLoadingScreen() {
   useEffect(() => {
     if (
       !isFocused ||
-      pairingCancelledRef.current ||
+      pairingStoppedRef.current ||
       !pairingKickoffComplete ||
       !isMentraLive ||
       securePairingCapable === false ||
@@ -253,7 +262,7 @@ export default function GlassesPairingLoadingScreen() {
   ])
 
   useEffect(() => {
-    if (pairingCancelledRef.current || !isFocused || !pairingKickoffComplete || !selectedTargetReady) {
+    if (pairingStoppedRef.current || !isFocused || !pairingKickoffComplete || !selectedTargetReady) {
       return
     }
     logPairingTiming(

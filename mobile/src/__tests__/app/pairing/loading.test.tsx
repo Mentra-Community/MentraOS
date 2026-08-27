@@ -293,6 +293,31 @@ describe("pairing loading screen", () => {
     expect(replace).toHaveBeenCalledWith("/pairing/success", {deviceModel: "Mentra Live"})
   })
 
+  it("cancels a pending success transition when the selected attempt fails", async () => {
+    ;(useRoute as jest.Mock).mockReturnValue({
+      params: makeRouteParams("Mentra Live", "MENTRA_LIVE_BLE_EXISTING", {securePairingCapable: false}),
+    })
+    render(<GlassesPairingLoadingScreen />)
+    await startPairingKickoff()
+
+    act(() => {
+      promoteWearable("Mentra Live", "MENTRA_LIVE_BLE_EXISTING")
+      useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+    })
+    expect(replace).not.toHaveBeenCalledWith("/pairing/success", expect.anything())
+
+    act(() => {
+      emitBluetoothSdkEvent("pair_failure", {error: "pairing:failed_after_kickoff"})
+      jest.advanceTimersByTime(1_000)
+    })
+
+    expect(replace).toHaveBeenCalledWith("/pairing/failure", {
+      error: "pairing:failed_after_kickoff",
+      deviceModel: "Mentra Live",
+    })
+    expect(replace).not.toHaveBeenCalledWith("/pairing/success", expect.anything())
+  })
+
   it("does not start the selected-device kickoff while loading is under Bluetooth Classic", async () => {
     ;(useIsFocused as jest.Mock).mockReturnValue(false)
     const screen = render(<GlassesPairingLoadingScreen />)
