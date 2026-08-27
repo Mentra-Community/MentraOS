@@ -77,6 +77,14 @@ export function CustomMentraLiveOtaFlow({
           <Text style={styles.title}>{presentation.title}</Text>
           <Text style={styles.message}>{presentation.message}</Text>
 
+          {presentation.versionLabel ? (
+            <View style={styles.versionBadge}>
+              <Text selectable style={styles.versionLabel}>
+                {presentation.versionLabel}
+              </Text>
+            </View>
+          ) : null}
+
           {presentation.progress !== undefined ? (
             <View style={styles.progressBlock}>
               <Text style={[styles.progressValue, { color: palette.accent }]}>
@@ -246,6 +254,21 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
     maxWidth: 420,
+    textAlign: "center",
+  },
+  versionBadge: {
+    backgroundColor: toneColors.neutral.wash,
+    borderColor: colors.hairline,
+    borderRadius: 12,
+    borderWidth: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+  },
+  versionLabel: {
+    color: colors.ink,
+    fontSize: 14,
+    fontVariant: ["tabular-nums"],
+    fontWeight: "600",
     textAlign: "center",
   },
   progressBlock: {

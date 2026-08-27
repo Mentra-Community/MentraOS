@@ -30,11 +30,17 @@ export type CustomOtaPresentation = {
   secondary?: CustomOtaButton;
   title: string;
   tone: 'active' | 'danger' | 'neutral' | 'success';
+  versionLabel?: string;
 };
 
-type OtaStateWithChangelogs = MentraLiveOtaState & {
-  changelogs?: CustomOtaChangelog[];
-};
+function updateVersionLabel(transition: MentraLiveOtaState['releaseTransition']): string | undefined {
+  if (!transition) return undefined;
+  return `${transition.fromVersion ?? 'Current version unknown'} → ${transition.toVersion}`;
+}
+
+function completedVersionLabel(transition: MentraLiveOtaState['releaseTransition']): string | undefined {
+  return transition ? `Updated to ${transition.toVersion}` : undefined;
+}
 
 function stepLabel(step: MentraLiveOtaStep | null): string {
   switch (step) {
@@ -70,7 +76,7 @@ export function otaPresentation(
   state: MentraLiveOtaState,
   deviceName = 'Mentra Live',
 ): CustomOtaPresentation {
-  const changelogs = (state as OtaStateWithChangelogs).changelogs ?? [];
+  const {changelogs, releaseTransition} = state;
 
   if (state.versionChangePhase === 'restarting') {
     return {
@@ -122,6 +128,7 @@ export function otaPresentation(
           : undefined,
         title: state.versionChange ? 'Version change required' : 'Update available',
         tone: 'active',
+        versionLabel: updateVersionLabel(releaseTransition),
       };
     case 'wifi_required':
       return {
@@ -133,6 +140,7 @@ export function otaPresentation(
           : undefined,
         title: 'Wi-Fi required',
         tone: 'neutral',
+        versionLabel: updateVersionLabel(releaseTransition),
       };
     case 'up_to_date':
       return {
@@ -141,6 +149,7 @@ export function otaPresentation(
         primary: {action: 'finish', label: 'Continue'},
         title: 'Everything is up to date',
         tone: 'success',
+        versionLabel: completedVersionLabel(releaseTransition),
       };
     case 'dev_build':
       return {
@@ -233,6 +242,7 @@ export function otaPresentation(
         primary: {action: 'finish', label: state.versionChange && !state.versionChangeConverged ? 'Continue' : 'Done'},
         title: state.versionChange ? 'Version change complete' : 'Update complete',
         tone: 'success',
+        versionLabel: completedVersionLabel(releaseTransition),
       };
     case 'failed':
       return {

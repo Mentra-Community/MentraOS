@@ -1,16 +1,9 @@
 import {describe, expect, test} from 'bun:test';
 import type {MentraLiveOtaState} from '@mentra/engine/ota';
 
-import {
-  otaPresentation,
-  type CustomOtaChangelog,
-} from './otaPresentation';
+import {otaPresentation} from './otaPresentation';
 
-type OtaStateWithChangelogs = MentraLiveOtaState & {
-  changelogs?: CustomOtaChangelog[];
-};
-
-const baseState: OtaStateWithChangelogs = {
+const baseState: MentraLiveOtaState = {
   canDiscard: false,
   canDismiss: false,
   canFinish: false,
@@ -26,8 +19,10 @@ const baseState: OtaStateWithChangelogs = {
   hotspotPhase: 'idle',
   hotspotSupported: true,
   installingApkOnly: false,
+  changelogs: [],
   phase: null,
   progress: null,
+  releaseTransition: null,
   screen: 'checking',
   step: null,
   totalSteps: null,
@@ -40,7 +35,7 @@ const baseState: OtaStateWithChangelogs = {
   wifiStatusKnown: true,
 };
 
-function otaState(overrides: Partial<OtaStateWithChangelogs>): OtaStateWithChangelogs {
+function otaState(overrides: Partial<MentraLiveOtaState>): MentraLiveOtaState {
   return {...baseState, ...overrides};
 }
 
@@ -61,6 +56,25 @@ describe('custom OTA presentation', () => {
     });
     expect(presentation.secondary).toEqual({action: 'finish', label: 'Later'});
     expect(presentation.detail).toContain('glasses hotspot');
+  });
+
+  test('shows the current and target coordinated releases before installation', () => {
+    const presentation = otaPresentation(otaState({
+      canInstall: true,
+      releaseTransition: {fromVersion: '40', toVersion: '3.1.0-beta.37'},
+      screen: 'update_available',
+    }));
+
+    expect(presentation.versionLabel).toBe('40 → 3.1.0-beta.37');
+  });
+
+  test('does not invent an unknown current coordinated release', () => {
+    const presentation = otaPresentation(otaState({
+      releaseTransition: {fromVersion: null, toVersion: '3.1.0-beta.37'},
+      screen: 'wifi_required',
+    }));
+
+    expect(presentation.versionLabel).toBe('Current version unknown → 3.1.0-beta.37');
   });
 
   test('does not offer Later for a required update', () => {
@@ -145,6 +159,7 @@ describe('custom OTA presentation', () => {
         {version: '3.2.0', markdown: 'Newest notes'},
         {version: '3.1.0', markdown: 'Earlier notes'},
       ],
+      releaseTransition: {fromVersion: '40', toVersion: '3.2.0'},
       screen: 'complete',
     }));
 
@@ -154,6 +169,7 @@ describe('custom OTA presentation', () => {
       '3.1.0',
     ]);
     expect(presentation.tone).toBe('success');
+    expect(presentation.versionLabel).toBe('Updated to 3.2.0');
   });
 
   test('keeps changelogs on the stable up-to-date screen', () => {
