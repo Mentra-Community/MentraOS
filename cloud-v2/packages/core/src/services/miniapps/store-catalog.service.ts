@@ -257,10 +257,12 @@ export class StoreCatalogService {
     );
     const stableRelease = app.activeReleaseId ? releaseById.get(app.activeReleaseId) : null;
     const betaRelease = app.activeBetaReleaseId ? releaseById.get(app.activeBetaReleaseId) : null;
+    const stableDistributionAuthorized =
+      app.visibility === "private"
+        ? appInvitationAuthorized
+        : Boolean(stableRelease?.publicStoreApprovedAt) || appInvitationAuthorized;
     const referencedByStable = Boolean(
-      stableRelease &&
-        (stableRelease.publicStoreApprovedAt || appInvitationAuthorized) &&
-        referencedBy(app.publishedStoreListing),
+      stableRelease && stableDistributionAuthorized && referencedBy(app.publishedStoreListing),
     );
     const betaDistributionAuthorized =
       app.visibility === "private"
@@ -277,7 +279,7 @@ export class StoreCatalogService {
       ...asset,
       cacheControl:
         app.visibility !== "private" && referencedByStable && Boolean(stableRelease?.publicStoreApprovedAt)
-          ? "public, max-age=31536000, immutable"
+          ? "public, max-age=0, must-revalidate"
           : "private, no-store",
     };
   }

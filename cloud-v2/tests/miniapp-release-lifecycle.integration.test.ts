@@ -547,7 +547,7 @@ describe("miniapp release lifecycle", () => {
 
     const publicAsset = await catalogService.getPublicAsset(icon.id);
     expect(publicAsset.contentType).toBe("image/png");
-    expect(publicAsset.cacheControl).toBe("public, max-age=31536000, immutable");
+    expect(publicAsset.cacheControl).toBe("public, max-age=0, must-revalidate");
     const replacement = await miniapps.createStoreAsset(developer, "com.example.artwork", {
       role: "store_icon",
       fileName: "replacement.png",
@@ -564,6 +564,71 @@ describe("miniapp release lifecycle", () => {
       status: 409,
     });
     await miniapps.deleteStoreAsset(developer, "com.example.artwork", replacement.id);
+  });
+
+  test("public artwork becomes private immediately when distribution visibility changes", async () => {
+    const packageName = "com.example.artworkvisibility";
+    await miniapps.createMiniApp(developer, {
+      packageName,
+      displayName: "Artwork Visibility",
+      description: "Artwork visibility transition test",
+    });
+    await miniapps.updateStoreListing(developer, packageName, {
+      longDescription: "A complete Store description.",
+      privacyPolicyUrl: "https://example.com/privacy",
+      supportUrl: "https://example.com/support",
+    });
+    const assets = await Promise.all([
+      miniapps.createStoreAsset(developer, packageName, {
+        role: "store_icon",
+        fileName: "icon.png",
+        contentType: "image/png",
+        bytes: tinyPng(),
+      }),
+      miniapps.createStoreAsset(developer, packageName, {
+        role: "store_cover",
+        fileName: "cover.png",
+        contentType: "image/png",
+        bytes: tinyPng(),
+      }),
+      miniapps.createStoreAsset(developer, packageName, {
+        role: "gallery_screenshot",
+        fileName: "screenshot.png",
+        contentType: "image/png",
+        bytes: tinyPng(),
+      }),
+    ]);
+    const release = await miniapps.createRelease(developer, {
+      packageName,
+      version: "1.0.0",
+      manifest: { packageName, name: "Artwork Visibility", version: "1.0.0" },
+      bundle: await releaseBundle({ packageName, name: "Artwork Visibility", version: "1.0.0" }),
+    });
+    await miniapps.submitRelease(developer, packageName, release.id);
+    await miniapps.approveRelease({ releaseId: release.id, adminId: "admin@mentraglass.com" });
+    await miniapps.publishRelease({ releaseId: release.id, adminId: "admin@mentraglass.com" });
+
+    const catalog = new StoreCatalogService();
+    for (const asset of assets) {
+      expect((await catalog.getPublicAsset(asset.id)).cacheControl).toBe("public, max-age=0, must-revalidate");
+    }
+
+    await miniapps.updateVisibility(developer, packageName, "private");
+    const uninvitedUser = { mentraUserId: "mu_store_other", tenantId: "mentra" };
+    for (const asset of assets) {
+      await expect(catalog.getPublicAsset(asset.id)).rejects.toMatchObject({ status: 404 });
+      await expect(catalog.getAsset(asset.id, uninvitedUser)).rejects.toMatchObject({ status: 404 });
+    }
+
+    const invitation = await miniappAccess.invite(developer, packageName, "tester@example.com");
+    for (const asset of assets) {
+      expect((await catalog.getAsset(asset.id, storeUser)).cacheControl).toBe("private, no-store");
+    }
+
+    await miniappAccess.revoke(developer, packageName, invitation.id);
+    for (const asset of assets) {
+      await expect(catalog.getAsset(asset.id, storeUser)).rejects.toMatchObject({ status: 404 });
+    }
   });
 
   test("private beta-only artwork stays off the unauthenticated asset route", async () => {
