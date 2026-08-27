@@ -11,40 +11,26 @@ packages, hosted OTA manifest, and portable OTA bundle selected for one release.
 See [Air-Gapped Bluetooth SDK Deployment](/mentra-live/air-gapped-deployment)
 for release-record resolution, checksum verification, and internal hosting.
 
-Resolve the newest completed beta release record, then pin its exact identity
-in your app:
+Resolve the current beta candidate, require its completed release record, then
+pin that exact identity in your app:
 
 ```bash
 RELEASE_FAMILY="3.1.0"
-RELEASE_API="https://api.github.com/repos/Mentra-Community/MentraOS/releases/tags/mentra-builds-v${RELEASE_FAMILY}"
 RELEASE_RECORD="mentra-release-selected-beta.json"
-
-RELEASE_RECORD_URL="$(
-  curl --fail --silent --show-error --location "$RELEASE_API" |
-    jq -er --arg family "$RELEASE_FAMILY" '
-      [.assets[]
-        | select(.name | startswith("mentra-release-" + $family + "-beta."))
-        | select(.name | test("beta[.][0-9]+[.]json$"))
-        | {
-            url: .browser_download_url,
-            sequence: (.name | capture("beta[.](?<n>[0-9]+)[.]json$").n | tonumber)
-          }
-      ]
-      | if length == 0
-        then error("no completed beta release")
-        else max_by(.sequence).url
-        end
-    '
-)" &&
+RELEASE_VERSION="$(npm view @mentra/bluetooth-sdk@beta version)" &&
+RELEASE_RECORD_URL="https://github.com/Mentra-Community/MentraOS/releases/download/mentra-builds-v${RELEASE_FAMILY}/mentra-release-${RELEASE_VERSION}.json" &&
 curl --fail --location --output "$RELEASE_RECORD" "$RELEASE_RECORD_URL" &&
-RELEASE_VERSION="$(jq -er .releaseIdentity "$RELEASE_RECORD")" &&
+test "$(jq -er .releaseIdentity "$RELEASE_RECORD")" = "$RELEASE_VERSION" &&
 echo "$RELEASE_VERSION"
 ```
 
-The command considers only a `mentra-release-<release-version>.json` record,
-which is published after the SDK packages, native artifacts, OTA assets, example
-app, and release verification complete. It fails instead of selecting a release
-that is still publishing. Use the printed value across every platform:
+The npm tag proposes a candidate; it is not the readiness check. The command
+succeeds only when the matching `mentra-release-<release-version>.json` exists
+and identifies that same release. This record is published after the SDK
+packages, native artifacts, OTA assets, example app, and release verification
+complete. If the candidate is still publishing, the command fails; wait for it
+to finish instead of mixing versions. Use the printed value across every
+platform:
 
 | Mobile app dependency | Required glasses software |
 | --- | --- |
