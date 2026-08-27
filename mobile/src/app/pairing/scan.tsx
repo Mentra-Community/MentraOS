@@ -285,9 +285,6 @@ export default function SelectGlassesBluetoothScreen() {
   const formatLiveSubtitle = (device: Device) => {
     const base = filterDeviceName(device.name)
     const parts: string[] = [base]
-    if (device.pairingCode) {
-      parts.push(translate("pairing:pairingCodeLabel", {code: device.pairingCode}))
-    }
     if (device.securePairingCapable !== false && device.pairingMode === false) {
       parts.push(translate("pairing:notInPairingModeLabel"))
     }
