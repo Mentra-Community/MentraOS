@@ -6,6 +6,7 @@ import {
   collectPaginatedData,
   findProcessedBuild,
   productionSubmissionStatus,
+  setBetaBuildWhatsNew,
   waitForProductionSubmission,
   waitForProcessedBuild,
 } from "./app-store-connect-build.mjs"
@@ -60,6 +61,20 @@ test("does not post when the group already contains the build", async () => {
   const result = await assignBuildToGroup(api, {appId: "app-1", buildId: "build-1", groupName: "Mentra Dev"})
   assert.equal(result.reused, true)
   assert.equal(api.calls.length, 2)
+})
+
+test("creates TestFlight release notes for the exact processed build", async () => {
+  const api = client([
+    {data: []},
+    {data: {id: "localization-1", attributes: {locale: "en-US", whatsNew: "Release 3.1.0-dev.45"}}},
+  ])
+  const result = await setBetaBuildWhatsNew(api, {
+    buildId: "build-1",
+    whatsNew: "Release 3.1.0-dev.45",
+  })
+  assert.equal(result.localization.id, "localization-1")
+  assert.equal(api.calls[1].options.method, "POST")
+  assert.equal(JSON.parse(api.calls[1].options.body).data.relationships.build.data.id, "build-1")
 })
 
 test("follows every TestFlight relationship page before posting", async () => {

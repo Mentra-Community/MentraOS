@@ -168,7 +168,20 @@ test("assembles every product target and finalizes one complete release manifest
       sha256: String(index + 1).repeat(64),
       contentType: "application/octet-stream",
     })),
-    testflight: null,
+  }
+  const exampleTestflight = {
+    schemaVersion: 1,
+    releaseSetId: plan.releaseSetId,
+    releaseIdentity: plan.releaseIdentity,
+    channel: plan.channel,
+    mentraosSourceCommit: plan.sourceCommit,
+    starterKitReleaseCommit: starterKit.starterKit.releaseCommit,
+    app: {id: "6792839366", bundleId: "com.mentra.bluetoothsdk.example.reactnative"},
+    version: {marketingVersion: plan.native.marketingVersion, buildNumber: plan.native.buildNumber},
+    build: {id: "build-1", processingState: "VALID", uploadStatus: "published"},
+    group: {id: "group-1", name: "Mentra Staging"},
+    provenanceUrl,
+    ipa: {size: 123, sha256: "9".repeat(64)},
   }
 
   const results = assembleCoordinatedReleaseResults({
@@ -179,6 +192,7 @@ test("assembles every product target and finalizes one complete release manifest
     mobile,
     starterKit,
     starterKitResultUrl: "https://example.com/starter-kit-result.json",
+    exampleTestflight,
     asgSelectionFile,
     enginePackage,
     releaseAssetBaseUrl: "https://github.com/Mentra-Community/MentraOS/releases/download/mentra-builds-v3.1.0",
@@ -190,6 +204,7 @@ test("assembles every product target and finalizes one complete release manifest
   assert.equal(manifest.publications.mentraos["app-store-connect"].status, "published")
   assert.ok(manifest.artifacts.some((artifact) => artifact.coordinate === plan.artifactNames.asgSelection))
   assert.equal(manifest.starterKit.resultUrl, "https://example.com/starter-kit-result.json")
+  assert.equal(manifest.starterKit.testflight.build.id, "build-1")
   assert.equal(manifest.artifacts.at(-1).coordinate, starterKit.artifacts.at(-1).name)
 
   assert.throws(
@@ -217,6 +232,7 @@ test("assembles every product target and finalizes one complete release manifest
         mobile,
         starterKit: {...starterKit, releaseSetId: "mentra-other"},
         starterKitResultUrl: "https://example.com/starter-kit-result.json",
+        exampleTestflight,
         asgSelectionFile,
         enginePackage,
         releaseAssetBaseUrl: "https://example.com/release",

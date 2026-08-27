@@ -123,6 +123,33 @@ export async function assignBuildToGroup(client, {appId, buildId, groupName}) {
   return {group, reused: false}
 }
 
+export async function setBetaBuildWhatsNew(client, {buildId, locale = "en-US", whatsNew}) {
+  const response = await client.request(`/v1/builds/${buildId}/betaBuildLocalizations?limit=200`)
+  if (!Array.isArray(response?.data)) throw new Error("TestFlight localization response has no data array")
+  const matching = response.data.filter((localization) => localization.attributes?.locale === locale)
+  if (matching.length > 1) throw new Error(`Expected at most one TestFlight ${locale} localization`)
+  const existing = matching[0]
+  if (existing?.attributes?.whatsNew === whatsNew) return {localization: existing, reused: true}
+  if (existing) {
+    const localization = await client.request(`/v1/betaBuildLocalizations/${existing.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({data: {type: "betaBuildLocalizations", id: existing.id, attributes: {whatsNew}}}),
+    })
+    return {localization: localization.data, reused: false}
+  }
+  const localization = await client.request("/v1/betaBuildLocalizations", {
+    method: "POST",
+    body: JSON.stringify({
+      data: {
+        type: "betaBuildLocalizations",
+        attributes: {locale, whatsNew},
+        relationships: {build: {data: {type: "builds", id: buildId}}},
+      },
+    }),
+  })
+  return {localization: localization.data, reused: false}
+}
+
 export async function findAppStoreVersion(client, {appId, versionString}) {
   const response = await client.request(
     query("/v1/appStoreVersions", {
@@ -201,7 +228,7 @@ async function main() {
       const {appendFileSync} = await import("node:fs")
       appendFileSync(
         process.env.GITHUB_OUTPUT,
-        `exists=${Boolean(build)}\nprocessed=${build?.attributes?.processingState === "VALID"}\nbuild_id=${build?.id || ""}\n`,
+        `exists=${Boolean(build)}\nprocessed=${build?.attributes?.processingState === "VALID"}\napp_id=${app.id}\nbuild_id=${build?.id || ""}\n`,
       )
     }
     console.log(build ? `Found App Store Connect build ${args["build-number"]}` : "Build is absent")
@@ -209,7 +236,17 @@ async function main() {
   }
   if (command === "assign") {
     const build = await waitForProcessedBuild(client, {appId: app.id, buildNumber: args["build-number"]})
+    if (args["whats-new"]) {
+      await setBetaBuildWhatsNew(client, {buildId: build.id, whatsNew: args["whats-new"]})
+    }
     const result = await assignBuildToGroup(client, {appId: app.id, buildId: build.id, groupName: args["group-name"]})
+    if (process.env.GITHUB_OUTPUT) {
+      const {appendFileSync} = await import("node:fs")
+      appendFileSync(
+        process.env.GITHUB_OUTPUT,
+        `app_id=${app.id}\nbuild_id=${build.id}\nprocessing_state=${build.attributes?.processingState || ""}\ngroup_id=${result.group.id}\ngroup_name=${result.group.attributes?.name || args["group-name"]}\nreused=${result.reused}\n`,
+      )
+    }
     console.log(
       `${result.reused ? "Verified" : "Added"} build ${args["build-number"]} in TestFlight group ${result.group.attributes?.name || args["group-name"]}`,
     )
