@@ -102,10 +102,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: mobile/ios/build-device
-          key: xcode-derived-device-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-${{ hashFiles('mobile/ios/Podfile.lock', 'mobile/package.json') }}
-          restore-keys: |
-            xcode-derived-device-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-
-            xcode-derived-device-${{ runner.os }}-
+          # DerivedData and SwiftPM artifacts embed absolute workspace paths.
+          # Keep this cache runner-local and exact: restoring another runner's
+          # cache produced references to missing Mapbox XCFrameworks.
+          key: xcode-derived-device-${{ runner.name }}-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-${{ hashFiles('mobile/ios/Podfile.lock', 'mobile/package.json', 'mobile/bun.lock') }}
 
       - name: Install dependencies
         id: bun-install
@@ -411,14 +411,19 @@ jobs:
           # sufficient. We intentionally do NOT `rm -rf ~/Library/.../DerivedData/Mentra-*`:
           # that global glob would delete other branches' in-flight DerivedData on this
           # shared runner, which was contributing to the cross-build failures.
-          rm -rf Pods Podfile.lock build-device
+          # Keep Podfile.lock so the retry resolves the same dependency graph as
+          # the first attempt rather than drifting to newer pod versions.
+          rm -rf Pods build-device
 
           # Reinstall pods from scratch with fresh repo
           pod install --repo-update
 
-          # Retry the build
+          # Retry serially. The fallback only runs after a failed cached build,
+          # and limiting concurrency avoids the observed CocoaPods VFS overlay
+          # disappearing while parallel compile and XCFramework copy jobs run.
           xcodebuild -workspace Mentra.xcworkspace \
                      -scheme Mentra \
+                     -jobs 1 \
                      -configuration Release \
                      -destination 'generic/platform=iOS' \
                      -derivedDataPath build-device \

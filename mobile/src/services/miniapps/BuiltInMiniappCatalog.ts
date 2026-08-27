@@ -72,9 +72,10 @@ class BuiltInMiniappCatalog {
       void this.syncGlassesMenuApps()
     })
 
-    const syncMiniappDeveloperVisibility = (showOnHomeScreen: boolean) => {
-      appRegistry.setOfflineAppHidden(miniappDeveloperPackageName, !showOnHomeScreen)
-      engine.miniapps.setHiddenStatus(miniappDeveloperPackageName, !showOnHomeScreen)
+    const syncMiniappDeveloperVisibility = (showOnHomeScreen: boolean | undefined) => {
+      const visible = Boolean(showOnHomeScreen)
+      appRegistry.setOfflineAppHidden(miniappDeveloperPackageName, !visible)
+      engine.miniapps.setHiddenStatus(miniappDeveloperPackageName, !visible)
     }
     syncMiniappDeveloperVisibility(Boolean(engine.settings.get(SETTINGS.miniapp_dev_mode.key)))
     engine.settings.onChanged<boolean>(SETTINGS.miniapp_dev_mode.key, syncMiniappDeveloperVisibility)

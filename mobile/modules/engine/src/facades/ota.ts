@@ -8,8 +8,15 @@
  * `installSession` fronts the OtaInstallCoordinator state machine (WP 8B) — the host
  * progress screen is a pure renderer over its snapshot + attach/detach/retry/finish.
  */
-import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
-import type {OtaProgress, OtaProgressStatus, OtaStartAckEvent, OtaStatus, OtaUpdateInfo} from "@mentra/bluetooth-sdk"
+import BluetoothSdk from "@mentra/bluetooth-sdk"
+import type {
+  OtaProgress,
+  OtaProgressStatus,
+  OtaStartAckEvent,
+  OtaStatus,
+  OtaUpdateInfo,
+  ReleaseChangelog,
+} from "@mentra/bluetooth-sdk"
 import {isGlassesConnected, useGlassesStore} from "../stores/glasses"
 import {resolveOtaManifestUrl} from "../services/otaManifestUrl"
 import {otaInstallCoordinator, type OtaInstallSnapshot} from "../services/OtaInstallCoordinator"
@@ -26,6 +33,7 @@ function projectSnapshot() {
   return {
     connected: isGlassesConnected(s.connection),
     buildNumber: s.buildNumber || null,
+    appVersion: s.appVersion || null,
     mtkFirmwareVersion: s.mtkFirmwareVersion || null,
     besFirmwareVersion: s.besFirmwareVersion || null,
     hotspotOtaVersion: s.hotspotOtaVersion ?? 0,
@@ -46,6 +54,7 @@ export type {
   OtaProgressStatus,
   OtaStatus,
   OtaUpdateInfo,
+  ReleaseChangelog,
   OtaInstallSnapshot,
   OtaCheckCurrentGlassesOptions,
   OtaCheckCurrentGlassesResult,
@@ -84,6 +93,9 @@ export const ota = {
   ping: () => BluetoothSdk.ping(),
   /** Resolve and compare the current glasses against the OTA manifest, then update the OTA snapshot. */
   checkForUpdates: (options?: OtaCheckCurrentGlassesOptions) => checkCurrentGlassesForUpdate(options),
+  /** Return bundled release changelogs crossed between two coordinated product versions, newest first. */
+  getReleaseChangelogs: (fromVersion?: string | null, toVersion?: string | null): ReleaseChangelog[] =>
+    BluetoothSdk.getReleaseChangelogs(fromVersion, toVersion),
   /** Clear the available-update prompt state. */
   clearUpdateAvailable: () => useGlassesStore.getState().setOtaUpdateAvailable(null),
   /** Clear active progress/status before entering a fresh install flow. */
@@ -113,7 +125,6 @@ export const ota = {
    * @deprecated Legacy progress route (build < 37) only — removed with WP 8D.
    */
   clearBuildNumberForNextCheck: () => {
-    BluetoothSdk.updateGlasses({buildNumber: ""})
     useGlassesStore.getState().setGlassesInfo({buildNumber: ""})
   },
   /**
@@ -136,9 +147,9 @@ export const ota = {
     detach: () => otaInstallCoordinator.detach(),
     /** Retry after a failure: clear state and re-send ota_start (if connected). */
     retry: () => otaInstallCoordinator.retry(),
-    /** Terminal cleanup for Continue/Done (navigation stays in the screen). */
+    /** Terminal cleanup for Continue/Done, including hotspot route teardown. */
     finish: () => otaInstallCoordinator.finish(),
-    /** Abandon an interrupted session (super-mode skip): finish() + drop the session's status/progress. */
+    /** Abandon an interrupted session: await finish() then drop the session's status/progress. */
     discard: () => otaInstallCoordinator.discard(),
     /** Current install read model (displayState/errorMsg/lockout + glasses OTA data). */
     snapshot: (): OtaInstallSnapshot => otaInstallCoordinator.snapshot(),

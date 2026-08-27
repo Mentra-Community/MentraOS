@@ -71,11 +71,8 @@ public class GalleryCommandHandler implements ICommandHandler {
                 return sendEmptyGalleryStatus(cameraState);
             }
 
-            // Get FileManager from the camera server (same way HTTP server does it)
-            FileManager fileManager = null;
-            if (serviceManager != null && serviceManager.getCameraServer() != null) {
-                fileManager = serviceManager.getCameraServer().getFileManager();
-            }
+            // Gallery status travels over BLE and remains available before hotspot startup.
+            FileManager fileManager = serviceManager != null ? serviceManager.getFileManager() : null;
 
             if (fileManager == null) {
                 Log.e(TAG, "📸 FileManager not available");

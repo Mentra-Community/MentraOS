@@ -25,6 +25,35 @@ struct MentraLiveDevice {
     let address: String
 }
 
+enum MentraLivePendingPairingTarget {
+    static func matches(
+        connectedName: String,
+        connectedIdentifier: String,
+        pendingName: String,
+        pendingIdentifier: String
+    ) -> Bool {
+        if !pendingIdentifier.isEmpty {
+            return connectedIdentifier.caseInsensitiveCompare(pendingIdentifier) == .orderedSame
+        }
+        return !pendingName.isEmpty && connectedName == pendingName
+    }
+
+    static func shouldRecover(
+        isConnected: Bool,
+        connectedName: String,
+        connectedIdentifier: String,
+        pendingName: String,
+        pendingIdentifier: String
+    ) -> Bool {
+        isConnected && matches(
+            connectedName: connectedName,
+            connectedIdentifier: connectedIdentifier,
+            pendingName: pendingName,
+            pendingIdentifier: pendingIdentifier
+        )
+    }
+}
+
 // MARK: - BlePhotoUploadService
 
 class BlePhotoUploadService {
@@ -873,9 +902,10 @@ extension MentraLive: CBCentralManagerDelegate {
             if !isReconnectTarget && advertisesPairingFlag(advertisementData)
                 && !isPairingDiscoverable(advertisementData)
             {
-                // Nearby but not pairable: RN uses this for the empty-state hint, not the list.
+                // Keep nearby secure units visible with pairing-mode guidance, while RN blocks
+                // the connection until a pairable advertisement arrives.
                 Bridge.log(
-                    "LIVE: Nearby \(name) is secure firmware not in pairing mode — hiding from scan list"
+                    "LIVE: Nearby \(name) is secure firmware not in pairing mode — exposing as non-pairable"
                 )
                 discoveredPeripherals[name] = peripheral
                 cacheAdvPairing(
@@ -967,6 +997,7 @@ extension MentraLive: CBCentralManagerDelegate {
             self.isConnecting = false
             self.connectingPeripheral = nil
             self.connectedPeripheral = peripheral
+            self.emitConnectedPendingDeviceForPairingScan()
 
             // Save device name and address for future reconnection
             if let name = peripheral.name {
@@ -1618,6 +1649,7 @@ class MentraLive: NSObject, SGCManager {
 
     // State Tracking
     private var isScanning = false
+    private var manualDiscoveryActive = false
     private var isConnecting = false
     private var isKilled = false
     /// Glasses opened pairing window — stand down without forgetting identity/bonds.
@@ -1772,7 +1804,9 @@ class MentraLive: NSObject, SGCManager {
             // clear the saved device name:
             UserDefaults.standard.set("", forKey: PREFS_DEVICE_NAME)
 
+            manualDiscoveryActive = true
             startScan()
+            emitConnectedPendingDeviceForPairingScan()
         }
     }
 
@@ -2364,10 +2398,6 @@ class MentraLive: NSObject, SGCManager {
 
         centralManager?.scanForPeripherals(withServices: nil, options: scanOptions)
 
-        // Fresh advertisements refill pairing metadata. Re-emitting the last scan's
-        // cache would keep a unit pairable after it left pairing mode.
-        emitConnectedDeviceForPairingScan()
-
         // var dName = DeviceManager.shared.deviceName
         // if dName.isEmpty {
         //     dName = "MENTRA_LIVE"
@@ -2385,6 +2415,7 @@ class MentraLive: NSObject, SGCManager {
     }
 
     func stopScan() {
+        manualDiscoveryActive = false
         guard isScanning else { return }
 
         centralManager?.stopScan()
@@ -5502,22 +5533,33 @@ class MentraLive: NSObject, SGCManager {
 
     // MARK: - Event Emission
 
-    /// Pairing scan listens for advertisements. A unit that is already GATT-connected
-    /// has stopped ADV, so emit it as pairable or the scan list stays empty.
-    private func emitConnectedDeviceForPairingScan() {
-        guard connected, let peripheral = connectedPeripheral, let name = peripheral.name,
-              name == "Xy_A" || name.hasPrefix("XyBLE_") || name.hasPrefix("MENTRA_LIVE_BLE")
-              || name.hasPrefix("MENTRA_LIVE_BT") || name.lowercased().hasPrefix("mentra_live")
+    /// A selected pairing target can stop advertising once GATT connects, before readiness
+    /// promotes it to the default device. Re-emit only that explicit pending target; an
+    /// established owner's connected glasses have no pending identity and remain hidden.
+    private func emitConnectedPendingDeviceForPairingScan() {
+        guard manualDiscoveryActive, !pairingYieldActive, let peripheral = connectedPeripheral,
+              let name = peripheral.name,
+              MentraLivePendingPairingTarget.shouldRecover(
+                  isConnected: peripheral.state == .connected,
+                  connectedName: name,
+                  connectedIdentifier: peripheral.identifier.uuidString,
+                  pendingName: DeviceStore.shared.get("bluetooth", "pending_device_name") as? String ?? "",
+                  pendingIdentifier: DeviceStore.shared.get("bluetooth", "pending_device_address") as? String ?? ""
+              )
         else {
             return
         }
-        Bridge.log("LIVE: Pairing scan: already GATT-connected to \(name) — emitting as pairable (ADV off while connected)")
+
+        Bridge.log("LIVE: Pairing scan: recovering connected pending target \(name) (\(peripheral.identifier))")
         emitDiscoveredDevice(
             name,
             identifier: peripheral.identifier.uuidString,
             pairingMode: true,
             pairingCode: nil,
-            securePairingCapable: discoveredAdvPairing[name]?.securePairingCapable ?? false
+            securePairingCapable: DeviceStore.shared.get(
+                "bluetooth",
+                "pending_device_secure_pairing_capable"
+            ) as? Bool
         )
     }
 

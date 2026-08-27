@@ -885,20 +885,14 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
                 authTimeoutRunnable = null;
             }
 
-            byte[] data = SCmd_GetProtocolVersion();
-            Log.d(
-                    TAG,
-                    "Sending GetProtocolVersion command, data="
-                            + (data != null
-                                    ? ByteUtil.outputHexString(data, 0, data.length)
-                                    : "null"));
-            if (send(data)) {
-                Log.i(TAG, "BES OTA protocol started successfully");
-            } else {
-                Log.e(TAG, "Failed to send first protocol command");
-                failDurablyLocked("protocol_start_failed");
-                cleanupLocked();
-            }
+            // hm_ota proves that BES accepted the mode change, but not that its raw OTA parser is
+            // already ready for the first byte. Use the same bounded, read-only 0x99 probe ladder
+            // as the missing-ACK recovery path instead of betting the whole update on one packet.
+            // A duplicate protocol-version query is side-effect free and the first valid 0x9A
+            // response cancels the remaining attempts.
+            authorizationRecoveryProbePending = true;
+            authorizationRecoveryProbeAttempts = 0;
+            sendNextAuthorizationRecoveryProbeLocked();
         }
     }
 
@@ -1370,7 +1364,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
 
         if (msg.cmd == BesProtocolConstants.RCMD_GET_PROTOCOL_VERSION) {
             if (authorizationRecoveryProbePending) {
-                Log.i(TAG, "Raw BES OTA mode proven after missing hm_ota");
+                Log.i(TAG, "Raw BES OTA mode proven by protocol-version response");
                 cancelAuthorizationRecoveryProbeLocked();
                 rearmResponseWatchdog();
             }

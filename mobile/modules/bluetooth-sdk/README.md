@@ -349,7 +349,14 @@ Android and iOS async APIs use `BluetoothSdkException` / `BluetoothSdkError` for
 
 ## OTA Updates
 
-Mentra Live firmware owns the OTA flow. The SDK mirrors the MentraOS app commands and events:
+React Native apps should use `MentraLiveOtaFlow` or `useMentraLiveOta` from
+`@mentra/engine/ota`. They provide the same tested Wi-Fi/hotspot,
+APK/MTK/BES, restart, retry, and verification flow as the Mentra App. See
+[Update Mentra Live](https://docs.mentraglass.com/mentra-live/software-update).
+
+The Bluetooth SDK exposes the lower-level commands and transport capabilities
+that Mentra Engine and native apps build on. They are not a replacement for the
+Engine coordinator:
 
 - `setOtaVersionUrl(url)` selects the manifest used by subsequent checks and installs. Use this
   for a customer-controlled internal update server.
@@ -357,6 +364,9 @@ Mentra Live firmware owns the OTA flow. The SDK mirrors the MentraOS app command
   when no override was supplied.
 - `checkForOtaUpdate()` fetches the configured manifest and resolves with `true` when an ASG APK, MTK, or BES update is available.
 - `startOtaUpdate()` sends `ota_start` with the same configured manifest URL and resolves with the ASG start ack after your app presents the update and the user accepts it.
+- `queryOtaStatus()` returns the correlated status for the active session.
+- `@mentra/bluetooth-sdk/ota-transport` exposes scoped hotspot networking and
+  the local OTA artifact server without exposing native module internals.
 
 Release CI embeds an immutable manifest URL and checksum into every published
 SDK distribution. The completed coordinated release record correlates the SDK
@@ -370,25 +380,10 @@ against the URL they advertise, or the production default if they do not
 advertise one, so the app does not prompt for an update the glasses cannot
 install.
 
-```ts
-import BluetoothSdk from '@mentra/bluetooth-sdk'
-
-// Optional: point both the phone-side check and glasses install at an internal server.
-BluetoothSdk.setOtaVersionUrl('https://updates.example.internal/mentra-live/version.json')
-
-BluetoothSdk.addListener('ota_status', (event) => {
-  console.log(`OTA ${event.status}: ${event.overall_percent}%`)
-})
-
-const hasUpdate = await BluetoothSdk.checkForOtaUpdate()
-if (hasUpdate) {
-  const userAccepted = await promptUserToInstallUpdate() // your app's UI
-  if (userAccepted) {
-    const startAck = await BluetoothSdk.startOtaUpdate()
-    console.log('OTA start acknowledged', startAck.timestamp)
-  }
-}
-```
+Use these primitives directly only when implementing the documented native
+Android/iOS OTA contract or infrastructure beneath a coordinator. React Native
+application pages should render Mentra Engine's semantic controller state
+instead of sequencing raw events.
 
 Each coordinated prerelease publishes a portable OTA bundle. Stable releases
 promote the exact beta-tested OTA bytes, so always resolve the bundle coordinate

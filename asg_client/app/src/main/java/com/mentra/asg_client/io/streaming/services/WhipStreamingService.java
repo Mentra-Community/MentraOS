@@ -665,11 +665,14 @@ public class WhipStreamingService extends Service {
   }
 
   /**
-   * Cap the video encoder bitrate via RTP sender parameters and set degradation
-   * preference to MAINTAIN_FRAMERATE so WebRTC drops quality-per-frame instead of
+   * Seed WebRTC above its conservative startup default, cap the video encoder bitrate, and set
+   * degradation preference to MAINTAIN_FRAMERATE so WebRTC drops quality-per-frame instead of
    * frame rate when thermals get tight.
    */
   private void applyBitrateConstraints() {
+    int maximumBitrateBps = mStreamConfig.getVideoBitrate();
+    int initialBitrateBps = WhipBitratePolicy.initialBitrateBps(maximumBitrateBps);
+
     for (RtpSender sender : mPeerConnection.getSenders()) {
       if (sender.track() == null) continue;
       if (!"video".equals(sender.track().kind())) continue;
@@ -680,13 +683,20 @@ public class WhipStreamingService extends Service {
       params.degradationPreference = RtpParameters.DegradationPreference.MAINTAIN_FRAMERATE;
 
       for (RtpParameters.Encoding encoding : params.encodings) {
-        encoding.maxBitrateBps = mStreamConfig.getVideoBitrate();
+        encoding.maxBitrateBps = maximumBitrateBps;
       }
 
       sender.setParameters(params);
-      Log.i(TAG, "Applied video bitrate cap: " + (mStreamConfig.getVideoBitrate() / 1000)
-          + " kbps, degradation: MAINTAIN_FRAMERATE");
     }
+
+    boolean bitratePreferencesApplied =
+        WhipBitratePolicy.applyTo(mPeerConnection, maximumBitrateBps);
+    if (!bitratePreferencesApplied) {
+      Log.w(TAG, "Failed to apply WHIP initial/max bitrate preferences");
+    }
+    Log.i(TAG, "Applied video bitrate constraints: start=" + (initialBitrateBps / 1000)
+        + " kbps, max=" + (maximumBitrateBps / 1000)
+        + " kbps, degradation=MAINTAIN_FRAMERATE");
   }
 
   // -----------------------------------------------------------------------

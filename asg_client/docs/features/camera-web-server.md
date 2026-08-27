@@ -1,12 +1,14 @@
 # Camera web server
 
-ASG Client embeds a small HTTP server on the glasses (default port **8089**) that the phone uses to enumerate, sync, and download captured photos and videos. It also exposes endpoints for taking pictures, server status, and bulk file management.
+ASG Client embeds a small HTTP server on the glasses (default port **8089**) that the phone uses to enumerate, sync, and download captured photos and videos while connected to the Mentra Live hotspot. It also exposes endpoints for taking pictures, server status, and bulk file management.
 
 Source: `app/src/main/java/com/mentra/asg_client/io/server/`. Main class: `AsgCameraServer` (`io/server/services/AsgCameraServer.java`), built on the abstract `AsgServer` (`io/server/core/AsgServer.java`) which wraps NanoHTTPD.
 
 ## When the server runs
 
-The server is started by `AsgClientServiceManager.initializeCameraWebServer()` after WiFi credentials are accepted (see `WifiCommandHandler.handleSetWifiCredentials`). It listens on the local WiFi address only — it is not exposed beyond the network the glasses are joined to.
+The server starts only after the Mentra Live hotspot reports ready and stops as soon as the hotspot stops. `AsgClientService.onHotspotStateChanged()` drives the matching server lifecycle through `AsgClientServiceManager`. At process startup, an already-active hotspot is adopted before the service manager synchronizes the server state.
+
+NanoHTTPD binds specifically to the active hotspot gateway address, not to every interface. Ordinary station-mode WiFi connections never start the server and cannot reach it.
 
 `AsgClientServiceManager.getCameraServer()` exposes the running instance to other components. The gallery command handler, for example, reads counts from the server's `FileManager`.
 
@@ -27,7 +29,7 @@ CacheManager cache = new DefaultCacheManager(logger);
 RateLimiter rate = new DefaultRateLimiter(100, 60_000, logger);
 
 AsgCameraServer server = new AsgCameraServer(
-    config, network, cache, rate, logger, fileManager
+    config, network, cache, rate, logger, fileManager, hotspotGatewayIp
 );
 
 server.setOnPictureRequestListener(() -> mediaCaptureService.takePicture());
@@ -125,7 +127,7 @@ The capture ID is also stamped into the photo's EXIF `ImageUniqueID` tag at save
 
 ## Curl test recipes
 
-Replace `<GLASSES_IP>` with the WiFi IP of the glasses (visible in the phone app's pairing screen).
+Replace `<GLASSES_IP>` with the hotspot gateway IP reported by the glasses.
 
 ```bash
 # Health

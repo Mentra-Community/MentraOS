@@ -3,6 +3,7 @@ package com.mentra.asg_client.audio;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.mentra.asg_client.AsgConstants;
 import java.util.Arrays;
 import java.util.List;
 import org.junit.Test;
@@ -29,7 +30,7 @@ public class PairingCodePcmStitcherTest {
     }
 
     @Test
-    public void stitchWavs_crossfadesIntoOneShorterPhrase() throws Exception {
+    public void stitchWavs_insertsPauseBetweenTrimmedClips() throws Exception {
         int silence = PairingCodePcmStitcher.msToSamples(200, SAMPLE_RATE);
         int tone = PairingCodePcmStitcher.msToSamples(100, SAMPLE_RATE);
         byte[] left = toneWav(silence, tone, silence, (short) 8000);
@@ -39,11 +40,13 @@ public class PairingCodePcmStitcherTest {
                 PairingCodePcmStitcher.stitchWavs(List.of(left, right));
         PairingCodePcmStitcher.PcmClip clip = PairingCodePcmStitcher.decodePcmWav(stitched);
 
-        int overlap = PairingCodePcmStitcher.msToSamples(PairingCodePcmStitcher.CROSSFADE_MS, SAMPLE_RATE);
+        int pause =
+                PairingCodePcmStitcher.msToSamples(
+                        AsgConstants.PAIRING_CODE_INTER_CHARACTER_PAUSE_MS, SAMPLE_RATE);
         assertThat(clip.sampleRate).isEqualTo(SAMPLE_RATE);
-        assertThat(clip.samples.length).isEqualTo(tone * 2 - overlap);
-        assertThat(clip.samples.length)
-                .isLessThan(PairingCodePcmStitcher.decodePcmWav(left).samples.length);
+        assertThat(clip.samples.length).isEqualTo(tone * 2 + pause);
+        assertThat(Arrays.copyOfRange(clip.samples, tone, tone + pause))
+                .containsOnly((short) 0);
     }
 
     @Test

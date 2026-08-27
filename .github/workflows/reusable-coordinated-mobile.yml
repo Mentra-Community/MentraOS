@@ -71,6 +71,16 @@ on:
         value: ${{ jobs.result.outputs.result_artifact }}
       release_tag:
         value: ${{ jobs.prepare.outputs.release_tag }}
+      android_result:
+        value: ${{ jobs.status.outputs.android_result }}
+      ios_result:
+        value: ${{ jobs.status.outputs.ios_result }}
+      apk_name:
+        value: ${{ jobs.status.outputs.apk_name }}
+      ipa_name:
+        value: ${{ jobs.status.outputs.ipa_name }}
+      asset_base_url:
+        value: ${{ jobs.status.outputs.asset_base_url }}
 
 permissions:
   contents: write
@@ -119,7 +129,7 @@ jobs:
           [[ "$source" == "$SOURCE_COMMIT" ]]
           identity=$(jq -er .releaseIdentity release-intent/release-plan.json)
           release_set_id=$(jq -er .releaseSetId release-intent/release-plan.json)
-          tag="mentra-v${identity}"
+          tag=$(jq -er .artifactContainerTag release-intent/release-plan.json)
           {
             echo "release_tag=$tag"
             echo "release_identity=$identity"
@@ -150,20 +160,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_ID: ${{ inputs.release_id }}
-          SOURCE_COMMIT: ${{ inputs.source_commit }}
         run: |
           set -euo pipefail
           tag="${{ steps.release.outputs.release_tag }}"
           test -n "$RELEASE_ID"
           release=$(gh api "repos/${GITHUB_REPOSITORY}/releases/$RELEASE_ID")
           [[ "$(jq -r .tag_name <<< "$release")" == "$tag" ]]
-          [[ "$(jq -r .name <<< "$release")" == "Mentra ${{ steps.release.outputs.release_identity }}" ]]
-          if [[ "$(jq -r .draft <<< "$release")" == "true" ]]; then
-            [[ "$(jq -r .target_commitish <<< "$release")" == "$SOURCE_COMMIT" ]]
-          else
-            git fetch --force origin "refs/tags/$tag:refs/tags/$tag"
-            [[ "$(git rev-parse "$tag^{commit}")" == "$SOURCE_COMMIT" ]]
-          fi
+          [[ "$(jq -r .name <<< "$release")" == "$(jq -er .artifactContainerName release-intent/release-plan.json)" ]]
+          [[ "$(jq -r .draft <<< "$release")" == "false" ]]
+          [[ "$(jq -r .prerelease <<< "$release")" == "true" ]]
 
           release_id="$RELEASE_ID"
           assets=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases/$release_id/assets?per_page=100" | jq 'add')
@@ -754,3 +759,32 @@ jobs:
           path: result
           if-no-files-found: error
           retention-days: 90
+
+  status:
+    name: Export mobile build status
+    needs: [prepare, android, ios]
+    if: always()
+    runs-on: ubuntu-latest
+    outputs:
+      android_result: ${{ steps.status.outputs.android_result }}
+      ios_result: ${{ steps.status.outputs.ios_result }}
+      apk_name: ${{ steps.status.outputs.apk_name }}
+      ipa_name: ${{ steps.status.outputs.ipa_name }}
+      asset_base_url: ${{ steps.status.outputs.asset_base_url }}
+    steps:
+      - name: Export platform conclusions and artifact coordinates
+        id: status
+        env:
+          ANDROID_RESULT: ${{ needs.android.result }}
+          IOS_RESULT: ${{ needs.ios.result }}
+          APK_NAME: ${{ needs.prepare.outputs.apk_name }}
+          IPA_NAME: ${{ needs.prepare.outputs.ipa_name }}
+          ASSET_BASE_URL: ${{ needs.prepare.outputs.asset_base_url }}
+        run: |
+          {
+            echo "android_result=$ANDROID_RESULT"
+            echo "ios_result=$IOS_RESULT"
+            echo "apk_name=$APK_NAME"
+            echo "ipa_name=$IPA_NAME"
+            echo "asset_base_url=$ASSET_BASE_URL"
+          } >> "$GITHUB_OUTPUT"

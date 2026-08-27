@@ -1043,6 +1043,10 @@ export type BluetoothSdkEventMap = {
   mic_lc3: MicLc3Event
   mic_health: MicHealthEvent
   stream_status: StreamStatusEvent
+  /** Mentra Live MTK updater completed and the glasses are about to restart. */
+  mtk_update_complete: MtkUpdateCompleteEvent
+  /** The ASG process restarted while the BES kept the BLE connection alive. */
+  glasses_session_changed: GlassesSessionChangedEvent
   ota_start_ack: OtaStartAckEvent
   ota_status: OtaStatusEvent
   ar99_ota_status: Ar99OtaStatusEvent
@@ -1068,6 +1072,15 @@ export interface BluetoothSdkPublicModule {
     listener: BluetoothSdkEventListener<EventName>,
   ): BluetoothSdkSubscription
 
+  /** Read an immutable snapshot of the current glasses state. */
+  getGlassesStatus(): Promise<PublicGlassesStatus>
+  /** Read an immutable snapshot of the phone Bluetooth adapter state. */
+  getBluetoothStatus(): Promise<PublicBluetoothStatus>
+  /** Observe immutable glasses-state patches. Returns an unsubscribe function. */
+  subscribeGlassesStatus(listener: (changed: Partial<PublicGlassesStatus>) => void): () => void
+  /** Observe immutable Bluetooth-state patches. Returns an unsubscribe function. */
+  subscribeBluetoothStatus(listener: (changed: Partial<PublicBluetoothStatus>) => void): () => void
+
   getDefaultDevice(): Promise<Device | null>
   setDefaultDevice(device: Device | null): Promise<void>
   clearDefaultDevice(): Promise<void>
@@ -1089,11 +1102,15 @@ export interface BluetoothSdkPublicModule {
   setHeadUpAngle(angleDegrees: number): Promise<void>
   setImuEnabled(enabled: boolean): Promise<void>
   setScreenDisabled(disabled: boolean): Promise<void>
+  /** Keep legacy Mentra Live OTA sessions awake. Modern sessions normally do not require this. */
+  ping(): Promise<void>
 
   requestWifiScan(): Promise<WifiSearchResult[]>
   sendWifiCredentials(ssid: string, password: string): Promise<WifiStatusChangeEvent>
   forgetWifiNetwork(ssid: string): Promise<WifiStatusChangeEvent>
   setHotspotState(enabled: boolean): Promise<HotspotStatusChangeEvent>
+  /** Set the glasses clock from the phone after an OTA clock-skew failure. */
+  setSystemTime(timestampMs: number): Promise<void>
   /** Enable or disable Wi-Fi ADB on Mentra Live (no-op on other devices). */
   setWifiAdbState(enabled: boolean): Promise<void>
 
@@ -1182,8 +1199,12 @@ export interface BluetoothSdkPublicModule {
   getOtaVersionUrl(): string
   /** Fetch the configured OTA manifest and return whether any ASG/BES/MTK update is available. */
   checkForOtaUpdate(): Promise<boolean>
+  /** Return bundled release changelogs crossed between two coordinated product versions, newest first. */
+  getReleaseChangelogs(fromVersion?: string | null, toVersion?: string | null): ReleaseChangelog[]
   /** Start OTA from the configured or explicitly supplied manifest URL. */
   startOtaUpdate(otaVersionUrl?: string | null): Promise<OtaStartAckEvent>
+  /** Query the active OTA session and return the correlated status response. */
+  queryOtaStatus(): Promise<OtaQueryResult>
   startAr99OtaFromFile(path: string): Promise<boolean>
   cancelAr99Ota(): Promise<void>
   sendAr99FactoryReset(): Promise<void>
@@ -1260,6 +1281,13 @@ export interface OtaUpdateInfo {
   besVersion?: string
   /** True when the APK step installs an older build than the glasses currently run (exact-pin manifests only). */
   isDowngrade?: boolean
+}
+
+export interface ReleaseChangelog {
+  /** Base production version, for example `3.1.0`. */
+  version: string
+  /** Markdown body authored in `/changelogs/<version>.md`. */
+  markdown: string
 }
 
 export interface OtaProgress {

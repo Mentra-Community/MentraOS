@@ -19,8 +19,16 @@ import {
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 
+function writeChangelog(root, version = "3.1.0") {
+  mkdirSync(path.join(root, "changelogs"), {recursive: true})
+  writeFileSync(path.join(root, "changelogs", version + ".md"), "Release notes")
+}
+
 test("accepts only credential-free public HTTPS URLs without fragments", () => {
-  assert.equal(requirePublicHttpsUrl("https://artifacts.example.com/file?q=1", "artifact"), "https://artifacts.example.com/file?q=1")
+  assert.equal(
+    requirePublicHttpsUrl("https://artifacts.example.com/file?q=1", "artifact"),
+    "https://artifacts.example.com/file?q=1",
+  )
   assert.throws(() => requirePublicHttpsUrl("http://artifacts.example.com/file", "artifact"), /must use HTTPS/)
   assert.throws(
     () => requirePublicHttpsUrl("https://token@artifacts.example.com/file", "artifact"),
@@ -42,8 +50,37 @@ test("loads the repository release family and derives dependency-first publicati
   assert.ok(
     family.publicationOrder.indexOf("@mentra/bluetooth-sdk") < family.publicationOrder.indexOf("@mentra/engine"),
   )
-  assert.equal(family.members.some((member) => member.name === "@mentra/types"), false)
+  assert.equal(
+    family.members.some((member) => member.name === "@mentra/types"),
+    false,
+  )
   assert.ok(family.publicationOrder.indexOf("@mentra/engine") < family.publicationOrder.indexOf("mentraos"))
+})
+
+test("requires release notes for the active family base version", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "mentra-release-family-"))
+  mkdirSync(path.join(root, ".github"), {recursive: true})
+  writeFileSync(path.join(root, "package.json"), JSON.stringify({name: "product", version: "3.1.0"}))
+  writeFileSync(
+    path.join(root, ".github/release-family.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      family: "mentra",
+      versionSource: "package.json",
+      products: ["product"],
+      members: [
+        {
+          name: "product",
+          manifest: "package.json",
+          kind: "product",
+          publishTargets: ["npm"],
+          dependencies: [],
+        },
+      ],
+    }),
+  )
+
+  assert.throws(() => loadReleaseFamily({rootDir: root}), /missing changelogs\/3\.1\.0\.md/)
 })
 
 test("maps release branches and derives one ecosystem-neutral identity", () => {
@@ -70,6 +107,8 @@ test("creates a deterministic release plan with exact dependency versions", () =
   })
 
   assert.equal(plan.releaseSetId, "mentra-3.1.0-beta.57")
+  assert.equal(plan.artifactContainerTag, "mentra-builds-v3.1.0")
+  assert.equal(plan.artifactContainerName, "Mentra 3.1.0 development builds")
   assert.equal(plan.native.marketingVersion, "3.1.0")
   assert.equal(plan.native.buildNumber, 3100057)
   assert.equal(plan.products["@mentra/engine"], "3.1.0-beta.57")
@@ -81,6 +120,15 @@ test("creates a deterministic release plan with exact dependency versions", () =
   assert.equal(plan.artifactNames.androidStoreApp, "mentraos-3.1.0-beta.57-android.aab")
   assert.equal(plan.artifactNames.iosSdkArchive, "mentra-bluetooth-sdk-ios-3.1.0-beta.57.tar")
   assert.equal(plan.otaInputs.firmwareManifest, "firmware_live.json")
+
+  const productionPlan = createReleasePlan({
+    family,
+    channel: "production",
+    sourceCommit: "b".repeat(40),
+    nativeBuildNumber: 3100057,
+  })
+  assert.equal(productionPlan.artifactContainerTag, "mentra-v3.1.0")
+  assert.equal(productionPlan.artifactContainerName, "Mentra 3.1.0")
 })
 
 test("serializes records canonically and finalizes only complete release results", () => {
@@ -191,6 +239,7 @@ test("can require package manifests to mirror the family base during activation"
   const root = mkdtempSync(path.join(tmpdir(), "mentra-release-family-"))
   mkdirSync(path.join(root, ".github"), {recursive: true})
   mkdirSync(path.join(root, "packages/example"), {recursive: true})
+  writeChangelog(root)
   writeFileSync(path.join(root, "package.json"), JSON.stringify({version: "3.1.0"}))
   writeFileSync(path.join(root, "packages/example/package.json"), JSON.stringify({name: "example", version: "3.0.0"}))
   writeFileSync(
@@ -220,6 +269,7 @@ test("requires exact regular dependencies between activated public family packag
   mkdirSync(path.join(root, ".github"), {recursive: true})
   mkdirSync(path.join(root, "packages/base"), {recursive: true})
   mkdirSync(path.join(root, "packages/product"), {recursive: true})
+  writeChangelog(root)
   writeFileSync(path.join(root, "package.json"), JSON.stringify({version: "3.1.0"}))
   writeFileSync(path.join(root, "packages/base/package.json"), JSON.stringify({name: "base", version: "3.1.0"}))
   writeFileSync(
@@ -263,6 +313,7 @@ test("rejects family dependencies hidden from the configured graph or declared a
   mkdirSync(path.join(root, ".github"), {recursive: true})
   mkdirSync(path.join(root, "packages/base"), {recursive: true})
   mkdirSync(path.join(root, "packages/product"), {recursive: true})
+  writeChangelog(root)
   writeFileSync(path.join(root, "package.json"), JSON.stringify({version: "3.1.0"}))
   writeFileSync(path.join(root, "packages/base/package.json"), JSON.stringify({name: "base", version: "3.1.0"}))
   writeFileSync(
@@ -319,7 +370,7 @@ test("rejects family dependencies hidden from the configured graph or declared a
     JSON.stringify({
       name: "product",
       version: "3.1.0",
-      dependencies: {base: "3.1.0", "@mentra/outside": "workspace:*"},
+      dependencies: {"base": "3.1.0", "@mentra/outside": "workspace:*"},
     }),
   )
   assert.throws(

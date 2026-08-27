@@ -997,7 +997,10 @@ public class AsgClientService extends Service implements NetworkStateListener, T
         // Send hotspot status update to phone
         try {
             if (serviceInitializer != null && serviceInitializer.getServiceManager() != null) {
-                var networkManager = serviceInitializer.getServiceManager().getNetworkManager();
+                var serviceManager = serviceInitializer.getServiceManager();
+                serviceManager.setWebServerEnabled(isEnabled);
+
+                var networkManager = serviceManager.getNetworkManager();
                 var commManager = serviceInitializer.getCommunicationManager();
 
                 if (networkManager != null && commManager != null) {

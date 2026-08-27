@@ -51,13 +51,13 @@ export function computeAsgBuildFingerprint({entries, latestInputCommitTimestamp,
   }
 }
 
-export function finalizeAsgBuildIdentity({buildFingerprint, versionCode}) {
+export function finalizeAsgBuildIdentity({buildFingerprint, versionCode, versionName}) {
   const {fingerprint} = buildFingerprint
   if (!/^[0-9a-f]{64}$/.test(fingerprint)) throw new Error("Invalid ASG build fingerprint")
   if (!Number.isSafeInteger(versionCode) || versionCode <= 0 || versionCode > 2_100_000_000) {
     throw new Error(`Allocated ASG versionCode ${versionCode} is outside the Android-safe range`)
   }
-  const versionName = `asg.${versionCode}.${fingerprint.slice(0, 12)}`
+  if (!versionName) throw new Error("ASG versionName is required")
   return {
     ...buildFingerprint,
     versionCode,
@@ -67,10 +67,11 @@ export function finalizeAsgBuildIdentity({buildFingerprint, versionCode}) {
   }
 }
 
-export function computeAsgBuildIdentity({entries, latestInputCommitTimestamp, versionCode, contract = BUILD_CONTRACT}) {
+export function computeAsgBuildIdentity({entries, latestInputCommitTimestamp, versionCode, versionName, contract = BUILD_CONTRACT}) {
   return finalizeAsgBuildIdentity({
     buildFingerprint: computeAsgBuildFingerprint({entries, latestInputCommitTimestamp, contract}),
     versionCode,
+    versionName,
   })
 }
 
@@ -122,7 +123,11 @@ function main() {
   const output = path.resolve(repoRoot, args.output || "asg-build-identity.json")
   const buildFingerprint = computeAsgBuildFingerprintFromGit({repoRoot, sourceCommit})
   const identity = args["version-code"]
-    ? finalizeAsgBuildIdentity({buildFingerprint, versionCode: Number(args["version-code"])})
+    ? finalizeAsgBuildIdentity({
+        buildFingerprint,
+        versionCode: Number(args["version-code"]),
+        versionName: args["version-name"],
+      })
     : buildFingerprint
   mkdirSync(path.dirname(output), {recursive: true})
   writeFileSync(output, `${JSON.stringify(identity, null, 2)}\n`)

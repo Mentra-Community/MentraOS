@@ -144,7 +144,7 @@ test("assembles every product target and finalizes one complete release manifest
     mobile,
     asgSelectionFile,
     enginePackage,
-    releaseAssetBaseUrl: `https://github.com/Mentra-Community/MentraOS/releases/download/mentra-v${plan.releaseIdentity}`,
+    releaseAssetBaseUrl: "https://github.com/Mentra-Community/MentraOS/releases/download/mentra-builds-v3.1.0",
   })
   const manifest = finalizeReleaseManifest({plan, results, completedAt: "2026-08-25T02:00:00.000Z"})
 

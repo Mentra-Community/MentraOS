@@ -25,6 +25,8 @@ export interface Channels {
   "rec:playback": {playingId: string | null}
   /** A recording's stored audio couldn't be read back (e.g. legacy/corrupt blob). */
   "rec:audio-missing": {id: string}
+  /** The OS rejected a recording share for a reason other than cancellation. */
+  "rec:share-failed": {id: string}
   /** Live transcript (Soniox) during a capture: committed text + in-progress tail. */
   "rec:transcript": {final: string; interim: string; lang?: string}
 

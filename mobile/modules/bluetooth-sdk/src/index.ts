@@ -3,8 +3,11 @@ import type {
   BluetoothSdkEventListener,
   BluetoothSdkEventName,
   BluetoothSdkPublicModule,
+  PublicBluetoothStatus,
+  PublicGlassesStatus,
   VideoRecordingDefaults,
 } from "./BluetoothSdk.types"
+import {getReleaseChangelogs} from "./changelogs"
 
 const PUBLIC_EVENT_NAMES = new Set<BluetoothSdkEventName>([
   "log",
@@ -46,6 +49,8 @@ const PUBLIC_EVENT_NAMES = new Set<BluetoothSdkEventName>([
   "mic_lc3",
   "mic_health",
   "stream_status",
+  "mtk_update_complete",
+  "glasses_session_changed",
   "ota_start_ack",
   "ota_status",
   "ar99_ota_status",
@@ -64,6 +69,10 @@ const startOtaUpdate: BluetoothSdkPublicModule["startOtaUpdate"] = (otaVersionUr
   return PrivateBluetoothSdkModule.startOtaUpdate(otaVersionUrl)
 }
 
+const queryOtaStatus: BluetoothSdkPublicModule["queryOtaStatus"] = () => {
+  return PrivateBluetoothSdkModule.sendOtaQueryStatus()
+}
+
 const bindPublicMethod = <K extends keyof BluetoothSdkPublicModule>(name: K): BluetoothSdkPublicModule[K] => {
   const method = (PrivateBluetoothSdkModule as unknown as Record<string, unknown>)[name]
   if (typeof method === "function") {
@@ -77,6 +86,12 @@ const bindPublicMethod = <K extends keyof BluetoothSdkPublicModule>(name: K): Bl
 
 export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
   addListener,
+  getGlassesStatus: bindPublicMethod("getGlassesStatus"),
+  getBluetoothStatus: bindPublicMethod("getBluetoothStatus"),
+  subscribeGlassesStatus: (listener: (changed: Partial<PublicGlassesStatus>) => void) =>
+    PrivateBluetoothSdkModule.onGlassesStatus(listener),
+  subscribeBluetoothStatus: (listener: (changed: Partial<PublicBluetoothStatus>) => void) =>
+    PrivateBluetoothSdkModule.onBluetoothStatus(listener),
   getDefaultDevice: bindPublicMethod("getDefaultDevice"),
   setDefaultDevice: bindPublicMethod("setDefaultDevice"),
   clearDefaultDevice: bindPublicMethod("clearDefaultDevice"),
@@ -95,10 +110,12 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
   setHeadUpAngle: bindPublicMethod("setHeadUpAngle"),
   setImuEnabled: bindPublicMethod("setImuEnabled"),
   setScreenDisabled: bindPublicMethod("setScreenDisabled"),
+  ping: bindPublicMethod("ping"),
   requestWifiScan: bindPublicMethod("requestWifiScan"),
   sendWifiCredentials: bindPublicMethod("sendWifiCredentials"),
   forgetWifiNetwork: bindPublicMethod("forgetWifiNetwork"),
   setHotspotState: bindPublicMethod("setHotspotState"),
+  setSystemTime: bindPublicMethod("setSystemTime"),
   setWifiAdbState: bindPublicMethod("setWifiAdbState"),
   setGalleryModeEnabled: bindPublicMethod("setGalleryModeEnabled"),
   setVoiceActivityDetectionEnabled: bindPublicMethod("setVoiceActivityDetectionEnabled"),
@@ -143,7 +160,9 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
   setOtaVersionUrl: bindPublicMethod("setOtaVersionUrl"),
   getOtaVersionUrl: bindPublicMethod("getOtaVersionUrl"),
   checkForOtaUpdate: bindPublicMethod("checkForOtaUpdate"),
+  getReleaseChangelogs,
   startOtaUpdate,
+  queryOtaStatus,
   startAr99OtaFromFile: bindPublicMethod("startAr99OtaFromFile"),
   cancelAr99Ota: bindPublicMethod("cancelAr99Ota"),
   sendAr99FactoryReset: bindPublicMethod("sendAr99FactoryReset"),
@@ -212,6 +231,7 @@ export type {
   HotspotErrorEvent,
   HotspotStatus,
   HotspotStatusChangeEvent,
+  GlassesSessionChangedEvent,
   KeepAliveAckEvent,
   LocalTranscriptionEvent,
   LogEvent,
@@ -228,6 +248,8 @@ export type {
   OtaStatusEvent,
   OtaQueryResult,
   OtaUpdateInfo,
+  ReleaseChangelog,
+  MtkUpdateCompleteEvent,
   PairFailureEvent,
   PairingInfoEvent,
   EnteringPairingModeEvent,
@@ -238,6 +260,8 @@ export type {
   PhotoFpsRange,
   PhotoMeteredPreview,
   PhotoMode,
+  PublicBluetoothStatus,
+  PublicGlassesStatus,
   PhotoTransferMethod,
   PhotoResponseEvent,
   PhotoRequestedCaptureConfig,

@@ -1,8 +1,9 @@
-import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
-import type {OtaUpdateInfo} from "@mentra/bluetooth-sdk"
+import BluetoothSdk, {type OtaUpdateInfo} from "@mentra/bluetooth-sdk"
+import {ENGINE_RELEASE_METADATA} from "../generated/releaseMetadata"
 import {getGlassesSystemTimeMs, isGlassesConnected, useGlassesStore, waitForGlassesState} from "../stores/glasses"
 import {maybeFixGlassesClockFromVersionInfo} from "./glassesClockSync"
 import {hasConfiguredModernOtaManifestPin, resolveOtaManifestUrl} from "./otaManifestUrl"
+import {resolveOtaReleaseVersion} from "./otaReleaseVersion"
 
 /**
  * Phone-side mirror of ASG's `DOWNGRADE_FLOOR_VERSION_CODE`. Set to the versionCode of the first
@@ -38,6 +39,7 @@ export interface BesFirmware {
 }
 
 export interface VersionJson {
+  releaseVersion?: string
   apps?: {
     [packageName: string]: VersionInfo
   }
@@ -66,6 +68,8 @@ export interface OtaCheckResult {
    * instead of racing it with a second fetch of the same URL.
    */
   manifestBody: string | null
+  /** Coordinated release identity for the selected OTA pin. */
+  releaseVersion: string | null
   /**
    * Why the check failed, when it did. "network" is retryable (connection/server
    * trouble); "pin_unavailable" is permanent for this app build (manifest 404/gone,
@@ -106,6 +110,7 @@ function emptyCheckResult(skippedReason?: OtaCheckSkippedReason): OtaCheckCurren
     besVersion: null,
     isApkDowngrade: false,
     manifestBody: null,
+    releaseVersion: null,
     updateInfo: null,
     isRequired: true,
     skippedReason,
@@ -122,7 +127,7 @@ async function fetchVersionInfoDetailed(url: string): Promise<ManifestFetchResul
   try {
     const response = await fetch(url)
     if (!response.ok) {
-      console.error("Failed to fetch version info:", response.status)
+      console.warn("Failed to fetch version info:", response.status)
       // 4xx: the manifest does not exist (or is gone) — permanent for this app
       // build, retrying cannot help. Everything else is transient server/network
       // trouble and retryable.
@@ -134,11 +139,11 @@ async function fetchVersionInfoDetailed(url: string): Promise<ManifestFetchResul
     try {
       return {json: await response.json()}
     } catch (parseError) {
-      console.error("OTA: manifest is not valid JSON:", parseError)
+      console.warn("OTA: manifest is not valid JSON:", parseError)
       return {json: null, failureReason: "pin_unavailable"}
     }
   } catch (error) {
-    console.error("OTA: Error fetching version info:", error)
+    console.warn("OTA: Error fetching version info:", error)
     return {json: null, failureReason: "network"}
   }
 }
@@ -298,6 +303,7 @@ export async function checkForOtaUpdate(
         besVersion: null,
         isApkDowngrade: false,
         manifestBody: null,
+        releaseVersion: null,
         checkFailureReason: fetched.failureReason ?? "network",
       }
     }
@@ -329,6 +335,7 @@ export async function checkForOtaUpdate(
         besVersion: null,
         isApkDowngrade: false,
         manifestBody: null,
+        releaseVersion: null,
         checkFailureReason: "pin_unavailable",
       }
     }
@@ -367,6 +374,12 @@ export async function checkForOtaUpdate(
       besVersion: versionJson?.bes_firmware?.version || null,
       isApkDowngrade: apkDirection === "downgrade",
       manifestBody: versionJson ? JSON.stringify(versionJson) : null,
+      releaseVersion: resolveOtaReleaseVersion({
+        manifestReleaseVersion: versionJson.releaseVersion,
+        manifestUrl: otaVersionUrl,
+        packagedManifestUrl: ENGINE_RELEASE_METADATA.otaManifestUrl,
+        packagedReleaseIdentity: ENGINE_RELEASE_METADATA.releaseIdentity,
+      }),
     }
   } catch (error) {
     console.error("Error checking for OTA update:", error)
@@ -379,6 +392,7 @@ export async function checkForOtaUpdate(
       besVersion: null,
       isApkDowngrade: false,
       manifestBody: null,
+      releaseVersion: null,
       checkFailureReason: "network",
     }
   }
@@ -406,9 +420,13 @@ export async function checkCurrentGlassesForUpdate(
   }
 
   if (refreshVersionInfo) {
-    void BluetoothSdk.requestVersionInfo().catch((error) => {
-      console.warn("OTA: Failed to request version_info from glasses:", error)
-    })
+    void BluetoothSdk.requestVersionInfo()
+      .then((versionInfo) => {
+        useGlassesStore.getState().setGlassesInfo(versionInfo)
+      })
+      .catch((error) => {
+        console.warn("OTA: Failed to request version_info from glasses:", error)
+      })
   }
 
   let buildNumber = useGlassesStore.getState().buildNumber

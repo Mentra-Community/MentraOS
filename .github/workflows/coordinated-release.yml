@@ -77,6 +77,9 @@ jobs:
       - name: Collect promoted firmware inputs
         run: node .github/scripts/collect-ota-release-inputs.mjs
 
+      - name: Verify generated changelog catalogs
+        run: node .github/scripts/generate-changelog-catalog.mjs --check
+
       - name: Create deterministic release plan
         run: |
           set -euo pipefail
@@ -133,31 +136,32 @@ jobs:
           SOURCE_COMMIT: ${{ github.sha }}
         run: |
           set -euo pipefail
-          identity=$(jq -er .releaseIdentity release-plan.json)
-          tag="mentra-v$identity"
-          name="Mentra $identity"
-          releases=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases?per_page=100" | jq 'add')
-          matches=$(jq --arg tag "$tag" '[.[] | select(.tag_name == $tag)]' <<< "$releases")
-          [[ "$(jq 'length' <<< "$matches")" -le 1 ]]
-          if [[ "$(jq 'length' <<< "$matches")" == 0 ]]; then
+          tag=$(jq -er .artifactContainerTag release-plan.json)
+          name=$(jq -er .artifactContainerName release-plan.json)
+          if ! release=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/$tag" 2>/dev/null); then
             payload=$(jq -n \
               --arg tag "$tag" \
               --arg source "$SOURCE_COMMIT" \
               --arg name "$name" \
-              --arg body "Coordinated release $identity. Publication is incomplete until the release manifest is attached." \
-              '{tag_name: $tag, target_commitish: $source, name: $name, body: $body, draft: true, prerelease: true}')
-            release=$(gh api --method POST "repos/${GITHUB_REPOSITORY}/releases" --input - <<< "$payload")
-          else
-            release=$(jq '.[0]' <<< "$matches")
+              --arg body "Immutable development and beta artifacts for the Mentra $(jq -er .familyBaseVersion release-plan.json) release train. Exact source revisions are preserved by per-build tags." \
+              '{tag_name: $tag, target_commitish: $source, name: $name, body: $body, draft: false, prerelease: true}')
+            if ! release=$(gh api --method POST "repos/${GITHUB_REPOSITORY}/releases" --input - <<< "$payload" 2>/dev/null); then
+              # Dev and staging can allocate the same base-version bucket concurrently.
+              sleep 2
+              release=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/$tag")
+            fi
           fi
+          [[ "$(jq -r .tag_name <<< "$release")" == "$tag" ]]
           [[ "$(jq -r .name <<< "$release")" == "$name" ]]
-          if [[ "$(jq -r .draft <<< "$release")" == "true" ]]; then
-            [[ "$(jq -r .target_commitish <<< "$release")" == "$SOURCE_COMMIT" ]]
-          else
-            git fetch --force origin "refs/tags/$tag:refs/tags/$tag"
-            [[ "$(git rev-parse "$tag^{commit}")" == "$SOURCE_COMMIT" ]]
+          [[ "$(jq -r .draft <<< "$release")" == "false" ]]
+          [[ "$(jq -r .prerelease <<< "$release")" == "true" ]]
+          release_id=$(jq -er .id <<< "$release")
+          asset_count=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases/$release_id/assets?per_page=100" | jq 'add | length')
+          if (( asset_count >= 900 )); then
+            echo "Release container $tag has $asset_count assets; advance the family base version before GitHub's 1000-asset limit." >&2
+            exit 1
           fi
-          echo "release_id=$(jq -er .id <<< "$release")" >> "$GITHUB_OUTPUT"
+          echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -290,7 +294,7 @@ jobs:
           mkdir -p finalized-release
           plan=release-input/plan/release-plan.json
           identity=$(jq -er .releaseIdentity "$plan")
-          tag="mentra-v$identity"
+          tag=$(jq -er .artifactContainerTag "$plan")
           asg_selection="release-input/ota/release-assets/$(jq -er .artifactNames.asgSelection "$plan")"
           test -f "$asg_selection"
           engine_package=$(find release-input/npm -type f -name 'mentra-engine-*.tgz' -print -quit)
@@ -320,19 +324,14 @@ jobs:
         if: needs.plan.outputs.dry_run != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          SOURCE_COMMIT: ${{ needs.plan.outputs.source_commit }}
         run: |
           set -euo pipefail
           tag="${{ steps.results.outputs.tag }}"
           release=$(gh api "repos/${GITHUB_REPOSITORY}/releases/${{ needs.plan.outputs.release_id }}")
           [[ "$(jq -r .tag_name <<< "$release")" == "$tag" ]]
-          [[ "$(jq -r .name <<< "$release")" == "Mentra ${{ steps.results.outputs.identity }}" ]]
-          if [[ "$(jq -r .draft <<< "$release")" == "true" ]]; then
-            [[ "$(jq -r .target_commitish <<< "$release")" == "$SOURCE_COMMIT" ]]
-          else
-            git fetch --force origin "refs/tags/$tag:refs/tags/$tag"
-            [[ "$(git rev-parse "$tag^{commit}")" == "$SOURCE_COMMIT" ]]
-          fi
+          [[ "$(jq -r .name <<< "$release")" == "$(jq -er .artifactContainerName release-input/plan/release-plan.json)" ]]
+          [[ "$(jq -r .draft <<< "$release")" == "false" ]]
+          [[ "$(jq -r .prerelease <<< "$release")" == "true" ]]
           echo "release_id=${{ needs.plan.outputs.release_id }}" >> "$GITHUB_OUTPUT"
 
       - name: Finalize release manifest
@@ -361,24 +360,20 @@ jobs:
               --repository "${{ github.repository }}"
           done
 
-      - name: Publish completed release set
+      - name: Tag and verify the completed release set
         if: needs.plan.outputs.dry_run != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          tag="${{ steps.results.outputs.tag }}"
-          payload=$(jq -n \
-            --arg name "Mentra ${{ steps.results.outputs.identity }}" \
-            --arg body "Coordinated Mentra release ${{ steps.results.outputs.identity }} from ${{ needs.plan.outputs.source_commit }}. Every required target is recorded in ${{ steps.results.outputs.manifest_name }}." \
-            '{draft: false, prerelease: true, name: $name, body: $body}')
-          gh api --method PATCH \
-            "repos/${GITHUB_REPOSITORY}/releases/${{ steps.release-container.outputs.release_id }}" \
-            --input - <<< "$payload" \
-            --jq '.draft == false and .prerelease == true' | grep -qx true
-          git fetch --force origin "refs/tags/$tag:refs/tags/$tag"
-          [[ "$(git rev-parse "$tag^{commit}")" == "${{ needs.plan.outputs.source_commit }}" ]]
-          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/$tag/${{ steps.results.outputs.manifest_name }}"
+          source_tag="mentra-v${{ steps.results.outputs.identity }}"
+          if ! ref=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/$source_tag" 2>/dev/null); then
+            ref=$(gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+              -f ref="refs/tags/$source_tag" \
+              -f sha="${{ needs.plan.outputs.source_commit }}")
+          fi
+          [[ "$(jq -r .object.sha <<< "$ref")" == "${{ needs.plan.outputs.source_commit }}" ]]
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${{ steps.results.outputs.tag }}/${{ steps.results.outputs.manifest_name }}"
           node .github/scripts/verify-public-release-asset.mjs \
             --file "finalized-release/${{ steps.results.outputs.manifest_name }}" \
             --url "$url"
@@ -403,3 +398,41 @@ jobs:
               echo "- GitHub release: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${{ steps.results.outputs.tag }}"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+
+  notify-slack:
+    name: Notify release Slack channel
+    needs: [plan, ota, npm, sdk-native, mobile, engine-consumer, finalize]
+    if: always() && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Post coordinated release result
+        continue-on-error: true
+        env:
+          STAGING_SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_NIGHTLY_BUILDS }}
+          DEV_SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_DEV_BUILDS }}
+          BRANCH: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          SHA: ${{ github.sha }}
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+          COMMIT_AUTHOR: ${{ github.event.head_commit.author.name }}
+          RELEASE_IDENTITY: ${{ needs.plan.outputs.release_identity }}
+          PLAY_TRACK: ${{ needs.plan.outputs.play_track }}
+          TESTFLIGHT_GROUP: ${{ needs.plan.outputs.testflight_group }}
+          PLAN_RESULT: ${{ needs.plan.result }}
+          OTA_RESULT: ${{ needs.ota.result }}
+          NPM_RESULT: ${{ needs.npm.result }}
+          SDK_NATIVE_RESULT: ${{ needs.sdk-native.result }}
+          MOBILE_RESULT: ${{ needs.mobile.result }}
+          ANDROID_RESULT: ${{ needs.mobile.outputs.android_result }}
+          IOS_RESULT: ${{ needs.mobile.outputs.ios_result }}
+          ENGINE_RESULT: ${{ needs.engine-consumer.result }}
+          FINALIZE_RESULT: ${{ needs.finalize.result }}
+          APK_NAME: ${{ needs.mobile.outputs.apk_name }}
+          IPA_NAME: ${{ needs.mobile.outputs.ipa_name }}
+          MOBILE_ASSET_BASE_URL: ${{ needs.mobile.outputs.asset_base_url }}
+          ASG_APK_NAME: ${{ needs.ota.outputs.asg_apk_name }}
+          ASG_APK_URL: ${{ needs.ota.outputs.asg_apk_url }}
+        run: .github/scripts/notify-coordinated-release-slack.sh

@@ -50,7 +50,8 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$BETA_IDENTITY" =~ ^[0-9]+\.[0-9]+\.[0-9]+-beta\.[1-9][0-9]*$ ]]
-          tag="mentra-v$BETA_IDENTITY"
+          base_version="${BETA_IDENTITY%%-*}"
+          tag="mentra-builds-v$base_version"
           state=$(gh release view "$tag" --json isDraft,isPrerelease --jq '[.isDraft,.isPrerelease] | @tsv')
           [[ "$state" == $'false\ttrue' ]]
           mkdir -p selected-beta
@@ -60,6 +61,8 @@ jobs:
             --dir selected-beta
           mv "selected-beta/mentra-release-plan-$BETA_IDENTITY.json" selected-beta/release-plan.json
           mv "selected-beta/mentra-release-$BETA_IDENTITY.json" selected-beta/release-manifest.json
+          [[ "$(jq -er .releaseIdentity selected-beta/release-plan.json)" == "$BETA_IDENTITY" ]]
+          [[ "$(jq -er .artifactContainerTag selected-beta/release-plan.json)" == "$tag" ]]
 
       - name: Require and select the beta source from main
         run: |

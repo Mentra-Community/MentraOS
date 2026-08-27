@@ -47,6 +47,36 @@ jest.mock("@mentra/bluetooth-sdk/internal", () => {
   }
 })
 
+jest.mock("@mentra/bluetooth-sdk/ota-transport", () => {
+  const {mentraLocalNetworkMock} = require("./src/test-utils/mockBluetoothSdk")
+  return {
+    otaLocalNetwork: {
+      isAvailable: () => true,
+      connect: mentraLocalNetworkMock.connect,
+      request: mentraLocalNetworkMock.request,
+      download: mentraLocalNetworkMock.download,
+      cancel: mentraLocalNetworkMock.cancel,
+      disconnect: mentraLocalNetworkMock.disconnect,
+      onDownloadProgress: (listener) => mentraLocalNetworkMock.addListener("downloadProgress", listener),
+      onNetworkLost: (listener) => mentraLocalNetworkMock.addListener("networkLost", listener),
+    },
+    otaServer: {
+      start: jest.fn(() =>
+        Promise.resolve({
+          baseUrl: "http://127.0.0.1:8080",
+          host: "127.0.0.1",
+          manifestUrl: "http://127.0.0.1:8080/manifest.json",
+          port: 8080,
+        }),
+      ),
+      stop: jest.fn(() => Promise.resolve()),
+      waitForWifiAddress: jest.fn(() => Promise.resolve("127.0.0.1")),
+      downloadArtifact: jest.fn(() => Promise.resolve({statusCode: 200, bytesWritten: 0})),
+      onArtifactDownloadProgress: jest.fn(() => ({remove: jest.fn()})),
+    },
+  }
+})
+
 jest.mock("@/utils/auth/authClient", () => ({
   __esModule: true,
   default: {
@@ -300,6 +330,7 @@ const mockIslandEntries = () => {
   // implementation (pure: settings store + types only) so host screens/tests
   // exercise the actual three-state read-model, not a parallel stub.
   const realPairingIdentity = jest.requireActual("./modules/engine/src/services/PairingIdentity")
+  const realPairingFacade = jest.requireActual("./modules/engine/src/facades/pairing")
   // Clock-skew utils moved into island; the host gallery sync + OTA checker import them
   // from @mentra/engine, so expose the real (pure) implementations through the mock.
   const realGlassesClockSync = jest.requireActual("./modules/engine/src/services/glassesClockSync")
@@ -528,6 +559,8 @@ const mockIslandEntries = () => {
             cb(readiness)
           })
         }),
+        targetReady: jest.fn((options) => realPairingFacade.pairing.targetReady(options)),
+        onTargetReady: jest.fn((options, cb) => realPairingFacade.pairing.onTargetReady(options, cb)),
         // Identity lifecycle: real projection/writes over the real settings store,
         // so tests observe the same none/pending/paired snapshots the app does.
         identity: jest.fn(() => realPairingIdentity.projectPairingIdentity()),

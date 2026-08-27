@@ -38,6 +38,12 @@ on:
       asg_fingerprint:
         description: Effective ASG build-input fingerprint
         value: ${{ jobs.ota.outputs.asg_fingerprint }}
+      asg_apk_name:
+        description: Selected ASG APK asset name
+        value: ${{ jobs.ota.outputs.asg_apk_name }}
+      asg_apk_url:
+        description: Selected ASG APK public URL
+        value: ${{ jobs.ota.outputs.asg_apk_url }}
 
 permissions:
   contents: write
@@ -65,6 +71,8 @@ jobs:
       manifest_sha256: ${{ steps.result.outputs.manifest_sha256 }}
       result_artifact: ${{ steps.names.outputs.result_artifact }}
       asg_fingerprint: ${{ steps.asg-identity.outputs.fingerprint }}
+      asg_apk_name: ${{ steps.names.outputs.apk_asset }}
+      asg_apk_url: ${{ steps.names.outputs.apk_url }}
     steps:
       - name: Clean persistent-runner build outputs
         run: rm -rf asg_client/app/build asg_client/.gradle asg_client/StreamPackLite coordinated-ota-work "$GRADLE_USER_HOME"
@@ -155,12 +163,27 @@ jobs:
             echo "provenance_asset=$(jq -r .provenanceAsset coordinated-ota-work/asg-allocation.json)"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Resolve ASG version name
+        id: asg-version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROVENANCE_ASSET: ${{ steps.existing-asg.outputs.provenance_asset }}
+        run: |
+          version_name=$(jq -er .releaseIdentity release-intent/release-plan.json)
+          if [[ "${{ steps.existing-asg.outputs.exists }}" == "true" ]]; then
+            gh release download "$ASG_RELEASE_TAG" --pattern "$PROVENANCE_ASSET" --dir coordinated-ota-work
+            mv "coordinated-ota-work/$PROVENANCE_ASSET" coordinated-ota-work/asg-provenance.json
+            version_name=$(jq -er .versionName coordinated-ota-work/asg-provenance.json)
+          fi
+          echo "version_name=$version_name" >> "$GITHUB_OUTPUT"
+
       - name: Finalize effective ASG build identity
         id: asg-identity
         run: >-
           node .github/scripts/compute-asg-build-identity.mjs
           --source-commit "${{ github.sha }}"
           --version-code "${{ steps.existing-asg.outputs.version_code }}"
+          --version-name "${{ steps.asg-version.outputs.version_name }}"
           --output coordinated-ota-work/asg-build-identity.json
 
       - name: Prepare immutable asset names
@@ -179,7 +202,7 @@ jobs:
           provenance_asset=$(jq -er .provenanceAsset coordinated-ota-work/asg-build-identity.json)
           [[ "$apk_asset" == "${{ steps.existing-asg.outputs.apk_asset }}" ]]
           [[ "$provenance_asset" == "${{ steps.existing-asg.outputs.provenance_asset }}" ]]
-          release_tag="mentra-v${release_identity}"
+          release_tag=$(jq -er .artifactContainerTag release-intent/release-plan.json)
           asg_release_base="https://github.com/${REPOSITORY}/releases/download/${ASG_RELEASE_TAG}"
           release_base="https://github.com/${REPOSITORY}/releases/download/${release_tag}"
 
@@ -199,16 +222,14 @@ jobs:
             echo "result_artifact=coordinated-ota-${release_set_id}"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Download reusable ASG artifact and provenance
+      - name: Download reusable ASG artifact
         if: steps.existing-asg.outputs.exists == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           APK_ASSET: ${{ steps.names.outputs.apk_asset }}
-          PROVENANCE_ASSET: ${{ steps.names.outputs.provenance_asset }}
         run: |
-          gh release download "$ASG_RELEASE_TAG" --pattern "$APK_ASSET" --pattern "$PROVENANCE_ASSET" --dir coordinated-ota-work
+          gh release download "$ASG_RELEASE_TAG" --pattern "$APK_ASSET" --dir coordinated-ota-work
           mv "coordinated-ota-work/$APK_ASSET" coordinated-ota-work/asg.apk
-          mv "coordinated-ota-work/$PROVENANCE_ASSET" coordinated-ota-work/asg-provenance.json
 
       - name: Setup Java for ASG build and APK verification
         uses: actions/setup-java@v4
@@ -302,7 +323,7 @@ jobs:
           ASG_VERSION_NAME: ${{ steps.asg-identity.outputs.version_name }}
           FIRMWARE_MANIFEST: asg_client/ota_manifests/firmware_live.json
           OUTPUT_PATH: coordinated-ota-work/release-assets/${{ steps.names.outputs.manifest_asset }}
-          SDK_VERSION: ${{ steps.names.outputs.release_identity }}
+          RELEASE_VERSION: ${{ steps.names.outputs.release_identity }}
         run: |
           ASG_APK_SHA256=$(jq -er .apk.sha256 coordinated-ota-work/asg-provenance.json)
           ASG_APK_SIZE=$(jq -er .apk.size coordinated-ota-work/asg-provenance.json)
@@ -430,20 +451,13 @@ jobs:
         if: inputs.dry_run != true
         env:
           GH_TOKEN: ${{ github.token }}
-          SOURCE_COMMIT: ${{ github.sha }}
         run: |
           set -euo pipefail
           release=$(gh api "repos/${GITHUB_REPOSITORY}/releases/${{ inputs.release_id }}")
           [[ "$(jq -r .tag_name <<< "$release")" == "${{ steps.names.outputs.release_tag }}" ]]
-          [[ "$(jq -r .name <<< "$release")" == "Mentra ${{ steps.names.outputs.release_identity }}" ]]
+          [[ "$(jq -r .name <<< "$release")" == "$(jq -er .artifactContainerName release-intent/release-plan.json)" ]]
           [[ "$(jq -r .prerelease <<< "$release")" == "true" ]]
-          if [[ "$(jq -r .draft <<< "$release")" == "true" ]]; then
-            [[ "$(jq -r .target_commitish <<< "$release")" == "$SOURCE_COMMIT" ]]
-          else
-            tag="${{ steps.names.outputs.release_tag }}"
-            git fetch --force origin "refs/tags/$tag:refs/tags/$tag"
-            [[ "$(git rev-parse "$tag^{commit}")" == "$SOURCE_COMMIT" ]]
-          fi
+          [[ "$(jq -r .draft <<< "$release")" == "false" ]]
           for file in coordinated-ota-work/release-assets/*; do
             name=$(basename "$file")
             node .github/scripts/publish-immutable-release-asset.mjs \
@@ -452,16 +466,6 @@ jobs:
               --release-id "${{ inputs.release_id }}" \
               --repository "${{ github.repository }}"
           done
-
-          if [[ "$(jq -r .draft <<< "$release")" == "true" ]]; then
-            payload=$(jq -n \
-              --arg body "Coordinated Mentra release ${{ steps.names.outputs.release_identity }} is in progress. Its immutable OTA assets are available; the completed release manifest is published only after every target succeeds." \
-              '{draft: false, prerelease: true, body: $body}')
-            gh api --method PATCH \
-              "repos/${GITHUB_REPOSITORY}/releases/${{ inputs.release_id }}" \
-              --input - <<< "$payload" \
-              --jq '.draft == false and .prerelease == true' | grep -qx true
-          fi
 
       - name: Verify published OTA manifest
         if: inputs.dry_run != true

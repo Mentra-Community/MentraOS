@@ -25,7 +25,8 @@ test("coordinated OTA assets have bounded release ownership", () => {
   assert.match(ota, /for file in coordinated-ota-work\/asg-release-assets\/\*/)
   assert.match(ota, /for file in coordinated-ota-work\/release-assets\/\*/)
   assert.match(ota, /--release-id "\$\{\{ inputs\.release_id \}\}"/)
-  assert.match(ota, /\{draft: false, prerelease: true, body: \$body\}/)
+  assert.match(ota, /artifactContainerTag/)
+  assert.doesNotMatch(ota, /draft: false, prerelease: true, body:/)
   assert.doesNotMatch(ota, /OTA_RELEASE_TAG/)
 })
 
@@ -40,6 +41,7 @@ test("release finalization reads the preserved OTA artifact layout", () => {
 
 test("production validates before approval and proves packages before mobile promotion", () => {
   const production = workflow("coordinated-production-promotion.yml")
+  const sdkNative = jobBlock(workflow("reusable-coordinated-sdk-native.yml"), "prepare")
 
   assert.doesNotMatch(jobBlock(production, "plan"), /^    needs:/m)
   assert.match(jobBlock(production, "approve"), /^    needs: plan$/m)
@@ -51,6 +53,15 @@ test("production validates before approval and proves packages before mobile pro
   assert.match(
     jobBlock(production, "finalize"),
     /^    needs: \[plan, approve, npm, sdk-native, mobile, engine-consumer\]$/m,
+  )
+  assert.match(sdkNative, /channel=\$\(jq -er \.channel release-intent\/release-plan\.json\)/)
+  assert.match(
+    sdkNative,
+    /if \[\[ "\$channel" == "production" \]\]; then\s+\[\[ "\$\(jq -r \.draft <<< "\$release"\)" == "true" \]\]\s+\[\[ "\$\(jq -r \.prerelease <<< "\$release"\)" == "false" \]\]/,
+  )
+  assert.match(
+    sdkNative,
+    /else\s+\[\[ "\$\(jq -r \.draft <<< "\$release"\)" == "false" \]\]\s+\[\[ "\$\(jq -r \.prerelease <<< "\$release"\)" == "true" \]\]/,
   )
 })
 

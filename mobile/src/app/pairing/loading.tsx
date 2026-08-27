@@ -1,8 +1,8 @@
-import {useRoute} from "@react-navigation/native"
-import BluetoothSdk, {type PairingInfoEvent} from "@mentra/bluetooth-sdk"
+import {useIsFocused, useRoute} from "@react-navigation/native"
+import BluetoothSdk, {type Device, type PairingInfoEvent} from "@mentra/bluetooth-sdk"
 import {engine} from "@mentra/engine"
 import type {PairFailureEvent} from "@mentra/engine"
-import {useCallback, useEffect, useRef, useState} from "react"
+import {useCallback, useEffect, useMemo, useRef, useState} from "react"
 import {View} from "react-native"
 
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
@@ -12,38 +12,59 @@ import {Screen} from "@/components/ignite/Screen"
 import GlassesPairingLoader from "@/components/glasses/GlassesPairingLoader"
 import GlassesTroubleshootingModal from "@/components/glasses/GlassesTroubleshootingModal"
 import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
-import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
 
-// Legacy ads without secure_pairing_capable use this timeout. Secure firmware must not.
-const PAIRING_INFO_FALLBACK_MS = 5_000
+// Secure pairing info should arrive immediately after Mentra Live finishes booting.
+// Secure or unknown firmware fails closed instead of spinning forever.
+const PAIRING_INFO_WAIT_MS = 5_000
+const PAIRING_KICKOFF_DELAY_MS = 2_000
 
 /**
  * Design A (open reclaim): five-tap clears prior owner/bonds on the glasses; the first
  * successful pair wins. Mentra Live pairing does NOT run ownership-transfer finalize/wipe.
- * pairing_info is still used as a secure-firmware readiness signal, but had_previous_bond
- * is ignored for UI gating.
+ * pairing_info is used only as a secure-firmware readiness signal; the advertised capability
+ * lets existing customer firmware proceed without waiting for an event it does not emit.
  */
 export default function GlassesPairingLoadingScreen() {
   const {replace, goBack} = useNavigationStore.getState()
   const route = useRoute()
-  const {deviceModel, deviceName, ar99ProjectName, securePairingCapable} = route.params as {
+  const {
+    device: deviceJson,
+    deviceModel,
+    deviceName,
+    ar99ProjectName,
+    securePairingCapable,
+    pairingCode,
+  } = route.params as {
+    device?: string
     deviceModel: string
     deviceName?: string
     ar99ProjectName?: string
     /** Known upfront from the scan result's advertised capability, before any pairing_info event. */
     securePairingCapable?: boolean
+    pairingCode?: string
   }
+  const isFocused = useIsFocused()
+  const selectedDevice = useMemo((): Device | null => {
+    if (!deviceJson) return null
+    try {
+      const device = JSON.parse(deviceJson) as Device
+      if (device.model !== deviceModel || (deviceName && device.name !== deviceName)) return null
+      return device
+    } catch {
+      return null
+    }
+  }, [deviceJson, deviceModel, deviceName])
   const [showTroubleshootingModal, setShowTroubleshootingModal] = useState(false)
   const hasNavigatedRef = useRef(false)
   const navigationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const glassesFullyBooted = useEngineSnapshot(engine.pairing.readiness, (onChange) =>
-    engine.pairing.onReadiness(onChange),
-  ).fullyBooted
+  const [selectedTargetReady, setSelectedTargetReady] = useState(false)
   const [showGlassesBooting, setShowGlassesBooting] = useState(false)
-  const pairingInfoRef = useRef<PairingInfoEvent | null>(null)
   const [pairingInfoReceived, setPairingInfoReceived] = useState(false)
-  const [pairingInfoTimedOut, setPairingInfoTimedOut] = useState(false)
+  const [pairingKickoffComplete, setPairingKickoffComplete] = useState(false)
+  const pairingKickoffStartedRef = useRef(false)
+  const pairingKickoffTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pairingStoppedRef = useRef(false)
   const isMentraLive = deviceModel === DeviceTypes.LIVE
   const pairingTimingStartRef = useRef(Date.now())
   const pairingTimingLastRef = useRef(Date.now())
@@ -64,6 +85,22 @@ export default function GlassesPairingLoadingScreen() {
   }, [deviceModel, deviceName, logPairingTiming])
 
   useEffect(() => {
+    const target = {deviceModel, deviceName}
+    const observeReadiness = (ready: boolean) => {
+      setSelectedTargetReady(ready)
+      if (!ready && navigationTimerRef.current) {
+        clearTimeout(navigationTimerRef.current)
+        navigationTimerRef.current = null
+        if (!pairingStoppedRef.current) hasNavigatedRef.current = false
+      }
+    }
+    const unsubscribe = engine.pairing.onTargetReady(target, observeReadiness)
+    observeReadiness(engine.pairing.targetReady(target))
+
+    return unsubscribe
+  }, [deviceModel, deviceName])
+
+  useEffect(() => {
     const unsub = engine.pairing.onGlassesNotReady(() => {
       setShowGlassesBooting(true)
       logPairingTiming("glasses_not_ready_ui")
@@ -74,12 +111,19 @@ export default function GlassesPairingLoadingScreen() {
   }, [logPairingTiming])
 
   useEffect(() => {
-    if (!isMentraLive) {
+    if (!isMentraLive || securePairingCapable === false) {
       return
     }
 
     const sub = BluetoothSdk.addListener("pairing_info", (event: PairingInfoEvent) => {
-      pairingInfoRef.current = event
+      if (!pairingKickoffStartedRef.current) return
+
+      const advertisedCode = pairingCode?.trim().toUpperCase()
+      const eventCode = typeof event.pairing_code === "string" ? event.pairing_code.trim().toUpperCase() : undefined
+      if (advertisedCode && eventCode && eventCode !== advertisedCode) {
+        logPairingTiming("ignoring_pairing_info_for_other_device")
+        return
+      }
       setPairingInfoReceived(true)
       logPairingTiming(
         "pairing_info",
@@ -90,14 +134,37 @@ export default function GlassesPairingLoadingScreen() {
     return () => {
       sub.remove()
     }
-  }, [isMentraLive, logPairingTiming])
+  }, [isMentraLive, securePairingCapable, pairingCode, logPairingTiming])
 
   const handleGoBack = useCallback(() => {
+    pairingStoppedRef.current = true
+    hasNavigatedRef.current = true
+    if (pairingKickoffTimerRef.current) {
+      clearTimeout(pairingKickoffTimerRef.current)
+      pairingKickoffTimerRef.current = null
+    }
+    if (navigationTimerRef.current) {
+      clearTimeout(navigationTimerRef.current)
+      navigationTimerRef.current = null
+    }
+    void engine.pairing.abandonAttempt().catch((cleanupError) => {
+      console.warn("Pairing cancellation cleanup failed:", cleanupError)
+    })
     goBack()
   }, [goBack])
 
   const handlePairFailure = useCallback(
     (error: string) => {
+      pairingStoppedRef.current = true
+      hasNavigatedRef.current = true
+      if (pairingKickoffTimerRef.current) {
+        clearTimeout(pairingKickoffTimerRef.current)
+        pairingKickoffTimerRef.current = null
+      }
+      if (navigationTimerRef.current) {
+        clearTimeout(navigationTimerRef.current)
+        navigationTimerRef.current = null
+      }
       void engine.pairing.abandonAttempt().catch((cleanupError) => {
         console.warn("Pairing failure cleanup failed:", cleanupError)
       })
@@ -120,6 +187,34 @@ export default function GlassesPairingLoadingScreen() {
   }, [handlePairFailure])
 
   useEffect(() => {
+    if (!isFocused || !selectedDevice || pairingKickoffStartedRef.current) return
+
+    const timer = setTimeout(() => {
+      pairingKickoffTimerRef.current = null
+      if (pairingStoppedRef.current) return
+      pairingKickoffStartedRef.current = true
+      logPairingTiming("pairing_kickoff")
+      void engine.pairing
+        .pair(selectedDevice)
+        .then(() => {
+          setPairingKickoffComplete(true)
+        })
+        .catch((error) => {
+          console.error("Failed to connect to selected device:", error)
+          if (pairingStoppedRef.current || hasNavigatedRef.current) return
+          handlePairFailure("errors:pairingCouldNotStart")
+        })
+    }, PAIRING_KICKOFF_DELAY_MS)
+    pairingKickoffTimerRef.current = timer
+
+    return () => {
+      clearTimeout(timer)
+      if (pairingKickoffTimerRef.current === timer) pairingKickoffTimerRef.current = null
+    }
+  }, [handlePairFailure, isFocused, logPairingTiming, selectedDevice])
+
+  useEffect(() => {
+    if (!isFocused || !pairingKickoffComplete) return
     const controller = new AbortController()
 
     void engine.pairing.waitForReady({
@@ -133,65 +228,82 @@ export default function GlassesPairingLoadingScreen() {
     return () => {
       controller.abort()
     }
-  }, [deviceModel, deviceName])
+  }, [deviceModel, deviceName, isFocused, pairingKickoffComplete])
 
   useEffect(() => {
-    if (!isMentraLive || !glassesFullyBooted || pairingInfoReceived || pairingInfoTimedOut) {
-      return
-    }
-    // Secure-capable firmware must not use the legacy pairing_info timeout fallback.
-    // Wait for the pairing_info readiness signal (not for ownership transfer).
-    if (securePairingCapable === true || pairingInfoRef.current?.secure_pairing_capable) {
+    if (
+      !isFocused ||
+      pairingStoppedRef.current ||
+      !pairingKickoffComplete ||
+      !isMentraLive ||
+      securePairingCapable === false ||
+      !selectedTargetReady ||
+      pairingInfoReceived
+    ) {
       return
     }
     const timer = setTimeout(() => {
-      setPairingInfoTimedOut(true)
-    }, PAIRING_INFO_FALLBACK_MS)
+      hasNavigatedRef.current = true
+      logPairingTiming("pairing_info_timeout", `securePairingCapable=${String(securePairingCapable)}`)
+      handlePairFailure("errors:pairingCouldNotStart")
+    }, PAIRING_INFO_WAIT_MS)
     return () => {
       clearTimeout(timer)
     }
-  }, [isMentraLive, glassesFullyBooted, pairingInfoReceived, pairingInfoTimedOut, securePairingCapable])
+  }, [
+    isMentraLive,
+    isFocused,
+    pairingKickoffComplete,
+    securePairingCapable,
+    selectedTargetReady,
+    pairingInfoReceived,
+    handlePairFailure,
+    logPairingTiming,
+  ])
 
   useEffect(() => {
-    if (!glassesFullyBooted) {
+    if (pairingStoppedRef.current || !isFocused || !pairingKickoffComplete || !selectedTargetReady) {
       return
     }
     logPairingTiming(
       "glasses_fully_booted",
-      `pairingInfoReceived=${pairingInfoReceived} timedOut=${pairingInfoTimedOut}`,
+      `pairingInfoReceived=${pairingInfoReceived} securePairingCapable=${String(securePairingCapable)}`,
     )
     if (hasNavigatedRef.current) {
       return
     }
 
-    if (isMentraLive) {
-      const secure = securePairingCapable === true || pairingInfoRef.current?.secure_pairing_capable === true
-      if (!pairingInfoReceived && !pairingInfoTimedOut) {
-        logPairingTiming("waiting_pairing_info")
-        return
-      }
-      if (secure && !pairingInfoReceived) {
-        logPairingTiming("waiting_secure_pairing_info")
-        return
-      }
+    if (isMentraLive && securePairingCapable !== false && !pairingInfoReceived) {
+      logPairingTiming("waiting_secure_pairing_info")
+      return
     }
 
     hasNavigatedRef.current = true
     logPairingTiming("navigate_success_scheduled")
     navigationTimerRef.current = setTimeout(() => {
+      navigationTimerRef.current = null
       replace("/pairing/success", {deviceModel: deviceModel, ar99ProjectName})
     }, 1000)
   }, [
-    glassesFullyBooted,
+    selectedTargetReady,
+    isFocused,
+    pairingKickoffComplete,
     replace,
     deviceModel,
     isMentraLive,
     pairingInfoReceived,
-    pairingInfoTimedOut,
     ar99ProjectName,
     securePairingCapable,
     logPairingTiming,
   ])
+
+  useEffect(() => {
+    if (!isFocused && navigationTimerRef.current) {
+      clearTimeout(navigationTimerRef.current)
+      navigationTimerRef.current = null
+      hasNavigatedRef.current = false
+    }
+  }, [isFocused])
 
   useEffect(() => {
     return () => {

@@ -1,5 +1,5 @@
 import React from "react"
-import {render, act, fireEvent} from "@testing-library/react-native"
+import {render, act, fireEvent, waitFor} from "@testing-library/react-native"
 
 import {useGlassesStore} from "../../../../modules/engine/src/stores/glasses"
 import {useNavigationStore} from "@/stores/navigation"
@@ -13,6 +13,7 @@ import {BES_INSTALL_RESTART_MESSAGE} from "@/utils/otaErrorMapping"
 import {beginOtaAutoChain, isOtaAutoChainActive, stopOtaAutoChain} from "@/services/otaAutoChain"
 
 const mockReplace = jest.fn()
+const AUTO_CHAIN_RELEASE_RANGE = {fromVersion: "3.0.0", toVersion: "3.1.0-dev.1"}
 
 // super_mode is controlled through the REAL settings store — the screen's
 // useSetting comes from the global @mentra/engine mock, which passes the real
@@ -86,7 +87,7 @@ beforeEach(() => {
   useGlassesStore.getState().reset()
   useConnectionOverlayConfig.getState().clearConfig()
   mockReplace.mockClear()
-  BluetoothSdk.sendOtaQueryStatus.mockClear()
+  BluetoothSdk.queryOtaStatus.mockClear()
   BluetoothSdk.startOtaUpdate.mockReset().mockResolvedValue(undefined)
   stopOtaAutoChain()
 })
@@ -196,7 +197,7 @@ describe("progress.tsx display states", () => {
 
   it("automatically returns to update checking after a chained pass completes", async () => {
     setGlassesConnected()
-    beginOtaAutoChain("initial-offer", false)
+    beginOtaAutoChain("initial-offer", false, AUTO_CHAIN_RELEASE_RANGE)
     const replaceSpy = jest.spyOn(useNavigationStore.getState(), "replace")
     try {
       const {getByText} = render(<OtaProgressScreen />)
@@ -228,7 +229,7 @@ describe("progress.tsx display states", () => {
 
   it("waits for a rebooting chained pass to reconnect before checking again", async () => {
     setGlassesDisconnected()
-    beginOtaAutoChain("initial-offer", false)
+    beginOtaAutoChain("initial-offer", false, AUTO_CHAIN_RELEASE_RANGE)
     useGlassesStore.getState().setOtaStatus({
       sessionId: "s1",
       totalSteps: 1,
@@ -263,7 +264,7 @@ describe("progress.tsx display states", () => {
 
   it("reschedules chained navigation when a reboot starts during the success delay", async () => {
     setGlassesConnected()
-    beginOtaAutoChain("initial-offer", false)
+    beginOtaAutoChain("initial-offer", false, AUTO_CHAIN_RELEASE_RANGE)
     const replaceSpy = jest.spyOn(useNavigationStore.getState(), "replace")
     try {
       const {getByText} = render(<OtaProgressScreen />)
@@ -306,7 +307,7 @@ describe("progress.tsx display states", () => {
 
   it("stops automatic chaining when Continue bypasses BES reboot verification", async () => {
     setGlassesConnected()
-    beginOtaAutoChain("initial-offer", false)
+    beginOtaAutoChain("initial-offer", false, AUTO_CHAIN_RELEASE_RANGE)
     const {getByTestId} = render(<OtaProgressScreen />)
 
     act(() => {
@@ -354,7 +355,7 @@ describe("progress.tsx display states", () => {
 
   it("stops automatic chaining when leaving a failed pass to change WiFi", () => {
     setGlassesConnected()
-    beginOtaAutoChain("initial-offer", false)
+    beginOtaAutoChain("initial-offer", false, AUTO_CHAIN_RELEASE_RANGE)
     const pushSpy = jest.spyOn(useNavigationStore.getState(), "push")
     try {
       const {getByText} = render(<OtaProgressScreen />)
@@ -437,7 +438,7 @@ describe("progress.tsx display states", () => {
     expect(getByText("Glasses disconnected")).toBeDefined()
   })
 
-  it("shows Skip (super) when disconnected in super mode", () => {
+  it("shows Skip (super) when disconnected in super mode", async () => {
     setSuperMode(true)
     setGlassesDisconnected()
     useGlassesStore.getState().setOtaStatus({
@@ -454,7 +455,7 @@ describe("progress.tsx display states", () => {
     const {getByText, getByTestId} = render(<OtaProgressScreen />)
     expect(getByText("Skip (super)")).toBeDefined()
     fireEvent.press(getByTestId("button-Skip (super)"))
-    expect(replaceSpy).toHaveBeenCalled()
+    await waitFor(() => expect(replaceSpy).toHaveBeenCalled())
     replaceSpy.mockRestore()
   })
 
@@ -640,7 +641,7 @@ describe("progress.tsx watchdog timers", () => {
         status: "step_complete",
       })
     })
-    BluetoothSdk.sendOtaQueryStatus.mockClear()
+    BluetoothSdk.queryOtaStatus.mockClear()
     BluetoothSdk.startOtaUpdate.mockClear()
 
     act(() => {
@@ -650,7 +651,7 @@ describe("progress.tsx watchdog timers", () => {
       setGlassesConnected()
     })
 
-    expect(BluetoothSdk.sendOtaQueryStatus).toHaveBeenCalledTimes(1)
+    expect(BluetoothSdk.queryOtaStatus).toHaveBeenCalledTimes(1)
     expect(BluetoothSdk.startOtaUpdate).not.toHaveBeenCalled()
 
     await act(async () => {

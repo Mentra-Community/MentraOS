@@ -1,5 +1,4 @@
 import {engine} from "@mentra/engine"
-
 import {useNavigationStore} from "@/stores/navigation"
 
 /**
@@ -7,8 +6,8 @@ import {useNavigationStore} from "@/stores/navigation"
  *
  * A kickoff rejection (e.g. Bluetooth powered off, a native-bridge error)
  * emits no pair_failure event, so the loading screen would otherwise spin
- * until the user cancels. Because the rejection lands on a delay, the user
- * may also have cancelled already — so this fires only while /pairing/loading
+ * until the user cancels. Because the rejection can land asynchronously, the user
+ * may have cancelled already — so this fires only while /pairing/loading
  * is still the top route; a stale callback must not yank the user out of
  * whatever screen they navigated to instead.
  */
