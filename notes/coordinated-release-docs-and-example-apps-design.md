@@ -192,8 +192,8 @@ MentraOS. Required inputs are:
 The workflow:
 
 1. validates the caller, channel, identity, and expected branch head;
-2. waits for every required npm, Maven, and SwiftPM package to be publicly
-   readable and verifies its version and recorded integrity;
+2. waits for required npm and SwiftPM packages to be publicly readable without
+   waiting for the automatically submitted Sonatype deployment;
 3. creates an isolated candidate commit from the expected Starter Kit head;
 4. updates every example and lockfile to the exact coordinated versions;
 5. embeds the exact release identity and OTA pin where the example runtime
@@ -224,7 +224,7 @@ reimplement the PR build commands in MentraOS or a second Starter Kit script.
 The initial artifact set is:
 
 ```text
-mentra-example-android-<identity>.apk
+mentra-example-android-<identity>.apk  # optional until Maven Central exposes the identity
 mentra-example-ios-<identity>-unsigned.ipa
 mentra-example-react-native-<identity>.apk
 mentra-example-rn-elevenlabs-audio-<identity>.apk
@@ -353,9 +353,11 @@ release plan and OTA selection
   -> channel Slack notification
 ```
 
-The Starter Kit gate runs only after its public dependencies exist. It may run
-in parallel with unrelated late gates when dependencies permit, but finalization
-waits for its validated result.
+The Starter Kit gate runs after npm and SwiftPM exist. Native Android is built
+when Maven Central already exposes the exact SDK version; otherwise its APK is
+omitted from that release while the other examples remain required. The gate
+may run in parallel with unrelated late gates when dependencies permit, but
+finalization waits for its validated result.
 
 If the Starter Kit fails, already published package artifacts remain recoverable
 under the in-progress release. There is no completed release manifest, docs do

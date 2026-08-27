@@ -73,7 +73,10 @@ test("assembles every product target and finalizes one complete release manifest
     releaseSetId: plan.releaseSetId,
     publications: {
       "@mentra/bluetooth-sdk": {
-        "maven-central": publication(`com.mentraglass:bluetooth-sdk:${plan.releaseIdentity}`),
+        "maven-central": {
+          ...publication(`com.mentraglass:bluetooth-sdk:${plan.releaseIdentity}`),
+          status: "submitted",
+        },
         "swift-package-manager": publication(`Mentra-Community/mentra-bluetooth-sdk-ios@${plan.releaseIdentity}`),
       },
     },
@@ -157,7 +160,7 @@ test("assembles every product target and finalizes one complete release manifest
       "@mentra/bluetooth-sdk": plan.releaseIdentity,
       "@mentra/engine": plan.releaseIdentity,
     },
-    artifacts: ["android", "ios", "reactNative", "reactNativeElevenLabsAudio"].map((key, index) => ({
+    artifacts: ["ios", "reactNative", "reactNativeElevenLabsAudio"].map((key, index) => ({
       key,
       name: `mentra-example-${key}-${plan.releaseIdentity}.${key === "ios" ? "ipa" : "apk"}`,
       url: `https://example.com/mentra-example-${key}-${plan.releaseIdentity}`,
@@ -183,7 +186,7 @@ test("assembles every product target and finalizes one complete release manifest
   const manifest = finalizeReleaseManifest({plan, results, completedAt: "2026-08-25T02:00:00.000Z"})
 
   assert.equal(Object.keys(manifest.publications).length, 8)
-  assert.equal(manifest.publications["@mentra/bluetooth-sdk"]["maven-central"].status, "published")
+  assert.equal(manifest.publications["@mentra/bluetooth-sdk"]["maven-central"].status, "submitted")
   assert.equal(manifest.publications.mentraos["app-store-connect"].status, "published")
   assert.ok(manifest.artifacts.some((artifact) => artifact.coordinate === plan.artifactNames.asgSelection))
   assert.equal(manifest.starterKit.resultUrl, "https://example.com/starter-kit-result.json")

@@ -7,7 +7,7 @@ const COMMIT_PATTERN = /^[0-9a-f]{40}$/
 const CHANNELS = new Set(["dev", "beta", "production"])
 const KINDS = new Set(["package", "product"])
 const PUBLISH_TARGETS = new Set(["app-store-connect", "google-play", "maven-central", "npm", "swift-package-manager"])
-const PUBLICATION_STATUSES = new Set(["promoted", "published", "reused"])
+const PUBLICATION_STATUSES = new Set(["promoted", "published", "reused", "submitted"])
 const SHA256_PATTERN = /^[0-9a-f]{64}$/
 
 function fail(message) {
@@ -315,7 +315,7 @@ export function requirePublicHttpsUrl(value, label) {
 function validatePublication(publication, label) {
   if (!publication || typeof publication !== "object") throw new Error(`${label} is missing`)
   if (!PUBLICATION_STATUSES.has(publication.status)) {
-    throw new Error(`${label}.status must be promoted, published, or reused`)
+    throw new Error(`${label}.status must be promoted, published, reused, or submitted`)
   }
   requireString(publication.coordinate, `${label}.coordinate`)
   requirePublicHttpsUrl(publication.url, `${label}.url`)
@@ -369,7 +369,7 @@ function validateStarterKitEvidence(plan, starterKit, artifacts) {
     starterKit.channel !== plan.channel ||
     starterKit.mentraos?.sourceCommit !== plan.sourceCommit ||
     !Array.isArray(starterKit.artifacts) ||
-    starterKit.artifacts.length !== 4
+    ![3, 4].includes(starterKit.artifacts.length)
   ) {
     throw new Error("Starter Kit evidence does not match the release plan")
   }
