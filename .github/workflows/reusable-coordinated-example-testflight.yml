@@ -276,8 +276,8 @@ jobs:
             -authenticationKeyIssuerID "$ASC_ISSUER_ID"
           ipa=$(find "$output" -maxdepth 1 -name '*.ipa' -print -quit)
           test -n "$ipa"
-          mkdir -p release-output
-          destination="release-output/mentra-example-react-native-${{ steps.coordinates.outputs.release_identity }}.ipa"
+          mkdir -p "$GITHUB_WORKSPACE/release-output"
+          destination="$GITHUB_WORKSPACE/release-output/mentra-example-react-native-${{ steps.coordinates.outputs.release_identity }}.ipa"
           cp "$ipa" "$destination"
           echo "path=$destination" >> "$GITHUB_OUTPUT"
 

@@ -80,6 +80,7 @@ test("mobile destinations use real TestFlight groups without changing the releas
   assert.match(example, /runs-on: \[self-hosted, macOS, ARM64\]/)
   assert.match(example, /xcrun altool --upload-app/)
   assert.match(example, /app-store-connect-build\.mjs assign/)
+  assert.match(example, /destination="\$GITHUB_WORKSPACE\/release-output\/mentra-example-react-native-/)
 })
 
 test("coordinated docs publish only after finalization to the matching channel", () => {
