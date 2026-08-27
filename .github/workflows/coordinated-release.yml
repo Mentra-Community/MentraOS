@@ -337,14 +337,27 @@ jobs:
           if ! curl --fail --silent --show-error --location "$result_url" \
             --output "starter-kit-result/$result_name" 2>/dev/null; then
             rm -f "starter-kit-result/$result_name"
-            dispatched_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-            gh workflow run coordinated-example-release.yml \
-              --repo "$STARTER_KIT_REPOSITORY" \
-              --ref main \
-              -f "channel=$channel" \
-              -f "payload=$payload"
+            run_json=$(gh run list --repo "$STARTER_KIT_REPOSITORY" \
+              --workflow coordinated-example-release.yml --event workflow_dispatch --limit 100 \
+              --json databaseId,displayTitle,status,url \
+              --jq ".[] | select(.displayTitle == \"$run_title\" and .status != \"completed\")" \
+              | head -1)
+            dispatched_at=""
+            if [[ -n "$run_json" ]]; then
+              run_id=$(jq -r .databaseId <<< "$run_json")
+              run_url=$(jq -r .url <<< "$run_json")
+              echo "run_url=$run_url" >> "$GITHUB_OUTPUT"
+            else
+              dispatched_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+              gh workflow run coordinated-example-release.yml \
+                --repo "$STARTER_KIT_REPOSITORY" \
+                --ref main \
+                -f "channel=$channel" \
+                -f "payload=$payload"
+            fi
 
             candidate_branch="coordinated/$identity"
+            encoded_candidate_branch=$(jq -rn --arg value "$candidate_branch" '$value | @uri')
             candidate_sha=""
             for _ in {1..180}; do
               if [[ -z "$run_id" ]]; then
@@ -359,7 +372,7 @@ jobs:
                   echo "run_url=$run_url" >> "$GITHUB_OUTPUT"
                 fi
               fi
-              candidate_sha=$(gh api "repos/$STARTER_KIT_REPOSITORY/branches/$candidate_branch" \
+              candidate_sha=$(gh api "repos/$STARTER_KIT_REPOSITORY/branches/$encoded_candidate_branch" \
                 --jq .commit.sha 2>/dev/null || true)
               [[ -n "$run_id" && -n "$candidate_sha" ]] && break
               if [[ -n "$run_id" ]]; then

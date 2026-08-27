@@ -84,6 +84,8 @@ test("coordinated docs publish only after finalization to the matching channel",
   assert.match(starterKit, /^    needs: \[plan, ota, npm, sdk-native, engine-consumer\]$/m)
   assert.match(starterKit, /coordinated-example-release\.yml/)
   assert.match(starterKit, /starter-kit-release-\$identity\.json/)
+  assert.match(starterKit, /select\(\.displayTitle == [^\n]+ and \.status != \\"completed\\"\)/)
+  assert.match(starterKit, /encoded_candidate_branch=\$\(jq -rn[^\n]+'\$value \| @uri'\)/)
   assert.match(starterKit, /gh pr checks "\$pr_url"[^]*--required --json name,bucket/)
   assert.match(starterKit, /gh pr merge "\$pr_url"[^]*--match-head-commit "\$candidate_sha"/)
   assert.match(starterKit, /gh pr view "\$pull_request_url"[^]*--json url,state,headRefOid,baseRefName,mergeCommit/)
