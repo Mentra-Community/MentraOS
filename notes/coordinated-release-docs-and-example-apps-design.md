@@ -177,7 +177,9 @@ to TestFlight.
 ### Coordinated example release
 
 `coordinated-example-release.yml` is invoked by an authenticated dispatch from
-MentraOS. Required inputs are:
+MentraOS. The coordinator uses GitHub's cross-repository `repository_dispatch`
+endpoint, which is covered by the GitHub App's existing Contents write grant;
+manual `workflow_dispatch` remains available for operators. Required inputs are:
 
 - `releaseSetId`;
 - `releaseIdentity`;
