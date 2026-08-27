@@ -43,6 +43,12 @@ public class AsgConstants {
     public static final long STREAM_METRICS_INTERVAL_MS = 1_000L;
 
     /**
+     * Initial WHIP/WebRTC send bitrate before congestion control has measured the network. This
+     * avoids libwebrtc's low default startup estimate while preserving room to adapt.
+     */
+    public static final int WHIP_INITIAL_VIDEO_BITRATE_BPS = 1_500_000;
+
+    /**
      * 1Hz encoder FPS/bitrate/dropped-frame telemetry ({@code [STREAM_QUALITY]} and BLE {@code
      * stream_status.stats}). Lifecycle {@code stream_status} (started/stopped/error) is unaffected.
      * Keep false in production; flip locally to debug the Mentra Call FPS ladder.

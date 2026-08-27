@@ -108,6 +108,8 @@ Every camera-button press should still be forwarded to the phone as a `button_pr
 
 Mentra Live supports camera/microphone live streaming paths from `asg_client`, including RTMP, SRT, and WHIP services. Streaming behavior must coordinate camera ownership, microphone foreground-service requirements, reconnect/keep-alive handling, and privacy LED state.
 
+WHIP streams seed WebRTC with an explicit initial send bitrate capped by the caller's configured maximum. Congestion control remains enabled so the sender can still reduce bitrate on constrained networks instead of treating the configured bitrate as a fixed rate.
+
 Streaming endpoints on the active Mentra Live hotspot subnet are reachable without a separate STA WiFi connection. `asg_client` derives that subnet from the live hotspot interface rather than assuming fixed client addresses. For WHIP, the WebRTC network inventory must also expose the hotspot interface so ICE can gather a directly reachable local candidate.
 
 ### Local media sync server
