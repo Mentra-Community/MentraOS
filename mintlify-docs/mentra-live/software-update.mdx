@@ -11,19 +11,40 @@ packages, hosted OTA manifest, and portable OTA bundle selected for one release.
 See [Air-Gapped Bluetooth SDK Deployment](/mentra-live/air-gapped-deployment)
 for release-record resolution, checksum verification, and internal hosting.
 
-Resolve the current coordinated beta identity, then pin that exact value in
-your app:
+Resolve the newest completed beta release record, then pin its exact identity
+in your app:
 
 ```bash
-ENGINE_VERSION="$(npm view @mentra/engine@beta version)"
-SDK_VERSION="$(npm view @mentra/bluetooth-sdk@beta version)"
-test "$ENGINE_VERSION" = "$SDK_VERSION"
-echo "$SDK_VERSION"
+RELEASE_FAMILY="3.1.0"
+RELEASE_API="https://api.github.com/repos/Mentra-Community/MentraOS/releases/tags/mentra-builds-v${RELEASE_FAMILY}"
+RELEASE_RECORD="mentra-release-selected-beta.json"
+
+RELEASE_RECORD_URL="$(
+  curl --fail --silent --show-error --location "$RELEASE_API" |
+    jq -er --arg family "$RELEASE_FAMILY" '
+      [.assets[]
+        | select(.name | startswith("mentra-release-" + $family + "-beta."))
+        | select(.name | test("beta[.][0-9]+[.]json$"))
+        | {
+            url: .browser_download_url,
+            sequence: (.name | capture("beta[.](?<n>[0-9]+)[.]json$").n | tonumber)
+          }
+      ]
+      | if length == 0
+        then error("no completed beta release")
+        else max_by(.sequence).url
+        end
+    '
+)" &&
+curl --fail --location --output "$RELEASE_RECORD" "$RELEASE_RECORD_URL" &&
+RELEASE_VERSION="$(jq -er .releaseIdentity "$RELEASE_RECORD")" &&
+echo "$RELEASE_VERSION"
 ```
 
-The command prints the current `<release-version>`. If the equality check fails,
-the coordinated release is still publishing; wait for it to finish instead of
-mixing versions. Use that exact value across every platform:
+The command considers only a `mentra-release-<release-version>.json` record,
+which is published after the SDK packages, native artifacts, OTA assets, example
+app, and release verification complete. It fails instead of selecting a release
+that is still publishing. Use the printed value across every platform:
 
 | Mobile app dependency | Required glasses software |
 | --- | --- |
@@ -132,15 +153,13 @@ Do not reproduce that sequencing with `checkForOtaUpdate()`,
 This is the simplest and safest integration. `MentraLiveOtaFlow` provides the
 same full-page OTA screens and behavior as the Mentra App.
 
-Install the matching Mentra Engine and Bluetooth SDK releases. This example
-resolves the current beta again, verifies that publication is coordinated, and
-then pins the exact result in your lockfile:
+Install the matching Mentra Engine and Bluetooth SDK releases from the completed
+record selected above. The `&&` guard prevents installation if the record is
+missing or invalid:
 
 ```bash
-ENGINE_VERSION="$(npm view @mentra/engine@beta version)"
-SDK_VERSION="$(npm view @mentra/bluetooth-sdk@beta version)"
-test "$ENGINE_VERSION" = "$SDK_VERSION"
-bun add "@mentra/engine@$ENGINE_VERSION" "@mentra/bluetooth-sdk@$SDK_VERSION"
+RELEASE_VERSION="$(jq -er .releaseIdentity mentra-release-selected-beta.json)" &&
+bun add "@mentra/engine@$RELEASE_VERSION" "@mentra/bluetooth-sdk@$RELEASE_VERSION"
 ```
 
 Render the flow after Mentra Live connects. Your app owns only the surrounding
