@@ -88,11 +88,10 @@ test("synchronizes all maintained example manifests", () => {
   )
 })
 
-test("creates a deterministic result for all four artifacts", () => {
+test("creates a deterministic result when optional native Android is unavailable", () => {
   const artifactDir = mkdtempSync(path.join(tmpdir(), "starter-kit-artifacts-"))
   const identity = "3.1.0-beta.57"
   for (const name of [
-    `mentra-example-android-${identity}.apk`,
     `mentra-example-ios-${identity}-unsigned.ipa`,
     `mentra-example-react-native-${identity}.apk`,
     `mentra-example-rn-elevenlabs-audio-${identity}.apk`,
@@ -111,6 +110,23 @@ test("creates a deterministic result for all four artifacts", () => {
   })
 
   assert.equal(result.starterKit.artifactContainerTag, "sdk-builds-v3.1.0")
-  assert.equal(result.artifacts.length, 4)
+  assert.equal(result.artifacts.length, 3)
   assert.ok(result.artifacts.every((artifact) => artifact.sha256.length === 64 && artifact.size > 0))
+
+  writeFileSync(
+    path.join(artifactDir, `mentra-example-android-${identity}.apk`),
+    `mentra-example-android-${identity}.apk`,
+  )
+  assert.equal(
+    createReleaseResult({
+      payload: payload(identity),
+      repository: "Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit",
+      releaseCommit: sha,
+      mergeCommit: "c".repeat(40),
+      pullRequestUrl: "https://github.com/Mentra/pr/1",
+      validationRunUrl: "https://github.com/Mentra/actions/1",
+      artifactDir,
+    }).artifacts.length,
+    4,
+  )
 })

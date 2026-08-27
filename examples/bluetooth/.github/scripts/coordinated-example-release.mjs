@@ -11,7 +11,13 @@ const SHA256_PATTERN = /^[0-9a-f]{64}$/
 const REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
 
 const EXAMPLE_ARTIFACTS = [
-  {key: "android", prefix: "mentra-example-android", suffix: ".apk", contentType: "application/vnd.android.package-archive"},
+  {
+    key: "android",
+    prefix: "mentra-example-android",
+    suffix: ".apk",
+    contentType: "application/vnd.android.package-archive",
+    required: false,
+  },
   {key: "ios", prefix: "mentra-example-ios", suffix: "-unsigned.ipa", contentType: "application/octet-stream"},
   {
     key: "reactNative",
@@ -164,18 +170,19 @@ export function createReleaseResult({payload, repository, releaseCommit, mergeCo
 
   const files = listFilesRecursively(artifactDir)
   const assetBaseUrl = `https://github.com/${repository}/releases/download/${release.artifactContainerTag}`
-  const artifacts = EXAMPLE_ARTIFACTS.map(({key, prefix, suffix, contentType}) => {
+  const artifacts = EXAMPLE_ARTIFACTS.flatMap(({key, prefix, suffix, contentType, required = true}) => {
     const name = `${prefix}-${release.releaseIdentity}${suffix}`
     const matches = files.filter((filePath) => path.basename(filePath) === name)
+    if (matches.length === 0 && !required) return []
     if (matches.length !== 1) throw new Error(`Expected exactly one built artifact named ${name}`)
-    return {
+    return [{
       key,
       name,
       url: `${assetBaseUrl}/${name}`,
       size: statSync(matches[0]).size,
       sha256: sha256(matches[0]),
       contentType,
-    }
+    }]
   })
 
   return {

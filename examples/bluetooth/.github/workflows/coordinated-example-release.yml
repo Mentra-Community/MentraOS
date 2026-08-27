@@ -92,7 +92,7 @@ jobs:
             [[ "$(jq -r .baseRefName <<< "$pr_provenance")" == "$TARGET_BRANCH" ]]
             [[ "$(jq -r .mergeCommit.oid <<< "$pr_provenance")" == "$merge_commit" ]]
             [[ "$(gh api "repos/$STARTER_KIT_REPOSITORY/git/ref/tags/sdk-$RELEASE_IDENTITY" --jq .object.sha)" == "$release_commit" ]]
-            [[ "$(jq -er '.artifacts | length' "$result")" == "4" ]]
+            [[ "$(jq -er '.artifacts | length' "$result")" =~ ^(3|4)$ ]]
             while IFS= read -r url; do
               curl --fail --silent --show-error --location --head "$url" >/dev/null
             done < <(jq -r '.artifacts[].url' "$result")
@@ -125,11 +125,6 @@ jobs:
             [[ "$(npm view "@mentra/bluetooth-sdk@$RELEASE_IDENTITY" version 2>/dev/null)" == "$RELEASE_IDENTITY" ]] &&
               [[ "$(npm view "@mentra/engine@$RELEASE_IDENTITY" version 2>/dev/null)" == "$RELEASE_IDENTITY" ]]
           }
-          check_maven() {
-            curl --fail --silent --show-error --head \
-              "https://repo1.maven.org/maven2/com/mentraglass/bluetooth-sdk/$RELEASE_IDENTITY/bluetooth-sdk-$RELEASE_IDENTITY.pom" \
-              >/dev/null
-          }
           check_swiftpm() {
             git ls-remote --exit-code --tags \
               https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git \
@@ -137,7 +132,6 @@ jobs:
           }
 
           retry 30 20 check_npm
-          retry 30 20 check_maven
           retry 30 20 check_swiftpm
           curl --fail --silent --show-error --location "$OTA_MANIFEST_URL" --output ota-manifest.json
           echo "$OTA_MANIFEST_SHA256  ota-manifest.json" | sha256sum --check --status
