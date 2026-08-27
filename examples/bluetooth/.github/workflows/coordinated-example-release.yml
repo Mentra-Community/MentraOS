@@ -1,4 +1,5 @@
 name: Coordinated Example Release
+run-name: Coordinated example ${{ inputs.channel }} ${{ fromJSON(inputs.payload).releaseIdentity }}
 
 "on":
   workflow_dispatch:
