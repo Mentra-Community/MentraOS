@@ -79,6 +79,9 @@ make Engine installation and native resolution ambiguous to consumers.
 13. Dev and beta documentation is a post-finalization release output. The docs
     show the exact coordinated release identity and are never published ahead
     of the completed release manifest.
+14. Starter Kit examples are built and published by the Starter Kit repository,
+    but their validated result is a required consumer gate before coordinated
+    finalization. Documentation never guesses or constructs an example URL.
 
 ## Phase 0: Fix the Engine Boundary Now
 
@@ -505,12 +508,14 @@ After the OTA bundle and version map exist:
 3. After npm and native publication, a clean external OEM fixture installs only
    the exact public Engine package plus host-owned dependencies. It verifies the
    registry graph, TypeScript, Metro, Expo autolinking, Android, and iOS.
-4. Finalization writes the completed release manifest only after every product
-   lane and the external consumer gate succeeds.
-5. Dev and beta documentation publishes after finalization from the exact
-   source commit and release plan. Starter Kit artifacts remain a separate
-   downstream publication because their example binaries are not produced by
-   this repository.
+4. After its public dependencies are readable, the Starter Kit repository
+   synchronizes every maintained example to the exact release identity, builds
+   them from one tested commit, and publishes an immutable result with artifact
+   hashes.
+5. Finalization writes the completed release manifest only after every product
+   lane, the external consumer gate, and the Starter Kit gate succeed.
+6. Dev and beta documentation publishes after finalization from the exact
+   source commit, release plan, and validated Starter Kit result.
 
 Independent jobs may run in parallel when the dependency graph permits it. A
 consumer package cannot publish until its referenced versions are publicly
@@ -734,21 +739,29 @@ manifest, IPA, and Android store artifact are not rebuilt.
 
 ## Starter Kit and Documentation
 
+The detailed ownership, cross-repository protocol, artifact contract,
+documentation rendering, Slack integration, and deferred TestFlight design are
+specified in
+[Coordinated Documentation and Example App Releases](./coordinated-release-docs-and-example-apps-design.md).
+
 Starter Kit examples are downstream release consumers, not sources of package
 truth.
 
 1. Wait until npm, Maven, and SwiftPM all expose the coordinated SDK version and
    Engine's full dependency closure is readable.
-2. Update all three examples to the selected public versions.
-3. Build and publish example APK/IPA artifacts.
-4. Update the independently versioned example variables after its artifacts are
-   public. Coordinated dev and beta package/glasses versions are already
-   supplied by their release workflow.
+2. Dispatch the Starter Kit repository with the exact release identity and its
+   expected channel-branch head.
+3. Update every maintained example and lockfile to the selected public versions
+   in an isolated candidate commit.
+4. Build and publish immutable example APK/IPA artifacts and a machine-readable
+   result containing their source commit, URLs, and hashes.
+5. Validate that result before coordinated finalization, then render the exact
+   example version and URL into dev or beta documentation.
 
 The Starter Kit publication fails closed if a referenced package is
-unavailable. Documentation labels the separately published example version
-explicitly and never claims that its download matches a newer coordinated
-release.
+unavailable. Documentation never claims that an example matches a coordinated
+release unless its validated Starter Kit result is included in that release's
+final manifest.
 
 ## Verification Gates
 

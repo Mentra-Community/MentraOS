@@ -44,12 +44,68 @@ function verifyAsgSelection(plan, ota, selectionFile) {
   return {sha256, size: bytes.length}
 }
 
+function verifyStarterKitResult(plan, starterKit, resultUrl) {
+  if (!starterKit) return undefined
+  if (
+    starterKit.schemaVersion !== 1 ||
+    starterKit.releaseSetId !== plan.releaseSetId ||
+    starterKit.releaseIdentity !== plan.releaseIdentity ||
+    starterKit.familyBaseVersion !== plan.familyBaseVersion ||
+    starterKit.channel !== plan.channel ||
+    starterKit.mentraos?.sourceCommit !== plan.sourceCommit
+  ) {
+    throw new Error("Starter Kit result does not match the release plan")
+  }
+  for (const packageName of ["@mentra/bluetooth-sdk", "@mentra/engine"]) {
+    if (starterKit.packages?.[packageName] !== plan.releaseIdentity) {
+      throw new Error(`Starter Kit ${packageName} version does not match the release plan`)
+    }
+  }
+  if (!/^https:\/\//.test(resultUrl || "")) throw new Error("Starter Kit result URL must be public HTTPS")
+  if (!/^https:\/\//.test(starterKit.starterKit?.validationRunUrl || "")) {
+    throw new Error("Starter Kit validation run URL must be public HTTPS")
+  }
+  if (!Array.isArray(starterKit.artifacts) || starterKit.artifacts.length !== 4) {
+    throw new Error("Starter Kit result must contain all four example artifacts")
+  }
+  const keys = new Set()
+  const artifacts = starterKit.artifacts.map((artifact) => {
+    if (
+      !artifact?.key ||
+      keys.has(artifact.key) ||
+      typeof artifact.name !== "string" ||
+      !artifact.name.includes(plan.releaseIdentity) ||
+      !/^https:\/\//.test(artifact.url || "") ||
+      !/^[0-9a-f]{64}$/.test(artifact.sha256 || "") ||
+      !Number.isSafeInteger(artifact.size) ||
+      artifact.size < 1
+    ) {
+      throw new Error("Starter Kit contains an invalid or duplicate example artifact")
+    }
+    keys.add(artifact.key)
+    return {
+      status: "published",
+      coordinate: artifact.name,
+      url: artifact.url,
+      sha256: artifact.sha256,
+      size: artifact.size,
+      provenanceUrl: starterKit.starterKit.validationRunUrl,
+    }
+  })
+  for (const key of ["android", "ios", "reactNative", "reactNativeElevenLabsAudio"]) {
+    if (!keys.has(key)) throw new Error(`Starter Kit result is missing ${key}`)
+  }
+  return {record: {...starterKit, resultUrl}, artifacts}
+}
+
 export function assembleCoordinatedReleaseResults({
   plan,
   ota,
   npmRecords,
   native,
   mobile,
+  starterKit,
+  starterKitResultUrl,
   asgSelectionFile,
   enginePackage,
   releaseAssetBaseUrl,
@@ -59,6 +115,7 @@ export function assembleCoordinatedReleaseResults({
   }
   const merged = mergeReleaseResultRecords({plan, records: [...npmRecords, native, mobile]})
   const selection = verifyAsgSelection(plan, ota, asgSelectionFile)
+  const verifiedStarterKit = verifyStarterKitResult(plan, starterKit, starterKitResultUrl)
   const otaProvenanceUrl = provenanceUrl(ota)
   const artifacts = [
     ...merged.artifacts,
@@ -99,6 +156,7 @@ export function assembleCoordinatedReleaseResults({
       }),
     )
   }
+  if (verifiedStarterKit) artifacts.push(...verifiedStarterKit.artifacts)
 
   return {
     schemaVersion: 1,
@@ -113,6 +171,7 @@ export function assembleCoordinatedReleaseResults({
       provenanceUrl: otaProvenanceUrl,
     },
     artifacts,
+    ...(verifiedStarterKit ? {starterKit: verifiedStarterKit.record} : {}),
   }
 }
 
@@ -135,6 +194,8 @@ function main() {
     npmRecords: [readJson(path.resolve(args.npm))],
     native: readJson(path.resolve(args.native)),
     mobile: readJson(path.resolve(args.mobile)),
+    starterKit: args["starter-kit"] ? readJson(path.resolve(args["starter-kit"])) : undefined,
+    starterKitResultUrl: args["starter-kit-result-url"],
     asgSelectionFile: path.resolve(args["asg-selection"]),
     enginePackage: args["engine-package"] ? path.resolve(args["engine-package"]) : undefined,
     releaseAssetBaseUrl: args["release-asset-base-url"],

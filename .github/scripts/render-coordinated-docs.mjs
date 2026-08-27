@@ -16,7 +16,24 @@ function parseArgs(args) {
   return values
 }
 
-export function renderCoordinatedDocs({sourceDir, outputDir, releasePlan, repository}) {
+function validateStarterKitResult(releasePlan, starterKitResult) {
+  if (!starterKitResult) throw new Error("Coordinated prerelease docs require a Starter Kit result")
+  if (
+    starterKitResult.schemaVersion !== 1 ||
+    starterKitResult.releaseSetId !== releasePlan.releaseSetId ||
+    starterKitResult.releaseIdentity !== releasePlan.releaseIdentity ||
+    starterKitResult.mentraos?.sourceCommit !== releasePlan.sourceCommit
+  ) {
+    throw new Error("Starter Kit result does not match the coordinated release plan")
+  }
+  const reactNative = starterKitResult.artifacts?.find((artifact) => artifact.key === "reactNative")
+  if (!reactNative || !/^https:\/\//.test(reactNative.url || "")) {
+    throw new Error("Starter Kit result is missing the React Native APK")
+  }
+  return reactNative
+}
+
+export function renderCoordinatedDocs({sourceDir, outputDir, releasePlan, starterKitResult, repository}) {
   if (!RELEASE_IDENTITY_PATTERN.test(releasePlan?.releaseIdentity || "")) {
     throw new Error(`Invalid coordinated release identity ${JSON.stringify(releasePlan?.releaseIdentity)}`)
   }
@@ -51,6 +68,11 @@ export function renderCoordinatedDocs({sourceDir, outputDir, releasePlan, reposi
   config.variables["release-version"] = releasePlan.releaseIdentity
   config.variables["release-artifacts-url"] =
     `https://github.com/${repository}/releases/tag/${releasePlan.artifactContainerTag}`
+  if (releasePlan.releaseIdentity.includes("-")) {
+    const reactNative = validateStarterKitResult(releasePlan, starterKitResult)
+    config.variables["example-app-version"] = releasePlan.releaseIdentity
+    config.variables["example-app-url"] = reactNative.url
+  }
   writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`)
 
   return {releaseIdentity: releasePlan.releaseIdentity, outputDir: output}
@@ -60,10 +82,14 @@ const isMain = process.argv[1] && import.meta.url === pathToFileURL(path.resolve
 if (isMain) {
   const args = parseArgs(process.argv.slice(2))
   const plan = JSON.parse(readFileSync(path.resolve(args.plan), "utf8"))
+  const starterKitResult = args["starter-kit"]
+    ? JSON.parse(readFileSync(path.resolve(args["starter-kit"]), "utf8"))
+    : undefined
   const result = renderCoordinatedDocs({
     sourceDir: path.resolve(args.source),
     outputDir: path.resolve(args.output),
     releasePlan: plan,
+    starterKitResult,
     repository: args.repository,
   })
   console.log(`Rendered docs for ${result.releaseIdentity} in ${result.outputDir}`)
