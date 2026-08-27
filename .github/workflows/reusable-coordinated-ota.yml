@@ -323,7 +323,7 @@ jobs:
           ASG_VERSION_NAME: ${{ steps.asg-identity.outputs.version_name }}
           FIRMWARE_MANIFEST: asg_client/ota_manifests/firmware_live.json
           OUTPUT_PATH: coordinated-ota-work/release-assets/${{ steps.names.outputs.manifest_asset }}
-          SDK_VERSION: ${{ steps.names.outputs.release_identity }}
+          RELEASE_VERSION: ${{ steps.names.outputs.release_identity }}
         run: |
           ASG_APK_SHA256=$(jq -er .apk.sha256 coordinated-ota-work/asg-provenance.json)
           ASG_APK_SIZE=$(jq -er .apk.size coordinated-ota-work/asg-provenance.json)

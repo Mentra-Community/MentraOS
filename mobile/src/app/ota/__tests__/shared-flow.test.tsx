@@ -36,6 +36,7 @@ describe("MentraLiveOtaFlow", () => {
     useGlassesStore.getState().setGlassesInfo({
       connection: {state: "connected", fullyBooted: true},
       buildNumber: "37",
+      appVersion: "3.1.0-dev.7",
       hotspotOtaVersion: 1,
       wifi: {state: "disconnected"},
     })
@@ -48,6 +49,7 @@ describe("MentraLiveOtaFlow", () => {
       besVersion: null,
       isApkDowngrade: false,
       manifestBody: "{}",
+      releaseVersion: "3.1.0-dev.8",
       updateInfo: {isDowngrade: false, updates: [{type: "apk"}], versionName: "38"},
       isRequired: true,
       manifestUrl: "https://example.com/version.json",
@@ -63,6 +65,7 @@ describe("MentraLiveOtaFlow", () => {
       await jest.advanceTimersByTimeAsync(1_100)
     })
     expect(getByText("Mentra Live Update Available")).toBeDefined()
+    expect(getByText("3.1.0-dev.7 → 3.1.0-dev.8")).toBeDefined()
 
     fireEvent.press(getByTestId("button-Update Now"))
 
@@ -87,6 +90,7 @@ describe("MentraLiveOtaFlow", () => {
       besVersion: null,
       isApkDowngrade: false,
       manifestBody: "{}",
+      releaseVersion: null,
       updateInfo: {isDowngrade: false, updates: [{type: "apk"}], versionName: "37"},
       isRequired: false,
       manifestUrl: "https://example.com/version.json",
@@ -142,6 +146,7 @@ describe("MentraLiveOtaFlow", () => {
       besVersion: null,
       isApkDowngrade: false,
       manifestBody: "{}",
+      releaseVersion: null,
       updateInfo: null,
       isRequired: false,
       manifestUrl: "https://example.com/version.json",

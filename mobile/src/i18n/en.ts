@@ -411,6 +411,9 @@ const en = {
     updateReadyToInstall: "Version {{version}} for {{deviceName}} is ready to install.",
     updateConnectWifi: "Connect your {{deviceName}} to WiFi to install the update.",
     updateDescription: "A new update is available for your glasses. We recommend updating now for the best experience.",
+    releaseTransition: "{{fromVersion}} → {{toVersion}}",
+    releaseTransitionUnknown: "Current version unknown → {{toVersion}}",
+    updatedToVersion: "Updated to {{version}}",
     downgradeAvailable: "{{deviceName}} Version Change Required",
     downgradeDescriptionShort:
       "This app requires an earlier glasses software version. Photos and videos are kept; glasses settings will be reset and restored automatically.",

@@ -29,6 +29,7 @@ function result(overrides: Partial<OtaCheckCurrentGlassesResult> = {}): OtaCheck
     besVersion: null,
     isApkDowngrade: false,
     manifestBody: '{"version":37}',
+    releaseVersion: null,
     updateInfo: {
       available: true,
       versionCode: 37,

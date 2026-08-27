@@ -37,6 +37,7 @@ export interface BesFirmware {
 }
 
 export interface VersionJson {
+  releaseVersion?: string
   apps?: {
     [packageName: string]: VersionInfo
   }
@@ -65,6 +66,8 @@ export interface OtaCheckResult {
    * instead of racing it with a second fetch of the same URL.
    */
   manifestBody: string | null
+  /** Coordinated release identity carried by modern OTA manifests. */
+  releaseVersion: string | null
   /**
    * Why the check failed, when it did. "network" is retryable (connection/server
    * trouble); "pin_unavailable" is permanent for this app build (manifest 404/gone,
@@ -105,6 +108,7 @@ function emptyCheckResult(skippedReason?: OtaCheckSkippedReason): OtaCheckCurren
     besVersion: null,
     isApkDowngrade: false,
     manifestBody: null,
+    releaseVersion: null,
     updateInfo: null,
     isRequired: true,
     skippedReason,
@@ -116,6 +120,13 @@ function glassesConnectedNow(): boolean {
 }
 
 type ManifestFetchResult = {json: VersionJson | null; failureReason?: "network" | "pin_unavailable"}
+
+const COORDINATED_RELEASE_VERSION = /^\d+\.\d+\.\d+(?:-(?:dev|beta)\.[1-9]\d*)?$/
+
+function coordinatedReleaseVersion(versionJson: VersionJson): string | null {
+  const version = versionJson.releaseVersion?.trim()
+  return version && COORDINATED_RELEASE_VERSION.test(version) ? version : null
+}
 
 async function fetchVersionInfoDetailed(url: string): Promise<ManifestFetchResult> {
   try {
@@ -297,6 +308,7 @@ export async function checkForOtaUpdate(
         besVersion: null,
         isApkDowngrade: false,
         manifestBody: null,
+        releaseVersion: null,
         checkFailureReason: fetched.failureReason ?? "network",
       }
     }
@@ -328,6 +340,7 @@ export async function checkForOtaUpdate(
         besVersion: null,
         isApkDowngrade: false,
         manifestBody: null,
+        releaseVersion: null,
         checkFailureReason: "pin_unavailable",
       }
     }
@@ -366,6 +379,7 @@ export async function checkForOtaUpdate(
       besVersion: versionJson?.bes_firmware?.version || null,
       isApkDowngrade: apkDirection === "downgrade",
       manifestBody: versionJson ? JSON.stringify(versionJson) : null,
+      releaseVersion: coordinatedReleaseVersion(versionJson),
     }
   } catch (error) {
     console.error("Error checking for OTA update:", error)
@@ -378,6 +392,7 @@ export async function checkForOtaUpdate(
       besVersion: null,
       isApkDowngrade: false,
       manifestBody: null,
+      releaseVersion: null,
       checkFailureReason: "network",
     }
   }

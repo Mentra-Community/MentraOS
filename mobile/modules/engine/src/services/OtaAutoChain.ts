@@ -14,6 +14,8 @@ type OtaAutoChainSession = {
 export type OtaAutoChainReleaseRange = {
   fromVersion: string | null
   toVersion: string | null
+  /** Exact coordinated release identity, absent for legacy manifests. */
+  releaseVersion?: string | null
 }
 
 export type OtaAutoChainAdvanceResult =
@@ -99,6 +101,7 @@ export function tryAdvanceOtaAutoChain(
   fingerprint: string,
   isDowngrade: boolean,
   targetVersion: string | null,
+  releaseVersion: string | null = null,
 ): OtaAutoChainAdvanceResult {
   if (!session) {
     return {advance: false, reason: "inactive"}
@@ -122,5 +125,6 @@ export function tryAdvanceOtaAutoChain(
   session.seenFingerprints.add(fingerprint)
   session.passCount += 1
   if (targetVersion) session.releaseRange.toVersion = targetVersion
+  if (releaseVersion) session.releaseRange.releaseVersion = releaseVersion
   return {advance: true, passCount: session.passCount}
 }
