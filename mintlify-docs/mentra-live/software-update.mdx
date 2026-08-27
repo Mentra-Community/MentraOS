@@ -205,9 +205,10 @@ export function CustomMentraLiveUpdate({onDone, onSetupWifi}: CustomMentraLiveUp
 coordinated Mentra release. `toVersion` is that exact release identity. The
 current `fromVersion` is the ASG client version reported by the glasses and may
 be `null` on older installations, so custom pages should keep an honest unknown
-fallback. This is an internal compatibility proxy until glasses report their
-coordinated release identity directly. Engine captures the pair before
-installation and retains it through restarts and final verification.
+fallback. When glasses report their coordinated release identity directly,
+Engine can replace this one source-version lookup without changing customer UI
+code. Engine captures the pair before installation and retains it through
+restarts and final verification.
 
 Start from the Starter Kit's
 [custom OTA presentation folder](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/tree/main/examples/react-native/src/ota)

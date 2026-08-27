@@ -14,7 +14,7 @@ type OtaAutoChainSession = {
 export type OtaAutoChainReleaseRange = {
   fromVersion: string | null
   toVersion: string | null
-  /** Exact coordinated release identity, absent for legacy manifests. */
+  /** Exact coordinated release identity for the OTA pin, absent for legacy manifests. */
   releaseVersion?: string | null
 }
 

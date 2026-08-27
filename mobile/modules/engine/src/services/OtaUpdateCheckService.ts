@@ -68,7 +68,7 @@ export interface OtaCheckResult {
    * instead of racing it with a second fetch of the same URL.
    */
   manifestBody: string | null
-  /** Coordinated release identity carried by modern OTA manifests. */
+  /** Coordinated release identity for the selected OTA pin. */
   releaseVersion: string | null
   /**
    * Why the check failed, when it did. "network" is retryable (connection/server

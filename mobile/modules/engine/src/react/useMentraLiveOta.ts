@@ -62,7 +62,7 @@ export type MentraLiveOtaStep = "apk" | "mtk" | "bes"
 export type MentraLiveOtaReleaseTransition = {
   /** Current glasses software label. Temporarily backed by the reported ASG app version. */
   fromVersion: string | null
-  /** Exact coordinated release identity carried by the OTA manifest. */
+  /** Exact coordinated release identity for the selected OTA pin. */
   toVersion: string
 }
 
