@@ -399,9 +399,130 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
+  docs:
+    name: Publish release-matched documentation
+    needs: [plan, finalize]
+    if: needs.plan.result == 'success' && needs.finalize.result == 'success' && needs.plan.outputs.dry_run != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      docs_url: ${{ steps.target.outputs.docs_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.source_commit }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.plan.outputs.plan_artifact }}
+          path: release-input/plan
+
+      - name: Select the documentation channel
+        id: target
+        env:
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          case "$BRANCH" in
+            dev)
+              echo "project=mentraos-docs-dev" >> "$GITHUB_OUTPUT"
+              echo "pages_branch=dev" >> "$GITHUB_OUTPUT"
+              echo "docs_url=https://docs-dev.mentraglass.com" >> "$GITHUB_OUTPUT"
+              ;;
+            staging)
+              echo "project=mentraos-docs-beta" >> "$GITHUB_OUTPUT"
+              echo "pages_branch=staging" >> "$GITHUB_OUTPUT"
+              echo "docs_url=https://docs-beta.mentraglass.com" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "Unsupported documentation branch $BRANCH" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Render the exact release version into a temporary docs tree
+        run: >-
+          node .github/scripts/render-coordinated-docs.mjs
+          --source mintlify-docs
+          --output "$RUNNER_TEMP/mentraos-docs-source"
+          --plan release-input/plan/release-plan.json
+          --repository "${{ github.repository }}"
+
+      - name: Export Mintlify docs
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/mentraos-docs-source"
+          bunx --bun mint export --output "$RUNNER_TEMP/mentraos-docs.zip"
+
+      - name: Prepare and verify the Cloudflare Pages artifact
+        env:
+          RELEASE_IDENTITY: ${{ needs.plan.outputs.release_identity }}
+        run: |
+          set -euo pipefail
+          export_dir="$RUNNER_TEMP/mentraos-docs"
+          rm -rf "$export_dir"
+          mkdir -p "$export_dir"
+          unzip -q "$RUNNER_TEMP/mentraos-docs.zip" -d "$export_dir"
+          cat > "$export_dir/_headers" <<'HEADERS'
+          /*
+            X-Robots-Tag: noindex
+          HEADERS
+          grep -R --fixed-strings --quiet "$RELEASE_IDENTITY" "$export_dir/mentra-live"
+          if grep -R --fixed-strings --quiet '{{release-version}}' "$export_dir/mentra-live"; then
+            echo "Mintlify export contains an unresolved release-version variable." >&2
+            exit 1
+          fi
+
+      - name: Deploy to Cloudflare Pages
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_PAGES_API_TOKEN }}
+          PROJECT: ${{ steps.target.outputs.project }}
+          PAGES_BRANCH: ${{ steps.target.outputs.pages_branch }}
+          RELEASE_IDENTITY: ${{ needs.plan.outputs.release_identity }}
+        run: |
+          set -euo pipefail
+          npx wrangler@4.86.0 pages deploy "$RUNNER_TEMP/mentraos-docs" \
+            --project-name "$PROJECT" \
+            --branch "$PAGES_BRANCH" \
+            --commit-hash "${{ needs.plan.outputs.source_commit }}" \
+            --commit-message "Deploy MentraOS docs for $RELEASE_IDENTITY" \
+            --commit-dirty=true
+
+      - name: Verify the published custom domain
+        env:
+          DOCS_URL: ${{ steps.target.outputs.docs_url }}
+          RELEASE_IDENTITY: ${{ needs.plan.outputs.release_identity }}
+        run: |
+          set -euo pipefail
+          page="$DOCS_URL/mentra-live/software-update/"
+          body="$RUNNER_TEMP/software-update.html"
+          headers="$RUNNER_TEMP/software-update.headers"
+          for _ in {1..18}; do
+            if curl --fail --silent --show-error --location \
+              --dump-header "$headers" --output "$body" "$page" && \
+              grep --fixed-strings --quiet "$RELEASE_IDENTITY" "$body" && \
+              grep --ignore-case --quiet '^x-robots-tag:.*noindex' "$headers" && \
+              ! grep --fixed-strings --quiet '{{release-version}}' "$body"; then
+              echo "Verified $page for $RELEASE_IDENTITY"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Published docs did not converge to $RELEASE_IDENTITY at $page" >&2
+          exit 1
+
   notify-slack:
     name: Notify release Slack channel
-    needs: [plan, ota, npm, sdk-native, mobile, engine-consumer, finalize]
+    needs: [plan, ota, npm, sdk-native, mobile, engine-consumer, finalize, docs]
     if: always() && github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
@@ -430,6 +551,8 @@ jobs:
           IOS_RESULT: ${{ needs.mobile.outputs.ios_result }}
           ENGINE_RESULT: ${{ needs.engine-consumer.result }}
           FINALIZE_RESULT: ${{ needs.finalize.result }}
+          DOCS_RESULT: ${{ needs.docs.result }}
+          DOCS_URL: ${{ needs.docs.outputs.docs_url }}
           APK_NAME: ${{ needs.mobile.outputs.apk_name }}
           IPA_NAME: ${{ needs.mobile.outputs.ipa_name }}
           MOBILE_ASSET_BASE_URL: ${{ needs.mobile.outputs.asset_base_url }}

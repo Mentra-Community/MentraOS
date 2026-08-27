@@ -75,6 +75,25 @@ test("mobile destinations use real TestFlight groups without changing the releas
   assert.doesNotMatch(mobile, /MENTRA_COORDINATED_RELEASE_CHANNEL=\$\{\{ inputs\.testflight_group \}\}/)
 })
 
+test("coordinated docs publish only after finalization to the matching channel", () => {
+  const coordinator = workflow("coordinated-release.yml")
+  const docs = jobBlock(coordinator, "docs")
+  const notify = jobBlock(coordinator, "notify-slack")
+
+  assert.match(docs, /^    needs: \[plan, finalize\]$/m)
+  assert.match(docs, /needs\.finalize\.result == 'success'/)
+  assert.match(docs, /needs\.plan\.outputs\.dry_run != 'true'/)
+  assert.match(docs, /project=mentraos-docs-dev/)
+  assert.match(docs, /docs_url=https:\/\/docs-dev\.mentraglass\.com/)
+  assert.match(docs, /project=mentraos-docs-beta/)
+  assert.match(docs, /docs_url=https:\/\/docs-beta\.mentraglass\.com/)
+  assert.match(docs, /render-coordinated-docs\.mjs/)
+  assert.match(docs, /X-Robots-Tag: noindex/)
+  assert.match(docs, /grep --fixed-strings --quiet "\$RELEASE_IDENTITY" "\$body"/)
+  assert.match(notify, /^    needs: \[plan, ota, npm, sdk-native, mobile, engine-consumer, finalize, docs\]$/m)
+  assert.match(notify, /DOCS_RESULT: \$\{\{ needs\.docs\.result \}\}/)
+})
+
 test("mobile release selects an existing Doppler token for its backend", () => {
   const mobile = workflow("reusable-coordinated-mobile.yml")
 
