@@ -45,6 +45,7 @@ import {SystemModule} from "./modules/system"
 import {MiniappsModule} from "./modules/miniapps"
 import {ActionsModule} from "./modules/actions"
 import {BlobModule} from "./modules/blob"
+import {MeetingModule} from "./modules/meeting"
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -191,6 +192,7 @@ type SessionEmitterEvents = {
   colorScheme: (scheme: MiniappColorScheme) => void
   permissions: (perms: PermissionRecord) => void
   speakerState: (event: import("./modules/speaker").SpeakerStateEvent) => void
+  meetingState: (event: import("./modules/meeting").MeetingState) => void
   auth: (auth: MiniappAuthState) => void
 }
 
@@ -211,6 +213,7 @@ export class MiniappSession<TChannels extends object = any> {
    */
   public readonly events: EventManager
   public readonly speaker: SpeakerModule
+  public readonly meeting: MeetingModule
   public readonly camera: CameraModule
   public readonly cloud: CloudModule
   public readonly dashboard: DashboardAPI
@@ -308,6 +311,7 @@ export class MiniappSession<TChannels extends object = any> {
     this.auth = new AuthModule(this)
     this.events = new EventManager(this)
     this.speaker = new SpeakerModule(this)
+    this.meeting = new MeetingModule(this)
     this.camera = new CameraModule(this)
     this.cloud = new CloudModule(this)
     this.dashboard = new DashboardAPI(this)
@@ -664,6 +668,21 @@ export class MiniappSession<TChannels extends object = any> {
         }
         this.speaker._applyState(event)
         this.emitter.emit("speakerState", event)
+        return
+      }
+
+      case MiniappResponseType.MEETING_STATE: {
+        const state = payload.state as import("./modules/meeting").MeetingPhase | undefined
+        if (!state) return
+        const event = {
+          state,
+          muted: Boolean(payload.muted),
+          error: payload.error as string | undefined,
+          meetingUrl: payload.meetingUrl as string | undefined,
+          provider: payload.provider as import("./modules/meeting").MeetingProvider | undefined,
+        }
+        this.meeting._applyState(event)
+        this.emitter.emit("meetingState", event)
         return
       }
 

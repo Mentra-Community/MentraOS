@@ -80,6 +80,7 @@ import {resolveForegroundLocationPermission} from "./ForegroundLocationPermissio
 import {advanceMiniappPingLiveness} from "./MiniappLiveness"
 import {listPhoneCalendarEvents, PhoneCalendarError} from "./PhoneCalendarService"
 import {LocalMiniappStorage} from "./LocalMiniappStorage"
+import acsMeetingService from "./AcsMeetingService"
 
 // =============================================================================
 // Types
@@ -953,6 +954,9 @@ class LocalMiniappRuntime {
     void phoneVideoCoordinator.stopForApp(packageName).catch((error) => {
       console.warn(`${LOG_TAG}: failed to stop video recording for ${packageName} on unregister`, error)
     })
+    void acsMeetingService.leaveIfOwner(packageName).catch((error) => {
+      console.warn(`${LOG_TAG}: failed to leave ACS meeting for ${packageName} on unregister`, error)
+    })
 
     // Detach the per-app nav event forwarder but leave the native nav session
     // running. The user may have just closed the mini-app UI and will reopen
@@ -1306,6 +1310,21 @@ class LocalMiniappRuntime {
         break
       case MiniappRequestType.MANAGED_STREAM_STOP:
         void this.handleManagedStreamStop(packageName, payload, requestId)
+        break
+      case MiniappRequestType.MEETING_JOIN:
+        void this.handleMeetingJoin(packageName, payload, requestId)
+        break
+      case MiniappRequestType.MEETING_LEAVE:
+        void this.handleMeetingLeave(packageName, requestId)
+        break
+      case MiniappRequestType.MEETING_SET_MUTED:
+        void this.handleMeetingSetMuted(packageName, payload, requestId)
+        break
+      case MiniappRequestType.MEETING_UPDATE_VIDEO_SOURCE:
+        void this.handleMeetingUpdateVideoSource(packageName, payload, requestId)
+        break
+      case MiniappRequestType.MEETING_GET_STATE:
+        void this.handleMeetingGetState(packageName, requestId)
         break
       case REQUEST_WIFI_SETUP_TYPE:
         void this.handleRequestWifiSetup(packageName, payload, requestId)
@@ -3480,6 +3499,109 @@ class LocalMiniappRuntime {
     requestId?: string,
   ): Promise<void> {
     return this.handleStreamStop(packageName, payload, requestId)
+  }
+
+  private ensureMeetingStateBridge(): void {
+    acsMeetingService.setStateHandler((owner, state) => {
+      this.sendToMiniapp(owner, {
+        type: MiniappResponseType.MEETING_STATE,
+        ...state,
+      })
+    })
+  }
+
+  private async handleMeetingJoin(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    this.ensureMeetingStateBridge()
+    const meetingUrl = typeof payload.meetingUrl === "string" ? payload.meetingUrl : ""
+    const token = typeof payload.token === "string" ? payload.token : ""
+    const videoSource = payload.videoSource as {type?: string; url?: string} | undefined
+    const whepUrl = videoSource?.type === "whep" ? videoSource.url ?? "" : ""
+    const displayName = typeof payload.displayName === "string" ? payload.displayName : undefined
+    if (!meetingUrl || !token || !whepUrl) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INVALID_ARGUMENT,
+        message: "meetingUrl, token, and a WHEP videoSource are required",
+      })
+      return
+    }
+    try {
+      const state = await acsMeetingService.join(packageName, {meetingUrl, token, whepUrl, displayName})
+      this.sendResult(packageName, requestId, true, state)
+    } catch (err) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "ACS meeting join failed",
+      })
+    }
+  }
+
+  private async handleMeetingLeave(packageName: string, requestId?: string): Promise<void> {
+    try {
+      await acsMeetingService.leave(packageName)
+      this.sendResult(packageName, requestId, true)
+    } catch (err) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "ACS meeting leave failed",
+      })
+    }
+  }
+
+  private async handleMeetingSetMuted(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    try {
+      const state = await acsMeetingService.setMuted(packageName, Boolean(payload.muted))
+      this.sendResult(packageName, requestId, true, state)
+    } catch (err) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "ACS mute failed",
+      })
+    }
+  }
+
+  private async handleMeetingUpdateVideoSource(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    const videoSource = payload.videoSource as {type?: string; url?: string} | undefined
+    const whepUrl = videoSource?.type === "whep" ? videoSource.url ?? "" : ""
+    if (!whepUrl) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INVALID_ARGUMENT,
+        message: "videoSource must be a WHEP URL",
+      })
+      return
+    }
+    try {
+      await acsMeetingService.updateVideoSource(packageName, whepUrl)
+      this.sendResult(packageName, requestId, true)
+    } catch (err) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "ACS video source update failed",
+      })
+    }
+  }
+
+  private async handleMeetingGetState(packageName: string, requestId?: string): Promise<void> {
+    try {
+      const state = await acsMeetingService.readState(packageName)
+      this.sendResult(packageName, requestId, true, state)
+    } catch (err) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "ACS getState failed",
+      })
+    }
   }
 
   /**

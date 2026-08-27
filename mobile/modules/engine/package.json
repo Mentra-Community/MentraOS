@@ -98,6 +98,7 @@
   },
   "dependencies": {
     "@mentra/bluetooth-sdk": "3.1.0",
+    "@mentra/acs-meeting": "3.1.0",
     "@mentra/cloud-client": "3.1.0",
     "@mentra/cloud-protocol": "3.1.0",
     "@mentra/crust": "3.1.0",

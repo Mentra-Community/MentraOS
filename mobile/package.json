@@ -70,6 +70,7 @@
     "@livekit/react-native-expo-plugin": "^1.0.1",
     "@livekit/react-native-webrtc": "^137.0.2",
     "@mentra/bluetooth-sdk": "workspace:*",
+    "@mentra/acs-meeting": "workspace:*",
     "@mentra/crust": "workspace:*",
     "@mentra/cloud-client": "workspace:*",
     "@mentra/engine": "workspace:*",

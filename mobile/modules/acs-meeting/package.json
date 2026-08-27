@@ -1,0 +1,48 @@
+{
+  "name": "@mentra/acs-meeting",
+  "version": "3.1.0",
+  "description": "MentraOS native ACS Teams meeting module (WHEP decode → ACS raw media)",
+  "main": "build/index.js",
+  "react-native": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "build": "expo-module build",
+    "clean": "expo-module clean",
+    "lint": "expo-module lint",
+    "prepare": "expo-module prepare",
+    "prepublishOnly": "expo-module prepublishOnly",
+    "expo-module": "expo-module"
+  },
+  "keywords": ["react-native", "expo", "acs", "teams"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Mentra-Community/MentraOS.git",
+    "directory": "mobile/modules/acs-meeting"
+  },
+  "author": "Mentra Community",
+  "license": "MIT",
+  "homepage": "https://github.com/Mentra-Community/MentraOS/tree/dev/mobile/modules/acs-meeting#readme",
+  "devDependencies": {
+    "expo-module-scripts": "^55.0.2",
+    "typescript": "~5.9.2"
+  },
+  "peerDependencies": {
+    "expo": "*",
+    "react": "*",
+    "react-native": "*"
+  },
+  "files": [
+    "android",
+    "!android/.gradle",
+    "!android/build",
+    "ios",
+    "!ios/build",
+    "!ios/Pods",
+    "build",
+    "expo-module.config.json",
+    "src",
+    "NOTICE",
+    "THIRD_PARTY",
+    "README.md"
+  ]
+}
