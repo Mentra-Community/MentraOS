@@ -473,7 +473,7 @@ jobs:
           [[ "$(jq -r .baseRefName <<< "$pr_provenance")" == "$target_branch" ]]
           [[ "$(jq -r .mergeCommit.oid <<< "$pr_provenance")" == "$merge_commit" ]]
           [[ "$(gh api "repos/$STARTER_KIT_REPOSITORY/git/ref/tags/sdk-$identity" --jq .object.sha)" == "$release_commit" ]]
-          [[ "$(jq -er '.artifacts | length' "$result")" == "4" ]]
+          [[ "$(jq -er '.artifacts | length' "$result")" =~ ^(3|4)$ ]]
           if [[ -z "$run_url" ]]; then
             run_url=$(jq -er .starterKit.validationRunUrl "$result")
           fi

@@ -65,8 +65,8 @@ function verifyStarterKitResult(plan, starterKit, resultUrl) {
   if (!/^https:\/\//.test(starterKit.starterKit?.validationRunUrl || "")) {
     throw new Error("Starter Kit validation run URL must be public HTTPS")
   }
-  if (!Array.isArray(starterKit.artifacts) || starterKit.artifacts.length !== 4) {
-    throw new Error("Starter Kit result must contain all four example artifacts")
+  if (!Array.isArray(starterKit.artifacts) || ![3, 4].includes(starterKit.artifacts.length)) {
+    throw new Error("Starter Kit result must contain the three required examples and optional native Android")
   }
   const keys = new Set()
   const artifacts = starterKit.artifacts.map((artifact) => {
@@ -92,7 +92,7 @@ function verifyStarterKitResult(plan, starterKit, resultUrl) {
       provenanceUrl: starterKit.starterKit.validationRunUrl,
     }
   })
-  for (const key of ["android", "ios", "reactNative", "reactNativeElevenLabsAudio"]) {
+  for (const key of ["ios", "reactNative", "reactNativeElevenLabsAudio"]) {
     if (!keys.has(key)) throw new Error(`Starter Kit result is missing ${key}`)
   }
   return {record: {...starterKit, resultUrl}, artifacts}
