@@ -1,7 +1,9 @@
 import BluetoothSdk, {type OtaUpdateInfo} from "@mentra/bluetooth-sdk"
+import {ENGINE_RELEASE_METADATA} from "../generated/releaseMetadata"
 import {getGlassesSystemTimeMs, isGlassesConnected, useGlassesStore, waitForGlassesState} from "../stores/glasses"
 import {maybeFixGlassesClockFromVersionInfo} from "./glassesClockSync"
 import {hasConfiguredModernOtaManifestPin, resolveOtaManifestUrl} from "./otaManifestUrl"
+import {resolveOtaReleaseVersion} from "./otaReleaseVersion"
 
 /**
  * Phone-side mirror of ASG's `DOWNGRADE_FLOOR_VERSION_CODE`. Set to the versionCode of the first
@@ -120,13 +122,6 @@ function glassesConnectedNow(): boolean {
 }
 
 type ManifestFetchResult = {json: VersionJson | null; failureReason?: "network" | "pin_unavailable"}
-
-const COORDINATED_RELEASE_VERSION = /^\d+\.\d+\.\d+(?:-(?:dev|beta)\.[1-9]\d*)?$/
-
-function coordinatedReleaseVersion(versionJson: VersionJson): string | null {
-  const version = versionJson.releaseVersion?.trim()
-  return version && COORDINATED_RELEASE_VERSION.test(version) ? version : null
-}
 
 async function fetchVersionInfoDetailed(url: string): Promise<ManifestFetchResult> {
   try {
@@ -379,7 +374,12 @@ export async function checkForOtaUpdate(
       besVersion: versionJson?.bes_firmware?.version || null,
       isApkDowngrade: apkDirection === "downgrade",
       manifestBody: versionJson ? JSON.stringify(versionJson) : null,
-      releaseVersion: coordinatedReleaseVersion(versionJson),
+      releaseVersion: resolveOtaReleaseVersion({
+        manifestReleaseVersion: versionJson.releaseVersion,
+        manifestUrl: otaVersionUrl,
+        packagedManifestUrl: ENGINE_RELEASE_METADATA.otaManifestUrl,
+        packagedReleaseIdentity: ENGINE_RELEASE_METADATA.releaseIdentity,
+      }),
     }
   } catch (error) {
     console.error("Error checking for OTA update:", error)
