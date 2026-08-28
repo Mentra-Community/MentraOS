@@ -67,7 +67,7 @@ import {
 } from "../runtime/config"
 import {getAnalytics, getUiSeams} from "../runtime/bootstrap"
 import {invokeScanQrSeam} from "../runtime/scanQrSeam"
-import {normalizeStreamAudioConfig, normalizeStreamVideoConfig} from "../runtime/streamConfig"
+import {normalizeStreamAudioConfig, normalizeStreamVideoConfig, resolveCaptureAudio} from "../runtime/streamConfig"
 import {toLanguageHint} from "@mentra/cloud-protocol/languages"
 import type {AudioSubscription, LanguageSource, TranscriptionData, TranslationData} from "@mentra/cloud-protocol"
 import {buildMiniappManifestSnapshot, type MiniappRuntimeDiagnosticSnapshot} from "../utils/miniappDiagnostics"
@@ -80,7 +80,7 @@ import {resolveForegroundLocationPermission} from "./ForegroundLocationPermissio
 import {advanceMiniappPingLiveness} from "./MiniappLiveness"
 import {listPhoneCalendarEvents, PhoneCalendarError} from "./PhoneCalendarService"
 import {LocalMiniappStorage} from "./LocalMiniappStorage"
-import acsMeetingService from "./AcsMeetingService"
+import acsMeetingService, {resolveAcsAudioSource} from "./AcsMeetingService"
 
 // =============================================================================
 // Types
@@ -1428,6 +1428,7 @@ class LocalMiniappRuntime {
         packageName,
         capabilities,
         permissions: declaredPermissions,
+        hostFeatures: {captureAudio: true},
         ...(initialAuth ? {auth: initialAuth} : {}),
       },
       requestId,
@@ -3425,6 +3426,7 @@ class LocalMiniappRuntime {
         audio: normalizeStreamAudioConfig(payload.audio),
         sound: payload.sound as boolean | undefined,
         authToken: typeof payload.authToken === "string" ? payload.authToken : undefined,
+        captureAudio: resolveCaptureAudio(payload.captureAudio, resolveAcsAudioSource().source),
       })
       this.sendResult(packageName, requestId, true, result)
     } catch (err) {
@@ -3481,6 +3483,7 @@ class LocalMiniappRuntime {
         audio: normalizeStreamAudioConfig(payload.audio),
         sound: payload.sound as boolean | undefined,
         ingest: payload.ingest as "srt" | "whip" | undefined,
+        captureAudio: resolveCaptureAudio(payload.captureAudio, resolveAcsAudioSource().source),
       })
       this.sendResult(packageName, requestId, true, result)
     } catch (err) {
