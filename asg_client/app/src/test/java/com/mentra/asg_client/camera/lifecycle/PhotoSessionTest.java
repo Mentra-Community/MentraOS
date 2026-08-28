@@ -17,6 +17,7 @@ import android.hardware.camera2.CameraDevice;
 import android.hardware.camera2.CaptureRequest;
 import android.media.ImageReader;
 import android.os.Handler;
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.camera.CameraNeoService;
 import com.mentra.asg_client.camera.CameraSettings;
 import com.mentra.asg_client.camera.model.CameraOperationError;
@@ -37,6 +38,7 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.mockito.ArgumentCaptor;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
@@ -107,6 +109,47 @@ public class PhotoSessionTest {
         verify(hooks).cancelKeepAliveTimer();
         verify(hooks, never()).closeCamera();
         verify(hooks, never()).openCameraInternal(anyString(), eq(false));
+        assertThat(session.shotState()).isEqualTo(AeStateMachine.ShotState.WAITING_AE);
+    }
+
+    @Test
+    public void exposureStabilizationDelay_appliesOnlyToColdDispatch() throws Exception {
+        PhotoSession.Hooks hooks = mockConfiguredCameraHooks();
+        PhotoSession session = new PhotoSession(hooks);
+
+        assertThat(session.minimumExposureStabilizationDelayMs())
+                .isEqualTo(AsgConstants.COLD_CAMERA_EXPOSURE_SETTLE_DELAY_MS);
+
+        setBooleanField(session, "mCaptureDispatchedAsWarmReuse", true);
+        assertThat(session.minimumExposureStabilizationDelayMs()).isZero();
+
+        setBooleanField(session, "mCaptureDispatchedAsWarmReuse", false);
+        when(hooks.coordinator().isCameraKeptAlive()).thenReturn(false);
+        session.setupWarmUp(
+                "large", null, PhotoCaptureSettings.EMPTY, 30_000, () -> {}, error -> {});
+        assertThat(session.minimumExposureStabilizationDelayMs()).isZero();
+    }
+
+    @Test
+    public void delayedExposureSettle_fromReplacedRequest_isIgnored() throws Exception {
+        PhotoSession.Hooks hooks = mockConfiguredCameraHooks();
+        PhotoSession session = new PhotoSession(hooks);
+        activateQueuedRequest(
+                session,
+                new QueuedPhotoRequest("/tmp/old.jpg", "large", false, true, null, null));
+        setField(session, "shotState", AeStateMachine.ShotState.WAITING_AE);
+        ArgumentCaptor<Runnable> delayedCapture = ArgumentCaptor.forClass(Runnable.class);
+
+        session.scheduleCapturePhoto(475L);
+        verify(hooks.backgroundHandler()).postDelayed(delayedCapture.capture(), eq(475L));
+
+        activateQueuedRequest(
+                session,
+                new QueuedPhotoRequest("/tmp/new.jpg", "large", false, true, null, null));
+        setField(session, "shotState", AeStateMachine.ShotState.WAITING_AE);
+        delayedCapture.getValue().run();
+
+        verify(hooks, never()).ensureImuRecorder();
         assertThat(session.shotState()).isEqualTo(AeStateMachine.ShotState.WAITING_AE);
     }
 
@@ -893,6 +936,13 @@ public class PhotoSessionTest {
         Field field = target.getClass().getDeclaredField(name);
         field.setAccessible(true);
         field.setBoolean(target, value);
+    }
+
+    private static void setField(Object target, String name, Object value)
+            throws ReflectiveOperationException {
+        Field field = target.getClass().getDeclaredField(name);
+        field.setAccessible(true);
+        field.set(target, value);
     }
 
     private static void setIntField(Object target, String name, int value)

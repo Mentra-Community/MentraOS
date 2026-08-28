@@ -41,11 +41,11 @@ checkout.
 
 ### Documentation channels
 
-| Release channel | Source branch | Published site | Publisher |
-| --- | --- | --- | --- |
-| Development | `dev` | `https://docs-dev.mentraglass.com` | Coordinated CI to Cloudflare Pages |
-| Beta | `staging` | `https://docs-beta.mentraglass.com` | Coordinated CI to Cloudflare Pages |
-| Production | `main` | `https://docs.mentraglass.com` | Mintlify Git integration |
+| Release channel | Source branch | Published site                      | Publisher                          |
+| --------------- | ------------- | ----------------------------------- | ---------------------------------- |
+| Development     | `dev`         | `https://docs-dev.mentraglass.com`  | Coordinated CI to Cloudflare Pages |
+| Beta            | `staging`     | `https://docs-beta.mentraglass.com` | Coordinated CI to Cloudflare Pages |
+| Production      | `main`        | `https://docs.mentraglass.com`      | Mintlify Git integration           |
 
 Dev and beta sites are release outputs and carry `X-Robots-Tag: noindex`.
 Production uses the checked-in stable family base because Mintlify's Git
@@ -126,6 +126,7 @@ without first building the example would instead create a not-found link.
 - synchronized `dev`, `staging`, and `main` branches;
 - exact dependency updates requested by the coordinator;
 - all example builds and build validation;
+- merging the exact validated synchronization pull request;
 - immutable Starter Kit tags, releases, and artifact checksums;
 - the machine-readable result returned to MentraOS.
 
@@ -139,11 +140,11 @@ consumes a validated result from the repository that owns the source.
 
 The Starter Kit mirrors the coordinated product channels:
 
-| Starter Kit branch | Coordinated channel | Expected dependency identity |
-| --- | --- | --- |
-| `dev` | Development | Latest completed `X.Y.Z-dev.N` synchronized to that branch |
-| `staging` | Beta | Latest completed `X.Y.Z-beta.N` synchronized to that branch |
-| `main` | Production | Latest completed stable `X.Y.Z` |
+| Starter Kit branch | Coordinated channel | Expected dependency identity                                |
+| ------------------ | ------------------- | ----------------------------------------------------------- |
+| `dev`              | Development         | Latest completed `X.Y.Z-dev.N` synchronized to that branch  |
+| `staging`          | Beta                | Latest completed `X.Y.Z-beta.N` synchronized to that branch |
+| `main`             | Production          | Latest completed stable `X.Y.Z`                             |
 
 Human Starter Kit features land on `dev`. Stabilization fixes may land on
 `staging` first and must be merged back into `dev`. Production changes move
@@ -202,12 +203,12 @@ The workflow:
 4. updates every example and lockfile to the exact coordinated versions;
 5. embeds the exact release identity and OTA pin where the example runtime
    needs observable release metadata;
-6. waits for MentraOS to open a version-synchronization pull request against the
-   channel branch;
+6. opens or reuses a version-synchronization pull request against the channel
+   branch with the repository-local workflow token;
 7. lets the repository's normal pull-request workflow validate the exact
    candidate SHA;
-8. waits for MentraOS to merge the pull request only after the protected
-   required checks for that same head SHA pass;
+8. merges the pull request itself only after the protected required checks for
+   that same head SHA pass;
 9. computes the filename, size, media type, and SHA-256 of every artifact;
 10. publishes an immutable Starter Kit source tag and uploads the artifacts to
     the base version's release container;
@@ -255,12 +256,23 @@ releases.
 
 MentraOS dispatches with a GitHub App installation token scoped to the two
 repositories. A personal access token is not part of the final release
-architecture. The App receives only the permissions needed to dispatch
-workflows, read run state, create the synchronization pull request, and merge
-the exact validated head in the Starter Kit. This split is required because the
-organization does not permit a repository `GITHUB_TOKEN` to create or approve
-pull requests. The Starter Kit's own `GITHUB_TOKEN` creates the candidate
-commit and publishes its tag, release, and assets after MentraOS merges the PR.
+architecture. The App receives only the permissions needed to dispatch the
+workflow and read run state. The Starter Kit's own `GITHUB_TOKEN` creates the
+candidate commit and synchronization pull request, observes its normal
+pull-request validation, merges the exact validated head, and publishes the
+tag, release, and assets.
+
+MentraOS stores the numeric App ID in the
+`STARTER_KIT_COORDINATOR_APP_ID` repository variable and its private key
+in the `STARTER_KIT_COORDINATOR_APP_PRIVATE_KEY` repository secret. Release
+jobs mint short-lived installation tokens with
+`actions/create-github-app-token`; no generated token is persisted. MentraOS
+uses one token for the bounded request phase, waits for the immutable public
+result without credentials, and mints a fresh read-only token for final
+provenance verification. The App is
+installed only on `MentraOS` and `Mentra-Bluetooth-SDK-Starter-Kit` with
+Actions read, Checks read, Contents read/write, and Pull requests read/write
+permissions. Each job requests only the subset it uses when minting its token.
 
 During bootstrap, the implementation may fall back to the existing scoped SDK
 push credential while `STARTER_KIT_COORDINATOR_TOKEN` is being provisioned. The
@@ -349,19 +361,22 @@ The Starter Kit becomes a required consumer gate before finalization:
 
 ```text
 release plan and OTA selection
-  -> coordinated package and mobile publication
-       |-> external Engine consumer verification ----\
-       \-> Starter Kit build and publication --------+-> both required
+  |-> npm publication -> external Engine consumer verification --\
+  |-> native SDK publication ------------------------------------+-> all required
+  |-> MentraOS mobile publication -------------------------------+
+  \-> Starter Kit readiness, build, and publication -------------+
   -> finalized Mentra release manifest
   -> release-matched documentation
   -> channel Slack notification
 ```
 
-The Starter Kit gate runs after npm and SwiftPM exist, in parallel with the
-external Engine consumer gate. Native Android is built when Maven Central
-already exposes the exact SDK version; otherwise its APK is omitted from that
-release while the other examples remain required. Finalization waits for both
-independent gates and the example TestFlight publication.
+The Starter Kit gate is dispatched after OTA publication and polls the exact npm
+and SwiftPM identities while those publication lanes continue. The external
+Engine consumer starts as soon as npm is public; it does not wait for unrelated
+Maven or SwiftPM artifacts. Native Android is built when Maven Central already
+exposes the exact SDK version; otherwise its APK is omitted from that release
+while the other examples remain required. Finalization waits for every product
+lane, both consumer gates, and the example TestFlight publication.
 
 If the Starter Kit fails, already published package artifacts remain recoverable
 under the in-progress release. There is no completed release manifest, docs do
@@ -515,11 +530,17 @@ not depend only on mutable display names.
 ### TestFlight job
 
 MentraOS adds a dedicated reusable React Native example TestFlight workflow to
-the coordinated release. It runs on the existing self-hosted Mac Mini after
-MentraOS has accepted the Starter Kit result. This keeps signing assets and App
-Store Connect credentials in the repository that already owns the Mac runner
-setup while still building the exact validated Starter Kit release commit. It
-is separate from the Starter Kit native iOS unsigned-IPA job.
+the coordinated release after accepting the Starter Kit result. Its signing
+phase runs on the existing self-hosted Mac Mini, keeping signing assets and App
+Store Connect credentials in the repository that already owns the runner setup
+while still building the exact validated Starter Kit release commit. It is
+separate from the Starter Kit native iOS unsigned-IPA job.
+
+The self-hosted signing phase ends after App Store Connect accepts the upload.
+Processing polls, release-note updates, and TestFlight group assignment run in a
+separate Linux job. The MentraOS app follows the same split. This keeps the
+machine-global macOS signing state serialized without holding the signing lane
+idle during Apple's potentially long processing delay.
 
 The job:
 
@@ -578,7 +599,8 @@ promotion require a separate explicit decision.
 ### Phase 2: MentraOS integration
 
 1. Install GitHub App authentication for cross-repository dispatch.
-2. Add the Starter Kit gate after package and external Engine validation.
+2. Dispatch the Starter Kit gate after OTA publication and let it wait for its
+   exact npm and SwiftPM inputs in parallel with the other release lanes.
 3. Poll and validate the exact correlated Starter Kit result.
 4. Include that result in finalization and `release-manifest.json`.
 5. Render example variables from the result.
@@ -604,7 +626,8 @@ promotion require a separate explicit decision.
    entitlements.
 3. Verify App Store Connect API access to app `6792839366` and pin both internal
    group IDs.
-4. Add archive, upload, processing wait, and group assignment.
+4. Add serialized Mac archive/upload followed by Linux processing wait and
+   group assignment.
 5. Add TestFlight results to the Mentra final manifest and Slack message.
 6. Prove one dev upload and one staging upload on the required gate.
 

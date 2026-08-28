@@ -36,10 +36,13 @@ export function createAppStoreConnectClient({issuerId, keyId, privateKey, fetchI
       },
     })
     const body = await response.text()
-    if (!response.ok)
-      throw new Error(
+    if (!response.ok) {
+      const error = new Error(
         `App Store Connect ${options.method || "GET"} ${resource} failed with HTTP ${response.status}: ${body}`,
       )
+      error.status = response.status
+      throw error
+    }
     return body ? JSON.parse(body) : null
   }
   return {request}
@@ -73,7 +76,19 @@ export async function collectPaginatedData(client, resource) {
   return data
 }
 
-export async function findApp(client, bundleId) {
+export async function findApp(client, bundleId, appId) {
+  if (appId) {
+    const response = await client.request(`/v1/apps/${encodeURIComponent(appId)}`)
+    const app = response?.data
+    if (!app || Array.isArray(app)) throw new Error(`App Store Connect returned no app ${appId}`)
+    const actualBundleId = app.attributes?.bundleId
+    if (actualBundleId !== bundleId) {
+      throw new Error(
+        `App Store Connect app ${appId} has bundle ID ${actualBundleId || "<missing>"}, expected ${bundleId}`,
+      )
+    }
+    return app
+  }
   return exactlyOne(
     await client.request(query("/v1/apps", {"filter[bundleId]": bundleId, "limit": "2"})),
     `app ${bundleId}`,
@@ -88,6 +103,51 @@ export async function findBuild(client, {appId, buildNumber, marketingVersion}) 
   return exactlyOne(response, `build ${buildNumber}`)
 }
 
+export async function findBuildUpload(client, {appId, buildNumber, marketingVersion}) {
+  const filters = {"filter[cfBundleVersion]": String(buildNumber), "sort": "-uploadedDate", "limit": "2"}
+  if (marketingVersion) filters["filter[cfBundleShortVersionString]"] = marketingVersion
+  const response = await client.request(query(`/v1/apps/${encodeURIComponent(appId)}/buildUploads`, filters))
+  if (!Array.isArray(response?.data) || response.data.length === 0) return null
+  return response.data[0]
+}
+
+function buildUploadState(upload) {
+  return upload?.attributes?.state?.state || null
+}
+
+function buildUploadDetails(upload) {
+  const state = upload?.attributes?.state
+  return [...(state?.errors || []), ...(state?.warnings || []), ...(state?.infos || [])]
+    .map((detail) => [detail.code, detail.description].filter(Boolean).join(": "))
+    .filter(Boolean)
+    .join("; ")
+}
+
+function buildUploadDisposition(upload, buildNumber) {
+  if (!upload) return "absent"
+  const state = buildUploadState(upload)
+  if (state === "AWAITING_UPLOAD") return "awaiting"
+  if (state === "PROCESSING" || state === "COMPLETE") return "accepted"
+  if (state === "FAILED") {
+    const details = buildUploadDetails(upload)
+    throw new Error(`App Store Connect build upload ${buildNumber} failed${details ? `: ${details}` : ""}`)
+  }
+  throw new Error(`App Store Connect build upload ${buildNumber} has unknown state ${state || "<missing>"}`)
+}
+
+function isTransientAppStoreConnectError(error) {
+  return (
+    error?.status === 429 ||
+    (error?.status >= 500 && error.status <= 599) ||
+    (error instanceof TypeError && error.message === "fetch failed")
+  )
+}
+
+function transientAppStoreConnectErrorLabel(error) {
+  if (error?.status) return `HTTP ${error.status}`
+  return error?.cause?.code || error?.message || "network failure"
+}
+
 export async function findProcessedBuild(client, {appId, buildNumber, marketingVersion}) {
   const build = await findBuild(client, {appId, buildNumber, marketingVersion})
   if (!build) return null
@@ -98,14 +158,31 @@ export async function findProcessedBuild(client, {appId, buildNumber, marketingV
 
 export async function waitForProcessedBuild(
   client,
-  {appId, buildNumber, marketingVersion, attempts = 120, delay = 10_000},
+  {appId, buildNumber, marketingVersion, attempts = 360, delay = 10_000},
 ) {
+  let lastUploadState = null
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const build = await findProcessedBuild(client, {appId, buildNumber, marketingVersion})
-    if (build) return build
+    try {
+      const build = await findProcessedBuild(client, {appId, buildNumber, marketingVersion})
+      if (build) return build
+      const upload = await findBuildUpload(client, {appId, buildNumber, marketingVersion})
+      buildUploadDisposition(upload, buildNumber)
+      const state = buildUploadState(upload)
+      if (state && state !== lastUploadState) console.log(`App Store Connect build upload ${buildNumber} is ${state}`)
+      lastUploadState = state || lastUploadState
+    } catch (error) {
+      if (!isTransientAppStoreConnectError(error) || attempt === attempts) throw error
+      console.warn(
+        `App Store Connect temporarily failed while checking build ${buildNumber} (${transientAppStoreConnectErrorLabel(error)}); retrying`,
+      )
+    }
     if (attempt < attempts) await new Promise((resolve) => setTimeout(resolve, delay))
   }
-  throw new Error(`App Store Connect build ${buildNumber} did not finish processing`)
+  throw new Error(
+    `App Store Connect build ${buildNumber} did not finish processing${
+      lastUploadState ? `; upload state is ${lastUploadState}` : ""
+    }`,
+  )
 }
 
 function uploadWithAltool({ipaPath, issuerId, keyId, keyPath}) {
@@ -137,6 +214,10 @@ export async function uploadExactBuild(
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     const existing = await findBuild(client, {appId, buildNumber, marketingVersion})
     if (existing) return {build: existing, reused: true}
+    const existingUpload = await findBuildUpload(client, {appId, buildNumber, marketingVersion})
+    if (buildUploadDisposition(existingUpload, buildNumber) === "accepted") {
+      return {build: null, upload: existingUpload, reused: true}
+    }
     try {
       await upload()
       return {build: null, reused: false}
@@ -147,6 +228,10 @@ export async function uploadExactBuild(
   }
   const existing = await findBuild(client, {appId, buildNumber, marketingVersion})
   if (existing) return {build: existing, reused: true}
+  const existingUpload = await findBuildUpload(client, {appId, buildNumber, marketingVersion})
+  if (buildUploadDisposition(existingUpload, buildNumber) === "accepted") {
+    return {build: null, upload: existingUpload, reused: true}
+  }
   throw lastError
 }
 
@@ -267,21 +352,39 @@ async function main() {
     keyId: args["key-id"],
     privateKey: readFileSync(path.resolve(args["key-path"]), "utf8"),
   })
-  const app = await findApp(client, args["bundle-id"])
+  const app = await findApp(client, args["bundle-id"], args["app-id"])
   if (command === "lookup") {
     const build = await findBuild(client, {
       appId: app.id,
       buildNumber: args["build-number"],
       marketingVersion: args["marketing-version"],
     })
+    const upload = build
+      ? null
+      : await findBuildUpload(client, {
+          appId: app.id,
+          buildNumber: args["build-number"],
+          marketingVersion: args["marketing-version"],
+        })
+    const uploadDisposition = buildUploadDisposition(upload, args["build-number"])
+    const exists = Boolean(build) || uploadDisposition === "accepted"
+    const uploadState = buildUploadState(upload)
     if (process.env.GITHUB_OUTPUT) {
       const {appendFileSync} = await import("node:fs")
       appendFileSync(
         process.env.GITHUB_OUTPUT,
-        `exists=${Boolean(build)}\nprocessed=${build?.attributes?.processingState === "VALID"}\napp_id=${app.id}\nbuild_id=${build?.id || ""}\n`,
+        `exists=${exists}\nprocessed=${build?.attributes?.processingState === "VALID"}\napp_id=${app.id}\nbuild_id=${
+          build?.id || ""
+        }\nupload_id=${upload?.id || ""}\nupload_state=${uploadState || ""}\n`,
       )
     }
-    console.log(build ? `Found App Store Connect build ${args["build-number"]}` : "Build is absent")
+    console.log(
+      build
+        ? `Found App Store Connect build ${args["build-number"]}`
+        : upload
+          ? `Found App Store Connect build upload ${args["build-number"]} in ${uploadState}`
+          : "Build and build upload are absent",
+    )
     return
   }
   if (command === "upload") {
@@ -300,7 +403,7 @@ async function main() {
     })
     console.log(
       result.reused
-        ? `Verified App Store Connect already has build ${args["build-number"]}`
+        ? `Verified App Store Connect already has build or upload ${args["build-number"]}`
         : `Uploaded App Store Connect build ${args["build-number"]}`,
     )
     return

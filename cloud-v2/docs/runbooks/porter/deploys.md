@@ -8,14 +8,26 @@ layering, and what changes when you `porter apply`.
 Cloud V2 deploys use one Porter app per environment in the AWS us-west-2
 cluster:
 
-| Branch    | Workflow               | Porter app      | Manifest              | Public hosts                                                                                                                     |
-| --------- | ---------------------- | --------------- | --------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `dev`     | `cloud-v2-dev.yml`     | `cloud-dev`     | `porter.dev.yaml`     | `core.dev.us-west-2.mentraglass.com`, `store.dev.us-west-2.mentraglass.com`, `runtime.dev.us-west-2.mentraglass.com`             |
-| `staging` | `cloud-v2-staging.yml` | `cloud-staging` | `porter.staging.yaml` | `core.staging.us-west-2.mentraglass.com`, `store.staging.us-west-2.mentraglass.com`, `runtime.staging.us-west-2.mentraglass.com` |
-| `main`    | `cloud-v2-prod.yml`    | `cloud-prod`    | `porter.prod.yaml`    | `core.mentraglass.com`, `store.mentraglass.com`, `runtime.mentraglass.com`                                                       |
+| Release source                              | Coordinated owner                      | Porter app      | Manifest              | Public hosts                                                                                                                     |
+| ------------------------------------------- | -------------------------------------- | --------------- | --------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `dev`                                       | `coordinated-release.yml`              | `cloud-dev`     | `porter.dev.yaml`     | `core.dev.us-west-2.mentraglass.com`, `store.dev.us-west-2.mentraglass.com`, `runtime.dev.us-west-2.mentraglass.com`             |
+| `staging`                                   | `coordinated-release.yml`              | `cloud-staging` | `porter.staging.yaml` | `core.staging.us-west-2.mentraglass.com`, `store.staging.us-west-2.mentraglass.com`, `runtime.staging.us-west-2.mentraglass.com` |
+| selected release source contained in `main` | `coordinated-production-promotion.yml` | `cloud-prod`    | `porter.prod.yaml`    | `core.mentraglass.com`, `store.mentraglass.com`, `runtime.mentraglass.com`                                                       |
 
-Each workflow also supports `workflow_dispatch`, which lets us deploy a PR
-branch into one of these environments for validation before merging.
+Both coordinators call `reusable-coordinated-cloud-v2.yml`, which is the single
+implementation owner for target resolution, Porter deployment, public health
+checks, and deployment evidence. Dev and staging can be started with the
+coordinator's `workflow_dispatch`; production remains a protected promotion of
+a completed beta whose source is contained in `main`.
+
+The deployment must finish before the release's Mentra App publication starts.
+The beta mobile app still embeds production Cloud V2 today even though the
+`staging` release deploys `cloud-staging`; that explicit temporary mismatch is
+not changed by this sequencing work.
+
+Do not add a second branch-push deploy workflow for these Porter apps. A manual
+repair should rerun the exact coordinated job/source so its result remains
+attached to the release record.
 
 `cloud-debug` is intentionally outside this promotion path. Treat it as an
 explicit shared debugging environment and do not use it as a default test
@@ -62,7 +74,7 @@ Three layers, in increasing priority:
    `LOG_STDOUT_JSON=true`, `AUDIO_UDP_PORT=8000`.
 2. **Linked env groups** (referenced in `envGroups:` in `porter.yaml`).
    We use `cloud-v2-dev-doppler`, `cloud-v2-staging-doppler`, and
-   `cloud-v2-prod-doppler`. See
+   `cloud-v2-prod-doppler-sync`. See
    [`doppler/porter-integration.md`](../doppler/porter-integration.md).
 3. **App-level env** (rarely set) — overrides env-group values per-app.
 
@@ -78,6 +90,7 @@ porter env pull --app cloud-dev --merged | grep MENTRA_JWT
 ```bash
 # Live logs from one service (Ctrl+C to stop)
 porter app logs cloud-dev --service core
+porter app logs cloud-dev --service store
 porter app logs cloud-dev --service runtime
 
 # Historical logs
@@ -106,12 +119,14 @@ If you only need to change an env var (no code change), you can:
 # Change in Doppler — auto-syncs to Porter via the integration.
 doppler secrets set FOO=bar --config dev_aws
 
-# Trigger a redeploy so pods pick up the new env.
-porter apply -f porter.dev.yaml
+# Trigger a new coordinated dev release so pods pick up the new env.
+gh workflow run coordinated-release.yml --ref dev -f dry_run=false
 ```
 
 Pods don't auto-restart on env changes (avoids cascading restarts). You
-have to re-apply.
+have to run the matching coordinator again. Use `--ref staging` for staging;
+production remains a protected production promotion rather than an ad hoc
+cloud-only deployment.
 
 ## Public URLs
 
@@ -127,7 +142,7 @@ ALB ingress. Hostnames are derived from `<service>-<project-id>-<target-id>.onpo
 To get the URLs programmatically:
 
 ```bash
-porter kubectl -- get ingress -l porter.run/app-name=cloud-v2
+porter kubectl -- get ingress -l porter.run/app-name=cloud-dev
 ```
 
 For UDP, see [`udp-nlb-aws.md`](./udp-nlb-aws.md) — separate Service +
@@ -155,6 +170,13 @@ We set `/ready` to be the slower check (Mongo ping, Redis ping). `/healthz`
 just returns "ok" — no work — so liveness can't false-positive under load.
 
 (Lesson from v1 issue 057.)
+
+The coordinated deployer verifies both paths through every configured public
+Core, Store, and Runtime hostname after `porter apply -w`. Missing DNS, an unhealthy
+dependency, or an unready pod fails the cloud job and prevents mobile
+publication. It then reads pod `imageID` values and the Porter pod revision back
+through read-only `porter kubectl`; those immutable observations are stored in
+`cloud-v2-deployment.json` and copied into the completed release manifest.
 
 ## Resource limits
 
@@ -202,7 +224,7 @@ Usually means the build succeeded but Porter pushed to a registry the
 cluster can't read from. Check:
 
 ```bash
-porter kubectl -- get pods -l porter.run/app-name=cloud-v2
+porter kubectl -- get pods -l porter.run/app-name=cloud-dev
 porter kubectl -- describe pod <pod-name> | grep -A5 Events
 ```
 
@@ -214,7 +236,7 @@ Most often: a placeholder URL in Doppler (e.g., MONGO_URL = TBD_PROVISION
 something). Check:
 
 ```bash
-porter app logs cloud-v2 --service core --search "error" --limit 20
+porter app logs cloud-dev --service core --search "error" --limit 20
 ```
 
 Update Doppler, re-apply.

@@ -4,6 +4,7 @@ import test from "node:test"
 import {
   assignBuildToGroup,
   collectPaginatedData,
+  findApp,
   findProcessedBuild,
   productionSubmissionStatus,
   setBetaBuildWhatsNew,
@@ -25,13 +26,32 @@ function client(responses) {
   }
 }
 
+test("resolves an App Store app by its authoritative numeric ID", async () => {
+  const api = client([{data: {id: "6792839366", attributes: {bundleId: "com.mentra.example"}}}])
+  const app = await findApp(api, "com.mentra.example", "6792839366")
+  assert.equal(app.id, "6792839366")
+  assert.equal(api.calls[0].resource, "/v1/apps/6792839366")
+})
+
+test("rejects an App Store app whose numeric ID belongs to another bundle", async () => {
+  const api = client([{data: {id: "6792839366", attributes: {bundleId: "com.mentra.other"}}}])
+  await assert.rejects(
+    () => findApp(api, "com.mentra.example", "6792839366"),
+    /has bundle ID com\.mentra\.other, expected com\.mentra\.example/,
+  )
+})
+
 test("waits for an uploaded build to finish processing", async () => {
   const api = client([
     {data: []},
+    {data: [{id: "upload-1", attributes: {state: {state: "PROCESSING"}}}]},
     {data: [{id: "build-1", attributes: {processingState: "PROCESSING"}}]},
+    {data: [{id: "upload-1", attributes: {state: {state: "COMPLETE"}}}]},
+    {data: [{id: "build-1", attributes: {processingState: "PROCESSING"}}]},
+    {data: [{id: "upload-1", attributes: {state: {state: "COMPLETE"}}}]},
     {data: [{id: "build-1", attributes: {processingState: "VALID"}}]},
   ])
-  const build = await waitForProcessedBuild(api, {appId: "app-1", buildNumber: 310000057, attempts: 3, delay: 0})
+  const build = await waitForProcessedBuild(api, {appId: "app-1", buildNumber: 310000057, attempts: 4, delay: 0})
   assert.equal(build.id, "build-1")
   assert.match(api.calls[0].resource, /filter%5Bversion%5D=310000057/)
 })
@@ -53,7 +73,12 @@ test("fails when App Store Connect marks a build invalid", async () => {
 })
 
 test("reconciles an upload accepted before a transient transport failure", async () => {
-  const api = client([{data: []}, {data: [{id: "build-1", attributes: {processingState: "PROCESSING"}}]}])
+  const api = client([
+    {data: []},
+    {data: []},
+    {data: []},
+    {data: [{id: "upload-1", attributes: {state: {state: "PROCESSING"}}}]},
+  ])
   let uploads = 0
   const result = await uploadExactBuild(api, {
     appId: "app-1",
@@ -68,12 +93,12 @@ test("reconciles an upload accepted before a transient transport failure", async
     },
   })
   assert.equal(result.reused, true)
-  assert.equal(result.build.id, "build-1")
+  assert.equal(result.upload.id, "upload-1")
   assert.equal(uploads, 1)
 })
 
 test("retries a failed upload only while the exact build remains absent", async () => {
-  const api = client([{data: []}, {data: []}])
+  const api = client([{data: []}, {data: []}, {data: []}, {data: []}])
   let uploads = 0
   const result = await uploadExactBuild(api, {
     appId: "app-1",
@@ -88,6 +113,131 @@ test("retries a failed upload only while the exact build remains absent", async 
   })
   assert.equal(result.reused, false)
   assert.equal(uploads, 2)
+})
+
+test("does not upload over an exact build upload that is still processing", async () => {
+  const api = client([{data: []}, {data: [{id: "upload-1", attributes: {state: {state: "PROCESSING"}}}]}])
+  let uploads = 0
+  const result = await uploadExactBuild(api, {
+    appId: "app-1",
+    buildNumber: 310000047,
+    marketingVersion: "3.1.0",
+    upload: async () => {
+      uploads += 1
+    },
+  })
+  assert.equal(result.reused, true)
+  assert.equal(result.upload.id, "upload-1")
+  assert.equal(uploads, 0)
+  assert.match(api.calls[1].resource, /filter%5BcfBundleShortVersionString%5D=3.1.0/)
+  assert.match(api.calls[1].resource, /sort=-uploadedDate/)
+})
+
+test("does not treat an awaiting upload placeholder as a delivered build", async () => {
+  const api = client([
+    {data: []},
+    {data: [{id: "upload-1", attributes: {state: {state: "AWAITING_UPLOAD"}}}]},
+    {data: []},
+    {data: [{id: "upload-1", attributes: {state: {state: "AWAITING_UPLOAD"}}}]},
+  ])
+  let uploads = 0
+  await assert.rejects(
+    () =>
+      uploadExactBuild(api, {
+        appId: "app-1",
+        buildNumber: 310000047,
+        attempts: 1,
+        upload: async () => {
+          uploads += 1
+          throw new Error("Upload limit reached (90382)")
+        },
+      }),
+    /Upload limit reached \(90382\)/,
+  )
+  assert.equal(uploads, 1)
+})
+
+test("uploads when Apple has only created an awaiting placeholder", async () => {
+  const api = client([{data: []}, {data: [{id: "upload-1", attributes: {state: {state: "AWAITING_UPLOAD"}}}]}])
+  let uploads = 0
+  const result = await uploadExactBuild(api, {
+    appId: "app-1",
+    buildNumber: 310000047,
+    upload: async () => {
+      uploads += 1
+    },
+  })
+  assert.equal(result.reused, false)
+  assert.equal(uploads, 1)
+})
+
+test("retries transient App Store Connect failures while polling", async () => {
+  const transient = new Error("App Store Connect returned HTTP 500")
+  transient.status = 500
+  const api = client([{data: []}, transient, {data: [{id: "build-1", attributes: {processingState: "VALID"}}]}])
+  const build = await waitForProcessedBuild(api, {
+    appId: "app-1",
+    buildNumber: 310000047,
+    attempts: 2,
+    delay: 0,
+  })
+  assert.equal(build.id, "build-1")
+})
+
+test("retries transient fetch timeouts while polling", async () => {
+  const transient = new TypeError("fetch failed")
+  transient.cause = {code: "UND_ERR_HEADERS_TIMEOUT"}
+  const api = client([{data: []}, transient, {data: [{id: "build-1", attributes: {processingState: "VALID"}}]}])
+  const build = await waitForProcessedBuild(api, {
+    appId: "app-1",
+    buildNumber: 310000047,
+    attempts: 2,
+    delay: 0,
+  })
+  assert.equal(build.id, "build-1")
+})
+
+test("uses the newest upload when Apple retains an older failed attempt", async () => {
+  const api = client([
+    {data: []},
+    {
+      data: [
+        {id: "upload-new", attributes: {state: {state: "PROCESSING"}}},
+        {id: "upload-old", attributes: {state: {state: "FAILED"}}},
+      ],
+    },
+  ])
+  const result = await uploadExactBuild(api, {
+    appId: "app-1",
+    buildNumber: 310000047,
+    upload: async () => {},
+  })
+  assert.equal(result.upload.id, "upload-new")
+})
+
+test("surfaces exact build upload validation failures", async () => {
+  const api = client([
+    {data: []},
+    {
+      data: [
+        {
+          id: "upload-1",
+          attributes: {
+            state: {state: "FAILED", errors: [{code: "STATE_ERROR", description: "Invalid entitlement"}]},
+          },
+        },
+      ],
+    },
+  ])
+  await assert.rejects(
+    () =>
+      uploadExactBuild(api, {
+        appId: "app-1",
+        buildNumber: 310000047,
+        upload: async () => {},
+      }),
+    /STATE_ERROR: Invalid entitlement/,
+  )
 })
 
 test("idempotently adds a build to exactly one TestFlight group", async () => {

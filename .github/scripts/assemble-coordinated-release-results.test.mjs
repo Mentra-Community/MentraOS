@@ -7,6 +7,7 @@ import test from "node:test"
 import {fileURLToPath} from "node:url"
 
 import {assembleCoordinatedReleaseResults} from "./assemble-coordinated-release-results.mjs"
+import {cloudRecordForPlan} from "./coordinated-cloud-v2-test-helpers.mjs"
 import {createReleasePlan, finalizeReleaseManifest, loadReleaseFamily} from "./release-family.mjs"
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
@@ -176,7 +177,7 @@ test("assembles every product target and finalizes one complete release manifest
     channel: plan.channel,
     mentraosSourceCommit: plan.sourceCommit,
     starterKitReleaseCommit: starterKit.starterKit.releaseCommit,
-    app: {id: "6792839366", bundleId: "com.mentra.bluetoothsdk.example.reactnative"},
+    app: {id: "6792839366", bundleId: "com.mentra.bluetoothsdkexample"},
     version: {marketingVersion: plan.native.marketingVersion, buildNumber: plan.native.buildNumber},
     build: {id: "build-1", processingState: "VALID", uploadStatus: "published"},
     group: {id: "group-1", name: "Mentra Staging"},
@@ -190,6 +191,7 @@ test("assembles every product target and finalizes one complete release manifest
     npmRecords,
     native,
     mobile,
+    cloud: cloudRecordForPlan(plan),
     starterKit,
     starterKitResultUrl: "https://example.com/starter-kit-result.json",
     exampleTestflight,
@@ -205,6 +207,7 @@ test("assembles every product target and finalizes one complete release manifest
   assert.ok(manifest.artifacts.some((artifact) => artifact.coordinate === plan.artifactNames.asgSelection))
   assert.equal(manifest.starterKit.resultUrl, "https://example.com/starter-kit-result.json")
   assert.equal(manifest.starterKit.testflight.build.id, "build-1")
+  assert.equal(manifest.cloud.environment, "staging")
   assert.equal(manifest.artifacts.at(-1).coordinate, starterKit.artifacts.at(-1).name)
 
   assert.throws(
@@ -215,6 +218,7 @@ test("assembles every product target and finalizes one complete release manifest
         npmRecords: [...npmRecords, npmRecords[0]],
         native,
         mobile,
+        cloud: cloudRecordForPlan(plan),
         asgSelectionFile,
         enginePackage,
         releaseAssetBaseUrl: "https://example.com/release",
@@ -230,6 +234,7 @@ test("assembles every product target and finalizes one complete release manifest
         npmRecords,
         native,
         mobile,
+        cloud: cloudRecordForPlan(plan),
         starterKit: {...starterKit, releaseSetId: "mentra-other"},
         starterKitResultUrl: "https://example.com/starter-kit-result.json",
         exampleTestflight,
@@ -249,6 +254,7 @@ test("assembles every product target and finalizes one complete release manifest
         npmRecords,
         native,
         mobile,
+        cloud: cloudRecordForPlan(plan),
         asgSelectionFile,
         enginePackage,
         releaseAssetBaseUrl: "https://example.com/release",

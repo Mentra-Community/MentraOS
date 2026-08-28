@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import {readFileSync} from "node:fs"
+import {existsSync, readFileSync} from "node:fs"
 import test from "node:test"
 
 function workflow(name) {
@@ -41,7 +41,8 @@ test("release finalization reads the preserved OTA artifact layout", () => {
 
 test("production validates before approval and proves packages before mobile promotion", () => {
   const production = workflow("coordinated-production-promotion.yml")
-  const sdkNative = jobBlock(workflow("reusable-coordinated-sdk-native.yml"), "prepare")
+  const sdkNativeWorkflow = workflow("reusable-coordinated-sdk-native.yml")
+  const sdkNative = jobBlock(sdkNativeWorkflow, "prepare")
 
   assert.doesNotMatch(jobBlock(production, "plan"), /^    needs:/m)
   assert.match(jobBlock(production, "approve"), /^    needs: plan$/m)
@@ -49,11 +50,14 @@ test("production validates before approval and proves packages before mobile pro
   assert.match(jobBlock(production, "npm"), /^    needs: \[plan, approve\]$/m)
   assert.match(jobBlock(production, "sdk-native"), /^    needs: \[plan, approve\]$/m)
   assert.match(jobBlock(production, "engine-consumer"), /^    needs: \[plan, npm, sdk-native\]$/m)
-  assert.match(jobBlock(production, "mobile"), /^    needs: \[plan, engine-consumer\]$/m)
+  assert.match(jobBlock(production, "cloud-v2"), /^    needs: \[plan, approve, engine-consumer\]$/m)
+  assert.match(jobBlock(production, "cloud-v2"), /deployment_environment: prod/)
+  assert.match(jobBlock(production, "mobile"), /^    needs: \[plan, engine-consumer, cloud-v2\]$/m)
   assert.match(
     jobBlock(production, "finalize"),
-    /^    needs: \[plan, approve, npm, sdk-native, mobile, engine-consumer\]$/m,
+    /^    needs: \[plan, approve, npm, sdk-native, mobile, engine-consumer, cloud-v2\]$/m,
   )
+  assert.match(jobBlock(production, "finalize"), /--cloud release-input\/cloud-v2\/cloud-v2-deployment\.json/)
   assert.match(sdkNative, /channel=\$\(jq -er \.channel release-intent\/release-plan\.json\)/)
   assert.match(
     sdkNative,
@@ -63,35 +67,105 @@ test("production validates before approval and proves packages before mobile pro
     sdkNative,
     /else\s+\[\[ "\$\(jq -r \.draft <<< "\$release"\)" == "false" \]\]\s+\[\[ "\$\(jq -r \.prerelease <<< "\$release"\)" == "true" \]\]/,
   )
+  assert.match(sdkNativeWorkflow, /for attempt in \{1\.\.6\}/)
+  assert.match(
+    sdkNativeWorkflow,
+    /cmp --silent native-result\/maven\/sonatype-deployment\.json persisted-deployment\.json/,
+  )
+})
+
+test("Cloud V2 deploys once per coordinated environment before mobile publication", () => {
+  const coordinator = workflow("coordinated-release.yml")
+  const cloud = workflow("reusable-coordinated-cloud-v2.yml")
+  const cloudJob = jobBlock(coordinator, "cloud-v2")
+  const mobile = jobBlock(coordinator, "mobile")
+  const finalize = jobBlock(coordinator, "finalize")
+  const notify = jobBlock(coordinator, "notify-slack")
+
+  assert.match(coordinator, /cloud_environment=dev/)
+  assert.match(coordinator, /cloud_environment=staging/)
+  assert.match(coordinator, /backend_environment=dev/)
+  assert.match(coordinator, /backend_environment=prod/)
+  assert.match(cloudJob, /^    needs: plan$/m)
+  assert.match(cloudJob, /reusable-coordinated-cloud-v2\.yml/)
+  assert.match(cloudJob, /deployment_environment: \$\{\{ needs\.plan\.outputs\.cloud_environment \}\}/)
+  assert.match(mobile, /^    needs: \[plan, ota, cloud-v2\]$/m)
+  assert.match(finalize, /needs\.cloud-v2\.result == 'success'/)
+  assert.match(finalize, /--cloud release-input\/cloud-v2\/cloud-v2-deployment\.json/)
+  assert.match(notify, /CLOUD_V2_RESULT: \$\{\{ needs\.cloud-v2\.result \}\}/)
+
+  assert.match(cloud, /workflow_call:/)
+  assert.match(cloud, /group: coordinated-cloud-v2-\$\{\{ inputs\.deployment_environment \}\}/)
+  assert.match(cloud, /cancel-in-progress: false/)
+  assert.match(cloud, /porter apply \\\n+            -w/)
+  assert.match(cloud, /getent hosts "\$host"/)
+  assert.match(cloud, /for probe in healthz ready/)
+  assert.match(cloud, /porter kubectl -- get pods/)
+  assert.match(cloud, /--status validated/)
+  assert.match(cloud, /--status deployed/)
+  assert.doesNotMatch(cloud, /--validate|--dry-run/)
+  assert.doesNotMatch(cloud, /DNS is not configured.*skipping/i)
+
+  for (const legacyOwner of ["cloud-v2-dev.yml", "cloud-v2-staging.yml", "cloud-v2-prod.yml"]) {
+    assert.equal(existsSync(new URL(`../workflows/${legacyOwner}`, import.meta.url)), false)
+  }
 })
 
 test("mobile destinations use real TestFlight groups without changing the release channel", () => {
   const coordinator = workflow("coordinated-release.yml")
   const mobile = workflow("reusable-coordinated-mobile.yml")
   const example = workflow("reusable-coordinated-example-testflight.yml")
+  const mobileIos = jobBlock(mobile, "ios")
+  const mobileStore = jobBlock(mobile, "ios-store")
+  const exampleIos = jobBlock(example, "ios")
+  const exampleStore = jobBlock(example, "testflight")
 
   assert.match(coordinator, /testflight_group=Mentra Dev/)
   assert.match(coordinator, /testflight_group=Mentra Staging/)
   assert.match(mobile, /MENTRA_COORDINATED_RELEASE_CHANNEL=\$\(jq -er \.channel release-intent\/release-plan\.json\)/)
   assert.doesNotMatch(mobile, /MENTRA_COORDINATED_RELEASE_CHANNEL=\$\{\{ inputs\.testflight_group \}\}/)
   assert.match(example, /EXAMPLE_APP_ID: "6792839366"/)
-  assert.match(example, /EXAMPLE_BUNDLE_ID: com\.mentra\.bluetoothsdk\.example\.reactnative/)
+  assert.match(example, /EXAMPLE_BUNDLE_ID: com\.mentra\.bluetoothsdkexample/)
+  assert.match(example, /config\.expo\.ios\.bundleIdentifier = process\.env\.EXAMPLE_BUNDLE_ID/)
+  assert.match(example, /find ios -maxdepth 1 -name '\*\.xcworkspace'/)
+  assert.match(example, /select\(\. == "MentraSDKRN"\)/)
+  assert.match(example, /security list-keychains -d user -s "\$keychain"/)
+  assert.match(example, /certificate_id=\$\(basename "\$certificate" \.cer\)/)
+  assert.match(example, /awk -v fingerprint="\$certificate_fingerprint" '\$2 == fingerprint/)
+  assert.match(example, /bundle exec fastlane sigh/)
+  assert.match(example, /--app_identifier "\$EXAMPLE_BUNDLE_ID"/)
+  assert.match(example, /--cert_id "\$certificate_id"/)
+  assert.match(example, /CODE_SIGN_STYLE=Manual/)
+  assert.match(example, /CODE_SIGN_IDENTITY="\$MENTRA_CI_CODE_SIGN_IDENTITY"/)
+  assert.match(example, /PROVISIONING_PROFILE_SPECIFIER="\$MENTRA_CI_PROVISIONING_PROFILE_NAME"/)
+  assert.match(example, /OTHER_CODE_SIGN_FLAGS="--keychain \$MENTRA_CI_KEYCHAIN"/)
+  assert.match(example, /provisioningProfiles: \{\(\$bundle_id\): \$profile\}/)
+  assert.match(example, /PlistBuddy -c 'Print :com\.apple\.developer\.networking\.HotspotConfiguration'/)
+  assert.equal([...example.matchAll(/--app-id "\$EXAMPLE_APP_ID"/g)].length, 3)
   assert.match(example, /starterKit\.releaseCommit/)
   assert.match(example, /runs-on: \[self-hosted, macOS, ARM64\]/)
   assert.match(example, /app-store-connect-build\.mjs upload/)
   assert.match(mobile, /app-store-connect-build\.mjs upload/)
   assert.match(example, /app-store-connect-build\.mjs assign/)
   assert.match(example, /destination="\$GITHUB_WORKSPACE\/release-output\/mentra-example-react-native-/)
+  assert.doesNotMatch(mobileIos, /app-store-connect-build\.mjs assign/)
+  assert.match(mobileStore, /^    runs-on: ubuntu-latest$/m)
+  assert.match(mobileStore, /app-store-connect-build\.mjs assign/)
+  assert.doesNotMatch(exampleIos, /app-store-connect-build\.mjs assign/)
+  assert.match(exampleStore, /^    runs-on: ubuntu-latest$/m)
+  assert.match(exampleStore, /app-store-connect-build\.mjs assign/)
 })
 
 test("coordinated docs publish only after finalization to the matching channel", () => {
   const coordinator = workflow("coordinated-release.yml")
   const starterKit = jobBlock(coordinator, "starter-kit")
+  const engineConsumer = jobBlock(coordinator, "engine-consumer")
   const exampleTestflight = jobBlock(coordinator, "example-testflight")
   const docs = jobBlock(coordinator, "docs")
   const notify = jobBlock(coordinator, "notify-slack")
 
-  assert.match(starterKit, /^    needs: \[plan, ota, npm, sdk-native\]$/m)
+  assert.match(starterKit, /^    needs: \[plan, ota\]$/m)
+  assert.match(engineConsumer, /^    needs: \[plan, npm\]$/m)
   assert.match(starterKit, /coordinated-example-release\.yml/)
   assert.match(starterKit, /event_type: "coordinated_example_release"/)
   assert.match(starterKit, /--event repository_dispatch/)
@@ -99,11 +173,41 @@ test("coordinated docs publish only after finalization to the matching channel",
   assert.match(starterKit, /starter-kit-release-\$identity\.json/)
   assert.match(starterKit, /select\(\.displayTitle == [^\n]+ and \.status != \\"completed\\"\)/)
   assert.match(starterKit, /encoded_candidate_branch=\$\(jq -rn[^\n]+'\$value \| @uri'\)/)
-  assert.match(starterKit, /gh pr checks "\$pr_url"[^]*--required --json name,bucket/)
-  assert.match(starterKit, /gh pr merge "\$pr_url"[^]*--match-head-commit "\$candidate_sha"/)
+  assert.match(starterKit, /--json status,conclusion 2>\/dev\/null \|\| true/)
+  assert.doesNotMatch(starterKit, /repos\/\$STARTER_KIT_REPOSITORY\/pulls/)
+  assert.doesNotMatch(starterKit, /gh pr create/)
+  assert.doesNotMatch(starterKit, /gh pr checks/)
+  assert.doesNotMatch(starterKit, /gh pr merge/)
+  assert.match(starterKit, /Create Starter Kit request token/)
+  assert.match(starterKit, /Wait for the immutable Starter Kit result/)
+  assert.match(starterKit, /Create Starter Kit verification token/)
+  assert.match(starterKit, /--location "\$result_url" --output \/dev\/null/)
+  assert.doesNotMatch(starterKit, /--location --head "\$result_url"/)
+  assert.match(starterKit, /for _ in \{1\.\.630\}/)
   assert.match(starterKit, /gh pr view "\$pull_request_url"[^]*--json url,state,headRefOid,baseRefName,mergeCommit/)
   assert.match(starterKit, /git\/ref\/tags\/sdk-\$identity/)
   assert.match(starterKit, /\.digest <<< "\$asset"/)
+  assert.match(starterKit, /actions\/create-github-app-token@v3/)
+  assert.match(starterKit, /app-id: \$\{\{ vars\.STARTER_KIT_COORDINATOR_APP_ID \}\}/)
+  assert.match(starterKit, /private-key: \$\{\{ secrets\.STARTER_KIT_COORDINATOR_APP_PRIVATE_KEY \}\}/)
+  assert.match(starterKit, /continue-on-error: true/)
+  assert.doesNotMatch(starterKit, /STARTER_KIT_APP_PRIVATE_KEY:/)
+  assert.match(starterKit, /permission-actions: read/)
+  assert.match(starterKit, /permission-contents: write/)
+  assert.doesNotMatch(starterKit, /permission-pull-requests: write/)
+  assert.match(starterKit, /permission-contents: read/)
+  assert.match(starterKit, /permission-pull-requests: read/)
+  assert.match(starterKit, /\[\[ "\$branch_sha" =~ \^\[0-9a-f\]\{40\}\$ \]\]/)
+  assert.doesNotMatch(starterKit, /candidate_sha=\$\([^\n]+\n\s+--jq \.commit\.sha 2>\/dev\/null \|\| true\)/)
+  assert.doesNotMatch(starterKit, /lookup_starter_pr|repos\/\$STARTER_KIT_REPOSITORY\/pulls/)
+  assert.match(
+    starterKit,
+    /STARTER_KIT_TOKEN: \$\{\{ steps\.starter-kit-request-token\.outputs\.token \|\| secrets\.STARTER_KIT_COORDINATOR_TOKEN/,
+  )
+  assert.match(
+    starterKit,
+    /STARTER_KIT_TOKEN: \$\{\{ steps\.starter-kit-verification-token\.outputs\.token \|\| secrets\.STARTER_KIT_COORDINATOR_TOKEN/,
+  )
   assert.match(exampleTestflight, /^    needs: \[plan, starter-kit\]$/m)
   assert.match(exampleTestflight, /reusable-coordinated-example-testflight\.yml/)
   assert.match(jobBlock(coordinator, "finalize"), /needs\.starter-kit\.result == 'success'/)
@@ -123,12 +227,23 @@ test("coordinated docs publish only after finalization to the matching channel",
   assert.match(docs, /grep --fixed-strings --quiet "\$RELEASE_IDENTITY" "\$body"/)
   assert.match(
     notify,
-    /^    needs: \[plan, ota, npm, sdk-native, mobile, engine-consumer, starter-kit, example-testflight, finalize, docs\]$/m,
+    /^    needs:\n      \[plan, cloud-v2, ota, npm, sdk-native, mobile, engine-consumer, starter-kit, example-testflight, finalize, docs\]$/m,
   )
   assert.match(notify, /STARTER_KIT_RESULT: \$\{\{ needs\.starter-kit\.result \}\}/)
   assert.match(notify, /EXAMPLE_TESTFLIGHT_RESULT: \$\{\{ needs\.example-testflight\.result \}\}/)
   assert.match(notify, /STARTER_KIT_RUN_URL: \$\{\{ needs\.starter-kit\.outputs\.run_url \}\}/)
   assert.match(notify, /DOCS_RESULT: \$\{\{ needs\.docs\.result \}\}/)
+  const example = workflow("reusable-coordinated-example-testflight.yml")
+  assert.match(example, /actions\/create-github-app-token@v3/)
+  assert.match(example, /private-key: \$\{\{ secrets\.STARTER_KIT_COORDINATOR_APP_PRIVATE_KEY \}\}/)
+  assert.match(example, /continue-on-error: true/)
+  assert.doesNotMatch(example, /STARTER_KIT_APP_PRIVATE_KEY:/)
+  assert.match(example, /permission-contents: read/)
+  assert.match(example, /^      group: mentra-ios-signing-runner$/m)
+  assert.match(
+    example,
+    /token: \$\{\{ steps\.starter-kit-app-token\.outputs\.token \|\| secrets\.STARTER_KIT_COORDINATOR_TOKEN/,
+  )
 })
 
 test("mobile release selects an existing Doppler token for its backend", () => {
@@ -163,6 +278,9 @@ test("Maven generation builds every local config plugin before Expo prebuild", (
   assert.notEqual(prebuild, -1)
   assert.ok(crustPluginBuild < prebuild)
   assert.ok(bluetoothPluginBuild < prebuild)
+  assert.match(sdkNative, /react-native\/gradle\/libs\.versions\.toml/)
+  assert.match(sdkNative, /sdkmanager "ndk;\$ndk_version"/)
+  assert.doesNotMatch(sdkNative, /sdkmanager "ndk;[0-9]/)
 })
 
 test("Android release preserves the Expo-configured marketing version", () => {
