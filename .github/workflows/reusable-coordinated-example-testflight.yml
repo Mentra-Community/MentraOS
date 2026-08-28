@@ -121,13 +121,27 @@ jobs:
           set -euo pipefail
           [[ "${{ steps.app-store.outputs.app_id }}" == "$EXAMPLE_APP_ID" ]]
 
+      - name: Create Starter Kit checkout token
+        id: starter-kit-app-token
+        if: steps.app-store.outputs.exists != 'true' && vars.STARTER_KIT_COORDINATOR_APP_ID != ''
+        continue-on-error: true
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.STARTER_KIT_COORDINATOR_APP_ID }}
+          private-key: ${{ secrets.STARTER_KIT_COORDINATOR_APP_PRIVATE_KEY }}
+          owner: Mentra-Community
+          repositories: |
+            MentraOS
+            Mentra-Bluetooth-SDK-Starter-Kit
+          permission-contents: read
+
       - name: Checkout the exact validated Starter Kit source
         if: steps.app-store.outputs.exists != 'true'
         uses: actions/checkout@v4
         with:
           repository: ${{ env.STARTER_KIT_REPOSITORY }}
           ref: ${{ steps.coordinates.outputs.starter_release_commit }}
-          token: ${{ secrets.STARTER_KIT_COORDINATOR_TOKEN || secrets.MENTRA_BLUETOOTH_SDK_IOS_PUSH_TOKEN }}
+          token: ${{ steps.starter-kit-app-token.outputs.token || secrets.STARTER_KIT_COORDINATOR_TOKEN || secrets.MENTRA_BLUETOOTH_SDK_IOS_PUSH_TOKEN }}
           path: starter-kit
 
       - name: Add runner-managed tools to PATH

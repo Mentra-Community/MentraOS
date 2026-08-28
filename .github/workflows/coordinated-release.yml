@@ -270,11 +270,28 @@ jobs:
           name: ${{ needs.plan.outputs.plan_artifact }}
           path: release-input/plan
 
+      - name: Create Starter Kit coordinator token
+        id: starter-kit-app-token
+        if: vars.STARTER_KIT_COORDINATOR_APP_ID != ''
+        continue-on-error: true
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.STARTER_KIT_COORDINATOR_APP_ID }}
+          private-key: ${{ secrets.STARTER_KIT_COORDINATOR_APP_PRIVATE_KEY }}
+          owner: Mentra-Community
+          repositories: |
+            MentraOS
+            Mentra-Bluetooth-SDK-Starter-Kit
+          permission-actions: read
+          permission-checks: read
+          permission-contents: write
+          permission-pull-requests: write
+
       - name: Dispatch and wait for the exact Starter Kit release
         id: coordinates
         if: needs.plan.outputs.dry_run != 'true'
         env:
-          STARTER_KIT_TOKEN: ${{ secrets.STARTER_KIT_COORDINATOR_TOKEN || secrets.MENTRA_BLUETOOTH_SDK_IOS_PUSH_TOKEN }}
+          STARTER_KIT_TOKEN: ${{ steps.starter-kit-app-token.outputs.token || secrets.STARTER_KIT_COORDINATOR_TOKEN || secrets.MENTRA_BLUETOOTH_SDK_IOS_PUSH_TOKEN }}
           STARTER_KIT_REPOSITORY: Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit
           OTA_MANIFEST_URL: ${{ needs.ota.outputs.manifest_url }}
           OTA_MANIFEST_SHA256: ${{ needs.ota.outputs.manifest_sha256 }}
