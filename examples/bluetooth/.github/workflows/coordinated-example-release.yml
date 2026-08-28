@@ -177,14 +177,21 @@ jobs:
             node .github/scripts/coordinated-example-release.mjs sync \
               --root . \
               --identity "$RELEASE_IDENTITY"
-            (
-              cd examples/react-native
-              bun install --lockfile-only
-            )
-            (
-              cd examples/react-native-elevenlabs-audio
-              bun install --lockfile-only
-            )
+            update_lockfile() {
+              local directory="$1"
+              for attempt in {1..12}; do
+                if (cd "$directory" && bun install --lockfile-only); then
+                  return 0
+                fi
+                if (( attempt == 12 )); then
+                  return 1
+                fi
+                echo "Package metadata has not propagated to Bun yet; retrying $directory ($attempt/12)."
+                sleep 10
+              done
+            }
+            update_lockfile examples/react-native
+            update_lockfile examples/react-native-elevenlabs-audio
             cp "$canonical_payload" .github/coordinated-example-release.json
             git config user.name "mentra-release-bot"
             git config user.email "actions@users.noreply.github.com"
