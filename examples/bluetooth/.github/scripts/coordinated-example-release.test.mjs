@@ -53,6 +53,12 @@ test("reconciles completed releases from immutable PR and tag provenance", () =>
   assert.doesNotMatch(releaseWorkflow, /\.starterKit\.baseCommit "\$result"\)" == "\$EXPECTED_STARTER_KIT_HEAD"/)
 })
 
+test("accepts coordinated releases from manual or cross-repository dispatch", () => {
+  assert.match(releaseWorkflow, /repository_dispatch:\n    types:\n      - coordinated_example_release/)
+  assert.match(releaseWorkflow, /inputs\.payload \|\| github\.event\.client_payload\.payload/)
+  assert.match(releaseWorkflow, /inputs\.channel \|\| github\.event\.client_payload\.channel/)
+})
+
 test("synchronizes all maintained example manifests", () => {
   const root = mkdtempSync(path.join(tmpdir(), "starter-kit-sync-"))
   mkdirSync(path.join(root, "examples/android"), {recursive: true})
