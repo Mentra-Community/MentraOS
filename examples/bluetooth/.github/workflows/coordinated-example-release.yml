@@ -204,37 +204,41 @@ jobs:
 
           echo "release_commit=$release_commit" >> "$GITHUB_OUTPUT"
 
-      - name: Wait for the coordinator synchronization pull request
+      - name: Create or reuse the synchronization pull request
         if: steps.existing.outputs.already_published != 'true'
         id: pull-request
         env:
           RELEASE_IDENTITY: ${{ steps.release.outputs.releaseIdentity }}
           TARGET_BRANCH: ${{ steps.release.outputs.targetBranch }}
           CANDIDATE_BRANCH: ${{ steps.release.outputs.candidateBranch }}
+          RELEASE_COMMIT: ${{ steps.candidate.outputs.release_commit }}
           MENTRAOS_RUN_URL: ${{ fromJSON(env.COORDINATED_PAYLOAD).mentraos.coordinatorRunUrl }}
         run: |
           set -euo pipefail
-          pr_url=""
-          for _ in {1..60}; do
-            pr_json=$(gh pr list --state all --base "$TARGET_BRANCH" --head "$CANDIDATE_BRANCH" \
-              --limit 1 --json number,url,state,mergedAt)
-            if [[ "$(jq 'length' <<<"$pr_json")" != "0" ]]; then
-              pr_url=$(jq -r '.[0].url' <<<"$pr_json")
-              state=$(jq -r '.[0].state' <<<"$pr_json")
-              merged_at=$(jq -r '.[0].mergedAt // empty' <<<"$pr_json")
-              if [[ "$state" == "CLOSED" && -z "$merged_at" ]]; then
-                echo "Coordinator PR $pr_url was closed without merging." >&2
-                exit 1
-              fi
-              break
-            fi
-            sleep 10
-          done
+          pr_json=$(gh pr list --state all --base "$TARGET_BRANCH" --head "$CANDIDATE_BRANCH" \
+            --limit 1 --json url,state,mergedAt,headRefOid)
+          pr_url=$(jq -r '.[0].url // empty' <<< "$pr_json")
           if [[ -z "$pr_url" ]]; then
-            echo "MentraOS did not create the synchronization PR for $RELEASE_IDENTITY." >&2
-            echo "Coordinator: $MENTRAOS_RUN_URL" >&2
+            pr_body=$(printf '%s\n\n%s\n%s\n' \
+              "Automated dependency synchronization for coordinated release \`$RELEASE_IDENTITY\`." \
+              "Coordinator: $MENTRAOS_RUN_URL" \
+              "Starter Kit workflow: https://github.com/$STARTER_KIT_REPOSITORY/actions/runs/$GITHUB_RUN_ID")
+            pr_url=$(gh pr create \
+              --base "$TARGET_BRANCH" \
+              --head "$CANDIDATE_BRANCH" \
+              --title "chore(release): synchronize examples to $RELEASE_IDENTITY" \
+              --body "$pr_body")
+            pr_json=$(gh pr view "$pr_url" --json url,state,mergedAt,headRefOid)
+          else
+            pr_json=$(jq '.[0]' <<< "$pr_json")
+          fi
+          state=$(jq -r .state <<< "$pr_json")
+          merged_at=$(jq -r '.mergedAt // empty' <<< "$pr_json")
+          if [[ "$state" == "CLOSED" && -z "$merged_at" ]]; then
+            echo "Synchronization PR $pr_url was closed without merging." >&2
             exit 1
           fi
+          [[ "$(jq -r .headRefOid <<< "$pr_json")" == "$RELEASE_COMMIT" ]]
           echo "url=$pr_url" >> "$GITHUB_OUTPUT"
 
       - name: Wait for pull request validation of the candidate commit
