@@ -21,12 +21,8 @@ cd examples/react-native
 bun install
 ```
 
-The example depends on the SDK version pinned in `package.json`, for example:
-
-```json
-"@mentra/bluetooth-sdk": "3.1.0-dev.27",
-"@mentra/engine": "3.1.0-dev.27"
-```
+The example depends on the exact SDK and Engine versions pinned in
+[`package.json`](./package.json). Those two package versions must match.
 
 Use compatible SDK and Engine versions published by Mentra. When validating
 unreleased SDK changes, use the local source override below so JavaScript,
