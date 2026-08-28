@@ -251,7 +251,8 @@ jobs:
           security unlock-keychain -p "$MENTRA_CI_KEYCHAIN_PASSWORD" "$MENTRA_CI_KEYCHAIN"
           workspace=$(find ios -maxdepth 1 -name '*.xcworkspace' -print -quit)
           test -n "$workspace"
-          scheme=$(xcodebuild -workspace "$workspace" -list -json | jq -er '.workspace.schemes[0]')
+          scheme=$(xcodebuild -workspace "$workspace" -list -json \
+            | jq -er '.workspace.schemes[] | select(. == "MentraSDKRN")')
           archive="$RUNNER_TEMP/mentra-example-react-native.xcarchive"
           output="$RUNNER_TEMP/mentra-example-react-native-export"
           rm -rf "$archive" "$output"

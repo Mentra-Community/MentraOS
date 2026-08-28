@@ -81,6 +81,7 @@ test("mobile destinations use real TestFlight groups without changing the releas
   assert.match(example, /EXAMPLE_BUNDLE_ID: com\.mentra\.bluetoothsdkexample/)
   assert.match(example, /config\.expo\.ios\.bundleIdentifier = process\.env\.EXAMPLE_BUNDLE_ID/)
   assert.match(example, /find ios -maxdepth 1 -name '\*\.xcworkspace'/)
+  assert.match(example, /select\(\. == "MentraSDKRN"\)/)
   assert.equal([...example.matchAll(/--app-id "\$EXAMPLE_APP_ID"/g)].length, 3)
   assert.match(example, /starterKit\.releaseCommit/)
   assert.match(example, /runs-on: \[self-hosted, macOS, ARM64\]/)
