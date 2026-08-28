@@ -21,6 +21,8 @@ The first supported private Mentra App deployment requires:
 
 - The official Mentra App binary from one completed coordinated release.
 - Customer-hosted Cloud V2 Core and Runtime services from that release.
+- A private GoTrue-compatible credential service and datastore used by Core's
+  current account adapter, with pilot users provisioned as verified accounts.
 - The matching self-hosted Mentra Live OTA bundle.
 - Customer-hosted copies of the on-device STT and TTS model archives the
   deployment enables.
@@ -84,10 +86,52 @@ for the first implementation.
 After confirmation, the app opens that deployment's authentication screen. An
 email/password deployment with `allowSignup: true` offers both sign-in and
 account creation against the configured Core. With `allowSignup: false`, it
-offers sign-in only and the customer must pre-provision accounts or configure an
-SSO method. Account verification, password reset, and SSO callbacks also return
-to the selected deployment. The QR only chooses configuration; it does not
-create an account or session.
+offers sign-in only and the deployment operator must pre-provision accounts or
+configure an SSO method. Account verification, password reset, and SSO callbacks
+also return to the selected deployment. The QR only chooses configuration; it
+does not create an account or session.
+
+### Identity rollout
+
+Use "deployment operator" for the organization running the private deployment
+and "end user" for the person using the Mentra App and glasses.
+
+The speedrun pilot supports one private auth flow:
+
+1. The deployment operator creates verified email/password accounts in the
+   private identity service before handoff.
+2. The end user opens Enterprise / SSO and scans the deployment QR.
+3. The app fetches the manifest, shows the deployment name, and presents email
+   and password fields.
+4. The end user signs in against the configured private Core.
+
+The pilot manifest sets `methods: ["email-password"]`, `allowSignup: false`, and
+`allowPasswordReset: false`. This avoids making private SMTP delivery, account
+verification, password recovery, generic SSO, or organization discovery part of
+the first deployment. A small operator-side provisioning command creates or
+resets verified pilot accounts.
+
+This limitation is not just UI scope. Core's current first-party account module
+delegates credentials to Supabase GoTrue. Signup expects GoTrue to send a
+verification email, while password recovery uses Core's email service. A truly
+private deployment must therefore package a private GoTrue-compatible service
+and its datastore, or replace that adapter. Hosting only Core and Runtime is not
+enough for email/password login.
+
+Self-service signup comes next. When the deployment operator provides internal
+SMTP and verification, or Core gains an explicitly supported no-email enrollment
+mode, the server enables signup and the manifest reflects that capability with
+`allowSignup: true`. The manifest is presentation policy; Core remains
+authoritative and must reject signup when the deployment has disabled it.
+
+Future SSO still resolves the deployment before authentication. The app needs
+the manifest's Core URL and auth policy in order to know where to begin SSO. For
+managed or air-gapped devices, MDM or the deployment QR supplies that bootstrap.
+For connected deployments, a later organization-discovery service can make it
+feel automatic: the end user enters a work email or organization code, the app
+resolves and downloads that organization's manifest, and then it opens the
+declared SSO flow. An SSO callback should not introduce or switch deployment
+configuration after authentication.
 
 On subsequent boots, the app loads the saved profile before starting any
 network-capable service. It refreshes the configured URL when reachable and can
@@ -391,6 +435,10 @@ The first Android pilot is complete when:
 ## Explicitly later
 
 - Runtime-only deployments with a customer IdP or token broker.
+- End-user self-service signup, internal verification/password-reset email, and
+  an explicitly supported no-email enrollment mode.
+- Organization discovery by work email or organization code and generic SSO
+  methods. Air-gapped deployments continue to bootstrap through MDM or QR.
 - Separating account, registry, settings, version-check, and reporting APIs from
   Core into a smaller control-plane service.
 - Local-only Engine startup with no Core, Runtime, or auth seam.

@@ -95,9 +95,13 @@ releases.
 - [ ] After enrollment, show the deployment name and render the resolved
       profile's declared email, SSO, or other authentication methods. Treat the
       enrollment QR as configuration, not an auth credential.
-- [ ] For email/password, show account creation only when `allowSignup` is
-      true and send it to the selected Core. When it is false, present sign-in
-      only; the customer must pre-provision users or configure SSO.
+- [ ] For the first private pilot, render email/password sign-in only. Set
+      `allowSignup` and `allowPasswordReset` false and use operator-provisioned,
+      verified accounts; do not put SMTP, account verification, recovery, or
+      SSO on the pilot critical path.
+- [ ] Keep `allowSignup` as a server-reflected UI capability for later work.
+      Core remains authoritative and must enforce the deployment's signup
+      policy regardless of the manifest value.
 - [ ] Make switching deployment stop Engine, sign out, clear the old auth
       namespace, and reboot through the same resolver.
 
@@ -120,6 +124,9 @@ releases.
 - [ ] Keep consumer Google, Apple, and Email entry points bound to the embedded
       Mentra profile. Render only the active custom profile's auth methods and
       supporting signup, verification, and recovery flows after enrollment.
+- [ ] Do not implement organization discovery or generic SSO in the first
+      private pilot. Keep the auth-provider boundary capable of adding them
+      after manifest resolution.
 - [ ] Make the minimum-version screen use managed-update copy instead of public
       store URLs when `appUpdates.mode` is `managed`.
 - [ ] Remove the current special deployment selection from scattered settings;
@@ -233,6 +240,11 @@ releases.
 - [ ] Keep Core in the first private deployment. Do not make Runtime-only auth
       or split Core's account, registry, settings, version-check, and reporting
       APIs part of this implementation.
+- [ ] Package the private GoTrue-compatible credential service and datastore
+      required by Core's current account adapter. Do not point a private Core at
+      Mentra's public Supabase project.
+- [ ] Provide an operator-side command to create, disable, and reset verified
+      pilot accounts without outbound email.
 - [ ] Configure customer-approved STT/TTS providers in private Runtime.
 - [ ] Host the coordinated OTA bundle and speech artifacts on the internal
       update service.
@@ -246,8 +258,9 @@ releases.
 
 - **PR 1:** Manifest types/resolver, embedded Mentra profile, deployment-neutral
   landing screen, boot gating, and tests. No customer deployment is promised yet.
-- **PR 2:** QR/MDM enrollment, consumer-versus-enterprise auth selection, and
-  deployment-scoped auth/Core/Runtime.
+- **PR 2:** QR/MDM enrollment, consumer-versus-enterprise auth selection,
+  deployment-scoped Core/Runtime, and pre-provisioned private email/password
+  sign-in.
 - **PR 3:** OTA/model routing, deployment wallpaper/link/system-miniapp policy,
   pairing-model override, telemetry, and optional-feature egress gates.
 - **PR 4:** Coordinated deployment artifacts and a physical disconnected pilot.
@@ -257,3 +270,7 @@ endpoint toggle. The existing Engine configuration, portable OTA bundle, hotspot
 flow, and coordinated release manifest remove much of the hard work; boot order,
 auth isolation, telemetry gating, model hosting, and private Cloud packaging are
 the remaining critical path.
+
+Self-service signup, email recovery, organization discovery, and generic SSO are
+follow-up identity work. They reuse the deployment resolver but do not block the
+first operator-provisioned pilot.
