@@ -7,6 +7,7 @@ import test from "node:test"
 import {fileURLToPath} from "node:url"
 
 import {assembleProductionReleaseResults} from "./assemble-production-release-results.mjs"
+import {cloudRecordForPlan} from "./coordinated-cloud-v2-test-helpers.mjs"
 import {createReleasePlan, finalizeReleaseManifest, loadReleaseFamily} from "./release-family.mjs"
 
 const plan = createReleasePlan({
@@ -99,6 +100,7 @@ test("assembles stable packages with exact promoted beta mobile and OTA bytes", 
     npmRecords,
     native,
     promotion,
+    cloud: cloudRecordForPlan(plan),
     enginePackage,
     assetBaseUrl: "https://example.com/stable",
   })
@@ -107,6 +109,7 @@ test("assembles stable packages with exact promoted beta mobile and OTA bytes", 
   assert.equal(manifest.promotion.selectedBetaIdentity, "3.1.0-beta.57")
   assert.equal(manifest.publications.mentraos["google-play"].status, "promoted")
   assert.equal(manifest.otaManifest.coordinate, "mentra-live-ota-3.1.0-beta.57.json")
+  assert.equal(manifest.cloud.environment, "prod")
 
   results.otaManifest.status = "published"
   assert.throws(

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import {readFileSync} from "node:fs"
+import {existsSync, readFileSync} from "node:fs"
 import test from "node:test"
 
 function workflow(name) {
@@ -50,11 +50,14 @@ test("production validates before approval and proves packages before mobile pro
   assert.match(jobBlock(production, "npm"), /^    needs: \[plan, approve\]$/m)
   assert.match(jobBlock(production, "sdk-native"), /^    needs: \[plan, approve\]$/m)
   assert.match(jobBlock(production, "engine-consumer"), /^    needs: \[plan, npm, sdk-native\]$/m)
-  assert.match(jobBlock(production, "mobile"), /^    needs: \[plan, engine-consumer\]$/m)
+  assert.match(jobBlock(production, "cloud-v2"), /^    needs: \[plan, approve, engine-consumer\]$/m)
+  assert.match(jobBlock(production, "cloud-v2"), /deployment_environment: prod/)
+  assert.match(jobBlock(production, "mobile"), /^    needs: \[plan, engine-consumer, cloud-v2\]$/m)
   assert.match(
     jobBlock(production, "finalize"),
-    /^    needs: \[plan, approve, npm, sdk-native, mobile, engine-consumer\]$/m,
+    /^    needs: \[plan, approve, npm, sdk-native, mobile, engine-consumer, cloud-v2\]$/m,
   )
+  assert.match(jobBlock(production, "finalize"), /--cloud release-input\/cloud-v2\/cloud-v2-deployment\.json/)
   assert.match(sdkNative, /channel=\$\(jq -er \.channel release-intent\/release-plan\.json\)/)
   assert.match(
     sdkNative,
@@ -65,7 +68,47 @@ test("production validates before approval and proves packages before mobile pro
     /else\s+\[\[ "\$\(jq -r \.draft <<< "\$release"\)" == "false" \]\]\s+\[\[ "\$\(jq -r \.prerelease <<< "\$release"\)" == "true" \]\]/,
   )
   assert.match(sdkNativeWorkflow, /for attempt in \{1\.\.6\}/)
-  assert.match(sdkNativeWorkflow, /cmp --silent native-result\/maven\/sonatype-deployment\.json persisted-deployment\.json/)
+  assert.match(
+    sdkNativeWorkflow,
+    /cmp --silent native-result\/maven\/sonatype-deployment\.json persisted-deployment\.json/,
+  )
+})
+
+test("Cloud V2 deploys once per coordinated environment before mobile publication", () => {
+  const coordinator = workflow("coordinated-release.yml")
+  const cloud = workflow("reusable-coordinated-cloud-v2.yml")
+  const cloudJob = jobBlock(coordinator, "cloud-v2")
+  const mobile = jobBlock(coordinator, "mobile")
+  const finalize = jobBlock(coordinator, "finalize")
+  const notify = jobBlock(coordinator, "notify-slack")
+
+  assert.match(coordinator, /cloud_environment=dev/)
+  assert.match(coordinator, /cloud_environment=staging/)
+  assert.match(coordinator, /backend_environment=dev/)
+  assert.match(coordinator, /backend_environment=prod/)
+  assert.match(cloudJob, /^    needs: plan$/m)
+  assert.match(cloudJob, /reusable-coordinated-cloud-v2\.yml/)
+  assert.match(cloudJob, /deployment_environment: \$\{\{ needs\.plan\.outputs\.cloud_environment \}\}/)
+  assert.match(mobile, /^    needs: \[plan, ota, cloud-v2\]$/m)
+  assert.match(finalize, /needs\.cloud-v2\.result == 'success'/)
+  assert.match(finalize, /--cloud release-input\/cloud-v2\/cloud-v2-deployment\.json/)
+  assert.match(notify, /CLOUD_V2_RESULT: \$\{\{ needs\.cloud-v2\.result \}\}/)
+
+  assert.match(cloud, /workflow_call:/)
+  assert.match(cloud, /group: coordinated-cloud-v2-\$\{\{ inputs\.deployment_environment \}\}/)
+  assert.match(cloud, /cancel-in-progress: false/)
+  assert.match(cloud, /porter apply \\\n+            -w/)
+  assert.match(cloud, /getent hosts "\$host"/)
+  assert.match(cloud, /for probe in healthz ready/)
+  assert.match(cloud, /porter kubectl -- get pods/)
+  assert.match(cloud, /--status validated/)
+  assert.match(cloud, /--status deployed/)
+  assert.doesNotMatch(cloud, /--validate|--dry-run/)
+  assert.doesNotMatch(cloud, /DNS is not configured.*skipping/i)
+
+  for (const legacyOwner of ["cloud-v2-dev.yml", "cloud-v2-staging.yml", "cloud-v2-prod.yml"]) {
+    assert.equal(existsSync(new URL(`../workflows/${legacyOwner}`, import.meta.url)), false)
+  }
 })
 
 test("mobile destinations use real TestFlight groups without changing the release channel", () => {
@@ -172,7 +215,7 @@ test("coordinated docs publish only after finalization to the matching channel",
   assert.match(docs, /grep --fixed-strings --quiet "\$RELEASE_IDENTITY" "\$body"/)
   assert.match(
     notify,
-    /^    needs: \[plan, ota, npm, sdk-native, mobile, engine-consumer, starter-kit, example-testflight, finalize, docs\]$/m,
+    /^    needs:\n      \[plan, cloud-v2, ota, npm, sdk-native, mobile, engine-consumer, starter-kit, example-testflight, finalize, docs\]$/m,
   )
   assert.match(notify, /STARTER_KIT_RESULT: \$\{\{ needs\.starter-kit\.result \}\}/)
   assert.match(notify, /EXAMPLE_TESTFLIGHT_RESULT: \$\{\{ needs\.example-testflight\.result \}\}/)
