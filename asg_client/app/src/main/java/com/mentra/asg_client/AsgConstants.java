@@ -84,6 +84,13 @@ public class AsgConstants {
     /** Cadence for the short hold-still click while a cold photo spins up the camera. */
     public static final long CAMERA_PREP_CLICK_INTERVAL_MS = 900L;
 
+    /**
+     * Ceiling on the repeating hold-still cue. A cold start that has not reached sensor exposure by
+     * now is stuck (camera owned elsewhere, HAL wedged), and more clicking only tells the user the
+     * glasses are broken. The capture keeps running under its own timeouts; only the cue stops.
+     */
+    public static final long CAMERA_PREP_CLICK_MAX_DURATION_MS = 5_000L;
+
     /** Baseline linear gain for Mentra Live audio prompts. */
     public static final float AUDIO_PLAYBACK_VOLUME = 0.1f;
 
@@ -104,6 +111,24 @@ public class AsgConstants {
 
     /** Duration of the user-visible RGB photo indicator, triggered at the capture boundary. */
     public static final int PHOTO_LIGHT_DURATION_MS = 2200;
+
+    /**
+     * Safety ceiling for the camera-holding capture phase used by {@code CaptureBusyGate}. Force-
+     * clears the button busy signal if no JPEG terminal fires. Sized for a cold ISP start plus
+     * MFNR/HDR, far below the 45s full-job {@code CAPTURE_SAFETY_TIMEOUT_MS} on {@code
+     * MediaCaptureService} that outlasts webhook/BLE upload tails.
+     */
+    public static final long CAPTURE_PHASE_SAFETY_TIMEOUT_MS = 10_000L;
+
+    /**
+     * Occupancy lease TTL advertised to BES on {@code mh_phobsy} {@code b=1}. BES is timer-free and
+     * expires the lease locally; ASG renews at {@link #PHOTO_PROMPT_LEASE_RENEW_MS} so two dropped
+     * renewals cannot expire a long recording.
+     */
+    public static final long PHOTO_PROMPT_BUSY_TTL_MS = 60_000L;
+
+    /** Re-sample and republish interval while the photo-prompt occupancy predicate is true. */
+    public static final long PHOTO_PROMPT_LEASE_RENEW_MS = 20_000L;
 
     /** Safety lease for a miniapp-owned transient FOV override. */
     public static final long CAMERA_FOV_OVERRIDE_DEFAULT_TTL_MS = 300_000L;
@@ -204,8 +229,7 @@ public class AsgConstants {
     public static final String BES_OTA_PRODUCT = "best1502x_ibrt_bpone";
 
     /** Prefix for hash-addressed ADB-only artifacts, separate from phone-owned BES OTA data. */
-    public static final String DEBUG_BES_OTA_ARTIFACT_PREFIX =
-            "/storage/emulated/0/asg/debug_bes_";
+    public static final String DEBUG_BES_OTA_ARTIFACT_PREFIX = "/storage/emulated/0/asg/debug_bes_";
 
     /** Debug BES intent extra carrying the exact post-reboot firmware version. */
     public static final String DEBUG_BES_OTA_TARGET_VERSION_EXTRA = "target_version";
@@ -217,8 +241,7 @@ public class AsgConstants {
     public static final String DEBUG_BES_OTA_ARTIFACT_ID_EXTRA = "artifact_id";
 
     /** ADB/local command that reboots BES before handing MTK to a factory USB flasher. */
-    public static final String COMMAND_REBOOT_BES_FOR_MTK_FLASH =
-            "reboot_bes_for_mtk_flash";
+    public static final String COMMAND_REBOOT_BES_FOR_MTK_FLASH = "reboot_bes_for_mtk_flash";
 
     /** Correlation field used to prove that the requested BES reboot reached the UART worker. */
     public static final String MTK_FLASH_REQUEST_ID_FIELD = "request_id";
@@ -252,9 +275,9 @@ public class AsgConstants {
     public static final long UART_BOOT_RECOVERY_INITIAL_DELAY_MS = 8000;
 
     /**
-     * Grace after bounded UART recovery is exhausted before a BES OTA timeout becomes terminal.
-     * BES can finish rebooting after the transport scan, and an exact target-version reply from
-     * that later Linux boot is authoritative.
+     * Grace after bounded UART recovery is exhausted before a BES OTA timeout becomes terminal. BES
+     * can finish rebooting after the transport scan, and an exact target-version reply from that
+     * later Linux boot is authoritative.
      */
     public static final long BES_OTA_RECOVERY_FAILURE_GRACE_MS = 30000;
 
@@ -473,8 +496,8 @@ public class AsgConstants {
     public static final int BLE_PHOTO_MAX_TARGET_PX = 1920;
 
     /**
-     * Phone → glasses JSON command type to enable or disable Wi-Fi ADB (Mentra Live).
-     * Persisted via AsgSettings and applied at boot (default off).
+     * Phone → glasses JSON command type to enable or disable Wi-Fi ADB (Mentra Live). Persisted via
+     * AsgSettings and applied at boot (default off).
      */
     public static final String COMMAND_SET_WIFI_ADB_STATE = "set_wifi_adb_state";
 }

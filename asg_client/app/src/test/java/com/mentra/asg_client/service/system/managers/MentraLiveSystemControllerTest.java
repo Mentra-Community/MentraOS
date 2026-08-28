@@ -55,6 +55,21 @@ public class MentraLiveSystemControllerTest {
         assertThat(intent.getPackage()).isEqualTo("com.android.systemui");
     }
 
+    @Test
+    public void setComBaudrate_emitsVendorComBaudProperty() {
+        Application app = ApplicationProvider.getApplicationContext();
+        MentraLiveSystemController controller = new MentraLiveSystemController(app);
+
+        controller.setComBaudrate(3_000_000);
+
+        Intent intent = lastBroadcast(app);
+        assertThat(intent.getStringExtra("cmd")).isEqualTo("setProperty");
+        assertThat(intent.getStringExtra("name")).isEqualTo("vendor.com.baud");
+        assertThat(intent.getStringExtra("value")).isEqualTo("3000000");
+        assertThat(intent.getAction()).isEqualTo("com.xy.xsetting.action");
+        assertThat(intent.getPackage()).isEqualTo("com.android.systemui");
+    }
+
     private static Intent lastBroadcast(Application app) {
         List<Intent> intents = shadowOf(app).getBroadcastIntents();
         assertThat(intents).isNotEmpty();

@@ -5,6 +5,7 @@ import android.util.Log;
 import com.lhs.serialport.api.SerialManager;
 import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.bluetooth.interfaces.SerialListener;
+import com.mentra.asg_client.service.system.core.SystemControllerFactory;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InterruptedIOException;
@@ -99,6 +100,7 @@ public class SerialPortBridge {
 
             SerialSession session = newSession(COM_BAUDRATE);
             currentSession = session;
+            publishComBaudrate(COM_BAUDRATE);
             mRecvThread = new RecvThread(mIS, session);
             if (mListener != null) mListener.onSerialReady(COM_PATH, session);
             mRecvThread.start();
@@ -187,6 +189,7 @@ public class SerialPortBridge {
 
         SerialSession session = newSession(baud);
         currentSession = session;
+        publishComBaudrate(baud);
 
         Log.i(BAUD_TAG, "Serial port opened at " + baud + " baud");
         return session;
@@ -296,6 +299,22 @@ public class SerialPortBridge {
 
         lastCloseSafe = driverClosed && readerStopped;
         return lastCloseSafe;
+    }
+
+    /**
+     * Publish the live UART baud to {@code vendor.com.baud} so FactoryTest can attach at the same
+     * rate ASG just opened.
+     */
+    private void publishComBaudrate(int baud) {
+        if (mContext == null) {
+            return;
+        }
+        try {
+            SystemControllerFactory.get(mContext).setComBaudrate(baud);
+            Log.i(BAUD_TAG, "Published vendor.com.baud=" + baud + " for FactoryTest");
+        } catch (RuntimeException e) {
+            Log.w(BAUD_TAG, "Failed to publish vendor.com.baud=" + baud, e);
+        }
     }
 
     /** Open COM_PATH at the given baud, catching any exception. */

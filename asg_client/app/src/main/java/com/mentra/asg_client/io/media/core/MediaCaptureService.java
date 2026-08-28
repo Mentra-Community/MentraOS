@@ -6,10 +6,8 @@ import android.net.NetworkCapabilities;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
-
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
-
 import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.audio.AudioAssets;
 import com.mentra.asg_client.camera.CameraNeoService;
@@ -19,7 +17,6 @@ import com.mentra.asg_client.camera.lifecycle.PhotoExifMetadataWriter;
 import com.mentra.asg_client.camera.model.CameraOperationError;
 import com.mentra.asg_client.camera.model.CapturedPhoto;
 import com.mentra.asg_client.camera.model.PhotoCaptureSettings;
-import com.mentra.asg_client.camera.model.QueuedPhotoRequestQueue;
 import com.mentra.asg_client.camera.policy.PhotoMode;
 import com.mentra.asg_client.camera.policy.PhotoSizeTier;
 import com.mentra.asg_client.io.file.core.FileManager;
@@ -36,6 +33,7 @@ import com.mentra.asg_client.io.streaming.services.RtmpStreamingService;
 import com.mentra.asg_client.io.streaming.services.SrtStreamingService;
 import com.mentra.asg_client.io.streaming.services.WhipStreamingService;
 import com.mentra.asg_client.logging.BleTraceLogger;
+import com.mentra.asg_client.service.core.AsgClientService;
 import com.mentra.asg_client.service.core.CameraRestartCooldown;
 import com.mentra.asg_client.service.core.constants.BatteryConstants;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
@@ -44,16 +42,6 @@ import com.mentra.asg_client.settings.VideoSettings;
 import com.mentra.asg_client.utils.CaptureRequestId;
 import com.mentra.asg_client.utils.GalleryStatusHelper;
 import com.mentra.asg_client.utils.GallerySyncFilter;
-
-import okhttp3.MultipartBody;
-import okhttp3.OkHttpClient;
-import okhttp3.Request;
-import okhttp3.RequestBody;
-import okhttp3.Response;
-
-import org.json.JSONException;
-import org.json.JSONObject;
-
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -74,6 +62,13 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import okhttp3.MultipartBody;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.RequestBody;
+import okhttp3.Response;
+import org.json.JSONException;
+import org.json.JSONObject;
 
 /**
  * Service that handles media capturing (photo and video) and uploading functionality. Replaces
@@ -691,6 +686,7 @@ public class MediaCaptureService {
                         t.setDaemon(true);
                         return t;
                     });
+
     private final ConcurrentHashMap<String, VideoThumbnailTask> videoThumbnailTasks =
             new ConcurrentHashMap<>();
     private final Object videoThumbnailLifecycleLock = new Object();
@@ -712,9 +708,42 @@ public class MediaCaptureService {
     // slow webhook upload on flaky WiFi so we don't prematurely free the flag while the upload
     // is still grinding. Force-resets isPhotoJobInFlight if no terminal callback fires.
     private static final long CAPTURE_SAFETY_TIMEOUT_MS = 45000; // 45 seconds
-    private final Object captureSafetyTimeoutLock = new Object();
-    private Runnable captureSafetyTimeout;
-    private String captureSafetyTimeoutRequestId;
+    private static final String JOB_TIMEOUT_KEY_PREFIX = "job:";
+    private final CaptureWatchdog safetyWatchdog =
+            new CaptureWatchdog(
+                    new CaptureWatchdog.Scheduler() {
+                        @Override
+                        public void postDelayed(Runnable task, long delayMs) {
+                            mainHandler.postDelayed(task, delayMs);
+                        }
+
+                        @Override
+                        public void cancel(Runnable task) {
+                            mainHandler.removeCallbacks(task);
+                        }
+                    });
+    private final CaptureBusyGate captureBusyGate =
+            new CaptureBusyGate(
+                    new CaptureBusyTracker(),
+                    safetyWatchdog,
+                    AsgConstants.CAPTURE_PHASE_SAFETY_TIMEOUT_MS);
+    private final PhotoPromptOccupancy photoPromptOccupancy =
+            new PhotoPromptOccupancy(
+                    busy -> {
+                        AsgClientService service = AsgClientService.getInstance();
+                        return service != null && service.sendPhotoPromptBusy(busy);
+                    },
+                    new PhotoPromptOccupancy.Scheduler() {
+                        @Override
+                        public void postDelayed(Runnable task, long delayMs) {
+                            mainHandler.postDelayed(task, delayMs);
+                        }
+
+                        @Override
+                        public void cancel(Runnable task) {
+                            mainHandler.removeCallbacks(task);
+                        }
+                    });
 
     // Per-request timing instrumentation (gated by AsgConstants.ENABLE_PHOTO_TIMING_LOGS)
     private final Map<String, Map<String, Long>> photoTimings = new ConcurrentHashMap<>();
@@ -1135,6 +1164,9 @@ public class MediaCaptureService {
         VideoRecordingLifecycle.StartResult result =
                 videoRecordingLifecycle.requestStart(startAction);
         if (result == VideoRecordingLifecycle.StartResult.START_NOW) {
+            // Publish before the camera open so a button press racing video startup is already
+            // covered by the lease instead of arming a prompt BES cannot take back.
+            publishPromptOccupancy();
             startAction.run();
             return true;
         }
@@ -1145,6 +1177,12 @@ public class MediaCaptureService {
 
         Log.w(TAG, "Video start rejected because another recording or queued start is active");
         return false;
+    }
+
+    /** Releases the camera claim taken by {@code requestStart} and re-publishes occupancy. */
+    private void videoStartFailed() {
+        videoRecordingLifecycle.startFailed();
+        publishPromptOccupancy();
     }
 
     /**
@@ -1222,7 +1260,7 @@ public class MediaCaptureService {
                 || SrtStreamingService.isStreaming()
                 || WhipStreamingService.isStreaming()) {
             Log.e(TAG, "Cannot start video - streaming active");
-            videoRecordingLifecycle.startFailed();
+            videoStartFailed();
             if (mMediaCaptureListener != null) {
                 mMediaCaptureListener.onMediaError(
                         requestId,
@@ -1235,7 +1273,7 @@ public class MediaCaptureService {
         // Check if camera is actively in use (this will return false for kept-alive idle camera)
         if (CameraNeoService.isCameraInUse()) {
             Log.e(TAG, "Cannot start video - camera actively in use");
-            videoRecordingLifecycle.startFailed();
+            videoStartFailed();
             if (mMediaCaptureListener != null) {
                 mMediaCaptureListener.onMediaError(
                         requestId, "Camera busy", MediaUploadQueueManager.MEDIA_TYPE_VIDEO);
@@ -1246,7 +1284,7 @@ public class MediaCaptureService {
         // Check storage availability before recording
         if (!isExternalStorageAvailable()) {
             Log.e(TAG, "External storage is not available for video capture");
-            videoRecordingLifecycle.startFailed();
+            videoStartFailed();
             if (mMediaCaptureListener != null) {
                 mMediaCaptureListener.onMediaError(
                         requestId,
@@ -1291,6 +1329,7 @@ public class MediaCaptureService {
                             Log.d(TAG, "Video recording started with ID: " + videoId);
                             videoRecordingLifecycle.recordingStarted();
                             isRecordingVideo = true;
+                            publishPromptOccupancy();
                             recordingStartTime = System.currentTimeMillis();
 
                             // Start battery monitoring on main thread (callback runs on background
@@ -1420,6 +1459,7 @@ public class MediaCaptureService {
                             }
 
                             isRecordingVideo = false;
+                            publishPromptOccupancy();
                             currentVideoId = null;
                             currentVideoPath = null;
                             completeVideoTermination();
@@ -1502,19 +1542,19 @@ public class MediaCaptureService {
                                                                         Log.w(
                                                                                 TAG,
                                                                                 "Could not delete"
-                                                                                    + " failed"
-                                                                                    + " video file:"
-                                                                                    + " "
+                                                                                        + " failed"
+                                                                                        + " video file:"
+                                                                                        + " "
                                                                                         + filePath);
                                                                     }
                                                                 } else {
                                                                     Log.w(
                                                                             TAG,
                                                                             "Skipping failed video"
-                                                                                + " deletion"
-                                                                                + " because cleanup"
-                                                                                + " is in"
-                                                                                + " progress");
+                                                                                    + " deletion"
+                                                                                    + " because cleanup"
+                                                                                    + " is in"
+                                                                                    + " progress");
                                                                 }
                                                                 if (mMediaCaptureListener != null) {
                                                                     mMediaCaptureListener
@@ -1522,20 +1562,20 @@ public class MediaCaptureService {
                                                                                     pendingRequestId,
                                                                                     cleaningUp
                                                                                             ? "Video"
-                                                                                                  + " integrity"
-                                                                                                  + " check"
-                                                                                                  + " aborted"
-                                                                                                  + " during"
-                                                                                                  + " cleanup;"
-                                                                                                  + " file"
-                                                                                                  + " preserved"
+                                                                                                    + " integrity"
+                                                                                                    + " check"
+                                                                                                    + " aborted"
+                                                                                                    + " during"
+                                                                                                    + " cleanup;"
+                                                                                                    + " file"
+                                                                                                    + " preserved"
                                                                                             : "Video"
-                                                                                                  + " file"
-                                                                                                  + " failed"
-                                                                                                  + " integrity"
-                                                                                                  + " check"
-                                                                                                  + " and was"
-                                                                                                  + " removed",
+                                                                                                    + " file"
+                                                                                                    + " failed"
+                                                                                                    + " integrity"
+                                                                                                    + " check"
+                                                                                                    + " and was"
+                                                                                                    + " removed",
                                                                                     MediaUploadQueueManager
                                                                                             .MEDIA_TYPE_VIDEO);
                                                                 }
@@ -1618,6 +1658,7 @@ public class MediaCaptureService {
                             }
 
                             isRecordingVideo = false;
+                            publishPromptOccupancy();
 
                             // Turn off RGB white LED on error (error path may not go through
                             // stopVideoRecording)
@@ -1673,7 +1714,7 @@ public class MediaCaptureService {
             clearVideoCaptureSyncBlocks(videoFilePath);
             currentVideoId = null;
             currentVideoPath = null;
-            videoRecordingLifecycle.startFailed();
+            videoStartFailed();
         }
     }
 
@@ -1684,6 +1725,7 @@ public class MediaCaptureService {
             mCurrentStopReason = null;
             pendingStart = videoRecordingLifecycle.recordingTerminated();
         }
+        publishPromptOccupancy();
         if (pendingStart == null) {
             return;
         }
@@ -1692,14 +1734,14 @@ public class MediaCaptureService {
                 mainHandler.post(
                         () -> {
                             if (isCleaningUp.get()) {
-                                videoRecordingLifecycle.startFailed();
+                                videoStartFailed();
                                 return;
                             }
                             Log.i(TAG, "Starting video queued behind recorder teardown");
                             pendingStart.run();
                         });
         if (!posted) {
-            videoRecordingLifecycle.startFailed();
+            videoStartFailed();
             Log.e(TAG, "Could not post video start queued behind recorder teardown");
         }
     }
@@ -1829,6 +1871,7 @@ public class MediaCaptureService {
             // so drop this recording's upload target here to mirror
             // onRecordingStopped/onRecordingError.
             isRecordingVideo = false;
+            publishPromptOccupancy();
             currentVideoId = null;
             currentVideoPath = null;
             if (captureId != null) {
@@ -1962,7 +2005,7 @@ public class MediaCaptureService {
         }
 
         // Check if video recording is active - photos cannot interrupt video recording
-        if (isRecordingVideo) {
+        if (isVideoHoldingCamera()) {
             Log.e(TAG, "Cannot take photo - video recording in progress");
             if (mMediaCaptureListener != null) {
                 mMediaCaptureListener.onMediaError(
@@ -2009,8 +2052,8 @@ public class MediaCaptureService {
             return;
         }
 
-        // Note: No isCapturingPhoto guard here — button photos enqueue into QueuedPhotoRequestQueue
-        // so rapid presses serialize through CameraNeoService burst reuse (not CAMERA_BUSY).
+        // Occupancy is tracked by CaptureBusyGate for the camera-holding phase only. Button
+        // presses drop while this is set; SDK take_photo still uses the separate job lock.
 
         // Add milliseconds and a random component to ensure uniqueness even in rapid capture
         String timeStamp =
@@ -2018,6 +2061,25 @@ public class MediaCaptureService {
         int randomSuffix = (int) (Math.random() * 1000);
 
         String captureDir = "IMG_" + timeStamp + "_" + randomSuffix;
+
+        // Button captures have no phone-originated requestId; the capture directory name is
+        // their stable ID (it is what gallery sync exposes as capture_id), so status messages
+        // carry it instead of a throwaway local_<timestamp> string.
+        String requestId = captureDir;
+
+        // Claim the camera-holding slot before any user-visible feedback or filesystem work, so a
+        // capture that loses the race never plays sound/LED, emits a queued status, or leaves an
+        // orphan capture directory behind.
+        final long captureToken = beginCapturePhase(requestId);
+        if (captureToken == CaptureBusyGate.NO_CAPTURE) {
+            Log.w(
+                    TAG,
+                    "Local capture rejected - another capture is in flight requestId=" + requestId);
+            sendPhotoStatus(
+                    requestId, "failed", null, "CAMERA_BUSY", "Another capture is in progress");
+            return;
+        }
+
         File captureDirFile = new File(fileManager.getDefaultMediaDirectory(), captureDir);
         captureDirFile.mkdirs();
         String photoFilePath = new File(captureDirFile, "base.jpg").getAbsolutePath();
@@ -2057,14 +2119,11 @@ public class MediaCaptureService {
         // Log test configuration for debugging
         PhotoCaptureTestHooks.logTestConfig();
 
-        // Button captures have no phone-originated requestId; the capture directory name is
-        // their stable ID (it is what gallery sync exposes as capture_id), so status messages
-        // carry it instead of a throwaway local_<timestamp> string.
-        String requestId = captureDir;
         sendPhotoStatus(requestId, "queued");
 
         // TESTING: Check for fake camera initialization failure
         if (PhotoCaptureTestHooks.shouldFail("CAMERA_INIT")) {
+            endCapturePhase(captureToken);
             Log.e(TAG, "TESTING: Simulating camera initialization failure");
             sendPhotoErrorResponse(
                     requestId,
@@ -2085,8 +2144,7 @@ public class MediaCaptureService {
             if (effectiveSound) {
                 // Button photo: isFromSdk=false, auto exposure (null) — matches the
                 // enqueuePhotoRequest call below so the warm/cold prediction lines up.
-                feedbackToken =
-                        startPhotoFeedback(requestId, size, false, null, captureSettings);
+                feedbackToken = startPhotoFeedback(requestId, size, false, null, captureSettings);
             }
             if (enableFlash) {
                 flashPrivacyLedForPhoto(); // Flash privacy LED
@@ -2096,6 +2154,7 @@ public class MediaCaptureService {
 
         // TESTING: Check for fake camera capture failure
         if (PhotoCaptureTestHooks.shouldFail("CAMERA_CAPTURE")) {
+            endCapturePhase(captureToken);
             photoFeedbackController.stopForFailure(captureFeedbackToken);
             Log.e(TAG, "TESTING: Simulating camera capture failure");
             sendPhotoErrorResponse(
@@ -2112,141 +2171,143 @@ public class MediaCaptureService {
         // isFromSdk=false because this is a button-triggered photo (local storage, high quality)
         try {
             CameraNeoService.enqueuePhotoRequest(
-                mContext,
-                photoFilePath,
-                size,
-                enableFlash,
-                false, // isFromSdk - button photo, use high quality resolution
-                null, // exposureTimeNs — auto exposure for button photos
-                null,
-                captureSettings,
-                new CameraNeoService.PhotoCaptureCallback() {
-                    @Override
-                    public void onPhotoConfigured(JSONObject resolvedConfig) {
-                        sendPhotoStatus(
-                                requestId,
-                                "configuring",
-                                addPhotoTransferDetails(
-                                        resolvedConfig, true, "local", effectiveCompress),
-                                null,
-                                null);
-                    }
-
-                    @Override
-                    public void onPhotoCapturing(
-                            JSONObject requestedCaptureConfig, JSONObject meteredPreview) {
-                        sendPhotoStatus(
-                                requestId,
-                                "capturing",
-                                null,
-                                null,
-                                null,
-                                requestedCaptureConfig,
-                                meteredPreview,
-                                null);
-                    }
-
-                    @Override
-                    public void onPhotoExposureStarted(
-                            long sensorTimestampNs, long estimatedExposureDurationNs) {
-                        photoLightController.onCaptureBoundary(
-                                captureLightToken,
-                                "sensor exposure",
-                                estimatedExposureDurationNs);
-                        photoFeedbackController.onExposureStarted(
-                                captureFeedbackToken,
-                                sensorTimestampNs,
-                                estimatedExposureDurationNs);
-                    }
-
-                    @Override
-                    public void onPhotoFrameAvailable(long sensorTimestampNs) {
-                        photoLightController.onCaptureBoundary(
-                                captureLightToken, "JPEG frame fallback");
-                        photoFeedbackController.playSnap(
-                                captureFeedbackToken, "JPEG frame available");
-                    }
-
-                    @Override
-                    public void onPhotoCaptured(String filePath) {
-                        onPhotoCaptured(filePath, null);
-                    }
-
-                    @Override
-                    public void onPhotoCaptured(String filePath, JSONObject captureMetadata) {
-                        photoLightController.onCaptureBoundary(
-                                captureLightToken, "photo completion fallback");
-                        photoFeedbackController.playSnap(
-                                captureFeedbackToken, "photo completion fallback");
-
-                        // Calculate end-to-end timing from request to capture
-                        long totalElapsedMs = System.currentTimeMillis() - requestStartTimeMs;
-                        if (AsgConstants.ENABLE_PHOTO_TIMING_LOGS) {
-                            Log.i(
-                                    TAG,
-                                    "⏱️ [TIMING] LOCAL Photo CAPTURED in " + totalElapsedMs + "ms");
-                        }
-
-                        Log.d(TAG, "Local photo captured successfully at: " + filePath);
-                        sendPhotoStatus(
-                                requestId,
-                                "captured",
-                                null,
-                                null,
-                                null,
-                                null,
-                                null,
-                                captureMetadata);
-
-                        // LED is now managed by CameraNeoService and will turn off when camera
-                        // closes
-
-                        // Notify through standard capture listener if set up
-                        if (mMediaCaptureListener != null) {
-                            mMediaCaptureListener.onPhotoCaptured(requestId, filePath);
-                            mMediaCaptureListener.onPhotoUploading(requestId);
-                        }
-
-                        // Send gallery status update to phone after photo capture
-                        sendGalleryStatusUpdate();
-                    }
-
-                    @Override
-                    public void onPhotoFailureDetected() {
-                        photoFeedbackController.stopForFailure(captureFeedbackToken);
-                    }
-
-                    @Override
-                    public void onPhotoError(String errorMessage) {
-                        onPhotoError(CameraOperationError.captureFailed(errorMessage));
-                    }
-
-                    @Override
-                    public void onPhotoError(CameraOperationError error) {
-                        photoFeedbackController.stopForFailure(captureFeedbackToken);
-                        Log.e(TAG, "Failed to capture offline photo: " + error.message());
-                        sendPhotoStatus(requestId, "failed", null, error.code(), error.message());
-
-                        // LED is now managed by CameraNeoService and will turn off when camera
-                        // closes
-
-                        if (mMediaCaptureListener != null) {
-                            mMediaCaptureListener.onMediaError(
+                    mContext,
+                    photoFilePath,
+                    size,
+                    enableFlash,
+                    false, // isFromSdk - button photo, use high quality resolution
+                    null, // exposureTimeNs — auto exposure for button photos
+                    null,
+                    captureSettings,
+                    new CameraNeoService.PhotoCaptureCallback() {
+                        @Override
+                        public void onPhotoConfigured(JSONObject resolvedConfig) {
+                            sendPhotoStatus(
                                     requestId,
-                                    error.message(),
-                                    MediaUploadQueueManager.MEDIA_TYPE_PHOTO);
+                                    "configuring",
+                                    addPhotoTransferDetails(
+                                            resolvedConfig, true, "local", effectiveCompress),
+                                    null,
+                                    null);
                         }
-                    }
-                });
+
+                        @Override
+                        public void onPhotoCapturing(
+                                JSONObject requestedCaptureConfig, JSONObject meteredPreview) {
+                            sendPhotoStatus(
+                                    requestId,
+                                    "capturing",
+                                    null,
+                                    null,
+                                    null,
+                                    requestedCaptureConfig,
+                                    meteredPreview,
+                                    null);
+                        }
+
+                        @Override
+                        public void onPhotoExposureStarted(
+                                long sensorTimestampNs, long estimatedExposureDurationNs) {
+                            photoLightController.onCaptureBoundary(
+                                    captureLightToken,
+                                    "sensor exposure",
+                                    estimatedExposureDurationNs);
+                            photoFeedbackController.onExposureStarted(
+                                    captureFeedbackToken,
+                                    sensorTimestampNs,
+                                    estimatedExposureDurationNs);
+                        }
+
+                        @Override
+                        public void onPhotoFrameAvailable(long sensorTimestampNs) {
+                            photoLightController.onCaptureBoundary(
+                                    captureLightToken, "JPEG frame fallback");
+                            photoFeedbackController.playSnap(
+                                    captureFeedbackToken, "JPEG frame available");
+                        }
+
+                        @Override
+                        public void onPhotoCaptured(String filePath) {
+                            onPhotoCaptured(filePath, null);
+                        }
+
+                        @Override
+                        public void onPhotoCaptured(String filePath, JSONObject captureMetadata) {
+                            endCapturePhase(captureToken);
+                            photoLightController.onCaptureBoundary(
+                                    captureLightToken, "photo completion fallback");
+                            photoFeedbackController.playSnap(
+                                    captureFeedbackToken, "photo completion fallback");
+
+                            // Calculate end-to-end timing from request to capture
+                            long totalElapsedMs = System.currentTimeMillis() - requestStartTimeMs;
+                            if (AsgConstants.ENABLE_PHOTO_TIMING_LOGS) {
+                                Log.i(
+                                        TAG,
+                                        "⏱️ [TIMING] LOCAL Photo CAPTURED in "
+                                                + totalElapsedMs
+                                                + "ms");
+                            }
+
+                            Log.d(TAG, "Local photo captured successfully at: " + filePath);
+                            sendPhotoStatus(
+                                    requestId,
+                                    "captured",
+                                    null,
+                                    null,
+                                    null,
+                                    null,
+                                    null,
+                                    captureMetadata);
+
+                            // LED is now managed by CameraNeoService and will turn off when camera
+                            // closes
+
+                            // Notify through standard capture listener if set up
+                            if (mMediaCaptureListener != null) {
+                                mMediaCaptureListener.onPhotoCaptured(requestId, filePath);
+                                mMediaCaptureListener.onPhotoUploading(requestId);
+                            }
+
+                            // Send gallery status update to phone after photo capture
+                            sendGalleryStatusUpdate();
+                        }
+
+                        @Override
+                        public void onPhotoFailureDetected() {
+                            photoFeedbackController.stopForFailure(captureFeedbackToken);
+                        }
+
+                        @Override
+                        public void onPhotoError(String errorMessage) {
+                            onPhotoError(CameraOperationError.captureFailed(errorMessage));
+                        }
+
+                        @Override
+                        public void onPhotoError(CameraOperationError error) {
+                            endCapturePhase(captureToken);
+                            photoFeedbackController.stopForFailure(captureFeedbackToken);
+                            Log.e(TAG, "Failed to capture offline photo: " + error.message());
+                            sendPhotoStatus(
+                                    requestId, "failed", null, error.code(), error.message());
+
+                            // LED is now managed by CameraNeoService and will turn off when camera
+                            // closes
+
+                            if (mMediaCaptureListener != null) {
+                                mMediaCaptureListener.onMediaError(
+                                        requestId,
+                                        error.message(),
+                                        MediaUploadQueueManager.MEDIA_TYPE_PHOTO);
+                            }
+                        }
+                    });
         } catch (Exception e) {
+            endCapturePhase(captureToken);
             photoFeedbackController.stopForFailure(captureFeedbackToken);
             Log.e(TAG, "Failed to enqueue button photo", e);
             sendPhotoStatus(
-                    requestId,
-                    "failed",
-                    null,
-                    "CAMERA_ERROR",
-                    "Failed to start photo capture");
+                    requestId, "failed", null, "CAMERA_ERROR", "Failed to start photo capture");
             if (mMediaCaptureListener != null) {
                 mMediaCaptureListener.onMediaError(
                         requestId,
@@ -2258,11 +2319,11 @@ public class MediaCaptureService {
 
     /**
      * Capture a photo that is only saved to the gallery: an SDK take_photo with save=true and no
-     * upload target. Ordinary photos bypass the single-flight photo-job gate and enqueue straight
-     * into the camera queue, exactly like button photos. Text mode remains single-flight through
-     * detection and final persistence so bursts cannot retain an unbounded queue of sensor JPEGs.
-     * The terminal photo_response carries the captureId (the requestId-stamped capture directory
-     * name) for sync-time correlation.
+     * upload target. Ordinary photos skip the full-job photo-job gate but occupy {@link
+     * CaptureBusyGate} for the camera-holding phase so the button cannot start another capture.
+     * Text mode remains single-flight through detection and final persistence so bursts cannot
+     * retain an unbounded queue of sensor JPEGs. The terminal photo_response carries the captureId
+     * (the requestId-stamped capture directory name) for sync-time correlation.
      */
     public boolean takePhotoForLocalSave(
             String photoFilePath,
@@ -2292,6 +2353,13 @@ public class MediaCaptureService {
         if (CameraRestartCooldown.isActive()) {
             Log.w(TAG, "Cannot take local-save photo - camera HAL restarting after FOV change");
             sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Camera restarting after FOV change");
+            return false;
+        }
+
+        if (isVideoHoldingCamera()) {
+            Log.e(TAG, "Cannot take local-save photo - video recording owns the camera");
+            sendPhotoErrorResponse(
+                    requestId, "CAMERA_BUSY", "Camera busy with video recording");
             return false;
         }
 
@@ -2328,6 +2396,22 @@ public class MediaCaptureService {
                         + mode
                         + " path="
                         + photoFilePath);
+        // Claim the camera-holding slot before any user-visible feedback or queued status so a
+        // capture that loses the race never plays sound/LED or emits a misleading queued status.
+        final long captureToken = beginCapturePhase(requestId);
+        if (captureToken == CaptureBusyGate.NO_CAPTURE) {
+            Log.w(
+                    TAG,
+                    "Local-save capture rejected - another capture is in flight requestId="
+                            + requestId);
+            sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Another capture is in progress");
+            if (textModeRequested) {
+                clearPhotoTracking(requestId);
+                releasePhotoJob(requestId);
+            }
+            return false;
+        }
+
         sendPhotoStatus(requestId, "queued");
 
         // The capture directory name is the stable capture_id exposed by gallery sync.
@@ -2343,11 +2427,7 @@ public class MediaCaptureService {
                 // Local-save SDK photo: isFromSdk=true, matching the enqueue below.
                 feedbackToken =
                         startPhotoFeedback(
-                                requestId,
-                                captureSize,
-                                true,
-                                exposureTimeNs,
-                                captureSettings);
+                                requestId, captureSize, true, exposureTimeNs, captureSettings);
             }
             if (enableFlash) {
                 flashPrivacyLedForPhoto();
@@ -2428,6 +2508,7 @@ public class MediaCaptureService {
                                 String filePath,
                                 JSONObject captureMetadata,
                                 CapturedPhoto capturedPhoto) {
+                            endCapturePhase(captureToken);
                             photoLightController.onCaptureBoundary(
                                     captureLightToken, "photo completion fallback");
                             photoFeedbackController.playSnap(
@@ -2516,6 +2597,7 @@ public class MediaCaptureService {
 
                         @Override
                         public void onPhotoError(CameraOperationError error) {
+                            endCapturePhase(captureToken);
                             photoFeedbackController.stopForFailure(captureFeedbackToken);
                             try {
                                 Log.e(
@@ -2539,6 +2621,7 @@ public class MediaCaptureService {
                     });
             return true;
         } catch (Exception e) {
+            endCapturePhase(captureToken);
             photoFeedbackController.stopForFailure(captureFeedbackToken);
             try {
                 Log.e(TAG, "Error taking local-save photo", e);
@@ -2669,6 +2752,15 @@ public class MediaCaptureService {
             return false;
         }
 
+        // Photos cannot interrupt video recording, including its async start/stop windows
+        if (isVideoHoldingCamera()) {
+            Log.e(TAG, "Cannot take photo - video recording owns the camera");
+            sendPhotoErrorResponse(
+                    requestId, "CAMERA_BUSY", "Camera busy with video recording");
+            clearPhotoTracking(requestId);
+            return false;
+        }
+
         // Check battery level before proceeding
         if (mStateManager != null) {
             int batteryLevel = mStateManager.getBatteryLevel();
@@ -2759,11 +2851,7 @@ public class MediaCaptureService {
                     // call below so the warm/cold prediction lines up.
                     feedbackToken =
                             startPhotoFeedback(
-                                    requestId,
-                                    captureSize,
-                                    true,
-                                    exposureTimeNs,
-                                    captureSettings);
+                                    requestId, captureSize, true, exposureTimeNs, captureSettings);
                 }
                 if (enableFlash) {
                     flashPrivacyLedForPhoto();
@@ -3073,13 +3161,66 @@ public class MediaCaptureService {
         return activePhotoJobRequestId.get() != null;
     }
 
+    /**
+     * Whether a local/button (or local-save) capture currently holds the camera. Ends at JPEG
+     * capture, not after upload or gallery sync. The phone/SDK {@code take_photo} path does not
+     * consult this flag.
+     */
+    public boolean isCaptureInFlight() {
+        return captureBusyGate.isBusy();
+    }
+
+    /**
+     * Re-push the occupancy lease after UART/BES link-up so a reboot mid-recording cannot leave
+     * prompts enabled for more than one renewal interval.
+     */
+    public void resyncPhotoPromptOccupancy() {
+        photoPromptOccupancy.resync(this::samplePromptOccupancy);
+    }
+
+    private long beginCapturePhase(String requestId) {
+        long token = captureBusyGate.begin(requestId);
+        publishPromptOccupancy();
+        return token;
+    }
+
+    private boolean endCapturePhase(long token) {
+        boolean ended = captureBusyGate.end(token);
+        publishPromptOccupancy();
+        return ended;
+    }
+
+    private void publishPromptOccupancy() {
+        photoPromptOccupancy.publish(this::samplePromptOccupancy, false);
+    }
+
+    private boolean samplePromptOccupancy() {
+        return PhotoPromptOccupancy.suppressed(
+                captureBusyGate.isBusy(),
+                activePhotoJobRequestId.get() != null,
+                isVideoHoldingCamera());
+    }
+
+    /**
+     * True while video owns the camera. {@code isRecordingVideo} only flips on the recorder's
+     * started callback and clears on its terminal callback, so it leaves the asynchronous start and
+     * stop windows uncovered; the lifecycle phase covers them. A photo admitted in one of those
+     * windows never gets the camera, so it clicks its way to a timeout instead of capturing.
+     */
+    private boolean isVideoHoldingCamera() {
+        return isRecordingVideo || videoRecordingLifecycle.isCameraOccupied();
+    }
+
     private boolean acquirePhotoJob(String requestId) {
-        return activePhotoJobRequestId.compareAndSet(null, requestId);
+        boolean acquired = activePhotoJobRequestId.compareAndSet(null, requestId);
+        publishPromptOccupancy();
+        return acquired;
     }
 
     private void releasePhotoJob(String requestId) {
         if (activePhotoJobRequestId.compareAndSet(requestId, null)) {
             cancelCaptureSafetyTimeout(requestId);
+            publishPromptOccupancy();
         } else {
             Log.w(
                     TAG,
@@ -3097,50 +3238,37 @@ public class MediaCaptureService {
      * upload.
      */
     private void startCaptureSafetyTimeout(String requestId) {
-        Runnable timeout =
-                new Runnable() {
-                    @Override
-                    public void run() {
-                        if (!activePhotoJobRequestId.compareAndSet(requestId, null)) {
-                            return;
-                        }
-                        synchronized (captureSafetyTimeoutLock) {
-                            if (captureSafetyTimeout == this) {
-                                captureSafetyTimeout = null;
-                                captureSafetyTimeoutRequestId = null;
-                            }
-                        }
-                        photoFeedbackController.stopForTimeout(requestId);
-                        Log.e(
-                                TAG,
-                                "⚠️ SAFETY TIMEOUT: isPhotoJobInFlight force-reset after "
-                                        + CAPTURE_SAFETY_TIMEOUT_MS
-                                        + "ms - no terminal callback fired for "
-                                        + requestId);
-                        dumpTimings(requestId);
-                        clearBlePhotoTimingTracking(requestId);
-                        sendPhotoErrorResponse(
-                                requestId,
-                                "CAPTURE_TIMEOUT",
-                                "Photo job timed out on glasses - no terminal callback fired");
+        safetyWatchdog.arm(
+                jobTimeoutKey(requestId),
+                CAPTURE_SAFETY_TIMEOUT_MS,
+                () -> {
+                    if (!activePhotoJobRequestId.compareAndSet(requestId, null)) {
+                        return;
                     }
-                };
-        synchronized (captureSafetyTimeoutLock) {
-            captureSafetyTimeout = timeout;
-            captureSafetyTimeoutRequestId = requestId;
-        }
-        mainHandler.postDelayed(timeout, CAPTURE_SAFETY_TIMEOUT_MS);
+                    publishPromptOccupancy();
+                    photoFeedbackController.stopForTimeout(requestId);
+                    Log.e(
+                            TAG,
+                            "⚠️ SAFETY TIMEOUT: isPhotoJobInFlight force-reset after "
+                                    + CAPTURE_SAFETY_TIMEOUT_MS
+                                    + "ms - no terminal callback fired for "
+                                    + requestId);
+                    dumpTimings(requestId);
+                    clearBlePhotoTimingTracking(requestId);
+                    sendPhotoErrorResponse(
+                            requestId,
+                            "CAPTURE_TIMEOUT",
+                            "Photo job timed out on glasses - no terminal callback fired");
+                });
     }
 
     /** Cancel the capture safety timeout (called when callback fires normally). */
     private void cancelCaptureSafetyTimeout(String requestId) {
-        synchronized (captureSafetyTimeoutLock) {
-            if (captureSafetyTimeout != null && requestId.equals(captureSafetyTimeoutRequestId)) {
-                mainHandler.removeCallbacks(captureSafetyTimeout);
-                captureSafetyTimeout = null;
-                captureSafetyTimeoutRequestId = null;
-            }
-        }
+        safetyWatchdog.cancel(jobTimeoutKey(requestId));
+    }
+
+    private static String jobTimeoutKey(String requestId) {
+        return JOB_TIMEOUT_KEY_PREFIX + requestId;
     }
 
     /**
@@ -5056,6 +5184,16 @@ public class MediaCaptureService {
             return false;
         }
 
+        // Photos cannot interrupt video recording, including its async start/stop windows
+        logBlePhotoStep(requestId, "video_recording_check", "checking video camera ownership");
+        if (isVideoHoldingCamera()) {
+            Log.e(TAG, "Cannot take photo - video recording owns the camera");
+            sendPhotoErrorResponse(
+                    requestId, "CAMERA_BUSY", "Camera busy with video recording");
+            clearPhotoTracking(requestId);
+            return false;
+        }
+
         // Check battery level before proceeding
         logBlePhotoStep(requestId, "battery_check", "checking minimum battery requirement");
         if (mStateManager != null) {
@@ -5156,11 +5294,7 @@ public class MediaCaptureService {
                 // enqueuePhotoRequest call below so the warm/cold prediction lines up.
                 feedbackToken =
                         startPhotoFeedback(
-                                requestId,
-                                captureSize,
-                                true,
-                                exposureTimeNs,
-                                captureSettings);
+                                requestId, captureSize, true, exposureTimeNs, captureSettings);
             }
             if (enableFlash) {
                 flashPrivacyLedForPhoto();
@@ -7094,11 +7228,8 @@ public class MediaCaptureService {
             }
             try {
                 if (!videoThumbnailExecutor.awaitTermination(
-                        AsgConstants.VIDEO_THUMBNAIL_SHUTDOWN_TIMEOUT_MS,
-                        TimeUnit.MILLISECONDS)) {
-                    videoThumbnailTasks
-                            .values()
-                            .forEach(VideoThumbnailTask::cancelThumbnailWrite);
+                        AsgConstants.VIDEO_THUMBNAIL_SHUTDOWN_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+                    videoThumbnailTasks.values().forEach(VideoThumbnailTask::cancelThumbnailWrite);
                     videoThumbnailExecutor.shutdownNow();
                 }
             } catch (InterruptedException e) {

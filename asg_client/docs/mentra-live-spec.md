@@ -86,9 +86,11 @@ Mentra Live supports photo capture and video recording from the glasses camera.
 - Photo/video resolution, FPS, max recording duration, and privacy LED behavior are configurable by commands from the phone app.
 - Captured media is stored locally in package-namespaced storage and exposed to the phone through the camera web server for gallery sync.
 - **Warm photo capture** (camera already running): waits for Camera2's sensor-exposure-start callback, then times the snap near the end of exposure.
-- **Cold photo capture** (camera startup required): plays a short, intentionally subtle hold-still prep click immediately and every 900ms during camera/ISP startup, then stops the clicks when sensor exposure starts.
+- **Cold photo capture** (camera startup required): plays a short, intentionally subtle hold-still prep click immediately and every 900ms during camera/ISP startup, then stops the clicks when sensor exposure starts. The cue is also capped at 5s total: a start that never reaches exposure goes quiet instead of clicking for the full 45s feedback timeout.
 - Single-frame captures use Camera2 `onCaptureStarted` as the hardware anchor. The snap targets 100ms before estimated exposure end (manual duration when fixed; latest preview-metered duration for auto exposure), which keeps it immediate in bright scenes and avoids an early cue during longer low-light exposures. If the completed JPEG reaches `ImageReader` first—as can happen when a HAL delivers `onCaptureStarted` late—the frame callback plays the snap immediately, before extraction or persistence. HDR bursts use the final bracket's exposure/frame callbacks so the user remains still for the whole burst. The final captured callback remains an idempotent last-resort fallback.
 - Prep clicks and snaps use isolated audio overlays so camera feedback does not cut off unrelated device prompts. The shutter snap uses a deliberately prominent playback gain so it remains distinct from the quieter prep cue. A failed capture cancels only its own pending click.
+- Video owns the camera from the moment a start is dispatched until the recorder's terminal callback, which is wider than the `recordingVideo` flag: that flag only flips on the started callback and clears on the terminal one. Every photo entry point (button, SDK webhook, SDK local-save, BLE transfer) rejects with `CAMERA_BUSY` across the whole span, so a photo requested during video startup or MediaRecorder finalization fails immediately instead of clicking its way to a timeout it can never satisfy.
+- BES camera-button prompts are occupancy-gated. ASG publishes `mh_phobsy` when `captureInFlight || photoJobInFlight || videoHoldingCamera` is true — the same set of locally handled presses that `ButtonCaptureDecision` maps to `DROP_BUSY` or `STOP_RECORDING`. Idle short presses still get an immediate BES `PHOTO_START` plus ASG prep/snap; a short press during a photo is silent; if that press is later accepted after the previous capture ends, BES catch-up plays one `PHOTO_START` on the rising-edge `b:1` (not on renewals, not on SDK `take_photo`); a short press during video is the ASG stop cue only; `SKIP_LOCAL` (gallery off, phone present) remains BES prompt only; a phone/SDK `take_photo` uses ASG prep/snap but still occupies the lease so a mid-flight button press is silent. The lease TTL is 60s, renewed every 20s while busy, and resynced on Bluetooth connect and `sr_syvr` proof.
 - The user-visible BES RGB photo indicator starts at the same sensor-exposure boundary, with the JPEG frame and final completion callbacks as idempotent fallbacks. It does not start during cold camera warmup, so it remains on when the image is actually captured.
 
 ### Gallery-mode behavior
@@ -205,10 +207,10 @@ upgrade OTA completing).
 ### Camera button photo flow
 
 1. User short-presses the camera button.
-2. BES classifies the press and sends `cs_pho` or an equivalent notification over UART.
+2. BES classifies the press and sends `cs_pho` or an equivalent notification over UART. It consults the ASG-pushed `mh_phobsy` occupancy lease at this moment: idle presses play `PHOTO_START` immediately; an in-flight photo or video recording suppresses that prompt. A suppressed `cs_pho` that ASG later accepts after the previous capture ends gets one catch-up `PHOTO_START` on the rising-edge `mh_phobsy` `b:1`.
 3. `K900CommandHandler` forwards a `button_press` event to the phone.
 4. The gallery-mode gate decides whether local capture should occur.
-5. If local capture is enabled, `MediaCaptureService` takes a photo using the configured size and LED setting.
+5. If local capture is enabled and no capture is already in flight, `MediaCaptureService` takes a photo using the configured size and LED setting. A short press while a photo is being captured is forwarded to the phone but does not enqueue another shot.
 6. The media file is stored locally and becomes available through gallery sync / camera web server APIs.
 
 ### Camera button video flow
@@ -216,7 +218,7 @@ upgrade OTA completing).
 1. User long-presses the camera button.
 2. BES sends `cs_vdo` or equivalent over UART.
 3. `asg_client` forwards `button_press` to the phone.
-4. If local capture is permitted and battery is above the minimum threshold, video recording starts with configured resolution/FPS/max duration.
+4. If local capture is permitted, no photo capture is in flight, and battery is above the minimum threshold, video recording starts with configured resolution/FPS/max duration. A long press during an in-flight photo is forwarded to the phone but does not start recording.
 5. LEDs indicate active camera use.
 6. A subsequent short or long press stops the recording, finalizes the file, turns off recording indicators, and exposes the file for sync.
 

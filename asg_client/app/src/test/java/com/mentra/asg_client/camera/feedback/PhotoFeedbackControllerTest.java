@@ -84,6 +84,45 @@ public class PhotoFeedbackControllerTest {
     }
 
     @Test
+    public void stuckColdCapture_stopsClickingAtTheCap() {
+        ArgumentCaptor<Runnable> cadence = ArgumentCaptor.forClass(Runnable.class);
+        controller.start("stuck", false);
+        verify(handler)
+                .postDelayed(
+                        cadence.capture(),
+                        eq(AsgConstants.CAMERA_PREP_CLICK_INTERVAL_MS));
+        clearInvocations(hardwareManager);
+
+        clock.nowMs = AsgConstants.CAMERA_PREP_CLICK_MAX_DURATION_MS;
+        cadence.getValue().run();
+
+        verify(hardwareManager).stopAudioOverlayPlayback(41L);
+        verify(hardwareManager, never())
+                .playAudioAssetOverlayTracked(
+                        AudioAssets.CAMERA_PREP_CLICK,
+                        AsgConstants.CAMERA_PREP_CLICK_PLAYBACK_VOLUME);
+    }
+
+    @Test
+    public void stuckColdCapture_clicksUntilTheCap() {
+        ArgumentCaptor<Runnable> cadence = ArgumentCaptor.forClass(Runnable.class);
+        controller.start("stuck", false);
+        verify(handler)
+                .postDelayed(
+                        cadence.capture(),
+                        eq(AsgConstants.CAMERA_PREP_CLICK_INTERVAL_MS));
+        clearInvocations(hardwareManager);
+
+        clock.nowMs = AsgConstants.CAMERA_PREP_CLICK_MAX_DURATION_MS - 1L;
+        cadence.getValue().run();
+
+        verify(hardwareManager)
+                .playAudioAssetOverlayTracked(
+                        AudioAssets.CAMERA_PREP_CLICK,
+                        AsgConstants.CAMERA_PREP_CLICK_PLAYBACK_VOLUME);
+    }
+
+    @Test
     public void exposureStarted_schedulesSnapAtConfiguredLeadTime() {
         PhotoFeedbackController.Token token = controller.start("warm", true);
         clearInvocations(handler, hardwareManager);

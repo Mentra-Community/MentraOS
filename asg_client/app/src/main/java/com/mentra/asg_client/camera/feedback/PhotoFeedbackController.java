@@ -42,6 +42,7 @@ public final class PhotoFeedbackController {
         private boolean mExposureStarted;
         private boolean mTerminal;
         private long mPrepClickPlaybackToken;
+        private long mPrepClickDeadlineUptimeMs;
         private long mSnapPlaybackToken;
         @Nullable private Runnable mPrepClickRunnable;
         @Nullable private Runnable mPrepResumeRunnable;
@@ -125,8 +126,12 @@ public final class PhotoFeedbackController {
                     TAG,
                     "Cold capture — playing prep click every "
                             + AsgConstants.CAMERA_PREP_CLICK_INTERVAL_MS
-                            + "ms until sensor exposure starts");
+                            + "ms until sensor exposure starts, at most "
+                            + AsgConstants.CAMERA_PREP_CLICK_MAX_DURATION_MS
+                            + "ms");
             feedbackToken.mPrepClicksActive = true;
+            feedbackToken.mPrepClickDeadlineUptimeMs =
+                    mClock.uptimeMillis() + AsgConstants.CAMERA_PREP_CLICK_MAX_DURATION_MS;
             mCurrentPrepFeedback = feedbackToken;
             if (isPrepSuppressedLocked()) {
                 feedbackToken.mPrepClicksPaused = true;
@@ -305,6 +310,18 @@ public final class PhotoFeedbackController {
                 || mCurrentPrepFeedback != feedbackToken
                 || mHardwareManager == null
                 || !mHardwareManager.supportsAudioPlayback()) {
+            return;
+        }
+
+        if (mClock.uptimeMillis() >= feedbackToken.mPrepClickDeadlineUptimeMs) {
+            Log.w(
+                    TAG,
+                    "Prep click cap reached after "
+                            + AsgConstants.CAMERA_PREP_CLICK_MAX_DURATION_MS
+                            + "ms without exposure (gen="
+                            + feedbackToken.mGeneration
+                            + ") — going quiet");
+            stopPrepClicksLocked(feedbackToken);
             return;
         }
 

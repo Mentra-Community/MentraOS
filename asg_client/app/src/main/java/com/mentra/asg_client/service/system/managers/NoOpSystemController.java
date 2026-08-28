@@ -74,6 +74,16 @@ public class NoOpSystemController implements ISystemController {
     }
 
     @Override
+    public void setProperty(String name, String value) {
+        Log.w(TAG, "setProperty(" + name + ") unsupported on this device");
+    }
+
+    @Override
+    public void setComBaudrate(int baudrate) {
+        Log.w(TAG, "setComBaudrate(" + baudrate + ") unsupported on this device");
+    }
+
+    @Override
     public void setI2SAudioPlayReceiverPackage(String packageName) {
         Log.w(TAG, "setI2SAudioPlayReceiverPackage() unsupported on this device");
     }

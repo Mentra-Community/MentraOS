@@ -108,7 +108,6 @@ public final class ButtonEventSubscriber implements IPeripheralBus.McuEventListe
         // UNKNOWN (old BES firmware, or no signal since the link reset) is treated as no phone:
         // local capture is the safe default — worst case a duplicate photo, never a lost one.
         LinkStateMachine.PhonePresence presence = phonePresence();
-        boolean phonePresent = presence == LinkStateMachine.PhonePresence.PRESENT;
 
         Log.i(
                 TAG,
@@ -117,15 +116,28 @@ public final class ButtonEventSubscriber implements IPeripheralBus.McuEventListe
                         + ", Phone presence: "
                         + presence);
 
-        // Skip capture only if: camera app NOT running AND the BES reports a phone present
-        if (!isSaveInGalleryMode && phonePresent) {
+        MediaCaptureService captureService = serviceManager.getMediaCaptureService();
+        boolean isRecordingVideo = captureService != null && captureService.isRecordingVideo();
+        boolean isCaptureInFlight = captureService != null && captureService.isCaptureInFlight();
+        boolean isPhotoJobInFlight = captureService != null && captureService.isPhotoJobInFlight();
+
+        ButtonCaptureDecision.Action action =
+                ButtonCaptureDecision.decide(
+                        isLongPress,
+                        isSaveInGalleryMode,
+                        presence,
+                        isRecordingVideo,
+                        isCaptureInFlight,
+                        isPhotoJobInFlight);
+
+        if (action == ButtonCaptureDecision.Action.SKIP_LOCAL) {
             Log.d(
                     TAG,
                     "📸 Camera app not active and phone present - skipping local capture (button press already forwarded to apps)");
             return;
         }
 
-        if (!phonePresent) {
+        if (presence != LinkStateMachine.PhonePresence.PRESENT) {
             Log.d(
                     TAG,
                     "📸 No phone present ("
@@ -135,7 +147,6 @@ public final class ButtonEventSubscriber implements IPeripheralBus.McuEventListe
             Log.d(TAG, "📸 Camera app active - proceeding with local capture");
         }
 
-        MediaCaptureService captureService = serviceManager.getMediaCaptureService();
         if (captureService == null) {
             Log.d(TAG, "MediaCaptureService is null, initializing");
             return;
@@ -152,14 +163,23 @@ public final class ButtonEventSubscriber implements IPeripheralBus.McuEventListe
             Log.w(TAG, "⚠️ StateManager not available - cannot check battery level");
         }
 
-        if (isLongPress) {
-            // Long press behavior:
-            // - If video is recording, stop it (pause/stop with video stop feedback)
-            // - If video is not recording, start it
-            if (captureService.isRecordingVideo()) {
-                Log.d(TAG, "⏹️ Stopping video recording (long press during recording)");
+        switch (action) {
+            case STOP_RECORDING:
+                Log.d(
+                        TAG,
+                        isLongPress
+                                ? "⏹️ Stopping video recording (long press during recording)"
+                                : "⏹️ Stopping video recording (short press during recording)");
                 captureService.stopVideoRecording();
-            } else {
+                return;
+            case DROP_BUSY:
+                Log.d(
+                        TAG,
+                        "📸 Camera button "
+                                + (isLongPress ? "long" : "short")
+                                + " press dropped — capture already in flight");
+                return;
+            case START_VIDEO:
                 Log.d(
                         TAG,
                         "📹 Starting video recording (long press) with LED: "
@@ -168,7 +188,6 @@ public final class ButtonEventSubscriber implements IPeripheralBus.McuEventListe
                                 + batteryLevel
                                 + "%");
 
-                // Check if battery is too low to start recording
                 if (batteryLevel >= 0 && batteryLevel < BatteryConstants.MIN_BATTERY_LEVEL) {
                     Log.w(
                             TAG,
@@ -177,40 +196,31 @@ public final class ButtonEventSubscriber implements IPeripheralBus.McuEventListe
                                     + "% (minimum "
                                     + BatteryConstants.MIN_BATTERY_LEVEL
                                     + "% required)");
-
-                    // Play audio feedback
                     captureService.playBatteryLowSound();
-
                     return;
                 }
 
-                // Get saved video settings for button press
                 VideoSettings videoSettings =
                         serviceManager.getAsgSettings().getButtonVideoSettings();
                 int maxRecordingTimeMinutes =
                         serviceManager.getAsgSettings().getButtonMaxRecordingTimeMinutes();
                 captureService.startVideoRecording(
                         videoSettings, ledEnabled, maxRecordingTimeMinutes, batteryLevel);
-            }
-        } else {
-            // Short press behavior
-            // If video is recording, stop it. Otherwise take a photo.
-            if (captureService.isRecordingVideo()) {
-                Log.d(TAG, "⏹️ Stopping video recording (short press during recording)");
-                captureService.stopVideoRecording();
-            } else {
+                return;
+            case TAKE_PHOTO:
                 Log.d(TAG, "📸 Taking photo locally (short press) with LED: " + ledEnabled);
-                // Get saved photo size for button press
                 String photoSize = serviceManager.getAsgSettings().getButtonPhotoSize();
                 captureService.takePhotoLocally(photoSize, ledEnabled, true);
-            }
+                return;
+            default:
+                return;
         }
     }
 
     /**
      * BES-reported phone BLE presence from the transport link state machine. {@code UNKNOWN} when
-     * the BES firmware predates sr_phble/phone_ble reporting, when no signal has arrived since
-     * the last link reset, or when the transport is not the K900 UART bridge at all.
+     * the BES firmware predates sr_phble/phone_ble reporting, when no signal has arrived since the
+     * last link reset, or when the transport is not the K900 UART bridge at all.
      */
     private LinkStateMachine.PhonePresence phonePresence() {
         ICompanionTransport bluetoothManager =
@@ -275,7 +285,9 @@ public final class ButtonEventSubscriber implements IPeripheralBus.McuEventListe
                         TAG,
                         "🔋 Device is asleep, acquiring short wake lock for battery announcement");
                 WakeLockManager.acquireScreen(
-                        context, WakeLockManager.WakeOwner.BATTERY_ANNOUNCE, 5000); // 5 seconds for query + audio
+                        context,
+                        WakeLockManager.WakeOwner.BATTERY_ANNOUNCE,
+                        5000); // 5 seconds for query + audio
             }
         }
 

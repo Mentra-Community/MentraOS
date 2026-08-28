@@ -1379,6 +1379,13 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                                 // both mutations atomic with the baud-state transition.
                                 applyPhonePresenceFromSyvr(bData);
                                 linkState.capsAdvertised(applyBesWireCaps(json));
+                                // Closest ASG-side "BES came up" edge. A reboot that leaves the
+                                // Android serial fd open may not re-run this handshake; renewal
+                                // then bounds incorrect-prompt exposure to one lease interval.
+                                AsgClientService occupancyService = AsgClientService.getInstance();
+                                if (occupancyService != null) {
+                                    occupancyService.resyncPhotoPromptOccupancy();
+                                }
                             });
             if (result == BesUartTransportCoordinator.SystemVersionResult.IGNORED) {
                 Log.i(TAG, "Ignoring sr_syvr from a retired UART session");
