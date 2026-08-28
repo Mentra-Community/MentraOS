@@ -44,10 +44,14 @@ test("rejects an App Store app whose numeric ID belongs to another bundle", asyn
 test("waits for an uploaded build to finish processing", async () => {
   const api = client([
     {data: []},
+    {data: [{id: "upload-1", attributes: {state: {state: "PROCESSING"}}}]},
     {data: [{id: "build-1", attributes: {processingState: "PROCESSING"}}]},
+    {data: [{id: "upload-1", attributes: {state: {state: "COMPLETE"}}}]},
+    {data: [{id: "build-1", attributes: {processingState: "PROCESSING"}}]},
+    {data: [{id: "upload-1", attributes: {state: {state: "COMPLETE"}}}]},
     {data: [{id: "build-1", attributes: {processingState: "VALID"}}]},
   ])
-  const build = await waitForProcessedBuild(api, {appId: "app-1", buildNumber: 310000057, attempts: 3, delay: 0})
+  const build = await waitForProcessedBuild(api, {appId: "app-1", buildNumber: 310000057, attempts: 4, delay: 0})
   assert.equal(build.id, "build-1")
   assert.match(api.calls[0].resource, /filter%5Bversion%5D=310000057/)
 })
@@ -69,7 +73,12 @@ test("fails when App Store Connect marks a build invalid", async () => {
 })
 
 test("reconciles an upload accepted before a transient transport failure", async () => {
-  const api = client([{data: []}, {data: [{id: "build-1", attributes: {processingState: "PROCESSING"}}]}])
+  const api = client([
+    {data: []},
+    {data: []},
+    {data: []},
+    {data: [{id: "upload-1", attributes: {state: {state: "PROCESSING"}}}]},
+  ])
   let uploads = 0
   const result = await uploadExactBuild(api, {
     appId: "app-1",
@@ -84,12 +93,12 @@ test("reconciles an upload accepted before a transient transport failure", async
     },
   })
   assert.equal(result.reused, true)
-  assert.equal(result.build.id, "build-1")
+  assert.equal(result.upload.id, "upload-1")
   assert.equal(uploads, 1)
 })
 
 test("retries a failed upload only while the exact build remains absent", async () => {
-  const api = client([{data: []}, {data: []}])
+  const api = client([{data: []}, {data: []}, {data: []}, {data: []}])
   let uploads = 0
   const result = await uploadExactBuild(api, {
     appId: "app-1",
@@ -104,6 +113,67 @@ test("retries a failed upload only while the exact build remains absent", async 
   })
   assert.equal(result.reused, false)
   assert.equal(uploads, 2)
+})
+
+test("does not upload over an exact build upload that is still processing", async () => {
+  const api = client([{data: []}, {data: [{id: "upload-1", attributes: {state: {state: "PROCESSING"}}}]}])
+  let uploads = 0
+  const result = await uploadExactBuild(api, {
+    appId: "app-1",
+    buildNumber: 310000047,
+    marketingVersion: "3.1.0",
+    upload: async () => {
+      uploads += 1
+    },
+  })
+  assert.equal(result.reused, true)
+  assert.equal(result.upload.id, "upload-1")
+  assert.equal(uploads, 0)
+  assert.match(api.calls[1].resource, /filter%5BcfBundleShortVersionString%5D=3.1.0/)
+  assert.match(api.calls[1].resource, /sort=-uploadedDate/)
+})
+
+test("uses the newest upload when Apple retains an older failed attempt", async () => {
+  const api = client([
+    {data: []},
+    {
+      data: [
+        {id: "upload-new", attributes: {state: {state: "PROCESSING"}}},
+        {id: "upload-old", attributes: {state: {state: "FAILED"}}},
+      ],
+    },
+  ])
+  const result = await uploadExactBuild(api, {
+    appId: "app-1",
+    buildNumber: 310000047,
+    upload: async () => {},
+  })
+  assert.equal(result.upload.id, "upload-new")
+})
+
+test("surfaces exact build upload validation failures", async () => {
+  const api = client([
+    {data: []},
+    {
+      data: [
+        {
+          id: "upload-1",
+          attributes: {
+            state: {state: "FAILED", errors: [{code: "STATE_ERROR", description: "Invalid entitlement"}]},
+          },
+        },
+      ],
+    },
+  ])
+  await assert.rejects(
+    () =>
+      uploadExactBuild(api, {
+        appId: "app-1",
+        buildNumber: 310000047,
+        upload: async () => {},
+      }),
+    /STATE_ERROR: Invalid entitlement/,
+  )
 })
 
 test("idempotently adds a build to exactly one TestFlight group", async () => {
