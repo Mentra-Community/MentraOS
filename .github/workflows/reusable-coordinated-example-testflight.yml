@@ -224,17 +224,16 @@ jobs:
               security import "$certificate" -k "$keychain" -T /usr/bin/codesign 2>&1 | grep -v "already exists" || true
             fi
           done
-          keychains=("$keychain")
-          while IFS= read -r existing; do
-            existing="${existing#*\"}"
-            existing="${existing%\"*}"
-            [[ -n "$existing" && "$existing" != "$keychain" ]] && keychains+=("$existing")
-          done < <(security list-keychains -d user)
-          security list-keychains -d user -s "${keychains[@]}"
+          security list-keychains -d user -s "$keychain"
           security default-keychain -s "$keychain"
           bundle exec fastlane match appstore --readonly --keychain_name "$keychain" --keychain_password "$password"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain"
+          identity=$(security find-identity -v -p codesigning "$keychain" \
+            | awk '/Apple Distribution: Mentra Labs, Inc\. \(T5XXXL6N36\)/ { print $2; exit }')
+          test -n "$identity"
           echo "MENTRA_CI_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
           echo "MENTRA_CI_KEYCHAIN_PASSWORD=$password" >> "$GITHUB_ENV"
+          echo "MENTRA_CI_CODE_SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
 
       - name: Archive and export the signed React Native example
         if: steps.app-store.outputs.exists != 'true'
@@ -268,6 +267,8 @@ jobs:
             -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
             DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
             CODE_SIGN_STYLE=Automatic \
+            CODE_SIGN_IDENTITY="$MENTRA_CI_CODE_SIGN_IDENTITY" \
+            OTHER_CODE_SIGN_FLAGS="--keychain $MENTRA_CI_KEYCHAIN" \
             MARKETING_VERSION="$MARKETING_VERSION" \
             CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
             archive
