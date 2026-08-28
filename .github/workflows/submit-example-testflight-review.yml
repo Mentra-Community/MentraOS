@@ -3,19 +3,8 @@ name: Submit Example TestFlight Review
 on:
   workflow_dispatch:
     inputs:
-      channel:
-        description: Public TestFlight channel receiving the replacement build
-        required: true
-        type: choice
-        options:
-          - beta
-          - production
-      marketing_version:
-        description: Exact App Store Connect marketing version, such as 3.1.0
-        required: true
-        type: string
-      build_number:
-        description: Exact processed App Store Connect build number
+      beta_identity:
+        description: Exact completed beta release to submit, such as 3.1.0-beta.84
         required: true
         type: string
       review_notes:
@@ -47,18 +36,35 @@ jobs:
         with:
           node-version: "24"
 
-      - name: Select the public TestFlight group
-        id: channel
+      - name: Resolve the exact coordinated beta build
+        id: coordinates
         env:
-          CHANNEL: ${{ inputs.channel }}
+          BETA_IDENTITY: ${{ inputs.beta_identity }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          case "$CHANNEL" in
-            beta) group="Mentra Staging Public" ;;
-            production) group="Mentra Production Public" ;;
-            *) echo "Unsupported TestFlight channel $CHANNEL" >&2; exit 1 ;;
-          esac
-          echo "group=$group" >> "$GITHUB_OUTPUT"
+          [[ "$BETA_IDENTITY" =~ ^[0-9]+\.[0-9]+\.[0-9]+-beta\.[1-9][0-9]*$ ]]
+          base_version="${BETA_IDENTITY%%-*}"
+          tag="mentra-builds-v$base_version"
+          mkdir -p selected-beta
+          gh release download "$tag" \
+            --pattern "mentra-release-plan-$BETA_IDENTITY.json" \
+            --pattern "mentra-release-$BETA_IDENTITY.json" \
+            --dir selected-beta
+          plan="selected-beta/mentra-release-plan-$BETA_IDENTITY.json"
+          manifest="selected-beta/mentra-release-$BETA_IDENTITY.json"
+          [[ "$(jq -er .releaseIdentity "$plan")" == "$BETA_IDENTITY" ]]
+          [[ "$(jq -er .releaseIdentity "$manifest")" == "$BETA_IDENTITY" ]]
+          [[ "$(jq -er .releaseSetId "$plan")" == "$(jq -er .releaseSetId "$manifest")" ]]
+          [[ "$(jq -er .starterKit.testflight.app.id "$manifest")" == "$EXAMPLE_APP_ID" ]]
+          [[ "$(jq -er .starterKit.testflight.app.bundleId "$manifest")" == "$EXAMPLE_BUNDLE_ID" ]]
+          [[ "$(jq -er .starterKit.testflight.distribution.status "$manifest")" == "skipped" ]]
+          {
+            echo "beta_identity=$BETA_IDENTITY"
+            echo "marketing_version=$(jq -er .starterKit.testflight.version.marketingVersion "$manifest")"
+            echo "build_number=$(jq -er .starterKit.testflight.version.buildNumber "$manifest")"
+            echo "build_id=$(jq -er .starterKit.testflight.build.id "$manifest")"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Inject App Store Connect API credential
         uses: ./.github/actions/inject-signing
@@ -85,7 +91,7 @@ jobs:
           --key-path "${{ steps.asc.outputs.key_path }}"
           --app-id "$EXAMPLE_APP_ID"
           --bundle-id "$EXAMPLE_BUNDLE_ID"
-          --group-name "${{ steps.channel.outputs.group }}"
+          --group-name "Mentra Staging Public"
           --audience external
           --install-url ""
           --allow-rejected-override true
@@ -99,11 +105,18 @@ jobs:
           echo "TestFlight review submission remains blocked: $REASON ($DETAIL)" >&2
           exit 1
 
+      - name: Refuse to resubmit the rejected build itself
+        if: steps.preflight.outputs.review_state == 'REJECTED' && steps.preflight.outputs.review_build_id == steps.coordinates.outputs.build_id
+        run: |
+          echo "${{ steps.coordinates.outputs.beta_identity }} still identifies the rejected build; select a later skipped beta containing the review fix." >&2
+          exit 1
+
       - name: Assign and submit the exact processed build
         id: assignment
         env:
-          MARKETING_VERSION: ${{ inputs.marketing_version }}
-          BUILD_NUMBER: ${{ inputs.build_number }}
+          MARKETING_VERSION: ${{ steps.coordinates.outputs.marketing_version }}
+          BUILD_NUMBER: ${{ steps.coordinates.outputs.build_number }}
+          BUILD_ID: ${{ steps.coordinates.outputs.build_id }}
           REVIEW_NOTES: ${{ inputs.review_notes }}
         run: >-
           node mobile/scripts/app-store-connect-build.mjs assign
@@ -114,7 +127,8 @@ jobs:
           --bundle-id "$EXAMPLE_BUNDLE_ID"
           --marketing-version "$MARKETING_VERSION"
           --build-number "$BUILD_NUMBER"
-          --group-name "${{ steps.channel.outputs.group }}"
+          --build-id "$BUILD_ID"
+          --group-name "Mentra Staging Public"
           --audience external
           --install-url "${{ steps.preflight.outputs.install_url }}"
           --allow-rejected-override true
@@ -123,12 +137,14 @@ jobs:
 
       - name: Summarize the submitted replacement
         env:
-          MARKETING_VERSION: ${{ inputs.marketing_version }}
-          BUILD_NUMBER: ${{ inputs.build_number }}
+          BETA_IDENTITY: ${{ steps.coordinates.outputs.beta_identity }}
+          MARKETING_VERSION: ${{ steps.coordinates.outputs.marketing_version }}
+          BUILD_NUMBER: ${{ steps.coordinates.outputs.build_number }}
         run: |
           {
             echo "## Example TestFlight review submission"
             echo
+            echo "- Coordinated beta: \`$BETA_IDENTITY\`"
             echo "- Build: \`$MARKETING_VERSION ($BUILD_NUMBER)\`"
             echo "- Group: \`${{ steps.assignment.outputs.group_name }}\`"
             echo "- Review state: \`${{ steps.assignment.outputs.review_state }}\`"

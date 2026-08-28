@@ -149,7 +149,7 @@ jobs:
           [[ "$(jq -er .releaseIdentity "$starter")" == "$release_identity" ]]
           [[ "$(jq -er .mentraos.sourceCommit "$starter")" == "$source_commit" ]]
           release_commit=$(jq -er '.starterKit.releaseCommit | select(test("^[0-9a-f]{40}$"))' "$starter")
-          expected_group=$(jq -er 'if .channel == "dev" then "Mentra Dev" elif .channel == "beta" then "Mentra Staging Public" elif .channel == "production" then "Mentra Production Public" else error("unsupported channel") end' "$plan")
+          expected_group=$(jq -er 'if .channel == "dev" then "Mentra Dev" elif .channel == "beta" then "Mentra Staging Public" else error("unsupported channel") end' "$plan")
           [[ "$TESTFLIGHT_GROUP" == "$expected_group" ]]
           expected_audience=$(jq -er 'if .channel == "dev" then "internal" else "external" end' "$plan")
           [[ "${{ inputs.testflight_audience }}" == "$expected_audience" ]]
@@ -545,7 +545,7 @@ jobs:
           [[ "$(jq -er .releaseSetId "$starter")" == "$release_set_id" ]]
           [[ "$(jq -er .releaseIdentity "$starter")" == "$release_identity" ]]
           [[ "$(jq -er .mentraos.sourceCommit "$starter")" == "$(jq -er .sourceCommit "$plan")" ]]
-          expected_group=$(jq -er 'if .channel == "dev" then "Mentra Dev" elif .channel == "beta" then "Mentra Staging Public" elif .channel == "production" then "Mentra Production Public" else error("unsupported channel") end' "$plan")
+          expected_group=$(jq -er 'if .channel == "dev" then "Mentra Dev" elif .channel == "beta" then "Mentra Staging Public" else error("unsupported channel") end' "$plan")
           [[ "$TESTFLIGHT_GROUP" == "$expected_group" ]]
           expected_audience=$(jq -er 'if .channel == "dev" then "internal" else "external" end' "$plan")
           [[ "${{ inputs.testflight_audience }}" == "$expected_audience" ]]

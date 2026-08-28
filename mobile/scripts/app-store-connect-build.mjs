@@ -667,6 +667,9 @@ async function main() {
       buildNumber: args["build-number"],
       marketingVersion: args["marketing-version"],
     })
+    if (args["build-id"] && build.id !== args["build-id"]) {
+      throw new Error(`App Store Connect build ID ${build.id} does not match expected build ${args["build-id"]}`)
+    }
     if (args["whats-new"]) {
       await setBetaBuildWhatsNew(client, {buildId: build.id, whatsNew: args["whats-new"]})
     }

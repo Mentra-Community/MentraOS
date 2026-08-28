@@ -592,10 +592,12 @@ group link, which serves the latest Apple-approved build.
 
 Review discussion and change-request responses remain in App Store Connect.
 After a source fix reaches staging and its exact build has been uploaded, an
-operator runs `Submit Example TestFlight Review` with that marketing version,
-build number, and optional review notes. This Linux-only manual workflow
-refuses to bypass an active review and may replace only a rejected review. It
-does not rebuild the IPA or rerun package, OTA, cloud, or mobile publication.
+operator runs `Submit Example TestFlight Review` with that exact coordinated
+beta identity and optional review notes. The workflow reads the build ID and
+number from the immutable completed beta manifest, requires that automatic
+submission was skipped, and refuses to reuse the build Apple rejected. This
+Linux-only manual workflow does not rebuild the IPA or rerun package, OTA,
+cloud, or mobile publication.
 
 Production promotion does not rebuild or relabel the example IPA. It verifies
 that the selected beta's exact TestFlight build is `APPROVED`, then adds that
