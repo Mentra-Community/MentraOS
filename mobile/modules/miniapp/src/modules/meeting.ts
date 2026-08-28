@@ -37,6 +37,15 @@ export interface MeetingState {
   error?: string
   meetingUrl?: string
   provider?: MeetingProvider
+  audioSource?: "glasses" | "phone"
+  audioSourceReason?:
+    | "explicit"
+    | "current-mic"
+    | "ranking"
+    | "fallback-glasses-connected"
+    | "fallback-no-glasses"
+  activeStream?: "none" | "virtual" | "local"
+  audioSafety?: "safe" | "degraded" | "unsafe"
 }
 
 export type MeetingStateHandler = (state: MeetingState) => void
@@ -155,6 +164,10 @@ export class MeetingModule {
       error: event.error,
       meetingUrl: event.meetingUrl,
       provider: event.provider,
+      audioSource: event.audioSource,
+      audioSourceReason: event.audioSourceReason,
+      activeStream: event.activeStream,
+      audioSafety: event.audioSafety,
     }
   }
 }
