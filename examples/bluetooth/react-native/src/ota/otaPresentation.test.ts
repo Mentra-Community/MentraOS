@@ -153,6 +153,17 @@ describe('custom OTA presentation', () => {
     expect(presentation.progress).toBe(68);
   });
 
+  test('keeps update progress indeterminate until Engine reports a percentage', () => {
+    const presentation = otaPresentation(otaState({
+      phase: 'install',
+      progress: null,
+      screen: 'updating',
+    }));
+
+    expect(presentation.indeterminate).toBe(true);
+    expect(presentation.progress).toBeUndefined();
+  });
+
   test('uses only retry and Wi-Fi controller actions after a recoverable failure', () => {
     const presentation = otaPresentation(otaState({
       canOpenWifiSetup: true,
@@ -164,6 +175,17 @@ describe('custom OTA presentation', () => {
     expect(presentation.primary?.action).toBe('retryInstall');
     expect(presentation.secondary?.action).toBe('openWifiSetup');
     expect(presentation.message).toBe('Download failed');
+  });
+
+  test('does not expose Finish when Engine has no valid failure action', () => {
+    const presentation = otaPresentation(otaState({
+      canFinish: false,
+      canRetry: false,
+      error: {code: 'install_failed', message: 'Update unavailable'},
+      screen: 'failed',
+    }));
+
+    expect(presentation.primary).toBeUndefined();
   });
 
   test('keeps a failed update check on the stock retry-only action', () => {

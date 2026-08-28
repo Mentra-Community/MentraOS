@@ -189,9 +189,9 @@ export function otaPresentation(
         detail: state.versionChange && state.phase === 'install'
           ? 'Your glasses will restart twice — this may take up to 2 minutes.'
           : undefined,
-        indeterminate: state.installingApkOnly,
+        indeterminate: state.installingApkOnly || state.progress === null,
         message: 'Do not disconnect your glasses',
-        progress: state.installingApkOnly ? undefined : (state.progress ?? 0),
+        progress: state.installingApkOnly ? undefined : (state.progress ?? undefined),
         title: state.phase === 'download' ? 'Downloading...' : 'Installing...',
         tone: 'active',
       };
@@ -235,7 +235,9 @@ export function otaPresentation(
         message: state.error?.message,
         primary: state.canRetry
           ? {action: 'retryInstall', label: 'Retry'}
-          : {action: 'finish', label: 'Done'},
+          : state.canFinish
+            ? {action: 'finish', label: 'Done'}
+            : undefined,
         secondary: state.canOpenWifiSetup
           ? {action: 'openWifiSetup', label: 'Change WiFi'}
           : undefined,
