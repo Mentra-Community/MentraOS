@@ -7,8 +7,15 @@
 import audioPlaybackService from "./AudioPlaybackService"
 import {SETTINGS, useSettingsStore} from "../stores/settings"
 import {useCoreStore} from "../stores/core"
+import {isGlassesConnected, useGlassesStore} from "../stores/glasses"
+import {resolveAudioSource, type ResolvedAudioSource, type SourceReason} from "./acsAudioSource"
+
+export type {ResolvedAudioSource, SourceReason}
 
 type MeetingPhase = "idle" | "connecting" | "lobby" | "connected" | "disconnected" | "error"
+
+export type AudioSafety = "safe" | "degraded" | "unsafe"
+export type ActiveStream = "none" | "virtual" | "local"
 
 export interface MeetingState {
   state: MeetingPhase
@@ -17,18 +24,19 @@ export interface MeetingState {
   meetingUrl?: string
   provider?: "acs-teams"
   audioSource?: "glasses" | "phone"
+  audioSourceReason?: SourceReason
+  activeStream?: ActiveStream
+  audioSafety?: AudioSafety
 }
 
 /** MentraOS preferred_mic → ACS capture. bluetooth uses the OS local capture path. */
-export function resolveAcsAudioSource(): "glasses" | "phone" {
-  const preferred = String(useSettingsStore.getState().getSetting(SETTINGS.preferred_mic.key) ?? "auto")
-  if (preferred === "phone" || preferred === "bluetooth") return "phone"
-  if (preferred === "glasses") return "glasses"
-  const current = useCoreStore.getState().currentMic
-  if (current === "phone" || current === "bluetooth" || current === "bluetoothClassic") return "phone"
-  if (current === "glasses") return "glasses"
-  const rank = useCoreStore.getState().micRanking[0]
-  return rank === "glasses" ? "glasses" : "phone"
+export function resolveAcsAudioSource(): ResolvedAudioSource {
+  return resolveAudioSource({
+    preferred: String(useSettingsStore.getState().getSetting(SETTINGS.preferred_mic.key) ?? "auto"),
+    currentMic: useCoreStore.getState().currentMic,
+    micRanking: useCoreStore.getState().micRanking,
+    glassesConnected: isGlassesConnected(useGlassesStore.getState().connection),
+  })
 }
 
 type NativeModule = {
@@ -61,11 +69,25 @@ function getNative(): NativeModule | null {
   return nativeModule
 }
 
+/** Test seam: skip the native require and inject a fake ACS module. */
+export function setAcsMeetingNativeForTests(mod: NativeModule | null | undefined): void {
+  nativeModule = mod
+}
+
+function parseActiveStream(value: unknown): ActiveStream | undefined {
+  if (value === "none" || value === "virtual" || value === "local") return value
+  return undefined
+}
+
+function parseAudioSafety(value: unknown): AudioSafety | undefined {
+  if (value === "safe" || value === "degraded" || value === "unsafe") return value
+  return undefined
+}
+
 class AcsMeetingService {
   private owner: string | null = null
   private pcmStreamId: string | null = null
   private subscriptions: Array<{remove: () => void}> = []
-  private settingUnsub: (() => void) | null = null
   private lastState: MeetingState = {state: "idle", muted: false}
   private onState: ((packageName: string, state: MeetingState) => void) | null = null
 
@@ -95,13 +117,14 @@ class AcsMeetingService {
     }
     this.owner = packageName
     this.bindNative(native, packageName)
-    const audioSource = resolveAcsAudioSource()
+    const resolved = resolveAcsAudioSource()
     console.log("[AcsMeeting] phase=join-native", {
       packageName,
       nativeLoaded: true,
       hasToken: Boolean(args.token),
       hasWhep: Boolean(args.whepUrl),
-      audioSource,
+      audioSource: resolved.source,
+      audioSourceReason: resolved.reason,
       preferredMic: useSettingsStore.getState().getSetting(SETTINGS.preferred_mic.key),
     })
     const state = await native.join({
@@ -109,14 +132,17 @@ class AcsMeetingService {
       token: args.token,
       whepUrl: args.whepUrl,
       displayName: args.displayName,
-      audioSource,
+      audioSource: resolved.source,
     })
-    this.lastState = state
-    this.watchMicSetting(native)
+    this.lastState = {
+      ...state,
+      audioSource: resolved.source,
+      audioSourceReason: resolved.reason,
+    }
     console.log("[AcsMeeting] phase=join-native-ok", {state: state.state, muted: state.muted})
     await this.ensurePcmPlayback(packageName)
     console.log("[AcsMeeting] phase=pcm-playback", {streamId: this.pcmStreamId})
-    return state
+    return this.lastState
   }
 
   async leave(packageName: string): Promise<void> {
@@ -126,7 +152,6 @@ class AcsMeetingService {
       await native?.leave()
     } finally {
       await this.stopPcm()
-      this.stopWatchingMicSetting()
       this.owner = null
       this.lastState = {state: "idle", muted: false}
     }
@@ -137,8 +162,12 @@ class AcsMeetingService {
     const native = getNative()
     if (!native) throw new Error("ACS meeting module is not available on this host")
     const state = await native.setMuted(muted)
-    this.lastState = state
-    return state
+    this.lastState = {
+      ...this.lastState,
+      ...state,
+      audioSourceReason: this.lastState.audioSourceReason,
+    }
+    return this.lastState
   }
 
   async updateVideoSource(packageName: string, whepUrl: string): Promise<void> {
@@ -173,6 +202,13 @@ class AcsMeetingService {
     this.subscriptions.forEach((sub) => sub.remove())
     this.subscriptions = [
       native.addListener("onState", (event) => {
+        const audioSafety = parseAudioSafety(event.audioSafety)
+        if (audioSafety === "unsafe") {
+          console.error("[AcsMeeting] phase=audio-unsafe", {
+            activeStream: event.activeStream,
+            audioSource: event.audioSource,
+          })
+        }
         const state: MeetingState = {
           state: (event.state as MeetingPhase) ?? "idle",
           muted: Boolean(event.muted),
@@ -180,9 +216,19 @@ class AcsMeetingService {
           meetingUrl: event.meetingUrl as string | undefined,
           provider: "acs-teams",
           audioSource: event.audioSource === "phone" ? "phone" : "glasses",
+          audioSourceReason: this.lastState.audioSourceReason,
+          activeStream: parseActiveStream(event.activeStream),
+          audioSafety,
         }
         this.lastState = state
-        console.log("[AcsMeeting] phase=native-state", {state: state.state, muted: state.muted, error: state.error})
+        console.log("[AcsMeeting] phase=native-state", {
+          state: state.state,
+          muted: state.muted,
+          error: state.error,
+          audioSource: state.audioSource,
+          activeStream: state.activeStream,
+          audioSafety: state.audioSafety,
+        })
         this.onState?.(packageName, state)
       }),
       native.addListener("onIncomingPcm", (event) => {
@@ -193,34 +239,6 @@ class AcsMeetingService {
         })
       }),
     ]
-  }
-
-  private watchMicSetting(native: NativeModule): void {
-    this.stopWatchingMicSetting()
-    let last = resolveAcsAudioSource()
-    const apply = () => {
-      if (!this.owner) return
-      const source = resolveAcsAudioSource()
-      if (source === last) return
-      last = source
-      void native.setAudioSource(source).then((state) => {
-        this.lastState = {...this.lastState, ...state, audioSource: source}
-        console.log("[AcsMeeting] phase=audio-source", {audioSource: source})
-      }).catch((error) => {
-        console.warn("[AcsMeeting] setAudioSource failed", error)
-      })
-    }
-    const unsubSettings = useSettingsStore.subscribe(apply)
-    const unsubCore = useCoreStore.subscribe(apply)
-    this.settingUnsub = () => {
-      unsubSettings()
-      unsubCore()
-    }
-  }
-
-  private stopWatchingMicSetting(): void {
-    this.settingUnsub?.()
-    this.settingUnsub = null
   }
 
   private async ensurePcmPlayback(packageName: string): Promise<void> {
