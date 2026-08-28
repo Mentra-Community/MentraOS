@@ -412,17 +412,29 @@ jobs:
             fi
 
             lookup_starter_pr() {
-              gh api --method GET "repos/$STARTER_KIT_REPOSITORY/pulls" \
-                -f state=all \
-                -f base="$target_branch" \
-                -f head="Mentra-Community:$candidate_branch" \
-                -f per_page=1 \
-                --jq '[.[] | {
-                  url: .html_url,
-                  state: (.state | ascii_upcase),
-                  mergedAt: .merged_at,
-                  headRefOid: .head.sha
-                }]'
+              local response
+              for attempt in {1..6}; do
+                if response=$(gh api --method GET "repos/$STARTER_KIT_REPOSITORY/pulls" \
+                  -f state=all \
+                  -f base="$target_branch" \
+                  -f head="Mentra-Community:$candidate_branch" \
+                  -f per_page=1 2>pr-lookup-error.log) && \
+                  jq -e 'type == "array"' <<< "$response" >/dev/null 2>&1; then
+                  jq '[.[] | {
+                    url: .html_url,
+                    state: (.state | ascii_upcase),
+                    mergedAt: .merged_at,
+                    headRefOid: .head.sha
+                  }]' <<< "$response"
+                  return 0
+                fi
+                if (( attempt == 6 )); then
+                  echo "Could not read a valid Starter Kit PR list after $attempt attempts." >&2
+                  cat pr-lookup-error.log >&2
+                  return 1
+                fi
+                sleep 2
+              done
             }
             pr_json=$(lookup_starter_pr)
             if [[ "$(jq 'length' <<< "$pr_json")" == "0" ]]; then
