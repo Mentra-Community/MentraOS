@@ -25,6 +25,7 @@ The first supported private Mentra App deployment requires:
 - Customer-hosted copies of the on-device STT and TTS model archives the
   deployment enables.
 - A customer deployment manifest reachable by the phone before sign-in.
+- Mentra Live as the only glasses model qualified for the first private pilot.
 - No public-network access after device and app provisioning.
 
 Core is required for this first version. The current Mentra App uses Core for
@@ -184,7 +185,8 @@ Rules:
   common glasses registry. When present, the pairing UI shows only those
   models. When omitted, the normal supported-model list is shown. This is a UI
   catalog override, not a security boundary, and does not add model checks to
-  scanning, deep links, or reconnection.
+  scanning, deep links, or reconnection. It also does not make a model's vendor
+  services air-gap compatible.
 - The manifest never exposes model-specific switches such as
   `ar99VendorServices`. Vendor-specific transports and update behavior remain
   behind each glasses adapter. A deployment that permits only selected hardware
@@ -301,6 +303,12 @@ The resolved profile controls optional network-capable behavior:
   through direct routes. The common binary still contains their implementation.
 - The pairing model picker shows only `glasses.allowedModelsOverride` when that
   override is present; otherwise it shows the normal supported-model catalog.
+- The first private template exposes only Mentra Live. A different model may be
+  added only after its adapter has been qualified with public internet blocked
+  and any required vendor endpoints have been removed, disabled, or made
+  customer-configurable. AR99's current public OTA/vendor-service calls are
+  therefore outside the first private deployment rather than controlled by an
+  AR99-specific manifest switch.
 - Google, Apple, and Email on the initial landing screen select the embedded
   Mentra profile. After enterprise enrollment, the app displays the selected
   deployment name and that profile's login methods. For email/password,
@@ -379,3 +387,5 @@ The first Android pilot is complete when:
 - Dynamic private certificate pinning.
 - Customer branding or bundle identifiers.
 - A standalone public hotspot OTA coordinator in the raw Bluetooth SDK.
+- Restricted-network qualification and endpoint configuration for non-Mentra
+  glasses adapters, including AR99 vendor services.

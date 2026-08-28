@@ -192,6 +192,10 @@ releases.
       deep-link, reconnect, or profile-switch paths.
 - [ ] Keep vendor-specific behavior behind glasses adapters; do not add AR99 or
       other model-specific policy fields to the deployment schema.
+- [ ] Ship the first private template with only Mentra Live in the pairing
+      override. Do not expose another model until its adapter passes a blocked-
+      public-internet test and any vendor network calls are disabled or routed
+      to customer-controlled endpoints.
 - [ ] Confirm customer-hosted Core supplies only internal miniapp/media URLs for
       the pilot registry.
 - [ ] Add a test that enumerates the known network integrations and asserts each
