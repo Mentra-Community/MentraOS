@@ -420,14 +420,16 @@ jobs:
                 "Automated dependency synchronization for coordinated release \`$identity\`." \
                 "Coordinator: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
                 "Starter Kit workflow: $run_url")
-              pr_url=$(gh api --method POST "repos/$STARTER_KIT_REPOSITORY/pulls" \
+              pr_response=$(gh api --method POST "repos/$STARTER_KIT_REPOSITORY/pulls" \
                 -f base="$target_branch" \
                 -f head="$candidate_branch" \
                 -f title="chore(release): synchronize examples to $identity" \
-                -f body="$pr_body" \
-                --jq .html_url)
+                -f body="$pr_body")
+              pr_url=$(jq -r .html_url <<< "$pr_response")
+              pr_head=$(jq -r .head.sha <<< "$pr_response")
             else
               pr_url=$(jq -r '.[0].url' <<< "$pr_json")
+              pr_head=$(jq -r '.[0].headRefOid' <<< "$pr_json")
               merged_at=$(jq -r '.[0].mergedAt // empty' <<< "$pr_json")
               state=$(jq -r '.[0].state' <<< "$pr_json")
               if [[ "$state" == "CLOSED" && -z "$merged_at" ]]; then
@@ -435,7 +437,7 @@ jobs:
                 exit 1
               fi
             fi
-            [[ "$(gh pr view "$pr_url" --repo "$STARTER_KIT_REPOSITORY" --json headRefOid --jq .headRefOid)" == "$candidate_sha" ]]
+            [[ "$pr_head" == "$candidate_sha" ]]
 
             if [[ -z "${merged_at:-}" ]]; then
               checks_ready=false
