@@ -204,10 +204,23 @@ jobs:
 
           echo "release_commit=$release_commit" >> "$GITHUB_OUTPUT"
 
+      - name: Create pull request token
+        if: steps.existing.outputs.already_published != 'true'
+        id: pull-request-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.STARTER_KIT_COORDINATOR_APP_ID }}
+          private-key: ${{ secrets.STARTER_KIT_COORDINATOR_APP_PRIVATE_KEY }}
+          owner: Mentra-Community
+          repositories: Mentra-Bluetooth-SDK-Starter-Kit
+          permission-contents: read
+          permission-pull-requests: write
+
       - name: Create or reuse the synchronization pull request
         if: steps.existing.outputs.already_published != 'true'
         id: pull-request
         env:
+          GH_TOKEN: ${{ steps.pull-request-token.outputs.token }}
           RELEASE_IDENTITY: ${{ steps.release.outputs.releaseIdentity }}
           TARGET_BRANCH: ${{ steps.release.outputs.targetBranch }}
           CANDIDATE_BRANCH: ${{ steps.release.outputs.candidateBranch }}
@@ -274,10 +287,23 @@ jobs:
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
           echo "url=https://github.com/$STARTER_KIT_REPOSITORY/actions/runs/$run_id" >> "$GITHUB_OUTPUT"
 
+      - name: Create pull request merge token
+        if: steps.existing.outputs.already_published != 'true'
+        id: pull-request-merge-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.STARTER_KIT_COORDINATOR_APP_ID }}
+          private-key: ${{ secrets.STARTER_KIT_COORDINATOR_APP_PRIVATE_KEY }}
+          owner: Mentra-Community
+          repositories: Mentra-Bluetooth-SDK-Starter-Kit
+          permission-contents: write
+          permission-pull-requests: write
+
       - name: Merge the validated pull request
         if: steps.existing.outputs.already_published != 'true'
         id: merge
         env:
+          GH_TOKEN: ${{ steps.pull-request-merge-token.outputs.token }}
           PR_URL: ${{ steps.pull-request.outputs.url }}
           RELEASE_COMMIT: ${{ steps.candidate.outputs.release_commit }}
           TARGET_BRANCH: ${{ steps.release.outputs.targetBranch }}
