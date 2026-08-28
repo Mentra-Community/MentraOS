@@ -5,9 +5,10 @@ import WebRTC
 
 /// Recvonly WHEP subscriber. Decoded frames become CVPixelBuffers for ACS.
 /// Remote PCM is the P4 hard gate (RTCAudioRenderer on LiveKit/WebRTC-SDK 137).
-final class WhepVideoSource: NSObject {
+final class WhepVideoSource: NSObject, GlassesMediaSource {
   var onFrame: ((CVPixelBuffer) -> Void)?
   var onPcm: ((Data, Int, Int) -> Void)?
+  private(set) var state: SourceState = .idle
 
   private var factory: RTCPeerConnectionFactory?
   private var pc: RTCPeerConnection?
@@ -19,10 +20,15 @@ final class WhepVideoSource: NSObject {
   private var frameCount = 0
   private var lastFpsLog = Date()
 
+  func start(config: SourceConfig) {
+    start(whepUrl: config.url)
+  }
+
   func start(whepUrl: String) {
     stop()
     currentUrl = whepUrl
     offerPosted = false
+    state = .connecting
     RTCInitializeSSL()
     let encoder = RTCDefaultVideoEncoderFactory()
     let decoder = RTCDefaultVideoDecoderFactory()
@@ -48,9 +54,17 @@ final class WhepVideoSource: NSObject {
     }
   }
 
+  func restart(config: SourceConfig) {
+    if config.url == currentUrl { return }
+    start(config: config)
+  }
+
   func updateUrl(_ whepUrl: String) {
-    if whepUrl == currentUrl { return }
-    start(whepUrl: whepUrl)
+    restart(config: SourceConfig(url: whepUrl))
+  }
+
+  func setPcmDeliveryEnabled(_ enabled: Bool) {
+    setPcmEnabled(enabled)
   }
 
   func setPcmEnabled(_ enabled: Bool) {
@@ -66,6 +80,7 @@ final class WhepVideoSource: NSObject {
     pendingOfferPost = nil
     pcmEnabled = true
     audioTracks.removeAll()
+    state = .idle
     pc?.close()
     pc = nil
   }
@@ -90,14 +105,16 @@ final class WhepVideoSource: NSObject {
     request.httpMethod = "POST"
     request.setValue("application/sdp", forHTTPHeaderField: "Content-Type")
     request.httpBody = sdp.data(using: .utf8)
-    URLSession.shared.dataTask(with: request) { data, response, error in
+    URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
       let code = (response as? HTTPURLResponse)?.statusCode ?? -1
       NSLog("ACS-SPIKE P3 WHEP \(code) answer bytes=\(data?.count ?? 0)")
       guard error == nil, (200 ..< 300).contains(code),
             let data, let answer = String(data: data, encoding: .utf8) else {
         NSLog("ACS-SPIKE WHEP answer rejected code=\(code)")
+        self?.state = .failed
         return
       }
+      self?.state = .live
       let desc = RTCSessionDescription(type: .answer, sdp: answer)
       peer.setRemoteDescription(desc) { _ in }
     }.resume()
@@ -114,6 +131,9 @@ extension WhepVideoSource: RTCPeerConnectionDelegate {
   func peerConnectionShouldNegotiate(_ peerConnection: RTCPeerConnection) {}
   func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceConnectionState) {
     NSLog("ACS-SPIKE ICE \(newState.rawValue)")
+    if newState == .failed || newState == .disconnected {
+      state = .failed
+    }
   }
   func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceGatheringState) {
     if newState == .complete { postOfferIfNeeded() }
