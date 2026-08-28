@@ -140,13 +140,13 @@ interface RuntimeSnapshot {
   the encryption key from `connection.ack.audio` and hands them to the injected
   native UDP transport (bytes do not flow through JS).
 
-## `cloud.core` and `cloud.store`
+## `cloud.core`
 
-The other v2 REST calls the device makes (not the live session, not auth), each
-sent with the Core identity token from `cloud.auth`. Core-owned report/support
-resources and Store-owned miniapp resources have independent endpoints and
-modules. In runtime-only mode both are absent rather than being routed to
-Runtime.
+The other Core REST calls the device makes (not the live session, not auth),
+sent with the Core identity token from `cloud.auth`. In runtime-only mode the
+module is absent rather than being routed to Runtime. The Store miniapp uses its
+own Miniapp SDK authenticated fetch surface; Store catalog operations are not a
+Cloud Client module.
 
 ```ts
 interface CoreModule {
@@ -154,14 +154,6 @@ interface CoreModule {
   supportProfile: SupportProfileModule
 }
 
-interface StoreModule {
-  list(): Promise<MiniappListing[]>
-  getBundle(
-    packageName: string,
-    version?: string,
-  ): Promise<{downloadUrl: string; version: string; manifest: MiniappManifest}>
-  getPreinstalledRegistry(): Promise<PreinstalledMiniappRegistry>
-}
 ```
 
 Guardrail: device-facing only, no Dev Console / OEM Portal / store web UI.

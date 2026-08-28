@@ -167,8 +167,8 @@ Both commands must call one shared packing/signing implementation in
 Production `pack` always signs. Development snapshots continue using the
 existing short-lived development attestation flow rather than becoming
 production releases. Any explicit unsigned archive helper must be limited to
-unit-test fixtures and must not be accepted by Store, preinstall, bundled, or
-semver release installation paths.
+unit-test fixtures and must not be accepted by Store, bundled, or semver release
+installation paths.
 
 ### `mentra publish`
 

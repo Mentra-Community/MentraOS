@@ -34,12 +34,6 @@ export type {Logger} from "./logger"
 
 // Runtime lifecycle state exposed to hosts for UI/debugging and fallback policy.
 export type {
-  PreinstalledInstallPolicy,
-  PreinstalledMiniappRegistry,
-  PreinstalledMiniappRegistryEntry,
-} from "./modules/store/store"
-
-export type {
   RuntimeAudioTransport,
   RuntimeSnapshot,
   RuntimeStatus,

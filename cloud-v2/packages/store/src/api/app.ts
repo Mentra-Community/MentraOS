@@ -3,8 +3,7 @@ import {Hono} from "hono"
 import type {AppEnv} from "../types/hono.types"
 import {OauthError} from "../types/oauth.types"
 import {requestContext} from "./middleware/context.middleware"
-import adminApi from "./admin/preinstalled.api"
-import clientMiniapps from "./client/miniapps.api"
+import adminApi from "./admin/admin.api"
 import consoleApi from "./console/cli-auth.api"
 import storeCatalog from "./store/catalog.api"
 import internalDevAttestations from "./internal/dev-attestations.api"
@@ -18,7 +17,6 @@ export function createApp(opts: {readinessChecks: ReadinessCheck[]}): Hono<AppEn
   app.route("/api/store", storeCatalog)
   app.route("/api/console", consoleApi)
   app.route("/api/admin", adminApi)
-  app.route("/api/client/miniapps", clientMiniapps)
   app.route("/api/internal/dev-attestations", internalDevAttestations)
   app.onError((error, c) => {
     if (error instanceof OauthError) {

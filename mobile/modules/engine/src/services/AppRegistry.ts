@@ -164,7 +164,7 @@ interface InstalledLma {
 }
 
 export interface MiniappReleaseIdentity {
-  source: "direct_download" | "bundled_asset" | "preinstalled_registry" | "dev_snapshot" | "store" | "system_store"
+  source: "direct_download" | "bundled_asset" | "dev_snapshot" | "store" | "system_store"
   releaseId?: string
   bundleSha256?: string
   channel?: string
@@ -1088,7 +1088,7 @@ class AppRegistry {
         if (!isDevInstall) {
           this.clearDevArtifacts(packageName)
         }
-        // Any explicit successful install (Store, preinstall, dev, or a new
+        // Any explicit successful install (Store, dev, or a new
         // build-owned bundle) reverses a prior user-uninstalled tombstone.
         storage.remove(userUninstalledKey(packageName))
         this.refreshNeeded = true
@@ -1308,7 +1308,7 @@ class AppRegistry {
   public getInstalledVersions(packageName: string): string[] {
     try {
       const lmaDir = new Directory(Paths.document, "lmas", packageName)
-      // Not installed yet is an expected state (e.g. preinstall sync probing
+      // Not installed yet is an expected state (e.g. Store reconciliation probing
       // versions before first install) — return [] without the error noise.
       if (!lmaDir.exists) {
         return []

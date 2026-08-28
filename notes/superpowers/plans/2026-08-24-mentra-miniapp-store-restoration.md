@@ -41,8 +41,8 @@ manifest, compatibility, and Store provenance.
       App build. There is no author-declarable manifest permission or parallel
       hardcoded package-name list; a dev miniapp copying a bundled package name
       is not privileged without host-owned release provenance.
-- [x] Protect every bundled SYSTEM package from removal and ordinary Store or
-      preinstall replacement.
+- [x] Protect every bundled SYSTEM package from removal and unauthorized Store
+      replacement.
 - [x] Protect every bundled SYSTEM package from direct user uninstall at the
       host registry boundary while preserving Remove from Home.
 - [x] Treat every currently shipped bundle (including Notes, Translation,
@@ -279,7 +279,8 @@ data; each deployment may publish both stable and beta releases.
       two-endpoint profiles by deriving Store from their selected Core.
 - [x] Pin Core, Store, and Runtime together in coordinated Android/iOS release
       environments and verify all three values exist in the shipped bundle.
-- [x] Expose Store resources as `cloud.store` rather than routing a misleading
+- [x] Keep Store catalog calls in the Store miniapp's normal Miniapp SDK auth
+      surface rather than adding `cloud.store` or routing a misleading
       `cloud.core.miniapps` API to another hostname.
 - [x] Add Core JWT/JWKS verification, WorkOS/API-key developer authentication,
       and narrow HMAC-authenticated Core-to-Store service bridges.
@@ -294,14 +295,12 @@ data; each deployment may publish both stable and beta releases.
 - [x] Cloud typecheck.
 - [x] Developer Console production build.
 - [x] Cloud Store/CLI bundle tests: 16 passed.
-- [x] Publish-to-catalog integration: 18 passed, including private/public beta
+- [x] Publish-to-catalog integration: 15 scenarios, including private/public beta
       invitations, beta-only discovery, stable/beta isolation, per-user enrollment, concurrent listing
       edits, publication fencing, selected-track featured ordering, download-time revocation,
-      tenant-scoped preinstall authorization, moderation, artwork privacy, and
-      the 10-screenshot cap.
-- [x] Real Core/Store-token integration: 4 passed, including strict Store
-      miniapp audience acceptance, rejection of unrelated miniapp tokens, and
-      `cloud.store` routing to the independent Store endpoint.
+      moderation, artwork privacy, and the 10-screenshot cap.
+- [x] Real Core/Store-token integration: 3 scenarios, including strict Store
+      miniapp audience acceptance and rejection of unrelated miniapp tokens.
 - [x] Miniapp packer regressions: 2 passed, including atomic preservation of
       the previous artifact after a failed ZIP command.
 - [x] Mentra Miniapp SDK: 272 passed.
@@ -335,8 +334,7 @@ data; each deployment may publish both stable and beta releases.
       rejection of direct/dev SYSTEM replacements,
       unbounded install request correlation, update repair of incompatible
       releases, live detail resolution after catalog refreshes, Expo-native
-      bounded response streaming, and rejection of remote preinstalled
-      replacements for build-owned SYSTEM packages, Store availability without
+      bounded response streaming, Store availability without
       connected glasses, and credential-free private-LAN Local/Auto Core
       origins without allowing public cleartext catalog traffic (including DNS
       names that resemble private IPv6 prefixes), independent OEM Store
@@ -394,9 +392,10 @@ work remains before describing the overall Store program as production-ready:
 - [x] Make the published Cloud V2 `mentra` CLI default to production and
       discover the selected Store's public WorkOS client id, while retaining
       environment overrides for dev/staging/OEM deployments.
-- [x] Keep preinstall bundle delivery compatible with older Mentra App clients
-      by embedding a short-lived tenant-scoped signed capability in registry
-      URLs; newer clients may also authenticate the same download directly.
+- [x] Remove the unused Cloud V2 preinstalled-registry prototype, including its
+      duplicate mobile startup reconciler, admin/CLI control plane, fixture
+      miniapps, routes, models, and Cloud Client surface. Store catalog installs
+      and Store automatic updates are the only remote distribution path.
 - [x] Expand the admin review UI to show the canonical manifest permissions,
       hardware requirements, Store listing/artwork, and moderation controls
       before publication.

@@ -322,15 +322,6 @@ export class Core implements CoreModule {
   supportProfile: SupportProfileModule
 }
 
-export class Store implements StoreModule {
-  constructor(http: HttpClient)
-  list(): Promise<MiniappListing[]>
-  getBundle(
-    packageName: string,
-    version?: string,
-  ): Promise<{downloadUrl: string; version: string; manifest: MiniappManifest}>
-  getPreinstalledRegistry(): Promise<PreinstalledMiniappRegistry>
-}
 ```
 
 **`src/logger.ts`** / **`src/errors.ts`**: small shared bits.
@@ -523,12 +514,12 @@ never reaches Redis/Soniox. Client-side fallback still needs active transport
 selection: detect missing UDP progress, switch `audioTransport` to `ws`, and send the
 same audio frames over the live WebSocket as the last-resort cloud path.
 
-## `cloud.core` and `cloud.store`
+## `cloud.core`
 
-The simplest modules: stateless REST calls using the Core identity token from
-`cloud.auth.getCoreToken()`. `cloud.core` owns report/support resources;
-`cloud.store` owns catalog, bundle, and preinstall resources and may use a
-different origin. In runtime-only mode both modules are absent.
+The simplest module: stateless REST calls using the Core identity token from
+`cloud.auth.getCoreToken()`. `cloud.core` owns report/support resources. Store
+catalog calls originate from the Store miniapp through the Miniapp SDK instead
+of a Cloud Client Store module. In runtime-only mode `cloud.core` is absent.
 
 ## The shared HTTP helper
 

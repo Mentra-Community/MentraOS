@@ -72,16 +72,6 @@ export function requiresConnectedGlasses(packageName: string): boolean {
 }
 
 /**
- * The remotely managed preinstalled registry must never replace a build-owned
- * SYSTEM package. SYSTEM updates use the narrower bundled-Store channel;
- * treating ordinary registry provenance as bundled would let a downloaded
- * replacement inherit privileged APIs.
- */
-export function isPreinstalledMiniappPackageAllowed(packageName: string): boolean {
-  return !isSystemMiniappPackage(packageName)
-}
-
-/**
  * Bind SYSTEM authority to both the build-owned package allowlist and the
  * host-owned bundle provenance. A dev server or downloaded bundle that copies
  * a SYSTEM package name must never inherit privileged host APIs.

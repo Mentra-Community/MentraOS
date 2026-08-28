@@ -113,20 +113,20 @@ routes.
   minting a miniapp token. This does not give Core ownership of developer keys.
 
 The official endpoints are independently configurable (`MENTRA_CORE_URL` and
-`MENTRA_STORE_URL`). `@mentra/cloud-client` exposes them as `cloud.core` and
-`cloud.store`. The CLI and Mentra App derive `store.*` only from a conventional
-`core.*` hostname (and local port 3003 from Core port 3000, including a Metro
-host's LAN address on physical phones). An independently named OEM Store must
-be selected explicitly as part of the same endpoint
+`MENTRA_STORE_URL`). The Store miniapp reaches its backend through the normal
+Miniapp SDK authenticated-fetch surface; `@mentra/cloud-client` does not own a
+parallel Store catalog module. The CLI and Mentra App derive `store.*` only from
+a conventional `core.*` hostname (and local port 3003 from Core port 3000,
+including a Metro host's LAN address on physical phones). An independently
+named OEM Store must be selected explicitly as part of the same endpoint
 profile. An arbitrary custom Core hostname never falls back to Mentra's Store,
 so a Core identity credential cannot be sent to an unrelated distribution
 service. Existing two-endpoint custom profiles derive Store from their selected
 Core until the user supplies the new explicit Store field. Coordinated mobile
 release tooling pins and verifies Core, Store, and Runtime together in the
-shipped JavaScript bundle. The Android `bun adb` helper reverses both local
-Core port 3000 and local Store port 3003. OEM or self-hosted deployments may
-point the same host contract at their own identity issuer and Store
-implementation.
+shipped JavaScript bundle. The Android `bun adb` helper reverses both local Core
+port 3000 and local Store port 3003. OEM or self-hosted deployments may point
+the same host contract at their own identity issuer and Store implementation.
 
 ## Design principles
 
@@ -167,8 +167,7 @@ SYSTEM has these consequences:
 
 - Users cannot uninstall the package.
 - Users may remove it from Home without removing its installation.
-- Direct developer installs and ordinary preinstall synchronization cannot
-  replace it.
+- Direct developer installs cannot replace it.
 - A build-trusted Store may update it only when the build assigns that Store as
   the package's SYSTEM update owner.
 - A Store-installed update retains SYSTEM identity across restarts because the
@@ -414,9 +413,6 @@ revalidate rather than remaining anonymously reusable for a year after a
 public-to-private transition. Previously downloaded bytes cannot be recalled,
 but the retained URL no longer grants future origin access.
 
-Preinstall downloads remain a separate channel. An asset is eligible only when
-an active registry applicable to the user's tenant assigns that exact release.
-
 ## Store install API
 
 The Store calls a backend-neutral SDK request with this effective v1 shape:
@@ -471,9 +467,13 @@ manifest. An install transaction is:
 16. Reload or restart the runtime as needed, restoring the prior release and
     running state on failure.
 
-Other installation sources—bundled synchronization, preinstall registries, and
-developer URLs—share serialized AppRegistry transactions so they cannot race a
-Store activation.
+Other installation sources—bundled synchronization and developer URLs—share
+serialized AppRegistry transactions so they cannot race a Store activation.
+
+The abandoned Cloud V2 preinstalled-registry prototype is intentionally absent.
+It was a one-device Store stopgap with a second update policy, API, admin UI,
+and startup reconciler. Bundled SYSTEM packages and user-installed packages now
+use the single Store catalog/install/update model described here.
 
 ## Compatibility model
 

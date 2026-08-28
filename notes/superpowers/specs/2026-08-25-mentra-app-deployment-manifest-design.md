@@ -29,7 +29,7 @@ The first supported private Mentra App deployment requires:
 
 Core is required for this first version. The current Mentra App uses Core for
 account login and refresh, subject-token minting, the minimum-client-version
-check, Runtime token exchange, preinstalled miniapp registry, settings, and
+check, Runtime token exchange, settings, and
 reports. A Runtime-only Mentra App is possible later, but it requires a new
 identity/authentication mode rather than another manifest field.
 

@@ -148,10 +148,6 @@ describe("cloud.auth.getMiniappToken (real core)", () => {
     expect(unrelatedResponse.status).toBe(401);
   });
 
-  test("cloud.store uses the independent Store endpoint with Core identity", async () => {
-    const cloud = await newCloud("store-host-user");
-    await expect(cloud.store?.list()).resolves.toEqual([]);
-  });
 });
 
 // === Helpers ===

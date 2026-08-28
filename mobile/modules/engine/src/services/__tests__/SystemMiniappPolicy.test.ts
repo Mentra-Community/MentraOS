@@ -6,7 +6,6 @@ import {
   canInstallMiniappRelease,
   canStoreUpdateSystemMiniapp,
   isHostTrustedSystemMiniapp,
-  isPreinstalledMiniappPackageAllowed,
   isStoreMiniappPackage,
   isSystemMiniappPackage,
   requiresConnectedGlasses,
@@ -113,12 +112,6 @@ describe("SYSTEM miniapp policy", () => {
       ),
     ).toBe(false)
     expect(canInstallMiniappRelease("com.example.weather", {source: "direct_download"}, false)).toBe(true)
-  })
-
-  test("prevents the remote preinstalled registry from replacing SYSTEM packages", () => {
-    expect(isPreinstalledMiniappPackageAllowed("com.mentra.store")).toBe(false)
-    expect(isPreinstalledMiniappPackageAllowed("com.mentra.settings")).toBe(true)
-    expect(isPreinstalledMiniappPackageAllowed("com.example.weather")).toBe(true)
   })
 
   test("preserves a newer trusted Store-updated SYSTEM release over an older bundle", () => {

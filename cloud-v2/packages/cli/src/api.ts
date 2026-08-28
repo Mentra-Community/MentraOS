@@ -102,56 +102,9 @@ export interface DeveloperSigningKey {
   updatedAt: string | null;
 }
 
-export type PreinstallEnvironment = "debug" | "dev" | "staging" | "prod";
-export type PreinstallPolicy = "install_once" | "keep_updated" | "mandatory";
-
 export interface AdminUser {
   developerId: string;
   email: string;
-}
-
-export interface AdminRegistry {
-  id: string;
-  name: string;
-  environment: PreinstallEnvironment;
-  tenantId: string | null;
-  status: "draft" | "active" | "archived";
-  activeRevisionId: string | null;
-  createdAt: string | null;
-  updatedAt: string | null;
-}
-
-export interface AdminReleaseSummary {
-  id: string;
-  miniAppId?: string;
-  packageName: string;
-  displayName: string;
-  version: string;
-  releaseTrack: "stable" | "beta";
-  status: DeveloperRelease["status"];
-  bundleSha256: string | null;
-  bundleSizeBytes: number | null;
-  createdAt: string | null;
-}
-
-export interface AdminRegistryRevision {
-  id: string;
-  registryId: string;
-  status: "draft" | "active" | "archived";
-  reason: string | null;
-  entries: Array<{
-    id: string;
-    miniAppId: string;
-    releaseId: string;
-    required: boolean;
-    installPolicy: PreinstallPolicy;
-    minMobileVersion: string | null;
-    maxMobileVersion: string | null;
-    priority: number;
-  }>;
-  promotedAt: string | null;
-  createdAt: string | null;
-  updatedAt: string | null;
 }
 
 export async function startLogin(config: CliConfig): Promise<DeviceAuthorizationResponse> {
@@ -221,66 +174,6 @@ export async function getAdminMe(
   credentials: CliCredentials,
 ): Promise<{ authenticated: true; admin: true; user: AdminUser | null }> {
   return storeRequest(credentials, "/api/admin/me");
-}
-
-export async function listAdminRegistries(credentials: CliCredentials): Promise<{ registries: AdminRegistry[] }> {
-  return storeRequest(credentials, "/api/admin/preinstalled/registries");
-}
-
-export async function ensureAdminRegistry(
-  credentials: CliCredentials,
-  input: { environment: PreinstallEnvironment; name?: string; tenantId?: string | null },
-): Promise<{ registry: AdminRegistry }> {
-  return storeRequest(credentials, "/api/admin/preinstalled/registries", {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
-}
-
-export async function listAdminPreinstallReleases(
-  credentials: CliCredentials,
-): Promise<{ releases: AdminReleaseSummary[] }> {
-  return storeRequest(credentials, "/api/admin/preinstalled/releases");
-}
-
-export async function listAdminRegistryRevisions(
-  credentials: CliCredentials,
-  registryId: string,
-): Promise<{ revisions: AdminRegistryRevision[] }> {
-  return storeRequest(credentials, `/api/admin/preinstalled/registries/${encodeURIComponent(registryId)}/revisions`);
-}
-
-export async function createAdminRegistryRevision(
-  credentials: CliCredentials,
-  registryId: string,
-  input: {
-    reason?: string | null;
-    entries: Array<{
-      releaseId: string;
-      required?: boolean;
-      installPolicy?: PreinstallPolicy;
-      minMobileVersion?: string | null;
-      maxMobileVersion?: string | null;
-      priority?: number;
-    }>;
-  },
-): Promise<{ revision: AdminRegistryRevision }> {
-  return storeRequest(credentials, `/api/admin/preinstalled/registries/${encodeURIComponent(registryId)}/revisions`, {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
-}
-
-export async function promoteAdminRegistryRevision(
-  credentials: CliCredentials,
-  registryId: string,
-  revisionId: string,
-): Promise<{ registry: AdminRegistry; revision: AdminRegistryRevision }> {
-  return storeRequest(
-    credentials,
-    `/api/admin/preinstalled/registries/${encodeURIComponent(registryId)}/revisions/${encodeURIComponent(revisionId)}/promote`,
-    { method: "POST" },
-  );
 }
 
 export async function getOrg(credentials: CliCredentials): Promise<{ org: DeveloperOrg | null }> {

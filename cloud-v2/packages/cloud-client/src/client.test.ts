@@ -54,57 +54,9 @@ describe("CloudClient construction", () => {
     )
 
     expect(cloud.core).toBeUndefined()
-    expect(cloud.store).toBeUndefined()
     expect(() => cloud.auth.identity).toThrow(AuthExpiredError)
     expect(() => cloud.auth.identity).toThrow("runtime-only mode")
     await expect(cloud.auth.getMiniappToken("com.example.app")).rejects.toThrow("runtime-only mode")
-  })
-
-  test("routes Store resources to the independently configured Store endpoint", async () => {
-    const nowSeconds = Math.floor(Date.now() / 1000)
-    const calls: Array<{url: string; authorization: string | null}> = []
-    const http: NonNullable<CloudClientTransports["http"]> = async (input, init) => {
-      const headers = new Headers(init?.headers)
-      const url = String(input)
-      calls.push({url, authorization: headers.get("authorization")})
-      if (url.endsWith("/api/client/auth/refresh")) {
-        return jsonResponse({
-          access_token: accessToken,
-          refresh_token: "refresh-2",
-          token_type: "Bearer",
-          expires_in: 3600,
-        })
-      }
-      return jsonResponse([])
-    }
-
-    const accessToken = testJwt({sub: "user-1", oem_id: "oem-1", exp: nowSeconds + 3600})
-    const cloud = new CloudClient(
-      config({
-        endpoints: {
-          core: "https://core.example.test",
-          store: "https://store.example.test",
-          runtime: "https://runtime.example.test",
-        },
-        auth: {
-          core: {accessToken, refreshToken: "refresh-1"},
-          runtime: {getToken: async () => "runtime-token"},
-        },
-        http,
-      }),
-    )
-
-    expect(await cloud.store?.list()).toEqual([])
-    expect(calls).toEqual([
-      {
-        url: "https://core.example.test/api/client/auth/refresh",
-        authorization: null,
-      },
-      {
-        url: "https://store.example.test/api/client/miniapps",
-        authorization: `Bearer ${accessToken}`,
-      },
-    ])
   })
 
   test("remints miniapp tokens when requested TTL exceeds cached lifetime", async () => {

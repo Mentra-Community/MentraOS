@@ -5,7 +5,6 @@ import * as Calendar from "expo-calendar"
 import {router} from "expo-router"
 
 import {bootstrapMentraJS} from "@/services/mentraJsBootstrap"
-import {preinstalledMiniappSync} from "@/services/miniapps/preinstalledMiniappSync"
 import {storeUpdateScheduler} from "@/services/miniapps/storeUpdateScheduler"
 import builtInMiniappCatalog from "@/services/miniapps/BuiltInMiniappCatalog"
 import {
@@ -579,11 +578,6 @@ class MantleManager {
     // already-installed check below sees the real on-disk state.
     await this.installBundledMiniapps()
 
-    // Then reconcile the admin-managed preinstall registry from Cloud V2. This
-    // lets Core move users to newer bundled miniapp releases without shipping a
-    // new mobile binary.
-    await preinstalledMiniappSync.sync()
-
     // The Store ships as a real build-owned SYSTEM miniapp so its trust and
     // update paths are exercised before launch, but it is a host-gated preview:
     // normal users get no Home tile, running-tray entry, catalog traffic, or
@@ -732,12 +726,9 @@ class MantleManager {
   private async setupPeriodicTasks() {
     this.sendCalendarEvents()
     // Calendar sync every hour
-    this.calendarSyncTimer = BgTimer.setInterval(
-      () => {
-        this.sendCalendarEvents()
-      },
-      60 * 60 * 1000,
-    ) // 1 hour
+    this.calendarSyncTimer = BgTimer.setInterval(() => {
+      this.sendCalendarEvents()
+    }, 60 * 60 * 1000) // 1 hour
 
     try {
       // only start location updates if we have the location permission (host UI gate);

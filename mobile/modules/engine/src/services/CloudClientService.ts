@@ -14,7 +14,7 @@
  * this service.
  */
 import {CloudClient, setNativeHttp, setNativeUdp, setSecureStorage} from "@mentra/cloud-client/react-native"
-import type {PreinstalledMiniappRegistry, RuntimeSnapshot} from "@mentra/cloud-client/react-native"
+import type {RuntimeSnapshot} from "@mentra/cloud-client/react-native"
 import type {SubjectTokenType} from "@mentra/cloud-client"
 import {Platform} from "react-native"
 import type {AudioSubscription, TranscriptionData, TranslationData} from "@mentra/cloud-protocol"
@@ -560,13 +560,6 @@ export const cloudClientService = {
     if (wasConnected) notifyConnectionListeners(false)
 
     construct()
-  },
-
-  async getPreinstalledMiniappRegistry(): Promise<PreinstalledMiniappRegistry> {
-    if (!client) this.init()
-    const c = client
-    if (!c?.store) throw new Error("cloud client Store is unavailable")
-    return c.store.getPreinstalledRegistry()
   },
 
   /** Fresh Core credential for host-owned downloads; never exposed to a miniapp. */

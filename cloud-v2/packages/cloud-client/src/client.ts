@@ -36,7 +36,6 @@ import {Maps} from "./modules/runtime/maps"
 import {Tts} from "./modules/runtime/tts"
 import {UdpAudio} from "./modules/runtime/audio-udp"
 import {Core} from "./modules/core/core"
-import {Store} from "./modules/store/store"
 
 /**
  * Default reconnect/backoff for the live socket when a host supplies none.
@@ -111,7 +110,6 @@ export class CloudClient {
   readonly auth: Auth
   readonly runtime: Runtime
   readonly core?: Core
-  readonly store?: Store
 
   constructor(config: CloudClientConfig) {
     // One logger for the whole client, so a host routes every module's logs in
@@ -126,8 +124,6 @@ export class CloudClient {
     // without one, each module talks to its own service directly.
     const {core: coreBase, runtime: runtimeBase, proxy} = config.endpoints
     const coreUrl = coreBase ? (proxy ? rewriteThroughProxy(coreBase, proxy) : coreBase) : undefined
-    const storeBase = config.endpoints.store ?? (coreBase ? deriveStoreUrl(coreBase) : undefined)
-    const storeUrl = storeBase ? (proxy ? rewriteThroughProxy(storeBase, proxy) : storeBase) : undefined
     const runtimeUrl = proxy ? rewriteThroughProxy(runtimeBase, proxy) : runtimeBase
 
     if (config.auth.core && !coreUrl) {
@@ -176,16 +172,6 @@ export class CloudClient {
       coreUrl && config.auth.core
         ? createHttpClient({
             baseUrl: coreUrl,
-            getToken: getCoreToken,
-            logger,
-            fetch: config.transports.http,
-            timers,
-          })
-        : null
-    const storeHttp =
-      storeUrl && config.auth.core
-        ? createHttpClient({
-            baseUrl: storeUrl,
             getToken: getCoreToken,
             logger,
             fetch: config.transports.http,
@@ -266,26 +252,10 @@ export class CloudClient {
       forceRefreshToken: () => auth.getRuntimeToken({forceRefresh: true}),
     })
 
-    // Stateless service clients share Core-issued identity but retain separate
-    // endpoints and resource ownership.
     const core = coreHttp ? new Core({http: coreHttp}) : undefined
-    const storeModule = storeHttp ? new Store(storeHttp) : undefined
 
     this.auth = auth
     this.runtime = runtime
     this.core = core
-    this.store = storeModule
   }
-}
-
-function deriveStoreUrl(coreUrl: string): string {
-  const url = new URL(coreUrl)
-  if (url.hostname === "core.mentraglass.com") return "https://store.mentraglass.com"
-  if (url.hostname.startsWith("core.")) url.hostname = url.hostname.replace(/^core\./, "store.")
-  else if (
-    (url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "::1") &&
-    url.port === "3000"
-  )
-    url.port = "3003"
-  return url.toString()
 }

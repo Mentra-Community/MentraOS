@@ -1,26 +1,17 @@
 import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, Bug, Check, ClipboardList, CloudUpload, FileText, History, Home, Loader2, MessageSquareWarning, PackageCheck, RefreshCcw, RotateCcw, ShieldCheck, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { AlertCircle, Bug, Check, ClipboardList, FileText, History, Home, Loader2, MessageSquareWarning, RefreshCcw, ShieldCheck, X } from "lucide-react";
+import { useEffect, useState } from "react";
 import { AppShell, type NavItem } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
 import mentraLogo from "./assets/mentra-logo.svg";
 
 type Environment = "debug" | "dev" | "staging" | "prod";
-type InstallPolicy = "install_once" | "keep_updated" | "mandatory";
-type AdminPageKey = "home" | "review" | "preinstalled" | "audit" | "incidents";
+type AdminPageKey = "home" | "review" | "audit" | "incidents";
 type ReleaseStatus = "draft" | "submitted" | "in_review" | "accepted" | "rejected" | "published" | "suspended";
 
 interface AdminUser {
   developerId: string;
   email: string;
-}
-
-interface Registry {
-  id: string;
-  name: string;
-  environment: Environment;
-  status: string;
-  activeRevisionId: string | null;
 }
 
 interface ReleaseSummary {
@@ -65,18 +56,6 @@ interface ReleaseSummary {
   publicStoreApprovedAt?: string | null;
   isActiveRelease?: boolean;
   requiresPublicStoreApproval?: boolean;
-}
-
-interface RegistryRevision {
-  id: string;
-  status: string;
-  entries: Array<{
-    releaseId: string;
-    installPolicy: InstallPolicy;
-    required: boolean;
-  }>;
-  createdAt: string | null;
-  promotedAt: string | null;
 }
 
 interface AuditEvent {
@@ -152,7 +131,6 @@ const queryClient = new QueryClient({
 const ADMIN_NAV: readonly NavItem[] = [
   { key: "home", label: "Home", icon: Home },
   { key: "review", label: "Miniapp review", icon: ClipboardList },
-  { key: "preinstalled", label: "Preinstalled miniapps", icon: PackageCheck },
   { key: "audit", label: "Audit log", icon: History },
   { key: "incidents", label: "Incident system", icon: Bug },
 ];
@@ -191,9 +169,7 @@ function AdminPage() {
   const env = ENVIRONMENT;
   const [page, setPage] = useState<AdminPageKey>(pendingDeepLinkReportId ? "incidents" : "home");
   const [deepLinkReportId, setDeepLinkReportId] = useState<string | null>(pendingDeepLinkReportId);
-  const [selectedReleaseIds, setSelectedReleaseIds] = useState<Set<string>>(new Set());
   const [detailReleaseId, setDetailReleaseId] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
   const [signingOut, setSigningOut] = useState(false);
 
   async function signOut() {
@@ -226,29 +202,10 @@ function AdminPage() {
     queryFn: () => api<{ submissions: ReleaseSummary[] }>("/api/admin/submissions"),
     enabled: me.isSuccess,
   });
-  const registries = useQuery({
-    queryKey: ["admin-registries"],
-    queryFn: () => api<{ registries: Registry[] }>("/api/admin/preinstalled/registries"),
-    enabled: me.isSuccess,
-  });
-  const releases = useQuery({
-    queryKey: ["admin-releases"],
-    queryFn: () => api<{ releases: ReleaseSummary[] }>("/api/admin/preinstalled/releases"),
-    enabled: me.isSuccess,
-  });
   const audit = useQuery({
     queryKey: ["admin-audit"],
     queryFn: () => api<{ events: AuditEvent[] }>("/api/admin/audit-log"),
     enabled: me.isSuccess,
-  });
-  const activeRegistry = useMemo(
-    () => registries.data?.registries.find(registry => registry.environment === env && registry.name === "default"),
-    [env, registries.data?.registries],
-  );
-  const revisions = useQuery({
-    queryKey: ["admin-revisions", activeRegistry?.id],
-    queryFn: () => api<{ revisions: RegistryRevision[] }>(`/api/admin/preinstalled/registries/${activeRegistry?.id}/revisions`),
-    enabled: Boolean(activeRegistry?.id),
   });
 
   // Review decisions carry the reviewer's typed notes. "Request changes" is a
@@ -263,7 +220,6 @@ function AdminPage() {
       setDetailReleaseId(null);
       await Promise.all([
         qc.invalidateQueries({ queryKey: ["admin-submissions"] }),
-        qc.invalidateQueries({ queryKey: ["admin-releases"] }),
         qc.invalidateQueries({ queryKey: ["admin-audit"] }),
       ]);
     },
@@ -282,72 +238,17 @@ function AdminPage() {
     },
   });
 
-  const publishRegistry = useMutation({
-    mutationFn: async () => {
-      const registry = await api<{ registry: Registry }>("/api/admin/preinstalled/registries", {
-        method: "POST",
-        body: { environment: env },
-      });
-      const revision = await api<{ revision: RegistryRevision }>(
-        `/api/admin/preinstalled/registries/${registry.registry.id}/revisions`,
-        {
-          method: "POST",
-          body: {
-            reason: `Admin preinstall registry publish for ${env}`,
-            entries: [...selectedReleaseIds].map((releaseId, index) => ({
-              releaseId,
-              required: false,
-              installPolicy: "keep_updated" satisfies InstallPolicy,
-              priority: index,
-            })),
-          },
-        },
-      );
-      return api<{ registry: Registry; revision: RegistryRevision }>(
-        `/api/admin/preinstalled/registries/${registry.registry.id}/revisions/${revision.revision.id}/promote`,
-        { method: "POST" },
-      );
-    },
-    onSuccess: async data => {
-      setMessage(`Published ${data.revision.entries.length} release(s) to ${envLabel(env)}.`);
-      setSelectedReleaseIds(new Set());
-      await Promise.all([
-        qc.invalidateQueries({ queryKey: ["admin-registries"] }),
-        qc.invalidateQueries({ queryKey: ["admin-revisions"] }),
-        qc.invalidateQueries({ queryKey: ["admin-audit"] }),
-      ]);
-    },
-  });
-
-  // Restore (rollback): re-promote a previous revision. Same promote endpoint.
-  const restoreRevision = useMutation({
-    mutationFn: (revisionId: string) =>
-      api(`/api/admin/preinstalled/registries/${activeRegistry?.id}/revisions/${revisionId}/promote`, { method: "POST" }),
-    onSuccess: async () => {
-      setMessage(`Restored a previous preinstall revision for ${envLabel(env)}.`);
-      await Promise.all([
-        qc.invalidateQueries({ queryKey: ["admin-registries"] }),
-        qc.invalidateQueries({ queryKey: ["admin-revisions"] }),
-        qc.invalidateQueries({ queryKey: ["admin-audit"] }),
-      ]);
-    },
-  });
-
   const submissionList = submissions.data?.submissions ?? [];
-  const releaseList = releases.data?.releases ?? [];
-  const revisionList = revisions.data?.revisions ?? [];
   const auditEvents = audit.data?.events ?? [];
   const pendingReviews = submissionList.filter(release =>
     ["submitted", "in_review"].includes(release.status) || needsPublicApproval(release),
   );
-  const selectedReleases = releaseList.filter(release => selectedReleaseIds.has(release.id));
-  const detailRelease = [...submissionList, ...releaseList].find(release => release.id === detailReleaseId) ?? null;
+  const detailRelease = submissionList.find(release => release.id === detailReleaseId) ?? null;
 
   const pageMeta: Record<AdminPageKey, { title: string; body: string }> = {
-    home: { title: "Operations home", body: "Pending review, the active preinstall list, and recent admin actions." },
+    home: { title: "Operations home", body: "Pending review and recent admin actions." },
     review: { title: "Miniapp review", body: "Review developer-submitted releases before they are published to the store." },
-    preinstalled: { title: "Preinstalled miniapps", body: "The managed default set MentraOS installs and keeps updated without a mobile app release." },
-    audit: { title: "Audit log", body: "Every admin mutation: who approved, rejected, published, or promoted something." },
+    audit: { title: "Audit log", body: "Every admin mutation: who approved, rejected, published, or moderated something." },
     incidents: { title: "Incident system", body: "Bug reports and feedback filed from the Mentra App, with their screenshots and log bundles." },
   };
 
@@ -377,21 +278,11 @@ function AdminPage() {
       accountLabel="Admin"
       onSignOut={signOut}
       signingOut={signingOut}
-      headerAction={
-        page === "preinstalled" && selectedReleases.length > 0 ? (
-          <div className="rounded-full border border-[#dfe3dc] bg-white px-4 py-2 text-sm font-semibold text-[#4f5d54]">
-            {selectedReleases.length} selected
-          </div>
-        ) : undefined
-      }
     >
       {page === "home" ? (
         <HomePage
-          env={env}
-          loading={submissions.isLoading || registries.isLoading}
+          loading={submissions.isLoading}
           pendingReviews={pendingReviews}
-          activeRegistry={activeRegistry}
-          activeRevision={revisionList.find(rev => rev.id === activeRegistry?.activeRevisionId)}
           auditEvents={auditEvents}
           onOpenRelease={setDetailReleaseId}
           onGo={setPage}
@@ -403,24 +294,6 @@ function AdminPage() {
           submissions={submissionList}
           loading={submissions.isLoading}
           onOpen={setDetailReleaseId}
-        />
-      ) : null}
-
-      {page === "preinstalled" ? (
-        <PreinstalledPage
-          env={env}
-          releases={releaseList}
-          loading={releases.isLoading}
-          selectedReleaseIds={selectedReleaseIds}
-          setSelectedReleaseIds={setSelectedReleaseIds}
-          onPublish={() => publishRegistry.mutate()}
-          publishing={publishRegistry.isPending}
-          error={publishRegistry.error}
-          message={message}
-          activeRegistry={activeRegistry}
-          revisions={revisionList}
-          onRestore={id => restoreRevision.mutate(id)}
-          restoring={restoreRevision.isPending}
         />
       ) : null}
 
@@ -469,31 +342,21 @@ function EnvBadge({ env }: { env: Environment }) {
 }
 
 function HomePage(props: {
-  env: Environment;
   loading: boolean;
   pendingReviews: ReleaseSummary[];
-  activeRegistry?: Registry;
-  activeRevision?: RegistryRevision;
   auditEvents: AuditEvent[];
   onOpenRelease: (id: string) => void;
   onGo: (page: AdminPageKey) => void;
 }) {
   return (
     <div className="space-y-6">
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2">
         <StatCard
           label="Pending reviews"
           value={String(props.pendingReviews.length)}
           hint="Releases awaiting a decision"
           tone={props.pendingReviews.length > 0 ? "alert" : "calm"}
           onClick={() => props.onGo("review")}
-        />
-        <StatCard
-          label={`Preinstall · ${envLabel(props.env)}`}
-          value={props.activeRegistry?.activeRevisionId ? `${props.activeRevision?.entries.length ?? 0} apps` : "None"}
-          hint={props.activeRegistry?.activeRevisionId ? "Active managed default set" : "No active list yet"}
-          tone="calm"
-          onClick={() => props.onGo("preinstalled")}
         />
         <StatCard
           label="Recent admin actions"
@@ -846,131 +709,6 @@ function StoreListingReview(props: {
           This historical publication is immutable. Moderate the active release instead.
         </p>
       )}
-    </div>
-  );
-}
-
-function PreinstalledPage(props: {
-  env: Environment;
-  releases: ReleaseSummary[];
-  loading: boolean;
-  selectedReleaseIds: Set<string>;
-  setSelectedReleaseIds: React.Dispatch<React.SetStateAction<Set<string>>>;
-  onPublish: () => void;
-  publishing: boolean;
-  error: unknown;
-  message: string | null;
-  activeRegistry?: Registry;
-  revisions: RegistryRevision[];
-  onRestore: (revisionId: string) => void;
-  restoring: boolean;
-}) {
-  return (
-    <div className="grid gap-6 xl:grid-cols-[1fr_340px]">
-      <section className="space-y-6">
-        <section className="rounded-[24px] border border-[#e0e4de] bg-white shadow-[0_1px_2px_rgba(20,21,27,0.06)]">
-          <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[#eceeeb] p-5">
-            <div>
-              <h2 className="text-xl font-bold">Preinstalled miniapp list</h2>
-              <p className="mt-1 max-w-2xl text-sm leading-6 text-[#68746d]">
-                Mobile clients fetch this list, so we can add or update default miniapps without shipping a new iOS or Android build.
-              </p>
-            </div>
-            <div className="flex h-9 items-center gap-2 rounded-full border border-[#dfe3dc] bg-[#f6f7f5] px-4 text-sm font-semibold text-[#4f5d54]">
-              {envLabel(props.env)} environment
-            </div>
-          </div>
-
-          <div className="p-5">
-            <div className="mb-4 rounded-[18px] bg-[#f5f7f4] p-4 text-sm leading-6 text-[#68746d]">
-              <span className="font-semibold text-[#111318]">Managed set:</span> selected releases become the default set for <span className="font-semibold">{envLabel(props.env)}</span>. Existing users receive updates through mobile registry sync.
-            </div>
-            <div className="space-y-3">
-              {props.loading ? (
-                <InlineLoading label="Loading approved releases" />
-              ) : props.releases.length === 0 ? (
-                <EmptyState title="No publishable releases" body="Publish a miniapp release from review before adding it to the preinstalled list." />
-              ) : props.releases.map(release => {
-                const selected = props.selectedReleaseIds.has(release.id);
-                return (
-                  <button
-                    key={release.id}
-                    className={`flex w-full items-center gap-4 rounded-[18px] border p-4 text-left ${selected ? "border-[#1bbd7e] bg-[#effaf5]" : "border-[#e0e4de] bg-white"}`}
-                    onClick={() =>
-                      props.setSelectedReleaseIds(current => {
-                        const next = new Set(current);
-                        if (next.has(release.id)) next.delete(release.id);
-                        else next.add(release.id);
-                        return next;
-                      })
-                    }
-                  >
-                    <span className={`flex size-10 items-center justify-center rounded-[14px] ${selected ? "bg-[#1bbd7e] text-white" : "bg-[#e9f8f1] text-[#087d50]"}`}>
-                      {selected ? <Check className="size-4" /> : <PackageCheck className="size-4" />}
-                    </span>
-                    <ReleaseIdentity release={release} compact />
-                  </button>
-                );
-              })}
-            </div>
-
-            <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-[#eceeeb] pt-5">
-              <p className="max-w-xl text-sm leading-6 text-[#68746d]">
-                Publishing replaces the active preinstalled miniapp list for {envLabel(props.env)}.
-              </p>
-              <Button className="h-12 rounded-full bg-[#111217] px-6 text-white hover:bg-[#25262c]" disabled={props.selectedReleaseIds.size === 0 || props.publishing} onClick={props.onPublish}>
-                {props.publishing ? <Loader2 className="size-4 animate-spin" /> : <CloudUpload className="size-4" />}
-                Publish preinstalled list
-              </Button>
-            </div>
-            {props.error ? <ErrorText error={props.error} /> : null}
-            {props.message ? <p className="mt-3 rounded-[14px] bg-[#e9f8f1] p-3 text-sm text-[#087d50]">{props.message}</p> : null}
-          </div>
-        </section>
-      </section>
-
-      <aside className="space-y-6">
-        <section className="rounded-[24px] bg-[#111318] p-5 text-white shadow-[0_18px_42px_-22px_rgba(20,21,27,0.55)]">
-          <PackageCheck className="mb-4 size-7 text-[#57d391]" />
-          <h2 className="text-xl font-bold">Active list</h2>
-          <p className="mt-2 text-sm leading-6 text-white/65">
-            {props.activeRegistry?.activeRevisionId ? `${envLabel(props.env)} has an active preinstall list.` : `No active ${envLabel(props.env)} list yet.`}
-          </p>
-        </section>
-
-        <section className="rounded-[24px] border border-[#e0e4de] bg-white p-5 shadow-[0_1px_2px_rgba(20,21,27,0.06)]">
-          <h2 className="text-xl font-bold">Revision history</h2>
-          <p className="mt-1 text-sm text-[#68746d]">Restore re-promotes a past revision as the live list.</p>
-          <div className="mt-4 space-y-3">
-            {props.revisions.length > 0 ? props.revisions.map(revision => {
-              const active = revision.id === props.activeRegistry?.activeRevisionId;
-              return (
-                <div key={revision.id} className="rounded-[16px] bg-[#f5f7f4] p-4">
-                  <div className="flex items-center justify-between">
-                    <span className="font-semibold">{revision.entries.length} miniapp(s)</span>
-                    {active ? (
-                      <span className="rounded-full bg-[#e9f8f1] px-3 py-1 text-xs font-bold uppercase tracking-[0.1em] text-[#087d50]">Active</span>
-                    ) : (
-                      <span className="rounded-full bg-white px-3 py-1 text-xs uppercase tracking-[0.12em] text-[#68746d]">{revision.status}</span>
-                    )}
-                  </div>
-                  <p className="mt-2 text-xs text-[#68746d]">{formatDate(revision.promotedAt ?? revision.createdAt)}</p>
-                  {!active ? (
-                    <Button
-                      variant="ghost"
-                      className="mt-2 h-8 rounded-full px-3 text-xs text-[#4f5d54] hover:bg-white"
-                      disabled={props.restoring}
-                      onClick={() => props.onRestore(revision.id)}
-                    >
-                      <RotateCcw className="size-3.5" /> Restore
-                    </Button>
-                  ) : null}
-                </div>
-              );
-            }) : <p className="text-sm text-[#68746d]">No publishes yet.</p>}
-          </div>
-        </section>
-      </aside>
     </div>
   );
 }
@@ -1471,7 +1209,7 @@ function LoginGate({ denied = false }: { denied?: boolean }) {
             <p className="mx-auto max-w-[300px] font-body text-[13.5px] leading-[20px] text-[#7a7a82]">
               {denied
                 ? "You're signed in, but this account isn't on the admin allowlist. Switch accounts, or ask for your email to be added to the Core admin allowlist."
-                : "Review miniapp releases, publish preinstalled registries, and manage internal operations."}
+                : "Review miniapp releases and manage internal operations."}
             </p>
 
             <div className="h-8" />
