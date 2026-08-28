@@ -395,7 +395,7 @@ function validateStarterKitEvidence(plan, starterKit, artifacts) {
     testflight.mentraosSourceCommit !== plan.sourceCommit ||
     testflight.starterKitReleaseCommit !== starterKit.starterKit?.releaseCommit ||
     testflight.app?.id !== "6792839366" ||
-    testflight.app?.bundleId !== "com.mentra.bluetoothsdk.example.reactnative" ||
+    testflight.app?.bundleId !== "com.mentra.bluetoothsdkexample" ||
     testflight.version?.marketingVersion !== plan.native.marketingVersion ||
     testflight.version?.buildNumber !== plan.native.buildNumber ||
     testflight.build?.processingState !== "VALID" ||

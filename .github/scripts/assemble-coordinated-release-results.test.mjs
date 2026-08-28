@@ -176,7 +176,7 @@ test("assembles every product target and finalizes one complete release manifest
     channel: plan.channel,
     mentraosSourceCommit: plan.sourceCommit,
     starterKitReleaseCommit: starterKit.starterKit.releaseCommit,
-    app: {id: "6792839366", bundleId: "com.mentra.bluetoothsdk.example.reactnative"},
+    app: {id: "6792839366", bundleId: "com.mentra.bluetoothsdkexample"},
     version: {marketingVersion: plan.native.marketingVersion, buildNumber: plan.native.buildNumber},
     build: {id: "build-1", processingState: "VALID", uploadStatus: "published"},
     group: {id: "group-1", name: "Mentra Staging"},

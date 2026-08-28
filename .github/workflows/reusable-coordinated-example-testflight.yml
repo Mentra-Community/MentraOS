@@ -28,7 +28,7 @@ env:
   GSTREAMER_VERSION: 1.28.2
   STARTER_KIT_REPOSITORY: Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit
   EXAMPLE_APP_ID: "6792839366"
-  EXAMPLE_BUNDLE_ID: com.mentra.bluetoothsdk.example.reactnative
+  EXAMPLE_BUNDLE_ID: com.mentra.bluetoothsdkexample
   APPLE_TEAM_ID: T5XXXL6N36
 
 jobs:
@@ -182,6 +182,7 @@ jobs:
           const file = "app.json"
           const config = JSON.parse(readFileSync(file, "utf8"))
           config.expo.version = process.env.MARKETING_VERSION
+          config.expo.ios.bundleIdentifier = process.env.EXAMPLE_BUNDLE_ID
           config.expo.ios.buildNumber = process.env.BUILD_NUMBER
           config.expo.ios.infoPlist.ITSAppUsesNonExemptEncryption = false
           writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`)
