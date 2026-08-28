@@ -79,6 +79,7 @@ jobs:
           echo "tag=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Setup Porter CLI
+        if: inputs.dry_run != true
         uses: porter-dev/setup-porter@v0.1.0
 
       - name: Validate Cloud V2 source and Porter configuration
@@ -86,25 +87,15 @@ jobs:
         working-directory: cloud-v2
         env:
           PORTER_APP_NAME: ${{ steps.target.outputs.porter_app }}
-          PORTER_CLUSTER: ${{ steps.target.outputs.porter_cluster }}
-          PORTER_DEPLOYMENT_TARGET_ID: ${{ steps.target.outputs.porter_deployment_target_id }}
-          PORTER_HOST: https://dashboard.porter.run
-          PORTER_PROJECT: ${{ steps.target.outputs.porter_project }}
-          PORTER_REPO_NAME: ${{ github.event.repository.name }}
-          PORTER_TAG: ${{ steps.source.outputs.tag }}
-          PORTER_TOKEN: ${{ secrets.PORTER_TOKEN }}
         run: |
           set -euo pipefail
           bun install --frozen-lockfile
           bun run typecheck
           config="${{ steps.target.outputs.porter_config }}"
-          porter apply \
-            -f "${config#cloud-v2/}" \
-            -x "${{ steps.target.outputs.porter_target }}" \
-            --cluster "$PORTER_CLUSTER" \
-            --project "$PORTER_PROJECT" \
-            --validate \
-            --dry-run
+          config="${config#cloud-v2/}"
+          [[ -s "$config" ]]
+          grep --fixed-strings --line-regexp "version: v2" "$config"
+          grep --fixed-strings --line-regexp "name: $PORTER_APP_NAME" "$config"
 
       - name: Deploy exact Cloud V2 source through Porter
         if: inputs.dry_run != true

@@ -103,6 +103,7 @@ test("Cloud V2 deploys once per coordinated environment before mobile publicatio
   assert.match(cloud, /porter kubectl -- get pods/)
   assert.match(cloud, /--status validated/)
   assert.match(cloud, /--status deployed/)
+  assert.doesNotMatch(cloud, /--validate|--dry-run/)
   assert.doesNotMatch(cloud, /DNS is not configured.*skipping/i)
 
   for (const legacyOwner of ["cloud-v2-dev.yml", "cloud-v2-staging.yml", "cloud-v2-prod.yml"]) {

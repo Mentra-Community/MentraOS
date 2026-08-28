@@ -211,9 +211,11 @@ digest with both service names. What matters is recording the observed immutable
 deployment, not assuming that a short Git tag proves what is running.
 
 For `dry_run: true`, the workflow validates the plan/environment mapping,
-installs dependencies, runs Cloud V2 type/build checks, and validates the Porter
-file without deploying. It emits a clearly distinct `validated` record and
-must not claim readiness or an observed digest.
+installs dependencies, runs Cloud V2 type checks, and verifies that the selected
+Porter file exists and names the guarded application without deploying. Porter
+does not expose a non-mutating `apply` validation mode, so dry runs must not
+invent unsupported `porter apply` flags. The workflow emits a clearly distinct
+`validated` record and must not claim readiness or an observed digest.
 
 ## Coordinator integration
 

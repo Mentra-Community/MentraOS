@@ -104,6 +104,9 @@ reusable workflow
       called-workflow output.
 - [x] For dry runs, emit `validated` evidence without a deployment ID/digest and
       never describe the environment as ready.
+- [x] Keep dry-run validation non-mutating: type-check Cloud V2 and verify the
+      guarded Porter file identity without passing unsupported validation flags
+      to `porter apply`.
 
 ---
 
