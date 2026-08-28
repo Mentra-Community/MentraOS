@@ -104,11 +104,7 @@ test("coordinated docs publish only after finalization to the matching channel",
   assert.match(starterKit, /select\(\.displayTitle == [^\n]+ and \.status != \\"completed\\"\)/)
   assert.match(starterKit, /encoded_candidate_branch=\$\(jq -rn[^\n]+'\$value \| @uri'\)/)
   assert.match(starterKit, /--json status,conclusion 2>\/dev\/null \|\| true/)
-  assert.match(starterKit, /gh api --method POST "repos\/\$STARTER_KIT_REPOSITORY\/pulls"/)
-  assert.match(starterKit, /pr_head=\$\(jq -r \.head\.sha <<< "\$pr_response"\)/)
-  assert.match(starterKit, /lookup_starter_pr\(\)[^]*repos\/\$STARTER_KIT_REPOSITORY\/pulls/)
-  assert.match(starterKit, /reconciled_pr=\$\(lookup_starter_pr/)
-  assert.match(starterKit, /Starter Kit PR head \$pr_head does not match candidate \$candidate_sha/)
+  assert.doesNotMatch(starterKit, /repos\/\$STARTER_KIT_REPOSITORY\/pulls/)
   assert.doesNotMatch(starterKit, /gh pr create/)
   assert.doesNotMatch(starterKit, /gh pr checks/)
   assert.doesNotMatch(starterKit, /gh pr merge/)
@@ -128,12 +124,12 @@ test("coordinated docs publish only after finalization to the matching channel",
   assert.doesNotMatch(starterKit, /STARTER_KIT_APP_PRIVATE_KEY:/)
   assert.match(starterKit, /permission-actions: read/)
   assert.match(starterKit, /permission-contents: write/)
-  assert.match(starterKit, /permission-pull-requests: write/)
+  assert.doesNotMatch(starterKit, /permission-pull-requests: write/)
   assert.match(starterKit, /permission-contents: read/)
   assert.match(starterKit, /permission-pull-requests: read/)
   assert.match(starterKit, /\[\[ "\$branch_sha" =~ \^\[0-9a-f\]\{40\}\$ \]\]/)
   assert.doesNotMatch(starterKit, /candidate_sha=\$\([^\n]+\n\s+--jq \.commit\.sha 2>\/dev\/null \|\| true\)/)
-  assert.match(starterKit, /lookup_starter_pr\(\)[^]*for attempt in \{1\.\.6\}[^]*jq -e 'type == "array"'/)
+  assert.doesNotMatch(starterKit, /lookup_starter_pr|repos\/\$STARTER_KIT_REPOSITORY\/pulls/)
   assert.match(
     starterKit,
     /STARTER_KIT_TOKEN: \$\{\{ steps\.starter-kit-request-token\.outputs\.token \|\| secrets\.STARTER_KIT_COORDINATOR_TOKEN/,
