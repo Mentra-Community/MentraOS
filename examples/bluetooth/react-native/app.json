@@ -5,6 +5,7 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
+    "icon": "./assets/app-icon.png",
     "splash": {
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
