@@ -21,8 +21,8 @@
     "web": "expo start --web"
   },
   "dependencies": {
-    "@mentra/bluetooth-sdk": "3.1.0-dev.69",
-    "@mentra/engine": "3.1.0-dev.69",
+    "@mentra/bluetooth-sdk": "3.1.0-dev.70",
+    "@mentra/engine": "3.1.0-dev.70",
     "@mentra/react-native-barcode-scanner": "file:modules/mentra-barcode-scanner",
     "@mentra/react-native-video-stream-receiver": "file:modules/mentra-video-stream-receiver",
     "expo": "~55.0.24",
