@@ -24,6 +24,7 @@ enum BleJsonCompact {
         "height": "h",
         "bitrate": "br",
         "fps": "f",
+        "captureAudio": "ca",
         "droppedFrames": "df",
         "duration": "du",
         "temperatureC": "tc",
