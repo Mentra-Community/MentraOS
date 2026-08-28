@@ -276,6 +276,18 @@ describe("PhoneStreamCoordinator", () => {
       expect("keepAliveIntervalSeconds" in arg).toBe(false)
     })
 
+    test("startManaged forwards captureAudio=false onto the BLE start_stream payload", async () => {
+      const coord = new PhoneStreamCoordinator({
+        hlsReadinessInitialDelayMs: 5,
+        hlsReadinessPollMs: 5,
+        cloudflareStatusPollMs: 1000,
+        keepAliveIntervalMs: 10_000,
+      })
+      await coord.startManaged("com.a", {ingest: "whip", captureAudio: false})
+      const arg = startExternallyManagedStream.mock.calls[0]![0] as {captureAudio?: boolean}
+      expect(arg.captureAudio).toBe(false)
+    })
+
     test("RTMP preference publishes to the RTMP ingest URL", async () => {
       const coord = new PhoneStreamCoordinator({
         hlsReadinessInitialDelayMs: 5,
