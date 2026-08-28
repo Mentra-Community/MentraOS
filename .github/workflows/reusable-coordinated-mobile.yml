@@ -212,7 +212,6 @@ jobs:
     env:
       EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY }}
       EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID }}
-      ORG_GRADLE_PROJECT_reactNativeArchitectures: armeabi-v7a,arm64-v8a,x86,x86_64
     steps:
       - uses: actions/checkout@v4
         with:
@@ -327,13 +326,14 @@ jobs:
             "repos/${GITHUB_REPOSITORY}/releases/assets/${{ needs.prepare.outputs.aab_asset_id }}" \
             > "mobile-release/android/${{ needs.prepare.outputs.aab_name }}"
 
-      - name: Verify Android native version and production signature
+      - name: Verify Android version, signature, and ABI contract
         env:
           EXPECTED_BUILD: ${{ needs.prepare.outputs.build_number }}
           EXPECTED_VERSION: ${{ needs.prepare.outputs.marketing_version }}
         run: |
           set -euo pipefail
           apk="mobile-release/android/${{ needs.prepare.outputs.apk_name }}"
+          aab="mobile-release/android/${{ needs.prepare.outputs.aab_name }}"
           apksigner=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner -perm -111 | sort | tail -1)
           aapt=$(find "$ANDROID_HOME/build-tools" -type f -name aapt -perm -111 | sort | tail -1)
           "$apksigner" verify --print-certs "$apk" > /tmp/mentra-mobile-certs.txt
@@ -351,6 +351,25 @@ jobs:
           fi
           if [[ "$version_name" != "$EXPECTED_VERSION" ]]; then
             echo "Android versionName ${version_name:-<missing>} does not match $EXPECTED_VERSION." >&2
+            exit 1
+          fi
+
+          apk_abis=$(unzip -Z1 "$apk" \
+            | sed -n 's#^lib/\([^/]*\)/.*\.so$#\1#p' \
+            | LC_ALL=C sort -u \
+            | paste -sd, -)
+          if [[ "$apk_abis" != "arm64-v8a" ]]; then
+            echo "GitHub APK ABIs '${apk_abis:-<none>}' do not match required arm64-v8a." >&2
+            exit 1
+          fi
+
+          aab_abis=$(unzip -Z1 "$aab" \
+            | sed -n 's#^[^/]*/lib/\([^/]*\)/.*\.so$#\1#p' \
+            | LC_ALL=C sort -u \
+            | paste -sd, -)
+          expected_aab_abis="arm64-v8a,armeabi-v7a,x86,x86_64"
+          if [[ "$aab_abis" != "$expected_aab_abis" ]]; then
+            echo "Google Play AAB ABIs '${aab_abis:-<none>}' do not match required $expected_aab_abis." >&2
             exit 1
           fi
 
