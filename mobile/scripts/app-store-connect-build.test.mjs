@@ -14,6 +14,7 @@ import {
   productionSubmissionStatus,
   setBetaBuildWhatsNew,
   submitBuildForBetaReview,
+  updateBetaAppReviewNotes,
   uploadExactBuild,
   waitForProductionSubmission,
   waitForProcessedBuild,
@@ -589,6 +590,17 @@ test("refuses to resubmit an existing rejected beta build", async () => {
     submitBuildForBetaReview(api, {buildId: "build-rejected"}),
     /build build-rejected was rejected; submit a later replacement build/,
   )
+})
+
+test("clears stale beta review notes when given an empty value", async () => {
+  const api = client([
+    {data: {type: "betaAppReviewDetails", id: "detail-1", attributes: {notes: "Previous fix details"}}},
+    {data: {type: "betaAppReviewDetails", id: "detail-1", attributes: {notes: ""}}},
+  ])
+  const result = await updateBetaAppReviewNotes(api, {appId: "app-1", notes: ""})
+  assert.equal(result.reused, false)
+  assert.equal(api.calls[1].options.method, "PATCH")
+  assert.equal(JSON.parse(api.calls[1].options.body).data.attributes.notes, "")
 })
 
 test("promotes only an approved build to a public production group", async () => {

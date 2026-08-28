@@ -605,6 +605,7 @@ jobs:
           --audience "${{ inputs.testflight_audience }}"
           --install-url "${{ needs.preflight.outputs.install_url }}"
           --allow-rejected-override false
+          --review-notes ""
           --whats-new "Coordinated example release ${{ steps.coordinates.outputs.release_identity }}."
 
       - name: Write example TestFlight publication result

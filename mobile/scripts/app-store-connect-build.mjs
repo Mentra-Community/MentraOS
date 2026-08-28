@@ -702,7 +702,9 @@ async function main() {
         )
       }
       installUrl = readiness.installUrl
-      if (args["review-notes"]) await updateBetaAppReviewNotes(client, {appId: app.id, notes: args["review-notes"]})
+      if (Object.hasOwn(args, "review-notes")) {
+        await updateBetaAppReviewNotes(client, {appId: app.id, notes: args["review-notes"]})
+      }
     }
     const result = await assignBuildToGroup(client, {
       appId: app.id,
