@@ -164,6 +164,20 @@ jobs:
           cp .env.example .env
           bun expo prebuild --platform android
 
+      - name: Install Android NDK with transient-download retries
+        run: |
+          set -euo pipefail
+          for attempt in {1..3}; do
+            if sdkmanager "ndk;27.1.12297006"; then
+              exit 0
+            fi
+            if (( attempt == 3 )); then
+              exit 1
+            fi
+            echo "::warning::Android NDK download failed; retrying ($attempt/3)."
+            sleep 10
+          done
+
       - name: Inspect public Maven state
         id: existing
         env:
