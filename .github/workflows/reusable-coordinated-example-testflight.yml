@@ -93,7 +93,7 @@ jobs:
       - name: Check for an unresolved external review
         id: preflight
         env:
-          INTERNAL_INSTALL_URL: https://appstoreconnect.apple.com/teams/52733bd2-726b-4742-b1e2-1cfc0174c696/apps/6792839366/testflight/groups/{groupId}
+          INTERNAL_INSTALL_URL: https://appstoreconnect.apple.com/apps/6792839366/testflight/groups/{groupId}
         run: >-
           node mobile/scripts/app-store-connect-build.mjs testflight-preflight
           --issuer-id "${{ secrets.ASC_API_ISSUER_ID }}"
