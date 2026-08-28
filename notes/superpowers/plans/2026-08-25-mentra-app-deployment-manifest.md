@@ -311,7 +311,8 @@ releases.
 
 ## Phase 5: Self-hosted service packaging and qualification
 
-**Files:** Cloud V2 deployment charts/scripts, customer runbook, end-to-end tests
+**Files:** Cloud V2 deployment charts/scripts, Mentra Azure reference
+environment, customer runbook, end-to-end tests
 
 - [ ] Package the exact Core and Runtime service subset used by the official app.
 - [ ] Keep Core in the first self-hosted deployment as the customer-hosted
@@ -322,10 +323,20 @@ releases.
       Support a server-held client secret for the first controlled pilot and
       design the credential reference so certificate credentials can be added
       without changing the manifest.
-- [ ] Qualify against a non-production registration in Mentra's Microsoft Entra
-      tenant and an isolated customer-style Core deployment. Test assigned,
-      unassigned, wrong-tenant, MFA, disabled-user, expired-credential,
-      callback-tampering, refresh, reauthentication, and logout cases.
+- [ ] Create the v1 reference Self-Hosted deployment in Mentra's Azure account.
+      Deploy isolated customer-style Core and Runtime services with their own
+      configuration, secrets, databases, workspace URL, OTA/model artifacts,
+      and approved speech-provider configuration. Do not use Mentra's public
+      Core or Runtime as a hidden dependency.
+- [ ] Connect the Azure reference deployment to a non-production single-tenant
+      app registration and dedicated assigned test group in Mentra's Microsoft
+      Entra tenant.
+- [ ] Use the official Android and iOS Mentra App binaries to select the Azure
+      workspace through the normal manual or MDM flow and complete login,
+      Runtime, miniapp, OTA, and speech scenarios end to end.
+- [ ] Test assigned, unassigned, wrong-tenant, MFA, disabled-user,
+      expired-credential, callback-tampering, refresh, reauthentication, and
+      logout cases against that reference deployment.
 - [ ] Verify just-in-time user creation, disabled-user behavior, session expiry,
       and reauthentication without creating a second employee password store.
 - [ ] Configure customer-approved STT/TTS providers in customer-hosted Runtime.

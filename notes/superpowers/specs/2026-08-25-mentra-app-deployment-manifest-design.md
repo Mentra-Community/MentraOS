@@ -290,13 +290,31 @@ authentication, MFA, Conditional Access, account disablement, and group/user
 assignment. Core is responsible for mapping an accepted Entra identity to the
 customer's MentraOS tenant and issuing the session used by Runtime.
 
-Mentra will qualify this first using a non-production app registration in its
-own Microsoft Entra tenant, a dedicated assigned test group, and an isolated
-customer-style Core deployment. The test matrix includes assigned and
-unassigned users, wrong-tenant users, MFA, disabled users, expired credentials,
-callback tampering, session refresh, and logout. The customer-facing Microsoft
-Entra setup guide is written from that proven setup before another provider is
-claimed as supported.
+### Mentra reference Self-Hosted deployment
+
+The v1 acceptance environment is a real internal Mentra Enterprise Self-Hosted
+deployment in Mentra's Azure account, using Mentra's Microsoft Entra tenant. It
+must use the same deployment package and official Mentra App binaries intended
+for customers, not mocks or Mentra's public Core and Runtime.
+
+The reference environment includes:
+
+- Isolated customer-style Core and Runtime services in Azure, with their own
+  deployment configuration, secrets, databases, and workspace URL.
+- A non-production single-tenant app registration in Mentra's Entra tenant and a
+  dedicated assigned test group.
+- The well-known deployment manifest, customer-hosted OTA and model artifacts,
+  and an explicitly approved speech-provider configuration.
+- Android and iOS devices running the official Mentra App and selecting the
+  Azure environment through the normal workspace or MDM flow.
+- Restricted-network validation proving that the Self-Hosted profile does not
+  use Mentra's public Core, Runtime, telemetry, artifact, or content services.
+
+The identity test matrix includes assigned and unassigned users, wrong-tenant
+users, MFA, disabled users, expired credentials, callback tampering, session
+refresh, reauthentication, and logout. A customer-facing Microsoft Entra setup
+guide is written from this proven deployment before another provider is claimed
+as supported.
 
 The guide should link directly to Microsoft's documentation for
 [registering an application](https://learn.microsoft.com/en-us/entra/identity-platform/quickstart-register-app),
@@ -336,18 +354,21 @@ supported until separately tested and documented. PKCE protects the short-lived
 browser-to-app handoff; it is not another login option.
 
 The customer IT administrator does not implement a login screen or give
-credentials to Mentra. The current implementation hard-codes Google and Apple
-and delegates them to GoTrue, so direct Microsoft Entra OIDC requires
-implementation work rather than a schema toggle. The existing browser PKCE
-handoff, trusted-issuer verification, external-token exchange, and Core session
-model remain reusable.
+credentials to Mentra. Direct Microsoft Entra OIDC is mandatory v1
+implementation work, not a later option. The current consumer route accepts only
+Google and Apple provider identifiers and exchanges their callbacks through
+GoTrue, so a manifest value cannot turn on Entra by itself. V1 adds the direct
+OIDC discovery, authorization, callback, token-validation, and identity-mapping
+code on customer-hosted Core. The existing browser PKCE handoff,
+trusted-issuer verification, external-token exchange, and Core session model
+remain reusable.
 
 In a customer-hosted deployment, the workspace ingress, Core, Runtime, and
 resulting MentraOS session are customer-controlled. Microsoft hosts the Entra
-identity endpoint, but it operates against the customer's tenant and policy. Mentra's
-public Core, Runtime, directory, and Supabase are not in this authentication
-path. Neither the workspace manifest nor Mentra infrastructure receives the
-user's corporate credential.
+identity endpoint, but it operates against the customer's tenant and policy.
+Mentra's public Core, Runtime, directory, and Supabase are not in this
+authentication path. Neither the workspace manifest nor Mentra infrastructure
+receives the user's corporate credential.
 
 MDM can make workspace selection invisible, but does not make login silent
 unless the managed environment separately supplies a device identity,
