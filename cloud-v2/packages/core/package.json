@@ -10,17 +10,12 @@
   },
   "dependencies": {
     "@mentra/cloud-shared": "workspace:*",
+    "@mentra/developer-auth": "workspace:*",
     "@workos-inc/node": "^10.3.0",
     "hono": "^4.11.1",
     "jose": "^5.9.6",
-    "jszip": "^3.10.1",
     "mongoose": "^8.8.4",
-    "semver": "^7.7.4",
     "ulid": "^3.0.2",
     "zod": "^3.24.1"
-  },
-  "devDependencies": {
-    "@mentra/miniapp-cli": "file:../../../sdk/miniapp-cli",
-    "@types/semver": "^7.7.1"
   }
 }

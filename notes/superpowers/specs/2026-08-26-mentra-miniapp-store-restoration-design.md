@@ -8,10 +8,12 @@ owner: Mentra
 ## Outcome
 
 MentraOS has a backend-neutral miniapp distribution system in which the Mentra
-Miniapp Store is itself a bundled Mentra miniapp. Cloud Core owns Mentra's
-catalog, publishing, review, tracks, and access control. The Mentra App owns the
-privileged installation boundary. The Mentra Miniapp SDK exposes that host
-capability only to build-trusted SYSTEM Store miniapps.
+Miniapp Store is itself a bundled Mentra miniapp with an independently
+deployable Store backend. Cloud Core remains the identity issuer and broker;
+the Store backend owns catalog, publishing, review, tracks, access control, and
+artifacts. The Mentra App owns the privileged installation boundary. The Mentra
+Miniapp SDK exposes that host capability only to build-trusted SYSTEM Store
+miniapps.
 
 This structure supports Mentra's Store today without making Mentra's backend a
 permanent requirement for installation. An OEM build may bundle its own Store,
@@ -32,7 +34,7 @@ The implementation checklist and verification record are maintained in
 
 This design includes:
 
-- A Cloud Core catalog and immutable release-publication model.
+- An independent Store backend and immutable release-publication model.
 - Canonical ZIP ingestion, validation, storage, and protected distribution.
 - Stable and beta release tracks.
 - Public and per-user private miniapp distribution.
@@ -59,10 +61,11 @@ responsibilities.
 ```mermaid
 flowchart LR
   Developer[Developer project] --> CLI[mentra CLI]
-  CLI --> Core[Cloud Core]
-  Console[Developer Console] --> Core
-  Admin[Admin Console] --> Core
-  Core --> Catalog[Catalog, releases, assets, access]
+  CLI --> StoreBackend[Store backend]
+  Console[Developer Console] --> StoreBackend
+  Admin[Admin Console] --> StoreBackend
+  Core[Cloud Core identity] -->|JWT / JWKS| StoreBackend
+  StoreBackend --> Catalog[Catalog, releases, assets, access]
   Store[Store miniapp] --> Catalog
   Store --> SDK[Mentra Miniapp SDK]
   AI[Mentra AI] --> Actions[Miniapp actions broker]
@@ -76,7 +79,8 @@ flowchart LR
 
 | Component          | Responsibility                                                                                                                                                                           |
 | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Cloud Core         | Publisher identity, organizations, releases, canonical manifests, Store listings, tracks, review, publication, invitations, enrollments, assets, and download authorization.             |
+| Cloud Core         | Mentra account/OEM identity, token exchange, miniapp-scoped token issuance, stable Mentra user identifiers, and public signing-key discovery.                                            |
+| Store backend      | Developer organizations, API keys, packages, releases, canonical manifests, Store listings, tracks, review, publication, invitations, enrollments, assets, and download authorization.   |
 | Developer Console  | Human-facing management of organizations, API keys, listings, artwork, releases, distribution visibility, beta access, invitations, and review feedback.                                 |
 | Admin Console      | Review of public submissions, canonical permissions and requirements, artwork, moderation fields, acceptance, rejection, and publication.                                                |
 | `mentra` CLI       | Browser/API-key authentication, organization selection, package reservation, local signing, canonical packing and validation, upload, submission, and status inspection.                 |
@@ -85,7 +89,35 @@ flowchart LR
 | Mentra App host    | Build trust, SYSTEM identity, Store ownership, downloads, ZIP validation, compatibility enforcement, extraction, atomic activation, rollback, garbage collection, and running lifecycle. |
 | Cloud Runtime      | Runs cloud-connected miniapp sessions. It does not own Store catalog or release distribution state.                                                                                      |
 
-## Core design principles
+### Service and authentication boundaries
+
+The official service runs from `cloud-v2/packages/store` on its own public
+origin and process. It may initially share the Cloud V2 Mongo deployment and
+object-storage credentials, but it owns its collections and behavior. Core no
+longer mounts public Store, Console, release, catalog, bundle, or Store-admin
+routes.
+
+- The Store miniapp uses the normal Mentra miniapp authentication flow. Core
+  issues an audience-pinned miniapp token; Store verifies it against Core's
+  public JWKS contract.
+- Mentra App host calls use the normal Core access token. Store verifies the
+  public signature and claims without importing Core implementation code.
+- Developer Console and CLI users authenticate directly to Store through a
+  thin shared WorkOS adapter or a Store-owned organization API key. Publisher
+  organizations and API keys are Store data, not Core identity data.
+- A narrow authenticated service bridge resolves verified account emails to
+  opaque Mentra user IDs for invitations. Store admin report/support views
+  proxy to Core through the same service-authenticated boundary because those
+  records remain Core-owned.
+- Core calls Store only to verify developer-mode publisher attestations before
+  minting a miniapp token. This does not give Core ownership of developer keys.
+
+The official endpoints are independently configurable (`MENTRA_CORE_URL` and
+`MENTRA_STORE_URL`). `@mentra/cloud-client` exposes them as `cloud.core` and
+`cloud.store`. OEM or self-hosted deployments may point the same host contract
+at their own identity issuer and Store implementation.
+
+## Design principles
 
 1. **The Store is a miniapp.** Its UI and background controller use the same
    two-layer SDK architecture as other Mentra miniapps.
@@ -106,8 +138,10 @@ flowchart LR
 9. **Maintenance need not become visible activity.** Transient actions may run
    a miniapp context without placing it in the running tray.
 10. **Publisher identity travels with the artifact.** Every production ZIP is
-    developer-signed; Core and the host independently verify the same embedded
+    developer-signed; Store and the host independently verify the same embedded
     identity, and updates must retain it.
+11. **Identity and distribution are separate services.** Store trusts
+    versioned Core JWT/JWKS contracts; Store data and policy do not live in Core.
 
 ## Identity and trust model
 
@@ -162,16 +196,16 @@ The first release authorizes an install using:
 - The canonical manifest found inside the ZIP.
 - The developer's Ed25519 publisher signature embedded in that ZIP.
 
-The first valid, durably stored Core release upload atomically binds the package
+The first valid, durably stored Store release upload atomically binds the package
 record to the derived publisher-key fingerprint. The first authorized non-SYSTEM install
-binds that package on the device. Every later Core release and host update must
+binds that package on the device. Every later Store release and host update must
 match the established fingerprint. Bundled SYSTEM packages are stricter: the
 build-generated catalog pins their expected publisher fingerprints, so neither
 a new Store install nor a legacy device record can choose their identity.
 
 Publisher identity and Store provenance are separate. The publisher signature
 answers who produced the bytes; build trust and `storeOwnerPackageName` answer
-which Store may manage them. Core does not sign miniapps or installation
+which Store may manage them. Neither Core nor Store signs miniapps or installation
 descriptors in v1.
 
 ## Canonical release artifact
@@ -184,7 +218,7 @@ signature over that payload. The file index covers every non-directory archive
 entry except the signature itself. The final ZIP SHA-256 separately protects
 transport without creating a circular embedded hash.
 
-Core reads and verifies the archive during upload and binds the release record
+Store reads and verifies the archive during upload and binds the release record
 to the actual ZIP. Developers do not separately type compatibility or identity
 metadata into the Store. Removing the signature or changing the manifest,
 executable code, or assets invalidates the production artifact.
@@ -201,7 +235,7 @@ The canonical release record includes:
 - Hardware requirements and permissions.
 - Review, publication, and active-release state.
 
-Core and the host reject malformed archives, unsafe paths, symbolic links,
+Store and the host reject malformed archives, unsafe paths, symbolic links,
 duplicate or nested manifests, CRC failures, excessive entry counts, oversized
 downloads or manifests, missing entry files, identity mismatches, and
 decompression abuse.
@@ -235,8 +269,8 @@ The normal workflow is:
 6. Build and publish from the project using `mentra publish`, selecting
    `stable` or `beta` and optionally leaving the release as a draft.
 7. `pack` creates the final signed ZIP; `publish` verifies and uploads that
-   exact artifact without detached or Core-side signing.
-8. Core validates the ZIP, manifest, signature, package ownership, version, and
+   exact artifact without detached or server-side signing.
+8. Store validates the ZIP, manifest, signature, package ownership, version, and
    track before storing the draft release.
 9. Open the package in the Developer Console to edit its Store listing,
    artwork, visibility, beta policy, and invitations.
@@ -323,7 +357,7 @@ automatic deployment, or a special runtime mode.
 ### Beta tracks
 
 Beta is release selection, not Cloud deployment environment. Development,
-staging, and production Core deployments may each contain both stable and beta
+staging, and production Store deployments may each contain both stable and beta
 releases.
 
 - Stable is the default selected track.
@@ -342,7 +376,7 @@ releases.
 
 ## Catalog and protected assets
 
-Core exposes catalog browse, search, category, pagination, detail, artwork, track
+Store exposes catalog browse, search, category, pagination, detail, artwork, track
 selection, and bundle routes. Catalog results include the selected release,
 available tracks, access state, installation metadata, manifest-derived
 permissions and compatibility requirements, and moderated listing fields.
@@ -353,7 +387,7 @@ details, artwork, and bundle authorization use the same selected-track and
 access rules.
 
 Bundle bytes use an authenticated Store distribution route. On every request,
-Core resolves the asset back to:
+Store resolves the asset back to:
 
 - The exact active app and current active release for the selected track.
 - Published release state.
@@ -400,9 +434,9 @@ manifest. An install transaction is:
 1. Verify the connected caller is a build-trusted SYSTEM Store.
 2. Enforce Store provenance and SYSTEM update ownership.
 3. Reject Store self-replacement and unauthorized downgrade/replacement.
-4. Validate the trusted Core origin and URL policy.
-5. Download through a bounded stream with a fresh host-owned Core credential
-   when the URL belongs to the configured Core.
+4. Validate the configured, host-trusted Store origin and URL policy.
+5. Download through a bounded stream with a fresh host-owned Core identity
+   credential when the URL belongs to the configured Store.
 6. Reject credential-bearing redirects and never expose the Core token to the
    Store miniapp.
 7. Verify SHA-256, archive limits, package, and version.
@@ -575,7 +609,7 @@ With preview disabled, the host:
 The privileged host APIs remain independently protected by build trust. Hiding
 the Store is a rollout decision, not the security boundary.
 
-Core, Console, and CLI deploy through the normal `dev` to `staging` to `main`
+Store backend, Core, Console, and CLI deploy through the normal `dev` to `staging` to `main`
 promotion flow. Enabling the UI and seeding catalog inventory are separate
 launch operations.
 
@@ -594,8 +628,8 @@ The host applies the same package, URL, hash, archive, manifest, compatibility,
 and provenance checks to every Store. A Store may update only its own
 non-SYSTEM installs and the SYSTEM packages assigned to it by the build.
 
-A fully self-hosted OEM Core may implement the Mentra catalog contract, but the
-host does not require it to be Cloud Core specifically.
+A fully self-hosted OEM may deploy the same Store contract next to its identity
+service, but the host does not require Mentra's Store backend or Cloud Core.
 
 ## Failure and recovery behavior
 
@@ -623,7 +657,7 @@ The implementation is acceptable when:
 4. Only a build-trusted Store can reach install/uninstall host mutations.
 5. Cross-Store adoption and unauthorized SYSTEM replacement fail.
 6. The host validates the canonical ZIP and compatibility before activation.
-7. Core and the host reject unsigned, tampered, or differently signed package
+7. Store and the host reject unsigned, tampered, or differently signed package
    replacements, including Store-delivered SYSTEM updates.
 8. Compatible owned updates apply automatically; incompatible updates defer.
 9. Transient Store work never appears in the running tray and promotes cleanly
@@ -632,7 +666,7 @@ The implementation is acceptable when:
 11. Failed updates roll back without losing the prior runnable release or its
     publisher identity.
 
-Automated verification covers Core release/catalog integration, real Store
+Automated verification covers Store release/catalog integration, real Core-to-Store
 token boundaries, CLI authentication and bundle validation, Console/admin/Store
 production builds, Store controller and UI models, actions, transient lifecycle,
 SYSTEM/provenance policy, ZIP abuse cases, compatibility, rollback, garbage

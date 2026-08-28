@@ -10,10 +10,10 @@
  *   SEED_ENV=dev KAWAII_BUNDLE=../miniapps/kawaii/build/com.mentra.kawaii-0.1.0.zip \
  *     doppler run --project cloud-v2 --config dev -- bun scripts/seed-kawaii-preinstall.ts
  */
-import {connectMongo, disconnectMongo} from "../packages/core/src/connections/mongo.connection"
-import {MiniAppReleaseModel} from "../packages/core/src/models/miniapp-release.model"
-import {MiniAppService} from "../packages/core/src/services/miniapps/miniapp.service"
-import {PreinstalledRegistryService} from "../packages/core/src/services/miniapps/preinstalled-registry.service"
+import {connectMongo, disconnectMongo} from "../packages/store/src/connections/mongo.connection"
+import {MiniAppReleaseModel} from "../packages/store/src/models/miniapp-release.model"
+import {MiniAppService} from "../packages/store/src/services/miniapps/miniapp.service"
+import {PreinstalledRegistryService} from "../packages/store/src/services/miniapps/preinstalled-registry.service"
 
 const PACKAGE_NAME = "com.mentra.kawaii"
 const DISPLAY_NAME = "Kawaii"

@@ -95,18 +95,18 @@ export class CloudClient {
 ```ts
 export interface CloudClientConfig {
   endpoints:
-    | { core: string; runtime: string; proxy?: string }   // Core + Runtime
-    | { runtime: string; proxy?: string }                 // Runtime-only
+    | {core: string; runtime: string; proxy?: string} // Core + Runtime
+    | {runtime: string; proxy?: string} // Runtime-only
   auth: AuthConfig
   transports: CloudClientTransports
   logger?: Logger
-  reconnect?: { baseMs: number; maxMs: number; jitter: boolean }
+  reconnect?: {baseMs: number; maxMs: number; jitter: boolean}
 }
 export type CoreBackedAuthConfig =
-  | { subjectToken: string; subjectTokenType: SubjectTokenType }
-  | { getSubjectToken: () => Promise<{ token: string; type: SubjectTokenType }> }
-  | { accessToken: string; refreshToken: string }
-export type RuntimeAuthConfig = { getToken: () => Promise<string> }
+  | {subjectToken: string; subjectTokenType: SubjectTokenType}
+  | {getSubjectToken: () => Promise<{token: string; type: SubjectTokenType}>}
+  | {accessToken: string; refreshToken: string}
+export type RuntimeAuthConfig = {getToken: () => Promise<string>}
 export type AuthConfig = {
   runtime: RuntimeAuthConfig
   core?: CoreBackedAuthConfig
@@ -123,7 +123,7 @@ export interface WebSocketLike {
   close(): void
   onOpen(cb: () => void): void
   onMessage(cb: (data: string) => void): void
-  onClose(cb: (info: { code: number; reason: string }) => void): void
+  onClose(cb: (info: {code: number; reason: string}) => void): void
   onError(cb: (err: unknown) => void): void
 }
 export interface UdpSocketLike {
@@ -152,10 +152,13 @@ export interface HttpClient {
   post<T>(path: string, body?: unknown, opts?: ReqOpts): Promise<T>
   put<T>(path: string, body: unknown, opts?: ReqOpts): Promise<T>
 }
-export interface ReqOpts { bearer?: string; idempotent?: boolean }  // bearer overrides the default
+export interface ReqOpts {
+  bearer?: string
+  idempotent?: boolean
+} // bearer overrides the default
 export function createHttpClient(deps: {
   baseUrl: string
-  getToken?: () => Promise<string>   // default Bearer source (cloud.auth)
+  getToken?: () => Promise<string> // default Bearer source (cloud.auth)
   logger: Logger
 }): HttpClient
 ```
@@ -164,11 +167,11 @@ export function createHttpClient(deps: {
 
 ```ts
 export class Auth implements AuthModule {
-  constructor(deps: { http: HttpClient; store: TokenStore; config: AuthConfig; logger: Logger })
-  getRuntimeToken(): Promise<string>                                  // cloud-runtime audience
-  getCoreToken(): Promise<string>                                     // cloud-core audience
-  getMiniappToken(packageName: string): Promise<{ token: string; expiresAt: number }>
-  get identity(): { mentraUserId: string; tenantId: string }
+  constructor(deps: {http: HttpClient; store: TokenStore; config: AuthConfig; logger: Logger})
+  getRuntimeToken(): Promise<string> // cloud-runtime audience
+  getCoreToken(): Promise<string> // cloud-core audience
+  getMiniappToken(packageName: string): Promise<{token: string; expiresAt: number}>
+  get identity(): {mentraUserId: string; tenantId: string}
   onExpired(handler: () => void): () => void
 }
 ```
@@ -182,11 +185,11 @@ token. The runtime module does not know which path supplied the token.
 
 ```ts
 export class TokenStore {
-  constructor(deps: { storage: KeyValueStore })
-  current(): { accessToken: string; exp: number } | null            // in-memory
-  save(tokens: { accessToken: string; refreshToken: string }): Promise<void>  // persists refresh
+  constructor(deps: {storage: KeyValueStore})
+  current(): {accessToken: string; exp: number} | null // in-memory
+  save(tokens: {accessToken: string; refreshToken: string}): Promise<void> // persists refresh
   refreshToken(): Promise<string | null>
-  singleFlight<T>(key: string, fn: () => Promise<T>): Promise<T>     // de-dupes concurrent refresh/mint
+  singleFlight<T>(key: string, fn: () => Promise<T>): Promise<T> // de-dupes concurrent refresh/mint
 }
 ```
 
@@ -195,7 +198,10 @@ cloud verifies).
 
 ```ts
 export function decodeClaims(jwt: string): {
-  sub: string; tenantId: string; exp: number; [k: string]: unknown
+  sub: string
+  tenantId: string
+  exp: number
+  [k: string]: unknown
 }
 ```
 
@@ -205,19 +211,23 @@ export function decodeClaims(jwt: string): {
 ```ts
 export class Runtime implements RuntimeModule {
   constructor(deps: {
-    connection: Connection; emitter: RuntimeEmitter;
-    subscriptions: Subscriptions; camera: Camera; audio: UdpAudio; logger: Logger
+    connection: Connection
+    emitter: RuntimeEmitter
+    subscriptions: Subscriptions
+    camera: Camera
+    audio: UdpAudio
+    logger: Logger
   })
   connect(): Promise<void>
   close(): void
   setSubscriptions(subs: AudioSubscription[]): Promise<void>
   onTranscript(cb: (d: TranscriptionData) => void): () => void
   onTranslation(cb: (d: TranslationData) => void): () => void
-  requestManagedPhoto(opts: PhotoOptions): Promise<{ requestId: string; readUrl: string }>
+  requestManagedPhoto(opts: PhotoOptions): Promise<{requestId: string; readUrl: string}>
   startManagedStream(opts: StreamOptions): Promise<ManagedStream>
   stopManagedStream(streamId: string): Promise<void>
   onConnected(cb: () => void): () => void
-  onDisconnected(cb: (info: { reason: string }) => void): () => void
+  onDisconnected(cb: (info: {reason: string}) => void): () => void
   onError(cb: (err: ProtocolError) => void): () => void
   on<K extends keyof RuntimeEvents>(event: K, cb: (d: RuntimeEvents[K]) => void): () => void
   off<K extends keyof RuntimeEvents>(event: K, cb: (d: RuntimeEvents[K]) => void): void
@@ -232,16 +242,19 @@ raw socket.
 ```ts
 export class Connection {
   constructor(deps: {
-    ws: (url: string) => WebSocketLike; url: string
-    getToken: () => Promise<string>; initPayload: () => ConnectionInit
-    reconnect: { baseMs: number; maxMs: number; jitter: boolean }; logger: Logger
+    ws: (url: string) => WebSocketLike
+    url: string
+    getToken: () => Promise<string>
+    initPayload: () => ConnectionInit
+    reconnect: {baseMs: number; maxMs: number; jitter: boolean}
+    logger: Logger
   })
-  open(): Promise<ConnectionAck>                              // connect + init + await ack
+  open(): Promise<ConnectionAck> // connect + init + await ack
   close(): void
   send(msg: ClientToCloudMessage): void
-  onMessage(cb: (msg: CloudToClientMessage) => void): void    // already validated by the protocol types
+  onMessage(cb: (msg: CloudToClientMessage) => void): void // already validated by the protocol types
   onState(cb: (s: "connecting" | "open" | "closed") => void): void
-  get ack(): ConnectionAck | null                            // sessionId, audio config
+  get ack(): ConnectionAck | null // sessionId, audio config
 }
 ```
 
@@ -253,7 +266,7 @@ export interface RuntimeEvents {
   transcript: TranscriptionData
   translation: TranslationData
   connected: void
-  disconnected: { reason: string }
+  disconnected: {reason: string}
   error: ProtocolError
 }
 export class RuntimeEmitter {
@@ -269,9 +282,9 @@ counter, plus the re-send on reconnect.
 
 ```ts
 export class Subscriptions {
-  constructor(deps: { http: HttpClient })
-  set(subs: AudioSubscription[], sessionId: string): Promise<void>   // PUT, bumps version
-  resend(sessionId: string): Promise<void>                           // re-PUT the current set
+  constructor(deps: {http: HttpClient})
+  set(subs: AudioSubscription[], sessionId: string): Promise<void> // PUT, bumps version
+  resend(sessionId: string): Promise<void> // re-PUT the current set
 }
 ```
 
@@ -280,11 +293,11 @@ features: send a REST request, then resolve when the matching push arrives.
 
 ```ts
 export class Camera {
-  constructor(deps: { http: HttpClient })
-  requestPhoto(opts: PhotoOptions): Promise<{ requestId: string; readUrl: string }>
+  constructor(deps: {http: HttpClient})
+  requestPhoto(opts: PhotoOptions): Promise<{requestId: string; readUrl: string}>
   startStream(opts: StreamOptions): Promise<ManagedStream>
   stopStream(streamId: string): Promise<void>
-  handlePush(msg: CloudToClientMessage): void   // resolves/rejects a pending request by requestId
+  handlePush(msg: CloudToClientMessage): void // resolves/rejects a pending request by requestId
 }
 ```
 
@@ -293,9 +306,9 @@ send through the injected socket.
 
 ```ts
 export class UdpAudio {
-  constructor(deps: { udp: () => UdpSocketLike })
-  configure(audio: NonNullable<ConnectionAck["audio"]>): void   // sessionTag, host/port, key
-  sendFrame(lc3: Uint8Array): void                              // secretbox + frame + udp.send
+  constructor(deps: {udp: () => UdpSocketLike})
+  configure(audio: NonNullable<ConnectionAck["audio"]>): void // sessionTag, host/port, key
+  sendFrame(lc3: Uint8Array): void // secretbox + frame + udp.send
   close(): void
 }
 ```
@@ -304,12 +317,19 @@ export class UdpAudio {
 
 ```ts
 export class Core implements CoreModule {
-  constructor(deps: { http: HttpClient })
-  miniapps: {
-    list(): Promise<MiniappListing[]>
-    getBundle(packageName: string, version?: string):
-      Promise<{ downloadUrl: string; version: string; manifest: MiniappManifest }>
-  }
+  constructor(deps: {http: HttpClient})
+  reports: ReportModule
+  supportProfile: SupportProfileModule
+}
+
+export class Store implements StoreModule {
+  constructor(http: HttpClient)
+  list(): Promise<MiniappListing[]>
+  getBundle(
+    packageName: string,
+    version?: string,
+  ): Promise<{downloadUrl: string; version: string; manifest: MiniappManifest}>
+  getPreinstalledRegistry(): Promise<PreinstalledMiniappRegistry>
 }
 ```
 
@@ -325,7 +345,10 @@ export interface Logger {
 export const noopLogger: Logger
 
 export class CloudClientError extends Error {}
-export class HttpError extends CloudClientError { status!: number; code?: string }
+export class HttpError extends CloudClientError {
+  status!: number
+  code?: string
+}
 export class AuthExpiredError extends CloudClientError {}
 ```
 
@@ -335,11 +358,11 @@ pre-wired with them, so the caller just passes `{ endpoints, auth }`.
 
 ```ts
 // node/index.ts
-import { CloudClient as Base, CloudClientConfig } from "@mentra/cloud-client"
-import { nodeTransports } from "./transports"
+import {CloudClient as Base, CloudClientConfig} from "@mentra/cloud-client"
+import {nodeTransports} from "./transports"
 export class CloudClient extends Base {
   constructor(config: Omit<CloudClientConfig, "transports">) {
-    super({ ...config, transports: nodeTransports() })
+    super({...config, transports: nodeTransports()})
   }
 }
 ```
@@ -349,11 +372,11 @@ export class CloudClient extends Base {
 Three things differ between a phone and a server, so the core takes them as inputs
 instead of importing them (the types are in [`spec.md`](./spec.md#construction)):
 
-| Input | What it is | On the phone | On a server |
-| --- | --- | --- | --- |
-| `ws` | opens a WebSocket and sends/receives text | the RN WebSocket (or nitro-websockets later) | the `ws` package |
-| `udp` | sends and receives UDP packets | a native socket | Node `dgram` |
-| `storage` | a tiny key/value store for tokens | the OS secure store | memory or a temp file |
+| Input     | What it is                                | On the phone                                 | On a server           |
+| --------- | ----------------------------------------- | -------------------------------------------- | --------------------- |
+| `ws`      | opens a WebSocket and sends/receives text | the RN WebSocket (or nitro-websockets later) | the `ws` package      |
+| `udp`     | sends and receives UDP packets            | a native socket                              | Node `dgram`          |
+| `storage` | a tiny key/value store for tokens         | the OS secure store                          | memory or a temp file |
 
 REST is the exception: there's no platform input for it, because `fetch` exists on
 both a phone and a modern server. The core calls `fetch` directly.
@@ -500,13 +523,12 @@ never reaches Redis/Soniox. Client-side fallback still needs active transport
 selection: detect missing UDP progress, switch `audioTransport` to `ws`, and send the
 same audio frames over the live WebSocket as the last-resort cloud path.
 
-## `cloud.core`
+## `cloud.core` and `cloud.store`
 
-The simplest module: stateless REST calls, each with the Core token from
-`cloud.auth.getCoreToken()`. No connection, no session state, so any pod serves it.
-`miniapps.list()` and `miniapps.getBundle()` are `GET`s that return typed results. It
-grows as miniapp-service is specced. In runtime-only mode this module is absent or
-throws `CoreNotConfiguredError`, depending on the final API decision in issue 007.
+The simplest modules: stateless REST calls using the Core identity token from
+`cloud.auth.getCoreToken()`. `cloud.core` owns report/support resources;
+`cloud.store` owns catalog, bundle, and preinstall resources and may use a
+different origin. In runtime-only mode both modules are absent.
 
 ## The shared HTTP helper
 

@@ -11,19 +11,25 @@ Design source of truth:
 ## Outcome
 
 Restore the Mentra Miniapp Store as the bundled `com.mentra.store` miniapp for
-Mentra 3.0. Cloud Core owns Mentra's catalog and publishing workflow, while the
+Mentra 3.0. An independently deployable Store backend owns Mentra's catalog and
+publishing workflow; Cloud Core remains the identity broker. The
 Mentra Miniapp SDK and Mentra App host expose a backend-neutral installer that
 OEM Store miniapps can also use.
 
-The first release deliberately uses the approved MVP trust model: an exact,
-build-owned SYSTEM package plus package, version, HTTPS bundle URL, and SHA-256.
-The SDK request already reserves the signed authorization envelope so Store and
-publisher signatures can be enforced later without changing the API.
+The first release trusts an exact build-owned SYSTEM Store package for install
+authority. Every production ZIP is publisher-signed, and Store plus the Mentra
+App enforce publisher-key continuity alongside package, version, URL, hash,
+manifest, compatibility, and Store provenance.
 
 ## Architecture and trust boundary
 
-- [x] Keep Mentra catalog, ownership, review, publication, listings, and bundle
-      storage in Cloud Core rather than Cloud Runtime.
+- [x] Move Mentra catalog, ownership, review, publication, listings, developer
+      organizations, and bundle storage into an independent Store service.
+- [x] Keep Cloud Core limited to identity/token issuance and narrow authenticated
+      service bridges; Cloud Runtime owns no Store state.
+- [x] Let Store authenticate with standard Core-issued miniapp/host tokens via
+      public JWT/JWKS contracts while Console and CLI authenticate directly to
+      Store through shared WorkOS identity or Store-owned API keys.
 - [x] Implement `com.mentra.store` as a normal two-layer miniapp built with
       `@mentra/miniapp`.
 - [x] Keep installation in the host; Store miniapps receive no filesystem or
@@ -71,7 +77,7 @@ publisher signatures can be enforced later without changing the API.
       failure and cleaning downloaded archives.
 - [x] Add malicious-bundle, manifest identity, signature, and hash tests.
 
-## Cloud Core catalog and developer workflow
+## Store backend catalog and developer workflow
 
 - [x] Add Store listing metadata separate from signed release manifests.
 - [x] Support subtitle, long description, categories, privacy/support/website
@@ -90,7 +96,7 @@ publisher signatures can be enforced later without changing the API.
 ## Stable and beta release tracks
 
 Track is release-distribution state, not a Cloud deployment environment.
-Debug/dev/staging/prod continue to select independent Core deployments and
+Debug/dev/staging/prod continue to select independent Store deployments and
 data; each deployment may publish both stable and beta releases.
 
 - [x] Add an immutable `stable | beta` track to every release. Existing rows
@@ -101,7 +107,7 @@ data; each deployment may publish both stable and beta releases.
 - [x] Make stable the default catalog selection. An authenticated user enrolled
       in a miniapp's beta track receives its newest published beta release, with
       automatic fallback to stable whenever no beta is published.
-- [x] Persist beta enrollment per `(Mentra user, miniapp)` in Core and expose an
+- [x] Persist beta enrollment per `(Mentra user, miniapp)` in Store and expose an
       authenticated opt-in/leave endpoint. Catalog query parameters alone must
       never grant beta access.
 - [x] Default every beta to private. Let developers invite verified Mentra
@@ -191,8 +197,7 @@ data; each deployment may publish both stable and beta releases.
 
 - [x] Read the CLI version from its package metadata.
 - [x] Build, pack, validate, sign, and upload canonical ZIPs.
-- [x] Replace base64 release uploads with multipart bundles while retaining the
-      legacy Core input for compatibility.
+- [x] Replace base64 release uploads with multipart bundles.
 - [x] Add draft upload (`--no-submit`), JSON output, release list/status, review
       feedback, and explicit submission workflows.
 - [x] Retain browser login and API-token-compatible noninteractive auth.
@@ -252,9 +257,27 @@ data; each deployment may publish both stable and beta releases.
       another Store's packages.
 - [x] Keep the Store itself out of its in-process update loop; Store-self update
       remains a future signed host-owned updater concern.
-- [x] Package and integrity-check `com.mentra.store-1.0.12.zip`.
+- [x] Package, sign, and integrity-check `com.mentra.store-1.0.15.zip`.
 
 ## Verification
+
+### Independent Store service extraction
+
+- [x] Add `@mentra/miniapp-store-backend` as a separately runnable Cloud V2
+      package with health/readiness checks and Store-owned startup migrations.
+- [x] Remove public catalog, Console, release, bundle, and Store-admin routes,
+      models, and services from Cloud Core.
+- [x] Add explicit Store endpoints to the CLI, Console/Admin proxies, Store
+      miniapp, `@mentra/cloud-client`, and Mentra App configuration.
+- [x] Expose Store resources as `cloud.store` rather than routing a misleading
+      `cloud.core.miniapps` API to another hostname.
+- [x] Add Core JWT/JWKS verification, WorkOS/API-key developer authentication,
+      and narrow HMAC-authenticated Core-to-Store service bridges.
+- [x] Preserve Store organization migration, publisher identity, private/beta
+      authorization, protected-byte delivery, and admin report/support access.
+- [x] Add the Store service and domains to every Porter environment and the
+      local development stack.
+- [x] Rebuild and sign the bundled hidden Store against its independent backend.
 
 - [x] Cloud typecheck.
 - [x] Developer Console production build.
@@ -264,14 +287,15 @@ data; each deployment may publish both stable and beta releases.
       edits, publication fencing, selected-track featured ordering, download-time revocation,
       tenant-scoped preinstall authorization, moderation, artwork privacy, and
       the 10-screenshot cap.
-- [x] Real Core Store-token integration: 3 passed, including strict Store
-      miniapp audience acceptance and rejection of unrelated miniapp tokens.
+- [x] Real Core/Store-token integration: 4 passed, including strict Store
+      miniapp audience acceptance, rejection of unrelated miniapp tokens, and
+      `cloud.store` routing to the independent Store endpoint.
 - [x] Miniapp packer regressions: 2 passed, including atomic preservation of
       the previous artifact after a failed ZIP command.
 - [x] Mentra Miniapp SDK: 272 passed.
 - [x] Installer/SYSTEM security tests, including bundle-name impersonation.
 - [x] Store action registration, catalog, automatic-update policy, ownership,
-      refresh serialization, and UI-model tests: 31
+      refresh serialization, and UI-model tests: 33
       passed.
 - [x] Transient action lifecycle, invisible running projection, concurrent
       invocation teardown, promotion, host-action non-discovery, and scheduler
@@ -281,14 +305,14 @@ data; each deployment may publish both stable and beta releases.
       search-query preservation, install, details, verified identity, Installed
       state, and horizontal-overflow assertion.
 - [x] Mentra App TypeScript compile.
-- [x] Mentra App Jest: 91 suites passed (1 skipped), 710 tests passed
+- [x] Mentra App Jest: 92 suites passed (1 skipped), 729 tests passed
       (2 skipped).
 - [x] Android ASG and Bluetooth SDK compile checks.
 - [x] Full iOS Simulator native build with code signing disabled.
 - [x] ZIP integrity check. Bundled Store SHA-256:
-      `f2734b25372ec761bed48674d1494d9f9f486ad2a42fe0270bf2710261da4fc0`.
+      `53e29be8d43140dc1ad1a795563cad9c2aa25aecfcffe911b21eedf0264af119`.
 - [x] Review regressions: bounded streaming inflation and CRC checks in both
-      Core and the phone, trusted host-selected Core URL, complete catalog
+      Store and the phone, trusted host-selected Store URL, complete catalog
       pagination, Store-owned uninstall visibility, pre-activation host/SDK
       compatibility gates, running-context retry/rollback around updates,
       required/optional hardware installation gates (including G1 camera
@@ -316,16 +340,17 @@ data; each deployment may publish both stable and beta releases.
       attached to this workspace; native builds and automated host/UI tests are
       the available pre-review gates.
 
-## Intentionally deferred signed federation hardening
+## Publisher signing and deferred Store authorization
 
 These are not blockers for the approved first-release trust model.
 
 - [x] Reserve the versioned authorization shape in `InstallMiniappRequest`.
+- [x] Sign production ZIPs in `pack`/`publish`, verify them in Store and on the
+      Mentra App, pin bundled fingerprints, and enforce package publisher-key
+      continuity across uploads and updates.
 - [ ] Add the Mentra/OEM Store-backend public-key trust table to each app build.
 - [ ] Verify Store issuer, audience, expiry, and authorization signature in the
       host.
-- [ ] Verify publisher signatures again on-device and enforce publisher-key
-      continuity across package upgrades.
 - [ ] Add issuer/key rotation and revocation UX.
 
 ## Launch-readiness audit findings (2026-08-24)
@@ -340,7 +365,7 @@ work remains before describing the overall Store program as production-ready:
       has no active published miniapp records, while the legacy Cloud V1 Store
       currently exposes 10 published cloud miniapps that cannot be copied
       blindly without canonical local bundles and publisher identities.
-- [ ] Merge and deploy the Core catalog route; the production
+- [ ] Merge and deploy the independent Store backend; the production
       `/api/store/apps` endpoint returns 404 until this change is deployed.
 - [x] Complete the browser Developer Console release workflow from Linear
       OS-1443: organization switching, miniapp creation, listing/artwork
@@ -349,10 +374,10 @@ work remains before describing the overall Store program as production-ready:
       ZIP upload remains intentionally CLI-only so publisher signing keys stay
       on the developer's machine.
 - [x] Add closed-beta tester invitations/revocation and an explicit public-beta
-      mode to Core and the Developer Console. Private is the default; there is
+      mode to Store and the Developer Console. Private is the default; there is
       no general Store-wide beta enrollment button.
 - [x] Make the published Cloud V2 `mentra` CLI default to production and
-      discover the selected Core's public WorkOS client id, while retaining
+      discover the selected Store's public WorkOS client id, while retaining
       environment overrides for dev/staging/OEM deployments.
 - [x] Keep preinstall bundle delivery compatible with older Mentra App clients
       by embedding a short-lived tenant-scoped signed capability in registry

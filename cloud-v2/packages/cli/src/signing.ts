@@ -12,7 +12,7 @@ export interface DevMiniappAttestation {
 }
 
 export async function ensureSigningKey(credentials: CliCredentials): Promise<CliSigningKey> {
-  const stored = await loadSigningKey(credentials.coreUrl);
+  const stored = await loadSigningKey(credentials.storeUrl);
   if (stored && await remoteKeyIsActive(credentials, stored.signingKeyId)) return stored;
 
   const pair = crypto.generateKeyPairSync("ed25519");
@@ -20,7 +20,7 @@ export async function ensureSigningKey(credentials: CliCredentials): Promise<Cli
   const privateKeyJwk = pair.privateKey.export({ format: "jwk" }) as CliJwk;
   const { key } = await registerSigningKey(credentials, { publicKeyJwk });
   const localKey: CliSigningKey = {
-    coreUrl: credentials.coreUrl,
+    storeUrl: credentials.storeUrl,
     signingKeyId: key.id,
     publicKeyJwk,
     privateKeyJwk,

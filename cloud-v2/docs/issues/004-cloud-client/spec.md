@@ -39,9 +39,9 @@ platform it's on and takes the platform pieces as inputs. The `react-native` and
 
 ```ts
 interface CloudClientTransports {
-  ws: WebSocketLike            // RN built-in / nitro-websockets / ws (node)
-  udp: UdpSocketLike           // native on device, dgram in node
-  storage: KeyValueStore       // secure store on device, memory/file in node
+  ws: WebSocketLike // RN built-in / nitro-websockets / ws (node)
+  udp: UdpSocketLike // native on device, dgram in node
+  storage: KeyValueStore // secure store on device, memory/file in node
 }
 ```
 
@@ -49,11 +49,11 @@ interface CloudClientTransports {
 
 ```ts
 interface AuthModule {
-  getRuntimeToken(): Promise<string>                // cloud-runtime audience
-  getCoreToken(): Promise<string>                   // cloud-core audience, Core-backed mode only
-  getMiniappToken(packageName: string): Promise<{ token: string; expiresAt: number }>  // cached per package
-  readonly identity: { mentraUserId: string; tenantId: string }
-  onExpired(handler: () => void): () => void        // refresh failed; host must re-auth
+  getRuntimeToken(): Promise<string> // cloud-runtime audience
+  getCoreToken(): Promise<string> // cloud-core audience, Core-backed mode only
+  getMiniappToken(packageName: string): Promise<{token: string; expiresAt: number}> // cached per package
+  readonly identity: {mentraUserId: string; tenantId: string}
+  onExpired(handler: () => void): () => void // refresh failed; host must re-auth
 }
 ```
 
@@ -79,7 +79,7 @@ interface RuntimeModule {
   connect(): Promise<void>
   close(): void
 
-  setSubscriptions(subs: AudioSubscription[]): Promise<void>   // full-replace, PUT /api/audio/subscriptions
+  setSubscriptions(subs: AudioSubscription[]): Promise<void> // full-replace, PUT /api/audio/subscriptions
   sendAudioFrame(frame: Uint8Array): void
 
   getStatus(): RuntimeSnapshot
@@ -87,12 +87,12 @@ interface RuntimeModule {
   onTranscript(handler: (data: TranscriptionData) => void): () => void
   onTranslation(handler: (data: TranslationData) => void): () => void
 
-  requestManagedPhoto(opts: PhotoOptions): Promise<{ requestId: string; readUrl: string }>
+  requestManagedPhoto(opts: PhotoOptions): Promise<{requestId: string; readUrl: string}>
   startManagedStream(opts: StreamOptions): Promise<ManagedStream>
   stopManagedStream(streamId: string): Promise<void>
 
   onConnected(handler: () => void): () => void
-  onDisconnected(handler: (info: { reason: string }) => void): () => void
+  onDisconnected(handler: (info: {reason: string}) => void): () => void
   onStatusChanged(handler: (status: RuntimeSnapshot) => void): () => void
   onError(handler: (err: ProtocolError) => void): () => void
 
@@ -140,19 +140,27 @@ interface RuntimeSnapshot {
   the encryption key from `connection.ack.audio` and hands them to the injected
   native UDP transport (bytes do not flow through JS).
 
-## `cloud.core`
+## `cloud.core` and `cloud.store`
 
-The other v2 REST calls the device makes (not the live session, not auth), each sent
-with the Core token from `cloud.auth`. It starts small and grows as miniapp-service
-lands. In runtime-only mode, `cloud.core` is absent; Core-owned APIs fail clearly
-instead of being routed to Runtime.
+The other v2 REST calls the device makes (not the live session, not auth), each
+sent with the Core identity token from `cloud.auth`. Core-owned report/support
+resources and Store-owned miniapp resources have independent endpoints and
+modules. In runtime-only mode both are absent rather than being routed to
+Runtime.
 
 ```ts
 interface CoreModule {
-  miniapps: {
-    list(): Promise<MiniappListing[]>
-    getBundle(packageName: string, version?: string): Promise<{ downloadUrl: string; version: string; manifest: MiniappManifest }>
-  }
+  reports: ReportModule
+  supportProfile: SupportProfileModule
+}
+
+interface StoreModule {
+  list(): Promise<MiniappListing[]>
+  getBundle(
+    packageName: string,
+    version?: string,
+  ): Promise<{downloadUrl: string; version: string; manifest: MiniappManifest}>
+  getPreinstalledRegistry(): Promise<PreinstalledMiniappRegistry>
 }
 ```
 

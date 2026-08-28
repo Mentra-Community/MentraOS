@@ -9,7 +9,7 @@ owner: Mentra
 > bundle before Store installation is enabled.
 
 **Goal:** Every production miniapp ZIP is self-contained and developer-signed.
-Core rejects releases whose signer does not match the package's established
+Store rejects releases whose signer does not match the package's established
 publisher, and the Mentra App independently verifies and pins that publisher
 identity before installation or update. There is no unsigned compatibility
 path for Store releases created before launch.
@@ -17,9 +17,9 @@ path for Store releases created before launch.
 **Architecture:** `pack` creates the final signed ZIP. `publish` uploads that
 exact artifact without re-signing it. The ZIP contains an Ed25519 public key,
 canonical signed content statement, and signature in a reserved metadata
-entry. Core and the Mentra App run equivalent verification. Core performs an
+entry. Store and the Mentra App run equivalent verification. Store performs an
 early publication check; the Mentra App remains the final installation
-authority. Core does not sign miniapps or Store installation descriptors in
+authority. Neither Core nor Store signs miniapps or Store installation descriptors in
 this version.
 
 **Spec source of truth:**
@@ -30,7 +30,7 @@ this version.
 ## Decisions
 
 - The developer owns and protects the package signing private key.
-- Core receives only the public key and the already-signed ZIP.
+- Store receives only the public key and the already-signed ZIP.
 - The signing identity is embedded in the ZIP, not transported as a detached
   Store response field.
 - `mentra pack` and `mentra-miniapp pack` both produce the same final signed
@@ -38,7 +38,7 @@ this version.
 - The Store passes the final ZIP URL and transport SHA-256 to the host. The
   host obtains publisher identity from the ZIP itself.
 - A package's first valid, durably stored production release establishes its
-  publisher key fingerprint in Core.
+  publisher key fingerprint in Store.
 - A package's first installation establishes its publisher key fingerprint on
   that Mentra App, except that build-owned SYSTEM packages additionally pin the
   expected fingerprint in the generated bundled catalog.
@@ -49,7 +49,7 @@ this version.
 - The existing Store provenance rule remains independent: the publisher key
   identifies who produced the miniapp, while `storeOwnerPackageName`
   identifies which trusted Store manages the installation.
-- Core-signed `storeAuthorization` is out of scope. A build-trusted SYSTEM
+- Store-backend-signed `storeAuthorization` is out of scope. A build-trusted SYSTEM
   Store is a trusted installer. If backend-issued installation capabilities
   become necessary later, they can be layered on top without changing the
   publisher identity.
@@ -103,7 +103,7 @@ trusts the serialized fingerprint by itself.
 
 `miniapp.json` is therefore covered by the complete content digest.
 `manifestSha256` additionally binds its parsed canonical JSON representation,
-which Core and the host already use for release metadata and identity checks.
+which Store and the host already use for release metadata and identity checks.
 
 After inserting `META-INF/MENTRA.SIG`, `pack` computes the SHA-256 of the final
 ZIP. That final hash is used for Store download integrity. It is not placed in
@@ -188,7 +188,7 @@ network access.
 ### Shared bundle signing and verification
 
 **Primary paths:** `sdk/miniapp-cli/src/`, plus a dependency-minimal verifier
-module reusable by Core and the mobile host where practical.
+module reusable by Store and the mobile host where practical.
 
 - [x] Define the versioned `META-INF/MENTRA.SIG` schema.
 - [x] Define canonical public-key fingerprinting and canonical JSON bytes.
@@ -214,9 +214,9 @@ and `sdk/miniapp-cli/src/pack.ts`.
 - [x] Remove the old detached `signedBundle` upload behavior after all callers
       use the embedded format.
 
-### Core package identity and upload verification
+### Store package identity and upload verification
 
-**Primary paths:** `cloud-v2/packages/core/src/services/miniapps/`, release and
+**Primary paths:** `cloud-v2/packages/store/src/services/miniapps/`, release and
 package models, and Console/CLI release APIs.
 
 - [x] Parse and verify the embedded signature during every release upload.
@@ -234,7 +234,7 @@ package models, and Console/CLI release APIs.
 
 ### Store/catalog transport
 
-**Primary paths:** `cloud-v2/packages/core/src/services/miniapps/store-catalog.service.ts`
+**Primary paths:** `cloud-v2/packages/store/src/services/miniapps/store-catalog.service.ts`
 and `miniapps/store/`.
 
 - [x] Continue publishing the final signed ZIP URL and final bundle SHA-256.
@@ -298,7 +298,7 @@ the generated bundled miniapp catalog.
 ## Verification matrix
 
 - [x] Same package and same key: first install and update succeed.
-- [x] Same package and different key: Core upload fails.
+- [x] Same package and different key: Store upload fails.
 - [x] A forged catalog that changes the advertised fingerprint cannot bypass
       host verification.
 - [x] A trusted Store requesting a differently signed replacement fails.
@@ -313,16 +313,16 @@ the generated bundled miniapp catalog.
       incompatible or mismatched-signer releases.
 - [x] Private, beta, public, and SYSTEM distributions use identical publisher
       verification.
-- [x] `pack` output can be installed without ever being uploaded to Core, when
+- [x] `pack` output can be installed without ever being uploaded to Store, when
       invoked through an explicitly authorized non-Store installation path.
 - [x] CLI key export/import produces the same publisher fingerprint on another
       machine and in CI.
-- [x] Core, CLI, and Mentra App verify the same golden signed ZIP fixtures.
+- [x] Store, CLI, and Mentra App verify the same golden signed ZIP fixtures.
 
 ## Explicitly later
 
 - Old-key-authorized publisher key rotation and signer lineage acceptance.
 - Lost-key recovery policy.
 - Hardware-backed or managed signing services.
-- Core/Store-backend-signed installation capabilities.
+- Store-backend-signed installation capabilities.
 - Public certificate transparency or publisher identity directories.

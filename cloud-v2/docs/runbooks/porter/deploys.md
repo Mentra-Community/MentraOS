@@ -8,11 +8,11 @@ layering, and what changes when you `porter apply`.
 Cloud V2 deploys use one Porter app per environment in the AWS us-west-2
 cluster:
 
-| Branch | Workflow | Porter app | Manifest | Public hosts |
-| --- | --- | --- | --- | --- |
-| `dev` | `cloud-v2-dev.yml` | `cloud-dev` | `porter.dev.yaml` | `core.dev.us-west-2.mentraglass.com`, `runtime.dev.us-west-2.mentraglass.com` |
-| `staging` | `cloud-v2-staging.yml` | `cloud-staging` | `porter.staging.yaml` | `core.staging.us-west-2.mentraglass.com`, `runtime.staging.us-west-2.mentraglass.com` |
-| `main` | `cloud-v2-prod.yml` | `cloud-prod` | `porter.prod.yaml` | `core.mentraglass.com`, `runtime.mentraglass.com` |
+| Branch    | Workflow               | Porter app      | Manifest              | Public hosts                                                                                                                     |
+| --------- | ---------------------- | --------------- | --------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `dev`     | `cloud-v2-dev.yml`     | `cloud-dev`     | `porter.dev.yaml`     | `core.dev.us-west-2.mentraglass.com`, `store.dev.us-west-2.mentraglass.com`, `runtime.dev.us-west-2.mentraglass.com`             |
+| `staging` | `cloud-v2-staging.yml` | `cloud-staging` | `porter.staging.yaml` | `core.staging.us-west-2.mentraglass.com`, `store.staging.us-west-2.mentraglass.com`, `runtime.staging.us-west-2.mentraglass.com` |
+| `main`    | `cloud-v2-prod.yml`    | `cloud-prod`    | `porter.prod.yaml`    | `core.mentraglass.com`, `store.mentraglass.com`, `runtime.mentraglass.com`                                                       |
 
 Each workflow also supports `workflow_dispatch`, which lets us deploy a PR
 branch into one of these environments for validation before merging.
@@ -26,10 +26,11 @@ target unless the person currently using it agrees.
 Each Porter app has the same service layout. All services share one Docker
 image — each just runs a different process from it:
 
-| Service | Run | HTTP port | UDP port |
-| --- | --- | --- | --- |
-| `core` | `bun packages/core/src/index.ts` | 3000 | — |
-| `runtime` | `bun packages/runtime/src/index.ts` | 3001 | 8000 |
+| Service   | Run                                 | HTTP port | UDP port |
+| --------- | ----------------------------------- | --------- | -------- |
+| `core`    | `bun packages/core/src/index.ts`    | 3000      | —        |
+| `store`   | `bun packages/store/src/index.ts`   | 3003      | —        |
+| `runtime` | `bun packages/runtime/src/index.ts` | 3001      | 8000     |
 
 (The proxy service from `packages/proxy/` joins once it has real code.)
 
@@ -117,10 +118,10 @@ have to re-apply.
 The HTTP/WS endpoints are auto-provisioned by Porter via the cluster's
 ALB ingress. Hostnames are derived from `<service>-<project-id>-<target-id>.onporter.run`:
 
-| Service | URL |
-| --- | --- |
-| core | https://core-16427-87f939d6-fldz0e8y.onporter.run |
-| audio | https://audio-16427-87f939d6-e4galhhw.onporter.run |
+| Service  | URL                                                         |
+| -------- | ----------------------------------------------------------- |
+| core     | https://core-16427-87f939d6-fldz0e8y.onporter.run           |
+| audio    | https://audio-16427-87f939d6-e4galhhw.onporter.run          |
 | audio WS | wss://audio-16427-87f939d6-e4galhhw.onporter.run/ws/session |
 
 To get the URLs programmatically:
@@ -169,6 +170,7 @@ Defined in `porter.yaml` per service:
 ```
 
 Bump these in `porter.yaml` and re-apply when:
+
 - OOM kills happen (check with `porter app logs ... --search OOMKilled`)
 - CPU throttling shows up in metrics (the event-loop-lag gauge)
 - You're scaling user count beyond what the current size handles
@@ -179,7 +181,7 @@ By default Porter runs 1 replica per service. To scale up:
 
 ```yaml
 - name: audio
-  instances: 3  # multi-replica
+  instances: 3 # multi-replica
 ```
 
 For audio specifically, multi-replica is REAL multi-pod, exercised by the

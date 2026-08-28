@@ -70,7 +70,7 @@ let persistentFailureNotified = false
 let audioSubscriptions: AudioSubscription[] = []
 let transportsReady = false
 /** Endpoints to build with — seeded from config, overridable via reconnect(). */
-let endpointsOverride: {core: string; runtime: string} | null = null
+let endpointsOverride: {core: string; store?: string; runtime: string} | null = null
 let runtimeStatusUnsubscribe: (() => void) | null = null
 let transcriptUnsubscribe: (() => void) | null = null
 let translationUnsubscribe: (() => void) | null = null
@@ -99,13 +99,25 @@ const translationListeners = new Set<(d: TranslationData) => void>()
 const statusListeners = new Set<(snapshot: CloudClientStatusSnapshot) => void>()
 const connectionListeners = new Set<(connected: boolean) => void>()
 
-function resolveEndpoints(): {core: string; runtime: string} {
-  if (endpointsOverride) return endpointsOverride
+function resolveEndpoints(): {core: string; store: string; runtime: string} {
+  if (endpointsOverride) {
+    return {...endpointsOverride, store: endpointsOverride.store ?? deriveStoreUrl(endpointsOverride.core)}
+  }
   const cfg = getConfigValues()
+  const core = cfg.coreUrl?.trim() || FALLBACK_CORE_URL
   return {
-    core: cfg.coreUrl?.trim() || FALLBACK_CORE_URL,
+    core,
+    store: cfg.storeUrl?.trim() || deriveStoreUrl(core),
     runtime: cfg.runtimeUrl?.trim() || FALLBACK_RUNTIME_URL,
   }
+}
+
+function deriveStoreUrl(core: string): string {
+  const url = new URL(core)
+  if (url.hostname === "core.mentraglass.com") return "https://store.mentraglass.com"
+  if (url.hostname.startsWith("core.")) url.hostname = url.hostname.replace(/^core\./, "store.")
+  else if ((url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "::1") && url.port === "3000") url.port = "3003"
+  return url.origin
 }
 
 function getCoreClient(): CloudCore {
@@ -530,7 +542,7 @@ export const cloudClientService = {
    * a prior override and fall back to the boot config (so cleared/default cloud
    * URLs don't keep reconnecting to a stale override); omit to keep the current.
    */
-  reconnect(endpoints?: {core: string; runtime: string} | null): void {
+  reconnect(endpoints?: {core: string; store?: string; runtime: string} | null): void {
     if (endpoints !== undefined) endpointsOverride = endpoints
     try {
       client?.runtime.close()
@@ -553,8 +565,8 @@ export const cloudClientService = {
   async getPreinstalledMiniappRegistry(): Promise<PreinstalledMiniappRegistry> {
     if (!client) this.init()
     const c = client
-    if (!c?.core) throw new Error("cloud client core is unavailable")
-    return c.core.miniapps.getRegistry()
+    if (!c?.store) throw new Error("cloud client Store is unavailable")
+    return c.store.getPreinstalledRegistry()
   },
 
   /** Fresh Core credential for host-owned downloads; never exposed to a miniapp. */
@@ -714,6 +726,10 @@ export const cloudClientService = {
 
   getCoreUrl(): string {
     return resolveEndpoints().core
+  },
+
+  getStoreUrl(): string {
+    return resolveEndpoints().store
   },
 
   syncCoreTokenToBluetooth(): Promise<string> {

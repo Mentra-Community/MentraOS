@@ -16,37 +16,28 @@
 
 // The top-level object. Implemented in ./client by the client agent; re-exported
 // here so the public import is `@mentra/cloud-client`, not a deep path.
-export { CloudClient } from "./client";
+export {CloudClient} from "./client"
 
 // Construction contract.
-export type {
-  CloudClientConfig,
-  AuthConfig,
-  SubjectTokenType,
-} from "./config";
+export type {CloudClientConfig, AuthConfig, SubjectTokenType} from "./config"
 
 // The platform pieces a host (or a platform wrapper) supplies.
-export type {
-  CloudClientTransports,
-  WebSocketLike,
-  UdpSocketLike,
-  KeyValueStore,
-} from "./transports";
-export type { CloudClientTimers } from "./timers";
+export type {CloudClientTransports, WebSocketLike, UdpSocketLike, KeyValueStore} from "./transports"
+export type {CloudClientTimers} from "./timers"
 
 // Local error types a host can branch on with `instanceof`.
-export { CloudClientError, HttpError, AuthExpiredError } from "./errors";
+export {CloudClientError, HttpError, AuthExpiredError} from "./errors"
 
 // The logging hook a host can implement to route library logs.
-export { noopLogger } from "./logger";
-export type { Logger } from "./logger";
+export {noopLogger} from "./logger"
+export type {Logger} from "./logger"
 
 // Runtime lifecycle state exposed to hosts for UI/debugging and fallback policy.
 export type {
   PreinstalledInstallPolicy,
   PreinstalledMiniappRegistry,
   PreinstalledMiniappRegistryEntry,
-} from "./modules/core/core";
+} from "./modules/store/store"
 
 export type {
   RuntimeAudioTransport,
@@ -54,7 +45,7 @@ export type {
   RuntimeStatus,
   RuntimeTtsSpeakOptions,
   RuntimeTtsSpeechSource,
-} from "./modules/runtime/runtime";
+} from "./modules/runtime/runtime"
 
 export type {
   AddReportArtifactsResult,
@@ -71,4 +62,4 @@ export type {
   SupportConnectionState,
   SupportProfileUpdateResult,
   SupportStateInput,
-} from "./modules/core/core";
+} from "./modules/core/core"

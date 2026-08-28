@@ -5,6 +5,7 @@ export interface CoreDownloadAuthorization {
 
 export interface CoreDownloadAuthorizationProvider {
   getCoreUrl(): string
+  getStoreUrl(): string
   getCoreDownloadAuthorization(): Promise<CoreDownloadAuthorization>
 }
 
@@ -31,9 +32,9 @@ export async function mintCoreDownloadAuthorization(
 }
 
 /**
- * Attach a host-owned Core credential only when the bundle is on the active
- * runtime-resolved Core origin. The provider rechecks its origin when minting
- * the credential, so a reconnect cannot forward a token to the old endpoint.
+ * Attach a host-owned Core credential only to the host-selected Store origin.
+ * The Store validates this identity token through Core's public key contract;
+ * the miniapp never receives it.
  */
 export async function resolveCoreDownloadAuthorization(
   bundleUrl: string,
@@ -41,11 +42,12 @@ export async function resolveCoreDownloadAuthorization(
 ): Promise<CoreDownloadAuthorization | undefined> {
   const bundleOrigin = new URL(bundleUrl).origin
   const activeCoreOrigin = new URL(provider.getCoreUrl()).origin
-  if (bundleOrigin !== activeCoreOrigin) return undefined
+  const activeStoreOrigin = new URL(provider.getStoreUrl()).origin
+  if (bundleOrigin !== activeStoreOrigin) return undefined
 
   const authorization = await provider.getCoreDownloadAuthorization()
-  if (new URL(authorization.origin).origin !== bundleOrigin) {
+  if (new URL(authorization.origin).origin !== activeCoreOrigin) {
     throw new Error("Core endpoint changed while authorizing bundle download")
   }
-  return authorization
+  return {origin: bundleOrigin, bearerToken: authorization.bearerToken}
 }

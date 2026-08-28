@@ -8,10 +8,10 @@
 
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 
-import { connectMongo, disconnectMongo } from "../packages/core/src/connections/mongo.connection";
-import { DeveloperOrgMembershipModel } from "../packages/core/src/models/developer-org-membership.model";
-import { DeveloperOrgModel } from "../packages/core/src/models/developer-org.model";
-import { DeveloperOrgService } from "../packages/core/src/services/developer-orgs/developer-org.service";
+import { connectMongo, disconnectMongo } from "../packages/store/src/connections/mongo.connection";
+import { DeveloperOrgMembershipModel } from "../packages/store/src/models/developer-org-membership.model";
+import { DeveloperOrgModel } from "../packages/store/src/models/developer-org.model";
+import { DeveloperOrgService } from "../packages/store/src/services/developer-orgs/developer-org.service";
 
 const service = new DeveloperOrgService();
 
@@ -19,7 +19,6 @@ beforeAll(async () => {
   await connectMongo(process.env.MONGO_URL ?? "mongodb://127.0.0.1:27017/mentra-cloud-v2-test");
   await Promise.all([DeveloperOrgModel.syncIndexes(), DeveloperOrgMembershipModel.syncIndexes()]);
 });
-
 afterAll(async () => {
   await disconnectMongo();
 });

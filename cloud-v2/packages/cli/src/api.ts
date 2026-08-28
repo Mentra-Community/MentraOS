@@ -214,24 +214,24 @@ export async function refreshLoginToken(
 }
 
 export async function listApps(credentials: CliCredentials): Promise<{ apps: DeveloperApp[] }> {
-  return coreRequest(credentials, "/api/console/apps");
+  return storeRequest(credentials, "/api/console/apps");
 }
 
 export async function getAdminMe(
   credentials: CliCredentials,
 ): Promise<{ authenticated: true; admin: true; user: AdminUser | null }> {
-  return coreRequest(credentials, "/api/admin/me");
+  return storeRequest(credentials, "/api/admin/me");
 }
 
 export async function listAdminRegistries(credentials: CliCredentials): Promise<{ registries: AdminRegistry[] }> {
-  return coreRequest(credentials, "/api/admin/preinstalled/registries");
+  return storeRequest(credentials, "/api/admin/preinstalled/registries");
 }
 
 export async function ensureAdminRegistry(
   credentials: CliCredentials,
   input: { environment: PreinstallEnvironment; name?: string; tenantId?: string | null },
 ): Promise<{ registry: AdminRegistry }> {
-  return coreRequest(credentials, "/api/admin/preinstalled/registries", {
+  return storeRequest(credentials, "/api/admin/preinstalled/registries", {
     method: "POST",
     body: JSON.stringify(input),
   });
@@ -240,14 +240,14 @@ export async function ensureAdminRegistry(
 export async function listAdminPreinstallReleases(
   credentials: CliCredentials,
 ): Promise<{ releases: AdminReleaseSummary[] }> {
-  return coreRequest(credentials, "/api/admin/preinstalled/releases");
+  return storeRequest(credentials, "/api/admin/preinstalled/releases");
 }
 
 export async function listAdminRegistryRevisions(
   credentials: CliCredentials,
   registryId: string,
 ): Promise<{ revisions: AdminRegistryRevision[] }> {
-  return coreRequest(credentials, `/api/admin/preinstalled/registries/${encodeURIComponent(registryId)}/revisions`);
+  return storeRequest(credentials, `/api/admin/preinstalled/registries/${encodeURIComponent(registryId)}/revisions`);
 }
 
 export async function createAdminRegistryRevision(
@@ -265,7 +265,7 @@ export async function createAdminRegistryRevision(
     }>;
   },
 ): Promise<{ revision: AdminRegistryRevision }> {
-  return coreRequest(credentials, `/api/admin/preinstalled/registries/${encodeURIComponent(registryId)}/revisions`, {
+  return storeRequest(credentials, `/api/admin/preinstalled/registries/${encodeURIComponent(registryId)}/revisions`, {
     method: "POST",
     body: JSON.stringify(input),
   });
@@ -276,7 +276,7 @@ export async function promoteAdminRegistryRevision(
   registryId: string,
   revisionId: string,
 ): Promise<{ registry: AdminRegistry; revision: AdminRegistryRevision }> {
-  return coreRequest(
+  return storeRequest(
     credentials,
     `/api/admin/preinstalled/registries/${encodeURIComponent(registryId)}/revisions/${encodeURIComponent(revisionId)}/promote`,
     { method: "POST" },
@@ -284,18 +284,18 @@ export async function promoteAdminRegistryRevision(
 }
 
 export async function getOrg(credentials: CliCredentials): Promise<{ org: DeveloperOrg | null }> {
-  return coreRequest(credentials, "/api/console/org");
+  return storeRequest(credentials, "/api/console/org");
 }
 
 export async function getConsoleSession(credentials: CliCredentials): Promise<ConsoleSessionResponse> {
-  return coreRequest(credentials, "/api/console/auth/me");
+  return storeRequest(credentials, "/api/console/auth/me");
 }
 
 export async function upsertOrg(
   credentials: CliCredentials,
   input: { displayName: string; packagePrefix: string; createNew?: boolean },
 ): Promise<{ org: DeveloperOrg }> {
-  return coreRequest(credentials, "/api/console/org", {
+  return storeRequest(credentials, "/api/console/org", {
     method: "PUT",
     body: JSON.stringify(input),
   });
@@ -305,14 +305,14 @@ export async function createApp(
   credentials: CliCredentials,
   input: { packageName: string; displayName: string; description?: string | null },
 ): Promise<{ app: DeveloperApp }> {
-  return coreRequest(credentials, "/api/console/apps", {
+  return storeRequest(credentials, "/api/console/apps", {
     method: "POST",
     body: JSON.stringify(input),
   });
 }
 
 export async function deleteApp(credentials: CliCredentials, packageName: string): Promise<{ ok: true }> {
-  return coreRequest(credentials, `/api/console/apps/${encodeURIComponent(packageName)}`, {
+  return storeRequest(credentials, `/api/console/apps/${encodeURIComponent(packageName)}`, {
     method: "DELETE",
   });
 }
@@ -321,7 +321,7 @@ export async function listReleases(
   credentials: CliCredentials,
   packageName: string,
 ): Promise<{ releases: DeveloperRelease[] }> {
-  return coreRequest(credentials, `/api/console/apps/${encodeURIComponent(packageName)}/releases`);
+  return storeRequest(credentials, `/api/console/apps/${encodeURIComponent(packageName)}/releases`);
 }
 
 export async function createRelease(
@@ -342,21 +342,21 @@ export async function createRelease(
   form.set("manifest", JSON.stringify(input.manifest));
   form.set("fileName", input.fileName ?? "bundle.zip");
   form.set("bundle", new Blob([input.bundle], { type: "application/zip" }), input.fileName ?? "bundle.zip");
-  return coreRequest(credentials, `/api/console/apps/${encodeURIComponent(input.packageName)}/releases`, {
+  return storeRequest(credentials, `/api/console/apps/${encodeURIComponent(input.packageName)}/releases`, {
     method: "POST",
     body: form,
   });
 }
 
 export async function listSigningKeys(credentials: CliCredentials): Promise<{ keys: DeveloperSigningKey[] }> {
-  return coreRequest(credentials, "/api/console/signing-keys");
+  return storeRequest(credentials, "/api/console/signing-keys");
 }
 
 export async function registerSigningKey(
   credentials: CliCredentials,
   input: { publicKeyJwk: CliJwk },
 ): Promise<{ key: DeveloperSigningKey }> {
-  return coreRequest(credentials, "/api/console/signing-keys", {
+  return storeRequest(credentials, "/api/console/signing-keys", {
     method: "POST",
     body: JSON.stringify(input),
   });
@@ -369,15 +369,15 @@ export async function submitRelease(
     releaseId: string;
   },
 ): Promise<{ release: DeveloperRelease }> {
-  return coreRequest(
+  return storeRequest(
     credentials,
     `/api/console/apps/${encodeURIComponent(input.packageName)}/releases/${encodeURIComponent(input.releaseId)}/submit`,
     { method: "POST" },
   );
 }
 
-async function coreRequest<T>(credentials: CliCredentials, path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${credentials.coreUrl}${path}`, {
+async function storeRequest<T>(credentials: CliCredentials, path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${credentials.storeUrl}${path}`, {
     ...init,
     headers: {
       accept: "application/json",
@@ -394,16 +394,16 @@ async function coreRequest<T>(credentials: CliCredentials, path: string, init?: 
 async function ensureWorkosClientId(config: CliConfig): Promise<void> {
   if (config.workosClientId) return;
 
-  const response = await fetch(`${config.coreUrl}/api/console/auth/cli-config`, {
+  const response = await fetch(`${config.storeUrl}/api/console/auth/cli-config`, {
     headers: { accept: "application/json" },
   });
   if (!response.ok) throw new Error(await errorMessage(response));
   const body = (await response.json()) as { workosClientId?: unknown };
   if (typeof body.workosClientId !== "string" || !body.workosClientId.trim()) {
-    throw new Error("Mentra Core did not provide a WorkOS client id for CLI login");
+    throw new Error("The Mentra Miniapp Store did not provide a WorkOS client id for CLI login");
   }
   // Cache the public client id on this command's config so polling does not
-  // refetch Core every interval. Environment overrides still win for local or
+  // refetch the Store every interval. Environment overrides still win for local or
   // non-Mentra deployments.
   config.workosClientId = body.workosClientId.trim();
 }

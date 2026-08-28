@@ -7,6 +7,7 @@ const credentials = {
   workosUserId: "user",
   email: "developer@example.com",
   coreUrl: "https://core.example.test",
+  storeUrl: "https://store.example.test",
   storedAt: new Date(0).toISOString(),
 };
 
@@ -36,7 +37,7 @@ describe("createRelease", () => {
 
     expect(request?.body).toBeInstanceOf(FormData);
     const form = request?.body as FormData;
-    expect(requestUrl).toBe("https://core.example.test/api/console/apps/com.example.app/releases");
+    expect(requestUrl).toBe("https://store.example.test/api/console/apps/com.example.app/releases");
     expect(request?.method).toBe("POST");
     expect(request?.headers).toMatchObject({ accept: "application/json", authorization: "Bearer token" });
     expect(form.get("bundle")).toBeInstanceOf(File);
@@ -54,9 +55,10 @@ describe("createRelease", () => {
 });
 
 describe("startLogin", () => {
-  test("discovers the public WorkOS client id from the selected Core", async () => {
+  test("discovers the public WorkOS client id from the selected Store", async () => {
     const config: CliConfig = {
       coreUrl: "https://core.example.test",
+      storeUrl: "https://store.example.test",
       consoleUrl: "https://console.example.test",
       workosClientId: "",
       workosApiBaseUrl: "https://api.workos.test",
@@ -80,7 +82,7 @@ describe("startLogin", () => {
     await startLogin(config);
 
     expect(requests).toEqual([
-      "https://core.example.test/api/console/auth/cli-config",
+      "https://store.example.test/api/console/auth/cli-config",
       "https://api.workos.test/user_management/authorize/device",
     ]);
     expect(config.workosClientId).toBe("client_public_123");

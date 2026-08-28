@@ -30,6 +30,8 @@ jobs:
       PORTER_TOKEN: ${{ secrets.PORTER_TOKEN }}
       CORE_HOSTNAME: core.us-west-2.mentraglass.com
       CORE_GLOBAL_HOSTNAME: core.mentraglass.com
+      STORE_HOSTNAME: store.us-west-2.mentraglass.com
+      STORE_GLOBAL_HOSTNAME: store.mentraglass.com
       RUNTIME_HOSTNAME: runtime.us-west-2.mentraglass.com
       RUNTIME_GLOBAL_HOSTNAME: runtime.mentraglass.com
     steps:
@@ -58,7 +60,7 @@ jobs:
       - name: Verify prod health
         run: |
           set -euo pipefail
-          for host in "${CORE_HOSTNAME}" "${CORE_GLOBAL_HOSTNAME}" "${RUNTIME_HOSTNAME}" "${RUNTIME_GLOBAL_HOSTNAME}"; do
+          for host in "${CORE_HOSTNAME}" "${CORE_GLOBAL_HOSTNAME}" "${STORE_HOSTNAME}" "${STORE_GLOBAL_HOSTNAME}" "${RUNTIME_HOSTNAME}" "${RUNTIME_GLOBAL_HOSTNAME}"; do
             if ! getent hosts "${host}" >/dev/null; then
               echo "::warning::${host} DNS is not configured yet; skipping."
               continue

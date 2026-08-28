@@ -40,10 +40,10 @@ import {
   issueRuntimeToken,
 } from "../../services/session.service";
 import {
-  DeveloperSigningService,
-  DeveloperSigningServiceError,
-  type DevMiniappAttestation,
-} from "../../services/miniapps/developer-signing.service";
+  StoreServiceError,
+  verifyStoreDevAttestation,
+  type StoreDevAttestation,
+} from "../../services/store.client";
 import { userAuth } from "../middleware/user-auth.middleware";
 import type { AppContext, AppEnv } from "../../types/hono.types";
 
@@ -51,7 +51,6 @@ const TOKEN_EXCHANGE_GRANT = "urn:ietf:params:oauth:grant-type:token-exchange";
 const JWT_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:jwt";
 
 const app = new Hono<AppEnv>();
-const developerSigning = new DeveloperSigningService();
 
 // === Routes ===
 
@@ -127,9 +126,9 @@ async function postMiniappToken(c: AppContext) {
     typeof body.devAttestation === "string" ? parseDevAttestation(body.devAttestation) : null;
   if (devAttestation) {
     try {
-      await developerSigning.verifyDevAttestation(packageName, devAttestation);
+      await verifyStoreDevAttestation(packageName, devAttestation);
     } catch (error) {
-      if (error instanceof DeveloperSigningServiceError) {
+      if (error instanceof StoreServiceError) {
         return c.json(
           { error: error.code, error_description: error.message },
           error.status as ContentfulStatusCode,
@@ -192,7 +191,7 @@ async function readJsonBody(c: AppContext): Promise<Record<string, unknown>> {
   throw new InvalidRequest("request body must be a JSON object");
 }
 
-function parseDevAttestation(value: string): DevMiniappAttestation {
+function parseDevAttestation(value: string): StoreDevAttestation {
   try {
     const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as Record<string, unknown>;
     if (
@@ -203,7 +202,7 @@ function parseDevAttestation(value: string): DevMiniappAttestation {
       typeof parsed.signingKeyId === "string" &&
       typeof parsed.signature === "string"
     ) {
-      return parsed as unknown as DevMiniappAttestation;
+      return parsed as unknown as StoreDevAttestation;
     }
   } catch {
     // fall through to InvalidRequest below

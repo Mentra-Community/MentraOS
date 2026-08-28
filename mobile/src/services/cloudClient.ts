@@ -28,9 +28,11 @@ type Lc3FrameSizeBytes = 20 | 40 | 60
 // depends on a local stack plus adb reverse/LAN reachability.
 const DEFAULT_CORE_URL = "https://core.dev.us-west-2.mentraglass.com"
 const DEFAULT_RUNTIME_URL = "https://runtime.dev.us-west-2.mentraglass.com"
+const DEFAULT_STORE_URL = "https://store.dev.us-west-2.mentraglass.com"
 
 const CORE_PORT = 3000
 const RUNTIME_PORT = 3001
+const STORE_PORT = 3003
 
 function metroUrl(port: number): string | undefined {
   const host = devServerHost()
@@ -77,9 +79,18 @@ function runtimeUrl(): string {
   )
 }
 
+function storeUrl(): string {
+  const selectedCore = coreUrl()
+  const core = new URL(selectedCore)
+  if (core.hostname.startsWith("core.")) core.hostname = core.hostname.replace(/^core\./, "store.")
+  else if ((core.hostname === "localhost" || core.hostname === "127.0.0.1" || core.hostname === "::1") && core.port === String(CORE_PORT)) core.port = String(STORE_PORT)
+  const derived = core.origin === selectedCore.replace(/\/$/, "") ? core.origin : DEFAULT_STORE_URL
+  return (process.env.EXPO_PUBLIC_CLOUD_STORE_URL as string | undefined)?.trim() || derived
+}
+
 /** The endpoint URLs the client would use right now, every layer applied. */
-export function resolvedEndpoints(): {core: string; runtime: string} {
-  return {core: coreUrl(), runtime: runtimeUrl()}
+export function resolvedEndpoints(): {core: string; store: string; runtime: string} {
+  return {core: coreUrl(), store: storeUrl(), runtime: runtimeUrl()}
 }
 
 /** The LC3 frame size (bytes) the phone's encoder currently emits. */
@@ -94,6 +105,7 @@ export function lc3FrameSizeBytes(): Lc3FrameSizeBytes {
  */
 export function cloudConfigValues(): {
   coreUrl: string
+  storeUrl: string
   runtimeUrl: string
   audioFrameSizeBytes: number
   devServerHost: () => string | undefined
@@ -103,6 +115,7 @@ export function cloudConfigValues(): {
   const endpoints = resolvedEndpoints()
   return {
     coreUrl: endpoints.core,
+    storeUrl: endpoints.store,
     runtimeUrl: endpoints.runtime,
     audioFrameSizeBytes: lc3FrameSizeBytes(),
     devServerHost,

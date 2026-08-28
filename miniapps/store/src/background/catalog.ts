@@ -69,7 +69,7 @@ function isStoreApp(value: unknown): value is StoreApp {
   )
 }
 
-export function trustedCoreOrigin(value: string | null | undefined): string | null {
+export function trustedBackendOrigin(value: string | null | undefined): string | null {
   try {
     if (!value) return null
     const url = new URL(value)

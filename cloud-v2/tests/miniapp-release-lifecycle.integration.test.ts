@@ -14,27 +14,27 @@ import JSZip from "jszip";
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { generatePackageSigningKey, signBundleArchive, type PackageSigningKey } from "@mentra/miniapp-cli";
 
-process.env.CLOUD_CORE_LOCAL_STORAGE_DIR = join(tmpdir(), `mentra-miniapp-release-test-${process.pid}`);
+process.env.CLOUD_STORAGE_LOCAL_DIR = join(tmpdir(), `mentra-miniapp-release-test-${process.pid}`);
 
-import { connectMongo, disconnectMongo } from "../packages/core/src/connections/mongo.connection";
-import { MiniAppAssetModel } from "../packages/core/src/models/miniapp-asset.model";
-import { MiniAppAccessInvitationModel } from "../packages/core/src/models/miniapp-access-invitation.model";
-import { MiniAppBetaInvitationModel } from "../packages/core/src/models/miniapp-beta-invitation.model";
-import { MiniAppModel } from "../packages/core/src/models/miniapp.model";
-import { MiniAppReleaseModel } from "../packages/core/src/models/miniapp-release.model";
-import { MiniAppTrackEnrollmentModel } from "../packages/core/src/models/miniapp-track-enrollment.model";
-import { DeveloperSigningKeyModel } from "../packages/core/src/models/developer-signing-key.model";
-import { PreinstalledRegistryModel } from "../packages/core/src/models/preinstalled-registry.model";
-import { PreinstalledRegistryRevisionModel } from "../packages/core/src/models/preinstalled-registry-revision.model";
-import type { PreinstalledRegistryService } from "../packages/core/src/services/miniapps/preinstalled-registry.service";
-import type { MiniAppService } from "../packages/core/src/services/miniapps/miniapp.service";
-import type { MiniAppBetaService } from "../packages/core/src/services/miniapps/miniapp-beta.service";
-import type { MiniAppAccessService } from "../packages/core/src/services/miniapps/miniapp-access.service";
-import { StoreCatalogService } from "../packages/core/src/services/miniapps/store-catalog.service";
+import { connectMongo, disconnectMongo } from "../packages/store/src/connections/mongo.connection";
+import { MiniAppAssetModel } from "../packages/store/src/models/miniapp-asset.model";
+import { MiniAppAccessInvitationModel } from "../packages/store/src/models/miniapp-access-invitation.model";
+import { MiniAppBetaInvitationModel } from "../packages/store/src/models/miniapp-beta-invitation.model";
+import { MiniAppModel } from "../packages/store/src/models/miniapp.model";
+import { MiniAppReleaseModel } from "../packages/store/src/models/miniapp-release.model";
+import { MiniAppTrackEnrollmentModel } from "../packages/store/src/models/miniapp-track-enrollment.model";
+import { DeveloperSigningKeyModel } from "../packages/store/src/models/developer-signing-key.model";
+import { PreinstalledRegistryModel } from "../packages/store/src/models/preinstalled-registry.model";
+import { PreinstalledRegistryRevisionModel } from "../packages/store/src/models/preinstalled-registry-revision.model";
+import type { PreinstalledRegistryService } from "../packages/store/src/services/miniapps/preinstalled-registry.service";
+import type { MiniAppService } from "../packages/store/src/services/miniapps/miniapp.service";
+import type { MiniAppBetaService } from "../packages/store/src/services/miniapps/miniapp-beta.service";
+import type { MiniAppAccessService } from "../packages/store/src/services/miniapps/miniapp-access.service";
+import { StoreCatalogService } from "../packages/store/src/services/miniapps/store-catalog.service";
 import type {
   DeveloperJwk,
   DeveloperSigningService,
-} from "../packages/core/src/services/miniapps/developer-signing.service";
+} from "../packages/store/src/services/miniapps/developer-signing.service";
 
 const developer = {
   developerId: "dev_test_user",
@@ -64,13 +64,13 @@ beforeAll(async () => {
     PreinstalledRegistryModel.syncIndexes(),
     PreinstalledRegistryRevisionModel.syncIndexes(),
   ]);
-  const { MiniAppService } = await import("../packages/core/src/services/miniapps/miniapp.service");
-  const { MiniAppBetaService } = await import("../packages/core/src/services/miniapps/miniapp-beta.service");
-  const { MiniAppAccessService } = await import("../packages/core/src/services/miniapps/miniapp-access.service");
+  const { MiniAppService } = await import("../packages/store/src/services/miniapps/miniapp.service");
+  const { MiniAppBetaService } = await import("../packages/store/src/services/miniapps/miniapp-beta.service");
+  const { MiniAppAccessService } = await import("../packages/store/src/services/miniapps/miniapp-access.service");
   const { PreinstalledRegistryService } = await import(
-    "../packages/core/src/services/miniapps/preinstalled-registry.service"
+    "../packages/store/src/services/miniapps/preinstalled-registry.service"
   );
-  const { DeveloperSigningService } = await import("../packages/core/src/services/miniapps/developer-signing.service");
+  const { DeveloperSigningService } = await import("../packages/store/src/services/miniapps/developer-signing.service");
   miniapps = new MiniAppService();
   miniappBetas = new MiniAppBetaService(async email =>
     email === "tester@example.com" ? storeUser.mentraUserId : email === "other@example.com" ? "mu_store_other" : null,
@@ -1413,7 +1413,7 @@ describe("miniapp release lifecycle", () => {
     expect((await miniappBetas.invite(developer, packageName, "tester@example.com")).state).toBe("accepted");
 
     const { MiniAppBetaService: RemappedMiniAppBetaService } = await import(
-      "../packages/core/src/services/miniapps/miniapp-beta.service"
+      "../packages/store/src/services/miniapps/miniapp-beta.service"
     );
     const singlyRemappedBetas = new RemappedMiniAppBetaService(async () => "mu_store_reassigned");
     expect((await singlyRemappedBetas.invite(developer, packageName, "tester@example.com")).state).toBe("pending");
@@ -1629,7 +1629,6 @@ async function releaseBundle(manifest: Record<string, unknown>): Promise<Uint8Ar
   }
   return signBundleArchive(await zip.generateAsync({ type: "uint8array" }), key);
 }
-
 function canonicalJson(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;

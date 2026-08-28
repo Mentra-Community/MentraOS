@@ -103,6 +103,7 @@ program
           organizationId: token.organization_id,
           authenticationMethod: token.authentication_method,
           coreUrl: config.coreUrl,
+          storeUrl: config.storeUrl,
           storedAt: storedAt.toISOString(),
           expiresAt: expiresAt?.toISOString(),
         };
@@ -153,6 +154,7 @@ program
     if (creds.organizationId) console.log(`Organization: ${creds.organizationId}`);
     if (creds.developerOrgId) console.log(`Developer org: ${creds.developerOrgId}`);
     console.log(`Core: ${config.coreUrl}`);
+    console.log(`Store: ${config.storeUrl}`);
     if (creds.expiresAt) console.log(`Expires: ${new Date(creds.expiresAt).toLocaleString()}`);
   });
 
@@ -846,6 +848,7 @@ async function loadFreshCredentials(config = getConfig()): Promise<CliCredential
       developerOrgId: creds.developerOrgId,
       authenticationMethod: refreshed.authentication_method ?? creds.authenticationMethod,
       coreUrl: config.coreUrl,
+      storeUrl: config.storeUrl,
       storedAt: storedAt.toISOString(),
       expiresAt: expiresAt?.toISOString(),
     };

@@ -1,10 +1,10 @@
 import {registerMiniapp, type ActionContext, type MiniappSession} from "@mentra/miniapp/background"
-import {isNewerVersion, loadCompleteCatalog, parseCatalog, trustedCoreOrigin} from "./catalog"
+import {isNewerVersion, loadCompleteCatalog, parseCatalog, trustedBackendOrigin} from "./catalog"
 import {isAutomaticUpdateCandidate, isAutomaticUpdateOwnedRelease} from "./updates"
 import type {StoreChannels} from "../shared/channels"
 import {MENTRA_STORE_PACKAGE_NAME, type InstalledApp, type StoreApp, type StoreSnapshot} from "../shared/types"
 
-const FALLBACK_CORE_URL = process.env.MENTRA_PUBLIC_CORE_URL
+const CONFIGURED_STORE_URL = process.env.MENTRA_PUBLIC_STORE_URL
 const STORE_MUTATION_ACTION_CALLERS = new Set(["com.mentra.ai"])
 
 export class StoreController {
@@ -91,11 +91,11 @@ export class StoreController {
     this.ui.send("store:snapshot", this.snapshot)
   }
 
-  private async coreUrl() {
+  private async storeUrl() {
     try {
-      return trustedCoreOrigin(await this.session.auth.getCoreUrl()) ?? FALLBACK_CORE_URL
+      return resolveStoreBackendOrigin(await this.session.auth.getCoreUrl(), CONFIGURED_STORE_URL)
     } catch {
-      return FALLBACK_CORE_URL
+      return trustedBackendOrigin(CONFIGURED_STORE_URL)
     }
   }
 
@@ -197,8 +197,8 @@ export class StoreController {
     const query = typeof params.query === "string" ? params.query.trim().slice(0, 120) : ""
     const requestedLimit = typeof params.limit === "number" && Number.isFinite(params.limit) ? params.limit : 5
     const limit = Math.min(Math.max(Math.trunc(requestedLimit), 1), 10)
-    const base = await this.coreUrl()
-    if (!base) throw new Error("Store Core URL is not configured")
+    const base = await this.storeUrl()
+    if (!base) throw new Error("Store backend URL is not configured")
     const [apps, installed] = await Promise.all([
       this.loadCatalog(base, query).then((rows) => this.annotateInstallCompatibility(rows)),
       this.session.miniapps.list({includeIncompatible: true}),
@@ -212,8 +212,8 @@ export class StoreController {
 
   private async getMiniappDetails(params: Record<string, unknown>) {
     const packageName = this.actionPackageName(params)
-    const base = await this.coreUrl()
-    if (!base) throw new Error("Store Core URL is not configured")
+    const base = await this.storeUrl()
+    if (!base) throw new Error("Store backend URL is not configured")
     const [app, installed] = await Promise.all([
       this.loadCatalogApp(base, packageName),
       this.session.miniapps.list({includeIncompatible: true}),
@@ -238,8 +238,8 @@ export class StoreController {
 
   private async installMiniappAction(params: Record<string, unknown>, updateOnly: boolean) {
     const packageName = this.actionPackageName(params)
-    const base = await this.coreUrl()
-    if (!base) throw new Error("Store Core URL is not configured")
+    const base = await this.storeUrl()
+    if (!base) throw new Error("Store backend URL is not configured")
     const [app, installedBefore] = await Promise.all([
       this.loadCatalogApp(base, packageName),
       this.session.miniapps.list({includeIncompatible: true}),
@@ -309,8 +309,8 @@ export class StoreController {
     this.snapshot = {...this.snapshot, loading: true, error: null}
     this.send()
     try {
-      const base = await this.coreUrl()
-      if (!base) throw new Error("Store Core URL is not configured")
+      const base = await this.storeUrl()
+      if (!base) throw new Error("Store backend URL is not configured")
       const queryIsFiltered = Boolean(query?.trim())
       const [apps, installed, automaticApps] = await Promise.all([
         this.loadCatalog(base, query),
@@ -494,8 +494,8 @@ export class StoreController {
 
   private async setTrack(packageName: string, track: "stable" | "beta", query?: string) {
     if (query !== undefined) this.lastQuery = query
-    const base = await this.coreUrl()
-    if (!base) throw new Error("Store Core URL is not configured")
+    const base = await this.storeUrl()
+    if (!base) throw new Error("Store backend URL is not configured")
     const url = new URL(`/api/store/apps/${encodeURIComponent(packageName)}/track`, base)
     const response = await this.session.auth.fetch(url.toString(), {
       method: "POST",
@@ -527,6 +527,25 @@ export class StoreController {
       throw failure
     }
   }
+}
+
+export function resolveStoreBackendOrigin(
+  coreValue: string | null | undefined,
+  configuredValue?: string,
+): string | null {
+  const configured = trustedBackendOrigin(configuredValue)
+  const core = trustedBackendOrigin(coreValue)
+  if (!core) return configured
+  const url = new URL(core)
+  if (url.hostname === "core.mentraglass.com") return "https://store.mentraglass.com"
+  if (url.hostname.startsWith("core.") && url.hostname.endsWith(".mentraglass.com")) {
+    return `${url.protocol}//${url.hostname.replace(/^core\./, "store.")}${url.port ? `:${url.port}` : ""}`
+  }
+  if ((url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "::1") && url.port === "3000") {
+    url.port = "3003"
+    return url.origin
+  }
+  return configured ?? core
 }
 
 registerMiniapp((session) => new StoreController(session).start())

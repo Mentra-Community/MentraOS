@@ -16,6 +16,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:tes
 
 const TEST_OEM_ID = "test-oem";
 const CORE_PORT = 13030;
+const STORE_PORT = 13033;
 const TEST_OEM_PORT = 13130;
 const TEST_PACKAGE = "com.test.app";
 
@@ -45,6 +46,7 @@ const TEST_PACKAGE = "com.test.app";
 }
 
 import { startCore, type CoreHandle } from "../packages/core/src/index";
+import { startStore, type StoreHandle } from "../packages/store/src/index";
 import { startTestOem, type TestOemHandle } from "../test/test-oem/src/index";
 import { OemModel } from "../packages/core/src/models/oem.model";
 import { UserModel } from "../packages/core/src/models/user.model";
@@ -54,6 +56,7 @@ import { RevokedJtiModel } from "../packages/core/src/models/revoked-jti.model";
 import { CloudClient } from "../packages/cloud-client/node";
 
 let coreHandle: CoreHandle;
+let storeHandle: StoreHandle;
 let testOemHandle: TestOemHandle;
 
 beforeAll(async () => {
@@ -66,6 +69,8 @@ beforeAll(async () => {
 
   testOemHandle = await startTestOem({ port: TEST_OEM_PORT, tenantId: TEST_OEM_ID });
   coreHandle = await startCore({ port: CORE_PORT });
+  process.env.MENTRA_STORE_CORE_JWKS_URL = `${coreHandle.url}/.well-known/jwks.json`;
+  storeHandle = await startStore({ port: STORE_PORT });
   await Promise.all([
     OemModel.syncIndexes(),
     UserModel.syncIndexes(),
@@ -76,6 +81,7 @@ beforeAll(async () => {
 }, 30_000);
 
 afterAll(async () => {
+  await storeHandle?.stop();
   await coreHandle?.stop();
   await testOemHandle?.stop();
 });
@@ -130,16 +136,21 @@ describe("cloud.auth.getMiniappToken (real core)", () => {
   test("Store endpoints accept only the configured Store miniapp audience", async () => {
     const cloud = await newCloud("store-user");
     const storeToken = await cloud.auth.getMiniappToken("com.mentra.store");
-    const storeResponse = await fetch(`${coreHandle.url}/api/store/apps`, {
+    const storeResponse = await fetch(`${storeHandle.url}/api/store/apps`, {
       headers: { authorization: `Bearer ${storeToken.token}` },
     });
     expect(storeResponse.status).toBe(200);
 
     const unrelatedToken = await cloud.auth.getMiniappToken(TEST_PACKAGE);
-    const unrelatedResponse = await fetch(`${coreHandle.url}/api/store/apps`, {
+    const unrelatedResponse = await fetch(`${storeHandle.url}/api/store/apps`, {
       headers: { authorization: `Bearer ${unrelatedToken.token}` },
     });
-    expect(unrelatedResponse.status).toBe(400);
+    expect(unrelatedResponse.status).toBe(401);
+  });
+
+  test("cloud.store uses the independent Store endpoint with Core identity", async () => {
+    const cloud = await newCloud("store-host-user");
+    await expect(cloud.store?.list()).resolves.toEqual([]);
   });
 });
 
@@ -155,7 +166,7 @@ async function newCloud(tenantUserId: string): Promise<CloudClient> {
   const { jwt } = (await mintRes.json()) as { jwt: string };
 
   return new CloudClient({
-    endpoints: { core: coreHandle.url, runtime: `http://localhost:${CORE_PORT}` },
+    endpoints: { core: coreHandle.url, store: storeHandle.url, runtime: `http://localhost:${CORE_PORT}` },
     auth: {
       core: { subjectToken: jwt, subjectTokenType: "oem-jwt" },
       runtime: { source: "core" },

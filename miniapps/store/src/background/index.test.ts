@@ -1,6 +1,6 @@
 import {describe, expect, test} from "bun:test"
 import type {MiniappSession} from "@mentra/miniapp/background"
-import {StoreController} from "./index"
+import {resolveStoreBackendOrigin, StoreController} from "./index"
 import type {StoreApp, StoreSnapshot} from "../shared/types"
 
 interface TestController {
@@ -17,6 +17,17 @@ interface TestController {
   lastQuery: string
   snapshot: StoreSnapshot
 }
+
+describe("Store backend resolution", () => {
+  test("derives official environments but preserves an OEM build-configured Store", () => {
+    expect(
+      resolveStoreBackendOrigin("https://core.dev.us-west-2.mentraglass.com", "https://store.mentraglass.com"),
+    ).toBe("https://store.dev.us-west-2.mentraglass.com")
+    expect(resolveStoreBackendOrigin("https://core.some-oem.example", "https://apps.some-oem.example")).toBe(
+      "https://apps.some-oem.example",
+    )
+  })
+})
 
 describe("StoreController refresh serialization", () => {
   test("hydrates private artwork through the authenticated Store background", async () => {
@@ -177,7 +188,7 @@ describe("StoreController refresh serialization", () => {
         : []
     const session = {
       auth: {
-        getCoreUrl: async () => "https://core.example.test",
+        getCoreUrl: async () => "https://core.dev.us-west-2.mentraglass.com",
         fetch: async (url: string) => {
           const parsed = new URL(url)
           return parsed.pathname.endsWith(`/${catalogApp.packageName}`)
@@ -453,11 +464,11 @@ describe("StoreController refresh serialization", () => {
     expect(installs).toBe(0)
   })
 
-  test("changes track through authenticated Core state and refreshes the automatic catalog", async () => {
+  test("changes track through the authenticated Store backend and refreshes the automatic catalog", async () => {
     let request: {url: string; init?: RequestInit} | undefined
     const session = {
       auth: {
-        getCoreUrl: async () => "https://core.example.test",
+        getCoreUrl: async () => "https://core.dev.us-west-2.mentraglass.com",
         fetch: async (url: string, init?: RequestInit) => {
           request = {url, init}
           return Response.json({app: {}})
@@ -474,7 +485,7 @@ describe("StoreController refresh serialization", () => {
 
     await controller.setTrack("com.example.preview", "beta", "preview")
 
-    expect(request?.url).toBe("https://core.example.test/api/store/apps/com.example.preview/track")
+    expect(request?.url).toBe("https://store.dev.us-west-2.mentraglass.com/api/store/apps/com.example.preview/track")
     expect(request?.init).toMatchObject({method: "POST", body: JSON.stringify({track: "beta"})})
     expect(refreshArgs).toEqual(["preview", true, true])
   })

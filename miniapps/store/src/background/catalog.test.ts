@@ -1,5 +1,5 @@
 import {describe, expect, test} from "bun:test"
-import {isNewerVersion, loadCompleteCatalog, parseCatalog, trustedCoreOrigin} from "./catalog"
+import {isNewerVersion, loadCompleteCatalog, parseCatalog, trustedBackendOrigin} from "./catalog"
 
 const app = (packageName: string) => ({
   packageName,
@@ -32,16 +32,16 @@ describe("Store catalog", () => {
     expect(parseCatalog({apps: [poisoned]})[0]?.release.installCompatibility).toBeUndefined()
   })
 
-  test("accepts only a safe host-provided Core origin", () => {
-    expect(trustedCoreOrigin("https://core.dev.example.test/oauth")).toBe("https://core.dev.example.test")
-    expect(trustedCoreOrigin("http://localhost:3000")).toBe("http://localhost:3000")
-    expect(trustedCoreOrigin("http://192.168.1.42:3000/path")).toBe("http://192.168.1.42:3000")
-    expect(trustedCoreOrigin("http://10.0.2.2:3000")).toBe("http://10.0.2.2:3000")
-    expect(trustedCoreOrigin("http://[fd12:3456::1]:3000")).toBe("http://[fd12:3456::1]:3000")
-    expect(trustedCoreOrigin("http://evil.example.test")).toBeNull()
-    expect(trustedCoreOrigin("http://fd12.example.test:3000")).toBeNull()
-    expect(trustedCoreOrigin("http://fe80.attacker.test:3000")).toBeNull()
-    expect(trustedCoreOrigin("http://user:password@192.168.1.42:3000")).toBeNull()
+  test("accepts only a safe host-provided backend origin", () => {
+    expect(trustedBackendOrigin("https://store.dev.example.test/oauth")).toBe("https://store.dev.example.test")
+    expect(trustedBackendOrigin("http://localhost:3003")).toBe("http://localhost:3003")
+    expect(trustedBackendOrigin("http://192.168.1.42:3003/path")).toBe("http://192.168.1.42:3003")
+    expect(trustedBackendOrigin("http://10.0.2.2:3003")).toBe("http://10.0.2.2:3003")
+    expect(trustedBackendOrigin("http://[fd12:3456::1]:3003")).toBe("http://[fd12:3456::1]:3003")
+    expect(trustedBackendOrigin("http://evil.example.test")).toBeNull()
+    expect(trustedBackendOrigin("http://fd12.example.test:3003")).toBeNull()
+    expect(trustedBackendOrigin("http://fe80.attacker.test:3003")).toBeNull()
+    expect(trustedBackendOrigin("http://user:password@192.168.1.42:3003")).toBeNull()
   })
 
   test("keeps valid installable releases and redacted beta offers", () => {

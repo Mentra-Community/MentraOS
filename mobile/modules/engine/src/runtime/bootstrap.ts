@@ -22,6 +22,8 @@ export interface IslandAuth {
 export interface IslandConfigValues {
   /** cloud-v2 core service base URL (defaults resolved by the cloud client). */
   coreUrl?: string
+  /** Independently deployed Mentra Miniapp Store backend URL. */
+  storeUrl?: string
   /** cloud-v2 runtime service base URL. */
   runtimeUrl?: string
   /** OEM identifier (Mentra is OEM #0); reserved for OEM auth/telemetry. */

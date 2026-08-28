@@ -132,7 +132,7 @@ async function main(): Promise<void> {
     { CLOUD_V2_SETUP_CALLER: "dev" },
   );
 
-  step("starting Core + Runtime + Test OEM");
+  step("starting Core + Store + Runtime + Test OEM");
   await runInherited(
     [
       "doppler",

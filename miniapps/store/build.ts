@@ -5,8 +5,8 @@ const distDir = "./dist"
 await rm(distDir, {recursive: true, force: true})
 
 const define: Record<string, string> = {
-  "process.env.MENTRA_PUBLIC_CORE_URL": JSON.stringify(
-    process.env.MENTRA_PUBLIC_CORE_URL ?? "https://core.mentraglass.com",
+  "process.env.MENTRA_PUBLIC_STORE_URL": JSON.stringify(
+    process.env.MENTRA_PUBLIC_STORE_URL ?? "https://store.mentraglass.com",
   ),
 }
 

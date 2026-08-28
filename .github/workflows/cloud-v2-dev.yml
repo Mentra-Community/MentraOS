@@ -29,6 +29,7 @@ jobs:
       PORTER_REPO_NAME: ${{ github.event.repository.name }}
       PORTER_TOKEN: ${{ secrets.PORTER_TOKEN }}
       CORE_HOSTNAME: core.dev.us-west-2.mentraglass.com
+      STORE_HOSTNAME: store.dev.us-west-2.mentraglass.com
       RUNTIME_HOSTNAME: runtime.dev.us-west-2.mentraglass.com
     steps:
       - name: Checkout code
@@ -56,11 +57,13 @@ jobs:
       - name: Verify dev health
         run: |
           set -euo pipefail
-          if ! getent hosts "${CORE_HOSTNAME}" >/dev/null || ! getent hosts "${RUNTIME_HOSTNAME}" >/dev/null; then
+          if ! getent hosts "${CORE_HOSTNAME}" >/dev/null || ! getent hosts "${STORE_HOSTNAME}" >/dev/null || ! getent hosts "${RUNTIME_HOSTNAME}" >/dev/null; then
             echo "::warning::Dev DNS is not configured yet; skipping public health checks."
             exit 0
           fi
           curl --retry 12 --retry-delay 10 --retry-all-errors -fsS "https://${CORE_HOSTNAME}/healthz"
+          echo
+          curl --retry 12 --retry-delay 10 --retry-all-errors -fsS "https://${STORE_HOSTNAME}/healthz"
           echo
           curl --retry 12 --retry-delay 10 --retry-all-errors -fsS "https://${RUNTIME_HOSTNAME}/healthz"
           echo

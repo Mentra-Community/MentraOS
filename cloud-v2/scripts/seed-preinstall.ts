@@ -13,10 +13,10 @@ import { readFileSync } from "node:fs";
 import {
   connectMongo,
   disconnectMongo,
-} from "../packages/core/src/connections/mongo.connection";
-import { MiniAppModel } from "../packages/core/src/models/miniapp.model";
-import { MiniAppService } from "../packages/core/src/services/miniapps/miniapp.service";
-import { PreinstalledRegistryService } from "../packages/core/src/services/miniapps/preinstalled-registry.service";
+} from "../packages/store/src/connections/mongo.connection";
+import { MiniAppModel } from "../packages/store/src/models/miniapp.model";
+import { MiniAppService } from "../packages/store/src/services/miniapps/miniapp.service";
+import { PreinstalledRegistryService } from "../packages/store/src/services/miniapps/preinstalled-registry.service";
 
 const ENVIRONMENT = process.env.SEED_ENV ?? "dev";
 const PACKAGE = "com.example.captions";
