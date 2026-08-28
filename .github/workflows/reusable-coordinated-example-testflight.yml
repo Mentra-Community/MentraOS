@@ -196,6 +196,9 @@ jobs:
         env:
           MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
           RAW_MATCH_GIT_BASIC_AUTHORIZATION: ${{ secrets.MATCH_GIT_BASIC_AUTHORIZATION }}
+          ASC_KEY_PATH: ${{ steps.asc.outputs.key_path }}
+          ASC_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_API_ISSUER_ID }}
         run: |
           set -euo pipefail
           export PATH="$HOME/.rbenv/shims:$HOME/.rbenv/bin:$PATH"
@@ -231,9 +234,31 @@ jobs:
           identity=$(security find-identity -v -p codesigning "$keychain" \
             | awk '/Apple Distribution: Mentra Labs, Inc\. \(T5XXXL6N36\)/ { print $2; exit }')
           test -n "$identity"
+          api_key="${RUNNER_TEMP}/mentra-creds/example-fastlane-api-key.json"
+          jq -n \
+            --arg key_id "$ASC_KEY_ID" \
+            --arg issuer_id "$ASC_ISSUER_ID" \
+            --rawfile key "$ASC_KEY_PATH" \
+            '{key_id: $key_id, issuer_id: $issuer_id, key: $key, in_house: false}' \
+            > "$api_key"
+          profile_dir="${RUNNER_TEMP}/mentra-example-profile"
+          mkdir -p "$profile_dir"
+          bundle exec fastlane sigh \
+            --api_key_path "$api_key" \
+            --app_identifier "$EXAMPLE_BUNDLE_ID" \
+            --team_id "$APPLE_TEAM_ID" \
+            --output_path "$profile_dir" \
+            --filename "mentra-example-appstore.mobileprovision"
+          profile="$profile_dir/mentra-example-appstore.mobileprovision"
+          profile_plist="$profile_dir/profile.plist"
+          security cms -D -i "$profile" > "$profile_plist"
+          profile_name=$(/usr/libexec/PlistBuddy -c 'Print :Name' "$profile_plist")
+          [[ "$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' "$profile_plist")" == "$APPLE_TEAM_ID.$EXAMPLE_BUNDLE_ID" ]]
+          [[ "$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:get-task-allow' "$profile_plist")" == "false" ]]
           echo "MENTRA_CI_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
           echo "MENTRA_CI_KEYCHAIN_PASSWORD=$password" >> "$GITHUB_ENV"
           echo "MENTRA_CI_CODE_SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
+          echo "MENTRA_CI_PROVISIONING_PROFILE_NAME=$profile_name" >> "$GITHUB_ENV"
 
       - name: Archive and export the signed React Native example
         if: steps.app-store.outputs.exists != 'true'
@@ -266,29 +291,34 @@ jobs:
             -authenticationKeyID "$ASC_KEY_ID" \
             -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
             DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
-            CODE_SIGN_STYLE=Automatic \
+            CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY="$MENTRA_CI_CODE_SIGN_IDENTITY" \
+            PROVISIONING_PROFILE_SPECIFIER="$MENTRA_CI_PROVISIONING_PROFILE_NAME" \
             OTHER_CODE_SIGN_FLAGS="--keychain $MENTRA_CI_KEYCHAIN" \
             MARKETING_VERSION="$MARKETING_VERSION" \
             CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
             archive
-          cat > "$RUNNER_TEMP/mentra-example-export-options.plist" <<PLIST
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0"><dict>
-            <key>method</key><string>app-store-connect</string>
-            <key>teamID</key><string>$APPLE_TEAM_ID</string>
-            <key>signingStyle</key><string>automatic</string>
-            <key>destination</key><string>export</string>
-            <key>manageAppVersionAndBuildNumber</key><false/>
-            <key>uploadSymbols</key><true/>
-          </dict></plist>
-          PLIST
+          export_options="$RUNNER_TEMP/mentra-example-export-options.plist"
+          jq -n \
+            --arg team_id "$APPLE_TEAM_ID" \
+            --arg bundle_id "$EXAMPLE_BUNDLE_ID" \
+            --arg profile "$MENTRA_CI_PROVISIONING_PROFILE_NAME" \
+            '{
+              method: "app-store-connect",
+              teamID: $team_id,
+              signingStyle: "manual",
+              signingCertificate: "Apple Distribution",
+              provisioningProfiles: {($bundle_id): $profile},
+              destination: "export",
+              manageAppVersionAndBuildNumber: false,
+              uploadSymbols: true
+            }' > "$export_options.json"
+          plutil -convert xml1 -o "$export_options" "$export_options.json"
           xcodebuild \
             -exportArchive \
             -archivePath "$archive" \
             -exportPath "$output" \
-            -exportOptionsPlist "$RUNNER_TEMP/mentra-example-export-options.plist" \
+            -exportOptionsPlist "$export_options" \
             -allowProvisioningUpdates \
             -authenticationKeyPath "$ASC_KEY_PATH" \
             -authenticationKeyID "$ASC_KEY_ID" \
