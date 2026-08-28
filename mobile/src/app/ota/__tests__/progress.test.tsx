@@ -200,7 +200,7 @@ describe("progress.tsx display states", () => {
     beginOtaAutoChain("initial-offer", false, AUTO_CHAIN_RELEASE_RANGE)
     const replaceSpy = jest.spyOn(useNavigationStore.getState(), "replace")
     try {
-      const {getByText} = render(<OtaProgressScreen />)
+      const {getByText, queryByText} = render(<OtaProgressScreen />)
 
       act(() => {
         useGlassesStore.getState().setOtaStatus({
@@ -215,11 +215,13 @@ describe("progress.tsx display states", () => {
         })
       })
 
+      expect(getByText("ota:finishingUpdate")).toBeDefined()
+      expect(queryByText("Update complete!")).toBeNull()
       expect(replaceSpy).not.toHaveBeenCalledWith("/ota/check-for-updates")
       await act(async () => {
         await jest.advanceTimersByTimeAsync(750)
       })
-      expect(getByText("ota:checkingForUpdates")).toBeDefined()
+      expect(getByText("ota:finishingUpdate")).toBeDefined()
       expect(useConnectionOverlayConfig.getState().suppressOverlay).toBe(false)
       expect(replaceSpy).not.toHaveBeenCalledWith("/ota/check-for-updates")
     } finally {
@@ -255,7 +257,7 @@ describe("progress.tsx display states", () => {
       await act(async () => {
         await jest.advanceTimersByTimeAsync(750)
       })
-      expect(getByText("ota:checkingForUpdates")).toBeDefined()
+      expect(getByText("ota:finishingUpdate")).toBeDefined()
       expect(replaceSpy).not.toHaveBeenCalledWith("/ota/check-for-updates")
     } finally {
       replaceSpy.mockRestore()
@@ -298,7 +300,7 @@ describe("progress.tsx display states", () => {
       await act(async () => {
         await jest.advanceTimersByTimeAsync(750)
       })
-      expect(getByText("ota:checkingForUpdates")).toBeDefined()
+      expect(getByText("ota:finishingUpdate")).toBeDefined()
       expect(replaceSpy).not.toHaveBeenCalledWith("/ota/check-for-updates")
     } finally {
       replaceSpy.mockRestore()

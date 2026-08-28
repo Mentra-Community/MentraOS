@@ -88,10 +88,10 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
   maven:
-    name: Publish and verify Maven Central SDK
+    name: Build SDK and submit Maven Central publication
     needs: prepare
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -308,7 +308,7 @@ jobs:
             zip -q -r "$GITHUB_WORKSPACE/native-result/maven/central-bundle.zip" com
           )
 
-      - name: Upload and persist a user-managed Sonatype deployment
+      - name: Submit and persist an automatically published Sonatype deployment
         if: inputs.dry_run != true && steps.existing.outputs.exists != 'true' && steps.deployment.outputs.exists != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -329,52 +329,7 @@ jobs:
             --input native-result/maven/sonatype-deployment.json \
             "https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/$RELEASE_ID/assets?name=$encoded_name" >/dev/null
 
-      - name: Publish or resume the persisted Sonatype deployment
-        if: inputs.dry_run != true && steps.existing.outputs.exists != 'true'
-        env:
-          MAVEN_CENTRAL_TOKEN_BASE64: ${{ secrets.MAVEN_CENTRAL_TOKEN_BASE64 }}
-        run: |
-          node .github/scripts/sonatype-central-deployment.mjs publish \
-            --record native-result/maven/sonatype-deployment.json \
-            --output native-result/maven/sonatype-result.json
-
-      - name: Wait for and download public Maven artifacts
-        id: public
-        if: inputs.dry_run != true
-        env:
-          LC3_URL: ${{ steps.release.outputs.lc3_url }}
-          SDK_URL: ${{ steps.release.outputs.sdk_url }}
-        run: |
-          set -euo pipefail
-          mkdir -p native-result/maven
-          for attempt in {1..180}; do
-            if curl --fail --silent --show-error --location "$SDK_URL" -o native-result/maven/bluetooth-sdk.aar \
-              && curl --fail --silent --show-error --location "$LC3_URL" -o native-result/maven/lc3Lib.aar; then
-              exit 0
-            fi
-            echo "Waiting for Maven Central propagation (attempt $attempt/180)"
-            sleep 10
-          done
-          echo "Maven Central did not expose the complete coordinated SDK within 30 minutes." >&2
-          exit 1
-
-      - name: Verify public Maven SDK metadata
-        if: inputs.dry_run != true
-        env:
-          OTA_MANIFEST_SHA256: ${{ inputs.ota_manifest_sha256 }}
-          OTA_MANIFEST_URL: ${{ inputs.ota_manifest_url }}
-          RELEASE_IDENTITY: ${{ steps.release.outputs.version }}
-        run: |
-          set -euo pipefail
-          unzip -p native-result/maven/bluetooth-sdk.aar classes.jar > /tmp/mentra-public-sdk-classes.jar
-          javap -classpath /tmp/mentra-public-sdk-classes.jar -p -constants com.mentra.bluetoothsdk.GeneratedReleaseMetadata > /tmp/mentra-public-sdk-metadata.txt
-          javap -classpath /tmp/mentra-public-sdk-classes.jar -p -constants com.mentra.bluetoothsdk.BuildConfig >> /tmp/mentra-public-sdk-metadata.txt
-          grep -F "$RELEASE_IDENTITY" /tmp/mentra-public-sdk-metadata.txt
-          grep -F "$OTA_MANIFEST_URL" /tmp/mentra-public-sdk-metadata.txt
-          grep -F "$OTA_MANIFEST_SHA256" /tmp/mentra-public-sdk-metadata.txt
-
-      - name: Stage dry-run Maven artifacts
-        if: inputs.dry_run == true
+      - name: Stage locally verified Maven artifacts
         run: |
           mkdir -p native-result/maven
           cp "${{ steps.local.outputs.sdk }}" native-result/maven/bluetooth-sdk.aar
@@ -382,7 +337,7 @@ jobs:
 
       - name: Write Maven publication record
         env:
-          STATUS: ${{ inputs.dry_run && 'built' || ((steps.existing.outputs.exists == 'true' || steps.deployment.outputs.exists == 'true') && 'reused' || 'published') }}
+          STATUS: ${{ inputs.dry_run && 'built' || (steps.existing.outputs.exists == 'true' && 'reused' || 'submitted') }}
         run: >-
           node .github/scripts/coordinated-sdk-native-records.mjs create-maven
           --plan release-intent/release-plan.json

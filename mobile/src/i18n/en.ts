@@ -155,7 +155,7 @@ const en = {
     livePairingModeTitle: "Ready to pair",
     livePairingModeSubtitle: "Put your glasses into pairing mode before you scan.",
     livePairingModeInfo:
-      "Press the power button 5 times quickly. The LED flashes and the glasses speak a 4-character code (0–9, A–F). Match that code on the scan list if more than one unit appears.",
+      "Press the power button 3 times quickly. The LED flashes and the glasses speak a 4-character code (0–9, A–F). Match that code on the scan list if more than one unit appears.",
     liveScanTitle: "Turn on your glasses",
     liveScanSubtitle: "We're looking for your Mentra Live.",
     livePairingFoundTitle: "Glasses found",
@@ -166,13 +166,13 @@ const en = {
     liveChooseGlassesTitle: "Choose your glasses",
     scanAgain: "Scan Again",
     noGlassesFound: "No glasses found",
-    noGlassesFoundHint: "Make sure you pressed the power button 5 times quickly, then try again.",
+    noGlassesFoundHint: "Make sure you pressed the power button 3 times quickly, then try again.",
     nearbyNotInPairingModeHint:
-      "Nearby Mentra Live glasses were found, but they are not in pairing mode. Press the power button 5 times quickly, then try again.",
+      "Nearby Mentra Live glasses were found, but they are not in pairing mode. Press the power button 3 times quickly, then try again.",
     notInPairingModeLabel: "Not in pairing mode",
     notInPairingModeAlertTitle: "Enter pairing mode",
     notInPairingModeAlertMessage:
-      "Press the power button 5 times quickly. The LED flashes and the glasses speak a 4-character code. Then select the glasses again.",
+      "Press the power button 3 times quickly. The LED flashes and the glasses speak a 4-character code. Then select the glasses again.",
     tryAgain: "Try Again",
     pairingCodeLabel: "Code {{code}}",
     legacyFirmwareLabel: "Legacy software",
@@ -407,10 +407,19 @@ const en = {
     checkingForUpdates: "Checking for updates",
     checkingForUpdatesMessage:
       "Connected devices will perform automatic updates. Automatic updates can be disabled in Device Settings",
+    finishingUpdate: "Finishing your update",
+    checkingAdditionalUpdates: "Checking whether your glasses need any additional updates.",
     updateAvailable: "{{deviceName}} Update Available",
+    batteryRequiredTitle: "Charge {{deviceName}} to Update",
+    batteryRequiredMessage:
+      "{{deviceName}} is currently at {{batteryLevel}}%. Charge it to at least {{minimumBatteryLevel}}% before updating.",
+    batteryRequiredLiveUpdate: "This screen will update automatically as the battery charges.",
     updateReadyToInstall: "Version {{version}} for {{deviceName}} is ready to install.",
     updateConnectWifi: "Connect your {{deviceName}} to WiFi to install the update.",
+    wifiRequiredTitle: "WiFi Needed for Update",
     updateDescription: "A new update is available for your glasses. We recommend updating now for the best experience.",
+    updateSequenceMessage:
+      "Your glasses may install more than one update and restart several times. Keep them nearby until finished.",
     releaseTransition: "{{fromVersion}} → {{toVersion}}",
     releaseTransitionUnknown: "Current version unknown → {{toVersion}}",
     updatedToVersion: "Updated to {{version}}",
@@ -451,6 +460,7 @@ const en = {
       "Your glasses restarted with new firmware. One more step: they'll now continue to the required version.",
     updateComplete: "Update Complete",
     updateCompleteMessage: "Your glasses have been updated successfully.",
+    whatsNew: "What's new",
     updateFailed: "Update Failed",
     updateFailedMessage: "The update could not be completed. You can try again later from Settings.",
     glassesDisconnected: "Glasses Disconnected",

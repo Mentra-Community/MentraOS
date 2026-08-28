@@ -90,6 +90,9 @@ public class AsgConstants {
     /** Silence between spoken pairing-code characters so adjacent sounds remain distinguishable. */
     public static final int PAIRING_CODE_INTER_CHARACTER_PAUSE_MS = 140;
 
+    /** Pause between the pairing instruction and the first code character. */
+    public static final int PAIRING_INTRO_TO_CODE_PAUSE_MS = 300;
+
     /** Subtle linear gain for the repeating cold-camera hold-still cue. */
     public static final float CAMERA_PREP_CLICK_PLAYBACK_VOLUME = 0.09f;
 

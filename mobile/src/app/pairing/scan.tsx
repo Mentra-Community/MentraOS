@@ -19,6 +19,7 @@ import {useNavigationStore} from "@/stores/navigation"
 import showAlert from "@/utils/AlertUtils"
 import {PermissionFeatures, requestFeaturePermissions} from "@/utils/PermissionsUtils"
 import {AR99_MODEL_OPTIONS, getAr99DisplayName, getAr99ImageSource, getGlassesOpenImage} from "@/utils/getGlassesImage"
+import {isMentraLiveSecurePairingEnabled} from "@/utils/pairing/securePairingFeature"
 
 const normalizeProjectName = (value?: string | null) => value?.trim().toUpperCase() ?? ""
 const SUPPORTED_AR99_PROJECT_NAMES = new Set<string>(AR99_MODEL_OPTIONS.map((option) => option.projectName))
@@ -41,6 +42,7 @@ export default function SelectGlassesBluetoothScreen() {
   const scanGenerationRef = useRef(0)
   const [scanGeneration, setScanGeneration] = useState(0)
   const isMentraLivePairingScan = deviceModel === DeviceTypes.LIVE
+  const securePairingEnabled = isMentraLiveSecurePairingEnabled()
 
   const selectedDisplayName = useMemo(() => {
     return deviceModel === DeviceTypes.AR99 ? getAr99DisplayName(ar99ProjectName) : deviceModel
@@ -128,7 +130,10 @@ export default function SelectGlassesBluetoothScreen() {
   // Secure Mentra Live ads with pairingMode=false are nearby but not pairable yet.
   // Existing customer firmware (no secure flag) stays pairable when pairingMode is unset/false.
   const isLivePairable = (device: Device) =>
-    !isMentraLivePairingScan || device.pairingMode !== false || device.securePairingCapable === false
+    !isMentraLivePairingScan ||
+    !securePairingEnabled ||
+    device.pairingMode !== false ||
+    device.securePairingCapable === false
 
   useEffect(() => {
     void startScanAttempt()
@@ -149,15 +154,20 @@ export default function SelectGlassesBluetoothScreen() {
   const pairableResults = useMemo(
     () =>
       visibleResults.filter(
-        (device) => !isMentraLivePairingScan || device.pairingMode !== false || device.securePairingCapable === false,
+        (device) =>
+          !isMentraLivePairingScan ||
+          !securePairingEnabled ||
+          device.pairingMode !== false ||
+          device.securePairingCapable === false,
       ),
-    [visibleResults, isMentraLivePairingScan],
+    [visibleResults, isMentraLivePairingScan, securePairingEnabled],
   )
   const hasNearbyNotInPairingMode = useMemo(
     () =>
       isMentraLivePairingScan &&
+      securePairingEnabled &&
       visibleResults.some((device) => device.pairingMode === false && device.securePairingCapable !== false),
-    [isMentraLivePairingScan, visibleResults],
+    [isMentraLivePairingScan, securePairingEnabled, visibleResults],
   )
   const listResults = visibleResults
   const shouldShowDeviceList = listResults.length > 0
@@ -285,10 +295,7 @@ export default function SelectGlassesBluetoothScreen() {
   const formatLiveSubtitle = (device: Device) => {
     const base = filterDeviceName(device.name)
     const parts: string[] = [base]
-    if (device.pairingCode) {
-      parts.push(translate("pairing:pairingCodeLabel", {code: device.pairingCode}))
-    }
-    if (device.securePairingCapable !== false && device.pairingMode === false) {
+    if (securePairingEnabled && device.securePairingCapable !== false && device.pairingMode === false) {
       parts.push(translate("pairing:notInPairingModeLabel"))
     }
     return parts.join(" · ")
@@ -339,6 +346,7 @@ export default function SelectGlassesBluetoothScreen() {
 
   const showLivePairingHelp =
     isMentraLivePairingScan &&
+    securePairingEnabled &&
     !shouldShowDeviceList &&
     (scanTimedOut || (pairableResults.length === 0 && hasNearbyNotInPairingMode))
 
@@ -378,9 +386,11 @@ export default function SelectGlassesBluetoothScreen() {
               <Text
                 className="text-center text-sm text-muted-foreground"
                 text={
-                  hasNearbyNotInPairingMode
-                    ? translate("pairing:nearbyNotInPairingModeHint")
-                    : translate("pairing:noGlassesFoundHint")
+                  isMentraLivePairingScan && !securePairingEnabled
+                    ? translate("pairing:liveScanHelpInfo")
+                    : hasNearbyNotInPairingMode
+                      ? translate("pairing:nearbyNotInPairingModeHint")
+                      : translate("pairing:noGlassesFoundHint")
                 }
               />
               {shouldShowDeviceList ? (

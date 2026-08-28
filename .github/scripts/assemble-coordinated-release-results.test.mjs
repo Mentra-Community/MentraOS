@@ -73,7 +73,10 @@ test("assembles every product target and finalizes one complete release manifest
     releaseSetId: plan.releaseSetId,
     publications: {
       "@mentra/bluetooth-sdk": {
-        "maven-central": publication(`com.mentraglass:bluetooth-sdk:${plan.releaseIdentity}`),
+        "maven-central": {
+          ...publication(`com.mentraglass:bluetooth-sdk:${plan.releaseIdentity}`),
+          status: "submitted",
+        },
         "swift-package-manager": publication(`Mentra-Community/mentra-bluetooth-sdk-ios@${plan.releaseIdentity}`),
       },
     },
@@ -135,6 +138,51 @@ test("assembles every product target and finalizes one complete release manifest
     },
     workflow: {repository: "Mentra-Community/MentraOS", runId: "123"},
   }
+  const starterKit = {
+    schemaVersion: 1,
+    releaseSetId: plan.releaseSetId,
+    releaseIdentity: plan.releaseIdentity,
+    familyBaseVersion: plan.familyBaseVersion,
+    channel: plan.channel,
+    mentraos: {sourceCommit: plan.sourceCommit, coordinatorRunUrl: provenanceUrl},
+    ota: {manifestUrl: ota.manifest.url, manifestSha256: ota.manifest.sha256},
+    starterKit: {
+      baseCommit: "1".repeat(40),
+      releaseCommit: "2".repeat(40),
+      mergeCommit: "3".repeat(40),
+      sourceTag: `sdk-${plan.releaseIdentity}`,
+      artifactContainerTag: `sdk-builds-v${plan.familyBaseVersion}`,
+      releaseUrl: "https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/releases/tag/sdk-builds-v3.1.0",
+      pullRequestUrl: "https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/pull/51",
+      validationRunUrl: "https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/actions/runs/456",
+    },
+    packages: {
+      "@mentra/bluetooth-sdk": plan.releaseIdentity,
+      "@mentra/engine": plan.releaseIdentity,
+    },
+    artifacts: ["ios", "reactNative", "reactNativeElevenLabsAudio"].map((key, index) => ({
+      key,
+      name: `mentra-example-${key}-${plan.releaseIdentity}.${key === "ios" ? "ipa" : "apk"}`,
+      url: `https://example.com/mentra-example-${key}-${plan.releaseIdentity}`,
+      size: index + 1,
+      sha256: String(index + 1).repeat(64),
+      contentType: "application/octet-stream",
+    })),
+  }
+  const exampleTestflight = {
+    schemaVersion: 1,
+    releaseSetId: plan.releaseSetId,
+    releaseIdentity: plan.releaseIdentity,
+    channel: plan.channel,
+    mentraosSourceCommit: plan.sourceCommit,
+    starterKitReleaseCommit: starterKit.starterKit.releaseCommit,
+    app: {id: "6792839366", bundleId: "com.mentra.bluetoothsdk.example.reactnative"},
+    version: {marketingVersion: plan.native.marketingVersion, buildNumber: plan.native.buildNumber},
+    build: {id: "build-1", processingState: "VALID", uploadStatus: "published"},
+    group: {id: "group-1", name: "Mentra Staging"},
+    provenanceUrl,
+    ipa: {size: 123, sha256: "9".repeat(64)},
+  }
 
   const results = assembleCoordinatedReleaseResults({
     plan,
@@ -142,6 +190,9 @@ test("assembles every product target and finalizes one complete release manifest
     npmRecords,
     native,
     mobile,
+    starterKit,
+    starterKitResultUrl: "https://example.com/starter-kit-result.json",
+    exampleTestflight,
     asgSelectionFile,
     enginePackage,
     releaseAssetBaseUrl: "https://github.com/Mentra-Community/MentraOS/releases/download/mentra-builds-v3.1.0",
@@ -149,10 +200,12 @@ test("assembles every product target and finalizes one complete release manifest
   const manifest = finalizeReleaseManifest({plan, results, completedAt: "2026-08-25T02:00:00.000Z"})
 
   assert.equal(Object.keys(manifest.publications).length, 8)
-  assert.equal(manifest.publications["@mentra/bluetooth-sdk"]["maven-central"].status, "published")
+  assert.equal(manifest.publications["@mentra/bluetooth-sdk"]["maven-central"].status, "submitted")
   assert.equal(manifest.publications.mentraos["app-store-connect"].status, "published")
   assert.ok(manifest.artifacts.some((artifact) => artifact.coordinate === plan.artifactNames.asgSelection))
-  assert.equal(manifest.artifacts.at(-1).coordinate, plan.artifactNames.enginePackage)
+  assert.equal(manifest.starterKit.resultUrl, "https://example.com/starter-kit-result.json")
+  assert.equal(manifest.starterKit.testflight.build.id, "build-1")
+  assert.equal(manifest.artifacts.at(-1).coordinate, starterKit.artifacts.at(-1).name)
 
   assert.throws(
     () =>
@@ -167,6 +220,24 @@ test("assembles every product target and finalizes one complete release manifest
         releaseAssetBaseUrl: "https://example.com/release",
       }),
     /Duplicate publication record/,
+  )
+
+  assert.throws(
+    () =>
+      assembleCoordinatedReleaseResults({
+        plan,
+        ota,
+        npmRecords,
+        native,
+        mobile,
+        starterKit: {...starterKit, releaseSetId: "mentra-other"},
+        starterKitResultUrl: "https://example.com/starter-kit-result.json",
+        exampleTestflight,
+        asgSelectionFile,
+        enginePackage,
+        releaseAssetBaseUrl: "https://example.com/release",
+      }),
+    /Starter Kit result does not match/,
   )
 
   writeFileSync(asgSelectionFile, `${JSON.stringify(asgSelection)}\n`)

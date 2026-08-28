@@ -17,8 +17,12 @@ function screenLabel(screen: MentraLiveOtaScreen): string {
     case "initializing":
     case "checking":
       return "Checking"
+    case "finishing":
+      return "Finishing update"
     case "update_available":
       return "Update available"
+    case "battery_required":
+      return "Charge required"
     case "wifi_required":
       return "Wi-Fi required"
     case "up_to_date":
@@ -65,7 +69,8 @@ export function CustomOtaConsumer({onDone, onSetupWifi}: {onDone: () => void; on
   const controller = useMentraLiveOta({onFinished: onDone, onOpenWifiSetup: onSetupWifi})
   const transition = controller.state.releaseTransition
   const releaseLabel = transition ? `${transition.fromVersion ?? "Unknown"} → ${transition.toVersion}` : ""
-  return React.createElement(React.Fragment, null, screenLabel(controller.state.screen), releaseLabel)
+  const completionLabel = controller.state.completedUpdate ? "Updated" : ""
+  return React.createElement(React.Fragment, null, screenLabel(controller.state.screen), releaseLabel, completionLabel)
 }
 
 // Prove the curated low-level transport types resolve without a private import.

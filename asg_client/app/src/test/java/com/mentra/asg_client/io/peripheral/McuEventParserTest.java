@@ -12,6 +12,7 @@ import com.mentra.asg_client.io.peripheral.events.FactoryResetEvent;
 import com.mentra.asg_client.io.peripheral.events.FileTransferAckEvent;
 import com.mentra.asg_client.io.peripheral.events.HotspotTriggerEvent;
 import com.mentra.asg_client.io.peripheral.events.McuEvent;
+import com.mentra.asg_client.io.peripheral.events.PairingModeExitEvent;
 import com.mentra.asg_client.io.peripheral.events.ShutdownEvent;
 import com.mentra.asg_client.io.peripheral.events.SpeakPairingCodeEvent;
 import com.mentra.asg_client.io.peripheral.events.SwipeVolumeEvent;
@@ -141,6 +142,15 @@ public class McuEventParserTest {
     public void hmSpkcode_emptyCode_returnsNull() throws Exception {
         assertThat(McuEventParser.parse(cmd("hm_spkcode", new JSONObject().put("code", "  "))))
                 .isNull();
+    }
+
+    @Test
+    public void hmPairexit_mapsReasonToPairingModeExitEvent() throws Exception {
+        McuEvent event =
+                McuEventParser.parse(
+                        cmd("hm_pairexit", new JSONObject().put("reason", "idle_timeout")));
+        assertThat(event).isInstanceOf(PairingModeExitEvent.class);
+        assertThat(((PairingModeExitEvent) event).getReason()).isEqualTo("idle_timeout");
     }
 
     @Test

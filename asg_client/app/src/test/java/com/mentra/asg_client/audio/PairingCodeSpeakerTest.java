@@ -105,6 +105,29 @@ public class PairingCodeSpeakerTest {
     }
 
     @Test
+    public void speak_holdsWakeLeaseForFullInstructionAndCode() throws Exception {
+        when(hardware.supportsAudioPlayback()).thenReturn(true);
+        when(hardware.playAudioFile(any(File.class))).thenReturn(true);
+        File stitched = new File(app.getCacheDir(), "pairing_code_test.wav");
+
+        try (MockedStatic<WakeLockManager> wakeLocks =
+                        org.mockito.Mockito.mockStatic(WakeLockManager.class);
+                MockedStatic<PairingCodePcmStitcher> stitcher =
+                        org.mockito.Mockito.mockStatic(PairingCodePcmStitcher.class)) {
+            stitcher
+                    .when(() -> PairingCodePcmStitcher.stitchCodeToCache(app, "A12B"))
+                    .thenReturn(stitched);
+
+            assertThat(PairingCodeSpeaker.speak(app, hardware, "A12B")).isTrue();
+
+            wakeLocks.verify(
+                    () ->
+                            WakeLockManager.acquireScreen(
+                                    app, WakeOwner.PAIRING_CODE, 15_000L));
+        }
+    }
+
+    @Test
     public void speak_repeatedCode_usesDistinctFiles() {
         when(hardware.supportsAudioPlayback()).thenReturn(true);
         when(hardware.playAudioFile(any(File.class))).thenReturn(true);
@@ -115,6 +138,15 @@ public class PairingCodeSpeakerTest {
         ArgumentCaptor<File> files = ArgumentCaptor.forClass(File.class);
         verify(hardware, org.mockito.Mockito.times(2)).playAudioFile(files.capture());
         assertThat(files.getAllValues().get(0)).isNotEqualTo(files.getAllValues().get(1));
+    }
+
+    @Test
+    public void speakPairingEnded_playsExitAsset() {
+        when(hardware.supportsAudioPlayback()).thenReturn(true);
+
+        assertThat(PairingCodeSpeaker.speakPairingEnded(app, hardware)).isTrue();
+
+        verify(hardware).playAudioAsset(AudioAssets.PAIRING_EXITED);
     }
 
     private void deletePairingCacheFiles() {
