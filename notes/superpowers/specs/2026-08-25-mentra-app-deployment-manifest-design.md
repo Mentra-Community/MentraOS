@@ -158,6 +158,42 @@ to know where to begin SSO. Once a directory, MDM, or QR bootstrap resolves an
 SSO manifest, the app opens that flow automatically. An SSO callback should not
 introduce or switch deployment configuration after authentication.
 
+This fits Core's session model. Core already hosts the Google/Apple browser
+OAuth flow: the app starts against Core with PKCE, Core redirects to the identity
+provider through GoTrue, Core handles the callback and creates a Cloud V2
+session, and the app redeems a one-time handoff code against that same Core.
+Enterprise SSO generalizes that existing shape:
+
+1. The resolved manifest selects `coreUrl` before auth begins.
+2. The app opens an unauthenticated SSO start endpoint on that Core, passing a
+   PKCE challenge and optionally the work email as an IdP `login_hint`.
+3. Core redirects through its server-configured OIDC or SAML connection. IdP
+   metadata, client secrets, and signing keys stay in Core or its identity
+   broker, never in the manifest or Mentra directory.
+4. Core validates the IdP callback, maps the external subject to a Core user,
+   and creates that user just in time when organization policy permits it.
+5. Core deep-links a short-lived handoff code to the app, and the app exchanges
+   it with its PKCE verifier for a deployment-scoped Core session.
+
+The current implementation hard-codes Google and Apple and delegates them to
+GoTrue, so generic OIDC/SAML is future implementation work rather than a schema
+toggle. The important reusable boundary already exists: the app receives only a
+Core session, and neither Mentra's directory nor the manifest handles the user's
+SSO credential.
+
+QR and MDM remain configuration bootstrap, not proof of user identity. After a
+QR selects an SSO deployment, the app launches the organization's SSO flow; the
+user does not also enter an organization code, but still authenticates to the
+IdP. MDM can make manifest selection invisible, but does not make login silent
+unless the managed environment separately supplies a device identity,
+certificate, or platform SSO session.
+
+If a deployment wants the QR scan itself to sign in or create a user, that is a
+different, optional auth method. Such a QR must carry a short-lived, single-use
+enrollment code bound to the deployment and redeemed with Core. It must not put
+a reusable password, Core session, or bearer token in the manifest URL. This is
+not required for the first pilot.
+
 On subsequent boots, the app loads the saved profile before starting any
 network-capable service. It refreshes the configured URL when reachable and can
 use the last valid cached copy while disconnected. If a custom profile has never
@@ -469,6 +505,8 @@ The first Android pilot is complete when:
 - Generic SSO methods, self-service directory registration, and automated
   work-email-domain verification. Strictly disconnected deployments continue to
   bypass the directory through MDM or QR.
+- Optional passwordless QR enrollment backed by a short-lived, single-use Core
+  code. Basic manifest QR enrollment continues into the configured Core login.
 - Separating account, registry, settings, version-check, and reporting APIs from
   Core into a smaller control-plane service.
 - Local-only Engine startup with no Core, Runtime, or auth seam.

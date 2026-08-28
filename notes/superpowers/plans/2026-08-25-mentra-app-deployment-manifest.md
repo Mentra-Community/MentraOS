@@ -143,6 +143,14 @@ releases.
 - [ ] Implement only the minimal deployment-directory lookup in the first
       private pilot; defer generic SSO. Keep the auth-provider boundary capable
       of opening SSO automatically after manifest resolution when added.
+- [ ] Preserve Core as the auth broker for future enterprise SSO: generalize its
+      existing PKCE browser flow from fixed Google/Apple providers to a
+      server-configured OIDC/SAML connection, map the external subject to a Core
+      user, and return the normal Cloud V2 session through a one-time handoff.
+      Keep IdP secrets and tokens out of the manifest and deployment directory.
+- [ ] Treat MDM and QR as manifest selection only. A future QR-as-login method
+      must use a Core-redeemed, short-lived single-use enrollment code; it must
+      not place credentials or reusable sessions in the configuration payload.
 - [ ] Make the minimum-version screen use managed-update copy instead of public
       store URLs when `appUpdates.mode` is `managed`.
 - [ ] Remove the current special deployment selection from scattered settings;
