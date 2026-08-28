@@ -23,7 +23,7 @@ run-name: Coordinated example ${{ inputs.channel || github.event.client_payload.
 permissions:
   actions: read
   contents: write
-  pull-requests: read
+  pull-requests: write
 
 concurrency:
   # Dev and beta for one train share a GitHub release container, so serialize
@@ -261,7 +261,7 @@ jobs:
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
           echo "url=https://github.com/$STARTER_KIT_REPOSITORY/actions/runs/$run_id" >> "$GITHUB_OUTPUT"
 
-      - name: Wait for the coordinator to merge the validated pull request
+      - name: Merge the validated pull request
         if: steps.existing.outputs.already_published != 'true'
         id: merge
         env:
@@ -270,18 +270,16 @@ jobs:
           TARGET_BRANCH: ${{ steps.release.outputs.targetBranch }}
         run: |
           set -euo pipefail
-          for _ in {1..60}; do
-            pr_json=$(gh pr view "$PR_URL" --json state,headRefOid,mergeCommit)
-            [[ "$(jq -r .headRefOid <<< "$pr_json")" == "$RELEASE_COMMIT" ]]
-            state=$(jq -r .state <<< "$pr_json")
-            if [[ "$state" == "MERGED" ]]; then break; fi
-            if [[ "$state" == "CLOSED" ]]; then
-              echo "Coordinator closed $PR_URL without merging it." >&2
-              exit 1
-            fi
-            sleep 10
-          done
-          [[ "$state" == "MERGED" ]]
+          pr_json=$(gh pr view "$PR_URL" --json state,headRefOid,mergeCommit)
+          [[ "$(jq -r .headRefOid <<< "$pr_json")" == "$RELEASE_COMMIT" ]]
+          state=$(jq -r .state <<< "$pr_json")
+          if [[ "$state" == "OPEN" ]]; then
+            gh pr merge "$PR_URL" --merge --match-head-commit "$RELEASE_COMMIT"
+          elif [[ "$state" != "MERGED" ]]; then
+            echo "Coordinator PR $PR_URL was closed without merging." >&2
+            exit 1
+          fi
+
           merge_commit=$(gh pr view "$PR_URL" --json mergeCommit --jq .mergeCommit.oid)
           git fetch origin "$TARGET_BRANCH"
           git merge-base --is-ancestor "$RELEASE_COMMIT" "origin/$TARGET_BRANCH"
