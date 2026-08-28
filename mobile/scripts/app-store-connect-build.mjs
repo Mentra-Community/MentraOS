@@ -158,11 +158,22 @@ function buildUploadDisposition(upload, buildNumber) {
   throw new Error(`App Store Connect build upload ${buildNumber} has unknown state ${state || "<missing>"}`)
 }
 
+const TRANSIENT_NETWORK_ERROR_CODES = new Set([
+  "ECONNRESET",
+  "ETIMEDOUT",
+  "UND_ERR_BODY_TIMEOUT",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_HEADERS_TIMEOUT",
+  "UND_ERR_SOCKET",
+])
+
 function isTransientAppStoreConnectError(error) {
   return (
     error?.status === 429 ||
     (error?.status >= 500 && error.status <= 599) ||
-    (error instanceof TypeError && error.message === "fetch failed")
+    (error instanceof TypeError && (error.message === "fetch failed" || error.message === "terminated")) ||
+    TRANSIENT_NETWORK_ERROR_CODES.has(error?.code) ||
+    TRANSIENT_NETWORK_ERROR_CODES.has(error?.cause?.code)
   )
 }
 

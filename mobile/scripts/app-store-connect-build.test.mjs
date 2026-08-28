@@ -66,6 +66,34 @@ test("retries transient failures for App Store Connect read requests", async () 
   assert.deepEqual(delays, [25])
 })
 
+test("retries App Store Connect reads terminated while consuming the response body", async () => {
+  const terminated = new TypeError("terminated")
+  terminated.cause = {code: "UND_ERR_SOCKET"}
+  const responses = [
+    {
+      ok: true,
+      status: 200,
+      async text() {
+        throw terminated
+      },
+    },
+    response(200, {data: {id: "app-1", attributes: {bundleId: "com.mentra.example"}}}),
+  ]
+  let requests = 0
+  const api = createAppStoreConnectClient({
+    issuerId: "issuer",
+    keyId: "key",
+    privateKey: TEST_PRIVATE_KEY,
+    delay: 0,
+    sleep: async () => {},
+    fetchImpl: async () => responses[requests++],
+  })
+
+  const app = await findApp(api, "com.mentra.example", "app-1")
+  assert.equal(app.id, "app-1")
+  assert.equal(requests, 2)
+})
+
 test("does not retry permanent App Store Connect request failures", async () => {
   let requests = 0
   const api = createAppStoreConnectClient({
