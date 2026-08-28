@@ -229,10 +229,21 @@ jobs:
           done
           security list-keychains -d user -s "$keychain"
           security default-keychain -s "$keychain"
-          bundle exec fastlane match appstore --readonly --keychain_name "$keychain" --keychain_password "$password"
+          match_output="${RUNNER_TEMP}/mentra-example-match"
+          mkdir -p "$match_output"
+          bundle exec fastlane match appstore --readonly \
+            --keychain_name "$keychain" \
+            --keychain_password "$password" \
+            --output_path "$match_output"
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain"
+          certificate=$(find "$match_output" -maxdepth 1 -name '*.cer' -print -quit)
+          test -n "$certificate"
+          certificate_id=$(basename "$certificate" .cer)
+          certificate_fingerprint=$(openssl x509 -inform DER -in "$certificate" -noout -fingerprint -sha1 \
+            | cut -d= -f2 \
+            | tr -d ':')
           identity=$(security find-identity -v -p codesigning "$keychain" \
-            | awk '/Apple Distribution: Mentra Labs, Inc\. \(T5XXXL6N36\)/ { print $2; exit }')
+            | awk -v fingerprint="$certificate_fingerprint" '$2 == fingerprint { print $2; exit }')
           test -n "$identity"
           api_key="${RUNNER_TEMP}/mentra-creds/example-fastlane-api-key.json"
           jq -n \
@@ -247,6 +258,7 @@ jobs:
             --api_key_path "$api_key" \
             --app_identifier "$EXAMPLE_BUNDLE_ID" \
             --team_id "$APPLE_TEAM_ID" \
+            --cert_id "$certificate_id" \
             --output_path "$profile_dir" \
             --filename "mentra-example-appstore.mobileprovision"
           profile="$profile_dir/mentra-example-appstore.mobileprovision"
