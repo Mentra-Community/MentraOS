@@ -39,7 +39,7 @@ Use \`safe mode\`.`,
     )
 
     expect(getByTestId("ota-changelog-card")).toBeDefined()
-    expect(getByTestId("ota-changelog-scroll")).toBeDefined()
+    expect(getByTestId("ota-changelog-scroll")).toHaveStyle({maxHeight: 232})
     expect(getByTestId("ota-changelog-markdown")).toBeDefined()
     expect(getByText("What's new")).toBeDefined()
     expect(getByText("Highlights")).toBeDefined()

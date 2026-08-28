@@ -735,7 +735,7 @@ const styles = StyleSheet.create({
     width: "100%",
   },
   changelogTitle: {fontSize: 16, fontWeight: "700"},
-  changelogList: {flexShrink: 1, width: "100%"},
+  changelogList: {flexShrink: 1, maxHeight: 232, width: "100%"},
   changelogContent: {gap: 20, paddingBottom: 2},
   changelogEntry: {gap: 8},
   changelogEntryDivider: {borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 20},
