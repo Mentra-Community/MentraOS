@@ -5,7 +5,7 @@ import path from "node:path"
 import test from "node:test"
 import {fileURLToPath} from "node:url"
 
-import {createReleasePlan, loadReleaseFamily} from "./release-family.mjs"
+import {createReleasePlan, loadReleaseFamily, serializeReleaseRecord} from "./release-family.mjs"
 import {stageReleaseFamily} from "./stage-release-family.mjs"
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
@@ -38,7 +38,8 @@ test("stages one exact prerelease identity without changing MentraOS workspace e
     nativeBuildNumber: 310000057,
   })
 
-  stageReleaseFamily({rootDir: root, plan})
+  const downloadedPlan = JSON.parse(serializeReleaseRecord(plan))
+  stageReleaseFamily({rootDir: root, plan: downloadedPlan})
 
   for (const member of family.members) {
     const manifest = JSON.parse(readFileSync(path.join(root, member.manifest), "utf8"))

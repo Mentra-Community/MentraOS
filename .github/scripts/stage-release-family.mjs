@@ -16,7 +16,11 @@ export function stageReleaseFamily({rootDir = process.cwd(), plan}) {
       `Release plan base ${JSON.stringify(plan.familyBaseVersion)} does not match source ${family.familyBaseVersion}`,
     )
   }
-  if (JSON.stringify(plan.changelog) !== JSON.stringify(family.changelog)) {
+  if (
+    plan.changelog?.version !== family.changelog.version ||
+    plan.changelog?.path !== family.changelog.path ||
+    plan.changelog?.sha256 !== family.changelog.sha256
+  ) {
     throw new Error("Release plan changelog does not match the source changelog")
   }
   if (!plan.releaseIdentity || plan.releaseSetId !== `mentra-${plan.releaseIdentity}`) {
