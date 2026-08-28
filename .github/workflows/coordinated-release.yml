@@ -408,9 +408,20 @@ jobs:
               exit 1
             fi
 
-            pr_json=$(gh pr list --repo "$STARTER_KIT_REPOSITORY" --state all \
-              --base "$target_branch" --head "$candidate_branch" --limit 1 \
-              --json number,url,state,mergedAt,headRefOid)
+            lookup_starter_pr() {
+              gh api --method GET "repos/$STARTER_KIT_REPOSITORY/pulls" \
+                -f state=all \
+                -f base="$target_branch" \
+                -f head="Mentra-Community:$candidate_branch" \
+                -f per_page=1 \
+                --jq '[.[] | {
+                  url: .html_url,
+                  state: (.state | ascii_upcase),
+                  mergedAt: .merged_at,
+                  headRefOid: .head.sha
+                }]'
+            }
+            pr_json=$(lookup_starter_pr)
             if [[ "$(jq 'length' <<< "$pr_json")" == "0" ]]; then
               pr_body=$(printf '%s\n\n%s\n%s\n' \
                 "Automated dependency synchronization for coordinated release \`$identity\`." \
@@ -427,9 +438,7 @@ jobs:
                   pr_head=$(jq -r .head.sha <<< "$pr_response")
                   break
                 fi
-                reconciled_pr=$(gh pr list --repo "$STARTER_KIT_REPOSITORY" --state all \
-                  --base "$target_branch" --head "$candidate_branch" --limit 1 \
-                  --json url,state,mergedAt,headRefOid 2>/dev/null || true)
+                reconciled_pr=$(lookup_starter_pr 2>/dev/null || true)
                 if [[ "$(jq 'length' <<< "${reconciled_pr:-[]}")" != "0" ]]; then
                   pr_url=$(jq -r '.[0].url' <<< "$reconciled_pr")
                   pr_head=$(jq -r '.[0].headRefOid' <<< "$reconciled_pr")
@@ -443,6 +452,7 @@ jobs:
                 fi
                 if (( attempt == 6 )); then
                   cat pr-create-error.log >&2
+                  [[ -n "$pr_response" ]] && printf '%s\n' "$pr_response" >&2
                   exit 1
                 fi
                 sleep 5
@@ -457,7 +467,10 @@ jobs:
                 exit 1
               fi
             fi
-            [[ "$pr_head" == "$candidate_sha" ]]
+            if [[ "$pr_head" != "$candidate_sha" ]]; then
+              echo "Starter Kit PR head $pr_head does not match candidate $candidate_sha." >&2
+              exit 1
+            fi
           fi
 
           {
