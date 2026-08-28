@@ -41,11 +41,11 @@ checkout.
 
 ### Documentation channels
 
-| Release channel | Source branch | Published site | Publisher |
-| --- | --- | --- | --- |
-| Development | `dev` | `https://docs-dev.mentraglass.com` | Coordinated CI to Cloudflare Pages |
-| Beta | `staging` | `https://docs-beta.mentraglass.com` | Coordinated CI to Cloudflare Pages |
-| Production | `main` | `https://docs.mentraglass.com` | Mintlify Git integration |
+| Release channel | Source branch | Published site                      | Publisher                          |
+| --------------- | ------------- | ----------------------------------- | ---------------------------------- |
+| Development     | `dev`         | `https://docs-dev.mentraglass.com`  | Coordinated CI to Cloudflare Pages |
+| Beta            | `staging`     | `https://docs-beta.mentraglass.com` | Coordinated CI to Cloudflare Pages |
+| Production      | `main`        | `https://docs.mentraglass.com`      | Mintlify Git integration           |
 
 Dev and beta sites are release outputs and carry `X-Robots-Tag: noindex`.
 Production uses the checked-in stable family base because Mintlify's Git
@@ -140,11 +140,11 @@ consumes a validated result from the repository that owns the source.
 
 The Starter Kit mirrors the coordinated product channels:
 
-| Starter Kit branch | Coordinated channel | Expected dependency identity |
-| --- | --- | --- |
-| `dev` | Development | Latest completed `X.Y.Z-dev.N` synchronized to that branch |
-| `staging` | Beta | Latest completed `X.Y.Z-beta.N` synchronized to that branch |
-| `main` | Production | Latest completed stable `X.Y.Z` |
+| Starter Kit branch | Coordinated channel | Expected dependency identity                                |
+| ------------------ | ------------------- | ----------------------------------------------------------- |
+| `dev`              | Development         | Latest completed `X.Y.Z-dev.N` synchronized to that branch  |
+| `staging`          | Beta                | Latest completed `X.Y.Z-beta.N` synchronized to that branch |
+| `main`             | Production          | Latest completed stable `X.Y.Z`                             |
 
 Human Starter Kit features land on `dev`. Stabilization fixes may land on
 `staging` first and must be merged back into `dev`. Production changes move

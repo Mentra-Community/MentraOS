@@ -669,11 +669,11 @@ object and records the object's hash, version, signature, and provenance.
 Documentation has the same release-channel identity as the products it
 describes:
 
-| Source channel | Published docs | Cloudflare Pages project | Injected version |
-| -------------- | -------------- | ------------------------ | ---------------- |
-| `dev` | `https://docs-dev.mentraglass.com` | `mentraos-docs-dev` | Exact `X.Y.Z-dev.N` identity |
-| `staging` | `https://docs-beta.mentraglass.com` | `mentraos-docs-beta` | Exact `X.Y.Z-beta.N` identity |
-| `main` | `https://docs.mentraglass.com` | Mintlify Git deployment | Stable `X.Y.Z` family base |
+| Source channel | Published docs                      | Cloudflare Pages project | Injected version              |
+| -------------- | ----------------------------------- | ------------------------ | ----------------------------- |
+| `dev`          | `https://docs-dev.mentraglass.com`  | `mentraos-docs-dev`      | Exact `X.Y.Z-dev.N` identity  |
+| `staging`      | `https://docs-beta.mentraglass.com` | `mentraos-docs-beta`     | Exact `X.Y.Z-beta.N` identity |
+| `main`         | `https://docs.mentraglass.com`      | Mintlify Git deployment  | Stable `X.Y.Z` family base    |
 
 `mintlify-docs/docs.json` uses Mintlify's native global variables. The checked-in
 `release-version` and production release-artifact URL use the stable family
