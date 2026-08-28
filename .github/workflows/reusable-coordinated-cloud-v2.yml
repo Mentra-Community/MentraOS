@@ -76,7 +76,7 @@ jobs:
           set -euo pipefail
           actual=$(git rev-parse HEAD)
           [[ "$actual" == "${{ inputs.source_commit }}" ]]
-          echo "tag=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          echo "tag=$actual" >> "$GITHUB_OUTPUT"
 
       - name: Setup Porter CLI
         if: inputs.dry_run != true

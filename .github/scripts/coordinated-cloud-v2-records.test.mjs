@@ -41,7 +41,7 @@ function pods() {
           {
             name: service,
             ready: true,
-            image: "registry.example.com/cloud-v2:aaaaaaa",
+            image: `registry.example.com/cloud-v2:${sourceCommit}`,
             imageID: `docker-pullable://registry.example.com/cloud-v2@sha256:${"b".repeat(64)}`,
           },
         ],
@@ -105,7 +105,7 @@ test("records observed image digests, Porter revision, and every public readines
     plan: releasePlan,
     environment: "staging",
     sourceCommit,
-    requestedTag: "aaaaaaa",
+    requestedTag: sourceCommit,
     status: "deployed",
     pods: pods(),
     checks: checks("staging"),
@@ -132,7 +132,7 @@ test("fails closed on unready pods, mutable image observations, and missing publ
         plan: releasePlan,
         environment: "dev",
         sourceCommit,
-        requestedTag: "aaaaaaa",
+        requestedTag: sourceCommit,
         status: "deployed",
         pods: unready,
         checks: checks("dev"),
@@ -143,14 +143,14 @@ test("fails closed on unready pods, mutable image observations, and missing publ
   )
 
   const mutable = pods()
-  mutable.items[0].status.containerStatuses[0].imageID = "registry.example.com/cloud-v2:aaaaaaa"
+  mutable.items[0].status.containerStatuses[0].imageID = `registry.example.com/cloud-v2:${sourceCommit}`
   assert.throws(
     () =>
       createCloudV2DeploymentRecord({
         plan: releasePlan,
         environment: "dev",
         sourceCommit,
-        requestedTag: "aaaaaaa",
+        requestedTag: sourceCommit,
         status: "deployed",
         pods: mutable,
         checks: checks("dev"),
@@ -161,14 +161,14 @@ test("fails closed on unready pods, mutable image observations, and missing publ
   )
 
   const wrongSource = pods()
-  wrongSource.items[1].status.containerStatuses[0].image = "registry.example.com/cloud-v2:bbbbbbb"
+  wrongSource.items[1].status.containerStatuses[0].image = `registry.example.com/cloud-v2:${"b".repeat(40)}`
   assert.throws(
     () =>
       createCloudV2DeploymentRecord({
         plan: releasePlan,
         environment: "dev",
         sourceCommit,
-        requestedTag: "aaaaaaa",
+        requestedTag: sourceCommit,
         status: "deployed",
         pods: wrongSource,
         checks: checks("dev"),
@@ -184,7 +184,7 @@ test("fails closed on unready pods, mutable image observations, and missing publ
         plan: releasePlan,
         environment: "dev",
         sourceCommit,
-        requestedTag: "aaaaaaa",
+        requestedTag: sourceCommit,
         status: "deployed",
         pods: pods(),
         checks: checks("dev").slice(1),
@@ -201,7 +201,7 @@ test("dry-run evidence is validation-only and cannot finalize a live release", (
     plan: releasePlan,
     environment: "dev",
     sourceCommit,
-    requestedTag: "aaaaaaa",
+    requestedTag: sourceCommit,
     status: "validated",
     completedAt: "2026-08-27T20:00:00.000Z",
     provenanceUrl,

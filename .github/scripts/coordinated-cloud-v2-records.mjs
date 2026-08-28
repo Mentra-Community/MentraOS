@@ -6,7 +6,6 @@ import {fileURLToPath} from "node:url"
 
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/
-const SHORT_SHA_PATTERN = /^[0-9a-f]{7,40}$/
 
 export const CLOUD_V2_TARGETS = Object.freeze({
   dev: Object.freeze({
@@ -232,8 +231,8 @@ export function createCloudV2DeploymentRecord({
   provenanceUrl,
 }) {
   const target = resolveCloudV2Target({plan, environment, sourceCommit})
-  if (!SHORT_SHA_PATTERN.test(requestedTag || "") || !sourceCommit.startsWith(requestedTag)) {
-    throw new Error("requestedTag must be a short prefix of sourceCommit")
+  if (!COMMIT_PATTERN.test(requestedTag || "") || requestedTag !== sourceCommit) {
+    throw new Error("requestedTag must equal the full sourceCommit")
   }
   if (!new Set(["deployed", "validated"]).has(status)) {
     throw new Error("Cloud V2 deployment status must be deployed or validated")
@@ -290,10 +289,7 @@ export function validateCloudV2DeploymentRecord({plan, record, allowValidated = 
   ) {
     throw new Error("Cloud V2 deployment record does not match the release plan and target")
   }
-  if (
-    !SHORT_SHA_PATTERN.test(record.porter.requestedTag || "") ||
-    !plan.sourceCommit.startsWith(record.porter.requestedTag)
-  ) {
+  if (!COMMIT_PATTERN.test(record.porter.requestedTag || "") || record.porter.requestedTag !== plan.sourceCommit) {
     throw new Error("Cloud V2 deployment record has an invalid requested tag")
   }
   requireIsoUtc(record.completedAt, "cloud.completedAt")
