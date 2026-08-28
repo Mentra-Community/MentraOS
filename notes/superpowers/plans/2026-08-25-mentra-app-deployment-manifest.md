@@ -3,7 +3,7 @@ status: draft
 owner: Mentra
 ---
 
-# Mentra App deployment manifest implementation plan
+# Mentra Enterprise self-hosted deployment implementation plan
 
 > Execution checklist. Keep the first release focused on the same official app
 > binary with customer-hosted Core, Runtime, OTA, and speech artifacts.
@@ -98,6 +98,9 @@ releases.
 - [ ] On the workspace route, ask for the HTTPS origin supplied by the user's
       organization, with an example such as `https://mentra.example.com`. Do not
       ask for a raw JSON or Core API URL.
+- [ ] Provide Back on workspace entry and Cancel on candidate confirmation.
+      Neither action may persist a workspace, mutate endpoints, or initialize a
+      network-capable provider.
 - [ ] Normalize the origin and fetch the manifest directly from
       `/.well-known/mentra-deployment.json`. Reject credentials, query strings,
       fragments, invalid TLS, oversized responses, and cross-origin redirects.
@@ -113,11 +116,15 @@ releases.
 - [ ] Show display name, workspace hostname, and sign-in type before activation,
       with Core/Runtime hosts under expandable connection details. Continue
       atomically persists the workspace and re-enters the gated auth route.
+- [ ] On a manually selected workspace's pre-login screen, offer Use a different
+      workspace and Return to Mentra. Returning clears the custom selection and
+      restores the local consumer landing. Keep these controls unavailable when
+      an enforced MDM workspace is active and show managed-organization copy.
 - [ ] Read the workspace origin from Android Enterprise and Apple managed app
       configuration when supplied and use the same well-known resolver. Treat
       an enforced MDM value as authoritative.
 - [ ] For the first private pilot, render one organization-account action for
-      `methods: ["enterprise-sso"]`. Do not expose private signup, passwords,
+      `auth.mode: "core-sso"`. Do not expose private signup, passwords,
       verification email, or recovery.
 - [ ] Make switching deployment stop Engine, sign out, clear the old auth
       namespace, and reboot through the same resolver.
@@ -147,15 +154,19 @@ releases.
 - [ ] Route login, refresh, subject-token, OAuth, and minimum-version calls only
       to the active Core URL.
 - [ ] Keep consumer Google, Apple, and Email entry points bound to the embedded
-      Mentra profile. Render only the active custom profile's auth methods and
-      supporting signup, verification, and recovery flows after enrollment.
+      Mentra profile and `auth.mode: "mentra-account"`. Render only the flow for
+      an active custom profile's auth mode after enrollment.
 - [ ] Make Core the auth broker for the first private pilot: generalize its
       existing PKCE browser handoff from fixed Google/Apple-through-GoTrue to one
       server-configured OIDC connection, map issuer plus subject to a Core user,
       and return the normal Cloud V2 session through a one-time handoff.
 - [ ] Keep issuer metadata, client credentials, claim mapping, and IdP tokens in
-      Core server configuration. The manifest declares only
-      `methods: ["enterprise-sso"]`; the app opens a fixed route on active Core.
+      customer-hosted Core configuration. The manifest declares only
+      `auth.mode: "core-sso"`; the app opens a fixed route on active Core.
+- [ ] Validate Microsoft Entra as the reference OIDC integration, while keeping
+      the Core adapter standards-based for Okta, Google, or an internal OIDC
+      provider. Customer IT registers the application and assigns users/groups;
+      Mentra public infrastructure and Supabase are not in the private auth path.
 - [ ] Reuse the existing trusted-issuer verification and external-token exchange
       where their claim contract fits. Do not require a standard customer IdP to
       mint Mentra-specific routing claims without an explicit adapter.
@@ -276,9 +287,10 @@ releases.
 **Files:** Cloud V2 deployment charts/scripts, customer runbook, end-to-end tests
 
 - [ ] Package the exact Core and Runtime service subset used by the official app.
-- [ ] Keep Core in the first private deployment. Do not make Runtime-only auth
-      or split Core's account, registry, settings, version-check, and reporting
-      APIs part of this implementation.
+- [ ] Keep Core in the first private deployment as the customer-hosted control
+      plane for identity, sessions, token exchange, registry, settings,
+      version-check, and reporting. Runtime is the real-time execution plane.
+      Do not model Runtime-only operation as a manifest option.
 - [ ] Package direct OIDC support in Core without Supabase. Provide configuration
       for issuer, client id/secret, scopes, callback URL, and stable subject-claim
       mapping.
