@@ -212,7 +212,6 @@ jobs:
     env:
       EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY }}
       EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID }}
-      ORG_GRADLE_PROJECT_reactNativeArchitectures: armeabi-v7a,arm64-v8a,x86,x86_64
     steps:
       - uses: actions/checkout@v4
         with:
@@ -351,6 +350,36 @@ jobs:
           fi
           if [[ "$version_name" != "$EXPECTED_VERSION" ]]; then
             echo "Android versionName ${version_name:-<missing>} does not match $EXPECTED_VERSION." >&2
+            exit 1
+          fi
+
+      # ABI shape is a creation-time contract. A complete pair found here is
+      # immutable and may have been published under an earlier contract, so a
+      # retry verifies its permanent identity above without retroactively
+      # rejecting it. Every newly built pair must satisfy the current contract
+      # before its first publication below.
+      - name: Verify newly built Android ABI contract
+        if: inputs.dry_run == true || needs.prepare.outputs.android_assets_exist != 'true'
+        run: |
+          set -euo pipefail
+          apk="mobile-release/android/${{ needs.prepare.outputs.apk_name }}"
+          aab="mobile-release/android/${{ needs.prepare.outputs.aab_name }}"
+          apk_abis=$(unzip -Z1 "$apk" \
+            | sed -n 's#^lib/\([^/]*\)/.*\.so$#\1#p' \
+            | LC_ALL=C sort -u \
+            | paste -sd, -)
+          if [[ "$apk_abis" != "arm64-v8a" ]]; then
+            echo "GitHub APK ABIs '${apk_abis:-<none>}' do not match required arm64-v8a." >&2
+            exit 1
+          fi
+
+          aab_abis=$(unzip -Z1 "$aab" \
+            | sed -n 's#^[^/]*/lib/\([^/]*\)/.*\.so$#\1#p' \
+            | LC_ALL=C sort -u \
+            | paste -sd, -)
+          expected_aab_abis="arm64-v8a,armeabi-v7a,x86,x86_64"
+          if [[ "$aab_abis" != "$expected_aab_abis" ]]; then
+            echo "Google Play AAB ABIs '${aab_abis:-<none>}' do not match required $expected_aab_abis." >&2
             exit 1
           fi
 

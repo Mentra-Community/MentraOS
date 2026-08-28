@@ -6,6 +6,10 @@ function workflow(name) {
   return readFileSync(new URL(`../workflows/${name}`, import.meta.url), "utf8")
 }
 
+function mobileScript(name) {
+  return readFileSync(new URL(`../../mobile/scripts/${name}`, import.meta.url), "utf8")
+}
+
 function jobBlock(source, name) {
   const start = source.indexOf(`\n  ${name}:\n`)
   assert.notEqual(start, -1, `Missing workflow job ${name}`)
@@ -327,4 +331,36 @@ test("Android release preserves the Expo-configured marketing version", () => {
   assert.doesNotMatch(androidPlugin, /replace\([^\n]*versionName/)
   assert.match(mobile, /version_name=\$\(sed -n "s\/\.\*versionName=/)
   assert.match(mobile, /Android versionName \$\{version_name:-<missing>\} does not match \$EXPECTED_VERSION/)
+})
+
+test("Android release keeps the GitHub APK arm64-only and the Play AAB multi-ABI", () => {
+  const releaseAndroid = mobileScript("release-android.mjs")
+  const mobileAndroid = jobBlock(workflow("reusable-coordinated-mobile.yml"), "android")
+
+  assert.match(releaseAndroid, /const APK_ARCHITECTURES = 'arm64-v8a'/)
+  assert.match(releaseAndroid, /const AAB_ARCHITECTURES = 'armeabi-v7a,arm64-v8a,x86,x86_64'/)
+  assert.match(
+    releaseAndroid,
+    /gradlew assembleRelease -PreactNativeArchitectures=\$\{APK_ARCHITECTURES\}/,
+  )
+  assert.equal(
+    [
+      ...releaseAndroid.matchAll(
+        /gradlew bundleRelease -PreactNativeArchitectures=\$\{AAB_ARCHITECTURES\}/g,
+      ),
+    ].length,
+    2,
+  )
+  assert.doesNotMatch(mobileAndroid, /ORG_GRADLE_PROJECT_reactNativeArchitectures:/)
+  assert.match(mobileAndroid, /- name: Verify Android native version and production signature/)
+  assert.match(mobileAndroid, /- name: Verify newly built Android ABI contract\n/)
+  assert.match(
+    mobileAndroid,
+    /if: inputs\.dry_run == true \|\| needs\.prepare\.outputs\.android_assets_exist != 'true'/,
+  )
+  assert.match(mobileAndroid, /GitHub APK ABIs '\$\{apk_abis:-<none>\}' do not match required arm64-v8a/)
+  assert.match(
+    mobileAndroid,
+    /Google Play AAB ABIs '\$\{aab_abis:-<none>\}' do not match required \$expected_aab_abis/,
+  )
 })
