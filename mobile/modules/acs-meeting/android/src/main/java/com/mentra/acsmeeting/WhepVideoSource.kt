@@ -31,11 +31,11 @@ import java.util.concurrent.atomic.AtomicInteger
  * Recvonly WHEP subscriber. Decoded I420 frames are converted to RGBA for ACS.
  * Remote AudioTrackSink PCM is the P4 hard gate.
  */
-class WhepVideoSource(
+class CloudflareWhepSource(
   private val context: Context,
   private val videoListener: VideoFrameListener,
   private val pcmListener: PcmListener,
-) : VideoSource {
+) : GlassesMediaSource {
   private val http = OkHttpClient.Builder().callTimeout(20, TimeUnit.SECONDS).build()
   private var factory: PeerConnectionFactory? = null
   private var egl: EglBase? = null
@@ -45,14 +45,17 @@ class WhepVideoSource(
   private var lastFpsLogMs = 0L
   @Volatile private var offerPosted = false
   @Volatile private var pcmEnabled = true
+  @Volatile override var state: SourceState = SourceState.IDLE
+    private set
   private val audioTracks = mutableListOf<AudioTrack>()
   private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
   private var pendingOfferPost: Runnable? = null
 
-  override fun start(whepUrl: String) {
+  override fun start(config: SourceConfig) {
     stop()
-    currentUrl = whepUrl
+    currentUrl = config.url
     offerPosted = false
+    state = SourceState.CONNECTING
     ensureFactory()
     val peer = factory!!.createPeerConnection(iceServers(), observer) ?: error("PeerConnection create failed")
     pc = peer
@@ -76,12 +79,12 @@ class WhepVideoSource(
     )
   }
 
-  override fun updateUrl(whepUrl: String) {
-    if (whepUrl == currentUrl) return
-    start(whepUrl)
+  override fun restart(config: SourceConfig) {
+    if (config.url == currentUrl && config.kind == SourceKind.WHEP) return
+    start(config)
   }
 
-  fun setPcmEnabled(enabled: Boolean) {
+  override fun setPcmDeliveryEnabled(enabled: Boolean) {
     pcmEnabled = enabled
     audioTracks.forEach { it.setEnabled(enabled) }
     Log.i(TAG, "WHEP audio track enabled=$enabled")
@@ -96,6 +99,7 @@ class WhepVideoSource(
     pendingOfferPost?.let { mainHandler.removeCallbacks(it) }
     pendingOfferPost = null
     audioTracks.clear()
+    state = SourceState.IDLE
     try {
       pc?.close()
     } catch (_: Exception) {
@@ -134,6 +138,7 @@ class WhepVideoSource(
     http.newCall(request).enqueue(object : okhttp3.Callback {
       override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
         Log.e(TAG, "WHEP POST failed", e)
+        state = SourceState.FAILED
       }
 
       override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
@@ -141,9 +146,11 @@ class WhepVideoSource(
           val answer = it.body?.string().orEmpty()
           if (!it.isSuccessful) {
             Log.e(TAG, "WHEP ${it.code}: $answer")
+            state = SourceState.FAILED
             return
           }
           Log.i(TAG, "P3 WHEP ${it.code} answer bytes=${answer.length}")
+          state = SourceState.LIVE
           peer.setRemoteDescription(
             SdpAdapter(),
             SessionDescription(SessionDescription.Type.ANSWER, answer),
@@ -157,6 +164,11 @@ class WhepVideoSource(
     override fun onSignalingChange(state: PeerConnection.SignalingState) {}
     override fun onIceConnectionChange(state: PeerConnection.IceConnectionState) {
       Log.i(TAG, "ICE $state")
+      if (state == PeerConnection.IceConnectionState.FAILED ||
+        state == PeerConnection.IceConnectionState.DISCONNECTED
+      ) {
+        this@CloudflareWhepSource.state = SourceState.FAILED
+      }
     }
     override fun onIceConnectionReceivingChange(receiving: Boolean) {}
     override fun onIceGatheringChange(state: PeerConnection.IceGatheringState) {
@@ -259,6 +271,8 @@ class WhepVideoSource(
     }
   }
 }
+
+typealias WhepVideoSource = CloudflareWhepSource
 
 private open class SdpAdapter : SdpObserver {
   override fun onCreateSuccess(sdp: SessionDescription) {}
