@@ -1,0 +1,130 @@
+---
+title: "Photos"
+description: "Capture photos on camera glasses."
+icon: "image"
+---
+
+import BetaNote from '/snippets/beta-note.mdx'
+
+<BetaNote />
+
+`session.camera.takePhoto` captures a still on glasses that have a camera, like
+Mentra Live. It resolves after the photo is captured and uploaded, and hands you
+back a download URL.
+
+```typescript src/background/index.ts
+import { registerMiniapp } from "@mentra/miniapp/background";
+
+registerMiniapp((session) => {
+  session.input.onButtonPress(async () => {
+    if (!session.capabilities?.hasCamera) return;
+    const photo = await session.camera.takePhoto();
+    session.display.render([{type: "image", id: "photo", box: {x: 144, y: 44, w: 288, h: 200}, data: photo.photoUrl}]);
+  });
+});
+```
+
+Camera needs the `CAMERA` permission and glasses with a camera. Declare a
+`CAMERA` permission in your [manifest](/app-devs/core-concepts/miniapp-manifest)
+so the call is allowed, and a `CAMERA` hardware requirement so the miniapp only
+installs on glasses that can capture. Check `session.capabilities.hasCamera`
+before calling so you don't fire a request the glasses can't satisfy.
+
+## Take a photo
+
+`takePhoto` sends the request, waits while the glasses capture and the phone
+uploads, then resolves with the photo metadata. The returned `photoUrl` is a
+signed download URL with a short TTL (about 30 minutes), so fetch or display it
+soon after.
+
+```typescript
+const photo = await session.camera.takePhoto({ size: "high", sound: false });
+// photo.photoUrl  – signed URL, ~30 min TTL
+// photo.mimeType  – e.g. "image/jpeg"
+// photo.size      – bytes
+```
+
+All options are optional. The defaults are listed below.
+
+| Option | Type | Default | What it does |
+|---|---|---|---|
+| `size` | `"low" \| "medium" \| "high" \| "max"` | `"medium"` | Capture resolution. |
+| `transferMethod` | `"auto" \| "direct" \| "ble"` | `"auto"` | Use `"direct"` for webhook upload without BLE fallback, or `"ble"` to always relay through the phone. |
+| `compress` | `"none" \| "low" \| "medium" \| "high"` | `"none"` | JPEG compression applied before upload. |
+| `sound` | `boolean` | `true` | Play a shutter sound on the glasses. |
+| `saveToGallery` | `boolean` | `false` | Keep a copy in the glasses gallery. |
+| `exposureTimeNs` | `number` | auto | Manual shutter time in nanoseconds. Honored only on cameras with manual exposure; ignored otherwise. Omit to auto-expose. |
+
+Unknown runtime `transferMethod` values are rejected instead of being treated as `"auto"`.
+
+The result is a `PhotoTaken`:
+
+| Field | Type | Description |
+|---|---|---|
+| `requestId` | `string` | Correlates the request with ASG status and upload logs. |
+| `photoUrl` | `string` | Signed download URL for the captured image (~30 min TTL). |
+| `mimeType` | `string` | MIME type of the image, e.g. `"image/jpeg"`. |
+| `size` | `number` | Image size in bytes. |
+
+## Field of view
+
+`setFov` applies a temporary FOV/ROI override owned by the calling miniapp and
+resolves after the ASG client reports it was applied. It applies to all captures
+(photos and video) while that miniapp is active. When the miniapp closes, the host
+restores the previous live miniapp override or the persistent base setting. The
+factory/missing base is the centered `standard` preset (102 degrees); existing
+saved user values are preserved.
+
+```typescript
+// A named preset. The simplest option, always center ROI.
+await session.camera.setFov({ preset: "wide" });
+
+// Or an explicit horizontal FOV with a region.
+await session.camera.setFov({ fov: 102, roiPosition: "bottom" });
+```
+
+The argument is one of two shapes:
+
+| Field | Type | Notes |
+|---|---|---|
+| `preset` | `"narrow" \| "standard" \| "wide"` | Named preset. Uses center ROI. Mutually exclusive with `fov`/`roiPosition`. |
+| `fov` | `number` | Horizontal FOV in degrees. Pair with `roiPosition`. |
+| `roiPosition` | `"center" \| "bottom" \| "top"` | Region position for the `fov` form. Defaults to `"center"`. |
+
+It resolves with a `CameraFovResult`:
+
+| Field | Type | Description |
+|---|---|---|
+| `requestId` | `string` | Correlates the request with ASG logs. |
+| `fov` | `number` | The applied horizontal FOV in degrees. |
+| `roiPosition` | `"center" \| "bottom" \| "top"` | The applied region position. |
+| `timestamp` | `number` | When the setting was applied. |
+
+## Errors
+
+Every method returns a promise that rejects with `{ code, message }` on failure.
+Wrap calls in `try`/`catch` and read `code`.
+
+| Code | When |
+|---|---|
+| `PERMISSION_NOT_DECLARED` | The miniapp didn't declare the `CAMERA` permission. |
+| `REQUEST_ABORTED` | The request timed out, or the session was torn down before it completed. |
+| `INTERNAL` | The phone-side handler threw. The glasses have no camera, capture or upload failed, or another device error occurred. Read `message`. |
+
+```typescript
+try {
+  const photo = await session.camera.takePhoto();
+  session.display.render([{type: "image", id: "photo", box: {x: 144, y: 44, w: 288, h: 200}, data: photo.photoUrl}]);
+} catch (err) {
+  if (err.code === "PERMISSION_NOT_DECLARED") {
+    session.display.render([
+      {type: "text", id: "msg", box: {x: 0, y: 0, w: 576, h: 288}, text: "Camera permission not granted"},
+    ]);
+  }
+}
+```
+
+<Note>
+For video, see [Videos](/app-devs/core-concepts/camera/videos). For live video
+streaming, see [Streaming](/app-devs/core-concepts/stream).
+</Note>

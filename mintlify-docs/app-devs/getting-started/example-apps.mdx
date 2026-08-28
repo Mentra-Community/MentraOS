@@ -1,0 +1,92 @@
+---
+title: Example miniapps
+description: "Working miniapps to start from: the scaffolder starter, the in-repo reference, and first-party apps shipped in this repo."
+icon: "code"
+---
+
+import BetaNote from '/snippets/beta-note.mdx'
+
+<BetaNote />
+
+There are three ways to get working code in front of you: scaffold a fresh
+project, read the in-repo reference miniapp, or browse the first-party miniapps
+that ship in this repo.
+
+## Start from the scaffolder
+
+The fastest path is `create-mentra-miniapp`. It writes a ready-to-run project
+with both layers wired together. The [Quickstart](/app-devs/getting-started/quickstart)
+walks through it end to end.
+
+```bash
+bunx create-mentra-miniapp my-app
+```
+
+It asks for a project name and the kind of glasses you're targeting. You can skip
+the prompt with a flag:
+
+```bash
+bunx create-mentra-miniapp my-app --type=display   # Even Realities G1/G2, Vuzix Z100
+bunx create-mentra-miniapp my-app --type=camera    # Mentra Live
+```
+
+The `--type` choice only changes the manifest's `hardwareRequirements` (display
+vs. camera plus microphone). The generated code is the same either way: a glasses
+button press calls `session.display.render(...)`, and the WebView UI sends a
+`ping` that the background answers with a `pong` carrying a roundtrip timestamp.
+That gives you a button-to-display path and a UI-to-background path to edit from.
+
+## The in-repo reference miniapp
+
+If you've cloned the monorepo, `miniapps/example-miniapp` is the reference app
+that consumes the SDK. Its manifest names it "Mentra Example", and it exercises
+more of the surface than the starter does: transcription, text-wall display, TTS,
+button events, and an "SDK Tester" UI that drives each session module
+(`session.camera`, `session.location`, notifications, calendar) page by page.
+
+Run it from the repo to see the SDK working against your phone:
+
+```bash
+cd miniapps/example-miniapp
+bun install
+bun dev
+```
+
+`bun dev` validates the manifest, builds both layers, serves them over your LAN,
+and prints a QR code. In the Mentra App, scan it from **Settings → Miniapp
+Developer Settings → Scan Miniapp QR Code** (phone and laptop on the same Wi-Fi).
+
+## First-party miniapps in this repo
+
+These are apps Mentra ships, all under `miniapps/`. Read them when you want a
+real feature rather than a demo. Each builds with `bun dev` the same way the
+example does.
+
+<CardGroup cols={2}>
+  <Card title="Teleprompter" icon="scroll">
+    `miniapps/teleprompter`: paste a script and read it off the glasses;
+    scrolling follows your voice or runs at a set speed.
+  </Card>
+  <Card title="Mentra Maps" icon="map">
+    `miniapps/navigation`: turn-by-turn walking navigation with compass heading
+    and Google Maps, driven by `session.location`.
+  </Card>
+  <Card title="Recorder" icon="microphone">
+    `miniapps/recorder`: capture the glasses microphone to a WAV file on your
+    phone, play it back, and export it. Built on `session.recorder` +
+    `session.blob`.
+  </Card>
+  <Card title="Captions" icon="closed-captioning">
+    `miniapps/captions`: live transcription rendered on the display, with a
+    WebView for language and display settings.
+  </Card>
+  <Card title="Translation" icon="language">
+    `miniapps/translation`: translate a detected source language into a target
+    language and render it on the display.
+  </Card>
+</CardGroup>
+
+<Info>
+New here? Read the [Quickstart](/app-devs/getting-started/quickstart) first, then
+come back and open whichever app above is closest to what you're building.
+</Info>

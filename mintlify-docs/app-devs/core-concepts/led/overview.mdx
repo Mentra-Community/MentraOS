@@ -1,0 +1,80 @@
+---
+title: "LED"
+description: "Drive the indicator LED on glasses that have one."
+icon: "lightbulb"
+---
+
+import BetaNote from '/snippets/beta-note.mdx'
+
+<BetaNote />
+
+`session.led` controls the indicator LED on supported glasses. You give it a
+color and a blink pattern, and it tells the LED to turn on or off.
+
+```typescript src/background/index.ts
+import { registerMiniapp } from "@mentra/miniapp/background";
+
+registerMiniapp((session) => {
+  session.transcription.on(async () => {
+    // Blink green twice when speech comes in.
+    await session.led.blink("green", 200, 200, 2);
+  });
+});
+```
+
+The LED needs glasses with a `LIGHT` hardware capability. Declare it in your
+[manifest](/app-devs/core-concepts/miniapp-manifest) so the miniapp only installs
+on glasses that have an LED. There's no runtime permission to request.
+
+## Methods
+
+```typescript
+// Turn the LED on with an explicit pattern.
+await session.led.turnOn({ color: "blue", ontime: 500, offtime: 500, count: 3 });
+
+// Blink: color, on-ms, off-ms, repeat count.
+await session.led.blink("red", 200, 200, 4);
+
+// Solid: hold one color for a duration in ms.
+await session.led.solid("white", 2000);
+
+// Off.
+await session.led.turnOff();
+```
+
+| Method | Signature | What it does |
+|---|---|---|
+| `turnOn` | `turnOn(options?: LedControlOptions)` | Turns the LED on with the given color and pattern. |
+| `turnOff` | `turnOff()` | Turns all LEDs off. |
+| `blink` | `blink(color, ontime, offtime, count)` | Repeats an on/off cycle `count` times. Wraps `turnOn`. |
+| `solid` | `solid(color, duration)` | Holds one color for `duration` ms (one cycle, no off time). Wraps `turnOn`. |
+
+`LedControlOptions` is the shape `turnOn` accepts:
+
+| Field | Type | Default | What it does |
+|---|---|---|---|
+| `color` | `LedColor` | `"red"` | Which color to light. |
+| `ontime` | `number` | `1000` | On duration per cycle, in ms. |
+| `offtime` | `number` | `0` | Off duration per cycle, in ms. |
+| `count` | `number` | `1` | How many on/off cycles to run. |
+
+## Colors
+
+`LedColor` is a fixed set of names. The phone maps each name to the per-device LED
+index, so the same name can light different physical LEDs across glasses.
+
+| Value |
+|---|
+| `"red"` |
+| `"green"` |
+| `"blue"` |
+| `"orange"` |
+| `"white"` |
+
+<Note>
+Every method returns a `Promise` that resolves once the command is dispatched to
+the glasses, not when the blink pattern finishes playing. A `blink("red", 200,
+200, 4)` call resolves right after the command goes out, well before the LED has
+run all four cycles. Don't `await` the call as a way to wait for the LED to go
+dark; if you need timing, track it yourself.
+</Note>

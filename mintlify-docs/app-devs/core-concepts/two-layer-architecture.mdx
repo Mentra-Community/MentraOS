@@ -1,0 +1,212 @@
+---
+title: "Two-layer architecture"
+description: "How a miniapp's always-on background and on-demand UI layers work and talk to each other."
+icon: "layer-group"
+---
+
+import BetaNote from '/snippets/beta-note.mdx'
+
+<BetaNote />
+
+Every Mentra miniapp has two layers. Understanding the split is the key to the
+whole SDK: it determines where your code runs, what it can reach, and how the
+two halves communicate.
+
+| Layer | Lifetime | Has DOM? | Hardware access | Import from |
+|---|---|---|---|---|
+| **Background** | Always on while the miniapp is enabled | No | Full: owns the `session` | `@mentra/miniapp/background` |
+| **UI** | Only while the user has your tile open | Yes (React) | None: talks to background | `@mentra/miniapp/ui`, `@mentra/miniapp/react` |
+
+## File layout
+
+```
+my-miniapp/
+├── miniapp.json              # declares both entry points
+├── build.ts                  # bundles both layers in one pass
+└── src/
+    ├── background/
+    │   └── index.ts          # registerMiniapp(session => …)
+    ├── ui/
+    │   ├── index.html
+    │   ├── main.tsx          # mounts <App/>, calls mentra.ready()
+    │   └── App.tsx
+    └── shared/
+        └── channels.ts       # typed channel registry: both sides import it
+```
+
+`miniapp.json` points at the built output of each layer:
+
+```json
+{
+  "entry": {
+    "background": "background/index.js",
+    "ui": "ui/index.html"
+  }
+}
+```
+
+## The background layer
+
+The host evaluates your background bundle inside a per-miniapp JavaScript context
+and calls your `registerMiniapp` handler once the connection is ready. This is
+where every `session.*` call lives.
+
+```typescript src/background/index.ts
+import { registerMiniapp } from "@mentra/miniapp/background";
+import "../shared/channels";
+
+registerMiniapp(async (session) => {
+  // Subscribe to glasses events here. The runtime tears them down on disable.
+  session.transcription.on((data) => {
+    session.display.render([
+      { type: "text", id: "caption", box: { x: 0, y: 0, w: 576, h: 288 }, text: data.text },
+    ]);
+  });
+});
+```
+
+The background runs **even when no UI is open**. Register your subscriptions in
+the handler; they live for as long as the miniapp is enabled.
+
+<Note>
+The background context is not a browser and not Node: it's a bare JS engine
+(JavaScriptCore on iOS, QuickJS on Android). There's no `window`, no DOM, and no
+module resolver at runtime, which is why `build.ts` bundles the SDK *into* your
+background output rather than leaving it external.
+</Note>
+
+### Background runtime APIs
+
+Do not infer background support from what TypeScript or Bun accepts at build
+time. The background bundle targets a small, cross-platform runtime. MentraOS
+currently provides these browser-like globals:
+
+| Available | Scope and limits |
+|---|---|
+| `console` | `log`, `info`, `warn`, `error`, `debug`, and `trace` |
+| Timers | `setTimeout`, `clearTimeout`, `setInterval`, `clearInterval`, and `queueMicrotask` |
+| `fetch` | String request bodies plus `text()`, `json()`, and `arrayBuffer()` response helpers over the native HTTP bridge |
+| `WebSocket` | Native WebSocket bridge |
+| `localStorage` | Per-miniapp string key/value storage |
+| `crypto` | `getRandomValues` and `randomUUID`; `crypto.subtle` is not implemented |
+| Encoding | `TextEncoder`, `TextDecoder`, `atob`, and `btoa` |
+| Cancellation | The SDK-supported `AbortController` / `AbortSignal` subset |
+
+Common browser and Node APIs are **not** available in the background. This
+includes `window`, `document`, DOM elements, `performance`,
+`XMLHttpRequest`, Node built-ins such as `fs` and `path`, `process`, and runtime
+`require()` / dynamic module resolution. Put rendering, DOM work, and browser UI
+libraries in `src/ui/`. Put `session.*` calls, hardware subscriptions, durable
+state, and logic that must continue after the UI closes in `src/background/`.
+Exchange only serializable data through `mentra.*` / `session.ui.*`.
+
+<Warning>
+If an AI coding agent introduces `performance.now()`, DOM access, or a Node API
+under `src/background/`, move that code to the UI or replace it with a supported
+primitive. For elapsed time in the background, use `Date.now()`.
+
+Projects created with `create-mentra-miniapp` also check background source and
+its imported shared files during `bun run build`. Common unsupported browser or
+Node APIs fail the build with the source location and a supported alternative.
+</Warning>
+
+## The UI layer
+
+The UI is a normal React app. It has **zero** direct native access: it reaches
+the glasses only by sending messages to its own background layer. It mounts
+inside `<MentraProvider>` and must call `mentra.ready()` on boot so the host
+knows it's mounted.
+
+```tsx src/ui/main.tsx
+import { createRoot } from "react-dom/client";
+import { MentraProvider } from "@mentra/miniapp/ui";
+import { App } from "./App";
+
+createRoot(document.getElementById("root")!).render(
+  <MentraProvider>
+    <App />
+  </MentraProvider>,
+);
+
+mentra.ready(); // flush any buffered messages from background
+```
+
+## Talking between layers
+
+The two layers never share memory: they pass messages over a typed bus. You
+declare every channel once in `src/shared/channels.ts`; both halves import it, so
+names and payload shapes are enforced at compile time.
+
+```typescript src/shared/channels.ts
+import type { MentraTyped } from "@mentra/miniapp/ui";
+
+export interface Channels {
+  ping: { at: number };                        // UI → background
+  pong: { at: number; roundtripMs: number };   // background → UI
+}
+
+declare global {
+  var mentra: MentraTyped<Channels>;
+}
+```
+
+**From the UI**, use the injected `mentra` global:
+
+```tsx
+mentra.send("ping", { at: Date.now() });            // fire-and-forget
+mentra.on("pong", ({ roundtripMs }) => { /* … */ }); // subscribe
+const res = await mentra.request("getNotes", {});    // request/response (RPC)
+```
+
+**From the background**, use `session.ui`:
+
+```typescript
+session.ui.onOpen(() => session.ui.send("pong", { at: Date.now(), roundtripMs: 0 }));
+session.ui.on("ping", ({ at }) => { /* … */ });
+session.ui.handle("getNotes", async () => ({ notes }));  // respond to mentra.request
+```
+
+The two sides are intentionally asymmetric: `mentra.send` from the UI **buffers**
+until the WebView calls `ready()`, while `session.ui.send` from the background
+**drops silently** when no WebView is open (there's no one to receive it).
+
+There's no runtime channel registry: channel names are opaque strings on the
+wire, validated only by TypeScript. See
+[Interop & Actions](/app-devs/core-concepts/miniapp-interop) for the separate,
+cross-miniapp RPC layer (`session.actions`).
+
+## Lifecycle
+
+1. **Install**: the host unzips the bundle, validates the manifest, spawns the
+   background JS context, and runs your `registerMiniapp` handler. Background is
+   alive.
+2. **UI opens**: the user taps your tile; the host spawns a WebView, injects the
+   `mentra` shim, and loads `ui/index.html`. The WebView calls `mentra.ready()`,
+   and `session.ui.onOpen` fires in the background.
+3. **UI closes**: the user navigates away; the host destroys the WebView. The
+   background context stays alive and `session.ui.onClose` fires.
+4. **Disable / uninstall**: the host tears down your subscriptions and kills the
+   background context.
+
+## Crash recovery
+
+If your background layer crashes, the host restarts it automatically. Repeated
+crashes back off and eventually show the user a "try again" prompt, so aim to
+reach a stable state quickly on startup.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="The manifest" icon="file-code" href="/app-devs/core-concepts/miniapp-manifest">
+    Declare entries, permissions, and hardware in `miniapp.json`.
+  </Card>
+  <Card title="The session" icon="plug" href="/app-devs/core-concepts/session">
+    The background-side handle to every glasses capability.
+  </Card>
+  <Card title="The UI layer" icon="browser" href="/app-devs/core-concepts/webviews/react-webviews">
+    React hooks, the capsule menu, and safe areas.
+  </Card>
+  <Card title="Interop & Actions" icon="arrows-left-right" href="/app-devs/core-concepts/miniapp-interop">
+    Let other miniapps (and Mentra AI) call yours.
+  </Card>
+</CardGroup>

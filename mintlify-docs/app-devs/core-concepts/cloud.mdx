@@ -1,0 +1,99 @@
+---
+title: "Cloud status"
+description: "Read whether the phone is connected to MentraOS cloud."
+icon: "cloud"
+---
+
+import BetaNote from '/snippets/beta-note.mdx'
+
+<BetaNote />
+
+`session.cloud` reports whether the phone currently has a connection to MentraOS
+cloud. The phone owns that connection. Your miniapp does not open, configure, or
+close it. This module only observes and reports the current state, so you can
+render honest UX (an online/offline indicator, a "reconnecting" hint).
+
+```typescript src/background/index.ts
+import { registerMiniapp } from "@mentra/miniapp/background";
+
+registerMiniapp((session) => {
+  if (session.cloud.connected) {
+    session.display.render([{type: "text", id: "msg", box: {x: 0, y: 0, w: 576, h: 288}, text: "Online"}]);
+  }
+
+  session.cloud.onStatusChanged((status) => {
+    // status.status: "connected" | "connecting" | "reconnecting" | "disconnected"
+    // status.audioTransport: "udp" | "ws" | "offline" | "none"
+  });
+});
+```
+
+This module needs no permission. It's read-only.
+
+## Reading status
+
+`status` returns the latest `CloudClientStatus` snapshot. `connected` is `true`
+only when `status.status` is `"connected"`. `isConnected()` is a method alias for
+`connected`.
+
+```typescript
+const snapshot = session.cloud.status;   // { status, audioTransport }
+const online = session.cloud.connected;  // boolean
+const same = session.cloud.isConnected(); // same value, function-style
+```
+
+| Member | Returns | Notes |
+|---|---|---|
+| `status` | `CloudClientStatus` | Latest snapshot pushed by the phone. |
+| `connected` | `boolean` | `true` when `status.status === "connected"`. |
+| `isConnected()` | `boolean` | Method form of `connected`. |
+| `onStatusChanged(handler)` | `UnsubscribeFn` | Subscribe to changes. Call the returned function to unsubscribe. |
+
+## Watching for changes
+
+`onStatusChanged` delivers the current value to your handler immediately, then
+calls it again on every change. You don't need a separate read to hydrate UI.
+
+```typescript
+const stop = session.cloud.onStatusChanged((status) => {
+  render(status.status, status.audioTransport);
+});
+
+stop(); // unsubscribe
+```
+
+## CloudClientStatus
+
+```typescript
+interface CloudClientStatus {
+  status: "connected" | "connecting" | "reconnecting" | "disconnected";
+  audioTransport: "udp" | "ws" | "offline" | "none";
+}
+```
+
+`status` is the connection state:
+
+| Value | Meaning |
+|---|---|
+| `connected` | The cloud-client handshake is complete. |
+| `connecting` | A first connection is in progress. |
+| `reconnecting` | A dropped connection is being re-established. |
+| `disconnected` | No cloud connection. |
+
+`audioTransport` is how audio reaches the cloud when a connection exists:
+
+| Value | Meaning |
+|---|---|
+| `udp` | Audio over UDP. |
+| `ws` | Audio over WebSocket. |
+| `offline` | Connected, but no audio transport available. |
+| `none` | No audio transport (the default before any status arrives). |
+
+<Note>
+Some capabilities depend on the cloud connection.
+[`session.transcription`](/app-devs/core-concepts/microphone/speech-to-text),
+[`session.translation`](/app-devs/core-concepts/translation), and cloud
+text-to-speech on [`session.speaker`](/app-devs/core-concepts/speakers/text-to-speech)
+degrade or stop while `status.status` is not `"connected"`. Use `session.cloud` to
+tell the user why, not to control the connection.
+</Note>

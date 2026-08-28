@@ -1,0 +1,125 @@
+---
+title: "Auth"
+description: "Call your miniapp's backend as the signed-in Mentra user."
+icon: "key"
+---
+
+import BetaNote from '/snippets/beta-note.mdx'
+
+<BetaNote />
+
+If your miniapp has its own backend, `session.auth` lets you call it as the
+current Mentra user, with no login screen. The host hands your miniapp a signed
+token; your backend verifies it and gets the user's id. Two steps.
+
+## Get started
+
+### 1. Call your backend from the miniapp
+
+Use `session.auth.fetch` exactly like `fetch`. It attaches the user's token for
+you.
+
+```typescript src/background/index.ts
+const res = await session.auth.fetch("https://api.example.com/notes");
+const notes = await res.json();
+```
+
+### 2. Verify the token on your backend
+
+Install [`@mentra/auth`](https://www.npmjs.com/package/@mentra/auth) and add its
+middleware. The verified user lands on the request.
+
+```typescript
+import { createMentraAuth, type MentraAuthVariables } from "@mentra/auth";
+import { Hono } from "hono";
+
+const mentraAuth = createMentraAuth({ packageName: "com.example.myapp" });
+
+const app = new Hono<{ Variables: MentraAuthVariables }>();
+app.use("/api/*", mentraAuth.hono());
+
+app.get("/api/notes", (c) => {
+  const { mentraUserId } = c.get("mentraAuth");
+  return c.json({ userId: mentraUserId });
+});
+```
+
+That's it. Every request to `/api/*` now arrives with a verified Mentra user id,
+and a token minted for another miniapp can't be used against yours (its audience
+is pinned to your package).
+
+## On the client
+
+`session.auth.fetch(input, init)` is the easy path. If you bring your own HTTP
+client, grab the header or token instead:
+
+| Method | Returns | Description |
+|---|---|---|
+| `fetch(input, init?)` | `Promise<Response>` | Standard `fetch` with the `Authorization` header added. |
+| `getAuthHeader(options?)` | `Promise<string>` | The string `"Bearer <token>"`. |
+| `getToken(options?)` | `Promise<string>` | The raw token. |
+| `onUpdate(handler)` | `() => void` | Fires when the host rotates the token. Returns an unsubscribe function. |
+
+```typescript
+const header = await session.auth.getAuthHeader();
+await axios.get("https://api.example.com/notes", { headers: { Authorization: header } });
+```
+
+The token rotates, so read it through `fetch`/`getAuthHeader`/`getToken` each time
+rather than caching the string. Those three take a `minTtlMs` option, the minimum
+lifetime the token must still have (default `30000`); if the current token has
+less left, the call waits for the next refresh.
+
+```typescript
+const res = await session.auth.fetch("https://api.example.com/sync", { minTtlMs: 120_000 });
+```
+
+`session.auth.current` holds the active token and who it's for (or `null` before
+the host issues one). `session.auth.mentraUserId` and `session.auth.oemId` are
+getter shortcuts.
+
+| Field | Type | Description |
+|---|---|---|
+| `mentraUserId` | `string` | The Mentra user this token is for. |
+| `oemId` | `string \| undefined` | The OEM that provisioned the user, when present. |
+| `token` | `string` | The signed token sent to your backend. |
+| `expiresAt` | `number` | Expiry as a Unix timestamp in milliseconds. |
+
+## On your backend
+
+`createMentraAuth({ packageName })` checks the signature against MentraOS's JWKS,
+the issuer, and the audience (your `packageName`), and rejects expired tokens.
+`packageName` can also come from the `MENTRA_PACKAGE_NAME` environment variable.
+
+Not on Hono? Verify directly:
+
+```typescript
+await mentraAuth.verifyRequest(request);        // a Web Request
+await mentraAuth.verifyAuthHeader(headerValue); // an Authorization header value
+await mentraAuth.verifyToken(token);            // a bare token
+```
+
+Each resolves to a `VerifiedMentraAuth` (or throws `MentraAuthError`):
+
+| Field | Type | Description |
+|---|---|---|
+| `mentraUserId` | `string` | The Mentra user (the JWT `sub`). |
+| `oemId` | `string?` | The OEM that provisioned the user, when present. |
+| `packageName` | `string` | Your miniapp package (the verified audience). |
+| `tokenId` | `string?` | The token's `jti`, if set. |
+| `expiresAt` | `number?` | `exp`, in Unix seconds. |
+| `issuedAt` | `number?` | `iat`, in Unix seconds. |
+| `claims` | `JWTPayload` | The raw verified claims. |
+
+### Pointing at a non-production Core
+
+By default it verifies against production Core's JWKS
+(`https://core.mentraglass.com/.well-known/jwks.json`). For local, staging, or
+self-hosted Core, pass `jwksUrl` (or set `MENTRA_AUTH_JWKS_URL`):
+
+```typescript
+const mentraAuth = createMentraAuth({
+  packageName: "com.example.myapp",
+  jwksUrl: "http://localhost:3000/.well-known/jwks.json",
+});
+```

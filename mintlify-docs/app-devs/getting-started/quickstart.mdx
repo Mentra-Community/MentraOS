@@ -1,0 +1,148 @@
+---
+title: Quickstart
+description: Scaffold a Mentra miniapp and run it on your phone in a few minutes.
+icon: "rocket"
+---
+
+import LegacyCloudNote from '/snippets/legacy-cloud-note.mdx'
+import BetaNote from '/snippets/beta-note.mdx'
+
+<BetaNote />
+
+This Quickstart goes from zero to a miniapp running on your glasses. You need a
+phone, [Bun](https://bun.sh/docs/installation), and basic TypeScript. You can do
+the whole thing **without glasses**: the display just won't have anywhere to draw.
+
+<Info>
+Building a mobile app that connects directly to glasses over Bluetooth? Use the
+[Bluetooth SDK Quickstart](/bluetooth-sdk/quickstart) instead.
+</Info>
+
+<LegacyCloudNote />
+
+### Step 1: Install the Mentra App
+
+Install the Mentra App on your Android or iPhone from
+[MentraGlass.com/OS](https://mentraglass.com/os), sign in, and connect your
+glasses (if you have them).
+
+### Step 2: Scaffold a project
+
+```bash
+bunx create-mentra-miniapp my-miniapp
+```
+
+The scaffolder asks for a project name and the kind of glasses you're targeting
+(**display** glasses like Even Realities G1/G2 and Vuzix Z100, or **camera**
+glasses like Mentra Live), then generates a ready-to-run two-layer project.
+
+```bash
+cd my-miniapp
+bun install
+```
+
+`bun install` pulls in [`@mentra/miniapp`](https://www.npmjs.com/package/@mentra/miniapp)
+(the runtime) and [`@mentra/miniapp-cli`](https://www.npmjs.com/package/@mentra/miniapp-cli)
+(the `mentra-miniapp` tooling) automatically.
+
+### Step 3: Start the dev server
+
+```bash
+bun dev
+```
+
+This validates your `miniapp.json`, builds both layers, serves them over your
+LAN, and prints a **QR code** plus a `miniapp://dev?...` URL. It hot-reloads on
+save and forwards the miniapp's console logs back to your terminal.
+
+### Step 4: Load it on your phone
+
+In the Mentra App, go to **Settings → Miniapp Developer Settings → Scan Miniapp
+QR Code** and scan the QR from your terminal. If Miniapp Developer Settings is
+hidden, open **Settings → Debug Settings**, enable **Miniapp Developer
+Settings**, then return to Settings. If Debug Settings is hidden, tap the
+version number at the bottom of Settings ten times to reveal it.
+
+<Info>
+Your phone and your laptop must be on the **same Wi-Fi network**. `bun dev`
+watches for Wi-Fi changes and reprints the QR if your LAN IP moves.
+</Info>
+
+The miniapp installs and starts. In the starter project, pressing a glasses
+button shows text on the display, and opening the miniapp's UI tile shows a
+round-trip latency demo between the UI and background layers.
+
+## Understanding the starter
+
+A scaffolded miniapp has two entry points wired together by a shared, typed
+channel registry:
+
+```
+my-miniapp/
+├── miniapp.json              # manifest: package name, permissions, hardware, entries
+├── build.ts                  # bundles both layers
+└── src/
+    ├── background/index.ts   # always-on glasses logic: owns the session
+    ├── ui/                   # the on-demand WebView (React)
+    └── shared/channels.ts    # typed messages between the two layers
+```
+
+**Background**: owns the `session` and all glasses logic:
+
+```typescript src/background/index.ts
+import { registerMiniapp } from "@mentra/miniapp/background";
+import "../shared/channels";
+
+registerMiniapp((session) => {
+  session.input.onButtonPress(() => {
+    // render() replaces the whole frame — a full-canvas text element here.
+    // Box coordinates are raw device px from session.capabilities.display.
+    const d = session.capabilities?.display;
+    session.display.render([
+      { type: "text", id: "hello", box: { x: 0, y: 0, w: d?.width ?? 576, h: d?.height ?? 288 }, text: "Hello from MentraOS" },
+    ]);
+  });
+
+  // Reply to a "ping" from the UI with a "pong".
+  session.ui.on("ping", ({ at }) => {
+    session.ui.send("pong", { at: Date.now(), roundtripMs: Date.now() - at });
+  });
+});
+```
+
+**UI**: a normal React app that talks to the background over `mentra`. It has no
+direct hardware access:
+
+```tsx src/ui/App.tsx
+export function App() {
+  useEffect(() => mentra.on("pong", ({ roundtripMs }) => { /* update UI */ }), []);
+  return <button onClick={() => mentra.send("ping", { at: Date.now() })}>Ping</button>;
+}
+```
+
+**Shared channels**: the single source of truth for what flows between the two
+layers, enforced at compile time:
+
+```typescript src/shared/channels.ts
+export interface Channels {
+  ping: { at: number };                          // UI → background
+  pong: { at: number; roundtripMs: number };     // background → UI
+}
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Two-layer architecture" icon="layer-group" href="/app-devs/core-concepts/two-layer-architecture">
+    How background and UI work and communicate.
+  </Card>
+  <Card title="The session" icon="plug" href="/app-devs/core-concepts/session">
+    Every capability you can reach on the glasses.
+  </Card>
+  <Card title="The manifest" icon="file-code" href="/app-devs/core-concepts/miniapp-manifest">
+    Permissions, hardware requirements, and entry points.
+  </Card>
+  <Card title="Ship it" icon="upload" href="/app-devs/getting-started/distribution">
+    Pack a release and put it in front of users.
+  </Card>
+</CardGroup>

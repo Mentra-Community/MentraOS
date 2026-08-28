@@ -1,0 +1,120 @@
+---
+title: "System"
+description: "Phone-side OS actions: share sheet, downloads, clipboard, open URL."
+icon: "share-nodes"
+---
+
+import BetaNote from '/snippets/beta-note.mdx'
+
+<BetaNote />
+
+`session.system` runs OS-level actions on the phone: open the native share sheet,
+save a file through the system downloader, copy text to the clipboard, or open a
+URL in the phone browser. None of these need a permission or any hardware.
+
+```typescript src/background/index.ts
+const result = await session.system.share({ text: "Check out my run", url: "https://maps.app/abc" });
+if (result.cancelled) {
+  // the user dismissed the share sheet
+}
+```
+
+## Share
+
+`share(options)` opens the phone's native share sheet. Pass text and a URL for a
+link share, or pass `base64` with a `mimeType` to share file contents. The
+promise resolves once the sheet closes.
+
+```typescript
+// Share a link
+await session.system.share({
+  title: "My route",
+  text: "Today's walk",
+  url: "https://maps.app/abc",
+});
+
+// Share file contents
+await session.system.share({
+  base64: pngBytes,
+  mimeType: "image/png",
+  filename: "route.png",
+});
+```
+
+| `ShareOptions` field | Type | Notes |
+|---|---|---|
+| `text` | `string` | Body text for the share. |
+| `url` | `string` | A URL to share. |
+| `title` | `string` | Title shown by the share sheet. |
+| `base64` | `string` | Base64-encoded file data for file sharing. |
+| `mimeType` | `string` | MIME type when sharing `base64` data. |
+| `filename` | `string` | Filename when sharing `base64` data. |
+
+| `ShareResult` field | Type | Notes |
+|---|---|---|
+| `success` | `boolean` | Whether the share completed. |
+| `cancelled` | `boolean` | `true` when the user dismissed the sheet. Optional. |
+
+## Download
+
+`download(options)` saves a file. It opens the share sheet so the user picks
+where to save. Give it a `url` to fetch from, or `base64` data you already have.
+
+```typescript
+// Download from a URL
+const a = await session.system.download({
+  url: "https://example.com/report.pdf",
+  filename: "report.pdf",
+});
+
+// Save base64 data
+const b = await session.system.download({
+  base64: csvBytes,
+  mimeType: "text/csv",
+  filename: "export.csv",
+});
+```
+
+| `DownloadOptions` field | Type | Notes |
+|---|---|---|
+| `url` | `string` | URL to download from, or use `base64`. |
+| `base64` | `string` | Base64 file data, as an alternative to `url`. |
+| `filename` | `string` | Suggested filename. |
+| `mimeType` | `string` | MIME type of the data. |
+
+| `DownloadResult` field | Type | Notes |
+|---|---|---|
+| `success` | `boolean` | Whether the download completed. |
+| `cancelled` | `boolean` | `true` when the user dismissed the save sheet. Optional. |
+
+<Note>
+To export data your miniapp holds as binary, read it from
+[`session.blob`](/app-devs/core-concepts/blob), base64-encode it, and pass it to
+`share` or `download`.
+</Note>
+
+## Clipboard
+
+`copyToClipboard(text)` copies a string to the system clipboard. It resolves when
+the copy is done.
+
+```typescript
+await session.system.copyToClipboard("https://maps.app/abc");
+```
+
+## Open URL
+
+`openUrl(url)` opens a URL in the phone's browser. It's fire-and-forget: it
+returns `void` immediately and doesn't report whether the browser opened.
+Dangerous schemes (`javascript:`, `file:`) are blocked.
+
+```typescript
+session.system.openUrl("https://docs.mentra.glass");
+```
+
+| Method | Returns | Notes |
+|---|---|---|
+| `share(options)` | `Promise<ShareResult>` | Opens the native share sheet. |
+| `download(options)` | `Promise<DownloadResult>` | Saves a file via the system downloader. |
+| `copyToClipboard(text)` | `Promise<void>` | Copies text to the clipboard. |
+| `openUrl(url)` | `void` | Opens a URL in the phone browser. Blocks `javascript:`/`file:`. |

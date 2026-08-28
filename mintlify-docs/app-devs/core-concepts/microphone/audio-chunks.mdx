@@ -1,0 +1,69 @@
+---
+title: "Microphone"
+description: "Raw audio frames and voice-activity detection from the glasses mic."
+icon: "microphone"
+---
+
+import BetaNote from '/snippets/beta-note.mdx'
+
+<BetaNote />
+
+`session.mic` is the low-level audio input: raw frames and a voice-activity
+signal. If you want text, use [`session.transcription`](/app-devs/core-concepts/microphone/speech-to-text)
+instead. Reach for `mic` when you need the audio itself, like recording a clip or
+running your own audio processing.
+
+Both subscriptions need the `MICROPHONE` permission in your
+[manifest](/app-devs/core-concepts/miniapp-manifest), or the phone rejects them
+with `PERMISSION_NOT_DECLARED`.
+
+## Raw audio
+
+```typescript
+session.mic.onAudioChunk((chunk) => {
+  // chunk.data is base64-encoded PCM or LC3.
+  buffer.push(chunk.data);
+});
+```
+
+Each `AudioChunkData` has:
+
+| Field | Type | Notes |
+|---|---|---|
+| `data` | `string` | Base64-encoded audio. PCM or LC3 depending on the phone's mic mode. |
+| `sampleRate` | `number?` | Sample rate, when reported. |
+| `format` | `string?` | The encoding, when reported. |
+
+## Voice activity
+
+`onVoiceActivity` fires when the user starts and stops speaking, without giving
+you the audio:
+
+```typescript
+session.mic.onVoiceActivity(({ status }) => {
+  // status: true while speaking, false when silent.
+  if (status) session.display.render([{type: "text", id: "msg", box: {x: 0, y: 0, w: 576, h: 288}, text: "Listening…"}]);
+});
+```
+
+## Cleaning up
+
+Both methods return an unsubscribe function, and `stop()` tears down everything
+this module owns:
+
+```typescript
+const off = session.mic.onAudioChunk(handler);
+off();              // drop this one
+
+session.mic.stop(); // drop all of them
+```
+
+`session.mic.hasPermission` reports whether `MICROPHONE` is declared in your
+manifest, not whether the user granted the OS prompt. If they denied it, the
+subscription succeeds but no chunks arrive.
+
+<Note>
+`mic`, `transcription`, and `translation` are independent. Subscribing to raw
+audio does not give you transcripts, and vice versa. Audio *output* (playback and
+text-to-speech) lives on [`session.speaker`](/app-devs/core-concepts/speakers/text-to-speech).
+</Note>

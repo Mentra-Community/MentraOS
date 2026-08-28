@@ -1,0 +1,82 @@
+---
+title: "Streaming"
+description: "Live video streaming from camera glasses."
+icon: "tower-broadcast"
+---
+
+import BetaNote from '/snippets/beta-note.mdx'
+
+<BetaNote />
+
+`session.stream` starts and stops a live video stream from camera glasses like
+Mentra Live. One method, `startStream`, covers both ways to stream: Mentra hosts
+it for you (the default), or you publish straight to a URL you own.
+
+```typescript src/background/index.ts
+// Managed: Mentra hosts the stream and gives you playback URLs.
+const stream = await session.stream.startStream();
+session.display.showReferenceCard("Live", stream.hlsUrl);
+```
+
+## Managed streaming (default)
+
+Call `startStream()` with no `direct` URL and Mentra provisions a hosted stream,
+handles transport and reconnection, and returns playback URLs. This is the right
+choice for most apps.
+
+```typescript src/background/index.ts
+// Hosted stream, optionally fanned out to your own destinations.
+const stream = await session.stream.startStream({
+  destinations: [{ url: "rtmp://a.rtmp.youtube.com/live2/KEY", name: "youtube" }],
+});
+// stream.hlsUrl, stream.dashUrl, stream.webrtcUrl
+```
+
+| Option | Type | What it is |
+|---|---|---|
+| `destinations` | `Array<string \| { url; name? }>` | Restream targets the relay fans out to (YouTube, Twitch, …). Bare URLs or `{ url, name? }` objects, mixed freely. |
+| `ingest` | `"srt" \| "whip"` | Latency/durability trade. `"srt"` (default): ~10-20s latency, HLS/DASH playback, recording. `"whip"`: sub-second WebRTC playback, no HLS/DASH, no recording. |
+| `video` | `StreamVideoConfig` | `width`, `height`, `bitrate`, `fps` (all optional). |
+| `audio` | `StreamAudioConfig` | `bitrate`, `sampleRate`, `echoCancellation`, `noiseSuppression` (all optional). |
+| `sound` | `boolean` | Play glasses-side start/stop sounds. Defaults to `true`. |
+
+## Direct streaming
+
+Pass `direct` with your own ingest URL (rtmp/rtmps/srt/whip) and the glasses
+publish straight to it, with no Mentra relay. You manage the endpoint, and no
+playback URLs come back.
+
+```typescript src/background/index.ts
+const stream = await session.stream.startStream({
+  direct: "rtmp://example.com/live/STREAM-KEY",
+  video: { fps: 30 },
+});
+// stream.streamId, pass it to stop()
+```
+
+`video`, `audio`, and `sound` work the same as managed. `destinations` and
+`ingest` are ignored for direct streams.
+
+## Result
+
+`startStream` resolves to a `StreamResult`:
+
+| Field | Type | What it is |
+|---|---|---|
+| `streamId` | `string` | ID for this stream. Pass it to `stop`. |
+| `status` | `string` | The stream's reported state. |
+| `resolvedConfig` | `StreamResolvedConfig` | The transport and the video/audio settings actually applied. Optional. |
+| `hlsUrl` | `string` | HLS playback URL. Managed streams only. |
+| `dashUrl` | `string` | DASH playback URL. Managed streams only. |
+| `webrtcUrl` | `string` | WHEP playback URL. Managed streams in `"whip"` mode. |
+| `liveInputId` | `string` | Hosted live-input UID, for building player URLs. Managed streams only. |
+| `mode` | `"hls" \| "webrtc"` | Which playback the stream serves. Managed streams only. |
+
+## Stop
+
+`stop` ends the stream. Pass the `streamId` from the start result, or omit it to
+stop the active stream.
+
+```typescript src/background/index.ts
+await session.stream.stop(stream.streamId);
+```

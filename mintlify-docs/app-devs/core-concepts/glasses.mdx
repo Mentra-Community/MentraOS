@@ -1,0 +1,86 @@
+---
+title: "Glasses"
+description: "Battery level and connection state of the glasses."
+icon: "glasses"
+---
+
+import BetaNote from '/snippets/beta-note.mdx'
+
+<BetaNote />
+
+`session.glasses` reports on the glasses hardware: battery level plus charging
+state, and whether the glasses are connected. Both are subscriptions, so you get
+a callback whenever the value changes.
+
+```typescript src/background/index.ts
+session.glasses.onBattery(({ level, charging }) => {
+  if (level <= 15 && !charging) {
+    session.display.render([{type: "text", id: "msg", box: {x: 0, y: 0, w: 576, h: 288}, text: "Glasses battery low"}]);
+  }
+});
+```
+
+There's no synchronous getter for the current value. You learn the state by
+subscribing and waiting for the first event.
+
+## Battery
+
+`onBattery` fires when the glasses report a new battery reading.
+
+```typescript
+session.glasses.onBattery((data) => {
+  console.log(`${data.level}%`, data.charging ? "charging" : "on battery");
+});
+```
+
+Each `BatteryData` has:
+
+| Field | Type | Notes |
+|---|---|---|
+| `level` | `number` | Battery percentage, 0 to 100. |
+| `charging` | `boolean` | Whether the glasses are charging. |
+
+## Connection
+
+`onConnection` fires when the glasses connect or disconnect.
+
+```typescript
+session.glasses.onConnection((data) => {
+  if (!data.connected) {
+    // The glasses dropped. Display calls won't reach the HUD until they return.
+  }
+});
+```
+
+Each `ConnectionData` has:
+
+| Field | Type | Notes |
+|---|---|---|
+| `connected` | `boolean` | Whether the glasses are currently connected. |
+| `modelName` | `string?` | Glasses model name, when reported. May be absent. |
+
+`modelName` is optional, so guard for it before reading:
+
+```typescript
+session.glasses.onConnection(({ connected, modelName }) => {
+  if (connected && modelName) {
+    console.log(`Connected to ${modelName}`);
+  }
+});
+```
+
+## Cleaning up
+
+Both methods return an unsubscribe function:
+
+```typescript
+const off = session.glasses.onBattery(handler);
+off(); // stop listening
+```
+
+<Note>
+`session.glasses` covers the glasses hardware. The phone has its own battery and
+connection events on [`session.phone`](/app-devs/core-concepts/phone). For what
+the connected glasses can *do* (display, camera, sensors), read
+`session.capabilities` once the session is [ready](/app-devs/core-concepts/session#lifecycle).
+</Note>

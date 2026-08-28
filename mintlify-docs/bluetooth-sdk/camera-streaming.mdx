@@ -1,0 +1,564 @@
+---
+title: "Camera And Streaming"
+description: "Request photos, record videos, and start RTMP, SRT, or WebRTC streams from supported smart glasses."
+icon: "camera"
+---
+
+Camera and streaming features depend on Mentra Live being connected, ready, and permitted to capture. Gate UI by SDK status before exposing photo, video, or stream controls.
+
+## Photo Upload
+
+Photo upload sends a JPEG from supported glasses to a webhook URL. In the starter apps, the default Camera flow starts a receiver on the phone and sends the photo from the glasses to that phone URL. Turn on **Use cloud server** only when you want to send the upload to an external endpoint, such as your production API, a staging API, or the optional starter-kit helper.
+
+<Tabs>
+  <Tab title="React Native">
+
+```ts
+const photo = await BluetoothSdk.requestPhoto({
+  size: 'medium',
+  webhookUrl: 'https://api.example.com/mentra/photo',
+  authToken: 'optional-token',
+  compress: 'medium',
+  sound: true,
+  exposureTimeNs: null,
+  iso: null,
+});
+console.log('photo delivered', photo.photoUrl ?? photo.uploadUrl);
+```
+
+  </Tab>
+  <Tab title="Android">
+
+```kotlin
+val photo = sdk.requestPhoto(
+    PhotoRequest(
+        size = PhotoSize.MEDIUM,
+        webhookUrl = "https://api.example.com/mentra/photo",
+        authToken = "optional-token",
+        compress = PhotoCompression.MEDIUM,
+        sound = true,
+        exposureTimeNs = null,
+        iso = null,
+    )
+)
+println("photo delivered: ${photo.requestId}")
+```
+
+  </Tab>
+  <Tab title="iOS">
+
+```swift
+let photo = try await sdk.requestPhoto(
+    PhotoRequest(
+        size: .medium,
+        webhookUrl: "https://api.example.com/mentra/photo",
+        authToken: "optional-token",
+        compress: .medium,
+        sound: true,
+        exposureTimeNs: nil,
+        iso: nil
+    )
+)
+print("photo delivered: \(photo.requestId)")
+```
+
+  </Tab>
+</Tabs>
+
+`requestPhoto(...)` resolves when the full photo action reaches terminal success: capture completed and the JPEG was delivered to the webhook, either directly from the glasses over Wi-Fi or through the phone's Bluetooth fallback relay. It rejects or throws when the glasses report a terminal `photo_response` error, when phone-side fallback upload fails, when the SDK cannot send the command, or when no terminal response arrives before the command timeout. Use `photo_status` for intermediate progress such as `accepted`, `configuring`, `capturing`, `captured`, `uploading`, `ble_fallback_compression`, `ready_for_transfer`, and `transferring`; `photo_response` is the final success/error result. The returned success includes `uploadUrl`, and may include webhook-returned metadata such as `photoUrl`, `statusUrl`, `contentType`, or `fileSizeBytes`.
+
+The webhook should accept multipart form data with a `photo` file and `requestId`. The SDK generates a unique photo `requestId` when you omit one; pass your own only when your app needs to know it before the terminal response, such as when polling a predictable `/uploads/<requestId>.json` endpoint. If `authToken` is provided, the uploader adds `Authorization: Bearer <token>`. The capture light is always enabled for photo, video, and stream capture as a privacy indicator.
+
+For one-shot manual capture tuning, pass `exposureTimeNs` and `iso` together. `exposureTimeNs` is sensor exposure time in nanoseconds; `iso` is sensor ISO. If `exposureTimeNs` is omitted, `null` / `nil`, invalid, or unsupported by the connected glasses, the camera uses auto exposure and ignores `iso`.
+
+### Photo Parameters
+
+`requestPhoto(...)` is a one-shot request. Its capture fields apply only to that request and do not change the action-button photo defaults used by gallery mode.
+
+| Parameter | Applies to | Behavior |
+| --- | --- | --- |
+| `requestId` | React Native, Android, iOS | Optional ID used to correlate status and final response events. The SDK generates one when omitted or blank. |
+| `size` | React Native, Android, iOS | JPEG size tier: `low`, `medium`, `high`, or `max`. |
+| `webhookUrl` | React Native, Android, iOS | Upload URL that receives the multipart `photo` file and `requestId`. |
+| `authToken` | React Native, Android, iOS | Optional bearer token for the upload request. Omit it or pass `null` / `nil` to send no `Authorization` header. |
+| `compress` | React Native, Android, iOS | Upload compression: `none`, `medium`, or `heavy`. Omitted native values default to `none`. |
+| `save` | React Native, Android, iOS | Keeps the captured photo in the glasses gallery after delivery when `true`. When `false`, the photo is only used for the requested delivery. Defaults to `false`. |
+| `sound` | React Native, Android, iOS | Plays the shutter sound when `true`; defaults to `true`. |
+| `exposureTimeNs` | React Native, Android, iOS | Optional manual sensor exposure time in nanoseconds. Omit or pass `null` / `nil` for auto exposure. |
+| `iso` | React Native, Android, iOS | Optional manual ISO. Used only when `exposureTimeNs` enables manual exposure. |
+| `aeExposureDivisor` | React Native, Android, iOS | Optional scan-style auto-exposure divisor. Values must be greater than `1`. |
+| `isoCap` | React Native, Android, iOS | Optional scan-style ISO cap. Values must be greater than `0`. |
+| `zsl` | React Native, Android, iOS | ZSL preview/capture buffering. Enabled by default; pass `false` to disable. Honored in text/scan/manual exposure modes. |
+| `mfnr` | React Native, Android, iOS | Vendor multi-frame noise reduction on still capture. Enabled by default; pass `false` for the single-frame pipeline. Honored in text/scan/manual exposure modes. MFNR arms ZSL buffering in preview even when `zsl` is false. |
+| `noiseReduction` | React Native, Android, iOS | Optional per-request noise-reduction preference. Some firmware may report that this tuning is not implemented. |
+| `edgeEnhancement` | React Native, Android, iOS | Optional per-request edge-enhancement preference. Some firmware may report that this tuning is not implemented. |
+| `ispDigitalGain` | React Native, Android, iOS | Optional per-request ISP digital gain hint. Some firmware may report that this tuning is not implemented. |
+| `ispAnalogGain` | React Native, Android, iOS | Optional per-request ISP analog gain hint. Some firmware may report that this tuning is not implemented. |
+
+Listen for `photo_status` to render progress and inspect the effective settings the glasses used:
+
+```ts
+import {useBluetoothEvent} from '@mentra/bluetooth-sdk/react';
+
+useBluetoothEvent('photo_status', (event) => {
+  if (event.status === 'configuring') {
+    console.log('effective JPEG config', event.resolvedConfig);
+  }
+  if (event.status === 'capturing') {
+    console.log('requested still config', event.requestedCaptureConfig);
+    console.log('latest metered preview', event.meteredPreview);
+  }
+  if (event.status === 'captured') {
+    console.log('actual still capture', event.captureMetadata);
+  }
+});
+```
+
+`photo_status` metadata is stage-specific:
+
+| Status | Optional metadata | When to use it |
+| --- | --- | --- |
+| `configuring` | `resolvedConfig` | Show the effective JPEG dimensions, quality, requested size, source, transfer method, compression, and manual exposure fields when present. |
+| `capturing` | `requestedCaptureConfig`, `meteredPreview` | Compare the Camera2 still request with the latest auto-exposure preview estimate before the capture is fired. |
+| `captured` | `captureMetadata` | Read the actual HAL-applied still capture values, including exposure time, ISO, frame duration, AE state/name, noise reduction mode, edge mode, sensor timestamp, and MFNR hint when available. |
+
+Upload and BLE transfer statuses such as `uploading`, `compressing`, `ble_fallback_compression`, `ready_for_transfer`, and `transferring` are transport progress only. They do not carry capture metadata, so use the `captured` event when you need the actual exposure/ISO/frame data for debugging or UI. `ble_fallback_compression` means the direct Wi-Fi/webhook upload failed and the glasses are compressing the already-captured photo for Bluetooth fallback delivery.
+
+## Camera Warm-Up
+
+Use `warmUpCamera(...)` when your UI is about to offer photo capture and you want the next same-configuration `requestPhoto(...)` to skip most of the camera open/configure latency. A warm-up opens and configures the Mentra Live camera with the same size and optional manual exposure path as a photo request, starts preview/AE settling, and holds that session warm for a short TTL without taking a photo or uploading media. Because warm-up does not capture or transmit media, it does not pulse the capture light; photo, video, and stream capture still enable the light as the privacy indicator.
+
+In foreground camera UI, call warm-up when the screen or tab becomes active, then refresh it before the TTL expires. The starter apps use a `30_000ms` warm-up and refresh about every `20_000ms` while the Camera tab is foreground.
+
+<Tabs>
+  <Tab title="React Native">
+
+```ts
+await BluetoothSdk.warmUpCamera({
+  size: 'medium',
+  exposureTimeNs: null,
+  durationMs: 30_000,
+});
+```
+
+  </Tab>
+  <Tab title="Android">
+
+```kotlin
+sdk.warmUpCamera(
+    size = PhotoSize.MEDIUM,
+    exposureTimeNs = null,
+    durationMs = 30_000,
+)
+```
+
+  </Tab>
+  <Tab title="iOS">
+
+```swift
+try await sdk.warmUpCamera(
+    size: .medium,
+    exposureTimeNs: nil,
+    durationMs: 30_000
+)
+```
+
+  </Tab>
+</Tabs>
+
+`warmUpCamera(...)` returns the matching `camera_status` `ready` event. It throws or rejects when the glasses send `camera_status` `error`, when the command cannot be sent, or when the response times out. Listen for `camera_status` if you want progress events: `warming` means the warm-up was accepted, `ready` means the camera is open/configured for reuse, `stopped` means the warm lease expired or the camera closed, and `error` includes `errorCode` / `errorMessage` when available.
+
+Warm-up holds default to 15 seconds and are capped at 60 seconds. When your UI leaves the foreground, call `stopCameraWarmUp(requestId)` with the explicit request ID used to start the lease. Stopping while the camera is still opening rejects the original warm-up with `camera_warm_up_cancelled`; stopping a ready lease emits `stopped`. Compatible request-owned leases share the camera, so releasing one does not close it while another remains.
+
+The `stopped` event is not a promise settlement; it is the lifecycle end for a warm lease that already reached `ready`. If multiple callers warmed or refreshed the same camera session and received `ready`, each request ID receives its own `stopped` event when that lease expires or the camera service tears down. If the camera service tears down before a warm-up reaches `ready`, the pending warm-up rejects with `error` instead.
+
+Warm-up reuse is configuration-sensitive: the next photo should use the same `size` and `exposureTimeNs` value. A different size or manual-exposure setting may force the camera to reconfigure. If video recording or streaming already owns the camera, warm-up reports `ready` immediately because the camera is already active. If a photo capture, Bluetooth transfer, camera restart, or another warm-up is in flight, the glasses may report a retryable `camera_busy`, `photo_capture_in_progress`, `ble_transfer_in_progress`, or `camera_restart_cooldown` error; retry on the next foreground refresh rather than blocking capture UI. If a `requestPhoto(...)` arrives while warm-up is opening the session, the glasses finish parking the warm session first, then dispatch the queued photo on that same warm camera configuration.
+
+## Video Recording
+
+Use `startVideoRecording(...)` when your app needs a clip instead of a still image. Pass per-recording settings only when you want to override the saved video recording defaults; `maxRecordingTimeMinutes` is an auto-stop guard, and `0` or an omitted value records until your app stops recording or the glasses interrupt it.
+
+<Tabs>
+  <Tab title="React Native">
+
+```ts
+const requestId = `video-${Date.now()}`;
+
+const started = await BluetoothSdk.startVideoRecording(requestId, true, true, {
+  width: 1280,
+  height: 720,
+  fps: 30,
+  maxRecordingTimeMinutes: 1,
+});
+console.log('video started', started.status);
+
+const stopped = await BluetoothSdk.stopVideoRecording(
+  requestId,
+  'https://api.example.com/mentra/video',
+  'optional-token',
+);
+console.log('video uploaded', stopped.status);
+```
+
+  </Tab>
+  <Tab title="Android">
+
+```kotlin
+val requestId = "video-${System.currentTimeMillis()}"
+
+val started = sdk.startVideoRecording(
+    VideoRecordingRequest(
+        requestId = requestId,
+        save = true,
+        sound = true,
+        width = 1280,
+        height = 720,
+        fps = 30,
+        maxRecordingTimeMinutes = 1,
+    )
+)
+println("video started: ${started.status}")
+
+val stopped = sdk.stopVideoRecording(
+    requestId = requestId,
+    webhookUrl = "https://api.example.com/mentra/video",
+    authToken = "optional-token",
+)
+println("video uploaded: ${stopped.status}")
+```
+
+  </Tab>
+  <Tab title="iOS">
+
+```swift
+let requestId = "video-\(Date().timeIntervalSince1970)"
+
+let started = try await sdk.startVideoRecording(
+    VideoRecordingRequest(
+        requestId: requestId,
+        save: true,
+        sound: true,
+        width: 1280,
+        height: 720,
+        fps: 30,
+        maxRecordingTimeMinutes: 1
+    )
+)
+print("video started: \(started.status)")
+
+let stopped = try await sdk.stopVideoRecording(
+    requestId: requestId,
+    webhookUrl: "https://api.example.com/mentra/video",
+    authToken: "optional-token"
+)
+print("video uploaded: \(stopped.status)")
+```
+
+  </Tab>
+</Tabs>
+
+`startVideoRecording(...)` resolves from `recording_started`. `stopVideoRecording(...)` without a webhook resolves from `recording_stopped`; when you pass a webhook URL, it waits for `recording_stopped` plus video `media_success`, and rejects on video `media_error`. Raw `video_recording_status`, `media_success`, and `media_error` events remain available for listeners that need the glasses event stream directly. The video upload webhook should accept multipart form data with a `video` field and `requestId`. Pass the webhook URL and auth token at stop time so upload credentials can be fresh when the recording ends.
+
+## Gallery Mode
+
+Mentra Live has gallery mode for the right action button. When gallery mode is enabled, a short press takes a photo, a long press starts video recording, and a short press stops the active video recording. Button and touch events are still reported to your app.
+
+<Warning>
+  `setPhotoCaptureDefaults(...)` in the samples below is **deprecated**. Prefer per-request `requestPhoto(...)` options for capture tuning. The call still configures action-button size for now.
+</Warning>
+
+<Tabs>
+  <Tab title="React Native">
+
+```ts
+await BluetoothSdk.setGalleryModeEnabled(true);
+await BluetoothSdk.setPhotoCaptureDefaults({size: 'medium'}); // deprecated
+await BluetoothSdk.setVideoRecordingDefaults({width: 1280, height: 720, fps: 30});
+await BluetoothSdk.setMaxVideoRecordingDuration(3);
+const cameraFov = await BluetoothSdk.setCameraFov({fov: 102, roiPosition: 'center'});
+console.log(`Camera ready at ${cameraFov.fov}°`);
+```
+
+  </Tab>
+  <Tab title="Android">
+
+```kotlin
+sdk.setGalleryModeEnabled(true)
+@Suppress("DEPRECATION")
+sdk.setPhotoCaptureDefaults(PhotoCaptureDefaults(size = PhotoSize.MEDIUM)) // deprecated
+sdk.setVideoRecordingDefaults(VideoRecordingDefaults(width = 1280, height = 720, fps = 30))
+sdk.setMaxVideoRecordingDuration(minutes = 3)
+val cameraFov = sdk.setCameraFov(CameraFov(fov = 102, roiPosition = CameraRoiPosition.CENTER))
+println("Camera ready at ${cameraFov.fov}°")
+```
+
+  </Tab>
+  <Tab title="iOS">
+
+```swift
+try await sdk.setGalleryModeEnabled(true)
+try await sdk.setPhotoCaptureDefaults(PhotoCaptureDefaults(size: .medium)) // deprecated
+try await sdk.setVideoRecordingDefaults(VideoRecordingDefaults(width: 1280, height: 720, fps: 30))
+try await sdk.setMaxVideoRecordingDuration(minutes: 3)
+let cameraFov = try await sdk.setCameraFov(CameraFov(fov: 102, roiPosition: .center))
+print("Camera ready at \(cameraFov.fov)°")
+```
+
+  </Tab>
+</Tabs>
+
+Use `setGalleryModeEnabled(false)` when you want the action button to report events without triggering local gallery capture while the glasses are connected.
+
+Action-button photos emitted by the glasses use the same `photo_status` metadata shape when the phone SDK is connected. These local captures report `resolvedConfig.source: "button"` and `resolvedConfig.transferMethod: "local"`, then expose `requestedCaptureConfig` / `meteredPreview` on `capturing` and `captureMetadata` on `captured`.
+
+### Gallery Photo Request IDs
+
+In gallery mode, photos are saved on the glasses instead of being uploaded to a webhook. Because nothing is uploaded, there is no response that returns the `requestId`. Instead, read the `requestId` from `photo_status` events. Action-button captures set `resolvedConfig.source` to `"button"`, so you can filter for them. When your own app starts the capture, you set the `requestId` yourself by passing it to `requestPhoto({requestId, save: true, webhookUrl: null})`.
+
+<Tabs>
+  <Tab title="React Native">
+
+```ts
+import {useBluetoothEvent} from '@mentra/bluetooth-sdk/react';
+
+useBluetoothEvent('photo_status', (event) => {
+  if (event.resolvedConfig?.source === 'button') {
+    console.log('gallery photo requestId', event.requestId);
+  }
+});
+```
+
+  </Tab>
+  <Tab title="Android">
+
+```kotlin
+override fun onPhotoStatus(event: PhotoStatusEvent) {
+    if (event.resolvedConfig?.source == "button") {
+        Log.d("Mentra", "gallery photo requestId: ${event.requestId}")
+    }
+}
+```
+
+  </Tab>
+  <Tab title="iOS">
+
+```swift
+func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceive event: BluetoothEvent) {
+    if case let .photoStatus(status) = event,
+       status.resolvedConfig?.source == "button" {
+        print("gallery photo requestId: \(status.requestId)")
+    }
+}
+```
+
+  </Tab>
+</Tabs>
+
+To find the saved photo file, connect to the glasses Wi-Fi hotspot and request the gallery list. Each photo includes `request_id`, `name`, `url`, `mime_type`, and `size`. Match on `request_id` to find your capture:
+
+```ts
+const gallery = await fetch(`${galleryBaseUrl}/api/gallery?limit=100`).then((res) => res.json());
+const savedPhoto = gallery.data.photos.find((p) => p.request_id === requestId);
+console.log('saved as', savedPhoto?.name, 'at', savedPhoto?.url);
+```
+
+<Warning>
+  The gallery server is only reachable over the glasses Wi-Fi hotspot. Connect the phone to that hotspot before querying `/api/gallery`.
+</Warning>
+
+### Action-Button Photo Defaults
+
+<Warning>
+  `setPhotoCaptureDefaults(...)` is **deprecated**. Prefer per-request `requestPhoto(...)` options (for example `mode: "text"` for text sensor size/crop, or explicit `aeExposureDivisor`) instead of sticky button-photo presets. The method still works but will be removed in a future release.
+</Warning>
+
+`setPhotoCaptureDefaults(...)` controls action-button photo defaults. Omitted fields leave the existing defaults unchanged. Pass `resetCaptureTuning: true` to restore the optional tuning fields to standard capture behavior; this does not change photo size unless you also pass `size`. If you include other fields in the same call, those fields become the new defaults after the reset.
+
+| Default field | Behavior |
+| --- | --- |
+| `size` | Action-button photo size tier: `low`, `medium`, `high`, or `max`. |
+| `zsl` | Persisted ZSL override for physical camera-button photos. When omitted, button photos inherit the global ZSL default. |
+| `mfnr` | Persisted MFNR override for physical camera-button photos. When omitted, button photos inherit the global MFNR default. |
+| `noiseReduction` | Noise-reduction preference for action-button photos. |
+| `edgeEnhancement` | Edge-enhancement preference for action-button photos. |
+| `ispDigitalGain` | ISP digital gain hint for action-button photos. |
+| `ispAnalogGain` | ISP analog gain hint for action-button photos. |
+| `aeExposureDivisor` | Scan-style auto-exposure divisor for action-button photos. Values must be greater than `1`. |
+| `isoCap` | Scan-style ISO cap for action-button photos. Values must be greater than `0`. |
+| `compress` | Upload compression for action-button photos: `none`, `medium`, or `heavy`. |
+| `sound` | Shutter sound preference for action-button photos. |
+| `resetCaptureTuning` | Restores optional tuning fields to standard capture behavior before applying any fields included in the same call. |
+
+`setCameraFov` accepts FOV degrees from 62 to 118 and ROI position `"center"`, `"bottom"`, or `"top"` on React Native, `CameraRoiPosition` on Android, and `CameraRoiPosition` on iOS. React Native also accepts `{preset: "narrow" | "standard" | "wide"}`; presets map to 82, 102, and 118 degrees with center ROI. On Mentra Live, applying FOV/ROI restarts the camera; the returned `CameraFovResult` resolves from the ASG client only when the setting has been applied to camera hardware after the restart cooldown, and the promise rejects on glasses-side error, persist-only/no hardware-application ack, or timeout. Treat FOV as a framing/ROI control; output resolution and effective detail can vary by capture path, firmware, and camera mode.
+
+## Streaming
+
+Streaming sends camera video from supported glasses to an ingest URL. In the starter apps, the default Stream flow uses the phone as the receiver where the platform example supports it. Turn on **Use cloud server** when you want the glasses to stream to an external RTMP, SRT, or WHIP/WebRTC ingest endpoint. Use your own server in production; the local helper below is only a demo convenience for testing external endpoints from the starter apps.
+
+<Tabs>
+  <Tab title="React Native">
+
+```ts
+const streamId = `stream-${Date.now()}`;
+
+await BluetoothSdk.startStream({
+  type: 'start_stream',
+  streamUrl: 'http://192.168.1.42:8889/mentra-live/whip',
+  streamId,
+  video: {fps: 15},
+});
+
+await BluetoothSdk.stopStream();
+```
+
+  </Tab>
+  <Tab title="Android">
+
+```kotlin
+val streamId = "stream-${System.currentTimeMillis()}"
+
+sdk.startStream(
+    StreamRequest(
+        streamUrl = "http://192.168.1.42:8889/mentra-live/whip",
+        streamId = streamId,
+        video = StreamVideoConfig(fps = 15),
+    )
+)
+
+sdk.stopStream()
+```
+
+  </Tab>
+  <Tab title="iOS">
+
+```swift
+let streamId = "stream-\(Date().timeIntervalSince1970)"
+
+try await sdk.startStream(
+    StreamRequest(
+        streamUrl: "http://192.168.1.42:8889/mentra-live/whip",
+        streamId: streamId,
+        video: StreamVideoConfig(fps: 15)
+    )
+)
+
+try await sdk.stopStream()
+```
+
+  </Tab>
+</Tabs>
+
+Use `rtmp://` or `rtmps://` for RTMP, `srt://` for SRT, and `http://` or `https://` for WHIP/WebRTC ingest. `startStream()` resolves once glasses report `status: "streaming"`; `stopStream()` resolves once glasses report `status: "stopped"` and also resolves with a normalized stopped event when glasses report that no stream was active. The SDK sends stream keep-alives automatically while streaming and reports keep-alive failures through `stream_status`. The camera light is always enabled while streaming.
+
+## Optional Local Demo Helper
+
+The starter kit includes a local helper server so developers can try the **Use cloud server** path without first deploying their own webhook or streaming service:
+
+```bash
+git clone https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit.git
+cd Mentra-Bluetooth-SDK-Starter-Kit
+python3 examples/local-demo-cloud/server.py
+```
+
+In the starter apps, leave **Use cloud server** off for the default glasses-to-phone flow. Turn it on when you want to test an external endpoint, then paste the printed LAN `/upload` URL into the Camera screen or the printed RTMP, SRT, or WHIP publish URL into the Stream screen. You can skip this helper entirely when you already have reachable upload and streaming endpoints.
+
+<Warning>
+Do not use `localhost` from the mobile app. The glasses, phone, and computer must be on a network where the glasses can reach the printed LAN address.
+</Warning>
+
+## Direct Phone Capture And Streaming
+
+The starter kit examples also include direct phone photo and WebRTC receive flows:
+
+- Android can receive photos directly on the phone and host a GStreamer WHIP receiver.
+- iOS can receive photos directly on the phone and host a GStreamer WHIP receiver.
+- React Native includes local native companion modules for Android and iOS direct phone photo and WebRTC demos.
+
+Use real hardware for these flows. Keep the glasses Wi-Fi active and make sure the phone and glasses are on a reachable local network.
+
+For direct phone photo upload in React Native, start the phone receiver first and pass its `uploadUrl` as the photo webhook:
+
+```ts
+import BluetoothSdk from '@mentra/bluetooth-sdk';
+import MentraPhotoReceiver from '@mentra/bluetooth-sdk/photo-receiver';
+
+const receiver = await MentraPhotoReceiver.startPhotoReceiver();
+
+const uploadSubscription = MentraPhotoReceiver.addListener('photoUpload', (event) => {
+  console.log(event.requestId, event.fileUri, event.byteCount);
+});
+
+try {
+  const photo = await BluetoothSdk.requestPhoto({
+    size: 'medium',
+    webhookUrl: receiver.uploadUrl,
+    authToken: null,
+    compress: 'medium',
+    sound: true,
+  });
+  console.log('photo delivered', photo.photoUrl ?? photo.uploadUrl);
+} catch (error) {
+  uploadSubscription.remove();
+  await MentraPhotoReceiver.stopPhotoReceiver();
+  throw error;
+}
+
+// Later:
+uploadSubscription.remove();
+await MentraPhotoReceiver.stopPhotoReceiver();
+```
+
+## Stream Status
+
+Subscribe to stream status before starting a stream. Treat stream start as accepted, then drive UI from status events:
+
+<Tabs>
+  <Tab title="React Native">
+
+```tsx
+import {useBluetoothEvent} from '@mentra/bluetooth-sdk/react';
+
+export function StreamStatusLogger() {
+  useBluetoothEvent('stream_status', (event) => {
+    console.log(event);
+    console.log(event.resolvedConfig?.video?.fps);
+  });
+
+  return null;
+}
+```
+
+  </Tab>
+  <Tab title="Android">
+
+```kotlin
+override fun onStreamStatus(event: StreamStatusEvent) {
+    Log.d("Mentra", "Stream status: ${event.status}")
+    Log.d("Mentra", "Resolved FPS: ${event.resolvedConfig?.video?.fps}")
+}
+```
+
+  </Tab>
+  <Tab title="iOS">
+
+```swift
+func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceive event: BluetoothEvent) {
+    if case let .streamStatus(status) = event {
+        print("Stream status: \(status)")
+        print("Resolved FPS: \(status.resolvedConfig?.video?.fps ?? -1)")
+    }
+}
+```
+
+  </Tab>
+</Tabs>
+
+Status values include initializing, streaming, stopped, reconnecting, and error states.
+When a status event includes `resolvedConfig`, it contains the effective settings
+used by the glasses after defaults, clamps, and camera-mode selection. In
+`resolvedConfig.video`, `width` and `height` are the encoded output dimensions,
+`captureWidth` and `captureHeight` are the native camera buffer dimensions before
+crop or downscale, `bitrate` is the encoded video bitrate in bits per second, and
+`fps` is the resolved capture/encode frame rate. `resolvedConfig.audio` reports
+the audio bitrate, sample rate, echo cancellation, and noise suppression settings
+when audio is active.
