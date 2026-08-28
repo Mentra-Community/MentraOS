@@ -72,4 +72,24 @@ describe("MeetingModule", () => {
     })
     expect(calls[1]).toEqual({type: MiniappRequestType.MEETING_GET_STATE})
   })
+
+  test("applies audioSource, activeStream, and audioSafety from host state", async () => {
+    const {session} = mockSession(async () => ({
+      state: "connected",
+      muted: false,
+      provider: "acs-teams",
+      audioSource: "phone",
+      audioSourceReason: "explicit",
+      activeStream: "local",
+      audioSafety: "safe",
+    }))
+    const meeting = new MeetingModule(session)
+    await meeting.getState()
+    expect(meeting.state).toMatchObject({
+      audioSource: "phone",
+      audioSourceReason: "explicit",
+      activeStream: "local",
+      audioSafety: "safe",
+    })
+  })
 })
