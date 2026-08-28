@@ -142,6 +142,7 @@ export type {
   PermissionRecord,
   GlassesCapabilities,
   ConnectAckPayload,
+  HostFeatures,
   MiniappAuthState,
   MiniappRequestError,
 } from "../session"
