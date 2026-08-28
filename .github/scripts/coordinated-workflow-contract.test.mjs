@@ -239,7 +239,9 @@ test("coordinated docs publish only after finalization to the matching channel",
   assert.match(docs, /--example-testflight/)
   assert.match(docs, /X-Robots-Tag: noindex/)
   assert.match(docs, /grep --fixed-strings --quiet "\$RELEASE_IDENTITY" "\$body"/)
-  assert.match(docs, /grep --fixed-strings --quiet "\$EXAMPLE_IOS_URL" "\$body"/)
+  assert.match(docs, /grep --fixed-strings --quiet "href=\\"\$EXAMPLE_APK_URL\\"" "\$body"/)
+  assert.match(docs, /grep --fixed-strings --quiet "href=\\"\$EXAMPLE_IOS_URL\\"" "\$body"/)
+  assert.match(docs, /%7b%7b\[a-z0-9_-\]\+%7d%7d/)
   assert.match(
     notify,
     /^    needs:\n      \[plan, cloud-v2, ota, npm, sdk-native, mobile, engine-consumer, starter-kit, example-testflight, finalize, docs\]$/m,
