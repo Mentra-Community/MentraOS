@@ -7,3 +7,4 @@ android/build
 android/.cxx
 ios/build
 .expo/
+ios/PolicyKit/.build
