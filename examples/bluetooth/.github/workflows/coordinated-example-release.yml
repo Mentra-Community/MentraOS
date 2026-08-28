@@ -21,6 +21,7 @@ run-name: Coordinated example ${{ inputs.channel || github.event.client_payload.
         type: string
 
 permissions:
+  actions: read
   contents: write
   pull-requests: write
 
@@ -214,6 +215,7 @@ jobs:
           repositories: Mentra-Bluetooth-SDK-Starter-Kit
           permission-contents: read
           permission-pull-requests: write
+          skip-token-revoke: true
 
       - name: Create or reuse the synchronization pull request
         if: steps.existing.outputs.already_published != 'true'
@@ -252,6 +254,12 @@ jobs:
           fi
           [[ "$(jq -r .headRefOid <<< "$pr_json")" == "$RELEASE_COMMIT" ]]
           echo "url=$pr_url" >> "$GITHUB_OUTPUT"
+
+      - name: Revoke pull request token
+        if: always() && steps.existing.outputs.already_published != 'true' && steps.pull-request-token.outputs.token != ''
+        env:
+          GH_TOKEN: ${{ steps.pull-request-token.outputs.token }}
+        run: gh api --method DELETE /installation/token
 
       - name: Wait for pull request validation of the candidate commit
         if: steps.existing.outputs.already_published != 'true'
