@@ -1,0 +1,227 @@
+name: Reusable Coordinated Cloud V2 Deployment
+
+on:
+  workflow_call:
+    inputs:
+      source_commit:
+        required: true
+        type: string
+      release_plan_artifact:
+        required: true
+        type: string
+      deployment_environment:
+        required: true
+        type: string
+      dry_run:
+        required: false
+        default: false
+        type: boolean
+    secrets:
+      PORTER_TOKEN:
+        required: true
+    outputs:
+      result_artifact:
+        value: ${{ jobs.deploy.outputs.result_artifact }}
+      deployment_environment:
+        value: ${{ jobs.deploy.outputs.deployment_environment }}
+      porter_app:
+        value: ${{ jobs.deploy.outputs.porter_app }}
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy and verify Cloud V2 ${{ inputs.deployment_environment }}
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 60
+    concurrency:
+      group: coordinated-cloud-v2-${{ inputs.deployment_environment }}
+      cancel-in-progress: false
+    outputs:
+      result_artifact: ${{ steps.artifact.outputs.name }}
+      deployment_environment: ${{ steps.target.outputs.environment }}
+      porter_app: ${{ steps.target.outputs.porter_app }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_commit }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.release_plan_artifact }}
+          path: release-input/plan
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+
+      - name: Resolve and validate the guarded deployment target
+        id: target
+        run: >-
+          node .github/scripts/coordinated-cloud-v2-records.mjs resolve
+          --plan release-input/plan/release-plan.json
+          --environment "${{ inputs.deployment_environment }}"
+          --source-commit "${{ inputs.source_commit }}"
+          --output cloud-v2-target.json
+          --github-output "$GITHUB_OUTPUT"
+
+      - name: Set exact source tag
+        id: source
+        run: |
+          set -euo pipefail
+          actual=$(git rev-parse HEAD)
+          [[ "$actual" == "${{ inputs.source_commit }}" ]]
+          echo "tag=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Porter CLI
+        if: inputs.dry_run != true
+        uses: porter-dev/setup-porter@v0.1.0
+
+      - name: Validate Cloud V2 source and Porter configuration
+        if: inputs.dry_run
+        working-directory: cloud-v2
+        env:
+          PORTER_APP_NAME: ${{ steps.target.outputs.porter_app }}
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          config="${{ steps.target.outputs.porter_config }}"
+          config="${config#cloud-v2/}"
+          [[ -s "$config" ]]
+          grep --fixed-strings --line-regexp "version: v2" "$config"
+          grep --fixed-strings --line-regexp "name: $PORTER_APP_NAME" "$config"
+
+      - name: Deploy exact Cloud V2 source through Porter
+        if: inputs.dry_run != true
+        timeout-minutes: 45
+        working-directory: cloud-v2
+        env:
+          PORTER_APP_NAME: ${{ steps.target.outputs.porter_app }}
+          PORTER_CLUSTER: ${{ steps.target.outputs.porter_cluster }}
+          PORTER_DEPLOYMENT_TARGET_ID: ${{ steps.target.outputs.porter_deployment_target_id }}
+          PORTER_HOST: https://dashboard.porter.run
+          PORTER_PROJECT: ${{ steps.target.outputs.porter_project }}
+          PORTER_REPO_NAME: ${{ github.event.repository.name }}
+          PORTER_TAG: ${{ steps.source.outputs.tag }}
+          PORTER_TOKEN: ${{ secrets.PORTER_TOKEN }}
+        run: |
+          set -euo pipefail
+          config="${{ steps.target.outputs.porter_config }}"
+          porter apply \
+            -w \
+            -f "${config#cloud-v2/}" \
+            -x "${{ steps.target.outputs.porter_target }}" \
+            --cluster "$PORTER_CLUSTER" \
+            --project "$PORTER_PROJECT"
+
+      - name: Require public liveness and readiness
+        if: inputs.dry_run != true
+        run: |
+          set -euo pipefail
+          : > cloud-v2-checks.ndjson
+          while IFS=$'\t' read -r service host; do
+            getent hosts "$host" >/dev/null
+            for probe in healthz ready; do
+              url="https://$host/$probe"
+              status=$(curl \
+                --fail \
+                --silent \
+                --show-error \
+                --location \
+                --retry 12 \
+                --retry-delay 10 \
+                --retry-all-errors \
+                --output /dev/null \
+                --write-out '%{http_code}' \
+                "$url")
+              jq -nc \
+                --arg service "$service" \
+                --arg url "$url" \
+                --argjson statusCode "$status" \
+                '{service: $service, url: $url, ready: true, statusCode: $statusCode}' \
+                >> cloud-v2-checks.ndjson
+            done
+          done < <(
+            jq -r \
+              '.services | to_entries[] | .key as $service | .value.hosts[] | [$service, .] | @tsv' \
+              cloud-v2-target.json
+          )
+          jq -s . cloud-v2-checks.ndjson > cloud-v2-checks.json
+
+      - name: Read back the running deployment
+        if: inputs.dry_run != true
+        env:
+          PORTER_APP_NAME: ${{ steps.target.outputs.porter_app }}
+          PORTER_CLUSTER: ${{ steps.target.outputs.porter_cluster }}
+          PORTER_DEPLOYMENT_TARGET_ID: ${{ steps.target.outputs.porter_deployment_target_id }}
+          PORTER_HOST: https://dashboard.porter.run
+          PORTER_PROJECT: ${{ steps.target.outputs.porter_project }}
+          PORTER_TOKEN: ${{ secrets.PORTER_TOKEN }}
+        run: >-
+          porter kubectl -- get pods
+          -l "porter.run/app-name=$PORTER_APP_NAME"
+          -o json
+          > cloud-v2-pods.json
+
+      - name: Record validation-only evidence
+        if: inputs.dry_run
+        run: >-
+          node .github/scripts/coordinated-cloud-v2-records.mjs create
+          --plan release-input/plan/release-plan.json
+          --environment "${{ inputs.deployment_environment }}"
+          --source-commit "${{ inputs.source_commit }}"
+          --requested-tag "${{ steps.source.outputs.tag }}"
+          --status validated
+          --completed-at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
+          --provenance-url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          --output cloud-v2-deployment.json
+
+      - name: Record observed deployment evidence
+        if: inputs.dry_run != true
+        run: >-
+          node .github/scripts/coordinated-cloud-v2-records.mjs create
+          --plan release-input/plan/release-plan.json
+          --environment "${{ inputs.deployment_environment }}"
+          --source-commit "${{ inputs.source_commit }}"
+          --requested-tag "${{ steps.source.outputs.tag }}"
+          --status deployed
+          --pods cloud-v2-pods.json
+          --checks cloud-v2-checks.json
+          --completed-at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
+          --provenance-url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          --output cloud-v2-deployment.json
+
+      - name: Name result artifact
+        id: artifact
+        run: |
+          set -euo pipefail
+          release_set_id=$(jq -er .releaseSetId release-input/plan/release-plan.json)
+          echo "name=coordinated-cloud-v2-$release_set_id" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.artifact.outputs.name }}
+          path: cloud-v2-deployment.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Summarize Cloud V2 result
+        run: |
+          {
+            echo "## Cloud V2 coordinated result"
+            echo ""
+            echo "- Environment: \`${{ steps.target.outputs.environment }}\`"
+            echo "- Porter app: \`${{ steps.target.outputs.porter_app }}\`"
+            echo "- Source: \`${{ inputs.source_commit }}\`"
+            echo "- Status: \`$(jq -er .status cloud-v2-deployment.json)\`"
+            if [[ "$(jq -er .status cloud-v2-deployment.json)" == "deployed" ]]; then
+              echo "- Deployment: \`$(jq -er .deploymentId cloud-v2-deployment.json)\`"
+              jq -r '.observedServices[] | "- \(.service) image: `\(.digest)`"' cloud-v2-deployment.json
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
