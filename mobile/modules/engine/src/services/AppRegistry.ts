@@ -1287,7 +1287,11 @@ class AppRegistry {
       const lmasDir = new Directory(Paths.document, "lmas")
       if (!lmasDir.exists) return []
       let lmas = lmasDir.list()
-      lmas = lmas.filter((lma): lma is Directory => lma instanceof Directory && lma.list().length > 0)
+      lmas = lmas.filter(
+        (lma): lma is Directory =>
+          lma instanceof Directory &&
+          lma.list().some((entry) => entry instanceof Directory && parseActivationArtifact(entry.name) === null),
+      )
       return lmas.map((lma) => lma.name)
     } catch (error) {
       console.error("APP_REGISTRY: Error getting locally installed package names", error)
@@ -1303,8 +1307,12 @@ class AppRegistry {
       if (!lmaDir.exists) {
         return []
       }
-      const lma = lmaDir.list()
-      return lma.map((lma) => lma.name)
+      return lmaDir
+        .list()
+        .filter(
+          (entry): entry is Directory => entry instanceof Directory && parseActivationArtifact(entry.name) === null,
+        )
+        .map((entry) => entry.name)
     } catch (error) {
       console.error("APP_REGISTRY: Error getting local applet versions", error)
       return []
