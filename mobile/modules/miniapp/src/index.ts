@@ -21,6 +21,7 @@ export type {
   ConnectAckPayload,
   DisplayCapabilities,
   GlassesCapabilities,
+  HostFeatures,
   MiniappAuthState,
   MiniappRequestError,
   MiniappSessionOptions,
