@@ -21,7 +21,6 @@ run-name: Coordinated example ${{ inputs.channel || github.event.client_payload.
         type: string
 
 permissions:
-  actions: write
   contents: write
   pull-requests: write
 
@@ -258,7 +257,6 @@ jobs:
         if: steps.existing.outputs.already_published != 'true'
         id: validation
         env:
-          RELEASE_IDENTITY: ${{ steps.release.outputs.releaseIdentity }}
           CANDIDATE_BRANCH: ${{ steps.release.outputs.candidateBranch }}
           RELEASE_COMMIT: ${{ steps.candidate.outputs.release_commit }}
         run: |
@@ -267,11 +265,6 @@ jobs:
             --limit 20 --json databaseId,headSha \
             --jq ".[] | select(.headSha == \"$RELEASE_COMMIT\") | .databaseId" \
             | head -1)
-          if [[ -z "$run_id" ]]; then
-            gh workflow run example-app-builds.yml \
-              --ref "$CANDIDATE_BRANCH" \
-              -f artifact_suffix="$RELEASE_IDENTITY"
-          fi
           for _ in {1..60}; do
             [[ -n "$run_id" ]] && break
             run_id=$(gh run list --workflow example-app-builds.yml --branch "$CANDIDATE_BRANCH" \
