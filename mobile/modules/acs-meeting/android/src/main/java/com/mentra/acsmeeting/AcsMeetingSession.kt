@@ -6,6 +6,8 @@ import com.azure.android.communication.calling.AudioStreamBufferDuration
 import com.azure.android.communication.calling.AudioStreamChannelMode
 import com.azure.android.communication.calling.AudioStreamFormat
 import com.azure.android.communication.calling.AudioStreamSampleRate
+import com.azure.android.communication.calling.AudioStreamState
+import com.azure.android.communication.calling.AudioStreamType
 import com.azure.android.communication.calling.Call
 import com.azure.android.communication.calling.CallAgent
 import com.azure.android.communication.calling.CallAgentOptions
@@ -14,6 +16,7 @@ import com.azure.android.communication.calling.CallState
 import com.azure.android.communication.calling.IncomingAudioOptions
 import com.azure.android.communication.calling.IncomingMixedAudioEvent
 import com.azure.android.communication.calling.JoinCallOptions
+import com.azure.android.communication.calling.LocalOutgoingAudioStream
 import com.azure.android.communication.calling.OutgoingAudioOptions
 import com.azure.android.communication.calling.OutgoingVideoOptions
 import com.azure.android.communication.calling.RawAudioBuffer
@@ -29,32 +32,40 @@ import com.azure.android.communication.calling.VirtualOutgoingVideoStream
 import com.azure.android.communication.common.CommunicationTokenCredential
 import java.nio.ByteBuffer
 import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.atomic.AtomicBoolean
 
 class AcsMeetingSession(
   private val context: Context,
   private val onState: (Map<String, Any>) -> Unit,
   private val onIncomingPcm: (String, Int, Int) -> Unit,
+  mediaSourceFactory: GlassesMediaSourceFactory = GlassesMediaSourceFactory { video, pcm ->
+    CloudflareWhepSource(context, video, pcm)
+  },
 ) {
-  private val executor = Executors.newSingleThreadExecutor()
+  private val executor: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor()
+  private val scheduler = ExecutorPolicyScheduler(executor)
   private val outgoingReady = AtomicBoolean(false)
   private val muted = AtomicBoolean(false)
   private val frameSender = AcsFrameSender()
   @Volatile private var lastGatedLogMs = 0L
   @Volatile private var lastSentLogMs = 0L
   private var pcmBridge: PcmBridge? = null
-  private var whep: WhepVideoSource? = null
+  private val media = GlassesMediaController(mediaSourceFactory)
   private var callClient: CallClient? = null
   private var callAgent: CallAgent? = null
   private var call: Call? = null
   private var audioOut: RawOutgoingAudioStream? = null
+  private var localOut: LocalOutgoingAudioStream? = null
   private var audioIn: RawIncomingAudioStream? = null
   private var videoOut: VirtualOutgoingVideoStream? = null
   @Volatile private var meetingUrl: String? = null
   @Volatile private var phase = "idle"
   @Volatile private var lastError: String? = null
-  /** "glasses" = WHEP PCM into ACS. "phone" = ACS local mic (handset or BT). */
   @Volatile private var audioSource = "glasses"
+  @Volatile private var lastSafety = AudioSafety.DEGRADED
+  private val controller = SessionAudioController()
+  private val applier = AudioPolicyApplier(controller, scheduler) { Log.i(TAG, it) }
 
   fun snapshot(): Map<String, Any> {
     val result = mutableMapOf<String, Any>(
@@ -62,6 +73,8 @@ class AcsMeetingSession(
       "muted" to muted.get(),
       "provider" to "acs-teams",
       "audioSource" to audioSource,
+      "activeStream" to controller.readActive().name.lowercase(),
+      "audioSafety" to lastSafety.name.lowercase(),
     )
     meetingUrl?.let { result["meetingUrl"] = it }
     lastError?.let { result["error"] = it }
@@ -76,10 +89,15 @@ class AcsMeetingSession(
     dumpWav: Boolean,
     audioSource: String = "glasses",
   ) {
-    this.audioSource = if (audioSource == "phone") "phone" else "glasses"
+    val parsed = AcsAudioPolicy.parseSource(audioSource)
+    if (parsed == null) {
+      Log.w(TAG, "unknown audioSource=$audioSource, arming glasses (no local mic)")
+    }
+    this.audioSource = if (parsed == AudioSourceKind.PHONE) "phone" else "glasses"
     executor.execute {
       try {
         leaveLocked()
+        this.audioSource = if (parsed == AudioSourceKind.PHONE) "phone" else "glasses"
         meetingUrl = teamsUrl
         lastError = null
         emit("connecting")
@@ -107,6 +125,14 @@ class AcsMeetingSession(
         outgoing.addOnStateChangedListener {
           outgoingReady.set(outgoing.state.toString().contains("STARTED", ignoreCase = true))
           Log.i(TAG, "raw outgoing audio state=${outgoing.state}")
+          applyAudioPolicy("virtual-stream-state")
+        }
+
+        val local = LocalOutgoingAudioStream()
+        localOut = local
+        local.addOnStateChangedListener {
+          Log.i(TAG, "local outgoing audio state=${local.state}")
+          applyAudioPolicy("local-stream-state")
         }
 
         val incomingProperties = RawIncomingAudioStreamProperties()
@@ -127,13 +153,15 @@ class AcsMeetingSession(
           }
         }
 
+        val desired = desiredKind()
+        val plan = AcsAudioPolicy.planJoin(desired, muted.get(), GLASSES_REQUIRES_UNMUTED_TRANSPORT)
         val joinOptions = JoinCallOptions()
         val ov = OutgoingVideoOptions().setOutgoingVideoStreams(listOf(videoStream))
         joinOptions.setOutgoingVideoOptions(ov)
         val oa = OutgoingAudioOptions()
-          .setStream(outgoing)
-          .setMuted(true)
-          .setCommunicationAudioModeEnabled(this.audioSource == "phone")
+          .setStream(if (plan.armVirtual) outgoing else local)
+          .setMuted(plan.transportMuted)
+          .setCommunicationAudioModeEnabled(!plan.armVirtual)
         joinOptions.setOutgoingAudioOptions(oa)
         val ia = IncomingAudioOptions()
           .setStream(incoming)
@@ -144,16 +172,19 @@ class AcsMeetingSession(
         val joined = callAgent!!.join(context, locator, joinOptions)
         call = joined
         joined.addOnStateChangedListener { pushCallState(joined.state) }
+        joined.addOnOutgoingAudioStateChangedListener {
+          Log.i(TAG, "outgoing audio state changed muted=${joined.isOutgoingAudioMuted}")
+          applyAudioPolicy("outgoing-audio-state")
+        }
         pushCallState(joined.state)
 
-        whep = WhepVideoSource(
-          context,
-          videoListener = { rgba, width, height, _ -> frameSender.sendRgba(rgba, width, height) },
-          pcmListener = { pcm, rate, channels -> feedOutgoingPcm(pcm, rate, channels) },
+        media.attach(
+          video = { rgba, width, height, _ -> frameSender.sendRgba(rgba, width, height) },
+          pcm = { pcm, rate, channels -> feedOutgoingPcm(pcm, rate, channels) },
+          config = SourceConfig(whepUrl),
         )
-        whep!!.start(whepUrl)
-        applyAudioPolicyLocked()
-        Log.i(TAG, "P2 ACS join started for Teams locator source=${this.audioSource}")
+        applyAudioPolicy("join")
+        Log.i(TAG, "ACS join started source=${this.audioSource} armVirtual=${plan.armVirtual} transportMuted=${plan.transportMuted}")
       } catch (error: Exception) {
         lastError = formatAcsError(error)
         Log.e(TAG, "join failed $lastError", error)
@@ -163,23 +194,25 @@ class AcsMeetingSession(
   }
 
   fun updateVideoSource(whepUrl: String) {
-    executor.execute { whep?.updateUrl(whepUrl) }
+    executor.execute { media.restart(SourceConfig(whepUrl)) }
   }
 
   fun setMuted(next: Boolean): Map<String, Any> {
     muted.set(next)
-    executor.execute { applyAudioPolicyLocked() }
+    executor.execute { applyAudioPolicy("set-muted") }
     val snap = snapshot()
     onState(snap)
     return snap
   }
 
   fun setAudioSource(source: String): Map<String, Any> {
-    audioSource = if (source == "phone") "phone" else "glasses"
-    executor.execute { applyAudioPolicyLocked() }
-    val snap = snapshot()
-    onState(snap)
-    return snap
+    val parsed = AcsAudioPolicy.parseSource(source)
+    if (parsed == null) {
+      Log.w(TAG, "unknown audioSource=$source ignored; source is locked for this call")
+      return snapshot()
+    }
+    Log.i(TAG, "setAudioSource=$source ignored; audio source is locked for this call at ${audioSource}")
+    return snapshot()
   }
 
   fun leave() {
@@ -188,19 +221,20 @@ class AcsMeetingSession(
 
   fun getState(): Map<String, Any> = snapshot()
 
-  private fun applyAudioPolicyLocked() {
-    val sendGlasses = !muted.get() && audioSource == "glasses"
-    val sendPhone = !muted.get() && audioSource == "phone"
-    whep?.setPcmEnabled(sendGlasses)
-    Log.i(
-      TAG,
-      "audio policy source=$audioSource userMuted=${muted.get()} glassesPcm=$sendGlasses phoneMic=$sendPhone",
-    )
-    try {
-      if (sendPhone) call?.unmuteOutgoingAudio(context)?.get() else call?.muteOutgoingAudio(context)?.get()
-    } catch (error: Exception) {
-      Log.w(TAG, "SDK phone-mic mute policy failed", error)
+  private fun desiredKind(): AudioSourceKind =
+    if (audioSource == "phone") AudioSourceKind.PHONE else AudioSourceKind.GLASSES
+
+  /** Queues onto [executor] so ACS callbacks cannot race the applier. */
+  private fun applyAudioPolicy(reason: String) {
+    executor.execute { applyAudioPolicyOnExecutor(reason) }
+  }
+
+  private fun applyAudioPolicyOnExecutor(reason: String) {
+    lastSafety = applier.apply(desiredKind(), muted.get(), reason)
+    if (lastSafety == AudioSafety.UNSAFE) {
+      Log.e(TAG, "audioSafety=unsafe — mute and stopAudio both failed; unintended mic may be live")
     }
+    onState(snapshot())
   }
 
   private fun feedOutgoingPcm(pcm: ByteArray, sampleRate: Int, channels: Int) {
@@ -237,6 +271,7 @@ class AcsMeetingSession(
   }
 
   private fun pushCallState(state: CallState) {
+    val previous = phase
     phase = when (state) {
       CallState.CONNECTING -> "connecting"
       CallState.IN_LOBBY -> "lobby"
@@ -246,7 +281,11 @@ class AcsMeetingSession(
       else -> phase
     }
     Log.i(TAG, "ACS call state=$state phase=$phase")
-    onState(snapshot())
+    if (phase == "connected" && previous != "connected") {
+      applyAudioPolicy("call-connected")
+    } else {
+      onState(snapshot())
+    }
   }
 
   private fun emit(next: String) {
@@ -256,8 +295,10 @@ class AcsMeetingSession(
 
   private fun leaveLocked() {
     try {
+      applier.reset()
+      scheduler.cancelPending()
       pcmBridge?.finishDump()
-      whep?.stop()
+      media.stop()
       frameSender.detach()
     } catch (error: Exception) {
       Log.w(TAG, "leave cleanup failed", error)
@@ -275,20 +316,59 @@ class AcsMeetingSession(
       Log.w(TAG, "leave dispose failed", error)
     }
     callClient = null
-    whep = null
+    media.stop()
     call = null
     callAgent = null
     audioOut = null
+    localOut = null
     audioIn = null
     videoOut = null
     outgoingReady.set(false)
     muted.set(false)
+    audioSource = "glasses"
+    lastSafety = AudioSafety.DEGRADED
     meetingUrl = null
     emit("idle")
   }
 
+  private inner class SessionAudioController : AudioStreamController {
+    override fun readActive(): ActiveStreamKind {
+      val stream = call?.activeOutgoingAudioStream ?: return ActiveStreamKind.NONE
+      if (stream.state != AudioStreamState.STARTED) return ActiveStreamKind.NONE
+      return when (stream.type) {
+        AudioStreamType.VIRTUAL_OUTGOING -> ActiveStreamKind.VIRTUAL
+        AudioStreamType.LOCAL_OUTGOING -> ActiveStreamKind.LOCAL
+        else -> ActiveStreamKind.NONE
+      }
+    }
+
+    override fun isPhysicallyMuted(): Boolean? = call?.isOutgoingAudioMuted
+
+    override fun setGlassesPcmEnabled(enabled: Boolean) {
+      media.setPcmDeliveryEnabled(enabled)
+    }
+
+    override fun mutePhysical(): Result<Unit> {
+      val c = CallGuard.require(call).getOrElse { return Result.failure(it) }
+      return runCatching { c.muteOutgoingAudio(context).get() }
+    }
+
+    override fun unmutePhysical(): Result<Unit> {
+      val c = CallGuard.require(call).getOrElse { return Result.failure(it) }
+      return runCatching { c.unmuteOutgoingAudio(context).get() }
+    }
+
+    override fun stopActive(): Result<Unit> {
+      val c = CallGuard.require(call).getOrElse { return Result.failure(it) }
+      val stream = c.activeOutgoingAudioStream
+        ?: return Result.failure(IllegalStateException("no active stream"))
+      return runCatching { c.stopAudio(context, stream).get() }
+    }
+  }
+
   companion object {
     private const val TAG = "ACS-SPIKE"
+    const val GLASSES_REQUIRES_UNMUTED_TRANSPORT = true
 
     private fun formatAcsError(error: Throwable): String {
       val parts = linkedSetOf<String>()
