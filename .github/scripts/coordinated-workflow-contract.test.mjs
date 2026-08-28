@@ -166,6 +166,7 @@ test("mobile destinations use real TestFlight groups without changing the releas
   assert.doesNotMatch(exampleIos, /app-store-connect-build\.mjs assign/)
   assert.match(exampleStore, /^    runs-on: ubuntu-latest$/m)
   assert.match(exampleStore, /app-store-connect-build\.mjs assign/)
+  assert.match(exampleStore, /--review-notes ""/)
 })
 
 test("coordinated docs publish only after finalization to the matching channel", () => {
