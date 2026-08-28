@@ -212,13 +212,11 @@ export function otaPresentation(
       };
     case 'restarting':
       return {
-        primary: {
-          action: 'finish',
-          disabled: state.continueDisabled,
-          label: 'Continue',
-        },
-        title: 'Update Installed',
-        tone: 'success',
+        detail: "We'll continue automatically when they're ready.",
+        indeterminate: true,
+        message: 'The update is installed. Keep your glasses nearby and leave this screen open while they finish starting.',
+        title: `Restarting ${deviceName}…`,
+        tone: 'active',
       };
     case 'verifying':
       return {

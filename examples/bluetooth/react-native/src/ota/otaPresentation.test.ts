@@ -218,6 +218,25 @@ describe('custom OTA presentation', () => {
     expect(presentation.changelogs).toBeUndefined();
   });
 
+  test('matches the Mentra App reboot copy and exposes no completion action', () => {
+    const presentation = otaPresentation(otaState({
+      canFinish: false,
+      connected: false,
+      continueDisabled: false,
+      screen: 'restarting',
+    }));
+
+    expect(presentation).toMatchObject({
+      detail: "We'll continue automatically when they're ready.",
+      indeterminate: true,
+      message: 'The update is installed. Keep your glasses nearby and leave this screen open while they finish starting.',
+      title: 'Restarting Mentra Live…',
+      tone: 'active',
+    });
+    expect(presentation.primary).toBeUndefined();
+    expect(presentation.secondary).toBeUndefined();
+  });
+
   test('blocks installation until the glasses battery reaches the OTA minimum', () => {
     const presentation = otaPresentation(otaState({
       batteryLevel: 18,
