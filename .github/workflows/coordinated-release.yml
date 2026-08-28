@@ -349,7 +349,7 @@ jobs:
           container_tag="sdk-builds-v$family_base"
           result_url="https://github.com/$STARTER_KIT_REPOSITORY/releases/download/$container_tag/$result_name"
 
-          if ! curl --fail --silent --show-error --location --head "$result_url" >/dev/null 2>&1; then
+          if ! curl --fail --silent --show-error --location "$result_url" --output /dev/null 2>&1; then
             run_json=$(gh run list --repo "$STARTER_KIT_REPOSITORY" \
               --workflow coordinated-example-release.yml --event repository_dispatch --limit 100 \
               --json databaseId,displayTitle,status,url \
@@ -465,14 +465,14 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p starter-kit-result
-          for _ in {1..540}; do
+          for _ in {1..630}; do
             if curl --fail --silent --show-error --location "$RESULT_URL" \
               --output "starter-kit-result/$RESULT_NAME" 2>/dev/null; then
               exit 0
             fi
             sleep 10
           done
-          echo "Starter Kit did not publish $RESULT_NAME within 90 minutes." >&2
+          echo "Starter Kit did not publish $RESULT_NAME within 105 minutes." >&2
           exit 1
 
       - name: Create Starter Kit verification token
