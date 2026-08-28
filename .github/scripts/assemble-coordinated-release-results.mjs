@@ -4,6 +4,7 @@ import {readFileSync, statSync, writeFileSync} from "node:fs"
 import path from "node:path"
 import {fileURLToPath} from "node:url"
 
+import {validateCloudV2DeploymentRecord} from "./coordinated-cloud-v2-records.mjs"
 import {serializeReleaseRecord} from "./release-family.mjs"
 import {createEnginePackageArtifact, mergeReleaseResultRecords} from "./release-result-records.mjs"
 
@@ -142,6 +143,7 @@ export function assembleCoordinatedReleaseResults({
   npmRecords,
   native,
   mobile,
+  cloud,
   starterKit,
   starterKitResultUrl,
   exampleTestflight,
@@ -155,6 +157,7 @@ export function assembleCoordinatedReleaseResults({
   const merged = mergeReleaseResultRecords({plan, records: [...npmRecords, native, mobile]})
   const selection = verifyAsgSelection(plan, ota, asgSelectionFile)
   const verifiedStarterKit = verifyStarterKitResult(plan, starterKit, starterKitResultUrl, exampleTestflight)
+  const verifiedCloud = validateCloudV2DeploymentRecord({plan, record: cloud, allowValidated: true})
   const otaProvenanceUrl = provenanceUrl(ota)
   const artifacts = [
     ...merged.artifacts,
@@ -210,6 +213,7 @@ export function assembleCoordinatedReleaseResults({
       provenanceUrl: otaProvenanceUrl,
     },
     artifacts,
+    cloud: verifiedCloud,
     ...(verifiedStarterKit ? {starterKit: verifiedStarterKit.record} : {}),
   }
 }
@@ -233,6 +237,7 @@ function main() {
     npmRecords: [readJson(path.resolve(args.npm))],
     native: readJson(path.resolve(args.native)),
     mobile: readJson(path.resolve(args.mobile)),
+    cloud: readJson(path.resolve(args.cloud)),
     starterKit: args["starter-kit"] ? readJson(path.resolve(args["starter-kit"])) : undefined,
     starterKitResultUrl: args["starter-kit-result-url"],
     exampleTestflight: args["example-testflight"] ? readJson(path.resolve(args["example-testflight"])) : undefined,

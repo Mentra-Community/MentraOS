@@ -3,10 +3,19 @@ import {readFileSync, writeFileSync} from "node:fs"
 import path from "node:path"
 import {fileURLToPath} from "node:url"
 
+import {validateCloudV2DeploymentRecord} from "./coordinated-cloud-v2-records.mjs"
 import {serializeReleaseRecord} from "./release-family.mjs"
 import {createEnginePackageArtifact, mergeReleaseResultRecords} from "./release-result-records.mjs"
 
-export function assembleProductionReleaseResults({plan, npmRecords, native, promotion, enginePackage, assetBaseUrl}) {
+export function assembleProductionReleaseResults({
+  plan,
+  npmRecords,
+  native,
+  promotion,
+  cloud,
+  enginePackage,
+  assetBaseUrl,
+}) {
   if (
     plan.channel !== "production" ||
     promotion.promotion?.selectedBetaReleaseSetId !== plan.promotion?.selectedBetaReleaseSetId
@@ -14,6 +23,7 @@ export function assembleProductionReleaseResults({plan, npmRecords, native, prom
     throw new Error("Production plan and promotion record do not select the same beta")
   }
   const merged = mergeReleaseResultRecords({plan, records: [...npmRecords, native, promotion]})
+  const verifiedCloud = validateCloudV2DeploymentRecord({plan, record: cloud})
   merged.artifacts.push(
     createEnginePackageArtifact({
       plan,
@@ -25,6 +35,7 @@ export function assembleProductionReleaseResults({plan, npmRecords, native, prom
   return {
     schemaVersion: 1,
     releaseSetId: plan.releaseSetId,
+    cloud: verifiedCloud,
     promotion: promotion.promotion,
     publications: merged.publications,
     otaManifest: promotion.otaManifest,
@@ -54,6 +65,7 @@ function main() {
     npmRecords: [readJson(args.npm)],
     native: readJson(args.native),
     promotion: readJson(args.promotion),
+    cloud: readJson(args.cloud),
     enginePackage: path.resolve(args["engine-package"]),
     assetBaseUrl: args["asset-base-url"],
   })

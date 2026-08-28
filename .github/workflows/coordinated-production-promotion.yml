@@ -216,7 +216,7 @@ jobs:
 
   mobile:
     name: Promote exact beta mobile builds
-    needs: [plan, engine-consumer]
+    needs: [plan, engine-consumer, cloud-v2]
     uses: ./.github/workflows/reusable-coordinated-mobile-promotion.yml
     with:
       release_plan_artifact: ${{ needs.plan.outputs.plan_artifact }}
@@ -231,9 +231,19 @@ jobs:
       release_plan_artifact: ${{ needs.plan.outputs.plan_artifact }}
     secrets: inherit
 
+  cloud-v2:
+    name: Deploy production Cloud V2
+    needs: [plan, approve, engine-consumer]
+    uses: ./.github/workflows/reusable-coordinated-cloud-v2.yml
+    with:
+      source_commit: ${{ needs.plan.outputs.source_commit }}
+      release_plan_artifact: ${{ needs.plan.outputs.plan_artifact }}
+      deployment_environment: prod
+    secrets: inherit
+
   finalize:
     name: Finalize stable release and public package pointers
-    needs: [plan, approve, npm, sdk-native, mobile, engine-consumer]
+    needs: [plan, approve, npm, sdk-native, mobile, engine-consumer, cloud-v2]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -250,6 +260,11 @@ jobs:
         with:
           name: ${{ needs.plan.outputs.plan_artifact }}
           path: release-input/plan
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.cloud-v2.outputs.result_artifact }}
+          path: release-input/cloud-v2
 
       - uses: actions/download-artifact@v4
         with:
@@ -281,6 +296,7 @@ jobs:
             --npm release-input/npm/npm-publications.json \
             --native release-input/sdk-native/sdk-native-publications.json \
             --promotion release-input/promotion/production-promotion-records.json \
+            --cloud release-input/cloud-v2/cloud-v2-deployment.json \
             --engine-package "$engine_package" \
             --asset-base-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/$tag" \
             --output finalized-release/publication-results.json
@@ -297,7 +313,18 @@ jobs:
             echo "plan_name=$(jq -er .artifactNames.releasePlan "$plan")"
             echo "engine_name=$(jq -er .artifactNames.enginePackage "$plan")"
             echo "manifest_name=$(jq -er .artifactNames.releaseManifest "$plan")"
+            echo "cloud_deployment_id=$(jq -er .cloud.deploymentId finalized-release/publication-results.json)"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Summarize production cloud gate
+        run: |
+          {
+            echo "## Production Cloud V2 gate"
+            echo ""
+            echo "- Environment: \`prod\`"
+            echo "- Deployment: \`${{ steps.release.outputs.cloud_deployment_id }}\`"
+            echo "- Source: \`${{ needs.plan.outputs.source_commit }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Verify the allocated stable release container
         env:

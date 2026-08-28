@@ -2,6 +2,8 @@ import {existsSync, readFileSync} from "node:fs"
 import {createHash} from "node:crypto"
 import path from "node:path"
 
+import {validateCloudV2DeploymentRecord} from "./coordinated-cloud-v2-records.mjs"
+
 const STABLE_VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/
 const CHANNELS = new Set(["dev", "beta", "production"])
@@ -381,7 +383,12 @@ function validateStarterKitEvidence(plan, starterKit, artifacts) {
   const artifactByCoordinate = new Map(artifacts.map((artifact) => [artifact.coordinate, artifact]))
   for (const example of starterKit.artifacts) {
     const artifact = artifactByCoordinate.get(example.name)
-    if (!artifact || artifact.url !== example.url || artifact.sha256 !== example.sha256 || artifact.size !== example.size) {
+    if (
+      !artifact ||
+      artifact.url !== example.url ||
+      artifact.sha256 !== example.sha256 ||
+      artifact.size !== example.size
+    ) {
       throw new Error(`Starter Kit artifact ${example.name || "<unknown>"} differs from publication evidence`)
     }
   }
@@ -473,6 +480,7 @@ export function finalizeReleaseManifest({plan, results, completedAt}) {
     if (!artifactCoordinates.has(coordinate)) throw new Error(`Missing required artifact ${coordinate}`)
   }
   const starterKit = validateStarterKitEvidence(plan, results.starterKit, artifacts)
+  const cloud = validateCloudV2DeploymentRecord({plan, record: results.cloud})
 
   let promotion
   if (plan.channel === "production") {
@@ -505,6 +513,7 @@ export function finalizeReleaseManifest({plan, results, completedAt}) {
     publications,
     otaManifest,
     artifacts,
+    cloud,
     ...(starterKit ? {starterKit} : {}),
     ...(promotion ? {promotion} : {}),
   }

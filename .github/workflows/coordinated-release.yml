@@ -35,6 +35,7 @@ jobs:
       plan_artifact: ${{ steps.release.outputs.plan_artifact }}
       npm_artifact: ${{ steps.release.outputs.npm_artifact }}
       release_id: ${{ steps.container.outputs.release_id }}
+      cloud_environment: ${{ steps.release.outputs.cloud_environment }}
       backend_environment: ${{ steps.release.outputs.backend_environment }}
       play_track: ${{ steps.release.outputs.play_track }}
       testflight_group: ${{ steps.release.outputs.testflight_group }}
@@ -56,11 +57,13 @@ jobs:
           set -euo pipefail
           case "$BRANCH" in
             dev)
+              echo "cloud_environment=dev" >> "$GITHUB_OUTPUT"
               echo "backend_environment=dev" >> "$GITHUB_OUTPUT"
               echo "play_track=internal" >> "$GITHUB_OUTPUT"
               echo "testflight_group=Mentra Dev" >> "$GITHUB_OUTPUT"
               ;;
             staging)
+              echo "cloud_environment=staging" >> "$GITHUB_OUTPUT"
               # Beta is the exact production candidate promoted by App Store
               # Connect and Google Play, so its signed bytes must already point
               # at production services.
@@ -105,6 +108,7 @@ jobs:
       - name: Export immutable release coordinates
         id: release
         env:
+          CLOUD_ENVIRONMENT: ${{ steps.channel.outputs.cloud_environment }}
           BACKEND_ENVIRONMENT: ${{ steps.channel.outputs.backend_environment }}
           PLAY_TRACK: ${{ steps.channel.outputs.play_track }}
           TESTFLIGHT_GROUP: ${{ steps.channel.outputs.testflight_group }}
@@ -122,6 +126,7 @@ jobs:
             echo "release_set_id=$release_set_id"
             echo "plan_artifact=coordinated-release-plan-$release_set_id"
             echo "npm_artifact=coordinated-npm-$release_set_id"
+            echo "cloud_environment=$CLOUD_ENVIRONMENT"
             echo "backend_environment=$BACKEND_ENVIRONMENT"
             echo "play_track=$PLAY_TRACK"
             echo "testflight_group=$TESTFLIGHT_GROUP"
@@ -179,11 +184,23 @@ jobs:
             echo ""
             echo "- Release: \`${{ steps.release.outputs.release_identity }}\`"
             echo "- Source: \`${{ github.sha }}\`"
+            echo "- Cloud deployment: \`${{ steps.release.outputs.cloud_environment }}\`"
             echo "- Mobile backend: \`${{ steps.release.outputs.backend_environment }}\`"
             echo "- Google Play: \`${{ steps.release.outputs.play_track }}\`"
             echo "- TestFlight: \`${{ steps.release.outputs.testflight_group }}\`"
             echo "- Dry run: \`${{ steps.release.outputs.dry_run }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  cloud-v2:
+    name: Deploy branch-associated Cloud V2
+    needs: plan
+    uses: ./.github/workflows/reusable-coordinated-cloud-v2.yml
+    with:
+      source_commit: ${{ needs.plan.outputs.source_commit }}
+      release_plan_artifact: ${{ needs.plan.outputs.plan_artifact }}
+      deployment_environment: ${{ needs.plan.outputs.cloud_environment }}
+      dry_run: ${{ needs.plan.outputs.dry_run == 'true' }}
+    secrets: inherit
 
   ota:
     name: Publish immutable Mentra Live OTA set
@@ -224,7 +241,7 @@ jobs:
 
   mobile:
     name: Build and distribute MentraOS mobile apps
-    needs: [plan, ota]
+    needs: [plan, ota, cloud-v2]
     uses: ./.github/workflows/reusable-coordinated-mobile.yml
     with:
       source_commit: ${{ needs.plan.outputs.source_commit }}
@@ -609,10 +626,11 @@ jobs:
 
   finalize:
     name: Finalize immutable release bill of materials
-    needs: [plan, ota, npm, sdk-native, mobile, engine-consumer, starter-kit, example-testflight]
+    needs: [plan, cloud-v2, ota, npm, sdk-native, mobile, engine-consumer, starter-kit, example-testflight]
     if: >-
       always() &&
       needs.plan.result == 'success' &&
+      needs.cloud-v2.result == 'success' &&
       needs.ota.result == 'success' &&
       needs.npm.result == 'success' &&
       needs.sdk-native.result == 'success' &&
@@ -636,6 +654,11 @@ jobs:
         with:
           name: ${{ needs.plan.outputs.plan_artifact }}
           path: release-input/plan
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.cloud-v2.outputs.result_artifact }}
+          path: release-input/cloud-v2
 
       - uses: actions/download-artifact@v4
         with:
@@ -699,6 +722,7 @@ jobs:
             --npm release-input/npm/npm-publications.json \
             --native release-input/sdk-native/sdk-native-publications.json \
             --mobile release-input/mobile/mobile-publications.json \
+            --cloud release-input/cloud-v2/cloud-v2-deployment.json \
             "${starter_kit_args[@]}" \
             --asg-selection "$asg_selection" \
             --engine-package "$engine_package" \
@@ -787,6 +811,7 @@ jobs:
             echo ""
             echo "- Release: \`${{ steps.results.outputs.identity }}\`"
             echo "- Source: \`${{ needs.plan.outputs.source_commit }}\`"
+            echo "- Cloud deployment: \`$(jq -er .cloud.deploymentId finalized-release/publication-results.json 2>/dev/null || echo validated-only)\`"
             echo "- OTA manifest: ${{ needs.ota.outputs.manifest_url }}"
             echo "- Dry run: \`${{ needs.plan.outputs.dry_run }}\`"
             if [[ "${{ needs.plan.outputs.dry_run }}" != "true" ]]; then
@@ -924,7 +949,8 @@ jobs:
 
   notify-slack:
     name: Notify release Slack channel
-    needs: [plan, ota, npm, sdk-native, mobile, engine-consumer, starter-kit, example-testflight, finalize, docs]
+    needs:
+      [plan, cloud-v2, ota, npm, sdk-native, mobile, engine-consumer, starter-kit, example-testflight, finalize, docs]
     if: always() && github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
@@ -945,6 +971,7 @@ jobs:
           PLAY_TRACK: ${{ needs.plan.outputs.play_track }}
           TESTFLIGHT_GROUP: ${{ needs.plan.outputs.testflight_group }}
           PLAN_RESULT: ${{ needs.plan.result }}
+          CLOUD_V2_RESULT: ${{ needs.cloud-v2.result }}
           OTA_RESULT: ${{ needs.ota.result }}
           NPM_RESULT: ${{ needs.npm.result }}
           SDK_NATIVE_RESULT: ${{ needs.sdk-native.result }}
