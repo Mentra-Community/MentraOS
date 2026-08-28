@@ -133,6 +133,7 @@ test("coordinated docs publish only after finalization to the matching channel",
   assert.match(starterKit, /permission-pull-requests: read/)
   assert.match(starterKit, /\[\[ "\$branch_sha" =~ \^\[0-9a-f\]\{40\}\$ \]\]/)
   assert.doesNotMatch(starterKit, /candidate_sha=\$\([^\n]+\n\s+--jq \.commit\.sha 2>\/dev\/null \|\| true\)/)
+  assert.match(starterKit, /lookup_starter_pr\(\)[^]*for attempt in \{1\.\.6\}[^]*jq -e 'type == "array"'/)
   assert.match(
     starterKit,
     /STARTER_KIT_TOKEN: \$\{\{ steps\.starter-kit-request-token\.outputs\.token \|\| secrets\.STARTER_KIT_COORDINATOR_TOKEN/,
