@@ -571,6 +571,24 @@ test("submits one exact build for beta app review", async () => {
   assert.equal(JSON.parse(api.calls[1].options.body).data.relationships.build.data.id, "build-1")
 })
 
+test("refuses to resubmit an existing rejected beta build", async () => {
+  const api = client([
+    {
+      data: [
+        {
+          type: "betaAppReviewSubmissions",
+          id: "review-rejected",
+          attributes: {betaReviewState: "REJECTED"},
+        },
+      ],
+    },
+  ])
+  await assert.rejects(
+    submitBuildForBetaReview(api, {buildId: "build-rejected"}),
+    /build build-rejected was rejected; submit a later replacement build/,
+  )
+})
+
 test("promotes only an approved build to a public production group", async () => {
   const api = client([
     {data: [{id: "review-1", attributes: {betaReviewState: "APPROVED"}}]},

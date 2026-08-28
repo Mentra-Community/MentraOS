@@ -440,6 +440,9 @@ export async function submitBuildForBetaReview(client, {buildId}) {
   if (!Array.isArray(response?.data)) throw new Error("Beta app review response has no data array")
   if (response.data.length > 1) throw new Error(`Expected at most one beta app review submission for ${buildId}`)
   const existing = response.data[0]
+  if (existing?.attributes?.betaReviewState === "REJECTED") {
+    throw new Error(`TestFlight build ${buildId} was rejected; submit a later replacement build`)
+  }
   if (existing) return {submission: existing, reused: true}
   const created = await client.request("/v1/betaAppReviewSubmissions", {
     method: "POST",
