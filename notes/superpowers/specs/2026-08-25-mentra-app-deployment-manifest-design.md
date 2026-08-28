@@ -3,39 +3,58 @@ status: draft
 owner: Mentra
 ---
 
-# Mentra Enterprise self-hosted deployment design
+# Mentra Enterprise Self-Hosted deployment design
 
 ## Outcome
 
-The same official Mentra App binary can run against Mentra's public services or a
-customer-controlled deployment. A small deployment manifest selects the Core,
-Runtime, Mentra Live OTA, and speech-model locations and disables features that
-would otherwise contact public services.
+The same official Mentra App binary can run against Mentra's public services or
+as part of a Mentra Enterprise Self-Hosted deployment, where Core and Runtime
+run on customer-controlled infrastructure. A small deployment manifest selects
+the Core, Runtime, Mentra Live OTA, and speech-model locations and disables
+features that would otherwise contact public services.
 
 This is an operating mode of the Mentra App and Mentra Engine, not a customer
 fork, branded build, or second release pipeline.
 
-The v1 security target is a customer-controlled, restricted-network deployment,
+The v1 network posture is a customer-hosted, restricted-network deployment,
 not a literally disconnected network. The Mentra App must not contact Mentra's
-public Core, Runtime, telemetry, artifact, or content services after a private
-profile is active. The deployment may still reach destinations explicitly
-approved by the customer, such as its Microsoft Entra tenant, its configured
-speech providers, Apple or Google distribution services, and customer-operated
-hosts. This document uses "air-gapped" only for a future zero-egress deployment.
+public Core, Runtime, telemetry, artifact, or content services after a
+self-hosted profile is active. The deployment may still reach destinations
+explicitly approved by the customer, such as its Microsoft Entra tenant, its
+configured speech providers, Apple or Google distribution services, and
+customer-operated hosts. This document uses "air-gapped" only for a future
+zero-egress deployment.
 
-## First supported deployment
+## Terminology
 
-The first supported private Mentra App deployment requires:
+- **Mentra Enterprise Self-Hosted** is the deployment offering.
+- **Customer-hosted deployment** describes the architecture: Core and Runtime
+  run on infrastructure controlled by the customer.
+- **Restricted-network deployment** describes the v1 network posture: only
+  customer-approved destinations are reachable.
+- **Air-gapped deployment** is reserved for a future zero-egress qualification
+  profile.
+- **On-premises deployment** is used only when the customer runs the services in
+  its own data center; Self-Hosted also includes the customer's Azure, AWS, or
+  other cloud account.
+
+Do not use "private deployment" as the product or architecture name because it
+does not identify who hosts the services.
+
+## First supported self-hosted deployment
+
+The first supported Mentra Enterprise Self-Hosted deployment requires:
 
 - The official Mentra App binary from one completed coordinated release.
 - Customer-hosted Cloud V2 Core and Runtime services from that release.
 - A Microsoft Entra workforce tenant controlled by the deployment operator and
   connected to customer-hosted Core through OIDC for the first pilot.
-- The matching self-hosted Mentra Live OTA bundle.
+- The matching customer-hosted Mentra Live OTA bundle.
 - Customer-hosted copies of the on-device STT and TTS model archives the
   deployment enables.
 - A customer deployment manifest reachable by the phone before sign-in.
-- Mentra Live as the only glasses model qualified for the first private pilot.
+- Mentra Live as the only glasses model qualified for the first self-hosted
+  pilot.
 - No unapproved public-network access after device and app provisioning.
   Microsoft Entra and the deployment's configured speech providers are
   explicitly approved dependencies for the first pilot. A strictly disconnected
@@ -51,10 +70,10 @@ minimum-client-version check, the preinstalled miniapp registry, settings, and
 reports. Runtime is the real-time execution plane for glasses, audio, and
 miniapp sessions; it does not replace those account and control-plane APIs.
 
-Decision: package the required Core and Runtime services with the first private
-deployment. Runtime-only support is not a deployment-manifest option and is not
-part of this plan. Supporting it would require a separate architecture that
-moves or replaces Core's identity, token, registry, settings, version, and
+Decision: package the required Core and Runtime services with the first
+self-hosted deployment. Runtime-only support is not a deployment-manifest option
+and is not part of this plan. Supporting it would require a separate architecture
+that moves or replaces Core's identity, token, registry, settings, version, and
 reporting contracts. The manifest keeps the Core boundary deployment-scoped so
 that internal service decomposition can happen later without creating a second
 Mentra App path.
@@ -69,7 +88,7 @@ installation does not need a deployment selected before it can render a local
 landing screen.
 
 The landing screen keeps the ordinary Mentra account choices and adds one
-visually separate private-deployment action:
+visually separate workspace action:
 
 - Google
 - Apple, where supported
@@ -119,8 +138,8 @@ from a fixed unauthenticated path:
 GET https://mentra.example-corp.com/.well-known/mentra-deployment.json
 ```
 
-The private deployment package makes Core, or the ingress immediately in front
-of Core, serve the exact manifest JSON at that path from a mounted deployment
+The Self-Hosted deployment package makes Core, or the ingress immediately in
+front of Core, serve the exact manifest JSON at that path from a mounted deployment
 file. There is no directory response and no second manifest-URL hop. V1 requires
 the resolved `services.coreUrl` origin to equal the entered workspace origin;
 Runtime, artifact, and content hosts may remain separate.
@@ -179,15 +198,15 @@ selected Core. `core-sso` is a Mentra manifest mode, not an identity protocol or
 a Mentra-hosted identity service. In the first supported version, the customer's
 Core has exactly one Microsoft Entra OIDC registration configured by its
 administrator. Core therefore redirects to that specific Entra tenant; it does
-not dynamically choose among providers or protocols. The first private template
-does not expose signup, password, verification-email, or recovery UI.
+not dynamically choose among providers or protocols. The first self-hosted
+template does not expose signup, password, verification-email, or recovery UI.
 
 ### Identity rollout
 
-Use "deployment operator" for the organization running the private deployment
-and "end user" for the person using the Mentra App and glasses.
+Use "deployment operator" for the organization running the customer-hosted
+deployment and "end user" for the person using the Mentra App and glasses.
 
-The first supported private identity integration is Microsoft Entra:
+The first supported enterprise identity integration is Microsoft Entra:
 
 1. The deployment operator registers MentraOS as a single-tenant application in
    its Microsoft Entra tenant and configures the resulting registration on its
@@ -202,11 +221,11 @@ The first supported private identity integration is Microsoft Entra:
    validates the callback, and returns a normal deployment-scoped Cloud V2
    session to the app.
 
-The first private template sets `mode: "core-sso"`. It does not ask the
+The first self-hosted template sets `mode: "core-sso"`. It does not ask the
 customer to self-host Supabase Auth, build a password service, or administer a
 parallel employee directory. Email/password remains a possible future adapter
 for deployments that explicitly require local accounts, but it is not the first
-private pilot or a prerequisite for the manifest foundation.
+self-hosted pilot or a prerequisite for the manifest foundation.
 
 ### How an enterprise connects Microsoft Entra
 
@@ -323,9 +342,9 @@ implementation work rather than a schema toggle. The existing browser PKCE
 handoff, trusted-issuer verification, external-token exchange, and Core session
 model remain reusable.
 
-In a private deployment, the workspace ingress, Core, Runtime, and resulting
-MentraOS session are customer-controlled. Microsoft hosts the Entra identity
-endpoint, but it operates against the customer's tenant and policy. Mentra's
+In a customer-hosted deployment, the workspace ingress, Core, Runtime, and
+resulting MentraOS session are customer-controlled. Microsoft hosts the Entra
+identity endpoint, but it operates against the customer's tenant and policy. Mentra's
 public Core, Runtime, directory, and Supabase are not in this authentication
 path. Neither the workspace manifest nor Mentra infrastructure receives the
 user's corporate credential.
@@ -572,25 +591,25 @@ The resolved profile controls optional network-capable behavior:
   their implementation.
 - The pairing model picker shows only `glasses.allowedModelsOverride` when that
   override is present; otherwise it shows the normal supported-model catalog.
-- The first private template exposes only Mentra Live. A different model may be
-  added only after its adapter has been qualified with public internet blocked
+- The first self-hosted template exposes only Mentra Live. A different model may
+  be added only after its adapter has been qualified with public internet blocked
   and any required vendor endpoints have been removed, disabled, or made
   customer-configurable. AR99's current public OTA/vendor-service calls are
-  therefore outside the first private deployment rather than controlled by an
-  AR99-specific manifest switch.
+  therefore outside the first self-hosted deployment rather than controlled by
+  an AR99-specific manifest switch.
 - Google, Apple, and Email on the initial landing screen select the embedded
   Mentra profile. Connect to a workspace resolves a candidate manifest from the
   workspace origin before activating it. After activation, the app displays the
   selected deployment name and the flow for that profile's auth mode. The first
-  private template exposes only Continue with organization account through
+  self-hosted template exposes only Continue with organization account through
   customer-hosted Core.
 - Miniapp package and media URLs supplied by customer-hosted Core remain the
   customer's responsibility.
-- Runtime speech-provider egress is server-side configuration. A private Runtime
-  may use Soniox or ElevenLabs when the customer explicitly approves them. A
-  future customer may instead require Azure Speech, AWS speech services, or an
-  on-premises provider; adding those Runtime adapters is customer-driven work,
-  not part of manifest v1. When no approved cloud provider exists, the
+- Runtime speech-provider egress is server-side configuration. A customer-hosted
+  Runtime may use Soniox or ElevenLabs when the customer explicitly approves
+  them. A future customer may instead require Azure Speech, AWS speech services,
+  or an on-premises provider; adding those Runtime adapters is customer-driven
+  work, not part of manifest v1. When no approved cloud provider exists, the
   deployment can disable cloud speech and use the supported on-device path. The
   phone manifest does not configure or proxy server-side speech credentials.
 
@@ -605,9 +624,10 @@ The coordinated release is already the correlation mechanism. Its completed
 `mentra-release-<identity>.json` records the exact Android app, iOS app, Engine,
 Bluetooth SDK, OTA bundle, hashes, and provenance.
 
-For an Android private deployment, a customer can import the exact Mentra-signed
-APK from the completed GitHub release and install or update it through MDM. This
-is the same app binary produced by the normal coordinated release.
+For an Android customer-hosted deployment, a customer can import the exact
+Mentra-signed APK from the completed GitHub release and install or update it
+through MDM. This is the same app binary produced by the normal coordinated
+release.
 
 For iOS, use the normal App Store app through Apple Business Manager/MDM and
 deliver the workspace URL as managed app configuration. The current App Store IPA
@@ -632,14 +652,14 @@ the same coordinated release.
 
 ## MVP acceptance
 
-The first Android-and-iOS private pilot is complete when:
+The first Android-and-iOS self-hosted pilot is complete when:
 
 1. The official Android and iOS release artifacts start on a restricted customer
    network where Mentra public services are blocked and only deployment-approved
    customer and SaaS destinations are reachable.
 2. Google, Apple, or Email selects the embedded Mentra profile. Connect to a
    workspace or MDM resolves the customer manifest from the workspace's
-   well-known endpoint before private SSO.
+   well-known endpoint before organization SSO.
 3. Login, refresh, Runtime connection, cloud STT/TTS, settings, registry, and
    enabled miniapps use customer-hosted Core and Runtime. Any cloud speech egress
    is limited to the provider explicitly approved for that deployment.
@@ -662,7 +682,7 @@ The first Android-and-iOS private pilot is complete when:
 - Okta, Google, internal OIDC providers, SAML, and any identity integration
   beyond the first qualified Microsoft Entra OIDC implementation.
 - Optional workspace discovery by verified work-email domain or organization
-  code. It resolves to the same workspace URL and is not required for private
+  code. It resolves to the same workspace URL and is not required for self-hosted
   deployment or SSO.
 - Separating account, registry, settings, version-check, and reporting APIs from
   Core into a smaller control-plane service.

@@ -3,14 +3,14 @@ status: draft
 owner: Mentra
 ---
 
-# Mentra Enterprise self-hosted deployment implementation plan
+# Mentra Enterprise Self-Hosted deployment implementation plan
 
 > Execution checklist. Keep the first release focused on the same official app
 > binary with customer-hosted Core, Runtime, OTA, and speech artifacts.
 
-**Goal:** Run a completed coordinated Mentra App release inside a
-customer-controlled network by selecting one deployment manifest before sign-in
-and before any public-network integration starts.
+**Goal:** Run a completed coordinated Mentra App release as Mentra Enterprise
+Self-Hosted on customer-controlled infrastructure by selecting one deployment
+manifest before sign-in and before any public-network integration starts.
 
 **Architecture:** The app restores an MDM-provided or previously enrolled
 deployment at cold boot. Otherwise, a local landing screen lets Google, Apple,
@@ -21,7 +21,7 @@ after validation and confirmation, then starts the selected Core's configured
 auth flow. MDM injects the same workspace origin. The active immutable profile
 configures auth and Engine; Engine passes the OTA URL to Bluetooth SDK and model
 locations to its speech managers. Customer overrides and the embedded Mentra
-profile resolve to one complete object; the private template explicitly
+profile resolve to one complete object; the self-hosted template explicitly
 replaces or nulls every public-network destination.
 
 **Tech Stack:** React Native/Expo, TypeScript, MMKV, native managed-app
@@ -76,7 +76,7 @@ releases.
 - [ ] Verify Android and iOS native SDK startup before the JavaScript tree mounts.
       Add clean-install packet-capture coverage proving Firebase, Sentry, and
       other bundled telemetry SDKs do not auto-initialize or transmit while a
-      private profile is being resolved.
+      self-hosted profile is being resolved.
 - [ ] Render the local consumer-or-enterprise landing screen before starting any
       network integration when no deployment is already selected.
 - [ ] Render a local recovery/setup screen when a first-time custom profile
@@ -127,8 +127,8 @@ releases.
 - [ ] Read the workspace origin from Android Enterprise and Apple managed app
       configuration when supplied and use the same well-known resolver. Treat
       an enforced MDM value as authoritative.
-- [ ] For the first private pilot, render one organization-account action for
-      `auth.mode: "core-sso"`. Do not expose private signup, passwords,
+- [ ] For the first self-hosted pilot, render one organization-account action
+      for `auth.mode: "core-sso"`. Do not expose signup, passwords,
       verification email, or recovery.
 - [ ] Make switching deployment stop Engine, sign out, clear the old auth
       namespace, and reboot through the same resolver.
@@ -161,7 +161,7 @@ releases.
 - [ ] Keep consumer Google, Apple, and Email entry points bound to the embedded
       Mentra profile and `auth.mode: "mentra-account"`. Render only the flow for
       an active custom profile's auth mode after enrollment.
-- [ ] Make Core the auth broker for the first private pilot: generalize its
+- [ ] Make Core the auth broker for the first self-hosted pilot: generalize its
       existing PKCE browser handoff from fixed Google/Apple-through-GoTrue to one
       server-configured Microsoft Entra OIDC connection, map verified issuer
       plus subject to a Core user, and return the normal Cloud V2 session through
@@ -183,7 +183,7 @@ releases.
       registers the Core Web callback, requires assignment, and assigns the
       allowed users/groups. The Entra guide constructs the exact issuer URL from
       the customer's tenant id. Mentra public infrastructure and Supabase are not
-      in the private auth path.
+      in the self-hosted auth path.
 - [ ] Reuse the existing trusted-issuer verification and external-token exchange
       where their claim contract fits. Do not require a standard customer IdP to
       mint Mentra-specific routing claims without an explicit adapter.
@@ -232,7 +232,7 @@ releases.
       archives, and record upstream source/license provenance.
 - [ ] Replace hard-coded upstream Sherpa GitHub base URLs with deployment
       inputs. The embedded Mentra profile points at the Mentra-owned model CDN;
-      private profiles may point at an internal mirror.
+      self-hosted profiles may point at an internal mirror.
 - [ ] Ensure a custom profile with an unreachable artifact server fails without
       requesting GitHub or Mentra.
 
@@ -270,7 +270,7 @@ releases.
       deep-link, reconnect, or profile-switch paths.
 - [ ] Keep vendor-specific behavior behind glasses adapters; do not add AR99 or
       other model-specific policy fields to the deployment schema.
-- [ ] Ship the first private template with only Mentra Live in the pairing
+- [ ] Ship the first self-hosted template with only Mentra Live in the pairing
       override. Do not expose another model until its adapter passes a blocked-
       public-internet test and any vendor network calls are disabled or routed
       to customer-controlled endpoints.
@@ -309,13 +309,13 @@ releases.
 - [ ] Document the workspace URL and well-known endpoint, MDM key, and private-CA
       installation alongside the Entra guide.
 
-## Phase 5: Private service packaging and qualification
+## Phase 5: Self-hosted service packaging and qualification
 
 **Files:** Cloud V2 deployment charts/scripts, customer runbook, end-to-end tests
 
 - [ ] Package the exact Core and Runtime service subset used by the official app.
-- [ ] Keep Core in the first private deployment as the customer-hosted control
-      plane for identity, sessions, token exchange, registry, settings,
+- [ ] Keep Core in the first self-hosted deployment as the customer-hosted
+      control plane for identity, sessions, token exchange, registry, settings,
       version-check, and reporting. Runtime is the real-time execution plane.
       Do not model Runtime-only operation as a manifest option.
 - [ ] Package direct Microsoft Entra OIDC support in Core without Supabase.
@@ -328,7 +328,7 @@ releases.
       callback-tampering, refresh, reauthentication, and logout cases.
 - [ ] Verify just-in-time user creation, disabled-user behavior, session expiry,
       and reauthentication without creating a second employee password store.
-- [ ] Configure customer-approved STT/TTS providers in private Runtime.
+- [ ] Configure customer-approved STT/TTS providers in customer-hosted Runtime.
 - [ ] Host the coordinated OTA bundle and speech artifacts on the internal
       update service.
 - [ ] Run Android and iOS login, Runtime, miniapp, OTA, and offline-model tests.
@@ -354,8 +354,8 @@ releases.
 An Android-and-iOS pilot is roughly a multi-PR, several-week effort rather than a
 small endpoint toggle. The existing Engine configuration, portable OTA bundle,
 hotspot flow, and coordinated release manifest remove much of the hard work;
-boot order, auth isolation, telemetry gating, model hosting, and private Cloud
-packaging are the remaining critical path.
+boot order, auth isolation, telemetry gating, model hosting, and self-hosted
+Cloud packaging are the remaining critical path.
 
 Okta, Google, internal OIDC, SAML, local email/password accounts, self-service
 workspace discovery, and directory/domain verification are follow-up identity
