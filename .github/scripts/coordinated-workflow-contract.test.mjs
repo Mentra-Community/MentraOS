@@ -65,7 +65,10 @@ test("production validates before approval and proves packages before mobile pro
     /else\s+\[\[ "\$\(jq -r \.draft <<< "\$release"\)" == "false" \]\]\s+\[\[ "\$\(jq -r \.prerelease <<< "\$release"\)" == "true" \]\]/,
   )
   assert.match(sdkNativeWorkflow, /for attempt in \{1\.\.6\}/)
-  assert.match(sdkNativeWorkflow, /cmp --silent native-result\/maven\/sonatype-deployment\.json persisted-deployment\.json/)
+  assert.match(
+    sdkNativeWorkflow,
+    /cmp --silent native-result\/maven\/sonatype-deployment\.json persisted-deployment\.json/,
+  )
 })
 
 test("mobile destinations use real TestFlight groups without changing the release channel", () => {
@@ -184,6 +187,8 @@ test("coordinated docs publish only after finalization to the matching channel",
   assert.match(example, /continue-on-error: true/)
   assert.doesNotMatch(example, /STARTER_KIT_APP_PRIVATE_KEY:/)
   assert.match(example, /permission-contents: read/)
+  assert.match(example, /^      group: mentra-example-ios-signing-runner$/m)
+  assert.doesNotMatch(example, /^      group: mentra-ios-signing-runner$/m)
   assert.match(
     example,
     /token: \$\{\{ steps\.starter-kit-app-token\.outputs\.token \|\| secrets\.STARTER_KIT_COORDINATOR_TOKEN/,

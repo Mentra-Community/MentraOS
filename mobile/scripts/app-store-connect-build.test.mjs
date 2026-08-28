@@ -133,6 +133,57 @@ test("does not upload over an exact build upload that is still processing", asyn
   assert.match(api.calls[1].resource, /sort=-uploadedDate/)
 })
 
+test("does not treat an awaiting upload placeholder as a delivered build", async () => {
+  const api = client([
+    {data: []},
+    {data: [{id: "upload-1", attributes: {state: {state: "AWAITING_UPLOAD"}}}]},
+    {data: []},
+    {data: [{id: "upload-1", attributes: {state: {state: "AWAITING_UPLOAD"}}}]},
+  ])
+  let uploads = 0
+  await assert.rejects(
+    () =>
+      uploadExactBuild(api, {
+        appId: "app-1",
+        buildNumber: 310000047,
+        attempts: 1,
+        upload: async () => {
+          uploads += 1
+          throw new Error("Upload limit reached (90382)")
+        },
+      }),
+    /Upload limit reached \(90382\)/,
+  )
+  assert.equal(uploads, 1)
+})
+
+test("uploads when Apple has only created an awaiting placeholder", async () => {
+  const api = client([{data: []}, {data: [{id: "upload-1", attributes: {state: {state: "AWAITING_UPLOAD"}}}]}])
+  let uploads = 0
+  const result = await uploadExactBuild(api, {
+    appId: "app-1",
+    buildNumber: 310000047,
+    upload: async () => {
+      uploads += 1
+    },
+  })
+  assert.equal(result.reused, false)
+  assert.equal(uploads, 1)
+})
+
+test("retries transient App Store Connect failures while polling", async () => {
+  const transient = new Error("App Store Connect returned HTTP 500")
+  transient.status = 500
+  const api = client([{data: []}, transient, {data: [{id: "build-1", attributes: {processingState: "VALID"}}]}])
+  const build = await waitForProcessedBuild(api, {
+    appId: "app-1",
+    buildNumber: 310000047,
+    attempts: 2,
+    delay: 0,
+  })
+  assert.equal(build.id, "build-1")
+})
+
 test("uses the newest upload when Apple retains an older failed attempt", async () => {
   const api = client([
     {data: []},

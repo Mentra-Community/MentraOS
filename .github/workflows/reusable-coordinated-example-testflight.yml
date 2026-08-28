@@ -37,7 +37,7 @@ jobs:
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 90
     concurrency:
-      group: mentra-ios-signing-runner
+      group: mentra-example-ios-signing-runner
       cancel-in-progress: false
     outputs:
       result_artifact: ${{ steps.coordinates.outputs.result_artifact }}
