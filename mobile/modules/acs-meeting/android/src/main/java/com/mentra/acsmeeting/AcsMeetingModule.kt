@@ -16,6 +16,7 @@ class AcsMeetingModule : Module() {
       val whepUrl = options["whepUrl"] as? String ?: throw IllegalArgumentException("whepUrl is required")
       val displayName = options["displayName"] as? String
       val dumpWav = options["dumpPcmWav"] as? Boolean ?: false
+      val audioSource = options["audioSource"] as? String ?: "glasses"
       val context = appContext.reactContext ?: throw IllegalStateException("no react context")
       val meeting = session ?: AcsMeetingSession(
         context.applicationContext,
@@ -27,7 +28,7 @@ class AcsMeetingModule : Module() {
           )
         },
       ).also { session = it }
-      meeting.join(token, meetingUrl, whepUrl, displayName, dumpWav)
+      meeting.join(token, meetingUrl, whepUrl, displayName, dumpWav, audioSource)
       meeting.getState()
     }
 
@@ -37,6 +38,10 @@ class AcsMeetingModule : Module() {
 
     AsyncFunction("setMuted") { muted: Boolean ->
       session?.setMuted(muted) ?: mapOf("state" to "idle", "muted" to muted)
+    }
+
+    AsyncFunction("setAudioSource") { source: String ->
+      session?.setAudioSource(source) ?: mapOf("state" to "idle", "muted" to false, "audioSource" to source)
     }
 
     AsyncFunction("updateVideoSource") { whepUrl: String ->

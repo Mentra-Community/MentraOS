@@ -14,6 +14,9 @@ export default {
   async setMuted(_muted: boolean): Promise<AcsMeetingState> {
     unavailable()
   },
+  async setAudioSource(_source: "glasses" | "phone"): Promise<AcsMeetingState> {
+    unavailable()
+  },
   async updateVideoSource(_whepUrl: string): Promise<void> {
     unavailable()
   },

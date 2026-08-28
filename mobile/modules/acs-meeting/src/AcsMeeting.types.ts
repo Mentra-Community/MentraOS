@@ -6,6 +6,7 @@ export type AcsMeetingState = {
   error?: string
   meetingUrl?: string
   provider?: "acs-teams"
+  audioSource?: "glasses" | "phone"
 }
 
 export type AcsMeetingJoinOptions = {
@@ -13,6 +14,8 @@ export type AcsMeetingJoinOptions = {
   token: string
   whepUrl: string
   displayName?: string
+  /** "glasses" sends WHEP PCM. "phone" uses the ACS local mic (handset or BT). */
+  audioSource?: "glasses" | "phone"
   /** Dump WHEP PCM to a WAV in cache for P4 verification. */
   dumpPcmWav?: boolean
 }

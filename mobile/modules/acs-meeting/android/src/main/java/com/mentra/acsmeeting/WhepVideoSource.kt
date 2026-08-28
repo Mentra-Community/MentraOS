@@ -44,6 +44,8 @@ class WhepVideoSource(
   private val frames = AtomicInteger(0)
   private var lastFpsLogMs = 0L
   @Volatile private var offerPosted = false
+  @Volatile private var pcmEnabled = true
+  private val audioTracks = mutableListOf<AudioTrack>()
 
   override fun start(whepUrl: String) {
     stop()
@@ -77,9 +79,17 @@ class WhepVideoSource(
     start(whepUrl)
   }
 
+  fun setPcmEnabled(enabled: Boolean) {
+    pcmEnabled = enabled
+    audioTracks.forEach { it.setEnabled(enabled) }
+    Log.i(TAG, "WHEP audio track enabled=$enabled")
+  }
+
   override fun stop() {
     currentUrl = null
     offerPosted = false
+    pcmEnabled = true
+    audioTracks.clear()
     try {
       pc?.close()
     } catch (_: Exception) {
@@ -151,7 +161,7 @@ class WhepVideoSource(
     override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>) {}
     override fun onAddStream(stream: MediaStream) {
       stream.videoTracks.firstOrNull()?.addSink(videoSink)
-      stream.audioTracks.firstOrNull()?.addSink(audioSink)
+      stream.audioTracks.firstOrNull()?.let { attachAudio(it) }
     }
     override fun onRemoveStream(stream: MediaStream) {}
     override fun onDataChannel(channel: org.webrtc.DataChannel) {}
@@ -159,13 +169,13 @@ class WhepVideoSource(
     override fun onAddTrack(receiver: org.webrtc.RtpReceiver, streams: Array<out MediaStream>) {
       when (val track = receiver.track()) {
         is VideoTrack -> track.addSink(videoSink)
-        is AudioTrack -> track.addSink(audioSink)
+        is AudioTrack -> attachAudio(track)
       }
     }
     override fun onTrack(transceiver: RtpTransceiver) {
       when (val track = transceiver.receiver.track()) {
         is VideoTrack -> track.addSink(videoSink)
-        is AudioTrack -> track.addSink(audioSink)
+        is AudioTrack -> attachAudio(track)
       }
     }
   }
@@ -181,8 +191,14 @@ class WhepVideoSource(
     }
   }
 
-  private val audioSink = AudioTrackSink { audioData, bitsPerSample, sampleRate, numberOfChannels, numberOfFrames ->
-    if (bitsPerSample != 16) return@AudioTrackSink
+  private fun attachAudio(track: AudioTrack) {
+    if (!audioTracks.contains(track)) audioTracks.add(track)
+    track.setEnabled(pcmEnabled)
+    track.addSink(audioSink)
+  }
+
+  private val audioSink = AudioTrackSink { audioData, bitsPerSample, sampleRate, numberOfChannels, numberOfFrames, _ ->
+    if (!pcmEnabled || bitsPerSample != 16) return@AudioTrackSink
     val bytes = ByteArray(audioData.remaining())
     audioData.get(bytes)
     pcmListener.onPcm(bytes, sampleRate, numberOfChannels)

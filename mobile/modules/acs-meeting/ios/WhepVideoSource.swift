@@ -13,6 +13,8 @@ final class WhepVideoSource: NSObject {
   private var pc: RTCPeerConnection?
   private var currentUrl: String?
   private var offerPosted = false
+  private var pcmEnabled = true
+  private var audioTracks: [RTCAudioTrack] = []
   private var frameCount = 0
   private var lastFpsLog = Date()
 
@@ -48,11 +50,27 @@ final class WhepVideoSource: NSObject {
     start(whepUrl: whepUrl)
   }
 
+  func setPcmEnabled(_ enabled: Bool) {
+    pcmEnabled = enabled
+    audioTracks.forEach { $0.isEnabled = enabled }
+    NSLog("ACS-SPIKE WHEP audio track enabled=\(enabled)")
+  }
+
   func stop() {
     currentUrl = nil
     offerPosted = false
+    pcmEnabled = true
+    audioTracks.removeAll()
     pc?.close()
     pc = nil
+  }
+
+  private func attachAudio(_ track: RTCAudioTrack) {
+    if !audioTracks.contains(where: { $0 === track }) {
+      audioTracks.append(track)
+    }
+    track.isEnabled = pcmEnabled
+    track.add(self as RTCAudioRenderer)
   }
 
   private func postOfferIfNeeded() {
@@ -81,7 +99,7 @@ extension WhepVideoSource: RTCPeerConnectionDelegate {
   func peerConnection(_ peerConnection: RTCPeerConnection, didChange stateChanged: RTCSignalingState) {}
   func peerConnection(_ peerConnection: RTCPeerConnection, didAdd stream: RTCMediaStream) {
     stream.videoTracks.first?.add(self as RTCVideoRenderer)
-    stream.audioTracks.first?.add(self as RTCAudioRenderer)
+    stream.audioTracks.first.map(attachAudio)
   }
   func peerConnection(_ peerConnection: RTCPeerConnection, didRemove stream: RTCMediaStream) {}
   func peerConnectionShouldNegotiate(_ peerConnection: RTCPeerConnection) {}
@@ -99,7 +117,7 @@ extension WhepVideoSource: RTCPeerConnectionDelegate {
       video.add(self as RTCVideoRenderer)
     }
     if let audio = transceiver.receiver.track as? RTCAudioTrack {
-      audio.add(self as RTCAudioRenderer)
+      attachAudio(audio)
     }
   }
 }
@@ -121,6 +139,7 @@ extension WhepVideoSource: RTCVideoRenderer {
 
 extension WhepVideoSource: RTCAudioRenderer {
   func renderPCMBuffer(_ pcmBuffer: AVAudioPCMBuffer) {
+    guard pcmEnabled else { return }
     let channels = Int(pcmBuffer.format.channelCount)
     let rate = Int(pcmBuffer.format.sampleRate)
     guard let data = Self.pcm16(from: pcmBuffer) else { return }

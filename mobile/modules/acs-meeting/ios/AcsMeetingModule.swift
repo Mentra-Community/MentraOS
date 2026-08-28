@@ -16,6 +16,7 @@ public class AcsMeetingModule: Module {
       let whepUrl = options["whepUrl"] as? String ?? ""
       let displayName = options["displayName"] as? String
       let dumpWav = options["dumpPcmWav"] as? Bool ?? false
+      let audioSource = options["audioSource"] as? String ?? "glasses"
       let meeting = self.session ?? AcsMeetingSession(
         onState: { [weak self] state in self?.sendEvent("onState", state) },
         onIncomingPcm: { [weak self] base64, rate, channels in
@@ -23,7 +24,7 @@ public class AcsMeetingModule: Module {
         }
       )
       self.session = meeting
-      try meeting.join(token: token, meetingUrl: meetingUrl, whepUrl: whepUrl, displayName: displayName, dumpWav: dumpWav)
+      try meeting.join(token: token, meetingUrl: meetingUrl, whepUrl: whepUrl, displayName: displayName, dumpWav: dumpWav, audioSource: audioSource)
       return meeting.snapshot()
     }
 
@@ -33,6 +34,10 @@ public class AcsMeetingModule: Module {
 
     AsyncFunction("setMuted") { (muted: Bool) in
       self.session?.setMuted(muted) ?? ["state": "idle", "muted": muted]
+    }
+
+    AsyncFunction("setAudioSource") { (source: String) in
+      self.session?.setAudioSource(source) ?? ["state": "idle", "muted": false, "audioSource": source]
     }
 
     AsyncFunction("updateVideoSource") { (whepUrl: String) in
@@ -66,6 +71,7 @@ final class AcsMeetingSession {
   private var pcmBridge: PcmBridge?
   private var audioOut: RawOutgoingAudioStream?
   private var outgoingReady = false
+  private var audioSource = "glasses"
 
   init(onState: @escaping ([String: Any]) -> Void, onIncomingPcm: @escaping (String, Int, Int) -> Void) {
     self.onState = onState
@@ -73,13 +79,14 @@ final class AcsMeetingSession {
   }
 
   func snapshot() -> [String: Any] {
-    var result: [String: Any] = ["state": phase, "muted": muted, "provider": "acs-teams"]
+    var result: [String: Any] = ["state": phase, "muted": muted, "provider": "acs-teams", "audioSource": audioSource]
     if let meetingUrl { result["meetingUrl"] = meetingUrl }
     if let lastError { result["error"] = lastError }
     return result
   }
 
-  func join(token: String, meetingUrl: String, whepUrl: String, displayName: String?, dumpWav: Bool) throws {
+  func join(token: String, meetingUrl: String, whepUrl: String, displayName: String?, dumpWav: Bool, audioSource: String = "glasses") throws {
+    self.audioSource = audioSource == "phone" ? "phone" : "glasses"
     queue.async { [weak self] in
       guard let self else { return }
       do {
@@ -146,7 +153,8 @@ final class AcsMeetingSession {
         }
         source.start(whepUrl: whepUrl)
         self.whep = source
-        NSLog("ACS-SPIKE iOS ACS join started (foreground-only V1)")
+        self.applyAudioPolicyLocked()
+        NSLog("ACS-SPIKE iOS ACS join started source=\(self.audioSource)")
       } catch {
         self.lastError = error.localizedDescription
         self.emit("error")
@@ -160,12 +168,30 @@ final class AcsMeetingSession {
 
   func setMuted(_ next: Bool) -> [String: Any] {
     muted = next
-    queue.async {
-      if next { try? self.call?.mute().get() } else { try? self.call?.unmute().get() }
-    }
+    queue.async { self.applyAudioPolicyLocked() }
     let snap = snapshot()
     onState(snap)
     return snap
+  }
+
+  func setAudioSource(_ source: String) -> [String: Any] {
+    audioSource = source == "phone" ? "phone" : "glasses"
+    queue.async { self.applyAudioPolicyLocked() }
+    let snap = snapshot()
+    onState(snap)
+    return snap
+  }
+
+  private func applyAudioPolicyLocked() {
+    let sendGlasses = !muted && audioSource == "glasses"
+    let sendPhone = !muted && audioSource == "phone"
+    whep?.setPcmEnabled(sendGlasses)
+    NSLog("ACS-SPIKE audio policy source=\(audioSource) userMuted=\(muted) glassesPcm=\(sendGlasses) phoneMic=\(sendPhone)")
+    if sendPhone {
+      try? call?.unmute().get()
+    } else {
+      try? call?.mute().get()
+    }
   }
 
   func leave() {
@@ -173,7 +199,7 @@ final class AcsMeetingSession {
   }
 
   private func feedOutgoingPcm(_ pcm: Data, sampleRate: Int, channels: Int) {
-    guard !muted, outgoingReady, let stream = audioOut else { return }
+    guard !muted, audioSource == "glasses", outgoingReady, let stream = audioOut else { return }
     for frame in pcmBridge?.ingest(pcm16Le: pcm, sampleRate: sampleRate, channels: channels) ?? [] {
       do {
         let buffer = RawAudioBuffer()

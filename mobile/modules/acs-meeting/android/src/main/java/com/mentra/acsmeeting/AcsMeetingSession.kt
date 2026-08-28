@@ -2,22 +2,27 @@ package com.mentra.acsmeeting
 
 import android.content.Context
 import android.util.Log
+import com.azure.android.communication.calling.AudioStreamBufferDuration
 import com.azure.android.communication.calling.AudioStreamChannelMode
+import com.azure.android.communication.calling.AudioStreamFormat
 import com.azure.android.communication.calling.AudioStreamSampleRate
-import com.azure.android.communication.calling.AudioStreamSampleType
 import com.azure.android.communication.calling.Call
 import com.azure.android.communication.calling.CallAgent
 import com.azure.android.communication.calling.CallAgentOptions
 import com.azure.android.communication.calling.CallClient
 import com.azure.android.communication.calling.CallState
 import com.azure.android.communication.calling.IncomingAudioOptions
+import com.azure.android.communication.calling.IncomingMixedAudioEvent
 import com.azure.android.communication.calling.JoinCallOptions
 import com.azure.android.communication.calling.OutgoingAudioOptions
 import com.azure.android.communication.calling.OutgoingVideoOptions
+import com.azure.android.communication.calling.RawAudioBuffer
 import com.azure.android.communication.calling.RawIncomingAudioStream
 import com.azure.android.communication.calling.RawIncomingAudioStreamOptions
+import com.azure.android.communication.calling.RawIncomingAudioStreamProperties
 import com.azure.android.communication.calling.RawOutgoingAudioStream
 import com.azure.android.communication.calling.RawOutgoingAudioStreamOptions
+import com.azure.android.communication.calling.RawOutgoingAudioStreamProperties
 import com.azure.android.communication.calling.RawOutgoingVideoStreamOptions
 import com.azure.android.communication.calling.TeamsMeetingLinkLocator
 import com.azure.android.communication.calling.VirtualOutgoingVideoStream
@@ -35,6 +40,8 @@ class AcsMeetingSession(
   private val outgoingReady = AtomicBoolean(false)
   private val muted = AtomicBoolean(false)
   private val frameSender = AcsFrameSender()
+  @Volatile private var lastGatedLogMs = 0L
+  @Volatile private var lastSentLogMs = 0L
   private var pcmBridge: PcmBridge? = null
   private var whep: WhepVideoSource? = null
   private var callClient: CallClient? = null
@@ -46,19 +53,30 @@ class AcsMeetingSession(
   @Volatile private var meetingUrl: String? = null
   @Volatile private var phase = "idle"
   @Volatile private var lastError: String? = null
+  /** "glasses" = WHEP PCM into ACS. "phone" = ACS local mic (handset or BT). */
+  @Volatile private var audioSource = "glasses"
 
   fun snapshot(): Map<String, Any> {
     val result = mutableMapOf<String, Any>(
       "state" to phase,
       "muted" to muted.get(),
       "provider" to "acs-teams",
+      "audioSource" to audioSource,
     )
     meetingUrl?.let { result["meetingUrl"] = it }
     lastError?.let { result["error"] = it }
     return result
   }
 
-  fun join(token: String, teamsUrl: String, whepUrl: String, displayName: String?, dumpWav: Boolean) {
+  fun join(
+    token: String,
+    teamsUrl: String,
+    whepUrl: String,
+    displayName: String?,
+    dumpWav: Boolean,
+    audioSource: String = "glasses",
+  ) {
+    this.audioSource = if (audioSource == "phone") "phone" else "glasses"
     executor.execute {
       try {
         leaveLocked()
@@ -78,13 +96,12 @@ class AcsMeetingSession(
         videoOut = videoStream
         frameSender.attach(videoStream)
 
-        val audioFormat = com.azure.android.communication.calling.AudioStreamFormat()
-        audioFormat.sampleRate = AudioStreamSampleRate.SAMPLE_RATE_16000
-        audioFormat.channelMode = AudioStreamChannelMode.CHANNEL_MODE_MONO
-        audioFormat.encodedAudioFormat = AudioStreamSampleType.PCM
-
-        val outAudioOptions = RawOutgoingAudioStreamOptions()
-        outAudioOptions.format = audioFormat
+        val audioProperties = RawOutgoingAudioStreamProperties()
+          .setFormat(AudioStreamFormat.PCM16_BIT)
+          .setSampleRate(AudioStreamSampleRate.HZ_16000)
+          .setChannelMode(AudioStreamChannelMode.MONO)
+          .setBufferDuration(AudioStreamBufferDuration.MS20)
+        val outAudioOptions = RawOutgoingAudioStreamOptions().setProperties(audioProperties)
         val outgoing = RawOutgoingAudioStream(outAudioOptions)
         audioOut = outgoing
         outgoing.addOnStateChangedListener {
@@ -92,13 +109,16 @@ class AcsMeetingSession(
           Log.i(TAG, "raw outgoing audio state=${outgoing.state}")
         }
 
-        val inAudioOptions = RawIncomingAudioStreamOptions()
-        inAudioOptions.format = audioFormat
+        val incomingProperties = RawIncomingAudioStreamProperties()
+          .setFormat(AudioStreamFormat.PCM16_BIT)
+          .setSampleRate(AudioStreamSampleRate.HZ_16000)
+          .setChannelMode(AudioStreamChannelMode.MONO)
+        val inAudioOptions = RawIncomingAudioStreamOptions().setProperties(incomingProperties)
         val incoming = RawIncomingAudioStream(inAudioOptions)
         audioIn = incoming
-        incoming.addOnRawAudioBufferReceivedListener { args ->
+        incoming.addOnMixedAudioBufferReceivedListener { event: IncomingMixedAudioEvent ->
           try {
-            val data = args.audioBuffer?.data ?: return@addOnRawAudioBufferReceivedListener
+            val data = event.audioBuffer?.buffer ?: return@addOnMixedAudioBufferReceivedListener
             val bytes = ByteArray(data.remaining())
             data.get(bytes)
             onIncomingPcm(PcmBridge.encodeBase64(bytes), 16000, 1)
@@ -108,16 +128,17 @@ class AcsMeetingSession(
         }
 
         val joinOptions = JoinCallOptions()
-        val ov = OutgoingVideoOptions()
-        ov.streams = listOf(videoStream)
-        joinOptions.outgoingVideoOptions = ov
+        val ov = OutgoingVideoOptions().setOutgoingVideoStreams(listOf(videoStream))
+        joinOptions.setOutgoingVideoOptions(ov)
         val oa = OutgoingAudioOptions()
-        oa.stream = outgoing
-        mutePhoneMicrophone(oa)
-        joinOptions.outgoingAudioOptions = oa
+          .setStream(outgoing)
+          .setMuted(true)
+          .setCommunicationAudioModeEnabled(this.audioSource == "phone")
+        joinOptions.setOutgoingAudioOptions(oa)
         val ia = IncomingAudioOptions()
-        ia.stream = incoming
-        joinOptions.incomingAudioOptions = ia
+          .setStream(incoming)
+          .setMuted(true)
+        joinOptions.setIncomingAudioOptions(ia)
 
         val locator = TeamsMeetingLinkLocator(teamsUrl)
         val joined = callAgent!!.join(context, locator, joinOptions)
@@ -131,10 +152,11 @@ class AcsMeetingSession(
           pcmListener = { pcm, rate, channels -> feedOutgoingPcm(pcm, rate, channels) },
         )
         whep!!.start(whepUrl)
-        Log.i(TAG, "P2 ACS join started for Teams locator")
+        applyAudioPolicyLocked()
+        Log.i(TAG, "P2 ACS join started for Teams locator source=${this.audioSource}")
       } catch (error: Exception) {
-        Log.e(TAG, "join failed", error)
-        lastError = error.message ?: "ACS join failed"
+        lastError = formatAcsError(error)
+        Log.e(TAG, "join failed $lastError", error)
         emit("error")
       }
     }
@@ -146,13 +168,15 @@ class AcsMeetingSession(
 
   fun setMuted(next: Boolean): Map<String, Any> {
     muted.set(next)
-    executor.execute {
-      try {
-        if (next) call?.mute()?.get() else call?.unmute()?.get()
-      } catch (error: Exception) {
-        Log.w(TAG, "SDK mute failed (raw PCM gate still applies)", error)
-      }
-    }
+    executor.execute { applyAudioPolicyLocked() }
+    val snap = snapshot()
+    onState(snap)
+    return snap
+  }
+
+  fun setAudioSource(source: String): Map<String, Any> {
+    audioSource = if (source == "phone") "phone" else "glasses"
+    executor.execute { applyAudioPolicyLocked() }
     val snap = snapshot()
     onState(snap)
     return snap
@@ -164,15 +188,46 @@ class AcsMeetingSession(
 
   fun getState(): Map<String, Any> = snapshot()
 
+  private fun applyAudioPolicyLocked() {
+    val sendGlasses = !muted.get() && audioSource == "glasses"
+    val sendPhone = !muted.get() && audioSource == "phone"
+    whep?.setPcmEnabled(sendGlasses)
+    Log.i(
+      TAG,
+      "audio policy source=$audioSource userMuted=${muted.get()} glassesPcm=$sendGlasses phoneMic=$sendPhone",
+    )
+    try {
+      if (sendPhone) call?.unmuteOutgoingAudio(context)?.get() else call?.muteOutgoingAudio(context)?.get()
+    } catch (error: Exception) {
+      Log.w(TAG, "SDK phone-mic mute policy failed", error)
+    }
+  }
+
   private fun feedOutgoingPcm(pcm: ByteArray, sampleRate: Int, channels: Int) {
-    if (muted.get()) return
+    if (muted.get() || audioSource != "glasses") {
+      val now = System.currentTimeMillis()
+      if (now - lastGatedLogMs >= 1000) {
+        lastGatedLogMs = now
+        val why = if (muted.get()) "user muted" else "audioSource=$audioSource"
+        Log.i(TAG, "outgoing PCM gated bytes=${pcm.size} ($why)")
+      }
+      return
+    }
     val stream = audioOut ?: return
     if (!outgoingReady.get()) return
     val frames = pcmBridge?.ingest(pcm, sampleRate, channels) ?: return
+    val now = System.currentTimeMillis()
+    if (now - lastSentLogMs >= 1000) {
+      lastSentLogMs = now
+      Log.i(TAG, "outgoing PCM sent bytes=${pcm.size} rate=$sampleRate (glasses WHEP)")
+    }
     for (frame in frames) {
       try {
-        val buffer = com.azure.android.communication.calling.RawAudioBuffer()
-        buffer.data = ByteBuffer.wrap(frame)
+        val buffer = RawAudioBuffer()
+        val direct = ByteBuffer.allocateDirect(frame.size)
+        direct.put(frame)
+        direct.flip()
+        buffer.buffer = direct
         stream.sendRawAudioBuffer(buffer)
       } catch (error: Exception) {
         Log.w(TAG, "sendRawAudioBuffer failed", error)
@@ -226,16 +281,18 @@ class AcsMeetingSession(
   companion object {
     private const val TAG = "ACS-SPIKE"
 
-    /** Raw outgoing audio is the wearer mic. Do not also capture the phone mic. */
-    private fun mutePhoneMicrophone(options: OutgoingAudioOptions) {
-      try {
-        val setter = options.javaClass.methods.firstOrNull { method ->
-          method.name.equals("setMuted", ignoreCase = true) && method.parameterTypes.size == 1
-        }
-        setter?.invoke(options, true)
-      } catch (error: Exception) {
-        Log.w(TAG, "could not mute phone microphone capture", error)
+    private fun formatAcsError(error: Throwable): String {
+      val parts = linkedSetOf<String>()
+      var current: Throwable? = error
+      var depth = 0
+      while (current != null && depth < 4) {
+        val message = current.message?.trim().orEmpty()
+        val piece = if (message.isNotEmpty()) "${current.javaClass.simpleName}: $message" else current.javaClass.simpleName
+        parts.add(piece)
+        current = current.cause
+        depth += 1
       }
+      return parts.joinToString(" | ").ifBlank { "ACS join failed" }
     }
   }
 }

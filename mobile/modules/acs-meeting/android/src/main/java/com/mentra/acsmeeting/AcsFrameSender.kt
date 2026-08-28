@@ -50,8 +50,8 @@ class AcsFrameSender {
     val out = stream.get() ?: return
     if (!running.get()) return
     val negotiated = format.get() ?: return
-    val fps = negotiated.framesPerSecond.takeIf { it > 0 } ?: 15.0
-    val minIntervalNs = (1_000_000_000.0 / fps).toLong()
+    val fps = negotiated.framesPerSecond.let { if (it > 0f) it else 15f }
+    val minIntervalNs = (1_000_000_000.0 / fps.toDouble()).toLong()
     val now = System.nanoTime()
     if (lastSentNs != 0L && now - lastSentNs < minIntervalNs) return
     lastSentNs = now
@@ -107,7 +107,7 @@ class AcsFrameSender {
   companion object {
     private const val TAG = "ACS-SPIKE"
 
-    fun rgbaFormat(width: Int = 1280, height: Int = 720, fps: Double = 15.0): VideoStreamFormat {
+    fun rgbaFormat(width: Int = 1280, height: Int = 720, fps: Float = 15f): VideoStreamFormat {
       val format = VideoStreamFormat()
       format.pixelFormat = VideoStreamPixelFormat.RGBA
       format.width = width
