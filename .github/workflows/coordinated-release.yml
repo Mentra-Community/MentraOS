@@ -423,6 +423,8 @@ jobs:
                   -f head="$candidate_branch" \
                   -f title="chore(release): synchronize examples to $identity" \
                   -f body="$pr_body" 2>pr-create-error.log); then
+                  pr_url=$(jq -r .html_url <<< "$pr_response")
+                  pr_head=$(jq -r .head.sha <<< "$pr_response")
                   break
                 fi
                 reconciled_pr=$(gh pr list --repo "$STARTER_KIT_REPOSITORY" --state all \
@@ -445,10 +447,6 @@ jobs:
                 fi
                 sleep 5
               done
-              if [[ -n "$pr_response" ]]; then
-                pr_url=$(jq -r .html_url <<< "$pr_response")
-                pr_head=$(jq -r .head.sha <<< "$pr_response")
-              fi
             else
               pr_url=$(jq -r '.[0].url' <<< "$pr_json")
               pr_head=$(jq -r '.[0].headRefOid' <<< "$pr_json")
