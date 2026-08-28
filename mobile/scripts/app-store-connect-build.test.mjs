@@ -4,6 +4,7 @@ import test from "node:test"
 import {
   assignBuildToGroup,
   collectPaginatedData,
+  findApp,
   findProcessedBuild,
   productionSubmissionStatus,
   setBetaBuildWhatsNew,
@@ -24,6 +25,21 @@ function client(responses) {
     },
   }
 }
+
+test("resolves an App Store app by its authoritative numeric ID", async () => {
+  const api = client([{data: {id: "6792839366", attributes: {bundleId: "com.mentra.example"}}}])
+  const app = await findApp(api, "com.mentra.example", "6792839366")
+  assert.equal(app.id, "6792839366")
+  assert.equal(api.calls[0].resource, "/v1/apps/6792839366")
+})
+
+test("rejects an App Store app whose numeric ID belongs to another bundle", async () => {
+  const api = client([{data: {id: "6792839366", attributes: {bundleId: "com.mentra.other"}}}])
+  await assert.rejects(
+    () => findApp(api, "com.mentra.example", "6792839366"),
+    /has bundle ID com\.mentra\.other, expected com\.mentra\.example/,
+  )
+})
 
 test("waits for an uploaded build to finish processing", async () => {
   const api = client([

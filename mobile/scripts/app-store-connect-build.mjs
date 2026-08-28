@@ -73,7 +73,19 @@ export async function collectPaginatedData(client, resource) {
   return data
 }
 
-export async function findApp(client, bundleId) {
+export async function findApp(client, bundleId, appId) {
+  if (appId) {
+    const response = await client.request(`/v1/apps/${encodeURIComponent(appId)}`)
+    const app = response?.data
+    if (!app || Array.isArray(app)) throw new Error(`App Store Connect returned no app ${appId}`)
+    const actualBundleId = app.attributes?.bundleId
+    if (actualBundleId !== bundleId) {
+      throw new Error(
+        `App Store Connect app ${appId} has bundle ID ${actualBundleId || "<missing>"}, expected ${bundleId}`,
+      )
+    }
+    return app
+  }
   return exactlyOne(
     await client.request(query("/v1/apps", {"filter[bundleId]": bundleId, "limit": "2"})),
     `app ${bundleId}`,
@@ -267,7 +279,7 @@ async function main() {
     keyId: args["key-id"],
     privateKey: readFileSync(path.resolve(args["key-path"]), "utf8"),
   })
-  const app = await findApp(client, args["bundle-id"])
+  const app = await findApp(client, args["bundle-id"], args["app-id"])
   if (command === "lookup") {
     const build = await findBuild(client, {
       appId: app.id,
