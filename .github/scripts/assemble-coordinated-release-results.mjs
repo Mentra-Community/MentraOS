@@ -46,7 +46,9 @@ function verifyAsgSelection(plan, ota, selectionFile) {
 }
 
 function verifyExampleTestflight(plan, starterKit, exampleTestflight) {
-  const expectedGroup = plan.channel === "dev" ? "Mentra Dev" : "Mentra Staging"
+  const expectedGroup = plan.channel === "dev" ? "Mentra Dev" : "Mentra Staging Public"
+  const expectedAudience = plan.channel === "dev" ? "internal" : "external"
+  const distribution = exampleTestflight?.distribution
   if (
     exampleTestflight?.schemaVersion !== 1 ||
     exampleTestflight.releaseSetId !== plan.releaseSetId ||
@@ -65,6 +67,9 @@ function verifyExampleTestflight(plan, starterKit, exampleTestflight) {
     exampleTestflight.group?.name !== expectedGroup ||
     typeof exampleTestflight.group?.id !== "string" ||
     exampleTestflight.group.id.length === 0 ||
+    distribution?.audience !== expectedAudience ||
+    !["available", "submitted", "skipped"].includes(distribution?.status) ||
+    !/^https:\/\//.test(distribution?.installUrl || "") ||
     !/^https:\/\//.test(exampleTestflight.provenanceUrl || "")
   ) {
     throw new Error("Example TestFlight result does not match the release plan and Starter Kit source")
@@ -76,6 +81,15 @@ function verifyExampleTestflight(plan, starterKit, exampleTestflight) {
       exampleTestflight.ipa.size < 1)
   ) {
     throw new Error("Example TestFlight IPA evidence is invalid")
+  }
+  if (plan.channel === "dev" && distribution.status !== "available") {
+    throw new Error("Internal example TestFlight distribution must be available")
+  }
+  if (expectedAudience === "external" && !/^https:\/\/testflight\.apple\.com\/join\//.test(distribution.installUrl)) {
+    throw new Error("External example TestFlight distribution must use a public invitation link")
+  }
+  if (distribution.status === "skipped" && !distribution.skipReason) {
+    throw new Error("Skipped example TestFlight distribution must identify its reason")
   }
   return exampleTestflight
 }

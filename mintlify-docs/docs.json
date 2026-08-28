@@ -6,7 +6,8 @@
     "release-version": "3.1.0",
     "release-artifacts-url": "https://github.com/Mentra-Community/MentraOS/releases/tag/mentra-v3.1.0",
     "example-app-version": "0.1.21-beta.5",
-    "example-app-url": "https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/releases/download/sdk-0.1.21-beta.5/mentra-example-react-native.apk"
+    "example-app-url": "https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/releases/download/sdk-0.1.21-beta.5/mentra-example-react-native.apk",
+    "example-app-ios-url": "https://appstoreconnect.apple.com/teams/52733bd2-726b-4742-b1e2-1cfc0174c696/apps/6792839366/testflight/groups/1b1daeae-9175-4020-9c1b-52fd6b14cc49"
   },
   "banner": {
     "content": "**Beta.** The Mentra Miniapp SDK and these docs are subject to change. Open **Settings → Miniapp Developer Settings** in the Mentra App to access the developer tools. Send feedback with an in-app bug report, on [Discord](https://discord.gg/5ukNvkEAqT), or by [email](mailto:help@mentra.glass).",

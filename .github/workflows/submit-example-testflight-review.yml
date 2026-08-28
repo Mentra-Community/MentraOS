@@ -1,0 +1,136 @@
+name: Submit Example TestFlight Review
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Public TestFlight channel receiving the replacement build
+        required: true
+        type: choice
+        options:
+          - beta
+          - production
+      marketing_version:
+        description: Exact App Store Connect marketing version, such as 3.1.0
+        required: true
+        type: string
+      build_number:
+        description: Exact processed App Store Connect build number
+        required: true
+        type: string
+      review_notes:
+        description: Optional notes explaining how the review feedback was addressed
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mentra-example-testflight-review
+  cancel-in-progress: false
+
+env:
+  EXAMPLE_APP_ID: "6792839366"
+  EXAMPLE_BUNDLE_ID: com.mentra.bluetoothsdkexample
+
+jobs:
+  submit:
+    name: Submit exact example build for external review
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Select the public TestFlight group
+        id: channel
+        env:
+          CHANNEL: ${{ inputs.channel }}
+        run: |
+          set -euo pipefail
+          case "$CHANNEL" in
+            beta) group="Mentra Staging Public" ;;
+            production) group="Mentra Production Public" ;;
+            *) echo "Unsupported TestFlight channel $CHANNEL" >&2; exit 1 ;;
+          esac
+          echo "group=$group" >> "$GITHUB_OUTPUT"
+
+      - name: Inject App Store Connect API credential
+        uses: ./.github/actions/inject-signing
+        with:
+          ios: "true"
+          asc-api-key-p8-b64: ${{ secrets.ASC_API_KEY_P8_B64 }}
+          asc-api-key-id: ${{ secrets.ASC_API_KEY_ID }}
+          asc-api-issuer-id: ${{ secrets.ASC_API_ISSUER_ID }}
+
+      - name: Resolve App Store Connect credential path
+        id: asc
+        run: |
+          set -euo pipefail
+          key_path=$(sed -n 's/^ASC_API_KEY_PATH=//p' "$MENTRA_ASC_CONFIG_PATH")
+          test -f "$key_path"
+          echo "key_path=$key_path" >> "$GITHUB_OUTPUT"
+
+      - name: Verify the review lane can accept a replacement
+        id: preflight
+        run: >-
+          node mobile/scripts/app-store-connect-build.mjs testflight-preflight
+          --issuer-id "${{ secrets.ASC_API_ISSUER_ID }}"
+          --key-id "${{ secrets.ASC_API_KEY_ID }}"
+          --key-path "${{ steps.asc.outputs.key_path }}"
+          --app-id "$EXAMPLE_APP_ID"
+          --bundle-id "$EXAMPLE_BUNDLE_ID"
+          --group-name "${{ steps.channel.outputs.group }}"
+          --audience external
+          --install-url ""
+          --allow-rejected-override true
+
+      - name: Refuse to replace a review that is still active
+        if: steps.preflight.outputs.skip == 'true'
+        env:
+          REASON: ${{ steps.preflight.outputs.skip_reason }}
+          DETAIL: ${{ steps.preflight.outputs.skip_detail }}
+        run: |
+          echo "TestFlight review submission remains blocked: $REASON ($DETAIL)" >&2
+          exit 1
+
+      - name: Assign and submit the exact processed build
+        id: assignment
+        env:
+          MARKETING_VERSION: ${{ inputs.marketing_version }}
+          BUILD_NUMBER: ${{ inputs.build_number }}
+          REVIEW_NOTES: ${{ inputs.review_notes }}
+        run: >-
+          node mobile/scripts/app-store-connect-build.mjs assign
+          --issuer-id "${{ secrets.ASC_API_ISSUER_ID }}"
+          --key-id "${{ secrets.ASC_API_KEY_ID }}"
+          --key-path "${{ steps.asc.outputs.key_path }}"
+          --app-id "$EXAMPLE_APP_ID"
+          --bundle-id "$EXAMPLE_BUNDLE_ID"
+          --marketing-version "$MARKETING_VERSION"
+          --build-number "$BUILD_NUMBER"
+          --group-name "${{ steps.channel.outputs.group }}"
+          --audience external
+          --install-url "${{ steps.preflight.outputs.install_url }}"
+          --allow-rejected-override true
+          --review-notes "$REVIEW_NOTES"
+          --whats-new "Replacement example build $MARKETING_VERSION ($BUILD_NUMBER)."
+
+      - name: Summarize the submitted replacement
+        env:
+          MARKETING_VERSION: ${{ inputs.marketing_version }}
+          BUILD_NUMBER: ${{ inputs.build_number }}
+        run: |
+          {
+            echo "## Example TestFlight review submission"
+            echo
+            echo "- Build: \`$MARKETING_VERSION ($BUILD_NUMBER)\`"
+            echo "- Group: \`${{ steps.assignment.outputs.group_name }}\`"
+            echo "- Review state: \`${{ steps.assignment.outputs.review_state }}\`"
+            echo "- Public install link: ${{ steps.assignment.outputs.install_url }}"
+          } >> "$GITHUB_STEP_SUMMARY"

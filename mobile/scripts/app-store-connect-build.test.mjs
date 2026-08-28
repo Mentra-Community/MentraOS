@@ -6,10 +6,14 @@ import {
   assignBuildToGroup,
   collectPaginatedData,
   createAppStoreConnectClient,
+  ensurePublicBetaGroup,
   findApp,
   findProcessedBuild,
+  prepareTestflightDistribution,
+  promoteApprovedBuildToPublicGroup,
   productionSubmissionStatus,
   setBetaBuildWhatsNew,
+  submitBuildForBetaReview,
   uploadExactBuild,
   waitForProductionSubmission,
   waitForProcessedBuild,
@@ -346,12 +350,17 @@ test("surfaces exact build upload validation failures", async () => {
 
 test("idempotently adds a build to exactly one TestFlight group", async () => {
   const api = client([
-    {data: [{id: "group-1", attributes: {name: "Mentra Staging"}}]},
+    {data: [{id: "group-1", attributes: {name: "Mentra Staging Public", isInternalGroup: false}}]},
     {data: []},
     null,
     {data: [{type: "builds", id: "build-1"}]},
   ])
-  const result = await assignBuildToGroup(api, {appId: "app-1", buildId: "build-1", groupName: "Mentra Staging"})
+  const result = await assignBuildToGroup(api, {
+    appId: "app-1",
+    buildId: "build-1",
+    groupName: "Mentra Staging Public",
+    expectedInternal: false,
+  })
   assert.equal(result.reused, false)
   assert.equal(api.calls[2].options.method, "POST")
   assert.deepEqual(JSON.parse(api.calls[2].options.body), {data: [{type: "builds", id: "build-1"}]})
@@ -359,12 +368,258 @@ test("idempotently adds a build to exactly one TestFlight group", async () => {
 
 test("does not post when the group already contains the build", async () => {
   const api = client([
-    {data: [{id: "group-1", attributes: {name: "Mentra Dev"}}]},
+    {data: [{id: "group-1", attributes: {name: "Mentra Dev", isInternalGroup: true}}]},
     {data: [{type: "builds", id: "build-1"}]},
   ])
-  const result = await assignBuildToGroup(api, {appId: "app-1", buildId: "build-1", groupName: "Mentra Dev"})
+  const result = await assignBuildToGroup(api, {
+    appId: "app-1",
+    buildId: "build-1",
+    groupName: "Mentra Dev",
+    expectedInternal: true,
+  })
   assert.equal(result.reused, true)
   assert.equal(api.calls.length, 2)
+})
+
+test("creates an external TestFlight group with a public invitation link", async () => {
+  const api = client([
+    {data: []},
+    {
+      data: {
+        id: "group-public",
+        attributes: {
+          name: "Mentra Staging Public",
+          isInternalGroup: false,
+          publicLinkEnabled: true,
+          publicLink: "https://testflight.apple.com/join/public123",
+        },
+      },
+    },
+  ])
+  const group = await ensurePublicBetaGroup(api, {appId: "app-1", groupName: "Mentra Staging Public"})
+  assert.equal(group.id, "group-public")
+  assert.equal(api.calls[1].options.method, "POST")
+  assert.equal(JSON.parse(api.calls[1].options.body).data.relationships.app.data.id, "app-1")
+})
+
+test("refreshes a public group after enabling its invitation link", async () => {
+  const api = client([
+    {
+      data: [
+        {
+          id: "group-public",
+          attributes: {name: "Mentra Staging Public", isInternalGroup: false, publicLinkEnabled: false},
+        },
+      ],
+    },
+    {data: {id: "group-public", attributes: {publicLinkEnabled: true}}},
+    {
+      data: {
+        id: "group-public",
+        attributes: {
+          name: "Mentra Staging Public",
+          isInternalGroup: false,
+          publicLinkEnabled: true,
+          publicLink: "https://testflight.apple.com/join/public123",
+        },
+      },
+    },
+  ])
+  const group = await ensurePublicBetaGroup(api, {appId: "app-1", groupName: "Mentra Staging Public"})
+  assert.equal(group.attributes.publicLink, "https://testflight.apple.com/join/public123")
+  assert.equal(api.calls[1].options.method, "PATCH")
+  assert.equal(api.calls[2].resource, "/v1/betaGroups/group-public")
+})
+
+test("skips a following external build while beta review is pending", async () => {
+  const api = client([
+    {
+      data: [
+        {
+          id: "group-public",
+          attributes: {
+            name: "Mentra Staging Public",
+            isInternalGroup: false,
+            publicLinkEnabled: true,
+            publicLink: "https://testflight.apple.com/join/public123",
+          },
+        },
+      ],
+    },
+    {
+      data: {
+        id: "review-detail",
+        attributes: {
+          contactFirstName: "Test",
+          contactLastName: "Owner",
+          contactPhone: "5555555555",
+          contactEmail: "test@example.com",
+          demoAccountRequired: false,
+        },
+      },
+    },
+    {
+      data: [
+        {id: "localization", attributes: {locale: "en-US", description: "Example", feedbackEmail: "test@example.com"}},
+      ],
+    },
+    {
+      data: [
+        {
+          type: "builds",
+          id: "build-pending",
+          relationships: {betaAppReviewSubmission: {data: {type: "betaAppReviewSubmissions", id: "review-pending"}}},
+        },
+      ],
+      included: [
+        {
+          type: "betaAppReviewSubmissions",
+          id: "review-pending",
+          attributes: {betaReviewState: "WAITING_FOR_REVIEW"},
+        },
+      ],
+    },
+  ])
+  const result = await prepareTestflightDistribution(api, {
+    appId: "app-1",
+    groupName: "Mentra Staging Public",
+    audience: "external",
+  })
+  assert.equal(result.skip, true)
+  assert.equal(result.skipReason, "external_review_waiting_for_review")
+  assert.equal(result.reviewBuildId, "build-pending")
+})
+
+test("uses the resolved internal group ID in the App Store Connect install URL", async () => {
+  const api = client([{data: [{id: "group-dev", attributes: {name: "Mentra Dev", isInternalGroup: true}}]}])
+  const result = await prepareTestflightDistribution(api, {
+    appId: "app-1",
+    groupName: "Mentra Dev",
+    audience: "internal",
+    internalInstallUrl: "https://appstoreconnect.apple.com/apps/app-1/testflight/groups/{groupId}",
+  })
+  assert.equal(result.installUrl, "https://appstoreconnect.apple.com/apps/app-1/testflight/groups/group-dev")
+})
+
+test("manual review override replaces a rejected external build", async () => {
+  const api = client([
+    {
+      data: [
+        {
+          id: "group-public",
+          attributes: {
+            name: "Mentra Staging Public",
+            isInternalGroup: false,
+            publicLinkEnabled: true,
+            publicLink: "https://testflight.apple.com/join/public123",
+          },
+        },
+      ],
+    },
+    {
+      data: {
+        id: "review-detail",
+        attributes: {
+          contactFirstName: "Test",
+          contactLastName: "Owner",
+          contactPhone: "5555555555",
+          contactEmail: "test@example.com",
+          demoAccountRequired: false,
+        },
+      },
+    },
+    {
+      data: [
+        {id: "localization", attributes: {locale: "en-US", description: "Example", feedbackEmail: "test@example.com"}},
+      ],
+    },
+    {
+      data: [
+        {
+          type: "builds",
+          id: "build-rejected",
+          relationships: {betaAppReviewSubmission: {data: {type: "betaAppReviewSubmissions", id: "review-rejected"}}},
+        },
+      ],
+      included: [
+        {
+          type: "betaAppReviewSubmissions",
+          id: "review-rejected",
+          attributes: {betaReviewState: "REJECTED"},
+        },
+      ],
+    },
+  ])
+  const result = await prepareTestflightDistribution(api, {
+    appId: "app-1",
+    groupName: "Mentra Staging Public",
+    audience: "external",
+    allowRejectedOverride: true,
+  })
+  assert.equal(result.skip, false)
+  assert.equal(result.overriddenReviewState, "REJECTED")
+})
+
+test("submits one exact build for beta app review", async () => {
+  const api = client([
+    {data: []},
+    {data: {type: "betaAppReviewSubmissions", id: "review-1", attributes: {betaReviewState: "WAITING_FOR_REVIEW"}}},
+  ])
+  const result = await submitBuildForBetaReview(api, {buildId: "build-1"})
+  assert.equal(result.reused, false)
+  assert.equal(result.submission.id, "review-1")
+  assert.equal(JSON.parse(api.calls[1].options.body).data.relationships.build.data.id, "build-1")
+})
+
+test("promotes only an approved build to a public production group", async () => {
+  const api = client([
+    {data: [{id: "review-1", attributes: {betaReviewState: "APPROVED"}}]},
+    {
+      data: [
+        {
+          id: "group-production",
+          attributes: {
+            name: "Mentra Production Public",
+            isInternalGroup: false,
+            publicLinkEnabled: true,
+            publicLink: "https://testflight.apple.com/join/production123",
+          },
+        },
+      ],
+    },
+    {
+      data: [
+        {
+          id: "group-production",
+          attributes: {name: "Mentra Production Public", isInternalGroup: false},
+        },
+      ],
+    },
+    {data: []},
+    null,
+    {data: [{type: "builds", id: "build-1"}]},
+  ])
+  const result = await promoteApprovedBuildToPublicGroup(api, {
+    appId: "app-1",
+    buildId: "build-1",
+    groupName: "Mentra Production Public",
+  })
+  assert.equal(result.submission.attributes.betaReviewState, "APPROVED")
+  assert.equal(result.group.attributes.publicLink, "https://testflight.apple.com/join/production123")
+})
+
+test("refuses to promote an unapproved build to a public production group", async () => {
+  const api = client([{data: [{id: "review-1", attributes: {betaReviewState: "IN_REVIEW"}}]}])
+  await assert.rejects(
+    () =>
+      promoteApprovedBuildToPublicGroup(api, {
+        appId: "app-1",
+        buildId: "build-1",
+        groupName: "Mentra Production Public",
+      }),
+    /not approved for external testing \(IN_REVIEW\)/,
+  )
+  assert.equal(api.calls.length, 1)
 })
 
 test("creates TestFlight release notes for the exact processed build", async () => {

@@ -241,9 +241,131 @@ jobs:
       deployment_environment: prod
     secrets: inherit
 
+  example-testflight:
+    name: Promote approved example build to public TestFlight
+    needs: [plan, approve]
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    outputs:
+      result_artifact: ${{ steps.record.outputs.result_artifact }}
+      install_url: ${{ steps.promotion.outputs.install_url }}
+    env:
+      EXAMPLE_APP_ID: "6792839366"
+      EXAMPLE_BUNDLE_ID: com.mentra.bluetoothsdkexample
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.source_commit }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.plan.outputs.plan_artifact }}
+          path: release-input/plan
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Resolve the exact approved beta build
+        id: coordinates
+        run: |
+          set -euo pipefail
+          plan=release-input/plan/release-plan.json
+          beta=release-input/plan/selected-beta-manifest.json
+          [[ "$(jq -er .channel "$plan")" == "production" ]]
+          [[ "$(jq -er .promotion.selectedBetaReleaseSetId "$plan")" == "$(jq -er .releaseSetId "$beta")" ]]
+          [[ "$(jq -er .promotion.selectedBetaIdentity "$plan")" == "$(jq -er .releaseIdentity "$beta")" ]]
+          [[ "$(jq -er .starterKit.testflight.app.id "$beta")" == "$EXAMPLE_APP_ID" ]]
+          [[ "$(jq -er .starterKit.testflight.app.bundleId "$beta")" == "$EXAMPLE_BUNDLE_ID" ]]
+          [[ "$(jq -er .starterKit.testflight.version.marketingVersion "$beta")" == "$(jq -er .native.marketingVersion "$plan")" ]]
+          [[ "$(jq -er .starterKit.testflight.version.buildNumber "$beta")" == "$(jq -er .native.buildNumber "$plan")" ]]
+          {
+            echo "marketing_version=$(jq -er .native.marketingVersion "$plan")"
+            echo "build_number=$(jq -er .native.buildNumber "$plan")"
+            echo "build_id=$(jq -er .starterKit.testflight.build.id "$beta")"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Inject App Store Connect API credential
+        uses: ./.github/actions/inject-signing
+        with:
+          ios: "true"
+          asc-api-key-p8-b64: ${{ secrets.ASC_API_KEY_P8_B64 }}
+          asc-api-key-id: ${{ secrets.ASC_API_KEY_ID }}
+          asc-api-issuer-id: ${{ secrets.ASC_API_ISSUER_ID }}
+
+      - name: Resolve App Store Connect credential path
+        id: asc
+        run: |
+          set -euo pipefail
+          key_path=$(sed -n 's/^ASC_API_KEY_PATH=//p' "$MENTRA_ASC_CONFIG_PATH")
+          test -f "$key_path"
+          echo "key_path=$key_path" >> "$GITHUB_OUTPUT"
+
+      - name: Promote the approved build to the production public group
+        id: promotion
+        run: >-
+          node mobile/scripts/app-store-connect-build.mjs promote-approved
+          --issuer-id "${{ secrets.ASC_API_ISSUER_ID }}"
+          --key-id "${{ secrets.ASC_API_KEY_ID }}"
+          --key-path "${{ steps.asc.outputs.key_path }}"
+          --app-id "$EXAMPLE_APP_ID"
+          --bundle-id "$EXAMPLE_BUNDLE_ID"
+          --marketing-version "${{ steps.coordinates.outputs.marketing_version }}"
+          --build-number "${{ steps.coordinates.outputs.build_number }}"
+          --build-id "${{ steps.coordinates.outputs.build_id }}"
+          --group-name "Mentra Production Public"
+
+      - name: Require production docs to use the verified public link
+        env:
+          VERIFIED_INSTALL_URL: ${{ steps.promotion.outputs.install_url }}
+        run: |
+          set -euo pipefail
+          configured=$(jq -er '.variables["example-app-ios-url"]' mintlify-docs/docs.json)
+          if [[ "$configured" != "$VERIFIED_INSTALL_URL" ]]; then
+            echo "Production docs must set example-app-ios-url to $VERIFIED_INSTALL_URL" >&2
+            exit 1
+          fi
+
+      - name: Record exact public TestFlight promotion
+        id: record
+        run: |
+          set -euo pipefail
+          release_set_id=$(jq -er .releaseSetId release-input/plan/release-plan.json)
+          result_artifact="coordinated-example-testflight-$release_set_id"
+          mkdir -p release-output
+          node .github/scripts/coordinated-example-testflight-promotion-record.mjs \
+            --plan release-input/plan/release-plan.json \
+            --beta-manifest release-input/plan/selected-beta-manifest.json \
+            --app-id "$EXAMPLE_APP_ID" \
+            --bundle-id "$EXAMPLE_BUNDLE_ID" \
+            --build-id "${{ steps.promotion.outputs.build_id }}" \
+            --group-id "${{ steps.promotion.outputs.group_id }}" \
+            --group-name "${{ steps.promotion.outputs.group_name }}" \
+            --install-url "${{ steps.promotion.outputs.install_url }}" \
+            --provenance-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --output release-output/example-testflight-publication.json
+          echo "result_artifact=$result_artifact" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.record.outputs.result_artifact }}
+          path: release-output
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Summarize production example TestFlight promotion
+        run: |
+          {
+            echo "## Production example TestFlight"
+            echo
+            echo "- Build: \`${{ steps.coordinates.outputs.marketing_version }} (${{ steps.coordinates.outputs.build_number }})\`"
+            echo "- Review: \`APPROVED\`"
+            echo "- Public install link: ${{ steps.promotion.outputs.install_url }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   finalize:
     name: Finalize stable release and public package pointers
-    needs: [plan, approve, npm, sdk-native, mobile, engine-consumer, cloud-v2]
+    needs: [plan, approve, npm, sdk-native, mobile, engine-consumer, cloud-v2, example-testflight]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -281,6 +403,11 @@ jobs:
           name: ${{ needs.mobile.outputs.result_artifact }}
           path: release-input/promotion
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.example-testflight.outputs.result_artifact }}
+          path: release-input/example-testflight
+
       - name: Assemble stable publication evidence
         id: release
         run: |
@@ -296,6 +423,7 @@ jobs:
             --npm release-input/npm/npm-publications.json \
             --native release-input/sdk-native/sdk-native-publications.json \
             --promotion release-input/promotion/production-promotion-records.json \
+            --example-testflight release-input/example-testflight/example-testflight-publication.json \
             --cloud release-input/cloud-v2/cloud-v2-deployment.json \
             --engine-package "$engine_package" \
             --asset-base-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/$tag" \
