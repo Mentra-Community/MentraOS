@@ -7,6 +7,11 @@ import {
   Text,
   View,
 } from "react-native";
+import {
+  useMarkdown,
+  type MarkedStyles,
+  type useMarkdownHookOptions,
+} from "react-native-marked";
 import { SafeAreaView } from "react-native-safe-area-context";
 import Svg, { Circle, Line, Path, Polyline } from "react-native-svg";
 import {
@@ -20,6 +25,7 @@ import {
   otaPresentation,
   type CustomOtaAction,
   type CustomOtaButton,
+  type CustomOtaChangelog,
 } from "./otaPresentation";
 
 export type CustomMentraLiveOtaFlowProps = {
@@ -55,6 +61,7 @@ export function CustomMentraLiveOtaFlow({
     [controller.state, deviceName],
   );
   const palette = toneColors[presentation.tone];
+  const hasChangelogs = (presentation.changelogs?.length ?? 0) > 0;
 
   const runAction = (action: CustomOtaAction) => {
     controller[action]();
@@ -65,7 +72,10 @@ export function CustomMentraLiveOtaFlow({
       <Header title="Software Update" />
       <View style={styles.page} testID="custom-mentra-live-ota-flow">
         <ScrollView
-          contentContainerStyle={styles.centerContent}
+          contentContainerStyle={[
+            styles.centerContent,
+            hasChangelogs && styles.topContent,
+          ]}
           showsVerticalScrollIndicator={false}
           style={styles.contentScroll}
         >
@@ -114,16 +124,7 @@ export function CustomMentraLiveOtaFlow({
             <Text style={styles.detail}>{presentation.detail}</Text>
           ) : null}
 
-          {presentation.changelogs?.map((entry) => (
-            <View key={entry.version} style={styles.changelogEntry}>
-              <Text selectable style={styles.changelogVersion}>
-                {entry.version}
-              </Text>
-              <Text selectable style={styles.changelogBody}>
-                {entry.markdown}
-              </Text>
-            </View>
-          ))}
+          <ChangelogList changelogs={presentation.changelogs} />
         </ScrollView>
 
         {presentation.primary || presentation.secondary ? (
@@ -147,6 +148,162 @@ export function CustomMentraLiveOtaFlow({
         )}
       </View>
     </SafeAreaView>
+  );
+}
+
+function ChangelogMarkdown({ markdown }: { markdown: string }) {
+  const markdownStyles = useMemo<MarkedStyles>(
+    () => ({
+      blockquote: {
+        borderLeftColor: colors.greenPrimary,
+        borderLeftWidth: 3,
+        marginVertical: 2,
+        opacity: 1,
+        paddingLeft: 12,
+      },
+      code: {
+        backgroundColor: colors.bg,
+        borderColor: colors.hairline,
+        borderRadius: 8,
+        borderWidth: 1,
+        padding: 12,
+      },
+      codespan: {
+        backgroundColor: colors.hairline,
+        color: colors.ink,
+        fontFamily: "monospace",
+        fontSize: 13,
+        fontStyle: "normal",
+        fontWeight: "400",
+      },
+      em: { color: colors.muted, fontSize: 14, lineHeight: 20 },
+      h1: {
+        borderBottomWidth: 0,
+        color: colors.ink,
+        fontSize: 18,
+        fontWeight: "700",
+        lineHeight: 24,
+        marginVertical: 0,
+        paddingBottom: 0,
+      },
+      h2: {
+        borderBottomWidth: 0,
+        color: colors.ink,
+        fontSize: 17,
+        fontWeight: "700",
+        lineHeight: 23,
+        marginVertical: 0,
+        paddingBottom: 0,
+      },
+      h3: {
+        color: colors.ink,
+        fontSize: 16,
+        fontWeight: "700",
+        lineHeight: 22,
+        marginVertical: 0,
+      },
+      h4: {
+        color: colors.ink,
+        fontSize: 15,
+        fontWeight: "700",
+        lineHeight: 21,
+        marginVertical: 0,
+      },
+      h5: {
+        color: colors.ink,
+        fontSize: 14,
+        fontWeight: "700",
+        lineHeight: 20,
+        marginVertical: 0,
+      },
+      h6: {
+        color: colors.muted,
+        fontSize: 14,
+        fontWeight: "600",
+        lineHeight: 20,
+        marginVertical: 0,
+      },
+      hr: { borderBottomColor: colors.hairline, marginVertical: 2 },
+      image: { borderRadius: 8 },
+      li: { color: colors.muted, fontSize: 14, lineHeight: 20 },
+      link: {
+        color: colors.greenPrimary,
+        fontSize: 14,
+        fontStyle: "normal",
+        lineHeight: 20,
+        textDecorationLine: "underline",
+      },
+      paragraph: { paddingVertical: 0 },
+      strikethrough: { color: colors.muted, fontSize: 14, lineHeight: 20 },
+      strong: {
+        color: colors.ink,
+        fontSize: 14,
+        fontWeight: "700",
+        lineHeight: 20,
+      },
+      table: { borderColor: colors.hairline, borderRadius: 8 },
+      tableCell: { padding: 8 },
+      text: { color: colors.muted, fontSize: 14, lineHeight: 20 },
+    }),
+    [],
+  );
+  const markdownTheme = useMemo<NonNullable<useMarkdownHookOptions["theme"]>>(
+    () => ({
+      colors: {
+        background: colors.bg,
+        border: colors.hairline,
+        code: colors.hairline,
+        link: colors.greenPrimary,
+        text: colors.muted,
+      },
+    }),
+    [],
+  );
+  const elements = useMarkdown(markdown, {
+    colorScheme: "light",
+    styles: markdownStyles,
+    theme: markdownTheme,
+  });
+
+  return (
+    <View
+      style={styles.changelogMarkdownContent}
+      testID="custom-ota-changelog-markdown"
+    >
+      {elements}
+    </View>
+  );
+}
+
+function ChangelogList({ changelogs }: { changelogs?: CustomOtaChangelog[] }) {
+  if (!changelogs?.length) return null;
+
+  return (
+    <View style={styles.changelogCard} testID="custom-ota-changelog-card">
+      <Text style={styles.changelogTitle}>What&apos;s new</Text>
+      <ScrollView
+        contentContainerStyle={styles.changelogContent}
+        nestedScrollEnabled
+        showsVerticalScrollIndicator
+        style={styles.changelogList}
+        testID="custom-ota-changelog-scroll"
+      >
+        {changelogs.map((entry, index) => (
+          <View
+            key={entry.version}
+            style={[
+              styles.changelogEntry,
+              index > 0 && styles.changelogEntryDivider,
+            ]}
+          >
+            <Text selectable style={styles.changelogVersion}>
+              {entry.version}
+            </Text>
+            <ChangelogMarkdown markdown={entry.markdown} />
+          </View>
+        ))}
+      </ScrollView>
+    </View>
   );
 }
 
@@ -236,6 +393,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingVertical: 24,
   },
+  topContent: { justifyContent: "flex-start", paddingTop: 12 },
   iconTile: {
     alignItems: "center",
     borderRadius: 18,
@@ -299,21 +457,32 @@ const styles = StyleSheet.create({
     maxWidth: 420,
     textAlign: "center",
   },
-  changelogEntry: {
-    gap: 8,
+  changelogCard: {
+    borderColor: colors.hairline,
+    borderRadius: 16,
+    borderWidth: 1,
+    flexShrink: 1,
+    gap: 12,
+    maxHeight: 300,
     maxWidth: 420,
+    padding: 16,
     width: "100%",
+  },
+  changelogTitle: { color: colors.ink, fontSize: 16, fontWeight: "700" },
+  changelogList: { flexShrink: 1, maxHeight: 232, width: "100%" },
+  changelogContent: { gap: 20, paddingBottom: 2 },
+  changelogEntry: { gap: 8 },
+  changelogEntryDivider: {
+    borderTopColor: colors.hairline,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingTop: 20,
   },
   changelogVersion: {
     color: colors.ink,
-    fontSize: 16,
-    fontWeight: "700",
-  },
-  changelogBody: {
-    color: colors.muted,
     fontSize: 14,
-    lineHeight: 20,
+    fontWeight: "600",
   },
+  changelogMarkdownContent: { gap: 10 },
   actions: { gap: 10 },
   actionSpacer: { height: 48 },
   button: {
