@@ -10,6 +10,7 @@ const baseState: MentraLiveOtaState = {
   canInstall: false,
   canOpenWifiSetup: false,
   canRetry: false,
+  completedUpdate: false,
   connected: true,
   continueDisabled: false,
   currentStep: null,
@@ -40,6 +41,16 @@ function otaState(overrides: Partial<MentraLiveOtaState>): MentraLiveOtaState {
 }
 
 describe('custom OTA presentation', () => {
+  test('matches the Mentra App checking page copy', () => {
+    const presentation = otaPresentation(otaState({screen: 'checking'}));
+
+    expect(presentation).toMatchObject({
+      indeterminate: true,
+      message: 'Connected devices will perform automatic updates. Automatic updates can be disabled in Device Settings',
+      title: 'Checking for updates',
+    });
+  });
+
   test('routes a hotspot update through the controller install action', () => {
     const presentation = otaPresentation(otaState({
       canDismiss: true,
@@ -52,10 +63,16 @@ describe('custom OTA presentation', () => {
     expect(presentation.primary).toEqual({
       action: 'install',
       disabled: false,
-      label: 'Update now',
+      label: 'Update Now',
     });
     expect(presentation.secondary).toEqual({action: 'finish', label: 'Later'});
-    expect(presentation.detail).toContain('glasses hotspot');
+    expect(presentation.title).toBe('Mentra Live Update Available');
+    expect(presentation.message).toBe(
+      'A new update is available for your glasses. We recommend updating now for the best experience.',
+    );
+    expect(presentation.detail).toBe(
+      'Your glasses may install more than one update and restart several times. Keep them nearby until finished.',
+    );
   });
 
   test('shows the current and target coordinated releases before installation', () => {
@@ -96,8 +113,13 @@ describe('custom OTA presentation', () => {
 
     expect(presentation.primary).toEqual({
       action: 'openWifiSetup',
-      label: 'Set up Wi-Fi',
+      disabled: false,
+      label: 'Setup WiFi',
     });
+    expect(presentation.title).toBe('WiFi Needed for Update');
+    expect(presentation.message).toBe(
+      'Connect your Mentra Live to WiFi to install the update.',
+    );
   });
 
   test('shows phone artifact progress without implementing transport logic', () => {
@@ -108,12 +130,14 @@ describe('custom OTA presentation', () => {
       transport: 'hotspot',
     }));
 
-    expect(presentation.title).toBe('Downloading update to phone');
+    expect(presentation.title).toBe('Downloading update to phone...');
     expect(presentation.progress).toBe(42);
+    expect(presentation.indeterminate).toBe(true);
+    expect(presentation.message).toBe('Do not disconnect your glasses');
     expect(presentation.primary).toBeUndefined();
   });
 
-  test('renders coordinator step and progress fields', () => {
+  test('does not expose coordinator implementation details in customer copy', () => {
     const presentation = otaPresentation(otaState({
       currentStep: 2,
       phase: 'install',
@@ -123,9 +147,21 @@ describe('custom OTA presentation', () => {
       totalSteps: 3,
     }));
 
-    expect(presentation.title).toBe('Installing system software');
-    expect(presentation.detail).toBe('Step 2 of 3: system software');
+    expect(presentation.title).toBe('Installing...');
+    expect(presentation.detail).toBeUndefined();
+    expect(presentation.message).toBe('Do not disconnect your glasses');
     expect(presentation.progress).toBe(68);
+  });
+
+  test('keeps update progress indeterminate until Engine reports a percentage', () => {
+    const presentation = otaPresentation(otaState({
+      phase: 'install',
+      progress: null,
+      screen: 'updating',
+    }));
+
+    expect(presentation.indeterminate).toBe(true);
+    expect(presentation.progress).toBeUndefined();
   });
 
   test('uses only retry and Wi-Fi controller actions after a recoverable failure', () => {
@@ -141,6 +177,17 @@ describe('custom OTA presentation', () => {
     expect(presentation.message).toBe('Download failed');
   });
 
+  test('does not expose Finish when Engine has no valid failure action', () => {
+    const presentation = otaPresentation(otaState({
+      canFinish: false,
+      canRetry: false,
+      error: {code: 'install_failed', message: 'Update unavailable'},
+      screen: 'failed',
+    }));
+
+    expect(presentation.primary).toBeUndefined();
+  });
+
   test('keeps a failed update check on the stock retry-only action', () => {
     const presentation = otaPresentation(otaState({
       canRetry: true,
@@ -148,19 +195,37 @@ describe('custom OTA presentation', () => {
       screen: 'check_failed',
     }));
 
-    expect(presentation.primary).toEqual({action: 'retryCheck', label: 'Try again'});
+    expect(presentation.primary).toEqual({action: 'retryCheck', label: 'Retry'});
     expect(presentation.secondary).toBeUndefined();
+    expect(presentation.message).toBe(
+      "Couldn't check for updates. Please check your connection and try again.",
+    );
   });
 
-  test('finishes only after Engine reports completion', () => {
+  test('keeps intermediate completion in the active finishing state', () => {
     const presentation = otaPresentation(otaState({
-      canFinish: true,
+      changelogs: [{version: '3.1.0', markdown: 'Release notes'}],
+      screen: 'finishing',
+    }));
+
+    expect(presentation).toMatchObject({
+      indeterminate: true,
+      title: 'Finishing your update',
+      tone: 'active',
+    });
+    expect(presentation.primary).toBeUndefined();
+    expect(presentation.changelogs).toBeUndefined();
+  });
+
+  test('finishes only after Engine reports the final up-to-date state', () => {
+    const presentation = otaPresentation(otaState({
       changelogs: [
         {version: '3.2.0', markdown: 'Newest notes'},
         {version: '3.1.0', markdown: 'Earlier notes'},
       ],
+      completedUpdate: true,
       releaseTransition: {fromVersion: '40', toVersion: '3.2.0'},
-      screen: 'complete',
+      screen: 'up_to_date',
     }));
 
     expect(presentation.primary).toEqual({action: 'finish', label: 'Done'});
@@ -169,6 +234,7 @@ describe('custom OTA presentation', () => {
       '3.1.0',
     ]);
     expect(presentation.tone).toBe('success');
+    expect(presentation.title).toBe('Update complete');
     expect(presentation.versionLabel).toBe('Updated to 3.2.0');
   });
 
@@ -184,6 +250,28 @@ describe('custom OTA presentation', () => {
     expect(presentation.primary).toEqual({
       action: 'finish',
       label: 'Continue',
+    });
+  });
+
+  test('shows completed-session copy without requiring a release label', () => {
+    const presentation = otaPresentation(otaState({
+      completedUpdate: true,
+      releaseTransition: null,
+      screen: 'up_to_date',
+    }));
+
+    expect(presentation.primary).toEqual({action: 'finish', label: 'Done'});
+    expect(presentation.title).toBe('Update complete');
+    expect(presentation.versionLabel).toBeUndefined();
+  });
+
+  test('keeps only the example-specific dev setup instruction', () => {
+    const presentation = otaPresentation(otaState({screen: 'dev_build'}));
+
+    expect(presentation).toMatchObject({
+      detail: 'Set EXPO_PUBLIC_ASG_OTA_VERSION_URL when you intentionally want to test an OTA manifest.',
+      message: 'This mobile app is a development build, so automatic glasses updates are disabled.',
+      title: 'Development Build',
     });
   });
 });
