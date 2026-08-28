@@ -23,5 +23,5 @@ Pod::Spec.new do |s|
   s.pod_target_xcconfig = {
     'DEFINES_MODULE' => 'YES',
   }
-  s.source_files = '**/*.{h,m,mm,swift}'
+  s.source_files = '*.{h,m,mm,swift}', 'PolicyKit/Sources/AcsAudioPolicy/*.swift'
 end
