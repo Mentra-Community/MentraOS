@@ -91,6 +91,10 @@ const ota = useMentraLiveOta({onFinished, onOpenWifiSetup})
 // Render ota.state.screen and invoke ota.install(), retryInstall(), finish(), etc.
 ```
 
+On `up_to_date`, use `ota.state.completedUpdate` to distinguish a completed
+update session from a standalone check. `releaseTransition` is optional release
+metadata and is not a completion marker.
+
 Customize presentation only. Engine must remain responsible for OTA ordering,
 hotspot staging, restart recovery, retries, and verification. The canonical
 stock and custom integration guide is

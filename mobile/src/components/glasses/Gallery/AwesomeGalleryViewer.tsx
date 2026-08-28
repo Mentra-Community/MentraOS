@@ -56,7 +56,7 @@ const VideoPlayerItem = memo(function VideoPlayerItem({
   onSeekingChange,
   onDimensions,
 }: VideoPlayerItemProps) {
-  const {themed} = useAppTheme()
+  const {theme, themed} = useAppTheme()
   const {width: screenWidth, height: screenHeight} = useWindowDimensions()
   const videoRef = useRef<ElementRef<typeof Video>>(null)
   const [isPlaying, setIsPlaying] = useState(false)
@@ -135,11 +135,12 @@ const VideoPlayerItem = memo(function VideoPlayerItem({
 
   return (
     <View
+      testID="video-player-container"
       style={{
         flex: 1,
         width: screenWidth,
         height: screenHeight,
-        backgroundColor: "black",
+        backgroundColor: theme.colors.background,
         justifyContent: "center",
         alignItems: "center",
         paddingTop: screenHeight * 0.05,
@@ -149,7 +150,7 @@ const VideoPlayerItem = memo(function VideoPlayerItem({
         source={{uri: videoUrl}}
         poster={posterUrl}
         posterResizeMode="contain"
-        style={{width: "100%", aspectRatio: videoAspectRatio}}
+        style={{width: "100%", aspectRatio: videoAspectRatio, backgroundColor: theme.colors.background}}
         resizeMode="contain"
         paused={!isPlaying}
         controls={false}
@@ -228,7 +229,7 @@ const VideoPlayerItem = memo(function VideoPlayerItem({
 
       {/* Thumbnail placeholder while video loads - instant display */}
       {showThumbnail && posterUrl && !hasError && (
-        <View style={themed($thumbnailOverlay)} pointerEvents="none">
+        <View testID="video-thumbnail-overlay" style={themed($thumbnailOverlay)} pointerEvents="none">
           <Image
             source={{uri: posterUrl}}
             style={{width: "100%", aspectRatio: videoAspectRatio}}
@@ -707,13 +708,13 @@ const $timeText: ThemedStyle<any> = () => ({
 
 // Image item styles (dynamic dimensions now inlined via useWindowDimensions)
 
-const $thumbnailOverlay: ThemedStyle<any> = () => ({
+const $thumbnailOverlay: ThemedStyle<any> = ({colors}) => ({
   position: "absolute",
   top: 0,
   left: 0,
   bottom: 0,
   right: 0,
-  backgroundColor: "black",
+  backgroundColor: colors.background,
   justifyContent: "center",
   alignItems: "center",
   zIndex: 5,

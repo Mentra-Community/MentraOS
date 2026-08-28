@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import {readFileSync} from "node:fs"
 import {createPrivateKey, sign} from "node:crypto"
+import {spawnSync} from "node:child_process"
 import path from "node:path"
 import {fileURLToPath} from "node:url"
 
@@ -79,29 +80,74 @@ export async function findApp(client, bundleId) {
   )
 }
 
-export async function findBuild(client, {appId, buildNumber}) {
-  const response = await client.request(
-    query("/v1/builds", {"filter[app]": appId, "filter[version]": String(buildNumber), "limit": "2"}),
-  )
+export async function findBuild(client, {appId, buildNumber, marketingVersion}) {
+  const filters = {"filter[app]": appId, "filter[version]": String(buildNumber), "limit": "2"}
+  if (marketingVersion) filters["filter[preReleaseVersion.version]"] = marketingVersion
+  const response = await client.request(query("/v1/builds", filters))
   if (!Array.isArray(response?.data) || response.data.length === 0) return null
   return exactlyOne(response, `build ${buildNumber}`)
 }
 
-export async function findProcessedBuild(client, {appId, buildNumber}) {
-  const build = await findBuild(client, {appId, buildNumber})
+export async function findProcessedBuild(client, {appId, buildNumber, marketingVersion}) {
+  const build = await findBuild(client, {appId, buildNumber, marketingVersion})
   if (!build) return null
   const state = build.attributes?.processingState
   if (state === "FAILED" || state === "INVALID") throw new Error(`App Store Connect build ${buildNumber} is ${state}`)
   return state === "VALID" ? build : null
 }
 
-export async function waitForProcessedBuild(client, {appId, buildNumber, attempts = 120, delay = 10_000}) {
+export async function waitForProcessedBuild(
+  client,
+  {appId, buildNumber, marketingVersion, attempts = 120, delay = 10_000},
+) {
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const build = await findProcessedBuild(client, {appId, buildNumber})
+    const build = await findProcessedBuild(client, {appId, buildNumber, marketingVersion})
     if (build) return build
     if (attempt < attempts) await new Promise((resolve) => setTimeout(resolve, delay))
   }
   throw new Error(`App Store Connect build ${buildNumber} did not finish processing`)
+}
+
+function uploadWithAltool({ipaPath, issuerId, keyId, keyPath}) {
+  const result = spawnSync(
+    "xcrun",
+    ["altool", "--upload-app", "-f", ipaPath, "-t", "ios", "--apiKey", keyId, "--apiIssuer", issuerId],
+    {
+      stdio: "inherit",
+      env: {...process.env, API_PRIVATE_KEYS_DIR: path.dirname(keyPath)},
+    },
+  )
+  if (result.error) throw result.error
+  if (result.status !== 0) throw new Error(`altool exited with status ${result.status}`)
+}
+
+export async function uploadExactBuild(
+  client,
+  {
+    appId,
+    buildNumber,
+    marketingVersion,
+    upload,
+    attempts = 3,
+    delay = 30_000,
+    sleep = (duration) => new Promise((resolve) => setTimeout(resolve, duration)),
+  },
+) {
+  let lastError
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const existing = await findBuild(client, {appId, buildNumber, marketingVersion})
+    if (existing) return {build: existing, reused: true}
+    try {
+      await upload()
+      return {build: null, reused: false}
+    } catch (error) {
+      lastError = error
+      if (attempt < attempts) await sleep(delay)
+    }
+  }
+  const existing = await findBuild(client, {appId, buildNumber, marketingVersion})
+  if (existing) return {build: existing, reused: true}
+  throw lastError
 }
 
 export async function assignBuildToGroup(client, {appId, buildId, groupName}) {
@@ -121,6 +167,33 @@ export async function assignBuildToGroup(client, {appId, buildId, groupName}) {
     throw new Error(`App Store Connect did not retain build ${buildId} in TestFlight group ${groupName}`)
   }
   return {group, reused: false}
+}
+
+export async function setBetaBuildWhatsNew(client, {buildId, locale = "en-US", whatsNew}) {
+  const response = await client.request(`/v1/builds/${buildId}/betaBuildLocalizations?limit=200`)
+  if (!Array.isArray(response?.data)) throw new Error("TestFlight localization response has no data array")
+  const matching = response.data.filter((localization) => localization.attributes?.locale === locale)
+  if (matching.length > 1) throw new Error(`Expected at most one TestFlight ${locale} localization`)
+  const existing = matching[0]
+  if (existing?.attributes?.whatsNew === whatsNew) return {localization: existing, reused: true}
+  if (existing) {
+    const localization = await client.request(`/v1/betaBuildLocalizations/${existing.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({data: {type: "betaBuildLocalizations", id: existing.id, attributes: {whatsNew}}}),
+    })
+    return {localization: localization.data, reused: false}
+  }
+  const localization = await client.request("/v1/betaBuildLocalizations", {
+    method: "POST",
+    body: JSON.stringify({
+      data: {
+        type: "betaBuildLocalizations",
+        attributes: {locale, whatsNew},
+        relationships: {build: {data: {type: "builds", id: buildId}}},
+      },
+    }),
+  })
+  return {localization: localization.data, reused: false}
 }
 
 export async function findAppStoreVersion(client, {appId, versionString}) {
@@ -196,20 +269,59 @@ async function main() {
   })
   const app = await findApp(client, args["bundle-id"])
   if (command === "lookup") {
-    const build = await findBuild(client, {appId: app.id, buildNumber: args["build-number"]})
+    const build = await findBuild(client, {
+      appId: app.id,
+      buildNumber: args["build-number"],
+      marketingVersion: args["marketing-version"],
+    })
     if (process.env.GITHUB_OUTPUT) {
       const {appendFileSync} = await import("node:fs")
       appendFileSync(
         process.env.GITHUB_OUTPUT,
-        `exists=${Boolean(build)}\nprocessed=${build?.attributes?.processingState === "VALID"}\nbuild_id=${build?.id || ""}\n`,
+        `exists=${Boolean(build)}\nprocessed=${build?.attributes?.processingState === "VALID"}\napp_id=${app.id}\nbuild_id=${build?.id || ""}\n`,
       )
     }
     console.log(build ? `Found App Store Connect build ${args["build-number"]}` : "Build is absent")
     return
   }
+  if (command === "upload") {
+    const keyPath = path.resolve(args["key-path"])
+    const result = await uploadExactBuild(client, {
+      appId: app.id,
+      buildNumber: args["build-number"],
+      marketingVersion: args["marketing-version"],
+      upload: () =>
+        uploadWithAltool({
+          ipaPath: path.resolve(args.ipa),
+          issuerId: args["issuer-id"],
+          keyId: args["key-id"],
+          keyPath,
+        }),
+    })
+    console.log(
+      result.reused
+        ? `Verified App Store Connect already has build ${args["build-number"]}`
+        : `Uploaded App Store Connect build ${args["build-number"]}`,
+    )
+    return
+  }
   if (command === "assign") {
-    const build = await waitForProcessedBuild(client, {appId: app.id, buildNumber: args["build-number"]})
+    const build = await waitForProcessedBuild(client, {
+      appId: app.id,
+      buildNumber: args["build-number"],
+      marketingVersion: args["marketing-version"],
+    })
+    if (args["whats-new"]) {
+      await setBetaBuildWhatsNew(client, {buildId: build.id, whatsNew: args["whats-new"]})
+    }
     const result = await assignBuildToGroup(client, {appId: app.id, buildId: build.id, groupName: args["group-name"]})
+    if (process.env.GITHUB_OUTPUT) {
+      const {appendFileSync} = await import("node:fs")
+      appendFileSync(
+        process.env.GITHUB_OUTPUT,
+        `app_id=${app.id}\nbuild_id=${build.id}\nprocessing_state=${build.attributes?.processingState || ""}\ngroup_id=${result.group.id}\ngroup_name=${result.group.attributes?.name || args["group-name"]}\nreused=${result.reused}\n`,
+      )
+    }
     console.log(
       `${result.reused ? "Verified" : "Added"} build ${args["build-number"]} in TestFlight group ${result.group.attributes?.name || args["group-name"]}`,
     )

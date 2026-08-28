@@ -75,18 +75,22 @@
       "version": "0.0.0",
       "dependencies": {
         "@mentra/cloud-shared": "workspace:*",
+        "@mentra/developer-auth": "workspace:*",
         "@workos-inc/node": "^10.3.0",
         "hono": "^4.11.1",
         "jose": "^5.9.6",
-        "jszip": "^3.10.1",
         "mongoose": "^8.8.4",
-        "semver": "^7.7.4",
         "ulid": "^3.0.2",
         "zod": "^3.24.1",
       },
-      "devDependencies": {
-        "@mentra/miniapp-cli": "file:../../../sdk/miniapp-cli",
-        "@types/semver": "^7.7.1",
+    },
+    "cloud-v2/packages/developer-auth": {
+      "name": "@mentra/developer-auth",
+      "version": "0.0.0",
+      "dependencies": {
+        "@workos-inc/node": "^10.3.0",
+        "hono": "^4.11.1",
+        "jose": "^5.9.6",
       },
     },
     "cloud-v2/packages/protocol": {
@@ -127,6 +131,27 @@
       },
       "devDependencies": {
         "pino-pretty": "^11.3.0",
+      },
+    },
+    "cloud-v2/packages/store": {
+      "name": "@mentra/miniapp-store-backend",
+      "version": "0.0.0",
+      "dependencies": {
+        "@mentra/auth": "workspace:*",
+        "@mentra/cloud-shared": "workspace:*",
+        "@mentra/developer-auth": "workspace:*",
+        "@workos-inc/node": "^10.3.0",
+        "hono": "^4.11.1",
+        "jose": "^5.9.6",
+        "jszip": "^3.10.1",
+        "mongoose": "^8.8.4",
+        "semver": "^7.7.4",
+        "ulid": "^3.0.2",
+        "zod": "^3.24.1",
+      },
+      "devDependencies": {
+        "@mentra/miniapp-cli": "file:../../../sdk/miniapp-cli",
+        "@types/semver": "^7.7.1",
       },
     },
     "miniapps/captions": {
@@ -428,9 +453,13 @@
 
     "@mentra/cloud-shared": ["@mentra/cloud-shared@workspace:cloud-v2/packages/shared"],
 
+    "@mentra/developer-auth": ["@mentra/developer-auth@workspace:cloud-v2/packages/developer-auth"],
+
     "@mentra/miniapp": ["@mentra/miniapp@workspace:mobile/modules/miniapp"],
 
     "@mentra/miniapp-cli": ["@mentra/miniapp-cli@workspace:sdk/miniapp-cli"],
+
+    "@mentra/miniapp-store-backend": ["@mentra/miniapp-store-backend@workspace:cloud-v2/packages/store"],
 
     "@mentra/store-miniapp": ["@mentra/store-miniapp@workspace:miniapps/store"],
 

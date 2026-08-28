@@ -7,7 +7,7 @@ const COMMIT_PATTERN = /^[0-9a-f]{40}$/
 const CHANNELS = new Set(["dev", "beta", "production"])
 const KINDS = new Set(["package", "product"])
 const PUBLISH_TARGETS = new Set(["app-store-connect", "google-play", "maven-central", "npm", "swift-package-manager"])
-const PUBLICATION_STATUSES = new Set(["promoted", "published", "reused"])
+const PUBLICATION_STATUSES = new Set(["promoted", "published", "reused", "submitted"])
 const SHA256_PATTERN = /^[0-9a-f]{64}$/
 
 function fail(message) {
@@ -315,7 +315,7 @@ export function requirePublicHttpsUrl(value, label) {
 function validatePublication(publication, label) {
   if (!publication || typeof publication !== "object") throw new Error(`${label} is missing`)
   if (!PUBLICATION_STATUSES.has(publication.status)) {
-    throw new Error(`${label}.status must be promoted, published, or reused`)
+    throw new Error(`${label}.status must be promoted, published, reused, or submitted`)
   }
   requireString(publication.coordinate, `${label}.coordinate`)
   requirePublicHttpsUrl(publication.url, `${label}.url`)
@@ -357,6 +357,67 @@ function requiredArtifactCoordinates(plan) {
     }
     return coordinate
   })
+}
+
+function validateStarterKitEvidence(plan, starterKit, artifacts) {
+  if (starterKit === undefined) return undefined
+  if (
+    starterKit?.schemaVersion !== 1 ||
+    starterKit.releaseSetId !== plan.releaseSetId ||
+    starterKit.releaseIdentity !== plan.releaseIdentity ||
+    starterKit.familyBaseVersion !== plan.familyBaseVersion ||
+    starterKit.channel !== plan.channel ||
+    starterKit.mentraos?.sourceCommit !== plan.sourceCommit ||
+    !Array.isArray(starterKit.artifacts) ||
+    ![3, 4].includes(starterKit.artifacts.length)
+  ) {
+    throw new Error("Starter Kit evidence does not match the release plan")
+  }
+  requirePublicHttpsUrl(starterKit.resultUrl, "starterKit.resultUrl")
+  requirePublicHttpsUrl(starterKit.starterKit?.releaseUrl, "starterKit.starterKit.releaseUrl")
+  requirePublicHttpsUrl(starterKit.starterKit?.pullRequestUrl, "starterKit.starterKit.pullRequestUrl")
+  requirePublicHttpsUrl(starterKit.starterKit?.validationRunUrl, "starterKit.starterKit.validationRunUrl")
+
+  const artifactByCoordinate = new Map(artifacts.map((artifact) => [artifact.coordinate, artifact]))
+  for (const example of starterKit.artifacts) {
+    const artifact = artifactByCoordinate.get(example.name)
+    if (!artifact || artifact.url !== example.url || artifact.sha256 !== example.sha256 || artifact.size !== example.size) {
+      throw new Error(`Starter Kit artifact ${example.name || "<unknown>"} differs from publication evidence`)
+    }
+  }
+  const expectedGroup = plan.channel === "dev" ? "Mentra Dev" : "Mentra Staging"
+  const testflight = starterKit.testflight
+  if (
+    testflight?.schemaVersion !== 1 ||
+    testflight.releaseSetId !== plan.releaseSetId ||
+    testflight.releaseIdentity !== plan.releaseIdentity ||
+    testflight.channel !== plan.channel ||
+    testflight.mentraosSourceCommit !== plan.sourceCommit ||
+    testflight.starterKitReleaseCommit !== starterKit.starterKit?.releaseCommit ||
+    testflight.app?.id !== "6792839366" ||
+    testflight.app?.bundleId !== "com.mentra.bluetoothsdk.example.reactnative" ||
+    testflight.version?.marketingVersion !== plan.native.marketingVersion ||
+    testflight.version?.buildNumber !== plan.native.buildNumber ||
+    testflight.build?.processingState !== "VALID" ||
+    !["published", "reused"].includes(testflight.build?.uploadStatus) ||
+    typeof testflight.build?.id !== "string" ||
+    testflight.build.id.length === 0 ||
+    testflight.group?.name !== expectedGroup ||
+    typeof testflight.group?.id !== "string" ||
+    testflight.group.id.length === 0
+  ) {
+    throw new Error("Starter Kit TestFlight evidence does not match the release plan")
+  }
+  if (
+    testflight.ipa !== undefined &&
+    (!SHA256_PATTERN.test(testflight.ipa.sha256 || "") ||
+      !Number.isSafeInteger(testflight.ipa.size) ||
+      testflight.ipa.size < 1)
+  ) {
+    throw new Error("Starter Kit TestFlight IPA evidence is invalid")
+  }
+  requirePublicHttpsUrl(testflight.provenanceUrl, "starterKit.testflight.provenanceUrl")
+  return starterKit
 }
 
 export function finalizeReleaseManifest({plan, results, completedAt}) {
@@ -411,6 +472,7 @@ export function finalizeReleaseManifest({plan, results, completedAt}) {
   for (const coordinate of requiredArtifactCoordinates(plan)) {
     if (!artifactCoordinates.has(coordinate)) throw new Error(`Missing required artifact ${coordinate}`)
   }
+  const starterKit = validateStarterKitEvidence(plan, results.starterKit, artifacts)
 
   let promotion
   if (plan.channel === "production") {
@@ -443,6 +505,7 @@ export function finalizeReleaseManifest({plan, results, completedAt}) {
     publications,
     otaManifest,
     artifacts,
+    ...(starterKit ? {starterKit} : {}),
     ...(promotion ? {promotion} : {}),
   }
 }

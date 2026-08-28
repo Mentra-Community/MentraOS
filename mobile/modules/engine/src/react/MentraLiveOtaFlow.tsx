@@ -10,10 +10,16 @@ import {
   type StyleProp,
   type ViewStyle,
 } from "react-native"
+import {useMarkdown, type MarkedStyles, type useMarkdownHookOptions} from "react-native-marked"
 import {SafeAreaView} from "react-native-safe-area-context"
 import Svg, {Path, Rect} from "react-native-svg"
 
-import {useMentraLiveOta, type MentraLiveOtaController, type MentraLiveOtaFlowPage} from "./useMentraLiveOta"
+import {
+  MINIMUM_OTA_BATTERY_LEVEL,
+  useMentraLiveOta,
+  type MentraLiveOtaController,
+  type MentraLiveOtaFlowPage,
+} from "./useMentraLiveOta"
 
 export type {MentraLiveOtaFlowPage} from "./useMentraLiveOta"
 
@@ -65,13 +71,23 @@ const DEFAULT_THEME: MentraLiveOtaFlowTheme = {
 
 const ENGLISH_COPY: Record<string, string> = {
   "common:continue": "Continue",
+  "common:done": "Done",
   "ota:checkingForUpdates": "Checking for updates",
   "ota:checkingForUpdatesMessage":
     "Connected devices will perform automatic updates. Automatic updates can be disabled in Device Settings",
+  "ota:finishingUpdate": "Finishing your update",
+  "ota:checkingAdditionalUpdates": "Checking whether your glasses need any additional updates.",
   "ota:updateAvailable": "{{deviceName}} Update Available",
+  "ota:batteryRequiredTitle": "Charge {{deviceName}} to Update",
+  "ota:batteryRequiredMessage":
+    "{{deviceName}} is currently at {{batteryLevel}}%. Charge it to at least {{minimumBatteryLevel}}% before updating.",
+  "ota:batteryRequiredLiveUpdate": "This screen will update automatically as the battery charges.",
   "ota:updateConnectWifi": "Connect your {{deviceName}} to WiFi to install the update.",
+  "ota:wifiRequiredTitle": "WiFi Needed for Update",
   "ota:updateDescription":
     "A new update is available for your glasses. We recommend updating now for the best experience.",
+  "ota:updateSequenceMessage":
+    "Your glasses may install more than one update and restart several times. Keep them nearby until finished.",
   "ota:releaseTransition": "{{fromVersion}} → {{toVersion}}",
   "ota:releaseTransitionUnknown": "Current version unknown → {{toVersion}}",
   "ota:updatedToVersion": "Updated to {{version}}",
@@ -81,6 +97,8 @@ const ENGLISH_COPY: Record<string, string> = {
   "ota:updateNow": "Update Now",
   "ota:setupWifi": "Setup WiFi",
   "ota:updateLater": "Later",
+  "ota:updateComplete": "Update complete",
+  "ota:whatsNew": "What's new",
   "ota:upToDate": "Up To Date",
   "ota:devBuild": "Development Build",
   "ota:devBuildNoOta":
@@ -185,12 +203,53 @@ function OtaFlowContent({
     )
   }
 
+  if (state.screen === "battery_required") {
+    return (
+      <FlowPage
+        actions={
+          <>
+            <FlowButton colors={colors} disabled label={translate("ota:updateNow")} onPress={controller.install} />
+            {state.canDismiss ? (
+              <FlowButton colors={colors} label={translate("ota:updateLater")} onPress={controller.finish} secondary />
+            ) : null}
+          </>
+        }
+        colors={colors}
+        icon="alert"
+        title={translate("ota:batteryRequiredTitle", {deviceName})}>
+        <BodyText colors={colors}>
+          {translate("ota:batteryRequiredMessage", {
+            batteryLevel: String(state.batteryLevel),
+            deviceName,
+            minimumBatteryLevel: String(MINIMUM_OTA_BATTERY_LEVEL),
+          })}
+        </BodyText>
+        <BodyText colors={colors}>{translate("ota:batteryRequiredLiveUpdate")}</BodyText>
+      </FlowPage>
+    )
+  }
+
+  if (state.screen === "finishing") {
+    return (
+      <FlowPage colors={colors} icon="download" title={translate("ota:finishingUpdate")}>
+        <BodyText colors={colors}>{translate("ota:checkingAdditionalUpdates")}</BodyText>
+        <ActivityIndicator size="large" color={colors.foreground} />
+      </FlowPage>
+    )
+  }
+
   if (state.screen === "update_available" || state.screen === "wifi_required") {
+    const titleKey =
+      state.screen === "wifi_required"
+        ? "ota:wifiRequiredTitle"
+        : state.versionChange
+          ? "ota:downgradeAvailable"
+          : "ota:updateAvailable"
     return (
       <FlowPage
         colors={colors}
         icon="download"
-        title={translate(state.versionChange ? "ota:downgradeAvailable" : "ota:updateAvailable", {deviceName})}
+        title={translate(titleKey, {deviceName})}
         actions={
           <>
             <FlowButton
@@ -222,6 +281,7 @@ function OtaFlowContent({
             ? translate("ota:updateConnectWifi", {deviceName})
             : translate(state.versionChange ? "ota:downgradeDescription" : "ota:updateDescription")}
         </BodyText>
+        <BodyText colors={colors}>{translate("ota:updateSequenceMessage")}</BodyText>
       </FlowPage>
     )
   }
@@ -241,17 +301,24 @@ function OtaFlowContent({
   if (state.screen === "up_to_date") {
     return (
       <FlowPage
-        actions={<FlowButton colors={colors} label={translate("common:continue")} onPress={controller.finish} />}
+        actions={
+          <FlowButton
+            colors={colors}
+            label={translate(state.completedUpdate ? "common:done" : "common:continue")}
+            onPress={controller.finish}
+          />
+        }
         colors={colors}
+        contentAlignment={state.changelogs.length > 0 ? "top" : "center"}
         icon="check"
-        title={translate("ota:upToDate")}>
+        title={translate(state.completedUpdate ? "ota:updateComplete" : "ota:upToDate")}>
         <BodyText colors={colors}>{translate("ota:noUpdatesAvailable")}</BodyText>
         {state.releaseTransition ? (
           <BodyText colors={colors}>
             {translate("ota:updatedToVersion", {version: state.releaseTransition.toVersion})}
           </BodyText>
         ) : null}
-        <ChangelogList changelogs={state.changelogs} colors={colors} />
+        <ChangelogList changelogs={state.changelogs} colors={colors} title={translate("ota:whatsNew")} />
       </FlowPage>
     )
   }
@@ -307,10 +374,10 @@ function OtaFlowContent({
       state.hotspotPhase === "downloading"
         ? "Downloading update to phone..."
         : state.hotspotPhase === "starting_hotspot"
-        ? "Starting glasses hotspot..."
-        : state.hotspotPhase === "joining_hotspot"
-        ? "Connecting phone to glasses..."
-        : "Starting update..."
+          ? "Starting glasses hotspot..."
+          : state.hotspotPhase === "joining_hotspot"
+            ? "Connecting phone to glasses..."
+            : "Starting update..."
     return (
       <FlowPage colors={colors} icon="download" title={title}>
         {state.hotspotPhase === "downloading" && state.hotspotArtifactPercent !== null ? (
@@ -362,13 +429,13 @@ function OtaFlowContent({
     const title = state.versionChangeConverged
       ? translate("ota:versionChangeComplete")
       : state.versionChange
-      ? translate("ota:versionChangeFirmwarePassComplete")
-      : "Update complete!"
+        ? translate("ota:versionChangeFirmwarePassComplete")
+        : "Update complete!"
     const message = state.versionChangeConverged
       ? translate("ota:versionChangeCompleteMessage")
       : state.versionChange
-      ? translate("ota:versionChangeFirmwarePassCompleteMessage")
-      : "Your glasses are up to date."
+        ? translate("ota:versionChangeFirmwarePassCompleteMessage")
+        : "Your glasses are up to date."
     return (
       <FlowPage
         actions={
@@ -379,6 +446,7 @@ function OtaFlowContent({
           />
         }
         colors={colors}
+        contentAlignment={state.changelogs.length > 0 ? "top" : "center"}
         icon="check"
         title={title}>
         <BodyText colors={colors}>{message}</BodyText>
@@ -387,7 +455,7 @@ function OtaFlowContent({
             {translate("ota:updatedToVersion", {version: state.releaseTransition.toVersion})}
           </BodyText>
         ) : null}
-        <ChangelogList changelogs={state.changelogs} colors={colors} />
+        <ChangelogList changelogs={state.changelogs} colors={colors} title={translate("ota:whatsNew")} />
       </FlowPage>
     )
   }
@@ -435,14 +503,15 @@ type FlowPageProps = {
   actions?: React.ReactNode
   children?: React.ReactNode
   colors: MentraLiveOtaFlowTheme
+  contentAlignment?: "center" | "top"
   icon: "alert" | "bluetooth" | "check" | "download" | "settings"
   title: string
 }
 
-function FlowPage({actions, children, colors, icon, title}: FlowPageProps) {
+function FlowPage({actions, children, colors, contentAlignment = "center", icon, title}: FlowPageProps) {
   return (
     <View style={styles.page} testID="mentra-live-ota-flow">
-      <View style={styles.centerContent}>
+      <View style={[styles.centerContent, contentAlignment === "top" && styles.topContent]}>
         <FlowIcon colors={colors} name={icon} />
         <Text style={[styles.title, {color: colors.foreground}]}>{title}</Text>
         {children}
@@ -460,27 +529,129 @@ function PercentText({colors, percent}: {colors: MentraLiveOtaFlowTheme; percent
   return <Text style={[styles.percent, {color: colors.primary}]}>{Math.round(percent)}%</Text>
 }
 
-function ChangelogList({
+function ChangelogMarkdown({colors, markdown}: {colors: MentraLiveOtaFlowTheme; markdown: string}) {
+  const markdownStyles = useMemo<MarkedStyles>(
+    () => ({
+      blockquote: {
+        borderLeftColor: colors.primary,
+        borderLeftWidth: 3,
+        marginVertical: 2,
+        opacity: 1,
+        paddingLeft: 12,
+      },
+      code: {
+        backgroundColor: colors.background,
+        borderColor: colors.border,
+        borderRadius: 8,
+        borderWidth: 1,
+        padding: 12,
+      },
+      codespan: {
+        backgroundColor: colors.border,
+        color: colors.foreground,
+        fontFamily: "monospace",
+        fontSize: 13,
+        fontStyle: "normal",
+        fontWeight: "400",
+      },
+      em: {color: colors.textDim, fontSize: 14, lineHeight: 20},
+      h1: {
+        borderBottomWidth: 0,
+        color: colors.foreground,
+        fontSize: 18,
+        fontWeight: "700",
+        lineHeight: 24,
+        marginVertical: 0,
+        paddingBottom: 0,
+      },
+      h2: {
+        borderBottomWidth: 0,
+        color: colors.foreground,
+        fontSize: 17,
+        fontWeight: "700",
+        lineHeight: 23,
+        marginVertical: 0,
+        paddingBottom: 0,
+      },
+      h3: {color: colors.foreground, fontSize: 16, fontWeight: "700", lineHeight: 22, marginVertical: 0},
+      h4: {color: colors.foreground, fontSize: 15, fontWeight: "700", lineHeight: 21, marginVertical: 0},
+      h5: {color: colors.foreground, fontSize: 14, fontWeight: "700", lineHeight: 20, marginVertical: 0},
+      h6: {color: colors.textDim, fontSize: 14, fontWeight: "600", lineHeight: 20, marginVertical: 0},
+      hr: {borderBottomColor: colors.border, marginVertical: 2},
+      image: {borderRadius: 8},
+      li: {color: colors.textDim, fontSize: 14, lineHeight: 20},
+      link: {
+        color: colors.primary,
+        fontSize: 14,
+        fontStyle: "normal",
+        lineHeight: 20,
+        textDecorationLine: "underline",
+      },
+      paragraph: {paddingVertical: 0},
+      strikethrough: {color: colors.textDim, fontSize: 14, lineHeight: 20},
+      strong: {color: colors.foreground, fontSize: 14, fontWeight: "700", lineHeight: 20},
+      table: {borderColor: colors.border, borderRadius: 8},
+      tableCell: {padding: 8},
+      text: {color: colors.textDim, fontSize: 14, lineHeight: 20},
+    }),
+    [colors],
+  )
+  const markdownTheme = useMemo<NonNullable<useMarkdownHookOptions["theme"]>>(
+    () => ({
+      colors: {
+        background: colors.background,
+        border: colors.border,
+        code: colors.border,
+        link: colors.primary,
+        text: colors.textDim,
+      },
+    }),
+    [colors],
+  )
+  const elements = useMarkdown(markdown, {colorScheme: "light", styles: markdownStyles, theme: markdownTheme})
+
+  return (
+    <View style={styles.changelogMarkdownContent} testID="ota-changelog-markdown">
+      {elements}
+    </View>
+  )
+}
+
+export function ChangelogList({
   changelogs,
   colors,
+  title,
 }: {
   changelogs: MentraLiveOtaController["state"]["changelogs"]
   colors: MentraLiveOtaFlowTheme
+  title: string
 }) {
   if (changelogs.length === 0) return null
   return (
-    <ScrollView contentContainerStyle={styles.changelogContent} style={styles.changelogList}>
-      {changelogs.map((entry) => (
-        <View key={entry.version} style={styles.changelogEntry}>
-          <Text selectable style={[styles.changelogVersion, {color: colors.foreground}]}>
-            {entry.version}
-          </Text>
-          <Text selectable style={[styles.changelogMarkdown, {color: colors.textDim}]}>
-            {entry.markdown}
-          </Text>
-        </View>
-      ))}
-    </ScrollView>
+    <View style={[styles.changelogCard, {borderColor: colors.border}]} testID="ota-changelog-card">
+      <Text style={[styles.changelogTitle, {color: colors.foreground}]}>{title}</Text>
+      <ScrollView
+        contentContainerStyle={styles.changelogContent}
+        nestedScrollEnabled
+        showsVerticalScrollIndicator
+        style={styles.changelogList}
+        testID="ota-changelog-scroll">
+        {changelogs.map((entry, index) => (
+          <View
+            key={entry.version}
+            style={[
+              styles.changelogEntry,
+              index > 0 && styles.changelogEntryDivider,
+              index > 0 && {borderTopColor: colors.border},
+            ]}>
+            <Text selectable style={[styles.changelogVersion, {color: colors.foreground}]}>
+              {entry.version}
+            </Text>
+            <ChangelogMarkdown colors={colors} markdown={entry.markdown} />
+          </View>
+        ))}
+      </ScrollView>
+    </View>
   )
 }
 
@@ -544,6 +715,7 @@ const styles = StyleSheet.create({
   },
   page: {flex: 1, paddingBottom: 24, paddingHorizontal: 24},
   centerContent: {alignItems: "center", flex: 1, gap: 16, justifyContent: "center"},
+  topContent: {justifyContent: "flex-start", paddingTop: 12},
   actionSpacer: {height: 48},
   actions: {gap: 12},
   icon: {fontSize: 64, fontWeight: "500", lineHeight: 72, textAlign: "center"},
@@ -552,11 +724,23 @@ const styles = StyleSheet.create({
   percent: {fontSize: 30, fontVariant: ["tabular-nums"], fontWeight: "700"},
   progressTrack: {borderRadius: 4, height: 8, maxWidth: 420, overflow: "hidden", width: "100%"},
   progressFill: {borderRadius: 4, height: 8},
-  changelogList: {flexShrink: 1, maxHeight: 260, maxWidth: 420, width: "100%"},
-  changelogContent: {gap: 18, paddingVertical: 4},
+  changelogCard: {
+    borderRadius: 16,
+    borderWidth: 1,
+    flexShrink: 1,
+    gap: 12,
+    maxHeight: 300,
+    maxWidth: 420,
+    padding: 16,
+    width: "100%",
+  },
+  changelogTitle: {fontSize: 16, fontWeight: "700"},
+  changelogList: {flexShrink: 1, maxHeight: 232, width: "100%"},
+  changelogContent: {gap: 20, paddingBottom: 2},
   changelogEntry: {gap: 8},
-  changelogVersion: {fontSize: 16, fontWeight: "600"},
-  changelogMarkdown: {fontSize: 14, lineHeight: 20},
+  changelogEntryDivider: {borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 20},
+  changelogVersion: {fontSize: 14, fontWeight: "600"},
+  changelogMarkdownContent: {gap: 10},
   button: {
     alignItems: "center",
     borderRadius: 50,

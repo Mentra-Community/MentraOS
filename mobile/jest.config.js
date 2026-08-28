@@ -40,6 +40,6 @@ module.exports = {
     "<rootDir>/src/__tests__/app/miniapps/settings/camera.test.tsx",
   ],
   transformIgnorePatterns: [
-    "node_modules/(?!((jest-)?react-native|@react-native(-community)?)|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@sentry/react-native|native-base|react-native-svg|core|typesafe-ts|uniwind)",
+    "node_modules/(?!((jest-)?react-native|@react-native(-community)?)|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|@jsamr/.*|react-navigation|@react-navigation/.*|@sentry/react-native|native-base|react-native-svg|react-native-marked|react-native-reanimated-table|marked|github-slugger|html-entities|svg-parser|core|typesafe-ts|uniwind)",
   ],
 }

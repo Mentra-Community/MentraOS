@@ -407,10 +407,19 @@ const en = {
     checkingForUpdates: "Checking for updates",
     checkingForUpdatesMessage:
       "Connected devices will perform automatic updates. Automatic updates can be disabled in Device Settings",
+    finishingUpdate: "Finishing your update",
+    checkingAdditionalUpdates: "Checking whether your glasses need any additional updates.",
     updateAvailable: "{{deviceName}} Update Available",
+    batteryRequiredTitle: "Charge {{deviceName}} to Update",
+    batteryRequiredMessage:
+      "{{deviceName}} is currently at {{batteryLevel}}%. Charge it to at least {{minimumBatteryLevel}}% before updating.",
+    batteryRequiredLiveUpdate: "This screen will update automatically as the battery charges.",
     updateReadyToInstall: "Version {{version}} for {{deviceName}} is ready to install.",
     updateConnectWifi: "Connect your {{deviceName}} to WiFi to install the update.",
+    wifiRequiredTitle: "WiFi Needed for Update",
     updateDescription: "A new update is available for your glasses. We recommend updating now for the best experience.",
+    updateSequenceMessage:
+      "Your glasses may install more than one update and restart several times. Keep them nearby until finished.",
     releaseTransition: "{{fromVersion}} → {{toVersion}}",
     releaseTransitionUnknown: "Current version unknown → {{toVersion}}",
     updatedToVersion: "Updated to {{version}}",
@@ -451,6 +460,7 @@ const en = {
       "Your glasses restarted with new firmware. One more step: they'll now continue to the required version.",
     updateComplete: "Update Complete",
     updateCompleteMessage: "Your glasses have been updated successfully.",
+    whatsNew: "What's new",
     updateFailed: "Update Failed",
     updateFailedMessage: "The update could not be completed. You can try again later from Settings.",
     glassesDisconnected: "Glasses Disconnected",

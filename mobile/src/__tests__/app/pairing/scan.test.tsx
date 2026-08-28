@@ -388,7 +388,7 @@ describe("pairing scan screen", () => {
     }
   })
 
-  it("shows pairing codes for multi-device Mentra Live results", async () => {
+  it("shows device identifiers without a separate pairing-code label", async () => {
     setPlatformOS("android")
     useCoreStore.setState({
       searchResults: [
@@ -412,13 +412,14 @@ describe("pairing scan screen", () => {
       ],
     })
 
-    const {getByText} = render(<SelectGlassesBluetoothScreen />)
+    const {getByText, queryByText} = render(<SelectGlassesBluetoothScreen />)
 
     await waitFor(() => {
       expect(getByText("pairing:liveChooseGlassesTitle")).toBeTruthy()
-      expect(getByText(/pairing:pairingCodeLabel:A1B2/)).toBeTruthy()
-      expect(getByText(/pairing:pairingCodeLabel:C3D4/)).toBeTruthy()
+      expect(getByText("001")).toBeTruthy()
+      expect(getByText("002")).toBeTruthy()
     })
+    expect(queryByText(/pairing:pairingCodeLabel/)).toBeNull()
   })
 
   it("shows every Mentra Live and marks units that are not in pairing mode", async () => {
@@ -454,13 +455,14 @@ describe("pairing scan screen", () => {
       ],
     })
 
-    const {getByText} = render(<SelectGlassesBluetoothScreen />)
+    const {getByText, queryByText} = render(<SelectGlassesBluetoothScreen />)
 
     await waitFor(() => {
       expect(getByText(/IDLE.*pairing:notInPairingModeLabel/)).toBeTruthy()
-      expect(getByText(/pairing:pairingCodeLabel:ABCD/)).toBeTruthy()
-      expect(getByText(/pairing:pairingCodeLabel:EF01/)).toBeTruthy()
+      expect(getByText("PAIR_A")).toBeTruthy()
+      expect(getByText("PAIR_B")).toBeTruthy()
     })
+    expect(queryByText(/pairing:pairingCodeLabel/)).toBeNull()
   })
 
   it("shows a single pairing-mode Mentra Live and waits for the user to choose it", async () => {
@@ -492,11 +494,11 @@ describe("pairing scan screen", () => {
     await waitFor(() => {
       expect(getByText("pairing:liveChooseGlassesTitle")).toBeTruthy()
       expect(getByText(/IDLE.*pairing:notInPairingModeLabel/)).toBeTruthy()
-      expect(getByText(/pairing:pairingCodeLabel:ABCD/)).toBeTruthy()
+      expect(getByText("PAIR_A")).toBeTruthy()
     })
     expect(push).not.toHaveBeenCalled()
 
-    fireEvent.press(getByText(/pairing:pairingCodeLabel:ABCD/))
+    fireEvent.press(getByText("PAIR_A"))
 
     await waitFor(() => {
       expect(push).toHaveBeenCalledWith(
@@ -654,11 +656,11 @@ describe("pairing scan screen", () => {
 
     await waitFor(() => {
       expect(getByText(/IDLE.*pairing:notInPairingModeLabel/)).toBeTruthy()
-      expect(getByText(/pairing:pairingCodeLabel:A1B2/)).toBeTruthy()
+      expect(getByText("TARGET")).toBeTruthy()
     })
     expect(push).not.toHaveBeenCalled()
 
-    fireEvent.press(getByText(/pairing:pairingCodeLabel:A1B2/))
+    fireEvent.press(getByText("TARGET"))
 
     await waitFor(() => {
       expect(push).toHaveBeenCalledWith(

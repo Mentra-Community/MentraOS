@@ -36,6 +36,7 @@ function projectSnapshot() {
     appVersion: s.appVersion || null,
     mtkFirmwareVersion: s.mtkFirmwareVersion || null,
     besFirmwareVersion: s.besFirmwareVersion || null,
+    batteryLevel: s.batteryLevel >= 0 ? s.batteryLevel : null,
     hotspotOtaVersion: s.hotspotOtaVersion ?? 0,
     wifiConnected: s.wifi.state === "connected",
     wifiStatusKnown: s.wifiStatusKnown,
