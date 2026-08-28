@@ -183,9 +183,13 @@ releases.
       actions through their resolved manifest fields. Missing customer fields
       inherit the embedded Mentra values; explicit null suppresses nullable
       destinations. Do not add a blanket `externalLinks` switch.
-- [ ] Apply `systemMiniapps.hiddenPackageNames` consistently to registration,
-      bundled installation, launcher/menu visibility, direct routes, and
-      autostart. The embedded Mentra profile supplies an empty list.
+- [ ] Apply `systemMiniapps.approvedPackageNamesOverride` consistently to
+      registration, bundled installation, launcher/menu visibility, direct
+      routes, and autostart. `null` uses the complete built-in catalog, `[]`
+      approves none, and a populated array approves only those packages.
+- [ ] Generate the embedded Mentra profile with a `null` override. Generate
+      customer templates with an explicit release-pinned package allowlist so
+      newly introduced system miniapps require customer approval.
 - [ ] Centralize pairable glasses behind stable model ids. When
       `glasses.allowedModelsOverride` is present, filter the pairing model list
       to it; otherwise show the normal catalog. Do not add enforcement to scan,

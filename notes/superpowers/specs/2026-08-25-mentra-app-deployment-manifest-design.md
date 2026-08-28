@@ -140,7 +140,11 @@ to the embedded Mentra profile.
     "supportUrl": "https://support.example.internal/mentra"
   },
   "systemMiniapps": {
-    "hiddenPackageNames": []
+    "approvedPackageNamesOverride": [
+      "com.mentra.camera",
+      "com.mentra.gallery",
+      "com.mentra.settings"
+    ]
   },
   "glasses": {
     "allowedModelsOverride": ["mentra-live"]
@@ -176,11 +180,17 @@ Rules:
   uses administrator-provided update instructions instead of a public store.
   The Mentra Miniapp Store is a separate in-app system entry and is governed by
   its package name in the system-miniapp policy.
-- `systemMiniapps.hiddenPackageNames` contains stable miniapp package names. A
-  listed system miniapp is not registered in user-visible catalogs, menus, or
-  deep-link launch routes, although its code remains present in the common app
-  binary. The Mentra profile ships an empty list, so it hides no system
-  miniapps.
+- `systemMiniapps.approvedPackageNamesOverride` is either `null` or a complete
+  allowlist of stable miniapp package names. `null` means use the app release's
+  full built-in system-miniapp catalog and automatically includes future
+  additions; the embedded Mentra profile uses `null`. An array activates the
+  override: `[]` approves no system miniapps, while a populated array approves
+  only those packages. Customer manifests should use an explicit array so a
+  future Mentra App release cannot expose a newly added system miniapp without
+  customer approval.
+- A system miniapp outside the active approved set is not registered in
+  user-visible catalogs, menus, or deep-link launch routes, although its code
+  remains present in the common app binary.
 - `glasses.allowedModelsOverride` contains stable model identifiers from the
   common glasses registry. When present, the pairing UI shows only those
   models. When omitted, the normal supported-model list is shown. This is a UI
@@ -299,8 +309,9 @@ The resolved profile controls optional network-capable behavior:
   their resolved manifest fields. An omitted customer override inherits the
   embedded Mentra value; an explicit null suppresses a nullable destination.
   There is no global `externalLinks` switch.
-- Deployment-hidden system miniapps cannot be discovered or launched, including
-  through direct routes. The common binary still contains their implementation.
+- System miniapps outside an active approval override cannot be discovered or
+  launched, including through direct routes. The common binary still contains
+  their implementation.
 - The pairing model picker shows only `glasses.allowedModelsOverride` when that
   override is present; otherwise it shows the normal supported-model catalog.
 - The first private template exposes only Mentra Live. A different model may be
