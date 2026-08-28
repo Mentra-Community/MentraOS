@@ -17,6 +17,7 @@ import android.hardware.camera2.CameraDevice;
 import android.hardware.camera2.CaptureRequest;
 import android.media.ImageReader;
 import android.os.Handler;
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.camera.CameraNeoService;
 import com.mentra.asg_client.camera.CameraSettings;
 import com.mentra.asg_client.camera.model.CameraOperationError;
@@ -108,6 +109,17 @@ public class PhotoSessionTest {
         verify(hooks, never()).closeCamera();
         verify(hooks, never()).openCameraInternal(anyString(), eq(false));
         assertThat(session.shotState()).isEqualTo(AeStateMachine.ShotState.WAITING_AE);
+    }
+
+    @Test
+    public void exposureStabilizationDelay_appliesOnlyToColdDispatch() throws Exception {
+        PhotoSession session = new PhotoSession(mockConfiguredCameraHooks());
+
+        assertThat(session.minimumExposureStabilizationDelayMs())
+                .isEqualTo(AsgConstants.COLD_CAMERA_EXPOSURE_SETTLE_DELAY_MS);
+
+        setBooleanField(session, "mCaptureDispatchedAsWarmReuse", true);
+        assertThat(session.minimumExposureStabilizationDelayMs()).isZero();
     }
 
     @Test

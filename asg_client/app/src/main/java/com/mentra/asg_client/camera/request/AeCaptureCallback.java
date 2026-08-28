@@ -25,6 +25,9 @@ public final class AeCaptureCallback extends CameraCaptureSession.CaptureCallbac
 
         void postDelayed(Runnable runnable, long delayMs);
 
+        /** Minimum time from first AE convergence to still capture for the active request. */
+        long minimumExposureStabilizationDelayMs();
+
         void requestAeLock(CameraCaptureSession session);
 
         void capturePhoto();
@@ -127,12 +130,26 @@ public final class AeCaptureCallback extends CameraCaptureSession.CaptureCallbac
             case CAPTURE_NOW_STABLE: {
                 long elapsedMs = elapsedNs / 1_000_000;
                 long stabilityMs = aeStateMachine.nsSinceFirstConverged() / 1_000_000;
-                Log.i(TAG, "🔍 ✅ AE CONVERGED+STABLE in " + elapsedMs + "ms! State: "
-                        + AeStateMachine.getAeStateName(aeState) + " (stability wait "
-                        + stabilityMs + "ms, " + aeStateMachine.stableConvergedFrames()
-                        + " stable frames), capturing photo [ADAPTIVE]");
+                long minimumStabilityMs = hooks.minimumExposureStabilizationDelayMs();
+                long remainingStabilityMs = Math.max(0L, minimumStabilityMs - stabilityMs);
                 aeStateMachine.clearWaitFlags();
-                hooks.capturePhoto();
+                if (remainingStabilityMs > 0L) {
+                    Log.i(TAG, "🔍 ✅ AE CONVERGED+STABLE in " + elapsedMs + "ms! State: "
+                            + AeStateMachine.getAeStateName(aeState) + " (stability wait "
+                            + stabilityMs + "ms, " + aeStateMachine.stableConvergedFrames()
+                            + " stable frames), waiting " + remainingStabilityMs
+                            + "ms for cold-start exposure settling");
+                    hooks.postDelayed(() -> {
+                        Log.i(TAG, "🔍 Cold-start exposure settling complete, capturing photo");
+                        hooks.capturePhoto();
+                    }, remainingStabilityMs);
+                } else {
+                    Log.i(TAG, "🔍 ✅ AE CONVERGED+STABLE in " + elapsedMs + "ms! State: "
+                            + AeStateMachine.getAeStateName(aeState) + " (stability wait "
+                            + stabilityMs + "ms, " + aeStateMachine.stableConvergedFrames()
+                            + " stable frames), capturing photo [ADAPTIVE]");
+                    hooks.capturePhoto();
+                }
                 break;
             }
             case CONTINUE_WAITING_FOR_STABILITY:

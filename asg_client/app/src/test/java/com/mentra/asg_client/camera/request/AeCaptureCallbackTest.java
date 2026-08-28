@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.camera.policy.AeStateMachine;
 
 import android.hardware.camera2.CameraCaptureSession;
@@ -43,6 +44,37 @@ public class AeCaptureCallbackTest {
         callback.onCaptureCompleted(session, request, result);
 
         assertThat(stateMachine.waitingForAeConvergence()).isFalse();
+        assertThat(hooks.captureCount).isEqualTo(1);
+    }
+
+    @Test
+    public void onCaptureCompleted_coldStart_waitsUntilHistoricalExposureSettleFloor() {
+        AeStateMachine stateMachine = new AeStateMachine();
+        FakeHooks hooks = new FakeHooks();
+        hooks.minimumExposureStabilizationDelayMs =
+                AsgConstants.COLD_CAMERA_EXPOSURE_SETTLE_DELAY_MS;
+        hooks.runDelayedImmediately = false;
+        AeCaptureCallback callback = new AeCaptureCallback(stateMachine, hooks);
+        CameraCaptureSession session = mock(CameraCaptureSession.class);
+        CaptureRequest request = mock(CaptureRequest.class);
+        TotalCaptureResult result = mock(TotalCaptureResult.class);
+        stateMachine.beginWaitingForAe();
+        when(result.get(CaptureResult.CONTROL_AE_STATE))
+                .thenReturn(CaptureResult.CONTROL_AE_STATE_CONVERGED);
+        when(result.get(CaptureResult.SENSOR_SENSITIVITY)).thenReturn(400);
+        when(result.get(CaptureResult.SENSOR_EXPOSURE_TIME)).thenReturn(25_000_000L);
+
+        for (int i = 0; i < AeStateMachine.STABLE_FRAMES_REQUIRED; i++) {
+            callback.onCaptureCompleted(session, request, result);
+        }
+
+        assertThat(stateMachine.waitingForAeConvergence()).isFalse();
+        assertThat(hooks.captureCount).isZero();
+        assertThat(hooks.lastDelayMs)
+                .isBetween(1L, AsgConstants.COLD_CAMERA_EXPOSURE_SETTLE_DELAY_MS);
+        assertThat(hooks.delayedCapture).isNotNull();
+
+        hooks.delayedCapture.run();
         assertThat(hooks.captureCount).isEqualTo(1);
     }
 
@@ -116,6 +148,9 @@ public class AeCaptureCallbackTest {
         AeStateMachine.ShotState shotState = AeStateMachine.ShotState.IDLE;
         String errorMessage;
         long lastDelayMs = -1L;
+        long minimumExposureStabilizationDelayMs;
+        boolean runDelayedImmediately = true;
+        Runnable delayedCapture;
         int captureCount;
         int cancelKeepAliveCount;
         int closeCount;
@@ -140,7 +175,15 @@ public class AeCaptureCallbackTest {
         @Override
         public void postDelayed(Runnable runnable, long delayMs) {
             lastDelayMs = delayMs;
-            runnable.run();
+            delayedCapture = runnable;
+            if (runDelayedImmediately) {
+                runnable.run();
+            }
+        }
+
+        @Override
+        public long minimumExposureStabilizationDelayMs() {
+            return minimumExposureStabilizationDelayMs;
         }
 
         @Override

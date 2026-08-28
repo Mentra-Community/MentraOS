@@ -15,6 +15,7 @@ import android.util.Size;
 
 import androidx.annotation.Nullable;
 
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.camera.CameraConstants;
 import com.mentra.asg_client.camera.CameraNeoService;
 import com.mentra.asg_client.camera.CameraSettings;
@@ -217,6 +218,11 @@ public final class PhotoSession {
                             }
 
                             @Override
+                            public long minimumExposureStabilizationDelayMs() {
+                                return PhotoSession.this.minimumExposureStabilizationDelayMs();
+                            }
+
+                            @Override
                             public void requestAeLock(CameraCaptureSession session) {
                                 boolean lockRequested =
                                         AePreviewController.requestAeLock(
@@ -260,6 +266,12 @@ public final class PhotoSession {
                                 hooks.stopService();
                             }
                         });
+    }
+
+    long minimumExposureStabilizationDelayMs() {
+        return mCaptureDispatchedAsWarmReuse
+                ? 0L
+                : AsgConstants.COLD_CAMERA_EXPOSURE_SETTLE_DELAY_MS;
     }
 
     public AeCaptureCallback aeCallback() {
