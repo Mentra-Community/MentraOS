@@ -388,8 +388,11 @@ jobs:
                   echo "run_url=$run_url" >> "$GITHUB_OUTPUT"
                 fi
               fi
-              candidate_sha=$(gh api "repos/$STARTER_KIT_REPOSITORY/branches/$encoded_candidate_branch" \
-                --jq .commit.sha 2>/dev/null || true)
+              candidate_sha=""
+              if branch_sha=$(gh api "repos/$STARTER_KIT_REPOSITORY/branches/$encoded_candidate_branch" \
+                --jq .commit.sha 2>/dev/null) && [[ "$branch_sha" =~ ^[0-9a-f]{40}$ ]]; then
+                candidate_sha="$branch_sha"
+              fi
               [[ -n "$run_id" && -n "$candidate_sha" ]] && break
               if [[ -n "$run_id" ]]; then
                 run_state=$(gh run view "$run_id" --repo "$STARTER_KIT_REPOSITORY" \
