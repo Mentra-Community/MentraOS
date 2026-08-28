@@ -62,3 +62,17 @@ test("rejects a plan from another family base", () => {
 
   assert.throws(() => stageReleaseFamily({rootDir: root, plan}), /does not match source/)
 })
+
+test("rejects a plan whose changelog does not match the source", () => {
+  const {root, family} = fixture()
+  const plan = createReleasePlan({
+    family,
+    channel: "dev",
+    sequence: 4,
+    sourceCommit: "b".repeat(40),
+    nativeBuildNumber: 310000004,
+  })
+  plan.changelog.sha256 = "0".repeat(64)
+
+  assert.throws(() => stageReleaseFamily({rootDir: root, plan}), /changelog does not match/)
+})

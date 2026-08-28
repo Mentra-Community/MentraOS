@@ -16,6 +16,9 @@ export function stageReleaseFamily({rootDir = process.cwd(), plan}) {
       `Release plan base ${JSON.stringify(plan.familyBaseVersion)} does not match source ${family.familyBaseVersion}`,
     )
   }
+  if (JSON.stringify(plan.changelog) !== JSON.stringify(family.changelog)) {
+    throw new Error("Release plan changelog does not match the source changelog")
+  }
   if (!plan.releaseIdentity || plan.releaseSetId !== `mentra-${plan.releaseIdentity}`) {
     throw new Error("Release plan has an invalid release identity")
   }

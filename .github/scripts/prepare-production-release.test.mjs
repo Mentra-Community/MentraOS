@@ -6,6 +6,7 @@ import {prepareProductionRelease} from "./prepare-production-release.mjs"
 
 const family = {
   familyBaseVersion: "3.1.0",
+  changelog: {version: "3.1.0", path: "changelogs/3.1.0.md", sha256: "f".repeat(64)},
   products: ["mentraos"],
   publicationOrder: ["mentraos"],
   members: [

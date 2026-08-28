@@ -40,6 +40,30 @@ function requireUniqueStrings(values, label) {
   return seen
 }
 
+function changelogForVersion(rootDir, version) {
+  const relativePath = `changelogs/${version}.md`
+  const file = path.join(rootDir, relativePath)
+  if (!existsSync(file)) fail(`missing ${relativePath} for the current family base version`)
+  const content = readFileSync(file)
+  if (content.length === 0) fail(`${relativePath} must not be empty`)
+  return {
+    version,
+    path: relativePath,
+    sha256: createHash("sha256").update(content).digest("hex"),
+  }
+}
+
+function validateChangelog(changelog, familyBaseVersion) {
+  if (
+    changelog?.version !== familyBaseVersion ||
+    changelog?.path !== `changelogs/${familyBaseVersion}.md` ||
+    !SHA256_PATTERN.test(changelog?.sha256 || "")
+  ) {
+    throw new Error("Release plan has invalid changelog provenance")
+  }
+  return changelog
+}
+
 export function validateFamilyBaseVersion(version) {
   if (typeof version !== "string" || !STABLE_VERSION_PATTERN.test(version)) {
     fail(`family base version ${JSON.stringify(version)} must be a plain X.Y.Z version`)
@@ -104,9 +128,7 @@ export function loadReleaseFamily({rootDir = process.cwd(), requireVersionMirror
   requireString(definition.family, "family")
   const versionSource = requireString(definition.versionSource, "versionSource")
   const familyBaseVersion = validateFamilyBaseVersion(readJson(path.join(rootDir, versionSource)).version)
-  if (!existsSync(path.join(rootDir, "changelogs", `${familyBaseVersion}.md`))) {
-    fail(`missing changelogs/${familyBaseVersion}.md for the current family base version`)
-  }
+  const changelog = changelogForVersion(rootDir, familyBaseVersion)
 
   if (!Array.isArray(definition.members) || definition.members.length === 0) fail("members must not be empty")
   const members = []
@@ -214,6 +236,7 @@ export function loadReleaseFamily({rootDir = process.cwd(), requireVersionMirror
     family: definition.family,
     familyBaseVersion,
     versionSource,
+    changelog,
     products,
     members,
     publicationOrder,
@@ -222,6 +245,7 @@ export function loadReleaseFamily({rootDir = process.cwd(), requireVersionMirror
 
 export function createReleasePlan({family, channel, sequence, sourceCommit, nativeBuildNumber, otaInputs = {}}) {
   if (!family?.members || !family?.familyBaseVersion) throw new Error("A validated release family is required")
+  const changelog = validateChangelog(family.changelog, family.familyBaseVersion)
   if (!CHANNELS.has(channel)) throw new Error(`Unknown release channel ${JSON.stringify(channel)}`)
   if (typeof sourceCommit !== "string" || !COMMIT_PATTERN.test(sourceCommit)) {
     throw new Error("sourceCommit must be a full lowercase Git commit SHA")
@@ -249,6 +273,7 @@ export function createReleasePlan({family, channel, sequence, sourceCommit, nati
     schemaVersion: 1,
     releaseSetId: releaseSetId(releaseIdentity),
     familyBaseVersion: family.familyBaseVersion,
+    changelog: {...changelog},
     releaseIdentity,
     artifactContainerTag:
       channel === "production" ? `mentra-v${releaseIdentity}` : `mentra-builds-v${family.familyBaseVersion}`,
@@ -491,6 +516,7 @@ export function finalizeReleaseManifest({plan, results, completedAt}) {
   ) {
     throw new Error("Release plan has invalid native build identity")
   }
+  const changelog = validateChangelog(plan.changelog, plan.familyBaseVersion)
 
   const publications = {}
   for (const [memberName, member] of Object.entries(plan.members)) {
@@ -555,6 +581,7 @@ export function finalizeReleaseManifest({plan, results, completedAt}) {
     schemaVersion: 1,
     releaseSetId: plan.releaseSetId,
     familyBaseVersion: plan.familyBaseVersion,
+    changelog,
     releaseIdentity: plan.releaseIdentity,
     channel: plan.channel,
     sourceCommit: plan.sourceCommit,
