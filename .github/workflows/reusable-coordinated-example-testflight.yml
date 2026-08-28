@@ -361,7 +361,7 @@ jobs:
           [[ "$(plutil -extract CFBundleShortVersionString raw "$app/Info.plist")" == "$EXPECTED_VERSION" ]]
           [[ "$(plutil -extract CFBundleVersion raw "$app/Info.plist")" == "$EXPECTED_BUILD" ]]
           codesign -d --entitlements :- "$app" > "$RUNNER_TEMP/mentra-example-entitlements.plist"
-          [[ "$(plutil -extract com.apple.developer.networking.HotspotConfiguration raw "$RUNNER_TEMP/mentra-example-entitlements.plist")" == "true" ]]
+          [[ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.networking.HotspotConfiguration' "$RUNNER_TEMP/mentra-example-entitlements.plist")" == "true" ]]
           application_identifier=$(plutil -extract application-identifier raw "$RUNNER_TEMP/mentra-example-entitlements.plist")
           [[ "$application_identifier" == "$APPLE_TEAM_ID.$EXAMPLE_BUNDLE_ID" ]]
 

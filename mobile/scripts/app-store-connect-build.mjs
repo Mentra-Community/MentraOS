@@ -110,7 +110,7 @@ export async function findProcessedBuild(client, {appId, buildNumber, marketingV
 
 export async function waitForProcessedBuild(
   client,
-  {appId, buildNumber, marketingVersion, attempts = 120, delay = 10_000},
+  {appId, buildNumber, marketingVersion, attempts = 360, delay = 10_000},
 ) {
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     const build = await findProcessedBuild(client, {appId, buildNumber, marketingVersion})

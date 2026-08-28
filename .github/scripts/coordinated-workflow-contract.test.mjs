@@ -93,6 +93,7 @@ test("mobile destinations use real TestFlight groups without changing the releas
   assert.match(example, /PROVISIONING_PROFILE_SPECIFIER="\$MENTRA_CI_PROVISIONING_PROFILE_NAME"/)
   assert.match(example, /OTHER_CODE_SIGN_FLAGS="--keychain \$MENTRA_CI_KEYCHAIN"/)
   assert.match(example, /provisioningProfiles: \{\(\$bundle_id\): \$profile\}/)
+  assert.match(example, /PlistBuddy -c 'Print :com\.apple\.developer\.networking\.HotspotConfiguration'/)
   assert.equal([...example.matchAll(/--app-id "\$EXAMPLE_APP_ID"/g)].length, 3)
   assert.match(example, /starterKit\.releaseCommit/)
   assert.match(example, /runs-on: \[self-hosted, macOS, ARM64\]/)
