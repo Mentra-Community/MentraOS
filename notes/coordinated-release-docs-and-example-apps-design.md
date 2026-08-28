@@ -127,8 +127,10 @@ without first building the example would instead create a not-found link.
 - exact dependency updates requested by the coordinator;
 - all example builds and build validation;
 - immutable Starter Kit tags, releases, and artifact checksums;
-- the machine-readable result returned to MentraOS; and
-- the future React Native iOS TestFlight archive and upload.
+- the machine-readable result returned to MentraOS.
+
+MentraOS owns the signed React Native iOS archive and TestFlight upload after
+accepting that exact Starter Kit result.
 
 This boundary avoids both a Git submodule and copied build logic. MentraOS
 consumes a validated result from the repository that owns the source.
@@ -348,18 +350,18 @@ The Starter Kit becomes a required consumer gate before finalization:
 ```text
 release plan and OTA selection
   -> coordinated package and mobile publication
-  -> external Engine consumer verification
-  -> Starter Kit dispatch, build, and immutable publication
+       |-> external Engine consumer verification ----\
+       \-> Starter Kit build and publication --------+-> both required
   -> finalized Mentra release manifest
   -> release-matched documentation
   -> channel Slack notification
 ```
 
-The Starter Kit gate runs after npm and SwiftPM exist. Native Android is built
-when Maven Central already exposes the exact SDK version; otherwise its APK is
-omitted from that release while the other examples remain required. The gate
-may run in parallel with unrelated late gates when dependencies permit, but
-finalization waits for its validated result.
+The Starter Kit gate runs after npm and SwiftPM exist, in parallel with the
+external Engine consumer gate. Native Android is built when Maven Central
+already exposes the exact SDK version; otherwise its APK is omitted from that
+release while the other examples remain required. Finalization waits for both
+independent gates and the example TestFlight publication.
 
 If the Starter Kit fails, already published package artifacts remain recoverable
 under the in-progress release. There is no completed release manifest, docs do

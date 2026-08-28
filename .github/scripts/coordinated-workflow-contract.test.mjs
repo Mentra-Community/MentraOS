@@ -91,7 +91,7 @@ test("coordinated docs publish only after finalization to the matching channel",
   const docs = jobBlock(coordinator, "docs")
   const notify = jobBlock(coordinator, "notify-slack")
 
-  assert.match(starterKit, /^    needs: \[plan, ota, npm, sdk-native, engine-consumer\]$/m)
+  assert.match(starterKit, /^    needs: \[plan, ota, npm, sdk-native\]$/m)
   assert.match(starterKit, /coordinated-example-release\.yml/)
   assert.match(starterKit, /event_type: "coordinated_example_release"/)
   assert.match(starterKit, /--event repository_dispatch/)
@@ -108,6 +108,7 @@ test("coordinated docs publish only after finalization to the matching channel",
   assert.match(exampleTestflight, /reusable-coordinated-example-testflight\.yml/)
   assert.match(jobBlock(coordinator, "finalize"), /needs\.starter-kit\.result == 'success'/)
   assert.match(jobBlock(coordinator, "finalize"), /needs\.example-testflight\.result == 'success'/)
+  assert.match(jobBlock(coordinator, "finalize"), /needs\.engine-consumer\.result == 'success'/)
   assert.match(docs, /^    needs: \[plan, starter-kit, finalize\]$/m)
   assert.match(docs, /needs\.starter-kit\.result == 'success'/)
   assert.match(docs, /needs\.finalize\.result == 'success'/)
