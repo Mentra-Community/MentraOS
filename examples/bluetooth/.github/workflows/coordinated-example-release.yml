@@ -250,10 +250,19 @@ jobs:
           RELEASE_COMMIT: ${{ steps.candidate.outputs.release_commit }}
         run: |
           set -euo pipefail
-          run_id=""
+          run_id=$(gh run list --workflow example-app-builds.yml --branch "$CANDIDATE_BRANCH" \
+            --limit 20 --json databaseId,headSha \
+            --jq ".[] | select(.headSha == \"$RELEASE_COMMIT\") | .databaseId" \
+            | head -1)
+          if [[ -z "$run_id" ]]; then
+            gh workflow run example-app-builds.yml \
+              --ref "$CANDIDATE_BRANCH" \
+              -f artifact_suffix="$RELEASE_IDENTITY"
+          fi
           for _ in {1..60}; do
+            [[ -n "$run_id" ]] && break
             run_id=$(gh run list --workflow example-app-builds.yml --branch "$CANDIDATE_BRANCH" \
-              --event pull_request --limit 20 \
+              --limit 20 \
               --json databaseId,headSha \
               --jq ".[] | select(.headSha == \"$RELEASE_COMMIT\") | .databaseId" \
               | head -1)
