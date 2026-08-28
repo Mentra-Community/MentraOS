@@ -95,11 +95,35 @@ test("assembles stable packages with exact promoted beta mobile and OTA bytes", 
       {...publication("mentra-live-asg-100057.apk"), status: "promoted"},
     ],
   }
+  const exampleTestflight = {
+    schemaVersion: 1,
+    releaseSetId: plan.releaseSetId,
+    releaseIdentity: plan.releaseIdentity,
+    channel: "production",
+    selectedBetaReleaseSetId: plan.promotion.selectedBetaReleaseSetId,
+    selectedBetaIdentity: plan.promotion.selectedBetaIdentity,
+    app: {id: "6792839366", bundleId: "com.mentra.bluetoothsdkexample"},
+    version: plan.native,
+    build: {
+      id: "build-57",
+      processingState: "VALID",
+      sourceTestflightProvenanceUrl: "https://github.com/Mentra-Community/MentraOS/actions/runs/57",
+    },
+    group: {id: "group-production", name: "Mentra Production Public"},
+    distribution: {
+      audience: "external",
+      status: "available",
+      reviewState: "APPROVED",
+      installUrl: "https://testflight.apple.com/join/production123",
+    },
+    provenanceUrl,
+  }
   const results = assembleProductionReleaseResults({
     plan,
     npmRecords,
     native,
     promotion,
+    exampleTestflight,
     cloud: cloudRecordForPlan(plan),
     enginePackage,
     assetBaseUrl: "https://example.com/stable",
@@ -110,6 +134,7 @@ test("assembles stable packages with exact promoted beta mobile and OTA bytes", 
   assert.equal(manifest.publications.mentraos["google-play"].status, "promoted")
   assert.equal(manifest.otaManifest.coordinate, "mentra-live-ota-3.1.0-beta.57.json")
   assert.equal(manifest.cloud.environment, "prod")
+  assert.equal(manifest.exampleTestflight.distribution.reviewState, "APPROVED")
 
   results.otaManifest.status = "published"
   assert.throws(

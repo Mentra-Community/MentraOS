@@ -1,7 +1,7 @@
 # Coordinated Documentation and Example App Releases
 
-> Status: proposed; ready for review
-> Updated: 2026-08-27
+> Status: implemented; dev and beta end-to-end verification in progress
+> Updated: 2026-08-28
 > Parent design: [Coordinated Release System](./coordinated-release-system-proposal.md)
 
 ## Purpose
@@ -67,17 +67,17 @@ different releases when examples have drifted to different SDK versions. It
 also uses asset clobbering and force-moves release tags. Those behaviors do not
 provide immutable coordinated-release provenance.
 
-The checked-in examples are presently allowed to carry different SDK versions.
-The coordinated model instead requires every maintained example to consume the
-same exact release identity.
+The coordinated path synchronizes every maintained example to the same exact
+release identity before it accepts the Starter Kit result.
 
-### Known customer-facing gap
+### Remaining production-docs bootstrap
 
-The coordinated docs renderer currently leaves `example-app-version` and
-`example-app-url` at checked-in static values. The docs can therefore describe
-one coordinated release while linking to an older, independently published
-example app. Constructing a Starter Kit URL from the MentraOS release identity
-without first building the example would instead create a not-found link.
+Dev and beta docs receive the exact Android artifact URL and channel TestFlight
+link from validated release records. Production docs still use checked-in
+Mintlify variables. The first production promotion creates or verifies the
+public production TestFlight group; its Apple-generated stable public link must
+then replace the bootstrap iOS URL in `mintlify-docs/docs.json` before the first
+production docs release under this model.
 
 ## Goals
 
@@ -322,7 +322,16 @@ The result record has at least this shape:
       "contentType": "application/vnd.android.package-archive"
     }
   ],
-  "testflight": null
+  "testflight": {
+    "app": {"id": "6792839366", "bundleId": "com.mentra.bluetoothsdkexample"},
+    "version": {"marketingVersion": "3.1.0", "buildNumber": 310000057},
+    "group": {"name": "Mentra Staging Public"},
+    "distribution": {
+      "audience": "external",
+      "status": "submitted",
+      "installUrl": "https://testflight.apple.com/join/<token>"
+    }
+  }
 }
 ```
 
@@ -396,7 +405,8 @@ The checked-in Mintlify config retains these structured variables:
 - `release-version`;
 - `release-artifacts-url`;
 - `example-app-version`; and
-- `example-app-url`.
+- `example-app-url`; and
+- `example-app-ios-url`.
 
 For dev and beta, the renderer receives both the immutable Mentra release plan
 and the validated Starter Kit result. It sets:
@@ -405,7 +415,9 @@ and the validated Starter Kit result. It sets:
 - `release-artifacts-url` to the coordinated Mentra release container;
 - `example-app-version` to that same exact identity; and
 - `example-app-url` to the published React Native APK URL from the Starter Kit
-  result, never to a constructed or guessed URL.
+  result, never to a constructed or guessed URL; and
+- `example-app-ios-url` to the verified App Store Connect group URL for dev or
+  the Apple-generated public invitation link for beta.
 
 The renderer does not mutate the source checkout. Before deployment it verifies
 that:
@@ -480,7 +492,7 @@ One final coordinated message reports the full release, including:
 - React Native example APK direct download;
 - Starter Kit release page;
 - dev or beta docs URL;
-- TestFlight destination and processing state when that phase is enabled; and
+- TestFlight audience, submission state, and verified install link; and
 - links to the MentraOS and Starter Kit workflow runs on failure.
 
 Slack never guesses an artifact URL. It uses the validated release plan,
@@ -505,27 +517,26 @@ Every boundary uses exact identities and compare-and-swap behavior:
 - immutable tags and asset hashes on retry; and
 - exact release-set correlation before MentraOS finalization.
 
-## TestFlight Phase
-
-TestFlight is added only after the cross-repository Android/unsigned-iOS
-artifact flow has completed successfully through several coordinated `dev`
-releases and at least one `staging` release.
+## TestFlight Distribution
 
 ### Approved signing and App Store Connect decisions
 
 - Publish the React Native iOS example under App Store Connect app Apple ID
-  `6792839366`.
+  `6792839366` and bundle ID `com.mentra.bluetoothsdkexample`.
 - Reuse the Apple Distribution certificate and private key already installed on
   the self-hosted Mac Mini runners for MentraOS CI.
 - Use the React Native example's own bundle identifier, App ID, entitlements,
   and provisioning profile. The MentraOS provisioning profile is not reused.
 - Reuse the existing App Store Connect API key only after confirming it can
   upload builds and manage TestFlight groups for app `6792839366`.
-- Send `dev` builds to the example app's `Mentra Dev` internal group.
-- Send `staging` builds to the example app's `Mentra Staging` internal group.
+- Send `dev` builds to the `Mentra Dev` internal group.
+- Send `staging` builds to the `Mentra Staging Public` external group.
+- Promote the selected approved beta build to the `Mentra Production Public`
+  external group during stable production promotion.
 
-The group IDs are resolved and pinned during implementation; automation does
-not depend only on mutable display names.
+Automation verifies each resolved group's internal/external audience. External
+groups are created idempotently when absent and must expose an Apple-generated
+`https://testflight.apple.com/join/...` link.
 
 ### TestFlight job
 
@@ -550,7 +561,8 @@ The job:
 3. exports and validates the signed IPA;
 4. uploads it to app `6792839366`;
 5. waits for App Store Connect processing;
-6. assigns the exact build to the channel's internal TestFlight group; and
+6. assigns the exact dev build to its internal group, or submits the exact beta
+   build for external review when that review lane is available; and
 7. writes App Store app ID, bundle ID, marketing version, build number, upload
    state, group ID, and processing result into a MentraOS publication record;
    and
@@ -568,9 +580,32 @@ is:
 The numeric build number must remain unique across both dev and staging uploads
 for this App Store app. Channel-local counters are not sufficient.
 
-The TestFlight publication is an additional required coordinated-release gate
-for dev and staging. Public App Store submission and stable example-app
-promotion require a separate explicit decision.
+### External review serialization
+
+Apple allows only one useful external beta review to be active at a time. A
+staging release therefore always builds, uploads, and waits for its exact IPA,
+but it does not assign or submit that build when another build is
+`WAITING_FOR_REVIEW` or `IN_REVIEW`, or when the latest review was `REJECTED`.
+The release record preserves the exact uploaded build, public group link,
+blocking review state, and skip reason. Docs continue to use the stable public
+group link, which serves the latest Apple-approved build.
+
+Review discussion and change-request responses remain in App Store Connect.
+After a source fix reaches staging and its exact build has been uploaded, an
+operator runs `Submit Example TestFlight Review` with that exact coordinated
+beta identity and optional review notes. The workflow reads the build ID and
+number from the immutable completed beta manifest, requires that automatic
+submission was skipped, and refuses to reuse the build Apple rejected. This
+Linux-only manual workflow does not rebuild the IPA or rerun package, OTA,
+cloud, or mobile publication.
+
+Production promotion does not rebuild or relabel the example IPA. It verifies
+that the selected beta's exact TestFlight build is `APPROVED`, then adds that
+same build to `Mentra Production Public`. This matches the existing production
+model that promotes exact approved beta bytes.
+
+The TestFlight publication is a required coordinated-release gate. Public App
+Store submission remains outside this design.
 
 ## Security
 
@@ -613,10 +648,12 @@ promotion require a separate explicit decision.
 
 1. Verify one complete `staging` release, including `docs-beta` and the
    `staging-builds` Slack message.
-2. Add stable Starter Kit synchronization to the protected production flow.
-3. Verify stable example assets before considering Mintlify production docs
+2. Promote only the selected Apple-approved beta example build to the public
+   production TestFlight group.
+3. Add stable Starter Kit synchronization to the protected production flow.
+4. Verify stable example assets before considering Mintlify production docs
    complete.
-4. Remove obsolete independent Starter Kit publication behavior after all
+5. Remove obsolete independent Starter Kit publication behavior after all
    channels use the coordinated path.
 
 ### Phase 4: React Native example TestFlight
@@ -624,12 +661,14 @@ promotion require a separate explicit decision.
 1. Verify the shared distribution identity on each eligible Mac Mini runner.
 2. Create or install the example app's provisioning profile with all required
    entitlements.
-3. Verify App Store Connect API access to app `6792839366` and pin both internal
-   group IDs.
-4. Add serialized Mac archive/upload followed by Linux processing wait and
-   group assignment.
-5. Add TestFlight results to the Mentra final manifest and Slack message.
-6. Prove one dev upload and one staging upload on the required gate.
+3. Verify App Store Connect API access to app `6792839366` and the internal or
+   external audience of every resolved group.
+4. Add serialized Mac archive/upload followed by Linux processing wait,
+   review gating, and group assignment.
+5. Add the exact-build manual replacement-review dispatch.
+6. Add TestFlight results and install links to the Mentra manifest, docs, and
+   Slack message.
+7. Prove one dev upload, one staging submission, and one production promotion.
 
 ## Acceptance Criteria
 
@@ -646,9 +685,13 @@ promotion require a separate explicit decision.
 - Slack reports the same identity, docs URL, and example artifact URL.
 - A Starter Kit failure prevents finalization and docs advancement.
 - Dev and staging releases cannot cancel or replace one another.
-- After Phase 4, React Native iOS builds reach the correct example-app
+- React Native iOS builds reach the correct internal or public example-app
   TestFlight group using the shared distribution certificate and the example
   app's own provisioning profile.
+- Automatic staging runs never supersede an unresolved beta app review.
+- A rejected review can be replaced by manually submitting one exact already
+  uploaded build with optional review notes.
+- Production accepts only the selected beta's Apple-approved build.
 
 ## Remaining Implementation Checks
 
@@ -659,9 +702,9 @@ than assumed in this design:
 - Starter Kit `dev` and `staging` branch protection rules;
 - the Maven and SwiftPM public-readiness probes used before example builds;
 - the example app's registered bundle ID matching
-  `com.mentra.bluetoothsdk.example.reactnative`;
+  `com.mentra.bluetoothsdkexample`;
 - the provisioning profile and entitlements available on the Mac runners;
 - App Store Connect API-key access to app `6792839366`;
-- the immutable IDs for the example app's `Mentra Dev` and `Mentra Staging`
-  groups; and
+- the public invitation URLs generated for `Mentra Staging Public` and
+  `Mentra Production Public`; and
 - the globally monotonic TestFlight build-number source.

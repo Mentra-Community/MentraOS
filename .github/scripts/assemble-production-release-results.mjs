@@ -12,6 +12,7 @@ export function assembleProductionReleaseResults({
   npmRecords,
   native,
   promotion,
+  exampleTestflight,
   cloud,
   enginePackage,
   assetBaseUrl,
@@ -24,6 +25,26 @@ export function assembleProductionReleaseResults({
   }
   const merged = mergeReleaseResultRecords({plan, records: [...npmRecords, native, promotion]})
   const verifiedCloud = validateCloudV2DeploymentRecord({plan, record: cloud})
+  if (
+    exampleTestflight?.schemaVersion !== 1 ||
+    exampleTestflight.releaseSetId !== plan.releaseSetId ||
+    exampleTestflight.releaseIdentity !== plan.releaseIdentity ||
+    exampleTestflight.channel !== "production" ||
+    exampleTestflight.selectedBetaReleaseSetId !== plan.promotion?.selectedBetaReleaseSetId ||
+    exampleTestflight.selectedBetaIdentity !== plan.promotion?.selectedBetaIdentity ||
+    exampleTestflight.app?.id !== "6792839366" ||
+    exampleTestflight.app?.bundleId !== "com.mentra.bluetoothsdkexample" ||
+    exampleTestflight.version?.marketingVersion !== plan.native?.marketingVersion ||
+    exampleTestflight.version?.buildNumber !== plan.native?.buildNumber ||
+    exampleTestflight.build?.processingState !== "VALID" ||
+    exampleTestflight.group?.name !== "Mentra Production Public" ||
+    exampleTestflight.distribution?.audience !== "external" ||
+    exampleTestflight.distribution?.status !== "available" ||
+    exampleTestflight.distribution?.reviewState !== "APPROVED" ||
+    !/^https:\/\/testflight\.apple\.com\/join\//.test(exampleTestflight.distribution?.installUrl || "")
+  ) {
+    throw new Error("Production example TestFlight evidence does not match the selected beta")
+  }
   merged.artifacts.push(
     createEnginePackageArtifact({
       plan,
@@ -37,6 +58,7 @@ export function assembleProductionReleaseResults({
     releaseSetId: plan.releaseSetId,
     cloud: verifiedCloud,
     promotion: promotion.promotion,
+    exampleTestflight,
     publications: merged.publications,
     otaManifest: promotion.otaManifest,
     artifacts: merged.artifacts,
@@ -65,6 +87,7 @@ function main() {
     npmRecords: [readJson(args.npm)],
     native: readJson(args.native),
     promotion: readJson(args.promotion),
+    exampleTestflight: readJson(args["example-testflight"]),
     cloud: readJson(args.cloud),
     enginePackage: path.resolve(args["engine-package"]),
     assetBaseUrl: args["asset-base-url"],

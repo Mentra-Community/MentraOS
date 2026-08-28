@@ -33,7 +33,40 @@ function validateStarterKitResult(releasePlan, starterKitResult) {
   return reactNative
 }
 
-export function renderCoordinatedDocs({sourceDir, outputDir, releasePlan, starterKitResult, repository}) {
+function validateExampleTestflightResult(releasePlan, starterKitResult, exampleTestflightResult) {
+  const expectedGroup = releasePlan.channel === "dev" ? "Mentra Dev" : "Mentra Staging Public"
+  const expectedAudience = releasePlan.channel === "dev" ? "internal" : "external"
+  if (
+    exampleTestflightResult?.schemaVersion !== 1 ||
+    exampleTestflightResult.releaseSetId !== releasePlan.releaseSetId ||
+    exampleTestflightResult.releaseIdentity !== releasePlan.releaseIdentity ||
+    exampleTestflightResult.channel !== releasePlan.channel ||
+    exampleTestflightResult.mentraosSourceCommit !== releasePlan.sourceCommit ||
+    exampleTestflightResult.starterKitReleaseCommit !== starterKitResult?.starterKit?.releaseCommit ||
+    exampleTestflightResult.version?.marketingVersion !== releasePlan.native?.marketingVersion ||
+    exampleTestflightResult.version?.buildNumber !== releasePlan.native?.buildNumber ||
+    exampleTestflightResult.group?.name !== expectedGroup ||
+    exampleTestflightResult.distribution?.audience !== expectedAudience ||
+    !["available", "submitted", "skipped"].includes(exampleTestflightResult.distribution?.status)
+  ) {
+    throw new Error("Example TestFlight result does not match the coordinated release")
+  }
+  const installUrl = exampleTestflightResult.distribution.installUrl
+  if (!/^https:\/\//.test(installUrl || "")) throw new Error("Example TestFlight result has no install URL")
+  if (expectedAudience === "external" && !/^https:\/\/testflight\.apple\.com\/join\//.test(installUrl)) {
+    throw new Error("External example TestFlight result has no public invitation link")
+  }
+  return installUrl
+}
+
+export function renderCoordinatedDocs({
+  sourceDir,
+  outputDir,
+  releasePlan,
+  starterKitResult,
+  exampleTestflightResult,
+  repository,
+}) {
   if (!RELEASE_IDENTITY_PATTERN.test(releasePlan?.releaseIdentity || "")) {
     throw new Error(`Invalid coordinated release identity ${JSON.stringify(releasePlan?.releaseIdentity)}`)
   }
@@ -59,7 +92,13 @@ export function renderCoordinatedDocs({sourceDir, outputDir, releasePlan, starte
   if (!config.variables || typeof config.variables !== "object" || Array.isArray(config.variables)) {
     throw new Error("mintlify-docs/docs.json must define release variables")
   }
-  for (const name of ["release-version", "release-artifacts-url", "example-app-version", "example-app-url"]) {
+  for (const name of [
+    "release-version",
+    "release-artifacts-url",
+    "example-app-version",
+    "example-app-url",
+    "example-app-ios-url",
+  ]) {
     if (typeof config.variables[name] !== "string" || config.variables[name].length === 0) {
       throw new Error(`mintlify-docs/docs.json is missing variable ${name}`)
     }
@@ -72,6 +111,11 @@ export function renderCoordinatedDocs({sourceDir, outputDir, releasePlan, starte
     const reactNative = validateStarterKitResult(releasePlan, starterKitResult)
     config.variables["example-app-version"] = releasePlan.releaseIdentity
     config.variables["example-app-url"] = reactNative.url
+    config.variables["example-app-ios-url"] = validateExampleTestflightResult(
+      releasePlan,
+      starterKitResult,
+      exampleTestflightResult,
+    )
   }
   writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`)
 
@@ -85,11 +129,15 @@ if (isMain) {
   const starterKitResult = args["starter-kit"]
     ? JSON.parse(readFileSync(path.resolve(args["starter-kit"]), "utf8"))
     : undefined
+  const exampleTestflightResult = args["example-testflight"]
+    ? JSON.parse(readFileSync(path.resolve(args["example-testflight"]), "utf8"))
+    : undefined
   const result = renderCoordinatedDocs({
     sourceDir: path.resolve(args.source),
     outputDir: path.resolve(args.output),
     releasePlan: plan,
     starterKitResult,
+    exampleTestflightResult,
     repository: args.repository,
   })
   console.log(`Rendered docs for ${result.releaseIdentity} in ${result.outputDir}`)

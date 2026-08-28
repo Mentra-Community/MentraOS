@@ -31,6 +31,9 @@ function input(overrides = {}) {
     buildId: "build-1",
     groupId: "group-1",
     groupName: "Mentra Dev",
+    audience: "internal",
+    distributionStatus: "available",
+    installUrl: "https://appstoreconnect.apple.com/apps/6792839366/testflight",
     uploadStatus: "published",
     provenanceUrl: "https://github.com/Mentra-Community/MentraOS/actions/runs/1",
     ...overrides,
@@ -53,6 +56,40 @@ test("requires the channel's exact TestFlight group", () => {
     () => createExampleTestflightRecord(input({groupName: "Mentra Staging"})),
     /TestFlight group must be Mentra Dev/,
   )
+})
+
+test("records a skipped beta build while an earlier review is pending", () => {
+  const betaPlan = {
+    ...plan,
+    releaseSetId: "mentra-3.1.0-beta.46",
+    releaseIdentity: "3.1.0-beta.46",
+    channel: "beta",
+    sourceCommit: "c".repeat(40),
+  }
+  const betaStarterKit = {
+    ...starterKit,
+    releaseSetId: betaPlan.releaseSetId,
+    releaseIdentity: betaPlan.releaseIdentity,
+    mentraos: {sourceCommit: betaPlan.sourceCommit},
+  }
+  const record = createExampleTestflightRecord(
+    input({
+      plan: betaPlan,
+      starterKit: betaStarterKit,
+      buildId: "build-skipped",
+      uploadStatus: "published",
+      groupName: "Mentra Staging Public",
+      audience: "external",
+      distributionStatus: "skipped",
+      installUrl: "https://testflight.apple.com/join/public123",
+      reviewState: "WAITING_FOR_REVIEW",
+      skipReason: "external_review_waiting_for_review",
+      skipDetail: "build-pending",
+    }),
+  )
+  assert.equal(record.build.id, "build-skipped")
+  assert.equal(record.distribution.status, "skipped")
+  assert.equal(record.distribution.reviewState, "WAITING_FOR_REVIEW")
 })
 
 test("rejects a Starter Kit result from another release", () => {

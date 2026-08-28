@@ -22,6 +22,12 @@ export function createExampleTestflightRecord({
   buildId,
   groupId,
   groupName,
+  audience,
+  distributionStatus,
+  installUrl,
+  reviewState,
+  skipReason,
+  skipDetail,
   uploadStatus,
   provenanceUrl,
   ipa,
@@ -42,9 +48,21 @@ export function createExampleTestflightRecord({
   ) {
     throw new Error("Starter Kit result does not match the release plan")
   }
-  const expectedGroup = plan.channel === "dev" ? "Mentra Dev" : "Mentra Staging"
+  const expectedGroup = plan.channel === "dev" ? "Mentra Dev" : "Mentra Staging Public"
+  const expectedAudience = plan.channel === "dev" ? "internal" : "external"
   if (groupName !== expectedGroup) throw new Error(`TestFlight group must be ${expectedGroup}`)
-  if (!["published", "reused"].includes(uploadStatus)) throw new Error("Invalid TestFlight upload status")
+  if (audience !== expectedAudience) throw new Error(`TestFlight audience must be ${expectedAudience}`)
+  if (!["available", "submitted", "skipped"].includes(distributionStatus)) {
+    throw new Error("Invalid TestFlight distribution status")
+  }
+  if (distributionStatus === "skipped" && !skipReason) throw new Error("Skipped TestFlight distribution needs a reason")
+  if (!["published", "reused"].includes(uploadStatus)) {
+    throw new Error("Invalid TestFlight upload status")
+  }
+  if (!URL_PATTERN.test(installUrl || "")) throw new Error("TestFlight install URL must use HTTPS")
+  if (audience === "external" && !/^https:\/\/testflight\.apple\.com\/join\//.test(installUrl)) {
+    throw new Error("External TestFlight distribution needs a public invitation link")
+  }
   if (!URL_PATTERN.test(provenanceUrl || "")) throw new Error("TestFlight provenance URL must use HTTPS")
 
   const record = {
@@ -70,6 +88,14 @@ export function createExampleTestflightRecord({
     group: {
       id: requiredString(groupId, "TestFlight group ID"),
       name: groupName,
+    },
+    distribution: {
+      audience,
+      status: distributionStatus,
+      installUrl,
+      ...(reviewState ? {reviewState} : {}),
+      ...(skipReason ? {skipReason} : {}),
+      ...(skipDetail ? {skipDetail} : {}),
     },
     provenanceUrl,
   }
@@ -104,6 +130,12 @@ function main() {
     buildId: args["build-id"],
     groupId: args["group-id"],
     groupName: args["group-name"],
+    audience: args.audience,
+    distributionStatus: args["distribution-status"],
+    installUrl: args["install-url"],
+    reviewState: args["review-state"],
+    skipReason: args["skip-reason"],
+    skipDetail: args["skip-detail"],
     uploadStatus: args["upload-status"],
     provenanceUrl: args["provenance-url"],
     ipa: args.ipa ? path.resolve(args.ipa) : undefined,

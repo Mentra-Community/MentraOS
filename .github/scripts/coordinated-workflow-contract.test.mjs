@@ -53,11 +53,19 @@ test("production validates before approval and proves packages before mobile pro
   assert.match(jobBlock(production, "cloud-v2"), /^    needs: \[plan, approve, engine-consumer\]$/m)
   assert.match(jobBlock(production, "cloud-v2"), /deployment_environment: prod/)
   assert.match(jobBlock(production, "mobile"), /^    needs: \[plan, engine-consumer, cloud-v2\]$/m)
+  assert.match(jobBlock(production, "example-testflight"), /^    needs: \[plan, approve\]$/m)
+  assert.match(jobBlock(production, "example-testflight"), /app-store-connect-build\.mjs promote-approved/)
+  assert.match(jobBlock(production, "example-testflight"), /Mentra Production Public/)
+  assert.match(jobBlock(production, "example-testflight"), /example-app-ios-url/)
   assert.match(
     jobBlock(production, "finalize"),
-    /^    needs: \[plan, approve, npm, sdk-native, mobile, engine-consumer, cloud-v2\]$/m,
+    /^    needs: \[plan, approve, npm, sdk-native, mobile, engine-consumer, cloud-v2, example-testflight\]$/m,
   )
   assert.match(jobBlock(production, "finalize"), /--cloud release-input\/cloud-v2\/cloud-v2-deployment\.json/)
+  assert.match(
+    jobBlock(production, "finalize"),
+    /--example-testflight release-input\/example-testflight\/example-testflight-publication\.json/,
+  )
   assert.match(sdkNative, /channel=\$\(jq -er \.channel release-intent\/release-plan\.json\)/)
   assert.match(
     sdkNative,
@@ -141,12 +149,16 @@ test("mobile destinations use real TestFlight groups without changing the releas
   assert.match(example, /OTHER_CODE_SIGN_FLAGS="--keychain \$MENTRA_CI_KEYCHAIN"/)
   assert.match(example, /provisioningProfiles: \{\(\$bundle_id\): \$profile\}/)
   assert.match(example, /PlistBuddy -c 'Print :com\.apple\.developer\.networking\.HotspotConfiguration'/)
-  assert.equal([...example.matchAll(/--app-id "\$EXAMPLE_APP_ID"/g)].length, 3)
+  assert.equal([...example.matchAll(/--app-id "\$EXAMPLE_APP_ID"/g)].length, 5)
   assert.match(example, /starterKit\.releaseCommit/)
   assert.match(example, /runs-on: \[self-hosted, macOS, ARM64\]/)
   assert.match(example, /app-store-connect-build\.mjs upload/)
   assert.match(mobile, /app-store-connect-build\.mjs upload/)
   assert.match(example, /app-store-connect-build\.mjs assign/)
+  assert.match(example, /app-store-connect-build\.mjs testflight-preflight/)
+  assert.match(example, /app-store-connect-build\.mjs wait/)
+  assert.match(example, /Mentra Staging Public/)
+  assert.match(example, /testflight_audience/)
   assert.match(example, /destination="\$GITHUB_WORKSPACE\/release-output\/mentra-example-react-native-/)
   assert.doesNotMatch(mobileIos, /app-store-connect-build\.mjs assign/)
   assert.match(mobileStore, /^    runs-on: ubuntu-latest$/m)
@@ -213,7 +225,7 @@ test("coordinated docs publish only after finalization to the matching channel",
   assert.match(jobBlock(coordinator, "finalize"), /needs\.starter-kit\.result == 'success'/)
   assert.match(jobBlock(coordinator, "finalize"), /needs\.example-testflight\.result == 'success'/)
   assert.match(jobBlock(coordinator, "finalize"), /needs\.engine-consumer\.result == 'success'/)
-  assert.match(docs, /^    needs: \[plan, starter-kit, finalize\]$/m)
+  assert.match(docs, /^    needs: \[plan, starter-kit, example-testflight, finalize\]$/m)
   assert.match(docs, /needs\.starter-kit\.result == 'success'/)
   assert.match(docs, /needs\.finalize\.result == 'success'/)
   assert.match(docs, /needs\.plan\.outputs\.dry_run != 'true'/)
@@ -223,14 +235,21 @@ test("coordinated docs publish only after finalization to the matching channel",
   assert.match(docs, /docs_url=https:\/\/docs-beta\.mentraglass\.com/)
   assert.match(docs, /render-coordinated-docs\.mjs/)
   assert.match(docs, /--starter-kit/)
+  assert.match(docs, /--example-testflight/)
   assert.match(docs, /X-Robots-Tag: noindex/)
   assert.match(docs, /grep --fixed-strings --quiet "\$RELEASE_IDENTITY" "\$body"/)
+  assert.match(docs, /grep --fixed-strings --quiet "\$EXAMPLE_IOS_URL" "\$body"/)
   assert.match(
     notify,
     /^    needs:\n      \[plan, cloud-v2, ota, npm, sdk-native, mobile, engine-consumer, starter-kit, example-testflight, finalize, docs\]$/m,
   )
   assert.match(notify, /STARTER_KIT_RESULT: \$\{\{ needs\.starter-kit\.result \}\}/)
   assert.match(notify, /EXAMPLE_TESTFLIGHT_RESULT: \$\{\{ needs\.example-testflight\.result \}\}/)
+  assert.match(notify, /EXAMPLE_TESTFLIGHT_INSTALL_URL: \$\{\{ needs\.example-testflight\.outputs\.install_url \}\}/)
+  assert.match(
+    notify,
+    /EXAMPLE_TESTFLIGHT_BUILD_NUMBER: \$\{\{ needs\.example-testflight\.outputs\.build_number \}\}/,
+  )
   assert.match(notify, /STARTER_KIT_RUN_URL: \$\{\{ needs\.starter-kit\.outputs\.run_url \}\}/)
   assert.match(notify, /DOCS_RESULT: \$\{\{ needs\.docs\.result \}\}/)
   const example = workflow("reusable-coordinated-example-testflight.yml")
@@ -244,6 +263,21 @@ test("coordinated docs publish only after finalization to the matching channel",
     example,
     /token: \$\{\{ steps\.starter-kit-app-token\.outputs\.token \|\| secrets\.STARTER_KIT_COORDINATOR_TOKEN/,
   )
+})
+
+test("external example review replacements are manual and exact-build only", () => {
+  const manual = workflow("submit-example-testflight-review.yml")
+
+  assert.match(manual, /workflow_dispatch:/)
+  assert.match(manual, /beta_identity:/)
+  assert.match(manual, /review_notes:/)
+  assert.match(manual, /mentra-release-\$BETA_IDENTITY\.json/)
+  assert.match(manual, /\.starterKit\.testflight\.distribution\.status/)
+  assert.match(manual, /--allow-rejected-override true/)
+  assert.match(manual, /app-store-connect-build\.mjs testflight-preflight/)
+  assert.match(manual, /app-store-connect-build\.mjs assign/)
+  assert.doesNotMatch(manual, /app-store-connect-build\.mjs upload/)
+  assert.doesNotMatch(manual, /xcodebuild|npm publish|porter apply/)
 })
 
 test("mobile release selects an existing Doppler token for its backend", () => {
