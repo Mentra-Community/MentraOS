@@ -361,19 +361,22 @@ The Starter Kit becomes a required consumer gate before finalization:
 
 ```text
 release plan and OTA selection
-  -> coordinated package and mobile publication
-       |-> external Engine consumer verification ----\
-       \-> Starter Kit build and publication --------+-> both required
+  |-> npm publication -> external Engine consumer verification --\
+  |-> native SDK publication ------------------------------------+-> all required
+  |-> MentraOS mobile publication -------------------------------+
+  \-> Starter Kit readiness, build, and publication -------------+
   -> finalized Mentra release manifest
   -> release-matched documentation
   -> channel Slack notification
 ```
 
-The Starter Kit gate runs after npm and SwiftPM exist, in parallel with the
-external Engine consumer gate. Native Android is built when Maven Central
-already exposes the exact SDK version; otherwise its APK is omitted from that
-release while the other examples remain required. Finalization waits for both
-independent gates and the example TestFlight publication.
+The Starter Kit gate is dispatched after OTA publication and polls the exact npm
+and SwiftPM identities while those publication lanes continue. The external
+Engine consumer starts as soon as npm is public; it does not wait for unrelated
+Maven or SwiftPM artifacts. Native Android is built when Maven Central already
+exposes the exact SDK version; otherwise its APK is omitted from that release
+while the other examples remain required. Finalization waits for every product
+lane, both consumer gates, and the example TestFlight publication.
 
 If the Starter Kit fails, already published package artifacts remain recoverable
 under the in-progress release. There is no completed release manifest, docs do
@@ -527,11 +530,17 @@ not depend only on mutable display names.
 ### TestFlight job
 
 MentraOS adds a dedicated reusable React Native example TestFlight workflow to
-the coordinated release. It runs on the existing self-hosted Mac Mini after
-MentraOS has accepted the Starter Kit result. This keeps signing assets and App
-Store Connect credentials in the repository that already owns the Mac runner
-setup while still building the exact validated Starter Kit release commit. It
-is separate from the Starter Kit native iOS unsigned-IPA job.
+the coordinated release after accepting the Starter Kit result. Its signing
+phase runs on the existing self-hosted Mac Mini, keeping signing assets and App
+Store Connect credentials in the repository that already owns the runner setup
+while still building the exact validated Starter Kit release commit. It is
+separate from the Starter Kit native iOS unsigned-IPA job.
+
+The self-hosted signing phase ends after App Store Connect accepts the upload.
+Processing polls, release-note updates, and TestFlight group assignment run in a
+separate Linux job. The MentraOS app follows the same split. This keeps the
+machine-global macOS signing state serialized without holding the signing lane
+idle during Apple's potentially long processing delay.
 
 The job:
 
@@ -590,7 +599,8 @@ promotion require a separate explicit decision.
 ### Phase 2: MentraOS integration
 
 1. Install GitHub App authentication for cross-repository dispatch.
-2. Add the Starter Kit gate after package and external Engine validation.
+2. Dispatch the Starter Kit gate after OTA publication and let it wait for its
+   exact npm and SwiftPM inputs in parallel with the other release lanes.
 3. Poll and validate the exact correlated Starter Kit result.
 4. Include that result in finalization and `release-manifest.json`.
 5. Render example variables from the result.
@@ -616,7 +626,8 @@ promotion require a separate explicit decision.
    entitlements.
 3. Verify App Store Connect API access to app `6792839366` and pin both internal
    group IDs.
-4. Add archive, upload, processing wait, and group assignment.
+4. Add serialized Mac archive/upload followed by Linux processing wait and
+   group assignment.
 5. Add TestFlight results to the Mentra final manifest and Slack message.
 6. Prove one dev upload and one staging upload on the required gate.
 
