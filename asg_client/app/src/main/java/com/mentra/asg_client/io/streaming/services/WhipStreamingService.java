@@ -382,8 +382,13 @@ public class WhipStreamingService extends Service {
       logStartupStage("peer_connection_factory_ready");
       setupCamera();
       logStartupStage("camera_started");
-      setupAudio();
-      logStartupStage("audio_started");
+      if (mStreamConfig.isCaptureAudio()) {
+        setupAudio();
+        logStartupStage("audio_started");
+      } else {
+        Log.i(TAG, "Skipping glasses mic capture (captureAudio=false)");
+        logStartupStage("audio_skipped");
+      }
       createPeerConnectionAndOffer();
       logStartupStage("offer_requested");
     } catch (Exception e) {
@@ -574,7 +579,9 @@ public class WhipStreamingService extends Service {
     }
 
     mPeerConnection.addTrack(mVideoTrack);
-    mPeerConnection.addTrack(mAudioTrack);
+    if (mAudioTrack != null) {
+      mPeerConnection.addTrack(mAudioTrack);
+    }
 
     for (RtpTransceiver transceiver : mPeerConnection.getTransceivers()) {
       transceiver.setDirection(RtpTransceiver.RtpTransceiverDirection.SEND_ONLY);
