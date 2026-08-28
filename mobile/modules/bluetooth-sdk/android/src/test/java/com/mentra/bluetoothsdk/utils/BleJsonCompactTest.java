@@ -316,4 +316,15 @@ public class BleJsonCompactTest {
 
         assertEquals("ck", BleJsonCompact.decodeIfSupported(chunk).getString("type"));
     }
+
+    @Test
+    public void captureAudioCompactsToCa() throws Exception {
+        BleJsonCompact.markSessionConnected(1_700_000_000_000L);
+        JSONObject input = new JSONObject("{\"type\":\"start_stream\",\"captureAudio\":false}");
+        JSONObject compact = BleJsonCompact.encode(input);
+        assertEquals(false, compact.getBoolean("ca"));
+        assertFalse(compact.has("captureAudio"));
+        JSONObject restored = BleJsonCompact.decode(compact);
+        assertEquals(false, restored.getBoolean("captureAudio"));
+    }
 }
