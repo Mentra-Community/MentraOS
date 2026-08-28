@@ -38,6 +38,11 @@ export function interruptedActivationRecovery(input: {
   return input.hadExisting ? "keep-target" : "remove-target"
 }
 
+/** Host transaction artifacts and any unknown hidden directory stay inert. */
+export function isInstalledVersionDirectoryName(name: string): boolean {
+  return !name.startsWith(".") && parseActivationArtifact(name) === null
+}
+
 /**
  * Return a process-unique, timestamp-shaped id for install transaction paths.
  *

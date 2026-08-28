@@ -38,6 +38,7 @@ import {
   completeInstallFilesystemTransaction,
   interruptedActivationRecovery,
   isInstallScratchDirectoryName,
+  isInstalledVersionDirectoryName,
   nextInstallOperationId,
   parseActivationArtifact,
 } from "./installOperation"
@@ -1290,7 +1291,7 @@ class AppRegistry {
       lmas = lmas.filter(
         (lma): lma is Directory =>
           lma instanceof Directory &&
-          lma.list().some((entry) => entry instanceof Directory && parseActivationArtifact(entry.name) === null),
+          lma.list().some((entry) => entry instanceof Directory && isInstalledVersionDirectoryName(entry.name)),
       )
       return lmas.map((lma) => lma.name)
     } catch (error) {
@@ -1310,7 +1311,7 @@ class AppRegistry {
       return lmaDir
         .list()
         .filter(
-          (entry): entry is Directory => entry instanceof Directory && parseActivationArtifact(entry.name) === null,
+          (entry): entry is Directory => entry instanceof Directory && isInstalledVersionDirectoryName(entry.name),
         )
         .map((entry) => entry.name)
     } catch (error) {

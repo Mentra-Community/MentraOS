@@ -2,6 +2,7 @@ import {
   completeInstallFilesystemTransaction,
   interruptedActivationRecovery,
   isInstallScratchDirectoryName,
+  isInstalledVersionDirectoryName,
   nextInstallOperationId,
   parseActivationArtifact,
   runInstallFilesystemTransaction,
@@ -28,6 +29,13 @@ describe("AppRegistry install operation ids", () => {
     expect(isInstallScratchDirectoryName("lma_unzip-1800000000000")).toBe(true)
     expect(isInstallScratchDirectoryName("lma_unzip-unrelated")).toBe(false)
     expect(isInstallScratchDirectoryName("other-1800000000000")).toBe(false)
+  })
+
+  test("keeps transaction and unknown hidden directories out of installed version discovery", () => {
+    expect(isInstalledVersionDirectoryName("2.0.0")).toBe(true)
+    expect(isInstalledVersionDirectoryName("dev-1800000000000")).toBe(true)
+    expect(isInstalledVersionDirectoryName(".pending-new-2.0.0-1800000000000")).toBe(false)
+    expect(isInstalledVersionDirectoryName(".unknown-recovery-artifact")).toBe(false)
   })
 
   test("recognizes pending activation journals for crash rollback", () => {
