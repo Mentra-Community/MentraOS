@@ -33,6 +33,12 @@ check, Runtime token exchange, preinstalled miniapp registry, settings, and
 reports. A Runtime-only Mentra App is possible later, but it requires a new
 identity/authentication mode rather than another manifest field.
 
+Decision: do not separate Core as part of the deployment-manifest foundation.
+Package the required Core subset with the first private deployment and keep its
+client boundary deployment-scoped. Separating identity and the remaining
+control-plane APIs can then happen behind that boundary without changing the
+manifest resolver or creating a second app path.
+
 The standalone Bluetooth SDK deployment remains independent and does not need
 Core or Runtime.
 
@@ -59,8 +65,9 @@ credential unless the selected deployment later defines a QR-based auth method.
 
 An MDM-managed manifest URL takes precedence and can bypass the landing choice.
 A previously selected custom deployment is restored on subsequent boots. The
-embedded Mentra profile contains the same schema used by customer manifests; it
-is not a separate set of defaults scattered through the app.
+embedded Mentra profile is the one complete set of defaults. A customer
+manifest uses the same schema as a partial override of that profile, so the app
+has one resolution path rather than separate consumer and enterprise branches.
 
 The QR code is deliberately simple:
 
@@ -72,6 +79,14 @@ The app validates and downloads the JSON, shows the deployment name and service
 hosts for confirmation, and persists the URL plus the last valid JSON. HTTPS and
 the device trust store authenticate the server; manifest signing is not required
 for the first implementation.
+
+After confirmation, the app opens that deployment's authentication screen. An
+email/password deployment with `allowSignup: true` offers both sign-in and
+account creation against the configured Core. With `allowSignup: false`, it
+offers sign-in only and the customer must pre-provision accounts or configure an
+SSO method. Account verification, password reset, and SSO callbacks also return
+to the selected deployment. The QR only chooses configuration; it does not
+create an account or session.
 
 On subsequent boots, the app loads the saved profile before starting any
 network-capable service. It refreshes the configured URL when reachable and can
@@ -127,18 +142,14 @@ to the embedded Mentra profile.
     "hiddenPackageNames": []
   },
   "glasses": {
-    "allowedModels": ["mentra-live"]
+    "allowedModelsOverride": ["mentra-live"]
   },
   "features": {
     "cloudSpeech": true,
     "onDeviceSpeech": true,
     "navigation": false
   },
-  "telemetry": {
-    "sentry": false,
-    "posthog": false,
-    "firebaseAnalytics": false
-  }
+  "telemetry": false
 }
 ```
 
@@ -169,17 +180,21 @@ Rules:
   deep-link launch routes, although its code remains present in the common app
   binary. The Mentra profile ships an empty list, so it hides no system
   miniapps.
-- `glasses.allowedModels` contains stable model identifiers from the common
-  glasses registry. An empty list means every normally supported model is
-  allowed. A populated list restricts model selection, scanning, deep-link
-  pairing, and automatic reconnection to those models. The embedded Mentra
-  profile ships an empty list.
+- `glasses.allowedModelsOverride` contains stable model identifiers from the
+  common glasses registry. When present, the pairing UI shows only those
+  models. When omitted, the normal supported-model list is shown. This is a UI
+  catalog override, not a security boundary, and does not add model checks to
+  scanning, deep links, or reconnection.
 - The manifest never exposes model-specific switches such as
   `ar99VendorServices`. Vendor-specific transports and update behavior remain
   behind each glasses adapter. A deployment that permits only selected hardware
-  expresses that policy through the general glasses allowlist.
-- Missing fields are validation errors. A custom deployment never inherits a
-  public Mentra endpoint from compiled code.
+  customizes the pairing catalog through the general model override.
+- The embedded Mentra profile is complete. A customer manifest is recursively
+  merged over it: omitted fields inherit the Mentra value, arrays replace the
+  inherited array, and an explicit `null` disables fields documented as
+  nullable. Validation runs on the resolved profile. Strictly air-gapped
+  deployments must inspect that resolved profile and override or null every
+  inherited public-network destination before qualification.
 - The document contains no passwords, bearer tokens, private keys, or provider
   secrets. Those remain in MDM secret delivery or server configuration.
 - The pre-deployment landing screen always exposes the supported consumer
@@ -188,10 +203,19 @@ Rules:
 - `appUpdates.mode: "managed"` replaces public App Store/Play Store links with
   an administrator-managed update message. The embedded Mentra profile uses
   store mode and contains the normal public store and review URLs.
+- `telemetry` is one master switch. `false` prevents Sentry, PostHog, and
+  Firebase Analytics from initializing; v1 does not expose independent vendor
+  switches.
 
-The schema can later replace the two model base URLs with a checksum-bearing
-model catalog. That is valuable because STT downloads currently have no archive
-hash verification, but it does not need to block the configuration foundation.
+The embedded Mentra profile must stop fetching speech archives directly from
+the upstream Sherpa-ONNX GitHub release. Mentra will mirror the exact approved
+archives into a Mentra-owned Cloudflare R2 bucket behind a custom domain such as
+`models.mentra.glass`, preserving the existing filenames and recording the
+upstream source and license. Customer deployments can mirror those same files
+without changing the app's download protocol. The schema can later replace the
+two base URLs with a checksum-bearing model catalog; that is valuable because
+STT downloads currently have no archive hash verification, but it does not need
+to block the configuration foundation or the move to Mentra-owned hosting.
 
 ## Boot sequence
 
@@ -203,7 +227,7 @@ load local settings
   -> enterprise choice enrolls and validates a custom deployment
   -> validate release identity and schema
   -> expose immutable active deployment
-  -> initialize allowed telemetry
+  -> initialize telemetry only when the resolved master switch is true
   -> create the deployment-scoped auth provider
   -> run the configured Core version check
   -> engine.configure({ auth, config: deployment })
@@ -242,9 +266,10 @@ existing Engine hotspot relay. The Bluetooth SDK continues to accept only the
 resolved Mentra Live manifest URL and remains unaware of the larger deployment
 manifest.
 
-The STT and TTS managers replace their hard-coded GitHub base URLs with values
-from Engine configuration. Their existing filenames and extraction flow remain
-unchanged in v1.
+The STT and TTS managers replace their hard-coded upstream GitHub base URLs with
+values from Engine configuration. The embedded Mentra profile points to the
+Mentra-owned R2 custom domain, while customer profiles may point to an internal
+mirror. Existing filenames and extraction flow remain unchanged in v1.
 
 ## Network-capable app behavior
 
@@ -262,22 +287,27 @@ analytics collection should default off in the binary and be enabled only after
 the embedded Mentra profile is active. Sentry and PostHog should likewise be
 started only after profile resolution.
 
-Optional public-network features are fail-closed in a customer profile:
+The resolved profile controls optional network-capable behavior:
 
 - Mapbox directions/geocoding and native navigation are unavailable when
   `navigation` is false.
 - Preset wallpapers come only from `content.wallpaperUrls`; no compiled public
   wallpaper list is appended.
 - Legal, documentation, support, app-store, and review destinations come from
-  their specific manifest fields. There is no global `externalLinks` switch.
+  their resolved manifest fields. An omitted customer override inherits the
+  embedded Mentra value; an explicit null suppresses a nullable destination.
+  There is no global `externalLinks` switch.
 - Deployment-hidden system miniapps cannot be discovered or launched, including
   through direct routes. The common binary still contains their implementation.
-- Pairing rejects models outside a populated `glasses.allowedModels` list at
-  selection, scan, deep-link, and reconnect boundaries.
+- The pairing model picker shows only `glasses.allowedModelsOverride` when that
+  override is present; otherwise it shows the normal supported-model catalog.
 - Google, Apple, and Email on the initial landing screen select the embedded
-  Mentra profile. After enterprise enrollment, account creation, SSO,
-  verification, and recovery flows are shown only when the custom profile's
-  auth configuration supports them.
+  Mentra profile. After enterprise enrollment, the app displays the selected
+  deployment name and that profile's login methods. For email/password,
+  `allowSignup: true` exposes account creation against the customer Core;
+  `false` means users must be pre-provisioned or use a configured SSO method.
+  Verification and recovery appear only when the resolved auth configuration
+  supports them. Scanning the deployment QR never signs the user in by itself.
 - Miniapp package and media URLs supplied by customer-hosted Core remain the
   customer's responsibility.
 - Runtime speech-provider egress is server-side configuration. A private Runtime
@@ -332,8 +362,8 @@ The first Android pilot is complete when:
 4. Mentra Live OTA works through the existing Engine hotspot flow using the
    customer-hosted OTA bundle.
 5. On-device STT and TTS download from the customer mirror.
-6. Preset wallpapers, legal/support links, system-miniapp visibility, and
-   pairable glasses follow the active deployment without compiled fallbacks.
+6. Preset wallpapers, resolved legal/support links, system-miniapp visibility,
+   and the pairing model list follow the active deployment override.
 7. Sentry, PostHog, Firebase, Mapbox, GitHub, Mentra, and other public
    destinations receive no traffic during a packet-capture test.
 8. The embedded Mentra profile still passes the normal coordinated release and
@@ -342,6 +372,8 @@ The first Android pilot is complete when:
 ## Explicitly later
 
 - Runtime-only deployments with a customer IdP or token broker.
+- Separating account, registry, settings, version-check, and reporting APIs from
+  Core into a smaller control-plane service.
 - Local-only Engine startup with no Core, Runtime, or auth seam.
 - Signed deployment manifests or customer-managed signing keys.
 - Dynamic private certificate pinning.

@@ -17,10 +17,13 @@ deployment at cold boot. Otherwise, a local landing screen lets Google, Apple,
 or Email activate the embedded Mentra profile, while Enterprise / SSO enrolls a
 custom profile by QR or URL. The active immutable profile configures auth and
 Engine; Engine passes the OTA URL to Bluetooth SDK and model locations to its
-speech managers. Custom profiles fail closed without Mentra endpoint fallbacks.
+speech managers. Customer overrides and the embedded Mentra profile resolve to
+one complete object; the air-gap template explicitly replaces or nulls every
+public-network destination.
 
 **Tech Stack:** React Native/Expo, TypeScript, MMKV, native managed-app
-configuration bridges, Cloud V2, coordinated GitHub Actions releases.
+configuration bridges, Cloud V2, Cloudflare R2, coordinated GitHub Actions
+releases.
 
 **Spec source of truth:**
 `notes/superpowers/specs/2026-08-25-mentra-app-deployment-manifest-design.md`
@@ -39,7 +42,9 @@ configuration bridges, Cloud V2, coordinated GitHub Actions releases.
 - Create `mobile/src/services/deployment/embeddedDeployment.ts`
 - Add focused resolver/schema tests beside those files
 
-- [ ] Define and validate deployment manifest v1.
+- [ ] Define and validate deployment manifest v1 as a recursive override of the
+      complete embedded Mentra profile. Arrays replace; explicit null disables
+      nullable destinations; validation runs on the resolved profile.
 - [ ] Generate the embedded Mentra profile from coordinated build inputs.
 - [ ] Resolve an MDM URL or previously enrolled profile before showing auth.
 - [ ] Keep the embedded Mentra profile available for explicit consumer login
@@ -48,7 +53,8 @@ configuration bridges, Cloud V2, coordinated GitHub Actions releases.
 - [ ] Require exact `releaseIdentity` match and HTTPS outside development.
 - [ ] Never fall back to the embedded profile after a custom source is selected.
 - [ ] Validate wallpaper URLs, deployment links, system-miniapp package names,
-      and stable glasses model identifiers as part of the typed contract.
+      and `glasses.allowedModelsOverride` identifiers as part of the resolved
+      typed contract.
 
 ### Task 2: Gate the React tree on deployment readiness
 
@@ -60,10 +66,9 @@ configuration bridges, Cloud V2, coordinated GitHub Actions releases.
 - Add boot-route tests
 
 - [ ] Load local deployment state before mounting `AuthProvider`.
-- [ ] Move `SentrySetup()` behind the resolved telemetry policy.
-- [ ] Mount PostHog only when the active profile enables it.
-- [ ] Default native Firebase analytics collection off, then enable it only for
-      an active profile that permits it.
+- [ ] Move `SentrySetup()`, PostHog, and Firebase Analytics behind the one
+      resolved `telemetry` switch. Default native collection off until a
+      profile with `telemetry: true` is active.
 - [ ] Render the local consumer-or-enterprise landing screen before starting any
       network integration when no deployment is already selected.
 - [ ] Render a local recovery/setup screen when a first-time custom profile
@@ -87,9 +92,12 @@ configuration bridges, Cloud V2, coordinated GitHub Actions releases.
 - [ ] Show deployment name and Core/Runtime hosts before activation.
 - [ ] Read the manifest URL from Android Enterprise and Apple managed app
       configuration when supplied.
-- [ ] After enrollment, render the custom profile's declared email, SSO, or
-      other authentication methods. Treat the enrollment QR as configuration,
-      not an auth credential.
+- [ ] After enrollment, show the deployment name and render the resolved
+      profile's declared email, SSO, or other authentication methods. Treat the
+      enrollment QR as configuration, not an auth credential.
+- [ ] For email/password, show account creation only when `allowSignup` is
+      true and send it to the selected Core. When it is false, present sign-in
+      only; the customer must pre-provision users or configure SSO.
 - [ ] Make switching deployment stop Engine, sign out, clear the old auth
       namespace, and reboot through the same resolver.
 
@@ -145,7 +153,12 @@ configuration bridges, Cloud V2, coordinated GitHub Actions releases.
       release pin.
 - [ ] Reuse the existing Engine Wi-Fi/hotspot OTA coordinator unchanged after
       selecting the URL.
-- [ ] Replace hard-coded Sherpa GitHub base URLs with deployment inputs.
+- [ ] Create a Mentra-owned Cloudflare R2 bucket and custom model CDN domain
+      (for example `models.mentra.glass`), mirror the exact approved Sherpa-ONNX
+      archives, and record upstream source/license provenance.
+- [ ] Replace hard-coded upstream Sherpa GitHub base URLs with deployment
+      inputs. The embedded Mentra profile points at the Mentra-owned model CDN;
+      private profiles may point at an internal mirror.
 - [ ] Ensure a custom profile with an unreachable artifact server fails without
       requesting GitHub or Mentra.
 
@@ -167,15 +180,16 @@ configuration bridges, Cloud V2, coordinated GitHub Actions releases.
 - [ ] Replace hard-coded preset wallpapers with the active profile's complete
       `content.wallpaperUrls` list; an empty list makes no public request.
 - [ ] Route privacy, terms, documentation, support, app-store, and review
-      actions through their specific manifest fields. Do not add a blanket
-      `externalLinks` switch.
+      actions through their resolved manifest fields. Missing customer fields
+      inherit the embedded Mentra values; explicit null suppresses nullable
+      destinations. Do not add a blanket `externalLinks` switch.
 - [ ] Apply `systemMiniapps.hiddenPackageNames` consistently to registration,
       bundled installation, launcher/menu visibility, direct routes, and
       autostart. The embedded Mentra profile supplies an empty list.
-- [ ] Centralize pairable glasses behind stable model ids and enforce a
-      populated `glasses.allowedModels` list at selection, scan, deep-link,
-      reconnect, and profile-switch boundaries. Empty means all supported
-      models and is the embedded Mentra default.
+- [ ] Centralize pairable glasses behind stable model ids. When
+      `glasses.allowedModelsOverride` is present, filter the pairing model list
+      to it; otherwise show the normal catalog. Do not add enforcement to scan,
+      deep-link, reconnect, or profile-switch paths.
 - [ ] Keep vendor-specific behavior behind glasses adapters; do not add AR99 or
       other model-specific policy fields to the deployment schema.
 - [ ] Confirm customer-hosted Core supplies only internal miniapp/media URLs for
@@ -208,6 +222,9 @@ configuration bridges, Cloud V2, coordinated GitHub Actions releases.
 **Files:** Cloud V2 deployment charts/scripts, customer runbook, end-to-end tests
 
 - [ ] Package the exact Core and Runtime service subset used by the official app.
+- [ ] Keep Core in the first private deployment. Do not make Runtime-only auth
+      or split Core's account, registry, settings, version-check, and reporting
+      APIs part of this implementation.
 - [ ] Configure customer-approved STT/TTS providers in private Runtime.
 - [ ] Host the coordinated OTA bundle and speech artifacts on the internal
       update service.
@@ -224,7 +241,7 @@ configuration bridges, Cloud V2, coordinated GitHub Actions releases.
 - **PR 2:** QR/MDM enrollment, consumer-versus-enterprise auth selection, and
   deployment-scoped auth/Core/Runtime.
 - **PR 3:** OTA/model routing, deployment wallpaper/link/system-miniapp policy,
-  glasses allowlist, telemetry, and optional-feature egress gates.
+  pairing-model override, telemetry, and optional-feature egress gates.
 - **PR 4:** Coordinated deployment artifacts and a physical disconnected pilot.
 
 An Android pilot is roughly a multi-PR, several-week effort rather than a small
