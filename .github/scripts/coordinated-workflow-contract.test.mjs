@@ -161,6 +161,11 @@ test("mobile destinations use real TestFlight groups without changing the releas
   assert.match(example, /app-store-connect-build\.mjs assign/)
   assert.match(example, /app-store-connect-build\.mjs testflight-preflight/)
   assert.match(example, /app-store-connect-build\.mjs wait/)
+  assert.match(
+    example,
+    /INTERNAL_INSTALL_URL: https:\/\/appstoreconnect\.apple\.com\/apps\/6792839366\/testflight\/groups\/\{groupId\}/,
+  )
+  assert.doesNotMatch(example, /appstoreconnect\.apple\.com\/teams\//)
   assert.match(example, /Mentra Staging Public/)
   assert.match(example, /testflight_audience/)
   assert.match(example, /destination="\$GITHUB_WORKSPACE\/release-output\/mentra-example-react-native-/)
