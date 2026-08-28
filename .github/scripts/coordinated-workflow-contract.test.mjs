@@ -115,6 +115,10 @@ test("mobile destinations use real TestFlight groups without changing the releas
   const coordinator = workflow("coordinated-release.yml")
   const mobile = workflow("reusable-coordinated-mobile.yml")
   const example = workflow("reusable-coordinated-example-testflight.yml")
+  const mobileIos = jobBlock(mobile, "ios")
+  const mobileStore = jobBlock(mobile, "ios-store")
+  const exampleIos = jobBlock(example, "ios")
+  const exampleStore = jobBlock(example, "testflight")
 
   assert.match(coordinator, /testflight_group=Mentra Dev/)
   assert.match(coordinator, /testflight_group=Mentra Staging/)
@@ -144,16 +148,24 @@ test("mobile destinations use real TestFlight groups without changing the releas
   assert.match(mobile, /app-store-connect-build\.mjs upload/)
   assert.match(example, /app-store-connect-build\.mjs assign/)
   assert.match(example, /destination="\$GITHUB_WORKSPACE\/release-output\/mentra-example-react-native-/)
+  assert.doesNotMatch(mobileIos, /app-store-connect-build\.mjs assign/)
+  assert.match(mobileStore, /^    runs-on: ubuntu-latest$/m)
+  assert.match(mobileStore, /app-store-connect-build\.mjs assign/)
+  assert.doesNotMatch(exampleIos, /app-store-connect-build\.mjs assign/)
+  assert.match(exampleStore, /^    runs-on: ubuntu-latest$/m)
+  assert.match(exampleStore, /app-store-connect-build\.mjs assign/)
 })
 
 test("coordinated docs publish only after finalization to the matching channel", () => {
   const coordinator = workflow("coordinated-release.yml")
   const starterKit = jobBlock(coordinator, "starter-kit")
+  const engineConsumer = jobBlock(coordinator, "engine-consumer")
   const exampleTestflight = jobBlock(coordinator, "example-testflight")
   const docs = jobBlock(coordinator, "docs")
   const notify = jobBlock(coordinator, "notify-slack")
 
-  assert.match(starterKit, /^    needs: \[plan, ota, npm, sdk-native\]$/m)
+  assert.match(starterKit, /^    needs: \[plan, ota\]$/m)
+  assert.match(engineConsumer, /^    needs: \[plan, npm\]$/m)
   assert.match(starterKit, /coordinated-example-release\.yml/)
   assert.match(starterKit, /event_type: "coordinated_example_release"/)
   assert.match(starterKit, /--event repository_dispatch/)
@@ -227,6 +239,7 @@ test("coordinated docs publish only after finalization to the matching channel",
   assert.match(example, /continue-on-error: true/)
   assert.doesNotMatch(example, /STARTER_KIT_APP_PRIVATE_KEY:/)
   assert.match(example, /permission-contents: read/)
+  assert.match(example, /^      group: mentra-ios-signing-runner$/m)
   assert.match(
     example,
     /token: \$\{\{ steps\.starter-kit-app-token\.outputs\.token \|\| secrets\.STARTER_KIT_COORDINATOR_TOKEN/,

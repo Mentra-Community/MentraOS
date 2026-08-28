@@ -257,7 +257,7 @@ jobs:
 
   engine-consumer:
     name: Build a clean host from the public Engine package
-    needs: [plan, npm, sdk-native]
+    needs: [plan, npm]
     uses: ./.github/workflows/reusable-coordinated-engine-consumer.yml
     with:
       source_commit: ${{ needs.plan.outputs.source_commit }}
@@ -267,7 +267,7 @@ jobs:
 
   starter-kit:
     name: Build coordinated Starter Kit examples
-    needs: [plan, ota, npm, sdk-native]
+    needs: [plan, ota]
     runs-on: ubuntu-latest
     timeout-minutes: 150
     outputs:

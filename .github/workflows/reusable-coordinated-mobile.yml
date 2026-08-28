@@ -442,6 +442,9 @@ jobs:
     env:
       EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY }}
       EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID }}
+    outputs:
+      upload_artifact: coordinated-mobile-ios-upload-${{ github.run_id }}
+      upload_status: ${{ inputs.dry_run && 'built' || (steps.app-store.outputs.exists == 'true' && 'reused' || 'published') }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -662,33 +665,9 @@ jobs:
           --build-number "${{ needs.prepare.outputs.build_number }}"
           --ipa "mobile-release/ios/${{ needs.prepare.outputs.ipa_name }}"
 
-      - name: Wait for processing and assign the channel TestFlight group
-        if: inputs.dry_run != true
-        run: >-
-          node mobile/scripts/app-store-connect-build.mjs assign
-          --issuer-id "${{ secrets.ASC_API_ISSUER_ID }}"
-          --key-id "${{ secrets.ASC_API_KEY_ID }}"
-          --key-path "${{ steps.asc.outputs.key_path }}"
-          --bundle-id com.mentra.mentra
-          --build-number "${{ needs.prepare.outputs.build_number }}"
-          --group-name "${{ inputs.testflight_group }}"
-
-      - name: Write iOS release result
-        env:
-          STATUS: ${{ inputs.dry_run && 'built' || (steps.app-store.outputs.exists == 'true' && 'reused' || 'published') }}
-        run: >-
-          node .github/scripts/coordinated-mobile-records.mjs create-ios
-          --plan release-intent/release-plan.json
-          --ipa "mobile-release/ios/${{ needs.prepare.outputs.ipa_name }}"
-          --ipa-url "${{ needs.prepare.outputs.asset_base_url }}/${{ needs.prepare.outputs.ipa_name }}"
-          --testflight-group "${{ inputs.testflight_group }}"
-          --status "$STATUS"
-          --provenance-url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          --output mobile-release/ios-publication.json
-
       - uses: actions/upload-artifact@v4
         with:
-          name: coordinated-mobile-ios-${{ github.run_id }}
+          name: coordinated-mobile-ios-upload-${{ github.run_id }}
           path: mobile-release
           if-no-files-found: error
           retention-days: 90
@@ -716,9 +695,82 @@ jobs:
             sed -i '' '/machine api.mapbox.com/,+2d' "$HOME/.netrc" || true
           fi
 
+  ios-store:
+    name: Process iOS upload and assign TestFlight group
+    needs: [prepare, ios]
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_commit }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.release_plan_artifact }}
+          path: release-intent
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.ios.outputs.upload_artifact }}
+          path: mobile-release
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Inject App Store Connect API credential
+        if: inputs.dry_run != true
+        uses: ./.github/actions/inject-signing
+        with:
+          ios: "true"
+          asc-api-key-p8-b64: ${{ secrets.ASC_API_KEY_P8_B64 }}
+          asc-api-key-id: ${{ secrets.ASC_API_KEY_ID }}
+          asc-api-issuer-id: ${{ secrets.ASC_API_ISSUER_ID }}
+
+      - name: Resolve App Store Connect credential path
+        if: inputs.dry_run != true
+        id: asc
+        run: |
+          set -euo pipefail
+          key_path=$(sed -n 's/^ASC_API_KEY_PATH=//p' "$MENTRA_ASC_CONFIG_PATH")
+          test -f "$key_path"
+          echo "key_path=$key_path" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for processing and assign the channel TestFlight group
+        if: inputs.dry_run != true
+        run: >-
+          node mobile/scripts/app-store-connect-build.mjs assign
+          --issuer-id "${{ secrets.ASC_API_ISSUER_ID }}"
+          --key-id "${{ secrets.ASC_API_KEY_ID }}"
+          --key-path "${{ steps.asc.outputs.key_path }}"
+          --bundle-id com.mentra.mentra
+          --build-number "${{ needs.prepare.outputs.build_number }}"
+          --group-name "${{ inputs.testflight_group }}"
+
+      - name: Write iOS release result
+        env:
+          STATUS: ${{ needs.ios.outputs.upload_status }}
+        run: >-
+          node .github/scripts/coordinated-mobile-records.mjs create-ios
+          --plan release-intent/release-plan.json
+          --ipa "mobile-release/ios/${{ needs.prepare.outputs.ipa_name }}"
+          --ipa-url "${{ needs.prepare.outputs.asset_base_url }}/${{ needs.prepare.outputs.ipa_name }}"
+          --testflight-group "${{ inputs.testflight_group }}"
+          --status "$STATUS"
+          --provenance-url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          --output mobile-release/ios-publication.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coordinated-mobile-ios-${{ github.run_id }}
+          path: mobile-release
+          if-no-files-found: error
+          retention-days: 90
+
   result:
     name: Assemble coordinated mobile result
-    needs: [prepare, android, ios]
+    needs: [prepare, android, ios-store]
     runs-on: ubuntu-latest
     outputs:
       result_artifact: ${{ steps.name.outputs.value }}
@@ -763,7 +815,7 @@ jobs:
 
   status:
     name: Export mobile build status
-    needs: [prepare, android, ios]
+    needs: [prepare, android, ios, ios-store]
     if: always()
     runs-on: ubuntu-latest
     outputs:
@@ -777,14 +829,17 @@ jobs:
         id: status
         env:
           ANDROID_RESULT: ${{ needs.android.result }}
-          IOS_RESULT: ${{ needs.ios.result }}
+          IOS_BUILD_RESULT: ${{ needs.ios.result }}
+          IOS_STORE_RESULT: ${{ needs.ios-store.result }}
           APK_NAME: ${{ needs.prepare.outputs.apk_name }}
           IPA_NAME: ${{ needs.prepare.outputs.ipa_name }}
           ASSET_BASE_URL: ${{ needs.prepare.outputs.asset_base_url }}
         run: |
+          ios_result="$IOS_STORE_RESULT"
+          if [[ "$IOS_BUILD_RESULT" != "success" ]]; then ios_result="$IOS_BUILD_RESULT"; fi
           {
             echo "android_result=$ANDROID_RESULT"
-            echo "ios_result=$IOS_RESULT"
+            echo "ios_result=$ios_result"
             echo "apk_name=$APK_NAME"
             echo "ipa_name=$IPA_NAME"
             echo "asset_base_url=$ASSET_BASE_URL"
