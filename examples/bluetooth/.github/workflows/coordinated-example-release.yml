@@ -21,7 +21,7 @@ run-name: Coordinated example ${{ inputs.channel || github.event.client_payload.
         type: string
 
 permissions:
-  actions: read
+  actions: write
   contents: write
   pull-requests: write
 
