@@ -1,4 +1,4 @@
-import {deriveStoreUrl} from "./storeUrl"
+import {deriveStoreUrl, selectStoreUrl} from "./storeUrl"
 
 describe("Store endpoint derivation", () => {
   test("maps official service hosts to the matching Store environment", () => {
@@ -13,5 +13,26 @@ describe("Store endpoint derivation", () => {
 
   test("keeps non-conventional identity hosts on the same trusted origin", () => {
     expect(deriveStoreUrl("https://identity.example.test/cloud")).toBe("https://identity.example.test/cloud")
+  })
+
+  test("keeps a legacy custom Core profile ahead of the baked Store environment", () => {
+    expect(
+      selectStoreUrl({
+        coreOverrideUrl: "https://identity.example.test/cloud",
+        envStoreUrl: "https://store.mentraglass.com",
+        resolvedCoreUrl: "https://identity.example.test/cloud",
+      }),
+    ).toBe("https://identity.example.test/cloud")
+  })
+
+  test("lets an explicit Store override win for independently named profiles", () => {
+    expect(
+      selectStoreUrl({
+        storeOverrideUrl: "https://catalog.example.test",
+        coreOverrideUrl: "https://identity.example.test",
+        envStoreUrl: "https://store.mentraglass.com",
+        resolvedCoreUrl: "https://identity.example.test",
+      }),
+    ).toBe("https://catalog.example.test")
   })
 })

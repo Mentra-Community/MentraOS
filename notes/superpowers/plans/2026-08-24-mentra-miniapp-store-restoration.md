@@ -76,8 +76,9 @@ manifest, compatibility, and Store provenance.
 - [x] Stage and atomically activate an install, preserving the prior version on
       failure and cleaning downloaded archives.
 - [x] Keep activation rollback-capable until publisher/release/active-version
-      metadata is durable, and use a pending journal to roll back an
-      interrupted swap before startup disk discovery.
+      metadata is durable. Use pending/committed journals, encoded prior-target
+      state, and persisted metadata snapshots to recover every process-death
+      phase idempotently before startup disk discovery.
 - [x] Add malicious-bundle, manifest identity, signature, and hash tests.
 
 ## Store backend catalog and developer workflow
@@ -274,7 +275,10 @@ data; each deployment may publish both stable and beta releases.
       miniapp, `@mentra/cloud-client`, and Mentra App configuration.
 - [x] Derive only conventional `core.* -> store.*` endpoint pairs, make
       independently named Store origins explicit in CLI/mobile profiles, and
-      never fall back from an OEM Core to Mentra's Store.
+      never fall back from an OEM Core to Mentra's Store. Migrate existing
+      two-endpoint profiles by deriving Store from their selected Core.
+- [x] Pin Core, Store, and Runtime together in coordinated Android/iOS release
+      environments and verify all three values exist in the shipped bundle.
 - [x] Expose Store resources as `cloud.store` rather than routing a misleading
       `cloud.core.miniapps` API to another hostname.
 - [x] Add Core JWT/JWKS verification, WorkOS/API-key developer authentication,
@@ -313,7 +317,7 @@ data; each deployment may publish both stable and beta releases.
       search-query preservation, install, details, verified identity, Installed
       state, and horizontal-overflow assertion.
 - [x] Mentra App TypeScript compile.
-- [x] Mentra App Jest: 94 suites passed (1 skipped), 738 tests passed
+- [x] Mentra App Jest: 94 suites passed (1 skipped), 743 tests passed
       (2 skipped).
 - [x] Android ASG and Bluetooth SDK compile checks.
 - [x] Full iOS Simulator native build with code signing disabled.
@@ -337,7 +341,8 @@ data; each deployment may publish both stable and beta releases.
       origins without allowing public cleartext catalog traffic (including DNS
       names that resemble private IPv6 prefixes), independent OEM Store
       endpoint selection, and rollback of a filesystem activation when durable
-      install metadata fails.
+      install metadata fails, including pre-swap process death, interrupted
+      recovery, partial metadata commits, and release-build Store pinning.
 - [x] Touched-file lint and `git diff --check`.
 - [x] Full Cloud suite audit: 567 passed, 1 skipped. The aggregate invocation
       also reproduces unrelated shared-state/credential baselines (R2 is not

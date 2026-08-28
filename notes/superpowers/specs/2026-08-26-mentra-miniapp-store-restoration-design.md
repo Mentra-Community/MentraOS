@@ -119,8 +119,11 @@ The official endpoints are independently configurable (`MENTRA_CORE_URL` and
 named OEM Store must be selected explicitly as part of the same endpoint
 profile. An arbitrary custom Core hostname never falls back to Mentra's Store,
 so a Core identity credential cannot be sent to an unrelated distribution
-service. OEM or self-hosted deployments may point the same host contract at
-their own identity issuer and Store implementation.
+service. Existing two-endpoint custom profiles derive Store from their selected
+Core until the user supplies the new explicit Store field. Coordinated mobile
+release tooling pins and verifies Core, Store, and Runtime together in the
+shipped JavaScript bundle. OEM or self-hosted deployments may point the same
+host contract at their own identity issuer and Store implementation.
 
 ## Design principles
 
@@ -452,13 +455,16 @@ manifest. An install transaction is:
     SYSTEM packages, the build-generated identity pin.
 11. Re-run host, SDK, permissions, and hardware admission against that manifest.
 12. Extract into an isolated staging directory.
-13. Create a durable pending journal, retain any previous same-version bundle
-    as a backup, and make a reversible filesystem swap.
-14. Persist publisher identity, release provenance, and the active-version
-    pointer while the swap is still rollback-capable.
-15. Commit by removing the pending journal and backup. A metadata failure rolls
-    back immediately; process-death recovery sees the journal and restores the
-    backup before disk discovery can activate uncommitted bytes.
+13. Retain any previous same-version bundle as a backup, create a durable
+    pending journal whose name records whether that prior target existed, and
+    make a reversible filesystem swap.
+14. Persist the old publisher/release/active-version metadata snapshots into
+    that journal, then write the candidate metadata while the swap remains
+    rollback-capable.
+15. Atomically rename the journal from pending to committed. A metadata or
+    commit failure rolls back immediately; process-death recovery restores
+    pending filesystem and metadata state idempotently, while a committed
+    marker keeps the candidate and finishes cleanup.
 16. Reload or restart the runtime as needed, restoring the prior release and
     running state on failure.
 
@@ -654,6 +660,9 @@ service, but the host does not require Mentra's Store backend or Cloud Core.
 - A metadata-write failure or process death during activation restores the
   previous filesystem state; an uncommitted candidate cannot be selected by
   the next disk scan.
+- Recovery is restart-safe itself: an interrupted rollback distinguishes a
+  restored prior target from a first-install candidate and retains the durable
+  metadata journal until all rollback writes succeed.
 - An activation/runtime failure restores the prior release and running state.
 - A revoked user cannot use an old protected bundle URL for another download.
 - Publication interruption preserves the previous active catalog release and

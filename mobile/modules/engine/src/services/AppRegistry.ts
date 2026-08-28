@@ -34,7 +34,9 @@ import {sha256Hex} from "../utils/sha256"
 import {
   type ActivatedInstall,
   type ActivationArtifact,
+  type InstallFinalization,
   completeInstallFilesystemTransaction,
+  interruptedActivationRecovery,
   isInstallScratchDirectoryName,
   nextInstallOperationId,
   parseActivationArtifact,
@@ -248,6 +250,17 @@ interface StorageSnapshot<T> {
   value?: T
 }
 
+interface InstallMetadataRollbackJournal {
+  schemaVersion: 1
+  packageName: string
+  version: string
+  publisher: StorageSnapshot<string>
+  release: StorageSnapshot<MiniappReleaseIdentity>
+  active: StorageSnapshot<string>
+}
+
+const INSTALL_METADATA_ROLLBACK_FILE = "metadata-rollback.json"
+
 function snapshotStorage<T>(key: string): StorageSnapshot<T> {
   const loaded = storage.load<T>(key)
   return loaded.is_ok() ? {present: true, value: loaded.value} : {present: false}
@@ -255,11 +268,57 @@ function snapshotStorage<T>(key: string): StorageSnapshot<T> {
 
 function restoreStorage<T>(key: string, snapshot: StorageSnapshot<T>): void {
   if (!snapshot.present) {
-    storage.remove(key)
+    const removed = storage.remove(key)
+    if (removed.is_error()) throw removed.error
     return
   }
   const restored = storage.save(key, snapshot.value)
   if (restored.is_error()) throw restored.error
+}
+
+function isStorageSnapshot(value: unknown, valueType: "object" | "string"): value is StorageSnapshot<unknown> {
+  if (!value || typeof value !== "object" || typeof (value as {present?: unknown}).present !== "boolean") return false
+  const snapshot = value as {present: boolean; value?: unknown}
+  if (!snapshot.present) return true
+  return valueType === "string"
+    ? typeof snapshot.value === "string"
+    : Boolean(snapshot.value && typeof snapshot.value === "object" && !Array.isArray(snapshot.value))
+}
+
+function readMetadataRollbackJournal(
+  pendingDir: Directory,
+  packageName: string,
+  version: string,
+): InstallMetadataRollbackJournal | null {
+  try {
+    const file = new File(pendingDir, INSTALL_METADATA_ROLLBACK_FILE)
+    if (!file.exists) return null
+    const parsed = JSON.parse(file.textSync()) as Partial<InstallMetadataRollbackJournal>
+    if (
+      parsed.schemaVersion !== 1 ||
+      parsed.packageName !== packageName ||
+      parsed.version !== version ||
+      !isStorageSnapshot(parsed.publisher, "string") ||
+      !isStorageSnapshot(parsed.release, "object") ||
+      !isStorageSnapshot(parsed.active, "string")
+    ) {
+      console.warn(`APP_REGISTRY: ignoring invalid metadata rollback journal for ${packageName}@${version}`)
+      return null
+    }
+    return parsed as InstallMetadataRollbackJournal
+  } catch (error) {
+    // Metadata writes start only after this file has been written successfully,
+    // so a missing/corrupt journal means there is no partial metadata commit to
+    // undo. Filesystem rollback remains safe and authoritative.
+    console.warn(`APP_REGISTRY: could not read metadata rollback journal for ${packageName}@${version}`, error)
+    return null
+  }
+}
+
+function restoreInstallMetadata(journal: InstallMetadataRollbackJournal): void {
+  restoreStorage(`${journal.packageName}_active_version`, journal.active)
+  restoreStorage(releaseIdentityKey(journal.packageName, journal.version), journal.release)
+  restoreStorage(publisherIdentityKey(journal.packageName), journal.publisher)
 }
 
 function assertPublisherContinuity(
@@ -386,7 +445,10 @@ async function unpackMiniApp(
   versionOverride: string | undefined,
   expected: {packageName?: string; version?: string} | undefined,
   onProgress: InstallBundleOptions["onProgress"] | undefined,
-  finalize: (installed: {packageName: string; version: string}) => void | Promise<void>,
+  finalize: (
+    installed: {packageName: string; version: string},
+    activation: ActivatedInstall<{packageName: string; version: string}>,
+  ) => InstallFinalization | Promise<InstallFinalization>,
 ): Promise<{packageName: string; version: string}> {
   return completeInstallFilesystemTransaction(
     () => unpackMiniAppExclusive(zipPath, versionOverride, expected, onProgress),
@@ -481,12 +543,15 @@ async function unpackMiniAppFromScratchDirectory(
     throw "CREATE_PACKAGE_DIR_FAILED"
   }
 
-  const versionDir = new Directory(basePackageDir, version)
-  const stagingDir = new Directory(basePackageDir, `.staging-${version}-${operationId}`)
-  const backupDir = new Directory(basePackageDir, `.backup-${version}-${operationId}`)
-  const pendingDir = new Directory(basePackageDir, `.pending-${version}-${operationId}`)
+  const directory = (name: string) => new Directory(basePackageDir, name)
+  const stagingName = `.staging-${version}-${operationId}`
+  const backupName = `.backup-${version}-${operationId}`
+  const hadExisting = directory(version).exists
+  const activationKind = hadExisting ? "existing" : "new"
+  const pendingName = `.pending-${activationKind}-${version}-${operationId}`
+  const committedName = `.committed-${activationKind}-${version}-${operationId}`
   try {
-    stagingDir.create()
+    directory(stagingName).create()
   } catch (error) {
     console.error("Error creating the staging directory", error)
     throw "CREATE_VERSION_DIR_FAILED"
@@ -495,76 +560,86 @@ async function unpackMiniAppFromScratchDirectory(
   try {
     const contents = appDir.list()
     for (const item of contents) {
-      item.move(stagingDir)
+      item.move(directory(stagingName))
     }
   } catch (error) {
     console.error("Error moving the contents of the folder to the destination directory", error)
-    if (stagingDir.exists) stagingDir.delete()
+    if (directory(stagingName).exists) directory(stagingName).delete()
     throw "INSTALL_CONTENTS_FAILED"
   }
 
   // Swap only after the complete bundle is staged. If activation fails,
   // restore a previous same-version directory instead of leaving a partial
   // installation behind.
-  const hadExisting = versionDir.exists
   let movedExisting = false
   try {
     onProgress?.("activating")
-    // This marker is the crash-recovery journal. It exists before any active
-    // directory changes and remains until metadata and the filesystem swap
-    // have both reached their commit boundary.
-    pendingDir.create()
-    if (versionDir.exists) {
-      versionDir.move(backupDir)
+    // Move an existing target aside before creating the pending marker. A
+    // crash in that first move leaves only a backup, which startup restores.
+    // Once the marker exists its name records whether a prior target existed,
+    // making recovery idempotent even if it is interrupted itself.
+    if (directory(version).exists) {
+      directory(version).move(directory(backupName))
       movedExisting = true
     }
-    stagingDir.move(versionDir)
+    directory(pendingName).create()
+    directory(stagingName).move(directory(version))
   } catch (error) {
     console.error("Error activating the staged miniapp", error)
     try {
       if (movedExisting) {
-        if (versionDir.exists) versionDir.delete()
-        if (backupDir.exists) backupDir.move(versionDir)
-      } else if (!hadExisting && versionDir.exists) {
+        if (directory(version).exists) directory(version).delete()
+        if (directory(backupName).exists) directory(backupName).move(directory(version))
+      } else if (!hadExisting && directory(version).exists) {
         // No prior install can be harmed; remove a partially moved first
         // install if the filesystem move failed after creating its target.
-        versionDir.delete()
+        directory(version).delete()
       }
-      if (stagingDir.exists) stagingDir.delete()
-      if (pendingDir.exists) pendingDir.delete()
+      if (directory(stagingName).exists) directory(stagingName).delete()
+      if (directory(pendingName).exists) directory(pendingName).delete()
     } catch (rollbackError) {
       console.error("Error restoring the previous miniapp version", rollbackError)
     }
     throw "ACTIVATE_VERSION_FAILED"
   }
 
-  console.log("ZIP: local mini app installed at", versionDir.uri)
-  printDirectory(versionDir, 2)
+  console.log("ZIP: local mini app installed at", directory(version).uri)
+  printDirectory(directory(version), 2)
   return {
     value: {packageName, version},
     commit: () => {
+      // Renaming the journal is the atomic commit boundary. Recovery keeps a
+      // candidate with a committed marker and rolls back one with a pending
+      // marker. Cleanup after the rename may be retried on the next launch.
+      if (directory(pendingName).exists) directory(pendingName).move(directory(committedName))
+      else if (!directory(committedName).exists) throw new Error("activation journal disappeared before commit")
       try {
-        // Removing the marker commits the swap for crash recovery. Delete it
-        // before the backup: a crash between these operations leaves a target
-        // plus backup with no marker, which recovery safely recognizes as a
-        // committed activation and cleans up.
-        if (pendingDir.exists) pendingDir.delete()
-        if (backupDir.exists) backupDir.delete()
+        if (directory(backupName).exists) directory(backupName).delete()
+        if (directory(committedName).exists) directory(committedName).delete()
       } catch (error) {
-        // The new bundle and its metadata are already active. Recovery removes
-        // this stale backup on the next launch, so cleanup failure is benign.
-        console.warn("ZIP: Error deleting committed miniapp backup", error)
+        console.warn("ZIP: Error cleaning committed miniapp activation artifacts", error)
       }
     },
-    rollback: () => {
+    rollback: (options?: {preserveRecoveryState?: boolean}) => {
       try {
-        if (versionDir.exists) versionDir.delete()
-        if (backupDir.exists) backupDir.move(versionDir)
-        if (pendingDir.exists) pendingDir.delete()
+        if (options?.preserveRecoveryState && directory(committedName).exists) {
+          if (directory(pendingName).exists) directory(committedName).delete()
+          else directory(committedName).move(directory(pendingName))
+        }
+        if (directory(version).exists) directory(version).delete()
+        if (directory(backupName).exists) directory(backupName).move(directory(version))
+        if (!options?.preserveRecoveryState) {
+          if (directory(pendingName).exists) directory(pendingName).delete()
+          if (directory(committedName).exists) directory(committedName).delete()
+        }
       } catch (error) {
         console.error("ZIP: Error rolling back miniapp after metadata finalization failed", error)
         throw error
       }
+    },
+    recordRecoveryState: (serializedState: string) => {
+      const file = new File(directory(pendingName), INSTALL_METADATA_ROLLBACK_FILE)
+      file.write(serializedState)
     },
   }
 }
@@ -582,11 +657,14 @@ async function unpackMiniAppFromScratchDirectory(
 async function downloadAndInstallMiniApp(
   url: string,
   opts: InstallBundleOptions | undefined,
-  finalize: (installed: {
-    packageName: string
-    version: string
-    publisherKeyFingerprint?: string
-  }) => void | Promise<void>,
+  finalize: (
+    installed: {
+      packageName: string
+      version: string
+      publisherKeyFingerprint?: string
+    },
+    activation: ActivatedInstall<{packageName: string; version: string}>,
+  ) => InstallFinalization | Promise<InstallFinalization>,
 ): Promise<{packageName: string; version: string; publisherKeyFingerprint?: string}> {
   const downloadedZipPath = await downloadMiniAppZip(
     url,
@@ -617,12 +695,15 @@ async function downloadAndInstallMiniApp(
         version: opts?.expectedVersion,
       },
       opts?.onProgress,
-      ({packageName, version}) =>
-        finalize({
-          packageName,
-          version,
-          ...(manifest.publisherKeyFingerprint ? {publisherKeyFingerprint: manifest.publisherKeyFingerprint} : {}),
-        }),
+      ({packageName, version}, activation) =>
+        finalize(
+          {
+            packageName,
+            version,
+            ...(manifest.publisherKeyFingerprint ? {publisherKeyFingerprint: manifest.publisherKeyFingerprint} : {}),
+          },
+          activation,
+        ),
     )
     return {
       ...installed,
@@ -669,12 +750,12 @@ class AppRegistry {
   }
 
   /**
-   * Recover an activation interrupted by process death. A pending marker means
-   * the transaction never reached its final commit boundary, so remove the
-   * candidate target and restore its matching backup. Without a pending marker,
-   * a backup beside a target is stale cleanup from a committed activation; a
-   * backup without its target is restored. Staging directories are always inert
-   * and removable.
+   * Recover an activation interrupted by process death. Pending markers roll
+   * back both durable metadata and the filesystem; their encoded prior-target
+   * state makes that rollback idempotent. A committed marker is the opposite:
+   * metadata and the candidate are authoritative and only cleanup remains.
+   * Unjournaled backups are restored when their target is absent. Staging
+   * directories are always inert and removable.
    */
   private recoverInterruptedActivations(): void {
     try {
@@ -688,6 +769,20 @@ class AppRegistry {
           .map((directory) => ({directory, parsed: parseActivationArtifact(directory.name)}))
           .filter((item): item is {directory: Directory; parsed: ActivationArtifact} => item.parsed !== null)
 
+        const committed = artifacts
+          .filter((item) => item.parsed.kind === "committed")
+          .sort((left, right) => right.parsed.timestamp - left.parsed.timestamp)
+        for (const {directory, parsed} of committed) {
+          const matchingBackup = artifacts.find(
+            (item) =>
+              item.parsed.kind === "backup" &&
+              item.parsed.version === parsed.version &&
+              item.parsed.timestamp === parsed.timestamp,
+          )?.directory
+          if (matchingBackup?.exists) matchingBackup.delete()
+          if (directory.exists) directory.delete()
+        }
+
         const pending = artifacts
           .filter((item) => item.parsed.kind === "pending")
           .sort((left, right) => right.parsed.timestamp - left.parsed.timestamp)
@@ -699,8 +794,19 @@ class AppRegistry {
               item.parsed.version === parsed.version &&
               item.parsed.timestamp === parsed.timestamp,
           )?.directory
-          if (target.exists) target.delete()
-          if (matchingBackup?.exists) matchingBackup.move(target)
+          const metadataJournal = readMetadataRollbackJournal(directory, packageDir.name, parsed.version)
+          if (metadataJournal) restoreInstallMetadata(metadataJournal)
+
+          const recovery = interruptedActivationRecovery({
+            hasBackup: matchingBackup?.exists === true,
+            hadExisting: parsed.hadExisting === true,
+          })
+          if (recovery === "restore-backup") {
+            if (target.exists) target.delete()
+            new Directory(packageDir, matchingBackup!.name).move(target)
+          } else if (recovery === "remove-target" && target.exists) {
+            target.delete()
+          }
           if (directory.exists) directory.delete()
         }
 
@@ -711,10 +817,15 @@ class AppRegistry {
           const target = new Directory(packageDir, parsed.version)
           if (!directory.exists) continue
           if (target.exists) directory.delete()
-          else directory.move(target)
+          else new Directory(packageDir, directory.name).move(target)
         }
         for (const {directory, parsed} of artifacts) {
-          if ((parsed.kind === "staging" || parsed.kind === "pending") && directory.exists) directory.delete()
+          if (
+            (parsed.kind === "staging" || parsed.kind === "pending" || parsed.kind === "committed") &&
+            directory.exists
+          ) {
+            directory.delete()
+          }
         }
       }
     } catch (error) {
@@ -846,11 +957,16 @@ class AppRegistry {
    */
   public installFromUrl(url: string, opts?: InstallBundleOptions): AsyncResult<void, Error> {
     return Res.try_async(async () => {
-      await downloadAndInstallMiniApp(url, opts, ({packageName, version, publisherKeyFingerprint}) => {
-        this.finalizeInstall(packageName, version, {
-          ...resolvedReleaseIdentity(version, opts, false),
-          ...(publisherKeyFingerprint ? {publisherKeyFingerprint} : {}),
-        })
+      await downloadAndInstallMiniApp(url, opts, ({packageName, version, publisherKeyFingerprint}, activation) => {
+        return this.finalizeInstall(
+          packageName,
+          version,
+          {
+            ...resolvedReleaseIdentity(version, opts, false),
+            ...(publisherKeyFingerprint ? {publisherKeyFingerprint} : {}),
+          },
+          (state) => activation.recordRecoveryState(state),
+        )
       })
       console.log("APP_REGISTRY: Downloaded and installed mini app")
     })
@@ -890,7 +1006,8 @@ class AppRegistry {
           version: opts?.expectedVersion,
         },
         opts?.onProgress,
-        ({packageName, version}) => this.finalizeInstall(packageName, version, releaseIdentity),
+        ({packageName, version}, activation) =>
+          this.finalizeInstall(packageName, version, releaseIdentity, (state) => activation.recordRecoveryState(state)),
       )
       console.log("APP_REGISTRY: Installed mini app from local zip")
       return {packageName, version}
@@ -902,7 +1019,12 @@ class AppRegistry {
    * artifacts on release installs, point the active-version at the just-
    * installed bundle, and notify subscribers to refresh.
    */
-  private finalizeInstall(packageName: string, version: string, releaseIdentity: MiniappReleaseIdentity): void {
+  private finalizeInstall(
+    packageName: string,
+    version: string,
+    releaseIdentity: MiniappReleaseIdentity,
+    recordRecoveryState: (serializedState: string) => void,
+  ): InstallFinalization {
     const publisherKey = publisherIdentityKey(packageName)
     const releaseKey = releaseIdentityKey(packageName, version)
     const activeKey = `${packageName}_active_version`
@@ -910,22 +1032,18 @@ class AppRegistry {
     const releaseBefore = snapshotStorage<MiniappReleaseIdentity>(releaseKey)
     const activeBefore = snapshotStorage<string>(activeKey)
 
-    // Persist the verified package identity before making the new version
-    // active. The caller keeps the prior same-version directory as a backup
-    // until this method returns. If any write fails, restore the metadata
-    // snapshots and let the filesystem transaction restore that directory (or
-    // remove a first install), so directory discovery cannot activate bytes
-    // that lack their verified release identity and publisher continuity pin.
-    try {
-      if (releaseIdentity.publisherKeyFingerprint) {
-        const savedPublisher = storage.save(publisherKey, releaseIdentity.publisherKeyFingerprint)
-        if (savedPublisher.is_error()) throw savedPublisher.error
-      }
-      const savedRelease = storage.save(releaseKey, releaseIdentity)
-      if (savedRelease.is_error()) throw savedRelease.error
-      const activated = this.setActiveVersion(packageName, version)
-      if (activated.is_error()) throw activated.error
-    } catch (error) {
+    const rollbackJournal: InstallMetadataRollbackJournal = {
+      schemaVersion: 1,
+      packageName,
+      version,
+      publisher: publisherBefore,
+      release: releaseBefore,
+      active: activeBefore,
+    }
+    recordRecoveryState(JSON.stringify(rollbackJournal))
+
+    const rollbackMetadata = () => {
+      let firstError: unknown
       for (const restore of [
         () => restoreStorage(activeKey, activeBefore),
         () => restoreStorage(releaseKey, releaseBefore),
@@ -935,25 +1053,47 @@ class AppRegistry {
           restore()
         } catch (rollbackError) {
           console.error("APP_REGISTRY: failed to restore install metadata after finalization error", rollbackError)
+          firstError ??= rollbackError
         }
       }
-      throw error
+      if (firstError !== undefined) throw firstError
     }
 
-    // If this is a release install (semver, not dev-*) of a package that
-    // currently has dev-* snapshots, clear the dev state so the swap to
-    // "released" is clean. Otherwise the dev version would keep winning
-    // getActiveVersion's dev-precedence rule and the just-installed
-    // release wouldn't run.
-    const isDevInstall = version.startsWith("dev-")
-    if (!isDevInstall) {
-      this.clearDevArtifacts(packageName)
+    // Persist the verified package identity before making the new version
+    // active. The caller keeps the prior same-version directory as a backup
+    // until this method returns. If any write fails, restore the metadata
+    // snapshots and let the filesystem transaction restore that directory (or
+    // remove a first install), so directory discovery cannot activate bytes
+    // that lack their verified release identity and publisher continuity pin.
+    return {
+      apply: () => {
+        if (releaseIdentity.publisherKeyFingerprint) {
+          const savedPublisher = storage.save(publisherKey, releaseIdentity.publisherKeyFingerprint)
+          if (savedPublisher.is_error()) throw savedPublisher.error
+        }
+        const savedRelease = storage.save(releaseKey, releaseIdentity)
+        if (savedRelease.is_error()) throw savedRelease.error
+        const activated = this.setActiveVersion(packageName, version)
+        if (activated.is_error()) throw activated.error
+      },
+      rollback: rollbackMetadata,
+      afterCommit: () => {
+        // If this is a release install (semver, not dev-*) of a package that
+        // currently has dev-* snapshots, clear the dev state so the swap to
+        // "released" is clean. Otherwise the dev version would keep winning
+        // getActiveVersion's dev-precedence rule and the just-installed
+        // release wouldn't run.
+        const isDevInstall = version.startsWith("dev-")
+        if (!isDevInstall) {
+          this.clearDevArtifacts(packageName)
+        }
+        // Any explicit successful install (Store, preinstall, dev, or a new
+        // build-owned bundle) reverses a prior user-uninstalled tombstone.
+        storage.remove(userUninstalledKey(packageName))
+        this.refreshNeeded = true
+        this.notify()
+      },
     }
-    // Any explicit successful install (Store, preinstall, dev, or a new
-    // build-owned bundle) reverses a prior user-uninstalled tombstone.
-    storage.remove(userUninstalledKey(packageName))
-    this.refreshNeeded = true
-    this.notify()
   }
 
   public getReleaseIdentity(packageName: string, version: string): MiniappReleaseIdentity | null {

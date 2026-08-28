@@ -17,7 +17,7 @@ import Constants from "expo-constants"
 
 import {SETTINGS, engine} from "@mentra/engine"
 import {devServerHost, METRO_AUTO} from "@/utils/cloudClient/devHost"
-import {deriveStoreUrl} from "@/utils/cloudClient/storeUrl"
+import {selectStoreUrl} from "@/utils/cloudClient/storeUrl"
 
 type Lc3FrameSizeBytes = 20 | 40 | 60
 
@@ -44,7 +44,7 @@ function metroUrl(port: number): string | undefined {
  *   2. env (EXPO_PUBLIC_CLOUD_*): for CI/staging builds, never personal IPs;
  *   3. Cloud Dev: the default shared backend for team testing.
  */
-function resolveUrl(settingKey: string, envValue: string | undefined, port: number, defaultUrl: string): string {
+function resolvedEndpointOverride(settingKey: string, port: number): string | undefined {
   const override = engine.settings.get(settingKey)
   if (typeof override === "string" && override.trim().length > 0) {
     const trimmed = override.trim()
@@ -53,6 +53,13 @@ function resolveUrl(settingKey: string, envValue: string | undefined, port: numb
     const auto = metroUrl(port)
     if (auto) return auto
   }
+
+  return undefined
+}
+
+function resolveUrl(settingKey: string, envValue: string | undefined, port: number, defaultUrl: string): string {
+  const override = resolvedEndpointOverride(settingKey, port)
+  if (override) return override
 
   const envUrl = envValue?.trim()
   if (envUrl) return envUrl
@@ -79,12 +86,12 @@ function runtimeUrl(): string {
 }
 
 function storeUrl(): string {
-  return resolveUrl(
-    SETTINGS.cloud_store_url.key,
-    process.env.EXPO_PUBLIC_CLOUD_STORE_URL as string | undefined,
-    STORE_PORT,
-    deriveStoreUrl(coreUrl()),
-  )
+  return selectStoreUrl({
+    storeOverrideUrl: resolvedEndpointOverride(SETTINGS.cloud_store_url.key, STORE_PORT),
+    coreOverrideUrl: resolvedEndpointOverride(SETTINGS.cloud_core_url.key, CORE_PORT),
+    envStoreUrl: (process.env.EXPO_PUBLIC_CLOUD_STORE_URL as string | undefined)?.trim() || undefined,
+    resolvedCoreUrl: coreUrl(),
+  })
 }
 
 /** The endpoint URLs the client would use right now, every layer applied. */

@@ -7,6 +7,7 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {SETTINGS, useSetting} from "@mentra/engine"
 import {cloudClient, resolvedEndpoints} from "@/services/cloudClient"
 import {devServerHost, METRO_AUTO} from "@/utils/cloudClient/devHost"
+import {deriveStoreUrl} from "@/utils/cloudClient/storeUrl"
 import showAlert from "@/utils/AlertUtils"
 
 const CLOUD_DEV_CORE_URL = "https://core.dev.us-west-2.mentraglass.com"
@@ -83,15 +84,24 @@ export default function CloudUrl() {
 
   // Persisted setting is untyped; normalize to the bookmark array shape.
   const bookmarks: SavedCloudPair[] = Array.isArray(savedPairs)
-    ? savedPairs.filter(
-        (pair): pair is SavedCloudPair =>
-          typeof pair === "object" &&
-          pair !== null &&
-          typeof pair.label === "string" &&
-          typeof pair.coreUrl === "string" &&
-          typeof pair.storeUrl === "string" &&
-          typeof pair.runtimeUrl === "string",
-      )
+    ? savedPairs.flatMap((pair) => {
+        if (
+          typeof pair !== "object" ||
+          pair === null ||
+          typeof pair.label !== "string" ||
+          typeof pair.coreUrl !== "string" ||
+          typeof pair.runtimeUrl !== "string"
+        ) {
+          return []
+        }
+        const store =
+          typeof pair.storeUrl === "string"
+            ? pair.storeUrl
+            : pair.coreUrl === METRO_AUTO
+            ? METRO_AUTO
+            : deriveStoreUrl(pair.coreUrl)
+        return [{label: pair.label, coreUrl: pair.coreUrl, storeUrl: store, runtimeUrl: pair.runtimeUrl}]
+      })
     : []
 
   // The dev laptop's live address (only present in Metro-served dev builds).
@@ -164,8 +174,8 @@ export default function CloudUrl() {
             runtimeResult.status
               ? ` (status ${runtimeResult.status})`
               : runtimeResult.error
-                ? `: ${runtimeResult.error}`
-                : ""
+              ? `: ${runtimeResult.error}`
+              : ""
           }.`,
           [{text: "OK"}],
         )

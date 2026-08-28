@@ -28,6 +28,7 @@ test("separates the observable release identity from native store version fields
   assert.match(output, /^MENTRAOS_NATIVE_MARKETING_VERSION=3\.1\.0$/m)
   assert.match(output, /^MENTRAOS_PINNED_BUILD_NUMBER=310000057$/m)
   assert.match(output, /^EXPO_PUBLIC_CLOUD_CORE_URL=https:\/\/core\.us-west-2\.mentraglass\.com$/m)
+  assert.match(output, /^EXPO_PUBLIC_CLOUD_STORE_URL=https:\/\/store\.us-west-2\.mentraglass\.com$/m)
   assert.match(output, /^EXPO_PUBLIC_CLOUD_RUNTIME_URL=https:\/\/runtime\.us-west-2\.mentraglass\.com$/m)
 })
 
