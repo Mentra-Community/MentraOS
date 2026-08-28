@@ -13,6 +13,7 @@ final class WhepVideoSource: NSObject {
   private var pc: RTCPeerConnection?
   private var currentUrl: String?
   private var offerPosted = false
+  private var pendingOfferPost: DispatchWorkItem?
   private var pcmEnabled = true
   private var audioTracks: [RTCAudioTrack] = []
   private var frameCount = 0
@@ -35,12 +36,14 @@ final class WhepVideoSource: NSObject {
     pc = peer
     peer.addTransceiver(of: .video, init: RTCRtpTransceiverInit.recvOnly())
     peer.addTransceiver(of: .audio, init: RTCRtpTransceiverInit.recvOnly())
-    peer.offer(for: constraints) { sdp, error in
+    peer.offer(for: constraints) { [weak self] sdp, error in
       guard let sdp, error == nil else { return }
-      peer.setLocalDescription(sdp) { _ in
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
-          self?.postOfferIfNeeded()
-        }
+      peer.setLocalDescription(sdp) { [weak self] _ in
+        // Track the delayed post so a same-instance restart can cancel it and
+        // avoid publishing a stale peer's SDP before ICE finishes.
+        let work = DispatchWorkItem { [weak self] in self?.postOfferIfNeeded() }
+        self?.pendingOfferPost = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: work)
       }
     }
   }
@@ -59,6 +62,8 @@ final class WhepVideoSource: NSObject {
   func stop() {
     currentUrl = nil
     offerPosted = false
+    pendingOfferPost?.cancel()
+    pendingOfferPost = nil
     pcmEnabled = true
     audioTracks.removeAll()
     pc?.close()
@@ -88,7 +93,11 @@ final class WhepVideoSource: NSObject {
     URLSession.shared.dataTask(with: request) { data, response, error in
       let code = (response as? HTTPURLResponse)?.statusCode ?? -1
       NSLog("ACS-SPIKE P3 WHEP \(code) answer bytes=\(data?.count ?? 0)")
-      guard error == nil, let data, let answer = String(data: data, encoding: .utf8) else { return }
+      guard error == nil, (200 ..< 300).contains(code),
+            let data, let answer = String(data: data, encoding: .utf8) else {
+        NSLog("ACS-SPIKE WHEP answer rejected code=\(code)")
+        return
+      }
       let desc = RTCSessionDescription(type: .answer, sdp: answer)
       peer.setRemoteDescription(desc) { _ in }
     }.resume()

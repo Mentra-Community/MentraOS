@@ -259,23 +259,32 @@ class AcsMeetingSession(
       pcmBridge?.finishDump()
       whep?.stop()
       frameSender.detach()
-      call?.hangUp()?.get()
-      callAgent?.dispose()
-      callClient = null
     } catch (error: Exception) {
-      Log.w(TAG, "leave failed", error)
-    } finally {
-      whep = null
-      call = null
-      callAgent = null
-      audioOut = null
-      audioIn = null
-      videoOut = null
-      outgoingReady.set(false)
-      muted.set(false)
-      meetingUrl = null
-      emit("idle")
+      Log.w(TAG, "leave cleanup failed", error)
     }
+    // Hang up and dispose must be independent: a failed hang-up must not skip
+    // dispose, or the ACS agent leaks and the guest stays in the Teams roster.
+    try {
+      call?.hangUp()?.get()
+    } catch (error: Exception) {
+      Log.w(TAG, "leave hangUp failed", error)
+    }
+    try {
+      callAgent?.dispose()
+    } catch (error: Exception) {
+      Log.w(TAG, "leave dispose failed", error)
+    }
+    callClient = null
+    whep = null
+    call = null
+    callAgent = null
+    audioOut = null
+    audioIn = null
+    videoOut = null
+    outgoingReady.set(false)
+    muted.set(false)
+    meetingUrl = null
+    emit("idle")
   }
 
   companion object {

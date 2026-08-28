@@ -92,6 +92,7 @@ final class AcsMeetingSession {
       do {
         self.leaveLocked()
         self.meetingUrl = meetingUrl
+        self.lastError = nil
         self.emit("connecting")
         let credential = try CommunicationTokenCredential(token: token)
         let client = CallClient()
@@ -221,7 +222,14 @@ final class AcsMeetingSession {
     pcmBridge?.finishDump()
     whep?.stop()
     frameSender.detach()
-    try? call?.hangUp().get()
+    do {
+      try call?.hangUp().get()
+    } catch {
+      NSLog("ACS-SPIKE leave hangUp failed: \(error)")
+    }
+    // Dispose independently of hang-up: a failed hang-up must not leak the ACS
+    // agent, and each join/leave cycle must release the previous agent.
+    callAgent?.dispose()
     callAgent = nil
     callClient = nil
     call = nil

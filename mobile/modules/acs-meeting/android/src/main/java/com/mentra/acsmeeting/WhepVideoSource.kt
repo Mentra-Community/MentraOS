@@ -46,6 +46,8 @@ class WhepVideoSource(
   @Volatile private var offerPosted = false
   @Volatile private var pcmEnabled = true
   private val audioTracks = mutableListOf<AudioTrack>()
+  private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+  private var pendingOfferPost: Runnable? = null
 
   override fun start(whepUrl: String) {
     stop()
@@ -63,9 +65,9 @@ class WhepVideoSource(
             override fun onSetSuccess() {
               // Cloudflare WHEP wants candidates in the offer. Wait for ICE
               // gathering, with a timeout so trickle-less endpoints still join.
-              android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                postOfferIfNeeded()
-              }, 2000)
+              val runnable = Runnable { postOfferIfNeeded() }
+              pendingOfferPost = runnable
+              mainHandler.postDelayed(runnable, 2000)
             }
           }, sdp)
         }
@@ -89,6 +91,10 @@ class WhepVideoSource(
     currentUrl = null
     offerPosted = false
     pcmEnabled = true
+    // Cancel any pending delayed offer post so a same-instance restart cannot
+    // publish a stale peer's SDP before ICE finishes.
+    pendingOfferPost?.let { mainHandler.removeCallbacks(it) }
+    pendingOfferPost = null
     audioTracks.clear()
     try {
       pc?.close()
