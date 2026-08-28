@@ -90,6 +90,7 @@ export interface StartUnmanagedOptions {
   sound?: boolean
   /** Optional Bearer token for WHIP Authorization (custom authenticated endpoints). */
   authToken?: string
+  captureAudio?: boolean
 }
 
 export interface StartManagedOptions {
@@ -108,6 +109,8 @@ export interface StartManagedOptions {
    *     that drop WHIP/SRT UDP.
    */
   ingest?: "srt" | "whip" | "rtmp"
+  /** When false, glasses skip encoding their mic for this WHIP session. */
+  captureAudio?: boolean
 }
 
 export interface StreamPublisherStartResult {
@@ -319,6 +322,7 @@ export class PhoneStreamCoordinator {
           ...(opts.video !== undefined ? {video: opts.video} : {}),
           ...(opts.audio !== undefined ? {audio: opts.audio} : {}),
           ...(opts.authToken ? {authToken: opts.authToken} : {}),
+          ...(typeof opts.captureAudio === "boolean" ? {captureAudio: opts.captureAudio} : {}),
         })
         const result = publisherStartResult(streamId, event)
         this.startLifecycle(streamId)
@@ -422,6 +426,7 @@ export class PhoneStreamCoordinator {
           // See startUnmanaged: the native bridge rejects explicit `undefined`.
           ...(opts.video !== undefined ? {video: opts.video} : {}),
           ...(opts.audio !== undefined ? {audio: opts.audio} : {}),
+          ...(typeof opts.captureAudio === "boolean" ? {captureAudio: opts.captureAudio} : {}),
         })
         entry.publisherStart = publisherStartResult(streamId, event)
         console.info("[STREAM_STARTUP]", {
