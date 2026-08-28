@@ -41,7 +41,8 @@ test("release finalization reads the preserved OTA artifact layout", () => {
 
 test("production validates before approval and proves packages before mobile promotion", () => {
   const production = workflow("coordinated-production-promotion.yml")
-  const sdkNative = jobBlock(workflow("reusable-coordinated-sdk-native.yml"), "prepare")
+  const sdkNativeWorkflow = workflow("reusable-coordinated-sdk-native.yml")
+  const sdkNative = jobBlock(sdkNativeWorkflow, "prepare")
 
   assert.doesNotMatch(jobBlock(production, "plan"), /^    needs:/m)
   assert.match(jobBlock(production, "approve"), /^    needs: plan$/m)
@@ -63,6 +64,8 @@ test("production validates before approval and proves packages before mobile pro
     sdkNative,
     /else\s+\[\[ "\$\(jq -r \.draft <<< "\$release"\)" == "false" \]\]\s+\[\[ "\$\(jq -r \.prerelease <<< "\$release"\)" == "true" \]\]/,
   )
+  assert.match(sdkNativeWorkflow, /for attempt in \{1\.\.6\}/)
+  assert.match(sdkNativeWorkflow, /cmp --silent native-result\/maven\/sonatype-deployment\.json persisted-deployment\.json/)
 })
 
 test("mobile destinations use real TestFlight groups without changing the release channel", () => {
