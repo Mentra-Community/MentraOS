@@ -49,7 +49,7 @@
     "test:watch": "jest --watch",
     "test:maestro": "maestro test -e MAESTRO_APP_ID=${APP_PACKAGE_NAME:-com.mentra.mentra} .maestro/flows",
     "test:maestro:ci": "maestro test -e MAESTRO_APP_ID=${APP_PACKAGE_NAME:-com.mentra.mentra} .maestro/flows",
-    "adb": "adb reverse tcp:9090 tcp:9090 && adb reverse tcp:3000 tcp:3000 && adb reverse tcp:9001 tcp:9001 && adb reverse tcp:8081 tcp:8081",
+    "adb": "adb reverse tcp:9090 tcp:9090 && adb reverse tcp:3000 tcp:3000 && adb reverse tcp:3003 tcp:3003 && adb reverse tcp:9001 tcp:9001 && adb reverse tcp:8081 tcp:8081",
     "dev:logs": "bunx zx ./scripts/start.mjs 2>&1 | ./scripts/log-viewer.sh",
     "dev:logs-dashboard": "bunx zx ./scripts/start.mjs 2>&1 | ./scripts/log-dashboard.sh",
     "dev:logs-filter": "bunx zx ./scripts/start.mjs 2>&1 | ./scripts/log-viewer.sh | grep -i"

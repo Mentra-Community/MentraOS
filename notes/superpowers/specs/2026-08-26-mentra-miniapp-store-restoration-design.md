@@ -123,8 +123,10 @@ so a Core identity credential cannot be sent to an unrelated distribution
 service. Existing two-endpoint custom profiles derive Store from their selected
 Core until the user supplies the new explicit Store field. Coordinated mobile
 release tooling pins and verifies Core, Store, and Runtime together in the
-shipped JavaScript bundle. OEM or self-hosted deployments may point the same
-host contract at their own identity issuer and Store implementation.
+shipped JavaScript bundle. The Android `bun adb` helper reverses both local
+Core port 3000 and local Store port 3003. OEM or self-hosted deployments may
+point the same host contract at their own identity issuer and Store
+implementation.
 
 ## Design principles
 

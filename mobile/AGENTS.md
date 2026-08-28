@@ -189,7 +189,7 @@ push("/settings/profile")
 ## Working with MentraOS
 
 - Backend server required for local testing
-- Port forwarding: `bun adb` (sets up tcp:9090, tcp:3000, tcp:9001, tcp:8081)
+- Port forwarding: `bun adb` (sets up tcp:9090, tcp:3000, tcp:3003, tcp:9001, tcp:8081)
 - Bluetooth functionality for glasses pairing
 - **Background timers on Android are always native** (no env var, dev and
   release alike). If startup shows a "Background timers unavailable" alert or
