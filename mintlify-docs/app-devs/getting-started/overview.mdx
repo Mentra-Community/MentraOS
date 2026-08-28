@@ -1,0 +1,103 @@
+---
+title: "Overview"
+description: "Build on-device apps for smart glasses with the Mentra Miniapp SDK."
+icon: "compass"
+---
+
+import LegacyCloudNote from '/snippets/legacy-cloud-note.mdx'
+import BetaNote from '/snippets/beta-note.mdx'
+
+<BetaNote />
+
+MentraOS is the operating system for smart glasses. A **miniapp** is an app that
+runs on the user's phone, inside the Mentra App, and drives the glasses through the
+Mentra Miniapp SDK (`@mentra/miniapp`). You write a bundle, the user installs it
+from the Mentra Miniapp Store, and it runs on their device.
+
+<Info>
+Building a mobile app that connects directly to glasses over Bluetooth? Use the
+[Bluetooth SDK docs](/bluetooth-sdk/overview) instead.
+</Info>
+
+<LegacyCloudNote />
+
+## How a miniapp is built
+
+Every miniapp has **two layers**:
+
+- **Background**: an always-on JavaScript context (no DOM) that owns all the
+  glasses logic: subscribing to the microphone, drawing to the display, reacting
+  to button presses. It holds your `session`.
+- **UI**: an on-demand WebView (React + your styles) that opens when the user
+  taps your miniapp's tile, and is torn down when they leave. It has no direct
+  hardware access; it talks to the background layer over a typed message bus.
+
+This split exists so dozens of miniapps can stay resident on a phone without each
+one holding a heavyweight WebView in memory. See
+[Two-layer architecture](/app-devs/core-concepts/two-layer-architecture) for the
+full picture.
+
+## Hello world
+
+This background entry shows text on the glasses when the user presses a button:
+
+```typescript src/background/index.ts
+import { registerMiniapp } from "@mentra/miniapp/background";
+
+registerMiniapp((session) => {
+  // Runs once the miniapp connects. `session` is your handle to the glasses.
+  // display.render() replaces the frame; a stable id updates the element in
+  // place. Boxes are raw device px — see session.capabilities.display.
+  const hud = { x: 0, y: 0, w: 576, h: 288 };
+  session.input.onButtonPress(() => {
+    session.display.render([{ type: "text", id: "hud", box: hud, text: "Hello from MentraOS!" }]);
+  });
+
+  // React to what the user says.
+  session.transcription.on((data) => {
+    session.display.render([{ type: "text", id: "hud", box: hud, text: data.text }]);
+  });
+});
+```
+
+You don't `new` a server or call `start()`. The host evaluates your background
+bundle and hands you a `session`. Everything you do with the glasses goes through
+[`session`](/app-devs/core-concepts/session).
+
+## The toolchain
+
+Three npm packages, but you only ever invoke one of them directly:
+
+| Package | Role | Where it lives |
+|---|---|---|
+| [`create-mentra-miniapp`](https://www.npmjs.com/package/create-mentra-miniapp) | Scaffolds a new project. Run once via `bunx`, never installed. | N/A |
+| [`@mentra/miniapp`](https://www.npmjs.com/package/@mentra/miniapp) | The runtime SDK you `import` (`session.*`, React hooks). | your `dependencies` |
+| [`@mentra/miniapp-cli`](https://www.npmjs.com/package/@mentra/miniapp-cli) | The `mentra-miniapp` CLI (`dev` / `pack` / `release`). | your `devDependencies` |
+
+`create-mentra-miniapp` writes a `package.json` that already pins the other two,
+so a single `bun install` brings everything down.
+
+## What you could build
+
+- **Live captions** that show spoken words on the HUD
+- **Real-time translation** for conversations
+- **Hands-free note-taking** triggered by a button or your voice
+- **Navigation** prompts on supported glasses
+- **Teleprompters**, fitness coaches, inspection checklists, and more
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/app-devs/getting-started/quickstart">
+    Scaffold, run, and load a miniapp on your phone in minutes.
+  </Card>
+  <Card title="Two-layer architecture" icon="layer-group" href="/app-devs/core-concepts/two-layer-architecture">
+    How the background and UI layers work and talk to each other.
+  </Card>
+  <Card title="The session" icon="plug" href="/app-devs/core-concepts/session">
+    The object that connects you to the glasses.
+  </Card>
+  <Card title="Mobile Bluetooth apps" icon="bluetooth" href="/bluetooth-sdk/overview">
+    Connecting to glasses directly over BLE instead.
+  </Card>
+</CardGroup>

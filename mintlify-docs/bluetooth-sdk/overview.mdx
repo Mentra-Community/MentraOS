@@ -1,0 +1,66 @@
+---
+title: "Mentra Bluetooth SDK"
+description: "Connect mobile apps directly to Mentra Live over Bluetooth."
+icon: "bluetooth"
+---
+
+The Mentra Bluetooth SDK is the base SDK for building mobile apps that control Mentra Live directly over Bluetooth. It gives Android, iOS, and React Native apps access to scanning, pairing, device status, microphone audio, camera capture, speaker playback, streaming, Wi-Fi, and hardware events.
+
+Use this SDK when your app owns the mobile experience and needs a direct phone-to-glasses connection.
+
+## Packages
+
+| Platform | Package | Import |
+| --- | --- | --- |
+| Android | `com.mentraglass:bluetooth-sdk` | `import com.mentra.bluetoothsdk.*` |
+| iOS | `MentraBluetoothSDK` Swift package | `import MentraBluetoothSDK` |
+| React Native / Expo | `@mentra/bluetooth-sdk` | `import BluetoothSdk from '@mentra/bluetooth-sdk'` |
+
+## Quickstart
+
+The fastest way to try the Mentra Bluetooth SDK is to run one of the complete
+Android, iOS, or React Native example apps in the Mentra Bluetooth SDK Starter
+Kit.
+
+<Card title="Run an example app" icon="rocket" href="/bluetooth-sdk/quickstart">
+  Clone the starter kit, choose your platform, and connect to Mentra Live.
+</Card>
+
+You can also [open the starter kit directly on GitHub](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit).
+
+## What You Can Build
+
+- Native Android, iOS, or React Native apps that scan for and connect to Mentra Live.
+- Apps that receive button, touch, swipe, head-up, battery, Wi-Fi, hotspot, stream, photo, audio, and SDK log events.
+- Apps that control Mentra Live features such as gallery mode, camera settings, speaker playback, RGB LEDs, Wi-Fi, hotspot, microphone, camera, and streaming.
+- Photo upload to your own webhook and RTMP, SRT, or WebRTC streaming to your own ingest endpoint. The starter kit also includes optional local demo helpers for trying these flows on a LAN.
+
+## Requirements
+
+- The Bluetooth SDK and Mentra Live glasses software must use the same release version. The latest matching pair is `0.1.21-beta.5`.
+- A physical Android phone or iPhone for real Bluetooth testing.
+- Android min SDK `28` or newer.
+- iOS deployment target `15.1` or newer.
+- React Native / Expo apps must use a development build or production native build. Expo Go cannot load the native SDK.
+- Bluetooth permissions, plus Android location permission where BLE scanning requires it.
+
+<Warning>
+Bluetooth connection alone does not confirm version compatibility. Before testing SDK features, [update Mentra Live to the glasses software matching your SDK version](/bluetooth-sdk/software-update). An app using Bluetooth SDK `0.1.21-beta.5` must use the matching Mentra Live `0.1.21-beta.5` software release.
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Build from Scratch" icon="screwdriver-wrench" href="/bluetooth-sdk/build-from-scratch">
+    Add the SDK to your own Android, iOS, or React Native app.
+  </Card>
+  <Card title="Update Mentra Live" icon="download" href="/bluetooth-sdk/software-update">
+    Install the glasses software that matches your Bluetooth SDK release.
+  </Card>
+  <Card title="API Reference" icon="book" href="/bluetooth-sdk/api-reference">
+    Review lifecycle, commands, events, status fields, and Mentra Live behavior.
+  </Card>
+  <Card title="Troubleshooting" icon="circle-question" href="/bluetooth-sdk/troubleshooting">
+    Fix native build, permission, scan, stream, and Expo issues.
+  </Card>
+</CardGroup>

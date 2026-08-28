@@ -1,0 +1,109 @@
+---
+title: "Quickstart"
+description: "Run a complete Mentra Bluetooth SDK example app on a physical phone."
+icon: "rocket"
+---
+
+The fastest way to get started with the Mentra Bluetooth SDK is to run one of
+the complete example apps in the
+[Mentra Bluetooth SDK Starter Kit](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit).
+Choose Android, iOS, or React Native / Expo and connect to Mentra Live without
+first adding the SDK to your own app.
+
+<Card title="Open the Starter Kit on GitHub" icon="github" href="https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit">
+  Browse the example apps and source code.
+</Card>
+
+<Warning>
+Use a physical phone for Bluetooth testing. Simulators and emulators do not
+provide the real Bluetooth path.
+</Warning>
+
+## 1. Clone the Starter Kit
+
+```bash
+git clone https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit.git
+cd Mentra-Bluetooth-SDK-Starter-Kit
+```
+
+The examples include the OTA flow required to install the Mentra Live glasses
+software that matches their Bluetooth SDK version. For the current
+`0.1.21-beta.5` builds and step-by-step update instructions, see
+[Update Mentra Live](/bluetooth-sdk/software-update).
+
+## 2. Run an Example App
+
+### Android
+
+```bash
+cd examples/android
+./gradlew installDebug
+```
+
+The Android example is a Kotlin / Jetpack Compose app. It installs the SDK as
+`com.mentraglass:bluetooth-sdk`.
+
+### iOS
+
+```bash
+cd examples/ios
+open MentraExample.xcodeproj
+```
+
+Choose a physical iPhone as the run destination in Xcode. The iOS example is a
+SwiftUI app that installs the `MentraBluetoothSDK` Swift package.
+
+### React Native / Expo
+
+```bash
+cd examples/react-native
+bun install
+bunx expo prebuild
+bunx expo run:ios
+# or
+bun run android:dev
+```
+
+The React Native example installs `@mentra/bluetooth-sdk` and demonstrates the
+same Device, Camera, Stream, System, and Console flows as the native examples.
+
+## 3. Connect and Explore
+
+Open the example app, scan for Mentra Live, select your glasses, and connect.
+The examples demonstrate:
+
+- Connecting, disconnecting, and reconnecting to a saved/default device.
+- Checking for and installing the glasses software release that matches the SDK.
+- Reading typed glasses and Bluetooth status snapshots.
+- Handling button, touch, swipe, head-up, battery, Wi-Fi, hotspot, stream,
+  photo, video upload, audio, and SDK log events.
+- Controlling gallery mode, capture settings, speaker playback, RGB LEDs,
+  Wi-Fi, hotspot, microphone, camera, and streaming.
+- Running glasses-to-phone photo and streaming demos.
+
+## Optional Local Media and Streaming Helper
+
+The Camera and Stream screens default to a glasses-to-phone flow. You do not
+need a separate server for that default path.
+
+Use the helper only when you turn on **Use cloud server** in the example app and
+want to test an external endpoint without deploying your own media upload
+webhook or streaming server. From the repository root, run:
+
+```bash
+python3 examples/local-demo-cloud/server.py
+```
+
+Paste the printed LAN `/upload`, RTMP, SRT, or WHIP URL into the corresponding
+example screen. If Docker is unavailable, the helper starts the media upload
+webhook and skips streaming with a warning.
+
+<Warning>
+Do not use `localhost` in the app. The glasses, phone, and computer must be on a
+network where the glasses can reach the printed LAN address.
+</Warning>
+
+## Add the SDK to Your App
+
+Ready to integrate the SDK into an existing project? Continue to
+[Build from Scratch](/bluetooth-sdk/build-from-scratch).

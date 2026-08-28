@@ -1,0 +1,221 @@
+---
+title: "Speaker"
+description: "Play URLs, text-to-speech, and live PCM audio through the phone or connected glasses."
+icon: "volume"
+---
+
+import BetaNote from '/snippets/beta-note.mdx'
+
+<BetaNote />
+
+`session.speaker` is audio output: play a URL, speak text, or stream live PCM.
+Playback follows the phone's media route, including connected Bluetooth audio
+glasses. For audio _input_ (mic frames, voice activity), use
+[`session.mic`](/app-devs/core-concepts/microphone/audio-chunks) instead.
+
+```typescript src/background/index.ts
+import {registerMiniapp} from "@mentra/miniapp/background"
+
+registerMiniapp((session) => {
+  session.transcription.on(async (data) => {
+    await session.speaker.speak(`You said: ${data.text}`)
+  })
+})
+```
+
+## Methods
+
+| Method                   | Returns                        | Notes                                                                 |
+| ------------------------ | ------------------------------ | --------------------------------------------------------------------- |
+| `play(options)`          | `Promise<void>`                | Play a URL. Resolves when playback completes on the phone.            |
+| `speak(text, options?)`  | `Promise<SpeakResult>`         | Speak text. Resolves when playback completes; rejects on TTS failure. |
+| `createStream(options?)` | `Promise<SpeakerStreamWriter>` | Open a bounded live PCM stream. Android and iOS.                      |
+| `stop()`                 | `void`                         | Stop any audio this miniapp is playing. Fire-and-forget.              |
+| `state`                  | `SpeakerState`                 | Current playback state (sync getter).                                 |
+| `isPlaying`              | `boolean`                      | `true` when `state === "playing"`.                                    |
+| `onStateChange(handler)` | `UnsubscribeFn`                | Fires on every state transition.                                      |
+
+## Playing a URL
+
+`play` streams an audio URL through the phone's playback service and resolves
+when it finishes.
+
+```typescript
+await session.speaker.play({
+  audioUrl: "https://example.com/chime.mp3",
+  volume: 0.8, // optional
+  stopOtherAudio: true, // optional, defaults to false
+})
+```
+
+`PlayAudioOptions`:
+
+| Field            | Type       | Notes                                        |
+| ---------------- | ---------- | -------------------------------------------- |
+| `audioUrl`       | `string`   | The URL to play.                             |
+| `volume`         | `number?`  | Playback volume.                             |
+| `stopOtherAudio` | `boolean?` | Stop other audio first. Defaults to `false`. |
+
+## Text-to-speech
+
+`speak` sends the text to the phone, which streams cloud TTS when connected and
+falls back to local offline TTS when the cloud is unavailable. It resolves when
+playback completes. Offline playback may segment longer text internally to
+reduce latency; callers use the same `speak()` API and receive the same
+interruption behavior in either mode.
+
+By default, the Mentra App converts display-oriented markup and symbols into
+natural spoken words before either TTS path runs. For example, `68°F (20°C)`
+becomes "68 degrees Fahrenheit or 20 degrees Celsius." Set
+`enableSanitization: false` when the TTS engine must receive the exact input,
+such as code, equations, or character-by-character content.
+
+```typescript
+const result = await session.speaker.speak("Turn left in 200 meters", {
+  voice_id: "rachel",
+  volume: 1.0,
+})
+
+if (!result.completed) {
+  // Playback was interrupted before finishing.
+}
+```
+
+`SpeakOptions`:
+
+| Field                | Type                       | Notes                                             |
+| -------------------- | -------------------------- | ------------------------------------------------- |
+| `voice_id`           | `string?`                  | Voice to use.                                     |
+| `voice_settings`     | `Record<string, unknown>?` | Provider-specific voice tuning.                   |
+| `volume`             | `number?`                  | Playback volume.                                  |
+| `stopOtherAudio`     | `boolean?`                 | Stop other audio first. Defaults to `false`.      |
+| `enableSanitization` | `boolean?`                 | Normalize markup and symbols. Defaults to `true`. |
+| `forceLocal`         | `boolean?`                 | Require on-device TTS; never call cloud TTS.      |
+
+`SpeakResult` has one field, `completed`: `true` if playback finished, `false`
+if it was interrupted.
+
+## Live PCM streaming
+
+Use `createStream()` when audio arrives incrementally and cannot be exposed as
+a complete file or URL—for example, live meeting audio received over a
+WebSocket. The stream accepts signed 16-bit little-endian mono PCM on Android
+and iOS.
+
+<Warning>
+  Live PCM requires Mentra App 2.13.0 or newer. Set `minHostVersion: "2.13.0"` in a miniapp that depends on
+  `createStream()` so older hosts reject installation instead of failing during a call.
+</Warning>
+
+```typescript src/background/index.ts
+const writer = await session.speaker.createStream({
+  sampleRate: 24000,
+  volume: 1,
+  stopOtherAudio: true,
+})
+
+try {
+  for await (const pcmChunk of livePcmChunks) {
+    // Await every write. The host applies backpressure when its native queue
+    // reaches roughly two seconds, keeping memory bounded and audio ordered.
+    const {bufferedMs} = await writer.write(pcmChunk)
+    console.debug("speaker buffer", bufferedMs)
+  }
+  await writer.close() // drains queued audio before resolving
+} catch (error) {
+  await writer.abort() // immediately drops queued audio
+  throw error
+}
+```
+
+`SpeakerStreamOptions`:
+
+| Field            | Type                      | Notes                                                   |
+| ---------------- | ------------------------- | ------------------------------------------------------- |
+| `sampleRate`     | `16000 \| 24000 \| 48000` | Defaults to `16000`.                                    |
+| `channels`       | `1`                       | Version 1 supports mono only.                           |
+| `volume`         | `number?`                 | `0` through `1`. Defaults to `1`.                       |
+| `stopOtherAudio` | `boolean?`                | Stop other playback before opening. Defaults to `true`. |
+
+The returned `SpeakerStreamWriter` has:
+
+| Method                             | Behavior                                                              |
+| ---------------------------------- | --------------------------------------------------------------------- |
+| `write(Uint8Array \| ArrayBuffer)` | Encodes, chunks, orders, and writes raw PCM. Returns `{bufferedMs}`.  |
+| `writeBase64(string)`              | Writes already base64-encoded PCM without decoding it in the miniapp. |
+| `close()`                          | Drains scheduled audio and returns `{durationMs?}`.                   |
+| `abort()`                          | Immediately stops playback and drops the queue. Idempotent.           |
+
+<Warning>
+  Always await writes and call either `close()` or `abort()`. The host also aborts the stream when the miniapp
+  disconnects, but explicit teardown gives the best call-end latency. Compressed MP3, AAC, and Opus frames are not
+  accepted; decode them to PCM before writing.
+</Warning>
+
+### Errors
+
+`speak` rejects with an object carrying a `code` field on cloud-side TTS
+failure. Catch it and branch on `code`:
+
+```typescript
+try {
+  await session.speaker.speak(longText)
+} catch (err) {
+  if (err.code === "TTS_TEXT_TOO_LONG") {
+    // split the text and retry
+  }
+}
+```
+
+| Code                    | Meaning                                                 |
+| ----------------------- | ------------------------------------------------------- |
+| `TTS_TEXT_TOO_LONG`     | The text exceeded the provider's length limit.          |
+| `TTS_INVALID_VOICE`     | The `voice_id` isn't a known voice.                     |
+| `TTS_UPSTREAM_ERROR`    | The TTS provider returned an error.                     |
+| `TTS_LOCAL_UNAVAILABLE` | `forceLocal` was requested without a ready local model. |
+| `INTERNAL`              | Any other failure.                                      |
+
+## State
+
+Five states, read synchronously via `state` or `isPlaying`, or observed as
+transitions via `onStateChange`:
+
+| State     | Meaning                                                               |
+| --------- | --------------------------------------------------------------------- |
+| `idle`    | Nothing has played yet.                                               |
+| `loading` | A `speak()`, `play()`, or `createStream()` request is being prepared. |
+| `playing` | Audio is playing.                                                     |
+| `stopped` | Playback ended, by completion or `stop()`.                            |
+| `error`   | A failure occurred. Transient.                                        |
+
+A request moves `idle` → `loading` → `playing` → `stopped`. On failure the
+speaker fires `error` once with `errorCode` set, then settles to `stopped` so
+`isPlaying` reads `false`.
+
+```typescript
+const off = session.speaker.onStateChange((event) => {
+  if (event.state === "error") {
+    console.warn(event.errorCode, event.errorMessage)
+  }
+  if (event.state === "stopped") {
+    console.log("ran for", event.durationMs, "ms")
+  }
+})
+
+off() // unsubscribe
+```
+
+`SpeakerStateEvent`:
+
+| Field          | Type           | Notes                                                                |
+| -------------- | -------------- | -------------------------------------------------------------------- |
+| `state`        | `SpeakerState` | The new state.                                                       |
+| `errorCode`    | `string?`      | Set when `state === "error"` (`TTS_*` or `INTERNAL`).                |
+| `errorMessage` | `string?`      | Human-readable detail on error.                                      |
+| `durationMs`   | `number?`      | Set when `state === "stopped"`: how long playback ran (best-effort). |
+
+<Note>
+  `onStateChange` does not fire immediately with the current value. Read `state` separately if you want the starting
+  value. Audio *input* (mic frames and voice-activity detection) lives on
+  [`session.mic`](/app-devs/core-concepts/microphone/audio-chunks).
+</Note>

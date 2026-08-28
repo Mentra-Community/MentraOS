@@ -1,0 +1,127 @@
+---
+title: "Android"
+description: "Use the Mentra Bluetooth SDK from a native Android app."
+icon: "android"
+---
+
+Native Android apps use the Maven artifact `com.mentraglass:bluetooth-sdk`.
+
+## Requirements
+
+- Android min SDK `28` or newer.
+- Java 17.
+- Android Studio or Gradle.
+- A physical Android phone for Bluetooth, camera, microphone, direct phone photo, and direct phone WebRTC testing.
+
+## Gradle Setup
+
+```kotlin
+// settings.gradle.kts
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+```
+
+```kotlin
+// app/build.gradle.kts
+android {
+    defaultConfig {
+        minSdk = 28
+    }
+
+    packaging {
+        jniLibs {
+            pickFirsts += "**/libc++_shared.so"
+        }
+    }
+}
+
+dependencies {
+    implementation("com.mentraglass:bluetooth-sdk:0.1.21-beta.5")
+}
+```
+
+The SDK is published to Maven Central. Keep `google()` and `mavenCentral()` configured. The SDK POM pulls in the companion `com.mentraglass:lc3Lib` codec artifact automatically; do not add it manually unless you have a specific override reason.
+
+The packaging rule avoids duplicate `libc++_shared.so` conflicts when your app also includes native media or camera dependencies.
+
+## Permissions
+
+Declare the platform permissions your app uses:
+
+```xml
+<uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+<uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+<uses-permission android:name="android.permission.RECORD_AUDIO" />
+<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+```
+
+Request runtime permissions before scanning. Some Android 12+ devices require Location permission and Location services before BLE scan callbacks are delivered.
+
+## Basic Flow
+
+```kotlin
+import android.content.Context
+import com.mentra.bluetoothsdk.Device
+import com.mentra.bluetoothsdk.DeviceModel
+import com.mentra.bluetoothsdk.GlassesRuntimeState
+import com.mentra.bluetoothsdk.MentraBluetoothSdk
+import com.mentra.bluetoothsdk.MentraBluetoothSdkCallback
+
+class GlassesController(context: Context) : MentraBluetoothSdkCallback() {
+    private val sdk = MentraBluetoothSdk.create(
+        context = context.applicationContext,
+        listener = this,
+    )
+    private var selectedDevice: Device? = null
+
+    fun scan() {
+        sdk.scan(DeviceModel.MENTRA_LIVE, timeoutMs = 10_000) { devices ->
+            renderDevicePicker(devices, onSelect = { selectedDevice = it })
+        }
+    }
+
+    fun connect() {
+        selectedDevice?.let { sdk.connect(it) }
+    }
+
+    fun refreshStatus() {
+        sdk.requestVersionInfo()
+        val glasses = sdk.getGlasses()
+        if (glasses is GlassesRuntimeState.Connected) {
+            val model = glasses.device.deviceModel?.deviceType ?: "glasses"
+            val battery = glasses.battery.level?.toString() ?: "unknown"
+            println("Connected to $model, battery=$battery%")
+        }
+    }
+
+    override fun onGlassesChanged(glasses: GlassesRuntimeState) {
+        // Keep app UI derived from SDK status.
+        println("Glasses changed: $glasses")
+    }
+
+    private fun renderDevicePicker(devices: List<Device>, onSelect: (Device) -> Unit) {
+        // Render devices in SDK-provided order and call onSelect with the user's choice.
+    }
+
+    fun close() {
+        sdk.close()
+    }
+}
+```
+
+## Local SDK Override
+
+Use this when testing SDK source changes from a local MentraOS checkout. Run the publish command from the SDK Android module with a local Gradle install, then consume the Maven-local artifact from your app:
+
+```bash
+cd /path/to/MentraOS/mobile/modules/bluetooth-sdk/android
+gradle :lc3Lib:publishToMavenLocal :publishToMavenLocal -PmentraPublicSdk=true
+```
+
+Then include `mavenLocal()` before `mavenCentral()` in the app's repositories while testing the local artifact.

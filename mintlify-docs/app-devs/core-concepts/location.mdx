@@ -1,0 +1,70 @@
+---
+title: "Location"
+description: "The user's GPS position, as a one-shot fix or a continuous stream."
+icon: "location-dot"
+---
+
+import BetaNote from '/snippets/beta-note.mdx'
+
+<BetaNote />
+
+`session.location` reports the phone's GPS position. Get a single fix with
+`getOnce()`, or subscribe to a stream with `onUpdate()`.
+
+```typescript src/background/index.ts
+const fix = await session.location.getOnce();
+session.display.render([{type: "text", id: "msg", box: {x: 0, y: 0, w: 576, h: 288}, text: `${fix.lat.toFixed(4)}, ${fix.lng.toFixed(4)}`}]);
+```
+
+Location needs the `LOCATION` permission in your
+[manifest](/app-devs/core-concepts/miniapp-manifest). Without it, the phone
+rejects both paths with `PERMISSION_NOT_DECLARED` and no reading arrives.
+
+## A single fix
+
+`getOnce()` resolves with the next available reading from the phone. Use it at
+app load to seed your UI before a stream starts.
+
+```typescript
+const fix = await session.location.getOnce();
+```
+
+It returns a `Promise<LocationData>`.
+
+## Continuous updates
+
+`onUpdate()` delivers a `LocationData` every time the position changes. It
+returns an unsubscribe function.
+
+```typescript
+const off = session.location.onUpdate((data) => {
+  session.display.render([{type: "text", id: "msg", box: {x: 0, y: 0, w: 576, h: 288}, text: `${data.lat}, ${data.lng}`}]);
+});
+
+off(); // stop receiving updates
+```
+
+## LocationData
+
+Both paths hand you the same shape:
+
+| Field | Type | Notes |
+|---|---|---|
+| `lat` | `number` | Latitude in degrees. |
+| `lng` | `number` | Longitude in degrees. |
+| `accuracy` | `number?` | Accuracy in meters, when the platform reports it. |
+| `timestamp` | `number?` | Unix ms timestamp of the fix. |
+| `correlationId` | `string?` | Set when the event answers a single-location request. |
+
+## Permission
+
+`session.location.hasPermission` is `true` when `LOCATION` is declared in your
+manifest. It reports the manifest declaration, not the OS grant: if the user
+denied the system location prompt, `getOnce()` and `onUpdate()` produce no
+reading. See [Permissions](/app-devs/core-concepts/permissions).
+
+<Note>
+`LOCATION` and `BACKGROUND_LOCATION` are separate manifest keys, and
+`hasPermission` checks for `LOCATION` only. For turn-by-turn directions built on
+position, see [`session.navigation`](/app-devs/core-concepts/session).
+</Note>

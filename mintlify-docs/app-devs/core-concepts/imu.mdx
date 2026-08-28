@@ -1,0 +1,72 @@
+---
+title: "IMU"
+description: "Head-position events from the glasses inertial measurement unit."
+icon: "person-walking"
+---
+
+import BetaNote from '/snippets/beta-note.mdx'
+
+<BetaNote />
+
+`session.imu` reports which way the wearer is looking. The glasses' inertial
+measurement unit resolves head pose into two states, `"up"` and `"down"`, and
+fires an event each time that state changes. Use it to wake content when someone
+glances up, or to dismiss it when they look back down.
+
+This module needs the `IMU` hardware requirement in your
+[manifest](/app-devs/core-concepts/miniapp-manifest). Mark it `REQUIRED` and
+glasses without an IMU won't list your miniapp; mark it `OPTIONAL` and they still
+run it without head-position events. There is no runtime permission to request.
+
+## Head position
+
+```typescript src/background/index.ts
+const off = session.imu.onHeadPosition(({ position }) => {
+  if (position === "up") session.display.render([{type: "text", id: "msg", box: {x: 0, y: 0, w: 576, h: 288}, text: "Welcome back"}]);
+  else session.display.render([]);
+});
+```
+
+Each `HeadPositionData` has:
+
+| Field | Type | Notes |
+|---|---|---|
+| `position` | `"up" \| "down"` | The new head pose. Fires on each transition, not continuously. |
+
+## Raw accelerometer
+
+`onAccel` streams raw accelerometer readings, `{x, y, z}` in g plus a timestamp.
+This is G2-only today. On glasses without an exposed IMU stream the subscription
+succeeds and no events arrive.
+
+```typescript src/background/index.ts
+const off = session.imu.onAccel(({ x, y, z, timestamp }) => {
+  // x, y, z in g; timestamp is Unix ms.
+});
+```
+
+Each `AccelData` has:
+
+| Field | Type | Notes |
+|---|---|---|
+| `x`, `y`, `z` | `number` | Accelerometer axes in g (gravity-normalized). |
+| `timestamp` | `number` | Unix ms timestamp of the reading. |
+
+Subscribing turns the sensor on and unsubscribing turns it off, so most callers
+never touch it directly. `session.imu.setEnabled(true)` drives the sensor by hand
+when you want to, for instance, a diagnostic toggle. It's a no-op on glasses
+without an exposed IMU stream.
+
+Gyroscope, magnetometer, and fused orientation aren't exposed yet.
+
+## Cleaning up
+
+Both methods return an unsubscribe function:
+
+```typescript
+const off = session.imu.onHeadPosition(handler);
+off(); // stop listening
+```
+
+Subscriptions are ref-counted, so the SDK only talks to the phone on the first
+subscribe and last unsubscribe of a stream.
