@@ -188,6 +188,7 @@ jobs:
           writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`)
           NODE
           bunx expo prebuild --platform ios --clean
+          test -n "$(find ios -maxdepth 1 -name '*.xcworkspace' -print -quit)"
 
       - name: Install the shared Apple distribution identity
         if: steps.app-store.outputs.exists != 'true'
