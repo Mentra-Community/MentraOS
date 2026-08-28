@@ -923,10 +923,11 @@ jobs:
             if curl --fail --silent --show-error --location \
               --dump-header "$headers" --output "$body" "$page" && \
               grep --fixed-strings --quiet "$RELEASE_IDENTITY" "$body" && \
-              grep --fixed-strings --quiet "$EXAMPLE_APK_URL" "$body" && \
-              grep --fixed-strings --quiet "$EXAMPLE_IOS_URL" "$body" && \
+              grep --fixed-strings --quiet "href=\"$EXAMPLE_APK_URL\"" "$body" && \
+              grep --fixed-strings --quiet "href=\"$EXAMPLE_IOS_URL\"" "$body" && \
               grep --ignore-case --quiet '^x-robots-tag:.*noindex' "$headers" && \
-              ! grep --fixed-strings --quiet '{{release-version}}' "$body"; then
+              ! grep --extended-regexp --ignore-case --quiet \
+                '\{\{[a-z0-9_-]+\}\}|%7b%7b[a-z0-9_-]+%7d%7d' "$body"; then
               echo "Verified $page for $RELEASE_IDENTITY"
               exit 0
             fi
