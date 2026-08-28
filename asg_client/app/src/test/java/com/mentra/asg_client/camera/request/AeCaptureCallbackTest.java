@@ -13,6 +13,8 @@ import android.hardware.camera2.CaptureRequest;
 import android.hardware.camera2.CaptureResult;
 import android.hardware.camera2.TotalCaptureResult;
 
+import java.lang.reflect.Field;
+
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
@@ -75,6 +77,61 @@ public class AeCaptureCallbackTest {
         assertThat(hooks.delayedCapture).isNotNull();
 
         hooks.delayedCapture.run();
+        assertThat(hooks.captureCount).isEqualTo(1);
+    }
+
+    @Test
+    public void onCaptureCompleted_coldStartConvergedAtTimeout_stillWaitsForExposureSettleFloor()
+            throws Exception {
+        AeStateMachine stateMachine = new AeStateMachine();
+        FakeHooks hooks = new FakeHooks();
+        hooks.minimumExposureStabilizationDelayMs =
+                AsgConstants.COLD_CAMERA_EXPOSURE_SETTLE_DELAY_MS;
+        hooks.runDelayedImmediately = false;
+        AeCaptureCallback callback = new AeCaptureCallback(stateMachine, hooks);
+        CameraCaptureSession session = mock(CameraCaptureSession.class);
+        CaptureRequest request = mock(CaptureRequest.class);
+        TotalCaptureResult result = mock(TotalCaptureResult.class);
+        stateMachine.beginWaitingForAe();
+        setLongField(
+                stateMachine,
+                "aeStartTimeNs",
+                System.nanoTime() - AeStateMachine.AE_WAIT_MAX_NS - 1_000_000L);
+        when(result.get(CaptureResult.CONTROL_AE_STATE))
+                .thenReturn(CaptureResult.CONTROL_AE_STATE_CONVERGED);
+        when(result.get(CaptureResult.SENSOR_SENSITIVITY)).thenReturn(400);
+        when(result.get(CaptureResult.SENSOR_EXPOSURE_TIME)).thenReturn(25_000_000L);
+
+        callback.onCaptureCompleted(session, request, result);
+
+        assertThat(stateMachine.waitingForAeConvergence()).isFalse();
+        assertThat(hooks.captureCount).isZero();
+        assertThat(hooks.lastDelayMs)
+                .isBetween(1L, AsgConstants.COLD_CAMERA_EXPOSURE_SETTLE_DELAY_MS);
+    }
+
+    @Test
+    public void onCaptureCompleted_coldStartNeverConvergedAtTimeout_capturesWithoutSettleDelay()
+            throws Exception {
+        AeStateMachine stateMachine = new AeStateMachine();
+        FakeHooks hooks = new FakeHooks();
+        hooks.minimumExposureStabilizationDelayMs =
+                AsgConstants.COLD_CAMERA_EXPOSURE_SETTLE_DELAY_MS;
+        AeCaptureCallback callback = new AeCaptureCallback(stateMachine, hooks);
+        CameraCaptureSession session = mock(CameraCaptureSession.class);
+        CaptureRequest request = mock(CaptureRequest.class);
+        TotalCaptureResult result = mock(TotalCaptureResult.class);
+        stateMachine.beginWaitingForAe();
+        setLongField(
+                stateMachine,
+                "aeStartTimeNs",
+                System.nanoTime() - AeStateMachine.AE_WAIT_MAX_NS - 1_000_000L);
+        when(result.get(CaptureResult.CONTROL_AE_STATE))
+                .thenReturn(CaptureResult.CONTROL_AE_STATE_SEARCHING);
+
+        callback.onCaptureCompleted(session, request, result);
+
+        assertThat(hooks.lastDelayMs).isZero();
         assertThat(hooks.captureCount).isEqualTo(1);
     }
 
@@ -144,6 +201,12 @@ public class AeCaptureCallbackTest {
         return failure;
     }
 
+    private static void setLongField(Object target, String name, long value) throws Exception {
+        Field field = target.getClass().getDeclaredField(name);
+        field.setAccessible(true);
+        field.setLong(target, value);
+    }
+
     private static final class FakeHooks implements AeCaptureCallback.Hooks {
         AeStateMachine.ShotState shotState = AeStateMachine.ShotState.IDLE;
         String errorMessage;
@@ -173,11 +236,11 @@ public class AeCaptureCallbackTest {
         public void recordMeteredExposureNs(Long exposureNs) {}
 
         @Override
-        public void postDelayed(Runnable runnable, long delayMs) {
+        public void scheduleCapturePhoto(long delayMs) {
             lastDelayMs = delayMs;
-            delayedCapture = runnable;
+            delayedCapture = this::capturePhoto;
             if (runDelayedImmediately) {
-                runnable.run();
+                delayedCapture.run();
             }
         }
 

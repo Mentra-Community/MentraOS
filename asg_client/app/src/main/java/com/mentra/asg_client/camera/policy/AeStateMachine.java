@@ -99,6 +99,11 @@ public final class AeStateMachine {
         return (t == 0L) ? 0L : System.nanoTime() - t;
     }
 
+    /** Whether any repeating frame has reported AE convergence during the current wait. */
+    public boolean hasSeenAeConvergence() {
+        return firstConvergedNs != 0L;
+    }
+
     public void skipAeForManualCapture() {
         waitingForAeConvergence = false;
         aeLockRequested = false;

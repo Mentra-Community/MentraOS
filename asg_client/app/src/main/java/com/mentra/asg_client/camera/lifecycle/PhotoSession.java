@@ -208,13 +208,8 @@ public final class PhotoSession {
                             }
 
                             @Override
-                            public void postDelayed(Runnable runnable, long delayMs) {
-                                Handler h = hooks.backgroundHandler();
-                                if (h != null) {
-                                    h.postDelayed(runnable, delayMs);
-                                } else {
-                                    runnable.run();
-                                }
+                            public void scheduleCapturePhoto(long delayMs) {
+                                PhotoSession.this.scheduleCapturePhoto(delayMs);
                             }
 
                             @Override
@@ -269,9 +264,23 @@ public final class PhotoSession {
     }
 
     long minimumExposureStabilizationDelayMs() {
-        return mCaptureDispatchedAsWarmReuse
+        return warmUpRequest != null || mCaptureDispatchedAsWarmReuse
                 ? 0L
                 : AsgConstants.COLD_CAMERA_EXPOSURE_SETTLE_DELAY_MS;
+    }
+
+    void scheduleCapturePhoto(long delayMs) {
+        final long expectedGeneration;
+        synchronized (hooks.serviceLock()) {
+            expectedGeneration = captureMetadataGeneration;
+        }
+        Runnable runnable = () -> onAeReadyForActiveRequest(expectedGeneration);
+        Handler h = hooks.backgroundHandler();
+        if (h != null && delayMs > 0L) {
+            h.postDelayed(runnable, delayMs);
+        } else {
+            runnable.run();
+        }
     }
 
     public AeCaptureCallback aeCallback() {
@@ -937,7 +946,15 @@ public final class PhotoSession {
      * {@code onReady} callback only fires once AE has actually settled.
      */
     private void onAeReadyForActiveRequest() {
+        onAeReadyForActiveRequest(captureMetadataGeneration);
+    }
+
+    private void onAeReadyForActiveRequest(long expectedGeneration) {
         synchronized (hooks.serviceLock()) {
+            if (captureMetadataGeneration != expectedGeneration) {
+                Log.d(TAG, "Ignoring stale AE-ready callback from an older photo request");
+                return;
+            }
             if (warmUpRequest != null) {
                 finishWarmUpReady();
                 return;
@@ -949,6 +966,11 @@ public final class PhotoSession {
                 aeStateMachine.clearWaitFlags();
                 shotState = AeStateMachine.ShotState.IDLE;
                 Log.d(TAG, "Ignoring stale AE-ready callback with no active capture");
+                return;
+            }
+            if (shotState != AeStateMachine.ShotState.WAITING_AE
+                    && shotState != AeStateMachine.ShotState.WAITING_AE_LOCK) {
+                Log.d(TAG, "Ignoring stale AE-ready callback in state " + shotState);
                 return;
             }
         }
