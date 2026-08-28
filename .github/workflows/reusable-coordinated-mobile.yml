@@ -326,14 +326,13 @@ jobs:
             "repos/${GITHUB_REPOSITORY}/releases/assets/${{ needs.prepare.outputs.aab_asset_id }}" \
             > "mobile-release/android/${{ needs.prepare.outputs.aab_name }}"
 
-      - name: Verify Android version, signature, and ABI contract
+      - name: Verify Android native version and production signature
         env:
           EXPECTED_BUILD: ${{ needs.prepare.outputs.build_number }}
           EXPECTED_VERSION: ${{ needs.prepare.outputs.marketing_version }}
         run: |
           set -euo pipefail
           apk="mobile-release/android/${{ needs.prepare.outputs.apk_name }}"
-          aab="mobile-release/android/${{ needs.prepare.outputs.aab_name }}"
           apksigner=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner -perm -111 | sort | tail -1)
           aapt=$(find "$ANDROID_HOME/build-tools" -type f -name aapt -perm -111 | sort | tail -1)
           "$apksigner" verify --print-certs "$apk" > /tmp/mentra-mobile-certs.txt
@@ -354,6 +353,17 @@ jobs:
             exit 1
           fi
 
+      # ABI shape is a creation-time contract. A complete pair found here is
+      # immutable and may have been published under an earlier contract, so a
+      # retry verifies its permanent identity above without retroactively
+      # rejecting it. Every newly built pair must satisfy the current contract
+      # before its first publication below.
+      - name: Verify newly built Android ABI contract
+        if: inputs.dry_run == true || needs.prepare.outputs.android_assets_exist != 'true'
+        run: |
+          set -euo pipefail
+          apk="mobile-release/android/${{ needs.prepare.outputs.apk_name }}"
+          aab="mobile-release/android/${{ needs.prepare.outputs.aab_name }}"
           apk_abis=$(unzip -Z1 "$apk" \
             | sed -n 's#^lib/\([^/]*\)/.*\.so$#\1#p' \
             | LC_ALL=C sort -u \

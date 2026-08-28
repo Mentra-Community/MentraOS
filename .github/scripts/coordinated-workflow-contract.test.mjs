@@ -352,6 +352,12 @@ test("Android release keeps the GitHub APK arm64-only and the Play AAB multi-ABI
     2,
   )
   assert.doesNotMatch(mobileAndroid, /ORG_GRADLE_PROJECT_reactNativeArchitectures:/)
+  assert.match(mobileAndroid, /- name: Verify Android native version and production signature/)
+  assert.match(mobileAndroid, /- name: Verify newly built Android ABI contract\n/)
+  assert.match(
+    mobileAndroid,
+    /if: inputs\.dry_run == true \|\| needs\.prepare\.outputs\.android_assets_exist != 'true'/,
+  )
   assert.match(mobileAndroid, /GitHub APK ABIs '\$\{apk_abis:-<none>\}' do not match required arm64-v8a/)
   assert.match(
     mobileAndroid,
