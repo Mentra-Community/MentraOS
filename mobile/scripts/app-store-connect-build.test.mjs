@@ -184,6 +184,19 @@ test("retries transient App Store Connect failures while polling", async () => {
   assert.equal(build.id, "build-1")
 })
 
+test("retries transient fetch timeouts while polling", async () => {
+  const transient = new TypeError("fetch failed")
+  transient.cause = {code: "UND_ERR_HEADERS_TIMEOUT"}
+  const api = client([{data: []}, transient, {data: [{id: "build-1", attributes: {processingState: "VALID"}}]}])
+  const build = await waitForProcessedBuild(api, {
+    appId: "app-1",
+    buildNumber: 310000047,
+    attempts: 2,
+    delay: 0,
+  })
+  assert.equal(build.id, "build-1")
+})
+
 test("uses the newest upload when Apple retains an older failed attempt", async () => {
   const api = client([
     {data: []},

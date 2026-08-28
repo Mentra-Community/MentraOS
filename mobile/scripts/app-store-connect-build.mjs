@@ -136,7 +136,16 @@ function buildUploadDisposition(upload, buildNumber) {
 }
 
 function isTransientAppStoreConnectError(error) {
-  return error?.status === 429 || (error?.status >= 500 && error.status <= 599)
+  return (
+    error?.status === 429 ||
+    (error?.status >= 500 && error.status <= 599) ||
+    (error instanceof TypeError && error.message === "fetch failed")
+  )
+}
+
+function transientAppStoreConnectErrorLabel(error) {
+  if (error?.status) return `HTTP ${error.status}`
+  return error?.cause?.code || error?.message || "network failure"
 }
 
 export async function findProcessedBuild(client, {appId, buildNumber, marketingVersion}) {
@@ -164,7 +173,7 @@ export async function waitForProcessedBuild(
     } catch (error) {
       if (!isTransientAppStoreConnectError(error) || attempt === attempts) throw error
       console.warn(
-        `App Store Connect temporarily failed while checking build ${buildNumber} (HTTP ${error.status}); retrying`,
+        `App Store Connect temporarily failed while checking build ${buildNumber} (${transientAppStoreConnectErrorLabel(error)}); retrying`,
       )
     }
     if (attempt < attempts) await new Promise((resolve) => setTimeout(resolve, delay))
