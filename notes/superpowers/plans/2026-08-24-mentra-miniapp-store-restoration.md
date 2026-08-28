@@ -317,7 +317,7 @@ data; each deployment may publish both stable and beta releases.
       search-query preservation, install, details, verified identity, Installed
       state, and horizontal-overflow assertion.
 - [x] Mentra App TypeScript compile.
-- [x] Mentra App Jest: 94 suites passed (1 skipped), 744 tests passed
+- [x] Mentra App Jest: 94 suites passed (1 skipped), 745 tests passed
       (2 skipped).
 - [x] Android ASG and Bluetooth SDK compile checks.
 - [x] Full iOS Simulator native build with code signing disabled.

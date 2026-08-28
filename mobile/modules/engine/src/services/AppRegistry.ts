@@ -36,9 +36,9 @@ import {
   type ActivationArtifact,
   type InstallFinalization,
   completeInstallFilesystemTransaction,
+  installedVersionDirectoryNames,
   interruptedActivationRecovery,
   isInstallScratchDirectoryName,
-  isInstalledVersionDirectoryName,
   nextInstallOperationId,
   parseActivationArtifact,
 } from "./installOperation"
@@ -1291,7 +1291,12 @@ class AppRegistry {
       lmas = lmas.filter(
         (lma): lma is Directory =>
           lma instanceof Directory &&
-          lma.list().some((entry) => entry instanceof Directory && isInstalledVersionDirectoryName(entry.name)),
+          installedVersionDirectoryNames(
+            lma
+              .list()
+              .filter((entry): entry is Directory => entry instanceof Directory)
+              .map((entry) => entry.name),
+          ).length > 0,
       )
       return lmas.map((lma) => lma.name)
     } catch (error) {
@@ -1308,12 +1313,11 @@ class AppRegistry {
       if (!lmaDir.exists) {
         return []
       }
-      return lmaDir
+      const directoryNames = lmaDir
         .list()
-        .filter(
-          (entry): entry is Directory => entry instanceof Directory && isInstalledVersionDirectoryName(entry.name),
-        )
+        .filter((entry): entry is Directory => entry instanceof Directory)
         .map((entry) => entry.name)
+      return installedVersionDirectoryNames(directoryNames)
     } catch (error) {
       console.error("APP_REGISTRY: Error getting local applet versions", error)
       return []

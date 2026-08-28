@@ -659,7 +659,9 @@ service, but the host does not require Mentra's Store backend or Cloud Core.
   bytes.
 - A metadata-write failure or process death during activation restores the
   previous filesystem state; an uncommitted candidate cannot be selected by
-  the next disk scan.
+  the next disk scan. If recovery must retry, any ordinary version directory
+  referenced by a surviving pending journal remains suppressed until recovery
+  succeeds; committed journals do not suppress their activated version.
 - Recovery is restart-safe itself: an interrupted rollback distinguishes a
   restored prior target from a first-install candidate and retains the durable
   metadata journal until all rollback writes succeed.

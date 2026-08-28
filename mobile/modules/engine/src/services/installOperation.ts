@@ -44,6 +44,24 @@ export function isInstalledVersionDirectoryName(name: string): boolean {
 }
 
 /**
+ * Return only committed version directories from one package directory.
+ *
+ * A pending activation may already have moved its candidate into the ordinary
+ * version path before startup recovery restores metadata. Keep that target
+ * inert while its pending journal survives; a committed journal represents
+ * the opposite side of the atomic commit boundary and must not hide it.
+ */
+export function installedVersionDirectoryNames(names: readonly string[]): string[] {
+  const pendingVersions = new Set(
+    names
+      .map(parseActivationArtifact)
+      .filter((artifact): artifact is ActivationArtifact => artifact?.kind === "pending")
+      .map((artifact) => artifact.version),
+  )
+  return names.filter((name) => isInstalledVersionDirectoryName(name) && !pendingVersions.has(name))
+}
+
+/**
  * Return a process-unique, timestamp-shaped id for install transaction paths.
  *
  * AppRegistry recovery records historically end in a numeric timestamp, so

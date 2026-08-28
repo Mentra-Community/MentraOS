@@ -1,5 +1,6 @@
 import {
   completeInstallFilesystemTransaction,
+  installedVersionDirectoryNames,
   interruptedActivationRecovery,
   isInstallScratchDirectoryName,
   isInstalledVersionDirectoryName,
@@ -36,6 +37,20 @@ describe("AppRegistry install operation ids", () => {
     expect(isInstalledVersionDirectoryName("dev-1800000000000")).toBe(true)
     expect(isInstalledVersionDirectoryName(".pending-new-2.0.0-1800000000000")).toBe(false)
     expect(isInstalledVersionDirectoryName(".unknown-recovery-artifact")).toBe(false)
+  })
+
+  test("keeps a pending activation target inert until recovery completes", () => {
+    expect(
+      installedVersionDirectoryNames([
+        "1.0.0",
+        "2.0.0",
+        ".pending-existing-2.0.0-1800000000000",
+        ".committed-existing-1.0.0-1800000000001",
+        ".unknown-recovery-artifact",
+      ]),
+    ).toEqual(["1.0.0"])
+
+    expect(installedVersionDirectoryNames(["2.0.0", ".committed-new-2.0.0-1800000000001"])).toEqual(["2.0.0"])
   })
 
   test("recognizes pending activation journals for crash rollback", () => {
