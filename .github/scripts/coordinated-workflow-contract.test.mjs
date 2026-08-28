@@ -104,8 +104,11 @@ test("coordinated docs publish only after finalization to the matching channel",
   assert.match(starterKit, /pr_head=\$\(jq -r \.head\.sha <<< "\$pr_response"\)/)
   assert.match(starterKit, /\[\[ "\$pr_head" == "\$candidate_sha" \]\]/)
   assert.doesNotMatch(starterKit, /gh pr create/)
-  assert.match(starterKit, /gh pr checks "\$pr_url"[^]*--required --json name,bucket/)
-  assert.match(starterKit, /gh pr merge "\$pr_url"[^]*--match-head-commit "\$candidate_sha"/)
+  assert.doesNotMatch(starterKit, /gh pr checks/)
+  assert.doesNotMatch(starterKit, /gh pr merge/)
+  assert.match(starterKit, /Create Starter Kit request token/)
+  assert.match(starterKit, /Wait for the immutable Starter Kit result/)
+  assert.match(starterKit, /Create Starter Kit verification token/)
   assert.match(starterKit, /gh pr view "\$pull_request_url"[^]*--json url,state,headRefOid,baseRefName,mergeCommit/)
   assert.match(starterKit, /git\/ref\/tags\/sdk-\$identity/)
   assert.match(starterKit, /\.digest <<< "\$asset"/)
@@ -115,12 +118,17 @@ test("coordinated docs publish only after finalization to the matching channel",
   assert.match(starterKit, /continue-on-error: true/)
   assert.doesNotMatch(starterKit, /STARTER_KIT_APP_PRIVATE_KEY:/)
   assert.match(starterKit, /permission-actions: read/)
-  assert.match(starterKit, /permission-checks: read/)
   assert.match(starterKit, /permission-contents: write/)
   assert.match(starterKit, /permission-pull-requests: write/)
+  assert.match(starterKit, /permission-contents: read/)
+  assert.match(starterKit, /permission-pull-requests: read/)
   assert.match(
     starterKit,
-    /STARTER_KIT_TOKEN: \$\{\{ steps\.starter-kit-app-token\.outputs\.token \|\| secrets\.STARTER_KIT_COORDINATOR_TOKEN/,
+    /STARTER_KIT_TOKEN: \$\{\{ steps\.starter-kit-request-token\.outputs\.token \|\| secrets\.STARTER_KIT_COORDINATOR_TOKEN/,
+  )
+  assert.match(
+    starterKit,
+    /STARTER_KIT_TOKEN: \$\{\{ steps\.starter-kit-verification-token\.outputs\.token \|\| secrets\.STARTER_KIT_COORDINATOR_TOKEN/,
   )
   assert.match(exampleTestflight, /^    needs: \[plan, starter-kit\]$/m)
   assert.match(exampleTestflight, /reusable-coordinated-example-testflight\.yml/)

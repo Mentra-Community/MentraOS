@@ -126,6 +126,7 @@ without first building the example would instead create a not-found link.
 - synchronized `dev`, `staging`, and `main` branches;
 - exact dependency updates requested by the coordinator;
 - all example builds and build validation;
+- merging the exact validated synchronization pull request;
 - immutable Starter Kit tags, releases, and artifact checksums;
 - the machine-readable result returned to MentraOS.
 
@@ -206,8 +207,8 @@ The workflow:
    channel branch;
 7. lets the repository's normal pull-request workflow validate the exact
    candidate SHA;
-8. waits for MentraOS to merge the pull request only after the protected
-   required checks for that same head SHA pass;
+8. merges the pull request itself only after the protected required checks for
+   that same head SHA pass;
 9. computes the filename, size, media type, and SHA-256 of every artifact;
 10. publishes an immutable Starter Kit source tag and uploads the artifacts to
     the base version's release container;
@@ -256,17 +257,19 @@ releases.
 MentraOS dispatches with a GitHub App installation token scoped to the two
 repositories. A personal access token is not part of the final release
 architecture. The App receives only the permissions needed to dispatch
-workflows, read run state, create the synchronization pull request, and merge
-the exact validated head in the Starter Kit. This split is required because the
-organization does not permit a repository `GITHUB_TOKEN` to create or approve
-pull requests. The Starter Kit's own `GITHUB_TOKEN` creates the candidate
-commit and publishes its tag, release, and assets after MentraOS merges the PR.
+workflows, read run state, and create the synchronization pull request. The
+Starter Kit's own `GITHUB_TOKEN` creates the candidate commit, observes its
+normal pull-request validation, merges the exact validated head, and publishes
+the tag, release, and assets.
 
 MentraOS stores the numeric App ID in the
 `STARTER_KIT_COORDINATOR_APP_ID` repository variable and its private key
 in the `STARTER_KIT_COORDINATOR_APP_PRIVATE_KEY` repository secret. Release
 jobs mint short-lived installation tokens with
-`actions/create-github-app-token`; no generated token is persisted. The App is
+`actions/create-github-app-token`; no generated token is persisted. MentraOS
+uses one token for the bounded request phase, waits for the immutable public
+result without credentials, and mints a fresh read-only token for final
+provenance verification. The App is
 installed only on `MentraOS` and `Mentra-Bluetooth-SDK-Starter-Kit` with
 Actions read, Checks read, Contents read/write, and Pull requests read/write
 permissions. Each job requests only the subset it uses when minting its token.
