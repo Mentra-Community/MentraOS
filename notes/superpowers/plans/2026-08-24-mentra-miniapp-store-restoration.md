@@ -75,6 +75,9 @@ manifest, compatibility, and Store provenance.
       before native extraction.
 - [x] Stage and atomically activate an install, preserving the prior version on
       failure and cleaning downloaded archives.
+- [x] Keep activation rollback-capable until publisher/release/active-version
+      metadata is durable, and use a pending journal to roll back an
+      interrupted swap before startup disk discovery.
 - [x] Add malicious-bundle, manifest identity, signature, and hash tests.
 
 ## Store backend catalog and developer workflow
@@ -269,6 +272,9 @@ data; each deployment may publish both stable and beta releases.
       models, and services from Cloud Core.
 - [x] Add explicit Store endpoints to the CLI, Console/Admin proxies, Store
       miniapp, `@mentra/cloud-client`, and Mentra App configuration.
+- [x] Derive only conventional `core.* -> store.*` endpoint pairs, make
+      independently named Store origins explicit in CLI/mobile profiles, and
+      never fall back from an OEM Core to Mentra's Store.
 - [x] Expose Store resources as `cloud.store` rather than routing a misleading
       `cloud.core.miniapps` API to another hostname.
 - [x] Add Core JWT/JWKS verification, WorkOS/API-key developer authentication,
@@ -277,6 +283,8 @@ data; each deployment may publish both stable and beta releases.
       authorization, protected-byte delivery, and admin report/support access.
 - [x] Add the Store service and domains to every Porter environment and the
       local development stack.
+- [x] Probe deployed Core, Store, and Runtime health independently so a missing
+      new Store DNS record cannot suppress checks for the existing services.
 - [x] Rebuild and sign the bundled hidden Store against its independent backend.
 
 - [x] Cloud typecheck.
@@ -305,7 +313,7 @@ data; each deployment may publish both stable and beta releases.
       search-query preservation, install, details, verified identity, Installed
       state, and horizontal-overflow assertion.
 - [x] Mentra App TypeScript compile.
-- [x] Mentra App Jest: 93 suites passed (1 skipped), 732 tests passed
+- [x] Mentra App Jest: 94 suites passed (1 skipped), 738 tests passed
       (2 skipped).
 - [x] Android ASG and Bluetooth SDK compile checks.
 - [x] Full iOS Simulator native build with code signing disabled.
@@ -327,7 +335,9 @@ data; each deployment may publish both stable and beta releases.
       replacements for build-owned SYSTEM packages, Store availability without
       connected glasses, and credential-free private-LAN Local/Auto Core
       origins without allowing public cleartext catalog traffic (including DNS
-      names that resemble private IPv6 prefixes).
+      names that resemble private IPv6 prefixes), independent OEM Store
+      endpoint selection, and rollback of a filesystem activation when durable
+      install metadata fails.
 - [x] Touched-file lint and `git diff --check`.
 - [x] Full Cloud suite audit: 567 passed, 1 skipped. The aggregate invocation
       also reproduces unrelated shared-state/credential baselines (R2 is not

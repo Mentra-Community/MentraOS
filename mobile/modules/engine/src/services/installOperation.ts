@@ -1,6 +1,16 @@
 let lastInstallOperationId = 0
 let installFilesystemTail: Promise<void> = Promise.resolve()
 
+export type ActivationArtifact = {kind: "backup" | "pending" | "staging"; version: string; timestamp: number}
+
+export function parseActivationArtifact(name: string): ActivationArtifact | null {
+  const match = /^\.(backup|pending|staging)-(.+)-(\d{10,})$/.exec(name)
+  if (!match) return null
+  const timestamp = Number(match[3])
+  if (!Number.isSafeInteger(timestamp)) return null
+  return {kind: match[1] as ActivationArtifact["kind"], version: match[2], timestamp}
+}
+
 /**
  * Return a process-unique, timestamp-shaped id for install transaction paths.
  *
@@ -30,4 +40,32 @@ export function runInstallFilesystemTransaction<T>(run: () => Promise<T>): Promi
     () => undefined,
   )
   return result
+}
+
+export interface ActivatedInstall<T> {
+  value: T
+  commit(): void | Promise<void>
+  rollback(): void | Promise<void>
+}
+
+/**
+ * Keep filesystem activation and durable metadata finalization in one queue.
+ * A finalization failure restores the previous bundle (or removes a first
+ * install) before another install may inspect or mutate the package tree.
+ */
+export function completeInstallFilesystemTransaction<T>(
+  activate: () => Promise<ActivatedInstall<T>>,
+  finalize: (value: T) => void | Promise<void>,
+): Promise<T> {
+  return runInstallFilesystemTransaction(async () => {
+    const activation = await activate()
+    try {
+      await finalize(activation.value)
+    } catch (error) {
+      await activation.rollback()
+      throw error
+    }
+    await activation.commit()
+    return activation.value
+  })
 }

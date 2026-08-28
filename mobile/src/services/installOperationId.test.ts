@@ -1,6 +1,8 @@
 import {
+  completeInstallFilesystemTransaction,
   isInstallScratchDirectoryName,
   nextInstallOperationId,
+  parseActivationArtifact,
   runInstallFilesystemTransaction,
 } from "../../modules/engine/src/services/installOperation"
 
@@ -27,6 +29,15 @@ describe("AppRegistry install operation ids", () => {
     expect(isInstallScratchDirectoryName("other-1800000000000")).toBe(false)
   })
 
+  test("recognizes pending activation journals for crash rollback", () => {
+    expect(parseActivationArtifact(".pending-2.0.0-1800000000000")).toEqual({
+      kind: "pending",
+      version: "2.0.0",
+      timestamp: 1_800_000_000_000,
+    })
+    expect(parseActivationArtifact("2.0.0")).toBeNull()
+  })
+
   test("serializes filesystem mutations without poisoning the queue", async () => {
     const events: string[] = []
     let releaseFirst!: () => void
@@ -51,5 +62,50 @@ describe("AppRegistry install operation ids", () => {
     await expect(first).rejects.toThrow("first failed")
     await second
     expect(events).toEqual(["first:start", "first:end", "second:start", "second:end"])
+  })
+
+  test("rolls filesystem activation back when metadata finalization fails", async () => {
+    const events: string[] = []
+
+    await expect(
+      completeInstallFilesystemTransaction(
+        async () => ({
+          value: {packageName: "com.example.app", version: "2.0.0"},
+          commit: () => {
+            events.push("commit")
+          },
+          rollback: () => {
+            events.push("rollback")
+          },
+        }),
+        () => {
+          events.push("finalize")
+          throw new Error("MMKV write failed")
+        },
+      ),
+    ).rejects.toThrow("MMKV write failed")
+
+    expect(events).toEqual(["finalize", "rollback"])
+  })
+
+  test("commits filesystem activation only after metadata finalization", async () => {
+    const events: string[] = []
+
+    await completeInstallFilesystemTransaction(
+      async () => ({
+        value: {packageName: "com.example.app", version: "2.0.0"},
+        commit: () => {
+          events.push("commit")
+        },
+        rollback: () => {
+          events.push("rollback")
+        },
+      }),
+      () => {
+        events.push("finalize")
+      },
+    )
+
+    expect(events).toEqual(["finalize", "commit"])
   })
 })

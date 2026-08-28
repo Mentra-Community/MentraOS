@@ -32,9 +32,12 @@ import {storage} from "../utils/storage/storage"
 import {printDirectory} from "../utils/storage/zip"
 import {sha256Hex} from "../utils/sha256"
 import {
+  type ActivatedInstall,
+  type ActivationArtifact,
+  completeInstallFilesystemTransaction,
   isInstallScratchDirectoryName,
   nextInstallOperationId,
-  runInstallFilesystemTransaction,
+  parseActivationArtifact,
 } from "./installOperation"
 import {checkManifestVersions} from "./manifestVersionGate"
 import {checkMiniappInstallCompatibility} from "./miniappInstallCompatibility"
@@ -56,16 +59,6 @@ const ALLOWED_PERMISSION_TYPES: ReadonlySet<AppPermissionType> = new Set<AppPerm
   "READ_NOTIFICATIONS",
   "POST_NOTIFICATIONS",
 ])
-
-type ActivationArtifact = {kind: "backup" | "staging"; version: string; timestamp: number}
-
-function parseActivationArtifact(name: string): ActivationArtifact | null {
-  const match = /^\.(backup|staging)-(.+)-(\d{10,})$/.exec(name)
-  if (!match) return null
-  const timestamp = Number(match[3])
-  if (!Number.isSafeInteger(timestamp)) return null
-  return {kind: match[1] as ActivationArtifact["kind"], version: match[2], timestamp}
-}
 
 /**
  * Normalize the `permissions` field from a miniapp.json manifest.
@@ -250,6 +243,25 @@ function publisherIdentityKey(packageName: string): string {
   return `miniapp_publisher_identity:${packageName}`
 }
 
+interface StorageSnapshot<T> {
+  present: boolean
+  value?: T
+}
+
+function snapshotStorage<T>(key: string): StorageSnapshot<T> {
+  const loaded = storage.load<T>(key)
+  return loaded.is_ok() ? {present: true, value: loaded.value} : {present: false}
+}
+
+function restoreStorage<T>(key: string, snapshot: StorageSnapshot<T>): void {
+  if (!snapshot.present) {
+    storage.remove(key)
+    return
+  }
+  const restored = storage.save(key, snapshot.value)
+  if (restored.is_error()) throw restored.error
+}
+
 function assertPublisherContinuity(
   packageName: string,
   publisherKeyFingerprint: string | undefined,
@@ -371,11 +383,15 @@ async function downloadMiniAppZip(
  */
 async function unpackMiniApp(
   zipPath: string,
-  versionOverride?: string,
-  expected?: {packageName?: string; version?: string},
-  onProgress?: InstallBundleOptions["onProgress"],
+  versionOverride: string | undefined,
+  expected: {packageName?: string; version?: string} | undefined,
+  onProgress: InstallBundleOptions["onProgress"] | undefined,
+  finalize: (installed: {packageName: string; version: string}) => void | Promise<void>,
 ): Promise<{packageName: string; version: string}> {
-  return runInstallFilesystemTransaction(() => unpackMiniAppExclusive(zipPath, versionOverride, expected, onProgress))
+  return completeInstallFilesystemTransaction(
+    () => unpackMiniAppExclusive(zipPath, versionOverride, expected, onProgress),
+    finalize,
+  )
 }
 
 async function unpackMiniAppExclusive(
@@ -383,7 +399,7 @@ async function unpackMiniAppExclusive(
   versionOverride?: string,
   expected?: {packageName?: string; version?: string},
   onProgress?: InstallBundleOptions["onProgress"],
-): Promise<{packageName: string; version: string}> {
+): Promise<ActivatedInstall<{packageName: string; version: string}>> {
   const operationId = nextInstallOperationId()
   const unzipDir = new Directory(Paths.cache, `lma_unzip-${operationId}`)
   try {
@@ -418,7 +434,7 @@ async function unpackMiniAppFromScratchDirectory(
   versionOverride?: string,
   expected?: {packageName?: string; version?: string},
   onProgress?: InstallBundleOptions["onProgress"],
-): Promise<{packageName: string; version: string}> {
+): Promise<ActivatedInstall<{packageName: string; version: string}>> {
   try {
     onProgress?.("extracting")
     console.log("ZIP: unzipping", zipPath)
@@ -468,6 +484,7 @@ async function unpackMiniAppFromScratchDirectory(
   const versionDir = new Directory(basePackageDir, version)
   const stagingDir = new Directory(basePackageDir, `.staging-${version}-${operationId}`)
   const backupDir = new Directory(basePackageDir, `.backup-${version}-${operationId}`)
+  const pendingDir = new Directory(basePackageDir, `.pending-${version}-${operationId}`)
   try {
     stagingDir.create()
   } catch (error) {
@@ -493,12 +510,15 @@ async function unpackMiniAppFromScratchDirectory(
   let movedExisting = false
   try {
     onProgress?.("activating")
+    // This marker is the crash-recovery journal. It exists before any active
+    // directory changes and remains until metadata and the filesystem swap
+    // have both reached their commit boundary.
+    pendingDir.create()
     if (versionDir.exists) {
       versionDir.move(backupDir)
       movedExisting = true
     }
     stagingDir.move(versionDir)
-    if (backupDir.exists) backupDir.delete()
   } catch (error) {
     console.error("Error activating the staged miniapp", error)
     try {
@@ -511,6 +531,7 @@ async function unpackMiniAppFromScratchDirectory(
         versionDir.delete()
       }
       if (stagingDir.exists) stagingDir.delete()
+      if (pendingDir.exists) pendingDir.delete()
     } catch (rollbackError) {
       console.error("Error restoring the previous miniapp version", rollbackError)
     }
@@ -519,7 +540,33 @@ async function unpackMiniAppFromScratchDirectory(
 
   console.log("ZIP: local mini app installed at", versionDir.uri)
   printDirectory(versionDir, 2)
-  return {packageName, version}
+  return {
+    value: {packageName, version},
+    commit: () => {
+      try {
+        // Removing the marker commits the swap for crash recovery. Delete it
+        // before the backup: a crash between these operations leaves a target
+        // plus backup with no marker, which recovery safely recognizes as a
+        // committed activation and cleans up.
+        if (pendingDir.exists) pendingDir.delete()
+        if (backupDir.exists) backupDir.delete()
+      } catch (error) {
+        // The new bundle and its metadata are already active. Recovery removes
+        // this stale backup on the next launch, so cleanup failure is benign.
+        console.warn("ZIP: Error deleting committed miniapp backup", error)
+      }
+    },
+    rollback: () => {
+      try {
+        if (versionDir.exists) versionDir.delete()
+        if (backupDir.exists) backupDir.move(versionDir)
+        if (pendingDir.exists) pendingDir.delete()
+      } catch (error) {
+        console.error("ZIP: Error rolling back miniapp after metadata finalization failed", error)
+        throw error
+      }
+    },
+  }
 }
 
 /**
@@ -534,7 +581,12 @@ async function unpackMiniAppFromScratchDirectory(
  */
 async function downloadAndInstallMiniApp(
   url: string,
-  opts?: InstallBundleOptions,
+  opts: InstallBundleOptions | undefined,
+  finalize: (installed: {
+    packageName: string
+    version: string
+    publisherKeyFingerprint?: string
+  }) => void | Promise<void>,
 ): Promise<{packageName: string; version: string; publisherKeyFingerprint?: string}> {
   const downloadedZipPath = await downloadMiniAppZip(
     url,
@@ -565,6 +617,12 @@ async function downloadAndInstallMiniApp(
         version: opts?.expectedVersion,
       },
       opts?.onProgress,
+      ({packageName, version}) =>
+        finalize({
+          packageName,
+          version,
+          ...(manifest.publisherKeyFingerprint ? {publisherKeyFingerprint: manifest.publisherKeyFingerprint} : {}),
+        }),
     )
     return {
       ...installed,
@@ -611,10 +669,12 @@ class AppRegistry {
   }
 
   /**
-   * Recover an activation interrupted by process death. A backup without its
-   * target means the old version was moved aside before the staged version was
-   * activated, so restore it. Backups beside a complete target and all staging
-   * directories are stale transaction artifacts and are removed.
+   * Recover an activation interrupted by process death. A pending marker means
+   * the transaction never reached its final commit boundary, so remove the
+   * candidate target and restore its matching backup. Without a pending marker,
+   * a backup beside a target is stale cleanup from a committed activation; a
+   * backup without its target is restored. Staging directories are always inert
+   * and removable.
    */
   private recoverInterruptedActivations(): void {
     try {
@@ -628,16 +688,33 @@ class AppRegistry {
           .map((directory) => ({directory, parsed: parseActivationArtifact(directory.name)}))
           .filter((item): item is {directory: Directory; parsed: ActivationArtifact} => item.parsed !== null)
 
+        const pending = artifacts
+          .filter((item) => item.parsed.kind === "pending")
+          .sort((left, right) => right.parsed.timestamp - left.parsed.timestamp)
+        for (const {directory, parsed} of pending) {
+          const target = new Directory(packageDir, parsed.version)
+          const matchingBackup = artifacts.find(
+            (item) =>
+              item.parsed.kind === "backup" &&
+              item.parsed.version === parsed.version &&
+              item.parsed.timestamp === parsed.timestamp,
+          )?.directory
+          if (target.exists) target.delete()
+          if (matchingBackup?.exists) matchingBackup.move(target)
+          if (directory.exists) directory.delete()
+        }
+
         const backups = artifacts
           .filter((item) => item.parsed.kind === "backup")
           .sort((left, right) => right.parsed.timestamp - left.parsed.timestamp)
         for (const {directory, parsed} of backups) {
           const target = new Directory(packageDir, parsed.version)
+          if (!directory.exists) continue
           if (target.exists) directory.delete()
           else directory.move(target)
         }
         for (const {directory, parsed} of artifacts) {
-          if (parsed.kind === "staging" && directory.exists) directory.delete()
+          if ((parsed.kind === "staging" || parsed.kind === "pending") && directory.exists) directory.delete()
         }
       }
     } catch (error) {
@@ -769,12 +846,13 @@ class AppRegistry {
    */
   public installFromUrl(url: string, opts?: InstallBundleOptions): AsyncResult<void, Error> {
     return Res.try_async(async () => {
-      const {packageName, version, publisherKeyFingerprint} = await downloadAndInstallMiniApp(url, opts)
-      console.log("APP_REGISTRY: Downloaded and installed mini app")
-      this.finalizeInstall(packageName, version, {
-        ...resolvedReleaseIdentity(version, opts, false),
-        ...(publisherKeyFingerprint ? {publisherKeyFingerprint} : {}),
+      await downloadAndInstallMiniApp(url, opts, ({packageName, version, publisherKeyFingerprint}) => {
+        this.finalizeInstall(packageName, version, {
+          ...resolvedReleaseIdentity(version, opts, false),
+          ...(publisherKeyFingerprint ? {publisherKeyFingerprint} : {}),
+        })
       })
+      console.log("APP_REGISTRY: Downloaded and installed mini app")
     })
   }
 
@@ -812,9 +890,9 @@ class AppRegistry {
           version: opts?.expectedVersion,
         },
         opts?.onProgress,
+        ({packageName, version}) => this.finalizeInstall(packageName, version, releaseIdentity),
       )
       console.log("APP_REGISTRY: Installed mini app from local zip")
-      this.finalizeInstall(packageName, version, releaseIdentity)
       return {packageName, version}
     })
   }
@@ -825,17 +903,42 @@ class AppRegistry {
    * installed bundle, and notify subscribers to refresh.
    */
   private finalizeInstall(packageName: string, version: string, releaseIdentity: MiniappReleaseIdentity): void {
+    const publisherKey = publisherIdentityKey(packageName)
+    const releaseKey = releaseIdentityKey(packageName, version)
+    const activeKey = `${packageName}_active_version`
+    const publisherBefore = snapshotStorage<string>(publisherKey)
+    const releaseBefore = snapshotStorage<MiniappReleaseIdentity>(releaseKey)
+    const activeBefore = snapshotStorage<string>(activeKey)
+
     // Persist the verified package identity before making the new version
-    // active. If durable storage fails, the staged files remain inert instead
-    // of running without the continuity pin that protects their next update.
-    if (releaseIdentity.publisherKeyFingerprint) {
-      const savedPublisher = storage.save(publisherIdentityKey(packageName), releaseIdentity.publisherKeyFingerprint)
-      if (savedPublisher.is_error()) throw savedPublisher.error
+    // active. The caller keeps the prior same-version directory as a backup
+    // until this method returns. If any write fails, restore the metadata
+    // snapshots and let the filesystem transaction restore that directory (or
+    // remove a first install), so directory discovery cannot activate bytes
+    // that lack their verified release identity and publisher continuity pin.
+    try {
+      if (releaseIdentity.publisherKeyFingerprint) {
+        const savedPublisher = storage.save(publisherKey, releaseIdentity.publisherKeyFingerprint)
+        if (savedPublisher.is_error()) throw savedPublisher.error
+      }
+      const savedRelease = storage.save(releaseKey, releaseIdentity)
+      if (savedRelease.is_error()) throw savedRelease.error
+      const activated = this.setActiveVersion(packageName, version)
+      if (activated.is_error()) throw activated.error
+    } catch (error) {
+      for (const restore of [
+        () => restoreStorage(activeKey, activeBefore),
+        () => restoreStorage(releaseKey, releaseBefore),
+        () => restoreStorage(publisherKey, publisherBefore),
+      ]) {
+        try {
+          restore()
+        } catch (rollbackError) {
+          console.error("APP_REGISTRY: failed to restore install metadata after finalization error", rollbackError)
+        }
+      }
+      throw error
     }
-    const savedRelease = storage.save(releaseIdentityKey(packageName, version), releaseIdentity)
-    if (savedRelease.is_error()) throw savedRelease.error
-    const activated = this.setActiveVersion(packageName, version)
-    if (activated.is_error()) throw activated.error
 
     // If this is a release install (semver, not dev-*) of a package that
     // currently has dev-* snapshots, clear the dev state so the swap to

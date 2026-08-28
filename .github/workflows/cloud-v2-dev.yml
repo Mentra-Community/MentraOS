@@ -57,13 +57,16 @@ jobs:
       - name: Verify dev health
         run: |
           set -euo pipefail
-          if ! getent hosts "${CORE_HOSTNAME}" >/dev/null || ! getent hosts "${STORE_HOSTNAME}" >/dev/null || ! getent hosts "${RUNTIME_HOSTNAME}" >/dev/null; then
-            echo "::warning::Dev DNS is not configured yet; skipping public health checks."
-            exit 0
-          fi
-          curl --retry 12 --retry-delay 10 --retry-all-errors -fsS "https://${CORE_HOSTNAME}/healthz"
-          echo
-          curl --retry 12 --retry-delay 10 --retry-all-errors -fsS "https://${STORE_HOSTNAME}/healthz"
-          echo
-          curl --retry 12 --retry-delay 10 --retry-all-errors -fsS "https://${RUNTIME_HOSTNAME}/healthz"
-          echo
+          check_health() {
+            local service="$1"
+            local hostname="$2"
+            if ! getent hosts "${hostname}" >/dev/null; then
+              echo "::warning::${service} DNS (${hostname}) is not configured yet; skipping only its public health check."
+              return
+            fi
+            curl --retry 12 --retry-delay 10 --retry-all-errors -fsS "https://${hostname}/healthz"
+            echo
+          }
+          check_health "Core" "${CORE_HOSTNAME}"
+          check_health "Store" "${STORE_HOSTNAME}"
+          check_health "Runtime" "${RUNTIME_HOSTNAME}"

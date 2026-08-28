@@ -88,8 +88,11 @@ that track's independent active slot. Store users remain on stable unless they
 opt into beta for that miniapp. If no beta is currently published, Core serves
 stable without discarding their beta preference.
 
-The published CLI targets production by default. Set `MENTRA_CORE_URL` and
-`MENTRA_CONSOLE_URL` to use a local, development, staging, or self-hosted Core;
-the CLI discovers that Core's public WorkOS client id automatically.
+The published CLI targets production by default. Set `MENTRA_CORE_URL`,
+`MENTRA_STORE_URL`, and `MENTRA_CONSOLE_URL` to use a local, development,
+staging, OEM, or self-hosted deployment. When `MENTRA_STORE_URL` is omitted,
+the CLI derives `store.*` from a matching `core.*` host (and port 3003 from
+local Core port 3000). Independently named Store hosts must be explicit. The
+CLI discovers the selected Store's public WorkOS client id automatically.
 
 Run `mentra <command> --help` for the full option set.

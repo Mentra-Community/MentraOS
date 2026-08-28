@@ -114,8 +114,13 @@ routes.
 
 The official endpoints are independently configurable (`MENTRA_CORE_URL` and
 `MENTRA_STORE_URL`). `@mentra/cloud-client` exposes them as `cloud.core` and
-`cloud.store`. OEM or self-hosted deployments may point the same host contract
-at their own identity issuer and Store implementation.
+`cloud.store`. The CLI and Mentra App derive `store.*` only from a conventional
+`core.*` hostname (and local port 3003 from Core port 3000). An independently
+named OEM Store must be selected explicitly as part of the same endpoint
+profile. An arbitrary custom Core hostname never falls back to Mentra's Store,
+so a Core identity credential cannot be sent to an unrelated distribution
+service. OEM or self-hosted deployments may point the same host contract at
+their own identity issuer and Store implementation.
 
 ## Design principles
 
@@ -447,10 +452,15 @@ manifest. An install transaction is:
     SYSTEM packages, the build-generated identity pin.
 11. Re-run host, SDK, permissions, and hardware admission against that manifest.
 12. Extract into an isolated staging directory.
-13. Persist package/release identity before atomically activating the new
-    release.
-14. Reload or restart the runtime as needed.
-15. Restore the prior release and running state on failure.
+13. Create a durable pending journal, retain any previous same-version bundle
+    as a backup, and make a reversible filesystem swap.
+14. Persist publisher identity, release provenance, and the active-version
+    pointer while the swap is still rollback-capable.
+15. Commit by removing the pending journal and backup. A metadata failure rolls
+    back immediately; process-death recovery sees the journal and restores the
+    backup before disk discovery can activate uncommitted bytes.
+16. Reload or restart the runtime as needed, restoring the prior release and
+    running state on failure.
 
 Other installation sources—bundled synchronization, preinstall registries, and
 developer URLs—share serialized AppRegistry transactions so they cannot race a
@@ -611,7 +621,9 @@ the Store is a rollout decision, not the security boundary.
 
 Store backend, Core, Console, and CLI deploy through the normal `dev` to `staging` to `main`
 promotion flow. Enabling the UI and seeding catalog inventory are separate
-launch operations.
+launch operations. Post-deploy health checks probe Core, Store, and Runtime
+independently; missing DNS for a newly introduced service skips only that
+service rather than suppressing health verification for the others.
 
 ## Multiple Stores and OEMs
 
@@ -639,6 +651,9 @@ service, but the host does not require Mentra's Store backend or Cloud Core.
 - An incompatible update remains pending until compatibility changes.
 - A hash, archive, manifest, or authorization failure never activates staged
   bytes.
+- A metadata-write failure or process death during activation restores the
+  previous filesystem state; an uncommitted candidate cannot be selected by
+  the next disk scan.
 - An activation/runtime failure restores the prior release and running state.
 - A revoked user cannot use an old protected bundle URL for another download.
 - Publication interruption preserves the previous active catalog release and

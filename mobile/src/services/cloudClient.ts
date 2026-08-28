@@ -17,6 +17,7 @@ import Constants from "expo-constants"
 
 import {SETTINGS, engine} from "@mentra/engine"
 import {devServerHost, METRO_AUTO} from "@/utils/cloudClient/devHost"
+import {deriveStoreUrl} from "@/utils/cloudClient/storeUrl"
 
 type Lc3FrameSizeBytes = 20 | 40 | 60
 
@@ -28,8 +29,6 @@ type Lc3FrameSizeBytes = 20 | 40 | 60
 // depends on a local stack plus adb reverse/LAN reachability.
 const DEFAULT_CORE_URL = "https://core.dev.us-west-2.mentraglass.com"
 const DEFAULT_RUNTIME_URL = "https://runtime.dev.us-west-2.mentraglass.com"
-const DEFAULT_STORE_URL = "https://store.dev.us-west-2.mentraglass.com"
-
 const CORE_PORT = 3000
 const RUNTIME_PORT = 3001
 const STORE_PORT = 3003
@@ -80,12 +79,12 @@ function runtimeUrl(): string {
 }
 
 function storeUrl(): string {
-  const selectedCore = coreUrl()
-  const core = new URL(selectedCore)
-  if (core.hostname.startsWith("core.")) core.hostname = core.hostname.replace(/^core\./, "store.")
-  else if ((core.hostname === "localhost" || core.hostname === "127.0.0.1" || core.hostname === "::1") && core.port === String(CORE_PORT)) core.port = String(STORE_PORT)
-  const derived = core.origin === selectedCore.replace(/\/$/, "") ? core.origin : DEFAULT_STORE_URL
-  return (process.env.EXPO_PUBLIC_CLOUD_STORE_URL as string | undefined)?.trim() || derived
+  return resolveUrl(
+    SETTINGS.cloud_store_url.key,
+    process.env.EXPO_PUBLIC_CLOUD_STORE_URL as string | undefined,
+    STORE_PORT,
+    deriveStoreUrl(coreUrl()),
+  )
 }
 
 /** The endpoint URLs the client would use right now, every layer applied. */
