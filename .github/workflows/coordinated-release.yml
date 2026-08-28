@@ -396,7 +396,7 @@ jobs:
               if [[ -n "$run_id" ]]; then
                 run_state=$(gh run view "$run_id" --repo "$STARTER_KIT_REPOSITORY" \
                   --json status,conclusion 2>/dev/null || true)
-                status=$(jq -r '.status // empty' <<< "${run_state:-{}}")
+                status=$(jq -r '.status // empty' <<< "${run_state:-null}")
                 if [[ "$status" == "completed" ]]; then
                   conclusion=$(jq -r '.conclusion // "unknown"' <<< "$run_state")
                   echo "Starter Kit run concluded $conclusion before creating $candidate_branch: $run_url" >&2
