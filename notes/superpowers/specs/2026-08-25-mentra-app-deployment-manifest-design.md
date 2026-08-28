@@ -21,16 +21,17 @@ The first supported private Mentra App deployment requires:
 
 - The official Mentra App binary from one completed coordinated release.
 - Customer-hosted Cloud V2 Core and Runtime services from that release.
-- A customer-controlled corporate identity provider configured on Core through
-  OIDC for the first pilot.
+- A Microsoft Entra workforce tenant controlled by the deployment operator and
+  connected to customer-hosted Core through OIDC for the first pilot.
 - The matching self-hosted Mentra Live OTA bundle.
 - Customer-hosted copies of the on-device STT and TTS model archives the
   deployment enables.
 - A customer deployment manifest reachable by the phone before sign-in.
 - Mentra Live as the only glasses model qualified for the first private pilot.
-- No unapproved public-network access after device and app provisioning. A
-  cloud identity provider such as Microsoft Entra is an explicitly approved
-  dependency; a strictly disconnected customer must use an internal IdP.
+- No unapproved public-network access after device and app provisioning.
+  Microsoft Entra is an explicitly approved dependency for the first identity
+  pilot. A strictly disconnected identity provider will use the same Core
+  boundary but is not claimed as supported until it is separately qualified.
 
 ### Why Core is required
 
@@ -166,35 +167,113 @@ Manifest signing is not required for the first implementation.
 After activation, a `core-sso` deployment presents a single Continue with
 organization account button. It opens `GET /api/account/sso/start` on the
 selected Core. `core-sso` is a Mentra manifest mode, not an identity protocol or
-a Mentra-hosted identity service. The selected customer Core decides which
-server-configured corporate identity provider and protocol to use. The first
-private template does not expose signup, password, verification-email, or
-recovery UI.
+a Mentra-hosted identity service. In the first supported version, the customer's
+Core has exactly one Microsoft Entra OIDC registration configured by its
+administrator. Core therefore redirects to that specific Entra tenant; it does
+not dynamically choose among providers or protocols. The first private template
+does not expose signup, password, verification-email, or recovery UI.
 
 ### Identity rollout
 
 Use "deployment operator" for the organization running the private deployment
 and "end user" for the person using the Mentra App and glasses.
 
-The first supported private identity integration is:
+The first supported private identity integration is Microsoft Entra:
 
-1. The deployment operator configures its workspace URL and Core with an OIDC
-   connection to its existing corporate identity provider.
+1. The deployment operator registers MentraOS as a single-tenant application in
+   its Microsoft Entra tenant and configures the resulting registration on its
+   customer-hosted Core.
 2. The end user chooses Connect to a workspace and enters the URL supplied by
    IT, or MDM supplies it automatically.
 3. The app fetches and validates the well-known manifest, then asks the end user
    to confirm the resolved organization.
 4. The app activates that deployment and presents Continue with organization
    account.
-5. The customer's Core redirects the browser to the customer's configured
-   identity provider, validates the callback, and returns a normal
-   deployment-scoped Cloud V2 session to the app.
+5. The customer's Core redirects the browser to the customer's Entra sign-in,
+   validates the callback, and returns a normal deployment-scoped Cloud V2
+   session to the app.
 
-The first private template sets `mode: "core-sso"`. It does not ask
-the customer to self-host Supabase Auth, build a password service, or administer
-a parallel employee directory. Email/password remains a possible future adapter
+The first private template sets `mode: "core-sso"`. It does not ask the
+customer to self-host Supabase Auth, build a password service, or administer a
+parallel employee directory. Email/password remains a possible future adapter
 for deployments that explicitly require local accounts, but it is not the first
 private pilot or a prerequisite for the manifest foundation.
+
+### How an enterprise connects Microsoft Entra
+
+There are two separate configuration surfaces:
+
+1. **Microsoft Entra configuration.** The customer's Entra administrator creates
+   a new app registration named, for example, "MentraOS Enterprise", selects
+   Accounts in this organizational directory only, and adds one Web redirect
+   URI:
+
+   ```text
+   https://<workspace-host>/api/account/sso/callback
+   ```
+
+   The administrator records the Directory (tenant) ID and Application (client)
+   ID, creates a client credential for the confidential Core server, requires
+   assignment for the Enterprise Application, and assigns the users or groups
+   allowed to use MentraOS. The first integration requests only the standard
+   `openid profile email` identity scopes; it does not require Microsoft Graph
+   access.
+2. **Customer Core configuration.** The deployment operator places the tenant
+   ID, client ID, and client credential in the Core deployment configuration and
+   secret store. They are not put in the workspace manifest or Mentra App. An
+   illustrative configuration shape is:
+
+   ```yaml
+   identity:
+     mode: microsoft-entra
+     tenantId: 11111111-2222-3333-4444-555555555555
+     clientId: aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee
+     clientCredentialSecretRef: mentra-entra-client-credential
+     redirectUri: https://mentra.example-corp.com/api/account/sso/callback
+     userProvisioning: just-in-time
+   ```
+
+   The packaged deployment validates these values at startup and resolves
+   Microsoft's OIDC discovery metadata for that exact tenant. A client secret is
+   sufficient for the first controlled pilot because it remains on Core; a
+   certificate credential is the stronger production option and can be added to
+   the same server-side configuration contract.
+
+The end user never sees any of those identifiers. Continue with organization
+account starts this sequence:
+
+```text
+Mentra App
+  -> customer Core /api/account/sso/start
+  -> login.microsoftonline.com/<customer-tenant>/.../authorize
+  -> customer Entra login, MFA, and Conditional Access
+  -> customer Core /api/account/sso/callback
+  -> customer Core validates identity and creates a MentraOS session
+  -> Mentra App redeems a one-time PKCE-bound handoff at customer Core
+     /api/account/sso/complete
+```
+
+Core must validate the Entra issuer, tenant, audience, signature, state, nonce,
+and PKCE response. It keys the external identity by verified issuer plus stable
+subject, not by mutable email address. Entra remains responsible for employee
+authentication, MFA, Conditional Access, account disablement, and group/user
+assignment. Core is responsible for mapping an accepted Entra identity to the
+customer's MentraOS tenant and issuing the session used by Runtime.
+
+Mentra will qualify this first using a non-production app registration in its
+own Microsoft Entra tenant, a dedicated assigned test group, and an isolated
+customer-style Core deployment. The test matrix includes assigned and
+unassigned users, wrong-tenant users, MFA, disabled users, expired credentials,
+callback tampering, session refresh, and logout. The customer-facing Microsoft
+Entra setup guide is written from that proven setup before another provider is
+claimed as supported.
+
+The guide should link directly to Microsoft's documentation for
+[registering an application](https://learn.microsoft.com/en-us/entra/identity-platform/quickstart-register-app),
+[authorization code flow with OIDC and PKCE](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow),
+[redirect URI rules](https://learn.microsoft.com/en-us/entra/identity-platform/reply-url),
+[application credentials](https://learn.microsoft.com/en-us/entra/identity-platform/how-to-add-credentials),
+and [assigning users or groups](https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/assign-user-or-group-access-portal).
 
 The app must resolve the deployment before authentication because it needs the
 manifest's Core URL and auth policy to know where to begin SSO. An SSO callback
@@ -209,9 +288,9 @@ Customer-hosted Core SSO generalizes that existing shape:
 1. The resolved manifest selects `coreUrl` before auth begins.
 2. The app opens the unauthenticated `/api/account/sso/start` endpoint on that
    Core with a PKCE challenge.
-3. Core redirects through its server-configured OIDC connection. IdP metadata,
-   client secrets, and signing keys stay in customer-hosted Core or its identity
-   broker, never in the manifest or public Mentra services.
+3. Core redirects through its server-configured Microsoft Entra OIDC
+   connection. Tenant metadata and client credentials stay in customer-hosted
+   Core or its secret store, never in the manifest or public Mentra services.
 4. Core validates the IdP callback, maps the external subject to a Core user,
    and creates that user just in time when organization policy permits it.
 5. Core deep-links a short-lived handoff code to the app, and the app exchanges
@@ -219,29 +298,26 @@ Customer-hosted Core SSO generalizes that existing shape:
 
 SSO describes the user experience of using one organization account; it is not
 one wire protocol. OIDC and SAML are two common protocols for delivering that
-identity. Microsoft Entra, Okta, Google, or an internal identity service is the
-customer's IdP. The first implementation uses OIDC, with Microsoft Entra as the
-reference integration, because OIDC is the modern fit for a new mobile browser
-flow. The same Core adapter is configured against another standards-compliant
-OIDC provider; SAML requires a separate server-side adapter and is added only
-when a customer requires it. PKCE protects the short-lived browser-to-app
-handoff; it is not another login option.
+identity. Microsoft Entra is the only provider qualified and documented in the
+first implementation, using OIDC because it is the modern fit for a new mobile
+browser flow. The Core boundary should remain compatible with adding another
+OIDC provider later, but Okta, Google, internal OIDC, and SAML are not claimed as
+supported until separately tested and documented. PKCE protects the short-lived
+browser-to-app handoff; it is not another login option.
 
-The customer IT administrator registers MentraOS as an application in the IdP,
-assigns the allowed users or groups, and gives customer-hosted Core its issuer,
-client id, client secret, callback URL, and claim mapping. IT does not implement
-a login screen or give credentials to Mentra. The current implementation
-hard-codes Google and Apple and delegates them to GoTrue, so direct corporate
-OIDC requires implementation work rather than a schema toggle. The existing
-browser PKCE handoff, trusted-issuer verification, external-token exchange, and
-Core session model remain reusable.
+The customer IT administrator does not implement a login screen or give
+credentials to Mentra. The current implementation hard-codes Google and Apple
+and delegates them to GoTrue, so direct Microsoft Entra OIDC requires
+implementation work rather than a schema toggle. The existing browser PKCE
+handoff, trusted-issuer verification, external-token exchange, and Core session
+model remain reusable.
 
 In a private deployment, the workspace ingress, Core, Runtime, and resulting
-MentraOS session are customer-controlled. The IdP may be a customer tenant in a
-permitted cloud service such as Microsoft Entra or an internal service for a
-disconnected network. Mentra's public Core, Runtime, directory, and Supabase are
-not in this authentication path. Neither the workspace manifest nor Mentra
-infrastructure receives the user's corporate credential.
+MentraOS session are customer-controlled. Microsoft hosts the Entra identity
+endpoint, but it operates against the customer's tenant and policy. Mentra's
+public Core, Runtime, directory, and Supabase are not in this authentication
+path. Neither the workspace manifest nor Mentra infrastructure receives the
+user's corporate credential.
 
 MDM can make workspace selection invisible, but does not make login silent
 unless the managed environment separately supplies a device identity,
@@ -563,8 +639,8 @@ The first Android pilot is complete when:
 
 - Local email/password accounts, end-user self-service signup, internal
   verification/password-reset email, and a supported no-email enrollment mode.
-- SAML and additional enterprise identity protocols beyond the first OIDC
-  implementation.
+- Okta, Google, internal OIDC providers, SAML, and any identity integration
+  beyond the first qualified Microsoft Entra OIDC implementation.
 - Optional workspace discovery by verified work-email domain or organization
   code. It resolves to the same workspace URL and is not required for private
   deployment or SSO.

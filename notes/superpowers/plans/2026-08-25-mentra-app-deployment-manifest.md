@@ -147,6 +147,7 @@ releases.
 - Create `cloud-v2/packages/core/src/services/account/oidc.client.ts`
 - Modify `cloud-v2/packages/core/src/api/app.ts`
 - Modify Core account/profile consumers that currently read identity from GoTrue
+- Add Core integration tests against a Microsoft Entra test registration
 
 - [ ] Construct the account provider only after deployment resolution.
 - [ ] Namespace access tokens, refresh tokens, cached profile, and refresh state
@@ -158,23 +159,35 @@ releases.
       an active custom profile's auth mode after enrollment.
 - [ ] Make Core the auth broker for the first private pilot: generalize its
       existing PKCE browser handoff from fixed Google/Apple-through-GoTrue to one
-      server-configured OIDC connection, map issuer plus subject to a Core user,
-      and return the normal Cloud V2 session through a one-time handoff.
-- [ ] Keep issuer metadata, client credentials, claim mapping, and IdP tokens in
-      customer-hosted Core configuration. The manifest declares only
-      `auth.mode: "core-sso"`; the app opens a fixed route on active Core.
-- [ ] Validate Microsoft Entra as the reference OIDC integration, while keeping
-      the Core adapter standards-based for Okta, Google, or an internal OIDC
-      provider. Customer IT registers the application and assigns users/groups;
-      Mentra public infrastructure and Supabase are not in the private auth path.
+      server-configured Microsoft Entra OIDC connection, map verified issuer
+      plus subject to a Core user, and return the normal Cloud V2 session through
+      a one-time handoff.
+- [ ] Implement fixed `/api/account/sso/start`, `/api/account/sso/callback`, and
+      `/api/account/sso/complete` routes. Use a separate Core-to-Entra state,
+      nonce, and PKCE verifier while preserving the app-to-Core PKCE binding.
+- [ ] Add Core deployment configuration for Microsoft Entra tenant id, client
+      id, client-credential secret reference, redirect URI, and just-in-time
+      provisioning policy. Resolve OIDC metadata for that exact tenant at Core
+      startup and fail closed on invalid configuration.
+- [ ] Keep tenant metadata, client credentials, claim mapping, and IdP tokens in
+      customer-hosted Core configuration and its secret store. The manifest
+      declares only `auth.mode: "core-sso"`; the Mentra App opens the fixed start
+      route on active Core.
+- [ ] Treat Microsoft Entra as the only qualified and documented provider in the
+      first milestone. Customer IT creates a single-tenant app registration,
+      registers the Core Web callback, requires assignment, and assigns the
+      allowed users/groups. Mentra public infrastructure and Supabase are not in
+      the private auth path.
 - [ ] Reuse the existing trusted-issuer verification and external-token exchange
       where their claim contract fits. Do not require a standard customer IdP to
       mint Mentra-specific routing claims without an explicit adapter.
 - [ ] Replace first-party profile lookups that assume a GoTrue user with an
       identity-provider-neutral record keyed by issuer plus stable subject. Do
       not use email as the durable user key.
-- [ ] Keep SAML and local email/password adapters outside the first pilot. They
-      must fit the same post-manifest Core-session boundary when added.
+- [ ] Keep Okta, Google, internal OIDC, SAML, and local email/password adapters
+      outside the first supported pilot. They must fit the same post-manifest
+      Core-session boundary and receive their own qualification before being
+      documented as supported.
 - [ ] Make the minimum-version screen use managed-update copy instead of public
       store URLs when `appUpdates.mode` is `managed`.
 - [ ] Remove the current special deployment selection from scattered settings;
@@ -268,6 +281,8 @@ releases.
 - Modify `.github/scripts/finalize-release-manifest.mjs`
 - Modify `.github/workflows/reusable-coordinated-ota.yml` or add a reusable
   deployment-artifact job
+- Create `mintlify-docs/enterprise/microsoft-entra-sso.mdx`
+- Modify `mintlify-docs/docs.json`
 - Add release-script tests and enterprise handoff docs
 
 - [ ] Publish `mentra-deployment-template-<identity>.json` on the existing
@@ -279,8 +294,13 @@ releases.
 - [ ] Do not create a customer mobile build lane; reuse the exact Android and
       iOS artifacts from the coordinated release.
 - [ ] Document Android MDM/APK import and iOS Apple Business Manager/MDM setup.
-- [ ] Document the workspace URL and well-known endpoint, MDM key, private-CA
-      installation, OIDC application registration, and callback URL.
+- [ ] Publish a Microsoft Entra administrator guide based on Mentra's tested
+      setup. Cover single-tenant app registration, the Core Web callback URL,
+      tenant/client ids, secure client-credential delivery, required assignment,
+      user/group assignment, Core configuration, validation, rotation, and
+      troubleshooting. State that no Microsoft Graph access is required.
+- [ ] Document the workspace URL and well-known endpoint, MDM key, and private-CA
+      installation alongside the Entra guide.
 
 ## Phase 5: Private service packaging and qualification
 
@@ -291,9 +311,14 @@ releases.
       plane for identity, sessions, token exchange, registry, settings,
       version-check, and reporting. Runtime is the real-time execution plane.
       Do not model Runtime-only operation as a manifest option.
-- [ ] Package direct OIDC support in Core without Supabase. Provide configuration
-      for issuer, client id/secret, scopes, callback URL, and stable subject-claim
-      mapping.
+- [ ] Package direct Microsoft Entra OIDC support in Core without Supabase.
+      Support a server-held client secret for the first controlled pilot and
+      design the credential reference so certificate credentials can be added
+      without changing the manifest.
+- [ ] Qualify against a non-production registration in Mentra's Microsoft Entra
+      tenant and an isolated customer-style Core deployment. Test assigned,
+      unassigned, wrong-tenant, MFA, disabled-user, expired-credential,
+      callback-tampering, refresh, reauthentication, and logout cases.
 - [ ] Verify just-in-time user creation, disabled-user behavior, session expiry,
       and reauthentication without creating a second employee password store.
 - [ ] Configure customer-approved STT/TTS providers in private Runtime.
@@ -310,7 +335,7 @@ releases.
 - **PR 1:** Manifest types/resolver, embedded Mentra profile, deployment-neutral
   landing screen, boot gating, and tests. No customer deployment is promised yet.
 - **PR 2:** Workspace URL/well-known manifest enrollment, MDM configuration,
-  deployment-scoped Core/Runtime, and direct enterprise OIDC sign-in.
+  deployment-scoped Core/Runtime, and direct Microsoft Entra OIDC sign-in.
 - **PR 3:** OTA/model routing, deployment wallpaper/link/system-miniapp policy,
   pairing-model override, telemetry, and optional-feature egress gates.
 - **PR 4:** Coordinated deployment artifacts and a physical disconnected pilot.
@@ -321,7 +346,7 @@ flow, and coordinated release manifest remove much of the hard work; boot order,
 auth isolation, telemetry gating, model hosting, and private Cloud packaging are
 the remaining critical path.
 
-SAML, local email/password accounts, self-service workspace discovery, and
-directory/domain verification are follow-up identity work. The first pilot uses
-a workspace URL and one server-configured OIDC connection against the customer's
-existing corporate identity provider.
+Okta, Google, internal OIDC, SAML, local email/password accounts, self-service
+workspace discovery, and directory/domain verification are follow-up identity
+work. The first pilot uses a workspace URL and one server-configured Microsoft
+Entra OIDC registration against the customer's own tenant.
