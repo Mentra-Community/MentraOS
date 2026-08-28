@@ -1,9 +1,11 @@
 import assert from "node:assert/strict"
+import {generateKeyPairSync} from "node:crypto"
 import test from "node:test"
 
 import {
   assignBuildToGroup,
   collectPaginatedData,
+  createAppStoreConnectClient,
   findApp,
   findProcessedBuild,
   productionSubmissionStatus,
@@ -12,6 +14,21 @@ import {
   waitForProductionSubmission,
   waitForProcessedBuild,
 } from "./app-store-connect-build.mjs"
+
+const TEST_PRIVATE_KEY = generateKeyPairSync("ec", {namedCurve: "P-256"}).privateKey.export({
+  format: "pem",
+  type: "pkcs8",
+})
+
+function response(status, body) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    async text() {
+      return body === undefined ? "" : JSON.stringify(body)
+    },
+  }
+}
 
 function client(responses) {
   const calls = []
@@ -25,6 +42,93 @@ function client(responses) {
     },
   }
 }
+
+test("retries transient failures for App Store Connect read requests", async () => {
+  const timeout = new TypeError("fetch failed")
+  timeout.cause = {code: "UND_ERR_CONNECT_TIMEOUT"}
+  const responses = [timeout, response(200, {data: {id: "app-1", attributes: {bundleId: "com.mentra.example"}}})]
+  const delays = []
+  const api = createAppStoreConnectClient({
+    issuerId: "issuer",
+    keyId: "key",
+    privateKey: TEST_PRIVATE_KEY,
+    delay: 25,
+    sleep: async (duration) => delays.push(duration),
+    fetchImpl: async () => {
+      const next = responses.shift()
+      if (next instanceof Error) throw next
+      return next
+    },
+  })
+
+  const app = await findApp(api, "com.mentra.example", "app-1")
+  assert.equal(app.id, "app-1")
+  assert.deepEqual(delays, [25])
+})
+
+test("retries App Store Connect reads terminated while consuming the response body", async () => {
+  const terminated = new TypeError("terminated")
+  terminated.cause = {code: "UND_ERR_SOCKET"}
+  const responses = [
+    {
+      ok: true,
+      status: 200,
+      async text() {
+        throw terminated
+      },
+    },
+    response(200, {data: {id: "app-1", attributes: {bundleId: "com.mentra.example"}}}),
+  ]
+  let requests = 0
+  const api = createAppStoreConnectClient({
+    issuerId: "issuer",
+    keyId: "key",
+    privateKey: TEST_PRIVATE_KEY,
+    delay: 0,
+    sleep: async () => {},
+    fetchImpl: async () => responses[requests++],
+  })
+
+  const app = await findApp(api, "com.mentra.example", "app-1")
+  assert.equal(app.id, "app-1")
+  assert.equal(requests, 2)
+})
+
+test("does not retry permanent App Store Connect request failures", async () => {
+  let requests = 0
+  const api = createAppStoreConnectClient({
+    issuerId: "issuer",
+    keyId: "key",
+    privateKey: TEST_PRIVATE_KEY,
+    delay: 0,
+    sleep: async () => {},
+    fetchImpl: async () => {
+      requests += 1
+      return response(400, {errors: [{detail: "bad request"}]})
+    },
+  })
+
+  await assert.rejects(() => findApp(api, "com.mentra.example", "app-1"), /failed with HTTP 400/)
+  assert.equal(requests, 1)
+})
+
+test("does not replay a mutating request after a transient failure", async () => {
+  let requests = 0
+  const api = createAppStoreConnectClient({
+    issuerId: "issuer",
+    keyId: "key",
+    privateKey: TEST_PRIVATE_KEY,
+    delay: 0,
+    sleep: async () => {},
+    fetchImpl: async () => {
+      requests += 1
+      throw new TypeError("fetch failed")
+    },
+  })
+
+  await assert.rejects(() => api.request("/v1/betaGroups", {method: "POST"}), /fetch failed/)
+  assert.equal(requests, 1)
+})
 
 test("resolves an App Store app by its authoritative numeric ID", async () => {
   const api = client([{data: {id: "6792839366", attributes: {bundleId: "com.mentra.example"}}}])
