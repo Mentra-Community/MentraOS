@@ -196,6 +196,12 @@ public class StreamCommandHandler implements ICommandHandler {
             if (videoJson == null) videoJson = data.optJSONObject("v");
             JSONObject audioJson = data.optJSONObject("audio");
             if (audioJson == null) audioJson = data.optJSONObject("a");
+            Boolean captureAudioOverride = null;
+            if (data.has("captureAudio")) {
+                captureAudioOverride = data.optBoolean("captureAudio", true);
+            } else if (data.has("ca")) {
+                captureAudioOverride = data.optBoolean("ca", true);
+            }
 
             switch (protocol) {
                 case RTMP:
@@ -235,6 +241,9 @@ public class StreamCommandHandler implements ICommandHandler {
                 case WHIP:
                     {
                         WhipStreamConfig config = WhipStreamConfig.fromJson(videoJson, audioJson);
+                        if (captureAudioOverride != null) {
+                            config.setCaptureAudio(captureAudioOverride);
+                        }
                         Log.i(TAG, "[VideoQuality] parsed WHIP config " + config);
                         if (!preflightCameraCaptureForWhip(config, streamId)) {
                             return false;
