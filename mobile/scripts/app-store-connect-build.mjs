@@ -408,7 +408,15 @@ export async function prepareTestflightDistribution(
   if (!blocked) return {audience, group, installUrl: group.attributes.publicLink, skip: false}
   const reviewState = blocked.submission.attributes.betaReviewState
   if (reviewState === "REJECTED" && allowRejectedOverride) {
-    return {audience, group, installUrl: group.attributes.publicLink, skip: false, overriddenReviewState: reviewState}
+    return {
+      audience,
+      group,
+      installUrl: group.attributes.publicLink,
+      skip: false,
+      overriddenReviewState: reviewState,
+      reviewState,
+      reviewBuildId: blocked.build.id,
+    }
   }
   return {
     audience,
@@ -705,7 +713,10 @@ async function main() {
     const review = audience === "external" ? await submitBuildForBetaReview(client, {buildId: build.id}) : null
     const reviewState = review?.submission.attributes?.betaReviewState || ""
     const distributionStatus = audience === "internal" || reviewState === "APPROVED" ? "available" : "submitted"
-    if (!/^https:\/\//.test(installUrl || "")) throw new Error("TestFlight install URL must use HTTPS")
+    if (audience === "external" && !/^https:\/\//.test(installUrl || "")) {
+      throw new Error("External TestFlight install URL must use HTTPS")
+    }
+    if (installUrl && !/^https:\/\//.test(installUrl)) throw new Error("TestFlight install URL must use HTTPS")
     if (process.env.GITHUB_OUTPUT) {
       const {appendFileSync} = await import("node:fs")
       appendFileSync(

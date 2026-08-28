@@ -558,6 +558,8 @@ test("manual review override replaces a rejected external build", async () => {
   })
   assert.equal(result.skip, false)
   assert.equal(result.overriddenReviewState, "REJECTED")
+  assert.equal(result.reviewState, "REJECTED")
+  assert.equal(result.reviewBuildId, "build-rejected")
 })
 
 test("submits one exact build for beta app review", async () => {
