@@ -284,7 +284,6 @@ jobs:
             Mentra-Bluetooth-SDK-Starter-Kit
           permission-actions: read
           permission-contents: write
-          permission-pull-requests: write
 
       - name: Request the exact Starter Kit release
         id: request
@@ -408,82 +407,6 @@ jobs:
             done
             if [[ -z "$run_id" || -z "$candidate_sha" ]]; then
               echo "Starter Kit did not create $candidate_branch for $identity within 30 minutes." >&2
-              exit 1
-            fi
-
-            lookup_starter_pr() {
-              local response
-              for attempt in {1..6}; do
-                if response=$(gh api --method GET "repos/$STARTER_KIT_REPOSITORY/pulls" \
-                  -f state=all \
-                  -f base="$target_branch" \
-                  -f head="Mentra-Community:$candidate_branch" \
-                  -f per_page=1 2>pr-lookup-error.log) && \
-                  jq -e 'type == "array"' <<< "$response" >/dev/null 2>&1; then
-                  jq '[.[] | {
-                    url: .html_url,
-                    state: (.state | ascii_upcase),
-                    mergedAt: .merged_at,
-                    headRefOid: .head.sha
-                  }]' <<< "$response"
-                  return 0
-                fi
-                if (( attempt == 6 )); then
-                  echo "Could not read a valid Starter Kit PR list after $attempt attempts." >&2
-                  cat pr-lookup-error.log >&2
-                  return 1
-                fi
-                sleep 2
-              done
-            }
-            pr_json=$(lookup_starter_pr)
-            if [[ "$(jq 'length' <<< "$pr_json")" == "0" ]]; then
-              pr_body=$(printf '%s\n\n%s\n%s\n' \
-                "Automated dependency synchronization for coordinated release \`$identity\`." \
-                "Coordinator: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
-                "Starter Kit workflow: $run_url")
-              pr_response=""
-              for attempt in {1..6}; do
-                if pr_response=$(gh api --method POST "repos/$STARTER_KIT_REPOSITORY/pulls" \
-                  -f base="$target_branch" \
-                  -f head="$candidate_branch" \
-                  -f title="chore(release): synchronize examples to $identity" \
-                  -f body="$pr_body" 2>pr-create-error.log); then
-                  pr_url=$(jq -r .html_url <<< "$pr_response")
-                  pr_head=$(jq -r .head.sha <<< "$pr_response")
-                  break
-                fi
-                reconciled_pr=$(lookup_starter_pr 2>/dev/null || true)
-                if [[ "$(jq 'length' <<< "${reconciled_pr:-[]}")" != "0" ]]; then
-                  pr_url=$(jq -r '.[0].url' <<< "$reconciled_pr")
-                  pr_head=$(jq -r '.[0].headRefOid' <<< "$reconciled_pr")
-                  state=$(jq -r '.[0].state' <<< "$reconciled_pr")
-                  merged_at=$(jq -r '.[0].mergedAt // empty' <<< "$reconciled_pr")
-                  if [[ "$state" == "CLOSED" && -z "$merged_at" ]]; then
-                    echo "Reconciled coordinator PR $pr_url was closed without merging." >&2
-                    exit 1
-                  fi
-                  break
-                fi
-                if (( attempt == 6 )); then
-                  cat pr-create-error.log >&2
-                  [[ -n "$pr_response" ]] && printf '%s\n' "$pr_response" >&2
-                  exit 1
-                fi
-                sleep 5
-              done
-            else
-              pr_url=$(jq -r '.[0].url' <<< "$pr_json")
-              pr_head=$(jq -r '.[0].headRefOid' <<< "$pr_json")
-              merged_at=$(jq -r '.[0].mergedAt // empty' <<< "$pr_json")
-              state=$(jq -r '.[0].state' <<< "$pr_json")
-              if [[ "$state" == "CLOSED" && -z "$merged_at" ]]; then
-                echo "Existing coordinator PR $pr_url was closed without merging." >&2
-                exit 1
-              fi
-            fi
-            if [[ "$pr_head" != "$candidate_sha" ]]; then
-              echo "Starter Kit PR head $pr_head does not match candidate $candidate_sha." >&2
               exit 1
             fi
           fi
