@@ -385,7 +385,7 @@ jobs:
                   --workflow coordinated-example-release.yml --event repository_dispatch --limit 30 \
                   --json databaseId,displayTitle,createdAt,url \
                   --jq ".[] | select(.displayTitle == \"$run_title\" and .createdAt >= \"$dispatched_at\")" \
-                  | head -1)
+                  2>/dev/null | head -1 || true)
                 if [[ -n "$run_json" ]]; then
                   run_id=$(jq -r .databaseId <<< "$run_json")
                   run_url=$(jq -r .url <<< "$run_json")
@@ -396,9 +396,11 @@ jobs:
                 --jq .commit.sha 2>/dev/null || true)
               [[ -n "$run_id" && -n "$candidate_sha" ]] && break
               if [[ -n "$run_id" ]]; then
-                status=$(gh run view "$run_id" --repo "$STARTER_KIT_REPOSITORY" --json status --jq .status)
+                run_state=$(gh run view "$run_id" --repo "$STARTER_KIT_REPOSITORY" \
+                  --json status,conclusion 2>/dev/null || true)
+                status=$(jq -r '.status // empty' <<< "${run_state:-{}}")
                 if [[ "$status" == "completed" ]]; then
-                  conclusion=$(gh run view "$run_id" --repo "$STARTER_KIT_REPOSITORY" --json conclusion --jq .conclusion)
+                  conclusion=$(jq -r '.conclusion // "unknown"' <<< "$run_state")
                   echo "Starter Kit run concluded $conclusion before creating $candidate_branch: $run_url" >&2
                   exit 1
                 fi
@@ -467,9 +469,11 @@ jobs:
                 --output "starter-kit-result/$result_name" 2>/dev/null; then
                 break
               fi
-              status=$(gh run view "$run_id" --repo "$STARTER_KIT_REPOSITORY" --json status --jq .status)
+              run_state=$(gh run view "$run_id" --repo "$STARTER_KIT_REPOSITORY" \
+                --json status,conclusion 2>/dev/null || true)
+              status=$(jq -r '.status // empty' <<< "${run_state:-{}}")
               if [[ "$status" == "completed" ]]; then
-                conclusion=$(gh run view "$run_id" --repo "$STARTER_KIT_REPOSITORY" --json conclusion --jq .conclusion)
+                conclusion=$(jq -r '.conclusion // "unknown"' <<< "$run_state")
                 echo "Starter Kit run concluded $conclusion before publishing $result_name: $run_url" >&2
                 exit 1
               fi
