@@ -1,12 +1,18 @@
 export type MeetingPhase = "idle" | "connecting" | "lobby" | "connected" | "disconnected" | "error"
 
+export type AcsAudioSource = "glasses" | "phone"
+export type AcsActiveStream = "none" | "virtual" | "local"
+export type AcsAudioSafety = "safe" | "degraded" | "unsafe"
+
 export type AcsMeetingState = {
   state: MeetingPhase
   muted: boolean
   error?: string
   meetingUrl?: string
   provider?: "acs-teams"
-  audioSource?: "glasses" | "phone"
+  audioSource?: AcsAudioSource
+  activeStream?: AcsActiveStream
+  audioSafety?: AcsAudioSafety
 }
 
 export type AcsMeetingJoinOptions = {
@@ -15,7 +21,7 @@ export type AcsMeetingJoinOptions = {
   whepUrl: string
   displayName?: string
   /** "glasses" sends WHEP PCM. "phone" uses the ACS local mic (handset or BT). */
-  audioSource?: "glasses" | "phone"
+  audioSource?: AcsAudioSource
   /** Dump WHEP PCM to a WAV in cache for P4 verification. */
   dumpPcmWav?: boolean
 }
