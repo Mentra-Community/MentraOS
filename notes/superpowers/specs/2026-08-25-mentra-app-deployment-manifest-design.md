@@ -38,14 +38,29 @@ Core or Runtime.
 
 ## One configuration path
 
-The application always consumes the same typed deployment object:
+The application always consumes the same typed deployment object, but a new
+installation does not need a deployment selected before it can render a local
+landing screen.
 
-1. An MDM-managed manifest URL, when present.
-2. A manifest URL enrolled explicitly by scanning a QR code.
-3. The embedded Mentra deployment profile shipped in the app.
+The landing screen offers the ordinary Mentra sign-in choices plus a private
+deployment entry point:
 
-The embedded profile contains the same schema used by customer manifests. It is
-not a separate set of defaults scattered through the app.
+- Google
+- Apple, where supported
+- Email
+- Enterprise / SSO
+
+Google, Apple, or Email activates the embedded Mentra deployment profile before
+starting that authentication flow. Enterprise / SSO opens deployment enrollment
+and accepts a QR code or manually entered manifest URL. After the custom manifest
+loads, the app renders the authentication methods declared by that deployment.
+The enrollment QR selects configuration; it is not itself an authentication
+credential unless the selected deployment later defines a QR-based auth method.
+
+An MDM-managed manifest URL takes precedence and can bypass the landing choice.
+A previously selected custom deployment is restored on subsequent boots. The
+embedded Mentra profile contains the same schema used by customer manifests; it
+is not a separate set of defaults scattered through the app.
 
 The QR code is deliberately simple:
 
@@ -87,14 +102,37 @@ to the embedded Mentra profile.
     "ttsModelBaseUrl": "https://updates.example.internal/mentra/3.1.0/models/tts/"
   },
   "appUpdates": {
-    "mode": "managed"
+    "mode": "managed",
+    "storeUrls": {
+      "android": null,
+      "ios": null
+    },
+    "reviewUrls": {
+      "android": null,
+      "ios": null
+    }
+  },
+  "content": {
+    "wallpaperUrls": [
+      "https://updates.example.internal/mentra/3.1.0/wallpapers/landscape1.jpeg"
+    ]
+  },
+  "links": {
+    "privacyPolicyUrl": "https://portal.example.internal/privacy",
+    "termsOfServiceUrl": "https://portal.example.internal/terms",
+    "documentationUrl": "https://docs.example.internal/mentra",
+    "supportUrl": "https://support.example.internal/mentra"
+  },
+  "systemMiniapps": {
+    "hiddenPackageNames": []
+  },
+  "glasses": {
+    "allowedModels": ["mentra-live"]
   },
   "features": {
     "cloudSpeech": true,
     "onDeviceSpeech": true,
-    "navigation": false,
-    "externalLinks": false,
-    "ar99VendorServices": false
+    "navigation": false
   },
   "telemetry": {
     "sentry": false,
@@ -115,16 +153,41 @@ Rules:
   OTA bundle.
 - Model base URLs preserve the existing model archive filenames so a customer
   can mirror the files without a new model protocol in v1.
+- `content.wallpaperUrls` is the complete preset-wallpaper catalog. An empty
+  array means no remote presets; the app does not fall back to Mentra wallpaper
+  hosts. Choosing a local photo remains available independently.
+- Privacy and terms URLs belong to the active deployment and remain available
+  wherever the app presents legal text. Documentation and support URLs are
+  deployment-specific rather than controlled by a blanket external-links flag.
+- Mobile distribution-store and review URLs belong to `appUpdates`, not to the
+  system-miniapp policy. Null review URLs suppress review prompts. Managed mode
+  uses administrator-provided update instructions instead of a public store.
+  The Mentra Miniapp Store is a separate in-app system entry and is governed by
+  its package name in the system-miniapp policy.
+- `systemMiniapps.hiddenPackageNames` contains stable miniapp package names. A
+  listed system miniapp is not registered in user-visible catalogs, menus, or
+  deep-link launch routes, although its code remains present in the common app
+  binary. The Mentra profile ships an empty list, so it hides no system
+  miniapps.
+- `glasses.allowedModels` contains stable model identifiers from the common
+  glasses registry. An empty list means every normally supported model is
+  allowed. A populated list restricts model selection, scanning, deep-link
+  pairing, and automatic reconnection to those models. The embedded Mentra
+  profile ships an empty list.
+- The manifest never exposes model-specific switches such as
+  `ar99VendorServices`. Vendor-specific transports and update behavior remain
+  behind each glasses adapter. A deployment that permits only selected hardware
+  expresses that policy through the general glasses allowlist.
 - Missing fields are validation errors. A custom deployment never inherits a
   public Mentra endpoint from compiled code.
 - The document contains no passwords, bearer tokens, private keys, or provider
   secrets. Those remain in MDM secret delivery or server configuration.
-- The first private profile exposes email/password sign-in only. Google, Apple,
-  signup, email verification, and password recovery stay hidden unless the
-  deployment explicitly supports their required network services.
+- The pre-deployment landing screen always exposes the supported consumer
+  choices and the Enterprise / SSO enrollment entry. Once a custom deployment
+  is selected, only that manifest's auth methods and supporting flows are shown.
 - `appUpdates.mode: "managed"` replaces public App Store/Play Store links with
   an administrator-managed update message. The embedded Mentra profile uses
-  store mode and contains the normal public store URLs.
+  store mode and contains the normal public store and review URLs.
 
 The schema can later replace the two model base URLs with a checksum-bearing
 model catalog. That is valuable because STT downloads currently have no archive
@@ -134,7 +197,10 @@ hash verification, but it does not need to block the configuration foundation.
 
 ```text
 load local settings
-  -> resolve embedded / MDM / enrolled deployment
+  -> resolve MDM / previously enrolled deployment, if present
+  -> otherwise render the local consumer-or-enterprise landing screen
+  -> consumer choice activates embedded Mentra deployment
+  -> enterprise choice enrolls and validates a custom deployment
   -> validate release identity and schema
   -> expose immutable active deployment
   -> initialize allowed telemetry
@@ -200,11 +266,18 @@ Optional public-network features are fail-closed in a customer profile:
 
 - Mapbox directions/geocoding and native navigation are unavailable when
   `navigation` is false.
-- AR99 vendor APIs are unavailable when `ar99VendorServices` is false.
-- Public wallpapers, docs, privacy, store, and review links are hidden when
-  `externalLinks` is false.
-- Google and Apple SSO, account creation, verification email, and password
-  recovery are hidden unless enabled by the active auth configuration.
+- Preset wallpapers come only from `content.wallpaperUrls`; no compiled public
+  wallpaper list is appended.
+- Legal, documentation, support, app-store, and review destinations come from
+  their specific manifest fields. There is no global `externalLinks` switch.
+- Deployment-hidden system miniapps cannot be discovered or launched, including
+  through direct routes. The common binary still contains their implementation.
+- Pairing rejects models outside a populated `glasses.allowedModels` list at
+  selection, scan, deep-link, and reconnect boundaries.
+- Google, Apple, and Email on the initial landing screen select the embedded
+  Mentra profile. After enterprise enrollment, account creation, SSO,
+  verification, and recovery flows are shown only when the custom profile's
+  auth configuration supports them.
 - Miniapp package and media URLs supplied by customer-hosted Core remain the
   customer's responsibility.
 - Runtime speech-provider egress is server-side configuration. A private Runtime
@@ -252,15 +325,18 @@ the same coordinated release.
 The first Android pilot is complete when:
 
 1. The official release APK starts with public internet blocked.
-2. MDM or a QR code selects a customer manifest before sign-in.
+2. Google, Apple, or Email selects the embedded Mentra profile, while MDM or the
+   Enterprise / SSO QR flow selects a customer manifest before private sign-in.
 3. Login, refresh, Runtime connection, cloud STT/TTS, settings, registry, and
    enabled miniapps use customer-hosted Core and Runtime.
 4. Mentra Live OTA works through the existing Engine hotspot flow using the
    customer-hosted OTA bundle.
 5. On-device STT and TTS download from the customer mirror.
-6. Sentry, PostHog, Firebase, Mapbox, AR99, GitHub, Mentra, and other public
+6. Preset wallpapers, legal/support links, system-miniapp visibility, and
+   pairable glasses follow the active deployment without compiled fallbacks.
+7. Sentry, PostHog, Firebase, Mapbox, GitHub, Mentra, and other public
    destinations receive no traffic during a packet-capture test.
-7. The embedded Mentra profile still passes the normal coordinated release and
+8. The embedded Mentra profile still passes the normal coordinated release and
    consumer app tests.
 
 ## Explicitly later

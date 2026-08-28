@@ -12,8 +12,10 @@ owner: Mentra
 customer-controlled network by selecting one deployment manifest before sign-in
 and before any public-network integration starts.
 
-**Architecture:** The app resolves an embedded, MDM-provided, or QR-enrolled
-deployment profile at cold boot. The active immutable profile configures auth and
+**Architecture:** The app restores an MDM-provided or previously enrolled
+deployment at cold boot. Otherwise, a local landing screen lets Google, Apple,
+or Email activate the embedded Mentra profile, while Enterprise / SSO enrolls a
+custom profile by QR or URL. The active immutable profile configures auth and
 Engine; Engine passes the OTA URL to Bluetooth SDK and model locations to its
 speech managers. Custom profiles fail closed without Mentra endpoint fallbacks.
 
@@ -39,10 +41,14 @@ configuration bridges, Cloud V2, coordinated GitHub Actions releases.
 
 - [ ] Define and validate deployment manifest v1.
 - [ ] Generate the embedded Mentra profile from coordinated build inputs.
-- [ ] Resolve MDM URL, enrolled URL, then embedded profile in that order.
+- [ ] Resolve an MDM URL or previously enrolled profile before showing auth.
+- [ ] Keep the embedded Mentra profile available for explicit consumer login
+      selection rather than silently treating it as the only cold-boot default.
 - [ ] Persist the custom URL and last valid manifest under `deploymentId`.
 - [ ] Require exact `releaseIdentity` match and HTTPS outside development.
 - [ ] Never fall back to the embedded profile after a custom source is selected.
+- [ ] Validate wallpaper URLs, deployment links, system-miniapp package names,
+      and stable glasses model identifiers as part of the typed contract.
 
 ### Task 2: Gate the React tree on deployment readiness
 
@@ -58,6 +64,8 @@ configuration bridges, Cloud V2, coordinated GitHub Actions releases.
 - [ ] Mount PostHog only when the active profile enables it.
 - [ ] Default native Firebase analytics collection off, then enable it only for
       an active profile that permits it.
+- [ ] Render the local consumer-or-enterprise landing screen before starting any
+      network integration when no deployment is already selected.
 - [ ] Render a local recovery/setup screen when a first-time custom profile
       cannot be loaded.
 
@@ -70,10 +78,18 @@ configuration bridges, Cloud V2, coordinated GitHub Actions releases.
 - Add minimal Android/iOS MDM configuration bridges
 - Modify logout/reset utilities
 
-- [ ] Support a `mentra://deployment?url=...` QR payload.
+- [ ] Add an Enterprise / SSO action beside Google, Apple, and Email on the
+      initial landing screen.
+- [ ] Make Google, Apple, and Email activate the embedded Mentra profile before
+      entering the existing consumer auth flow.
+- [ ] Make Enterprise / SSO open MDM, QR, or manual-URL enrollment and support a
+      `mentra://deployment?url=...` QR payload.
 - [ ] Show deployment name and Core/Runtime hosts before activation.
 - [ ] Read the manifest URL from Android Enterprise and Apple managed app
       configuration when supplied.
+- [ ] After enrollment, render the custom profile's declared email, SSO, or
+      other authentication methods. Treat the enrollment QR as configuration,
+      not an auth credential.
 - [ ] Make switching deployment stop Engine, sign out, clear the old auth
       namespace, and reboot through the same resolver.
 
@@ -93,9 +109,9 @@ configuration bridges, Cloud V2, coordinated GitHub Actions releases.
       by `deploymentId`.
 - [ ] Route login, refresh, subject-token, OAuth, and minimum-version calls only
       to the active Core URL.
-- [ ] Render only the auth methods the profile enables; the first private
-      deployment supports pre-provisioned email/password accounts without
-      public Google, Apple, signup, verification-email, or recovery flows.
+- [ ] Keep consumer Google, Apple, and Email entry points bound to the embedded
+      Mentra profile. Render only the active custom profile's auth methods and
+      supporting signup, verification, and recovery flows after enrollment.
 - [ ] Make the minimum-version screen use managed-update copy instead of public
       store URLs when `appUpdates.mode` is `managed`.
 - [ ] Remove the current special deployment selection from scattered settings;
@@ -133,19 +149,35 @@ configuration bridges, Cloud V2, coordinated GitHub Actions releases.
 - [ ] Ensure a custom profile with an unreachable artifact server fails without
       requesting GitHub or Mentra.
 
-## Phase 3: Fail-close optional egress
+## Phase 3: Deployment-scoped content, hardware, and optional egress
 
 **Files:**
 
 - Modify `mobile/modules/engine/src/services/NavigationService.ts`
-- Modify `mobile/src/services/ar99ApiConfig.ts` and `ar99Ota.ts`
-- Modify external-link, wallpaper, store, privacy, and docs UI call sites
+- Modify `mobile/src/components/settings/BackgroundPicker.tsx`
+- Modify `mobile/src/constants/appConfig.ts` and legal/support link call sites
+- Modify `mobile/src/constants/miniapps.ts`, bundled installation, built-in
+  catalog, menu, launcher, and deep-link routing
+- Modify the pairing model registry, selection, scanning, deep-link, and
+  reconnect paths
 - Add policy tests
 
 - [ ] Disable Mapbox route/geocode/native navigation entry points when the
       profile disables navigation.
-- [ ] Disable AR99 vendor API/OTA requests when the profile disables them.
-- [ ] Hide or replace public links/assets when external links are disabled.
+- [ ] Replace hard-coded preset wallpapers with the active profile's complete
+      `content.wallpaperUrls` list; an empty list makes no public request.
+- [ ] Route privacy, terms, documentation, support, app-store, and review
+      actions through their specific manifest fields. Do not add a blanket
+      `externalLinks` switch.
+- [ ] Apply `systemMiniapps.hiddenPackageNames` consistently to registration,
+      bundled installation, launcher/menu visibility, direct routes, and
+      autostart. The embedded Mentra profile supplies an empty list.
+- [ ] Centralize pairable glasses behind stable model ids and enforce a
+      populated `glasses.allowedModels` list at selection, scan, deep-link,
+      reconnect, and profile-switch boundaries. Empty means all supported
+      models and is the embedded Mentra default.
+- [ ] Keep vendor-specific behavior behind glasses adapters; do not add AR99 or
+      other model-specific policy fields to the deployment schema.
 - [ ] Confirm customer-hosted Core supplies only internal miniapp/media URLs for
       the pilot registry.
 - [ ] Add a test that enumerates the known network integrations and asserts each
@@ -187,10 +219,12 @@ configuration bridges, Cloud V2, coordinated GitHub Actions releases.
 
 ## Suggested cut lines
 
-- **PR 1:** Manifest types/resolver, embedded Mentra profile, boot gating, and
-  tests. No customer deployment is promised yet.
-- **PR 2:** QR/MDM enrollment and deployment-scoped auth/Core/Runtime.
-- **PR 3:** OTA/model routing plus telemetry and optional-feature egress gates.
+- **PR 1:** Manifest types/resolver, embedded Mentra profile, deployment-neutral
+  landing screen, boot gating, and tests. No customer deployment is promised yet.
+- **PR 2:** QR/MDM enrollment, consumer-versus-enterprise auth selection, and
+  deployment-scoped auth/Core/Runtime.
+- **PR 3:** OTA/model routing, deployment wallpaper/link/system-miniapp policy,
+  glasses allowlist, telemetry, and optional-feature egress gates.
 - **PR 4:** Coordinated deployment artifacts and a physical disconnected pilot.
 
 An Android pilot is roughly a multi-PR, several-week effort rather than a small
