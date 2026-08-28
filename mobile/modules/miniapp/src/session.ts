@@ -106,6 +106,13 @@ export interface ConnectAckPayload {
   permissions?: PermissionRecord
   /** Miniapp-scoped backend auth. Never a Core or runtime token. */
   auth?: MiniappAuthState
+  /** Host-advertised optional features. Absent on older Mentra Apps. */
+  hostFeatures?: HostFeatures
+}
+
+export interface HostFeatures {
+  /** Host honors `startStream({captureAudio})` for the lifetime of a WHIP session. */
+  captureAudio?: boolean
 }
 
 export interface MiniappAuthState {
@@ -259,6 +266,11 @@ export class MiniappSession<TChannels extends object = any> {
 
   /** Phone-declared glasses capabilities. Null until CONNECT_ACK arrives. */
   public capabilities: GlassesCapabilities | null = null
+  /**
+   * Host-advertised optional features. Null until CONNECT_ACK. Older Mentra Apps
+   * omit this, so miniapps must not assume `captureAudio` is honored.
+   */
+  public hostFeatures: HostFeatures | null = null
   public userId = ""
   public packageName = ""
   public visibility: MiniappVisibility = "foreground"
@@ -623,6 +635,7 @@ export class MiniappSession<TChannels extends object = any> {
         this.userId = ack.userId ?? ""
         if (ack.packageName) this.packageName = ack.packageName
         this.capabilities = ack.capabilities ?? null
+        this.hostFeatures = ack.hostFeatures ?? null
         if (ack.visibility) this.visibility = ack.visibility
         if (ack.colorScheme === "light" || ack.colorScheme === "dark") {
           this.colorScheme = ack.colorScheme
