@@ -460,6 +460,7 @@ const en = {
       "Your glasses restarted with new firmware. One more step: they'll now continue to the required version.",
     updateComplete: "Update Complete",
     updateCompleteMessage: "Your glasses have been updated successfully.",
+    whatsNew: "What's new",
     updateFailed: "Update Failed",
     updateFailedMessage: "The update could not be completed. You can try again later from Settings.",
     glassesDisconnected: "Glasses Disconnected",

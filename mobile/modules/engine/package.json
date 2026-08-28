@@ -104,6 +104,7 @@
     "@mentra/miniapp": "3.1.0",
     "buffer": "^6.0.3",
     "events": "^3.3.0",
+    "react-native-marked": "8.1.1",
     "semver": "^7.7.4",
     "typesafe-ts": "^1.7.1"
   },
