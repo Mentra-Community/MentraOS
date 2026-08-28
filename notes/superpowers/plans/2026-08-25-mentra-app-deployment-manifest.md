@@ -14,11 +14,14 @@ and before any public-network integration starts.
 
 **Architecture:** The app restores an MDM-provided or previously enrolled
 deployment at cold boot. Otherwise, a local landing screen lets Google, Apple,
-or Email activate the embedded Mentra profile, while Enterprise / SSO enrolls a
-custom profile by QR or URL. The active immutable profile configures auth and
-Engine; Engine passes the OTA URL to Bluetooth SDK and model locations to its
-speech managers. Customer overrides and the embedded Mentra profile resolve to
-one complete object; the air-gap template explicitly replaces or nulls every
+or Email activate the embedded Mentra profile. Enterprise / SSO accepts a work
+email or organization code, resolves a registered manifest URL through a small
+Mentra deployment directory, and immediately continues into that manifest's
+auth flow. MDM and QR/manual URL are alternative directory-bypass mechanisms,
+not additional steps. The active immutable profile configures auth and Engine;
+Engine passes the OTA URL to Bluetooth SDK and model locations to its speech
+managers. Customer overrides and the embedded Mentra profile resolve to one
+complete object; the air-gap template explicitly replaces or nulls every
 public-network destination.
 
 **Tech Stack:** React Native/Expo, TypeScript, MMKV, native managed-app
@@ -79,22 +82,32 @@ releases.
 **Files:**
 
 - Create a deployment setup route under `mobile/src/app/auth/`
+- Create `mobile/src/services/deployment/DeploymentDirectoryService.ts`
 - Modify `mobile/src/contexts/DeeplinkContext.tsx`
 - Add minimal Android/iOS MDM configuration bridges
+- Add a minimal Cloud V2 public deployment-directory endpoint and registry
 - Modify logout/reset utilities
 
 - [ ] Add an Enterprise / SSO action beside Google, Apple, and Email on the
       initial landing screen.
 - [ ] Make Google, Apple, and Email activate the embedded Mentra profile before
       entering the existing consumer auth flow.
-- [ ] Make Enterprise / SSO open MDM, QR, or manual-URL enrollment and support a
-      `mentra://deployment?url=...` QR payload.
+- [ ] Make Enterprise / SSO accept a work email or organization code. Normalize
+      an email to its domain on-device, resolve the registered manifest URL, and
+      never submit the complete email address to the directory.
+- [ ] Implement the speedrun directory as a small Mentra-operated registry of
+      verified domains and/or organization codes to deployment id, display name,
+      and manifest URL. Return no credentials or provider secrets; manual
+      registration is sufficient for the pilot.
+- [ ] Keep MDM, QR, and manual URL as alternative bootstrap paths that bypass
+      directory discovery. Support a `mentra://deployment?url=...` QR payload.
 - [ ] Show deployment name and Core/Runtime hosts before activation.
 - [ ] Read the manifest URL from Android Enterprise and Apple managed app
       configuration when supplied.
-- [ ] After enrollment, show the deployment name and render the resolved
-      profile's declared email, SSO, or other authentication methods. Treat the
-      enrollment QR as configuration, not an auth credential.
+- [ ] After any bootstrap path resolves the manifest, show the deployment name
+      and immediately render or open its declared email, SSO, or other
+      authentication method. Treat the enrollment QR as configuration, not an
+      auth credential, and never require both discovery and QR.
 - [ ] For the first private pilot, render email/password sign-in only. Set
       `allowSignup` and `allowPasswordReset` false and use operator-provisioned,
       verified accounts; do not put SMTP, account verification, recovery, or
@@ -104,6 +117,9 @@ releases.
       policy regardless of the manifest value.
 - [ ] Make switching deployment stop Engine, sign out, clear the old auth
       namespace, and reboot through the same resolver.
+- [ ] Cache the selected manifest so the directory is not contacted again on
+      ordinary boots. Test domain/code lookup, unknown-organization errors,
+      MDM/QR bypass, and the absence of cross-deployment credentials.
 
 ## Phase 2: Feed the profile into auth and Engine
 
@@ -124,9 +140,9 @@ releases.
 - [ ] Keep consumer Google, Apple, and Email entry points bound to the embedded
       Mentra profile. Render only the active custom profile's auth methods and
       supporting signup, verification, and recovery flows after enrollment.
-- [ ] Do not implement organization discovery or generic SSO in the first
-      private pilot. Keep the auth-provider boundary capable of adding them
-      after manifest resolution.
+- [ ] Implement only the minimal deployment-directory lookup in the first
+      private pilot; defer generic SSO. Keep the auth-provider boundary capable
+      of opening SSO automatically after manifest resolution when added.
 - [ ] Make the minimum-version screen use managed-update copy instead of public
       store URLs when `appUpdates.mode` is `managed`.
 - [ ] Remove the current special deployment selection from scattered settings;
@@ -231,6 +247,9 @@ releases.
 - [ ] Do not create a customer mobile build lane; reuse the exact Android and
       iOS artifacts from the coordinated release.
 - [ ] Document Android MDM/APK import and iOS Apple Business Manager/MDM setup.
+- [ ] Document directory registration as a one-time provisioning step, including
+      domain/code ownership checks and how strictly disconnected deployments
+      bypass it with MDM or QR.
 
 ## Phase 5: Private service packaging and qualification
 
@@ -258,9 +277,9 @@ releases.
 
 - **PR 1:** Manifest types/resolver, embedded Mentra profile, deployment-neutral
   landing screen, boot gating, and tests. No customer deployment is promised yet.
-- **PR 2:** QR/MDM enrollment, consumer-versus-enterprise auth selection,
-  deployment-scoped Core/Runtime, and pre-provisioned private email/password
-  sign-in.
+- **PR 2:** Minimal work-domain/organization-code directory, QR/MDM bypasses,
+  consumer-versus-enterprise auth selection, deployment-scoped Core/Runtime,
+  and pre-provisioned private email/password sign-in.
 - **PR 3:** OTA/model routing, deployment wallpaper/link/system-miniapp policy,
   pairing-model override, telemetry, and optional-feature egress gates.
 - **PR 4:** Coordinated deployment artifacts and a physical disconnected pilot.
@@ -271,6 +290,6 @@ flow, and coordinated release manifest remove much of the hard work; boot order,
 auth isolation, telemetry gating, model hosting, and private Cloud packaging are
 the remaining critical path.
 
-Self-service signup, email recovery, organization discovery, and generic SSO are
-follow-up identity work. They reuse the deployment resolver but do not block the
-first operator-provisioned pilot.
+Self-service signup, email recovery, generic SSO, and self-service directory
+registration/domain verification are follow-up identity work. The first pilot
+uses a manually administered directory and operator-provisioned accounts.

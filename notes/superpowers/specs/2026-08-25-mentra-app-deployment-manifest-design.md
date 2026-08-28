@@ -60,19 +60,38 @@ deployment entry point:
 - Enterprise / SSO
 
 Google, Apple, or Email activates the embedded Mentra deployment profile before
-starting that authentication flow. Enterprise / SSO opens deployment enrollment
-and accepts a QR code or manually entered manifest URL. After the custom manifest
-loads, the app renders the authentication methods declared by that deployment.
-The enrollment QR selects configuration; it is not itself an authentication
-credential unless the selected deployment later defines a QR-based auth method.
+starting that authentication flow. Enterprise / SSO asks for a work email or
+organization code. The app resolves that organization through a small Mentra
+deployment directory, downloads its registered manifest, and immediately starts
+the authentication method declared by that deployment. For example, an SSO
+deployment opens its identity-provider flow without asking the end user to scan
+a second code.
 
-An MDM-managed manifest URL takes precedence and can bypass the landing choice.
-A previously selected custom deployment is restored on subsequent boots. The
-embedded Mentra profile is the one complete set of defaults. A customer
-manifest uses the same schema as a partial override of that profile, so the app
-has one resolution path rather than separate consumer and enterprise branches.
+MDM, directory discovery, and QR/manual URL enrollment are alternative bootstrap
+mechanisms, not consecutive steps. An MDM-managed manifest URL takes precedence
+and can bypass the landing choice. QR or manual URL enrollment remains available
+for unmanaged deployments that cannot or do not want to register with Mentra's
+directory. A previously selected custom deployment is restored on subsequent
+boots. The embedded Mentra profile is the one complete set of defaults. A
+customer manifest uses the same schema as a partial override of that profile, so
+the app has one resolution path rather than separate consumer and enterprise
+branches.
 
-The QR code is deliberately simple:
+The first directory can be deliberately small. During deployment setup, Mentra
+manually registers a verified work-email domain and/or organization code to a
+manifest URL. The public response contains only a deployment id, display name,
+and manifest URL; it contains no credentials or provider secrets. When the end
+user enters an email, the app derives and submits the normalized domain rather
+than the complete address. Self-service domain verification and an operator
+portal can come later.
+
+Directory access is provisioning-time egress only. After the manifest has been
+validated and cached, ordinary startup, authentication, and operation use the
+selected deployment and do not call the directory. A deployment that permits no
+Mentra contact at provisioning time supplies the same manifest URL through MDM,
+QR, or manual entry instead.
+
+The fallback QR code is deliberately simple:
 
 ```text
 mentra://deployment?url=https%3A%2F%2Fconfig.example.internal%2Fmentra%2F3.1.0%2Fmentra-deployment.json
@@ -96,20 +115,29 @@ does not create an account or session.
 Use "deployment operator" for the organization running the private deployment
 and "end user" for the person using the Mentra App and glasses.
 
-The speedrun pilot supports one private auth flow:
+The speedrun pilot supports one private auth flow while exercising the intended
+deployment-discovery UX:
 
-1. The deployment operator creates verified email/password accounts in the
-   private identity service before handoff.
-2. The end user opens Enterprise / SSO and scans the deployment QR.
-3. The app fetches the manifest, shows the deployment name, and presents email
-   and password fields.
+1. The deployment operator registers its verified domain or organization code
+   and manifest URL with Mentra, then creates verified email/password accounts
+   in the private identity service before handoff.
+2. The end user opens Enterprise / SSO and enters a work email or organization
+   code once.
+3. The app resolves and fetches the manifest, shows the deployment name, and
+   presents email and password fields.
 4. The end user signs in against the configured private Core.
+
+MDM and QR/manual enrollment are alternate ways to perform step 2-3. An
+MDM-managed user can be taken directly to the organization's authentication
+screen. A QR-enrolled user scans once and is then taken directly to that screen.
+Neither path is an additional step after directory discovery.
 
 The pilot manifest sets `methods: ["email-password"]`, `allowSignup: false`, and
 `allowPasswordReset: false`. This avoids making private SMTP delivery, account
-verification, password recovery, generic SSO, or organization discovery part of
-the first deployment. A small operator-side provisioning command creates or
-resets verified pilot accounts.
+verification, password recovery, or generic SSO part of the first deployment.
+A small operator-side provisioning command creates or resets verified pilot
+accounts, and a minimal Mentra-managed directory provides the initial manifest
+lookup.
 
 This limitation is not just UI scope. Core's current first-party account module
 delegates credentials to Supabase GoTrue. Signup expects GoTrue to send a
@@ -124,14 +152,11 @@ mode, the server enables signup and the manifest reflects that capability with
 `allowSignup: true`. The manifest is presentation policy; Core remains
 authoritative and must reject signup when the deployment has disabled it.
 
-Future SSO still resolves the deployment before authentication. The app needs
-the manifest's Core URL and auth policy in order to know where to begin SSO. For
-managed or air-gapped devices, MDM or the deployment QR supplies that bootstrap.
-For connected deployments, a later organization-discovery service can make it
-feel automatic: the end user enters a work email or organization code, the app
-resolves and downloads that organization's manifest, and then it opens the
-declared SSO flow. An SSO callback should not introduce or switch deployment
-configuration after authentication.
+Future SSO uses the same discovery flow. The app still resolves the deployment
+before authentication because it needs the manifest's Core URL and auth policy
+to know where to begin SSO. Once a directory, MDM, or QR bootstrap resolves an
+SSO manifest, the app opens that flow automatically. An SSO callback should not
+introduce or switch deployment configuration after authentication.
 
 On subsequent boots, the app loads the saved profile before starting any
 network-capable service. It refreshes the configured URL when reachable and can
@@ -280,11 +305,14 @@ load local settings
   -> resolve MDM / previously enrolled deployment, if present
   -> otherwise render the local consumer-or-enterprise landing screen
   -> consumer choice activates embedded Mentra deployment
-  -> enterprise choice enrolls and validates a custom deployment
+  -> enterprise choice resolves a work-email domain / organization code
+     through the deployment directory, or uses QR/manual URL as a fallback
+  -> download and validate the custom deployment
   -> validate release identity and schema
   -> expose immutable active deployment
   -> initialize telemetry only when the resolved master switch is true
   -> create the deployment-scoped auth provider
+  -> immediately start the active deployment's configured authentication flow
   -> run the configured Core version check
   -> engine.configure({ auth, config: deployment })
   -> engine.start()
@@ -418,8 +446,9 @@ the same coordinated release.
 The first Android pilot is complete when:
 
 1. The official release APK starts with public internet blocked.
-2. Google, Apple, or Email selects the embedded Mentra profile, while MDM or the
-   Enterprise / SSO QR flow selects a customer manifest before private sign-in.
+2. Google, Apple, or Email selects the embedded Mentra profile. Enterprise / SSO
+   resolves a registered customer manifest from a work-email domain or
+   organization code, while MDM and QR/manual URL provide alternate bootstraps.
 3. Login, refresh, Runtime connection, cloud STT/TTS, settings, registry, and
    enabled miniapps use customer-hosted Core and Runtime.
 4. Mentra Live OTA works through the existing Engine hotspot flow using the
@@ -437,8 +466,9 @@ The first Android pilot is complete when:
 - Runtime-only deployments with a customer IdP or token broker.
 - End-user self-service signup, internal verification/password-reset email, and
   an explicitly supported no-email enrollment mode.
-- Organization discovery by work email or organization code and generic SSO
-  methods. Air-gapped deployments continue to bootstrap through MDM or QR.
+- Generic SSO methods, self-service directory registration, and automated
+  work-email-domain verification. Strictly disconnected deployments continue to
+  bypass the directory through MDM or QR.
 - Separating account, registry, settings, version-check, and reporting APIs from
   Core into a smaller control-plane service.
 - Local-only Engine startup with no Core, Runtime, or auth seam.
