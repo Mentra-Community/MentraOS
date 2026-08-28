@@ -174,23 +174,23 @@ selection and restores the local landing screen; because the user is not yet
 authenticated, no account logout is needed. After login, changing deployments
 uses the controlled logout flow described below.
 
-An MDM-managed workspace URL uses the same well-known lookup and takes
-precedence over manual selection. Because MDM is authoritative, it can activate
-the validated workspace without asking for the URL; an unauthenticated user is
-shown the organization-branded sign-in screen rather than having a browser open
-unexpectedly. An enforced MDM deployment does not offer Return to Mentra or
-manual workspace switching and labels the deployment as managed by the user's
-organization. Removing that restriction requires the administrator to remove
-the managed configuration. A previously selected custom deployment is restored
-on subsequent boots. The embedded Mentra profile is the one complete set of
-defaults. A customer manifest uses the same schema as a partial override of that
-profile, so the app has one resolution path rather than separate consumer and
-enterprise branches.
+V1 supports manual workspace entry only. A previously selected customer-hosted
+deployment is restored on subsequent boots, so the end user normally enters the
+workspace URL once. The acquisition step is kept separate from the common
+fetch, validation, confirmation, activation, and persistence pipeline. Local
+enrollment metadata records that the source was manual; a future MDM adapter can
+supply the same workspace origin with a managed/enforced source without changing
+the manifest schema or well-known endpoint.
 
-HTTPS and the device trust store authenticate the workspace server; MDM may
-install a private CA where required. V1 rejects URL credentials, query strings,
-fragments, invalid TLS, oversized responses, and cross-origin redirects.
-Manifest signing is not required for the first implementation.
+The embedded Mentra profile is the one complete set of defaults. A customer
+manifest uses the same schema as a partial override of that profile, so the app
+has one resolution path rather than separate consumer and enterprise branches.
+
+HTTPS and the device trust store authenticate the workspace server; a device
+administrator may install a private CA where required. V1 rejects URL
+credentials, query strings, fragments, invalid TLS, oversized responses, and
+cross-origin redirects. Manifest signing is not required for the first
+implementation.
 
 After activation, a `core-sso` deployment presents a single Continue with
 organization account button. It opens `GET /api/account/sso/start` on the
@@ -212,7 +212,7 @@ The first supported enterprise identity integration is Microsoft Entra:
    its Microsoft Entra tenant and configures the resulting registration on its
    customer-hosted Core.
 2. The end user chooses Connect to a workspace and enters the URL supplied by
-   IT, or MDM supplies it automatically.
+   IT.
 3. The app fetches and validates the well-known manifest, then asks the end user
    to confirm the resolved organization.
 4. The app activates that deployment and presents Continue with organization
@@ -306,7 +306,7 @@ The reference environment includes:
 - The well-known deployment manifest, customer-hosted OTA and model artifacts,
   and an explicitly approved speech-provider configuration.
 - Android and iOS devices running the official Mentra App and selecting the
-  Azure environment through the normal workspace or MDM flow.
+  Azure environment through the normal manual workspace flow.
 - Restricted-network validation proving that the Self-Hosted profile does not
   use Mentra's public Core, Runtime, telemetry, artifact, or content services.
 
@@ -369,10 +369,6 @@ identity endpoint, but it operates against the customer's tenant and policy.
 Mentra's public Core, Runtime, directory, and Supabase are not in this
 authentication path. Neither the workspace manifest nor Mentra infrastructure
 receives the user's corporate credential.
-
-MDM can make workspace selection invisible, but does not make login silent
-unless the managed environment separately supplies a device identity,
-certificate, or platform SSO session.
 
 On subsequent boots, the app loads the saved profile before starting any
 network-capable service. It refreshes the configured URL when reachable and can
@@ -502,7 +498,7 @@ Rules:
   deployments must inspect that resolved profile and override or null every
   inherited public-network destination before qualification.
 - The document contains no passwords, bearer tokens, private keys, or provider
-  secrets. Those remain in MDM secret delivery or server configuration.
+  secrets. Those remain in server configuration and its secret store.
 - The pre-deployment landing screen always exposes the supported consumer
   choices and Connect to a workspace. Once a custom deployment is selected,
   only that manifest's auth mode and supporting flow are shown.
@@ -527,7 +523,7 @@ to block the configuration foundation or the move to Mentra-owned hosting.
 
 ```text
 load local settings
-  -> resolve MDM workspace / previously enrolled deployment, if present
+  -> restore the previously enrolled deployment, if present
   -> otherwise render the local consumer-or-enterprise landing screen
   -> consumer choice activates embedded Mentra deployment
   -> Connect to a workspace accepts an HTTPS workspace origin
@@ -650,14 +646,15 @@ Mentra-signed APK from the completed GitHub release and install or update it
 through MDM. This is the same app binary produced by the normal coordinated
 release.
 
-For iOS, use the normal App Store app through Apple Business Manager/MDM and
-deliver the workspace URL as managed app configuration. The current App Store IPA
-is not a generally sideloadable offline package. Strictly disconnected first
-installation would require a separately provisioned in-house distribution and
-periodic Apple certificate validation, so the same-binary promise should be
-stated as disconnected operation after Apple/MDM provisioning on iOS.
+For iOS, use the normal App Store app through Apple Business Manager/MDM. V1
+users enter the workspace URL manually after installation; the Mentra App does
+not yet consume managed app configuration. The current App Store IPA is not a
+generally sideloadable offline package. Strictly disconnected first installation
+would require a separately provisioned in-house distribution and periodic Apple
+certificate validation, so the same-binary promise should be stated as
+disconnected operation after Apple/MDM provisioning on iOS.
 
-Apple documents [managed app configuration](https://support.apple.com/guide/deployment/distribute-managed-apps-dep575bfed86/web),
+Apple documents [managed app distribution](https://support.apple.com/guide/deployment/distribute-managed-apps-dep575bfed86/web),
 [Custom App distribution through Apple Business Manager](https://support.apple.com/guide/deployment/distribute-custom-apps-dep0113f6e18/web),
 and the additional provisioning/certificate requirements for
 [self-hosted in-house IPA distribution](https://support.apple.com/guide/deployment/distribute-proprietary-in-house-apps-depce7cefc4d/web).
@@ -679,8 +676,8 @@ The first Android-and-iOS self-hosted pilot is complete when:
    network where Mentra public services are blocked and only deployment-approved
    customer and SaaS destinations are reachable.
 2. Google, Apple, or Email selects the embedded Mentra profile. Connect to a
-   workspace or MDM resolves the customer manifest from the workspace's
-   well-known endpoint before organization SSO.
+   workspace resolves the customer manifest from the workspace's well-known
+   endpoint before organization SSO.
 3. Login, refresh, Runtime connection, cloud STT/TTS, settings, registry, and
    enabled miniapps use customer-hosted Core and Runtime. Any cloud speech egress
    is limited to the provider explicitly approved for that deployment.
@@ -705,6 +702,10 @@ The first Android-and-iOS self-hosted pilot is complete when:
 - Optional workspace discovery by verified work-email domain or organization
   code. It resolves to the same workspace URL and is not required for self-hosted
   deployment or SSO.
+- MDM-managed workspace injection. A future Android Enterprise or Apple managed
+  app configuration adapter supplies the same workspace origin to the common
+  resolver, marks it enforced, and suppresses manual deployment switching. MDM
+  app distribution itself does not depend on this feature.
 - Separating account, registry, settings, version-check, and reporting APIs from
   Core into a smaller control-plane service.
 - Local-only Engine startup with no Core, Runtime, or auth seam.

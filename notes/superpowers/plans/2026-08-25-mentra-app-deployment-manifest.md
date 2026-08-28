@@ -12,21 +12,22 @@ owner: Mentra
 Self-Hosted on customer-controlled infrastructure by selecting one deployment
 manifest before sign-in and before any public-network integration starts.
 
-**Architecture:** The app restores an MDM-provided or previously enrolled
-deployment at cold boot. Otherwise, a local landing screen lets Google, Apple,
-or Email activate the embedded Mentra profile. Connect to a workspace accepts a
-human-facing HTTPS origin and fetches its manifest from
+**Architecture:** The app restores a previously enrolled deployment at cold
+boot. Otherwise, a local landing screen lets Google, Apple, or Email activate
+the embedded Mentra profile. Connect to a workspace accepts a human-facing HTTPS
+origin and fetches its manifest from
 `/.well-known/mentra-deployment.json`. The app activates the candidate only
 after validation and confirmation, then starts the selected Core's configured
-auth flow. MDM injects the same workspace origin. The active immutable profile
-configures auth and Engine; Engine passes the OTA URL to Bluetooth SDK and model
-locations to its speech managers. Customer overrides and the embedded Mentra
-profile resolve to one complete object; the self-hosted template explicitly
-replaces or nulls every public-network destination.
+auth flow. Workspace acquisition remains separate from the common fetch,
+validation, and activation pipeline so a future MDM adapter can supply the same
+origin. The active immutable profile configures auth and Engine; Engine passes
+the OTA URL to Bluetooth SDK and model locations to its speech managers.
+Customer overrides and the embedded Mentra profile resolve to one complete
+object; the self-hosted template explicitly replaces or nulls every
+public-network destination.
 
-**Tech Stack:** React Native/Expo, TypeScript, MMKV, native managed-app
-configuration bridges, Cloud V2, Cloudflare R2, coordinated GitHub Actions
-releases.
+**Tech Stack:** React Native/Expo, TypeScript, MMKV, Cloud V2, Cloudflare R2,
+coordinated GitHub Actions releases.
 
 **Spec source of truth:**
 `notes/superpowers/specs/2026-08-25-mentra-app-deployment-manifest-design.md`
@@ -49,8 +50,7 @@ releases.
       complete embedded Mentra profile. Arrays replace; explicit null disables
       nullable destinations; validation runs on the resolved profile.
 - [ ] Generate the embedded Mentra profile from coordinated build inputs.
-- [ ] Resolve an MDM workspace URL or previously enrolled profile before
-      showing auth.
+- [ ] Restore a previously enrolled profile before showing auth.
 - [ ] Keep the embedded Mentra profile available for explicit consumer login
       selection rather than silently treating it as the only cold-boot default.
 - [ ] Persist the workspace origin and last valid manifest under `deploymentId`.
@@ -92,7 +92,6 @@ releases.
 - Modify mobile login translations, starting with `mobile/src/i18n/en.ts`
 - Modify `cloud-v2/packages/core/src/api/well-known.api.ts`
 - Add mobile and Core well-known-manifest tests
-- Add minimal Android/iOS MDM configuration bridges
 - Modify logout/reset utilities
 
 - [ ] Preserve the current Mentra consumer signup/login controls and add a
@@ -122,20 +121,20 @@ releases.
       atomically persists the workspace and re-enters the gated auth route.
 - [ ] On a manually selected workspace's pre-login screen, offer Use a different
       workspace and Return to Mentra. Returning clears the custom selection and
-      restores the local consumer landing. Keep these controls unavailable when
-      an enforced MDM workspace is active and show managed-organization copy.
-- [ ] Read the workspace origin from Android Enterprise and Apple managed app
-      configuration when supplied and use the same well-known resolver. Treat
-      an enforced MDM value as authoritative.
+      restores the local consumer landing.
+- [ ] Keep workspace acquisition separate from manifest fetch, validation,
+      confirmation, and activation. Persist local enrollment metadata with
+      `source: "manual"` so a future managed/enforced source can reuse the same
+      pipeline without changing the manifest contract. Do not implement native
+      MDM configuration bridges in v1.
 - [ ] For the first self-hosted pilot, render one organization-account action
       for `auth.mode: "core-sso"`. Do not expose signup, passwords,
       verification email, or recovery.
 - [ ] Make switching deployment stop Engine, sign out, clear the old auth
       namespace, and reboot through the same resolver.
 - [ ] Cache the selected manifest for disconnected boot and refresh it from the
-      stable workspace URL when reachable. Test invalid candidates, MDM
-      precedence, failed refresh, and the absence of cross-deployment
-      credentials.
+      stable workspace URL when reachable. Test invalid candidates, failed
+      refresh, manual switching, and the absence of cross-deployment credentials.
 
 ## Phase 2: Feed the profile into auth and Engine
 
@@ -299,14 +298,16 @@ releases.
       manifest.
 - [ ] Do not create a customer mobile build lane; reuse the exact Android and
       iOS artifacts from the coordinated release.
-- [ ] Document Android MDM/APK import and iOS Apple Business Manager/MDM setup.
+- [ ] Document Android APK/MDM distribution and iOS Apple Business Manager/MDM
+      app distribution. State that v1 users enter the workspace URL manually;
+      managed app configuration injection is a follow-up feature.
 - [ ] Publish a Microsoft Entra administrator guide based on Mentra's tested
       setup. Cover single-tenant app registration, the Core Web callback URL,
       the tenant-specific OIDC issuer URL, client id, secure client-credential
       delivery, required assignment, user/group assignment, Core configuration,
       validation, rotation, and troubleshooting. State that no Microsoft Graph
       access is required.
-- [ ] Document the workspace URL and well-known endpoint, MDM key, and private-CA
+- [ ] Document the workspace URL, well-known endpoint, and private-CA
       installation alongside the Entra guide.
 
 ## Phase 5: Self-hosted service packaging and qualification
@@ -332,8 +333,8 @@ environment, customer runbook, end-to-end tests
       app registration and dedicated assigned test group in Mentra's Microsoft
       Entra tenant.
 - [ ] Use the official Android and iOS Mentra App binaries to select the Azure
-      workspace through the normal manual or MDM flow and complete login,
-      Runtime, miniapp, OTA, and speech scenarios end to end.
+      workspace through the manual workspace flow and complete login, Runtime,
+      miniapp, OTA, and speech scenarios end to end.
 - [ ] Test assigned, unassigned, wrong-tenant, MFA, disabled-user,
       expired-credential, callback-tampering, refresh, reauthentication, and
       logout cases against that reference deployment.
@@ -355,8 +356,8 @@ environment, customer runbook, end-to-end tests
 
 - **PR 1:** Manifest types/resolver, embedded Mentra profile, deployment-neutral
   landing screen, boot gating, and tests. No customer deployment is promised yet.
-- **PR 2:** Workspace URL/well-known manifest enrollment, MDM configuration,
-  deployment-scoped Core/Runtime, and direct Microsoft Entra OIDC sign-in.
+- **PR 2:** Workspace URL/well-known manifest enrollment, deployment-scoped
+  Core/Runtime, and direct Microsoft Entra OIDC sign-in.
 - **PR 3:** OTA/model routing, deployment wallpaper/link/system-miniapp policy,
   pairing-model override, telemetry, and optional-feature egress gates.
 - **PR 4:** Coordinated deployment artifacts and a physical restricted-network
