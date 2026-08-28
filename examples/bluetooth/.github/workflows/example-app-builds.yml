@@ -334,7 +334,7 @@ jobs:
       - name: Build release Android app
         working-directory: examples/react-native/android
         run: |
-          ./gradlew :app:assembleRelease --no-daemon
+          ./gradlew :app:assembleRelease --no-daemon -Dorg.gradle.jvmargs="-Xmx6g -XX:MaxMetaspaceSize=1g"
 
       - name: Verify Android 16 KB page-size support
         run: examples/react-native/scripts/check-android-16kb.sh examples/react-native/android/app/build/outputs/apk/release/app-release.apk
