@@ -278,6 +278,9 @@ test("Maven generation builds every local config plugin before Expo prebuild", (
   assert.notEqual(prebuild, -1)
   assert.ok(crustPluginBuild < prebuild)
   assert.ok(bluetoothPluginBuild < prebuild)
+  assert.match(sdkNative, /react-native\/gradle\/libs\.versions\.toml/)
+  assert.match(sdkNative, /sdkmanager "ndk;\$ndk_version"/)
+  assert.doesNotMatch(sdkNative, /sdkmanager "ndk;[0-9]/)
 })
 
 test("Android release preserves the Expo-configured marketing version", () => {
