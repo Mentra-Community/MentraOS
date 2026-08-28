@@ -28,7 +28,7 @@ env:
   GSTREAMER_VERSION: 1.28.2
   STARTER_KIT_REPOSITORY: Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit
   EXAMPLE_APP_ID: "6792839366"
-  EXAMPLE_BUNDLE_ID: com.mentra.bluetoothsdk.example.reactnative
+  EXAMPLE_BUNDLE_ID: com.mentra.bluetoothsdkexample
   APPLE_TEAM_ID: T5XXXL6N36
 
 jobs:
@@ -112,6 +112,7 @@ jobs:
           --issuer-id "${{ secrets.ASC_API_ISSUER_ID }}"
           --key-id "${{ secrets.ASC_API_KEY_ID }}"
           --key-path "${{ steps.asc.outputs.key_path }}"
+          --app-id "$EXAMPLE_APP_ID"
           --bundle-id "$EXAMPLE_BUNDLE_ID"
           --marketing-version "${{ steps.coordinates.outputs.marketing_version }}"
           --build-number "${{ steps.coordinates.outputs.build_number }}"
@@ -181,11 +182,13 @@ jobs:
           const file = "app.json"
           const config = JSON.parse(readFileSync(file, "utf8"))
           config.expo.version = process.env.MARKETING_VERSION
+          config.expo.ios.bundleIdentifier = process.env.EXAMPLE_BUNDLE_ID
           config.expo.ios.buildNumber = process.env.BUILD_NUMBER
           config.expo.ios.infoPlist.ITSAppUsesNonExemptEncryption = false
           writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`)
           NODE
           bunx expo prebuild --platform ios --clean
+          test -n "$(find ios -maxdepth 1 -name '*.xcworkspace' -print -quit)"
 
       - name: Install the shared Apple distribution identity
         if: steps.app-store.outputs.exists != 'true'
@@ -193,6 +196,9 @@ jobs:
         env:
           MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
           RAW_MATCH_GIT_BASIC_AUTHORIZATION: ${{ secrets.MATCH_GIT_BASIC_AUTHORIZATION }}
+          ASC_KEY_PATH: ${{ steps.asc.outputs.key_path }}
+          ASC_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_API_ISSUER_ID }}
         run: |
           set -euo pipefail
           export PATH="$HOME/.rbenv/shims:$HOME/.rbenv/bin:$PATH"
@@ -221,17 +227,50 @@ jobs:
               security import "$certificate" -k "$keychain" -T /usr/bin/codesign 2>&1 | grep -v "already exists" || true
             fi
           done
-          keychains=("$keychain")
-          while IFS= read -r existing; do
-            existing="${existing#*\"}"
-            existing="${existing%\"*}"
-            [[ -n "$existing" && "$existing" != "$keychain" ]] && keychains+=("$existing")
-          done < <(security list-keychains -d user)
-          security list-keychains -d user -s "${keychains[@]}"
+          security list-keychains -d user -s "$keychain"
           security default-keychain -s "$keychain"
-          bundle exec fastlane match appstore --readonly --keychain_name "$keychain" --keychain_password "$password"
+          match_output="${RUNNER_TEMP}/mentra-example-match"
+          mkdir -p "$match_output"
+          bundle exec fastlane match appstore --readonly \
+            --keychain_name "$keychain" \
+            --keychain_password "$password" \
+            --output_path "$match_output"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain"
+          certificate=$(find "$match_output" -maxdepth 1 -name '*.cer' -print -quit)
+          test -n "$certificate"
+          certificate_id=$(basename "$certificate" .cer)
+          certificate_fingerprint=$(openssl x509 -inform DER -in "$certificate" -noout -fingerprint -sha1 \
+            | cut -d= -f2 \
+            | tr -d ':')
+          identity=$(security find-identity -v -p codesigning "$keychain" \
+            | awk -v fingerprint="$certificate_fingerprint" '$2 == fingerprint { print $2; exit }')
+          test -n "$identity"
+          api_key="${RUNNER_TEMP}/mentra-creds/example-fastlane-api-key.json"
+          jq -n \
+            --arg key_id "$ASC_KEY_ID" \
+            --arg issuer_id "$ASC_ISSUER_ID" \
+            --rawfile key "$ASC_KEY_PATH" \
+            '{key_id: $key_id, issuer_id: $issuer_id, key: $key, in_house: false}' \
+            > "$api_key"
+          profile_dir="${RUNNER_TEMP}/mentra-example-profile"
+          mkdir -p "$profile_dir"
+          bundle exec fastlane sigh \
+            --api_key_path "$api_key" \
+            --app_identifier "$EXAMPLE_BUNDLE_ID" \
+            --team_id "$APPLE_TEAM_ID" \
+            --cert_id "$certificate_id" \
+            --output_path "$profile_dir" \
+            --filename "mentra-example-appstore.mobileprovision"
+          profile="$profile_dir/mentra-example-appstore.mobileprovision"
+          profile_plist="$profile_dir/profile.plist"
+          security cms -D -i "$profile" > "$profile_plist"
+          profile_name=$(/usr/libexec/PlistBuddy -c 'Print :Name' "$profile_plist")
+          [[ "$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' "$profile_plist")" == "$APPLE_TEAM_ID.$EXAMPLE_BUNDLE_ID" ]]
+          [[ "$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:get-task-allow' "$profile_plist")" == "false" ]]
           echo "MENTRA_CI_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
           echo "MENTRA_CI_KEYCHAIN_PASSWORD=$password" >> "$GITHUB_ENV"
+          echo "MENTRA_CI_CODE_SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
+          echo "MENTRA_CI_PROVISIONING_PROFILE_NAME=$profile_name" >> "$GITHUB_ENV"
 
       - name: Archive and export the signed React Native example
         if: steps.app-store.outputs.exists != 'true'
@@ -248,7 +287,8 @@ jobs:
           security unlock-keychain -p "$MENTRA_CI_KEYCHAIN_PASSWORD" "$MENTRA_CI_KEYCHAIN"
           workspace=$(find ios -maxdepth 1 -name '*.xcworkspace' -print -quit)
           test -n "$workspace"
-          scheme=$(xcodebuild -workspace "$workspace" -list -json | jq -er '.workspace.schemes[0]')
+          scheme=$(xcodebuild -workspace "$workspace" -list -json \
+            | jq -er '.workspace.schemes[] | select(. == "MentraSDKRN")')
           archive="$RUNNER_TEMP/mentra-example-react-native.xcarchive"
           output="$RUNNER_TEMP/mentra-example-react-native-export"
           rm -rf "$archive" "$output"
@@ -263,27 +303,34 @@ jobs:
             -authenticationKeyID "$ASC_KEY_ID" \
             -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
             DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
-            CODE_SIGN_STYLE=Automatic \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="$MENTRA_CI_CODE_SIGN_IDENTITY" \
+            PROVISIONING_PROFILE_SPECIFIER="$MENTRA_CI_PROVISIONING_PROFILE_NAME" \
+            OTHER_CODE_SIGN_FLAGS="--keychain $MENTRA_CI_KEYCHAIN" \
             MARKETING_VERSION="$MARKETING_VERSION" \
             CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
             archive
-          cat > "$RUNNER_TEMP/mentra-example-export-options.plist" <<PLIST
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0"><dict>
-            <key>method</key><string>app-store-connect</string>
-            <key>teamID</key><string>$APPLE_TEAM_ID</string>
-            <key>signingStyle</key><string>automatic</string>
-            <key>destination</key><string>export</string>
-            <key>manageAppVersionAndBuildNumber</key><false/>
-            <key>uploadSymbols</key><true/>
-          </dict></plist>
-          PLIST
+          export_options="$RUNNER_TEMP/mentra-example-export-options.plist"
+          jq -n \
+            --arg team_id "$APPLE_TEAM_ID" \
+            --arg bundle_id "$EXAMPLE_BUNDLE_ID" \
+            --arg profile "$MENTRA_CI_PROVISIONING_PROFILE_NAME" \
+            '{
+              method: "app-store-connect",
+              teamID: $team_id,
+              signingStyle: "manual",
+              signingCertificate: "Apple Distribution",
+              provisioningProfiles: {($bundle_id): $profile},
+              destination: "export",
+              manageAppVersionAndBuildNumber: false,
+              uploadSymbols: true
+            }' > "$export_options.json"
+          plutil -convert xml1 -o "$export_options" "$export_options.json"
           xcodebuild \
             -exportArchive \
             -archivePath "$archive" \
             -exportPath "$output" \
-            -exportOptionsPlist "$RUNNER_TEMP/mentra-example-export-options.plist" \
+            -exportOptionsPlist "$export_options" \
             -allowProvisioningUpdates \
             -authenticationKeyPath "$ASC_KEY_PATH" \
             -authenticationKeyID "$ASC_KEY_ID" \
@@ -314,7 +361,7 @@ jobs:
           [[ "$(plutil -extract CFBundleShortVersionString raw "$app/Info.plist")" == "$EXPECTED_VERSION" ]]
           [[ "$(plutil -extract CFBundleVersion raw "$app/Info.plist")" == "$EXPECTED_BUILD" ]]
           codesign -d --entitlements :- "$app" > "$RUNNER_TEMP/mentra-example-entitlements.plist"
-          [[ "$(plutil -extract com.apple.developer.networking.HotspotConfiguration raw "$RUNNER_TEMP/mentra-example-entitlements.plist")" == "true" ]]
+          [[ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.networking.HotspotConfiguration' "$RUNNER_TEMP/mentra-example-entitlements.plist")" == "true" ]]
           application_identifier=$(plutil -extract application-identifier raw "$RUNNER_TEMP/mentra-example-entitlements.plist")
           [[ "$application_identifier" == "$APPLE_TEAM_ID.$EXAMPLE_BUNDLE_ID" ]]
 
@@ -325,6 +372,7 @@ jobs:
           --issuer-id "${{ secrets.ASC_API_ISSUER_ID }}"
           --key-id "${{ secrets.ASC_API_KEY_ID }}"
           --key-path "${{ steps.asc.outputs.key_path }}"
+          --app-id "$EXAMPLE_APP_ID"
           --bundle-id "$EXAMPLE_BUNDLE_ID"
           --marketing-version "${{ steps.coordinates.outputs.marketing_version }}"
           --build-number "${{ steps.coordinates.outputs.build_number }}"
@@ -337,6 +385,7 @@ jobs:
           --issuer-id "${{ secrets.ASC_API_ISSUER_ID }}"
           --key-id "${{ secrets.ASC_API_KEY_ID }}"
           --key-path "${{ steps.asc.outputs.key_path }}"
+          --app-id "$EXAMPLE_APP_ID"
           --bundle-id "$EXAMPLE_BUNDLE_ID"
           --marketing-version "${{ steps.coordinates.outputs.marketing_version }}"
           --build-number "${{ steps.coordinates.outputs.build_number }}"

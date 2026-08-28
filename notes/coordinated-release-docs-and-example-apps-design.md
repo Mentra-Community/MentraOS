@@ -203,8 +203,8 @@ The workflow:
 4. updates every example and lockfile to the exact coordinated versions;
 5. embeds the exact release identity and OTA pin where the example runtime
    needs observable release metadata;
-6. waits for MentraOS to open a version-synchronization pull request against the
-   channel branch;
+6. opens or reuses a version-synchronization pull request against the channel
+   branch with the repository-local workflow token;
 7. lets the repository's normal pull-request workflow validate the exact
    candidate SHA;
 8. merges the pull request itself only after the protected required checks for
@@ -256,11 +256,11 @@ releases.
 
 MentraOS dispatches with a GitHub App installation token scoped to the two
 repositories. A personal access token is not part of the final release
-architecture. The App receives only the permissions needed to dispatch
-workflows, read run state, and create the synchronization pull request. The
-Starter Kit's own `GITHUB_TOKEN` creates the candidate commit, observes its
-normal pull-request validation, merges the exact validated head, and publishes
-the tag, release, and assets.
+architecture. The App receives only the permissions needed to dispatch the
+workflow and read run state. The Starter Kit's own `GITHUB_TOKEN` creates the
+candidate commit and synchronization pull request, observes its normal
+pull-request validation, merges the exact validated head, and publishes the
+tag, release, and assets.
 
 MentraOS stores the numeric App ID in the
 `STARTER_KIT_COORDINATOR_APP_ID` repository variable and its private key

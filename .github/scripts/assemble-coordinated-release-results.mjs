@@ -55,7 +55,7 @@ function verifyExampleTestflight(plan, starterKit, exampleTestflight) {
     exampleTestflight.mentraosSourceCommit !== plan.sourceCommit ||
     exampleTestflight.starterKitReleaseCommit !== starterKit.starterKit?.releaseCommit ||
     exampleTestflight.app?.id !== "6792839366" ||
-    exampleTestflight.app?.bundleId !== "com.mentra.bluetoothsdk.example.reactnative" ||
+    exampleTestflight.app?.bundleId !== "com.mentra.bluetoothsdkexample" ||
     exampleTestflight.version?.marketingVersion !== plan.native.marketingVersion ||
     exampleTestflight.version?.buildNumber !== plan.native.buildNumber ||
     exampleTestflight.build?.processingState !== "VALID" ||

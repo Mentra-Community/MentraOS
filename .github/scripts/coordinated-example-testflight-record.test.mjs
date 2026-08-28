@@ -27,7 +27,7 @@ function input(overrides = {}) {
     plan,
     starterKit,
     appId: "6792839366",
-    bundleId: "com.mentra.bluetoothsdk.example.reactnative",
+    bundleId: "com.mentra.bluetoothsdkexample",
     buildId: "build-1",
     groupId: "group-1",
     groupName: "Mentra Dev",

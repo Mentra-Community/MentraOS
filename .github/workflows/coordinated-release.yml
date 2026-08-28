@@ -301,7 +301,6 @@ jobs:
             Mentra-Bluetooth-SDK-Starter-Kit
           permission-actions: read
           permission-contents: write
-          permission-pull-requests: write
 
       - name: Request the exact Starter Kit release
         id: request
@@ -405,13 +404,16 @@ jobs:
                   echo "run_url=$run_url" >> "$GITHUB_OUTPUT"
                 fi
               fi
-              candidate_sha=$(gh api "repos/$STARTER_KIT_REPOSITORY/branches/$encoded_candidate_branch" \
-                --jq .commit.sha 2>/dev/null || true)
+              candidate_sha=""
+              if branch_sha=$(gh api "repos/$STARTER_KIT_REPOSITORY/branches/$encoded_candidate_branch" \
+                --jq .commit.sha 2>/dev/null) && [[ "$branch_sha" =~ ^[0-9a-f]{40}$ ]]; then
+                candidate_sha="$branch_sha"
+              fi
               [[ -n "$run_id" && -n "$candidate_sha" ]] && break
               if [[ -n "$run_id" ]]; then
                 run_state=$(gh run view "$run_id" --repo "$STARTER_KIT_REPOSITORY" \
                   --json status,conclusion 2>/dev/null || true)
-                status=$(jq -r '.status // empty' <<< "${run_state:-{}}")
+                status=$(jq -r '.status // empty' <<< "${run_state:-null}")
                 if [[ "$status" == "completed" ]]; then
                   conclusion=$(jq -r '.conclusion // "unknown"' <<< "$run_state")
                   echo "Starter Kit run concluded $conclusion before creating $candidate_branch: $run_url" >&2
@@ -424,43 +426,6 @@ jobs:
               echo "Starter Kit did not create $candidate_branch for $identity within 30 minutes." >&2
               exit 1
             fi
-
-            pr_json=$(gh pr list --repo "$STARTER_KIT_REPOSITORY" --state all \
-              --base "$target_branch" --head "$candidate_branch" --limit 1 \
-              --json number,url,state,mergedAt,headRefOid)
-            if [[ "$(jq 'length' <<< "$pr_json")" == "0" ]]; then
-              pr_body=$(printf '%s\n\n%s\n%s\n' \
-                "Automated dependency synchronization for coordinated release \`$identity\`." \
-                "Coordinator: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
-                "Starter Kit workflow: $run_url")
-              pr_response=""
-              for attempt in {1..6}; do
-                if pr_response=$(gh api --method POST "repos/$STARTER_KIT_REPOSITORY/pulls" \
-                  -f base="$target_branch" \
-                  -f head="$candidate_branch" \
-                  -f title="chore(release): synchronize examples to $identity" \
-                  -f body="$pr_body" 2>pr-create-error.log); then
-                  break
-                fi
-                if (( attempt == 6 )); then
-                  cat pr-create-error.log >&2
-                  exit 1
-                fi
-                sleep 5
-              done
-              pr_url=$(jq -r .html_url <<< "$pr_response")
-              pr_head=$(jq -r .head.sha <<< "$pr_response")
-            else
-              pr_url=$(jq -r '.[0].url' <<< "$pr_json")
-              pr_head=$(jq -r '.[0].headRefOid' <<< "$pr_json")
-              merged_at=$(jq -r '.[0].mergedAt // empty' <<< "$pr_json")
-              state=$(jq -r '.[0].state' <<< "$pr_json")
-              if [[ "$state" == "CLOSED" && -z "$merged_at" ]]; then
-                echo "Existing coordinator PR $pr_url was closed without merging." >&2
-                exit 1
-              fi
-            fi
-            [[ "$pr_head" == "$candidate_sha" ]]
           fi
 
           {
