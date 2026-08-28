@@ -79,6 +79,7 @@ test("mobile destinations use real TestFlight groups without changing the releas
   assert.doesNotMatch(mobile, /MENTRA_COORDINATED_RELEASE_CHANNEL=\$\{\{ inputs\.testflight_group \}\}/)
   assert.match(example, /EXAMPLE_APP_ID: "6792839366"/)
   assert.match(example, /EXAMPLE_BUNDLE_ID: com\.mentra\.bluetoothsdk\.example\.reactnative/)
+  assert.equal([...example.matchAll(/--app-id "\$EXAMPLE_APP_ID"/g)].length, 3)
   assert.match(example, /starterKit\.releaseCommit/)
   assert.match(example, /runs-on: \[self-hosted, macOS, ARM64\]/)
   assert.match(example, /app-store-connect-build\.mjs upload/)
