@@ -14,11 +14,8 @@ This example installs the SDK as `com.mentraglass:bluetooth-sdk` and is intended
 
 ## SDK Version
 
-The example reads the SDK version from `gradle.properties`:
-
-```properties
-mentraSdkVersion=3.1.0-dev.9
-```
+The example reads its exact SDK version from `mentraSdkVersion` in
+[`gradle.properties`](./gradle.properties).
 
 Use the latest SDK version published by Mentra. If a future release note lists an additional Maven repository, add it to `settings.gradle.kts` beside `google()` and `mavenCentral()`.
 

@@ -13,7 +13,8 @@ This example installs the SDK as the `MentraBluetoothSDK` Swift package. No path
 
 ## SDK Version
 
-The Xcode project pins the public Swift package to `3.1.0-dev.9`:
+The Xcode project pins an exact version of the public Swift package configured
+in [`project.yml`](./project.yml):
 
 ```text
 https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git
