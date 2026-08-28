@@ -262,6 +262,15 @@ organization does not permit a repository `GITHUB_TOKEN` to create or approve
 pull requests. The Starter Kit's own `GITHUB_TOKEN` creates the candidate
 commit and publishes its tag, release, and assets after MentraOS merges the PR.
 
+MentraOS stores the numeric App ID in the
+`STARTER_KIT_COORDINATOR_APP_ID` repository variable and its private key
+in the `STARTER_KIT_COORDINATOR_APP_PRIVATE_KEY` repository secret. Release
+jobs mint short-lived installation tokens with
+`actions/create-github-app-token`; no generated token is persisted. The App is
+installed only on `MentraOS` and `Mentra-Bluetooth-SDK-Starter-Kit` with
+Actions read, Checks read, Contents read/write, and Pull requests read/write
+permissions. Each job requests only the subset it uses when minting its token.
+
 During bootstrap, the implementation may fall back to the existing scoped SDK
 push credential while `STARTER_KIT_COORDINATOR_TOKEN` is being provisioned. The
 fallback is explicit migration debt: it is not copied into another secret, and

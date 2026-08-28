@@ -104,6 +104,19 @@ test("coordinated docs publish only after finalization to the matching channel",
   assert.match(starterKit, /gh pr view "\$pull_request_url"[^]*--json url,state,headRefOid,baseRefName,mergeCommit/)
   assert.match(starterKit, /git\/ref\/tags\/sdk-\$identity/)
   assert.match(starterKit, /\.digest <<< "\$asset"/)
+  assert.match(starterKit, /actions\/create-github-app-token@v3/)
+  assert.match(starterKit, /app-id: \$\{\{ vars\.STARTER_KIT_COORDINATOR_APP_ID \}\}/)
+  assert.match(starterKit, /private-key: \$\{\{ secrets\.STARTER_KIT_COORDINATOR_APP_PRIVATE_KEY \}\}/)
+  assert.match(starterKit, /continue-on-error: true/)
+  assert.doesNotMatch(starterKit, /STARTER_KIT_APP_PRIVATE_KEY:/)
+  assert.match(starterKit, /permission-actions: read/)
+  assert.match(starterKit, /permission-checks: read/)
+  assert.match(starterKit, /permission-contents: write/)
+  assert.match(starterKit, /permission-pull-requests: write/)
+  assert.match(
+    starterKit,
+    /STARTER_KIT_TOKEN: \$\{\{ steps\.starter-kit-app-token\.outputs\.token \|\| secrets\.STARTER_KIT_COORDINATOR_TOKEN/,
+  )
   assert.match(exampleTestflight, /^    needs: \[plan, starter-kit\]$/m)
   assert.match(exampleTestflight, /reusable-coordinated-example-testflight\.yml/)
   assert.match(jobBlock(coordinator, "finalize"), /needs\.starter-kit\.result == 'success'/)
@@ -129,6 +142,16 @@ test("coordinated docs publish only after finalization to the matching channel",
   assert.match(notify, /EXAMPLE_TESTFLIGHT_RESULT: \$\{\{ needs\.example-testflight\.result \}\}/)
   assert.match(notify, /STARTER_KIT_RUN_URL: \$\{\{ needs\.starter-kit\.outputs\.run_url \}\}/)
   assert.match(notify, /DOCS_RESULT: \$\{\{ needs\.docs\.result \}\}/)
+  const example = workflow("reusable-coordinated-example-testflight.yml")
+  assert.match(example, /actions\/create-github-app-token@v3/)
+  assert.match(example, /private-key: \$\{\{ secrets\.STARTER_KIT_COORDINATOR_APP_PRIVATE_KEY \}\}/)
+  assert.match(example, /continue-on-error: true/)
+  assert.doesNotMatch(example, /STARTER_KIT_APP_PRIVATE_KEY:/)
+  assert.match(example, /permission-contents: read/)
+  assert.match(
+    example,
+    /token: \$\{\{ steps\.starter-kit-app-token\.outputs\.token \|\| secrets\.STARTER_KIT_COORDINATOR_TOKEN/,
+  )
 })
 
 test("mobile release selects an existing Doppler token for its backend", () => {
