@@ -116,7 +116,7 @@ function deriveStoreUrl(core: string): string {
   const url = new URL(core)
   if (url.hostname === "core.mentraglass.com") return "https://store.mentraglass.com"
   if (url.hostname.startsWith("core.")) url.hostname = url.hostname.replace(/^core\./, "store.")
-  else if ((url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "::1") && url.port === "3000") url.port = "3003"
+  else if (url.protocol === "http:" && url.port === "3000") url.port = "3003"
   return url.origin
 }
 

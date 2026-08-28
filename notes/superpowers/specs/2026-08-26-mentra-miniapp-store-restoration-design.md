@@ -115,8 +115,9 @@ routes.
 The official endpoints are independently configurable (`MENTRA_CORE_URL` and
 `MENTRA_STORE_URL`). `@mentra/cloud-client` exposes them as `cloud.core` and
 `cloud.store`. The CLI and Mentra App derive `store.*` only from a conventional
-`core.*` hostname (and local port 3003 from Core port 3000). An independently
-named OEM Store must be selected explicitly as part of the same endpoint
+`core.*` hostname (and local port 3003 from Core port 3000, including a Metro
+host's LAN address on physical phones). An independently named OEM Store must
+be selected explicitly as part of the same endpoint
 profile. An arbitrary custom Core hostname never falls back to Mentra's Store,
 so a Core identity credential cannot be sent to an unrelated distribution
 service. Existing two-endpoint custom profiles derive Store from their selected
