@@ -153,7 +153,7 @@ the production plan has already proven reachable from `main`.
 For a real release the reusable workflow:
 
 1. Checks out the exact `source_commit`.
-2. Resolves and records the full SHA and short tag.
+2. Resolves and records the full SHA used as Porter's image tag.
 3. Sets up the pinned Bun and Porter versions already used by the existing
    workflows.
 4. Runs `porter apply -w` with the environment's existing Porter file and waits
@@ -186,11 +186,11 @@ The minimum result record is:
   "porter": {
     "app": "cloud-dev",
     "config": "cloud-v2/porter.dev.yaml",
-    "requestedTag": "<short SHA>"
+    "requestedTag": "<full SHA>"
   },
   "observedServices": [
-    {"service": "core", "digest": "sha256:...", "images": ["registry/cloud-v2:<short SHA>"]},
-    {"service": "runtime", "digest": "sha256:...", "images": ["registry/cloud-v2:<short SHA>"]}
+    {"service": "core", "digest": "sha256:...", "images": ["registry/cloud-v2:<full SHA>"]},
+    {"service": "runtime", "digest": "sha256:...", "images": ["registry/cloud-v2:<full SHA>"]}
   ],
   "deploymentId": "<Porter deployment identifier>",
   "checks": [
@@ -208,7 +208,8 @@ The minimum result record is:
 
 If Porter reports one built image for both process types, the record may use one
 digest with both service names. What matters is recording the observed immutable
-deployment, not assuming that a short Git tag proves what is running.
+deployment. The requested image tag is the full source SHA, and the observed
+digest proves the immutable bytes that are actually running.
 
 For `dry_run: true`, the workflow validates the plan/environment mapping,
 installs dependencies, runs Cloud V2 type checks, and verifies that the selected
