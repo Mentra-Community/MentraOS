@@ -31,6 +31,7 @@ public class WhipStreamConfig {
 
   private boolean echoCancellation = DEFAULT_ECHO_CANCELLATION;
   private boolean noiseSuppression = DEFAULT_NOISE_SUPPRESSION;
+  private boolean captureAudio = true;
 
   private String stunServer = DEFAULT_STUN_SERVER;
 
@@ -65,6 +66,7 @@ public class WhipStreamConfig {
     if (audioJson != null) {
       config.echoCancellation = optBoolWithFallback(audioJson, "echoCancellation", "ec", DEFAULT_ECHO_CANCELLATION);
       config.noiseSuppression = optBoolWithFallback(audioJson, "noiseSuppression", "ns", DEFAULT_NOISE_SUPPRESSION);
+      config.captureAudio = optBoolWithFallback(audioJson, "captureAudio", "ca", true);
     }
 
     return config;
@@ -157,6 +159,7 @@ public class WhipStreamConfig {
   public int getVideoBitrate() { return videoBitrate; }
   public boolean isEchoCancellation() { return echoCancellation; }
   public boolean isNoiseSuppression() { return noiseSuppression; }
+  public boolean isCaptureAudio() { return captureAudio; }
   public String getStunServer() { return stunServer; }
 
   // Setters with validation (fluent API)
@@ -227,6 +230,11 @@ public class WhipStreamConfig {
     return this;
   }
 
+  public WhipStreamConfig setCaptureAudio(boolean enabled) {
+    this.captureAudio = enabled;
+    return this;
+  }
+
   public WhipStreamConfig setStunServer(String stunServer) {
     this.stunServer = stunServer;
     return this;
@@ -239,6 +247,7 @@ public class WhipStreamConfig {
         + (videoBitrate / 1000) + "kbps"
         + ", echo=" + echoCancellation
         + ", noise=" + noiseSuppression
+        + ", captureAudio=" + captureAudio
         + ", stun=" + stunServer
         + '}';
   }
