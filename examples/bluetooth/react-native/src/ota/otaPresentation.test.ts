@@ -4,6 +4,7 @@ import type {MentraLiveOtaState} from '@mentra/engine/ota';
 import {otaPresentation} from './otaPresentation';
 
 const baseState: MentraLiveOtaState = {
+  batteryLevel: 80,
   canDiscard: false,
   canDismiss: false,
   canFinish: false,
@@ -215,6 +216,23 @@ describe('custom OTA presentation', () => {
     });
     expect(presentation.primary).toBeUndefined();
     expect(presentation.changelogs).toBeUndefined();
+  });
+
+  test('blocks installation until the glasses battery reaches the OTA minimum', () => {
+    const presentation = otaPresentation(otaState({
+      batteryLevel: 18,
+      canDismiss: true,
+      screen: 'battery_required',
+    }));
+
+    expect(presentation).toMatchObject({
+      detail: 'This screen will update automatically as the battery charges.',
+      message: 'Mentra Live is currently at 18%. Charge it to at least 25% before updating.',
+      primary: {action: 'install', disabled: true, label: 'Update Now'},
+      secondary: {action: 'finish', label: 'Later'},
+      title: 'Charge Mentra Live to Update',
+      tone: 'neutral',
+    });
   });
 
   test('finishes only after Engine reports the final up-to-date state', () => {

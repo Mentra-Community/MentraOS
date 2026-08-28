@@ -108,6 +108,21 @@ export function otaPresentation(
         tone: 'active',
         versionLabel: updateVersionLabel(releaseTransition),
       };
+    case 'battery_required':
+      return {
+        detail: 'This screen will update automatically as the battery charges.',
+        message: `${deviceName} is currently at ${state.batteryLevel}%. Charge it to at least 25% before updating.`,
+        primary: {
+          action: 'install',
+          disabled: true,
+          label: 'Update Now',
+        },
+        secondary: state.canDismiss
+          ? {action: 'finish', label: 'Later'}
+          : undefined,
+        title: `Charge ${deviceName} to Update`,
+        tone: 'neutral',
+      };
     case 'wifi_required':
       return {
         detail: 'Your glasses may install more than one update and restart several times. Keep them nearby until finished.',
