@@ -105,6 +105,7 @@ test("coordinated docs publish only after finalization to the matching channel",
   assert.match(starterKit, /--json status,conclusion 2>\/dev\/null \|\| true/)
   assert.match(starterKit, /gh api --method POST "repos\/\$STARTER_KIT_REPOSITORY\/pulls"/)
   assert.match(starterKit, /pr_head=\$\(jq -r \.head\.sha <<< "\$pr_response"\)/)
+  assert.match(starterKit, /reconciled_pr=\$\(gh pr list[^]*--json url,state,mergedAt,headRefOid/)
   assert.match(starterKit, /\[\[ "\$pr_head" == "\$candidate_sha" \]\]/)
   assert.doesNotMatch(starterKit, /gh pr create/)
   assert.doesNotMatch(starterKit, /gh pr checks/)

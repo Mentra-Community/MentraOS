@@ -425,14 +425,30 @@ jobs:
                   -f body="$pr_body" 2>pr-create-error.log); then
                   break
                 fi
+                reconciled_pr=$(gh pr list --repo "$STARTER_KIT_REPOSITORY" --state all \
+                  --base "$target_branch" --head "$candidate_branch" --limit 1 \
+                  --json url,state,mergedAt,headRefOid 2>/dev/null || true)
+                if [[ "$(jq 'length' <<< "${reconciled_pr:-[]}")" != "0" ]]; then
+                  pr_url=$(jq -r '.[0].url' <<< "$reconciled_pr")
+                  pr_head=$(jq -r '.[0].headRefOid' <<< "$reconciled_pr")
+                  state=$(jq -r '.[0].state' <<< "$reconciled_pr")
+                  merged_at=$(jq -r '.[0].mergedAt // empty' <<< "$reconciled_pr")
+                  if [[ "$state" == "CLOSED" && -z "$merged_at" ]]; then
+                    echo "Reconciled coordinator PR $pr_url was closed without merging." >&2
+                    exit 1
+                  fi
+                  break
+                fi
                 if (( attempt == 6 )); then
                   cat pr-create-error.log >&2
                   exit 1
                 fi
                 sleep 5
               done
-              pr_url=$(jq -r .html_url <<< "$pr_response")
-              pr_head=$(jq -r .head.sha <<< "$pr_response")
+              if [[ -n "$pr_response" ]]; then
+                pr_url=$(jq -r .html_url <<< "$pr_response")
+                pr_head=$(jq -r .head.sha <<< "$pr_response")
+              fi
             else
               pr_url=$(jq -r '.[0].url' <<< "$pr_json")
               pr_head=$(jq -r '.[0].headRefOid' <<< "$pr_json")
