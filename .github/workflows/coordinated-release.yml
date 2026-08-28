@@ -270,8 +270,8 @@ jobs:
           name: ${{ needs.plan.outputs.plan_artifact }}
           path: release-input/plan
 
-      - name: Create Starter Kit coordinator token
-        id: starter-kit-app-token
+      - name: Create Starter Kit request token
+        id: starter-kit-request-token
         if: vars.STARTER_KIT_COORDINATOR_APP_ID != ''
         continue-on-error: true
         uses: actions/create-github-app-token@v3
@@ -283,15 +283,14 @@ jobs:
             MentraOS
             Mentra-Bluetooth-SDK-Starter-Kit
           permission-actions: read
-          permission-checks: read
           permission-contents: write
           permission-pull-requests: write
 
-      - name: Dispatch and wait for the exact Starter Kit release
-        id: coordinates
+      - name: Request the exact Starter Kit release
+        id: request
         if: needs.plan.outputs.dry_run != 'true'
         env:
-          STARTER_KIT_TOKEN: ${{ steps.starter-kit-app-token.outputs.token || secrets.STARTER_KIT_COORDINATOR_TOKEN || secrets.MENTRA_BLUETOOTH_SDK_IOS_PUSH_TOKEN }}
+          STARTER_KIT_TOKEN: ${{ steps.starter-kit-request-token.outputs.token || secrets.STARTER_KIT_COORDINATOR_TOKEN || secrets.MENTRA_BLUETOOTH_SDK_IOS_PUSH_TOKEN }}
           STARTER_KIT_REPOSITORY: Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit
           OTA_MANIFEST_URL: ${{ needs.ota.outputs.manifest_url }}
           OTA_MANIFEST_SHA256: ${{ needs.ota.outputs.manifest_sha256 }}
@@ -349,11 +348,8 @@ jobs:
           result_name="starter-kit-release-$identity.json"
           container_tag="sdk-builds-v$family_base"
           result_url="https://github.com/$STARTER_KIT_REPOSITORY/releases/download/$container_tag/$result_name"
-          mkdir -p starter-kit-result
 
-          if ! curl --fail --silent --show-error --location "$result_url" \
-            --output "starter-kit-result/$result_name" 2>/dev/null; then
-            rm -f "starter-kit-result/$result_name"
+          if ! curl --fail --silent --show-error --location --head "$result_url" >/dev/null 2>&1; then
             run_json=$(gh run list --repo "$STARTER_KIT_REPOSITORY" \
               --workflow coordinated-example-release.yml --event repository_dispatch --limit 100 \
               --json databaseId,displayTitle,status,url \
@@ -420,11 +416,21 @@ jobs:
                 "Automated dependency synchronization for coordinated release \`$identity\`." \
                 "Coordinator: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
                 "Starter Kit workflow: $run_url")
-              pr_response=$(gh api --method POST "repos/$STARTER_KIT_REPOSITORY/pulls" \
-                -f base="$target_branch" \
-                -f head="$candidate_branch" \
-                -f title="chore(release): synchronize examples to $identity" \
-                -f body="$pr_body")
+              pr_response=""
+              for attempt in {1..6}; do
+                if pr_response=$(gh api --method POST "repos/$STARTER_KIT_REPOSITORY/pulls" \
+                  -f base="$target_branch" \
+                  -f head="$candidate_branch" \
+                  -f title="chore(release): synchronize examples to $identity" \
+                  -f body="$pr_body" 2>pr-create-error.log); then
+                  break
+                fi
+                if (( attempt == 6 )); then
+                  cat pr-create-error.log >&2
+                  exit 1
+                fi
+                sleep 5
+              done
               pr_url=$(jq -r .html_url <<< "$pr_response")
               pr_head=$(jq -r .head.sha <<< "$pr_response")
             else
@@ -438,50 +444,82 @@ jobs:
               fi
             fi
             [[ "$pr_head" == "$candidate_sha" ]]
-
-            if [[ -z "${merged_at:-}" ]]; then
-              checks_ready=false
-              for _ in {1..540}; do
-                checks=$(gh pr checks "$pr_url" --repo "$STARTER_KIT_REPOSITORY" \
-                  --required --json name,bucket 2>/dev/null || true)
-                if [[ -n "$checks" && "$(jq 'length' <<< "$checks")" != "0" ]]; then
-                  if jq -e 'any(.[]; .bucket == "fail" or .bucket == "cancel")' <<< "$checks" >/dev/null; then
-                    jq -r '.[] | "\(.bucket)\t\(.name)"' <<< "$checks" >&2
-                    echo "Required Starter Kit validation failed for $pr_url." >&2
-                    exit 1
-                  fi
-                  if jq -e 'all(.[]; .bucket == "pass" or .bucket == "skipping")' <<< "$checks" >/dev/null; then
-                    checks_ready=true
-                    break
-                  fi
-                fi
-                sleep 10
-              done
-              if [[ "$checks_ready" != "true" ]]; then
-                echo "Required Starter Kit validation did not finish within 90 minutes: $pr_url" >&2
-                exit 1
-              fi
-
-              gh pr merge "$pr_url" --repo "$STARTER_KIT_REPOSITORY" \
-                --merge --match-head-commit "$candidate_sha"
-            fi
-
-            for _ in {1..90}; do
-              if curl --fail --silent --show-error --location "$result_url" \
-                --output "starter-kit-result/$result_name" 2>/dev/null; then
-                break
-              fi
-              run_state=$(gh run view "$run_id" --repo "$STARTER_KIT_REPOSITORY" \
-                --json status,conclusion 2>/dev/null || true)
-              status=$(jq -r '.status // empty' <<< "${run_state:-{}}")
-              if [[ "$status" == "completed" ]]; then
-                conclusion=$(jq -r '.conclusion // "unknown"' <<< "$run_state")
-                echo "Starter Kit run concluded $conclusion before publishing $result_name: $run_url" >&2
-                exit 1
-              fi
-              sleep 10
-            done
           fi
+
+          {
+            echo "identity=$identity"
+            echo "release_set_id=$release_set_id"
+            echo "source_commit=$source_commit"
+            echo "target_branch=$target_branch"
+            echo "result_name=$result_name"
+            echo "container_tag=$container_tag"
+            echo "result_url=$result_url"
+            echo "run_url=$run_url"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Wait for the immutable Starter Kit result
+        if: needs.plan.outputs.dry_run != 'true'
+        env:
+          RESULT_NAME: ${{ steps.request.outputs.result_name }}
+          RESULT_URL: ${{ steps.request.outputs.result_url }}
+        run: |
+          set -euo pipefail
+          mkdir -p starter-kit-result
+          for _ in {1..540}; do
+            if curl --fail --silent --show-error --location "$RESULT_URL" \
+              --output "starter-kit-result/$RESULT_NAME" 2>/dev/null; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Starter Kit did not publish $RESULT_NAME within 90 minutes." >&2
+          exit 1
+
+      - name: Create Starter Kit verification token
+        id: starter-kit-verification-token
+        if: needs.plan.outputs.dry_run != 'true' && vars.STARTER_KIT_COORDINATOR_APP_ID != ''
+        continue-on-error: true
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.STARTER_KIT_COORDINATOR_APP_ID }}
+          private-key: ${{ secrets.STARTER_KIT_COORDINATOR_APP_PRIVATE_KEY }}
+          owner: Mentra-Community
+          repositories: |
+            MentraOS
+            Mentra-Bluetooth-SDK-Starter-Kit
+          permission-contents: read
+          permission-pull-requests: read
+
+      - name: Verify the exact Starter Kit release
+        id: coordinates
+        if: needs.plan.outputs.dry_run != 'true'
+        env:
+          STARTER_KIT_TOKEN: ${{ steps.starter-kit-verification-token.outputs.token || secrets.STARTER_KIT_COORDINATOR_TOKEN || secrets.MENTRA_BLUETOOTH_SDK_IOS_PUSH_TOKEN }}
+          STARTER_KIT_REPOSITORY: Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit
+          IDENTITY: ${{ steps.request.outputs.identity }}
+          RELEASE_SET_ID: ${{ steps.request.outputs.release_set_id }}
+          SOURCE_COMMIT: ${{ steps.request.outputs.source_commit }}
+          TARGET_BRANCH: ${{ steps.request.outputs.target_branch }}
+          RESULT_NAME: ${{ steps.request.outputs.result_name }}
+          CONTAINER_TAG: ${{ steps.request.outputs.container_tag }}
+          RESULT_URL: ${{ steps.request.outputs.result_url }}
+          RUN_URL: ${{ steps.request.outputs.run_url }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$STARTER_KIT_TOKEN" ]]; then
+            echo "A Starter Kit GitHub App token is required in STARTER_KIT_COORDINATOR_TOKEN." >&2
+            exit 1
+          fi
+          export GH_TOKEN="$STARTER_KIT_TOKEN"
+
+          identity="$IDENTITY"
+          release_set_id="$RELEASE_SET_ID"
+          source_commit="$SOURCE_COMMIT"
+          target_branch="$TARGET_BRANCH"
+          result_name="$RESULT_NAME"
+          container_tag="$CONTAINER_TAG"
+          result_url="$RESULT_URL"
+          run_url="$RUN_URL"
           result="starter-kit-result/$result_name"
           test -s "$result"
           [[ "$(jq -er .releaseSetId "$result")" == "$release_set_id" ]]
