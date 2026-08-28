@@ -418,11 +418,12 @@ jobs:
                 "Automated dependency synchronization for coordinated release \`$identity\`." \
                 "Coordinator: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
                 "Starter Kit workflow: $run_url")
-              pr_url=$(gh pr create --repo "$STARTER_KIT_REPOSITORY" \
-                --base "$target_branch" \
-                --head "$candidate_branch" \
-                --title "chore(release): synchronize examples to $identity" \
-                --body "$pr_body")
+              pr_url=$(gh api --method POST "repos/$STARTER_KIT_REPOSITORY/pulls" \
+                -f base="$target_branch" \
+                -f head="$candidate_branch" \
+                -f title="chore(release): synchronize examples to $identity" \
+                -f body="$pr_body" \
+                --jq .html_url)
             else
               pr_url=$(jq -r '.[0].url' <<< "$pr_json")
               merged_at=$(jq -r '.[0].mergedAt // empty' <<< "$pr_json")
