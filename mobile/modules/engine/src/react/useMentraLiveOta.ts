@@ -310,18 +310,18 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
 
     const performCheck = async () => {
       if (checkCompletedRef.current) return
+      if (isOtaAutoChainActive() && !otaSnapshot.ready) {
+        const remainingMs = otaAutoChainReconnectWaitRemaining()
+        if (remainingMs === null) return
+        reconnectTimeout = setTimeout(() => {
+          if (cancelled || myGeneration !== performCheckGenerationRef.current || ota.snapshot().ready) return
+          stopOtaAutoChain()
+          checkCompletedRef.current = true
+          setCheckState("error")
+        }, remainingMs)
+        return
+      }
       if (!otaSnapshot.connected) {
-        if (isOtaAutoChainActive()) {
-          const remainingMs = otaAutoChainReconnectWaitRemaining()
-          if (remainingMs === null) return
-          reconnectTimeout = setTimeout(() => {
-            if (cancelled || myGeneration !== performCheckGenerationRef.current || ota.snapshot().connected) return
-            stopOtaAutoChain()
-            checkCompletedRef.current = true
-            setCheckState("error")
-          }, remainingMs)
-          return
-        }
         if (checkStartedRef.current) {
           stopOtaAutoChain()
           checkCompletedRef.current = true
@@ -430,7 +430,15 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
       cancelled = true
       if (reconnectTimeout) clearTimeout(reconnectTimeout)
     }
-  }, [checkGeneration, continueApprovedChain, otaSnapshot.connected, otaSnapshot.wifiStatusKnown, page, runtimeReady])
+  }, [
+    checkGeneration,
+    continueApprovedChain,
+    otaSnapshot.connected,
+    otaSnapshot.ready,
+    otaSnapshot.wifiStatusKnown,
+    page,
+    runtimeReady,
+  ])
 
   useEffect(() => {
     if (
@@ -570,7 +578,11 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
       onFinishedRef.current?.()
       return
     }
-    if (installSnapshot.displayState === "restarting") stopOtaAutoChain()
+    const restartStillInProgress =
+      installSnapshot.displayState === "restarting" ||
+      installSnapshot.versionChangePhase === "restarting" ||
+      installSnapshot.versionChangePhase === "verifying"
+    if (restartStillInProgress) return
     const requiresGlassesReboot = shouldRequireGlassesRebootForBesFailure(
       installSnapshot.otaStatus,
       installSnapshot.otaProgress,
@@ -748,7 +760,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
       error,
       canInstall: false,
       canRetry: screen === "failed" && !requiresGlassesReboot,
-      canFinish: screen === "complete" || screen === "restarting" || (screen === "failed" && requiresGlassesReboot),
+      canFinish: screen === "complete" || (screen === "failed" && requiresGlassesReboot),
       canDismiss: false,
       canDiscard: screen === "disconnected",
       canOpenWifiSetup: screen === "failed" && showChangeWifi,

@@ -8,7 +8,7 @@ import {useConnectionOverlayConfig} from "@/contexts/ConnectionOverlayContext"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 
 import OtaProgressScreen from "@/app/ota/progress"
-import {MINIMUM_OTA_STATUS_BUILD, OtaProgressMessages} from "@mentra/engine"
+import {BES_RESTART_TIMEOUT_MS, MINIMUM_OTA_STATUS_BUILD, OtaProgressMessages} from "@mentra/engine"
 import {BES_INSTALL_RESTART_MESSAGE} from "@/utils/otaErrorMapping"
 import {beginOtaAutoChain, isOtaAutoChainActive, stopOtaAutoChain} from "@/services/otaAutoChain"
 
@@ -307,10 +307,10 @@ describe("progress.tsx display states", () => {
     }
   })
 
-  it("stops automatic chaining when Continue bypasses BES reboot verification", async () => {
+  it("keeps a chained BES reboot non-actionable until the glasses reconnect", async () => {
     setGlassesConnected()
     beginOtaAutoChain("initial-offer", false, AUTO_CHAIN_RELEASE_RANGE)
-    const {getByTestId} = render(<OtaProgressScreen />)
+    const {getByText, queryByTestId} = render(<OtaProgressScreen />)
 
     act(() => {
       useGlassesStore.getState().setOtaStatus({
@@ -325,11 +325,22 @@ describe("progress.tsx display states", () => {
       })
     })
 
+    expect(getByText("ota:restartingGlasses")).toBeDefined()
+    expect(getByText("ota:restartingGlassesMessage")).toBeDefined()
+    expect(getByText("ota:restartingGlassesAutomatic")).toBeDefined()
+    expect(queryByTestId("button-Continue")).toBeNull()
+
     await act(async () => {
-      await jest.advanceTimersByTimeAsync(15_000)
+      await jest.advanceTimersByTimeAsync(35_000)
     })
-    fireEvent.press(getByTestId("button-Continue"))
-    expect(isOtaAutoChainActive()).toBe(false)
+    expect(queryByTestId("button-Continue")).toBeNull()
+    expect(isOtaAutoChainActive()).toBe(true)
+
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(BES_RESTART_TIMEOUT_MS - 35_000)
+    })
+    expect(getByText("Update Failed")).toBeDefined()
+    expect(getByText(BES_INSTALL_RESTART_MESSAGE)).toBeDefined()
   })
 
   it("transitions to failed on failed ota_status with error", () => {

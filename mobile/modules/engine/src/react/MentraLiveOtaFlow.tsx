@@ -113,6 +113,10 @@ const ENGLISH_COPY: Record<string, string> = {
   "ota:versionChangeRestarting": "Installing a different version…",
   "ota:versionChangeVerifying": "Verifying your glasses…",
   "ota:versionChangeKeepNearby": "Keep your glasses nearby and connected. They will restart on their own.",
+  "ota:restartingGlasses": "Restarting {{deviceName}}…",
+  "ota:restartingGlassesMessage":
+    "The update is installed. Keep your glasses nearby and leave this screen open while they finish starting.",
+  "ota:restartingGlassesAutomatic": "We'll continue automatically when they're ready.",
   "ota:versionChangeComplete": "Version Change Complete",
   "ota:versionChangeCompleteMessage":
     "Your glasses are now on the required version. Their settings were reset and are being restored automatically.",
@@ -414,14 +418,11 @@ function OtaFlowContent({
 
   if (state.screen === "restarting") {
     return (
-      <FlowPage
-        actions={
-          <FlowButton colors={colors} disabled={state.continueDisabled} label="Continue" onPress={controller.finish} />
-        }
-        colors={colors}
-        icon="check"
-        title="Update Installed"
-      />
+      <FlowPage colors={colors} icon="download" title={translate("ota:restartingGlasses", {deviceName})}>
+        <ActivityIndicator size="large" color={colors.foreground} />
+        <BodyText colors={colors}>{translate("ota:restartingGlassesMessage")}</BodyText>
+        <BodyText colors={colors}>{translate("ota:restartingGlassesAutomatic")}</BodyText>
+      </FlowPage>
     )
   }
 
