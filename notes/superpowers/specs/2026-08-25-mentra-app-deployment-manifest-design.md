@@ -15,6 +15,14 @@ would otherwise contact public services.
 This is an operating mode of the Mentra App and Mentra Engine, not a customer
 fork, branded build, or second release pipeline.
 
+The v1 security target is a customer-controlled, restricted-network deployment,
+not a literally disconnected network. The Mentra App must not contact Mentra's
+public Core, Runtime, telemetry, artifact, or content services after a private
+profile is active. The deployment may still reach destinations explicitly
+approved by the customer, such as its Microsoft Entra tenant, its configured
+speech providers, Apple or Google distribution services, and customer-operated
+hosts. This document uses "air-gapped" only for a future zero-egress deployment.
+
 ## First supported deployment
 
 The first supported private Mentra App deployment requires:
@@ -29,9 +37,10 @@ The first supported private Mentra App deployment requires:
 - A customer deployment manifest reachable by the phone before sign-in.
 - Mentra Live as the only glasses model qualified for the first private pilot.
 - No unapproved public-network access after device and app provisioning.
-  Microsoft Entra is an explicitly approved dependency for the first identity
-  pilot. A strictly disconnected identity provider will use the same Core
-  boundary but is not claimed as supported until it is separately qualified.
+  Microsoft Entra and the deployment's configured speech providers are
+  explicitly approved dependencies for the first pilot. A strictly disconnected
+  identity or speech provider will use the same Core/Runtime boundaries but is
+  not claimed as supported until separately qualified.
 
 ### Why Core is required
 
@@ -218,26 +227,28 @@ There are two separate configuration surfaces:
    allowed to use MentraOS. The first integration requests only the standard
    `openid profile email` identity scopes; it does not require Microsoft Graph
    access.
-2. **Customer Core configuration.** The deployment operator places the tenant
-   ID, client ID, and client credential in the Core deployment configuration and
-   secret store. They are not put in the workspace manifest or Mentra App. An
+2. **Customer Core configuration.** The deployment operator uses the tenant ID
+   to form the tenant-specific OIDC issuer URL, then places that URL, the client
+   ID, and the client credential in the Core deployment configuration and secret
+   store. They are not put in the workspace manifest or Mentra App. An
    illustrative configuration shape is:
 
    ```yaml
    identity:
-     mode: microsoft-entra
-     tenantId: 11111111-2222-3333-4444-555555555555
+     mode: oidc
+     issuerUrl: https://login.microsoftonline.com/11111111-2222-3333-4444-555555555555/v2.0
      clientId: aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee
      clientCredentialSecretRef: mentra-entra-client-credential
      redirectUri: https://mentra.example-corp.com/api/account/sso/callback
      userProvisioning: just-in-time
    ```
 
-   The packaged deployment validates these values at startup and resolves
-   Microsoft's OIDC discovery metadata for that exact tenant. A client secret is
-   sufficient for the first controlled pilot because it remains on Core; a
-   certificate credential is the stronger production option and can be added to
-   the same server-side configuration contract.
+   The packaged deployment validates these values at startup and resolves OIDC
+   discovery metadata from that exact issuer. The Core configuration contract is
+   standards-based rather than hard-coded to Microsoft, but only Microsoft Entra
+   is supported and qualified in v1. A client secret is sufficient for the first
+   controlled pilot because it remains on Core; a certificate credential is the
+   stronger production option and can be added to the same server-side contract.
 
 The end user never sees any of those identifiers. Continue with organization
 account starts this sequence:
@@ -576,8 +587,12 @@ The resolved profile controls optional network-capable behavior:
 - Miniapp package and media URLs supplied by customer-hosted Core remain the
   customer's responsibility.
 - Runtime speech-provider egress is server-side configuration. A private Runtime
-  must use customer-approved providers or on-premises services; the phone
-  manifest cannot make Soniox or ElevenLabs private.
+  may use Soniox or ElevenLabs when the customer explicitly approves them. A
+  future customer may instead require Azure Speech, AWS speech services, or an
+  on-premises provider; adding those Runtime adapters is customer-driven work,
+  not part of manifest v1. When no approved cloud provider exists, the
+  deployment can disable cloud speech and use the supported on-device path. The
+  phone manifest does not configure or proxy server-side speech credentials.
 
 The official binary will still contain optional vendor SDK code and public
 tokens used by the Mentra profile. Runtime policy prevents egress; it does not
@@ -617,21 +632,26 @@ the same coordinated release.
 
 ## MVP acceptance
 
-The first Android pilot is complete when:
+The first Android-and-iOS private pilot is complete when:
 
-1. The official release APK starts with public internet blocked.
+1. The official Android and iOS release artifacts start on a restricted customer
+   network where Mentra public services are blocked and only deployment-approved
+   customer and SaaS destinations are reachable.
 2. Google, Apple, or Email selects the embedded Mentra profile. Connect to a
    workspace or MDM resolves the customer manifest from the workspace's
    well-known endpoint before private SSO.
 3. Login, refresh, Runtime connection, cloud STT/TTS, settings, registry, and
-   enabled miniapps use customer-hosted Core and Runtime.
+   enabled miniapps use customer-hosted Core and Runtime. Any cloud speech egress
+   is limited to the provider explicitly approved for that deployment.
 4. Mentra Live OTA works through the existing Engine hotspot flow using the
    customer-hosted OTA bundle.
 5. On-device STT and TTS download from the customer mirror.
 6. Preset wallpapers, resolved legal/support links, system-miniapp visibility,
    and the pairing model list follow the active deployment override.
-7. Sentry, PostHog, Firebase, Mapbox, GitHub, Mentra, and other public
-   destinations receive no traffic during a packet-capture test.
+7. Mentra public Core, Runtime, telemetry, artifact, and content services receive
+   no traffic. Sentry, PostHog, Firebase, Mapbox, GitHub, and any other
+   destination not explicitly approved for the deployment receive no traffic
+   during a packet-capture test.
 8. The embedded Mentra profile still passes the normal coordinated release and
    consumer app tests.
 

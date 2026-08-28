@@ -21,7 +21,7 @@ after validation and confirmation, then starts the selected Core's configured
 auth flow. MDM injects the same workspace origin. The active immutable profile
 configures auth and Engine; Engine passes the OTA URL to Bluetooth SDK and model
 locations to its speech managers. Customer overrides and the embedded Mentra
-profile resolve to one complete object; the air-gap template explicitly
+profile resolve to one complete object; the private template explicitly
 replaces or nulls every public-network destination.
 
 **Tech Stack:** React Native/Expo, TypeScript, MMKV, native managed-app
@@ -73,6 +73,10 @@ releases.
 - [ ] Move `SentrySetup()`, PostHog, and Firebase Analytics behind the one
       resolved `telemetry` switch. Default native collection off until a
       profile with `telemetry: true` is active.
+- [ ] Verify Android and iOS native SDK startup before the JavaScript tree mounts.
+      Add clean-install packet-capture coverage proving Firebase, Sentry, and
+      other bundled telemetry SDKs do not auto-initialize or transmit while a
+      private profile is being resolved.
 - [ ] Render the local consumer-or-enterprise landing screen before starting any
       network integration when no deployment is already selected.
 - [ ] Render a local recovery/setup screen when a first-time custom profile
@@ -165,10 +169,11 @@ releases.
 - [ ] Implement fixed `/api/account/sso/start`, `/api/account/sso/callback`, and
       `/api/account/sso/complete` routes. Use a separate Core-to-Entra state,
       nonce, and PKCE verifier while preserving the app-to-Core PKCE binding.
-- [ ] Add Core deployment configuration for Microsoft Entra tenant id, client
-      id, client-credential secret reference, redirect URI, and just-in-time
-      provisioning policy. Resolve OIDC metadata for that exact tenant at Core
-      startup and fail closed on invalid configuration.
+- [ ] Add standards-based Core OIDC configuration for exact issuer URL, client
+      id, client-credential secret reference, redirect URI, scopes, and
+      just-in-time provisioning policy. Resolve discovery metadata for that exact
+      issuer at Core startup and fail closed on invalid configuration. Do not
+      hard-code the Core configuration schema to Microsoft.
 - [ ] Keep tenant metadata, client credentials, claim mapping, and IdP tokens in
       customer-hosted Core configuration and its secret store. The manifest
       declares only `auth.mode: "core-sso"`; the Mentra App opens the fixed start
@@ -176,8 +181,9 @@ releases.
 - [ ] Treat Microsoft Entra as the only qualified and documented provider in the
       first milestone. Customer IT creates a single-tenant app registration,
       registers the Core Web callback, requires assignment, and assigns the
-      allowed users/groups. Mentra public infrastructure and Supabase are not in
-      the private auth path.
+      allowed users/groups. The Entra guide constructs the exact issuer URL from
+      the customer's tenant id. Mentra public infrastructure and Supabase are not
+      in the private auth path.
 - [ ] Reuse the existing trusted-issuer verification and external-token exchange
       where their claim contract fits. Do not require a standard customer IdP to
       mint Mentra-specific routing claims without an explicit adapter.
@@ -296,9 +302,10 @@ releases.
 - [ ] Document Android MDM/APK import and iOS Apple Business Manager/MDM setup.
 - [ ] Publish a Microsoft Entra administrator guide based on Mentra's tested
       setup. Cover single-tenant app registration, the Core Web callback URL,
-      tenant/client ids, secure client-credential delivery, required assignment,
-      user/group assignment, Core configuration, validation, rotation, and
-      troubleshooting. State that no Microsoft Graph access is required.
+      the tenant-specific OIDC issuer URL, client id, secure client-credential
+      delivery, required assignment, user/group assignment, Core configuration,
+      validation, rotation, and troubleshooting. State that no Microsoft Graph
+      access is required.
 - [ ] Document the workspace URL and well-known endpoint, MDM key, and private-CA
       installation alongside the Entra guide.
 
@@ -325,8 +332,11 @@ releases.
 - [ ] Host the coordinated OTA bundle and speech artifacts on the internal
       update service.
 - [ ] Run Android and iOS login, Runtime, miniapp, OTA, and offline-model tests.
-- [ ] Run a clean-device packet capture with public internet blocked and fail the
-      qualification if any unapproved destination is contacted.
+- [ ] Run clean-device packet captures on a restricted network with Mentra public
+      services blocked. Fail qualification if the app contacts Mentra public
+      Core, Runtime, telemetry, artifacts, or content, or any destination not on
+      the customer's approved egress list. Entra and the configured Runtime
+      speech provider may be explicitly approved.
 - [ ] Verify the embedded Mentra profile in the ordinary coordinated release
       gates so consumer behavior remains unchanged.
 
@@ -338,13 +348,14 @@ releases.
   deployment-scoped Core/Runtime, and direct Microsoft Entra OIDC sign-in.
 - **PR 3:** OTA/model routing, deployment wallpaper/link/system-miniapp policy,
   pairing-model override, telemetry, and optional-feature egress gates.
-- **PR 4:** Coordinated deployment artifacts and a physical disconnected pilot.
+- **PR 4:** Coordinated deployment artifacts and a physical restricted-network
+  pilot on Android and iOS.
 
-An Android pilot is roughly a multi-PR, several-week effort rather than a small
-endpoint toggle. The existing Engine configuration, portable OTA bundle, hotspot
-flow, and coordinated release manifest remove much of the hard work; boot order,
-auth isolation, telemetry gating, model hosting, and private Cloud packaging are
-the remaining critical path.
+An Android-and-iOS pilot is roughly a multi-PR, several-week effort rather than a
+small endpoint toggle. The existing Engine configuration, portable OTA bundle,
+hotspot flow, and coordinated release manifest remove much of the hard work;
+boot order, auth isolation, telemetry gating, model hosting, and private Cloud
+packaging are the remaining critical path.
 
 Okta, Google, internal OIDC, SAML, local email/password accounts, self-service
 workspace discovery, and directory/domain verification are follow-up identity
