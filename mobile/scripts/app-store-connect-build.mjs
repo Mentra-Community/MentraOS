@@ -25,25 +25,48 @@ export function createAppStoreConnectToken({issuerId, keyId, privateKey, now = D
   return `${input}.${signature}`
 }
 
-export function createAppStoreConnectClient({issuerId, keyId, privateKey, fetchImpl = fetch}) {
+export function createAppStoreConnectClient({
+  issuerId,
+  keyId,
+  privateKey,
+  fetchImpl = fetch,
+  attempts = 3,
+  delay = 2_000,
+  sleep = (duration) => new Promise((resolve) => setTimeout(resolve, duration)),
+}) {
   async function request(resource, options = {}) {
-    const response = await fetchImpl(new URL(resource, API_ROOT), {
-      ...options,
-      headers: {
-        "Authorization": `Bearer ${createAppStoreConnectToken({issuerId, keyId, privateKey})}`,
-        "Content-Type": "application/json",
-        ...options.headers,
-      },
-    })
-    const body = await response.text()
-    if (!response.ok) {
-      const error = new Error(
-        `App Store Connect ${options.method || "GET"} ${resource} failed with HTTP ${response.status}: ${body}`,
-      )
-      error.status = response.status
-      throw error
+    let lastError
+    const method = (options.method || "GET").toUpperCase()
+    const canRetry = method === "GET" || method === "HEAD"
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      try {
+        const response = await fetchImpl(new URL(resource, API_ROOT), {
+          ...options,
+          headers: {
+            "Authorization": `Bearer ${createAppStoreConnectToken({issuerId, keyId, privateKey})}`,
+            "Content-Type": "application/json",
+            ...options.headers,
+          },
+        })
+        const body = await response.text()
+        if (!response.ok) {
+          const error = new Error(
+            `App Store Connect ${options.method || "GET"} ${resource} failed with HTTP ${response.status}: ${body}`,
+          )
+          error.status = response.status
+          throw error
+        }
+        return body ? JSON.parse(body) : null
+      } catch (error) {
+        lastError = error
+        if (!canRetry || !isTransientAppStoreConnectError(error) || attempt === attempts) throw error
+        console.warn(
+          `App Store Connect temporarily failed ${method} ${resource} (${transientAppStoreConnectErrorLabel(error)}); retrying`,
+        )
+        await sleep(delay)
+      }
     }
-    return body ? JSON.parse(body) : null
+    throw lastError
   }
   return {request}
 }
