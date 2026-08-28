@@ -14,15 +14,15 @@ and before any public-network integration starts.
 
 **Architecture:** The app restores an MDM-provided or previously enrolled
 deployment at cold boot. Otherwise, a local landing screen lets Google, Apple,
-or Email activate the embedded Mentra profile. Enterprise / SSO accepts a work
-email or organization code, resolves a registered manifest URL through a small
-Mentra deployment directory, and immediately continues into that manifest's
-auth flow. MDM and QR/manual URL are alternative directory-bypass mechanisms,
-not additional steps. The active immutable profile configures auth and Engine;
-Engine passes the OTA URL to Bluetooth SDK and model locations to its speech
-managers. Customer overrides and the embedded Mentra profile resolve to one
-complete object; the air-gap template explicitly replaces or nulls every
-public-network destination.
+or Email activate the embedded Mentra profile. Connect to a workspace accepts a
+human-facing HTTPS origin and fetches its manifest from
+`/.well-known/mentra-deployment.json`. The app activates the candidate only
+after validation and confirmation, then starts the selected Core's configured
+auth flow. MDM injects the same workspace origin. The active immutable profile
+configures auth and Engine; Engine passes the OTA URL to Bluetooth SDK and model
+locations to its speech managers. Customer overrides and the embedded Mentra
+profile resolve to one complete object; the air-gap template explicitly
+replaces or nulls every public-network destination.
 
 **Tech Stack:** React Native/Expo, TypeScript, MMKV, native managed-app
 configuration bridges, Cloud V2, Cloudflare R2, coordinated GitHub Actions
@@ -49,10 +49,11 @@ releases.
       complete embedded Mentra profile. Arrays replace; explicit null disables
       nullable destinations; validation runs on the resolved profile.
 - [ ] Generate the embedded Mentra profile from coordinated build inputs.
-- [ ] Resolve an MDM URL or previously enrolled profile before showing auth.
+- [ ] Resolve an MDM workspace URL or previously enrolled profile before
+      showing auth.
 - [ ] Keep the embedded Mentra profile available for explicit consumer login
       selection rather than silently treating it as the only cold-boot default.
-- [ ] Persist the custom URL and last valid manifest under `deploymentId`.
+- [ ] Persist the workspace origin and last valid manifest under `deploymentId`.
 - [ ] Require exact `releaseIdentity` match and HTTPS outside development.
 - [ ] Never fall back to the embedded profile after a custom source is selected.
 - [ ] Validate wallpaper URLs, deployment links, system-miniapp package names,
@@ -77,49 +78,53 @@ releases.
 - [ ] Render a local recovery/setup screen when a first-time custom profile
       cannot be loaded.
 
-### Task 3: Add enrollment and deployment switching
+### Task 3: Add workspace enrollment and deployment switching
 
 **Files:**
 
-- Create a deployment setup route under `mobile/src/app/auth/`
-- Create `mobile/src/services/deployment/DeploymentDirectoryService.ts`
-- Modify `mobile/src/contexts/DeeplinkContext.tsx`
+- Modify `mobile/src/app/auth/start.tsx`
+- Create `mobile/src/app/auth/workspace.tsx`
+- Create `mobile/src/services/deployment/WorkspaceDeploymentService.ts`
+- Modify mobile login translations, starting with `mobile/src/i18n/en.ts`
+- Modify `cloud-v2/packages/core/src/api/well-known.api.ts`
+- Add mobile and Core well-known-manifest tests
 - Add minimal Android/iOS MDM configuration bridges
-- Add a minimal Cloud V2 public deployment-directory endpoint and registry
 - Modify logout/reset utilities
 
-- [ ] Add an Enterprise / SSO action beside Google, Apple, and Email on the
-      initial landing screen.
+- [ ] Preserve the current Mentra consumer signup/login controls and add a
+      visually separate Connect to a workspace action below them.
 - [ ] Make Google, Apple, and Email activate the embedded Mentra profile before
       entering the existing consumer auth flow.
-- [ ] Make Enterprise / SSO accept a work email or organization code. Normalize
-      an email to its domain on-device, resolve the registered manifest URL, and
-      never submit the complete email address to the directory.
-- [ ] Implement the speedrun directory as a small Mentra-operated registry of
-      verified domains and/or organization codes to deployment id, display name,
-      and manifest URL. Return no credentials or provider secrets; manual
-      registration is sufficient for the pilot.
-- [ ] Keep MDM, QR, and manual URL as alternative bootstrap paths that bypass
-      directory discovery. Support a `mentra://deployment?url=...` QR payload.
-- [ ] Show deployment name and Core/Runtime hosts before activation.
-- [ ] Read the manifest URL from Android Enterprise and Apple managed app
-      configuration when supplied.
-- [ ] After any bootstrap path resolves the manifest, show the deployment name
-      and immediately render or open its declared email, SSO, or other
-      authentication method. Treat the enrollment QR as configuration, not an
-      auth credential, and never require both discovery and QR.
-- [ ] For the first private pilot, render email/password sign-in only. Set
-      `allowSignup` and `allowPasswordReset` false and use operator-provisioned,
-      verified accounts; do not put SMTP, account verification, recovery, or
-      SSO on the pilot critical path.
-- [ ] Keep `allowSignup` as a server-reflected UI capability for later work.
-      Core remains authoritative and must enforce the deployment's signup
-      policy regardless of the manifest value.
+- [ ] On the workspace route, ask for the HTTPS origin supplied by the user's
+      organization, with an example such as `https://mentra.example.com`. Do not
+      ask for a raw JSON or Core API URL.
+- [ ] Normalize the origin and fetch the manifest directly from
+      `/.well-known/mentra-deployment.json`. Reject credentials, query strings,
+      fragments, invalid TLS, oversized responses, and cross-origin redirects.
+- [ ] Make Core or its deployment ingress serve the exact manifest JSON at the
+      well-known path without authentication. Back it with the mounted release-
+      matched deployment file rather than a second registry or pointer.
+- [ ] Require the resolved `services.coreUrl` origin to equal the workspace
+      origin in v1. Permit separate Runtime, artifact, and content hosts, but do
+      not let discovery silently move authentication to another host.
+- [ ] Keep the fetched deployment pending until recursive resolution, schema
+      validation, and exact `releaseIdentity` validation succeed. Do not mutate
+      active endpoints while loading or previewing a candidate.
+- [ ] Show display name, workspace hostname, and sign-in type before activation,
+      with Core/Runtime hosts under expandable connection details. Continue
+      atomically persists the workspace and re-enters the gated auth route.
+- [ ] Read the workspace origin from Android Enterprise and Apple managed app
+      configuration when supplied and use the same well-known resolver. Treat
+      an enforced MDM value as authoritative.
+- [ ] For the first private pilot, render one organization-account action for
+      `methods: ["enterprise-sso"]`. Do not expose private signup, passwords,
+      verification email, or recovery.
 - [ ] Make switching deployment stop Engine, sign out, clear the old auth
       namespace, and reboot through the same resolver.
-- [ ] Cache the selected manifest so the directory is not contacted again on
-      ordinary boots. Test domain/code lookup, unknown-organization errors,
-      MDM/QR bypass, and the absence of cross-deployment credentials.
+- [ ] Cache the selected manifest for disconnected boot and refresh it from the
+      stable workspace URL when reachable. Test invalid candidates, MDM
+      precedence, failed refresh, and the absence of cross-deployment
+      credentials.
 
 ## Phase 2: Feed the profile into auth and Engine
 
@@ -131,6 +136,10 @@ releases.
 - Modify `mobile/src/utils/auth/provider/accountClient.ts`
 - Modify auth secure-storage helpers and tests
 - Modify `mobile/src/utils/cloudVersion.ts`
+- Create `cloud-v2/packages/core/src/api/account/sso.api.ts`
+- Create `cloud-v2/packages/core/src/services/account/oidc.client.ts`
+- Modify `cloud-v2/packages/core/src/api/app.ts`
+- Modify Core account/profile consumers that currently read identity from GoTrue
 
 - [ ] Construct the account provider only after deployment resolution.
 - [ ] Namespace access tokens, refresh tokens, cached profile, and refresh state
@@ -140,17 +149,21 @@ releases.
 - [ ] Keep consumer Google, Apple, and Email entry points bound to the embedded
       Mentra profile. Render only the active custom profile's auth methods and
       supporting signup, verification, and recovery flows after enrollment.
-- [ ] Implement only the minimal deployment-directory lookup in the first
-      private pilot; defer generic SSO. Keep the auth-provider boundary capable
-      of opening SSO automatically after manifest resolution when added.
-- [ ] Preserve Core as the auth broker for future enterprise SSO: generalize its
-      existing PKCE browser flow from fixed Google/Apple providers to a
-      server-configured OIDC/SAML connection, map the external subject to a Core
-      user, and return the normal Cloud V2 session through a one-time handoff.
-      Keep IdP secrets and tokens out of the manifest and deployment directory.
-- [ ] Treat MDM and QR as manifest selection only. A future QR-as-login method
-      must use a Core-redeemed, short-lived single-use enrollment code; it must
-      not place credentials or reusable sessions in the configuration payload.
+- [ ] Make Core the auth broker for the first private pilot: generalize its
+      existing PKCE browser handoff from fixed Google/Apple-through-GoTrue to one
+      server-configured OIDC connection, map issuer plus subject to a Core user,
+      and return the normal Cloud V2 session through a one-time handoff.
+- [ ] Keep issuer metadata, client credentials, claim mapping, and IdP tokens in
+      Core server configuration. The manifest declares only
+      `methods: ["enterprise-sso"]`; the app opens a fixed route on active Core.
+- [ ] Reuse the existing trusted-issuer verification and external-token exchange
+      where their claim contract fits. Do not require a standard customer IdP to
+      mint Mentra-specific routing claims without an explicit adapter.
+- [ ] Replace first-party profile lookups that assume a GoTrue user with an
+      identity-provider-neutral record keyed by issuer plus stable subject. Do
+      not use email as the durable user key.
+- [ ] Keep SAML and local email/password adapters outside the first pilot. They
+      must fit the same post-manifest Core-session boundary when added.
 - [ ] Make the minimum-version screen use managed-update copy instead of public
       store URLs when `appUpdates.mode` is `managed`.
 - [ ] Remove the current special deployment selection from scattered settings;
@@ -255,9 +268,8 @@ releases.
 - [ ] Do not create a customer mobile build lane; reuse the exact Android and
       iOS artifacts from the coordinated release.
 - [ ] Document Android MDM/APK import and iOS Apple Business Manager/MDM setup.
-- [ ] Document directory registration as a one-time provisioning step, including
-      domain/code ownership checks and how strictly disconnected deployments
-      bypass it with MDM or QR.
+- [ ] Document the workspace URL and well-known endpoint, MDM key, private-CA
+      installation, OIDC application registration, and callback URL.
 
 ## Phase 5: Private service packaging and qualification
 
@@ -267,11 +279,11 @@ releases.
 - [ ] Keep Core in the first private deployment. Do not make Runtime-only auth
       or split Core's account, registry, settings, version-check, and reporting
       APIs part of this implementation.
-- [ ] Package the private GoTrue-compatible credential service and datastore
-      required by Core's current account adapter. Do not point a private Core at
-      Mentra's public Supabase project.
-- [ ] Provide an operator-side command to create, disable, and reset verified
-      pilot accounts without outbound email.
+- [ ] Package direct OIDC support in Core without Supabase. Provide configuration
+      for issuer, client id/secret, scopes, callback URL, and stable subject-claim
+      mapping.
+- [ ] Verify just-in-time user creation, disabled-user behavior, session expiry,
+      and reauthentication without creating a second employee password store.
 - [ ] Configure customer-approved STT/TTS providers in private Runtime.
 - [ ] Host the coordinated OTA bundle and speech artifacts on the internal
       update service.
@@ -285,9 +297,8 @@ releases.
 
 - **PR 1:** Manifest types/resolver, embedded Mentra profile, deployment-neutral
   landing screen, boot gating, and tests. No customer deployment is promised yet.
-- **PR 2:** Minimal work-domain/organization-code directory, QR/MDM bypasses,
-  consumer-versus-enterprise auth selection, deployment-scoped Core/Runtime,
-  and pre-provisioned private email/password sign-in.
+- **PR 2:** Workspace URL/well-known manifest enrollment, MDM configuration,
+  deployment-scoped Core/Runtime, and direct enterprise OIDC sign-in.
 - **PR 3:** OTA/model routing, deployment wallpaper/link/system-miniapp policy,
   pairing-model override, telemetry, and optional-feature egress gates.
 - **PR 4:** Coordinated deployment artifacts and a physical disconnected pilot.
@@ -298,6 +309,7 @@ flow, and coordinated release manifest remove much of the hard work; boot order,
 auth isolation, telemetry gating, model hosting, and private Cloud packaging are
 the remaining critical path.
 
-Self-service signup, email recovery, generic SSO, and self-service directory
-registration/domain verification are follow-up identity work. The first pilot
-uses a manually administered directory and operator-provisioned accounts.
+SAML, local email/password accounts, self-service workspace discovery, and
+directory/domain verification are follow-up identity work. The first pilot uses
+a workspace URL and one server-configured OIDC connection against the customer's
+existing corporate identity provider.
