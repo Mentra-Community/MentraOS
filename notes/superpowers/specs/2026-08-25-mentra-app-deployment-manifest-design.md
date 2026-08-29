@@ -88,6 +88,55 @@ there is no Recall bot. It does not mean the current implementation has no media
 relay: Cloudflare remains between the glasses' WHIP publisher and the phone's
 WHEP consumer until a direct glasses-to-phone transport is implemented.
 
+## Mentra Call product slice and roadmap boundary
+
+The older Mentra Call roadmap mixed three independent concerns under a single
+V1/V2/V3 sequence. This deployment design does not inherit those version labels.
+It tracks the concerns separately so enterprise work does not accidentally
+rescope Nicolo's native ACS work or pull later Mentra Call features into the
+first deployment.
+
+| Concern | First integrated deployment | Later evolution |
+|---|---|---|
+| Product experience | Join an existing work/school Teams meeting by pasting its URL; one primary **Join Teams call** action; clear Wi-Fi-required, joining, in-call, failure, and leave states; leaving returns to the Mentra Call home screen | Create/invite/end meetings, calendar discovery, chat, custom display names, native sharing, and additional in-call controls |
+| Media transport | Mentra Live publishes video-only WHIP to Cloudflare; the phone consumes WHEP, uses its microphone for outgoing voice, and sends native ACS raw media to Teams; incoming voice plays through the glasses | Direct SoftAP glasses-to-phone media removes the managed-stream module and Cloudflare hop |
+| Identity and deployment | Nicolo's branch first proves the media path with an ACS guest identity; the enterprise integration replaces that credential source with the same employee Entra identity used to enter the workspace | Other IdPs, non-Entra deployments, and other meeting-provider identity models |
+| Meeting providers | Microsoft 365 work/school Teams through ACS | Google Meet, Zoom, and any consumer Recall-backed compatibility remain separate Mentra Call roadmap work |
+
+The first combined product slice therefore requires:
+
+- Join an existing Microsoft 365 work/school Teams URL without Graph or calendar
+  access.
+- Target 1280x720 at 15 fps at the Teams receiver and less than two seconds of
+  measured end-to-end video latency under the reference network. ACS raw-media
+  formats are negotiation ceilings, so qualification records the observed
+  receiver resolution, frame rate, bitrate, and latency rather than assuming
+  the requested format was delivered.
+- Show the existing Mentra Live Wi-Fi connection prompt when the Cloudflare
+  transport cannot start because the glasses are not connected to Wi-Fi.
+- Preserve Nicolo's current exclusive-microphone policy: the glasses WHIP stream
+  is video-only (`captureAudio: false`), the phone microphone supplies outgoing
+  Teams audio, and remote Teams audio plays through the glasses without a second
+  competing uplink.
+- Provide an unambiguous Leave action, confirm that the call ended, tear down
+  stream and ACS resources, and return to the Mentra Call home screen.
+- Keep meeting creation, calendar integration, invitation UX, chat, Google Meet,
+  Zoom, and the SoftAP transport outside the first enterprise acceptance gate.
+  Existing mute or recovery behavior already present on the native branch may
+  ship and must not regress, but this effort does not add new in-call product
+  controls.
+
+The guest-media checkpoint and enterprise release intentionally have different
+roster identity. The branch-local guest checkpoint may use the hard-coded
+display name `Mentra Live`. The enterprise release joins with an ACS Teams-user
+token and therefore appears as the signed-in employee's Microsoft work identity;
+it must not attempt to override that identity with the guest display name.
+
+This specification does not replace the broader Mentra Call product roadmap or
+change the existing consumer Google Meet/Zoom behavior. It defines only the
+Mentra Call capability consumed by the first Mentra Enterprise Self-Hosted
+deployment.
+
 ### Why Core is not required and Runtime remains small
 
 The first deployment does not need Core's consumer-account system, Supabase,
@@ -177,13 +226,19 @@ When direct glasses-to-phone SoftAP video replaces WHIP/WHEP, the same Runtime
 image runs with `RUNTIME_SERVICES=meetings`. No new container or mobile API is
 introduced.
 
-## Current implementation boundary
+## Ownership and merge boundary
 
 The architecture above does not require the enterprise work to fork or rewrite
 the native ACS/media implementation currently being developed on
 `nicolo/acs-teams-v1`. The first implementation tranche starts from current
 `dev` and is limited to foundations that have no semantic dependency on that
 branch:
+
+| Lane | Owner | Starting point | Exit condition |
+|---|---|---|---|
+| Enterprise/platform foundations | Alex | Focused branches from current `dev` | Workspace resolution, Entra sign-in, Runtime-only Engine auth, reduced Runtime, managed stream, and server-harness ACS Teams-user exchange work without touching the native ACS branch |
+| Native Mentra Call/ACS media | Nicolo | `nicolo/acs-teams-v1`, rebased or merged with current `dev` by its owner | Existing work Teams URL joins through native ACS raw media on Android/iOS using the branch's guest checkpoint, with WHEP, audio, leave, and recovery qualified |
+| Product integration | Alex and Nicolo jointly | Fresh `dev` after both prerequisite lanes merge | Host-owned enterprise credentials replace miniapp token pass-through, the bundled Mentra Call UX invokes the agreed provider-neutral host capability, and the complete enterprise call passes qualification |
 
 - deployment manifest types, resolution, persistence, workspace selection, and
   pre-network policy gating;
@@ -214,6 +269,18 @@ endpoint, removes credential pass-through from miniapp JavaScript, and finalizes
 the provider-neutral Miniapp SDK call contract with the native implementation's
 owner. The current API name and payload are not prerequisites for the unblocked
 foundation work.
+
+The merge sequence is explicit:
+
+1. Land this planning PR.
+2. Land independent enterprise/platform foundation PRs from current `dev`.
+3. Nicolo lands the native ACS/media PR independently; Entra and deployment work
+   are not prerequisites for that branch's guest-media checkpoint.
+4. After both sets of prerequisites are on `dev`, open a fresh joint integration
+   PR. Do not build the enterprise foundation on top of Nicolo's branch and do
+   not retrofit the branch's Miniapp SDK spike from a parallel branch.
+5. Pin and bundle the corresponding Mentra Call release only after the joint
+   integration contract is stable.
 
 The first tranche is complete when a customer-style Azure deployment can resolve
 its manifest, sign a user in through Entra, authenticate directly to one reduced
@@ -570,7 +637,6 @@ The eventual Mentra Call/native-host integration requires:
   obtains and refreshes the ACS Teams-user token from Runtime.
 - Keep call state in the native host/phone runtime for ACS calls.
 - Join existing Teams URLs without Graph.
-- Expose optional host-owned meeting creation that returns only a join URL.
 - Fail closed when a required Runtime capability or provider is absent.
 
 A provider-neutral Miniapp SDK call capability remains the intended boundary,
@@ -630,25 +696,37 @@ The first Android-and-iOS call-focused pilot is complete when:
 3. Engine starts without Core, authenticates directly to the customer Runtime,
    pairs Mentra Live, and launches the approved bundled Mentra Call miniapp
    without opening a Runtime WebSocket or raising cloud connection alarms.
-4. The customer-hosted Runtime allocates a WHIP/WHEP stream through the approved
+4. Mentra Call presents one primary join action, accepts an existing work/school
+   Teams URL, shows the established Wi-Fi-required UX when Mentra Live cannot
+   publish, and requires no calendar or meeting-creation permission.
+5. The customer-hosted Runtime allocates a WHIP/WHEP stream through the approved
    provider using the existing managed-stream contract, and the glasses stream
    reaches the phone.
-5. The phone joins a work/school Teams meeting through native ACS raw media on
+6. The phone joins a work/school Teams meeting through native ACS raw media on
    Android and iOS, with no Recall bot, using the same employee identity that
    signed into the workspace through Entra.
-6. Leaving, mute, stream recovery, incoming glasses audio, and a 30–60 minute
-   device soak pass on both platforms within the native branch's supported
-   limits.
-7. Mentra public Core, Runtime, telemetry, artifacts, content, and miniapp
+7. The Teams receiver observes the 1280x720 at 15 fps target and less than two
+   seconds of end-to-end video latency under the documented reference network.
+   Qualification records negotiated and observed media rather than treating the
+   requested ACS format as a guarantee.
+8. Leaving, shipped mute behavior, stream recovery, incoming glasses audio, and
+   a 30–60 minute device soak pass on both platforms within the native branch's
+   supported limits. Leave tears down resources, confirms exit, and returns to
+   the Mentra Call home screen.
+9. Mentra public Core, Runtime, telemetry, artifacts, content, and miniapp
    services receive no traffic. Only the manifest-declared/customer-approved
    customer Runtime, Microsoft, ACS, and streaming destinations are
    contacted.
-8. The embedded Mentra profile still passes ordinary consumer release tests.
+10. The embedded Mentra profile still passes ordinary consumer release tests.
 
 ## Explicitly later
 
 - Customer-hosted Core, remote miniapps, Core-minted miniapp backend tokens,
   cloud speech, synchronized settings, reports, and customer Store behavior.
+- Meeting creation, Graph `OnlineMeetings.ReadWrite`, calendar integration,
+  invitations/native sharing, chat, and custom meeting display names.
+- Enterprise-qualified Google Meet and Zoom paths. Existing consumer-provider
+  behavior is not changed by this deployment work.
 - Direct glasses-to-phone media transport that removes Cloudflare or another
   WHIP/WHEP relay.
 - Streaming providers other than the first qualified Cloudflare path.

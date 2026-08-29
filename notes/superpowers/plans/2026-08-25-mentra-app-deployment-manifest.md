@@ -32,9 +32,34 @@ the first WHIP/WHEP provider, coordinated GitHub releases.
 
 ---
 
+## Product acceptance consumed from Mentra Call
+
+This plan consumes one bounded Mentra Call product slice; it is not the master
+Mentra Call roadmap and does not reuse the older V1/V1.5/V2/V3 numbering.
+
+- Join an existing Microsoft 365 work/school Teams meeting from a pasted URL.
+- Show one primary **Join Teams call** action plus clear Wi-Fi-required, joining,
+  in-call, failure, and leave states.
+- Reuse the Livestreamer-style Mentra Live Wi-Fi prompt for the current
+  Cloudflare WHIP/WHEP path.
+- Preserve the native branch's exclusive-microphone path: Mentra Live publishes
+  video-only WHIP, the phone microphone supplies outgoing Teams audio, and
+  incoming Teams audio plays through the glasses.
+- Target 1280x720 at 15 fps and less than two seconds of measured end-to-end
+  latency at the Teams receiver under the reference network.
+- Leave tears down stream and ACS resources, confirms exit, and returns home.
+- No meeting creation, Graph/calendar permission, invite flow, chat, Google Meet,
+  Zoom, or SoftAP transport is required for the first enterprise release.
+
+Nicolo's branch may use an ACS guest identity named `Mentra Live` to qualify the
+native media path. The enterprise integration instead uses the signed-in
+employee's Entra/Teams identity and does not add a second interactive login.
+
+---
+
 ## Execution lanes
 
-### Lane A: unblocked foundation work from `dev`
+### Lane A: Alex — unblocked enterprise/platform foundations from `dev`
 
 Phases 1, 2, Phase 3 Task 1, and Phase 4 can proceed without the native ACS
 branch. Lane A owns deployment resolution, Entra, generic Runtime-only Engine
@@ -42,14 +67,14 @@ auth, modular Runtime boot, managed streams, the server-side ACS exchange, and
 the Azure reference service. The Runtime meetings endpoint is exercised through
 a server-side harness; Lane A does not connect it to native ACS.
 
-### Lane B: native ACS/media branch
+### Lane B: Nicolo — native ACS/media branch
 
 The owner of `nicolo/acs-teams-v1` retains the native ACS module, WHEP/raw-media
 implementation, exclusive-audio policy, `captureAudio` transport, current
 Miniapp SDK meeting request, and Mentra Call ACS controller. Lane A does not edit
 or replace those files.
 
-### Lane C: post-merge integration
+### Lane C: Alex + Nicolo — post-merge integration
 
 Phase 3 Task 2, Phase 5, final bundling, and end-to-end call qualification begin
 after Lane B lands on `dev`. This lane connects the trusted native host to the
@@ -61,6 +86,20 @@ Entra, and authenticate directly to a reduced Runtime; that Runtime starts only
 the configured HTTP modules, allocates and cleans up a managed stream, and
 completes an ACS Teams-user exchange through a server-side harness. Lane A is not
 expected to place a Teams call.
+
+### Merge gates
+
+1. Merge this documentation-only planning PR.
+2. Ship Lane A as focused PRs based on current `dev`; none imports or modifies
+   Nicolo's ACS branch.
+3. Nicolo rebases or merges current `dev`, qualifies the guest ACS media path,
+   and lands Lane B as its own focused PR. Lane B does not wait for enterprise
+   Entra or Runtime work.
+4. Once the relevant Lane A PRs and Lane B are on `dev`, create Lane C from fresh
+   `dev`. Jointly finalize the provider-neutral host/Miniapp SDK boundary and
+   replace miniapp credential pass-through with host-owned Runtime exchange.
+5. Pin and bundle the matching Mentra Call package only after Lane C's contract
+   is stable, then run the complete Azure reference deployment qualification.
 
 ## Phase 1: Deployment contract and pre-network boot
 
@@ -253,6 +292,14 @@ expected to place a Teams call.
       JavaScript receives no bearer token.
 - [ ] Preserve existing Teams/ACS join, leave, mute, state, recovery, WHEP
       update, and incoming-audio behavior from `nicolo/acs-teams-v1`.
+- [ ] Present one primary Join Teams call action and accept an existing
+      Microsoft 365 work/school Teams URL.
+- [ ] Reuse the Livestreamer-style Wi-Fi prompt when the glasses cannot start the
+      current Cloudflare streaming path.
+- [ ] Leave tears down the managed stream and ACS call, confirms exit, and
+      returns to Mentra Call home.
+- [ ] Do not add meeting creation, calendar, invite, chat, Google Meet, Zoom, or
+      SoftAP work to this integration task.
 
 ## Phase 4: Modular Runtime Services
 
@@ -343,21 +390,6 @@ native module integration, tests, and admin guide
       policy, disabled user, token expiry/refresh, revoked consent, missing Teams
       license, and Conditional Access.
 
-### Task 2: Create meetings as the signed-in user when required
-
-**Files:** Host meeting API, optional Runtime meetings provider, UI adapter, and
-Graph tests
-
-- [ ] Allow joining a supplied Teams URL without Graph permission.
-- [ ] When creation is enabled, silently request delegated Graph
-      `OnlineMeetings.ReadWrite` for the same MSAL account.
-- [ ] Call `POST /me/onlineMeetings` from the trusted host or Runtime meetings
-      module and return only the join URL to Mentra Call.
-- [ ] Remove the current shared licensed Graph service account and app-only
-      client secret from the customer template.
-- [ ] Keep meeting creation optional so customers that only join scheduled
-      meetings grant no Graph permission.
-
 ## Phase 6: Deployment policy, artifacts, and qualification
 
 ### Task 1: Enforce content, hardware, and egress policy
@@ -413,6 +445,11 @@ templates, and runbooks
       deployment-switch tests.
 - [ ] Run Teams join, mute, incoming audio, Wi-Fi recovery, WHEP replacement,
       leave, and 30–60 minute soak tests on Android and iOS.
+- [ ] At the Teams receiver, record observed resolution, frame rate, bitrate,
+      and end-to-end latency; qualify the 1280x720 at 15 fps and less-than-two-
+      second targets under the documented reference network.
+- [ ] Verify join-only UX: pasted work Teams URL, Wi-Fi prompt, call state,
+      explicit leave confirmation, resource teardown, and return home.
 - [ ] Run packet capture with Mentra public services blocked and fail on any
       unapproved destination.
 - [ ] Re-run ordinary consumer release gates with the embedded Mentra profile.
@@ -428,8 +465,8 @@ templates, and runbooks
 - **PR 4:** Runtime meetings/ACS Teams-user token exchange, exercised through a
   server-side qualification harness with no native/mobile changes.
 - **PR 5:** Integrate the qualified native ACS implementation, finalize the
-  provider-neutral Miniapp SDK capability, and optionally add delegated Graph
-  meeting creation.
+  provider-neutral Miniapp SDK capability, and ship the join-only Mentra Call
+  product slice. Do not add delegated Graph meeting creation here.
 - **PR 6:** OTA/content/hardware policy, release artifacts, guides, and physical
   restricted-network qualification.
 
@@ -438,6 +475,21 @@ Core and every Runtime dependency. It still requires real mobile work—native
 Entra login, Runtime-only Engine auth, modular Runtime boot, and secure ACS
 credential ownership—but those changes form a reusable foundation for later
 workspace profiles.
+
+## Explicitly deferred Mentra Call follow-ons
+
+These remain valid product directions but are not tasks or merge gates for this
+implementation plan:
+
+- Create a Teams meeting as the signed-in user with delegated Graph
+  `OnlineMeetings.ReadWrite`; remove any shared licensed Graph service-account
+  flow from an eventual enterprise creation path.
+- Copy/share invite links, calendar discovery, chat, TTS of chat, custom display
+  names, and additional in-call controls.
+- Google Meet and Zoom enterprise qualification and their corresponding
+  customer-controlled provider infrastructure.
+- Direct SoftAP glasses-to-phone media. When it lands, run the same Runtime image
+  with only `RUNTIME_SERVICES=meetings`.
 
 ## Branch and dependency strategy
 
