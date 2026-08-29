@@ -98,7 +98,10 @@ jobs:
             if [[ "$product" == mentraApp ]]; then package=com.mentra.mentra; else package=com.mentra.bluetoothsdkexample; fi
             expected=$(jq -er ".coordinates.candidates.$product.android.buildNumber" ../promotion-input/current.json)
             APP_PACKAGE_NAME="$package" GOOGLE_PLAY_INVENTORY_OUTPUT="$product.json" bundle exec fastlane google_play_inventory
-            jq -e --argjson expected "$expected" '.tracks.production | map(tonumber) | index($expected) != null' "$product.json" >/dev/null
+            node ../.github/scripts/validate-google-play-rollout.mjs \
+              --inventory "$product.json" \
+              --version-code "$expected" \
+              --output "../promotion-output/public-status/$product-google.json"
           done
 
       - name: Append protected approval or observed rollout state
@@ -117,20 +120,23 @@ jobs:
             asset=production-public-rollout-started.json
             jq -n --arg url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" '{schemaVersion: 1, kind: "production-public-rollout-started", provenanceUrl: $url, exactStoreCoordinatesObserved: true}' > "promotion-output/$asset"
           fi
-          digest=$(sha256sum "promotion-output/$asset" | cut -d' ' -f1)
-          jq -n --arg kind "$kind" --arg url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" --arg sha256 "$digest" --arg assetName "$asset" '{kind: $kind, url: $url, sha256: $sha256, assetName: $assetName}' > promotion-output/evidence.json
+          node .github/scripts/production-promotion-assets.mjs prepare-evidence \
+            --file "promotion-output/$asset" \
+            --kind "$kind" \
+            --url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --output promotion-output/evidence.json \
+            --output-directory promotion-output/evidence-assets \
+            --github-output "$GITHUB_OUTPUT"
           node .github/scripts/production-promotion-state.mjs transition --record promotion-input/current.json --to "$to" --actor "$GITHUB_ACTOR" --created-at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" --provenance-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" --evidence promotion-output/evidence.json --output promotion-output/next.json
           name=$(node --input-type=module -e 'import {readFileSync} from "node:fs"; import {promotionAssetName} from "./.github/scripts/production-promotion-state.mjs"; process.stdout.write(promotionAssetName(JSON.parse(readFileSync("promotion-output/next.json", "utf8"))))')
           mv promotion-output/next.json "promotion-output/$name"
           {
             echo "record=promotion-output/$name"
-            echo "asset=promotion-output/$asset"
-            echo "asset_name=$asset"
           } >> "$GITHUB_OUTPUT"
 
       - name: Publish protected release evidence
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          node .github/scripts/publish-immutable-release-asset.mjs --file "${{ steps.next.outputs.asset }}" --name "${{ steps.next.outputs.asset_name }}" --release-id "${{ steps.promotion.outputs.release_id }}" --repository "$GITHUB_REPOSITORY"
+          node .github/scripts/publish-immutable-release-asset.mjs --file "${{ steps.next.outputs.asset_path }}" --name "${{ steps.next.outputs.asset_name }}" --release-id "${{ steps.promotion.outputs.release_id }}" --repository "$GITHUB_REPOSITORY"
           node .github/scripts/production-promotion-assets.mjs publish-record --record "${{ steps.next.outputs.record }}" --release-id "${{ steps.promotion.outputs.release_id }}" --repository "$GITHUB_REPOSITORY"

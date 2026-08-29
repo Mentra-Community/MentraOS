@@ -3,6 +3,7 @@ import test from "node:test"
 
 import {releaseRecordSha256} from "./release-family.mjs"
 import {
+  ATTESTATION_CHECKS,
   PROMOTION_STATES,
   abortPromotionRecord,
   createInitialPromotionRecord,
@@ -70,6 +71,22 @@ function withCompatibilityLab(record = initial()) {
     provenanceUrl: runUrl,
     evidence: evidence("staging-mobile-n-compatibility-lab"),
   })
+}
+
+function atState(target) {
+  let record = withCompatibilityLab()
+  const targetIndex = PROMOTION_STATES.indexOf(target)
+  for (const state of PROMOTION_STATES.slice(1, targetIndex + 1)) {
+    record = transitionPromotionRecord({
+      record,
+      to: state,
+      actor: "release-owner",
+      createdAt: now,
+      provenanceUrl: runUrl,
+      evidence: evidence(state === "staging-compatible" ? "staging-mobile-n-compatibility" : state),
+    })
+  }
+  return record
 }
 
 test("creates a deterministic initial promotion and append-only transition", () => {
@@ -186,8 +203,8 @@ test("requires complete platform coverage and rejects credential-like evidence",
         product: "mentra-app",
         platform: "ios",
         result: "pass",
-        appVersion: "3.0.0",
-        appBuild: 300000100,
+        appVersion: "3.1.0",
+        appBuild: 310000090,
         deviceModel: "iPhone 15",
         osVersion: "iOS 19",
       },
@@ -199,12 +216,24 @@ test("requires complete platform coverage and rejects credential-like evidence",
     product: "mentra-app",
     platform: "android",
     result: "pass",
-    appVersion: "3.0.0",
-    appBuild: 300000101,
+    appVersion: "3.1.0",
+    appBuild: 310000090,
     deviceModel: "Pixel 9",
     osVersion: "Android 16",
   })
   assert.equal(validateAttestation(attestation, record), attestation)
+  assert.throws(
+    () =>
+      validateAttestation(
+        {...attestation, tests: [{...attestation.tests[0], appBuild: "BUILD"}, attestation.tests[1]]},
+        record,
+      ),
+    /does not match frozen mentra-app:ios coordinate/,
+  )
+  assert.throws(
+    () => validateAttestation({...attestation, tests: [...attestation.tests, attestation.tests[0]]}, record),
+    /duplicate coverage/,
+  )
   const advanced = transitionWithAttestation({
     record,
     attestation,
@@ -220,6 +249,63 @@ test("requires complete platform coverage and rejects credential-like evidence",
     () => validateAttestation({...attestation, notes: `Bearer ${"x".repeat(40)}`}, record),
     /credential material/,
   )
+})
+
+test("binds every human gate to its check-specific frozen coordinates", () => {
+  const initialRecord = initial()
+  const cases = [
+    {
+      check: "production-mobile-n-compatibility",
+      record: atState("cloud-deployed"),
+      coordinates: {"mentra-app": initialRecord.coordinates.currentMentraApp},
+    },
+    {
+      check: "production-mobile-candidate-acceptance",
+      record: atState("mobile-candidates-uploaded"),
+      coordinates: {
+        "mentra-app": initialRecord.coordinates.candidates.mentraApp,
+        "starter-kit": initialRecord.coordinates.candidates.starterKit,
+      },
+    },
+    {
+      check: "store-review-approved",
+      record: atState("stores-submitted"),
+      coordinates: {
+        "mentra-app": initialRecord.coordinates.candidates.mentraApp,
+        "starter-kit": initialRecord.coordinates.candidates.starterKit,
+      },
+    },
+  ]
+  for (const {check, record, coordinates} of cases) {
+    const tests = ATTESTATION_CHECKS[check].coverage.map((coverage) => {
+      const [product, platform] = coverage.split(":")
+      const coordinate = coordinates[product][platform]
+      return {
+        product,
+        platform,
+        result: "pass",
+        appVersion: coordinate.marketingVersion,
+        appBuild: coordinate.buildNumber,
+        deviceModel: "release device",
+        osVersion: "release OS",
+      }
+    })
+    const attestation = {
+      schemaVersion: 1,
+      promotionId: record.promotionId,
+      releaseIdentity: record.releaseIdentity,
+      check,
+      result: "pass",
+      performedAt: now,
+      tester: {githubLogin: "qa-owner"},
+      tests,
+      evidenceUrls: [runUrl],
+    }
+    assert.equal(validateAttestation(attestation, record), attestation)
+    const wrong = structuredClone(attestation)
+    wrong.tests[0].appBuild += 1
+    assert.throws(() => validateAttestation(wrong, record), /does not match frozen/)
+  }
 })
 
 test("aborting is terminal and preserves the previous digest", () => {

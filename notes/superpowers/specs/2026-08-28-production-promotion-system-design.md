@@ -253,6 +253,14 @@ Each transition consumes the immutable records from earlier phases and emits a
 new append-only record. It never edits an earlier successful record to make a
 different result appear equivalent.
 
+Workflow-produced evidence assets use content-addressed names. Evidence is
+published before the state that references it; if state publication fails, a
+retry can publish another content-addressed observation without overwriting the
+first. Only evidence referenced by the successfully published state chain
+counts as completed. Human attestations must identify the exact frozen
+marketing version and native build/version code for every required product and
+platform.
+
 ## Phase 0: account and launch readiness
 
 This phase is completed once per app and rechecked before every release.

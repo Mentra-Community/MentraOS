@@ -1,12 +1,16 @@
 #!/usr/bin/env node
+import {createHash} from "node:crypto"
 import {execFileSync} from "node:child_process"
-import {appendFileSync, mkdirSync, readFileSync, writeFileSync} from "node:fs"
+import {appendFileSync, copyFileSync, mkdirSync, readFileSync, writeFileSync} from "node:fs"
 import path from "node:path"
 import {fileURLToPath} from "node:url"
 
+import {requirePublicHttpsUrl} from "./release-family.mjs"
 import {promotionAssetName, validatePromotionChain, validatePromotionRecord} from "./production-promotion-state.mjs"
 
 const VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
+const EVIDENCE_KIND_PATTERN = /^[a-z][a-z0-9-]{0,79}$/
+const ASSET_PREFIX_PATTERN = /^[a-z0-9][a-z0-9.-]{0,119}$/
 
 function gh(args, options = {}) {
   const stdin = options.input === undefined ? "ignore" : "pipe"
@@ -43,6 +47,36 @@ export function promotionContainerTag(releaseIdentity, attempt) {
 export function promotionContainerName(releaseIdentity, attempt) {
   promotionContainerTag(releaseIdentity, attempt)
   return `Mentra ${releaseIdentity} production promotion attempt ${attempt}`
+}
+
+export function prepareEvidenceAsset({file, kind, url, outputDirectory, assetPrefix}) {
+  if (!EVIDENCE_KIND_PATTERN.test(kind || "")) throw new Error("evidence kind has an unsupported shape")
+  requirePublicHttpsUrl(url, "evidence URL")
+  const source = path.resolve(file)
+  const bytes = readFileSync(source)
+  try {
+    JSON.parse(bytes.toString("utf8"))
+  } catch {
+    throw new Error("production promotion evidence must be JSON")
+  }
+  const sha256 = createHash("sha256").update(bytes).digest("hex")
+  const prefix = assetPrefix || `production-evidence-${kind}`
+  if (!ASSET_PREFIX_PATTERN.test(prefix)) throw new Error("evidence asset prefix has an unsupported shape")
+  const assetName = `${prefix}-${sha256}.json`
+  const directory = path.resolve(outputDirectory || path.dirname(source))
+  mkdirSync(directory, {recursive: true})
+  const assetPath = path.join(directory, assetName)
+  if (assetPath !== source) copyFileSync(source, assetPath)
+  return {
+    assetPath,
+    assetName,
+    reference: {
+      kind,
+      url,
+      sha256,
+      assetName,
+    },
+  }
 }
 
 export function parsePromotionContainer(release) {
@@ -210,6 +244,21 @@ function main() {
         state: result.record.state,
         sequence: result.record.sequence,
       },
+      args["github-output"],
+    )
+    return
+  }
+  if (command === "prepare-evidence") {
+    const result = prepareEvidenceAsset({
+      file: args.file,
+      kind: args.kind,
+      url: args.url,
+      outputDirectory: args["output-directory"],
+      assetPrefix: args["asset-prefix"],
+    })
+    writeFileSync(path.resolve(args.output), `${JSON.stringify(result.reference, null, 2)}\n`)
+    output(
+      {asset_path: result.assetPath, asset_name: result.assetName, sha256: result.reference.sha256},
       args["github-output"],
     )
     return
