@@ -69,11 +69,13 @@ jobs:
           fi
           [[ "$state" == rolling-out ]]
           previous=$(jq -r '[.evidence[].assetName | (try capture("^production-rollout-(?<percent>[0-9]{3})-[0-9a-f]{64}\\.json$") catch empty) | .percent | tonumber] | max // 0' promotion-input/current.json)
-          [[ "$percent" -gt "$previous" ]]
           if [[ "${{ inputs.action }}" == complete ]]; then
             [[ "$percent" == 100 ]]
+            [[ "$previous" -le 100 ]]
             to=finalizing
           else
+            [[ "$percent" -lt 100 ]]
+            [[ "$percent" -gt "$previous" ]]
             to=rolling-out
           fi
           mkdir -p promotion-output

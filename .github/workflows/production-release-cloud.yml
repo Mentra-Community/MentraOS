@@ -58,12 +58,22 @@ jobs:
           --output promotion-input/current.json
           --github-output "$GITHUB_OUTPUT"
 
+      - name: Resolve the frozen Cloud source
+        id: source
+        run: echo "commit=$(jq -er .source.mentraosCommit promotion-input/current.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout the frozen Cloud source separately from workflow tooling
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.source.outputs.commit }}
+          path: promotion-source
+
       - name: Require the staging-compatible state
         run: |
           [[ "$(jq -er .state promotion-input/current.json)" == "staging-compatible" ]]
           node .github/scripts/validate-production-cloud-config.mjs \
             --contract .github/production-release/cloud-config-contract.json \
-            --root .
+            --root promotion-source
 
       - uses: porter-dev/setup-porter@v0.1.0
 
@@ -80,13 +90,13 @@ jobs:
           mkdir -p promotion-output/config
           node .github/scripts/validate-production-cloud-config.mjs \
             --contract .github/production-release/cloud-config-contract.json \
-            --root . \
+            --root promotion-source \
             --environment staging \
             --env-file "$RUNNER_TEMP/production-config/staging.env" \
             --output promotion-output/config/staging.json
           node .github/scripts/validate-production-cloud-config.mjs \
             --contract .github/production-release/cloud-config-contract.json \
-            --root . \
+            --root promotion-source \
             --environment prod \
             --env-file "$RUNNER_TEMP/production-config/prod.env" \
             --output promotion-output/config/prod.json
