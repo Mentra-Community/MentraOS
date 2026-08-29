@@ -29,24 +29,36 @@
  * storage quota. Recording cannot simply be turned off -- HLS playback requires
  * `mode: automatic` -- so `stop()` deletes the recordings before the input, and
  * `deleteRecordingAfterDays` is set as a floor for anything that slips past.
+ * Inputs are disabled before cleanup and retained whenever a recording is still
+ * finalizing, so no billable recording becomes unreachable through its input.
  */
 
 import type { ManagedStream, StreamOptions, StreamStatusResult } from "@mentra/cloud-protocol/camera";
-import type { StreamProvider } from "../stream.service";
+import type {
+  StreamCleanupResult,
+  StreamDiscoveryResult,
+  StreamProvider,
+} from "../stream.service";
 
 const CF_API = "https://api.cloudflare.com/client/v4";
 
 /** Cloudflare's minimum for `deleteRecordingAfterDays`. A floor, not the policy. */
 const RECORDING_RETENTION_DAYS = 30;
 
+interface LiveInputSummary {
+  uid?: string;
+  created?: string;
+  modified?: string;
+  meta?: unknown;
+}
+
 /** `GET /live_inputs` -- every input on the account. */
 interface LiveInputListResult {
-  result?: Array<{
-    uid: string;
-    created?: string;
-    modified?: string;
-    status?: { current?: { state?: string | null } | null } | null;
-  }>;
+  result?: {
+    liveInputs?: LiveInputSummary[];
+    range?: number;
+    total?: number;
+  };
   success: boolean;
 }
 
@@ -62,19 +74,24 @@ interface VideoListResult {
 interface LiveInputResult {
   result?: {
     uid: string;
+    enabled?: boolean;
+    meta?: unknown;
     rtmps?: { url: string; streamKey: string };
     rtmpsPlayback?: { url: string; streamKey: string };
     srt?: { url: string; streamId: string; passphrase: string };
     webRTC?: { url: string };
     webRTCPlayback?: { url: string };
-    status?: {
-      current?: {
-        state?: string | null;
-        statusEnteredAt?: string;
-        statusLastSeen?: string;
-        reason?: string;
-      } | null;
-    } | null;
+    status?:
+      | string
+      | {
+          current?: {
+            state?: string | null;
+            statusEnteredAt?: string;
+            statusLastSeen?: string;
+            reason?: string;
+          } | null;
+        }
+      | null;
   };
   success: boolean;
   errors?: Array<{ code: number; message: string }>;
@@ -116,74 +133,184 @@ export function createCloudflareStreamProvider(): StreamProvider {
     };
   }
 
+  function currentStatus(input: NonNullable<LiveInputResult["result"]>): {
+    state: string | null;
+    statusEnteredAt?: string;
+    statusLastSeen?: string;
+    reason?: string;
+  } {
+    if (typeof input.status === "string") return { state: input.status };
+    return {
+      state: input.status?.current?.state ?? null,
+      statusEnteredAt: input.status?.current?.statusEnteredAt,
+      statusLastSeen: input.status?.current?.statusLastSeen,
+      reason: input.status?.current?.reason,
+    };
+  }
+
+  function isReclaimProtectedState(state: string | null): boolean {
+    return (
+      state === "connected" ||
+      state === "reconnected" ||
+      state === "reconnecting" ||
+      state === "live"
+    );
+  }
+
+  function isConnectedState(state: string | null): boolean {
+    return state === "connected" || state === "reconnected" || state === "live";
+  }
+
+  function isMentraInput(input: LiveInputSummary): boolean {
+    if (!input.meta || typeof input.meta !== "object") return false;
+    const name = (input.meta as Record<string, unknown>).name;
+    return typeof name === "string" && name.startsWith("mentra-");
+  }
+
+  async function getLiveInput(inputUid: string): Promise<NonNullable<LiveInputResult["result"]> | null> {
+    const res = await fetch(`${base}/${inputUid}`, { headers: authHeaders });
+    if (res.status === 404) return null;
+
+    const body = (await res.json()) as LiveInputResult;
+    if (!res.ok || !body.success || !body.result) {
+      const detail = body.errors?.map((e) => e.message).join("; ") ?? res.statusText;
+      throw new Error(`cloudflare live input get failed: ${detail}`);
+    }
+    return body.result;
+  }
+
+  async function disableInput(inputUid: string): Promise<boolean> {
+    const res = await fetch(`${base}/${inputUid}`, {
+      method: "PUT",
+      headers: { ...authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: false }),
+    });
+    if (res.status === 404) return false;
+    if (!res.ok) throw new Error(`cloudflare live input disable failed: ${res.status}`);
+    return true;
+  }
+
+  async function deleteInput(inputUid: string): Promise<void> {
+    const res = await fetch(`${base}/${inputUid}`, {
+      method: "DELETE",
+      headers: authHeaders,
+    });
+    if (!res.ok && res.status !== 404) {
+      throw new Error(`cloudflare live input delete failed: ${res.status}`);
+    }
+  }
+
+  interface RecordingCleanupResult {
+    deleted: number;
+    failed: number;
+    pending: number;
+    seen: number;
+  }
+
   /**
    * Delete every finished recording belonging to a live input.
    *
-   * Best-effort by design: a stream that has just ended may not have a
-   * recording yet (Cloudflare takes up to ~60s to make one available), and a
-   * failure here must not stop the caller from tearing the input down. What
-   * this misses, the sweeper and `deleteRecordingAfterDays` catch.
+   * A stream that has just ended may not have a recording yet (Cloudflare can
+   * take time to make one available). Callers use the returned pending/failure
+   * counts to retain the input for a later sweep instead of orphaning video.
    *
-   * Returns the number deleted, so callers can log it.
+   * Returns a lifecycle summary so callers can distinguish complete cleanup
+   * from a safe deferral.
    */
-  async function deleteRecordings(inputUid: string): Promise<number> {
+  async function cleanupRecordings(inputUid: string): Promise<RecordingCleanupResult> {
     const listed = await fetch(`${base}/${inputUid}/videos`, { headers: authHeaders });
-    if (!listed.ok) return 0;
+    if (!listed.ok) {
+      throw new Error(`cloudflare recording list failed: ${listed.status}`);
+    }
 
     const body = (await listed.json()) as VideoListResult;
+    if (!body.success || !Array.isArray(body.result)) {
+      throw new Error("cloudflare recording list returned an invalid response");
+    }
     const videos = body.result ?? [];
     let deleted = 0;
+    let failed = 0;
+    let pending = 0;
 
     for (const video of videos) {
-      // An in-progress broadcast is not a recording yet. Deleting it would
-      // kill a live stream.
-      if (video.status?.state === "live-inprogress") continue;
+      const state = video.status?.state;
+      if (state !== "ready" && state !== "error") {
+        // Unknown and processing states are deliberately retained. Deleting
+        // the input now would orphan a recording that Cloudflare has not
+        // finished materializing yet.
+        pending += 1;
+        continue;
+      }
 
       const res = await fetch(`${CF_API}/accounts/${accountId}/stream/${video.uid}`, {
         method: "DELETE",
         headers: authHeaders,
       });
       if (res.ok || res.status === 404) deleted += 1;
+      else failed += 1;
     }
-    return deleted;
+    return { deleted, failed, pending, seen: videos.length };
+  }
+
+  async function listLiveInputs(): Promise<{
+    inputs: LiveInputSummary[];
+    total: number;
+  }> {
+    const listed = await fetch(base, { headers: authHeaders });
+    if (!listed.ok) throw new Error(`cloudflare live input list failed: ${listed.status}`);
+
+    const body = (await listed.json()) as LiveInputListResult;
+    const inputs = body.result?.liveInputs;
+    if (!body.success || !Array.isArray(inputs)) {
+      throw new Error("cloudflare live input list returned an invalid response");
+    }
+    return { inputs, total: body.result?.total ?? inputs.length };
   }
 
   /**
-   * Reclaim what `stop()` never got to.
-   *
-   * `stop()` only runs when a client explicitly ends a stream. A stream that
-   * ends because the device dropped, the app closed, or the pod restarted
-   * leaves its input and recordings behind forever. That is the leak that
-   * filled the account: thousands of abandoned inputs, each with recordings
-   * still billed against the storage quota.
-   *
-   * Deletes inputs (and their recordings) last modified before the cutoff,
-   * skipping anything currently connected. Idempotent: a 404 counts as done,
-   * so concurrent pods sweeping at once is harmless.
+   * Disable an input, delete terminal recordings, then delete the input only
+   * when no recording can be orphaned. Explicit stops defer an empty recording
+   * list because Cloudflare may still be materializing it; queue recovery can
+   * accept an empty list after its grace period.
    */
-  async function sweep(olderThanMs: number): Promise<{ recordings: number; inputs: number }> {
-    const cutoff = Date.now() - olderThanMs;
-    let recordings = 0;
-    let inputs = 0;
+  async function cleanupInput(
+    inputUid: string,
+    allowEmpty: boolean,
+  ): Promise<StreamCleanupResult> {
+    if (!(await disableInput(inputUid))) return { recordings: 0, input: "missing" };
 
-    const listed = await fetch(base, { headers: authHeaders });
-    if (!listed.ok) return { recordings, inputs };
-
-    const body = (await listed.json()) as LiveInputListResult;
-    for (const input of body.result ?? []) {
-      const modified = Date.parse(input.modified ?? input.created ?? "");
-      if (!Number.isFinite(modified) || modified >= cutoff) continue;
-
-      // Never touch an input a device is publishing to right now.
-      const state = input.status?.current?.state ?? null;
-      if (state === "connected" || state === "live") continue;
-
-      recordings += await deleteRecordings(input.uid);
-
-      const res = await fetch(`${base}/${input.uid}`, { method: "DELETE", headers: authHeaders });
-      if (res.ok || res.status === 404) inputs += 1;
+    const cleanup = await cleanupRecordings(inputUid);
+    if (cleanup.failed > 0) {
+      throw new Error(`cloudflare recording cleanup failed for ${cleanup.failed} recording(s)`);
     }
-    return { recordings, inputs };
+    if (cleanup.pending > 0 || (!allowEmpty && cleanup.seen === 0)) {
+      return { recordings: cleanup.deleted, input: "retained" };
+    }
+
+    await deleteInput(inputUid);
+    return { recordings: cleanup.deleted, input: "deleted" };
+  }
+
+  async function reclaim(inputUid: string): Promise<StreamCleanupResult> {
+    // A registry entry may refer to a live stream lasting longer than the
+    // abandonment grace period. Verify provider state before disabling it.
+    const current = await getLiveInput(inputUid);
+    if (!current) return { recordings: 0, input: "missing" };
+    if (isReclaimProtectedState(currentStatus(current).state)) {
+      return { recordings: 0, input: "retained" };
+    }
+    return await cleanupInput(inputUid, true);
+  }
+
+  async function discover(): Promise<StreamDiscoveryResult> {
+    const listed = await listLiveInputs();
+    const inputs = listed.inputs.flatMap((input) => {
+      if (!input.uid || !isMentraInput(input)) return [];
+      const createdAt = Date.parse(input.created ?? input.modified ?? "");
+      if (!Number.isFinite(createdAt)) return [];
+      return [{ streamId: input.uid, createdAt }];
+    });
+    return { inputs, truncated: listed.total > listed.inputs.length };
   }
 
   return {
@@ -256,43 +383,25 @@ export function createCloudflareStreamProvider(): StreamProvider {
     },
 
     async status(streamId: string): Promise<StreamStatusResult> {
-      const res = await fetch(`${base}/${streamId}`, { headers: authHeaders });
-      const body = (await res.json()) as LiveInputResult;
-      if (!res.ok || !body.success || !body.result) {
-        const detail = body.errors?.map((e) => e.message).join("; ") ?? res.statusText;
-        throw new Error(`cloudflare live input status failed: ${detail}`);
-      }
-      const current = body.result.status?.current ?? null;
-      const state = current?.state ?? null;
+      const input = await getLiveInput(streamId);
+      if (!input) throw new Error("cloudflare live input status failed: input not found");
+      const current = currentStatus(input);
+      const state = current.state;
       return {
         streamId,
-        isConnected: state === "connected",
+        isConnected: isConnectedState(state),
         state,
-        connectedAt: current?.statusEnteredAt,
-        lastSeenAt: current?.statusLastSeen,
-        reason: current?.reason,
+        connectedAt: current.statusEnteredAt,
+        lastSeenAt: current.statusLastSeen,
+        reason: current.reason,
       };
     },
 
-    async stop(streamId: string): Promise<void> {
-      // Recordings first, then the input. Deleting the input orphans its
-      // recordings -- they survive, keep counting against the storage quota,
-      // and are no longer reachable through the input's /videos listing -- so
-      // the order matters. Once the account is over quota Cloudflare still
-      // creates live inputs but rejects the broadcast at publish, which
-      // surfaces to the user as a network failure.
-      await deleteRecordings(streamId);
-
-      const res = await fetch(`${base}/${streamId}`, {
-        method: "DELETE",
-        headers: authHeaders,
-      });
-      if (!res.ok && res.status !== 404) {
-        throw new Error(`cloudflare live input delete failed: ${res.status}`);
-      }
+    async stop(streamId: string): Promise<StreamCleanupResult> {
+      return await cleanupInput(streamId, false);
     },
 
-    deleteRecordings,
-    sweep,
+    reclaim,
+    discover,
   };
 }
