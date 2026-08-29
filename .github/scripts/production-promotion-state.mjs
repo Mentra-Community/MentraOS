@@ -316,6 +316,9 @@ export function transitionPromotionRecord({record, to, actor, createdAt, provena
 
 export function abortPromotionRecord({record, actor, createdAt, provenanceUrl, reason, evidence}) {
   validatePromotionRecord(record)
+  if (record.state === "finalizing") {
+    fail("cannot abort after the 100 percent rollout checkpoint; resume finalization")
+  }
   const next = {
     ...record,
     state: "aborted",
