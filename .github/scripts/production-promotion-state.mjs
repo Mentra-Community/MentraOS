@@ -16,7 +16,6 @@ export const PROMOTION_STATES = Object.freeze([
   "selected",
   "staging-compatible",
   "production-config-ready",
-  "cloud-approved",
   "cloud-deployed",
   "current-clients-accepted",
   "mobile-candidates-uploaded",
@@ -58,7 +57,6 @@ export const ATTESTATION_CHECKS = Object.freeze({
 export const NEXT_ACTIONS = Object.freeze({
   "staging-compatible": {kind: "workflow", workflow: "production-release-cloud.yml", phase: "preflight"},
   "production-config-ready": {kind: "workflow", workflow: "production-release-cloud.yml", phase: "deploy"},
-  "cloud-approved": {kind: "workflow", workflow: "production-release-cloud.yml", phase: "deploy"},
   "cloud-deployed": {kind: "attest", check: "production-mobile-n-compatibility"},
   "current-clients-accepted": {kind: "workflow", workflow: "production-release-mobile.yml", phase: "build"},
   "mobile-candidates-uploaded": {kind: "attest", check: "production-mobile-candidate-acceptance"},

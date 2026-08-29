@@ -64,9 +64,14 @@ test("production promotion is resumable and keeps irreversible actions behind se
   assert.match(compatibilityLab, /play_track: internal-app-sharing/)
   assert.match(compatibilityLab, /Mentra Compatibility Lab/)
   assert.match(compatibilityLab, /current-production-release-manifest\.json/)
+  assert.match(compatibilityLab, /--output promotion-input\/release-plan\.json/)
+  assert.match(compatibilityLab, /path: promotion-input\/release-plan\.json/)
+  assert.match(compatibilityLab, /--plan promotion-input\/plan\/release-plan\.json/)
   assert.doesNotMatch(compatibilityLab, /backend_environment: prod/)
   assert.doesNotMatch(compatibilityLab, /production-store-release/)
   assert.match(cloud, /name: production-cloud/)
+  assert.doesNotMatch(cloud, /cloud-approved/)
+  assert.match(cloud, /--record promotion-input\/current\.json \\\n+            --to cloud-deployed/)
   assert.match(mobile, /name: production-mobile-candidates/)
   assert.match(submit, /name: production-store-submission/)
   assert.match(release, /name: production-store-release/)
@@ -260,10 +265,7 @@ test("coordinated docs publish only after finalization to the matching channel",
   assert.match(notify, /STARTER_KIT_RESULT: \$\{\{ needs\.starter-kit\.result \}\}/)
   assert.match(notify, /EXAMPLE_TESTFLIGHT_RESULT: \$\{\{ needs\.example-testflight\.result \}\}/)
   assert.match(notify, /EXAMPLE_TESTFLIGHT_INSTALL_URL: \$\{\{ needs\.example-testflight\.outputs\.install_url \}\}/)
-  assert.match(
-    notify,
-    /EXAMPLE_TESTFLIGHT_BUILD_NUMBER: \$\{\{ needs\.example-testflight\.outputs\.build_number \}\}/,
-  )
+  assert.match(notify, /EXAMPLE_TESTFLIGHT_BUILD_NUMBER: \$\{\{ needs\.example-testflight\.outputs\.build_number \}\}/)
   assert.match(notify, /STARTER_KIT_RUN_URL: \$\{\{ needs\.starter-kit\.outputs\.run_url \}\}/)
   assert.match(notify, /DOCS_RESULT: \$\{\{ needs\.docs\.result \}\}/)
   const example = workflow("reusable-coordinated-example-testflight.yml")
@@ -347,16 +349,9 @@ test("Android release keeps the GitHub APK arm64-only and the Play AAB multi-ABI
 
   assert.match(releaseAndroid, /const APK_ARCHITECTURES = 'arm64-v8a'/)
   assert.match(releaseAndroid, /const AAB_ARCHITECTURES = 'armeabi-v7a,arm64-v8a,x86,x86_64'/)
-  assert.match(
-    releaseAndroid,
-    /gradlew assembleRelease -PreactNativeArchitectures=\$\{APK_ARCHITECTURES\}/,
-  )
+  assert.match(releaseAndroid, /gradlew assembleRelease -PreactNativeArchitectures=\$\{APK_ARCHITECTURES\}/)
   assert.equal(
-    [
-      ...releaseAndroid.matchAll(
-        /gradlew bundleRelease -PreactNativeArchitectures=\$\{AAB_ARCHITECTURES\}/g,
-      ),
-    ].length,
+    [...releaseAndroid.matchAll(/gradlew bundleRelease -PreactNativeArchitectures=\$\{AAB_ARCHITECTURES\}/g)].length,
     2,
   )
   assert.doesNotMatch(mobileAndroid, /ORG_GRADLE_PROJECT_reactNativeArchitectures:/)
@@ -367,8 +362,5 @@ test("Android release keeps the GitHub APK arm64-only and the Play AAB multi-ABI
     /if: inputs\.dry_run == true \|\| needs\.prepare\.outputs\.android_assets_exist != 'true'/,
   )
   assert.match(mobileAndroid, /GitHub APK ABIs '\$\{apk_abis:-<none>\}' do not match required arm64-v8a/)
-  assert.match(
-    mobileAndroid,
-    /Google Play AAB ABIs '\$\{aab_abis:-<none>\}' do not match required \$expected_aab_abis/,
-  )
+  assert.match(mobileAndroid, /Google Play AAB ABIs '\$\{aab_abis:-<none>\}' do not match required \$expected_aab_abis/)
 })

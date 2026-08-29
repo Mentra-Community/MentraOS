@@ -234,7 +234,6 @@ checkout is never an implicit production source.
 selected
   -> staging-compatible
   -> production-config-ready
-  -> cloud-approved
   -> cloud-deployed
   -> current-clients-accepted
   -> mobile-candidates-uploaded
@@ -446,6 +445,13 @@ The CLI shows the exact source, image input, target, previous production
 revision, migration plan, and rollback command. It asks for confirmation and
 dispatches the protected Cloud workflow. A separate approver reviews the same
 summary in GitHub and approves the `production-cloud` environment.
+
+GitHub's protected-environment history is the approval audit record. The
+promotion state advances directly from `production-config-ready` to
+`cloud-deployed` only after the approved job has deployed, probed, and read
+back the exact running revision. It does not publish a separate approval state
+that could imply deployment happened before approval or leave an ambiguous
+partial transition after the deployment already completed.
 
 The deployment must:
 

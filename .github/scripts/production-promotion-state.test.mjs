@@ -93,6 +93,37 @@ test("creates a deterministic initial promotion and append-only transition", () 
   assert.equal(validatePromotionChain(labReady, compatible), compatible)
 })
 
+test("records protected Cloud deployment as one resumable transition", () => {
+  const labReady = withCompatibilityLab()
+  const compatible = transitionPromotionRecord({
+    record: labReady,
+    to: "staging-compatible",
+    actor: "qa-owner",
+    createdAt: now,
+    provenanceUrl: runUrl,
+    evidence: evidence("staging-mobile-n-compatibility"),
+  })
+  const configReady = transitionPromotionRecord({
+    record: compatible,
+    to: "production-config-ready",
+    actor: "release-owner",
+    createdAt: now,
+    provenanceUrl: runUrl,
+    evidence: evidence("production-cloud-config-preflight"),
+  })
+  assert.equal(nextAction(configReady).phase, "deploy")
+  const deployed = transitionPromotionRecord({
+    record: configReady,
+    to: "cloud-deployed",
+    actor: "release-owner",
+    createdAt: now,
+    provenanceUrl: runUrl,
+    evidence: evidence("production-cloud-v2-deployment"),
+  })
+  assert.equal(deployed.sequence, configReady.sequence + 1)
+  assert.equal(nextAction(deployed).check, "production-mobile-n-compatibility")
+})
+
 test("rejects skipped states, changed identities, and malformed chain digests", () => {
   const selected = initial()
   assert.throws(

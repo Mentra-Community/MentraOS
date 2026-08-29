@@ -76,17 +76,27 @@ export function validateContractCoverage(contract, sourceKeys) {
   return true
 }
 
-function validateUrl(value, protocols, label) {
+function parseUrl(value, protocols, label) {
   let url
   try {
     url = new URL(value)
   } catch {
     throw new Error(`${label} is not a valid URL`)
   }
-  if (!protocols.includes(url.protocol) || url.username || url.password || url.hash) {
+  if (!protocols.includes(url.protocol) || !url.hostname || url.hash) {
     throw new Error(`${label} has an unsafe or unsupported URL shape`)
   }
   return url
+}
+
+function validatePublicUrl(value, protocols, label) {
+  const url = parseUrl(value, protocols, label)
+  if (url.username || url.password) throw new Error(`${label} has an unsafe or unsupported URL shape`)
+  return url
+}
+
+function validateConnectionUrl(value, protocols, label) {
+  return parseUrl(value, protocols, label)
 }
 
 function validateValue(value, rule, label, environment) {
@@ -95,9 +105,9 @@ function validateValue(value, rule, label, environment) {
     throw new Error(`${label} contains a placeholder or local value`)
   const values = rule.valuesByEnvironment?.[environment] || rule.values
   if (values && !values.includes(value)) throw new Error(`${label} is not an allowed ${environment} value`)
-  if (rule.kind === "https-url") validateUrl(value, ["https:"], label)
-  if (rule.kind === "mongo-url") validateUrl(value, ["mongodb:", "mongodb+srv:"], label)
-  if (rule.kind === "redis-url") validateUrl(value, ["redis:", "rediss:"], label)
+  if (rule.kind === "https-url") validatePublicUrl(value, ["https:"], label)
+  if (rule.kind === "mongo-url") validateConnectionUrl(value, ["mongodb:", "mongodb+srv:"], label)
+  if (rule.kind === "redis-url") validateConnectionUrl(value, ["redis:", "rediss:"], label)
   if (rule.kind === "integer" && (!/^\d+$/.test(value) || Number(value) < 1))
     throw new Error(`${label} is not positive integer text`)
   if (rule.kind === "json") {
