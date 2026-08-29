@@ -83,22 +83,31 @@ jobs:
 
       - name: Get cache week number
         id: cache-week
-        run: echo "week=$(date +%Y-%U)" >> $GITHUB_OUTPUT
+        run: echo "week=$(date +%Y-%U)" >> "$GITHUB_OUTPUT"
 
-      - name: Cache CocoaPods
-        id: pods-cache
+      - name: Cache CocoaPods downloads
         uses: actions/cache@v4
         with:
           path: |
-            mobile/ios/Pods
             ~/Library/Caches/CocoaPods
             ~/.cocoapods
-          key: pods-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-${{ hashFiles('mobile/ios/Podfile.lock', 'mobile/package.json') }}
+          # Downloaded pod archives and specs are portable between runners.
+          key: cocoapods-downloads-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-${{ hashFiles('mobile/package.json', 'mobile/bun.lock') }}
           restore-keys: |
-            pods-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-
-            pods-${{ runner.os }}-
+            cocoapods-downloads-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-
+            cocoapods-downloads-${{ runner.os }}-
+
+      - name: Cache installed CocoaPods
+        uses: actions/cache@v4
+        with:
+          path: mobile/ios/Pods
+          # Generated pod support files can embed absolute node_modules and
+          # workspace paths. Keep them runner-local and exact so a runner never
+          # inherits another runner's Hermes or React Native build-script paths.
+          key: pods-installed-${{ runner.name }}-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-${{ hashFiles('mobile/ios/Podfile.lock', 'mobile/package.json', 'mobile/bun.lock') }}
 
       - name: Cache Xcode DerivedData (device build)
+        id: xcode-derived-cache
         uses: actions/cache@v4
         with:
           path: mobile/ios/build-device
@@ -371,6 +380,15 @@ jobs:
           SENTRY_DISABLE_AUTO_UPLOAD: "true"
         continue-on-error: true
         run: |
+          started_at="$(date +%s)"
+          record_duration() {
+            status=$?
+            echo "duration_seconds=$(($(date +%s) - started_at))" >> "$GITHUB_OUTPUT"
+            trap - EXIT
+            exit "$status"
+          }
+          trap record_duration EXIT
+
           xcodebuild -workspace Mentra.xcworkspace \
                      -scheme Mentra \
                      -configuration Release \
@@ -381,11 +399,21 @@ jobs:
                      CODE_SIGNING_ALLOWED=NO
 
       - name: Retry build with clean caches (if first attempt failed)
+        id: xcode-build-clean
         if: steps.xcode-build.outcome == 'failure'
         working-directory: ./mobile/ios
         env:
           SENTRY_DISABLE_AUTO_UPLOAD: "true"
         run: |
+          started_at="$(date +%s)"
+          record_duration() {
+            status=$?
+            echo "duration_seconds=$(($(date +%s) - started_at))" >> "$GITHUB_OUTPUT"
+            trap - EXIT
+            exit "$status"
+          }
+          trap record_duration EXIT
+
           echo "First build failed, nuking caches and retrying from scratch..."
 
           # Kill any hung xcodebuild from THIS job's failed attempt only — scoped to our
@@ -430,6 +458,45 @@ jobs:
                      CODE_SIGN_IDENTITY="" \
                      CODE_SIGNING_REQUIRED=NO \
                      CODE_SIGNING_ALLOWED=NO
+
+      - name: Summarize iOS build attempts
+        if: always()
+        env:
+          DERIVED_CACHE_HIT: ${{ steps.xcode-derived-cache.outputs.cache-hit }}
+          CACHED_OUTCOME: ${{ steps.xcode-build.outcome }}
+          CACHED_DURATION_SECONDS: ${{ steps.xcode-build.outputs.duration_seconds }}
+          RETRY_OUTCOME: ${{ steps.xcode-build-clean.outcome }}
+          RETRY_DURATION_SECONDS: ${{ steps.xcode-build-clean.outputs.duration_seconds }}
+        run: |
+          format_duration() {
+            seconds="$1"
+            if ! [[ "$seconds" =~ ^[0-9]+$ ]]; then
+              echo "not recorded"
+              return
+            fi
+            printf '%dm %02ds\n' "$((seconds / 60))" "$((seconds % 60))"
+          }
+
+          cache_hit="${DERIVED_CACHE_HIT:-false}"
+          cached_outcome="${CACHED_OUTCOME:-not run}"
+          retry_outcome="${RETRY_OUTCOME:-not run}"
+          cached_duration="$(format_duration "$CACHED_DURATION_SECONDS")"
+          retry_duration="$(format_duration "$RETRY_DURATION_SECONDS")"
+
+          {
+            echo "## iOS device build attempts"
+            echo ""
+            echo "- DerivedData exact-key hit: $cache_hit"
+            echo ""
+            echo "| Attempt | Outcome | Duration |"
+            echo "| --- | --- | ---: |"
+            echo "| Cache-enabled build | $cached_outcome | $cached_duration |"
+            echo "| Clean-cache retry | $retry_outcome | $retry_duration |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$cached_outcome" = "failure" ]; then
+            echo "::warning::Cache-enabled iOS build failed after $cached_duration; clean-cache retry outcome: $retry_outcome ($retry_duration)."
+          fi
 
       - name: Fail if both builds failed
         if: steps.xcode-build.outcome == 'failure'
