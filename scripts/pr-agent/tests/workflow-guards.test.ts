@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { requiredWorkflowsForPaths } from '../src/ci-gates.js';
 import { shouldBlankPrForWorkflowRunHandoff } from '../src/handoff-gate.js';
 import { repoRoot } from './helpers.js';
 
@@ -8,6 +9,7 @@ const workflowPath = join(
   repoRoot,
   '.github/workflows/pr-agent-orchestrator.yml',
 );
+const ciGateWorkflowPath = join(repoRoot, '.github/workflows/ci-gate.yml');
 
 /** Slice from `  jobId:` through the line before the next 2-space job key. */
 function jobBlock(workflow: string, jobId: string): string {
@@ -83,6 +85,34 @@ describe('shouldBlankPrForWorkflowRunHandoff', () => {
     expect(
       shouldBlankPrForWorkflowRunHandoff('workflow_run', ['agent-in-progress']),
     ).toBe(false);
+  });
+});
+
+describe('CI Gate empty-area handling', () => {
+  const workflow = readFileSync(ciGateWorkflowPath, 'utf8');
+
+  test('settles successfully after grace when no gated workflow registers', () => {
+    expect(workflow).toContain(
+      'else if (elapsedMs >= GRACE_MS || alreadySettled)',
+    );
+    expect(workflow).toContain(
+      'const EMPTY_AREA_DESCRIPTION = "No required area builds for this change"',
+    );
+    expect(workflow).toContain(
+      'latest?.description !== EMPTY_AREA_DESCRIPTION',
+    );
+    expect(workflow).toContain('description = EMPTY_AREA_DESCRIPTION');
+  });
+});
+
+describe('Cloud V2 validation gate paths', () => {
+  test('requires validation when its workflow definition changes', () => {
+    expect(
+      requiredWorkflowsForPaths(
+        ['.github/workflows/cloud-v2-validation.yml'],
+        repoRoot,
+      ),
+    ).toContain('Cloud V2 Validation');
   });
 });
 
