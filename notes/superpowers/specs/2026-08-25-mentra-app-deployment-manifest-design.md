@@ -8,95 +8,158 @@ owner: Mentra
 ## Outcome
 
 The same official Mentra App binary can run against Mentra's public services or
-as part of a Mentra Enterprise Self-Hosted deployment, where Core and Runtime
-run on customer-controlled infrastructure. A small deployment manifest selects
-the Core, Runtime, Mentra Live OTA, and speech-model locations and disables
-features that would otherwise contact public services.
+as part of a Mentra Enterprise Self-Hosted deployment. A deployment manifest is
+resolved before sign-in and selects the authentication, services, artifacts,
+content, hardware catalog, and network-capable behavior for that workspace.
+
+The first customer deployment is deliberately narrower than a self-hosted copy
+of the complete MentraOS cloud. It supports the bundled Mentra Call miniapp,
+Mentra Live, Microsoft Entra sign-in, and direct Microsoft Teams participation
+through Azure Communication Services (ACS). It does not require customer-hosted
+Cloud V2 Core or Runtime.
 
 This is an operating mode of the Mentra App and Mentra Engine, not a customer
 fork, branded build, or second release pipeline.
 
-The v1 network posture is a customer-hosted, restricted-network deployment,
-not a literally disconnected network. The Mentra App must not contact Mentra's
-public Core, Runtime, telemetry, artifact, or content services after a
-self-hosted profile is active. The deployment may still reach destinations
-explicitly approved by the customer, such as its Microsoft Entra tenant, its
-configured speech providers, Apple or Google distribution services, and
-customer-operated hosts. This document uses "air-gapped" only for a future
-zero-egress deployment.
+The v1 network posture is customer-controlled and restricted, not literally
+air-gapped. The app must not contact Mentra's public Core, Runtime, telemetry,
+artifact, content, or miniapp services after a self-hosted profile is active.
+It may reach destinations explicitly approved by the deployment operator,
+including the customer's Microsoft Entra tenant, ACS resource, Workspace
+Gateway, and the configured WHIP/WHEP streaming provider.
 
 ## Terminology
 
 - **Mentra Enterprise Self-Hosted** is the deployment offering.
-- **Customer-hosted deployment** describes the architecture: Core and Runtime
-  run on infrastructure controlled by the customer.
+- **Customer-hosted deployment** means its required server component runs in
+  infrastructure controlled by the customer, including the customer's Azure or
+  AWS account.
+- **Workspace Gateway** is the small customer-hosted API required by the first
+  Mentra Call deployment. It is not a repackaged full Core or Runtime.
 - **Restricted-network deployment** describes the v1 network posture: only
   customer-approved destinations are reachable.
 - **Air-gapped deployment** is reserved for a future zero-egress qualification
   profile.
-- **On-premises deployment** is used only when the customer runs the services in
-  its own data center; Self-Hosted also includes the customer's Azure, AWS, or
-  other cloud account.
+- **On-premises deployment** is used only when the customer runs services in its
+  own data center.
 
 Do not use "private deployment" as the product or architecture name because it
 does not identify who hosts the services.
 
-## First supported self-hosted deployment
+## First supported deployment
 
-The first supported Mentra Enterprise Self-Hosted deployment requires:
+The first Mentra Enterprise Self-Hosted deployment requires:
 
-- The official Mentra App binary from one completed coordinated release.
-- Customer-hosted Cloud V2 Core and Runtime services from that release.
-- A Microsoft Entra workforce tenant controlled by the deployment operator and
-  connected to customer-hosted Core through OIDC for the first pilot.
-- The matching customer-hosted Mentra Live OTA bundle.
-- Customer-hosted copies of the on-device STT and TTS model archives the
-  deployment enables.
-- A customer deployment manifest reachable by the phone before sign-in.
-- Mentra Live as the only glasses model qualified for the first self-hosted
-  pilot.
-- No unapproved public-network access after device and app provisioning.
-  Microsoft Entra and the deployment's configured speech providers are
-  explicitly approved dependencies for the first pilot. A strictly disconnected
-  identity or speech provider will use the same Core/Runtime boundaries but is
-  not claimed as supported until separately qualified.
+- The official Android and iOS Mentra App binaries from one coordinated release.
+- The bundled, phone-hosted Mentra Call miniapp.
+- Mentra Live as the only glasses model qualified for the first pilot.
+- A customer workspace URL and deployment manifest reachable before sign-in.
+- Native Microsoft Entra sign-in against the deployment operator's tenant.
+- A customer-hosted Workspace Gateway.
+- A customer-owned ACS resource.
+- A customer-approved WHIP/WHEP streaming provider. The current
+  `nicolo/acs-teams-v1` implementation uses Cloudflare Stream.
+- Customer-hosted Mentra Live OTA artifacts if OTA is enabled for the pilot.
+- No unapproved public-network access after app and device provisioning.
 
-### Why Core is required
+The initial media path is:
 
-Core is required for this design. It is the customer deployment's control plane:
-it owns account login, session refresh and revocation, stable tenant and user
-identity, subject-token minting, Runtime and miniapp token exchange, the
-minimum-client-version check, the preinstalled miniapp registry, settings, and
-reports. Runtime is the real-time execution plane for glasses, audio, and
-miniapp sessions; it does not replace those account and control-plane APIs.
+```text
+Mentra Live camera
+  -> WHIP
+  -> customer-approved streaming provider
+  -> WHEP
+  -> Mentra App native decoder
+  -> ACS raw outgoing media
+  -> Microsoft Teams
 
-Decision: package the required Core and Runtime services with the first
-self-hosted deployment. Runtime-only support is not a deployment-manifest option
-and is not part of this plan. Supporting it would require a separate architecture
-that moves or replaces Core's identity, token, registry, settings, version, and
-reporting contracts. The manifest keeps the Core boundary deployment-scoped so
-that internal service decomposition can happen later without creating a second
-Mentra App path.
+Microsoft Teams
+  -> ACS raw incoming audio
+  -> Mentra App PCM playback
+  -> glasses speakers
+```
 
-The standalone Bluetooth SDK deployment remains independent and does not need
-Core or Runtime.
+"Direct to Teams through ACS" means that the phone is the Teams participant and
+there is no Recall bot. It does not mean the current implementation has no media
+relay: Cloudflare remains between the glasses' WHIP publisher and the phone's
+WHEP consumer until a direct glasses-to-phone transport is implemented.
+
+### Why full Core and Runtime are not required
+
+The first deployment does not need Core's consumer-account system, Supabase,
+remote miniapp registry, reporting, public store, or general tenant management.
+It also does not need Runtime's speech pipeline or general real-time miniapp
+session. The only Runtime responsibility used by the current Mentra Call branch
+is managed-stream allocation and status. That narrow function moves behind the
+Workspace Gateway instead of forcing customers to deploy the complete Runtime.
+
+The Mentra App therefore needs a supported cloud-session-disabled Engine mode:
+
+- It does not construct or connect a Cloud Client.
+- It does not request a Core token or Runtime token.
+- It uses the verified Entra tenant id plus object id as the local user
+  namespace, scoped again by `deploymentId`.
+- It installs and launches only bundled local miniapps approved by the active
+  manifest.
+- Cloud-backed settings, reports, speech, registry synchronization, and remote
+  miniapps are unavailable.
+- Managed media requests are routed to the Workspace Gateway rather than to
+  Runtime.
+
+Core and Runtime URLs remain optional fields in the common manifest contract so
+a later full-platform customer profile can configure them. They are explicitly
+`null` in the first Mentra Call template. Missing or null service URLs must never
+fall back to Mentra's public endpoints.
+
+## Workspace Gateway
+
+The Workspace Gateway is the only customer-hosted server package required by
+the first deployment. It has a small, explicit contract:
+
+```text
+GET    /.well-known/mentra-deployment.json
+POST   /api/media/streams
+GET    /api/media/streams/:streamId
+DELETE /api/media/streams/:streamId
+POST   /api/communications/teams/guest-token
+POST   /api/communications/teams/user-token      (later Teams-identity step)
+```
+
+An optional meeting-creation endpoint may be supplied, but the preferred future
+flow creates a meeting on behalf of the signed-in user with delegated Microsoft
+Graph permission rather than a shared service account.
+
+The gateway:
+
+- validates Microsoft Entra access tokens from the configured tenant and app
+  registration;
+- authorizes the user or assigned group before allocating resources;
+- holds streaming-provider credentials and creates short-lived WHIP/WHEP
+  resources;
+- holds an ACS server credential, or uses Azure managed identity/RBAC, to mint or
+  exchange short-lived ACS credentials;
+- never receives the user's Microsoft password;
+- does not require Supabase, MongoDB, Recall, Soniox, ElevenLabs, the Mentra
+  Miniapp Store, or Mentra public infrastructure in the ACS-only profile.
+
+The service should be delivered as a small container and an Azure reference
+deployment. Configuration validation is profile-aware: it rejects missing ACS
+or streaming credentials, but does not require environment variables for
+disabled providers.
+
+The existing Mentra Call backend already demonstrates ACS guest-token minting
+and Teams meeting creation, while Cloud V2 Runtime demonstrates Cloudflare
+managed-stream allocation. V1 extracts only these required responsibilities
+behind the gateway contract. It must not package the existing backends with all
+of their unrelated SaaS configuration.
 
 ## One configuration path
 
-The application always consumes the same typed deployment object, but a new
-installation does not need a deployment selected before it can render a local
-landing screen.
+The application always consumes one typed deployment object. A new installation
+does not need a deployment selected before it can render a local landing screen.
 
-The landing screen keeps the ordinary Mentra account choices and adds one
+The landing screen keeps the normal Mentra account choices and adds one
 visually separate workspace action:
-
-- Google
-- Apple, where supported
-- Email
-- Connect to a workspace
-
-The first screen preserves the existing consumer hierarchy rather than
-redesigning account creation in this project:
 
 ```text
                          Mentra
@@ -112,13 +175,9 @@ redesigning account creation in this project:
                  [ Connect to a workspace ]
 ```
 
-Connect to a workspace is visually secondary but always visible. It names the
-thing being selected rather than assuming the workspace uses SSO; authentication
-policy is learned only after the manifest loads.
-
-Google, Apple, or Email activates the embedded Mentra deployment profile before
-starting that authentication flow. Connect to a workspace opens a second local
-screen with one field:
+Google, Apple, or Email activates the embedded Mentra deployment before starting
+the existing consumer authentication flow. Connect to a workspace opens a local
+screen with Back, one URL field, and Continue:
 
 ```text
 < Back
@@ -129,29 +188,21 @@ https://mentra.example-corp.com
 [ Continue ]
 ```
 
-The workspace URL is the human-shareable, externally reachable HTTPS origin for
-that deployment's Core. It is not a raw JSON URL and does not need to be the
-Runtime host. The app normalizes the origin and fetches the manifest directly
-from a fixed unauthenticated path:
+The workspace URL is the human-shareable HTTPS origin for the deployment. It is
+not a raw JSON URL, Core URL, or Runtime URL. The app fetches:
 
 ```text
 GET https://mentra.example-corp.com/.well-known/mentra-deployment.json
 ```
 
-The Self-Hosted deployment package makes Core, or the ingress immediately in
-front of Core, serve the exact manifest JSON at that path from a mounted deployment
-file. There is no directory response and no second manifest-URL hop. V1 requires
-the resolved `services.coreUrl` origin to equal the entered workspace origin;
-Runtime, artifact, and content hosts may remain separate.
+V1 requires `services.workspaceGatewayUrl` to have the same origin as the
+entered workspace URL. Optional Core, Runtime, artifact, and content hosts may
+be different when a future profile uses them.
 
-Entering a workspace URL creates a candidate deployment; it does not immediately
-change active endpoints. The app first downloads the JSON, resolves it over the
-embedded defaults, validates the schema and `releaseIdentity`, and shows a local
-confirmation screen containing the deployment display name, workspace hostname,
-and declared sign-in type. Core/Runtime hosts are available under expandable
-connection details rather than shown as primary end-user copy. Only after the
-user chooses Continue does the app atomically persist and activate the workspace,
-then enter that deployment's authentication flow.
+Entering a workspace creates a candidate only. The app downloads, resolves, and
+validates the manifest and exact `releaseIdentity`, then shows the deployment
+display name, workspace hostname, and declared sign-in type. It persists and
+activates the workspace only after the user confirms.
 
 ```text
 < Cancel
@@ -159,224 +210,119 @@ then enter that deployment's authentication flow.
 Connect to Example Corp
 
 Workspace: mentra.example-corp.com
-Sign-in:   Organization account
+Sign-in:   Microsoft organization account
 
 [ Continue to Example Corp ]
 [ View connection details ]
 ```
 
-Back or Cancel discards only the candidate and returns to the ordinary Mentra
-landing screen. It does not change endpoints, save the workspace, or start a
-network service. After a manually selected workspace has been activated but
-before login, its organization sign-in screen also offers Use a different
-workspace and Return to Mentra. Return to Mentra clears the custom deployment
-selection and restores the local landing screen; because the user is not yet
-authenticated, no account logout is needed. After login, changing deployments
-uses the controlled logout flow described below.
+Back or Cancel returns to the ordinary Mentra landing screen without changing
+endpoints or saving the candidate. A selected but unauthenticated workspace also
+offers Use a different workspace and Return to Mentra. Returning clears the
+selection and restores the local landing screen.
 
-V1 supports manual workspace entry only. A previously selected customer-hosted
-deployment is restored on subsequent boots, so the end user normally enters the
-workspace URL once. The acquisition step is kept separate from the common
-fetch, validation, confirmation, activation, and persistence pipeline. Local
-enrollment metadata records that the source was manual; a future MDM adapter can
-supply the same workspace origin with a managed/enforced source without changing
-the manifest schema or well-known endpoint.
+V1 supports manual workspace entry only. The selected workspace is restored on
+subsequent boots. Enrollment records `source: "manual"`; a future MDM adapter can
+supply the same origin and mark it enforced without changing manifest discovery
+or validation. QR enrollment and a Mentra-hosted workspace directory are not in
+v1.
 
-The embedded Mentra profile is the one complete set of defaults. A customer
-manifest uses the same schema as a partial override of that profile, so the app
-has one resolution path rather than separate consumer and enterprise branches.
+HTTPS and the device trust store authenticate the workspace server. A device
+administrator may install a private CA. V1 rejects URL credentials, query
+strings, fragments, invalid TLS, oversized responses, and cross-origin
+redirects. Manifest signing is not required initially.
 
-HTTPS and the device trust store authenticate the workspace server; a device
-administrator may install a private CA where required. V1 rejects URL
-credentials, query strings, fragments, invalid TLS, oversized responses, and
-cross-origin redirects. Manifest signing is not required for the first
-implementation.
+## Microsoft Entra is the main workspace sign-in
 
-After activation, a `core-sso` deployment presents a single Continue with
-organization account button. It opens `GET /api/account/sso/start` on the
-selected Core. `core-sso` is a Mentra manifest mode, not an identity protocol or
-a Mentra-hosted identity service. In the first supported version, the customer's
-Core has exactly one Microsoft Entra OIDC registration configured by its
-administrator. Core therefore redirects to that specific Entra tenant; it does
-not dynamically choose among providers or protocols. The first self-hosted
-template does not expose signup, password, verification-email, or recovery UI.
+The first call-focused profile uses `auth.mode: "microsoft-entra"`. The Mentra
+App uses the native Microsoft Authentication Library (MSAL) on Android and iOS
+with Authorization Code + PKCE. It does not open a customer Core callback and it
+does not create a Cloud V2 session.
 
-### Identity rollout
+The manifest contains only public Entra configuration: the exact tenant
+authority, native application client id, and requested scopes. It never contains
+a client secret. The customer administrator registers the official Mentra App
+package/bundle redirect URI in a single-tenant public-client app registration,
+assigns allowed users or groups, and grants the permissions required by the
+enabled call features.
 
-Use "deployment operator" for the organization running the customer-hosted
-deployment and "end user" for the person using the Mentra App and glasses.
-
-The first supported enterprise identity integration is Microsoft Entra:
-
-1. The deployment operator registers MentraOS as a single-tenant application in
-   its Microsoft Entra tenant and configures the resulting registration on its
-   customer-hosted Core.
-2. The end user chooses Connect to a workspace and enters the URL supplied by
-   IT.
-3. The app fetches and validates the well-known manifest, then asks the end user
-   to confirm the resolved organization.
-4. The app activates that deployment and presents Continue with organization
-   account.
-5. The customer's Core redirects the browser to the customer's Entra sign-in,
-   validates the callback, and returns a normal deployment-scoped Cloud V2
-   session to the app.
-
-The first self-hosted template sets `mode: "core-sso"`. It does not ask the
-customer to self-host Supabase Auth, build a password service, or administer a
-parallel employee directory. Email/password remains a possible future adapter
-for deployments that explicitly require local accounts, but it is not the first
-self-hosted pilot or a prerequisite for the manifest foundation.
-
-### How an enterprise connects Microsoft Entra
-
-There are two separate configuration surfaces:
-
-1. **Microsoft Entra configuration.** The customer's Entra administrator creates
-   a new app registration named, for example, "MentraOS Enterprise", selects
-   Accounts in this organizational directory only, and adds one Web redirect
-   URI:
-
-   ```text
-   https://<workspace-host>/api/account/sso/callback
-   ```
-
-   The administrator records the Directory (tenant) ID and Application (client)
-   ID, creates a client credential for the confidential Core server, requires
-   assignment for the Enterprise Application, and assigns the users or groups
-   allowed to use MentraOS. The first integration requests only the standard
-   `openid profile email` identity scopes; it does not require Microsoft Graph
-   access.
-2. **Customer Core configuration.** The deployment operator uses the tenant ID
-   to form the tenant-specific OIDC issuer URL, then places that URL, the client
-   ID, and the client credential in the Core deployment configuration and secret
-   store. They are not put in the workspace manifest or Mentra App. An
-   illustrative configuration shape is:
-
-   ```yaml
-   identity:
-     mode: oidc
-     issuerUrl: https://login.microsoftonline.com/11111111-2222-3333-4444-555555555555/v2.0
-     clientId: aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee
-     clientCredentialSecretRef: mentra-entra-client-credential
-     redirectUri: https://mentra.example-corp.com/api/account/sso/callback
-     userProvisioning: just-in-time
-   ```
-
-   The packaged deployment validates these values at startup and resolves OIDC
-   discovery metadata from that exact issuer. The Core configuration contract is
-   standards-based rather than hard-coded to Microsoft, but only Microsoft Entra
-   is supported and qualified in v1. A client secret is sufficient for the first
-   controlled pilot because it remains on Core; a certificate credential is the
-   stronger production option and can be added to the same server-side contract.
-
-The end user never sees any of those identifiers. Continue with organization
-account starts this sequence:
+The end-user flow is:
 
 ```text
-Mentra App
-  -> customer Core /api/account/sso/start
-  -> login.microsoftonline.com/<customer-tenant>/.../authorize
-  -> customer Entra login, MFA, and Conditional Access
-  -> customer Core /api/account/sso/callback
-  -> customer Core validates identity and creates a MentraOS session
-  -> Mentra App redeems a one-time PKCE-bound handoff at customer Core
-     /api/account/sso/complete
+Mentra App resolves workspace manifest
+  -> app creates the deployment-scoped native MSAL client
+  -> system browser or Microsoft broker opens the customer's Entra tenant
+  -> user completes the organization's MFA and Conditional Access
+  -> MSAL returns the verified account and caches tokens securely
+  -> app derives local identity from verified tid + oid
+  -> bundled Mentra Call becomes available
 ```
 
-Core must validate the Entra issuer, tenant, audience, signature, state, nonce,
-and PKCE response. It keys the external identity by verified issuer plus stable
-subject, not by mutable email address. Entra remains responsible for employee
-authentication, MFA, Conditional Access, account disablement, and group/user
-assignment. Core is responsible for mapping an accepted Entra identity to the
-customer's MentraOS tenant and issuing the session used by Runtime.
+The customer's Workspace Gateway validates bearer tokens against that exact
+tenant, issuer, audience, signature, expiry, and required scopes. The app and
+gateway key users by stable tenant id plus object id, not mutable email.
 
-### Mentra reference Self-Hosted deployment
+### Reusing the same sign-in for Teams and ACS
 
-The v1 acceptance environment is a real internal Mentra Enterprise Self-Hosted
-deployment in Mentra's Azure account, using Mentra's Microsoft Entra tenant. It
-must use the same deployment package and official Mentra App binaries intended
-for customers, not mocks or Mentra's public Core and Runtime.
+Yes: the same Entra account and the same cached MSAL sign-in should become the
+Teams identity. It is one interactive login, but it is not one literal bearer
+token. MSAL silently obtains separate access tokens for different audiences and
+scopes after the user has signed in:
 
-The reference environment includes:
+```text
+one Entra account/session
+  |- ID token / account claims            -> Mentra App workspace identity
+  |- Workspace Gateway access token       -> stream allocation and gateway API
+  |- ACS Teams delegated access token     -> exchanged for ACS Teams-user token
+  `- Microsoft Graph access token         -> optional /me/onlineMeetings creation
+```
 
-- Isolated customer-style Core and Runtime services in Azure, with their own
-  deployment configuration, secrets, databases, and workspace URL.
-- A non-production single-tenant app registration in Mentra's Entra tenant and a
-  dedicated assigned test group.
-- The well-known deployment manifest, customer-hosted OTA and model artifacts,
-  and an explicitly approved speech-provider configuration.
-- Android and iOS devices running the official Mentra App and selecting the
-  Azure environment through the normal manual workspace flow.
-- Restricted-network validation proving that the Self-Hosted profile does not
-  use Mentra's public Core, Runtime, telemetry, artifact, or content services.
+For authenticated Teams identity, the Entra registration receives the delegated
+ACS permissions `Teams.ManageCalls` and `Teams.ManageChats`. Microsoft currently
+requires both for Teams-user token exchange. The app silently acquires that
+Entra token for the already-selected MSAL account. The customer-hosted gateway
+then calls ACS `GetTokenForTeamsUser` using its ACS server credential and returns
+the short-lived ACS Teams-user token to the native host. The ACS Calling SDK
+joins as that employee, subject to the employee's Teams license and policies.
 
-The identity test matrix includes assigned and unassigned users, wrong-tenant
-users, MFA, disabled users, expired credentials, callback tampering, session
-refresh, reauthentication, and logout. A customer-facing Microsoft Entra setup
-guide is written from this proven deployment before another provider is claimed
-as supported.
+Microsoft recommends performing the exchange on a trusted backend because the
+exchange request is signed with an ACS secret or Azure credential. The client
+secret, ACS connection string, or managed-identity credential stays in the
+gateway and is never placed in the app or manifest. See Microsoft's guides for
+[Teams-user token exchange](https://learn.microsoft.com/en-us/azure/communication-services/quickstarts/manage-teams-identity),
+[required Entra permissions](https://learn.microsoft.com/en-us/azure/communication-services/concepts/interop/teams-user/azure-ad-api-permissions),
+and [Teams interoperability](https://learn.microsoft.com/en-us/azure/communication-services/concepts/teams-interop).
 
-The guide should link directly to Microsoft's documentation for
-[registering an application](https://learn.microsoft.com/en-us/entra/identity-platform/quickstart-register-app),
-[authorization code flow with OIDC and PKCE](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow),
-[redirect URI rules](https://learn.microsoft.com/en-us/entra/identity-platform/reply-url),
-[application credentials](https://learn.microsoft.com/en-us/entra/identity-platform/how-to-add-credentials),
-and [assigning users or groups](https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/assign-user-or-group-access-portal).
+The current `nicolo/acs-teams-v1` branch deliberately mints an anonymous ACS
+communication user and passes its token through the miniapp. That joins Teams as
+a guest and may encounter the meeting lobby. It does not use the employee's
+Teams identity. This guest flow is acceptable as the fastest internal media
+bring-up checkpoint, while Entra still gates access to the workspace. Claiming
+"joins as your Teams account" requires the Teams-user exchange above and native
+Android/iOS validation.
 
-The app must resolve the deployment before authentication because it needs the
-manifest's Core URL and auth policy to know where to begin SSO. An SSO callback
-must not introduce or switch deployment configuration after authentication.
+The app should own ACS credential acquisition. A bundled miniapp requests
+`session.meeting.join(...)` without receiving or persisting an ACS token; the
+host silently obtains the appropriate credential from the gateway. This removes
+the token pass-through debt already identified in the ACS branch.
 
-This fits Core's session model. Core already hosts the Google/Apple browser
-OAuth flow: the app starts against Core with PKCE, Core redirects to the identity
-provider through GoTrue, Core handles the callback and creates a Cloud V2
-session, and the app redeems a one-time handoff code against that same Core.
-Customer-hosted Core SSO generalizes that existing shape:
+### Creating a Teams meeting
 
-1. The resolved manifest selects `coreUrl` before auth begins.
-2. The app opens the unauthenticated `/api/account/sso/start` endpoint on that
-   Core with a PKCE challenge.
-3. Core redirects through its server-configured Microsoft Entra OIDC
-   connection. Tenant metadata and client credentials stay in customer-hosted
-   Core or its secret store, never in the manifest or public Mentra services.
-4. Core validates the IdP callback, maps the external subject to a Core user,
-   and creates that user just in time when organization policy permits it.
-5. Core deep-links a short-lived handoff code to the app, and the app exchanges
-   it with its PKCE verifier for a deployment-scoped Core session.
+Joining an existing Teams URL needs no Microsoft Graph permission. If Mentra
+Call must create the meeting, the preferred enterprise flow uses the same MSAL
+account to request delegated `OnlineMeetings.ReadWrite` and calls
+`POST /me/onlineMeetings`. This creates the meeting as the signed-in employee and
+removes the current shared licensed service account plus app-only Graph secret.
+Microsoft documents that delegated contract in
+[Create onlineMeeting](https://learn.microsoft.com/en-us/graph/api/application-post-onlinemeetings?view=graph-rest-1.0).
 
-SSO describes the user experience of using one organization account; it is not
-one wire protocol. OIDC and SAML are two common protocols for delivering that
-identity. Microsoft Entra is the only provider qualified and documented in the
-first implementation, using OIDC because it is the modern fit for a new mobile
-browser flow. The Core boundary should remain compatible with adding another
-OIDC provider later, but Okta, Google, internal OIDC, and SAML are not claimed as
-supported until separately tested and documented. PKCE protects the short-lived
-browser-to-app handoff; it is not another login option.
-
-The customer IT administrator does not implement a login screen or give
-credentials to Mentra. Direct Microsoft Entra OIDC is mandatory v1
-implementation work, not a later option. The current consumer route accepts only
-Google and Apple provider identifiers and exchanges their callbacks through
-GoTrue, so a manifest value cannot turn on Entra by itself. V1 adds the direct
-OIDC discovery, authorization, callback, token-validation, and identity-mapping
-code on customer-hosted Core. The existing browser PKCE handoff,
-trusted-issuer verification, external-token exchange, and Core session model
-remain reusable.
-
-In a customer-hosted deployment, the workspace ingress, Core, Runtime, and
-resulting MentraOS session are customer-controlled. Microsoft hosts the Entra
-identity endpoint, but it operates against the customer's tenant and policy.
-Mentra's public Core, Runtime, directory, and Supabase are not in this
-authentication path. Neither the workspace manifest nor Mentra infrastructure
-receives the user's corporate credential.
-
-On subsequent boots, the app loads the saved profile before starting any
-network-capable service. It refreshes the configured URL when reachable and can
-use the last valid cached copy while disconnected. If a custom profile has never
-loaded successfully, boot stops at local deployment setup; it never falls back
-to the embedded Mentra profile.
+The native host, not miniapp JavaScript, owns the Graph access token. A host
+meeting-creation API may call Graph directly or proxy through the Workspace
+Gateway. The miniapp receives only the resulting join URL.
 
 ## Manifest v1
+
+The first call-focused template is illustrative:
 
 ```json
 {
@@ -385,16 +331,25 @@ to the embedded Mentra profile.
   "displayName": "Example Corp Mentra",
   "releaseIdentity": "3.1.0",
   "services": {
-    "coreUrl": "https://mentra.example-corp.com",
-    "runtimeUrl": "https://runtime.example.internal"
+    "workspaceGatewayUrl": "https://mentra.example-corp.com",
+    "coreUrl": null,
+    "runtimeUrl": null
   },
   "auth": {
-    "mode": "core-sso"
+    "mode": "microsoft-entra",
+    "authorityUrl": "https://login.microsoftonline.com/11111111-2222-3333-4444-555555555555",
+    "clientId": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+    "gatewayScopes": ["api://aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/mentra.access"],
+    "teamsScopes": [
+      "https://auth.msft.communication.azure.com/Teams.ManageCalls",
+      "https://auth.msft.communication.azure.com/Teams.ManageChats"
+    ],
+    "graphScopes": ["https://graph.microsoft.com/OnlineMeetings.ReadWrite"]
   },
   "artifacts": {
-    "mentraLiveOtaManifestUrl": "https://updates.example.internal/mentra/3.1.0/version.json",
-    "sttModelBaseUrl": "https://updates.example.internal/mentra/3.1.0/models/stt/",
-    "ttsModelBaseUrl": "https://updates.example.internal/mentra/3.1.0/models/tts/"
+    "mentraLiveOtaManifestUrl": "https://mentra.example-corp.com/artifacts/mentra-live/version.json",
+    "sttModelBaseUrl": null,
+    "ttsModelBaseUrl": null
   },
   "appUpdates": {
     "mode": "managed",
@@ -408,20 +363,17 @@ to the embedded Mentra profile.
     }
   },
   "content": {
-    "wallpaperUrls": [
-      "https://updates.example.internal/mentra/3.1.0/wallpapers/landscape1.jpeg"
-    ]
+    "wallpaperUrls": []
   },
   "links": {
-    "privacyPolicyUrl": "https://portal.example.internal/privacy",
-    "termsOfServiceUrl": "https://portal.example.internal/terms",
-    "documentationUrl": "https://docs.example.internal/mentra",
-    "supportUrl": "https://support.example.internal/mentra"
+    "privacyPolicyUrl": "https://mentra.example-corp.com/privacy",
+    "termsOfServiceUrl": "https://mentra.example-corp.com/terms",
+    "documentationUrl": "https://mentra.example-corp.com/docs",
+    "supportUrl": "https://mentra.example-corp.com/support"
   },
   "systemMiniapps": {
     "approvedPackageNamesOverride": [
-      "com.mentra.camera",
-      "com.mentra.gallery",
+      "com.mentra.call",
       "com.mentra.settings"
     ]
   },
@@ -429,8 +381,9 @@ to the embedded Mentra profile.
     "allowedModelsOverride": ["mentra-live"]
   },
   "features": {
-    "cloudSpeech": true,
-    "onDeviceSpeech": true,
+    "cloudSession": false,
+    "cloudSpeech": false,
+    "onDeviceSpeech": false,
     "navigation": false
   },
   "telemetry": false
@@ -439,279 +392,192 @@ to the embedded Mentra profile.
 
 Rules:
 
-- `deploymentId` is stable and namespaces credentials, caches, and settings.
-- The resolved `services.coreUrl` origin must equal the workspace origin in v1,
-  so configuration discovery and authentication cannot silently move the user
-  to a different host. A customer can place Core behind its workspace ingress.
-- `auth.mode: "core-sso"` makes the app open the selected Core's fixed
-  `/api/account/sso/start` route. Protocol, issuer, client credentials, claim
-  mapping, and IdP secrets are server-side Core configuration, not manifest
-  fields.
-- The complete embedded Mentra profile uses `auth.mode: "mentra-account"` and
-  retains its existing Google, Apple, email signup, login, verification, and
-  recovery surfaces. V1 customer manifests may select `core-sso`; they do not
-  compose an arbitrary list of login buttons.
-- `releaseIdentity` must exactly match the installed coordinated Mentra release.
-  This prevents an app, Engine, SDK, and OTA bundle from different release sets
-  being combined accidentally.
-- URLs must be absolute HTTPS URLs outside development builds.
-- The OTA URL points at the `version.json` generated from the matching portable
-  OTA bundle.
-- Model base URLs preserve the existing model archive filenames so a customer
-  can mirror the files without a new model protocol in v1.
-- `content.wallpaperUrls` is the complete preset-wallpaper catalog. An empty
-  array means no remote presets; the app does not fall back to Mentra wallpaper
-  hosts. Choosing a local photo remains available independently.
-- Privacy and terms URLs belong to the active deployment and remain available
-  wherever the app presents legal text. Documentation and support URLs are
-  deployment-specific rather than controlled by a blanket external-links flag.
-- Mobile distribution-store and review URLs belong to `appUpdates`, not to the
-  system-miniapp policy. Null review URLs suppress review prompts. Managed mode
-  uses administrator-provided update instructions instead of a public store.
-  The Mentra Miniapp Store is a separate in-app system entry and is governed by
-  its package name in the system-miniapp policy.
+- `deploymentId` namespaces credentials, token caches, local settings, and
+  installed/running miniapp state.
+- The resolved `services.workspaceGatewayUrl` origin equals the entered
+  workspace origin in v1.
+- `services.coreUrl` and `services.runtimeUrl` are nullable. Null means the
+  service is absent; the app must not substitute embedded Mentra endpoints.
+- `features.cloudSession: false` prevents Cloud Client construction, Core token
+  synchronization, Runtime connection, cloud audio upload, remote miniapp
+  registry sync, and cloud-backed reports/settings.
+- `auth.mode: "microsoft-entra"` selects native MSAL. The authority must name an
+  exact tenant for the first pilot; `common`, `organizations`, and consumer
+  Microsoft accounts are rejected.
+- Tenant authority, client id, and scopes are public configuration. Client
+  credentials and provider secrets remain in the gateway's secret store.
+- The embedded Mentra profile uses `auth.mode: "mentra-account"` and complete
+  Core and Runtime URLs. It retains Google, Apple, email signup, login,
+  verification, and recovery.
+- `releaseIdentity` exactly matches the installed coordinated release.
+- URLs are absolute HTTPS outside development.
+- `content.wallpaperUrls` is the complete preset catalog. An empty array makes
+  no wallpaper request.
+- Legal and support URLs belong to the deployment. There is no blanket
+  `externalLinks` switch.
+- Store and review destinations belong to `appUpdates`. Null review URLs
+  suppress review prompts. Managed mode shows administrator-provided update
+  instructions instead of public-store actions.
 - `systemMiniapps.approvedPackageNamesOverride` is either `null` or a complete
-  allowlist of stable miniapp package names. `null` means use the app release's
-  full built-in system-miniapp catalog and automatically includes future
-  additions; the embedded Mentra profile uses `null`. An array activates the
-  override: `[]` approves no system miniapps, while a populated array approves
-  only those packages. Customer manifests should use an explicit array so a
-  future Mentra App release cannot expose a newly added system miniapp without
-  customer approval.
-- A system miniapp outside the active approved set is not registered in
-  user-visible catalogs, menus, or deep-link launch routes, although its code
-  remains present in the common app binary.
-- `glasses.allowedModelsOverride` contains stable model identifiers from the
-  common glasses registry. When present, the pairing UI shows only those
-  models. When omitted, the normal supported-model list is shown. This is a UI
-  catalog override, not a security boundary, and does not add model checks to
-  scanning, deep links, or reconnection. It also does not make a model's vendor
-  services air-gap compatible.
-- The manifest never exposes model-specific switches such as
-  `ar99VendorServices`. Vendor-specific transports and update behavior remain
-  behind each glasses adapter. A deployment that permits only selected hardware
-  customizes the pairing catalog through the general model override.
-- The embedded Mentra profile is complete. A customer manifest is recursively
-  merged over it: omitted fields inherit the Mentra value, arrays replace the
-  inherited array, and an explicit `null` disables fields documented as
-  nullable. Validation runs on the resolved profile. Strictly air-gapped
-  deployments must inspect that resolved profile and override or null every
-  inherited public-network destination before qualification.
-- The document contains no passwords, bearer tokens, private keys, or provider
-  secrets. Those remain in server configuration and its secret store.
-- The pre-deployment landing screen always exposes the supported consumer
-  choices and Connect to a workspace. Once a custom deployment is selected,
-  only that manifest's auth mode and supporting flow are shown.
-- `appUpdates.mode: "managed"` replaces public App Store/Play Store links with
-  an administrator-managed update message. The embedded Mentra profile uses
-  store mode and contains the normal public store and review URLs.
-- `telemetry` is one master switch. `false` prevents Sentry, PostHog, and
-  Firebase Analytics from initializing; v1 does not expose independent vendor
-  switches.
-
-The embedded Mentra profile must stop fetching speech archives directly from
-the upstream Sherpa-ONNX GitHub release. Mentra will mirror the exact approved
-archives into a Mentra-owned Cloudflare R2 bucket behind a custom domain such as
-`models.mentra.glass`, preserving the existing filenames and recording the
-upstream source and license. Customer deployments can mirror those same files
-without changing the app's download protocol. The schema can later replace the
-two base URLs with a checksum-bearing model catalog; that is valuable because
-STT downloads currently have no archive hash verification, but it does not need
-to block the configuration foundation or the move to Mentra-owned hosting.
+  allowlist. `null` uses the release's full built-in catalog, `[]` approves none,
+  and a populated array approves only those package names. The embedded Mentra
+  profile uses `null`; customer templates use an explicit release-pinned list.
+- A non-approved system miniapp is not installed, registered, shown, autostarted,
+  deep-linked, or launched even though its code may exist in the shared binary.
+- `glasses.allowedModelsOverride` filters the pairing catalog by stable model
+  id. It is not a pairing security boundary. Vendor-specific behavior remains
+  behind glasses adapters; there is no `ar99VendorServices` field.
+- The embedded Mentra profile is complete. A customer manifest recursively
+  overrides it, arrays replace, and explicit null disables nullable values.
+  Validation runs on the resolved profile. Service nulls are never re-filled by
+  consumer defaults.
+- `telemetry: false` prevents Sentry, PostHog, and Firebase Analytics from
+  initializing.
 
 ## Boot sequence
 
 ```text
 load local settings
-  -> restore the previously enrolled deployment, if present
-  -> otherwise render the local consumer-or-enterprise landing screen
+  -> restore selected deployment, if present
+  -> otherwise render local consumer/workspace landing screen
   -> consumer choice activates embedded Mentra deployment
-  -> Connect to a workspace accepts an HTTPS workspace origin
-  -> fetch /.well-known/mentra-deployment.json from that origin
-  -> resolve and validate candidate schema and release identity
-  -> show workspace identity and sign-in type for confirmation
-  -> atomically persist and expose immutable active deployment
-  -> initialize telemetry only when the resolved master switch is true
-  -> create the deployment-scoped auth provider
-  -> run the configured Core version check
-  -> present the active deployment's configured authentication action
-  -> after authentication succeeds, obtain the deployment-scoped session
-  -> engine.configure({ auth, config: deployment })
-  -> engine.start()
+  -> workspace choice fetches /.well-known/mentra-deployment.json
+  -> resolve and validate candidate plus exact release identity
+  -> show workspace and sign-in type for confirmation
+  -> atomically persist immutable active deployment
+  -> initialize telemetry only when enabled
+  -> create the selected auth provider
+  -> for Microsoft Entra, initialize deployment-scoped MSAL and sign in
+  -> configure Engine from the active deployment
+  -> when cloudSession is false, start local device + miniapp services only
+  -> install/launch only approved bundled miniapps
 ```
 
-Changing deployment is a controlled logout operation:
+Changing deployment is controlled logout:
 
-1. Stop Engine and auth refresh.
-2. Clear or switch to the new deployment's credential namespace.
-3. Save and activate the new manifest.
+1. Leave any call and stop Engine.
+2. Clear the active deployment's MSAL/account state and local runtime identity.
+3. Select, validate, and persist the new deployment.
 4. Restart through the normal boot route.
 
-Credentials must not be shared across deployment ids. Today account tokens and
-the cloud client's secure state use global keys; they must be namespaced or
-cleared before endpoint switching.
+Credentials and app state must not cross deployment ids.
 
-## Engine contract
+## Engine and Mentra Call contract
 
 Core and Runtime URL injection already exists through
-`engine.configure({config: {coreUrl, runtimeUrl}})`. Extend the Engine config with:
+`engine.configure({config: {coreUrl, runtimeUrl}})`. Extend the contract so
+those services are optional and `cloudSession: false` is a real supported path,
+not two fake localhost URLs.
 
-- `otaManifestUrl`
-- `sttModelBaseUrl`
-- `ttsModelBaseUrl`
-- The feature flags the Engine itself enforces
+Cloud-session-disabled startup still brings up:
 
-Manifest selection for modern Mentra Live becomes:
+- Bluetooth and glasses state;
+- local pairing and reconnection;
+- local settings required by glasses and bundled miniapps;
+- the local miniapp registry, launcher, WebView/JS runtime, and display path;
+- the phone stream coordinator;
+- native ACS meeting services;
+- OTA using the selected deployment artifact URL, when configured.
 
-1. Super Mode developer override.
-2. Active deployment's OTA manifest URL.
-3. The embedded coordinated-release pin from the embedded Mentra profile.
+It does not start cloud audio uplink, Core-token sync, Runtime reconnect alarms,
+preinstalled registry sync, support-profile sync, cloud reports, or cloud speech.
 
-The customer profile therefore drives both the phone-side OTA check and the
-existing Engine hotspot relay. The Bluetooth SDK continues to accept only the
-resolved Mentra Live manifest URL and remains unaware of the larger deployment
-manifest.
+Mentra Call changes required by this deployment:
 
-The STT and TTS managers replace their hard-coded upstream GitHub base URLs with
-values from Engine configuration. The embedded Mentra profile points to the
-Mentra-owned R2 custom domain, while customer profiles may point to an internal
-mirror. Existing filenames and extraction flow remain unchanged in v1.
+- Bundle the release-pinned Mentra Call package in the official Mentra App.
+- Remove the build-time hard-coded Mentra Call backend URL from the ACS path.
+- Route managed stream create/status/delete through the selected Workspace
+  Gateway.
+- Move ACS credential fetching into the trusted host; miniapp code receives no
+  ACS or Entra token.
+- Keep call state in the native host/phone runtime for ACS calls.
+- Join existing Teams URLs without Graph.
+- Expose optional host-owned meeting creation that returns only a join URL.
+- Fail closed when a required gateway capability is absent.
 
-## Network-capable app behavior
+The provider-neutral `session.meeting` API remains the correct miniapp contract.
+Deployment and Microsoft-specific credential details stay below that boundary.
 
-The deployment must be resolved before these existing call sites run:
+## Network-capable behavior
 
-- `SentrySetup()` in the root layout.
-- The PostHog provider in `AllProviders`.
-- Firebase Analytics initialization.
-- `AuthProvider`, whose account client calls Core during mount.
-- The minimum-client-version request in the initial route.
-- `engine.start()`, which constructs and connects Cloud Client.
+The deployment resolves before Sentry, PostHog, Firebase, AuthProvider, version
+checks, Engine, or any other network-capable integration starts. Native Firebase
+collection defaults off in the binary and is enabled only after the embedded
+Mentra profile is selected.
 
-For the same binary to be safe in a restricted deployment, native Firebase
-analytics collection should default off in the binary and be enabled only after
-the embedded Mentra profile is active. Sentry and PostHog should likewise be
-started only after profile resolution.
+In the first call-focused template:
 
-The resolved profile controls optional network-capable behavior:
-
-- Mapbox directions/geocoding and native navigation are unavailable when
-  `navigation` is false.
-- Preset wallpapers come only from `content.wallpaperUrls`; no compiled public
-  wallpaper list is appended.
-- Legal, documentation, support, app-store, and review destinations come from
-  their resolved manifest fields. An omitted customer override inherits the
-  embedded Mentra value; an explicit null suppresses a nullable destination.
-  There is no global `externalLinks` switch.
-- System miniapps outside an active approval override cannot be discovered or
-  launched, including through direct routes. The common binary still contains
-  their implementation.
-- The pairing model picker shows only `glasses.allowedModelsOverride` when that
-  override is present; otherwise it shows the normal supported-model catalog.
-- The first self-hosted template exposes only Mentra Live. A different model may
-  be added only after its adapter has been qualified with public internet blocked
-  and any required vendor endpoints have been removed, disabled, or made
-  customer-configurable. AR99's current public OTA/vendor-service calls are
-  therefore outside the first self-hosted deployment rather than controlled by
-  an AR99-specific manifest switch.
-- Google, Apple, and Email on the initial landing screen select the embedded
-  Mentra profile. Connect to a workspace resolves a candidate manifest from the
-  workspace origin before activating it. After activation, the app displays the
-  selected deployment name and the flow for that profile's auth mode. The first
-  self-hosted template exposes only Continue with organization account through
-  customer-hosted Core.
-- Miniapp package and media URLs supplied by customer-hosted Core remain the
-  customer's responsibility.
-- Runtime speech-provider egress is server-side configuration. A customer-hosted
-  Runtime may use Soniox or ElevenLabs when the customer explicitly approves
-  them. A future customer may instead require Azure Speech, AWS speech services,
-  or an on-premises provider; adding those Runtime adapters is customer-driven
-  work, not part of manifest v1. When no approved cloud provider exists, the
-  deployment can disable cloud speech and use the supported on-device path. The
-  phone manifest does not configure or proxy server-side speech credentials.
-
-The official binary will still contain optional vendor SDK code and public
-tokens used by the Mentra profile. Runtime policy prevents egress; it does not
-remove those bytes. A customer whose policy prohibits the presence of that code
-would need a different native build, which is outside this same-binary design.
+- Mapbox/navigation is unavailable.
+- Wallpaper requests use only the configured list.
+- Legal, documentation, support, store, and review actions use resolved fields.
+- The Mentra Miniapp Store and all non-approved miniapps are unavailable.
+- Only Mentra Live is shown in pairing.
+- Cloud speech is unavailable; Runtime and speech SaaS credentials are not
+  required.
+- The only call-media destinations are the selected streaming provider, the
+  customer ACS resource, and Microsoft Teams endpoints.
+- The official binary may still contain dormant optional vendor SDK code. A
+  customer policy forbidding those bytes requires a separate native build and
+  is outside this same-binary design.
 
 ## Distribution
 
-The coordinated release is already the correlation mechanism. Its completed
-`mentra-release-<identity>.json` records the exact Android app, iOS app, Engine,
-Bluetooth SDK, OTA bundle, hashes, and provenance.
+The coordinated release remains the correlation mechanism for the Android app,
+iOS app, Engine, Bluetooth SDK, OTA, hashes, and provenance.
 
-For an Android customer-hosted deployment, a customer can import the exact
-Mentra-signed APK from the completed GitHub release and install or update it
-through MDM. This is the same app binary produced by the normal coordinated
-release.
+Android customers may import the exact Mentra-signed APK into MDM. iOS uses the
+normal App Store app through Apple Business Manager/MDM. V1 users enter the
+workspace URL manually; native managed-app configuration injection is later.
 
-For iOS, use the normal App Store app through Apple Business Manager/MDM. V1
-users enter the workspace URL manually after installation; the Mentra App does
-not yet consume managed app configuration. The current App Store IPA is not a
-generally sideloadable offline package. Strictly disconnected first installation
-would require a separately provisioned in-house distribution and periodic Apple
-certificate validation, so the same-binary promise should be stated as
-disconnected operation after Apple/MDM provisioning on iOS.
-
-Apple documents [managed app distribution](https://support.apple.com/guide/deployment/distribute-managed-apps-dep575bfed86/web),
-[Custom App distribution through Apple Business Manager](https://support.apple.com/guide/deployment/distribute-custom-apps-dep0113f6e18/web),
-and the additional provisioning/certificate requirements for
-[self-hosted in-house IPA distribution](https://support.apple.com/guide/deployment/distribute-proprietary-in-house-apps-depce7cefc4d/web).
-
-Add two release artifacts after the runtime work exists:
+Publish these release artifacts after implementation exists:
 
 - `mentra-deployment-template-<identity>.json`
-- `mentra-speech-models-<identity>.zip` (or a separately versioned model bundle)
+- the release-pinned bundled Mentra Call package
+- the existing Mentra Live OTA bundle
+- an Azure Workspace Gateway deployment template and administrator runbook
 
-Do not create a second mobile build lane. The template, speech models, existing
-Mentra Live OTA bundle, app binaries, and completed release record all attach to
-the same coordinated release.
+Do not create a second mobile build lane.
 
 ## MVP acceptance
 
-The first Android-and-iOS self-hosted pilot is complete when:
+The first Android-and-iOS call-focused pilot is complete when:
 
-1. The official Android and iOS release artifacts start on a restricted customer
-   network where Mentra public services are blocked and only deployment-approved
-   customer and SaaS destinations are reachable.
-2. Google, Apple, or Email selects the embedded Mentra profile. Connect to a
-   workspace resolves the customer manifest from the workspace's well-known
-   endpoint before organization SSO.
-3. Login, refresh, Runtime connection, cloud STT/TTS, settings, registry, and
-   enabled miniapps use customer-hosted Core and Runtime. Any cloud speech egress
-   is limited to the provider explicitly approved for that deployment.
-4. Mentra Live OTA works through the existing Engine hotspot flow using the
-   customer-hosted OTA bundle.
-5. On-device STT and TTS download from the customer mirror.
-6. Preset wallpapers, resolved legal/support links, system-miniapp visibility,
-   and the pairing model list follow the active deployment override.
-7. Mentra public Core, Runtime, telemetry, artifact, and content services receive
-   no traffic. Sentry, PostHog, Firebase, Mapbox, GitHub, and any other
-   destination not explicitly approved for the deployment receive no traffic
-   during a packet-capture test.
-8. The embedded Mentra profile still passes the normal coordinated release and
-   consumer app tests.
+1. The official Mentra App selects a workspace by manual URL and activates only
+   after manifest and release validation.
+2. An assigned user signs in through the deployment's Microsoft Entra tenant,
+   including MFA/Conditional Access, without Mentra Core or Supabase.
+3. Engine starts with Core and Runtime absent, pairs Mentra Live, and launches
+   the approved bundled Mentra Call miniapp without cloud connection alarms.
+4. The Workspace Gateway allocates a WHIP/WHEP stream through the approved
+   provider, and the glasses stream reaches the phone.
+5. The phone joins a work/school Teams meeting through native ACS raw media on
+   Android and iOS, with no Recall bot. The first media checkpoint may use the
+   current guest ACS identity; a pilot requiring employee identity must also
+   pass the Teams-user token exchange qualification.
+6. Leaving, mute, stream recovery, incoming glasses audio, and a 30–60 minute
+   device soak pass on both platforms within the native branch's supported
+   limits.
+7. Mentra public Core, Runtime, telemetry, artifacts, content, and miniapp
+   services receive no traffic. Only the manifest-declared/customer-approved
+   Microsoft, ACS, gateway, and streaming destinations are contacted.
+8. The embedded Mentra profile still passes ordinary consumer release tests.
 
 ## Explicitly later
 
-- Local email/password accounts, end-user self-service signup, internal
-  verification/password-reset email, and a supported no-email enrollment mode.
-- Okta, Google, internal OIDC providers, SAML, and any identity integration
-  beyond the first qualified Microsoft Entra OIDC implementation.
-- Optional workspace discovery by verified work-email domain or organization
-  code. It resolves to the same workspace URL and is not required for self-hosted
-  deployment or SSO.
-- MDM-managed workspace injection. A future Android Enterprise or Apple managed
-  app configuration adapter supplies the same workspace origin to the common
-  resolver, marks it enforced, and suppresses manual deployment switching. MDM
-  app distribution itself does not depend on this feature.
-- Separating account, registry, settings, version-check, and reporting APIs from
-  Core into a smaller control-plane service.
-- Local-only Engine startup with no Core, Runtime, or auth seam.
-- Signed deployment manifests or customer-managed signing keys.
-- Dynamic private certificate pinning.
+- Full-platform customer-hosted Core and Runtime, remote miniapps, cloud speech,
+  synchronized settings, reports, and customer registry/store behavior.
+- Authenticated Teams-user ACS identity if the first media pilot is accepted
+  with guest identity. It reuses the same MSAL account; it is not a second login.
+- Direct glasses-to-phone media transport that removes Cloudflare or another
+  WHIP/WHEP relay.
+- Streaming providers other than the first qualified Cloudflare path.
+- Local email/password accounts, signup, verification, and recovery.
+- Okta, Google, generic OIDC, SAML, and non-Entra identity providers.
+- MDM workspace injection. Distribution through MDM is already supported; only
+  automatic workspace configuration is deferred.
+- Workspace discovery by email domain or organization code.
+- Signed manifests, customer-managed manifest keys, and dynamic certificate
+  pinning.
 - Customer branding or bundle identifiers.
-- A standalone public hotspot OTA coordinator in the raw Bluetooth SDK.
-- Restricted-network qualification and endpoint configuration for non-Mentra
-  glasses adapters, including AR99 vendor services.
+- Non-Mentra glasses restricted-network qualification, including AR99 vendor
+  services.

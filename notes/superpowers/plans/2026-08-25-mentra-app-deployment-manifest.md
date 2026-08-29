@@ -3,40 +3,38 @@ status: draft
 owner: Mentra
 ---
 
-# Mentra Enterprise Self-Hosted deployment implementation plan
+# Mentra Enterprise Self-Hosted call deployment implementation plan
 
-> Execution checklist. Keep the first release focused on the same official app
-> binary with customer-hosted Core, Runtime, OTA, and speech artifacts.
+> Execution checklist for the first customer deployment: the official Mentra
+> App, bundled Mentra Call, Microsoft Entra, a small customer-hosted Workspace
+> Gateway, and direct Teams participation through ACS. Do not package full Core
+> or Runtime for this milestone.
 
-**Goal:** Run a completed coordinated Mentra App release as Mentra Enterprise
-Self-Hosted on customer-controlled infrastructure by selecting one deployment
-manifest before sign-in and before any public-network integration starts.
+**Goal:** Run Mentra Call on Android and iOS in a restricted customer-controlled
+workspace without Mentra public Core or Runtime.
 
-**Architecture:** The app restores a previously enrolled deployment at cold
-boot. Otherwise, a local landing screen lets Google, Apple, or Email activate
-the embedded Mentra profile. Connect to a workspace accepts a human-facing HTTPS
-origin and fetches its manifest from
-`/.well-known/mentra-deployment.json`. The app activates the candidate only
-after validation and confirmation, then starts the selected Core's configured
-auth flow. Workspace acquisition remains separate from the common fetch,
-validation, and activation pipeline so a future MDM adapter can supply the same
-origin. The active immutable profile configures auth and Engine; Engine passes
-the OTA URL to Bluetooth SDK and model locations to its speech managers.
-Customer overrides and the embedded Mentra profile resolve to one complete
-object; the self-hosted template explicitly replaces or nulls every
-public-network destination.
+**Architecture:** The app resolves a workspace manifest before authentication.
+The first customer template selects native Microsoft Entra sign-in, disables the
+Cloud Client, enables a local-only Engine and approved bundled miniapps, and
+routes managed-stream and ACS credential requests to a customer-hosted Workspace
+Gateway. Mentra Live publishes WHIP to the configured provider; the phone
+consumes WHEP and publishes raw media through ACS to Teams. The current guest
+ACS identity is the media bring-up path. The same cached Entra account later
+supplies the delegated token exchanged for an authenticated Teams-user ACS
+token, with no second interactive login.
 
-**Tech Stack:** React Native/Expo, TypeScript, MMKV, Cloud V2, Cloudflare R2,
-coordinated GitHub Actions releases.
+**Tech stack:** React Native/Expo, TypeScript, Android/iOS MSAL, local MentraJS,
+native ACS Calling SDK, customer-hosted Workspace Gateway, Cloudflare Stream for
+the first WHIP/WHEP provider, coordinated GitHub releases.
 
 **Spec source of truth:**
 `notes/superpowers/specs/2026-08-25-mentra-app-deployment-manifest-design.md`
 
 ---
 
-## Phase 1: Typed profile and pre-network boot
+## Phase 1: Deployment contract and pre-network boot
 
-### Task 1: Add the deployment contract and resolver
+### Task 1: Add the typed deployment resolver
 
 **Files:**
 
@@ -44,332 +42,354 @@ coordinated GitHub Actions releases.
 - Modify `mobile/modules/engine/src/runtime/bootstrap.ts`
 - Create `mobile/src/services/deployment/DeploymentService.ts`
 - Create `mobile/src/services/deployment/embeddedDeployment.ts`
-- Add focused resolver/schema tests beside those files
+- Add resolver/schema tests beside those files
 
-- [ ] Define and validate deployment manifest v1 as a recursive override of the
-      complete embedded Mentra profile. Arrays replace; explicit null disables
-      nullable destinations; validation runs on the resolved profile.
-- [ ] Generate the embedded Mentra profile from coordinated build inputs.
-- [ ] Restore a previously enrolled profile before showing auth.
-- [ ] Keep the embedded Mentra profile available for explicit consumer login
-      selection rather than silently treating it as the only cold-boot default.
-- [ ] Persist the workspace origin and last valid manifest under `deploymentId`.
-- [ ] Require exact `releaseIdentity` match and HTTPS outside development.
-- [ ] Never fall back to the embedded profile after a custom source is selected.
-- [ ] Validate wallpaper URLs, deployment links, system-miniapp package names,
-      and `glasses.allowedModelsOverride` identifiers as part of the resolved
-      typed contract.
+- [ ] Define manifest v1 as an override of the complete embedded Mentra profile.
+      Arrays replace; explicit null disables nullable destinations; validation
+      runs on the resolved profile.
+- [ ] Add `services.workspaceGatewayUrl` and make `coreUrl` and `runtimeUrl`
+      nullable without localhost or Mentra fallbacks.
+- [ ] Add `auth.mode: "microsoft-entra"` with exact authority URL, native client
+      id, and gateway/Teams/Graph delegated scopes.
+- [ ] Add `features.cloudSession`; false means no Cloud Client or cloud-dependent
+      services are constructed.
+- [ ] Generate the embedded Mentra profile from coordinated build inputs. It
+      keeps `auth.mode: "mentra-account"`, public Core/Runtime, and the ordinary
+      consumer feature set.
+- [ ] Restore the selected deployment before showing auth or starting a network
+      integration.
+- [ ] Persist workspace origin and last valid manifest under `deploymentId`.
+- [ ] Namespace credentials, settings, miniapp state, and caches by
+      `deploymentId`.
+- [ ] Require exact `releaseIdentity` and HTTPS outside development.
+- [ ] Validate all URLs, deployment links, package names, glasses model ids, and
+      Entra authority/scopes.
+- [ ] Reject `common`, `organizations`, personal Microsoft accounts, and any
+      authority not pinned to the declared first-pilot tenant.
+- [ ] Test that null Core/Runtime never resolves to embedded Mentra endpoints.
 
-### Task 2: Gate the React tree on deployment readiness
+### Task 2: Gate the React and native startup paths
 
 **Files:**
 
 - Modify `mobile/src/app/_layout.tsx`
 - Modify `mobile/src/contexts/AllProviders.tsx`
 - Create `mobile/src/contexts/DeploymentContext.tsx`
-- Add boot-route tests
+- Modify native analytics configuration on Android and iOS
+- Add boot-route and clean-install tests
 
-- [ ] Load local deployment state before mounting `AuthProvider`.
-- [ ] Move `SentrySetup()`, PostHog, and Firebase Analytics behind the one
-      resolved `telemetry` switch. Default native collection off until a
-      profile with `telemetry: true` is active.
-- [ ] Verify Android and iOS native SDK startup before the JavaScript tree mounts.
-      Add clean-install packet-capture coverage proving Firebase, Sentry, and
-      other bundled telemetry SDKs do not auto-initialize or transmit while a
-      self-hosted profile is being resolved.
-- [ ] Render the local consumer-or-enterprise landing screen before starting any
-      network integration when no deployment is already selected.
-- [ ] Render a local recovery/setup screen when a first-time custom profile
-      cannot be loaded.
+- [ ] Load deployment state before mounting consumer `AuthProvider`.
+- [ ] Move Sentry, PostHog, and Firebase Analytics behind the resolved master
+      telemetry switch.
+- [ ] Default native collection off before JavaScript/profile resolution.
+- [ ] Render a fully local landing screen when no deployment is selected.
+- [ ] Render local recovery/setup UI if a first custom manifest cannot load.
+- [ ] Add clean-install packet-capture coverage proving no telemetry or Mentra
+      service starts while a workspace is unresolved.
 
-### Task 3: Add workspace enrollment and deployment switching
+### Task 3: Add manual workspace enrollment
 
 **Files:**
 
 - Modify `mobile/src/app/auth/start.tsx`
 - Create `mobile/src/app/auth/workspace.tsx`
 - Create `mobile/src/services/deployment/WorkspaceDeploymentService.ts`
-- Modify mobile login translations, starting with `mobile/src/i18n/en.ts`
-- Modify `cloud-v2/packages/core/src/api/well-known.api.ts`
-- Add mobile and Core well-known-manifest tests
+- Modify login translations, starting with `mobile/src/i18n/en.ts`
+- Add the well-known manifest route to the Workspace Gateway
 - Modify logout/reset utilities
 
-- [ ] Preserve the current Mentra consumer signup/login controls and add a
-      visually separate Connect to a workspace action below them.
-- [ ] Make Google, Apple, and Email activate the embedded Mentra profile before
-      entering the existing consumer auth flow.
-- [ ] On the workspace route, ask for the HTTPS origin supplied by the user's
-      organization, with an example such as `https://mentra.example.com`. Do not
-      ask for a raw JSON or Core API URL.
-- [ ] Provide Back on workspace entry and Cancel on candidate confirmation.
-      Neither action may persist a workspace, mutate endpoints, or initialize a
-      network-capable provider.
-- [ ] Normalize the origin and fetch the manifest directly from
-      `/.well-known/mentra-deployment.json`. Reject credentials, query strings,
-      fragments, invalid TLS, oversized responses, and cross-origin redirects.
-- [ ] Make Core or its deployment ingress serve the exact manifest JSON at the
-      well-known path without authentication. Back it with the mounted release-
-      matched deployment file rather than a second registry or pointer.
-- [ ] Require the resolved `services.coreUrl` origin to equal the workspace
-      origin in v1. Permit separate Runtime, artifact, and content hosts, but do
-      not let discovery silently move authentication to another host.
-- [ ] Keep the fetched deployment pending until recursive resolution, schema
-      validation, and exact `releaseIdentity` validation succeed. Do not mutate
-      active endpoints while loading or previewing a candidate.
-- [ ] Show display name, workspace hostname, and sign-in type before activation,
-      with Core/Runtime hosts under expandable connection details. Continue
-      atomically persists the workspace and re-enters the gated auth route.
-- [ ] On a manually selected workspace's pre-login screen, offer Use a different
-      workspace and Return to Mentra. Returning clears the custom selection and
-      restores the local consumer landing.
-- [ ] Keep workspace acquisition separate from manifest fetch, validation,
-      confirmation, and activation. Persist local enrollment metadata with
-      `source: "manual"` so a future managed/enforced source can reuse the same
-      pipeline without changing the manifest contract. Do not implement native
-      MDM configuration bridges in v1.
-- [ ] For the first self-hosted pilot, render one organization-account action
-      for `auth.mode: "core-sso"`. Do not expose signup, passwords,
-      verification email, or recovery.
-- [ ] Make switching deployment stop Engine, sign out, clear the old auth
-      namespace, and reboot through the same resolver.
-- [ ] Cache the selected manifest for disconnected boot and refresh it from the
-      stable workspace URL when reachable. Test invalid candidates, failed
-      refresh, manual switching, and the absence of cross-deployment credentials.
+- [ ] Preserve current Google, Apple, and email controls and add a visually
+      separate Connect to a workspace action.
+- [ ] Make consumer actions activate the embedded profile before auth.
+- [ ] Ask for a human-facing HTTPS workspace origin, not a JSON/Core/Runtime URL.
+- [ ] Fetch `/.well-known/mentra-deployment.json` directly from that origin.
+- [ ] Reject credentials, query, fragment, invalid TLS, oversized responses, and
+      cross-origin redirects.
+- [ ] Require `services.workspaceGatewayUrl` to match the entered origin.
+- [ ] Keep the fetched workspace pending through resolution, schema validation,
+      and exact release validation.
+- [ ] Show display name, hostname, and Microsoft organization sign-in before
+      activation, with technical details expandable.
+- [ ] Provide Back and Cancel before activation. Neither may persist state or
+      start providers.
+- [ ] Provide Use a different workspace and Return to Mentra before login.
+- [ ] Persist `source: "manual"`; do not implement QR, a Mentra directory, or
+      managed-app configuration injection in v1.
+- [ ] Cache the last valid manifest for disconnected boot and never fall back to
+      the consumer profile after custom selection.
 
-## Phase 2: Feed the profile into auth and Engine
+## Phase 2: Native Microsoft Entra authentication
 
-### Task 1: Make auth deployment-scoped
+### Task 1: Add deployment-scoped MSAL on Android and iOS
 
 **Files:**
 
-- Modify `mobile/src/utils/auth/authClient.ts`
-- Modify `mobile/src/utils/auth/provider/accountClient.ts`
-- Modify auth secure-storage helpers and tests
-- Modify `mobile/src/utils/cloudVersion.ts`
-- Create `cloud-v2/packages/core/src/api/account/sso.api.ts`
-- Create `cloud-v2/packages/core/src/services/account/oidc.client.ts`
-- Modify `cloud-v2/packages/core/src/api/app.ts`
-- Modify Core account/profile consumers that currently read identity from GoTrue
-- Add Core integration tests against a Microsoft Entra test registration
+- Add an Expo/native Microsoft Entra auth module for Android and iOS
+- Create `mobile/src/services/auth/EntraAuthService.ts`
+- Modify auth routing and account context
+- Modify secure-storage and logout utilities
+- Add unit, native integration, and end-to-end auth tests
 
-- [ ] Construct the account provider only after deployment resolution.
-- [ ] Namespace access tokens, refresh tokens, cached profile, and refresh state
-      by `deploymentId`.
-- [ ] Route login, refresh, subject-token, OAuth, and minimum-version calls only
-      to the active Core URL.
-- [ ] Keep consumer Google, Apple, and Email entry points bound to the embedded
-      Mentra profile and `auth.mode: "mentra-account"`. Render only the flow for
-      an active custom profile's auth mode after enrollment.
-- [ ] Make Core the auth broker for the first self-hosted pilot: generalize its
-      existing PKCE browser handoff from fixed Google/Apple-through-GoTrue to one
-      server-configured Microsoft Entra OIDC connection, map verified issuer
-      plus subject to a Core user, and return the normal Cloud V2 session through
-      a one-time handoff.
-- [ ] Implement fixed `/api/account/sso/start`, `/api/account/sso/callback`, and
-      `/api/account/sso/complete` routes. Use a separate Core-to-Entra state,
-      nonce, and PKCE verifier while preserving the app-to-Core PKCE binding.
-- [ ] Add standards-based Core OIDC configuration for exact issuer URL, client
-      id, client-credential secret reference, redirect URI, scopes, and
-      just-in-time provisioning policy. Resolve discovery metadata for that exact
-      issuer at Core startup and fail closed on invalid configuration. Do not
-      hard-code the Core configuration schema to Microsoft.
-- [ ] Keep tenant metadata, client credentials, claim mapping, and IdP tokens in
-      customer-hosted Core configuration and its secret store. The manifest
-      declares only `auth.mode: "core-sso"`; the Mentra App opens the fixed start
-      route on active Core.
-- [ ] Treat Microsoft Entra as the only qualified and documented provider in the
-      first milestone. Customer IT creates a single-tenant app registration,
-      registers the Core Web callback, requires assignment, and assigns the
-      allowed users/groups. The Entra guide constructs the exact issuer URL from
-      the customer's tenant id. Mentra public infrastructure and Supabase are not
-      in the self-hosted auth path.
-- [ ] Reuse the existing trusted-issuer verification and external-token exchange
-      where their claim contract fits. Do not require a standard customer IdP to
-      mint Mentra-specific routing claims without an explicit adapter.
-- [ ] Replace first-party profile lookups that assume a GoTrue user with an
-      identity-provider-neutral record keyed by issuer plus stable subject. Do
-      not use email as the durable user key.
-- [ ] Keep Okta, Google, internal OIDC, SAML, and local email/password adapters
-      outside the first supported pilot. They must fit the same post-manifest
-      Core-session boundary and receive their own qualification before being
-      documented as supported.
-- [ ] Make the minimum-version screen use managed-update copy instead of public
-      store URLs when `appUpdates.mode` is `managed`.
-- [ ] Remove the current special deployment selection from scattered settings;
-      represent Mentra and China using the common profile contract when ready.
+- [ ] Initialize MSAL only after a `microsoft-entra` manifest is active.
+- [ ] Configure it dynamically from the exact tenant authority and client id
+      while using the official Mentra App's registered native redirect URI.
+- [ ] Use Authorization Code + PKCE through the system browser or supported
+      Microsoft broker.
+- [ ] Persist only MSAL/account state in OS-protected storage, scoped by
+      deployment id.
+- [ ] Derive the stable local user namespace from verified `tid` plus `oid`, not
+      email.
+- [ ] Acquire the Workspace Gateway scope for the selected account and refresh
+      it silently.
+- [ ] Keep consumer Google/Apple/email bound to the embedded Mentra profile.
+- [ ] Do not create a Cloud V2/Core session for the call-focused workspace.
+- [ ] Implement logout, disabled-user recovery, authority mismatch, token expiry,
+      and deployment switching without credential crossover.
+- [ ] Test assigned/unassigned users, wrong tenant, MFA, Conditional Access,
+      cancelled login, revoked session, and broker/browser return on both
+      platforms.
 
-### Task 2: Extend Engine configuration
+### Task 2: Authenticate the Workspace Gateway
+
+**Files:** Workspace Gateway auth middleware and deployment guide
+
+- [ ] Validate exact Entra issuer, tenant, audience, signature, expiry, and
+      gateway scope on every protected endpoint.
+- [ ] Authorize only assigned users/groups defined by customer policy.
+- [ ] Key server audit events by tenant id and object id; do not persist raw
+      identity-provider tokens.
+- [ ] Return actionable 401/403 responses without exposing token contents.
+- [ ] Document the single-tenant public-client registration, official Android
+      and iOS redirects, Enterprise Application assignment, gateway API scope,
+      and consent.
+
+## Phase 3: Cloud-session-disabled Engine and bundled Mentra Call
+
+### Task 1: Make local-only Engine startup supported
 
 **Files:**
 
-- Modify `mobile/modules/engine/src/runtime/bootstrap.ts`
-- Modify `mobile/src/services/cloudClient.ts`
+- Modify `mobile/modules/engine/src/engine.ts`
+- Modify `mobile/modules/engine/src/services/CloudClientService.ts`
+- Modify Engine startup services that currently assume cloud auth
 - Modify `mobile/src/services/MantleManager.ts`
-- Modify Engine lifecycle/config tests
+- Add local-only startup tests
 
-- [ ] Add OTA and speech-model locations plus Engine-owned feature flags to the
-      public config type.
-- [ ] Pass the active profile into the existing `engine.configure()` call.
-- [ ] Keep Core/Runtime construction and reconnection on the resolved immutable
-      profile for the whole Engine lifecycle.
+- [ ] When `cloudSession` is false, skip Cloud Client construction, Core token
+      sync, Runtime connection, cloud audio uplink, reconnect alarms, cloud
+      reports, support-profile sync, and cloud registry synchronization.
+- [ ] Continue Bluetooth, device hydration, pairing/reconnect, local settings,
+      display, local miniapp runtime/launcher, phone stream coordination, ACS,
+      and configured OTA.
+- [ ] Replace the global Core-owned local-miniapp identity assumption with the
+      verified deployment-scoped Entra identity.
+- [ ] Do not mint miniapp tokens from Core for approved bundled miniapps.
+- [ ] Fail unavailable cloud-only miniapp APIs explicitly rather than retrying
+      localhost or Mentra endpoints.
+- [ ] Suppress cloud-disconnected UI/notifications in local-only mode.
 
-### Task 3: Route OTA and speech artifacts
-
-**Files:**
-
-- Modify `mobile/modules/engine/src/services/otaManifestUrl.ts`
-- Modify `mobile/modules/engine/src/services/STTModelManager.ts`
-- Modify `mobile/modules/engine/src/services/TTSModelManager.ts`
-- Add URL-precedence, no-fallback, and download tests
-
-- [ ] Resolve OTA as developer override, deployment URL, then embedded Mentra
-      release pin.
-- [ ] Reuse the existing Engine Wi-Fi/hotspot OTA coordinator unchanged after
-      selecting the URL.
-- [ ] Create a Mentra-owned Cloudflare R2 bucket and custom model CDN domain
-      (for example `models.mentra.glass`), mirror the exact approved Sherpa-ONNX
-      archives, and record upstream source/license provenance.
-- [ ] Replace hard-coded upstream Sherpa GitHub base URLs with deployment
-      inputs. The embedded Mentra profile points at the Mentra-owned model CDN;
-      self-hosted profiles may point at an internal mirror.
-- [ ] Ensure a custom profile with an unreachable artifact server fails without
-      requesting GitHub or Mentra.
-
-## Phase 3: Deployment-scoped content, hardware, and optional egress
+### Task 2: Bundle and constrain Mentra Call
 
 **Files:**
 
-- Modify `mobile/modules/engine/src/services/NavigationService.ts`
-- Modify `mobile/src/components/settings/BackgroundPicker.tsx`
-- Modify `mobile/src/constants/appConfig.ts` and legal/support link call sites
-- Modify `mobile/src/constants/miniapps.ts`, bundled installation, built-in
-  catalog, menu, launcher, and deep-link routing
-- Modify the pairing model registry, selection, scanning, deep-link, and
-  reconnect paths
-- Add policy tests
+- Sync the release-pinned Mentra Call package into `mobile/assets/miniapps/`
+- Regenerate `mobile/src/generated/bundledMiniapps.ts`
+- Modify bundled install/registry/launcher policy
+- Modify Mentra Call ACS branch in its external repository
+- Add bundle and launch tests
 
-- [ ] Disable Mapbox route/geocode/native navigation entry points when the
-      profile disables navigation.
-- [ ] Replace hard-coded preset wallpapers with the active profile's complete
-      `content.wallpaperUrls` list; an empty list makes no public request.
-- [ ] Route privacy, terms, documentation, support, app-store, and review
-      actions through their resolved manifest fields. Missing customer fields
-      inherit the embedded Mentra values; explicit null suppresses nullable
-      destinations. Do not add a blanket `externalLinks` switch.
-- [ ] Apply `systemMiniapps.approvedPackageNamesOverride` consistently to
-      registration, bundled installation, launcher/menu visibility, direct
-      routes, and autostart. `null` uses the complete built-in catalog, `[]`
-      approves none, and a populated array approves only those packages.
-- [ ] Generate the embedded Mentra profile with a `null` override. Generate
-      customer templates with an explicit release-pinned package allowlist so
-      newly introduced system miniapps require customer approval.
-- [ ] Centralize pairable glasses behind stable model ids. When
-      `glasses.allowedModelsOverride` is present, filter the pairing model list
-      to it; otherwise show the normal catalog. Do not add enforcement to scan,
-      deep-link, reconnect, or profile-switch paths.
-- [ ] Keep vendor-specific behavior behind glasses adapters; do not add AR99 or
-      other model-specific policy fields to the deployment schema.
-- [ ] Ship the first self-hosted template with only Mentra Live in the pairing
-      override. Do not expose another model until its adapter passes a blocked-
-      public-internet test and any vendor network calls are disabled or routed
-      to customer-controlled endpoints.
-- [ ] Confirm customer-hosted Core supplies only internal miniapp/media URLs for
-      the pilot registry.
-- [ ] Add a test that enumerates the known network integrations and asserts each
-      has an explicit profile-controlled path.
+- [ ] Bundle Mentra Call in the official app and approve it in the first
+      customer manifest template.
+- [ ] Apply `systemMiniapps.approvedPackageNamesOverride` to install, registry,
+      menus, deep links, autostart, and direct launch.
+- [ ] Remove the build-time hard-coded Mentra Call backend URL from its ACS path.
+- [ ] Keep provider-neutral call requests in `session.meeting`.
+- [ ] Keep ACS/Entra credentials below the trusted host boundary; miniapp
+      JavaScript receives no bearer token.
+- [ ] Preserve existing Teams/ACS join, leave, mute, state, recovery, WHEP
+      update, and incoming-audio behavior from `nicolo/acs-teams-v1`.
 
-## Phase 4: Customer artifacts and coordinated release
+## Phase 4: Workspace Gateway and managed media
+
+### Task 1: Package the minimal gateway
+
+**Files:** New Workspace Gateway package, container, Azure template, tests, and
+operator documentation
+
+- [ ] Serve the exact deployment manifest at the well-known path from a mounted
+      release-matched file.
+- [ ] Provide authenticated create/status/delete managed-stream endpoints.
+- [ ] Extract the existing Cloudflare Stream provider logic needed to create a
+      live input and return WHIP/WHEP URLs.
+- [ ] Hold provider credentials only in the customer secret store.
+- [ ] Provide an ACS guest-token endpoint using customer-owned ACS credentials
+      for the fastest media checkpoint.
+- [ ] Use Azure managed identity/RBAC in the reference environment where the ACS
+      SDK supports it; permit a rotated connection-string secret for the first
+      controlled deployment.
+- [ ] Validate only the configuration needed by the active provider/profile. Do
+      not require MongoDB, Recall, speech, store, or Mentra cloud variables.
+- [ ] Add rate limits, per-user resource ownership, expiration, idempotent
+      teardown, and abandoned-stream cleanup.
+- [ ] Publish a health/readiness endpoint that does not disclose secrets.
+
+### Task 2: Route managed streams outside Runtime
 
 **Files:**
 
-- Modify `.github/scripts/create-release-plan.mjs`
-- Modify `.github/scripts/finalize-release-manifest.mjs`
-- Modify `.github/workflows/reusable-coordinated-ota.yml` or add a reusable
-  deployment-artifact job
-- Create `mintlify-docs/enterprise/microsoft-entra-sso.mdx`
-- Modify `mintlify-docs/docs.json`
-- Add release-script tests and enterprise handoff docs
+- Modify `mobile/modules/engine/src/services/cloudStreamApi.ts`
+- Modify `mobile/modules/engine/src/services/PhoneStreamCoordinator.ts`
+- Add a Workspace Gateway media client
+- Add provider-routing and recovery tests
 
-- [ ] Publish `mentra-deployment-template-<identity>.json` on the existing
-      coordinated GitHub release.
-- [ ] Publish a checksum-bearing bundle of the supported STT/TTS archives, or a
-      separately versioned model bundle referenced by the release record.
-- [ ] Record URLs, sizes, SHA-256 hashes, and provenance in the completed release
-      manifest.
-- [ ] Do not create a customer mobile build lane; reuse the exact Android and
-      iOS artifacts from the coordinated release.
-- [ ] Document Android APK/MDM distribution and iOS Apple Business Manager/MDM
-      app distribution. State that v1 users enter the workspace URL manually;
-      managed app configuration injection is a follow-up feature.
-- [ ] Publish a Microsoft Entra administrator guide based on Mentra's tested
-      setup. Cover single-tenant app registration, the Core Web callback URL,
-      the tenant-specific OIDC issuer URL, client id, secure client-credential
-      delivery, required assignment, user/group assignment, Core configuration,
-      validation, rotation, and troubleshooting. State that no Microsoft Graph
-      access is required.
-- [ ] Document the workspace URL, well-known endpoint, and private-CA
-      installation alongside the Entra guide.
+- [ ] Introduce a managed-stream provisioning interface independent of Cloud V2
+      Runtime.
+- [ ] Select Runtime only when a full platform profile supplies it; select the
+      Workspace Gateway for the call-focused profile.
+- [ ] Authenticate gateway calls with the deployment-scoped Entra account.
+- [ ] Preserve existing `StreamResult`, WHIP start, WHEP playback, status,
+      teardown, and reconnect behavior for Mentra Call.
+- [ ] Never expose streaming-provider credentials to the app or miniapp.
+- [ ] Make the remaining Cloudflare hop explicit in UI diagnostics and operator
+      documentation.
 
-## Phase 5: Self-hosted service packaging and qualification
+### Task 3: Move ACS token ownership into the host
 
-**Files:** Cloud V2 deployment charts/scripts, Mentra Azure reference
-environment, customer runbook, end-to-end tests
+**Files:**
 
-- [ ] Package the exact Core and Runtime service subset used by the official app.
-- [ ] Keep Core in the first self-hosted deployment as the customer-hosted
-      control plane for identity, sessions, token exchange, registry, settings,
-      version-check, and reporting. Runtime is the real-time execution plane.
-      Do not model Runtime-only operation as a manifest option.
-- [ ] Package direct Microsoft Entra OIDC support in Core without Supabase.
-      Support a server-held client secret for the first controlled pilot and
-      design the credential reference so certificate credentials can be added
-      without changing the manifest.
-- [ ] Create the v1 reference Self-Hosted deployment in Mentra's Azure account.
-      Deploy isolated customer-style Core and Runtime services with their own
-      configuration, secrets, databases, workspace URL, OTA/model artifacts,
-      and approved speech-provider configuration. Do not use Mentra's public
-      Core or Runtime as a hidden dependency.
-- [ ] Connect the Azure reference deployment to a non-production single-tenant
-      app registration and dedicated assigned test group in Mentra's Microsoft
-      Entra tenant.
-- [ ] Use the official Android and iOS Mentra App binaries to select the Azure
-      workspace through the manual workspace flow and complete login, Runtime,
-      miniapp, OTA, and speech scenarios end to end.
-- [ ] Test assigned, unassigned, wrong-tenant, MFA, disabled-user,
-      expired-credential, callback-tampering, refresh, reauthentication, and
-      logout cases against that reference deployment.
-- [ ] Verify just-in-time user creation, disabled-user behavior, session expiry,
-      and reauthentication without creating a second employee password store.
-- [ ] Configure customer-approved STT/TTS providers in customer-hosted Runtime.
-- [ ] Host the coordinated OTA bundle and speech artifacts on the internal
-      update service.
-- [ ] Run Android and iOS login, Runtime, miniapp, OTA, and offline-model tests.
-- [ ] Run clean-device packet captures on a restricted network with Mentra public
-      services blocked. Fail qualification if the app contacts Mentra public
-      Core, Runtime, telemetry, artifacts, or content, or any destination not on
-      the customer's approved egress list. Entra and the configured Runtime
-      speech provider may be explicitly approved.
-- [ ] Verify the embedded Mentra profile in the ordinary coordinated release
-      gates so consumer behavior remains unchanged.
+- Modify `mobile/modules/engine/src/services/AcsMeetingService.ts`
+- Modify Android/iOS ACS meeting modules as required
+- Modify `LocalMiniappRuntime` meeting handlers
+- Modify Mentra Call `CallManager`
+- Add token/redaction and end-to-end tests
+
+- [ ] Change the miniapp contract so `session.meeting.join` does not carry an ACS
+      token.
+- [ ] Have the trusted host call the configured gateway just before join and
+      refresh before expiry when necessary.
+- [ ] Redact ACS and Entra bearer tokens from logs, errors, diagnostics, and
+      miniapp messages.
+- [ ] Preserve native call lifecycle as the source of truth.
+- [ ] Qualify the current guest token path first and clearly label its Teams
+      roster/lobby behavior.
+
+## Phase 5: Reuse Entra for authenticated Teams identity
+
+This phase is not required to prove raw media, but it is required before claiming
+that the user joins as their corporate Teams account. It reuses Phase 2; there is
+no second interactive SSO screen.
+
+### Task 1: Add Teams-user token exchange
+
+**Files:** MSAL scope acquisition, Workspace Gateway ACS exchange endpoint,
+native ACS agent setup, tests, and admin guide
+
+- [ ] Add delegated ACS `Teams.ManageCalls` and `Teams.ManageChats` permissions
+      to the Entra registration and document admin consent/assignment.
+- [ ] Silently acquire an ACS-scoped Entra token for the same cached MSAL account.
+- [ ] Send it only to the trusted customer gateway over TLS; validate tenant,
+      client/app id, object id, scopes, and that it matches the active account.
+- [ ] Exchange it with ACS `GetTokenForTeamsUser` using the gateway's ACS
+      credential.
+- [ ] Return only the short-lived ACS Teams-user token to the native host.
+- [ ] Confirm the Android and iOS Calling SDK agent construction required by a
+      Teams-user token while retaining raw media.
+- [ ] Test same-tenant and external meetings, employee roster identity, lobby
+      policy, disabled user, token expiry/refresh, revoked consent, missing Teams
+      license, and Conditional Access.
+
+### Task 2: Create meetings as the signed-in user when required
+
+**Files:** Host meeting API, optional gateway proxy, Mentra Call UI adapter, and
+Graph tests
+
+- [ ] Allow joining a supplied Teams URL without Graph permission.
+- [ ] When creation is enabled, silently request delegated Graph
+      `OnlineMeetings.ReadWrite` for the same MSAL account.
+- [ ] Call `POST /me/onlineMeetings` from the trusted host or gateway and return
+      only the join URL to Mentra Call.
+- [ ] Remove the current shared licensed Graph service account and app-only
+      client secret from the customer template.
+- [ ] Keep meeting creation optional so customers that only join scheduled
+      meetings grant no Graph permission.
+
+## Phase 6: Deployment policy, artifacts, and qualification
+
+### Task 1: Enforce content, hardware, and egress policy
+
+**Files:** Existing wallpaper/link/update/miniapp/pairing/telemetry call sites and
+policy tests
+
+- [ ] Use only `content.wallpaperUrls`; empty means no remote presets.
+- [ ] Route privacy, terms, docs, support, store, and review actions through
+      resolved fields. Do not add `externalLinks`.
+- [ ] Apply the approved system-miniapp list everywhere. The embedded Mentra
+      profile uses `null`; the customer template pins Mentra Call and explicitly
+      approved utilities.
+- [ ] Filter the pairing picker with `glasses.allowedModelsOverride`; keep vendor
+      behavior in model adapters and do not add AR99-specific schema.
+- [ ] Disable navigation, cloud speech, cloud reports, public store/registry, and
+      any other unavailable integration in the call-focused template.
+- [ ] Add an integration inventory test asserting every known network path is
+      selected, disabled, or explicitly approved by the active profile.
+
+### Task 2: Publish customer artifacts and guides
+
+**Files:** Coordinated release scripts/workflows, Mintlify docs, gateway deployment
+templates, and runbooks
+
+- [ ] Publish a release-matched call-focused deployment template.
+- [ ] Publish the Workspace Gateway container digest, SBOM, checksums, and Azure
+      deployment template.
+- [ ] Publish customer-hostable Mentra Live OTA artifacts when OTA is enabled.
+- [ ] Reuse the exact normal Android and iOS app artifacts; no customer build
+      lane.
+- [ ] Document Android APK/MDM and iOS App Store/Apple Business Manager
+      distribution. State that workspace entry is manual in v1.
+- [ ] Publish a Microsoft Entra guide for native app redirects, single-tenant
+      authority, API permissions/scopes, assignment, consent, revocation, and
+      troubleshooting.
+- [ ] Publish an ACS/Cloudflare gateway guide that lists only the required
+      secrets, supports rotation, and distinguishes guest from Teams-user
+      identity.
+- [ ] Document that restricted-network means customer-approved Microsoft and
+      streaming egress, not zero internet.
+
+### Task 3: Qualify the Mentra Azure reference deployment
+
+**Files:** Mentra Azure environment and end-to-end test records
+
+- [ ] Deploy the Workspace Gateway in Mentra's Azure account using Mentra's
+      non-production Entra tenant and customer-style isolation.
+- [ ] Use a customer-style ACS resource, secret store/managed identity, and
+      dedicated Cloudflare configuration.
+- [ ] Do not deploy or use Mentra public Core or Runtime.
+- [ ] Select the workspace using official Android and iOS Mentra App artifacts.
+- [ ] Run Entra assignment, MFA, wrong-tenant, disabled-user, expiry, logout, and
+      deployment-switch tests.
+- [ ] Run Teams join, mute, incoming audio, Wi-Fi recovery, WHEP replacement,
+      leave, and 30–60 minute soak tests on Android and iOS.
+- [ ] Run packet capture with Mentra public services blocked and fail on any
+      unapproved destination.
+- [ ] Re-run ordinary consumer release gates with the embedded Mentra profile.
 
 ## Suggested cut lines
 
-- **PR 1:** Manifest types/resolver, embedded Mentra profile, deployment-neutral
-  landing screen, boot gating, and tests. No customer deployment is promised yet.
-- **PR 2:** Workspace URL/well-known manifest enrollment, deployment-scoped
-  Core/Runtime, and direct Microsoft Entra OIDC sign-in.
-- **PR 3:** OTA/model routing, deployment wallpaper/link/system-miniapp policy,
-  pairing-model override, telemetry, and optional-feature egress gates.
-- **PR 4:** Coordinated deployment artifacts and a physical restricted-network
-  pilot on Android and iOS.
+- **PR 1:** Manifest types/resolver, landing screen, manual workspace flow,
+  nullable Core/Runtime, and pre-network telemetry gating.
+- **PR 2:** Native Entra authentication plus deployment-scoped identity and
+  secure logout.
+- **PR 3:** Cloud-session-disabled Engine and approved bundled Mentra Call.
+- **PR 4:** Workspace Gateway, Cloudflare managed-stream routing, and host-owned
+  ACS guest credentials; complete direct-to-Teams media checkpoint.
+- **PR 5:** Authenticated Teams-user token exchange and optional delegated Graph
+  meeting creation if required by the pilot.
+- **PR 6:** OTA/content/hardware policy, release artifacts, guides, and physical
+  restricted-network qualification.
 
-An Android-and-iOS pilot is roughly a multi-PR, several-week effort rather than a
-small endpoint toggle. The existing Engine configuration, portable OTA bundle,
-hotspot flow, and coordinated release manifest remove much of the hard work;
-boot order, auth isolation, telemetry gating, model hosting, and self-hosted
-Cloud packaging are the remaining critical path.
-
-Okta, Google, internal OIDC, SAML, local email/password accounts, self-service
-workspace discovery, and directory/domain verification are follow-up identity
-work. The first pilot uses a workspace URL and one server-configured Microsoft
-Entra OIDC registration against the customer's own tenant.
+The narrowed call deployment avoids the largest previous work item: packaging
+general Core and Runtime with every unrelated SaaS and data dependency. It still
+requires real mobile work—native Entra login, cloudless Engine startup, managed
+stream extraction, and secure ACS credential ownership—but those changes are
+directly tied to Mentra Call and form a reusable foundation for later workspace
+profiles.
