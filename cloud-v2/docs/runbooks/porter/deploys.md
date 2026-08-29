@@ -8,22 +8,22 @@ layering, and what changes when you `porter apply`.
 Cloud V2 deploys use one Porter app per environment in the AWS us-west-2
 cluster:
 
-| Release source                              | Coordinated owner                      | Porter app      | Manifest              | Public hosts                                                                          |
-| ------------------------------------------- | -------------------------------------- | --------------- | --------------------- | ------------------------------------------------------------------------------------- |
-| `dev`                                       | `coordinated-release.yml`              | `cloud-dev`     | `porter.dev.yaml`     | `core.dev.us-west-2.mentraglass.com`, `runtime.dev.us-west-2.mentraglass.com`         |
-| `staging`                                   | `coordinated-release.yml`              | `cloud-staging` | `porter.staging.yaml` | `core.staging.us-west-2.mentraglass.com`, `runtime.staging.us-west-2.mentraglass.com` |
-| selected release source contained in `main` | `coordinated-production-promotion.yml` | `cloud-prod`    | `porter.prod.yaml`    | `core.mentraglass.com`, `runtime.mentraglass.com`                                     |
+| Release source                              | Coordinated owner              | Porter app      | Manifest              | Public hosts                                                                          |
+| ------------------------------------------- | ------------------------------ | --------------- | --------------------- | ------------------------------------------------------------------------------------- |
+| `dev`                                       | `coordinated-release.yml`      | `cloud-dev`     | `porter.dev.yaml`     | `core.dev.us-west-2.mentraglass.com`, `runtime.dev.us-west-2.mentraglass.com`         |
+| `staging`                                   | `coordinated-release.yml`      | `cloud-staging` | `porter.staging.yaml` | `core.staging.us-west-2.mentraglass.com`, `runtime.staging.us-west-2.mentraglass.com` |
+| selected release source contained in `main` | `production-release-cloud.yml` | `cloud-prod`    | `porter.prod.yaml`    | `core.mentraglass.com`, `runtime.mentraglass.com`                                     |
 
-Both coordinators call `reusable-coordinated-cloud-v2.yml`, which is the single
+Both release systems call `reusable-coordinated-cloud-v2.yml`, which is the single
 implementation owner for target resolution, Porter deployment, public health
 checks, and deployment evidence. Dev and staging can be started with the
 coordinator's `workflow_dispatch`; production remains a protected promotion of
 a completed beta whose source is contained in `main`.
 
-The deployment must finish before the release's Mentra App publication starts.
-The beta mobile app still embeds production Cloud V2 today even though the
-`staging` release deploys `cloud-staging`; that explicit temporary mismatch is
-not changed by this sequencing work.
+The production deployment must finish, and the actual currently published
+Mentra App must pass against it, before production mobile candidates are built.
+Beta mobile builds embed staging Cloud V2 and are not production-promotable
+artifacts.
 
 Do not add a second branch-push deploy workflow for these Porter apps. A manual
 repair should rerun the exact coordinated job/source so its result remains

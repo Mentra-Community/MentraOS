@@ -542,6 +542,59 @@ export async function findAppStoreVersion(client, {appId, versionString}) {
   return exactlyOne(response, `iOS App Store version ${versionString}`)
 }
 
+const PUBLIC_APP_STORE_STATES = new Set(["READY_FOR_DISTRIBUTION", "READY_FOR_SALE"])
+
+function compareVersionStrings(left, right) {
+  const leftParts = String(left).split(".").map(Number)
+  const rightParts = String(right).split(".").map(Number)
+  const length = Math.max(leftParts.length, rightParts.length)
+  for (let index = 0; index < length; index += 1) {
+    const difference = (leftParts[index] || 0) - (rightParts[index] || 0)
+    if (difference !== 0) return difference
+  }
+  return 0
+}
+
+export async function appStoreInventory(client, {app}) {
+  const builds = await collectPaginatedData(
+    client,
+    query("/v1/builds", {"filter[app]": app.id, "sort": "-uploadedDate", "limit": "200"}),
+  )
+  const buildNumbers = builds.map((build) => Number(build.attributes?.version)).filter(Number.isSafeInteger)
+  const versions = await collectPaginatedData(
+    client,
+    query(`/v1/apps/${encodeURIComponent(app.id)}/appStoreVersions`, {"filter[platform]": "IOS", "limit": "200"}),
+  )
+  const publicVersions = versions
+    .filter((version) =>
+      PUBLIC_APP_STORE_STATES.has(version.attributes?.appStoreState || version.attributes?.appVersionState),
+    )
+    .sort((left, right) => compareVersionStrings(right.attributes?.versionString, left.attributes?.versionString))
+  const currentVersion = publicVersions[0] || null
+  let current = null
+  if (currentVersion) {
+    const related = await client.request(`/v1/appStoreVersions/${currentVersion.id}/build`)
+    const build = related?.data
+    const buildNumber = Number(build?.attributes?.version)
+    if (!build?.id || !Number.isSafeInteger(buildNumber)) {
+      throw new Error(`Public App Store version ${currentVersion.id} has no numeric build`)
+    }
+    current = {
+      versionId: currentVersion.id,
+      buildId: build.id,
+      marketingVersion: currentVersion.attributes.versionString,
+      buildNumber,
+      state: currentVersion.attributes?.appStoreState || currentVersion.attributes?.appVersionState,
+    }
+  }
+  return {
+    appId: app.id,
+    bundleId: app.attributes?.bundleId,
+    current,
+    maxBuildNumber: buildNumbers.length === 0 ? 0 : Math.max(...buildNumbers),
+  }
+}
+
 const SUBMITTED_APP_STORE_STATES = new Set([
   "WAITING_FOR_REVIEW",
   "IN_REVIEW",
@@ -795,6 +848,15 @@ async function main() {
       )
     }
     console.log(`App Store version ${args["app-version"]} is ${status.state} with build ${args["build-number"]}`)
+    return
+  }
+  if (command === "inventory") {
+    const inventory = await appStoreInventory(client, {app})
+    if (args.output) {
+      const {writeFileSync} = await import("node:fs")
+      writeFileSync(path.resolve(args.output), `${JSON.stringify(inventory, null, 2)}\n`)
+    }
+    console.log(JSON.stringify(inventory))
     return
   }
   throw new Error(`Unknown command ${JSON.stringify(command)}`)

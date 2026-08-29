@@ -1,0 +1,136 @@
+name: Production Release - Public Release Gate
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_identity:
+        required: true
+        type: string
+      attempt:
+        required: true
+        type: number
+      phase:
+        required: true
+        type: choice
+        options: [release]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: production-release-${{ inputs.release_identity }}-attempt-${{ inputs.attempt }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Approve or verify public rollout start
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment:
+      name: production-store-release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Load current immutable promotion record
+        id: promotion
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          node .github/scripts/production-promotion-assets.mjs download-latest
+          --repository "$GITHUB_REPOSITORY"
+          --release "${{ inputs.release_identity }}"
+          --attempt "${{ inputs.attempt }}"
+          --output promotion-input/current.json
+          --github-output "$GITHUB_OUTPUT"
+
+      - name: Resolve protected release action
+        id: state
+        run: |
+          state=$(jq -er .state promotion-input/current.json)
+          [[ "$state" == stores-approved || "$state" == public-release-approved ]]
+          echo "value=$state" >> "$GITHUB_OUTPUT"
+
+      - uses: ruby/setup-ruby@v1
+        if: steps.state.outputs.value == 'public-release-approved'
+        with:
+          ruby-version: "3.3"
+
+      - name: Inject read-only store credentials for rollout verification
+        if: steps.state.outputs.value == 'public-release-approved'
+        uses: ./.github/actions/inject-signing
+        with:
+          play: "true"
+          ios: "true"
+          google-play-key-json: ${{ secrets.GOOGLE_PLAY_KEY_JSON }}
+          asc-api-key-p8-b64: ${{ secrets.ASC_API_KEY_P8_B64 }}
+          asc-api-key-id: ${{ secrets.ASC_API_KEY_ID }}
+          asc-api-issuer-id: ${{ secrets.ASC_API_ISSUER_ID }}
+
+      - name: Verify exact public rollout was started in both consoles
+        if: steps.state.outputs.value == 'public-release-approved'
+        env:
+          ASC_API_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+          ASC_API_ISSUER_ID: ${{ secrets.ASC_API_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          key_path=$(sed -n 's/^ASC_API_KEY_PATH=//p' "$MENTRA_ASC_CONFIG_PATH")
+          mkdir -p promotion-output/public-status play-status/fastlane
+          for product in mentraApp starterKit; do
+            if [[ "$product" == mentraApp ]]; then bundle_id=com.mentra.mentra; package=com.mentra.mentra; else bundle_id=com.mentra.bluetoothsdkexample; package=com.mentra.bluetoothsdkexample; fi
+            build=$(jq -er ".coordinates.candidates.$product.ios.buildNumber" promotion-input/current.json)
+            GITHUB_OUTPUT="promotion-output/public-status/$product.outputs" node mobile/scripts/app-store-connect-build.mjs production-status \
+              --issuer-id "$ASC_API_ISSUER_ID" --key-id "$ASC_API_KEY_ID" --key-path "$key_path" \
+              --bundle-id "$bundle_id" --build-number "$build" --app-version "${{ inputs.release_identity }}"
+            apple_state=$(sed -n 's/^state=//p' "promotion-output/public-status/$product.outputs")
+            [[ "$apple_state" == READY_FOR_SALE || "$apple_state" == READY_FOR_DISTRIBUTION || "$apple_state" == PROCESSING_FOR_DISTRIBUTION ]]
+          done
+          cp mobile/ci/fastlane-android/Fastfile mobile/ci/fastlane-android/Appfile play-status/fastlane/
+          cp mobile/Gemfile mobile/Gemfile.lock play-status/
+          cd play-status
+          bundle install
+          for product in mentraApp starterKit; do
+            if [[ "$product" == mentraApp ]]; then package=com.mentra.mentra; else package=com.mentra.bluetoothsdkexample; fi
+            expected=$(jq -er ".coordinates.candidates.$product.android.buildNumber" ../promotion-input/current.json)
+            APP_PACKAGE_NAME="$package" GOOGLE_PLAY_INVENTORY_OUTPUT="$product.json" bundle exec fastlane google_play_inventory
+            jq -e --argjson expected "$expected" '.tracks.production | map(tonumber) | index($expected) != null' "$product.json" >/dev/null
+          done
+
+      - name: Append protected approval or observed rollout state
+        id: next
+        run: |
+          set -euo pipefail
+          mkdir -p promotion-output
+          if [[ "${{ steps.state.outputs.value }}" == stores-approved ]]; then
+            to=public-release-approved
+            kind=production-public-release-approval
+            asset=production-public-release-approval.json
+            jq -n --arg approver "$GITHUB_ACTOR" --arg url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" '{schemaVersion: 1, kind: "production-public-release-approval", approver: $approver, provenanceUrl: $url, externalActionsPerformed: false, nextAction: "Use the README to release the exact Apple builds and begin the exact Google staged rollouts, then rerun this workflow."}' > "promotion-output/$asset"
+          else
+            to=rolling-out
+            kind=production-public-rollout-started
+            asset=production-public-rollout-started.json
+            jq -n --arg url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" '{schemaVersion: 1, kind: "production-public-rollout-started", provenanceUrl: $url, exactStoreCoordinatesObserved: true}' > "promotion-output/$asset"
+          fi
+          digest=$(sha256sum "promotion-output/$asset" | cut -d' ' -f1)
+          jq -n --arg kind "$kind" --arg url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" --arg sha256 "$digest" --arg assetName "$asset" '{kind: $kind, url: $url, sha256: $sha256, assetName: $assetName}' > promotion-output/evidence.json
+          node .github/scripts/production-promotion-state.mjs transition --record promotion-input/current.json --to "$to" --actor "$GITHUB_ACTOR" --created-at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" --provenance-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" --evidence promotion-output/evidence.json --output promotion-output/next.json
+          name=$(node --input-type=module -e 'import {readFileSync} from "node:fs"; import {promotionAssetName} from "./.github/scripts/production-promotion-state.mjs"; process.stdout.write(promotionAssetName(JSON.parse(readFileSync("promotion-output/next.json", "utf8"))))')
+          mv promotion-output/next.json "promotion-output/$name"
+          {
+            echo "record=promotion-output/$name"
+            echo "asset=promotion-output/$asset"
+            echo "asset_name=$asset"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Publish protected release evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node .github/scripts/publish-immutable-release-asset.mjs --file "${{ steps.next.outputs.asset }}" --name "${{ steps.next.outputs.asset_name }}" --release-id "${{ steps.promotion.outputs.release_id }}" --repository "$GITHUB_REPOSITORY"
+          node .github/scripts/production-promotion-assets.mjs publish-record --record "${{ steps.next.outputs.record }}" --release-id "${{ steps.promotion.outputs.release_id }}" --repository "$GITHUB_REPOSITORY"

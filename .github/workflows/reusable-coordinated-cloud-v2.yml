@@ -16,6 +16,11 @@ on:
         required: false
         default: false
         type: boolean
+      approval_environment:
+        description: Optional protected GitHub environment for this deployment job
+        required: false
+        default: ""
+        type: string
     secrets:
       PORTER_TOKEN:
         required: true
@@ -35,6 +40,8 @@ jobs:
     name: Deploy and verify Cloud V2 ${{ inputs.deployment_environment }}
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 60
+    environment:
+      name: ${{ inputs.approval_environment || inputs.deployment_environment }}
     concurrency:
       group: coordinated-cloud-v2-${{ inputs.deployment_environment }}
       cancel-in-progress: false

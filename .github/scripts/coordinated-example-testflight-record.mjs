@@ -31,14 +31,15 @@ export function createExampleTestflightRecord({
   uploadStatus,
   provenanceUrl,
   ipa,
+  buildNumber = plan?.native?.buildNumber,
 }) {
   if (
     !plan?.releaseSetId ||
-    !["dev", "beta"].includes(plan.channel) ||
+    !["dev", "beta", "production"].includes(plan.channel) ||
     plan.native?.marketingVersion !== plan.familyBaseVersion ||
     !Number.isSafeInteger(plan.native?.buildNumber)
   ) {
-    throw new Error("A valid dev or beta release plan is required")
+    throw new Error("A valid dev, beta, or production release plan is required")
   }
   if (
     starterKit?.releaseSetId !== plan.releaseSetId ||
@@ -48,8 +49,14 @@ export function createExampleTestflightRecord({
   ) {
     throw new Error("Starter Kit result does not match the release plan")
   }
-  const expectedGroup = plan.channel === "dev" ? "Mentra Dev" : "Mentra Staging Public"
-  const expectedAudience = plan.channel === "dev" ? "internal" : "external"
+  const expectedGroup =
+    plan.channel === "dev"
+      ? "Mentra Dev"
+      : plan.channel === "beta"
+        ? "Mentra Staging Public"
+        : "Mentra SDK Example Production Candidates"
+  const expectedAudience = plan.channel === "beta" ? "external" : "internal"
+  if (!Number.isSafeInteger(buildNumber) || buildNumber < 1) throw new Error("TestFlight build number must be positive")
   if (groupName !== expectedGroup) throw new Error(`TestFlight group must be ${expectedGroup}`)
   if (audience !== expectedAudience) throw new Error(`TestFlight audience must be ${expectedAudience}`)
   if (!["available", "submitted", "skipped"].includes(distributionStatus)) {
@@ -78,7 +85,7 @@ export function createExampleTestflightRecord({
     },
     version: {
       marketingVersion: plan.native.marketingVersion,
-      buildNumber: plan.native.buildNumber,
+      buildNumber,
     },
     build: {
       id: requiredString(buildId, "App Store Connect build ID"),
@@ -139,6 +146,7 @@ function main() {
     uploadStatus: args["upload-status"],
     provenanceUrl: args["provenance-url"],
     ipa: args.ipa ? path.resolve(args.ipa) : undefined,
+    buildNumber: args["build-number"] ? Number(args["build-number"]) : undefined,
   })
   writeFileSync(path.resolve(args.output), serializeReleaseRecord(record))
 }
