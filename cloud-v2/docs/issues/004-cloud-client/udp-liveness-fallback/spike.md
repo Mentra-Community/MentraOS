@@ -31,11 +31,9 @@ Useful pieces to carry forward:
 
 - `mobile/src/services/SocketComms.ts` configured UDP from `connection_ack` and
   handled `udp_ping_ack`.
-- `cloud/packages/cloud/src/services/session/UdpAudioManager.ts` sent
-  `udp_ping_ack` back over the WebSocket after the UDP server saw a ping.
-- `cloud/packages/cloud/src/services/udp/UdpAudioServer.ts` separated UDP ping
-  handling from audio forwarding, so ping packets did not become transcription
-  audio.
+- The retired V1 runtime sent `udp_ping_ack` back over the WebSocket after its
+  UDP server saw a ping, and separated UDP ping handling from audio forwarding
+  so ping packets did not become transcription audio.
 
 The important lesson is that UDP liveness should be acknowledged over the already
 authenticated WebSocket. That lets the client prove the exact network path:
@@ -82,4 +80,3 @@ fallback policy handle the user-visible behavior.
   UDP. The likely answer is yes.
 - Whether the runtime should expose per-session UDP liveness telemetry for
   Porter dashboards and harness assertions.
-

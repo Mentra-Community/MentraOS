@@ -5,7 +5,7 @@ import type {PairFailureEvent} from "@mentra/engine"
 import {useCallback, useEffect, useMemo, useRef, useState} from "react"
 import {View} from "react-native"
 
-import {DeviceTypes} from "@/../../cloud/packages/types/src"
+import {DeviceTypes} from "@mentra/engine"
 import {Button} from "@/components/ignite"
 import {Header} from "@/components/ignite/Header"
 import {Screen} from "@/components/ignite/Screen"

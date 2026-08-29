@@ -319,6 +319,7 @@ const mockIslandEntries = () => {
   // move, so requireActual preserves that exact behavior.
   const realSettings = jest.requireActual("./modules/engine/src/stores/settings")
   const realBtSettingKeys = jest.requireActual("./modules/engine/src/stores/bluetoothSettingKeys")
+  const realEngineTypes = jest.requireActual("./modules/engine/src/types")
   // engine.start() starts the island-owned device-settings -> glasses BLE sync; use
   // the real one so its behavior is exercised where it now lives (not MantleManager).
   const realGlassesSettingsSync = jest.requireActual("./modules/engine/src/services/GlassesSettingsSync")
@@ -394,6 +395,7 @@ const mockIslandEntries = () => {
   // --- "@mentra/engine" (main): engine + the pure helper/constant surface ---
   const main = {
     __esModule: true,
+    ...realEngineTypes,
     // OTA install policy (timings + failure copy) + deriveDisplayState — real (pure)
     // implementations, consumed by the host otaProgressTimeouts shim + OTA tests.
     ...realOtaInstallPolicy,

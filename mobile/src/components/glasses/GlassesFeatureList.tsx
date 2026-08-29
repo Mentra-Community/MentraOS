@@ -1,4 +1,4 @@
-import {DeviceTypes, getModelCapabilities} from "@/../../cloud/packages/types/src"
+import {DeviceTypes, getModelCapabilities} from "@mentra/engine"
 import {View, ViewStyle, TextStyle, ImageStyle} from "react-native"
 
 import {Icon, Text} from "@/components/ignite"

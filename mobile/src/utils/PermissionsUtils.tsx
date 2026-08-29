@@ -1,4 +1,4 @@
-import {AppletInterface, AppletPermission} from "@/../../cloud/packages/types/src"
+import {AppletInterface, AppletPermission} from "@mentra/engine"
 import CrustModule from "@mentra/crust"
 import * as ExpoCalendar from "expo-calendar"
 import {Alert, Linking, PermissionsAndroid, Platform} from "react-native"

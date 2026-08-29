@@ -30,15 +30,13 @@ config.resolver.sourceExts = [...config.resolver.sourceExts, "svg"]
 // Add HTML to asset extensions
 config.resolver.assetExts = [...config.resolver.assetExts, "html"]
 
-// Watch the core and cloud modules for changes
+// Watch the local modules and Cloud V2 client/protocol sources for changes.
 config.watchFolders = [
   path.resolve(__dirname, "./modules/bluetooth-sdk"),
   path.resolve(__dirname, "./modules/engine"),
   path.resolve(__dirname, "./modules/engine-host-internal"),
   path.resolve(__dirname, "./modules/crust"),
   path.resolve(__dirname, "./modules/miniapp"),
-  path.resolve(__dirname, "../cloud/packages/types/src"),
-  path.resolve(__dirname, "../cloud/packages/display-utils/src"),
   // The aliased cloud-v2 sources must be watched or Metro can't hash them.
   path.resolve(__dirname, "../cloud-v2/packages/protocol/src"),
   path.resolve(__dirname, "../cloud-v2/packages/cloud-client"),

@@ -197,6 +197,7 @@ export {
   evenRealitiesG1,
   evenRealitiesG2,
   mentraLive,
+  nimo,
   vuzixZ100,
   mentraDisplay,
 } from "./types"

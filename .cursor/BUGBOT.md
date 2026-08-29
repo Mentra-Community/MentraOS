@@ -4,7 +4,7 @@ When reviewing pull requests (including when triggered via `bugbot run` from the
 
 ## Standards
 
-- Follow root `AGENTS.md` and path-specific `AGENTS.md` (`mobile/`, `cloud/`, etc.).
+- Follow root `AGENTS.md` and path-specific guidance such as `mobile/AGENTS.md`.
 - Java/Android: Java 17, `mCamelCase` members, PascalCase classes, EventBus for component communication.
 - TypeScript/React Native: functional components, single quotes, strict typing, feature-based `src/` layout.
 - Swift: use swiftformat conventions.
