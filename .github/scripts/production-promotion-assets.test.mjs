@@ -9,6 +9,7 @@ import {
   nextPromotionAttempt,
   planPromotionContainerAllocation,
   prepareEvidenceAsset,
+  productionPromotionSelectionDigest,
   promotionContainerBody,
   promotionContainerName,
   promotionContainerTag,
@@ -150,11 +151,12 @@ test("allows a replacement only after every prior attempt is aborted", () => {
   assert.throws(() => requireNewPromotionAttemptAllowed([aborted], "3.2.0"), /belongs to 3.1.0/)
 })
 
-test("resumes the latest empty container only for the same frozen beta and source", () => {
+test("resumes the latest empty container only for the complete frozen selection", () => {
   const targetCommit = "a".repeat(40)
   const selectedBeta = "3.1.0-beta.57"
+  const selectionDigest = productionPromotionSelectionDigest({beta: selectedBeta, storeMax: 57})
   const draft = release(2, {
-    body: promotionContainerBody("3.1.0", selectedBeta),
+    body: promotionContainerBody("3.1.0", selectedBeta, selectionDigest),
     target_commitish: targetCommit,
   })
   const aborted = abortPromotionRecord({
@@ -172,6 +174,7 @@ test("resumes the latest empty container only for the same frozen beta and sourc
     releaseIdentity: "3.1.0",
     targetCommit,
     selectedBeta,
+    selectionDigest,
   })
   assert.equal(allocation.action, "reuse")
   assert.equal(allocation.attempt, 2)
@@ -182,6 +185,7 @@ test("resumes the latest empty container only for the same frozen beta and sourc
         releaseIdentity: "3.1.0",
         targetCommit: "b".repeat(40),
         selectedBeta,
+        selectionDigest,
       }),
     /another frozen selection/,
   )
@@ -191,6 +195,17 @@ test("resumes the latest empty container only for the same frozen beta and sourc
         releaseIdentity: "3.1.0",
         targetCommit,
         selectedBeta: "3.1.0-beta.58",
+        selectionDigest,
+      }),
+    /another frozen selection/,
+  )
+  assert.throws(
+    () =>
+      planPromotionContainerAllocation(containers, {
+        releaseIdentity: "3.1.0",
+        targetCommit,
+        selectedBeta,
+        selectionDigest: productionPromotionSelectionDigest({beta: selectedBeta, storeMax: 58}),
       }),
     /another frozen selection/,
   )
@@ -200,8 +215,35 @@ test("resumes the latest empty container only for the same frozen beta and sourc
         releaseIdentity: "3.1.0",
         targetCommit,
         selectedBeta,
+        selectionDigest,
       }),
     /Multiple empty/,
+  )
+})
+
+test("selection digests are canonical and cover every frozen input", () => {
+  const selection = {
+    betaPlan: {sourceCommit: "a".repeat(40), native: {buildNumber: 57}},
+    previousManifestSha256: "b".repeat(64),
+    starterKitCommit: "c".repeat(40),
+    mentraInventory: {apple: {maxBuildNumber: 57}},
+  }
+  assert.equal(
+    productionPromotionSelectionDigest(selection),
+    productionPromotionSelectionDigest({
+      mentraInventory: selection.mentraInventory,
+      starterKitCommit: selection.starterKitCommit,
+      previousManifestSha256: selection.previousManifestSha256,
+      betaPlan: selection.betaPlan,
+    }),
+  )
+  assert.notEqual(
+    productionPromotionSelectionDigest(selection),
+    productionPromotionSelectionDigest({...selection, starterKitCommit: "d".repeat(40)}),
+  )
+  assert.notEqual(
+    productionPromotionSelectionDigest(selection),
+    productionPromotionSelectionDigest({...selection, mentraInventory: {apple: {maxBuildNumber: 58}}}),
   )
 })
 

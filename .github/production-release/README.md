@@ -385,7 +385,8 @@ attempt for that release identity is aborted, and it never permits abort after
 the 100 percent `finalizing` checkpoint. Preparation runs are serialized while
 they allocate attempts, so starting two beta selections does not create two
 active promotions. A retry resumes a zero-state container only when its selected
-beta and source commit match exactly.
+beta, source commit, prior-production provenance, store inventories, release
+family, and Starter Kit commit match exactly through one deterministic digest.
 
 Common stop conditions include source/lock mismatch, missing store provenance,
 unclassified Cloud config, non-backward-compatible migration, Mobile N failure,
