@@ -356,4 +356,23 @@ test("allows append-only rollout observations before completion", () => {
   })
   assert.equal(observed.state, "rolling-out")
   assert.equal(observed.sequence, record.sequence + 1)
+
+  const finalizing = transitionPromotionRecord({
+    record: observed,
+    to: "finalizing",
+    actor: "release-owner",
+    createdAt: "2026-08-28T15:00:00.000Z",
+    provenanceUrl: "https://github.com/Mentra-Community/MentraOS/actions/runs/4",
+    evidence: evidence("production-rollout-observation"),
+  })
+  const completed = transitionPromotionRecord({
+    record: finalizing,
+    to: "completed",
+    actor: "release-owner",
+    createdAt: "2026-08-28T16:00:00.000Z",
+    provenanceUrl: "https://github.com/Mentra-Community/MentraOS/actions/runs/5",
+    evidence: evidence("production-release-manifest"),
+  })
+  assert.equal(completed.state, "completed")
+  assert.equal(completed.previous.assetName, promotionAssetName(finalizing))
 })

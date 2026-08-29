@@ -36,7 +36,8 @@ jobs:
       starter_build: ${{ steps.inputs.outputs.starter_build }}
       ota_url: ${{ steps.inputs.outputs.ota_url }}
       ota_sha256: ${{ steps.inputs.outputs.ota_sha256 }}
-      stable_release_id: ${{ steps.inputs.outputs.stable_release_id }}
+      candidate_container_tag: ${{ steps.inputs.outputs.candidate_container_tag }}
+      candidate_container_name: ${{ steps.inputs.outputs.candidate_container_name }}
       promotion_release_id: ${{ steps.promotion.outputs.release_id }}
     steps:
       - uses: actions/checkout@v4
@@ -59,7 +60,7 @@ jobs:
           --output promotion-input/current.json
           --github-output "$GITHUB_OUTPUT"
 
-      - name: Download plan, verify state, and allocate stable artifact container
+      - name: Download plan and resolve the attempt-scoped candidate container
         id: inputs
         env:
           GH_TOKEN: ${{ github.token }}
@@ -76,19 +77,10 @@ jobs:
           [[ "$(jq -er .channel "$plan")" == "production" ]]
           source_commit=$(jq -er .sourceCommit "$plan")
           [[ "$source_commit" == "$(jq -er .source.mentraosCommit promotion-input/current.json)" ]]
-          tag=$(jq -er .artifactContainerTag "$plan")
-          release_name=$(jq -er .artifactContainerName "$plan")
-          stable=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases?per_page=100" | jq --arg tag "$tag" 'add | [.[] | select(.tag_name == $tag)]')
-          [[ "$(jq length <<< "$stable")" -le 1 ]]
-          if [[ "$(jq length <<< "$stable")" == 0 ]]; then
-            payload=$(jq -n --arg tag "$tag" --arg target "$source_commit" --arg name "$release_name" '{tag_name: $tag, target_commitish: $target, name: $name, body: "Production candidate artifacts. Public release is a later protected phase.", draft: true, prerelease: false}')
-            stable_release=$(gh api --method POST "repos/${GITHUB_REPOSITORY}/releases" --input - <<< "$payload")
-          else
-            stable_release=$(jq '.[0]' <<< "$stable")
-          fi
-          [[ "$(jq -r .draft <<< "$stable_release")" == "true" ]]
-          [[ "$(jq -r .prerelease <<< "$stable_release")" == "false" ]]
-          [[ "$(jq -r .target_commitish <<< "$stable_release")" == "$source_commit" ]]
+          candidate_container=$(gh api "repos/${GITHUB_REPOSITORY}/releases/$release_id")
+          [[ "$(jq -r .draft <<< "$candidate_container")" == "true" ]]
+          [[ "$(jq -r .prerelease <<< "$candidate_container")" == "false" ]]
+          [[ "$(jq -r .target_commitish <<< "$candidate_container")" == "$source_commit" ]]
           starter_commit=$(jq -er .source.starterKitCommit promotion-input/current.json)
           jq -n \
             --arg releaseSetId "$(jq -er .releaseSetId "$plan")" \
@@ -108,7 +100,8 @@ jobs:
             echo "starter_build=$(jq -er .coordinates.candidates.starterKit.ios.buildNumber promotion-input/current.json)"
             echo "ota_url=$(jq -er .promotion.otaManifest.url "$plan")"
             echo "ota_sha256=$(jq -er .promotion.otaManifest.sha256 "$plan")"
-            echo "stable_release_id=$(jq -er .id <<< "$stable_release")"
+            echo "candidate_container_tag=$(jq -er .tag_name <<< "$candidate_container")"
+            echo "candidate_container_name=$(jq -er .name <<< "$candidate_container")"
           } >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@v4
@@ -144,7 +137,9 @@ jobs:
     with:
       source_commit: ${{ needs.load.outputs.source_commit }}
       release_plan_artifact: ${{ needs.load.outputs.plan_artifact }}
-      release_id: ${{ needs.load.outputs.stable_release_id }}
+      release_id: ${{ needs.load.outputs.promotion_release_id }}
+      artifact_container_tag: ${{ needs.load.outputs.candidate_container_tag }}
+      artifact_container_name: ${{ needs.load.outputs.candidate_container_name }}
       ota_manifest_url: ${{ needs.load.outputs.ota_url }}
       ota_manifest_sha256: ${{ needs.load.outputs.ota_sha256 }}
       backend_environment: prod

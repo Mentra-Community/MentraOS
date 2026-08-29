@@ -243,7 +243,9 @@ SDK dependencies; the workflow refuses to rewrite them. Outputs go only to:
 
 They are normal customer-eligible candidates, never TestFlight Internal Only or
 Internal App Sharing artifacts. A retry reuses only an exact matching coordinate
-and immutable artifact.
+and immutable artifact. GitHub candidate archives are stored in this promotion
+attempt's private draft container, not in `mentra-vX.Y.Z`; a replacement attempt
+therefore cannot inherit an earlier attempt's archives.
 
 Install through TestFlight and Play, not local archives. On iOS and Android test
 the Mentra App clean install/upgrade, production auth/session, pair/reconnect,
@@ -351,10 +353,18 @@ phased-release state, record monotonically increasing observations:
 ./scripts/production-release.mjs advance --release X.Y.Z --complete
 ```
 
-`--complete` records 100 percent and closes the immutable promotion chain. Do
-not complete until both store pages are publicly reachable in intended
+`--complete` first records 100 percent and enters the durable `finalizing`
+checkpoint. It then stages `mentra-release-plan-X.Y.Z.json` and
+`mentra-release-X.Y.Z.json` in the draft `mentra-vX.Y.Z` release and only then
+closes the immutable promotion chain. If finalization is interrupted, rerun the
+same `--complete` command; it verifies identical existing assets and resumes.
+Do not complete until both store pages are publicly reachable in intended
 territories, install/update returns the exact coordinates, production Cloud is
 healthy, and the release owner has recorded the final observation window.
+
+After completion, inspect the two canonical assets and perform the final public
+availability checks. Publish the already-staged GitHub release manually; no
+workflow in this system publishes it automatically.
 
 ## Abort, retry, and incident handling
 

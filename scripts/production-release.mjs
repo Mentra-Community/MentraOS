@@ -223,8 +223,8 @@ export function requireCommandState(command, record, options = {}) {
   if (command === "release" && record.state !== "stores-approved") {
     throw new Error(`Public release requires stores-approved, not ${record.state}`)
   }
-  if (command === "advance" && record.state !== "rolling-out") {
-    throw new Error(`Rollout advancement requires rolling-out, not ${record.state}`)
+  if (command === "advance" && !new Set(["rolling-out", "finalizing"]).has(record.state)) {
+    throw new Error(`Rollout advancement requires rolling-out or finalizing, not ${record.state}`)
   }
   if (command === "abort" && new Set(["aborted", "completed"]).has(record.state)) {
     throw new Error(`Cannot abort terminal promotion state ${record.state}`)
@@ -260,9 +260,14 @@ async function main(argv = process.argv.slice(2)) {
     printStatus(loaded.record, options.json)
     if (options.refresh) {
       if (
-        !new Set(["stores-submitted", "stores-approved", "public-release-approved", "rolling-out", "completed"]).has(
-          loaded.record.state,
-        )
+        !new Set([
+          "stores-submitted",
+          "stores-approved",
+          "public-release-approved",
+          "rolling-out",
+          "finalizing",
+          "completed",
+        ]).has(loaded.record.state)
       ) {
         throw new Error(`Store refresh is unavailable in promotion state ${loaded.record.state}`)
       }
@@ -336,6 +341,9 @@ async function main(argv = process.argv.slice(2)) {
     }
     if (percent && (!/^\d+$/.test(percent) || Number(percent) < 1 || Number(percent) > 100)) {
       throw commandError("--android-percent must be an integer from 1 through 100")
+    }
+    if (loaded.record.state === "finalizing" && !options.complete) {
+      throw commandError("a finalizing promotion can only be resumed with --complete")
     }
     await confirmEffect(
       options.complete

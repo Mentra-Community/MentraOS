@@ -52,20 +52,27 @@ jobs:
           --output promotion-input/current.json
           --github-output "$GITHUB_OUTPUT"
 
-      - name: Validate monotonic rollout decision and append state
-        id: next
+      - name: Record a monotonic rollout observation or completion checkpoint
+        id: checkpoint
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          [[ "$(jq -er .state promotion-input/current.json)" == rolling-out ]]
+          state=$(jq -er .state promotion-input/current.json)
           percent="${{ inputs.android_percent }}"
           [[ "$percent" =~ ^([1-9][0-9]?|100)$ ]]
+          if [[ "$state" == finalizing ]]; then
+            [[ "${{ inputs.action }}" == complete ]]
+            [[ "$percent" == 100 ]]
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          [[ "$state" == rolling-out ]]
           previous=$(jq -r '[.evidence[].assetName | (try capture("^production-rollout-(?<percent>[0-9]{3})-[0-9a-f]{64}\\.json$") catch empty) | .percent | tonumber] | max // 0' promotion-input/current.json)
           [[ "$percent" -gt "$previous" ]]
           if [[ "${{ inputs.action }}" == complete ]]; then
             [[ "$percent" == 100 ]]
-            to=completed
+            to=finalizing
           else
             to=rolling-out
           fi
@@ -91,15 +98,121 @@ jobs:
           name=$(node --input-type=module -e 'import {readFileSync} from "node:fs"; import {promotionAssetName} from "./.github/scripts/production-promotion-state.mjs"; process.stdout.write(promotionAssetName(JSON.parse(readFileSync("promotion-output/next.json", "utf8"))))')
           mv promotion-output/next.json "promotion-output/$name"
           {
+            echo "changed=true"
             echo "record=promotion-output/$name"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Publish immutable rollout evidence and state
+      - name: Publish immutable rollout evidence and checkpoint
+        if: steps.checkpoint.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          node .github/scripts/publish-immutable-release-asset.mjs --file "${{ steps.next.outputs.asset_path }}" --name "${{ steps.next.outputs.asset_name }}" --release-id "${{ steps.promotion.outputs.release_id }}" --repository "$GITHUB_REPOSITORY"
-          node .github/scripts/production-promotion-assets.mjs publish-record --record "${{ steps.next.outputs.record }}" --release-id "${{ steps.promotion.outputs.release_id }}" --repository "$GITHUB_REPOSITORY"
+          node .github/scripts/publish-immutable-release-asset.mjs --file "${{ steps.checkpoint.outputs.asset_path }}" --name "${{ steps.checkpoint.outputs.asset_name }}" --release-id "${{ steps.promotion.outputs.release_id }}" --repository "$GITHUB_REPOSITORY"
+          node .github/scripts/production-promotion-assets.mjs publish-record --record "${{ steps.checkpoint.outputs.record }}" --release-id "${{ steps.promotion.outputs.release_id }}" --repository "$GITHUB_REPOSITORY"
+
+      - name: Reload the durable finalizing checkpoint
+        if: inputs.action == 'complete'
+        id: finalizing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          node .github/scripts/production-promotion-assets.mjs download-latest
+          --repository "$GITHUB_REPOSITORY"
+          --release "${{ inputs.release_identity }}"
+          --attempt "${{ inputs.attempt }}"
+          --output promotion-input/finalizing.json
+          --github-output "$GITHUB_OUTPUT"
+
+      - name: Stage canonical production plan and manifest in the stable draft
+        if: inputs.action == 'complete'
+        id: stable
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          record=promotion-input/finalizing.json
+          [[ "$(jq -er .state "$record")" == finalizing ]]
+          promotion_release_id="${{ steps.finalizing.outputs.release_id }}"
+          assets=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases/$promotion_release_id/assets?per_page=100" | jq 'add')
+          promotion_plan_name="production-release-plan-${{ inputs.release_identity }}.json"
+          plan_asset_id=$(jq -er --arg name "$promotion_plan_name" '[.[] | select(.name == $name)] | if length == 1 then .[0].id else error("production plan must be unique") end' <<< "$assets")
+          mkdir -p production-finalization
+          gh api -H "Accept: application/octet-stream" "repos/${GITHUB_REPOSITORY}/releases/assets/$plan_asset_id" > production-finalization/release-plan.json
+          plan=production-finalization/release-plan.json
+          [[ "$(jq -er .channel "$plan")" == production ]]
+          [[ "$(jq -er .releaseIdentity "$plan")" == "${{ inputs.release_identity }}" ]]
+          [[ "$(jq -er .sourceCommit "$plan")" == "$(jq -er .source.mentraosCommit "$record")" ]]
+
+          tag=$(jq -er .artifactContainerTag "$plan")
+          release_name=$(jq -er .artifactContainerName "$plan")
+          matches=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases?per_page=100" | jq --arg tag "$tag" 'add | [.[] | select(.tag_name == $tag)]')
+          [[ "$(jq length <<< "$matches")" -le 1 ]]
+          if [[ "$(jq length <<< "$matches")" == 0 ]]; then
+            payload=$(jq -n \
+              --arg tag "$tag" \
+              --arg target "$(jq -er .sourceCommit "$plan")" \
+              --arg name "$release_name" \
+              '{tag_name: $tag, target_commitish: $target, name: $name, body: "Canonical production release records. Publish manually only after the completed promotion and final public-availability checks.", draft: true, prerelease: false}')
+            stable_release=$(gh api --method POST "repos/${GITHUB_REPOSITORY}/releases" --input - <<< "$payload")
+          else
+            stable_release=$(jq '.[0]' <<< "$matches")
+          fi
+          [[ "$(jq -r .draft <<< "$stable_release")" == true ]]
+          [[ "$(jq -r .prerelease <<< "$stable_release")" == false ]]
+          [[ "$(jq -r .name <<< "$stable_release")" == "$release_name" ]]
+          [[ "$(jq -r .target_commitish <<< "$stable_release")" == "$(jq -er .sourceCommit "$plan")" ]]
+
+          plan_name=$(jq -er .artifactNames.releasePlan "$plan")
+          manifest_name=$(jq -er .artifactNames.releaseManifest "$plan")
+          cp "$plan" "production-finalization/$plan_name"
+          checkpoint_name=$(node --input-type=module -e 'import {readFileSync} from "node:fs"; import {promotionAssetName} from "./.github/scripts/production-promotion-state.mjs"; process.stdout.write(promotionAssetName(JSON.parse(readFileSync(process.argv[1], "utf8"))))' "$record")
+          checkpoint_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${{ steps.finalizing.outputs.tag }}/$checkpoint_name"
+          node .github/scripts/finalize-production-promotion.mjs \
+            --plan "$plan" \
+            --record "$record" \
+            --checkpoint-url "$checkpoint_url" \
+            --output "production-finalization/$manifest_name"
+          stable_release_id=$(jq -er .id <<< "$stable_release")
+          node .github/scripts/publish-immutable-release-asset.mjs \
+            --file "production-finalization/$plan_name" --name "$plan_name" \
+            --release-id "$stable_release_id" --repository "$GITHUB_REPOSITORY"
+          node .github/scripts/publish-immutable-release-asset.mjs \
+            --file "production-finalization/$manifest_name" --name "$manifest_name" \
+            --release-id "$stable_release_id" --repository "$GITHUB_REPOSITORY"
+
+          manifest_sha=$(sha256sum "production-finalization/$manifest_name" | cut -d' ' -f1)
+          manifest_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/$tag/$manifest_name"
+          jq -n \
+            --arg kind production-release-manifest \
+            --arg url "$manifest_url" \
+            --arg sha256 "$manifest_sha" \
+            --arg assetName "$manifest_name" \
+            '{kind: $kind, url: $url, sha256: $sha256, assetName: $assetName}' \
+            > production-finalization/evidence.json
+          node .github/scripts/production-promotion-state.mjs transition \
+            --record "$record" --to completed --actor "$GITHUB_ACTOR" \
+            --created-at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" \
+            --provenance-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --evidence production-finalization/evidence.json \
+            --output production-finalization/completed.json
+          completed_name=$(node --input-type=module -e 'import {readFileSync} from "node:fs"; import {promotionAssetName} from "./.github/scripts/production-promotion-state.mjs"; process.stdout.write(promotionAssetName(JSON.parse(readFileSync("production-finalization/completed.json", "utf8"))))')
+          mv production-finalization/completed.json "production-finalization/$completed_name"
+          {
+            echo "record=production-finalization/$completed_name"
+            echo "release_id=$stable_release_id"
+            echo "tag=$tag"
+            echo "manifest_name=$manifest_name"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Publish the completed promotion state
+        if: inputs.action == 'complete'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          node .github/scripts/production-promotion-assets.mjs publish-record
+          --record "${{ steps.stable.outputs.record }}"
+          --release-id "${{ steps.finalizing.outputs.release_id }}"
+          --repository "$GITHUB_REPOSITORY"
 
       - name: Summarize completion
         if: inputs.action == 'complete'
@@ -107,6 +220,6 @@ jobs:
           {
             echo "## Production promotion completed"
             echo
-            echo "The immutable promotion chain is complete."
-            echo "Publish the stable GitHub release only after the README final public-availability checks have also passed."
+            echo "The immutable promotion chain is complete and the canonical plan and manifest are staged in draft release \`${{ steps.stable.outputs.tag }}\`."
+            echo "Publish that stable GitHub release only after the README final public-availability checks have also passed."
           } >> "$GITHUB_STEP_SUMMARY"
