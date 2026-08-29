@@ -9,6 +9,7 @@ import {requirePublicHttpsUrl} from "./release-family.mjs"
 import {promotionAssetName, validatePromotionChain, validatePromotionRecord} from "./production-promotion-state.mjs"
 
 const VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
+const BETA_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-beta\.([1-9]\d*)$/
 const EVIDENCE_KIND_PATTERN = /^[a-z][a-z0-9-]{0,79}$/
 const ASSET_PREFIX_PATTERN = /^[a-z0-9][a-z0-9.-]{0,119}$/
 
@@ -47,6 +48,14 @@ export function promotionContainerTag(releaseIdentity, attempt) {
 export function promotionContainerName(releaseIdentity, attempt) {
   promotionContainerTag(releaseIdentity, attempt)
   return `Mentra ${releaseIdentity} production promotion attempt ${attempt}`
+}
+
+export function promotionContainerBody(releaseIdentity, selectedBeta) {
+  const match = BETA_PATTERN.exec(selectedBeta || "")
+  if (!match || `${match[1]}.${match[2]}.${match[3]}` !== releaseIdentity) {
+    throw new Error(`selected beta must be a ${releaseIdentity}-beta.N identity`)
+  }
+  return `Append-only evidence for an in-progress Mentra production promotion. This draft is not a customer release. Selected beta: ${selectedBeta}.`
 }
 
 export function prepareEvidenceAsset({file, kind, url, outputDirectory, assetPrefix}) {
@@ -115,6 +124,41 @@ export function requirePromotionContainer(releases, releaseIdentity, attempt) {
   return release
 }
 
+export function requireNewPromotionAttemptAllowed(records, releaseIdentity) {
+  for (const record of records) {
+    validatePromotionRecord(record)
+    if (record.releaseIdentity !== releaseIdentity) {
+      throw new Error(`Prior promotion record belongs to ${record.releaseIdentity}, expected ${releaseIdentity}`)
+    }
+    if (record.state !== "aborted") {
+      throw new Error(
+        `Cannot start another ${releaseIdentity} promotion while attempt ${record.attempt} is ${record.state}`,
+      )
+    }
+  }
+}
+
+export function planPromotionContainerAllocation(containers, {releaseIdentity, targetCommit, selectedBeta}) {
+  requireNewPromotionAttemptAllowed(
+    containers.flatMap(({record}) => (record ? [record] : [])),
+    releaseIdentity,
+  )
+  const empty = containers.filter(({record}) => !record)
+  if (empty.length > 1) throw new Error(`Multiple empty ${releaseIdentity} promotion containers require reconciliation`)
+  if (empty.length === 1) {
+    const candidate = empty[0]
+    if (candidate !== containers.at(-1)) {
+      throw new Error(`Only the latest empty ${releaseIdentity} promotion container can be resumed`)
+    }
+    const expectedBody = promotionContainerBody(releaseIdentity, selectedBeta)
+    if (candidate.release.target_commitish !== targetCommit || candidate.release.body !== expectedBody) {
+      throw new Error(`Empty promotion attempt ${candidate.attempt} belongs to another frozen selection`)
+    }
+    return {action: "reuse", attempt: candidate.attempt, release: candidate.release}
+  }
+  return {action: "create", attempt: containers.length === 0 ? 1 : containers.at(-1).attempt + 1}
+}
+
 export function stateAssets(assets, releaseIdentity, attempt) {
   const pattern = new RegExp(
     `^production-promotion-${releaseIdentity.replaceAll(".", "\\.")}-attempt-${attempt}-(\\d{2,})-([a-z-]+)\\.json$`,
@@ -166,16 +210,27 @@ function resolveContainer(repository, releaseIdentity, attempt) {
   return requirePromotionContainer(listReleases(repository), releaseIdentity, attempt)
 }
 
-function createContainer({repository, releaseIdentity, targetCommit}) {
+function createContainer({repository, releaseIdentity, targetCommit, selectedBeta}) {
   const releases = listReleases(repository)
-  const attempt = nextPromotionAttempt(releases, releaseIdentity)
+  const containers = matchingPromotionContainers(releases, releaseIdentity).map(({attempt, release, ...entry}) => {
+    requirePromotionContainer(releases, releaseIdentity, attempt)
+    return {
+      ...entry,
+      attempt,
+      release,
+      record: loadPromotionState({repository, releaseIdentity, attempt, release})?.record || null,
+    }
+  })
+  const allocation = planPromotionContainerAllocation(containers, {releaseIdentity, targetCommit, selectedBeta})
+  if (allocation.action === "reuse") return {release: allocation.release, attempt: allocation.attempt}
+  const attempt = allocation.attempt
   const tag = promotionContainerTag(releaseIdentity, attempt)
   const name = promotionContainerName(releaseIdentity, attempt)
   const payload = JSON.stringify({
     tag_name: tag,
     target_commitish: targetCommit,
     name,
-    body: "Append-only evidence for an in-progress Mentra production promotion. This draft is not a customer release.",
+    body: promotionContainerBody(releaseIdentity, selectedBeta),
     draft: true,
     prerelease: false,
   })
@@ -186,10 +241,9 @@ function createContainer({repository, releaseIdentity, targetCommit}) {
   return {release, attempt}
 }
 
-function downloadLatest({repository, releaseIdentity, attempt, outputFile}) {
-  const release = resolveContainer(repository, releaseIdentity, attempt)
+function loadPromotionState({repository, releaseIdentity, attempt, release}) {
   const states = stateAssets(listAssets(repository, release.id), releaseIdentity, attempt)
-  if (states.length === 0) throw new Error(`Promotion ${releaseIdentity} attempt ${attempt} has no state record`)
+  if (states.length === 0) return null
   const entries = states.map((state) => {
     const bytes = gh(
       ["api", "-H", "Accept: application/octet-stream", `repos/${repository}/releases/assets/${state.asset.id}`],
@@ -199,6 +253,14 @@ function downloadLatest({repository, releaseIdentity, attempt, outputFile}) {
   })
   const record = validateStateRecordChain(entries, releaseIdentity, attempt)
   const latest = entries.at(-1)
+  return {release, latest, record}
+}
+
+function downloadLatest({repository, releaseIdentity, attempt, outputFile}) {
+  const release = resolveContainer(repository, releaseIdentity, attempt)
+  const loaded = loadPromotionState({repository, releaseIdentity, attempt, release})
+  if (!loaded) throw new Error(`Promotion ${releaseIdentity} attempt ${attempt} has no state record`)
+  const {latest, record} = loaded
   mkdirSync(path.dirname(outputFile), {recursive: true})
   writeFileSync(outputFile, latest.bytes)
   return {release, latest, record}
@@ -212,6 +274,7 @@ function main() {
       repository: args.repository,
       releaseIdentity: args.release,
       targetCommit: args["target-commit"],
+      selectedBeta: args.beta,
     })
     output(
       {

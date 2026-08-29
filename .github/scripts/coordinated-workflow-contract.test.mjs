@@ -58,6 +58,9 @@ test("production promotion is resumable and keeps irreversible actions behind se
     assert.doesNotMatch(source, /pull_request:/)
     assert.match(source, /ref: main/)
   }
+  assert.match(prepare, /group: production-release-prepare\n/)
+  assert.doesNotMatch(prepare, /group: production-release-prepare-\$\{\{/)
+  assert.match(prepare, /--beta "\$\{\{ inputs\.beta_identity \}\}"/)
   assert.match(compatibilityLab, /name: production-compatibility-lab/)
   assert.match(compatibilityLab, /backend_environment: staging/)
   assert.match(compatibilityLab, /compatibility_lab: true/)
@@ -97,6 +100,8 @@ test("production promotion is resumable and keeps irreversible actions behind se
   assert.match(rollout, /finalize-production-promotion\.mjs/)
   assert.match(rollout, /\.artifactNames\.releasePlan/)
   assert.match(rollout, /\.artifactNames\.releaseManifest/)
+  assert.match(rollout, /checkpoint_name=.*promotionAssetName/)
+  assert.match(rollout, /releases\/download\/\$tag\/\$checkpoint_name/)
   assert.match(rollout, /--to completed/)
   assert.doesNotMatch(rollout, /releases\/\$\{\{ steps\.promotion\.outputs\.release_id \}\}\/assets/)
   for (const source of [compatibilityLab, cloud, mobile, submit, release, rollout]) {
@@ -111,7 +116,10 @@ test("production promotion is resumable and keeps irreversible actions behind se
   assert.match(starterAndroid, /Persist and verify the exact App Bundle before Play upload/)
   assert.match(starterAndroid, /publish-immutable-release-asset\.mjs/)
   assert.match(starterAndroid, /GOOGLE_PLAY_AAB: \$\{\{ steps\.staged\.outputs\.aab \}\}/)
-  assert.match(starterAndroid, /Google Play contains this version code without this attempt's previously persisted App Bundle/)
+  assert.match(
+    starterAndroid,
+    /Google Play contains this version code without this attempt's previously persisted App Bundle/,
+  )
   assert.equal(existsSync(new URL("../workflows/coordinated-production-promotion.yml", import.meta.url)), false)
   assert.equal(existsSync(new URL("../workflows/reusable-coordinated-mobile-promotion.yml", import.meta.url)), false)
 })

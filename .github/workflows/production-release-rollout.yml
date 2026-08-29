@@ -166,18 +166,22 @@ jobs:
 
           plan_name=$(jq -er .artifactNames.releasePlan "$plan")
           manifest_name=$(jq -er .artifactNames.releaseManifest "$plan")
-          cp "$plan" "production-finalization/$plan_name"
           checkpoint_name=$(node --input-type=module -e 'import {readFileSync} from "node:fs"; import {promotionAssetName} from "./.github/scripts/production-promotion-state.mjs"; process.stdout.write(promotionAssetName(JSON.parse(readFileSync(process.argv[1], "utf8"))))' "$record")
-          checkpoint_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${{ steps.finalizing.outputs.tag }}/$checkpoint_name"
+          cp "$plan" "production-finalization/$plan_name"
+          cp "$record" "production-finalization/$checkpoint_name"
+          stable_release_id=$(jq -er .id <<< "$stable_release")
+          checkpoint_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/$tag/$checkpoint_name"
+          node .github/scripts/publish-immutable-release-asset.mjs \
+            --file "production-finalization/$plan_name" --name "$plan_name" \
+            --release-id "$stable_release_id" --repository "$GITHUB_REPOSITORY"
+          node .github/scripts/publish-immutable-release-asset.mjs \
+            --file "production-finalization/$checkpoint_name" --name "$checkpoint_name" \
+            --release-id "$stable_release_id" --repository "$GITHUB_REPOSITORY"
           node .github/scripts/finalize-production-promotion.mjs \
             --plan "$plan" \
             --record "$record" \
             --checkpoint-url "$checkpoint_url" \
             --output "production-finalization/$manifest_name"
-          stable_release_id=$(jq -er .id <<< "$stable_release")
-          node .github/scripts/publish-immutable-release-asset.mjs \
-            --file "production-finalization/$plan_name" --name "$plan_name" \
-            --release-id "$stable_release_id" --repository "$GITHUB_REPOSITORY"
           node .github/scripts/publish-immutable-release-asset.mjs \
             --file "production-finalization/$manifest_name" --name "$manifest_name" \
             --release-id "$stable_release_id" --repository "$GITHUB_REPOSITORY"
@@ -222,6 +226,6 @@ jobs:
           {
             echo "## Production promotion completed"
             echo
-            echo "The immutable promotion chain is complete and the canonical plan and manifest are staged in draft release \`${{ steps.stable.outputs.tag }}\`."
+            echo "The immutable promotion chain is complete and the canonical plan, finalizing checkpoint, and manifest are staged in draft release \`${{ steps.stable.outputs.tag }}\`."
             echo "Publish that stable GitHub release only after the README final public-availability checks have also passed."
           } >> "$GITHUB_STEP_SUMMARY"
