@@ -13,7 +13,10 @@ permissions:
   contents: write
 
 concurrency:
-  group: production-release-prepare-${{ inputs.beta_identity }}
+  # Preparation allocates the authoritative attempt number. Serialize all
+  # production allocations so two beta selections cannot race before either
+  # attempt has published its initial state record.
+  group: production-release-prepare
   cancel-in-progress: false
 
 jobs:

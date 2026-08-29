@@ -115,6 +115,20 @@ export function requirePromotionContainer(releases, releaseIdentity, attempt) {
   return release
 }
 
+export function requireNewPromotionAttemptAllowed(records, releaseIdentity) {
+  for (const record of records) {
+    validatePromotionRecord(record)
+    if (record.releaseIdentity !== releaseIdentity) {
+      throw new Error(`Prior promotion record belongs to ${record.releaseIdentity}, expected ${releaseIdentity}`)
+    }
+    if (record.state !== "aborted") {
+      throw new Error(
+        `Cannot start another ${releaseIdentity} promotion while attempt ${record.attempt} is ${record.state}`,
+      )
+    }
+  }
+}
+
 export function stateAssets(assets, releaseIdentity, attempt) {
   const pattern = new RegExp(
     `^production-promotion-${releaseIdentity.replaceAll(".", "\\.")}-attempt-${attempt}-(\\d{2,})-([a-z-]+)\\.json$`,
@@ -168,6 +182,10 @@ function resolveContainer(repository, releaseIdentity, attempt) {
 
 function createContainer({repository, releaseIdentity, targetCommit}) {
   const releases = listReleases(repository)
+  const priorRecords = matchingPromotionContainers(releases, releaseIdentity)
+    .map(({attempt, release}) => loadPromotionState({repository, releaseIdentity, attempt, release})?.record)
+    .filter(Boolean)
+  requireNewPromotionAttemptAllowed(priorRecords, releaseIdentity)
   const attempt = nextPromotionAttempt(releases, releaseIdentity)
   const tag = promotionContainerTag(releaseIdentity, attempt)
   const name = promotionContainerName(releaseIdentity, attempt)
@@ -186,10 +204,9 @@ function createContainer({repository, releaseIdentity, targetCommit}) {
   return {release, attempt}
 }
 
-function downloadLatest({repository, releaseIdentity, attempt, outputFile}) {
-  const release = resolveContainer(repository, releaseIdentity, attempt)
+function loadPromotionState({repository, releaseIdentity, attempt, release}) {
   const states = stateAssets(listAssets(repository, release.id), releaseIdentity, attempt)
-  if (states.length === 0) throw new Error(`Promotion ${releaseIdentity} attempt ${attempt} has no state record`)
+  if (states.length === 0) return null
   const entries = states.map((state) => {
     const bytes = gh(
       ["api", "-H", "Accept: application/octet-stream", `repos/${repository}/releases/assets/${state.asset.id}`],
@@ -199,6 +216,14 @@ function downloadLatest({repository, releaseIdentity, attempt, outputFile}) {
   })
   const record = validateStateRecordChain(entries, releaseIdentity, attempt)
   const latest = entries.at(-1)
+  return {release, latest, record}
+}
+
+function downloadLatest({repository, releaseIdentity, attempt, outputFile}) {
+  const release = resolveContainer(repository, releaseIdentity, attempt)
+  const loaded = loadPromotionState({repository, releaseIdentity, attempt, release})
+  if (!loaded) throw new Error(`Promotion ${releaseIdentity} attempt ${attempt} has no state record`)
+  const {latest, record} = loaded
   mkdirSync(path.dirname(outputFile), {recursive: true})
   writeFileSync(outputFile, latest.bytes)
   return {release, latest, record}

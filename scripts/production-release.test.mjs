@@ -1,7 +1,13 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import {parseCliArgs, requireCommandState, statusSummary, validateAdvanceOptions} from "./production-release.mjs"
+import {
+  advanceConfirmationMessage,
+  parseCliArgs,
+  requireCommandState,
+  statusSummary,
+  validateAdvanceOptions,
+} from "./production-release.mjs"
 
 const baseRecord = {
   schemaVersion: 1,
@@ -65,11 +71,21 @@ test("reserves 100 percent for the completion command", () => {
     action: "complete",
     androidPercent: "100",
   })
+  assert.match(
+    advanceConfirmationMessage({action: "advance", androidPercent: "25"}),
+    /increasing the Android production rollout to 25%/,
+  )
+  assert.match(advanceConfirmationMessage({action: "complete", androidPercent: "100"}), /completion/)
   assert.throws(() => validateAdvanceOptions(rolling, {"android-percent": "100"}), /use --complete/)
   assert.throws(
     () => validateAdvanceOptions({...rolling, state: "finalizing"}, {"android-percent": "99"}),
     /only be resumed with --complete/,
   )
+})
+
+test("treats the 100 percent finalizing checkpoint as a point of no return", () => {
+  assert.throws(() => requireCommandState("abort", {...baseRecord, state: "finalizing"}), /Cannot abort/)
+  assert.equal(validateAdvanceOptions({...baseRecord, state: "finalizing"}, {complete: true}).action, "complete")
 })
 
 const labReadyRecord = {

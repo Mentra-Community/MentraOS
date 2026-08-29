@@ -10,11 +10,13 @@ import {
   prepareEvidenceAsset,
   promotionContainerName,
   promotionContainerTag,
+  requireNewPromotionAttemptAllowed,
   requirePromotionContainer,
   stateAssets,
   validateStateRecordChain,
 } from "./production-promotion-assets.mjs"
 import {
+  abortPromotionRecord,
   createInitialPromotionRecord,
   promotionAssetName,
   transitionPromotionRecord,
@@ -131,6 +133,20 @@ function initialRecord() {
     provenanceUrl: "https://example.com/actions/1",
   })
 }
+
+test("allows a replacement only after every prior attempt is aborted", () => {
+  const active = initialRecord()
+  assert.throws(() => requireNewPromotionAttemptAllowed([active], "3.1.0"), /attempt 1 is selected/)
+  const aborted = abortPromotionRecord({
+    record: active,
+    actor: "owner",
+    createdAt: "2026-08-28T20:02:00.000Z",
+    provenanceUrl: "https://example.com/actions/3",
+    reason: "candidate rejected before public release",
+  })
+  assert.doesNotThrow(() => requireNewPromotionAttemptAllowed([aborted], "3.1.0"))
+  assert.throws(() => requireNewPromotionAttemptAllowed([aborted], "3.2.0"), /belongs to 3.1.0/)
+})
 
 test("validates every immutable state and digest before returning latest", () => {
   const initial = initialRecord()

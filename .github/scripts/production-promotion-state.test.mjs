@@ -365,6 +365,17 @@ test("allows append-only rollout observations before completion", () => {
     provenanceUrl: "https://github.com/Mentra-Community/MentraOS/actions/runs/4",
     evidence: evidence("production-rollout-observation"),
   })
+  assert.throws(
+    () =>
+      abortPromotionRecord({
+        record: finalizing,
+        actor: "release-owner",
+        createdAt: "2026-08-28T15:30:00.000Z",
+        provenanceUrl: "https://github.com/Mentra-Community/MentraOS/actions/runs/4",
+        reason: "too late to replace a fully public rollout",
+      }),
+    /cannot abort after the 100 percent rollout checkpoint/,
+  )
   const completed = transitionPromotionRecord({
     record: finalizing,
     to: "completed",

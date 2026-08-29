@@ -355,9 +355,12 @@ phased-release state, record monotonically increasing observations:
 
 `--complete` first records 100 percent and enters the durable `finalizing`
 checkpoint. It then stages `mentra-release-plan-X.Y.Z.json` and
-`mentra-release-X.Y.Z.json` in the draft `mentra-vX.Y.Z` release and only then
-closes the immutable promotion chain. If finalization is interrupted, rerun the
-same `--complete` command; it verifies identical existing assets and resumes.
+`mentra-release-X.Y.Z.json`, plus the exact finalizing checkpoint record, in the
+draft `mentra-vX.Y.Z` release and only then closes the immutable promotion
+chain. If finalization is interrupted, rerun the same `--complete` command; it
+verifies identical existing assets and resumes. Do not abort or start a
+replacement attempt after `finalizing`: the 100 percent rollout is already
+public, so the only valid recovery is to finish reconciling this attempt.
 Do not complete until both store pages are publicly reachable in intended
 territories, install/update returns the exact coordinates, production Cloud is
 healthy, and the release owner has recorded the final observation window.
@@ -377,7 +380,11 @@ Abort an attempt with:
 Abort is terminal and does not itself roll Cloud back or remove store builds.
 Follow the incident commander's explicit mitigation. A new attempt allocates
 new store build numbers and references the failed attempt. Never delete failed
-evidence.
+evidence. The workflow refuses to allocate another attempt until every prior
+attempt for that release identity is aborted, and it never permits abort after
+the 100 percent `finalizing` checkpoint. Preparation runs are serialized while
+they allocate attempts, so starting two beta selections does not create two
+active promotions.
 
 Common stop conditions include source/lock mismatch, missing store provenance,
 unclassified Cloud config, non-backward-compatible migration, Mobile N failure,
