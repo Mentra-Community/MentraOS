@@ -128,6 +128,12 @@ Preparation fails if:
   bootstrap, create and review an accurate immutable current-production record;
   do not invent coordinates in the workflow.
 
+If preparation stops before `status` can find an initial state record, rerun
+`start` with the same beta. That interrupted bootstrap may leave an empty draft
+attempt, but it has not deployed Cloud, uploaded an app, or consumed a store
+build coordinate. Once `status` returns `selected`, resume that attempt with
+`next` rather than starting another one.
+
 ## Phase 2 - Mobile N against staging Cloud N+1
 
 Run the next action and watch it to completion:
@@ -143,8 +149,8 @@ Compatibility Lab` and Android through Play Internal App Sharing, then records
 the App Store coordinate, Play download URL, source commit, binary digests, and
 target Cloud commit. It does not create a customer-promotable candidate.
 
-Install both builds using the coordinates in the workflow summary and immutable
-`production-compatibility-lab.json` evidence. Diagnostics must show
+Install both builds using the coordinates and content-addressed compatibility
+evidence named in the workflow summary. Diagnostics must show
 `COMPATIBILITY-LAB-NOT-FOR-PRODUCTION` and staging Cloud N+1. Apple documents that a [TestFlight
 Internal Only build cannot be submitted to
 customers](https://developer.apple.com/help/app-store-connect/test-a-beta-version/add-internal-testers/).

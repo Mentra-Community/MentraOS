@@ -98,9 +98,10 @@ jobs:
             if [[ "$product" == mentraApp ]]; then package=com.mentra.mentra; else package=com.mentra.bluetoothsdkexample; fi
             expected=$(jq -er ".coordinates.candidates.$product.android.buildNumber" ../promotion-input/current.json)
             APP_PACKAGE_NAME="$package" GOOGLE_PLAY_INVENTORY_OUTPUT="$product.json" bundle exec fastlane google_play_inventory
-            node ../.github/scripts/validate-google-play-rollout.mjs \
+            node ../.github/scripts/validate-google-play-release.mjs \
               --inventory "$product.json" \
               --version-code "$expected" \
+              --required-state public \
               --output "../promotion-output/public-status/$product-google.json"
           done
 

@@ -12,7 +12,7 @@ function versionCodes(release) {
   })
 }
 
-export function validateGooglePlayRollout(inventory, expectedVersionCode) {
+function exactProductionRelease(inventory, expectedVersionCode) {
   if (!Number.isSafeInteger(expectedVersionCode) || expectedVersionCode < 1) {
     throw new Error("expected Google Play version code must be a positive safe integer")
   }
@@ -22,7 +22,32 @@ export function validateGooglePlayRollout(inventory, expectedVersionCode) {
   if (matches.length !== 1) {
     throw new Error(`expected exactly one Google Play production release for version ${expectedVersionCode}`)
   }
-  const release = matches[0]
+  return matches[0]
+}
+
+function releaseResult(inventory, expectedVersionCode, release, state) {
+  return {
+    schemaVersion: 1,
+    kind: "google-play-production-release-state",
+    packageName: inventory.packageName,
+    versionCode: expectedVersionCode,
+    requiredState: state,
+    status: release.status,
+    userFraction: release.userFraction ?? null,
+    releaseName: release.name ?? null,
+  }
+}
+
+export function validateGooglePlayDraft(inventory, expectedVersionCode) {
+  const release = exactProductionRelease(inventory, expectedVersionCode)
+  if (release.status !== "draft" || (release.userFraction !== null && release.userFraction !== undefined)) {
+    throw new Error(`Google Play release is not an unreleased draft: ${release.status || "missing status"}`)
+  }
+  return releaseResult(inventory, expectedVersionCode, release, "draft")
+}
+
+export function validateGooglePlayRollout(inventory, expectedVersionCode) {
+  const release = exactProductionRelease(inventory, expectedVersionCode)
   if (release.status === "inProgress") {
     if (typeof release.userFraction !== "number" || release.userFraction <= 0 || release.userFraction >= 1) {
       throw new Error("in-progress Google Play release has no valid rollout fraction")
@@ -34,15 +59,7 @@ export function validateGooglePlayRollout(inventory, expectedVersionCode) {
   } else {
     throw new Error(`Google Play release is not public: ${release.status || "missing status"}`)
   }
-  return {
-    schemaVersion: 1,
-    kind: "google-play-public-rollout",
-    packageName: inventory.packageName,
-    versionCode: expectedVersionCode,
-    status: release.status,
-    userFraction: release.userFraction ?? null,
-    releaseName: release.name ?? null,
-  }
+  return releaseResult(inventory, expectedVersionCode, release, "public")
 }
 
 function parseArgs(args) {
@@ -56,10 +73,12 @@ function parseArgs(args) {
 
 function main() {
   const args = parseArgs(process.argv.slice(2))
-  const result = validateGooglePlayRollout(
-    JSON.parse(readFileSync(path.resolve(args.inventory), "utf8")),
-    Number(args["version-code"]),
-  )
+  const inventory = JSON.parse(readFileSync(path.resolve(args.inventory), "utf8"))
+  const expectedVersionCode = Number(args["version-code"])
+  const validators = {draft: validateGooglePlayDraft, public: validateGooglePlayRollout}
+  const validate = validators[args["required-state"]]
+  if (!validate) throw new Error("--required-state must be draft or public")
+  const result = validate(inventory, expectedVersionCode)
   writeFileSync(path.resolve(args.output), `${JSON.stringify(result, null, 2)}\n`)
 }
 

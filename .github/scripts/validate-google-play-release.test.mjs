@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import {validateGooglePlayRollout} from "./validate-google-play-rollout.mjs"
+import {validateGooglePlayDraft, validateGooglePlayRollout} from "./validate-google-play-release.mjs"
 
 function inventory(status, userFraction) {
   return {
@@ -15,12 +15,21 @@ function inventory(status, userFraction) {
   }
 }
 
+test("accepts only an exact unreleased Google Play draft during submission", () => {
+  const result = validateGooglePlayDraft(inventory("draft", null), 310000100)
+  assert.equal(result.requiredState, "draft")
+  assert.equal(result.status, "draft")
+  assert.throws(() => validateGooglePlayDraft(inventory("inProgress", 0.1), 310000100), /unreleased draft/)
+  assert.throws(() => validateGooglePlayDraft(inventory("completed", null), 310000100), /unreleased draft/)
+})
+
 test("accepts only an exact active or completed Google Play rollout", () => {
   assert.deepEqual(validateGooglePlayRollout(inventory("inProgress", 0.1), 310000100), {
     schemaVersion: 1,
-    kind: "google-play-public-rollout",
+    kind: "google-play-production-release-state",
     packageName: "com.mentra.mentra",
     versionCode: 310000100,
+    requiredState: "public",
     status: "inProgress",
     userFraction: 0.1,
     releaseName: "3.1.0",
@@ -28,7 +37,7 @@ test("accepts only an exact active or completed Google Play rollout", () => {
   assert.equal(validateGooglePlayRollout(inventory("completed", null), 310000100).status, "completed")
 })
 
-test("rejects drafts, halted releases, missing fractions, and another version", () => {
+test("rejects drafts, halted releases, missing fractions, and another version as public", () => {
   assert.throws(() => validateGooglePlayRollout(inventory("draft", null), 310000100), /not public/)
   assert.throws(() => validateGooglePlayRollout(inventory("halted", 0.1), 310000100), /not public/)
   assert.throws(() => validateGooglePlayRollout(inventory("inProgress", null), 310000100), /rollout fraction/)

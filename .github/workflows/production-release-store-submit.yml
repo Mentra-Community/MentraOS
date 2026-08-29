@@ -121,9 +121,11 @@ jobs:
             if [[ "$product" == mentraApp ]]; then
               package=com.mentra.mentra
               output=../promotion-output/play/mentra.json
+              observed=../promotion-output/play/mentra-observed.json
             else
               package=com.mentra.bluetoothsdkexample
               output=../promotion-output/play/starter.json
+              observed=../promotion-output/play/starter-observed.json
             fi
             build=$(jq -er ".coordinates.candidates.$product.android.buildNumber" ../promotion-input/current.json)
             APP_PACKAGE_NAME="$package" \
@@ -133,6 +135,14 @@ jobs:
               GOOGLE_PLAY_RELEASE_STATUS=draft \
               GOOGLE_PLAY_PROMOTION_OUTPUT="$output" \
               bundle exec fastlane promote_google_play
+            APP_PACKAGE_NAME="$package" \
+              GOOGLE_PLAY_INVENTORY_OUTPUT="$product-inventory.json" \
+              bundle exec fastlane google_play_inventory
+            node ../.github/scripts/validate-google-play-release.mjs \
+              --inventory "$product-inventory.json" \
+              --version-code "$build" \
+              --required-state draft \
+              --output "$observed"
           done
 
       - name: Read back exact submitted coordinates and append state
@@ -154,8 +164,8 @@ jobs:
           done
           jq -n \
             --arg url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
-            --slurpfile mentra promotion-output/play/mentra.json \
-            --slurpfile starter promotion-output/play/starter.json \
+            --slurpfile mentra promotion-output/play/mentra-observed.json \
+            --slurpfile starter promotion-output/play/starter-observed.json \
             '{schemaVersion: 1, kind: "production-store-submissions", provenanceUrl: $url, apple: {mentraApp: "submitted-manual-release", starterKit: "submitted-manual-release"}, google: {mentraApp: $mentra[0], starterKit: $starter[0]}, publicReleasePerformed: false}' \
             > promotion-output/store-submissions.json
           node .github/scripts/production-promotion-assets.mjs prepare-evidence \
