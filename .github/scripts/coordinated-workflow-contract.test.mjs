@@ -61,6 +61,8 @@ test("production promotion is resumable and keeps irreversible actions behind se
   assert.match(prepare, /group: production-release-prepare\n/)
   assert.doesNotMatch(prepare, /group: production-release-prepare-\$\{\{/)
   assert.match(prepare, /--beta "\$\{\{ inputs\.beta_identity \}\}"/)
+  assert.match(prepare, /production-promotion-assets\.mjs selection-digest/)
+  assert.match(prepare, /--selection-digest "\$\{\{ steps\.selection\.outputs\.selection_digest \}\}"/)
   assert.match(compatibilityLab, /name: production-compatibility-lab/)
   assert.match(compatibilityLab, /backend_environment: staging/)
   assert.match(compatibilityLab, /compatibility_lab: true/)

@@ -254,7 +254,9 @@ cannot bypass the point-of-no-return rule. Production preparation is serialized
 across release identities while it allocates the attempt, avoiding a second
 beta selection racing the initial state publication. If allocation succeeds but
 initial state publication does not, retry resumes that same empty container only
-when its draft metadata matches the exact selected beta and source commit.
+when its draft metadata matches a deterministic digest over every input that can
+affect the frozen plan, including prior-production provenance, both store
+inventories, the release family, and the Starter Kit commit.
 
 Each transition consumes the immutable records from earlier phases and emits a
 new append-only record. It never edits an earlier successful record to make a

@@ -5,13 +5,14 @@ import {appendFileSync, copyFileSync, mkdirSync, readFileSync, writeFileSync} fr
 import path from "node:path"
 import {fileURLToPath} from "node:url"
 
-import {requirePublicHttpsUrl} from "./release-family.mjs"
+import {loadReleaseFamily, releaseRecordSha256, requirePublicHttpsUrl} from "./release-family.mjs"
 import {promotionAssetName, validatePromotionChain, validatePromotionRecord} from "./production-promotion-state.mjs"
 
 const VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
 const BETA_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-beta\.([1-9]\d*)$/
 const EVIDENCE_KIND_PATTERN = /^[a-z][a-z0-9-]{0,79}$/
 const ASSET_PREFIX_PATTERN = /^[a-z0-9][a-z0-9.-]{0,119}$/
+const SHA256_PATTERN = /^[0-9a-f]{64}$/
 
 function gh(args, options = {}) {
   const stdin = options.input === undefined ? "ignore" : "pipe"
@@ -50,12 +51,17 @@ export function promotionContainerName(releaseIdentity, attempt) {
   return `Mentra ${releaseIdentity} production promotion attempt ${attempt}`
 }
 
-export function promotionContainerBody(releaseIdentity, selectedBeta) {
+export function promotionContainerBody(releaseIdentity, selectedBeta, selectionDigest) {
   const match = BETA_PATTERN.exec(selectedBeta || "")
   if (!match || `${match[1]}.${match[2]}.${match[3]}` !== releaseIdentity) {
     throw new Error(`selected beta must be a ${releaseIdentity}-beta.N identity`)
   }
-  return `Append-only evidence for an in-progress Mentra production promotion. This draft is not a customer release. Selected beta: ${selectedBeta}.`
+  if (!SHA256_PATTERN.test(selectionDigest || "")) throw new Error("selection digest must be a lowercase SHA-256")
+  return `Append-only evidence for an in-progress Mentra production promotion. This draft is not a customer release. Selected beta: ${selectedBeta}. Selection digest: ${selectionDigest}.`
+}
+
+export function productionPromotionSelectionDigest(selection) {
+  return releaseRecordSha256({schemaVersion: 1, kind: "mentra-production-promotion-selection", inputs: selection})
 }
 
 export function prepareEvidenceAsset({file, kind, url, outputDirectory, assetPrefix}) {
@@ -138,7 +144,10 @@ export function requireNewPromotionAttemptAllowed(records, releaseIdentity) {
   }
 }
 
-export function planPromotionContainerAllocation(containers, {releaseIdentity, targetCommit, selectedBeta}) {
+export function planPromotionContainerAllocation(
+  containers,
+  {releaseIdentity, targetCommit, selectedBeta, selectionDigest},
+) {
   requireNewPromotionAttemptAllowed(
     containers.flatMap(({record}) => (record ? [record] : [])),
     releaseIdentity,
@@ -150,7 +159,7 @@ export function planPromotionContainerAllocation(containers, {releaseIdentity, t
     if (candidate !== containers.at(-1)) {
       throw new Error(`Only the latest empty ${releaseIdentity} promotion container can be resumed`)
     }
-    const expectedBody = promotionContainerBody(releaseIdentity, selectedBeta)
+    const expectedBody = promotionContainerBody(releaseIdentity, selectedBeta, selectionDigest)
     if (candidate.release.target_commitish !== targetCommit || candidate.release.body !== expectedBody) {
       throw new Error(`Empty promotion attempt ${candidate.attempt} belongs to another frozen selection`)
     }
@@ -210,7 +219,7 @@ function resolveContainer(repository, releaseIdentity, attempt) {
   return requirePromotionContainer(listReleases(repository), releaseIdentity, attempt)
 }
 
-function createContainer({repository, releaseIdentity, targetCommit, selectedBeta}) {
+function createContainer({repository, releaseIdentity, targetCommit, selectedBeta, selectionDigest}) {
   const releases = listReleases(repository)
   const containers = matchingPromotionContainers(releases, releaseIdentity).map(({attempt, release, ...entry}) => {
     requirePromotionContainer(releases, releaseIdentity, attempt)
@@ -221,7 +230,12 @@ function createContainer({repository, releaseIdentity, targetCommit, selectedBet
       record: loadPromotionState({repository, releaseIdentity, attempt, release})?.record || null,
     }
   })
-  const allocation = planPromotionContainerAllocation(containers, {releaseIdentity, targetCommit, selectedBeta})
+  const allocation = planPromotionContainerAllocation(containers, {
+    releaseIdentity,
+    targetCommit,
+    selectedBeta,
+    selectionDigest,
+  })
   if (allocation.action === "reuse") return {release: allocation.release, attempt: allocation.attempt}
   const attempt = allocation.attempt
   const tag = promotionContainerTag(releaseIdentity, attempt)
@@ -230,7 +244,7 @@ function createContainer({repository, releaseIdentity, targetCommit, selectedBet
     tag_name: tag,
     target_commitish: targetCommit,
     name,
-    body: promotionContainerBody(releaseIdentity, selectedBeta),
+    body: promotionContainerBody(releaseIdentity, selectedBeta, selectionDigest),
     draft: true,
     prerelease: false,
   })
@@ -269,12 +283,35 @@ function downloadLatest({repository, releaseIdentity, attempt, outputFile}) {
 function main() {
   const command = process.argv[2]
   const args = parseArgs(process.argv.slice(3))
+  if (command === "selection-digest") {
+    const readJson = (name) => JSON.parse(readFileSync(path.resolve(args[name]), "utf8"))
+    const fileSha256 = (name) =>
+      createHash("sha256")
+        .update(readFileSync(path.resolve(args[name])))
+        .digest("hex")
+    const digest = productionPromotionSelectionDigest({
+      family: loadReleaseFamily({requireVersionMirrors: true}),
+      betaPlan: readJson("beta-plan"),
+      betaManifest: readJson("beta-manifest"),
+      betaManifestSha256: fileSha256("beta-manifest"),
+      betaManifestUrl: args["beta-manifest-url"],
+      previousPlanSha256: fileSha256("previous-plan"),
+      previousManifestSha256: fileSha256("previous-manifest"),
+      previousManifestUrl: args["previous-manifest-url"],
+      mentraInventory: readJson("mentra-inventory"),
+      starterKitInventory: readJson("starter-kit-inventory"),
+      starterKitCommit: args["starter-kit-commit"],
+    })
+    output({selection_digest: digest}, args["github-output"])
+    return
+  }
   if (command === "create-container") {
     const result = createContainer({
       repository: args.repository,
       releaseIdentity: args.release,
       targetCommit: args["target-commit"],
       selectedBeta: args.beta,
+      selectionDigest: args["selection-digest"],
     })
     output(
       {
