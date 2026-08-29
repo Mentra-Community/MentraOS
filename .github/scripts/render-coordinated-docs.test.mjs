@@ -168,8 +168,8 @@ test("rejects prerelease docs without matching example artifacts", (context) => 
   )
 })
 
-test("Mentra Live current-release copy uses configured variables", () => {
-  const docsRoot = fileURLToPath(new URL("../../mintlify-docs/mentra-live/", import.meta.url))
+test("Bluetooth SDK current-release copy uses configured variables", () => {
+  const docsRoot = fileURLToPath(new URL("../../mintlify-docs/bluetooth-sdk/", import.meta.url))
   const files = readdirSync(docsRoot, {recursive: true}).filter((file) => file.endsWith(".mdx"))
   const content = files.map((file) => readFileSync(path.join(docsRoot, file), "utf8")).join("\n")
 

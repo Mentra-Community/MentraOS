@@ -42,6 +42,10 @@ import {
   stopOwnershipRefreshLoop,
 } from "./services/session/ownership";
 import {
+  startStreamSweepLoop,
+  stopStreamSweepLoop,
+} from "./services/stream/stream.service";
+import {
   onTranscript,
   startWorkerPool,
   stopWorkerPool,
@@ -258,6 +262,12 @@ export async function startRuntime(opts: StartRuntimeOptions = {}): Promise<Runt
     onLostOwnership: dropUserSessionsForLostOwnership,
   });
 
+  // Reclaim Cloudflare Stream inputs and recordings whose stream ended without
+  // a stop() -- a disconnect, a closed app, a pod restart. Left alone these
+  // accumulate until the account hits its storage quota, at which point
+  // Cloudflare accepts new live inputs but rejects the broadcast at publish.
+  startStreamSweepLoop();
+
   // The REST surface (Hono): subscriptions today, health, camera later. The WS
   // upgrade is tried first; everything else falls through to this app.
   const apiApp = createApiApp({ readinessChecks: [redisReadinessCheck] });
@@ -290,6 +300,7 @@ export async function startRuntime(opts: StartRuntimeOptions = {}): Promise<Runt
     wsUrl: `ws://localhost:${boundHttpPort}/ws/session`,
     async stop() {
       stopOwnershipRefreshLoop();
+      stopStreamSweepLoop();
       await stopWorkerPool();
       server.stop();
       await stopUdpIngress();
