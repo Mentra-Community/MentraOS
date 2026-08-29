@@ -24,6 +24,7 @@ export const PROMOTION_STATES = Object.freeze([
   "stores-approved",
   "public-release-approved",
   "rolling-out",
+  "finalizing",
   "completed",
 ])
 
@@ -73,6 +74,7 @@ export const NEXT_ACTIONS = Object.freeze({
     phase: "release",
   },
   "rolling-out": {kind: "command", command: "advance"},
+  "finalizing": {kind: "command", command: "advance"},
   "completed": {kind: "none"},
   "aborted": {kind: "none"},
 })

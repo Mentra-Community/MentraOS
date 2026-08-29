@@ -60,7 +60,7 @@ jobs:
       - name: Require a post-submission promotion state
         run: |
           state=$(jq -er .state promotion-input/current.json)
-          [[ "$state" == stores-submitted || "$state" == stores-approved || "$state" == public-release-approved || "$state" == rolling-out || "$state" == completed ]]
+          [[ "$state" == stores-submitted || "$state" == stores-approved || "$state" == public-release-approved || "$state" == rolling-out || "$state" == finalizing || "$state" == completed ]]
 
       - name: Resolve App Store Connect credential path
         id: asc

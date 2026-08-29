@@ -82,4 +82,5 @@ test("prevents commands from skipping promotion states", () => {
   )
   assert.throws(() => requireCommandState("release", baseRecord), /requires stores-approved/)
   assert.equal(requireCommandState("attest", labReadyRecord, {check: "staging-mobile-n-compatibility"}).kind, "attest")
+  assert.equal(requireCommandState("advance", {...baseRecord, state: "finalizing"}).command, "advance")
 })

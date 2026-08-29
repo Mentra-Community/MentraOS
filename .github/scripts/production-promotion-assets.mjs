@@ -239,6 +239,7 @@ function main() {
     output(
       {
         release_id: result.release.id,
+        tag: result.release.tag_name,
         asset_id: result.latest.asset.id,
         asset_name: result.latest.asset.name,
         state: result.record.state,

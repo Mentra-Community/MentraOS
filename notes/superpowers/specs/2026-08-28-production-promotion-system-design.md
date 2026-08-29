@@ -242,6 +242,7 @@ selected
   -> stores-approved
   -> public-release-approved
   -> rolling-out
+  -> finalizing
   -> completed
 ```
 
@@ -252,6 +253,13 @@ references the aborted attempt.
 Each transition consumes the immutable records from earlier phases and emits a
 new append-only record. It never edits an earlier successful record to make a
 different result appear equivalent.
+
+`finalizing` is a durable retry boundary after the 100 percent rollout
+observation. From there the workflow creates or verifies the canonical stable
+plan and manifest in the draft `mentra-vX.Y.Z` release before it may append
+`completed`. Candidate archives remain in the private, attempt-scoped promotion
+container so an aborted attempt cannot be mistaken for a later attempt or for
+the public release.
 
 Workflow-produced evidence assets use content-addressed names. Evidence is
 published before the state that references it; if state publication fails, a
