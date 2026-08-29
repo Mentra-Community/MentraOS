@@ -12,9 +12,16 @@ Mentra release. The branch-associated cloud must deploy successfully and pass
 readiness checks before that run can publish a Mentra App build.
 
 This change moves the existing Cloud V2 deployment behavior into the release
-orchestrators. It does not redesign which backend is embedded in each mobile
-channel. In particular, the current beta built from `staging` continues to use
-the production cloud.
+orchestrators.
+
+**Policy update (2026-08-28):** staging-triggered beta Mentra App builds now
+embed the staging Cloud V2 Core and Runtime endpoints. This supersedes the
+temporary beta-to-production exception in the original design. The current
+exact-byte production promotion cannot safely promote one of these signed
+binaries because its embedded backend cannot be rewritten; production
+promotion must be redesigned before it is used for a staging-backed beta. A
+source-bound marker makes the production workflow fail before protected
+approval for every staging-backed beta commit.
 
 ## Scope
 
@@ -28,12 +35,12 @@ In scope:
 - Production store promotion in
   `.github/workflows/coordinated-production-promotion.yml`.
 - Deployment evidence in the coordinated release result and final manifest.
+- Staging Cloud V2 endpoints embedded in staging-triggered beta mobile builds.
 
 Out of scope:
 
 - The unused legacy Cloud V1 implementation under `cloud/` and its
   `porter-dev.yml`, `porter-staging.yml`, and `porter-prod.yml` workflows.
-- Changing beta mobile from the production backend to the staging backend.
 - Rebuilding production mobile binaries instead of promoting the selected beta
   binaries.
 - Cloud V2 static websites deployed by `cloud-v2-pages.yml`. They are not a
@@ -49,7 +56,7 @@ release-plan concepts.
 | Source / channel                            | Cloud deployed by this run                  | Mobile backend embedded today | Mobile publication gated by cloud                                        |
 | ------------------------------------------- | ------------------------------------------- | ----------------------------- | ------------------------------------------------------------------------ |
 | `dev` / dev                                 | `cloud-dev` using `porter.dev.yaml`         | dev                           | GitHub APK, Mentra Dev TestFlight, and the existing Play internal upload |
-| `staging` / beta                            | `cloud-staging` using `porter.staging.yaml` | **prod**                      | GitHub APK, Mentra Staging TestFlight, and the existing Play beta upload |
+| `staging` / beta                            | `cloud-staging` using `porter.staging.yaml` | staging                       | GitHub APK, Mentra Staging TestFlight, and the existing Play beta upload |
 | main-approved stable promotion / production | `cloud-prod` using `porter.prod.yaml`       | prod                          | Play production promotion and App Store submission/release flow          |
 
 For production, “main-approved” retains the coordinator's current rule: the
@@ -58,11 +65,15 @@ protected production approval. The production cloud deployment uses that
 verified release source, not the ref from which an operator happened to click
 `workflow_dispatch`.
 
-The staging row is an explicit temporary exception. The release proves that the
-branch-associated staging cloud deployed, but the beta binary still connects to
-production. This work must not claim that the staging deployment is the runtime
-backend exercised by that beta. Selecting staging as the beta mobile backend is
-a later policy change.
+The staging beta now exercises the same branch-associated staging cloud that
+the coordinated run deploys and verifies. The existing production-promotion
+workflow still assumes the selected beta bytes are production-ready. That
+assumption is no longer valid. The production workflow rejects a selected beta
+whose source contains `.github/production-mobile-promotion-blocked.md`, so the
+unsafe path fails closed before protected approval. The marker may be removed
+only when the follow-up production design either rebuilds the app with
+production endpoints or makes runtime configuration independent of signed
+mobile bytes.
 
 ## Required ordering
 
@@ -226,8 +237,7 @@ invent unsupported `porter apply` flags. The workflow emits a clearly distinct
 
 - `dev` maps to deployment environment `dev`.
 - `staging` maps to deployment environment `staging`.
-- The existing `backend_environment` output remains `dev` for dev and `prod`
-  for staging.
+- `backend_environment` is `dev` for dev and `staging` for staging.
 - `mobile.needs` gains `cloud-v2`.
 - `finalize.needs` gains `cloud-v2`, downloads the cloud result artifact, and
   supplies it to the release-results assembler.
@@ -314,7 +324,7 @@ change cannot accidentally revive or mutate legacy infrastructure.
 - A dev coordinated run deploys and verifies `cloud-dev` before any dev mobile
   publication begins.
 - A staging coordinated run deploys and verifies `cloud-staging` before any beta
-  mobile publication begins, while the beta mobile environment remains `prod`.
+  mobile publication begins, and the beta mobile environment is `staging`.
 - A production promotion deploys and verifies `cloud-prod` only after protected
   approval and before either mobile store action.
 - Cloud failure or public readiness failure prevents GitHub APK, TestFlight,
@@ -328,7 +338,8 @@ change cannot accidentally revive or mutate legacy infrastructure.
 
 ## Deferred decisions
 
-- When beta mobile should switch from production to staging cloud.
+- How production promotion should produce production-backed signed mobile
+  binaries after staging-backed beta validation.
 - Whether mobile building should run in parallel with cloud and only its upload
   phase should wait.
 - Whether Cloud V2 Pages and other cloud-adjacent services should join the

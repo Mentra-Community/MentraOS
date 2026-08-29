@@ -73,6 +73,16 @@ jobs:
           git merge-base --is-ancestor "$source_commit" origin/main
           git checkout --detach "$source_commit"
 
+      - name: Reject staging-backed beta mobile binaries
+        run: |
+          set -euo pipefail
+          marker=.github/production-mobile-promotion-blocked.md
+          if [[ -f "$marker" ]]; then
+            cat "$marker" >&2
+            echo "Production promotion is blocked for ${{ inputs.beta_identity }}." >&2
+            exit 1
+          fi
+
       - name: Verify every immutable beta package, OTA, and downloadable artifact
         run: node .github/scripts/verify-release-artifacts.mjs --manifest selected-beta/release-manifest.json
 
