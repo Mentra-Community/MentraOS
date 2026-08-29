@@ -1,18 +1,27 @@
 /**
  * ota facade — `engine.ota`: the OEM-facing OTA read/observe surface. Engine's
  * OtaService projects the glasses' OTA BLE events into the engine store; this facade
- * exposes the snapshot + change subscriptions the host renders its update prompt and
- * progress UI from. No host-injected UI — the host owns all alerts/navigation/i18n.
+ * exposes the snapshot + change subscriptions behind the shared OTA flow exported by
+ * `@mentra/engine/ota`. Hosts retain only their surrounding navigation and theme/i18n adapters.
  *
  * Availability checks live in engine. Install orchestration lives in engine too:
  * `installSession` fronts the OtaInstallCoordinator state machine (WP 8B) — the host
  * progress screen is a pure renderer over its snapshot + attach/detach/retry/finish.
  */
-import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
-import type {OtaProgress, OtaProgressStatus, OtaStatus, OtaUpdateInfo} from "@mentra/bluetooth-sdk/internal"
-import {isGlassesConnected, useGlassesStore} from "../stores/glasses"
+import BluetoothSdk from "@mentra/bluetooth-sdk"
+import type {
+  OtaProgress,
+  OtaProgressStatus,
+  OtaStartAckEvent,
+  OtaStatus,
+  OtaUpdateInfo,
+  ReleaseChangelog,
+} from "@mentra/bluetooth-sdk"
+import {isGlassesConnected, isGlassesReady, useGlassesStore} from "../stores/glasses"
 import {resolveOtaManifestUrl} from "../services/otaManifestUrl"
 import {otaInstallCoordinator, type OtaInstallSnapshot} from "../services/OtaInstallCoordinator"
+import {startGlassesStatusProjection} from "../services/GlassesStatusProjection"
+import {startOtaService} from "../services/OtaService"
 import {
   checkCurrentGlassesForUpdate,
   type OtaCheckCurrentGlassesOptions,
@@ -23,9 +32,13 @@ function projectSnapshot() {
   const s = useGlassesStore.getState()
   return {
     connected: isGlassesConnected(s.connection),
+    ready: isGlassesReady(s.connection),
     buildNumber: s.buildNumber || null,
+    appVersion: s.appVersion || null,
     mtkFirmwareVersion: s.mtkFirmwareVersion || null,
     besFirmwareVersion: s.besFirmwareVersion || null,
+    batteryLevel: s.batteryLevel >= 0 ? s.batteryLevel : null,
+    hotspotOtaVersion: s.hotspotOtaVersion ?? 0,
     wifiConnected: s.wifi.state === "connected",
     wifiStatusKnown: s.wifiStatusKnown,
     manifestUrl: resolveOtaManifestUrl(s.otaVersionUrl, s.buildNumber),
@@ -43,6 +56,7 @@ export type {
   OtaProgressStatus,
   OtaStatus,
   OtaUpdateInfo,
+  ReleaseChangelog,
   OtaInstallSnapshot,
   OtaCheckCurrentGlassesOptions,
   OtaCheckCurrentGlassesResult,
@@ -51,12 +65,22 @@ export type {
 export const ota = {
   // --- actions ---
   /**
+   * Start the device-status and OTA projections without starting the authenticated
+   * cloud connection or miniapp runtime. This is the explicit entry point for Bluetooth-only hosts.
+   * Idempotent and safe when the full engine runtime is already running.
+   */
+  initialize: async () => {
+    const hydrated = startGlassesStatusProjection()
+    startOtaService()
+    await hydrated
+  },
+  /**
    * Start the firmware install with the resolved OTA manifest URL. Progress lands on
-   * `status()`/`onStatus()`. (The host resolves the manifest URL — dev-override/env/prod
-   * resolution stays with the OTA config; the host-side stuck/retry watchdog is its own
+   * `status()`/`onStatus()`. (The host resolves the manifest URL — developer override,
+   * host pin, or Engine release pin resolution stays with the OTA config; the stuck/retry watchdog is its own
    * resilience layer on top of this command.)
    */
-  install: (...args: Parameters<typeof BluetoothSdk.startOtaUpdate>) => BluetoothSdk.startOtaUpdate(...args),
+  install: (otaVersionUrl?: string | null): Promise<OtaStartAckEvent> => BluetoothSdk.startOtaUpdate(otaVersionUrl),
   // Deferred: this facade entry was intended to become the engine-owned retry/check
   // action, but BluetoothSdk.checkForOtaUpdate() only returns a boolean. Exposing it
   // here would make callers think the rich otaUpdateAvailable read model is refreshed,
@@ -71,6 +95,9 @@ export const ota = {
   ping: () => BluetoothSdk.ping(),
   /** Resolve and compare the current glasses against the OTA manifest, then update the OTA snapshot. */
   checkForUpdates: (options?: OtaCheckCurrentGlassesOptions) => checkCurrentGlassesForUpdate(options),
+  /** Return bundled release changelogs crossed between two coordinated product versions, newest first. */
+  getReleaseChangelogs: (fromVersion?: string | null, toVersion?: string | null): ReleaseChangelog[] =>
+    BluetoothSdk.getReleaseChangelogs(fromVersion, toVersion),
   /** Clear the available-update prompt state. */
   clearUpdateAvailable: () => useGlassesStore.getState().setOtaUpdateAvailable(null),
   /** Clear active progress/status before entering a fresh install flow. */
@@ -100,7 +127,6 @@ export const ota = {
    * @deprecated Legacy progress route (build < 37) only — removed with WP 8D.
    */
   clearBuildNumberForNextCheck: () => {
-    BluetoothSdk.updateGlasses({buildNumber: ""})
     useGlassesStore.getState().setGlassesInfo({buildNumber: ""})
   },
   /**
@@ -115,15 +141,17 @@ export const ota = {
    * the snapshot; every watchdog/retry/reconnect rule lives in the coordinator.
    */
   installSession: {
+    /** Select Wi-Fi or capability-gated hotspot transport for this checked manifest. */
+    prepare: (result: OtaCheckCurrentGlassesResult) => otaInstallCoordinator.prepare(result),
     /** Bind the machine to the mounted progress screen. Idempotent per attach/detach cycle. */
     attach: () => otaInstallCoordinator.attach(),
     /** Unbind on unmount: clears all timers/listeners and resets session state. */
     detach: () => otaInstallCoordinator.detach(),
     /** Retry after a failure: clear state and re-send ota_start (if connected). */
     retry: () => otaInstallCoordinator.retry(),
-    /** Terminal cleanup for Continue/Done (navigation stays in the screen). */
+    /** Terminal cleanup for Continue/Done, including hotspot route teardown. */
     finish: () => otaInstallCoordinator.finish(),
-    /** Abandon an interrupted session (super-mode skip): finish() + drop the session's status/progress. */
+    /** Abandon an interrupted session: await finish() then drop the session's status/progress. */
     discard: () => otaInstallCoordinator.discard(),
     /** Current install read model (displayState/errorMsg/lockout + glasses OTA data). */
     snapshot: (): OtaInstallSnapshot => otaInstallCoordinator.snapshot(),

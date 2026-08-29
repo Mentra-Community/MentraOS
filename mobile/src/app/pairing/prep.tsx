@@ -1,15 +1,13 @@
-import {DeviceTypes} from "@/../../cloud/packages/types/src"
+import {DeviceTypes} from "@mentra/engine"
 import {useRoute} from "@react-navigation/native"
-import {Linking, PermissionsAndroid, Image, Platform, ScrollView, View} from "react-native"
-import type {ImageStyle, Permission, ViewStyle} from "react-native"
+import {Image, Platform, ScrollView, View} from "react-native"
+import type {ImageStyle, ViewStyle} from "react-native"
 
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
 import {Button, Header, Icon, Screen, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
-import {showAlert} from "@/utils/AlertUtils"
-import {PermissionFeatures, checkConnectivityRequirementsUI, requestFeaturePermissions} from "@/utils/PermissionsUtils"
 import GlassesDisplayMirror from "@/components/mirror/GlassesDisplayMirror"
 import {useState} from "react"
 import GlassesTroubleshootingModal from "@/components/glasses/GlassesTroubleshootingModal"
@@ -18,8 +16,8 @@ import {CDN_BASE_URL} from "@/constants/appConfig"
 import {engine} from "@mentra/engine"
 import {getAr99DisplayName, getAr99ImageSource} from "@/utils/getGlassesImage"
 import {ThemedStyle} from "@/theme"
-
-type BluetoothPermission = Permission | "android.permission.BLUETOOTH" | "android.permission.BLUETOOTH_ADMIN"
+import {preparePairingScan} from "@/utils/pairing/preparePairingScan"
+import {isMentraLiveSecurePairingEnabled} from "@/utils/pairing/securePairingFeature"
 
 export default function PairingPrepScreen() {
   const route = useRoute()
@@ -29,179 +27,8 @@ export default function PairingPrepScreen() {
   const {themed} = useAppTheme()
 
   const advanceToPairing = async () => {
-    if (deviceModel == null || deviceModel == "") {
-      console.log("SOME WEIRD ERROR HERE")
-      return
-    }
-
-    // Always request Bluetooth permissions - required for Android 14+ foreground service
-    let needsBluetoothPermissions = true
-    // we don't need bluetooth permissions for simulated glasses
-    if (deviceModel.startsWith(DeviceTypes.SIMULATED) && Platform.OS === "ios") {
-      needsBluetoothPermissions = false
-    }
-
-    try {
-      // Check for Android-specific permissions
-      if (Platform.OS === "android") {
-        // Android-specific Phone State permission - request for ALL glasses including simulated
-        console.log("Requesting PHONE_STATE permission...")
-        const phoneStateGranted = await requestFeaturePermissions(PermissionFeatures.PHONE_STATE)
-        console.log("PHONE_STATE permission result:", phoneStateGranted)
-
-        if (!phoneStateGranted) {
-          // The specific alert for previously denied permission is already handled in requestFeaturePermissions
-          // We just need to stop the flow here
-          return
-        }
-
-        // Bluetooth permissions only for physical glasses
-        if (needsBluetoothPermissions) {
-          const bluetoothPermissions: BluetoothPermission[] = []
-
-          // Bluetooth permissions based on Android version
-          if (typeof Platform.Version === "number" && Platform.Version < 31) {
-            // For Android 9, 10, and 11 (API 28-30), use legacy Bluetooth permissions
-            bluetoothPermissions.push("android.permission.BLUETOOTH")
-            bluetoothPermissions.push("android.permission.BLUETOOTH_ADMIN")
-          }
-          if (typeof Platform.Version === "number" && Platform.Version >= 31) {
-            bluetoothPermissions.push(PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN)
-            bluetoothPermissions.push(PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT)
-            bluetoothPermissions.push(PermissionsAndroid.PERMISSIONS.BLUETOOTH_ADVERTISE)
-          }
-
-          // Request Bluetooth permissions directly
-          if (bluetoothPermissions.length > 0) {
-            console.log("RIGHT BEFORE ASKING FOR PERMS")
-            console.log("Bluetooth permissions array:", bluetoothPermissions)
-            console.log(
-              "Bluetooth permission values:",
-              bluetoothPermissions.map((p) => `${p} (${typeof p})`),
-            )
-
-            const results = await PermissionsAndroid.requestMultiple(bluetoothPermissions as Permission[])
-            const allGranted = Object.values(results).every((value) => value === PermissionsAndroid.RESULTS.GRANTED)
-
-            // Since we now handle NEVER_ASK_AGAIN in requestFeaturePermissions,
-            // we just need to check if all are granted
-            if (!allGranted) {
-              // Check if any are NEVER_ASK_AGAIN to show proper dialog
-              const anyNeverAskAgain = Object.values(results).some(
-                (value) => value === PermissionsAndroid.RESULTS.NEVER_ASK_AGAIN,
-              )
-
-              if (anyNeverAskAgain) {
-                // Show "previously denied" dialog for Bluetooth
-                showAlert(
-                  translate("pairing:permissionRequired"),
-                  translate("pairing:bluetoothPermissionPreviouslyDenied"),
-                  [
-                    {
-                      text: translate("pairing:openSettings"),
-                      onPress: () => Linking.openSettings(),
-                    },
-                    {
-                      text: translate("common:cancel"),
-                      style: "cancel",
-                    },
-                  ],
-                )
-              } else {
-                // Show standard permission required dialog
-                showAlert(
-                  translate("pairing:bluetoothPermissionRequiredTitle"),
-                  translate("pairing:bluetoothPermissionRequiredMessage"),
-                  [{text: translate("common:ok")}],
-                )
-              }
-              return
-            }
-          }
-
-          // Phone state permission already requested above for all Android devices
-        } // End of Bluetooth permissions block
-      } // End of Android-specific permissions block
-
-      // Check connectivity early for iOS (permissions work differently)
-      console.log("DEBUG: needsBluetoothPermissions:", needsBluetoothPermissions, "Platform.OS:", Platform.OS)
-      if (needsBluetoothPermissions && Platform.OS === "ios") {
-        console.log("DEBUG: Running iOS connectivity check early")
-        const requirementsCheck = await checkConnectivityRequirementsUI()
-        if (!requirementsCheck) {
-          return
-        }
-      }
-
-      // Cross-platform permissions needed for both iOS and Android (only if connectivity check passed)
-      if (needsBluetoothPermissions) {
-        const hasBluetoothPermission = await requestFeaturePermissions(PermissionFeatures.BLUETOOTH)
-        if (!hasBluetoothPermission) {
-          showAlert(
-            translate("pairing:bluetoothPermissionRequiredTitle"),
-            translate("pairing:bluetoothPermissionRequiredMessageAlt"),
-            [{text: translate("common:ok")}],
-          )
-          return // Stop the connection process
-        }
-      }
-
-      // Request microphone permission (needed for both platforms)
-      console.log("Requesting microphone permission...")
-
-      // This now handles showing alerts for previously denied permissions internally
-      const micGranted = await requestFeaturePermissions(PermissionFeatures.MICROPHONE)
-
-      console.log("Microphone permission result:", micGranted)
-
-      if (!micGranted) {
-        // The specific alert for previously denied permission is already handled in requestFeaturePermissions
-        // We just need to stop the flow here
-        return
-      }
-
-      // Request location permission (needed for Android BLE scanning)
-      if (Platform.OS === "android") {
-        console.log("Requesting location permission for Android BLE scanning...")
-
-        // This now handles showing alerts for previously denied permissions internally
-        const locGranted = await requestFeaturePermissions(PermissionFeatures.LOCATION)
-
-        console.log("Location permission result:", locGranted)
-
-        if (!locGranted) {
-          // The specific alert for previously denied permission is already handled in requestFeaturePermissions
-          // We just need to stop the flow here
-          return
-        }
-
-        // Check connectivity for Android AFTER all permissions are granted
-        // This must be done after location permission is granted to avoid premature "Connection issue" popup
-        if (needsBluetoothPermissions) {
-          const requirementsCheck = await checkConnectivityRequirementsUI()
-          if (!requirementsCheck) {
-            return
-          }
-        }
-      } else {
-        console.log("Skipping location permission on iOS - not needed after BLE fix")
-      }
-    } catch (error) {
-      console.error("Error requesting permissions:", error)
-      showAlert(translate("pairing:errorTitle"), translate("pairing:permissionsError"), [
-        {text: translate("common:ok")},
-      ])
-      return
-    }
-
-    console.log("needsBluetoothPermissions", needsBluetoothPermissions)
-
-    // Stop any running apps from previous sessions to prevent mic race conditions.
-    // This is symmetric with the logic in DeviceSettings that stops apps when unpairing.
-    // Fire-and-forget: stopAll() awaits a per-app backend stop call that can take many
-    // seconds (or hang with no internet / NO_ACTIVE_SESSION). We don't need it to finish
-    // before navigating to the scan screen, so don't block pairing on it.
-    void engine.miniapps.stopAll()
+    const readyToScan = await preparePairingScan(deviceModel)
+    if (!readyToScan) return
 
     // skip pairing for simulated glasses:
     if (deviceModel.startsWith(DeviceTypes.SIMULATED)) {
@@ -228,20 +55,32 @@ export default function PairingPrepScreen() {
 
   const MentraLivePairingGuide = () => {
     const CDN_BASE = `${CDN_BASE_URL}/onboarding/mentra-live/light`
-    let steps: OnboardingStep[] = [
+    const steps: OnboardingStep[] = [
       {
         name: "power_on_tutorial",
         type: "video",
         source: `${CDN_BASE}/ONB1_power_button_loop.mp4`,
         poster: require("@assets/onboarding/live/thumbnails/ONB0_power.png"),
         transition: false,
-        title: translate("pairing:powerOn"), // for spacing so it's consistent with the other steps
+        title: translate("pairing:powerOn"),
         subtitle: translate("onboarding:livePowerOnTutorial"),
         info: translate("onboarding:livePowerOnInfo"),
-        playCount: -1, // repeat forever
+        playCount: -1,
         showButtonImmediately: true,
       },
     ]
+    if (isMentraLiveSecurePairingEnabled()) {
+      steps.push({
+        name: "pairing_mode_tutorial",
+        type: "image",
+        source: require("@assets/onboarding/live/thumbnails/ONB0_power.png"),
+        transition: false,
+        title: translate("pairing:livePairingModeTitle"),
+        subtitle: translate("pairing:livePairingModeSubtitle"),
+        info: translate("pairing:livePairingModeInfo"),
+        compactHeader: true,
+      })
+    }
 
     return (
       <OnboardingGuide

@@ -5,4 +5,4 @@
  *
  * @deprecated Use BluetoothSDK subscriptions directly instead.
  */
-export {GlobalEventEmitter as default} from "@mentra/engine/internal"
+export {GlobalEventEmitter as default} from "@mentra/engine-host-internal"

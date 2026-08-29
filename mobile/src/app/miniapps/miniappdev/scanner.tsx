@@ -9,10 +9,10 @@ import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import showAlert from "@/utils/AlertUtils"
 import {decideDevLaunchRoute, engine} from "@mentra/engine"
-import {appRegistry, registerDevApp, type DevAppRecord} from "@mentra/engine/internal"
+import {appRegistry, registerDevApp, type DevAppRecord} from "@mentra/engine-host-internal"
 import {askPermissionsUI, checkPermissionsUI, PERMISSION_CONFIG} from "@/utils/PermissionsUtils"
-import {markMiniappDevMode} from "@/utils/miniappDevMode"
-import type {AppletInterface, AppletPermission} from "@/../../cloud/packages/types/src"
+import {storage} from "@/utils/storage/storage"
+import type {AppletInterface, AppletPermission} from "@mentra/engine"
 
 export default function MiniappDeveloperScannerScreen() {
   const {theme} = useAppTheme()
@@ -48,7 +48,6 @@ export default function MiniappDeveloperScannerScreen() {
           ])
           return
         }
-        markMiniappDevMode()
         showAlert("Installed", `${res.value.name} v${res.value.version} is on your home screen.`, [
           {text: "OK", onPress: () => goBack()},
         ])
@@ -63,6 +62,7 @@ export default function MiniappDeveloperScannerScreen() {
       let packageName: string | undefined
       let name: string | undefined
       let devPort: string | undefined
+      let mdnsHost: string | undefined
       let devAttestation: string | undefined
 
       if (data.startsWith("miniapp://dev")) {
@@ -71,6 +71,7 @@ export default function MiniappDeveloperScannerScreen() {
         name = url.searchParams.get("name") || undefined
         packageName = url.searchParams.get("package") || undefined
         devPort = url.searchParams.get("dev") || undefined
+        mdnsHost = url.searchParams.get("mdns") || undefined
         devAttestation = url.searchParams.get("attestation") || undefined
       } else if (data.startsWith("http://") || data.startsWith("https://")) {
         devUrl = data
@@ -92,48 +93,76 @@ export default function MiniappDeveloperScannerScreen() {
         return
       }
 
-      const launchResult = await decideDevLaunchRoute(packageName ?? "", devUrl)
+      // Pass mDNS up front — storage hasn't been written yet on first scan, so
+      // decideDevLaunchRoute can't read `_dev_mdns` until we persist below.
+      const launchResult = await decideDevLaunchRoute(packageName ?? "", devUrl, {
+        alternateHosts: mdnsHost ? [mdnsHost] : undefined,
+      })
 
       const manifest = launchResult.manifest
-      packageName = manifest?.packageName || packageName || "com.dev.unknown"
+      // Keep an explicit identity separate from the offline-screen display
+      // fallback — never persist routing keys under the shared `com.dev.unknown`.
+      const knownPackageName = (manifest?.packageName || packageName)?.trim() || undefined
+      packageName = knownPackageName || "com.dev.unknown"
       name = manifest?.name || name || "Dev Miniapp"
       const iconPath = manifest?.icon as string | undefined
       const manifestPermissions: AppletPermission[] = Array.isArray(manifest?.permissions)
         ? (manifest!.permissions as AppletPermission[])
         : []
 
+      const resolvedBase = (launchResult.resolvedUrl || devUrl).replace(/\/$/, "")
       let iconUrl: string | undefined
       if (iconPath) {
         iconUrl = /^https?:\/\//.test(iconPath)
           ? iconPath
-          : `${devUrl.replace(/\/$/, "")}/${iconPath.replace(/^\//, "")}`
+          : `${resolvedBase}/${iconPath.replace(/^\//, "")}`
       }
+
+      const portNum = devPort ? parseInt(devPort, 10) : NaN
 
       // Persist a package-keyed home tile and routing record so this dev
       // miniapp remains independently launchable without rescanning. Its icon
       // is copied locally while the server is reachable.
-      if (manifest) {
-        // A fetched manifest means a real dev app loaded — latch the per-account
-        // "this user is a developer" signal (idempotent). Gated on the manifest
-        // so a failed/unreachable scan (decision "offline", no manifest) can't
-        // flip the flag, matching the URL loader's behavior.
-        markMiniappDevMode()
-
-        const portNum = devPort ? parseInt(devPort, 10) : NaN
-        const existing = engine.miniapps.list().find((app) => app.packageName === packageName)
-        if (existing?.running) await engine.miniapps.stop(packageName)
+      if (manifest && knownPackageName) {
+        const existing = engine.miniapps.list().find((app) => app.packageName === knownPackageName)
+        if (existing?.running) await engine.miniapps.stop(knownPackageName)
         await registerDevApp({
-          packageName,
-          name: name ?? packageName,
-          iconUrl: iconUrl ?? `${devUrl.replace(/\/$/, "")}/icon.png`,
-          devUrl: devUrl,
+          packageName: knownPackageName,
+          name: name ?? knownPackageName,
+          iconUrl: iconUrl ?? `${resolvedBase}/icon.png`,
+          // Prefer the host that actually answered (may be mDNS / Metro failover).
+          devUrl: launchResult.resolvedUrl || devUrl,
+          // Explicit empty clears a prior QR's sidecar port / mDNS for this package.
           devPort: Number.isFinite(portNum) ? portNum : undefined,
+          mdnsHost: mdnsHost ?? "",
           devAttestation,
           type: manifest.type as DevAppRecord["type"],
           permissions: manifest.permissions as DevAppRecord["permissions"],
           hardwareRequirements: manifest.hardwareRequirements as DevAppRecord["hardwareRequirements"],
           actions: manifest.actions as DevAppRecord["actions"],
         })
+      } else if (knownPackageName) {
+        // Reachability failed — still stash URL + mDNS so "Try again" can recover
+        // after a laptop Wi-Fi IP change without forcing a re-scan. Only when the
+        // QR (or a prior identity) named a real package — never `com.dev.unknown`.
+        storage.save(`${knownPackageName}_dev_url`, devUrl)
+        if (mdnsHost) {
+          storage.save(`${knownPackageName}_dev_mdns`, mdnsHost)
+        } else {
+          storage.remove(`${knownPackageName}_dev_mdns`)
+        }
+        if (Number.isFinite(portNum)) {
+          storage.save(`${knownPackageName}_dev_port`, portNum)
+        } else {
+          storage.remove(`${knownPackageName}_dev_port`)
+        }
+        // Keep the QR attestation so offline "Try again" can register with the
+        // same auto-auth proof the live scanner path would have used.
+        if (devAttestation) {
+          storage.save(`${knownPackageName}_dev_attestation`, devAttestation)
+        } else {
+          storage.remove(`${knownPackageName}_dev_attestation`)
+        }
       }
 
       if (launchResult.decision === "offline") {

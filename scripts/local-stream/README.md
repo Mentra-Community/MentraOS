@@ -22,15 +22,37 @@ Glasses route by URL scheme (`StreamCommandHandler`): `rtmp://` / `rtmps://`
 
 ## Quick start (RTMP — recommended)
 
-1. Put glasses, phone, and this laptop on the **same Wi‑Fi**.
-2. From the MentraOS repo root:
+1. Put glasses, phone, and this laptop on the **same Wi‑Fi** (or join the Mentra Live hotspot from the laptop).
+2. Start MediaMTX from the MentraOS repo root:
+
+   **macOS / Linux**
 
    ```bash
    ./scripts/local-stream/start-local-stream.sh
    ```
 
-   The script detects the laptop LAN IP every run (DHCP-safe), starts
-   MediaMTX, and prints:
+   **Windows** (Docker Desktop — preferred over Git Bash / WSL for LAN ingest)
+
+   ```bat
+   scripts\local-stream\start-local-stream.cmd
+   ```
+
+   Or in PowerShell:
+
+   ```powershell
+   .\scripts\local-stream\start-local-stream.ps1
+   ```
+
+   Optional IP override (if auto-detect picks the wrong adapter):
+
+   ```bat
+   set LAN_IP=192.168.43.81
+   scripts\local-stream\start-local-stream.cmd
+   ```
+
+   The script detects the laptop LAN IP every run (DHCP-safe; on Windows it
+   prefers Wi‑Fi / `192.168.43.x` hotspot addresses and skips WSL/`172.x`
+   bridges), starts MediaMTX, and prints:
 
    - **Publish (RTMP):** `rtmp://<LAN_IP>:1935/live/stream`
      (StreamPack requires `/app/streamKey` — a bare `/live` URL will fail)
@@ -118,7 +140,12 @@ available on Docker Desktop for macOS.
 |------|------|
 | `mediamtx.yml` | MediaMTX config (`live` + `all_others`; RTMP `:1935`, SRT `:8890`, HLS `:8888`, WebRTC `:8889`) |
 | `docker-compose.yml` | Publishes `1935/tcp`, `8888/tcp`, `8889/tcp`, `8189/udp`, `8890/udp`; requires `MTX_WEBRTCADDITIONALHOSTS` |
-| `start-local-stream.sh` | Detects LAN IP → exports ICE host → `docker compose up` → prints publish/watch URLs |
+| `Dockerfile` | Bakes `mediamtx.yml` into `mentra-local-mediamtx:1` (avoids USB bind-mount failures on Docker Desktop) |
+| `start-local-stream.sh` | macOS/Linux: detect LAN IP → export ICE host → `docker compose up` → print URLs + recv stats |
+| `start-local-stream.ps1` | Windows PowerShell: same flow (Wi‑Fi / hotspot IP detect, Docker Desktop) |
+| `start-local-stream.cmd` | Windows launcher that calls the `.ps1` (double-click friendly) |
+| `offline/images/*.tar` | Pre-saved MediaMTX images (no Docker Hub pull) |
+| `offline/load-images.cmd` | Load the matching offline image + tag as `bluenviron/mediamtx:1` |
 
 ## Troubleshooting
 
@@ -130,7 +157,8 @@ available on Docker Desktop for macOS.
 | HLS page loads, black / no stream | Publisher never connected — check glasses logcat / ADB smoke test |
 | WHIP POST fails / connection refused | Wrong LAN IP or TCP 8889 blocked |
 | WHIP 201, no video | ICE/UDP 8189 blocked (firewall / Docker Desktop) |
-| Wrong IP in printed URLs | Disconnect VPN; re-run start script so `en0` is the Wi‑Fi interface |
+| Wrong IP in printed URLs | Disconnect VPN; re-run start script. On Windows set `LAN_IP` to the hotspot/Wi‑Fi address from `ipconfig` |
+| `mount ... mediamtx.yml ... not a directory` | Old USB bind-mount bug. Update to the baked-Dockerfile compose (no volume). Run `docker rm -f mentra-local-stream` then re-run start script |
 
 Useful glasses log filters:
 

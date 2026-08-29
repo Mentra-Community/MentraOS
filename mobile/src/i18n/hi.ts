@@ -49,6 +49,25 @@ const hi = {
     hardwareIncompatibleMessage:
       "{{app}} को ऐसे हार्डवेयर की आवश्यकता है जो आपके कनेक्टेड चश्मे में उपलब्ध नहीं है: {{missing}}",
   },
+  settings: {
+    ...en.settings,
+    forgetGlassesWhilePairing:
+      "Bluetooth पेयरिंग जारी है। पहले सिस्टम पेयरिंग डायलॉग को स्वीकार या बंद करें, फिर चश्मे को दोबारा अनपेयर करने की कोशिश करें।",
+  },
+  pairing: {
+    ...en.pairing,
+    nearbyNotInPairingModeHint:
+      "पास में Mentra Live चश्मे मिले, लेकिन वे पेयरिंग मोड में नहीं हैं। पावर बटन को तेज़ी से 3 बार दबाएँ, फिर फिर से कोशिश करें।",
+    notInPairingModeLabel: "पेयरिंग मोड में नहीं",
+    notInPairingModeAlertTitle: "पेयरिंग मोड शुरू करें",
+    notInPairingModeAlertMessage:
+      "पावर बटन को तेज़ी से 3 बार दबाएँ। LED चमकता है और चश्मा 4-अक्षर का कोड बोलता है। फिर चश्मे को फिर से चुनें।",
+    pairingCodeLabel: "कोड {{code}}",
+    legacyFirmwareLabel: "पुराना फ़र्मवेयर",
+    livePairingModeInfo:
+      "पावर बटन को तेज़ी से 3 बार दबाएँ। LED चमकता है और चश्मा 4-अक्षर का कोड (0–9, A–F) बोलता है। एक से ज़्यादा यूनिट दिखें तो उसी कोड से मिलाएँ।",
+    noGlassesFoundHint: "पक्का करें कि आपने पावर बटन को तेज़ी से 3 बार दबाया, फिर फिर से कोशिश करें।",
+  },
   demoNavigator: {
     componentsTab: "कंपोनेंट्स",
     debugTab: "डीबग",
@@ -123,6 +142,18 @@ const hi = {
       content:
         "अभी तक कोई पसंदीदा नहीं जोड़ा गया है। इसे अपने पसंदीदा में जोड़ने के लिए किसी एपिसोड पर दिल पर टैप करें!",
     },
+  },
+  qrScan: {
+    defaultTitle: "QR कोड स्कैन करें",
+    defaultHint: "कैमरा QR कोड की ओर करें",
+    checkingPermission: "कैमरा अनुमति जाँची जा रही है\u2026",
+    permissionTitle: "कैमरा ऐक्सेस चाहिए",
+    permissionBody:
+      "QR कोड स्कैन करने के लिए कैमरा चाहिए। कैमरा केवल इस स्क्रीन के खुले रहने तक इस्तेमाल होता है।",
+    grantAccess: "कैमरा ऐक्सेस दें",
+    openSettings: "सेटिंग खोलें",
+    permissionDeniedTitle: "अनुमति अस्वीकृत",
+    permissionDeniedBody: "QR कोड स्कैन करने के लिए सेटिंग में कैमरा ऐक्सेस चालू करें।",
   },
 } satisfies TranslationResource
 

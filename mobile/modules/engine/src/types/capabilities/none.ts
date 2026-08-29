@@ -73,4 +73,7 @@ export const none: Capabilities = {
 
   // WiFi capabilities - does not support WiFi
   hasWifi: false,
+
+  // OTA capabilities - none profile does not support OTA
+  hasOta: false,
 };

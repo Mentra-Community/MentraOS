@@ -12,8 +12,8 @@
  * Spec: docs/issues/001-oem-auth/design.md ("Data model" / "Collection: users")
  */
 
-import { Schema, type InferSchemaType } from "mongoose";
-import { registerModel } from "./register-model";
+import {Schema, type InferSchemaType} from "mongoose"
+import {registerModel} from "./register-model"
 
 const UserSchema = new Schema(
   {
@@ -21,20 +21,26 @@ const UserSchema = new Schema(
      * Opaque Mentra-internal user identifier. Format: `mu_<ULID>`.
      * Stable across the user's lifetime under this OEM.
      */
-    mentraUserId: { type: String, required: true, unique: true },
+    mentraUserId: {type: String, required: true, unique: true},
 
     /** Attesting OEM. Matches `oems.tenantId`. */
-    tenantId: { type: String, required: true },
+    tenantId: {type: String, required: true},
 
     /** The OEM's own user identifier (their `sub` claim). */
-    tenantUserId: { type: String, required: true },
+    tenantUserId: {type: String, required: true},
+
+    /** Tombstone set at the start of account deletion. Prevents new support
+     * telemetry storage or delivery; a capture already in flight when it is
+     * set may still reach PostHog, whose retention policy governs delivered
+     * data (see confirmAccountDeletion). */
+    supportTelemetryDeletedAt: {type: Date, default: null},
   },
-  { timestamps: { createdAt: true, updatedAt: false }, collection: "users" },
-);
+  {timestamps: {createdAt: true, updatedAt: false}, collection: "users"},
+)
 
 // Compound uniqueness: one user record per (tenantId, tenantUserId) pair. Lookup
 // during token exchange to find existing or create on first sight.
-UserSchema.index({ tenantId: 1, tenantUserId: 1 }, { unique: true });
+UserSchema.index({tenantId: 1, tenantUserId: 1}, {unique: true})
 
-export type User = InferSchemaType<typeof UserSchema>;
-export const UserModel = registerModel("User", UserSchema);
+export type User = InferSchemaType<typeof UserSchema>
+export const UserModel = registerModel("User", UserSchema)

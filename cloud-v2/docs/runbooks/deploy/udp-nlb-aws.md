@@ -235,8 +235,8 @@ wrong. Compare the labels you used against what Porter actually attaches:
 kubectl get pods -l porter.run/app-name=cloud-<env> --show-labels
 ```
 
-(In v1 the porter.run labels were stable; in cloud-v2 we use the same
-ones — see the v1 reference manifest at `cloud/udp-service.yaml`.)
+Cloud V2 preserves the stable `porter.run` label pattern used by the retired V1
+deployment.
 
 ### NLB hostname is unstable on re-create
 
@@ -330,10 +330,10 @@ Apply `externalTrafficPolicy: Local` and within ~30s health checks pass.
 
 Negligible compared to Soniox.
 
-## Reference: v1's Azure equivalent
+## Historical Azure equivalent
 
-[`cloud/udp-service.yaml`](../../../../cloud/udp-service.yaml) is v1's
-Azure version. Same shape; the only differences:
+V1 used an Azure LoadBalancer Service with the same general shape. Its main
+differences were:
 
 - No NLB-specific annotations (Azure's basic LoadBalancer Service works fine)
 - Selector uses the same `porter.run/app-name` + `porter.run/service-name` pattern

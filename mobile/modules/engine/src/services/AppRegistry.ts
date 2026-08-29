@@ -24,7 +24,7 @@ import {AsyncResult, Result, result as Res} from "typesafe-ts"
 
 import type {AppletPermission, AppPermissionType, AppletType, ClientApp} from "../types/applet"
 import {HardwareRequirement, HardwareRequirementLevel, HardwareType} from "../types"
-import {getConfigValues} from "../runtime/bootstrap"
+import {configuredDevHost} from "../utils/configuredDevHost"
 import {storage} from "../utils/storage/storage"
 import {printDirectory} from "../utils/storage/zip"
 import {checkManifestVersions} from "./manifestVersionGate"
@@ -551,6 +551,7 @@ class AppRegistry {
     }
     storage.remove(`${packageName}_dev_url`)
     storage.remove(`${packageName}_dev_port`)
+    storage.remove(`${packageName}_dev_mdns`)
     storage.remove(`${packageName}_dev_last_reachable`)
     // HTTP-direct dev miniapps are indexed by their real package name. A
     // release install/uninstall of that same package should remove only its
@@ -871,6 +872,22 @@ class AppRegistry {
   }
 
   /**
+   * Update whether a registered offline app is projected into launcher UIs.
+   *
+   * Offline apps are registered once at host startup, so settings-backed
+   * visibility changes need to update the projection without reinstalling or
+   * duplicating the app. No-op when the app is missing or already matches.
+   */
+  public setOfflineAppHidden(packageName: string, hidden: boolean): void {
+    const app = this.offlineApps.find((candidate) => candidate.packageName === packageName)
+    if (!app || app.hidden === hidden) return
+
+    app.hidden = hidden
+    this.refreshNeeded = true
+    this.notify()
+  }
+
+  /**
    * Registered as needing the on-device STT model before it can start (the
    * host declares this per offline app; the apps store gates start() on it).
    */
@@ -939,6 +956,12 @@ export interface DevAppRecord {
   iconUrl: string
   devUrl: string
   devPort?: number
+  /**
+   * Bonjour / mDNS hostname from the QR (`ComputerName.local`). Used as a
+   * failover host when the raw LAN IP in `devUrl` goes stale after a Wi-Fi
+   * change — phones that resolve `.local` can relaunch without re-scanning.
+   */
+  mdnsHost?: string
   type?: AppletType
   permissions?: Array<string | {type: string; required?: boolean; description?: string}>
   hardwareRequirements?: Array<{type: string; level: string; description?: string}>
@@ -957,22 +980,6 @@ export interface DevAppRecord {
 const DEV_APPS_INDEX_KEY = "dev_apps_index"
 const DEV_APP_ICONS_DIR = "dev-miniapp-icons"
 
-function configuredDevHost(): string | undefined {
-  // Explicit escape hatch first; otherwise the host-injected Metro host (the
-  // address this dev bundle was served from — always current for the network
-  // the phone is on). Deliberately NOT the EXPO_PUBLIC_CLOUD_* URLs: those are
-  // cloud endpoints, a different machine entirely from the laptop running the
-  // miniapp dev server, and rewriting a dev URL to a cloud host would break it.
-  const explicit = process.env.EXPO_PUBLIC_LOCAL_MINIAPP_HOST
-  if (explicit) {
-    try {
-      return new URL(explicit).hostname
-    } catch {
-      if (/^[\w.-]+$/.test(explicit)) return explicit
-    }
-  }
-  return getConfigValues().devServerHost?.()
-}
 
 function isPrivateLanHost(hostname: string): boolean {
   return (
@@ -1063,6 +1070,7 @@ function removeDevRecordKeys(packageName: string): void {
   storage.remove(`${packageName}_dev_meta`)
   storage.remove(`${packageName}_dev_url`)
   storage.remove(`${packageName}_dev_port`)
+  storage.remove(`${packageName}_dev_mdns`)
   storage.remove(`${packageName}_dev_last_reachable`)
 }
 
@@ -1101,14 +1109,26 @@ function migrateLegacyDevSlot(): void {
     const port = migrated.devPort ?? (legacyPort.is_ok() ? legacyPort.value : undefined)
     if (typeof port === "number" && Number.isFinite(port)) storage.save(`${targetPackage}_dev_port`, port)
   }
+  const legacyMdns = storage.load<string>(`${DEV_APP_PACKAGE_NAME}_dev_mdns`)
+  const targetMdns = storage.load<string>(`${targetPackage}_dev_mdns`)
+  if (!targetMdns.is_ok() && legacyMdns.is_ok() && legacyMdns.value.trim()) {
+    storage.save(`${targetPackage}_dev_mdns`, legacyMdns.value.trim())
+  }
 
   storage.remove(`${DEV_APP_PACKAGE_NAME}_dev_meta`)
   storage.remove(`${DEV_APP_PACKAGE_NAME}_dev_url`)
   storage.remove(`${DEV_APP_PACKAGE_NAME}_dev_port`)
+  storage.remove(`${DEV_APP_PACKAGE_NAME}_dev_mdns`)
   storage.remove(`${DEV_APP_PACKAGE_NAME}_dev_last_reachable`)
 
   const index = Array.from(new Set(getDevAppIndex().map((pkg) => (pkg === DEV_APP_PACKAGE_NAME ? targetPackage : pkg))))
   storage.save(DEV_APPS_INDEX_KEY, JSON.stringify(index))
+}
+
+function readStoredMdnsHost(packageName: string): string | undefined {
+  const res = storage.load<string>(`${packageName}_dev_mdns`)
+  if (!res.is_ok()) return undefined
+  return res.value.trim() || undefined
 }
 
 /**
@@ -1121,12 +1141,18 @@ export async function registerDevApp(record: DevAppRecord): Promise<void> {
   if (!packageName) throw new Error("Dev miniapp manifest is missing packageName")
 
   const iconUrl = await cacheDevAppIcon(packageName, record.iconUrl)
+  // Relaunch paths (developer-URL screen, loadDevMiniapp) omit mdnsHost, so an
+  // omitted field keeps whatever the QR scan stored instead of wiping the
+  // `.local` failover host.
+  const mdnsHost =
+    record.mdnsHost !== undefined ? record.mdnsHost.trim() || undefined : readStoredMdnsHost(packageName)
   const devRecord: DevAppRecord = {
     ...record,
     packageName,
     sourcePackageName: packageName,
     name: record.name || DEV_APP_NAME,
     iconUrl,
+    mdnsHost,
   }
   storage.save(`${packageName}_dev_meta`, JSON.stringify(devRecord))
   storage.save(`${packageName}_dev_url`, record.devUrl)
@@ -1134,6 +1160,11 @@ export async function registerDevApp(record: DevAppRecord): Promise<void> {
     storage.save(`${packageName}_dev_port`, record.devPort)
   } else {
     storage.remove(`${packageName}_dev_port`)
+  }
+  if (mdnsHost) {
+    storage.save(`${packageName}_dev_mdns`, mdnsHost)
+  } else {
+    storage.remove(`${packageName}_dev_mdns`)
   }
   const idx = getDevAppIndex()
   if (!idx.includes(packageName)) {

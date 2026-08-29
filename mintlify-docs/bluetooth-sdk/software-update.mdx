@@ -6,16 +6,21 @@ icon: "download"
 
 Each Bluetooth SDK release has a matching Mentra Live glasses software release. Your mobile app and glasses must use the same release version.
 
+For coordinated releases, the completed release record correlates the exact SDK
+packages, hosted OTA manifest, and portable OTA bundle selected for one release.
+See [Air-Gapped Bluetooth SDK Deployment](/bluetooth-sdk/air-gapped-deployment)
+for release-record resolution, checksum verification, and internal hosting.
+
 The latest matching pair is:
 
 | Mobile app dependency | Required glasses software |
 | --- | --- |
-| React Native `@mentra/bluetooth-sdk@0.1.21-beta.5` | Mentra Live software `0.1.21-beta.5` |
-| Android `com.mentraglass:bluetooth-sdk:0.1.21-beta.5` | Mentra Live software `0.1.21-beta.5` |
-| iOS `MentraBluetoothSDK` version `0.1.21-beta.5` | Mentra Live software `0.1.21-beta.5` |
+| React Native `@mentra/bluetooth-sdk@{{release-version}}` | Mentra Live software `{{release-version}}` |
+| Android `com.mentraglass:bluetooth-sdk:{{release-version}}` | Mentra Live software `{{release-version}}` |
+| iOS `MentraBluetoothSDK` version `{{release-version}}` | Mentra Live software `{{release-version}}` |
 
 <Warning>
-Bluetooth connection alone does not confirm version compatibility. Glasses running an older software release may connect to an app using SDK `0.1.21-beta.5`, but SDK features may fail or behave incorrectly. Install the matching `0.1.21-beta.5` glasses software before testing SDK features.
+Bluetooth connection alone does not confirm version compatibility. Glasses running an older software release may connect to an app using SDK `{{release-version}}`, but SDK features may fail or behave incorrectly. Install the matching `{{release-version}}` glasses software before testing SDK features.
 </Warning>
 
 ## How Version Matching Works
@@ -26,9 +31,12 @@ When you upgrade your app to a new Bluetooth SDK release, run the OTA check agai
 
 ## Recommended: Update With An Example App
 
-The [Mentra Bluetooth SDK Starter Kit](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit) includes the complete OTA flow. You can build an example app from source or install the recommended prebuilt React Native Android app.
+The [Mentra Bluetooth SDK Starter Kit](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit) includes the complete OTA flow. Build an example app with SDK `{{release-version}}` to install the matching glasses software.
 
-- [Download the React Native example APK for SDK `0.1.21-beta.5`](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/releases/download/sdk-0.1.21-beta.5/mentra-example-react-native.apk)
+Prebuilt Starter Kit apps are validated against SDK `{{example-app-version}}`. The Android link names the exact coordinated build. The iPhone link opens the channel's TestFlight group; during beta review it continues to serve the latest Apple-approved build.
+
+- Android: [download the React Native example APK for SDK `{{example-app-version}}`]({{example-app-url}})
+- iPhone: [open the React Native example's TestFlight group]({{example-app-ios-url}})
 
 For another SDK version, open the [Starter Kit tags page](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/tags), choose the matching `sdk-<version>` tag, and select **Downloads** to find its React Native example APK.
 
@@ -53,22 +61,21 @@ Use the serial shown by `adb devices`. If only one Android device is connected, 
 ### Install The Matching Glasses Software
 
 1. Pair and connect the example app to Mentra Live.
-2. Open the **System** tab and connect the glasses to Wi-Fi.
-3. Open the **Device** tab and tap **Check OTA**.
-4. If an update is available, tap **Start OTA**.
-5. Keep the app connected and avoid using other glasses features while the update is running.
-6. Wait until the app reports that the update is complete. The glasses may restart during installation.
-7. Reconnect and run **Check OTA** again to confirm that no update remains.
+2. The full-screen update flow checks the glasses automatically.
+3. If an update is available, tap **Update Now**. Factory-stock glasses require
+   glasses Wi-Fi for their first update; after they run Mentra Live software 3.1
+   or newer, supported phones can use the Mentra Live hotspot instead.
+4. Keep the app connected and avoid using other glasses features while the update is running.
+5. Wait while the flow installs every required component and rechecks the glasses. They may restart during installation.
+6. Continue when the flow reports that the glasses are up to date.
 
-The example app uses the release-specific OTA manifest selected by SDK `0.1.21-beta.5`, so it installs the glasses software components matching that SDK release.
+The example app uses the release-specific OTA manifest selected by its SDK, so it installs the glasses software components matching that exact SDK release.
 
 ## Bootstrap The Update With ADB
 
 Use this path when the software currently installed on Mentra Live cannot run the SDK OTA flow.
 
-All supported versions are available on the [Bluetooth SDK OTA Artifacts release page](https://github.com/Mentra-Community/MentraOS/releases/tag/bluetooth-sdk-ota). Choose the ASG client APK whose filename starts with `asg-client-sdk-<sdk-version>-`, using the same version as your app's Bluetooth SDK dependency.
-
-For the latest `0.1.21-beta.5` release, open the [Bluetooth SDK OTA Artifacts release page](https://github.com/Mentra-Community/MentraOS/releases/tag/bluetooth-sdk-ota) and download the APK whose filename starts with `asg-client-sdk-0.1.21-beta.5-`.
+Open the [release artifacts for `{{release-version}}`]({{release-artifacts-url}}) and download `mentra-live-asg-selection-{{release-version}}.json`. That record contains the exact ASG client APK URL, filename, and checksum selected for this coordinated release. Download that APK rather than choosing an ASG build by date or version code.
 
 Install [ADB](https://developer.android.com/tools/adb), connect Mentra Live to the computer with a data-capable USB cable, and verify that the glasses appear:
 
@@ -80,25 +87,168 @@ Install the ASG client using the glasses serial shown by that command:
 
 ```bash
 adb -s <glasses-serial> install -r \
-  "$HOME/Downloads/<asg-client-sdk-0.1.21-beta.5-build>.apk"
+  "$HOME/Downloads/<mentra-live-asg-file>.apk"
 ```
 
 If only the glasses are connected, you can omit `-s <glasses-serial>`.
 
 <Warning>
-This command installs only the `0.1.21-beta.5` ASG client application. It does not necessarily install the matching MTK system software or BES firmware. After installing the APK, use the `0.1.21-beta.5` example app's OTA flow to install any remaining components and complete the matching glasses software release.
+This command installs only the ASG client selected for `{{release-version}}`. It does not necessarily install the matching MTK system software or BES firmware. After installing the APK, use an app built with SDK `{{release-version}}` to install any remaining components and complete the matching glasses software release.
 </Warning>
 
 ## Add The OTA Requirement To Your App
 
-Every app using the Bluetooth SDK must manage the glasses software release that matches its SDK dependency:
+Every app using the Bluetooth SDK must install the glasses software matching its
+SDK release before enabling version-dependent features. For React Native apps,
+Mentra Engine owns the complete Wi-Fi and hotspot OTA sequence, including
+artifact verification, APK/MTK/BES ordering, restarts, retries, and final
+version verification.
 
-1. Connect to Mentra Live and ensure the glasses have Wi-Fi access.
-2. Call `checkForOtaUpdate()`.
-3. If an update is available, explain that the matching glasses software is required and ask the user for confirmation.
-4. Call `startOtaUpdate()` after the user accepts.
-5. Display progress from `ota_status` until the update reaches `complete` or `failed`.
-6. Avoid sending unrelated SDK commands while the update is running.
-7. Do not enable features that require the matching glasses software until the OTA check succeeds with no update remaining.
+Do not reproduce that sequencing with `checkForOtaUpdate()`,
+`startOtaUpdate()`, and `ota_status` listeners in React Native application code.
 
-See [OTA Updates in the API Reference](/bluetooth-sdk/api-reference#ota-updates) for the Android, iOS, and React Native APIs and events.
+<Warning>
+`wifi_required` is only a legacy bootstrap state. Mentra Live software earlier
+than 3.1 does not support hotspot OTA. Factory-stock glasses are delivered in
+this state, so their first update must use a Wi-Fi network configured on the
+glasses. After that update installs Mentra Live software 3.1 or newer,
+subsequent updates can use hotspot OTA and the flow should not require glasses
+Wi-Fi.
+</Warning>
+
+## Use The Exact Mentra App OTA Pages
+
+This is the simplest and safest integration. `MentraLiveOtaFlow` provides the
+same full-page OTA screens and behavior as the Mentra App.
+
+Install matching Mentra Engine and Bluetooth SDK releases:
+
+```bash
+bun add @mentra/engine@VERSION @mentra/bluetooth-sdk@VERSION
+```
+
+Render the flow after Mentra Live connects. Your app owns only the surrounding
+navigation and its Wi-Fi setup page:
+
+```tsx
+import {MentraLiveOtaFlow} from "@mentra/engine/ota"
+
+type MentraLiveUpdateProps = {
+  onDone: () => void
+  onSetupWifi: () => void
+}
+
+export function MentraLiveUpdate({onDone, onSetupWifi}: MentraLiveUpdateProps) {
+  return <MentraLiveOtaFlow onFinished={onDone} onOpenWifiSetup={onSetupWifi} />
+}
+```
+
+The component initializes only the Engine projections required by OTA. If your
+app already called `engine.start()`, pass `initializeRuntime={false}`.
+
+The flow checks again after every install pass. It does not finish until the
+ASG client, MTK system software, and BES firmware all match the release
+manifest. On Android, hotspot OTA requires Android 13 or newer. On iOS, it uses
+the app's existing Bluetooth background execution while Mentra Live remains
+connected; it does not add a second keep-alive mechanism.
+
+## Customize The OTA Pages
+
+Use `useMentraLiveOta` when your app needs different components, layout, colors,
+or navigation. The hook exposes semantic screens and idempotent actions while
+the same Engine coordinator retains all OTA sequencing:
+
+```tsx
+import {Button, Text, View} from "react-native"
+import {useMentraLiveOta} from "@mentra/engine/ota"
+
+type CustomMentraLiveUpdateProps = {
+  onDone: () => void
+  onSetupWifi: () => void
+}
+
+export function CustomMentraLiveUpdate({onDone, onSetupWifi}: CustomMentraLiveUpdateProps) {
+  const ota = useMentraLiveOta({
+    onFinished: onDone,
+    onOpenWifiSetup: onSetupWifi,
+  })
+  const {state} = ota
+
+  if (state.screen === "checking" || state.screen === "initializing") {
+    return <Text>Checking for updates…</Text>
+  }
+  if (state.screen === "finishing") {
+    return <Text>Finishing your update…</Text>
+  }
+  if (state.screen === "update_available") {
+    return (
+      <View>
+        {state.releaseTransition && (
+          <Text>
+            {state.releaseTransition.fromVersion ?? "Current version unknown"} → {state.releaseTransition.toVersion}
+          </Text>
+        )}
+        <Button title="Update now" onPress={ota.install} />
+      </View>
+    )
+  }
+  if (state.screen === "wifi_required") {
+    return <Button title="Set up Wi-Fi" onPress={ota.openWifiSetup} />
+  }
+  if (state.screen === "failed") {
+    return (
+      <View>
+        <Text>{state.error?.message}</Text>
+        {state.canRetry && <Button title="Retry" onPress={ota.retryInstall} />}
+      </View>
+    )
+  }
+  if (state.screen === "up_to_date" || state.screen === "complete") {
+    return (
+      <View>
+        {state.releaseTransition && <Text>Updated to {state.releaseTransition.toVersion}</Text>}
+        <Button title={state.completedUpdate || state.screen === "complete" ? "Done" : "Continue"} onPress={ota.finish} />
+      </View>
+    )
+  }
+
+  return <Text>{state.progress == null ? "Preparing update…" : `${state.progress}%`}</Text>
+}
+```
+
+`state.releaseTransition` is present when the checked OTA manifest belongs to a
+coordinated Mentra release. `toVersion` is that exact release identity. The
+current `fromVersion` is the ASG client version reported by the glasses and may
+be `null` on older installations, so custom pages should keep an honest unknown
+fallback. When glasses report their coordinated release identity directly,
+Engine can replace this one source-version lookup without changing customer UI
+code. Engine captures the pair before installation and retains it through
+restarts and final verification.
+
+The `finishing` screen means the approved session is checking for additional
+required passes. Do not render terminal success or release notes until the
+controller reaches `up_to_date`.
+
+Use `state.completedUpdate` to distinguish a terminal update session from a
+standalone check that was already up to date. Release metadata is optional, so
+do not infer completion from `state.releaseTransition`.
+
+Start from the Starter Kit's
+[custom OTA presentation folder](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/tree/main/examples/react-native/src/ota)
+and change its presentation components and styles. Call only the controller's
+actions. Do not copy or modify update ordering, hotspot setup, watchdogs, or
+restart recovery, and do not import `@mentra/bluetooth-sdk/internal`, Engine
+stores, or Engine services.
+
+## Native Android And iOS Apps
+
+Mentra Engine's complete controller is currently a React Native integration.
+Native Android and iOS apps use the lower-level OTA commands and events in the
+[API Reference](/bluetooth-sdk/api-reference#ota-updates) and must preserve the
+documented OTA contract, including repeated checks across multi-component
+updates and restart recovery.
+
+Mentra Live rejects an OTA start when its known battery level is below 5% and
+reports `battery_low`. An unknown glasses battery remains fail-open. Keep an
+app-level battery check as the user-facing policy; the glasses check is defense
+in depth.

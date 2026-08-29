@@ -12,6 +12,7 @@ import android.util.Log;
 import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
 import com.mentra.asg_client.io.hardware.core.BaseHardwareManager;
 import com.mentra.asg_client.io.hardware.interfaces.Capability;
+import java.io.File;
 import java.io.IOException;
 import java.util.EnumSet;
 import java.util.HashMap;
@@ -141,12 +142,63 @@ public class StandardHardwareManager extends BaseHardwareManager {
     }
 
     @Override
+    public boolean playAudioFile(File file) {
+        if (file == null || !file.isFile()) {
+            Log.w(TAG, "playAudioFile skipped: missing file " + file);
+            return false;
+        }
+        stopAudioPlayback();
+        mediaPlayer = new MediaPlayer();
+        try {
+            mediaPlayer.setDataSource(file.getAbsolutePath());
+            mediaPlayer.setOnCompletionListener(
+                    mp -> {
+                        mp.release();
+                        mediaPlayer = null;
+                    });
+            mediaPlayer.setOnErrorListener(
+                    (mp, what, extra) -> {
+                        Log.e(
+                                TAG,
+                                "Error playing file "
+                                        + file.getAbsolutePath()
+                                        + " ("
+                                        + what
+                                        + "/"
+                                        + extra
+                                        + ")");
+                        mp.release();
+                        mediaPlayer = null;
+                        return true;
+                    });
+            mediaPlayer.prepare();
+            mediaPlayer.start();
+            return true;
+        } catch (IOException e) {
+            Log.e(TAG, "Unable to play file " + file.getAbsolutePath(), e);
+            mediaPlayer.release();
+            mediaPlayer = null;
+            return false;
+        }
+    }
+
+    @Override
     public void playAudioAssetOverlay(String assetName) {
-        playAudioAssetOverlayTracked(assetName);
+        playAudioAssetOverlayTracked(assetName, 1.0f);
+    }
+
+    @Override
+    public void playAudioAssetOverlay(String assetName, float playbackVolume) {
+        playAudioAssetOverlayTracked(assetName, playbackVolume);
     }
 
     @Override
     public long playAudioAssetOverlayTracked(String assetName) {
+        return playAudioAssetOverlayTracked(assetName, 1.0f);
+    }
+
+    @Override
+    public long playAudioAssetOverlayTracked(String assetName, float playbackVolume) {
         long token = nextOverlayToken.getAndIncrement();
         MediaPlayer overlayPlayer = new MediaPlayer();
         synchronized (overlayPlayers) {
@@ -157,6 +209,7 @@ public class StandardHardwareManager extends BaseHardwareManager {
             overlayPlayer.setDataSource(
                     afd.getFileDescriptor(), afd.getStartOffset(), afd.getLength());
             afd.close();
+            overlayPlayer.setVolume(playbackVolume, playbackVolume);
             overlayPlayer.setOnCompletionListener(mp -> releaseOverlayPlayer(token, mp));
             overlayPlayer.setOnErrorListener(
                     (mp, what, extra) -> {

@@ -1,6 +1,6 @@
 import Foundation
 
-/// BLE Wire Protocol v2 JSON compaction: short keys, enum ints, omitted defaults, config diff.
+/// BLE Wire Protocol v2 JSON compaction with lossless fallback for ambiguous payloads.
 enum BleJsonCompact {
     static let keyResolvedConfigHash = "rch"
 
@@ -64,8 +64,6 @@ enum BleJsonCompact {
     }()
 
     private static var sessionConnectEpochMs: Int64 = 0
-    private static var resolvedConfigSent = false
-    private static var currentSessionResolvedConfigHash: String?
     private static var resolvedConfigByHash: [String: [String: Any]] = [:]
 
     private static let highRoiMessageTypes: Set<String> = [
@@ -103,8 +101,6 @@ enum BleJsonCompact {
 
     static func resetSession() {
         sessionConnectEpochMs = 0
-        resolvedConfigSent = false
-        currentSessionResolvedConfigHash = nil
         resolvedConfigByHash.removeAll()
     }
 
@@ -125,7 +121,7 @@ enum BleJsonCompact {
             return json
         }
         let messageType = extractMessageType(json)
-        if !shouldCompactOutbound(messageType) {
+        if !shouldCompactOutbound(messageType) || !canCompactLosslessly(json, topLevel: true) {
             return json
         }
         return compactObject(json, topLevel: true)
@@ -170,48 +166,81 @@ enum BleJsonCompact {
         return decode(json)
     }
 
+    /// Compact JSON reserves short keys and enum integers. Fall back to verbose JSON whenever an
+    /// otherwise valid future payload already uses one of those wire representations.
+    private static func canCompactLosslessly(
+        _ input: [String: Any],
+        topLevel: Bool
+    ) -> Bool {
+        let messageType = stringValue(input["type"]) ?? stringValue(input["t"]) ?? ""
+        for (key, value) in input {
+            if shortToLong[key] != nil
+                || (topLevel && key == keyResolvedConfigHash)
+                || isAmbiguousEnumValue(key: key, value: value, messageType: messageType)
+            {
+                return false
+            }
+            if let nested = value as? [String: Any],
+               !canCompactLosslessly(nested, topLevel: false)
+            {
+                return false
+            }
+            if let array = value as? [Any], !canCompactArrayLosslessly(array) {
+                return false
+            }
+        }
+        return true
+    }
+
+    private static func canCompactArrayLosslessly(_ array: [Any]) -> Bool {
+        for value in array {
+            if let nested = value as? [String: Any],
+               !canCompactLosslessly(nested, topLevel: false)
+            {
+                return false
+            }
+            if let nestedArray = value as? [Any],
+               !canCompactArrayLosslessly(nestedArray)
+            {
+                return false
+            }
+        }
+        return true
+    }
+
+    private static func isAmbiguousEnumValue(
+        key: String,
+        value: Any,
+        messageType: String
+    ) -> Bool {
+        guard let number = value as? NSNumber,
+              CFGetTypeID(number) != CFBooleanGetTypeID()
+        else {
+            return false
+        }
+        return key == "kind"
+            || key == "source"
+            || key == "aeStateName"
+            || (key == "status" && messageType == "photo_status")
+    }
+
     private static func compactObject(_ input: [String: Any], topLevel: Bool) -> [String: Any] {
         var output: [String: Any] = [:]
         let messageType = stringValue(input["type"]) ?? stringValue(input["t"]) ?? ""
-        var skipResolvedConfig = false
-
-        if topLevel, shouldDiffResolvedConfig(messageType),
-           let resolvedConfig = input["resolvedConfig"] as? [String: Any]
-        {
-            let hash = hashConfig(resolvedConfig)
-            resolvedConfigByHash[hash] = resolvedConfig
-            if resolvedConfigSent, hash == currentSessionResolvedConfigHash {
-                output[keyResolvedConfigHash] = hash
-                skipResolvedConfig = true
-            } else {
-                currentSessionResolvedConfigHash = hash
-                resolvedConfigSent = true
-            }
-        }
 
         for (key, value) in input {
-            if skipResolvedConfig, key == "resolvedConfig" { continue }
-            let shortKey = longToShort[key] ?? key
-            guard let compacted = compactValue(longKey: key, value: value, messageType: messageType),
-                  !shouldOmit(compacted)
-            else {
-                continue
+            if let compacted = compactValue(longKey: key, value: value, messageType: messageType) {
+                // Legacy peers treat top-level `ts` as a session-relative delta. Preserve the
+                // verbose key so an absolute timestamp remains absolute across mixed versions.
+                let wireKey = topLevel && key == "timestamp" ? key : (longToShort[key] ?? key)
+                output[wireKey] = compacted
             }
-            output[shortKey] = compacted
-        }
-
-        if topLevel {
-            compactTimestamp(&output)
         }
         return output
     }
 
-    private static func shouldDiffResolvedConfig(_ messageType: String) -> Bool {
-        messageType == "photo_status" || messageType == "stream_status"
-    }
-
     private static func compactValue(longKey: String, value: Any, messageType: String) -> Any? {
-        if value is NSNull { return nil }
+        if value is NSNull { return NSNull() }
         if let nested = value as? [String: Any] {
             return compactObject(nested, topLevel: false)
         }
@@ -239,35 +268,6 @@ enum BleJsonCompact {
         return value
     }
 
-    private static func shouldOmit(_ value: Any) -> Bool {
-        if value is NSNull { return true }
-        if let boolValue = value as? Bool, !boolValue { return true }
-        if let dict = value as? [String: Any], dict.isEmpty { return true }
-        if let array = value as? [Any], array.isEmpty { return true }
-        return false
-    }
-
-    private static func compactTimestamp(_ output: inout [String: Any]) {
-        let tsKey: String?
-        if output["timestamp"] != nil {
-            tsKey = "timestamp"
-        } else if output["ts"] != nil {
-            tsKey = "ts"
-        } else {
-            tsKey = nil
-        }
-        guard let key = tsKey else { return }
-        let absolute = int64Value(output[key]) ?? 0
-        guard absolute > 0 else { return }
-        if sessionConnectEpochMs <= 0 {
-            sessionConnectEpochMs = absolute
-        }
-        output["ts"] = absolute - sessionConnectEpochMs
-        if key != "ts" {
-            output.removeValue(forKey: key)
-        }
-    }
-
     private static func expandObject(_ input: [String: Any], topLevel: Bool) -> [String: Any] {
         var output: [String: Any] = [:]
         let messageType = stringValue(input["type"]) ?? stringValue(input["t"]) ?? ""
@@ -278,10 +278,9 @@ enum BleJsonCompact {
                 continue
             }
             let longKey = shortToLong[key] ?? key
-            guard let expanded = expandValue(longKey: longKey, value: value, messageType: messageType) else {
-                continue
+            if let expanded = expandValue(longKey: longKey, value: value, messageType: messageType) {
+                output[longKey] = expanded
             }
-            output[longKey] = expanded
         }
 
         if topLevel {
@@ -296,8 +295,6 @@ enum BleJsonCompact {
         guard let resolvedConfig = output["resolvedConfig"] as? [String: Any] else { return }
         let hash = hashConfig(resolvedConfig)
         resolvedConfigByHash[hash] = resolvedConfig
-        currentSessionResolvedConfigHash = hash
-        resolvedConfigSent = true
     }
 
     private static func expandResolvedConfigHash(_ output: inout [String: Any]) {
@@ -312,7 +309,7 @@ enum BleJsonCompact {
     }
 
     private static func expandValue(longKey: String, value: Any, messageType: String) -> Any? {
-        if value is NSNull { return nil }
+        if value is NSNull { return NSNull() }
         if let nested = value as? [String: Any] {
             return expandObject(nested, topLevel: false)
         }
@@ -340,7 +337,12 @@ enum BleJsonCompact {
     }
 
     private static func expandTimestamp(_ output: inout [String: Any]) {
-        guard output["timestamp"] == nil, let delta = int64Value(output["ts"]) else { return }
+        guard output["timestamp"] == nil, let timestamp = output["ts"] else { return }
+        guard let delta = int64Value(timestamp) else {
+            output["timestamp"] = timestamp
+            output.removeValue(forKey: "ts")
+            return
+        }
         let absolute = sessionConnectEpochMs > 0 ? sessionConnectEpochMs + delta : delta
         output["timestamp"] = absolute
         output.removeValue(forKey: "ts")

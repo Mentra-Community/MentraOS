@@ -15,6 +15,8 @@
 export const CAPTION_TIMEOUT_OPTIONS_SECONDS = [3, 5, 10, 30, 40] as const
 export const DEFAULT_CAPTION_TIMEOUT_SECONDS = 40
 
+export type CaptionPosition = "top" | "bottom"
+
 /** Caption settings — persisted in storage, mirrored to the UI. */
 export interface CaptionSettings {
   language: string
@@ -22,8 +24,14 @@ export interface CaptionSettings {
   useOfflineStt: boolean
   displayLines: number
   displayWidth: number
+  captionPosition: CaptionPosition
   wordBreaking: boolean
   captionTimeoutSeconds: number
+}
+
+/** Display capabilities needed by the settings UI. */
+export interface CaptionsDisplayCapabilities {
+  canPosition: boolean
 }
 
 /** A single transcript entry shown in the UI's transcript list. */
@@ -69,4 +77,5 @@ export interface CaptionsSnapshot {
   transcripts: Transcript[]
   displayPreview: DisplayPreview | null
   cloudStatus: CloudClientStatus
+  displayCapabilities: CaptionsDisplayCapabilities
 }

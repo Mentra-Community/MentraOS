@@ -68,6 +68,7 @@ protocol SGCManager {
     func stopStream()
     func sendStreamKeepAlive(_ message: [String: Any])
     func startVideoRecording(requestId: String, save: Bool, sound: Bool)
+    func queryVideoRecordingStatus(requestId: String)
     /// Start video recording with optional per-recording resolution/fps. A width,
     /// height, or fps of 0 means "use the device's saved button-video default".
     /// Defaulted in an extension to delegate to the basic recording path; devices
@@ -189,6 +190,7 @@ protocol SGCManager {
     func sendWifiCredentials(_ ssid: String, _ password: String)
     func forgetWifiNetwork(_ ssid: String)
     func sendHotspotState(_ enabled: Bool)
+    func sendWifiAdbState(_ enabled: Bool)
     func sendOtaStart(otaVersionUrl: String?)
     func sendOtaQueryStatus()
     func sendSetSystemTime(_ timestampMs: Int64)
@@ -327,6 +329,10 @@ extension SGCManager {
         startVideoRecording(requestId: requestId, save: save, sound: sound)
     }
 
+    func queryVideoRecordingStatus(requestId _: String) {
+        Bridge.log("SGC: queryVideoRecordingStatus operation not supported")
+    }
+
     func stopVideoRecording(requestId: String, webhookUrl _: String?, authToken _: String?) {
         stopVideoRecording(requestId: requestId)
     }
@@ -376,6 +382,11 @@ extension SGCManager {
     /// Default no-op; Mentra Live and G2 override to handle phone-detected clock skew.
     func sendSetSystemTime(_: Int64) {
         Bridge.log("SGC: sendSetSystemTime not supported")
+    }
+
+    /// Default no-op; Mentra Live overrides to enable/disable Wi-Fi ADB.
+    func sendWifiAdbState(_: Bool) {
+        Bridge.log("SGC: sendWifiAdbState not supported")
     }
 
     // MARK: - Default DeviceStore-backed property implementations

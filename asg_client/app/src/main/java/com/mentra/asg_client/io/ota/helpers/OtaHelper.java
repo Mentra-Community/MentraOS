@@ -464,6 +464,15 @@ public class OtaHelper {
         }
         Log.i(TAG, "📱 Starting OTA from phone request");
 
+        // Reject before acknowledging or acquiring OTA admission. This preserves the former
+        // standalone updater's battery defense in depth while leaving the app free to apply a
+        // stricter product-level threshold. Unknown battery state remains fail-open.
+        if (!isBatterySufficientForUpdates()) {
+            Log.w(TAG, "📱 Refusing ota_start because glasses battery is below the safe threshold");
+            sendOtaStartRejection("battery_low");
+            return;
+        }
+
         // Immediately acknowledge receipt so the phone cancels its retry timer.
         sendOtaStartAck();
         String resolvedVersionJsonUrl = requireVersionJsonUrl(requestedVersionJsonUrl);
@@ -1030,7 +1039,13 @@ public class OtaHelper {
                 // after the restart via sendCompletionToPhone(), or naturally from
                 // the next step for multi-step sessions.
                 if (sessionManager != null) {
-                    sessionManager.setRestarting();
+                    if (!sessionManager.setRestarting()) {
+                        sessionManager.setFailed("apk_restart_guard_not_persisted");
+                        sendProgressToPhone(
+                                "install", 0, 0, 0, "FAILED", "apk_restart_guard_not_persisted");
+                        isUpdating = false;
+                        return false;
+                    }
                 }
 
                 boolean installKicked = installApk(context, localPath);
@@ -1986,7 +2001,7 @@ public class OtaHelper {
             return true;
         }
 
-        // Block updates if battery < 5% and not charging
+        // Block updates if battery < 5%. The app may enforce a higher threshold.
         if (glassesBatteryLevel < 5) {
             Log.w(TAG, "🚨 Battery insufficient for OTA updates: " + glassesBatteryLevel +
                   "% - blocking updates");
@@ -2023,8 +2038,8 @@ public class OtaHelper {
      * MTK requires sequential updates - must find patch starting from current version.
      * @param patches Array of patch objects with start_firmware, end_firmware, url
      * @param currentVersion Current MTK firmware version as reported by
-     *     {@code ro.custom.ota.version}, e.g. "MentraLive_20260626"; both sides are
-     *     normalized before comparison, so a bare "20260626" would also match
+     *     {@code ro.custom.ota.version}, e.g. "MentraLive_20260820.1"; both sides are
+     *     normalized before comparison, so a bare "20260820.1" would also match
      * @return Matching patch object, or null if no match or version unknown
      */
     private JSONObject findMatchingMtkPatch(JSONArray patches, String currentVersion) {
@@ -2053,9 +2068,9 @@ public class OtaHelper {
     }
 
     /**
-     * Reduce an MTK version string to its bare date so manifest entries and the device
+     * Reduce an MTK version string to its version suffix so manifest entries and the device
      * property match regardless of any "MentraLive_"-style prefix. Both normally carry the
-     * prefix; this is defensive so a bare-date value on either side still matches.
+     * prefix; this is defensive so a bare suffix on either side still matches.
      */
     private String normalizeMtkFirmwareVersion(String version) {
         if (version == null) {
@@ -3016,6 +3031,30 @@ public class OtaHelper {
         JSONObject sessionState = buildOtaStatusForPhone();
         if (sessionState != null) {
             phoneConnectionProvider.sendOtaStatus(sessionState);
+        }
+    }
+
+    /**
+     * Report a command rejected before OTA admission without reading or mutating an older session.
+     */
+    private void sendOtaStartRejection(String errorCode) {
+        if (phoneConnectionProvider == null || !isPhoneConnected()) return;
+        try {
+            JSONObject status = new JSONObject();
+            status.put("type", "ota_status");
+            status.put("session_id", "");
+            status.put("total_steps", 1);
+            status.put("current_step", 1);
+            status.put("step_type", UPDATE_TYPE_APK);
+            status.put("phase", "download");
+            status.put("step_percent", 0);
+            status.put("overall_percent", 0);
+            status.put("status", "failed");
+            status.put("error_message", errorCode);
+            status.put("glasses_time_ms", System.currentTimeMillis());
+            phoneConnectionProvider.sendOtaStatus(status);
+        } catch (JSONException e) {
+            Log.e(TAG, "Failed to send ota_start rejection", e);
         }
     }
 

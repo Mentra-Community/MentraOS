@@ -39,6 +39,7 @@ public class AsgSettings {
     /** Legacy coupled button key; migrated once into independent button ZSL/MFNR keys. */
     private static final String KEY_BUTTON_PHOTO_ZSL_MFNR = "button_photo_zsl_mfnr";
     private static final String KEY_HDR_BURST_ENABLED = "hdr_burst_enabled";
+    private static final String KEY_WIFI_ADB_ENABLED = "wifi_adb_enabled";
     private static final String KEY_MCU_FIRMWARE_VERSION = "mcu_firmware_version";
     private static final String KEY_BES_BAUD_SWITCH_VERSION = "bes_baud_switch_version";
     private static final String KEY_CAMERA_FOV = "camera_fov";
@@ -515,6 +516,22 @@ public class AsgSettings {
     public void setHdrBurstEnabled(boolean enabled) {
         Log.d(TAG, "Setting HDR burst enabled to: " + enabled);
         prefs.edit().putBoolean(KEY_HDR_BURST_ENABLED, enabled).commit();
+    }
+
+    /**
+     * Whether Wi-Fi ADB (wireless debugging) should be enabled.
+     * Defaults to false for security (OS-1627).
+     */
+    public boolean isWifiAdbEnabled() {
+        return prefs.getBoolean(KEY_WIFI_ADB_ENABLED, false);
+    }
+
+    /**
+     * Persist Wi-Fi ADB preference and apply on next boot / command.
+     */
+    public void setWifiAdbEnabled(boolean enabled) {
+        Log.d(TAG, "Setting Wi-Fi ADB enabled to: " + enabled);
+        prefs.edit().putBoolean(KEY_WIFI_ADB_ENABLED, enabled).commit();
     }
 
     /**

@@ -1,5 +1,5 @@
 /** Shared OTA progress watchdog timings (see progress-legacy.tsx / progress.tsx). */
-import type {OtaProgress, OtaStatus} from "@mentra/bluetooth-sdk/internal"
+import type {OtaProgress, OtaStatus} from "@mentra/bluetooth-sdk"
 
 /**
  * First glasses `build_number` (ASG `versionCode`) that uses `progress.tsx` with unified
@@ -32,6 +32,8 @@ export const PING_INTERVAL_MS = 10_000
 export const QUERY_REPLY_TIMEOUT_MS = 6000
 /** 15s lockout on the Continue button after a BES restart, to prevent an accidental tap. */
 export const BES_CONTINUE_LOCKOUT_MS = 15_000
+/** Fail closed if a BES reboot never reconnects; normal restarts complete in a fraction of this window. */
+export const BES_RESTART_TIMEOUT_MS = 120_000
 
 // --- Legacy old-build (< MINIMUM_OTA_STATUS_BUILD) OTA policy (WP 8C) ---
 //
@@ -51,6 +53,7 @@ export const LEGACY_MTK_INSTALL_TIMEOUT_MS = MTK_INSTALL_TIMEOUT_MS + LEGACY_EXT
 export const LEGACY_GLOBAL_OTA_TIMEOUT_MS = GLOBAL_OTA_TIMEOUT_MS + LEGACY_EXTRA_TIMEOUT_MS
 export const LEGACY_PING_INTERVAL_MS = PING_INTERVAL_MS + LEGACY_EXTRA_TIMEOUT_MS
 export const LEGACY_BES_CONTINUE_LOCKOUT_MS = BES_CONTINUE_LOCKOUT_MS + LEGACY_EXTRA_TIMEOUT_MS
+export const LEGACY_BES_RESTART_TIMEOUT_MS = BES_RESTART_TIMEOUT_MS + LEGACY_EXTRA_TIMEOUT_MS
 /**
  * After a legacy apk `install FINISHED` observed in-flight, the legacy screen held the
  * completed state for 12s (+20s pad) so the ASG process restart settles (and fresh
@@ -122,5 +125,12 @@ export function selectOtaProtocolProfile(
 export const OtaProgressMessages = {
   stalledOrStuck: "Update may have failed. Ensure glasses have internet access and try again.",
   globalTimeout: "Update took too long. Please try again.",
+  restartTimeout: "Glasses did not finish restarting. Restart them before trying the update again.",
   sendOtaStartFailed: "Failed to communicate with glasses.",
+  hotspotArtifactDownloadFailed: "Could not download the update to your phone. Check phone internet and try again.",
+  hotspotArtifactVerifyFailed: "The update package could not be verified. Please try again later.",
+  hotspotWifiPermissionDenied: "Allow nearby devices access so the phone can connect to the glasses hotspot.",
+  hotspotStartFailed: "Could not start the glasses hotspot. Please try again.",
+  hotspotJoinFailed: "Could not connect the phone to the glasses hotspot. Please try again.",
+  hotspotServerFailed: "Could not make the update available to the glasses. Please try again.",
 } as const

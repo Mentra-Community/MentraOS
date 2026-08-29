@@ -7,24 +7,38 @@
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import sttModelManager from "../services/STTModelManager"
 import ttsModelManager from "../services/TTSModelManager"
-import offlineSpeechModelService from "../services/OfflineSpeechModelService"
+import offlineSpeechModelService, {
+  type DownloadStatus as OfflineModelDownloadStatus,
+} from "../services/OfflineSpeechModelService"
+import type {
+  DownloadProgress as SttDownloadProgress,
+  ExtractionProgress as SttExtractionProgress,
+  LanguageConfig as SttLanguageConfig,
+  LanguageInfo as SttLanguageInfo,
+} from "../services/STTModelManager"
 
 export const speech = {
   /** Restart the glasses' on-device transcriber (e.g. after switching STT language). */
   restartTranscriber: (): Promise<void> => BluetoothSdk.restartTranscriber(),
   stt: {
     currentLanguage: () => sttModelManager.getCurrentLanguage(),
-    languages: () => sttModelManager.getAvailableLanguages(),
-    languageInfo: () => sttModelManager.getAllLanguageInfo(),
-    download: (...args: Parameters<typeof sttModelManager.downloadModel>) => sttModelManager.downloadModel(...args),
+    languages: (): SttLanguageConfig[] => sttModelManager.getAvailableLanguages(),
+    languageInfo: (): Promise<SttLanguageInfo[]> => sttModelManager.getAllLanguageInfo(),
+    download: (
+      ...args: [
+        code?: string,
+        onProgress?: (progress: SttDownloadProgress) => void,
+        onExtractionProgress?: (progress: SttExtractionProgress) => void,
+      ]
+    ): Promise<void> => sttModelManager.downloadModel(...args),
     activate: (code: string) => sttModelManager.setCurrentLanguage(code),
     cancelDownload: () => sttModelManager.cancelDownload(),
     deleteModel: (...args: Parameters<typeof sttModelManager.deleteModel>) => sttModelManager.deleteModel(...args),
     /** Current auto-download status of the offline STT model. */
-    status: () => offlineSpeechModelService.getStatus(),
+    status: (): OfflineModelDownloadStatus | null => offlineSpeechModelService.getStatus(),
     /** Subscribe to auto-download status changes; returns an unsubscribe. */
-    onStatusChanged: (...args: Parameters<typeof offlineSpeechModelService.subscribe>) =>
-      offlineSpeechModelService.subscribe(...args),
+    onStatusChanged: (listener: (status: OfflineModelDownloadStatus | null) => void): (() => void) =>
+      offlineSpeechModelService.subscribe(listener),
   },
   tts: {
     currentLanguage: () => ttsModelManager.getCurrentLanguage(),

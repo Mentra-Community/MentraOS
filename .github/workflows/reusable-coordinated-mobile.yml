@@ -1,0 +1,950 @@
+name: Reusable Coordinated MentraOS Mobile Release
+
+on:
+  workflow_call:
+    inputs:
+      source_commit:
+        required: true
+        type: string
+      release_plan_artifact:
+        required: true
+        type: string
+      release_id:
+        required: false
+        type: string
+      artifact_container_tag:
+        description: Optional private container tag for attempt-scoped candidate artifacts
+        required: false
+        type: string
+      artifact_container_name:
+        description: Optional private container name paired with artifact_container_tag
+        required: false
+        type: string
+      ota_manifest_url:
+        required: true
+        type: string
+      ota_manifest_sha256:
+        required: true
+        type: string
+      backend_environment:
+        required: true
+        type: string
+      play_track:
+        required: true
+        type: string
+      testflight_group:
+        required: true
+        type: string
+      dry_run:
+        required: false
+        default: false
+        type: boolean
+      compatibility_lab:
+        description: Build Mobile N for non-promotable staging compatibility distribution
+        required: false
+        default: false
+        type: boolean
+    secrets:
+      UPLOAD_KEYSTORE_B64:
+        required: false
+      MENTRAOS_UPLOAD_STORE_PASSWORD:
+        required: false
+      MENTRAOS_UPLOAD_KEY_PASSWORD:
+        required: false
+      MENTRAOS_UPLOAD_KEY_ALIAS:
+        required: false
+      GOOGLE_PLAY_KEY_JSON:
+        required: false
+      ASC_API_KEY_P8_B64:
+        required: false
+      ASC_API_KEY_ID:
+        required: false
+      ASC_API_ISSUER_ID:
+        required: false
+      MATCH_PASSWORD:
+        required: false
+      MATCH_GIT_BASIC_AUTHORIZATION:
+        required: false
+      MAPBOX_PUBLIC_TOKEN:
+        required: false
+      MAPBOX_DOWNLOADS_TOKEN:
+        required: false
+      DOPPLER_TOKEN_MOBILE_DEV:
+        required: false
+      DOPPLER_TOKEN_MOBILE_PRD:
+        required: false
+      SENTRY_AUTH_TOKEN:
+        required: false
+      EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID:
+        required: false
+      EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY:
+        required: false
+    outputs:
+      result_artifact:
+        value: ${{ jobs.result.outputs.result_artifact }}
+      release_tag:
+        value: ${{ jobs.prepare.outputs.release_tag }}
+      android_result:
+        value: ${{ jobs.status.outputs.android_result }}
+      ios_result:
+        value: ${{ jobs.status.outputs.ios_result }}
+      apk_name:
+        value: ${{ jobs.status.outputs.apk_name }}
+      ipa_name:
+        value: ${{ jobs.status.outputs.ipa_name }}
+      asset_base_url:
+        value: ${{ jobs.status.outputs.asset_base_url }}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: coordinated-mobile-publication
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Prepare immutable mobile release
+    runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.release.outputs.release_tag }}
+      release_identity: ${{ steps.release.outputs.release_identity }}
+      release_set_id: ${{ steps.release.outputs.release_set_id }}
+      marketing_version: ${{ steps.release.outputs.marketing_version }}
+      build_number: ${{ steps.release.outputs.build_number }}
+      apk_name: ${{ steps.release.outputs.apk_name }}
+      aab_name: ${{ steps.release.outputs.aab_name }}
+      ipa_name: ${{ steps.release.outputs.ipa_name }}
+      asset_base_url: ${{ steps.release.outputs.asset_base_url }}
+      release_id: ${{ steps.container.outputs.release_id }}
+      android_assets_exist: ${{ steps.container.outputs.android_assets_exist }}
+      apk_asset_id: ${{ steps.container.outputs.apk_asset_id }}
+      aab_asset_id: ${{ steps.container.outputs.aab_asset_id }}
+      ios_asset_exists: ${{ steps.container.outputs.ios_asset_exists }}
+      ipa_asset_id: ${{ steps.container.outputs.ipa_asset_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_commit }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.release_plan_artifact }}
+          path: release-intent
+
+      - name: Validate plan and resolve artifact names
+        id: release
+        env:
+          ARTIFACT_CONTAINER_NAME: ${{ inputs.artifact_container_name }}
+          ARTIFACT_CONTAINER_TAG: ${{ inputs.artifact_container_tag }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        run: |
+          set -euo pipefail
+          source=$(jq -er .sourceCommit release-intent/release-plan.json)
+          [[ "$source" == "$SOURCE_COMMIT" ]]
+          identity=$(jq -er .releaseIdentity release-intent/release-plan.json)
+          release_set_id=$(jq -er .releaseSetId release-intent/release-plan.json)
+          plan_tag=$(jq -er .artifactContainerTag release-intent/release-plan.json)
+          if [[ -n "$ARTIFACT_CONTAINER_TAG" || -n "$ARTIFACT_CONTAINER_NAME" ]]; then
+            [[ -n "$ARTIFACT_CONTAINER_TAG" && -n "$ARTIFACT_CONTAINER_NAME" ]]
+            [[ "$(jq -er .channel release-intent/release-plan.json)" == "production" ]]
+            tag="$ARTIFACT_CONTAINER_TAG"
+          else
+            tag="$plan_tag"
+          fi
+          {
+            echo "release_tag=$tag"
+            echo "release_identity=$identity"
+            echo "release_set_id=$release_set_id"
+            echo "marketing_version=$(jq -er .native.marketingVersion release-intent/release-plan.json)"
+            echo "build_number=$(jq -er .native.buildNumber release-intent/release-plan.json)"
+            echo "apk_name=$(jq -er .artifactNames.androidApp release-intent/release-plan.json)"
+            echo "aab_name=$(jq -er .artifactNames.androidStoreApp release-intent/release-plan.json)"
+            echo "ipa_name=$(jq -er .artifactNames.iosApp release-intent/release-plan.json)"
+            echo "asset_base_url=https://github.com/${GITHUB_REPOSITORY}/releases/download/$tag"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Verify the selected OTA manifest is live and exact
+        if: inputs.dry_run != true
+        env:
+          EXPECTED_SHA256: ${{ inputs.ota_manifest_sha256 }}
+          MANIFEST_URL: ${{ inputs.ota_manifest_url }}
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location "$MANIFEST_URL" -o /tmp/coordinated-mobile-ota.json
+          actual=$(sha256sum /tmp/coordinated-mobile-ota.json | awk '{print $1}')
+          [[ "$actual" == "$EXPECTED_SHA256" ]]
+          .github/scripts/validate-asg-ota-manifest.sh /tmp/coordinated-mobile-ota.json --check-apk
+
+      - name: Verify and inspect the centrally allocated release container
+        id: container
+        if: inputs.dry_run != true && inputs.compatibility_lab != true
+        env:
+          ARTIFACT_CONTAINER_NAME: ${{ inputs.artifact_container_name }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ inputs.release_id }}
+        run: |
+          set -euo pipefail
+          tag="${{ steps.release.outputs.release_tag }}"
+          test -n "$RELEASE_ID"
+          release=$(gh api "repos/${GITHUB_REPOSITORY}/releases/$RELEASE_ID")
+          [[ "$(jq -r .tag_name <<< "$release")" == "$tag" ]]
+          expected_name="$ARTIFACT_CONTAINER_NAME"
+          if [[ -z "$expected_name" ]]; then
+            expected_name=$(jq -er .artifactContainerName release-intent/release-plan.json)
+          fi
+          [[ "$(jq -r .name <<< "$release")" == "$expected_name" ]]
+          channel=$(jq -er .channel release-intent/release-plan.json)
+          if [[ "$channel" == "production" ]]; then
+            [[ "$(jq -r .prerelease <<< "$release")" == "false" ]]
+            if [[ "$(jq -r .draft <<< "$release")" == "true" ]]; then
+              [[ "$(jq -r .target_commitish <<< "$release")" == "${{ inputs.source_commit }}" ]]
+            else
+              git fetch --force origin "refs/tags/$tag:refs/tags/$tag"
+              [[ "$(git rev-parse "$tag^{commit}")" == "${{ inputs.source_commit }}" ]]
+            fi
+          else
+            [[ "$(jq -r .draft <<< "$release")" == "false" ]]
+            [[ "$(jq -r .prerelease <<< "$release")" == "true" ]]
+          fi
+
+          release_id="$RELEASE_ID"
+          assets=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases/$release_id/assets?per_page=100" | jq 'add')
+          asset_id() {
+            local name="$1"
+            local matches
+            matches=$(jq --arg name "$name" '[.[] | select(.name == $name)]' <<< "$assets")
+            [[ "$(jq 'length' <<< "$matches")" -le 1 ]] || {
+              echo "Release contains duplicate asset $name." >&2
+              exit 1
+            }
+            jq -r '.[0].id // empty' <<< "$matches"
+          }
+          apk_id=$(asset_id "${{ steps.release.outputs.apk_name }}")
+          aab_id=$(asset_id "${{ steps.release.outputs.aab_name }}")
+          ipa_id=$(asset_id "${{ steps.release.outputs.ipa_name }}")
+          android_assets_exist=false
+          if [[ -n "$apk_id" && -n "$aab_id" ]]; then
+            android_assets_exist=true
+          elif [[ -n "$apk_id" || -n "$aab_id" ]]; then
+            echo "Removing an interrupted Android asset pair before rebuilding it."
+            [[ -z "$apk_id" ]] || gh api --method DELETE "repos/${GITHUB_REPOSITORY}/releases/assets/$apk_id"
+            [[ -z "$aab_id" ]] || gh api --method DELETE "repos/${GITHUB_REPOSITORY}/releases/assets/$aab_id"
+            apk_id=""
+            aab_id=""
+          fi
+          {
+            echo "release_id=$release_id"
+            echo "android_assets_exist=$android_assets_exist"
+            echo "apk_asset_id=$apk_id"
+            echo "aab_asset_id=$aab_id"
+            echo "ios_asset_exists=$([[ -n "$ipa_id" ]] && echo true || echo false)"
+            echo "ipa_asset_id=$ipa_id"
+          } >> "$GITHUB_OUTPUT"
+
+  android:
+    name: Build and distribute coordinated Android app
+    needs: prepare
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 60
+    env:
+      EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY }}
+      EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_commit }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.release_plan_artifact }}
+          path: release-intent
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: temurin
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android build tools used for artifact verification
+        run: sdkmanager "build-tools;36.0.0"
+
+      - uses: ruby/setup-ruby@v1
+        if: inputs.dry_run != true
+        with:
+          ruby-version: "3.3"
+
+      - uses: oven-sh/setup-bun@v2
+        if: inputs.dry_run == true || needs.prepare.outputs.android_assets_exist != 'true'
+        with:
+          bun-version: 1.4.0
+
+      - name: Install exact workspace dependencies
+        if: inputs.dry_run == true || needs.prepare.outputs.android_assets_exist != 'true'
+        working-directory: mobile
+        run: bun install --frozen-lockfile
+
+      - name: Generate exact mobile environment and package metadata
+        if: inputs.dry_run == true || needs.prepare.outputs.android_assets_exist != 'true'
+        env:
+          BACKEND_ENVIRONMENT: ${{ inputs.backend_environment }}
+          DOPPLER_TOKEN_MOBILE_DEV: ${{ secrets.DOPPLER_TOKEN_MOBILE_DEV }}
+          DOPPLER_TOKEN_MOBILE_PRD: ${{ secrets.DOPPLER_TOKEN_MOBILE_PRD }}
+          MAPBOX_PUBLIC_TOKEN: ${{ secrets.MAPBOX_PUBLIC_TOKEN }}
+        run: |
+          set -euo pipefail
+          case "$BACKEND_ENVIRONMENT" in
+            dev) DOPPLER_TOKEN="$DOPPLER_TOKEN_MOBILE_DEV" ;;
+            # Staging has no separate mobile Doppler token. This token only
+            # reads the public Sentry DSN; checked-in staging URLs are rendered
+            # by prepare-mobile-release-env.mjs below.
+            staging) DOPPLER_TOKEN="$DOPPLER_TOKEN_MOBILE_PRD" ;;
+            prod) DOPPLER_TOKEN="$DOPPLER_TOKEN_MOBILE_PRD" ;;
+            *) echo "Unsupported mobile backend environment: $BACKEND_ENVIRONMENT" >&2; exit 1 ;;
+          esac
+          test -n "$DOPPLER_TOKEN"
+          test -n "$MAPBOX_PUBLIC_TOKEN"
+          response=$(curl --fail --silent --show-error --retry 3 -u "$DOPPLER_TOKEN:" \
+            "https://api.doppler.com/v3/configs/config/secret?name=EXPO_PUBLIC_SENTRY_DSN")
+          sentry_dsn=$(jq -er '.value.computed // .computed' <<< "$response")
+          echo "::add-mask::$sentry_dsn"
+          cp mobile/.env.example mobile/.env
+          node .github/scripts/prepare-mobile-release-env.mjs \
+            --plan release-intent/release-plan.json \
+            --env-file mobile/.env \
+            --backend-environment "${{ inputs.backend_environment }}" \
+            --ota-manifest-url "${{ inputs.ota_manifest_url }}" \
+            --mapbox-public-token "$MAPBOX_PUBLIC_TOKEN" \
+            --sentry-dsn "$sentry_dsn"
+          if [[ "${{ inputs.compatibility_lab }}" == "true" ]]; then
+            identity=$(jq -er .releaseIdentity release-intent/release-plan.json)
+            sed -i "s/^EXPO_PUBLIC_MENTRAOS_VERSION=.*/EXPO_PUBLIC_MENTRAOS_VERSION=${identity}-COMPATIBILITY-LAB-NOT-FOR-PRODUCTION/" mobile/.env
+          fi
+          node .github/scripts/stage-release-family.mjs --plan release-intent/release-plan.json
+          metadata=(
+            --family-base-version "${{ needs.prepare.outputs.marketing_version }}"
+            --release-identity "${{ needs.prepare.outputs.release_identity }}"
+            --release-set-id "${{ needs.prepare.outputs.release_set_id }}"
+            --source-commit "${{ inputs.source_commit }}"
+            --ota-manifest-url "${{ inputs.ota_manifest_url }}"
+            --ota-manifest-sha256 "${{ inputs.ota_manifest_sha256 }}"
+          )
+          node mobile/modules/bluetooth-sdk/scripts/write-release-metadata.mjs "${metadata[@]}"
+          node mobile/modules/engine/scripts/write-release-metadata.mjs "${metadata[@]}"
+          grep -E '^(EXPO_PUBLIC_|MENTRAOS_NATIVE_MARKETING_VERSION|MENTRAOS_PINNED_BUILD_NUMBER)=' mobile/.env >> "$GITHUB_ENV"
+          echo "MENTRA_COORDINATED_RELEASE_CHANNEL=$(jq -er .channel release-intent/release-plan.json)" >> "$GITHUB_ENV"
+
+      - name: Inject Android signing and Play credentials
+        uses: ./.github/actions/inject-signing
+        with:
+          mobile: ${{ inputs.dry_run == true || needs.prepare.outputs.android_assets_exist != 'true' }}
+          play: "true"
+          upload-keystore-b64: ${{ secrets.UPLOAD_KEYSTORE_B64 }}
+          upload-store-password: ${{ secrets.MENTRAOS_UPLOAD_STORE_PASSWORD }}
+          upload-key-password: ${{ secrets.MENTRAOS_UPLOAD_KEY_PASSWORD }}
+          upload-key-alias: ${{ secrets.MENTRAOS_UPLOAD_KEY_ALIAS }}
+          google-play-key-json: ${{ secrets.GOOGLE_PLAY_KEY_JSON }}
+
+      - name: Build signed coordinated APK and AAB
+        if: inputs.dry_run == true || needs.prepare.outputs.android_assets_exist != 'true'
+        working-directory: mobile
+        env:
+          MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
+          MENTRA_COORDINATED_OUTPUT_DIR: ${{ github.workspace }}/mobile-release/android
+          MENTRA_COORDINATED_RELEASE_IDENTITY: ${{ needs.prepare.outputs.release_identity }}
+          RNMAPBOX_MAPS_DOWNLOAD_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
+          SENTRY_ALLOW_FAILURE: "false"
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+        run: bun run release:android
+
+      - name: Download the existing immutable Android pair
+        if: inputs.dry_run != true && needs.prepare.outputs.android_assets_exist == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p mobile-release/android
+          gh api -H "Accept: application/octet-stream" \
+            "repos/${GITHUB_REPOSITORY}/releases/assets/${{ needs.prepare.outputs.apk_asset_id }}" \
+            > "mobile-release/android/${{ needs.prepare.outputs.apk_name }}"
+          gh api -H "Accept: application/octet-stream" \
+            "repos/${GITHUB_REPOSITORY}/releases/assets/${{ needs.prepare.outputs.aab_asset_id }}" \
+            > "mobile-release/android/${{ needs.prepare.outputs.aab_name }}"
+
+      - name: Verify Android native version and production signature
+        env:
+          EXPECTED_BUILD: ${{ needs.prepare.outputs.build_number }}
+          EXPECTED_VERSION: ${{ needs.prepare.outputs.marketing_version }}
+        run: |
+          set -euo pipefail
+          apk="mobile-release/android/${{ needs.prepare.outputs.apk_name }}"
+          apksigner=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner -perm -111 | sort | tail -1)
+          aapt=$(find "$ANDROID_HOME/build-tools" -type f -name aapt -perm -111 | sort | tail -1)
+          "$apksigner" verify --print-certs "$apk" > /tmp/mentra-mobile-certs.txt
+          if grep -qi "CN=Android Debug" /tmp/mentra-mobile-certs.txt; then
+            echo "Android release artifact is debug-signed." >&2
+            exit 1
+          fi
+          "$aapt" dump badging "$apk" > /tmp/mentra-mobile-badging.txt
+          badging=$(sed -n '1p' /tmp/mentra-mobile-badging.txt)
+          version_code=$(sed -n "s/.*versionCode='\([^']*\)'.*/\1/p" <<< "$badging")
+          version_name=$(sed -n "s/.*versionName='\([^']*\)'.*/\1/p" <<< "$badging")
+          if [[ "$version_code" != "$EXPECTED_BUILD" ]]; then
+            echo "Android versionCode ${version_code:-<missing>} does not match $EXPECTED_BUILD." >&2
+            exit 1
+          fi
+          if [[ "$version_name" != "$EXPECTED_VERSION" ]]; then
+            echo "Android versionName ${version_name:-<missing>} does not match $EXPECTED_VERSION." >&2
+            exit 1
+          fi
+
+      # ABI shape is a creation-time contract. A complete pair found here is
+      # immutable and may have been published under an earlier contract, so a
+      # retry verifies its permanent identity above without retroactively
+      # rejecting it. Every newly built pair must satisfy the current contract
+      # before its first publication below.
+      - name: Verify newly built Android ABI contract
+        if: inputs.dry_run == true || needs.prepare.outputs.android_assets_exist != 'true'
+        run: |
+          set -euo pipefail
+          apk="mobile-release/android/${{ needs.prepare.outputs.apk_name }}"
+          aab="mobile-release/android/${{ needs.prepare.outputs.aab_name }}"
+          apk_abis=$(unzip -Z1 "$apk" \
+            | sed -n 's#^lib/\([^/]*\)/.*\.so$#\1#p' \
+            | LC_ALL=C sort -u \
+            | paste -sd, -)
+          if [[ "$apk_abis" != "arm64-v8a" ]]; then
+            echo "GitHub APK ABIs '${apk_abis:-<none>}' do not match required arm64-v8a." >&2
+            exit 1
+          fi
+
+          aab_abis=$(unzip -Z1 "$aab" \
+            | sed -n 's#^[^/]*/lib/\([^/]*\)/.*\.so$#\1#p' \
+            | LC_ALL=C sort -u \
+            | paste -sd, -)
+          expected_aab_abis="arm64-v8a,armeabi-v7a,x86,x86_64"
+          if [[ "$aab_abis" != "$expected_aab_abis" ]]; then
+            echo "Google Play AAB ABIs '${aab_abis:-<none>}' do not match required $expected_aab_abis." >&2
+            exit 1
+          fi
+
+      - name: Publish immutable Android release assets
+        if: inputs.dry_run != true && inputs.compatibility_lab != true && needs.prepare.outputs.android_assets_exist != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node .github/scripts/publish-immutable-release-asset.mjs \
+            --release-id "${{ needs.prepare.outputs.release_id }}" \
+            --repository "${{ github.repository }}" \
+            --file "mobile-release/android/${{ needs.prepare.outputs.apk_name }}" \
+            --name "${{ needs.prepare.outputs.apk_name }}"
+          node .github/scripts/publish-immutable-release-asset.mjs \
+            --release-id "${{ needs.prepare.outputs.release_id }}" \
+            --repository "${{ github.repository }}" \
+            --file "mobile-release/android/${{ needs.prepare.outputs.aab_name }}" \
+            --name "${{ needs.prepare.outputs.aab_name }}"
+
+      - name: Prepare Google Play upload tooling
+        if: inputs.dry_run != true
+        run: |
+          set -euo pipefail
+          mkdir -p mobile-play/fastlane
+          cp mobile/ci/fastlane-android/Fastfile mobile-play/fastlane/Fastfile
+          cp mobile/ci/fastlane-android/Appfile mobile-play/fastlane/Appfile
+          cp mobile/Gemfile mobile-play/Gemfile
+          cp mobile/Gemfile.lock mobile-play/Gemfile.lock
+
+      - name: Install Google Play upload tooling
+        if: inputs.dry_run != true
+        working-directory: mobile-play
+        run: bundle install
+
+      - name: Check selected Google Play track
+        id: play
+        if: inputs.dry_run != true && inputs.compatibility_lab != true
+        working-directory: mobile-play
+        env:
+          GOOGLE_PLAY_TRACK: ${{ inputs.play_track }}
+          GOOGLE_PLAY_VERSION_CODES_OUTPUT: ${{ runner.temp }}/mentra-play-version-codes.json
+        run: |
+          set -euo pipefail
+          bundle exec fastlane track_version_codes
+          if jq -e --argjson expected "${{ needs.prepare.outputs.build_number }}" 'map(tonumber) | index($expected) != null' "$GOOGLE_PLAY_VERSION_CODES_OUTPUT" >/dev/null; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload exact AAB to Google Play
+        if: inputs.dry_run != true && inputs.compatibility_lab != true && steps.play.outputs.exists != 'true'
+        working-directory: mobile-play
+        env:
+          GOOGLE_PLAY_AAB: ${{ github.workspace }}/mobile-release/android/${{ needs.prepare.outputs.aab_name }}
+          GOOGLE_PLAY_TRACK: ${{ inputs.play_track }}
+        run: bundle exec fastlane google_play
+
+      - name: Checkout current non-promotable distribution tooling
+        if: inputs.dry_run != true && inputs.compatibility_lab == true
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: production-tools
+          sparse-checkout: .github/scripts
+
+      - name: Upload compatibility AAB to Google Play Internal App Sharing
+        if: inputs.dry_run != true && inputs.compatibility_lab == true
+        run: >-
+          node production-tools/.github/scripts/google-play-internal-sharing.mjs
+          --credentials "$GOOGLE_PLAY_JSON_KEY"
+          --package com.mentra.mentra
+          --bundle "mobile-release/android/${{ needs.prepare.outputs.aab_name }}"
+          --output mobile-release/android-internal-sharing.json
+
+      - name: Write Android release result
+        env:
+          STATUS: ${{ inputs.dry_run && 'built' || (steps.play.outputs.exists == 'true' && 'reused' || 'published') }}
+        run: >-
+          node .github/scripts/coordinated-mobile-records.mjs create-android
+          --plan release-intent/release-plan.json
+          --apk "mobile-release/android/${{ needs.prepare.outputs.apk_name }}"
+          --apk-url "${{ needs.prepare.outputs.asset_base_url }}/${{ needs.prepare.outputs.apk_name }}"
+          --aab "mobile-release/android/${{ needs.prepare.outputs.aab_name }}"
+          --aab-url "${{ needs.prepare.outputs.asset_base_url }}/${{ needs.prepare.outputs.aab_name }}"
+          --play-track "${{ inputs.play_track }}"
+          --status "$STATUS"
+          --provenance-url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          --output mobile-release/android-publication.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coordinated-mobile-android-${{ github.run_id }}
+          path: mobile-release
+          if-no-files-found: error
+          retention-days: 90
+
+  ios:
+    name: Build and distribute coordinated iOS app
+    needs: prepare
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 90
+    concurrency:
+      group: mentra-ios-signing-runner
+      cancel-in-progress: false
+    env:
+      EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY }}
+      EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID }}
+    outputs:
+      upload_artifact: coordinated-mobile-ios-upload-${{ github.run_id }}
+      upload_status: ${{ inputs.dry_run && 'built' || (steps.app-store.outputs.exists == 'true' && 'reused' || 'published') }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_commit }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.release_plan_artifact }}
+          path: release-intent
+
+      - name: Add runner-managed tools to PATH
+        run: |
+          {
+            echo "$HOME/.rbenv/shims"
+            echo "$HOME/.rbenv/bin"
+            echo "$HOME/.bun/bin"
+          } >> "$GITHUB_PATH"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - uses: oven-sh/setup-bun@v2
+        if: inputs.dry_run == true || needs.prepare.outputs.ios_asset_exists != 'true'
+        with:
+          bun-version: 1.4.0
+
+      - name: Install exact workspace dependencies
+        if: inputs.dry_run == true || needs.prepare.outputs.ios_asset_exists != 'true'
+        working-directory: mobile
+        run: bun install --frozen-lockfile
+
+      - name: Generate exact mobile environment and package metadata
+        if: inputs.dry_run == true || needs.prepare.outputs.ios_asset_exists != 'true'
+        env:
+          BACKEND_ENVIRONMENT: ${{ inputs.backend_environment }}
+          DOPPLER_TOKEN_MOBILE_DEV: ${{ secrets.DOPPLER_TOKEN_MOBILE_DEV }}
+          DOPPLER_TOKEN_MOBILE_PRD: ${{ secrets.DOPPLER_TOKEN_MOBILE_PRD }}
+          MAPBOX_PUBLIC_TOKEN: ${{ secrets.MAPBOX_PUBLIC_TOKEN }}
+        run: |
+          set -euo pipefail
+          case "$BACKEND_ENVIRONMENT" in
+            dev) DOPPLER_TOKEN="$DOPPLER_TOKEN_MOBILE_DEV" ;;
+            # Staging has no separate mobile Doppler token. This token only
+            # reads the public Sentry DSN; checked-in staging URLs are rendered
+            # by prepare-mobile-release-env.mjs below.
+            staging) DOPPLER_TOKEN="$DOPPLER_TOKEN_MOBILE_PRD" ;;
+            prod) DOPPLER_TOKEN="$DOPPLER_TOKEN_MOBILE_PRD" ;;
+            *) echo "Unsupported mobile backend environment: $BACKEND_ENVIRONMENT" >&2; exit 1 ;;
+          esac
+          test -n "$DOPPLER_TOKEN"
+          test -n "$MAPBOX_PUBLIC_TOKEN"
+          response=$(curl --fail --silent --show-error --retry 3 -u "$DOPPLER_TOKEN:" \
+            "https://api.doppler.com/v3/configs/config/secret?name=EXPO_PUBLIC_SENTRY_DSN")
+          sentry_dsn=$(jq -er '.value.computed // .computed' <<< "$response")
+          echo "::add-mask::$sentry_dsn"
+          cp mobile/.env.example mobile/.env
+          node .github/scripts/prepare-mobile-release-env.mjs \
+            --plan release-intent/release-plan.json \
+            --env-file mobile/.env \
+            --backend-environment "${{ inputs.backend_environment }}" \
+            --ota-manifest-url "${{ inputs.ota_manifest_url }}" \
+            --mapbox-public-token "$MAPBOX_PUBLIC_TOKEN" \
+            --sentry-dsn "$sentry_dsn"
+          if [[ "${{ inputs.compatibility_lab }}" == "true" ]]; then
+            identity=$(jq -er .releaseIdentity release-intent/release-plan.json)
+            sed -i '' "s/^EXPO_PUBLIC_MENTRAOS_VERSION=.*/EXPO_PUBLIC_MENTRAOS_VERSION=${identity}-COMPATIBILITY-LAB-NOT-FOR-PRODUCTION/" mobile/.env
+          fi
+          node .github/scripts/stage-release-family.mjs --plan release-intent/release-plan.json
+          metadata=(
+            --family-base-version "${{ needs.prepare.outputs.marketing_version }}"
+            --release-identity "${{ needs.prepare.outputs.release_identity }}"
+            --release-set-id "${{ needs.prepare.outputs.release_set_id }}"
+            --source-commit "${{ inputs.source_commit }}"
+            --ota-manifest-url "${{ inputs.ota_manifest_url }}"
+            --ota-manifest-sha256 "${{ inputs.ota_manifest_sha256 }}"
+          )
+          node mobile/modules/bluetooth-sdk/scripts/write-release-metadata.mjs "${metadata[@]}"
+          node mobile/modules/engine/scripts/write-release-metadata.mjs "${metadata[@]}"
+          grep -E '^(EXPO_PUBLIC_|MENTRAOS_NATIVE_MARKETING_VERSION|MENTRAOS_PINNED_BUILD_NUMBER)=' mobile/.env >> "$GITHUB_ENV"
+          echo "MENTRA_COORDINATED_RELEASE_CHANNEL=$(jq -er .channel release-intent/release-plan.json)" >> "$GITHUB_ENV"
+
+      - name: Configure Mapbox SwiftPM credentials
+        if: inputs.dry_run == true || needs.prepare.outputs.ios_asset_exists != 'true'
+        env:
+          MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$MAPBOX_DOWNLOADS_TOKEN"
+          if [[ -f "$HOME/.netrc" ]]; then sed -i '' '/machine api.mapbox.com/,+2d' "$HOME/.netrc" || true; fi
+          printf 'machine api.mapbox.com\n  login mapbox\n  password %s\n' "$MAPBOX_DOWNLOADS_TOKEN" >> "$HOME/.netrc"
+          chmod 600 "$HOME/.netrc"
+          echo "MENTRA_CONFIGURED_MAPBOX_NETRC=true" >> "$GITHUB_ENV"
+
+      - name: Install iOS signing assets
+        if: inputs.dry_run == true || needs.prepare.outputs.ios_asset_exists != 'true'
+        working-directory: mobile
+        env:
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+          RAW_MATCH_GIT_BASIC_AUTHORIZATION: ${{ secrets.MATCH_GIT_BASIC_AUTHORIZATION }}
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.rbenv/shims:$HOME/.rbenv/bin:$PATH"
+          previous_keychains="${RUNNER_TEMP}/mentra-previous-keychains-${GITHUB_RUN_ID}.txt"
+          previous_default="${RUNNER_TEMP}/mentra-previous-default-keychain-${GITHUB_RUN_ID}.txt"
+          security list-keychains -d user \
+            | sed -E 's/^[[:space:]]*"(.*)"[[:space:]]*$/\1/' \
+            > "$previous_keychains"
+          security default-keychain -d user \
+            | sed -E 's/^[[:space:]]*"(.*)"[[:space:]]*$/\1/' \
+            > "$previous_default"
+          echo "MENTRA_PREVIOUS_KEYCHAINS=$previous_keychains" >> "$GITHUB_ENV"
+          echo "MENTRA_PREVIOUS_DEFAULT_KEYCHAIN=$previous_default" >> "$GITHUB_ENV"
+          MATCH_GIT_BASIC_AUTHORIZATION="$(printf '%s' "$RAW_MATCH_GIT_BASIC_AUTHORIZATION" | tr -d '\r\n')"
+          export MATCH_GIT_BASIC_AUTHORIZATION
+          bundle install
+          keychain="mentra-coordinated-${GITHUB_RUN_ID}.keychain-db"
+          password="$(openssl rand -hex 32)"
+          security delete-keychain "$keychain" 2>/dev/null || true
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          for wwdr in G2 G4 G5 G6; do
+            certificate="${RUNNER_TEMP}/AppleWWDRCA${wwdr}.cer"
+            if curl --fail --silent --show-error --location "https://www.apple.com/certificateauthority/AppleWWDRCA${wwdr}.cer" -o "$certificate"; then
+              security import "$certificate" -k "$keychain" -T /usr/bin/codesign 2>&1 | grep -v "already exists" || true
+            fi
+          done
+          keychains=("$keychain")
+          while IFS= read -r existing; do
+            existing="${existing#*\"}"
+            existing="${existing%\"*}"
+            [[ -n "$existing" && "$existing" != "$keychain" ]] && keychains+=("$existing")
+          done < <(security list-keychains -d user)
+          security list-keychains -d user -s "${keychains[@]}"
+          security default-keychain -s "$keychain"
+          bundle exec fastlane match appstore --readonly --keychain_name "$keychain" --keychain_password "$password"
+          echo "MENTRA_CI_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+          echo "MENTRA_CI_KEYCHAIN_PASSWORD=$password" >> "$GITHUB_ENV"
+
+      - name: Inject App Store Connect API credential
+        uses: ./.github/actions/inject-signing
+        with:
+          ios: "true"
+          asc-api-key-p8-b64: ${{ secrets.ASC_API_KEY_P8_B64 }}
+          asc-api-key-id: ${{ secrets.ASC_API_KEY_ID }}
+          asc-api-issuer-id: ${{ secrets.ASC_API_ISSUER_ID }}
+
+      - name: Build signed coordinated IPA
+        if: inputs.dry_run == true || needs.prepare.outputs.ios_asset_exists != 'true'
+        working-directory: mobile
+        env:
+          MENTRA_COORDINATED_OUTPUT_DIR: ${{ github.workspace }}/mobile-release/ios
+          MENTRA_COORDINATED_RELEASE_IDENTITY: ${{ needs.prepare.outputs.release_identity }}
+          SENTRY_ALLOW_FAILURE: "false"
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          MENTRA_TESTFLIGHT_INTERNAL_ONLY: ${{ inputs.compatibility_lab }}
+        run: |
+          export PATH="$HOME/.rbenv/shims:$HOME/.rbenv/bin:$PATH"
+          security unlock-keychain -p "$MENTRA_CI_KEYCHAIN_PASSWORD" "$MENTRA_CI_KEYCHAIN"
+          security set-keychain-settings "$MENTRA_CI_KEYCHAIN"
+          if [[ "$MENTRA_TESTFLIGHT_INTERNAL_ONLY" == "true" ]]; then
+            plutil -replace testFlightInternalTestingOnly -bool true ci/ios-export/ExportOptions-Match.plist
+          fi
+          bun run release:ios
+
+      - name: Download the existing immutable iOS app
+        if: inputs.dry_run != true && needs.prepare.outputs.ios_asset_exists == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p mobile-release/ios
+          gh api -H "Accept: application/octet-stream" \
+            "repos/${GITHUB_REPOSITORY}/releases/assets/${{ needs.prepare.outputs.ipa_asset_id }}" \
+            > "mobile-release/ios/${{ needs.prepare.outputs.ipa_name }}"
+
+      - name: Verify iOS native version and build number
+        env:
+          EXPECTED_BUILD: ${{ needs.prepare.outputs.build_number }}
+          EXPECTED_VERSION: ${{ needs.prepare.outputs.marketing_version }}
+        run: |
+          set -euo pipefail
+          ipa="mobile-release/ios/${{ needs.prepare.outputs.ipa_name }}"
+          unzip -p "$ipa" 'Payload/*.app/Info.plist' > /tmp/mentra-mobile-info.plist
+          [[ "$(plutil -extract CFBundleShortVersionString raw /tmp/mentra-mobile-info.plist)" == "$EXPECTED_VERSION" ]]
+          [[ "$(plutil -extract CFBundleVersion raw /tmp/mentra-mobile-info.plist)" == "$EXPECTED_BUILD" ]]
+
+      - name: Publish immutable iOS release asset
+        if: inputs.dry_run != true && inputs.compatibility_lab != true && needs.prepare.outputs.ios_asset_exists != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          node .github/scripts/publish-immutable-release-asset.mjs
+          --release-id "${{ needs.prepare.outputs.release_id }}"
+          --repository "${{ github.repository }}"
+          --file "mobile-release/ios/${{ needs.prepare.outputs.ipa_name }}"
+          --name "${{ needs.prepare.outputs.ipa_name }}"
+
+      - name: Resolve App Store Connect credential path
+        if: inputs.dry_run != true
+        id: asc
+        run: |
+          set -euo pipefail
+          config="$MENTRA_ASC_CONFIG_PATH"
+          key_path=$(sed -n 's/^ASC_API_KEY_PATH=//p' "$config")
+          test -f "$key_path"
+          echo "key_path=$key_path" >> "$GITHUB_OUTPUT"
+
+      - name: Check exact App Store Connect build number
+        if: inputs.dry_run != true
+        id: app-store
+        run: >-
+          node mobile/scripts/app-store-connect-build.mjs lookup
+          --issuer-id "${{ secrets.ASC_API_ISSUER_ID }}"
+          --key-id "${{ secrets.ASC_API_KEY_ID }}"
+          --key-path "${{ steps.asc.outputs.key_path }}"
+          --bundle-id com.mentra.mentra
+          --build-number "${{ needs.prepare.outputs.build_number }}"
+
+      - name: Upload exact IPA to App Store Connect
+        if: inputs.dry_run != true && steps.app-store.outputs.exists != 'true'
+        run: >-
+          node mobile/scripts/app-store-connect-build.mjs upload
+          --issuer-id "${{ secrets.ASC_API_ISSUER_ID }}"
+          --key-id "${{ secrets.ASC_API_KEY_ID }}"
+          --key-path "${{ steps.asc.outputs.key_path }}"
+          --bundle-id com.mentra.mentra
+          --marketing-version "${{ needs.prepare.outputs.marketing_version }}"
+          --build-number "${{ needs.prepare.outputs.build_number }}"
+          --ipa "mobile-release/ios/${{ needs.prepare.outputs.ipa_name }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coordinated-mobile-ios-upload-${{ github.run_id }}
+          path: mobile-release
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Clean persistent-runner credentials
+        if: always()
+        run: |
+          if [[ -n "${MENTRA_CI_KEYCHAIN:-}" ]]; then
+            security delete-keychain "$MENTRA_CI_KEYCHAIN" 2>/dev/null || true
+          fi
+          if [[ -f "${MENTRA_PREVIOUS_KEYCHAINS:-}" ]]; then
+            previous_keychains=()
+            while IFS= read -r keychain; do
+              [[ -n "$keychain" ]] && previous_keychains+=("$keychain")
+            done < "$MENTRA_PREVIOUS_KEYCHAINS"
+            if (( ${#previous_keychains[@]} > 0 )); then
+              security list-keychains -d user -s "${previous_keychains[@]}" || true
+            fi
+          fi
+          if [[ -f "${MENTRA_PREVIOUS_DEFAULT_KEYCHAIN:-}" ]]; then
+            previous_default=$(head -1 "$MENTRA_PREVIOUS_DEFAULT_KEYCHAIN")
+            [[ -n "$previous_default" ]] && security default-keychain -d user -s "$previous_default" || true
+          fi
+          if [[ "${MENTRA_CONFIGURED_MAPBOX_NETRC:-}" == "true" && -f "$HOME/.netrc" ]]; then
+            sed -i '' '/machine api.mapbox.com/,+2d' "$HOME/.netrc" || true
+          fi
+
+  ios-store:
+    name: Process iOS upload and assign TestFlight group
+    needs: [prepare, ios]
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_commit }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.release_plan_artifact }}
+          path: release-intent
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.ios.outputs.upload_artifact }}
+          path: mobile-release
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Inject App Store Connect API credential
+        if: inputs.dry_run != true
+        uses: ./.github/actions/inject-signing
+        with:
+          ios: "true"
+          asc-api-key-p8-b64: ${{ secrets.ASC_API_KEY_P8_B64 }}
+          asc-api-key-id: ${{ secrets.ASC_API_KEY_ID }}
+          asc-api-issuer-id: ${{ secrets.ASC_API_ISSUER_ID }}
+
+      - name: Resolve App Store Connect credential path
+        if: inputs.dry_run != true
+        id: asc
+        run: |
+          set -euo pipefail
+          key_path=$(sed -n 's/^ASC_API_KEY_PATH=//p' "$MENTRA_ASC_CONFIG_PATH")
+          test -f "$key_path"
+          echo "key_path=$key_path" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for processing and assign the channel TestFlight group
+        if: inputs.dry_run != true
+        run: >-
+          node mobile/scripts/app-store-connect-build.mjs assign
+          --issuer-id "${{ secrets.ASC_API_ISSUER_ID }}"
+          --key-id "${{ secrets.ASC_API_KEY_ID }}"
+          --key-path "${{ steps.asc.outputs.key_path }}"
+          --bundle-id com.mentra.mentra
+          --build-number "${{ needs.prepare.outputs.build_number }}"
+          --group-name "${{ inputs.testflight_group }}"
+
+      - name: Write iOS release result
+        env:
+          STATUS: ${{ needs.ios.outputs.upload_status }}
+        run: >-
+          node .github/scripts/coordinated-mobile-records.mjs create-ios
+          --plan release-intent/release-plan.json
+          --ipa "mobile-release/ios/${{ needs.prepare.outputs.ipa_name }}"
+          --ipa-url "${{ needs.prepare.outputs.asset_base_url }}/${{ needs.prepare.outputs.ipa_name }}"
+          --testflight-group "${{ inputs.testflight_group }}"
+          --status "$STATUS"
+          --provenance-url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          --output mobile-release/ios-publication.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coordinated-mobile-ios-${{ github.run_id }}
+          path: mobile-release
+          if-no-files-found: error
+          retention-days: 90
+
+  result:
+    name: Assemble coordinated mobile result
+    needs: [prepare, android, ios-store]
+    runs-on: ubuntu-latest
+    outputs:
+      result_artifact: ${{ steps.name.outputs.value }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_commit }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.release_plan_artifact }}
+          path: release-intent
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: coordinated-mobile-android-${{ github.run_id }}
+          path: result/android
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: coordinated-mobile-ios-${{ github.run_id }}
+          path: result/ios
+
+      - name: Merge mobile publication records
+        run: >-
+          node .github/scripts/coordinated-mobile-records.mjs merge
+          --plan release-intent/release-plan.json
+          --android result/android/android-publication.json
+          --ios result/ios/ios-publication.json
+          --output result/mobile-publications.json
+
+      - name: Name final result
+        id: name
+        run: echo "value=coordinated-mobile-$(jq -er .releaseSetId release-intent/release-plan.json)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.name.outputs.value }}
+          path: result
+          if-no-files-found: error
+          retention-days: 90
+
+  status:
+    name: Export mobile build status
+    needs: [prepare, android, ios, ios-store]
+    if: always()
+    runs-on: ubuntu-latest
+    outputs:
+      android_result: ${{ steps.status.outputs.android_result }}
+      ios_result: ${{ steps.status.outputs.ios_result }}
+      apk_name: ${{ steps.status.outputs.apk_name }}
+      ipa_name: ${{ steps.status.outputs.ipa_name }}
+      asset_base_url: ${{ steps.status.outputs.asset_base_url }}
+    steps:
+      - name: Export platform conclusions and artifact coordinates
+        id: status
+        env:
+          ANDROID_RESULT: ${{ needs.android.result }}
+          IOS_BUILD_RESULT: ${{ needs.ios.result }}
+          IOS_STORE_RESULT: ${{ needs.ios-store.result }}
+          APK_NAME: ${{ needs.prepare.outputs.apk_name }}
+          IPA_NAME: ${{ needs.prepare.outputs.ipa_name }}
+          ASSET_BASE_URL: ${{ needs.prepare.outputs.asset_base_url }}
+        run: |
+          ios_result="$IOS_STORE_RESULT"
+          if [[ "$IOS_BUILD_RESULT" != "success" ]]; then ios_result="$IOS_BUILD_RESULT"; fi
+          {
+            echo "android_result=$ANDROID_RESULT"
+            echo "ios_result=$ios_result"
+            echo "apk_name=$APK_NAME"
+            echo "ipa_name=$IPA_NAME"
+            echo "asset_base_url=$ASSET_BASE_URL"
+          } >> "$GITHUB_OUTPUT"

@@ -50,6 +50,25 @@ const es = {
     hardwareIncompatibleMessage:
       "{{app}} requiere hardware que no está disponible en tus lentes conectados: {{missing}}",
   },
+  settings: {
+    ...en.settings,
+    forgetGlassesWhilePairing:
+      "El emparejamiento Bluetooth está en curso. Acepta o cierra primero el diálogo de emparejamiento del sistema y luego intenta desvincular las gafas de nuevo.",
+  },
+  pairing: {
+    ...en.pairing,
+    nearbyNotInPairingModeHint:
+      "Se encontraron gafas Mentra Live cerca, pero no están en modo de emparejamiento. Pulsa el botón de encendido 3 veces rápido y vuelve a intentarlo.",
+    notInPairingModeLabel: "No está en modo de emparejamiento",
+    notInPairingModeAlertTitle: "Activa el modo de emparejamiento",
+    notInPairingModeAlertMessage:
+      "Pulsa el botón de encendido 3 veces rápido. El LED parpadea y las gafas dicen un código de 4 caracteres. Luego selecciona las gafas de nuevo.",
+    pairingCodeLabel: "Código {{code}}",
+    legacyFirmwareLabel: "Firmware heredado",
+    livePairingModeInfo:
+      "Pulsa el botón de encendido 3 veces rápido. El LED parpadea y las gafas dicen un código de 4 caracteres (0–9, A–F). Compara ese código en la lista si aparece más de una unidad.",
+    noGlassesFoundHint: "Asegúrate de pulsar el botón de encendido 3 veces rápido y vuelve a intentarlo.",
+  },
   demoNavigator: {
     componentsTab: "Componentes",
     debugTab: "Debug",
@@ -127,6 +146,18 @@ const es = {
       content:
         "No se han agregado episodios favoritos todavía. ¡Presiona el corazón dentro de un episodio para agregarlo a tus favoritos!",
     },
+  },
+  qrScan: {
+    defaultTitle: "Escanear código QR",
+    defaultHint: "Apunta la cámara a un código QR",
+    checkingPermission: "Comprobando permiso de cámara\u2026",
+    permissionTitle: "Se necesita acceso a la cámara",
+    permissionBody:
+      "Necesitamos tu cámara para escanear códigos QR. Solo se usa mientras esta pantalla está abierta.",
+    grantAccess: "Permitir acceso a la cámara",
+    openSettings: "Abrir ajustes",
+    permissionDeniedTitle: "Permiso denegado",
+    permissionDeniedBody: "Activa el acceso a la cámara en Ajustes para escanear códigos QR.",
   },
 } satisfies TranslationResource
 

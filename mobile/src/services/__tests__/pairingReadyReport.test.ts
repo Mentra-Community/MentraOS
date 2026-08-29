@@ -3,6 +3,7 @@ import {act, waitFor} from "@testing-library/react-native"
 import {pairing, submitPairingBootTimeoutReport} from "../../../modules/engine/src/facades/pairing"
 import {submitAutomaticReport} from "../../../modules/engine/src/facades/reports"
 import {useGlassesStore} from "../../../modules/engine/src/stores/glasses"
+import {SETTINGS, useSettingsStore} from "../../../modules/engine/src/stores/settings"
 import {emitBluetoothSdkEvent, resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
 
 jest.mock("@mentra/bluetooth-sdk", () => {
@@ -26,6 +27,7 @@ describe("pairing ready timeout reports", () => {
     jest.useFakeTimers()
     resetBluetoothSdkMock()
     useGlassesStore.getState().reset()
+    useSettingsStore.getState().resetAllSettingsLocally()
     ;(submitAutomaticReport as jest.Mock).mockClear()
     ;(submitAutomaticReport as jest.Mock).mockResolvedValue({
       status: "submitted",
@@ -114,11 +116,47 @@ describe("pairing ready timeout reports", () => {
     })
 
     act(() => {
+      void useSettingsStore.getState().setSetting(SETTINGS.default_wearable.key, "Mentra Live", false)
+      void useSettingsStore.getState().setSetting(SETTINGS.device_name.key, "MENTRA_LIVE_BLE_001", false)
       useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
     })
 
     await expect(readyPromise).resolves.toBe(true)
     expect(submitAutomaticReport).not.toHaveBeenCalled()
+  })
+
+  it("does not accept readiness from a different paired wearable", async () => {
+    void useSettingsStore.getState().setSetting(SETTINGS.default_wearable.key, "Mentra Live", false)
+    void useSettingsStore.getState().setSetting(SETTINGS.device_name.key, "MENTRA_LIVE_BLE_OLD", false)
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+
+    const readyPromise = pairing.waitForReady({
+      deviceModel: "Mentra Live",
+      deviceName: "MENTRA_LIVE_BLE_NEW",
+      timeoutMs: 1000,
+    })
+    act(() => {
+      jest.advanceTimersByTime(1000)
+    })
+
+    await expect(readyPromise).resolves.toBe(false)
+  })
+
+  it("waits for the selected controller instead of wearable readiness", async () => {
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+    const readyPromise = pairing.waitForReady({
+      deviceModel: "Even Realities R1",
+      deviceName: "CEC5BA",
+      timeoutMs: 1000,
+    })
+
+    act(() => {
+      void useSettingsStore.getState().setSetting(SETTINGS.default_controller.key, "Even Realities R1", false)
+      void useSettingsStore.getState().setSetting(SETTINGS.controller_device_name.key, "CEC5BA", false)
+      useGlassesStore.getState().setGlassesInfo({controllerConnected: true, controllerFullyBooted: true})
+    })
+
+    await expect(readyPromise).resolves.toBe(true)
   })
 
   it("readiness() projects pairing state without exposing the raw glasses store", () => {

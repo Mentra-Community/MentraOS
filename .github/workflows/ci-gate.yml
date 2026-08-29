@@ -63,12 +63,9 @@ on:
       - "MentraOS ASG Client Build"
       - "Mobile App Quality Checks"
       - "OEM Host Boundary Gate"
+      - "Coordinated Release Family Checks"
       - "Bun Lockfile Checks"
-      - "🧪 Test Cloud build"
-      - "🧪 Test SDK build"
-      - "🧪 Test Console build"
-      - "🧪 Test Store build"
-      - "Run Cloud Tests ☁️"
+      - "Cloud V2 Validation"
     types: [completed]
 
 concurrency:
@@ -106,6 +103,7 @@ jobs:
         with:
           script: |
             const STATUS_CONTEXT = "ci-gate-dev";
+            const EMPTY_AREA_DESCRIPTION = "No required area builds for this change";
 
             // Workflows this gate aggregates, matched by exact workflow name.
             // A workflow absent from a commit's runs didn't run for this PR
@@ -118,12 +116,9 @@ jobs:
               "MentraOS ASG Client Build",
               "Mobile App Quality Checks",
               "OEM Host Boundary Gate",
+              "Coordinated Release Family Checks",
               "Bun Lockfile Checks",
-              "🧪 Test Cloud build",
-              "🧪 Test SDK build",
-              "🧪 Test Console build",
-              "🧪 Test Store build",
-              "Run Cloud Tests ☁️",
+              "Cloud V2 Validation",
             ]);
 
             // Resolve the head SHA for whichever event triggered us.
@@ -137,8 +132,9 @@ jobs:
             const BAD = new Set(["failure", "cancelled", "timed_out", "action_required", "startup_failure", "stale"]);
             const OK = new Set(["success", "skipped", "neutral"]);
 
-            // Did an earlier ci-gate run already SETTLE this commit (post success
-            // or failure)? If so, every builder the PR triggers had already
+            // Did an earlier ci-gate run already SETTLE a non-empty builder set
+            // for this commit (post success or failure)? If so, every builder
+            // the PR triggers had already
             // registered by then, so the grace window — whose only job is to wait
             // for path-filtered builders to first appear — is no longer needed.
             // Skipping grace when already settled does two things:
@@ -160,7 +156,11 @@ jobs:
               // listCommitStatusesForRef returns newest first; find the latest
               // status for our context.
               const latest = existing.find(s => s.context === STATUS_CONTEXT);
-              alreadySettled = latest?.state === "success" || latest?.state === "failure";
+              const hasSettledState = latest?.state === "success" || latest?.state === "failure";
+              // Empty-area success only proves that nothing registered during
+              // that evaluation's grace window. A genuinely late gated run must
+              // receive a fresh grace window so sibling builders can register.
+              alreadySettled = hasSettledState && latest?.description !== EMPTY_AREA_DESCRIPTION;
             } catch (e) {
               core.info(`could not read existing ci-gate-dev status: ${e.message}`);
             }
@@ -168,8 +168,8 @@ jobs:
 
             // The commit-status `description` field rejects 4-byte Unicode
             // (422 "Description doesn't accept 4-byte Unicode"). Some gated
-            // workflow names contain emoji (e.g. "🧪 Test Cloud build"), so strip
-            // any astral-plane code points and clamp to the 140-char limit.
+            // Workflow names can contain emoji, so strip any astral-plane code
+            // points and clamp to the 140-char limit.
             const sanitize = (s) =>
               s.replace(/[\u{10000}-\u{10FFFF}]/gu, "").replace(/\s+/g, " ").trim().slice(0, 140);
 
@@ -228,9 +228,16 @@ jobs:
                 // registered its run yet. Hold pending until the window elapses.
                 state = "pending"; settled = false;
                 description = "Confirming all area builds have registered…";
+              } else if (elapsedMs >= GRACE_MS || alreadySettled) {
+                // No gated workflow registered during the same grace window.
+                // This PR did not touch a gated area, so there is nothing to
+                // wait for. The always-on Cloud V1 builders used to mask this
+                // case by ensuring at least one gated run existed on every PR.
+                state = "success"; settled = true;
+                description = EMPTY_AREA_DESCRIPTION;
               } else {
                 // No gated workflow has appeared for this commit yet — builders are
-                // still spinning up. Not settled; keep polling.
+                // still within their registration grace period. Keep polling.
                 state = "pending"; settled = false;
                 description = "Waiting for area builds to report";
               }

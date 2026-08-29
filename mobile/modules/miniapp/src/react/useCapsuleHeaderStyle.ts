@@ -15,6 +15,7 @@
 
 import type {CSSProperties} from "react"
 
+import {getCapsuleHeaderPaddingRight} from "./capsuleHeaderLayout"
 import {useSafeArea} from "./useSafeArea"
 
 export interface UseCapsuleHeaderStyleOptions {
@@ -39,7 +40,11 @@ export function useCapsuleHeaderStyle(
     ? capsuleMenu.top + capsuleMenu.height / 2 - insets.top
     : fallbackMarginTop + height / 2
   const marginTop = Math.max(0, center - height / 2)
-  const paddingRight = capsuleMenu ? capsuleMenu.width + rightGap : leftPadding
+  const paddingRight = capsuleMenu
+    ? typeof window === "undefined"
+      ? capsuleMenu.width + rightGap
+      : getCapsuleHeaderPaddingRight(capsuleMenu, window.innerWidth, insets.right, rightGap)
+    : leftPadding
 
   return {
     display: "flex",

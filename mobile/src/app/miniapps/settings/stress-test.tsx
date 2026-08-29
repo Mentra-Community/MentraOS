@@ -17,7 +17,7 @@ import {useStressTestStore} from "@/stores/stressTest"
 import {buildDummyMiniappHtml} from "@/utils/stressTest/dummyHtml"
 import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
 import {engine} from "@mentra/engine"
-import {miniappRunningRegistry} from "@mentra/engine/devtools"
+import {miniappRunningRegistry} from "@mentra/engine-host-internal/devtools"
 
 const POLL_MS = 1000
 

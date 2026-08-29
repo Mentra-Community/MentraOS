@@ -41,6 +41,20 @@ public class MentraLiveSystemControllerTest {
         assertThat(lastBroadcast(app).getStringExtra("cmd")).isEqualTo("reboot");
     }
 
+    @Test
+    public void setWifiAdb_emitsWifiAdbBroadcast() {
+        Application app = ApplicationProvider.getApplicationContext();
+        MentraLiveSystemController controller = new MentraLiveSystemController(app);
+
+        controller.setWifiAdb(true);
+
+        Intent intent = lastBroadcast(app);
+        assertThat(intent.getStringExtra("cmd")).isEqualTo("wifiadb");
+        assertThat(intent.getBooleanExtra("enable", false)).isTrue();
+        assertThat(intent.getAction()).isEqualTo("com.xy.xsetting.action");
+        assertThat(intent.getPackage()).isEqualTo("com.android.systemui");
+    }
+
     private static Intent lastBroadcast(Application app) {
         List<Intent> intents = shadowOf(app).getBroadcastIntents();
         assertThat(intents).isNotEmpty();

@@ -44,6 +44,7 @@ import {
   VideoRecordingStartedStatusEvent,
   VideoRecordingSettings,
   VideoRecordingStoppedStatusEvent,
+  VideoRecordingStatusEvent,
   VersionInfoResult,
   WarmUpCameraParams,
   WifiSearchResult,
@@ -117,6 +118,8 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   sendWifiCredentials(ssid: string, password: string): Promise<WifiStatusChangeEvent>
   forgetWifiNetwork(ssid: string): Promise<WifiStatusChangeEvent>
   setHotspotState(enabled: boolean): Promise<HotspotStatusChangeEvent>
+  /** Enable or disable Wi-Fi ADB on Mentra Live (no-op on other devices). */
+  setWifiAdbState(enabled: boolean): Promise<void>
   /** Set the glasses system clock when phone detects clock skew (Mentra Live and G2). */
   setSystemTime(timestampMs: number): Promise<void>
   /** Logs current WiFi frequency (MHz) and 5 GHz band to Android logcat. */
@@ -179,6 +182,7 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
     webhookUrl?: string,
     authToken?: string,
   ): Promise<VideoRecordingStoppedStatusEvent>
+  queryVideoRecordingStatus(requestId: string): Promise<VideoRecordingStatusEvent>
 
   // Stream Commands
   startStream(params: StreamStartRequest): Promise<StreamStatusEvent>
@@ -293,7 +297,7 @@ const CAMERA_ROI_POSITION_VALUES: Record<CameraRoiPosition, CameraFovSetting["ro
 }
 
 // Named presets are a convenience layer over the numeric {fov, roiPosition} API.
-// The default is the full sensor; "standard" preserves the historical 102° crop.
+// The default is the full sensor; "standard" preserves the historical 102Â° crop.
 const CAMERA_FOV_PRESETS: Record<CameraFovPreset, CameraFovSetting> = {
   narrow: {fov: 82, roiPosition: 0},
   standard: {fov: 102, roiPosition: 0},
@@ -649,7 +653,3 @@ NativeBluetoothSdkModule.warmUpCamera = function (params: WarmUpCameraParams) {
 
 export default NativeBluetoothSdkModule
 export const BluetoothSdk = NativeBluetoothSdkModule as BluetoothSdkInternalModule
-
-
-
-

@@ -461,8 +461,20 @@ export const wsHandlers: WebSocketHandler<WsData> = {
         sessionTag: ws.data.sessionTag,
         mentraUserId: ws.data.mentraUserId,
         audioSessionId: ws.data.audioSessionId,
+        authSessionId: ws.data.authSessionId,
+        liveCount: sessionsPerUser.get(ws.data.mentraUserId) ?? 0,
       },
       "ws session opened",
+    );
+    logger.info(
+      {
+        mentraUserId: ws.data.mentraUserId,
+        sessionTag: ws.data.sessionTag,
+        audioSessionId: ws.data.audioSessionId,
+        authSessionId: ws.data.authSessionId,
+        liveCount: sessionsPerUser.get(ws.data.mentraUserId) ?? 0,
+      },
+      "ws-session-debug opened",
     );
 
     // Refresh loop: keep the Redis registration AND the subscription key alive
@@ -581,7 +593,8 @@ export const wsHandlers: WebSocketHandler<WsData> = {
           // cause was nginx ingress's proxy-send-timeout firing on CLIENT
           // silence, which server-side pings can't fix (they only reset the
           // server→client direction). The fix was app-level client pings plus
-          // an nginx WS-ingress timeout bump. See cloud/issues/034 + 035 (v1).
+          // an nginx WS-ingress timeout bump. The V1 incident history was
+          // retired with the V1 source tree.
           ws.send(
             JSON.stringify({
               v: PROTOCOL_MAJOR,
@@ -654,9 +667,28 @@ export const wsHandlers: WebSocketHandler<WsData> = {
       );
     });
 
+    const remainingLive = sessionsPerUser.get(ws.data.mentraUserId) ?? 0;
     logger.info(
-      { sessionTag: ws.data.sessionTag, mentraUserId: ws.data.mentraUserId },
+      {
+        sessionTag: ws.data.sessionTag,
+        mentraUserId: ws.data.mentraUserId,
+        audioSessionId: ws.data.audioSessionId,
+        authSessionId: ws.data.authSessionId,
+        superseded: ws.data.supersededAt !== undefined,
+        remainingLive,
+      },
       "ws session closed",
+    );
+    logger.info(
+      {
+        mentraUserId: ws.data.mentraUserId,
+        sessionTag: ws.data.sessionTag,
+        audioSessionId: ws.data.audioSessionId,
+        authSessionId: ws.data.authSessionId,
+        superseded: ws.data.supersededAt !== undefined,
+        remainingLive,
+      },
+      "ws-session-debug closed",
     );
   },
 };
@@ -854,6 +886,7 @@ function supersedeOlderSessionsForUser(current: WsData): void {
         "sessionTag unregister failed after supersede",
       );
     });
+    const dualClient = data.authSessionId !== current.authSessionId;
     logger.warn(
       {
         mentraUserId: data.mentraUserId,
@@ -863,8 +896,22 @@ function supersedeOlderSessionsForUser(current: WsData): void {
         newSessionTag: current.sessionTag,
         newAudioSessionId: current.audioSessionId,
         newAuthSessionId: current.authSessionId,
+        dualClient,
+        liveCount: sessionsPerUser.get(data.mentraUserId) ?? 0,
       },
       "ws session superseded by newer socket for same user",
+    );
+    logger.info(
+      {
+        mentraUserId: data.mentraUserId,
+        oldSessionTag: data.sessionTag,
+        oldAuthSessionId: data.authSessionId,
+        newSessionTag: current.sessionTag,
+        newAuthSessionId: current.authSessionId,
+        dualClient,
+        liveCount: sessionsPerUser.get(data.mentraUserId) ?? 0,
+      },
+      "ws-session-debug superseded",
     );
     try {
       entry.ws.close(1012, "superseded by newer session");

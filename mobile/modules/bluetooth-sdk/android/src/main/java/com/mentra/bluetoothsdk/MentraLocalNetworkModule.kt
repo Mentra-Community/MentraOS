@@ -5,7 +5,8 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.net.wifi.WifiNetworkSpecifier
-import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.util.Base64
 import android.util.Log
 import expo.modules.kotlin.Promise
@@ -14,6 +15,7 @@ import expo.modules.kotlin.modules.ModuleDefinition
 import java.io.File
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
+import java.net.Inet4Address
 import java.net.URL
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
@@ -22,14 +24,18 @@ import java.util.concurrent.Executors
 class MentraLocalNetworkModule : Module() {
     private companion object {
         const val TAG = "MentraLocalNetwork"
+        const val NETWORK_READINESS_TIMEOUT_MS = 5_000L
     }
 
     private val lock = Any()
     private val executor = Executors.newCachedThreadPool()
+    private val handler = Handler(Looper.getMainLooper())
     private val activeConnections = ConcurrentHashMap<String, HttpURLConnection>()
+    private val networkReadiness = ScopedNetworkReadiness<Network>()
     private var localNetwork: Network? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var pendingConnectPromise: Promise? = null
+    private var pendingReadinessTimeout: Runnable? = null
 
     override fun definition() = ModuleDefinition {
         Name("MentraLocalNetwork")
@@ -74,7 +80,9 @@ class MentraLocalNetworkModule : Module() {
         AsyncFunction("cancel") { requestId: String -> cancel(requestId) }
         AsyncFunction("disconnect") { disconnect() }
 
-        OnDestroy { disconnect() }
+        OnDestroy {
+            disconnect()
+        }
     }
 
     private fun connectivityManager(): ConnectivityManager =
@@ -83,11 +91,6 @@ class MentraLocalNetworkModule : Module() {
         }
 
     private fun connect(ssid: String, password: String, promise: Promise) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-            promise.reject("ERR_UNSUPPORTED_ANDROID", "Scoped local WiFi requires Android 10 or newer", null)
-            return
-        }
-
         disconnect()
         val manager = connectivityManager()
         val specifier =
@@ -105,21 +108,55 @@ class MentraLocalNetworkModule : Module() {
         val callback =
             object : ConnectivityManager.NetworkCallback() {
                 override fun onAvailable(network: Network) {
-                    val connectPromise: Promise?
                     synchronized(lock) {
                         if (networkCallback !== this) {
                             Log.d(TAG, "Ignoring onAvailable from a stale network request")
                             return
                         }
-                        localNetwork = network
-                        connectPromise = pendingConnectPromise
-                        pendingConnectPromise = null
+                        networkReadiness.onAvailable(network)
                     }
                     Log.i(
                         TAG,
-                        "Captured glasses WiFi network=$network processBoundNetwork=${manager.boundNetworkForProcess}",
+                        "Captured glasses WiFi network=$network; waiting for foreground capability " +
+                            "processBoundNetwork=${manager.boundNetworkForProcess}",
                     )
-                    connectPromise?.resolve(mapOf("connected" to true, "ssid" to ssid))
+                    scheduleReadinessTimeout(this, ssid)
+                }
+
+                override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+                    val connectPromise: Promise?
+                    synchronized(lock) {
+                        if (networkCallback !== this || localNetwork != null || pendingConnectPromise == null) return
+                        if (!networkReadiness.isReady(
+                                network,
+                                capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_FOREGROUND),
+                            )
+                        ) {
+                            return
+                        }
+                        localNetwork = network
+                        connectPromise = pendingConnectPromise
+                        pendingConnectPromise = null
+                        cancelReadinessTimeoutLocked()
+                    }
+                    Log.i(
+                        TAG,
+                        "Glasses WiFi network=$network is foreground and ready " +
+                            "processBoundNetwork=${manager.boundNetworkForProcess}",
+                    )
+                    val localAddress =
+                        manager.getLinkProperties(network)
+                            ?.linkAddresses
+                            ?.firstOrNull { it.address is Inet4Address }
+                            ?.address
+                            ?.hostAddress
+                    connectPromise?.resolve(
+                        buildMap<String, Any> {
+                            put("connected", true)
+                            put("ssid", ssid)
+                            if (!localAddress.isNullOrBlank()) put("localAddress", localAddress)
+                        },
+                    )
                 }
 
                 override fun onUnavailable() {
@@ -135,13 +172,17 @@ class MentraLocalNetworkModule : Module() {
 
                 override fun onLost(network: Network) {
                     synchronized(lock) {
-                        if (networkCallback !== this || localNetwork != network) {
+                        if (networkCallback !== this ||
+                            (localNetwork != network && !networkReadiness.contains(network))
+                        ) {
                             Log.d(TAG, "Ignoring onLost from a stale network request")
                             return
                         }
                         localNetwork = null
+                        networkReadiness.clear()
                     }
                     cancelAll()
+                    rejectPendingConnect("ERR_LOCAL_WIFI_LOST", "Lost connection to $ssid")
                     clearNetworkCallback(this)
                     sendEvent("networkLost", mapOf("ssid" to ssid))
                 }
@@ -289,6 +330,39 @@ class MentraLocalNetworkModule : Module() {
         activeConnections.keys.toList().forEach(::cancel)
     }
 
+    private fun scheduleReadinessTimeout(
+        callback: ConnectivityManager.NetworkCallback,
+        ssid: String,
+    ) {
+        val timeout =
+            Runnable {
+                val connectPromise = synchronized(lock) {
+                    if (networkCallback !== callback || pendingConnectPromise == null) return@Runnable
+                    pendingReadinessTimeout = null
+                    val promise = pendingConnectPromise
+                    pendingConnectPromise = null
+                    promise
+                }
+                connectPromise?.reject(
+                    "ERR_LOCAL_WIFI_NOT_READY",
+                    "Connected to $ssid but the network did not become ready",
+                    null,
+                )
+                clearNetworkCallback(callback)
+            }
+        synchronized(lock) {
+            if (networkCallback !== callback || pendingConnectPromise == null) return
+            cancelReadinessTimeoutLocked()
+            pendingReadinessTimeout = timeout
+        }
+        handler.postDelayed(timeout, NETWORK_READINESS_TIMEOUT_MS)
+    }
+
+    private fun cancelReadinessTimeoutLocked() {
+        pendingReadinessTimeout?.let(handler::removeCallbacks)
+        pendingReadinessTimeout = null
+    }
+
     private fun disconnect() {
         cancelAll()
         val manager = appContext.reactContext?.getSystemService(ConnectivityManager::class.java)
@@ -297,6 +371,8 @@ class MentraLocalNetworkModule : Module() {
             callback = networkCallback
             networkCallback = null
             localNetwork = null
+            networkReadiness.clear()
+            cancelReadinessTimeoutLocked()
         }
         if (callback != null && manager != null) {
             try {
@@ -311,7 +387,12 @@ class MentraLocalNetworkModule : Module() {
     private fun clearNetworkCallback(callback: ConnectivityManager.NetworkCallback) {
         val manager = appContext.reactContext?.getSystemService(ConnectivityManager::class.java)
         synchronized(lock) {
-            if (networkCallback == callback) networkCallback = null
+            if (networkCallback == callback) {
+                networkCallback = null
+                localNetwork = null
+                networkReadiness.clear()
+                cancelReadinessTimeoutLocked()
+            }
         }
         if (manager != null) {
             try {

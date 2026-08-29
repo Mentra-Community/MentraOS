@@ -17,18 +17,21 @@
  * state written mid-pass queues a follow-up pass — the same way a setState
  * during React effects scheduled a re-render after the current effect batch.
  */
-import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
-import type {OtaProgress, OtaStatus} from "@mentra/bluetooth-sdk/internal"
+import BluetoothSdk, {type OtaProgress, type OtaStatus} from "@mentra/bluetooth-sdk"
 import GlobalEventEmitter from "../utils/GlobalEventEmitter"
 import {isGlassesConnected, useGlassesStore} from "../stores/glasses"
 import {resolveOtaManifestUrl} from "./otaManifestUrl"
+import {hotspotOtaTransport, type HotspotOtaPhase} from "./HotspotOtaTransport"
+import type {OtaCheckCurrentGlassesResult} from "./OtaUpdateCheckService"
 import {deriveDisplayState, type DisplayState} from "./otaDisplayState"
 import {
   BES_CONTINUE_LOCKOUT_MS,
+  BES_RESTART_TIMEOUT_MS,
   DOWNLOAD_STUCK_TIMEOUT_MS,
   GLOBAL_OTA_TIMEOUT_MS,
   LEGACY_APK_COMPLETION_SETTLE_MS,
   LEGACY_BES_CONTINUE_LOCKOUT_MS,
+  LEGACY_BES_RESTART_TIMEOUT_MS,
   LEGACY_DOWNLOAD_STUCK_TIMEOUT_MS,
   LEGACY_GLOBAL_OTA_TIMEOUT_MS,
   LEGACY_MTK_INSTALL_TIMEOUT_MS,
@@ -56,6 +59,28 @@ import {
 
 function isTerminalForWatchdog(d: DisplayState): boolean {
   return d === "complete" || d === "failed" || d === "restarting"
+}
+
+function hotspotPreflightErrorMessage(error: unknown): string {
+  const code =
+    typeof error === "object" && error !== null && "code" in error ? String((error as {code: unknown}).code) : ""
+  switch (code) {
+    case "artifact_download_failed":
+      return OtaProgressMessages.hotspotArtifactDownloadFailed
+    case "artifact_verify_failed":
+    case "manifest_invalid":
+      return OtaProgressMessages.hotspotArtifactVerifyFailed
+    case "hotspot_wifi_permission_denied":
+      return OtaProgressMessages.hotspotWifiPermissionDenied
+    case "hotspot_start_failed":
+      return OtaProgressMessages.hotspotStartFailed
+    case "hotspot_join_failed":
+      return OtaProgressMessages.hotspotJoinFailed
+    case "hotspot_server_failed":
+      return OtaProgressMessages.hotspotServerFailed
+    default:
+      return OtaProgressMessages.hotspotServerFailed
+  }
 }
 
 /** Non-empty when glasses are actively reporting work — drives stall timeout reset. */
@@ -143,6 +168,11 @@ export interface OtaInstallSnapshot {
    * checking the version. Completion is the "complete" displayState.
    */
   versionChangePhase: "installing" | "restarting" | "verifying" | null
+  /** Pre-ota_start phone staging/join state for a hotspot attempt. */
+  hotspotPhase: HotspotOtaPhase
+  hotspotArtifactPercent: number | null
+  /** Transport selected from the checked glasses capabilities and Wi-Fi state. */
+  transport: "wifi" | "hotspot"
 }
 
 type OtaStartOutcome = "pending" | "acknowledged" | "rejected"
@@ -154,6 +184,11 @@ interface OtaStartOwnership {
 
 class OtaInstallCoordinator {
   private attached = false
+  private preparedCheckResult: OtaCheckCurrentGlassesResult | null = null
+  private selectedTransport: "wifi" | "hotspot" = "wifi"
+  private hotspotManifestUrl: string | null = null
+  private hotspotPhase: HotspotOtaPhase = "idle"
+  private hotspotArtifactPercent: number | null = null
 
   // Genuinely session-local state (was component state/refs).
   private errorMsg = ""
@@ -212,6 +247,7 @@ class OtaInstallCoordinator {
   private pingInterval: ReturnType<typeof setInterval> | null = null
   private queryReplyTimeout: ReturnType<typeof setTimeout> | null = null
   private continueLockoutTimer: ReturnType<typeof setTimeout> | null = null
+  private restartRecoveryTimeout: ReturnType<typeof setTimeout> | null = null
   private legacyApkSettleTimer: ReturnType<typeof setTimeout> | null = null
   private mtkStallDetectTimer: ReturnType<typeof setTimeout> | null = null
   private mtkSimTickTimer: ReturnType<typeof setInterval> | null = null
@@ -250,6 +286,25 @@ class OtaInstallCoordinator {
   private snapshotCheckers = new Set<() => void>()
 
   // --- public surface (engine.ota.installSession) ---
+
+  /** Select the transport at the existing install entry point before the progress route attaches. */
+  prepare(checkResult: OtaCheckCurrentGlassesResult): "wifi" | "hotspot" {
+    const state = useGlassesStore.getState()
+    if (!state.wifiStatusKnown) {
+      throw new Error("Glasses Wi-Fi status is not available")
+    }
+    const hotspotSupported = state.hotspotOtaVersion === 1
+    const wifiConnected = state.wifi.state === "connected"
+    if (!wifiConnected && !hotspotSupported) {
+      throw new Error("Connected glasses require Wi-Fi for OTA")
+    }
+    this.preparedCheckResult = checkResult
+    this.selectedTransport = wifiConnected ? "wifi" : "hotspot"
+    this.hotspotManifestUrl = null
+    this.hotspotPhase = "idle"
+    this.hotspotArtifactPercent = null
+    return this.selectedTransport
+  }
 
   /**
    * Bind the state machine to a mounted progress screen. Idempotent per
@@ -356,7 +411,7 @@ class OtaInstallCoordinator {
         if (this.otaStartOwnership?.outcome === "pending") {
           void this.sendOtaStartWithWatchdogs()
         } else {
-          void BluetoothSdk.sendOtaQueryStatus().catch(() => {})
+          void BluetoothSdk.queryOtaStatus().catch(() => {})
           this.armQueryReplyFallback("retry")
         }
       }
@@ -398,15 +453,17 @@ class OtaInstallCoordinator {
    * stays in the screen): clear the selected update, and after an APK step
    * clear the stale build number so the next check re-reads version_info.
    */
-  finish(): void {
+  async finish(): Promise<void> {
     if (this.otaStartOwnership?.outcome !== "pending") {
       this.otaStartOwnership = null
     }
     useGlassesStore.getState().setOtaUpdateAvailable(null)
     if (this.apkStepSeen) {
-      BluetoothSdk.updateGlasses({buildNumber: ""})
       useGlassesStore.getState().setGlassesInfo({buildNumber: ""})
     }
+    // The post-install check needs internet again. Do not let callers leave the
+    // terminal screen while Android still owns the no-internet hotspot route.
+    await this.teardownHotspotTransport()
   }
 
   /**
@@ -415,8 +472,8 @@ class OtaInstallCoordinator {
    * deriveDisplayState doesn't resurrect the stale install when the host
    * navigates away and back through /ota routes.
    */
-  discard(): void {
-    this.finish()
+  async discard(): Promise<void> {
+    await this.finish()
     const store = useGlassesStore.getState()
     store.setOtaStatus(null)
     store.setOtaProgress(null)
@@ -451,6 +508,9 @@ class OtaInstallCoordinator {
       isVersionChange: this.versionChangeSession,
       versionChangeConverged: this.versionChangeConverged,
       versionChangePhase: this.deriveVersionChangePhase(connected),
+      hotspotPhase: this.hotspotPhase,
+      hotspotArtifactPercent: this.hotspotArtifactPercent,
+      transport: this.selectedTransport,
     }
   }
 
@@ -943,16 +1003,22 @@ class OtaInstallCoordinator {
     // (15s unified, 35s for legacy-shaped sessions — WP 8C-f).
     if (displayStateChanged && displayState === "restarting") {
       this.clearContinueLockoutTimer()
+      this.clearRestartRecoveryTimeout()
       const lockoutMs = legacySession ? LEGACY_BES_CONTINUE_LOCKOUT_MS : BES_CONTINUE_LOCKOUT_MS
+      const restartTimeoutMs = legacySession ? LEGACY_BES_RESTART_TIMEOUT_MS : BES_RESTART_TIMEOUT_MS
       this.setContinueButtonDisabled(true)
       this.continueLockoutTimer = setTimeout(() => {
         this.continueLockoutTimer = null
         this.setContinueButtonDisabled(false)
       }, lockoutMs)
-    }
-
-    if (displayStateChanged && displayState === "failed") {
-      this.clearPerStepTimers()
+      this.restartRecoveryTimeout = setTimeout(() => {
+        this.restartRecoveryTimeout = null
+        if (this.computeDisplayStateNow() !== "restarting") return
+        console.log(`[OTA_PROGRESS] watchdog: glasses did not finish restarting in ${restartTimeoutMs}ms`)
+        this.setErrorMsg(OtaProgressMessages.restartTimeout)
+      }, restartTimeoutMs)
+    } else if (displayStateChanged) {
+      this.clearRestartRecoveryTimeout()
     }
 
     // Legacy MTK install stall simulation (WP 8C-e): display-only. The simulation
@@ -970,7 +1036,13 @@ class OtaInstallCoordinator {
       displayStateChanged &&
       (displayState === "complete" || displayState === "restarting" || displayState === "failed")
     ) {
+      if (displayState === "failed") {
+        this.clearPerStepTimers()
+      }
       useGlassesStore.getState().setOtaUpdateAvailable(null)
+      if (displayState === "complete" || displayState === "failed") {
+        void this.teardownHotspotTransport()
+      }
     }
   }
 
@@ -1009,7 +1081,7 @@ class OtaInstallCoordinator {
     if (this.otaStartOwnership?.outcome === "pending") {
       void this.sendOtaStartWithWatchdogs()
     }
-    void BluetoothSdk.sendOtaQueryStatus()
+    void BluetoothSdk.queryOtaStatus().catch(() => {})
     this.armQueryReplyFallback("reconnect")
     return true
   }
@@ -1053,7 +1125,7 @@ class OtaInstallCoordinator {
     if (noSessionYet) {
       if (!isIdleStatus && this.otaStartOwnership?.outcome === "acknowledged") {
         console.log("[OTA_PROGRESS] initial mount, acknowledged session has no cached status — reconciling")
-        void BluetoothSdk.sendOtaQueryStatus().catch(() => {})
+        void BluetoothSdk.queryOtaStatus().catch(() => {})
         this.armQueryReplyFallback("initial-mount")
         return
       }
@@ -1069,7 +1141,7 @@ class OtaInstallCoordinator {
       void this.sendOtaStartWithWatchdogs()
     } else {
       console.log("[OTA_PROGRESS] initial mount, session exists, sending ota_query_status")
-      void BluetoothSdk.sendOtaQueryStatus()
+      void BluetoothSdk.queryOtaStatus().catch(() => {})
       this.armQueryReplyFallback("initial-mount")
     }
   }
@@ -1098,7 +1170,7 @@ class OtaInstallCoordinator {
     this.clearProgressTimeout()
     this.onFirstActivity()
     this.onFirstNonZeroProgress()
-    void BluetoothSdk.sendOtaQueryStatus()
+    void BluetoothSdk.queryOtaStatus().catch(() => {})
     useGlassesStore.getState().setMtkUpdatedThisSession(true)
   }
 
@@ -1289,7 +1361,7 @@ class OtaInstallCoordinator {
     const s = useGlassesStore.getState().otaStatus
     if (s?.stepType === "apk" && s.phase === "install" && s.status === "in_progress") {
       this.apkInstallPollInFlight = true
-      void BluetoothSdk.sendOtaQueryStatus()
+      void BluetoothSdk.queryOtaStatus()
         .catch(() => {})
         .finally(() => {
           this.apkInstallPollInFlight = false
@@ -1392,7 +1464,7 @@ class OtaInstallCoordinator {
     const existingOwnership = this.otaStartOwnership
     if (existingOwnership?.outcome === "pending") {
       this.maybeStartGlobalTimeout()
-      this.maybeArmStuckWatchdog()
+      if (this.selectedTransport === "wifi" || this.hotspotManifestUrl) this.maybeArmStuckWatchdog()
       console.log("[OTA_PROGRESS] ota_start already pending — adopting existing native request")
       return existingOwnership.promise
     }
@@ -1406,7 +1478,7 @@ class OtaInstallCoordinator {
       return Promise.resolve()
     }
     this.maybeStartGlobalTimeout()
-    this.maybeArmStuckWatchdog()
+    if (this.selectedTransport === "wifi" || this.hotspotManifestUrl) this.maybeArmStuckWatchdog()
 
     const ownership: OtaStartOwnership = {
       outcome: "pending",
@@ -1418,10 +1490,29 @@ class OtaInstallCoordinator {
   }
 
   private async performOtaStart(ownership: OtaStartOwnership): Promise<void> {
+    let nativeStartAttempted = false
     try {
       const state = useGlassesStore.getState()
-      const otaVersionUrl = resolveOtaManifestUrl(state.otaVersionUrl, state.buildNumber)
-      console.log(`[OTA_PROGRESS] sending ota_start with manifest URL: ${otaVersionUrl}`)
+      let otaVersionUrl = resolveOtaManifestUrl(state.otaVersionUrl, state.buildNumber)
+      if (this.selectedTransport === "hotspot") {
+        if (!this.hotspotManifestUrl) {
+          if (!this.preparedCheckResult) {
+            throw new Error("No selected OTA check is available for hotspot staging")
+          }
+          this.hotspotManifestUrl = await hotspotOtaTransport.prepare(this.preparedCheckResult, (progress) => {
+            this.hotspotPhase = progress.phase
+            this.hotspotArtifactPercent = progress.artifact?.artifactPercent ?? null
+            this.emitInternalChange()
+          })
+        }
+        otaVersionUrl = this.hotspotManifestUrl
+        this.maybeArmStuckWatchdog()
+      }
+      if (!otaVersionUrl) {
+        throw new Error("OTA is disabled because this build has no immutable manifest pin")
+      }
+      console.log(`[OTA_PROGRESS] sending ota_start with ${this.selectedTransport} manifest URL: ${otaVersionUrl}`)
+      nativeStartAttempted = true
       await BluetoothSdk.startOtaUpdate(otaVersionUrl)
       if (this.otaStartOwnership !== ownership) return
       // The public SDK promise resolves only from ota_start_ack. Treat that
@@ -1432,6 +1523,14 @@ class OtaInstallCoordinator {
       console.warn("[OTA_PROGRESS] sendOtaStart threw", err)
 
       if (this.otaStartOwnership !== ownership) return
+
+      if (this.selectedTransport === "hotspot" && !nativeStartAttempted) {
+        ownership.outcome = "rejected"
+        this.clearStuckTimeout()
+        await this.teardownHotspotTransport()
+        if (this.attached) this.setErrorMsg(hotspotPreflightErrorMessage(err))
+        return
+      }
 
       // A received ota_status/legacy progress event, or the exact legacy APK
       // build-number proof, proves that this logical start was accepted. Its
@@ -1474,6 +1573,15 @@ class OtaInstallCoordinator {
         this.setErrorMsg(OtaProgressMessages.sendOtaStartFailed)
       }
     }
+  }
+
+  private async teardownHotspotTransport(): Promise<void> {
+    if (this.selectedTransport !== "hotspot" && !this.hotspotManifestUrl) return
+    await hotspotOtaTransport.teardown()
+    this.hotspotManifestUrl = null
+    this.hotspotPhase = "idle"
+    this.hotspotArtifactPercent = null
+    this.emitInternalChange()
   }
 
   /**
@@ -1573,6 +1681,13 @@ class OtaInstallCoordinator {
     }
   }
 
+  private clearRestartRecoveryTimeout(): void {
+    if (this.restartRecoveryTimeout) {
+      clearTimeout(this.restartRecoveryTimeout)
+      this.restartRecoveryTimeout = null
+    }
+  }
+
   private clearLegacyApkSettleTimer(): void {
     if (this.legacyApkSettleTimer) {
       clearTimeout(this.legacyApkSettleTimer)
@@ -1611,6 +1726,7 @@ class OtaInstallCoordinator {
     this.clearPingInterval()
     this.clearLegacyApkSettleTimer()
     this.clearMtkSimulationTimers()
+    this.clearRestartRecoveryTimeout()
   }
 }
 

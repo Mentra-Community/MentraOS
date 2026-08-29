@@ -7,16 +7,20 @@ import {
   fetchWorkflowStatuses,
   getChangedFiles,
   getPrHeadSha,
+  isCiFailed,
   isCiGreen,
   pollCiUntilSettled,
   requiredWorkflowsForPaths,
 } from './ci-gates.js';
 import { loadConfig } from './config.js';
+import { fetchExternalFindings, type ExternalFindings } from './external-reviews.js';
 import { runFix } from './fix.js';
+import { postInlineFindings } from './inline-comments.js';
 import { buildHandoffComment } from './handoff.js';
 import { runPlan, writePlanOutputs } from './plan.js';
 import { recheckHandoff } from './recheck-handoff.js';
 import { buildReviewComment } from './review-comment.js';
+import { runCodexReview } from './review-codex.js';
 import { runReview } from './review.js';
 import {
   createOctokit,
@@ -26,7 +30,7 @@ import {
   saveState,
   upsertMarkerComment,
 } from './state.js';
-import { MARKER_REVIEW, type ReviewSlot } from './types.js';
+import { MARKER_HANDOFF, MARKER_REVIEW, type ReviewSlot } from './types.js';
 
 const repoRoot = process.env.GITHUB_WORKSPACE ?? process.cwd();
 const owner = process.env.GITHUB_REPOSITORY_OWNER!;
@@ -43,8 +47,12 @@ async function cmdPlan() {
 
 async function cmdReview(slot: string) {
   const { state } = await loadOrCreateState(createOctokit(), owner, repo, prNumber);
+  if (slot === 'codex') {
+    await runCodexReview(repoRoot, prNumber, baseRef, state);
+    return;
+  }
   if (slot !== 'standards' && slot !== 'depth') {
-    throw new Error('slot must be standards or depth');
+    throw new Error('slot must be standards, depth, or codex');
   }
   await runReview(repoRoot, slot, prNumber, baseRef, state);
 }
@@ -83,12 +91,30 @@ async function cmdAggregate() {
   const ref = (await getPrHeadSha(octokit, owner, repo, prNumber)) || headSha;
   const ciChecks = await fetchWorkflowStatuses(octokit, owner, repo, ref, required);
 
+  // Ingestion of external bot inline comments must never take down the cycle:
+  // on API failure we proceed without them and pick them up next cycle.
+  let external: ExternalFindings | undefined;
+  try {
+    external = await fetchExternalFindings(
+      octokit,
+      owner,
+      repo,
+      prNumber,
+      repoRoot,
+      state.cycle,
+    );
+  } catch (err) {
+    console.warn('external review ingestion failed; continuing without:', err);
+  }
+
   const reviews = {
     standards: loadReviewOutput(repoRoot, 'standards'),
     depth: loadReviewOutput(repoRoot, 'depth'),
+    codex: loadReviewOutput(repoRoot, 'codex'),
     bugbot: await loadBugbotVerdict(octokit, owner, repo, prNumber),
     bugbotCheckCompleted: process.env.BUGBOT_COMPLETED === 'true',
     bugbotCheckSuccess: process.env.BUGBOT_SUCCESS === 'true',
+    external,
   };
 
   const result = aggregateCycle(repoRoot, state, reviews, ciChecks, activePair);
@@ -98,10 +124,25 @@ async function cmdAggregate() {
   // Always surface the human-readable review to the PR, regardless of verdict.
   const reviewComment = buildReviewComment(
     result.state,
-    { standards: reviews.standards, depth: reviews.depth, bugbot: reviews.bugbot },
+    {
+      standards: reviews.standards,
+      depth: reviews.depth,
+      codex: reviews.codex,
+      bugbot: reviews.bugbot,
+    },
     activePair,
+    { nativeReviewers: reviews.external?.reviewers },
   );
   await upsertMarkerComment(octokit, owner, repo, prNumber, MARKER_REVIEW, reviewComment);
+
+  // Inline comments are best-effort: an anchor rejection must not fail the cycle.
+  if (result.newBlockingFindings.length > 0) {
+    try {
+      await postInlineFindings(octokit, owner, repo, prNumber, ref, result.newBlockingFindings);
+    } catch (err) {
+      console.warn('posting inline finding comments failed; continuing:', err);
+    }
+  }
 
   const out = process.env.GITHUB_OUTPUT;
   if (out) {
@@ -178,16 +219,17 @@ async function cmdFinalize() {
   await saveState(octokit, owner, repo, prNumber, finalState, commentId);
 
   const body = buildHandoffComment(reason, finalState, ciChecks);
-  await octokit.issues.createComment({
-    owner,
-    repo,
-    issue_number: prNumber,
-    body,
-  });
+  // Upsert so late CI re-triggers edit one handoff comment instead of spamming.
+  await upsertMarkerComment(octokit, owner, repo, prNumber, MARKER_HANDOFF, body);
 
   await ensureLabel(octokit, owner, repo, prNumber, 'ready-for-human-review');
   if (reason !== 'human_handoff') {
     await ensureLabel(octokit, owner, repo, prNumber, 'agent-needs-human');
+  }
+  if (isCiFailed(ciChecks)) {
+    await ensureLabel(octokit, owner, repo, prNumber, 'agent-ci-failing');
+  } else {
+    await removeLabel(octokit, owner, repo, prNumber, 'agent-ci-failing');
   }
   await removeLabel(octokit, owner, repo, prNumber, 'agent-in-progress');
 }

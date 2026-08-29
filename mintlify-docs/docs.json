@@ -2,6 +2,13 @@
   "$schema": "https://mintlify.com/docs.json",
   "theme": "aspen",
   "name": "MentraOS",
+  "variables": {
+    "release-version": "3.1.0",
+    "release-artifacts-url": "https://github.com/Mentra-Community/MentraOS/releases/tag/mentra-v3.1.0",
+    "example-app-version": "0.1.21-beta.5",
+    "example-app-url": "https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/releases/download/sdk-0.1.21-beta.5/mentra-example-react-native.apk",
+    "example-app-ios-url": "https://appstoreconnect.apple.com/teams/52733bd2-726b-4742-b1e2-1cfc0174c696/apps/6792839366/testflight/groups/1b1daeae-9175-4020-9c1b-52fd6b14cc49"
+  },
   "colors": {
     "primary": "#00b869",
     "light": "#00b869",
@@ -146,7 +153,11 @@
           {
             "group": "Release",
             "icon": "clipboard-check",
-            "pages": ["bluetooth-sdk/troubleshooting", "bluetooth-sdk/production-checklist"]
+            "pages": [
+              "bluetooth-sdk/air-gapped-deployment",
+              "bluetooth-sdk/troubleshooting",
+              "bluetooth-sdk/production-checklist"
+            ]
           }
         ]
       },
@@ -310,6 +321,7 @@
     {"source": "/mentra-live/quickstart", "destination": "/bluetooth-sdk/quickstart"},
     {"source": "/mentra-live/examples", "destination": "/bluetooth-sdk/quickstart"},
     {"source": "/bluetooth-sdk/examples", "destination": "/bluetooth-sdk/quickstart"},
+    {"source": "/mentra-live/air-gapped-deployment", "destination": "/bluetooth-sdk/air-gapped-deployment"},
     {"source": "/mentra-live/software-update", "destination": "/bluetooth-sdk/software-update"},
     {"source": "/mentra-live/ai-ide-integration", "destination": "/bluetooth-sdk/ai-ide-integration"},
     {"source": "/mentra-live/react-native-expo", "destination": "/bluetooth-sdk/react-native-expo"},

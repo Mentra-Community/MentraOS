@@ -14,10 +14,12 @@ import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.audio.AudioAssets;
 import com.mentra.asg_client.camera.CameraNeoService;
 import com.mentra.asg_client.camera.feedback.PhotoFeedbackController;
+import com.mentra.asg_client.camera.feedback.PhotoLightController;
 import com.mentra.asg_client.camera.lifecycle.PhotoExifMetadataWriter;
 import com.mentra.asg_client.camera.model.CameraOperationError;
 import com.mentra.asg_client.camera.model.CapturedPhoto;
 import com.mentra.asg_client.camera.model.PhotoCaptureSettings;
+import com.mentra.asg_client.camera.model.QueuedPhotoRequestQueue;
 import com.mentra.asg_client.camera.policy.PhotoMode;
 import com.mentra.asg_client.camera.policy.PhotoSizeTier;
 import com.mentra.asg_client.io.file.core.FileManager;
@@ -92,10 +94,11 @@ public class MediaCaptureService {
     private ServiceCallbackInterface mServiceCallback;
     private final IHardwareManager hardwareManager;
     private final PhotoFeedbackController photoFeedbackController;
+    private final PhotoLightController photoLightController;
     private final MlKitTextRoiDetector textRoiDetector;
 
     // Track current video recording
-    private boolean isRecordingVideo = false;
+    private volatile boolean isRecordingVideo = false;
     private String currentVideoId = null;
     // volatile: read in the stop prologue (BLE worker / main looper) to derive the upload-target
     // captureId key, while written on the start/callback threads — needs cross-thread visibility.
@@ -138,6 +141,7 @@ public class MediaCaptureService {
     }
 
     private StopReason mCurrentStopReason = null;
+    private final VideoRecordingLifecycle videoRecordingLifecycle = new VideoRecordingLifecycle();
 
     /**
      * Stop-time upload target bound to a specific recording. Empty/null webhook = keep on device.
@@ -796,6 +800,7 @@ public class MediaCaptureService {
         // Initialize hardware manager
         hardwareManager = HardwareManagerFactory.getInstance(context);
         photoFeedbackController = new PhotoFeedbackController(hardwareManager, mainHandler);
+        photoLightController = new PhotoLightController(hardwareManager, mainHandler);
         Log.d(TAG, "Hardware manager initialized: " + hardwareManager.getDeviceModel());
     }
 
@@ -898,33 +903,6 @@ public class MediaCaptureService {
         hardwareManager.flashRecordingLed(1000);
     }
 
-    /**
-     * Trigger white LED flash for photo capture (synchronized with shutter sound, default
-     * brightness)
-     */
-    private void triggerPhotoFlashLed() {
-        triggerPhotoFlashLed(RgbLedConstants.DEFAULT_BRIGHTNESS);
-    }
-
-    /**
-     * Trigger white LED flash for photo capture with specified brightness
-     *
-     * @param brightness Brightness level (0-255, where 255 is maximum brightness)
-     */
-    private void triggerPhotoFlashLed(int brightness) {
-        Log.i(TAG, "📸 triggerPhotoFlashLed() called with brightness: " + brightness);
-
-        if (hardwareManager != null && hardwareManager.supportsRgbLed()) {
-            hardwareManager.flashRgbLedWhite(2200, brightness); // 2.2 second flash
-            Log.i(
-                    TAG,
-                    "📸 Photo flash LED (white) triggered via hardware manager at brightness "
-                            + brightness);
-        } else {
-            Log.w(TAG, "⚠️ RGB LED not supported on this device");
-        }
-    }
-
     /** Trigger solid white LED for video recording duration (default brightness) */
     private void triggerVideoRecordingLed() {
         triggerVideoRecordingLed(RgbLedConstants.DEFAULT_BRIGHTNESS);
@@ -1024,36 +1002,42 @@ public class MediaCaptureService {
                     "⚠️ StateManager not initialized - skipping battery check for video recording");
         }
 
-        if (isRecordingVideo) {
+        if (isRecordingVideo && !videoRecordingLifecycle.isStopping()) {
             Log.d(TAG, "Stopping video recording");
             stopVideoRecording();
         } else {
-            Log.d(
-                    TAG,
-                    "Starting video recording with settings: "
-                            + settings
-                            + ", max time: "
-                            + maxRecordingTimeMinutes
-                            + " minutes, battery: "
-                            + initialBatteryLevel
-                            + "%");
-            // Generate IDs for local recording
-            String timeStamp =
-                    new SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(new Date());
-            int randomSuffix = (int) (Math.random() * 1000);
-            String requestId = "local_video_" + timeStamp + "_" + randomSuffix;
-            String captureDir = "VID_" + timeStamp + "_" + randomSuffix;
-            File captureDirFile = new File(fileManager.getDefaultMediaDirectory(), captureDir);
-            captureDirFile.mkdirs();
-            String videoFilePath = new File(captureDirFile, "base.mp4").getAbsolutePath();
-            startVideoRecording(
-                    videoFilePath,
-                    requestId,
-                    settings,
-                    enableFlash,
-                    true,
-                    maxRecordingTimeMinutes,
-                    false);
+            Runnable startAction =
+                    () -> {
+                        Log.d(
+                                TAG,
+                                "Starting video recording with settings: "
+                                        + settings
+                                        + ", max time: "
+                                        + maxRecordingTimeMinutes
+                                        + " minutes, battery: "
+                                        + initialBatteryLevel
+                                        + "%");
+                        String timeStamp =
+                                new SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US)
+                                        .format(new Date());
+                        int randomSuffix = (int) (Math.random() * 1000);
+                        String requestId = "local_video_" + timeStamp + "_" + randomSuffix;
+                        String captureDir = "VID_" + timeStamp + "_" + randomSuffix;
+                        File captureDirFile =
+                                new File(fileManager.getDefaultMediaDirectory(), captureDir);
+                        captureDirFile.mkdirs();
+                        String videoFilePath =
+                                new File(captureDirFile, "base.mp4").getAbsolutePath();
+                        startVideoRecording(
+                                videoFilePath,
+                                requestId,
+                                settings,
+                                enableFlash,
+                                true,
+                                maxRecordingTimeMinutes,
+                                false);
+                    };
+            requestVideoStart(startAction);
         }
     }
 
@@ -1062,10 +1046,11 @@ public class MediaCaptureService {
      *
      * @param requestId Unique request ID for tracking
      * @param save Whether to keep the video on device after upload
+     * @return true when the start was accepted immediately or queued behind recorder teardown
      */
-    public void handleStartVideoCommand(
+    public boolean handleStartVideoCommand(
             String requestId, boolean save, boolean enableFlash, boolean enableSound) {
-        handleStartVideoCommand(requestId, save, null, enableFlash, enableSound);
+        return handleStartVideoCommand(requestId, save, null, enableFlash, enableSound);
     }
 
     /**
@@ -1074,14 +1059,15 @@ public class MediaCaptureService {
      * @param requestId Unique request ID for tracking
      * @param save Whether to keep the video on device after upload
      * @param settings Video settings (resolution, fps) or null for defaults
+     * @return true when the start was accepted immediately or queued behind recorder teardown
      */
-    public void handleStartVideoCommand(
+    public boolean handleStartVideoCommand(
             String requestId,
             boolean save,
             VideoSettings settings,
             boolean enableFlash,
             boolean enableSound) {
-        handleStartVideoCommand(requestId, save, settings, enableFlash, enableSound, 0);
+        return handleStartVideoCommand(requestId, save, settings, enableFlash, enableSound, 0);
     }
 
     /**
@@ -1091,8 +1077,9 @@ public class MediaCaptureService {
      * @param save Whether to keep the video on device after upload
      * @param settings Video settings (resolution, fps) or null for defaults
      * @param maxRecordingTimeMinutes Maximum recording time in minutes (0 = no limit)
+     * @return true when the start was accepted immediately or queued behind recorder teardown
      */
-    public void handleStartVideoCommand(
+    public boolean handleStartVideoCommand(
             String requestId,
             boolean save,
             VideoSettings settings,
@@ -1114,40 +1101,50 @@ public class MediaCaptureService {
                         + ", maxRecordingTimeMinutes: "
                         + maxRecordingTimeMinutes);
 
-        // Check if already recording
-        if (isRecordingVideo) {
-            Log.w(TAG, "Already recording video, ignoring start command");
-            if (mMediaCaptureListener != null) {
-                mMediaCaptureListener.onMediaError(
-                        requestId, "Already recording", MediaUploadQueueManager.MEDIA_TYPE_VIDEO);
-            }
-            return;
+        Runnable startAction =
+                () -> {
+                    String timeStamp =
+                            new SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US)
+                                    .format(new Date());
+                    int randomSuffix = (int) (Math.random() * 1000);
+                    String embeddedRequestId = CaptureRequestId.sanitizeForDirName(requestId);
+                    String captureDir =
+                            "VID_"
+                                    + timeStamp
+                                    + "_"
+                                    + randomSuffix
+                                    + (embeddedRequestId.isEmpty() ? "" : "_" + embeddedRequestId);
+                    File captureDirFile =
+                            new File(fileManager.getDefaultMediaDirectory(), captureDir);
+                    captureDirFile.mkdirs();
+                    String videoFilePath = new File(captureDirFile, "base.mp4").getAbsolutePath();
+
+                    startVideoRecording(
+                            videoFilePath,
+                            requestId,
+                            settings,
+                            enableFlash,
+                            enableSound,
+                            maxRecordingTimeMinutes,
+                            save);
+                };
+        return requestVideoStart(startAction);
+    }
+
+    private boolean requestVideoStart(Runnable startAction) {
+        VideoRecordingLifecycle.StartResult result =
+                videoRecordingLifecycle.requestStart(startAction);
+        if (result == VideoRecordingLifecycle.StartResult.START_NOW) {
+            startAction.run();
+            return true;
+        }
+        if (result == VideoRecordingLifecycle.StartResult.QUEUED) {
+            Log.i(TAG, "Queued video start until the active recording finishes stopping");
+            return true;
         }
 
-        // Generate filename with requestId
-        String timeStamp =
-                new SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(new Date());
-        int randomSuffix = (int) (Math.random() * 1000);
-        String embeddedRequestId = CaptureRequestId.sanitizeForDirName(requestId);
-        String captureDir =
-                "VID_"
-                        + timeStamp
-                        + "_"
-                        + randomSuffix
-                        + (embeddedRequestId.isEmpty() ? "" : "_" + embeddedRequestId);
-        File captureDirFile = new File(fileManager.getDefaultMediaDirectory(), captureDir);
-        captureDirFile.mkdirs();
-        String videoFilePath = new File(captureDirFile, "base.mp4").getAbsolutePath();
-
-        // Start video recording with the provided requestId and settings (or null for defaults)
-        startVideoRecording(
-                videoFilePath,
-                requestId,
-                settings,
-                enableFlash,
-                enableSound,
-                maxRecordingTimeMinutes,
-                save);
+        Log.w(TAG, "Video start rejected because another recording or queued start is active");
+        return false;
     }
 
     /**
@@ -1225,6 +1222,7 @@ public class MediaCaptureService {
                 || SrtStreamingService.isStreaming()
                 || WhipStreamingService.isStreaming()) {
             Log.e(TAG, "Cannot start video - streaming active");
+            videoRecordingLifecycle.startFailed();
             if (mMediaCaptureListener != null) {
                 mMediaCaptureListener.onMediaError(
                         requestId,
@@ -1237,6 +1235,7 @@ public class MediaCaptureService {
         // Check if camera is actively in use (this will return false for kept-alive idle camera)
         if (CameraNeoService.isCameraInUse()) {
             Log.e(TAG, "Cannot start video - camera actively in use");
+            videoRecordingLifecycle.startFailed();
             if (mMediaCaptureListener != null) {
                 mMediaCaptureListener.onMediaError(
                         requestId, "Camera busy", MediaUploadQueueManager.MEDIA_TYPE_VIDEO);
@@ -1247,6 +1246,7 @@ public class MediaCaptureService {
         // Check storage availability before recording
         if (!isExternalStorageAvailable()) {
             Log.e(TAG, "External storage is not available for video capture");
+            videoRecordingLifecycle.startFailed();
             if (mMediaCaptureListener != null) {
                 mMediaCaptureListener.onMediaError(
                         requestId,
@@ -1289,6 +1289,7 @@ public class MediaCaptureService {
                         @Override
                         public void onRecordingStarted(String videoId) {
                             Log.d(TAG, "Video recording started with ID: " + videoId);
+                            videoRecordingLifecycle.recordingStarted();
                             isRecordingVideo = true;
                             recordingStartTime = System.currentTimeMillis();
 
@@ -1421,6 +1422,7 @@ public class MediaCaptureService {
                             isRecordingVideo = false;
                             currentVideoId = null;
                             currentVideoPath = null;
+                            completeVideoTermination();
 
                             if (filePath == null || captureIdFromCallback == null) {
                                 Log.e(
@@ -1638,6 +1640,7 @@ public class MediaCaptureService {
                             // Reset state
                             currentVideoId = null;
                             currentVideoPath = null;
+                            completeVideoTermination();
                         }
 
                         @Override
@@ -1670,6 +1673,34 @@ public class MediaCaptureService {
             clearVideoCaptureSyncBlocks(videoFilePath);
             currentVideoId = null;
             currentVideoPath = null;
+            videoRecordingLifecycle.startFailed();
+        }
+    }
+
+    /** Release one start queued behind MediaRecorder teardown onto the main looper. */
+    private void completeVideoTermination() {
+        final Runnable pendingStart;
+        synchronized (mStopLock) {
+            mCurrentStopReason = null;
+            pendingStart = videoRecordingLifecycle.recordingTerminated();
+        }
+        if (pendingStart == null) {
+            return;
+        }
+
+        boolean posted =
+                mainHandler.post(
+                        () -> {
+                            if (isCleaningUp.get()) {
+                                videoRecordingLifecycle.startFailed();
+                                return;
+                            }
+                            Log.i(TAG, "Starting video queued behind recorder teardown");
+                            pendingStart.run();
+                        });
+        if (!posted) {
+            videoRecordingLifecycle.startFailed();
+            Log.e(TAG, "Could not post video start queued behind recorder teardown");
         }
     }
 
@@ -1712,6 +1743,14 @@ public class MediaCaptureService {
                 return;
             }
 
+            if (!isRecordingVideo || currentVideoId == null) {
+                Log.w(TAG, "⚠️ Not currently recording, nothing to stop");
+                return;
+            }
+            if (!videoRecordingLifecycle.beginStop()) {
+                Log.w(TAG, "⚠️ Video lifecycle is not ready to stop");
+                return;
+            }
             mCurrentStopReason = reason;
         }
         Log.d(TAG, "🛑 Stopping video recording - Reason: " + reason);
@@ -1724,13 +1763,6 @@ public class MediaCaptureService {
         try {
             // Stop battery monitoring first
             stopBatteryMonitoring();
-
-            if (!isRecordingVideo || currentVideoId == null) {
-                Log.w(TAG, "⚠️ Not currently recording, nothing to stop");
-                // No dispatch → no camera callback → nothing was registered for this stop, so
-                // there is nothing to leak (registration happens below, only on dispatch).
-                return;
-            }
 
             // Handle based on reason
             switch (reason) {
@@ -1808,10 +1840,7 @@ public class MediaCaptureService {
                 hardwareManager.setRecordingLedOff();
                 Log.d(TAG, "Recording LED turned OFF (stop error recovery)");
             }
-        } finally {
-            synchronized (mStopLock) {
-                mCurrentStopReason = null; // Reset for next recording
-            }
+            completeVideoTermination();
         }
     }
 
@@ -2048,10 +2077,11 @@ public class MediaCaptureService {
         PhotoCaptureTestHooks.addFakeDelay("CAMERA_INIT");
 
         // Skip sound and flash during camera HAL restart cooldown (e.g. after FOV change)
+        boolean suppressPhotoFeedback = shouldSuppressPhotoFeedback();
+        final PhotoLightController.Token captureLightToken =
+                photoLightController.prepare(!suppressPhotoFeedback);
         PhotoFeedbackController.Token feedbackToken = null;
-        if (!shouldSuppressPhotoFeedback()) {
-            // RGB LED always flashes for photos (user visibility indicator)
-            triggerPhotoFlashLed();
+        if (!suppressPhotoFeedback) {
             if (effectiveSound) {
                 // Button photo: isFromSdk=false, auto exposure (null) — matches the
                 // enqueuePhotoRequest call below so the warm/cold prediction lines up.
@@ -2119,6 +2149,10 @@ public class MediaCaptureService {
                     @Override
                     public void onPhotoExposureStarted(
                             long sensorTimestampNs, long estimatedExposureDurationNs) {
+                        photoLightController.onCaptureBoundary(
+                                captureLightToken,
+                                "sensor exposure",
+                                estimatedExposureDurationNs);
                         photoFeedbackController.onExposureStarted(
                                 captureFeedbackToken,
                                 sensorTimestampNs,
@@ -2127,6 +2161,8 @@ public class MediaCaptureService {
 
                     @Override
                     public void onPhotoFrameAvailable(long sensorTimestampNs) {
+                        photoLightController.onCaptureBoundary(
+                                captureLightToken, "JPEG frame fallback");
                         photoFeedbackController.playSnap(
                                 captureFeedbackToken, "JPEG frame available");
                     }
@@ -2138,6 +2174,8 @@ public class MediaCaptureService {
 
                     @Override
                     public void onPhotoCaptured(String filePath, JSONObject captureMetadata) {
+                        photoLightController.onCaptureBoundary(
+                                captureLightToken, "photo completion fallback");
                         photoFeedbackController.playSnap(
                                 captureFeedbackToken, "photo completion fallback");
 
@@ -2296,9 +2334,11 @@ public class MediaCaptureService {
         File captureDirFile = new File(photoFilePath).getParentFile();
         final String captureId = captureDirFile != null ? captureDirFile.getName() : "";
 
+        boolean suppressPhotoFeedback = shouldSuppressPhotoFeedback();
+        final PhotoLightController.Token captureLightToken =
+                photoLightController.prepare(!suppressPhotoFeedback);
         PhotoFeedbackController.Token feedbackToken = null;
-        if (!shouldSuppressPhotoFeedback()) {
-            triggerPhotoFlashLed();
+        if (!suppressPhotoFeedback) {
             if (enableSound) {
                 // Local-save SDK photo: isFromSdk=true, matching the enqueue below.
                 feedbackToken =
@@ -2355,6 +2395,10 @@ public class MediaCaptureService {
                         @Override
                         public void onPhotoExposureStarted(
                                 long sensorTimestampNs, long estimatedExposureDurationNs) {
+                            photoLightController.onCaptureBoundary(
+                                    captureLightToken,
+                                    "sensor exposure",
+                                    estimatedExposureDurationNs);
                             photoFeedbackController.onExposureStarted(
                                     captureFeedbackToken,
                                     sensorTimestampNs,
@@ -2363,6 +2407,8 @@ public class MediaCaptureService {
 
                         @Override
                         public void onPhotoFrameAvailable(long sensorTimestampNs) {
+                            photoLightController.onCaptureBoundary(
+                                    captureLightToken, "JPEG frame fallback");
                             photoFeedbackController.playSnap(
                                     captureFeedbackToken, "JPEG frame available");
                         }
@@ -2382,6 +2428,8 @@ public class MediaCaptureService {
                                 String filePath,
                                 JSONObject captureMetadata,
                                 CapturedPhoto capturedPhoto) {
+                            photoLightController.onCaptureBoundary(
+                                    captureLightToken, "photo completion fallback");
                             photoFeedbackController.playSnap(
                                     captureFeedbackToken, "photo completion fallback");
                             if (textModeRequested) {
@@ -2699,11 +2747,13 @@ public class MediaCaptureService {
         // TESTING: Add fake delay for camera capture
         PhotoCaptureTestHooks.addFakeDelay("CAMERA_CAPTURE");
 
+        boolean suppressPhotoFeedback = shouldSuppressPhotoFeedback();
+        final PhotoLightController.Token captureLightToken =
+                photoLightController.prepare(!suppressPhotoFeedback);
         PhotoFeedbackController.Token feedbackToken = null;
         try {
             // Skip sound and flash during camera HAL restart cooldown (e.g. after FOV change)
-            if (!shouldSuppressPhotoFeedback()) {
-                triggerPhotoFlashLed();
+            if (!suppressPhotoFeedback) {
                 if (enableSound) {
                     // SDK photo: isFromSdk=true; size and exposure match the enqueuePhotoRequest
                     // call below so the warm/cold prediction lines up.
@@ -2788,6 +2838,10 @@ public class MediaCaptureService {
                         @Override
                         public void onPhotoExposureStarted(
                                 long sensorTimestampNs, long estimatedExposureDurationNs) {
+                            photoLightController.onCaptureBoundary(
+                                    captureLightToken,
+                                    "sensor exposure",
+                                    estimatedExposureDurationNs);
                             photoFeedbackController.onExposureStarted(
                                     captureFeedbackToken,
                                     sensorTimestampNs,
@@ -2796,6 +2850,8 @@ public class MediaCaptureService {
 
                         @Override
                         public void onPhotoFrameAvailable(long sensorTimestampNs) {
+                            photoLightController.onCaptureBoundary(
+                                    captureLightToken, "JPEG frame fallback");
                             photoFeedbackController.playSnap(
                                     captureFeedbackToken, "JPEG frame available");
                         }
@@ -2866,6 +2922,8 @@ public class MediaCaptureService {
                                 String filePath,
                                 JSONObject captureMetadata,
                                 CapturedPhoto capturedPhoto) {
+                            photoLightController.onCaptureBoundary(
+                                    captureLightToken, "photo completion fallback");
                             photoFeedbackController.playSnap(
                                     captureFeedbackToken, "photo completion fallback");
                             if (!textModeRequested) {
@@ -5088,9 +5146,11 @@ public class MediaCaptureService {
         PhotoCaptureTestHooks.addFakeDelay("CAMERA_CAPTURE");
 
         // Skip sound and flash during camera HAL restart cooldown (e.g. after FOV change)
+        boolean suppressPhotoFeedback = shouldSuppressPhotoFeedback();
+        final PhotoLightController.Token captureLightToken =
+                photoLightController.prepare(!suppressPhotoFeedback);
         PhotoFeedbackController.Token feedbackToken = null;
-        if (!shouldSuppressPhotoFeedback()) {
-            triggerPhotoFlashLed();
+        if (!suppressPhotoFeedback) {
             if (enableSound) {
                 // BLE-transfer SDK photo: isFromSdk=true; size and exposure match the
                 // enqueuePhotoRequest call below so the warm/cold prediction lines up.
@@ -5181,6 +5241,10 @@ public class MediaCaptureService {
                         @Override
                         public void onPhotoExposureStarted(
                                 long sensorTimestampNs, long estimatedExposureDurationNs) {
+                            photoLightController.onCaptureBoundary(
+                                    captureLightToken,
+                                    "sensor exposure",
+                                    estimatedExposureDurationNs);
                             photoFeedbackController.onExposureStarted(
                                     captureFeedbackToken,
                                     sensorTimestampNs,
@@ -5189,6 +5253,8 @@ public class MediaCaptureService {
 
                         @Override
                         public void onPhotoFrameAvailable(long sensorTimestampNs) {
+                            photoLightController.onCaptureBoundary(
+                                    captureLightToken, "JPEG frame fallback");
                             photoFeedbackController.playSnap(
                                     captureFeedbackToken, "JPEG frame available");
                         }
@@ -5208,6 +5274,8 @@ public class MediaCaptureService {
                                 String filePath,
                                 JSONObject captureMetadata,
                                 CapturedPhoto capturedPhoto) {
+                            photoLightController.onCaptureBoundary(
+                                    captureLightToken, "photo completion fallback");
                             photoFeedbackController.playSnap(
                                     captureFeedbackToken, "photo completion fallback");
                             // NOTE: do NOT clear isPhotoJobInFlight here — the job continues
@@ -6989,6 +7057,7 @@ public class MediaCaptureService {
         assertMainThread();
         Log.d(TAG, "🧹 MediaCaptureService cleanup() called");
         isCleaningUp.set(true);
+        videoRecordingLifecycle.cancelPendingStart();
 
         try {
             photoFeedbackController.cleanup();

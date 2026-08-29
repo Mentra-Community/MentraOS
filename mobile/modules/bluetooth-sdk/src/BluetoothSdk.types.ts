@@ -155,6 +155,8 @@ export type VersionInfoResult = {
   systemTimeMs?: number
   otaVersionUrl: string
   appVersion: string
+  /** Phone-served hotspot OTA protocol version; 0 means unsupported/legacy glasses. */
+  hotspotOtaVersion: number
 }
 
 export type VersionInfoEvent = VersionInfoResult & {
@@ -648,6 +650,23 @@ export type PairFailureEvent = {
   error: string
 }
 
+export type PairingInfoEvent = {
+  had_previous_bond: boolean
+  pairing_code?: string
+  classic_bond_ready?: boolean
+  secure_pairing_capable?: boolean
+  protocol_version?: number
+}
+
+export type EnteringPairingModeEvent = {
+  window_ms: number
+  reason?: string
+}
+
+export type OwnerReplacedEvent = {
+  reason: string
+}
+
 export type AudioPairingNeededEvent = {
   type: "audio_pairing_needed"
   deviceName: string
@@ -699,6 +718,17 @@ export type MicLc3Event = {
   bitrate: number
   packetizedFromGlasses: boolean
   voiceActivityDetectionEnabled: boolean
+}
+
+/** Native glasses-microphone diagnostics emitted when the SDK detects a transport or decode issue. */
+export type MicHealthEvent = {
+  type: "mic_health"
+  reason: "sequence_gap" | "decode_failure"
+  sequenceGapEvents: number
+  decodeFailures: number
+  lastLc3ReceivedAt?: number
+  lastPcmProducedAt?: number
+  timestamp: number
 }
 
 export type StreamStatusLifecycleState = "initializing" | "streaming" | "stopping" | "stopped"
@@ -895,6 +925,9 @@ export type BluetoothSdkModuleEvents = {
   rgb_led_control_response: (event: RgbLedControlResponseEvent) => void
   settings_ack: (event: SettingsAckEvent) => void
   pair_failure: (event: PairFailureEvent) => void
+  pairing_info: (event: PairingInfoEvent) => void
+  entering_pairing_mode: (event: EnteringPairingModeEvent) => void
+  owner_replaced: (event: OwnerReplacedEvent) => void
   audio_pairing_needed: (event: AudioPairingNeededEvent) => void
   audio_connected: (event: AudioConnectedEvent) => void
   audio_disconnected: (event: AudioDisconnectedEvent) => void
@@ -903,6 +936,7 @@ export type BluetoothSdkModuleEvents = {
   ws_bin: (event: WsBinEvent) => void
   mic_pcm: (event: MicPcmEvent) => void
   mic_lc3: (event: MicLc3Event) => void
+  mic_health: (event: MicHealthEvent) => void
   stream_status: (event: StreamStatusEvent) => void
   keep_alive_ack: (event: KeepAliveAckEvent) => void
   mtk_update_complete: (event: MtkUpdateCompleteEvent) => void
@@ -999,12 +1033,20 @@ export type BluetoothSdkEventMap = {
   rgb_led_control_response: RgbLedControlResponseEvent
   settings_ack: SettingsAckEvent
   pair_failure: PairFailureEvent
+  pairing_info: PairingInfoEvent
+  entering_pairing_mode: EnteringPairingModeEvent
+  owner_replaced: OwnerReplacedEvent
   audio_pairing_needed: AudioPairingNeededEvent
   audio_connected: AudioConnectedEvent
   audio_disconnected: AudioDisconnectedEvent
   mic_pcm: MicPcmEvent
   mic_lc3: MicLc3Event
+  mic_health: MicHealthEvent
   stream_status: StreamStatusEvent
+  /** Mentra Live MTK updater completed and the glasses are about to restart. */
+  mtk_update_complete: MtkUpdateCompleteEvent
+  /** The ASG process restarted while the BES kept the BLE connection alive. */
+  glasses_session_changed: GlassesSessionChangedEvent
   ota_start_ack: OtaStartAckEvent
   ota_status: OtaStatusEvent
   ar99_ota_status: Ar99OtaStatusEvent
@@ -1030,6 +1072,15 @@ export interface BluetoothSdkPublicModule {
     listener: BluetoothSdkEventListener<EventName>,
   ): BluetoothSdkSubscription
 
+  /** Read an immutable snapshot of the current glasses state. */
+  getGlassesStatus(): Promise<PublicGlassesStatus>
+  /** Read an immutable snapshot of the phone Bluetooth adapter state. */
+  getBluetoothStatus(): Promise<PublicBluetoothStatus>
+  /** Observe immutable glasses-state patches. Returns an unsubscribe function. */
+  subscribeGlassesStatus(listener: (changed: Partial<PublicGlassesStatus>) => void): () => void
+  /** Observe immutable Bluetooth-state patches. Returns an unsubscribe function. */
+  subscribeBluetoothStatus(listener: (changed: Partial<PublicBluetoothStatus>) => void): () => void
+
   getDefaultDevice(): Promise<Device | null>
   setDefaultDevice(device: Device | null): Promise<void>
   clearDefaultDevice(): Promise<void>
@@ -1051,11 +1102,17 @@ export interface BluetoothSdkPublicModule {
   setHeadUpAngle(angleDegrees: number): Promise<void>
   setImuEnabled(enabled: boolean): Promise<void>
   setScreenDisabled(disabled: boolean): Promise<void>
+  /** Keep legacy Mentra Live OTA sessions awake. Modern sessions normally do not require this. */
+  ping(): Promise<void>
 
   requestWifiScan(): Promise<WifiSearchResult[]>
   sendWifiCredentials(ssid: string, password: string): Promise<WifiStatusChangeEvent>
   forgetWifiNetwork(ssid: string): Promise<WifiStatusChangeEvent>
   setHotspotState(enabled: boolean): Promise<HotspotStatusChangeEvent>
+  /** Set the glasses clock from the phone after an OTA clock-skew failure. */
+  setSystemTime(timestampMs: number): Promise<void>
+  /** Enable or disable Wi-Fi ADB on Mentra Live (no-op on other devices). */
+  setWifiAdbState(enabled: boolean): Promise<void>
 
   setGalleryModeEnabled(enabled: boolean): Promise<SettingsAckSuccessEvent>
   setVoiceActivityDetectionEnabled(enabled: boolean): Promise<void>
@@ -1110,6 +1167,8 @@ export interface BluetoothSdkPublicModule {
     webhookUrl?: string,
     authToken?: string,
   ): Promise<VideoRecordingStoppedStatusEvent>
+  /** Query the glasses for the current recording state and elapsed duration. */
+  queryVideoRecordingStatus(requestId: string): Promise<VideoRecordingStatusEvent>
 
   startStream(params: StreamStartRequest): Promise<StreamStatusEvent>
   stopStream(): Promise<StreamStatusEvent>
@@ -1131,14 +1190,31 @@ export interface BluetoothSdkPublicModule {
   ): Promise<RgbLedControlSuccessResponseEvent>
 
   requestVersionInfo(): Promise<VersionInfoResult>
+  /**
+   * Select the OTA manifest used by subsequent update checks and installs.
+   * The URL may point at Mentra's hosted manifest or any customer-controlled HTTP(S) server.
+   */
+  setOtaVersionUrl(otaVersionUrl: string): void
+  /** Return the configured or release-embedded OTA manifest URL. Rejects when a source build is unconfigured. */
+  getOtaVersionUrl(): string
   /** Fetch the configured OTA manifest and return whether any ASG/BES/MTK update is available. */
   checkForOtaUpdate(): Promise<boolean>
-  /** Start the OTA flow with the same configured manifest URL used by checkForOtaUpdate(). */
-  startOtaUpdate(): Promise<OtaStartAckEvent>
+  /** Return bundled release changelogs crossed between two coordinated product versions, newest first. */
+  getReleaseChangelogs(fromVersion?: string | null, toVersion?: string | null): ReleaseChangelog[]
+  /** Start OTA from the configured or explicitly supplied manifest URL. */
+  startOtaUpdate(otaVersionUrl?: string | null): Promise<OtaStartAckEvent>
+  /** Query the active OTA session and return the correlated status response. */
+  queryOtaStatus(): Promise<OtaQueryResult>
   startAr99OtaFromFile(path: string): Promise<boolean>
   cancelAr99Ota(): Promise<void>
   sendAr99FactoryReset(): Promise<void>
-  buildAr99OtaSignature(secret: string, appName: string, currentVersion: string, serialNumber: string, nonce: string): string
+  buildAr99OtaSignature(
+    secret: string,
+    appName: string,
+    currentVersion: string,
+    serialNumber: string,
+    nonce: string,
+  ): string
 
   // // stt commands (MOVE TO CRUST)
   // setSttModelDetails(path: string, languageCode: string): Promise<void>
@@ -1207,6 +1283,13 @@ export interface OtaUpdateInfo {
   isDowngrade?: boolean
 }
 
+export interface ReleaseChangelog {
+  /** Base production version, for example `3.1.0`. */
+  version: string
+  /** Markdown body authored in `/changelogs/<version>.md`. */
+  markdown: string
+}
+
 export interface OtaProgress {
   stage: OtaStage
   status: OtaProgressStatus
@@ -1233,6 +1316,7 @@ export interface GlassesStatus {
   besFirmwareVersion: string
   mtkFirmwareVersion: string
   bluetoothMacAddress: string
+  wifiMacAddress: string
   leftMacAddress: string
   rightMacAddress: string
   buildNumber: string
@@ -1240,6 +1324,8 @@ export interface GlassesStatus {
   systemTimeMs?: number
   otaVersionUrl: string
   appVersion: string
+  /** Phone-served hotspot OTA protocol version; 0 means unsupported/legacy glasses. */
+  hotspotOtaVersion: number
   bluetoothName: string
   serialNumber: string
   style: string
@@ -1303,6 +1389,12 @@ export interface Device {
    * appear in a later scan update when the platform reports RSSI metadata.
    */
   rssi?: number
+  /** Mentra Live: unit is currently in pairing mode (adv flag). */
+  pairingMode?: boolean
+  /** Mentra Live: four-character hex spoken pairing code when available. */
+  pairingCode?: string
+  /** Mentra Live: advertisement carries the secure-pairing capability trailer. */
+  securePairingCapable?: boolean
 }
 
 export interface ConnectOptions {

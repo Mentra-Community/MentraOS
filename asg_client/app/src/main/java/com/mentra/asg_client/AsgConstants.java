@@ -22,11 +22,17 @@ public class AsgConstants {
     /** Current Mentra Live Android hotspot gateway when interface discovery is unavailable. */
     public static final String DEFAULT_HOTSPOT_GATEWAY_IP = "192.168.43.1";
 
+    /** Canonical network interface used by the Mentra Live WiFi hotspot. */
+    public static final String MENTRA_LIVE_HOTSPOT_INTERFACE = "ap0";
+
     /** SmartXY setting containing the Mentra Live hotspot SSID. */
     public static final String K900_VENDOR_HOTSPOT_SSID_SETTING = "xy_ssid";
 
     /** SmartXY setting containing the Mentra Live hotspot password. */
     public static final String K900_VENDOR_HOTSPOT_PASSWORD_SETTING = "xy_pwd";
+
+    /** Protocol version for phone-served OTA artifacts over the Mentra Live hotspot. */
+    public static final int HOTSPOT_OTA_VERSION = 1;
 
     /** Canonical camera crop defaults shared with the phone and Bluetooth SDK. */
     public static final int CAMERA_FOV_DEFAULT = 118;
@@ -35,6 +41,23 @@ public class AsgConstants {
 
     /** Cadence for live stream bitrate, frame-rate, duration, and thermal telemetry. */
     public static final long STREAM_METRICS_INTERVAL_MS = 1_000L;
+
+    /**
+     * Initial WHIP/WebRTC send bitrate before congestion control has measured the network. This
+     * avoids libwebrtc's low default startup estimate while preserving room to adapt.
+     */
+    public static final int WHIP_INITIAL_VIDEO_BITRATE_BPS = 1_500_000;
+
+    /**
+     * 1Hz encoder FPS/bitrate/dropped-frame telemetry ({@code [STREAM_QUALITY]} and BLE {@code
+     * stream_status.stats}). Lifecycle {@code stream_status} (started/stopped/error) is unaffected.
+     * Keep false in production; flip locally to debug the Mentra Call FPS ladder.
+     *
+     * <p>Double gate: reporters are not scheduled, and {@code onStreamMetrics} returns immediately
+     * so accidental emission cannot reach BLE. Manual acceptance with every layer false: join
+     * waterfall yes; STREAM_QUALITY / BLE stats / encoder-stats / watch-stats / debug ingest no.
+     */
+    public static final boolean ENABLE_PIPELINE_FPS_TELEMETRY = false;
 
     /**
      * Local-testing stopgap that disables the 60s keep-alive watchdog for RTMP/SRT/WHIP streams.
@@ -61,8 +84,29 @@ public class AsgConstants {
     /** Cadence for the short hold-still click while a cold photo spins up the camera. */
     public static final long CAMERA_PREP_CLICK_INTERVAL_MS = 900L;
 
+    /** Minimum AE settling time after first convergence for a cold camera photo. */
+    public static final long COLD_CAMERA_EXPOSURE_SETTLE_DELAY_MS = 475L;
+
+    /** Baseline linear gain for Mentra Live audio prompts. */
+    public static final float AUDIO_PLAYBACK_VOLUME = 0.1f;
+
+    /** Silence between spoken pairing-code characters so adjacent sounds remain distinguishable. */
+    public static final int PAIRING_CODE_INTER_CHARACTER_PAUSE_MS = 140;
+
+    /** Pause between the pairing instruction and the first code character. */
+    public static final int PAIRING_INTRO_TO_CODE_PAUSE_MS = 300;
+
+    /** Subtle linear gain for the repeating cold-camera hold-still cue. */
+    public static final float CAMERA_PREP_CLICK_PLAYBACK_VOLUME = 0.09f;
+
+    /** Prominent linear gain for the photo shutter cue. */
+    public static final float CAMERA_SNAP_PLAYBACK_VOLUME = 0.3f;
+
     /** Target lead before the estimated end of sensor exposure for starting the camera snap. */
     public static final long CAMERA_SNAP_TARGET_LEAD_MS = 100L;
+
+    /** Duration of the user-visible RGB photo indicator, triggered at the capture boundary. */
+    public static final int PHOTO_LIGHT_DURATION_MS = 2200;
 
     /** Safety lease for a miniapp-owned transient FOV override. */
     public static final long CAMERA_FOV_OVERRIDE_DEFAULT_TTL_MS = 300_000L;
@@ -430,4 +474,10 @@ public class AsgConstants {
     public static final int BLE_PHOTO_HIGH_TARGET_PX = 1600;
     public static final int BLE_PHOTO_HIGH_AVIF_QUALITY = 48;
     public static final int BLE_PHOTO_MAX_TARGET_PX = 1920;
+
+    /**
+     * Phone → glasses JSON command type to enable or disable Wi-Fi ADB (Mentra Live).
+     * Persisted via AsgSettings and applied at boot (default off).
+     */
+    public static final String COMMAND_SET_WIFI_ADB_STATE = "set_wifi_adb_state";
 }

@@ -384,11 +384,6 @@ nicelogs.txt
 issues
 !cloud-v2/docs/issues/
 !cloud-v2/docs/issues/**
-!cloud/issues/
-!cloud/issues/**
-# Re-ignore macOS junk under the cloud/issues un-ignore above
-cloud/issues/.DS_Store
-cloud/issues/**/.DS_Store
 
 # Local pulled text-detection debug dumps (adb / analysis artifacts)
 mobile/textdetect_debug_pulled/
@@ -406,6 +401,9 @@ MEMORY.md
 .mcp.json
 .codex/
 
+# Graphify knowledge graph output (local AST extract)
+graphify-out/
+
 # Local Cursor/agent skills
 mobile/agents/
 
@@ -421,3 +419,7 @@ miniapps/navigation/build/
 # Downloaded bug report bundles (scripts/fetch-incident-logs.sh)
 incident-logs/
 asg_client/StreamPackLite.zip
+
+# Local temp artifacts and generated decks
+tmp/
+output/

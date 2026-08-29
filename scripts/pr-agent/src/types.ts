@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const ReviewSlotSchema = z.enum(['bugbot', 'standards', 'depth']);
+export const ReviewSlotSchema = z.enum(['bugbot', 'standards', 'depth', 'codex']);
 export type ReviewSlot = z.infer<typeof ReviewSlotSchema>;
 
 export const FindingSchema = z.object({
@@ -37,6 +37,11 @@ export const PrAgentStateSchema = z.object({
   fingerprintReopenCounts: z.record(z.number()).default({}),
   /** Fingerprints a human marked as false positive via `agent-resolve <id>`. */
   mutedFingerprints: z.array(z.string()).default([]),
+  /**
+   * Monotonic counter bumped on every successful state comment write.
+   * Used by saveState to refuse lost-update overwrites from stale concurrent runs.
+   */
+  revision: z.number().default(0),
 });
 
 export type PrAgentState = z.infer<typeof PrAgentStateSchema>;
@@ -50,6 +55,12 @@ export const VerdictSchema = z.object({
         file: z.string(),
         line: z.number().optional(),
         message: z.string(),
+        /**
+         * Id of an existing open finding the reviewer is re-confirming. The
+         * report then inherits that finding's fingerprint so rewording the
+         * same issue cannot fork it into a duplicate identity.
+         */
+        ref: z.string().optional(),
       }),
     )
     .default([]),
@@ -82,4 +93,15 @@ export type AggregateOutput = {
   handoffReason?: 'human_handoff' | 'budget_exhausted' | 'diverging';
   ciFailed: boolean;
   newBlockingCount: number;
+  /**
+   * Blocking findings first introduced this cycle by model reviewers (external
+   * bot findings excluded — those already exist as inline comments). Used to
+   * post inline PR review comments anchored at file/line.
+   */
+  newBlockingFindings: Finding[];
+  /**
+   * True when reviewers were scheduled but none produced a usable verdict.
+   * The cycle carried no review signal, so no convergence counters moved.
+   */
+  emptyCycle?: boolean;
 };

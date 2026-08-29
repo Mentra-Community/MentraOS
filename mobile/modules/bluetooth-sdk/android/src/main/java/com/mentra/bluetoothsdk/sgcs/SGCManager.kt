@@ -56,6 +56,9 @@ abstract class SGCManager {
     abstract fun stopStream()
     abstract fun sendStreamKeepAlive(message: MutableMap<String, Any>)
     abstract fun startVideoRecording(requestId: String, save: Boolean, sound: Boolean)
+    open fun queryVideoRecordingStatus(requestId: String) {
+        Bridge.log("SGC: queryVideoRecordingStatus operation not supported")
+    }
 
     /**
      * Start video recording with optional per-recording resolution/fps. A width,
@@ -306,6 +309,11 @@ abstract class SGCManager {
     /** Set glasses system clock (Mentra Live and G2; no-op on other devices). */
     open fun sendSetSystemTime(timestampMs: Long) {
         Bridge.log("SGC: sendSetSystemTime not supported on $type")
+    }
+
+    /** Enable/disable Wi-Fi ADB on Mentra Live (no-op on other devices). */
+    open fun sendWifiAdbState(enabled: Boolean) {
+        Bridge.log("SGC: sendWifiAdbState not supported on $type")
     }
 
     // User Context (for crash reporting)

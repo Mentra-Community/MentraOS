@@ -31,14 +31,20 @@ public interface ISystemController {
 
     /**
      * Current MTK firmware version from {@code ro.custom.ota.version}, returned verbatim.
-     * Mentra Live firmware reports "MentraLive_YYYYMMDD" (e.g. "MentraLive_20260626"), the
-     * same form OTA manifest {@code start_firmware} entries use. Returns an empty string
-     * when the version is unavailable; the phone-side OTA checkers treat that as unknown
-     * and offer no MTK update.
+     * Mentra Live firmware reports "MentraLive_YYYYMMDD.N" (e.g. "MentraLive_20260820.1"),
+     * while older builds omit the revision suffix. OTA manifest {@code start_firmware}
+     * entries use the same form. Returns an empty string when the version is unavailable;
+     * the phone-side OTA checkers treat that as unknown and offer no MTK update.
      */
     String getSystemOtaVersion();
 
     void setHotspot5GEnabled(boolean enable);
+
+    /**
+     * Enable or disable Wi-Fi ADB (wireless debugging) via SystemUI. Mentra Live defaults this off
+     * for security; phone/SDK can re-enable for debugging.
+     */
+    void setWifiAdb(boolean enable);
 
     void connectToWifiWithCredentialRefresh(String ssid, String password);
 

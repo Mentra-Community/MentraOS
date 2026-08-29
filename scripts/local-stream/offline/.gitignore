@@ -1,0 +1,7 @@
+# Large offline artifacts — keep local/USB only, do not commit
+images/
+*.tar
+*.tar.gz
+DockerDesktopInstaller.exe
+*.msi
+*.iso

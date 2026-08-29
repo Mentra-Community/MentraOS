@@ -1,4 +1,4 @@
-import {DeviceTypes} from "@/../../cloud/packages/types/src"
+import {DeviceTypes} from "@mentra/engine"
 import {act, fireEvent, render} from "@testing-library/react-native"
 import type {ReactNode} from "react"
 
@@ -9,6 +9,9 @@ import {useNavigationStore} from "@/stores/navigation"
 const mockSetOnboardingCompleted = jest.fn()
 
 jest.mock("@mentra/engine", () => ({
+  DeviceTypes: {
+    SIMULATED: "Simulated Glasses",
+  },
   SETTINGS: {
     onboarding_completed: {
       key: "onboarding_completed",

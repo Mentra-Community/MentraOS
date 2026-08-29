@@ -223,7 +223,9 @@ public final class PhotoFeedbackController {
                             mPrepSuppressedUntilUptimeMs,
                             mClock.uptimeMillis() + SNAP_PREP_RESUME_DELAY_MS);
             feedbackToken.mSnapPlaybackToken =
-                    mHardwareManager.playAudioAssetOverlayTracked(AudioAssets.CAMERA_SNAP);
+                    mHardwareManager.playAudioAssetOverlayTracked(
+                            AudioAssets.CAMERA_SNAP,
+                            AsgConstants.CAMERA_SNAP_PLAYBACK_VOLUME);
             if (feedbackToken.mSnapPlaybackToken > 0L) {
                 mPlayingSnapFeedback.add(feedbackToken);
                 feedbackToken.mSnapTrackingRunnable =
@@ -311,7 +313,9 @@ public final class PhotoFeedbackController {
                     feedbackToken.mPrepClickPlaybackToken);
         }
         feedbackToken.mPrepClickPlaybackToken =
-                mHardwareManager.playAudioAssetOverlayTracked(AudioAssets.CAMERA_PREP_CLICK);
+                mHardwareManager.playAudioAssetOverlayTracked(
+                        AudioAssets.CAMERA_PREP_CLICK,
+                        AsgConstants.CAMERA_PREP_CLICK_PLAYBACK_VOLUME);
 
         if (feedbackToken.mPrepClickRunnable == null) {
             feedbackToken.mPrepClickRunnable =

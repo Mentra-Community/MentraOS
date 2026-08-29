@@ -10,10 +10,11 @@ module.exports = {
     "^@mentra/bluetooth-sdk/internal$": "<rootDir>/modules/bluetooth-sdk/src/_internal.ts",
     // Mirror metro: the @mentra/engine entry points resolve to SOURCE, not the
     // (stale) build/ output — tests must exercise the same code the app
-    // bundles. jest.setup.js mocks all three entries.
+    // bundles. jest.setup.js mocks the runtime entries; /ota stays real.
     "^@mentra/engine$": "<rootDir>/modules/engine/src/index.ts",
-    "^@mentra/engine/internal$": "<rootDir>/modules/engine/src/internal.ts",
-    "^@mentra/engine/devtools$": "<rootDir>/modules/engine/src/devtools.ts",
+    "^@mentra/engine-host-internal$": "<rootDir>/modules/engine-host-internal/src/index.ts",
+    "^@mentra/engine-host-internal/devtools$": "<rootDir>/modules/engine-host-internal/src/devtools.ts",
+    "^@mentra/engine/ota$": "<rootDir>/modules/engine/src/react/index.ts",
     "^expo/virtual/env$": "<rootDir>/src/test-utils/expoVirtualEnvMock.ts",
     "^react-native$": "<rootDir>/node_modules/react-native",
     "^crust$": "<rootDir>/modules/crust/src",
@@ -31,9 +32,10 @@ module.exports = {
     "<rootDir>/src/services/streaming/",
     // bun:test suites — run via `bun test`, not Jest (cannot resolve "bun:test").
     "<rootDir>/src/stores/settings.test.ts",
+    "<rootDir>/src/services/qrScanRequest.test.ts",
     "<rootDir>/src/__tests__/app/miniapps/settings/camera.test.tsx",
   ],
   transformIgnorePatterns: [
-    "node_modules/(?!((jest-)?react-native|@react-native(-community)?)|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@sentry/react-native|native-base|react-native-svg|core|typesafe-ts|uniwind)",
+    "node_modules/(?!((jest-)?react-native|@react-native(-community)?)|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|@jsamr/.*|react-navigation|@react-navigation/.*|@sentry/react-native|native-base|react-native-svg|react-native-marked|react-native-reanimated-table|marked|github-slugger|html-entities|svg-parser|core|typesafe-ts|uniwind)",
   ],
 }

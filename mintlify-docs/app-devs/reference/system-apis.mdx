@@ -1,6 +1,6 @@
 ---
 title: "System Miniapp APIs"
-description: "APIs restricted to system miniapps for discovering, launching, and invoking other miniapps."
+description: "APIs restricted to system miniapps for interop and privileged device controls."
 icon: "shield-halved"
 ---
 
@@ -15,8 +15,9 @@ reference. To make your own miniapp callable, expose actions instead, see
 [Actions](/app-devs/core-concepts/miniapp-interop).
 </Warning>
 
-System miniapps can discover other miniapps, control their lifecycle, and invoke
-the actions those miniapps expose.
+System miniapps can discover other miniapps, control their lifecycle, invoke
+the actions those miniapps expose, and use a small set of privileged device
+controls.
 
 ## Discover and control miniapps
 
@@ -71,3 +72,20 @@ const res = await session.actions.invoke(
 A thrown handler in the target surfaces its own error message to the caller.
 The action descriptor returned by `session.miniapps.list()` includes an optional
 `outputSchema`, which describes the structured result for result-aware callers.
+
+## Privileged device controls
+
+### Wi-Fi ADB (Mentra Live)
+
+`session.glasses.setWifiAdbState` toggles wireless debugging on Mentra Live.
+The preference is persisted on the glasses and reapplied at boot (default
+**off**). Non-system callers get `NOT_PERMITTED`.
+
+```ts
+await session.glasses.setWifiAdbState(true);  // enable
+await session.glasses.setWifiAdbState(false); // disable
+```
+
+| Method | Returns | Notes |
+|---|---|---|
+| `setWifiAdbState(enabled)` | `Promise<void>` | Mentra Live only; other models no-op. SYSTEM-only. |

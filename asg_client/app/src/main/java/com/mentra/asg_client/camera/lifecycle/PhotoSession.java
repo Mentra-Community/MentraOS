@@ -15,6 +15,7 @@ import android.util.Size;
 
 import androidx.annotation.Nullable;
 
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.camera.CameraConstants;
 import com.mentra.asg_client.camera.CameraNeoService;
 import com.mentra.asg_client.camera.CameraSettings;
@@ -45,12 +46,15 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Owns photo capture lifecycle: queue dispatch, AE precapture, still/HDR capture, image save, and
@@ -72,6 +76,7 @@ public final class PhotoSession {
 
     private static final String TAG = "CameraNeo";
     private static final long CAPTURE_METADATA_WAIT_TIMEOUT_MS = 750;
+    private static final long PERSISTENCE_DRAIN_TIMEOUT_MS = 10_000;
 
     /** Fallback output path for still {@link ImageReader} callback (openCamera path param). */
     private String listenerFallbackPhotoPath;
@@ -152,6 +157,10 @@ public final class PhotoSession {
      */
     @Nullable private volatile ExecutorService persistenceExecutor;
 
+    /** Outstanding deferred JPEG writes; cancelled or awaited before session teardown. */
+    private final java.util.Set<Future<?>> outstandingPersistence =
+            java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
+
     private final Object captureMetadataLock = new Object();
     @Nullable private JSONObject pendingStillCaptureMetadata;
     @Nullable private String pendingCapturedFilePath;
@@ -199,13 +208,13 @@ public final class PhotoSession {
                             }
 
                             @Override
-                            public void postDelayed(Runnable runnable, long delayMs) {
-                                Handler h = hooks.backgroundHandler();
-                                if (h != null) {
-                                    h.postDelayed(runnable, delayMs);
-                                } else {
-                                    runnable.run();
-                                }
+                            public void scheduleCapturePhoto(long delayMs) {
+                                PhotoSession.this.scheduleCapturePhoto(delayMs);
+                            }
+
+                            @Override
+                            public long minimumExposureStabilizationDelayMs() {
+                                return PhotoSession.this.minimumExposureStabilizationDelayMs();
                             }
 
                             @Override
@@ -252,6 +261,26 @@ public final class PhotoSession {
                                 hooks.stopService();
                             }
                         });
+    }
+
+    long minimumExposureStabilizationDelayMs() {
+        return warmUpRequest != null || mCaptureDispatchedAsWarmReuse
+                ? 0L
+                : AsgConstants.COLD_CAMERA_EXPOSURE_SETTLE_DELAY_MS;
+    }
+
+    void scheduleCapturePhoto(long delayMs) {
+        final long expectedGeneration;
+        synchronized (hooks.serviceLock()) {
+            expectedGeneration = captureMetadataGeneration;
+        }
+        Runnable runnable = () -> onAeReadyForActiveRequest(expectedGeneration);
+        Handler h = hooks.backgroundHandler();
+        if (h != null && delayMs > 0L) {
+            h.postDelayed(runnable, delayMs);
+        } else {
+            runnable.run();
+        }
     }
 
     public AeCaptureCallback aeCallback() {
@@ -766,6 +795,60 @@ public final class PhotoSession {
         }
     }
 
+    /** Cancel the active still capture and mark the session idle before camera teardown. */
+    public boolean cancelActiveCapture(String errorMessage) {
+        synchronized (hooks.serviceLock()) {
+            boolean hadWarmUp = warmUpRequest != null;
+            boolean hadCapture =
+                    activeCapture != null || shotState != AeStateMachine.ShotState.IDLE;
+            if (!hadWarmUp && !hadCapture) {
+                return cancelOutstandingPersistence();
+            }
+            hdrBurstCapture.cancel();
+            hooks.cancelImuRecording();
+            aeStateMachine.clearWaitFlags();
+            // Drop late ImageReader frames: SHOOTING check + no fallback path.
+            shotState = AeStateMachine.ShotState.IDLE;
+            listenerFallbackPhotoPath = null;
+            closeImageReadersIfPresent();
+            if (hadWarmUp) {
+                failWarmUp(CameraOperationError.warmUpFailed(errorMessage));
+            } else {
+                notifyPhotoError(errorMessage);
+                clearActiveCapture();
+            }
+            cancelOutstandingPersistence();
+            return true;
+        }
+    }
+
+    /**
+     * Cancel and briefly await deferred disk writes so a wipe cannot race a late JPEG persistence.
+     *
+     * @return true if any outstanding persistence work was present
+     */
+    public boolean cancelOutstandingPersistence() {
+        boolean hadWork = !outstandingPersistence.isEmpty();
+        for (Future<?> future : outstandingPersistence) {
+            future.cancel(false);
+        }
+        long deadline = System.currentTimeMillis() + PERSISTENCE_DRAIN_TIMEOUT_MS;
+        for (Future<?> future : new ArrayList<>(outstandingPersistence)) {
+            long remaining = deadline - System.currentTimeMillis();
+            if (remaining <= 0) {
+                Log.w(TAG, "Deferred persistence still running after wipe drain timeout");
+                break;
+            }
+            try {
+                future.get(remaining, TimeUnit.MILLISECONDS);
+            } catch (Exception ignored) {
+                // Cancelled, timed out, or failed — wipe proceeds either way.
+            }
+        }
+        outstandingPersistence.clear();
+        return hadWork;
+    }
+
     /**
      * Prepare and hold the camera "warm" for {@code durationMs} without capturing a photo. The
      * session is opened/reused and configured with the SAME parameters a same-size SDK photo would
@@ -863,7 +946,15 @@ public final class PhotoSession {
      * {@code onReady} callback only fires once AE has actually settled.
      */
     private void onAeReadyForActiveRequest() {
+        onAeReadyForActiveRequest(captureMetadataGeneration);
+    }
+
+    private void onAeReadyForActiveRequest(long expectedGeneration) {
         synchronized (hooks.serviceLock()) {
+            if (captureMetadataGeneration != expectedGeneration) {
+                Log.d(TAG, "Ignoring stale AE-ready callback from an older photo request");
+                return;
+            }
             if (warmUpRequest != null) {
                 finishWarmUpReady();
                 return;
@@ -875,6 +966,11 @@ public final class PhotoSession {
                 aeStateMachine.clearWaitFlags();
                 shotState = AeStateMachine.ShotState.IDLE;
                 Log.d(TAG, "Ignoring stale AE-ready callback with no active capture");
+                return;
+            }
+            if (shotState != AeStateMachine.ShotState.WAITING_AE
+                    && shotState != AeStateMachine.ShotState.WAITING_AE_LOCK) {
+                Log.d(TAG, "Ignoring stale AE-ready callback in state " + shotState);
                 return;
             }
         }
@@ -1320,24 +1416,38 @@ public final class PhotoSession {
         final JSONObject callbackImuPayload = copyJsonPayload(imuPayload);
         Future<Boolean> persistence;
         if (persistToDisk) {
-            persistence =
+            AtomicReference<Future<?>> self = new AtomicReference<>();
+            Future<Boolean> task =
                     persistenceExecutor()
                             .submit(
                                     () -> {
-                                        boolean ok = saveImageDataToFile(bytes, targetPath);
-                                        if (!ok) {
-                                            Log.e(
-                                                    TAG,
-                                                    "Deferred photo persistence failed: "
-                                                            + targetPath);
-                                            return false;
+                                        try {
+                                            boolean ok = saveImageDataToFile(bytes, targetPath);
+                                            if (!ok) {
+                                                Log.e(
+                                                        TAG,
+                                                        "Deferred photo persistence failed: "
+                                                                + targetPath);
+                                                return false;
+                                            }
+                                            if (imuPayload != null && imu != null) {
+                                                writeImuArtifacts(targetPath, imuPayload, imu);
+                                            }
+                                            Log.d(TAG, "Deferred photo persisted: " + targetPath);
+                                            return true;
+                                        } finally {
+                                            Future<?> registered = self.get();
+                                            if (registered != null) {
+                                                outstandingPersistence.remove(registered);
+                                            }
                                         }
-                                        if (imuPayload != null && imu != null) {
-                                            writeImuArtifacts(targetPath, imuPayload, imu);
-                                        }
-                                        Log.d(TAG, "Deferred photo persisted: " + targetPath);
-                                        return true;
                                     });
+            self.set(task);
+            outstandingPersistence.add(task);
+            if (task.isDone()) {
+                outstandingPersistence.remove(task);
+            }
+            persistence = task;
         } else {
             persistence = CompletableFuture.completedFuture(false);
             Log.d(TAG, "RAM-only photo capture; persistence skipped: " + targetPath);

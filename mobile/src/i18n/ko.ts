@@ -48,6 +48,25 @@ const ko = {
     hardwareIncompatible: "하드웨어 비호환",
     hardwareIncompatibleMessage: "{{app}}은(는) 연결된 안경에서 사용할 수 없는 하드웨어가 필요합니다: {{missing}}",
   },
+  settings: {
+    ...en.settings,
+    forgetGlassesWhilePairing:
+      "Bluetooth 페어링이 진행 중입니다. 먼저 시스템 페어링 대화상자를 수락하거나 닫은 후 안경 페어링 해제를 다시 시도하세요.",
+  },
+  pairing: {
+    ...en.pairing,
+    nearbyNotInPairingModeHint:
+      "근처에 Mentra Live 안경이 있지만 페어링 모드가 아닙니다. 전원 버튼을 빠르게 3번 누른 뒤 다시 시도하세요.",
+    notInPairingModeLabel: "페어링 모드가 아님",
+    notInPairingModeAlertTitle: "페어링 모드 시작",
+    notInPairingModeAlertMessage:
+      "전원 버튼을 빠르게 3번 누르세요. LED가 깜빡이고 안경이 4자리 코드를 말합니다. 그런 다음 안경을 다시 선택하세요.",
+    pairingCodeLabel: "코드 {{code}}",
+    legacyFirmwareLabel: "레거시 펌웨어",
+    livePairingModeInfo:
+      "전원 버튼을 빠르게 3번 누르세요. LED가 깜빡이고 안경이 4자리 코드(0–9, A–F)를 말합니다. 여러 대가 보이면 그 코드로 확인하세요.",
+    noGlassesFoundHint: "전원 버튼을 빠르게 3번 눌렀는지 확인한 뒤 다시 시도하세요.",
+  },
   demoNavigator: {
     componentsTab: "컴포넌트",
     debugTab: "디버그",
@@ -120,6 +139,18 @@ const ko = {
       heading: "조금 텅 비어 있네요.",
       content: "즐겨찾기가 없습니다. 에피소드에 있는 하트를 눌러서 즐겨찾기에 추가하세요.",
     },
+  },
+  qrScan: {
+    defaultTitle: "QR 코드 스캔",
+    defaultHint: "카메라를 QR 코드에 맞춰 주세요",
+    checkingPermission: "카메라 권한을 확인하는 중\u2026",
+    permissionTitle: "카메라 접근이 필요합니다",
+    permissionBody:
+      "QR 코드를 스캔하려면 카메라가 필요합니다. 이 화면이 열려 있는 동안에만 사용합니다.",
+    grantAccess: "카메라 접근 허용",
+    openSettings: "설정 열기",
+    permissionDeniedTitle: "권한이 거부됨",
+    permissionDeniedBody: "QR 코드를 스캔하려면 설정에서 카메라 접근을 켜 주세요.",
   },
 } satisfies TranslationResource
 

@@ -994,9 +994,9 @@ export const useSettingsStore = create<SettingsState>()(
         // easy to get backwards. TestFlight and the App Store receive the SAME
         // binary, so promotion does not change EXPO_PUBLIC_BUILD_ENV and this
         // reset never fires on it. Promotion is safe for a different reason:
-        // the publishing lane bakes prod URLs (staging-builds.yml defaults
-        // cloud_env to prod), so a promoted build was pointed at production the
-        // whole time. The same holds for Android internal-track to production.
+        // the publishing lane bakes the selected release cloud environment, and
+        // production promotes the already-tested binary. The same holds for
+        // Android beta-track to production.
         //
         // The residual gap is therefore an override pinned while already on a
         // prod-labelled build, which no label comparison can see. That is a
@@ -1152,6 +1152,3 @@ export const useSetting = <T = any>(key: string): [T, (value: T) => AsyncResult<
   const setSetting = useSettingsStore((state) => state.setSetting)
   return [value, (newValue: T) => setSetting(key, newValue)]
 }
-
-
-

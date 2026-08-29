@@ -20,6 +20,7 @@ import type { CloudClientConfig } from "./config";
 import { createHttpClient } from "./http";
 import { CloudClientError } from "./errors";
 import type { ConnectionInit } from "@mentra/cloud-protocol";
+import { systemTimers } from "./timers";
 
 // The module implementations. Each is owned by another agent under ./modules/**;
 // this file only constructs them, matching the constructor signatures fixed in
@@ -117,6 +118,7 @@ export class CloudClient {
 
     // Reconnect/backoff lives here so the socket's timing is tuned in one spot.
     const reconnect = config.reconnect ?? DEFAULT_RECONNECT;
+    const timers = config.timers ?? systemTimers;
 
     // Resolve the two base addresses. With a proxy set, both route through it;
     // without one, each module talks to its own service directly.
@@ -149,7 +151,7 @@ export class CloudClient {
     // before any access token exists. It is deliberately Core-only: runtime-only
     // clients never get a fallback that points Core/Auth calls at Runtime.
     const authHttp = coreUrl
-      ? createHttpClient({ baseUrl: coreUrl, logger, fetch: config.transports.http })
+      ? createHttpClient({ baseUrl: coreUrl, logger, fetch: config.transports.http, timers })
       : undefined;
     const store = new TokenStore({ storage: config.transports.storage });
     const auth = new Auth({
@@ -173,6 +175,7 @@ export class CloudClient {
             getToken: getCoreToken,
             logger,
             fetch: config.transports.http,
+            timers,
           })
         : null;
     const runtimeHttp = createHttpClient({
@@ -180,10 +183,11 @@ export class CloudClient {
       getToken: getRuntimeToken,
       logger,
       fetch: config.transports.http,
+      timers,
     });
 
     const emitter = new RuntimeEmitter();
-    const subscriptions = new Subscriptions({ http: runtimeHttp });
+    const subscriptions = new Subscriptions({ http: runtimeHttp, timers });
 
     // The handshake payload the connection sends on every (re)open. It is a
     // factory (not a fixed value) so each reconnect re-reads the current defaults
@@ -221,12 +225,13 @@ export class CloudClient {
       getToken: getRuntimeToken,
       initPayload,
       reconnect,
+      timers,
       onAuthRejected: async () => {
         await auth.getRuntimeToken({ forceRefresh: true });
       },
       logger,
     });
-    const camera = new Camera({ http: runtimeHttp });
+    const camera = new Camera({ http: runtimeHttp, timers });
     const tts = new Tts({ http: runtimeHttp });
     const maps = new Maps({ http: runtimeHttp });
     const audio = new UdpAudio({ udp: config.transports.udp });
@@ -239,6 +244,7 @@ export class CloudClient {
       tts,
       maps,
       audio,
+      timers,
       logger,
       // On a fatal AUTH_EXPIRED at handshake, runtime forces auth to drop its
       // cached access token and refresh; the connection then re-reads the fresh

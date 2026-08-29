@@ -422,6 +422,12 @@ function construct(): void {
     // LC3 at 16 kHz with the frame size the encoder emits.
     audio: {codec: "lc3", sampleRate: 16000, frameSizeBytes: frameSizeBytes()},
     auth,
+    timers: {
+      setTimeout: (callback, delayMs) => BgTimer.setTimeout(callback, delayMs),
+      clearTimeout: (handle) => BgTimer.clearTimeout(handle as number),
+      setInterval: (callback, intervalMs) => BgTimer.setInterval(callback, intervalMs),
+      clearInterval: (handle) => BgTimer.clearInterval(handle as number),
+    },
     logger: cloudLogger,
   })
 
@@ -446,6 +452,7 @@ function construct(): void {
     if (c !== client) return
     connected = true
     console.log(`${LOG_TAG}: runtime connected`)
+    console.log(`${LOG_TAG}: debug: ws-session-debug connected`)
     // Cloud is up — cancel any pending persistent-failure alarm and re-arm for the
     // next outage.
     clearPersistentFailureAlarm()
@@ -462,6 +469,9 @@ function construct(): void {
     if (c !== client) return
     connected = false
     console.log(`${LOG_TAG}: runtime disconnected (${info.reason})`)
+    console.log(
+      `${LOG_TAG}: debug: ws-session-debug disconnected reason=${info.reason} willStayDown=${/superseded by newer session/i.test(info.reason)}`,
+    )
     // Arm the persistent-failure alarm once; if we're still down when it fires, raise
     // the notification. A reconnect within the window cancels it (onConnected above).
     if (!persistentFailureTimer && !persistentFailureNotified) {
@@ -738,6 +748,11 @@ export const cloudClientService = {
       },
       complete(...args: Parameters<CloudCore["reports"]["complete"]>) {
         return getCoreClient().reports.complete(...args)
+      },
+    },
+    supportProfile: {
+      update(...args: Parameters<CloudCore["supportProfile"]["update"]>) {
+        return getCoreClient().supportProfile.update(...args)
       },
     },
   },

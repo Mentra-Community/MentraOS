@@ -1,7 +1,7 @@
 package com.mentra.asg_client.service.core.handlers;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -40,7 +40,7 @@ public class OtaCommandHandlerTest {
         boolean handled = handler.handleCommand("ota_start", new JSONObject());
 
         assertThat(handled).isFalse();
-        verify(otaHelper, never()).startOtaFromPhone(any());
+        verify(otaHelper, never()).startOtaFromPhone(anyString());
     }
 
     @Test
@@ -83,7 +83,7 @@ public class OtaCommandHandlerTest {
                 handler.handleCommand("ota_start", new JSONObject().put("ota_version_url", " "));
 
         assertThat(handled).isFalse();
-        verify(otaHelper, never()).startOtaFromPhone(any());
+        verify(otaHelper, never()).startOtaFromPhone(anyString());
     }
 
     @Test
@@ -97,7 +97,7 @@ public class OtaCommandHandlerTest {
                         "ota_start", new JSONObject().put("ota_version_url", "file:///tmp/x"));
 
         assertThat(handled).isFalse();
-        verify(otaHelper, never()).startOtaFromPhone(any());
+        verify(otaHelper, never()).startOtaFromPhone(anyString());
     }
 
     @Test

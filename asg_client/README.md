@@ -94,7 +94,7 @@ Mentra Live ships with `com.mentra.asg_client` as a **system app** signed with M
 
 The MentraOS phone app must stay backward-compatible with older `asg_client` builds already in the field. When changing phone-to-glasses or glasses-to-phone protocol behavior, new phone app code should continue to accept old `asg_client` message shapes and unchunked responses.
 
-The opposite direction is not a required compatibility target: a new `asg_client` build does not need to support older MentraOS phone apps. On startup, the phone app calls the cloud `GET /api/client/min-version` endpoint and compares its local app version with the cloud `required` and `recommended` versions. If the local app is below `required`, startup is blocked by the update flow instead of continuing into pairing or BLE use. The cloud values are defined in `cloud/packages/cloud/src/version.ts` and served by `cloud/packages/cloud/src/api/hono/client/min-version.api.ts`; the mobile startup check is in `mobile/src/app/index.tsx`.
+The opposite direction is not a required compatibility target: a new `asg_client` build does not need to support older MentraOS phone apps. On startup, the phone app calls the cloud `GET /api/client/min-version` endpoint and compares its local app version with the cloud `required` and `recommended` versions. If the local app is below `required`, startup is blocked by the update flow instead of continuing into pairing or BLE use. Cloud V2 serves the values from `cloud-v2/packages/core/src/api/app.ts`, configured by `CLOUD_CLIENT_MIN_VERSION` and `CLOUD_CLIENT_RECOMMENDED_VERSION`; the mobile startup check is in `mobile/src/app/index.tsx`.
 
 ### Connecting via ADB
 
@@ -120,10 +120,30 @@ adb devices
 This script will:
 
 1. Build your debug APK
-2. Install it as `com.mentra.asg_client.thirdparty`, disable the stock app, and set your build as the default launcher
-3. Grant all required permissions
+2. Snapshot the latest staging OTA manifest and update stock ASG, BES, and MTK firmware
+3. Disable the stock app and its recovery agents
+4. Install your build as `com.mentra.asg_client.thirdparty`, grant its permissions, and make it the default launcher
+
+Older Mentra Live firmware may need an explicit reboot after an MTK patch. If USB ADB has not
+returned after 45 seconds, the script asks you to unplug and reconnect the Infinity Cable, then
+continues automatically.
 
 **Warning:** Your fork will not receive OTA updates from Mentra.
+
+### Updating Mentra Live Firmware with a Custom Build Installed
+
+After using `dev-setup.sh`, update the glasses firmware without rebuilding or reinstalling your
+custom ASG Client:
+
+```bash
+./scripts/update-mentra-live.sh
+```
+
+The script preserves the third-party APK and its app data, updates the glasses with Mentra-signed
+firmware, and returns to the existing third-party launcher after verifying the update. If the
+update fails, it leaves the stock launcher active as a safe recovery path. See
+[maintaining customized Mentra Live devices](docs/features/dev-firmware-update.md) for setup,
+firmware update, reconnect, and recovery guidance.
 
 ### Restoring Stock Firmware
 

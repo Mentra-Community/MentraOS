@@ -44,6 +44,11 @@ public class NoOpSystemController implements ISystemController {
     }
 
     @Override
+    public void setWifiAdb(boolean enable) {
+        Log.w(TAG, "setWifiAdb(" + enable + ") unsupported on this device");
+    }
+
+    @Override
     public void connectToWifiWithCredentialRefresh(String ssid, String password) {
         Log.w(TAG, "connectToWifiWithCredentialRefresh unsupported on this device");
     }

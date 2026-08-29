@@ -1,12 +1,12 @@
 import type {
   GlassesConnectionStatus,
-  GlassesStatus,
   HotspotStatus,
   OtaProgress,
   OtaStatus,
   OtaUpdateInfo,
+  PublicGlassesStatus,
   WifiStatus,
-} from "@mentra/bluetooth-sdk/internal"
+} from "@mentra/bluetooth-sdk"
 import {isGlassesConnected, isGlassesLinkLayerBusy, isGlassesReady} from "../services/GlassesReadiness"
 import {create} from "zustand"
 import {subscribeWithSelector} from "zustand/middleware"
@@ -20,7 +20,14 @@ export const selectGlassesConnected = (state: {connection: GlassesConnectionStat
 
 export const selectGlassesReady = (state: {connection: GlassesConnectionStatus}) => isGlassesReady(state.connection)
 
-export interface GlassesState extends GlassesStatus {
+type EngineGlassesStatus = PublicGlassesStatus & {
+  otaUpdateAvailable: OtaUpdateInfo | null
+  otaProgress: OtaProgress | null
+  otaInProgress: boolean
+  otaVersionUrl: string
+}
+
+export interface GlassesState extends EngineGlassesStatus {
   systemTimeMs: number
   wifiStatusKnown: boolean
   setGlassesInfo: (info: GlassesInfoUpdate) => void
@@ -53,7 +60,7 @@ type LegacyHotspotFields = {
   hotspotLocalIp?: string
 }
 
-type GlassesInfoUpdate = Partial<GlassesStatus> & LegacyWifiFields & LegacyHotspotFields
+type GlassesInfoUpdate = Partial<EngineGlassesStatus> & LegacyWifiFields & LegacyHotspotFields
 
 function wifiFromLegacyFields(info: LegacyWifiFields): WifiStatus | null {
   if (info.wifiConnected === true) {
@@ -80,7 +87,7 @@ function hotspotFromLegacyFields(info: LegacyHotspotFields): HotspotStatus | nul
   return null
 }
 
-export const getGlasesInfoPartial = (state: GlassesStatus) => {
+export const getGlasesInfoPartial = (state: EngineGlassesStatus) => {
   const wifi = state.wifi
   const connected = isGlassesConnected(state.connection)
   return {
@@ -98,7 +105,7 @@ export const getGlasesInfoPartial = (state: GlassesStatus) => {
   }
 }
 
-interface GlassesStore extends GlassesStatus {
+interface GlassesStore extends EngineGlassesStatus {
   systemTimeMs: number
   mtkUpdatedThisSession: boolean
   wifiStatusKnown: boolean
@@ -118,6 +125,7 @@ const initialState: GlassesStore = {
   androidVersion: "",
   firmwareVersion: "",
   bluetoothMacAddress: "",
+  wifiMacAddress: "",
   leftMacAddress: "",
   rightMacAddress: "",
   buildNumber: "",
@@ -130,6 +138,7 @@ const initialState: GlassesStore = {
   color: "",
   mtkFirmwareVersion: "",
   besFirmwareVersion: "",
+  hotspotOtaVersion: 0,
   // wifi info
   wifi: {state: "disconnected"},
   wifiStatusKnown: false,
@@ -193,6 +202,7 @@ export const useGlassesStore = create<GlassesState>()(
         }
         if (!isGlassesConnected(next.connection)) {
           next.wifiStatusKnown = false
+          next.hotspotOtaVersion = 0
         }
         return next
       }),

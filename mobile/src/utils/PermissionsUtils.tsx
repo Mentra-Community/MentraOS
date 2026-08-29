@@ -1,5 +1,6 @@
-import {AppletInterface, AppletPermission} from "@/../../cloud/packages/types/src"
+import {AppletInterface, AppletPermission} from "@mentra/engine"
 import CrustModule from "@mentra/crust"
+import * as ExpoCalendar from "expo-calendar"
 import {Alert, Linking, PermissionsAndroid, Platform} from "react-native"
 import BleManager from "react-native-ble-manager"
 import {check, PERMISSIONS, request, RESULTS} from "react-native-permissions"
@@ -200,7 +201,7 @@ export const hasPermissionBeenRequested = async (featureKey: string): Promise<bo
     console.log("Failed to get permission requested status, assuming it has not been requested", res.error)
     return false
   }
-  return true
+  return res.value === true
 }
 
 export const markPermissionGranted = async (featureKey: string): Promise<void> => {
@@ -216,7 +217,7 @@ export const hasPermissionBeenGranted = async (featureKey: string): Promise<bool
     console.log("Failed to get permission granted status", res.error)
     return false
   }
-  return true
+  return res.value === true
 }
 
 // Battery optimization permission temporarily disabled
@@ -348,6 +349,20 @@ export const requestFeaturePermissions = async (featureKey: string): Promise<boo
   if (Platform.OS === "ios" && config.ios.length > 0) {
     for (const permission of config.ios) {
       try {
+        // Calendar reads and their permission prompt both belong to
+        // expo-calendar. Keeping the check, request, and eventual reads on
+        // the same EventKit bridge avoids a first-grant race where
+        // react-native-permissions resolves before expo-calendar observes the
+        // updated authorization state.
+        if (permission === PERMISSIONS.IOS.CALENDARS) {
+          const currentPermission = await ExpoCalendar.getCalendarPermissionsAsync()
+          if (currentPermission.status === "denied" && !currentPermission.canAskAgain) {
+            await handlePreviouslyDeniedPermission(config)
+            return false
+          }
+          continue
+        }
+
         // Check current status before requesting
         const currentStatus = await check(permission)
         console.log(`Current status for ${permission}:`, currentStatus)
@@ -468,10 +483,28 @@ export const requestFeaturePermissions = async (featureKey: string): Promise<boo
   if (Platform.OS === "ios" && config.ios.length > 0) {
     for (const permission of config.ios) {
       try {
+        if (permission === PERMISSIONS.IOS.CALENDARS) {
+          // Use the permission response returned by the same native module
+          // that reads calendars. A separate immediate get call can still
+          // observe the pre-prompt state during the app's first session.
+          const eventKit = await ExpoCalendar.requestCalendarPermissionsAsync()
+          if (eventKit.status === "granted") {
+            partiallyGranted = true
+            await markPermissionGranted(featureKey)
+          } else {
+            allGranted = false
+            if (!eventKit.canAskAgain) {
+              await handlePreviouslyDeniedPermission(config)
+              return false
+            }
+          }
+          continue
+        }
+
         const result = await request(permission)
         if (result === RESULTS.GRANTED) {
           partiallyGranted = true
-          await markPermissionGranted(permission)
+          await markPermissionGranted(featureKey)
         } else if (result === RESULTS.LIMITED) {
           partiallyGranted = true
           allGranted = false
@@ -647,23 +680,25 @@ export const checkFeaturePermissions = async (featureKey: string): Promise<boole
           return true
         }
 
+        if (permission === PERMISSIONS.IOS.CALENDARS) {
+          // EventKit is the source of truth for calendar reads: react-native-
+          // permissions can report a scoped (write-only/limited) grant as
+          // granted, while expo-calendar — what the runtime reads events with —
+          // requires full access.
+          const eventKit = await ExpoCalendar.getCalendarPermissionsAsync()
+          if (eventKit.status !== "granted") {
+            allGranted = false
+          }
+          continue
+        }
+
         const status = await check(permission)
         if (status != RESULTS.GRANTED && status != RESULTS.LIMITED) {
           allGranted = false
         }
-
-        if (permission === PERMISSIONS.IOS.CALENDARS) {
-          // this permission is wierd and we should assume it's granted if we've been granted it before, but check for sure by requesting it:
-          if (await hasPermissionBeenGranted(permission)) {
-            // request the permission again to be sure (will do nothing if already granted)
-            const result = await request(permission)
-            if (result === RESULTS.GRANTED) {
-              return true
-            }
-          }
-        }
       } catch (error) {
         console.error(`Error checking iOS permission ${permission}:`, error)
+        allGranted = false
       }
     }
     return allGranted

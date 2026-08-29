@@ -254,6 +254,10 @@ Wire response type for all video commands: `video_recording_status`.
 
 Same battery constraint as photo. `recording_started` is the successful start status. `already_recording`, `battery_low`, `service_unavailable`, `missing_request_id`, and `error` are emitted with `success: false`.
 
+If a start arrives after a stop has been requested but before the recorder has finished finalizing
+the previous file, ASG queues that start and begins it as soon as camera teardown completes. One
+start may wait behind the active stop; further starts are rejected as `already_recording`.
+
 ```json
 {"type": "video_recording_status", "success": true, "status": "recording_started", "timestamp": 1708963201234}
 ```
@@ -269,7 +273,7 @@ If `requestId` is provided, the capture service validates it matches the active 
 #### `get_video_recording_status`
 
 ```json
-{"type": "get_video_recording_status"}
+{"type": "get_video_recording_status", "requestId": "status_001"}
 ```
 
 Response while recording:
@@ -277,10 +281,14 @@ Response while recording:
 ```json
 {
   "type": "video_recording_status",
+  "requestId": "status_001",
   "success": true,
+  "status": "recording_status",
   "data": {"recording": true, "duration_ms": 15000, "duration_formatted": "00:15"}
 }
 ```
+
+The Bluetooth SDK exposes this command as `queryVideoRecordingStatus(requestId)` and correlates the returned `video_recording_status` with that request ID.
 
 ---
 
@@ -313,7 +321,7 @@ See [features/rtmp-streaming.md](features/rtmp-streaming.md) for stream lifecycl
 | `flash`     | boolean | `true`   | Privacy LED during stream                                                                                                     |
 | `sound`     | boolean | `true`   | Start/stop tones                                                                                                              |
 
-**Constraints:** battery ≥ 10%, WiFi connected. WHIP streams whose requested resolution exceeds the camera's supported output are rejected (`WhipCameraFormatSelector`).
+**Constraints:** battery ≥ 10%, and either STA WiFi is connected or the stream endpoint is on the active glasses-hosted hotspot subnet. WHIP streams whose requested resolution exceeds the camera's supported output are rejected (`WhipCameraFormatSelector`).
 
 **Response wire type:** `stream_status` (new universal type from `MediaManager.sendStreamStatusResponse`). Legacy `rtmp_stream_status` is still produced by `ResponseBuilder` in some paths.
 
@@ -431,13 +439,23 @@ Response:
 
 #### `set_system_time`
 
-Sets the glasses system clock from the phone. Sent only when the phone detects clock skew during gallery sync or OTA version checks (not on every BLE connect).
+Sets the glasses system clock from the phone. The Bluetooth SDK sends this once shortly after every ready connection and again after a reconnect; it does not periodically correct a long-lived connection.
 
 ```json
 {"type": "set_system_time", "timestamp_ms": 1710000000000}
 ```
 
 No response is required for V1 (fire-and-forget).
+
+#### `set_wifi_adb_state`
+
+Enable or disable Wi-Fi ADB (wireless debugging) on Mentra Live. Persisted on the glasses; boot applies the saved preference (default `false` for security).
+
+```json
+{"type": "set_wifi_adb_state", "enabled": true}
+```
+
+No response is required (fire-and-forget).
 
 #### `disconnect_wifi`
 
@@ -490,12 +508,14 @@ The glasses also emit `battery_status` outbound:
 Returns version information in chunks to fit the BLE MTU:
 
 - `version_info_1`: `app_version`, `build_number`, `device_model`, `android_version`, `system_time_ms`, `sid`
-- `version_info_3`: `bes_fw_version`, `mtk_fw_version`, `bt_mac_address`, `serial_number`
+- `version_info_3`: `bes_fw_version`, `mtk_fw_version`, `bt_mac_address`, `wifi_mac_address`, `serial_number`
 
 `serial_number` is the Android firmware product serial from `ro.serialno`; the
 generic `0123456789ABCDEF` Android/ADB placeholder is omitted.
 `bt_mac_address` comes from BES and may arrive in a follow-up `version_info_3`
 after BES responds to the MAC-address request.
+`wifi_mac_address` is the MTK Wi-Fi interface MAC and is omitted when Android
+does not expose a valid address.
 
 ---
 
@@ -584,6 +604,26 @@ Both names are aliases; either works. No response.
 ```
 
 No response.
+
+---
+
+### Spoken pairing code
+
+Mentra Live pairing mode speaks one serialized I2S WAV containing “Connect to your Mentra Live in the app. Your code is:” and the 4-character code. BES requests the whole phrase with `hm_spkcode` immediately and every 30 seconds. `hm_pairexit` plays “Pairing mode ended.” once when the firmware closes the pairing window.
+
+Inbound K900 command from BES:
+
+```json
+{"C": "hm_spkcode", "B": {"code": "A1B2"}}
+```
+
+JSON command for intent/BLE testing:
+
+```json
+{"type": "speak_pairing_code", "code": "A1B2"}
+```
+
+No response. Clips live under `assets/pairing/` (`letter_a.wav` … `letter_z.wav`, `digit_0.wav` … `digit_9.wav`). Today's pairing code is hex (`0-9A-F`); `G-Z` ship for future-proofing.
 
 ---
 
@@ -891,7 +931,7 @@ Optionally, the phone can supply a custom manifest URL for this install attempt:
 
 When `ota_version_url` is omitted, ASG uses the compiled production default. When provided, it must be a non-empty `http` or `https` URL.
 
-On receipt, ASG sends `ota_start_ack` before version checks or downloads:
+When the known glasses battery level is below 5%, ASG rejects the request before acknowledgement and sends a failed `ota_status` with `error_message: "battery_low"`. Unknown battery state is allowed. Otherwise, ASG sends `ota_start_ack` before version checks or downloads:
 
 ```json
 {"type": "ota_start_ack", "timestamp": 1708963201234}
@@ -976,6 +1016,7 @@ The K900 microcontroller frames messages as `{"C": "<cmd>", "B": {...}, "V": 1}`
 | `cs_vdo`              | Camera button long press                             | `button_press`                            |
 | `hm_htsp` / `mh_htsp` | Hotspot start request                                | (handled internally)                      |
 | `hm_batv`             | Battery voltage update                               | `battery_status`                          |
+| `hm_spkcode`          | Speak pairing code over I2S                          | (handled internally)                      |
 | `cs_flts`             | File-transfer ACK                                    | (handled internally)                      |
 | `sr_swst`             | Switch status report                                 | `switch_status`                           |
 | `sr_tpevt`            | Touch event report                                   | `touch_event`                             |

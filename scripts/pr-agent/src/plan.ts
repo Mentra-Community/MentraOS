@@ -1,6 +1,6 @@
 import { loadConfig } from './config.js';
 import { resolveActivePair } from './rotate.js';
-import { applyResolvedIds, parseResolveIds } from './findings.js';
+import { applyResolvedIds, openBlocking, parseResolveIds } from './findings.js';
 import {
   createOctokit,
   listAllIssueComments,
@@ -9,7 +9,13 @@ import {
   removeLabel,
   saveState,
 } from './state.js';
-import { getChangedFiles } from './ci-gates.js';
+import {
+  fetchWorkflowStatuses,
+  getChangedFiles,
+  getPrHeadSha,
+  isCiFailed,
+  requiredWorkflowsForPaths,
+} from './ci-gates.js';
 import type { PlanOutput } from './types.js';
 
 export async function runPlan(repoRoot: string): Promise<PlanOutput> {
@@ -88,6 +94,7 @@ export async function runPlan(repoRoot: string): Promise<PlanOutput> {
     await removeLabel(octokit, owner, repo, prNumber, 'agent-resume');
     await removeLabel(octokit, owner, repo, prNumber, 'ready-for-human-review');
     await removeLabel(octokit, owner, repo, prNumber, 'agent-needs-human');
+    await removeLabel(octokit, owner, repo, prNumber, 'agent-ci-failing');
     await saveState(octokit, owner, repo, prNumber, state, commentId);
   }
 
@@ -143,7 +150,99 @@ export async function runPlan(repoRoot: string): Promise<PlanOutput> {
     };
   }
 
+  // Reviews already converged: no open blocking findings and enough clean
+  // cycles for handoff. The only thing left to wait for is CI, so re-running
+  // model reviews of an unchanged diff just burns credits (#3648 spent 8 full
+  // review cycles — ~16 model runs — reaching a handoff that needed 2). Route
+  // straight to the wait-ci -> recheck-handoff path instead.
+  if (
+    openBlocking(state.openFindings).length === 0 &&
+    state.consecutiveNoNewReviews >= config.limits.consecutiveNoNewReviewsForHandoff
+  ) {
+    // Mirror the cycle-cap block: recheck-handoff no-ops on red CI, so routing a
+    // failed-CI workflow_run event to recheckOnly here strands the PR in_progress
+    // forever (fixer never runs, no handoff posted). When CI is failing and the
+    // fixer still has rounds left, skip model reviews but return the deferral
+    // shape (shouldSkip=false, no recheckOnly) so aggregate sets shouldFix and the
+    // fixer reacts to the CI failure.
+    let ciFailed = process.env.CI_TRIGGER_FAILED === 'true';
+    if (!ciFailed && state.fixRound < config.limits.maxFixRounds) {
+      try {
+        const ref = await getPrHeadSha(octokit, owner, repo, prNumber);
+        const changedFiles = await getChangedFiles(octokit, owner, repo, prNumber);
+        const required = requiredWorkflowsForPaths(changedFiles, repoRoot);
+        const ciChecks = await fetchWorkflowStatuses(octokit, owner, repo, ref, required);
+        ciFailed = isCiFailed(ciChecks);
+      } catch (err) {
+        console.warn('plan: failed to fetch CI status for reviews-clean deferral', err);
+      }
+    }
+
+    if (ciFailed && state.fixRound < config.limits.maxFixRounds) {
+      console.log(
+        `Reviews clean but CI failed with fixRound=${state.fixRound}; skipping model reviews, deferring to fixer`,
+      );
+      await saveState(octokit, owner, repo, prNumber, state, commentId);
+      return {
+        runBugbot: false,
+        runStandards: false,
+        runDepth: false,
+        activePair: [],
+        state,
+        shouldSkip: false,
+        skipReason: 'reviews clean; CI fix deferred',
+      };
+    }
+
+    console.log(
+      `Reviews clean (consecutiveNoNewReviews=${state.consecutiveNoNewReviews}); skipping model reviews, CI recheck only`,
+    );
+    await saveState(octokit, owner, repo, prNumber, state, commentId);
+    return {
+      runBugbot: false,
+      runStandards: false,
+      runDepth: false,
+      activePair: [],
+      state,
+      shouldSkip: false,
+      recheckOnly: true,
+      skipReason: 'reviews clean; awaiting CI',
+    };
+  }
+
   if (state.cycle >= config.limits.maxOrchestratorCycles) {
+    // Mirror aggregate: when CI is red and the fixer still has rounds left,
+    // do not force budget_exhausted — continue with reviews skipped so
+    // aggregate can set shouldFix and the fixer can react to the CI failure.
+    let ciFailed = process.env.CI_TRIGGER_FAILED === 'true';
+    if (!ciFailed && state.fixRound < config.limits.maxFixRounds) {
+      try {
+        const ref = await getPrHeadSha(octokit, owner, repo, prNumber);
+        const changedFiles = await getChangedFiles(octokit, owner, repo, prNumber);
+        const required = requiredWorkflowsForPaths(changedFiles, repoRoot);
+        const ciChecks = await fetchWorkflowStatuses(octokit, owner, repo, ref, required);
+        ciFailed = isCiFailed(ciChecks);
+      } catch (err) {
+        console.warn('plan: failed to fetch CI status for cycle-cap deferral', err);
+      }
+    }
+
+    if (ciFailed && state.fixRound < config.limits.maxFixRounds) {
+      console.log(
+        `Cycle cap reached (${state.cycle}) but CI failed with fixRound=${state.fixRound}; deferring handoff for fixer`,
+      );
+      await saveState(octokit, owner, repo, prNumber, state, commentId);
+      return {
+        runBugbot: false,
+        runStandards: false,
+        runDepth: false,
+        activePair: [],
+        state,
+        shouldSkip: false,
+        skipReason: 'max cycles deferred for CI fix',
+      };
+    }
+
     const exhausted = { ...state, status: 'budget_exhausted' as const };
     await saveState(octokit, owner, repo, prNumber, exhausted, commentId);
     return {
@@ -209,6 +308,7 @@ export async function writePlanOutputs(repoRoot: string, plan: PlanOutput): Prom
   set('run_bugbot', String(plan.runBugbot));
   set('run_standards', String(plan.runStandards));
   set('run_depth', String(plan.runDepth));
+  set('run_codex', String(plan.activePair.includes('codex')));
   set('active_pair', plan.activePair.join(','));
   set('is_dry_run', String(loadConfig(repoRoot).dryRun));
   set('should_handoff', String(plan.shouldHandoff ?? false));

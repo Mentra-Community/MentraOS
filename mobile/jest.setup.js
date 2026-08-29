@@ -1,3 +1,9 @@
+// Most OTA integration tests model a released MentraOS host. Tests for an
+// unpinned source build delete this value explicitly before exercising the
+// fail-closed path.
+process.env.EXPO_PUBLIC_ASG_OTA_VERSION_URL ??=
+  "https://github.com/Mentra-Community/MentraOS/releases/download/bluetooth-sdk-ota/bluetooth-sdk-0.0.0-test-version.json"
+
 // Mock react-native-permissions
 jest.mock("react-native-permissions", () => require("react-native-permissions/mock"))
 // Requires its native module at import time (island gallery sync uses it for the
@@ -38,6 +44,36 @@ jest.mock("@mentra/bluetooth-sdk/internal", () => {
     BLUETOOTH_SDK_VERSION: "0.0.0-test",
     sdkPinnedOtaManifestUrl: () =>
       "https://github.com/Mentra-Community/MentraOS/releases/download/bluetooth-sdk-ota/bluetooth-sdk-0.0.0-test-version.json",
+  }
+})
+
+jest.mock("@mentra/bluetooth-sdk/ota-transport", () => {
+  const {mentraLocalNetworkMock} = require("./src/test-utils/mockBluetoothSdk")
+  return {
+    otaLocalNetwork: {
+      isAvailable: () => true,
+      connect: mentraLocalNetworkMock.connect,
+      request: mentraLocalNetworkMock.request,
+      download: mentraLocalNetworkMock.download,
+      cancel: mentraLocalNetworkMock.cancel,
+      disconnect: mentraLocalNetworkMock.disconnect,
+      onDownloadProgress: (listener) => mentraLocalNetworkMock.addListener("downloadProgress", listener),
+      onNetworkLost: (listener) => mentraLocalNetworkMock.addListener("networkLost", listener),
+    },
+    otaServer: {
+      start: jest.fn(() =>
+        Promise.resolve({
+          baseUrl: "http://127.0.0.1:8080",
+          host: "127.0.0.1",
+          manifestUrl: "http://127.0.0.1:8080/manifest.json",
+          port: 8080,
+        }),
+      ),
+      stop: jest.fn(() => Promise.resolve()),
+      waitForWifiAddress: jest.fn(() => Promise.resolve("127.0.0.1")),
+      downloadArtifact: jest.fn(() => Promise.resolve({statusCode: 200, bytesWritten: 0})),
+      onArtifactDownloadProgress: jest.fn(() => ({remove: jest.fn()})),
+    },
   }
 })
 
@@ -283,6 +319,7 @@ const mockIslandEntries = () => {
   // move, so requireActual preserves that exact behavior.
   const realSettings = jest.requireActual("./modules/engine/src/stores/settings")
   const realBtSettingKeys = jest.requireActual("./modules/engine/src/stores/bluetoothSettingKeys")
+  const realEngineTypes = jest.requireActual("./modules/engine/src/types")
   // engine.start() starts the island-owned device-settings -> glasses BLE sync; use
   // the real one so its behavior is exercised where it now lives (not MantleManager).
   const realGlassesSettingsSync = jest.requireActual("./modules/engine/src/services/GlassesSettingsSync")
@@ -294,6 +331,7 @@ const mockIslandEntries = () => {
   // implementation (pure: settings store + types only) so host screens/tests
   // exercise the actual three-state read-model, not a parallel stub.
   const realPairingIdentity = jest.requireActual("./modules/engine/src/services/PairingIdentity")
+  const realPairingFacade = jest.requireActual("./modules/engine/src/facades/pairing")
   // Clock-skew utils moved into island; the host gallery sync + OTA checker import them
   // from @mentra/engine, so expose the real (pure) implementations through the mock.
   const realGlassesClockSync = jest.requireActual("./modules/engine/src/services/glassesClockSync")
@@ -307,6 +345,8 @@ const mockIslandEntries = () => {
   const realOtaInstallPolicy = jest.requireActual("./modules/engine/src/services/otaInstallPolicy")
   const realOtaDisplayState = jest.requireActual("./modules/engine/src/services/otaDisplayState")
   const realOtaInstallCoordinator = jest.requireActual("./modules/engine/src/services/OtaInstallCoordinator")
+  const realOtaAutoChain = jest.requireActual("./modules/engine/src/services/OtaAutoChain")
+  const realOtaErrorMapping = jest.requireActual("./modules/engine/src/services/OtaErrorMapping")
   const realPhoneNotificationsSync = jest.requireActual("./modules/engine/src/services/PhoneNotificationsSync")
   // The on* event facades (button/touch/pair_failure/glasses_not_ready) are thin
   // addListener wrappers in the real engine, so the mock delegates to the shared
@@ -355,9 +395,12 @@ const mockIslandEntries = () => {
   // --- "@mentra/engine" (main): engine + the pure helper/constant surface ---
   const main = {
     __esModule: true,
+    ...realEngineTypes,
     // OTA install policy (timings + failure copy) + deriveDisplayState — real (pure)
     // implementations, consumed by the host otaProgressTimeouts shim + OTA tests.
     ...realOtaInstallPolicy,
+    ...realOtaAutoChain,
+    ...realOtaErrorMapping,
     deriveDisplayState: realOtaDisplayState.deriveDisplayState,
     // Settings contract on the public entry (real store-backed): SETTINGS registry,
     // per-key hook, and the pure device-model key helpers.
@@ -518,6 +561,8 @@ const mockIslandEntries = () => {
             cb(readiness)
           })
         }),
+        targetReady: jest.fn((options) => realPairingFacade.pairing.targetReady(options)),
+        onTargetReady: jest.fn((options, cb) => realPairingFacade.pairing.onTargetReady(options, cb)),
         // Identity lifecycle: real projection/writes over the real settings store,
         // so tests observe the same none/pending/paired snapshots the app does.
         identity: jest.fn(() => realPairingIdentity.projectPairingIdentity()),
@@ -752,7 +797,7 @@ const mockIslandEntries = () => {
     ISLAND_SETTINGS_KEYS: {},
   }
 
-  // --- "@mentra/engine/internal": raw stores + service singletons ---
+  // --- "@mentra/engine-host-internal": raw stores + service singletons ---
   const internal = {
     __esModule: true,
     // Real glasses store + its selectors/helpers (useGlassesStore, selectors,
@@ -790,7 +835,7 @@ const mockIslandEntries = () => {
     // one tests listen on across the boundary.
     GlobalEventEmitter: jest.requireActual("./modules/engine/src/utils/GlobalEventEmitter").default,
     // Gallery cluster moved into island; host consumers (GalleryScreen, gallery-settings,
-    // NetworkMonitoring, MantleManager) import these from @mentra/engine/internal. Stub
+    // NetworkMonitoring, MantleManager) import these from @mentra/engine-host-internal. Stub
     // them here so those screens/services load under the mock without native deps. The
     // gallery service's own jest test imports the REAL implementations by relative path.
     gallerySyncService: {
@@ -856,6 +901,11 @@ const mockIslandEntries = () => {
       installOfflineApp: jest.fn((app) => {
         appStatusState.apps = [...appStatusState.apps.filter((item) => item.packageName !== app.packageName), app]
         return {is_ok: () => true, is_error: () => false, value: app}
+      }),
+      setOfflineAppHidden: jest.fn((packageName, hidden) => {
+        appStatusState.apps = appStatusState.apps.map((app) =>
+          app.packageName === packageName ? {...app, hidden} : app,
+        )
       }),
     },
     configureIsland: jest.fn(),
@@ -933,7 +983,7 @@ const mockIslandEntries = () => {
     saveLocalAppRunningState: jest.fn(),
   }
 
-  // --- "@mentra/engine/devtools": debug-only singletons ---
+  // --- "@mentra/engine-host-internal/devtools": debug-only singletons ---
   const devtools = {
     __esModule: true,
     miniappRunningRegistry: {
@@ -947,8 +997,8 @@ const mockIslandEntries = () => {
 }
 
 jest.mock("@mentra/engine", () => mockIslandEntries().main)
-jest.mock("@mentra/engine/internal", () => mockIslandEntries().internal)
-jest.mock("@mentra/engine/devtools", () => mockIslandEntries().devtools)
+jest.mock("@mentra/engine-host-internal", () => mockIslandEntries().internal)
+jest.mock("@mentra/engine-host-internal/devtools", () => mockIslandEntries().devtools)
 
 // Mock crust native module to avoid native bridge errors
 jest.mock("@mentra/crust", () => ({

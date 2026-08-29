@@ -13,11 +13,16 @@
 
 set -euo pipefail
 
+if [ -n "${ADB_SERIAL:-}" ] && [ -z "${ANDROID_SERIAL:-}" ]; then
+    export ANDROID_SERIAL="$ADB_SERIAL"
+fi
+
 PORT=${OTA_TEST_PORT:-9876}
 WAIT_SECONDS=20
 MAX_TRIGGER_ATTEMPTS=3
 TRIGGER_RETRY_DELAY_SECONDS=8
 TRIGGER_ACTIVITY_TIMEOUT_SECONDS=15
+MTK_UPDATE_TIMEOUT_SECONDS=900
 SERVE_DIR="$(mktemp -d)"
 PATCH_PATH=""
 START_FIRMWARE_OVERRIDE=""
@@ -47,9 +52,9 @@ fail() {
     exit 1
 }
 
-extract_trailing_date() {
+extract_version_suffix() {
     local value="$1"
-    if [[ "$value" =~ ([0-9]{8})$ ]]; then
+    if [[ "$value" =~ ([0-9]{8}(\.[0-9]+)?)$ ]]; then
         echo "${BASH_REMATCH[1]}"
         return 0
     fi
@@ -90,9 +95,14 @@ monitor_update() {
     local raw_progress=0
     local idle_seconds=0
     local saw_activity=0
+    local update_deadline=$((SECONDS + MTK_UPDATE_TIMEOUT_SECONDS))
 
     exec 3< <(adb logcat -v time)
     while true; do
+        if [ "$SECONDS" -ge "$update_deadline" ]; then
+            exec 3<&-
+            fail "MTK OTA did not complete within $((MTK_UPDATE_TIMEOUT_SECONDS / 60)) minutes"
+        fi
         if IFS= read -r -t 1 line <&3; then
             idle_seconds=0
         else
@@ -167,7 +177,7 @@ monitor_update() {
            [[ "$line" == *"MTK OTA success:"* ]]; then
             exec 3<&-
             echo "✅ Complete. Rebooting glasses..."
-            if adb shell reboot >/dev/null 2>&1; then
+            if adb reboot >/dev/null 2>&1; then
                 echo "✅ Reboot command sent"
             else
                 echo "⚠️  ADB disconnected before reboot completed. This can be expected after the update."
@@ -256,11 +266,11 @@ if [ ! -f "$PATCH_PATH" ]; then
 fi
 
 PATCH_NAME="$(basename "$PATCH_PATH")"
-if [[ "$PATCH_NAME" =~ ([0-9]{8})_([0-9]{8})\.zip$ ]]; then
-    FILE_START_DATE="${BASH_REMATCH[1]}"
-    FILE_END_DATE="${BASH_REMATCH[2]}"
+if [[ "$PATCH_NAME" =~ ([0-9]{8}(\.[0-9]+)?)_([0-9]{8}(\.[0-9]+)?)\.zip$ ]]; then
+    FILE_START_VERSION="${BASH_REMATCH[1]}"
+    FILE_END_VERSION="${BASH_REMATCH[3]}"
 else
-    fail "Could not parse start/end dates from filename: $PATCH_NAME"
+    fail "Could not parse start/end versions from filename: $PATCH_NAME"
 fi
 
 DEVICE_VERSION="$(adb shell getprop ro.custom.ota.version 2>/dev/null | tr -d '\r\n')"
@@ -268,23 +278,29 @@ if [ -z "$DEVICE_VERSION" ]; then
     fail "Failed to read ro.custom.ota.version from device"
 fi
 
-if ! DEVICE_START_DATE="$(extract_trailing_date "$DEVICE_VERSION")"; then
-    fail "Device firmware version does not end with YYYYMMDD: $DEVICE_VERSION"
+if ! DEVICE_START_VERSION="$(extract_version_suffix "$DEVICE_VERSION")"; then
+    fail "Device firmware version does not end with YYYYMMDD or YYYYMMDD.N: $DEVICE_VERSION"
 fi
 
 START_FIRMWARE="${START_FIRMWARE_OVERRIDE:-$DEVICE_VERSION}"
-if ! START_DATE="$(extract_trailing_date "$START_FIRMWARE")"; then
-    fail "start_firmware does not end with YYYYMMDD: $START_FIRMWARE"
+if ! START_VERSION="$(extract_version_suffix "$START_FIRMWARE")"; then
+    fail "start_firmware does not end with YYYYMMDD or YYYYMMDD.N: $START_FIRMWARE"
 fi
 
-if [ "$FILE_START_DATE" != "$START_DATE" ]; then
-    fail "Patch start date ($FILE_START_DATE) does not match start_firmware date ($START_DATE)"
+if [ "$FILE_START_VERSION" != "$START_VERSION" ]; then
+    fail "Patch start version ($FILE_START_VERSION) does not match start_firmware version ($START_VERSION)"
 fi
 
 if [ -n "$END_FIRMWARE_OVERRIDE" ]; then
     END_FIRMWARE="$END_FIRMWARE_OVERRIDE"
 else
-    END_FIRMWARE="${START_FIRMWARE%$START_DATE}$FILE_END_DATE"
+    END_FIRMWARE="${START_FIRMWARE%$START_VERSION}$FILE_END_VERSION"
+fi
+if ! END_VERSION="$(extract_version_suffix "$END_FIRMWARE")"; then
+    fail "end_firmware does not end with YYYYMMDD or YYYYMMDD.N: $END_FIRMWARE"
+fi
+if [ "$FILE_END_VERSION" != "$END_VERSION" ]; then
+    fail "Patch end version ($FILE_END_VERSION) does not match end_firmware version ($END_VERSION)"
 fi
 
 if command -v shasum >/dev/null 2>&1; then

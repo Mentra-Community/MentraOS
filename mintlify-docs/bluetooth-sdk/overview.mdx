@@ -37,7 +37,7 @@ You can also [open the starter kit directly on GitHub](https://github.com/Mentra
 
 ## Requirements
 
-- The Bluetooth SDK and Mentra Live glasses software must use the same release version. The latest matching pair is `0.1.21-beta.5`.
+- The Bluetooth SDK and Mentra Live glasses software must use the same release version. The latest matching pair is `{{release-version}}`.
 - A physical Android phone or iPhone for real Bluetooth testing.
 - Android min SDK `28` or newer.
 - iOS deployment target `15.1` or newer.
@@ -45,7 +45,7 @@ You can also [open the starter kit directly on GitHub](https://github.com/Mentra
 - Bluetooth permissions, plus Android location permission where BLE scanning requires it.
 
 <Warning>
-Bluetooth connection alone does not confirm version compatibility. Before testing SDK features, [update Mentra Live to the glasses software matching your SDK version](/bluetooth-sdk/software-update). An app using Bluetooth SDK `0.1.21-beta.5` must use the matching Mentra Live `0.1.21-beta.5` software release.
+Bluetooth connection alone does not confirm version compatibility. Before testing SDK features, [update Mentra Live to the glasses software matching your SDK version](/bluetooth-sdk/software-update). An app using Bluetooth SDK `{{release-version}}` must use the matching Mentra Live `{{release-version}}` software release.
 </Warning>
 
 ## Next Steps
@@ -59,6 +59,9 @@ Bluetooth connection alone does not confirm version compatibility. Before testin
   </Card>
   <Card title="API Reference" icon="book" href="/bluetooth-sdk/api-reference">
     Review lifecycle, commands, events, status fields, and Mentra Live behavior.
+  </Card>
+  <Card title="Air-Gapped Deployment" icon="shield" href="/bluetooth-sdk/air-gapped-deployment">
+    Disable SDK analytics and host the complete Mentra Live update set on an internal network.
   </Card>
   <Card title="Troubleshooting" icon="circle-question" href="/bluetooth-sdk/troubleshooting">
     Fix native build, permission, scan, stream, and Expo issues.

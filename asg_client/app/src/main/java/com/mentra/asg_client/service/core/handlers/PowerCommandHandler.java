@@ -9,6 +9,7 @@ import com.mentra.asg_client.service.legacy.interfaces.ICommandHandler;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import com.mentra.asg_client.service.system.core.SystemControllerFactory;
 import com.mentra.asg_client.service.utils.ServiceConstants;
+import com.mentra.asg_client.settings.AsgSettings;
 import java.nio.charset.StandardCharsets;
 import java.util.Set;
 import org.json.JSONObject;
@@ -40,6 +41,7 @@ public class PowerCommandHandler implements ICommandHandler {
                 CMD_SHUTDOWN,
                 CMD_REBOOT,
                 CMD_SET_SYSTEM_TIME,
+                AsgConstants.COMMAND_SET_WIFI_ADB_STATE,
                 AsgConstants.COMMAND_REBOOT_BES_FOR_MTK_FLASH);
     }
 
@@ -53,6 +55,8 @@ public class PowerCommandHandler implements ICommandHandler {
                     return handleReboot();
                 case CMD_SET_SYSTEM_TIME:
                     return handleSetSystemTime(data);
+                case AsgConstants.COMMAND_SET_WIFI_ADB_STATE:
+                    return handleSetWifiAdbState(data);
                 case AsgConstants.COMMAND_REBOOT_BES_FOR_MTK_FLASH:
                     return handleBesRebootForMtkFlash(data);
                 default:
@@ -160,6 +164,28 @@ public class PowerCommandHandler implements ICommandHandler {
             return true;
         } catch (Exception e) {
             Log.e(TAG, "❌ Error setting system time", e);
+            return false;
+        }
+    }
+
+    /**
+     * Enable or disable Wi-Fi ADB on Mentra Live. Persists preference so boot applies the same state.
+     * Command format: {"type": "set_wifi_adb_state", "enabled": true}
+     */
+    private boolean handleSetWifiAdbState(JSONObject data) {
+        boolean enabled = data != null && data.optBoolean("enabled", false);
+        Log.i(TAG, "🔧 Setting Wi-Fi ADB state from phone: " + enabled);
+        try {
+            if (serviceManager != null) {
+                AsgSettings settings = serviceManager.getAsgSettings();
+                if (settings != null) {
+                    settings.setWifiAdbEnabled(enabled);
+                }
+            }
+            SystemControllerFactory.get(context).setWifiAdb(enabled);
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "❌ Error setting Wi-Fi ADB state", e);
             return false;
         }
     }

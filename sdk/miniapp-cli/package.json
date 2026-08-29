@@ -13,6 +13,7 @@
   "exports": {
     ".": "./src/api.ts",
     "./build-helpers": "./src/build-helpers.ts",
+    "./lan": "./src/lan.ts",
     "./package.json": "./package.json"
   },
   "scripts": {
@@ -27,7 +28,7 @@
   },
   "devDependencies": {
     "@types/qrcode": "^1.5.5",
-    "bun-types": "^1.3.14"
+    "bun-types": "1.3.14"
   },
   "files": [
     "src",

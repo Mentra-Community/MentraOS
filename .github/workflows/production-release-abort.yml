@@ -1,0 +1,80 @@
+name: Production Release - Abort Attempt
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_identity:
+        required: true
+        type: string
+      attempt:
+        required: true
+        type: number
+      reason:
+        description: Durable reason for stopping this attempt
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: production-release-${{ inputs.release_identity }}-attempt-${{ inputs.attempt }}
+  cancel-in-progress: false
+
+jobs:
+  abort:
+    name: Append terminal aborted state
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Load current immutable promotion record
+        id: promotion
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          node .github/scripts/production-promotion-assets.mjs download-latest
+          --repository "$GITHUB_REPOSITORY"
+          --release "${{ inputs.release_identity }}"
+          --attempt "${{ inputs.attempt }}"
+          --output promotion-input/current.json
+          --github-output "$GITHUB_OUTPUT"
+
+      - name: Append abort record
+        id: next
+        env:
+          ABORT_REASON: ${{ inputs.reason }}
+        run: |
+          set -euo pipefail
+          [[ ${#ABORT_REASON} -le 1000 ]]
+          mkdir -p promotion-output
+          node .github/scripts/production-promotion-state.mjs abort \
+            --record promotion-input/current.json \
+            --actor "$GITHUB_ACTOR" \
+            --created-at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" \
+            --provenance-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --reason "$ABORT_REASON" \
+            --output promotion-output/next.json
+          name=$(node --input-type=module -e '
+            import {readFileSync} from "node:fs";
+            import {promotionAssetName} from "./.github/scripts/production-promotion-state.mjs";
+            process.stdout.write(promotionAssetName(JSON.parse(readFileSync("promotion-output/next.json", "utf8"))));
+          ')
+          mv promotion-output/next.json "promotion-output/$name"
+          echo "record=promotion-output/$name" >> "$GITHUB_OUTPUT"
+
+      - name: Publish immutable terminal state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          node .github/scripts/production-promotion-assets.mjs publish-record
+          --record "${{ steps.next.outputs.record }}"
+          --release-id "${{ steps.promotion.outputs.release_id }}"
+          --repository "$GITHUB_REPOSITORY"

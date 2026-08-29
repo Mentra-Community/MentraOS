@@ -1,6 +1,6 @@
 {
   "name": "mentraos",
-  "version": "0.0.1",
+  "version": "3.1.0",
   "private": true,
   "main": "expo-router/entry",
   "workspaces": [
@@ -39,6 +39,8 @@
     "release-android": "zx ./scripts/release-android.mjs",
     "release-ios": "zx ./scripts/release-ios.mjs",
     "generate-bundled-miniapps": "zx ./scripts/generate-bundled-miniapps.mjs",
+    "pull:glasses-photos": "bash ./scripts/pull-glasses-photos.sh",
+    "wipe:glasses-photos": "bash ./scripts/wipe-glasses-photos.sh",
     "compile": "tsc --noEmit -p . --pretty",
     "lint": "eslint . --fix",
     "lint:check": "eslint .",
@@ -71,6 +73,7 @@
     "@mentra/crust": "workspace:*",
     "@mentra/cloud-client": "workspace:*",
     "@mentra/engine": "workspace:*",
+    "@mentra/engine-host-internal": "workspace:*",
     "@mentra/jspolyfill": "workspace:*",
     "@mentra/miniapp": "workspace:*",
     "@react-native-community/netinfo": "11.5.2",

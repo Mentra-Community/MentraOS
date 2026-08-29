@@ -1,5 +1,6 @@
 #!/usr/bin/env zx
 import {config} from "dotenv"
+import {execFileSync} from "child_process"
 import {writeFile, readFile, chmod} from "fs/promises"
 import {homedir} from "os"
 import {join} from "path"
@@ -40,6 +41,25 @@ async function syncMapboxNetrc() {
   console.log("  ~/.netrc updated with Mapbox SPM credentials (from environment)")
 }
 
+export function resolveBuildUser({
+  githubActor = process.env.GITHUB_ACTOR,
+  readGitUsername = () =>
+    execFileSync("git", ["config", "user.name"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }),
+} = {}) {
+  const actor = githubActor?.trim()
+  if (actor) return actor.replace(/\s+/g, "_")
+
+  try {
+    const username = readGitUsername().trim()
+    return username ? username.replace(/\s+/g, "_") : "unknown"
+  } catch {
+    return "unknown"
+  }
+}
+
 export async function setBuildEnv() {
   // Keep src/generated/bundledMiniapps.ts in sync with assets/miniapps/*.zip
   // before any prebuild/bundle so newly-dropped bundles get shipped.
@@ -54,8 +74,9 @@ export async function setBuildEnv() {
   await clearAutolinkingCache()
 
   const gitCommit = (await $`git rev-parse --short HEAD`).stdout.trim()
-  const gitBranch = (await $`git rev-parse --abbrev-ref HEAD`).stdout.trim()
-  const gitUsername = (await $`git config user.name`).stdout.trim().replace(/ /g, "_")  // format: 2025-11-18_12-00
+  const gitBranch =
+    process.env.MENTRA_COORDINATED_RELEASE_CHANNEL || (await $`git rev-parse --abbrev-ref HEAD`).stdout.trim()
+  const gitUsername = resolveBuildUser()
   const buildTime = new Date()
     .toLocaleString("en-US", {
       timeZone: "America/Los_Angeles",

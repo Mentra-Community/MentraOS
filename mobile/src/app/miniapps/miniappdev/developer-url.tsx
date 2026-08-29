@@ -11,11 +11,10 @@ import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import showAlert from "@/utils/AlertUtils"
 import {decideDevLaunchRoute, engine} from "@mentra/engine"
-import {registerDevApp, type DevAppRecord} from "@mentra/engine/internal"
+import {registerDevApp, type DevAppRecord} from "@mentra/engine-host-internal"
 import {askPermissionsUI, checkPermissionsUI, PERMISSION_CONFIG} from "@/utils/PermissionsUtils"
-import {markMiniappDevMode} from "@/utils/miniappDevMode"
 import {storage} from "@/utils/storage/storage"
-import type {AppletInterface, AppletPermission} from "@/../../cloud/packages/types/src"
+import type {AppletInterface, AppletPermission} from "@mentra/engine"
 
 const RECENT_KEY = "miniapp_dev_recent"
 const MAX_RECENT = 5
@@ -82,12 +81,6 @@ export default function MiniappDeveloperUrlScreen() {
       return
     }
 
-    // Single chokepoint for both entry paths (typed URL + recent-list tap): a
-    // reachable dev server means a real dev app loaded, so latch the per-account
-    // "this user is a developer" signal here (idempotent). Marking after the
-    // offline check keeps a failed/unreachable launch from flipping the flag.
-    markMiniappDevMode()
-
     const packageName = launchResult.manifest.packageName || entry.packageName
     const appName = launchResult.manifest.name || entry.name
     const manifestPermissions: AppletPermission[] = Array.isArray(launchResult.manifest.permissions)
@@ -121,12 +114,14 @@ export default function MiniappDeveloperUrlScreen() {
     // dev packages remain registered and independently launchable.
     const existing = engine.miniapps.list().find((app) => app.packageName === packageName)
     if (existing?.running) await engine.miniapps.stop(packageName)
+    const resolvedUrl = launchResult.resolvedUrl || entry.url
     await registerDevApp({
       packageName,
       name: appName,
-      iconUrl: resolveIconUrl(entry.url, launchResult.manifest.icon) ?? entry.iconUrl ?? `${entry.url}/icon.png`,
-      devUrl: entry.url,
-      devPort: deriveDevPort(entry.url),
+      iconUrl: resolveIconUrl(resolvedUrl, launchResult.manifest.icon) ?? entry.iconUrl ?? `${resolvedUrl}/icon.png`,
+      // Persist the host that answered — not the stale QR/recent-list IP.
+      devUrl: resolvedUrl,
+      devPort: deriveDevPort(resolvedUrl),
       type: launchResult.manifest.type as DevAppRecord["type"],
       permissions: launchResult.manifest.permissions as DevAppRecord["permissions"],
       hardwareRequirements: launchResult.manifest.hardwareRequirements as DevAppRecord["hardwareRequirements"],

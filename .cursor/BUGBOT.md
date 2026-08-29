@@ -4,7 +4,7 @@ When reviewing pull requests (including when triggered via `bugbot run` from the
 
 ## Standards
 
-- Follow root `AGENTS.md` and path-specific `AGENTS.md` (`mobile/`, `cloud/`, etc.).
+- Follow root `AGENTS.md` and path-specific guidance such as `mobile/AGENTS.md`.
 - Java/Android: Java 17, `mCamelCase` members, PascalCase classes, EventBus for component communication.
 - TypeScript/React Native: functional components, single quotes, strict typing, feature-based `src/` layout.
 - Swift: use swiftformat conventions.
@@ -17,18 +17,26 @@ When reviewing pull requests (including when triggered via `bugbot run` from the
 
 ## Orchestrator integration
 
-When the PR agent orchestrator triggers this review, end with a top-level PR comment containing:
+The orchestrator ingests this review from the native GitHub review + inline
+comments (`cursor[bot]`). High, Critical, and Medium Severity comments become
+blocking findings; Low Severity stays a nit. Do not rely on a custom issue
+comment — native Bugbot output is the required channel.
 
-1. Human-readable summary
-2. HTML marker `<!-- pr-agent-bugbot-verdict -->`
-3. JSON footer (same schema as the other reviewers):
+Optional enrichment (ignored if omitted): a top-level PR comment containing
+`<!-- pr-agent-bugbot-verdict -->` plus a JSON footer in the same schema as
+the other reviewers. Use it only when you can post it; never skip the native
+review to write this instead.
 
 ```json
-{"verdict":"approve|changes_requested","findings":[{"severity":"blocking|nit","file":"path","line":0,"message":"..."}]}
+{"verdict":"approve|changes_requested","findings":[{"severity":"blocking|nit","file":"path","line":0,"message":"...","ref":"abc123"}]}
 ```
 
 - Use `blocking` only for issues that must be fixed before merge.
 - Use `nit` for style or optional suggestions.
+- `line` is required whenever the issue is anchored to code (line at current HEAD).
+- `ref` is only for re-confirming an existing entry from the orchestrator's
+  open findings: copy that entry's exact `id`. Omit `ref` for anything new.
+  Never invent ids.
 - The orchestrator's `<!-- pr-agent-orchestrator -->` state comment lists prior
   open findings. Treat each as a hypothesis, not a fact: check the current
   code at HEAD before repeating one. If it's already fixed, leave it out of

@@ -286,6 +286,10 @@ class BluetoothSdkModule : Module() {
                     sendEvent("mic_lc3", event.toMap())
                 }
 
+                override fun onMicHealth(event: MicHealthEvent) {
+                    sendEvent("mic_health", event.values)
+                }
+
                 override fun onLocalTranscription(event: LocalTranscriptionEvent) {
                     sendEvent("local_transcription", event.values)
                 }
@@ -355,6 +359,9 @@ class BluetoothSdkModule : Module() {
             "settings_ack",
             "version_info",
             "pair_failure",
+            "pairing_info",
+            "entering_pairing_mode",
+            "owner_replaced",
             "audio_pairing_needed",
             "audio_connected",
             "audio_disconnected",
@@ -365,6 +372,7 @@ class BluetoothSdkModule : Module() {
             "ws_bin",
             "mic_pcm",
             "mic_lc3",
+            "mic_health",
             "stream_status",
             "keep_alive_ack",
             "mtk_update_complete",
@@ -571,6 +579,10 @@ class BluetoothSdkModule : Module() {
             requireSdk().setHotspotState(enabled).values
         }
 
+        SdkAsyncFunction("setWifiAdbState") { enabled: Boolean ->
+            sdk?.setWifiAdbState(enabled)
+        }
+
         SdkAsyncFunction("setSystemTime") { timestampMs: Double ->
             sdk?.setSystemTime(timestampMs.toLong())
         }
@@ -754,6 +766,10 @@ class BluetoothSdkModule : Module() {
                 webhookUrl: String?,
                 authToken: String? ->
             requireSdk().stopVideoRecording(requestId, webhookUrl, authToken).values
+        }
+
+        SdkCoroutineFunction("queryVideoRecordingStatus") { requestId: String ->
+            requireSdk().queryVideoRecordingStatus(requestId).values
         }
 
         // MARK: - Stream Commands

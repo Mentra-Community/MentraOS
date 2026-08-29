@@ -2,6 +2,8 @@ import "tsx/cjs"
 import {ExpoConfig, ConfigContext} from "@expo/config"
 import {getBuildNumber} from "./scripts/build-number.mjs"
 
+const familyBaseVersion = require("../package.json").version as string
+
 const VARIANTS = {
   default: {
     appName: "Mentra",
@@ -91,7 +93,10 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
     ...config,
     name: appName,
     slug: "Mentra",
-    version: process.env.EXPO_PUBLIC_MENTRAOS_VERSION || "2.9.1",
+    // Coordinated prereleases expose their full identity (for example,
+    // 3.1.0-beta.57) to shipped JavaScript while stores retain the plain
+    // marketing version so the exact tested binary can be promoted.
+    version: process.env.MENTRAOS_NATIVE_MARKETING_VERSION || familyBaseVersion,
     scheme: "com.mentra",
     orientation: "portrait",
     userInterfaceStyle: "automatic",
@@ -166,6 +171,8 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
           "Mentra accesses your calendar to display upcoming events and reminders directly on your smart glasses. For example, the app can show 'Meeting with John at 3 PM in Conference Room A' or remind you '15 minutes until dentist appointment' on your glasses display.",
         NSCalendarsFullAccessUsageDescription:
           "Mentra accesses your calendar to display upcoming events and reminders directly on your smart glasses. For example, the app can show 'Meeting with John at 3 PM in Conference Room A' or remind you '15 minutes until dentist appointment' on your glasses display.",
+        NSCalendarsWriteOnlyAccessUsageDescription:
+          "Mentra uses write-only calendar access to add events requested by miniapps to your calendar.",
         NSCalendarUsageDescription:
           "Mentra accesses your calendar to display upcoming events and reminders directly on your smart glasses. For example, the app can show 'Meeting with John at 3 PM in Conference Room A' or remind you '15 minutes until dentist appointment' on your glasses display.",
         NSPhotoLibraryUsageDescription:
@@ -175,7 +182,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
         NSUserNotificationUsageDescription:
           "This app needs access to your notifications to provide you with notifications.",
         NSLocalNetworkUsageDescription:
-          "Mentra needs to access your local network to connect to Mentra Live glasses for viewing photos and media stored on the device.",
+          "Mentra uses your local network to exchange photos, media, and verified software updates with Mentra Live glasses.",
         // Required because miniapps subscribed to `heading_update` cause
         // the host's HeadingService to read the device compass via
         // CoreMotion. iOS hard-crashes any access to motion sensors
@@ -241,6 +248,10 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
         "./modules/bluetooth-sdk/app.plugin.js",
         {
           node: true,
+          // The Mentra App sends identified support telemetry through Cloud V2.
+          // Keep the SDK's anonymous analytics enabled by default for standalone
+          // integrators, but disable the duplicate embedded copy in this host.
+          analytics: false,
         },
       ],
       // "./plugins/withSplashScreen.ts",
@@ -280,6 +291,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
             "Camera",
             "Microphone",
             "Calendars",
+            "CalendarsWriteOnly",
             "Bluetooth",
             "LocationAccuracy",
             "LocationWhenInUse",

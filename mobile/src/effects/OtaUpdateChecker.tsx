@@ -1,14 +1,14 @@
 import {useEffect, useRef, useState} from "react"
 
 import {useNavigationStore} from "@/stores/navigation"
-import {Capabilities, getModelCapabilities} from "@/../../cloud/packages/types/src"
+import {Capabilities, getModelCapabilities} from "@mentra/engine"
 import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {SETTINGS, useSetting} from "@mentra/engine"
 import showAlert from "@/utils/AlertUtils"
 import {translate} from "@/i18n/translate"
 import {usePathname} from "expo-router"
 import {BgTimer, engine, type VersionInfo} from "@mentra/engine"
-import {fetchVersionInfo} from "@mentra/engine/internal"
+import {fetchVersionInfo} from "@mentra/engine-host-internal"
 
 export {
   fetchVersionInfo,
@@ -17,10 +17,21 @@ export {
   findMatchingMtkPatch,
   checkBesUpdate,
   checkForOtaUpdate,
-} from "@mentra/engine/internal"
+} from "@mentra/engine-host-internal"
 
 function areGlassesConnectedNow(): boolean {
   return engine.ota.snapshot().connected
+}
+
+export function getPendingUpdatePromptAction(
+  returnedHome: boolean,
+  wifiStatusKnown: boolean,
+  wifiConnected: boolean,
+  hotspotOtaSupported: boolean,
+): "install" | "wifi_setup" | null {
+  if (!wifiStatusKnown) return null
+  if (!returnedHome && !wifiConnected && !hotspotOtaSupported) return null
+  return wifiConnected || hotspotOtaSupported ? "install" : "wifi_setup"
 }
 
 // How often to re-fetch the OTA manifest while glasses stay connected, so a
@@ -39,6 +50,8 @@ export function OtaUpdateChecker() {
   const glassesConnected = otaSnapshot.connected
   const buildNumber = otaSnapshot.buildNumber
   const glassesWifiConnected = otaSnapshot.wifiConnected
+  const glassesWifiStatusKnown = otaSnapshot.wifiStatusKnown
+  const hotspotOtaSupported = otaSnapshot.hotspotOtaVersion === 1
   const mtkFirmwareVersion = otaSnapshot.mtkFirmwareVersion
   const besFirmwareVersion = otaSnapshot.besFirmwareVersion
 
@@ -161,6 +174,7 @@ export function OtaUpdateChecker() {
     const pollManifest = async () => {
       if (!manifestBaselineRef.current) return // no completed check yet to compare against
       const url = engine.ota.snapshot().manifestUrl
+      if (!url) return
       const versionJson = await fetchVersionInfo(url)
       if (cancelled || !versionJson) return
       // Re-read after the await: a check completing mid-fetch refreshes the baseline.
@@ -195,11 +209,6 @@ export function OtaUpdateChecker() {
     const pending = pendingUpdate.current
     if (!pending) return
     const returnedHome = wasAwayFromHomeRef.current
-    wasAwayFromHomeRef.current = false
-
-    // Fire when returning to home, or when WiFi becomes connected while a
-    // pending update is already waiting on home.
-    if (!returnedHome && !glassesWifiConnected) return
 
     if (!glassesConnected) return
     if (hasPromptedOta.current) return
@@ -207,22 +216,52 @@ export function OtaUpdateChecker() {
     // Last-moment imperative check: reactive glassesConnected can be stale if
     // disconnect and navigation happen in the same render cycle.
     if (!areGlassesConnectedNow()) return
-    if (!engine.ota.snapshot().wifiConnected) {
-      console.log("OTA: Pending update is waiting for glasses WiFi before showing install prompt")
-      return
-    }
+    const currentOtaSnapshot = engine.ota.snapshot()
+    if (!currentOtaSnapshot.wifiStatusKnown) return
+    wasAwayFromHomeRef.current = false
+    const promptAction = getPendingUpdatePromptAction(
+      returnedHome,
+      currentOtaSnapshot.wifiStatusKnown,
+      currentOtaSnapshot.wifiConnected,
+      currentOtaSnapshot.hotspotOtaVersion === 1,
+    )
+    if (!promptAction) return
 
-    console.log("OTA: User returned to home with pending update - showing alert")
     const deviceName = defaultWearable || "Glasses"
     const updateCount = pending.updates.length
     const isDowngrade = pending.isDowngrade
+    const updateList = pending.updates.join(", ").toUpperCase()
     const updateMessage = isDowngrade
-      ? translate("ota:downgradeDescriptionShort") + (superMode ? ` (${pending.updates.join(", ").toUpperCase()})` : "")
+      ? translate("ota:downgradeDescriptionShort") + (superMode ? ` (${updateList})` : "")
       : superMode
-        ? `Updates available: ${pending.updates.join(", ").toUpperCase()}`
+        ? `Updates available: ${updateList}`
         : updateCount === 1
           ? "1 update available"
           : `${updateCount} updates available`
+
+    if (promptAction === "wifi_setup") {
+      if (hasPromptedOtaWifiSetup.current) return
+      console.log("OTA: User returned home with a pending update but no glasses WiFi - prompting WiFi setup")
+      hasPromptedOtaWifiSetup.current = true
+      showAlert(
+        translate(isDowngrade ? "ota:downgradeAvailable" : "ota:updateAvailable", {deviceName}),
+        `${updateMessage}\n\nConnect your ${deviceName} to WiFi to install.`,
+        [
+          {
+            text: translate("ota:updateLater"),
+            style: "cancel",
+            onPress: () => {
+              pendingUpdate.current = null
+              hasPromptedOtaWifiSetup.current = false
+            },
+          },
+          {text: translate("ota:setupWifi"), onPress: () => push("/wifi/scan")},
+        ],
+      )
+      return
+    }
+
+    console.log("OTA: User returned to home with pending update - showing install alert")
     pendingUpdate.current = null
     hasPromptedOta.current = true
     hasPromptedOtaWifiSetup.current = false
@@ -231,7 +270,16 @@ export function OtaUpdateChecker() {
       {text: translate("ota:updateLater"), style: "cancel"},
       {text: translate("ota:install"), onPress: () => push("/ota/check-for-updates")},
     ])
-  }, [pathname, glassesConnected, glassesWifiConnected, defaultWearable, superMode, push])
+  }, [
+    pathname,
+    glassesConnected,
+    glassesWifiConnected,
+    glassesWifiStatusKnown,
+    hotspotOtaSupported,
+    defaultWearable,
+    superMode,
+    push,
+  ])
 
   // Main OTA check effect
   useEffect(() => {
@@ -342,8 +390,18 @@ export function OtaUpdateChecker() {
 
             pendingUpdate.current = {latestVersionInfo, updates, isDowngrade: isApkDowngrade}
 
-            if (engine.ota.snapshot().wifiConnected) {
-              console.log("OTA: Update available and glasses are on WiFi - prompting install")
+            const currentOtaSnapshot = engine.ota.snapshot()
+            if (!currentOtaSnapshot.wifiStatusKnown) {
+              console.log("OTA: Update available but glasses Wi-Fi status is not known yet - caching for later")
+              wasAwayFromHomeRef.current = true
+              return
+            }
+            if (currentOtaSnapshot.wifiConnected || currentOtaSnapshot.hotspotOtaVersion === 1) {
+              console.log(
+                `OTA: Update available and ${
+                  currentOtaSnapshot.wifiConnected ? "glasses are on WiFi" : "hotspot OTA is supported"
+                } - prompting install`,
+              )
               pendingUpdate.current = null
               hasPromptedOta.current = true
               hasPromptedOtaWifiSetup.current = false
@@ -373,15 +431,15 @@ export function OtaUpdateChecker() {
               translate(isApkDowngrade ? "ota:downgradeAvailable" : "ota:updateAvailable", {deviceName}),
               wifiMessage,
               [
-              {
-                text: translate("ota:updateLater"),
-                style: "cancel",
-                onPress: () => {
-                  pendingUpdate.current = null // Clear pending on dismiss
-                  hasPromptedOtaWifiSetup.current = false
+                {
+                  text: translate("ota:updateLater"),
+                  style: "cancel",
+                  onPress: () => {
+                    pendingUpdate.current = null // Clear pending on dismiss
+                    hasPromptedOtaWifiSetup.current = false
+                  },
                 },
-              },
-              {text: translate("ota:setupWifi"), onPress: () => push("/wifi/scan")},
+                {text: translate("ota:setupWifi"), onPress: () => push("/wifi/scan")},
               ],
             )
           },
@@ -404,6 +462,8 @@ export function OtaUpdateChecker() {
     mtkFirmwareVersion,
     besFirmwareVersion,
     glassesWifiConnected,
+    glassesWifiStatusKnown,
+    hotspotOtaSupported,
     defaultWearable,
     pathname,
     push,

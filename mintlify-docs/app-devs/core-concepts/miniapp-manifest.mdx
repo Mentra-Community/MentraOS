@@ -97,6 +97,14 @@ Each entry is `{ "type": "...", "level": "...", "description"?: "..." }`.
   hidden in the Mentra Miniapp Store and launcher on incompatible devices).
 - **`OPTIONAL`**: incompatible glasses still run the miniapp, in a degraded state.
 
+<Note>
+`MICROPHONE` means that the miniapp needs audio input. MentraOS satisfies this
+requirement with the connected glasses microphone when one is available and
+falls back to the phone microphone otherwise. A miniapp that requires audio is
+therefore compatible with glasses such as the Vuzix Z100 that do not have an
+onboard microphone.
+</Note>
+
 ## Editing the manifest
 
 You can edit `miniapp.json` by hand, or use the CLI's guided commands:

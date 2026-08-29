@@ -11,6 +11,7 @@
 import type {OtaStatus} from "@mentra/bluetooth-sdk-internal"
 
 import {otaInstallCoordinator} from "../../modules/engine/src/services/OtaInstallCoordinator"
+import type {OtaCheckCurrentGlassesResult} from "../../modules/engine/src/services/OtaUpdateCheckService"
 import {
   BES_CONTINUE_LOCKOUT_MS,
   DOWNLOAD_STUCK_TIMEOUT_MS,
@@ -37,6 +38,18 @@ import {useGlassesStore} from "../../modules/engine/src/stores/glasses"
 import GlobalEventEmitter from "../../modules/engine/src/utils/GlobalEventEmitter"
 
 import {bluetoothSdkMock} from "../test-utils/mockBluetoothSdk"
+
+jest.mock("../../modules/engine/src/services/HotspotOtaTransport", () => ({
+  hotspotOtaTransport: {
+    prepare: jest.fn(),
+    teardown: jest.fn(),
+  },
+}))
+
+const mockedHotspotTransport = jest.requireMock("../../modules/engine/src/services/HotspotOtaTransport")
+  .hotspotOtaTransport as {prepare: jest.Mock; teardown: jest.Mock}
+const mockHotspotPrepare = mockedHotspotTransport.prepare
+const mockHotspotTeardown = mockedHotspotTransport.teardown
 
 function setGlassesConnected() {
   useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
@@ -105,6 +118,22 @@ function idleStatus(): OtaStatus {
   }
 }
 
+function checkResult(): OtaCheckCurrentGlassesResult {
+  return {
+    hasCheckCompleted: true,
+    updateAvailable: true,
+    latestVersionInfo: null,
+    updates: ["apk"],
+    mtkPatch: null,
+    besVersion: null,
+    isApkDowngrade: false,
+    manifestBody: "{}",
+    releaseVersion: null,
+    updateInfo: null,
+    isRequired: true,
+  }
+}
+
 async function flushNativeStartPromise(): Promise<void> {
   await jest.advanceTimersByTimeAsync(0)
 }
@@ -114,15 +143,112 @@ beforeEach(() => {
   otaInstallCoordinator.detach()
   useGlassesStore.getState().reset()
   bluetoothSdkMock.startOtaUpdate.mockReset().mockResolvedValue(undefined)
-  bluetoothSdkMock.sendOtaQueryStatus.mockClear()
+  bluetoothSdkMock.queryOtaStatus.mockClear()
   bluetoothSdkMock.requestVersionInfo.mockClear()
-  bluetoothSdkMock.updateGlasses.mockClear()
   bluetoothSdkMock.ping.mockClear()
+  mockHotspotPrepare.mockReset().mockResolvedValue("http://192.168.43.2:8791/version.json")
+  mockHotspotTeardown.mockReset().mockResolvedValue(undefined)
 })
 
 afterEach(() => {
   otaInstallCoordinator.detach()
+  useGlassesStore.getState().setGlassesInfo({
+    connection: {state: "connected", fullyBooted: true},
+    wifi: {state: "connected", ssid: "test"},
+  })
+  otaInstallCoordinator.prepare(checkResult())
   jest.useRealTimers()
+})
+
+describe("OtaInstallCoordinator hotspot transport selection", () => {
+  it("waits for an explicit glasses Wi-Fi status before choosing a transport", () => {
+    useGlassesStore.getState().setGlassesInfo({hotspotOtaVersion: 1})
+
+    expect(() => otaInstallCoordinator.prepare(checkResult())).toThrow("Wi-Fi status is not available")
+  })
+
+  it("selects hotspot when glasses have no Wi-Fi and advertise the capability", () => {
+    useGlassesStore.getState().setGlassesInfo({
+      connection: {state: "connected", fullyBooted: true},
+      hotspotOtaVersion: 1,
+      wifi: {state: "disconnected"},
+    })
+
+    expect(otaInstallCoordinator.prepare(checkResult())).toBe("hotspot")
+  })
+
+  it("keeps unsupported glasses on the existing Wi-Fi requirement", () => {
+    useGlassesStore.getState().setGlassesInfo({
+      connection: {state: "connected", fullyBooted: true},
+      hotspotOtaVersion: 0,
+      wifi: {state: "disconnected"},
+    })
+
+    expect(() => otaInstallCoordinator.prepare(checkResult())).toThrow("require Wi-Fi")
+  })
+
+  it("rejects unknown future hotspot OTA protocol versions", () => {
+    useGlassesStore.getState().setGlassesInfo({
+      connection: {state: "connected", fullyBooted: true},
+      hotspotOtaVersion: 2,
+      wifi: {state: "disconnected"},
+    })
+
+    expect(() => otaInstallCoordinator.prepare(checkResult())).toThrow("require Wi-Fi")
+  })
+
+  it("uses the existing Wi-Fi transport when glasses Wi-Fi is connected", () => {
+    useGlassesStore.getState().setGlassesInfo({
+      connection: {state: "connected", fullyBooted: true},
+      hotspotOtaVersion: 1,
+      wifi: {state: "connected", ssid: "office"},
+    })
+
+    expect(otaInstallCoordinator.prepare(checkResult())).toBe("wifi")
+  })
+
+  it("sends one hotspot ota_start and only queries status across an ASG SID change", async () => {
+    useGlassesStore.getState().setGlassesInfo({
+      connection: {state: "connected", fullyBooted: true},
+      hotspotOtaVersion: 1,
+      wifi: {state: "disconnected"},
+    })
+    otaInstallCoordinator.prepare(checkResult())
+
+    otaInstallCoordinator.attach()
+    await flushNativeStartPromise()
+
+    expect(mockHotspotPrepare).toHaveBeenCalledTimes(1)
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledWith("http://192.168.43.2:8791/version.json")
+
+    useGlassesStore
+      .getState()
+      .setOtaStatus(inProgressStatus({sessionId: "hotpot1", totalSteps: 3, stepPercent: 20, overallPercent: 4}))
+    GlobalEventEmitter.emit("glasses_session_changed", {previousSid: "old", sid: "new"})
+
+    expect(bluetoothSdkMock.queryOtaStatus).toHaveBeenCalledTimes(1)
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+  })
+
+  it("fails a phone preflight once without entering ota_start retry logic", async () => {
+    mockHotspotPrepare.mockRejectedValueOnce({code: "artifact_verify_failed"})
+    useGlassesStore.getState().setGlassesInfo({
+      connection: {state: "connected", fullyBooted: true},
+      hotspotOtaVersion: 1,
+      wifi: {state: "disconnected"},
+    })
+    otaInstallCoordinator.prepare(checkResult())
+
+    otaInstallCoordinator.attach()
+    await flushNativeStartPromise()
+    await flushNativeStartPromise()
+
+    expect(bluetoothSdkMock.startOtaUpdate).not.toHaveBeenCalled()
+    expect(otaInstallCoordinator.snapshot().errorMsg).toBe(OtaProgressMessages.hotspotArtifactVerifyFailed)
+    await jest.advanceTimersByTimeAsync(RETRY_INTERVAL_MS * MAX_RETRIES)
+    expect(mockHotspotPrepare).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe("OtaInstallCoordinator initial-mount arbitration", () => {
@@ -131,7 +257,7 @@ describe("OtaInstallCoordinator initial-mount arbitration", () => {
     otaInstallCoordinator.attach()
 
     expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
-    expect(bluetoothSdkMock.sendOtaQueryStatus).not.toHaveBeenCalled()
+    expect(bluetoothSdkMock.queryOtaStatus).not.toHaveBeenCalled()
     expect(otaInstallCoordinator.snapshot().displayState).toBe("starting")
 
     // Ack + steadily-advancing progress keep every per-step watchdog quiet, so
@@ -152,7 +278,7 @@ describe("OtaInstallCoordinator initial-mount arbitration", () => {
   it("attach while disconnected sends nothing", () => {
     otaInstallCoordinator.attach()
     expect(bluetoothSdkMock.startOtaUpdate).not.toHaveBeenCalled()
-    expect(bluetoothSdkMock.sendOtaQueryStatus).not.toHaveBeenCalled()
+    expect(bluetoothSdkMock.queryOtaStatus).not.toHaveBeenCalled()
     expect(otaInstallCoordinator.snapshot().displayState).toBe("disconnected")
   })
 })
@@ -248,7 +374,7 @@ describe("OtaInstallCoordinator ota_start request ownership", () => {
     expect(otaInstallCoordinator.snapshot().errorMsg).toBe("")
 
     setGlassesConnected()
-    expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalledTimes(1)
+    expect(bluetoothSdkMock.queryOtaStatus).toHaveBeenCalledTimes(1)
     await jest.advanceTimersByTimeAsync(QUERY_REPLY_TIMEOUT_MS - 1)
     expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
 
@@ -272,7 +398,7 @@ describe("OtaInstallCoordinator ota_start request ownership", () => {
     await flushNativeStartPromise()
 
     setGlassesConnected()
-    expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalledTimes(1)
+    expect(bluetoothSdkMock.queryOtaStatus).toHaveBeenCalledTimes(1)
     useGlassesStore.getState().setOtaStatus(inProgressStatus({stepPercent: 1, overallPercent: 1}))
     await jest.advanceTimersByTimeAsync(QUERY_REPLY_TIMEOUT_MS * 2)
 
@@ -288,7 +414,7 @@ describe("OtaInstallCoordinator ota_start request ownership", () => {
 
     useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
     setGlassesConnected()
-    expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalledTimes(1)
+    expect(bluetoothSdkMock.queryOtaStatus).toHaveBeenCalledTimes(1)
 
     await jest.advanceTimersByTimeAsync(RETRY_INTERVAL_MS)
     expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
@@ -349,7 +475,7 @@ describe("OtaInstallCoordinator query-status arbitration with an existing sessio
     useGlassesStore.getState().setOtaStatus(inProgressStatus({stepPercent: 10, overallPercent: 10}))
     otaInstallCoordinator.attach()
 
-    expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalledTimes(1)
+    expect(bluetoothSdkMock.queryOtaStatus).toHaveBeenCalledTimes(1)
     expect(bluetoothSdkMock.startOtaUpdate).not.toHaveBeenCalled()
 
     // Glasses process restarted: the session is gone; explicit idle reply
@@ -364,7 +490,7 @@ describe("OtaInstallCoordinator query-status arbitration with an existing sessio
     setGlassesConnected()
     useGlassesStore.getState().setOtaStatus(inProgressStatus({stepPercent: 10, overallPercent: 10}))
     otaInstallCoordinator.attach()
-    expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalledTimes(1)
+    expect(bluetoothSdkMock.queryOtaStatus).toHaveBeenCalledTimes(1)
 
     // The active session replies: still in progress.
     useGlassesStore.getState().setOtaStatus(inProgressStatus({stepPercent: 12, overallPercent: 12}))
@@ -380,7 +506,7 @@ describe("OtaInstallCoordinator query-status arbitration with an existing sessio
 
     await jest.advanceTimersByTimeAsync(QUERY_REPLY_TIMEOUT_MS)
 
-    expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalledTimes(1)
+    expect(bluetoothSdkMock.queryOtaStatus).toHaveBeenCalledTimes(1)
     expect(bluetoothSdkMock.startOtaUpdate).not.toHaveBeenCalled()
   })
 })
@@ -487,7 +613,7 @@ describe("OtaInstallCoordinator version-change detour retry gate", () => {
     expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
     await flushNativeStartPromise()
     otaInstallCoordinator.retry()
-    expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalledTimes(1)
+    expect(bluetoothSdkMock.queryOtaStatus).toHaveBeenCalledTimes(1)
     expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
   })
 })
@@ -534,16 +660,45 @@ describe("OtaInstallCoordinator MTK completion", () => {
   it("mtk_update_complete queries status and marks MTK updated this session", () => {
     setGlassesConnected()
     otaInstallCoordinator.attach()
-    bluetoothSdkMock.sendOtaQueryStatus.mockClear()
+    bluetoothSdkMock.queryOtaStatus.mockClear()
 
     GlobalEventEmitter.emit("mtk_update_complete", {message: "done", timestamp: Date.now()})
 
-    expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalledTimes(1)
+    expect(bluetoothSdkMock.queryOtaStatus).toHaveBeenCalledTimes(1)
     expect(useGlassesStore.getState().mtkUpdatedThisSession).toBe(true)
   })
 })
 
 describe("OtaInstallCoordinator finish()", () => {
+  it("does not resolve until hotspot transport teardown finishes", async () => {
+    useGlassesStore.getState().setGlassesInfo({
+      connection: {state: "connected", fullyBooted: true},
+      hotspotOtaVersion: 1,
+      wifi: {state: "disconnected"},
+    })
+    otaInstallCoordinator.prepare(checkResult())
+    let resolveTeardown!: () => void
+    mockHotspotTeardown.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveTeardown = resolve
+        }),
+    )
+
+    let finished = false
+    const finishPromise = otaInstallCoordinator.finish().then(() => {
+      finished = true
+    })
+    await Promise.resolve()
+
+    expect(mockHotspotTeardown).toHaveBeenCalledTimes(1)
+    expect(finished).toBe(false)
+
+    resolveTeardown()
+    await finishPromise
+    expect(finished).toBe(true)
+  })
+
   it("after an APK step clears the update prompt and the stale build number", () => {
     setGlassesConnected()
     useGlassesStore.getState().setGlassesInfo({buildNumber: "40"})
@@ -559,7 +714,6 @@ describe("OtaInstallCoordinator finish()", () => {
 
     otaInstallCoordinator.finish()
 
-    expect(bluetoothSdkMock.updateGlasses).toHaveBeenCalledWith({buildNumber: ""})
     expect(useGlassesStore.getState().buildNumber).toBe("")
     expect(useGlassesStore.getState().otaUpdateAvailable).toBeNull()
   })
@@ -574,7 +728,6 @@ describe("OtaInstallCoordinator finish()", () => {
 
     otaInstallCoordinator.finish()
 
-    expect(bluetoothSdkMock.updateGlasses).not.toHaveBeenCalled()
     expect(useGlassesStore.getState().buildNumber).toBe("40")
   })
 })
@@ -746,16 +899,29 @@ describe("OtaInstallCoordinator legacy ota_progress normalization (WP 8C-a)", ()
     otaInstallCoordinator.attach()
     GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
     useGlassesStore.getState().setOtaStatus(inProgressStatus({phase: "install", stepPercent: 0, overallPercent: 100}))
-    bluetoothSdkMock.sendOtaQueryStatus.mockClear()
+    bluetoothSdkMock.queryOtaStatus.mockClear()
     bluetoothSdkMock.startOtaUpdate.mockClear()
 
     GlobalEventEmitter.emit("glasses_session_changed", {previousSid: "", sid: "abcd1234"})
-    expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalledTimes(1)
+    expect(bluetoothSdkMock.queryOtaStatus).toHaveBeenCalledTimes(1)
 
     // No authoritative reply is ambiguous: preserve the accepted unified session.
     useGlassesStore.getState().setOtaStatus(null)
     await jest.advanceTimersByTimeAsync(QUERY_REPLY_TIMEOUT_MS)
     expect(bluetoothSdkMock.startOtaUpdate).not.toHaveBeenCalled()
+  })
+
+  it("swallows a concurrent status-query rejection after an ASG session restart", async () => {
+    setGlassesConnected()
+    otaInstallCoordinator.attach()
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+    useGlassesStore.getState().setOtaStatus(inProgressStatus({phase: "install", stepPercent: 0, overallPercent: 100}))
+    bluetoothSdkMock.queryOtaStatus.mockClear().mockRejectedValueOnce(new Error("request_in_flight"))
+
+    GlobalEventEmitter.emit("glasses_session_changed", {previousSid: "old", sid: "new"})
+    await jest.advanceTimersByTimeAsync(0)
+
+    expect(bluetoothSdkMock.queryOtaStatus).toHaveBeenCalledTimes(1)
   })
 
   it("glasses_session_changed after APK completion queries the ASG-owned session without sending ota_start", async () => {
@@ -769,11 +935,11 @@ describe("OtaInstallCoordinator legacy ota_progress normalization (WP 8C-a)", ()
         inProgressStatus({stepType: "apk", status: "step_complete", totalSteps: 2, currentStep: 1, stepPercent: 100}),
       )
     otaInstallCoordinator.attach()
-    expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalledTimes(1)
+    expect(bluetoothSdkMock.queryOtaStatus).toHaveBeenCalledTimes(1)
     bluetoothSdkMock.startOtaUpdate.mockClear()
 
     GlobalEventEmitter.emit("glasses_session_changed", {previousSid: "old0", sid: "new1"})
-    expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalledTimes(2)
+    expect(bluetoothSdkMock.queryOtaStatus).toHaveBeenCalledTimes(2)
     await jest.advanceTimersByTimeAsync(QUERY_REPLY_TIMEOUT_MS + 1000)
     expect(bluetoothSdkMock.startOtaUpdate).not.toHaveBeenCalled()
   })
@@ -793,7 +959,7 @@ describe("OtaInstallCoordinator legacy ota_progress normalization (WP 8C-a)", ()
     bluetoothSdkMock.startOtaUpdate.mockClear()
 
     GlobalEventEmitter.emit("glasses_session_changed", {previousSid: "old0", sid: "new1"})
-    expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalledTimes(1)
+    expect(bluetoothSdkMock.queryOtaStatus).toHaveBeenCalledTimes(1)
     expect(bluetoothSdkMock.startOtaUpdate).not.toHaveBeenCalled()
     useGlassesStore.getState().setOtaStatus(idleStatus())
     await jest.advanceTimersByTimeAsync(QUERY_REPLY_TIMEOUT_MS)
@@ -850,7 +1016,7 @@ describe("OtaInstallCoordinator legacy query-status fallback (WP 8C-b)", () => {
     otaInstallCoordinator.attach()
 
     expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
-    expect(bluetoothSdkMock.sendOtaQueryStatus).not.toHaveBeenCalled()
+    expect(bluetoothSdkMock.queryOtaStatus).not.toHaveBeenCalled()
   })
 
   it("reconnect query ignored by old glasses: stale legacy events do NOT suppress the ota_start fallback", async () => {
@@ -862,7 +1028,7 @@ describe("OtaInstallCoordinator legacy query-status fallback (WP 8C-b)", () => {
 
     useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
     setLegacyGlassesConnected()
-    expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalledTimes(1)
+    expect(bluetoothSdkMock.queryOtaStatus).toHaveBeenCalledTimes(1)
 
     // Old builds ignore ota_query_status: nothing new arrives. The pre-query
     // legacy-shaped otaStatus/otaProgress must not count as a reply.
@@ -878,7 +1044,7 @@ describe("OtaInstallCoordinator legacy query-status fallback (WP 8C-b)", () => {
 
     useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
     setGlassesConnected()
-    expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalledTimes(2)
+    expect(bluetoothSdkMock.queryOtaStatus).toHaveBeenCalledTimes(2)
 
     await jest.advanceTimersByTimeAsync(QUERY_REPLY_TIMEOUT_MS * 2)
     expect(bluetoothSdkMock.startOtaUpdate).not.toHaveBeenCalled()
@@ -922,14 +1088,14 @@ describe("OtaInstallCoordinator BES reboot recovery", () => {
     // events. The old split route would still be progress-legacy.tsx.
     useGlassesStore.getState().setGlassesInfo({buildNumber: "39"})
     emitUnifiedBesSuccess()
-    bluetoothSdkMock.sendOtaQueryStatus.mockClear()
+    bluetoothSdkMock.queryOtaStatus.mockClear()
 
     useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
     expect(otaInstallCoordinator.snapshot().displayState).toBe("restarting")
     setGlassesConnected()
 
     expect(otaInstallCoordinator.snapshot().displayState).toBe("complete")
-    expect(bluetoothSdkMock.sendOtaQueryStatus).not.toHaveBeenCalled()
+    expect(bluetoothSdkMock.queryOtaStatus).not.toHaveBeenCalled()
     expect(bluetoothSdkMock.requestVersionInfo).not.toHaveBeenCalled()
   })
 
@@ -967,7 +1133,7 @@ describe("OtaInstallCoordinator BES reboot recovery", () => {
     otaInstallCoordinator.attach()
     GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
     emitUnifiedBesSuccess()
-    bluetoothSdkMock.sendOtaQueryStatus.mockClear()
+    bluetoothSdkMock.queryOtaStatus.mockClear()
 
     useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
     // Old ASG builds either retain the stale pre-update value or publish an
@@ -977,7 +1143,7 @@ describe("OtaInstallCoordinator BES reboot recovery", () => {
 
     expect(otaInstallCoordinator.snapshot().displayState).toBe("complete")
     expect(otaInstallCoordinator.snapshot().continueButtonDisabled).toBe(true)
-    expect(bluetoothSdkMock.sendOtaQueryStatus).not.toHaveBeenCalled()
+    expect(bluetoothSdkMock.queryOtaStatus).not.toHaveBeenCalled()
     expect(bluetoothSdkMock.requestVersionInfo).not.toHaveBeenCalled()
 
     await jest.advanceTimersByTimeAsync(BES_CONTINUE_LOCKOUT_MS)
@@ -1026,7 +1192,7 @@ describe("OtaInstallCoordinator BES reboot recovery", () => {
     otaInstallCoordinator.retry()
     expect(otaInstallCoordinator.snapshot().displayState).toBe("starting")
 
-    bluetoothSdkMock.sendOtaQueryStatus.mockClear()
+    bluetoothSdkMock.queryOtaStatus.mockClear()
     bluetoothSdkMock.requestVersionInfo.mockClear()
     useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
     setGlassesConnected()
@@ -1034,7 +1200,7 @@ describe("OtaInstallCoordinator BES reboot recovery", () => {
     // This link edge happened before the retried attempt received BES success,
     // so it follows ordinary reconnect arbitration.
     expect(otaInstallCoordinator.snapshot().displayState).toBe("starting")
-    expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalledTimes(1)
+    expect(bluetoothSdkMock.queryOtaStatus).toHaveBeenCalledTimes(1)
     expect(bluetoothSdkMock.requestVersionInfo).not.toHaveBeenCalled()
   })
 
@@ -1084,13 +1250,13 @@ describe("OtaInstallCoordinator BES reboot recovery", () => {
         overallPercent: 100,
       }),
     )
-    bluetoothSdkMock.sendOtaQueryStatus.mockClear()
+    bluetoothSdkMock.queryOtaStatus.mockClear()
 
     useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
     setGlassesConnected()
 
     expect(otaInstallCoordinator.snapshot().displayState).toBe("updating")
-    expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalledTimes(1)
+    expect(bluetoothSdkMock.queryOtaStatus).toHaveBeenCalledTimes(1)
     expect(bluetoothSdkMock.requestVersionInfo).not.toHaveBeenCalled()
   })
 
@@ -1120,13 +1286,13 @@ describe("OtaInstallCoordinator BES reboot recovery", () => {
       currentUpdate: "bes",
     })
     otaInstallCoordinator.attach()
-    bluetoothSdkMock.sendOtaQueryStatus.mockClear()
+    bluetoothSdkMock.queryOtaStatus.mockClear()
 
     useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
     setGlassesConnected()
 
     expect(otaInstallCoordinator.snapshot().displayState).not.toBe("complete")
-    expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalledTimes(1)
+    expect(bluetoothSdkMock.queryOtaStatus).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -1158,7 +1324,7 @@ describe("OtaInstallCoordinator APK completion by build-number increase (WP 8C-c
 
     // finish() must clear the stale build number exactly like an explicit APK step.
     otaInstallCoordinator.finish()
-    expect(bluetoothSdkMock.updateGlasses).toHaveBeenCalledWith({buildNumber: ""})
+    expect(useGlassesStore.getState().buildNumber).toBe("")
   })
 
   it("build-number increase recovers a legacy session even from a watchdog failure", async () => {
@@ -1433,12 +1599,12 @@ describe("OtaInstallCoordinator apk install-phase status poll", () => {
     otaInstallCoordinator.attach()
     GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
     useGlassesStore.getState().setOtaStatus(inProgressStatus({phase: "install", stepPercent: 0, overallPercent: 100}))
-    bluetoothSdkMock.sendOtaQueryStatus.mockClear()
+    bluetoothSdkMock.queryOtaStatus.mockClear()
 
     await jest.advanceTimersByTimeAsync(PING_INTERVAL_MS)
-    expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalledTimes(1)
+    expect(bluetoothSdkMock.queryOtaStatus).toHaveBeenCalledTimes(1)
     await jest.advanceTimersByTimeAsync(PING_INTERVAL_MS)
-    expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalledTimes(2)
+    expect(bluetoothSdkMock.queryOtaStatus).toHaveBeenCalledTimes(2)
   })
 
   it("keeps one poll in flight and swallows its rejection", async () => {
@@ -1449,9 +1615,9 @@ describe("OtaInstallCoordinator apk install-phase status poll", () => {
     otaInstallCoordinator.attach()
     GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
     useGlassesStore.getState().setOtaStatus(inProgressStatus({phase: "install", stepPercent: 0, overallPercent: 100}))
-    bluetoothSdkMock.sendOtaQueryStatus.mockClear()
+    bluetoothSdkMock.queryOtaStatus.mockClear()
     let rejectPending!: (err: Error) => void
-    bluetoothSdkMock.sendOtaQueryStatus.mockImplementationOnce(
+    bluetoothSdkMock.queryOtaStatus.mockImplementationOnce(
       () =>
         new Promise((_resolve, reject) => {
           rejectPending = reject
@@ -1459,16 +1625,16 @@ describe("OtaInstallCoordinator apk install-phase status poll", () => {
     )
 
     await jest.advanceTimersByTimeAsync(PING_INTERVAL_MS)
-    expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalledTimes(1)
+    expect(bluetoothSdkMock.queryOtaStatus).toHaveBeenCalledTimes(1)
 
     // First query still pending: the next tick must not fire a concurrent one.
     await jest.advanceTimersByTimeAsync(PING_INTERVAL_MS)
-    expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalledTimes(1)
+    expect(bluetoothSdkMock.queryOtaStatus).toHaveBeenCalledTimes(1)
 
     // Rejection (e.g. request_timeout) is swallowed and polling resumes.
     rejectPending(new Error("request_timeout"))
     await jest.advanceTimersByTimeAsync(PING_INTERVAL_MS)
-    expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalledTimes(2)
+    expect(bluetoothSdkMock.queryOtaStatus).toHaveBeenCalledTimes(2)
   })
 
   it("does not poll during the download phase", async () => {
@@ -1476,10 +1642,10 @@ describe("OtaInstallCoordinator apk install-phase status poll", () => {
     otaInstallCoordinator.attach()
     GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
     useGlassesStore.getState().setOtaStatus(inProgressStatus({stepPercent: 40, overallPercent: 40}))
-    bluetoothSdkMock.sendOtaQueryStatus.mockClear()
+    bluetoothSdkMock.queryOtaStatus.mockClear()
 
     await jest.advanceTimersByTimeAsync(PING_INTERVAL_MS * 3)
-    expect(bluetoothSdkMock.sendOtaQueryStatus).not.toHaveBeenCalled()
+    expect(bluetoothSdkMock.queryOtaStatus).not.toHaveBeenCalled()
   })
 
   it("a polled complete reply lands the session on complete instead of the stall failure", async () => {
@@ -1492,7 +1658,7 @@ describe("OtaInstallCoordinator apk install-phase status poll", () => {
     useGlassesStore.getState().setOtaStatus(inProgressStatus({phase: "install", stepPercent: 0, overallPercent: 100}))
 
     await jest.advanceTimersByTimeAsync(PING_INTERVAL_MS)
-    expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalled()
+    expect(bluetoothSdkMock.queryOtaStatus).toHaveBeenCalled()
 
     // Glasses answer the query from their persisted session: install complete.
     useGlassesStore

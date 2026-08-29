@@ -1,4 +1,7 @@
 {
+  "name": "@mentra/release-family",
+  "version": "3.1.0",
+  "private": true,
   "workspaces": [
     "cloud-v2/packages/*",
     "miniapps/*",
@@ -34,8 +37,13 @@
   },
   "scripts": {
     "prepare": "husky",
+    "release:validate-family": "node .github/scripts/release-family-cli.mjs validate",
+    "release:test-family": "node --test .github/scripts/release-family.test.mjs",
+    "release:create-plan": "node .github/scripts/create-release-plan.mjs",
+    "release:finalize-manifest": "node .github/scripts/finalize-release-manifest.mjs",
     "generate-licenses": "bun mintlify-docs/generate-licenses.ts",
     "build:miniapp": "cd mobile/modules/miniapp && bun run build",
+    "sync-miniapp": "bun scripts/sync-miniapp.mjs",
     "postinstall": "bun run build:miniapp || echo '\\n[postinstall] WARNING: failed to build @mentra/miniapp. Miniapps will not run until you build it manually:\\n  cd mobile/modules/miniapp && bun run build\\n'"
   }
 }

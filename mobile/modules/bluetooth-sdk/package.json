@@ -1,6 +1,6 @@
 {
   "name": "@mentra/bluetooth-sdk",
-  "version": "0.1.21-dev.5",
+  "version": "3.1.0",
   "description": "SDK for communicating with smart glasses",
   "main": "build/index.js",
   "react-native": "src/index.ts",
@@ -31,6 +31,11 @@
       "react-native": "./src/photo-receiver/index.ts",
       "types": "./build/photo-receiver/index.d.ts",
       "default": "./build/photo-receiver/index.js"
+    },
+    "./ota-transport": {
+      "react-native": "./src/ota-transport/index.ts",
+      "types": "./build/ota-transport/index.d.ts",
+      "default": "./build/ota-transport/index.js"
     },
     "./debug": {
       "react-native": "./src/debug.ts",
@@ -73,9 +78,12 @@
     "build:plugin": "expo-module build plugin",
     "clean": "expo-module clean",
     "test": "expo-module test",
+    "test:release-metadata": "node --test scripts/*.test.mjs",
     "prepare": "expo-module prepare",
     "prepack": "node scripts/inject-ios-sdk-version.mjs",
     "postpack": "node scripts/inject-ios-sdk-version.mjs --restore",
+    "write:release-metadata": "node scripts/write-release-metadata.mjs",
+    "verify:release-package": "node scripts/verify-release-package.mjs",
     "prepublishOnly": "expo-module prepublishOnly",
     "lint": "expo-module lint",
     "expo-module": "expo-module",
