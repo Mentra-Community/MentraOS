@@ -122,7 +122,8 @@ expected to place a Teams call.
       package-specific values, but keep Runtime URLs and auth scopes at the host
       deployment level.
 - [ ] Add `auth.mode: "microsoft-entra"` with exact authority URL, native client
-      id, Runtime API scope, and Teams/Graph delegated scopes.
+      id, Runtime API scope, and ACS Teams delegated scopes. Request no Graph
+      scope in the first call-focused template.
 - [ ] Add `features.runtimeRealtimeSession`; false disables Runtime WebSocket,
       audio, and subscriptions while preserving authenticated Runtime REST
       capabilities.
@@ -284,7 +285,8 @@ expected to place a Teams call.
 - [ ] Bundle Mentra Call in the official app and approve it in the first
       customer manifest template.
 - [ ] Apply `systemMiniapps.approvedPackageNamesOverride` to install, registry,
-      menus, deep links, autostart, and direct launch.
+      menus, autostart, and primary system-miniapp launch surfaces. Do not make
+      comprehensive blocking of secondary shared-screen routes a v1 gate.
 - [ ] Remove the Mentra Call backend dependency from the ACS path.
 - [ ] Keep the Miniapp SDK call request provider-neutral. `session.meeting` is
       the current spike shape, not a frozen API name or payload.
@@ -400,9 +402,11 @@ policy tests
 - [ ] Use only `content.wallpaperUrls`; empty means no remote presets.
 - [ ] Route privacy, terms, docs, support, store, and review actions through
       resolved fields. Do not add `externalLinks`.
-- [ ] Apply the approved system-miniapp list everywhere. The embedded Mentra
-      profile uses `null`; the customer template pins Mentra Call and explicitly
-      approved utilities.
+- [ ] Apply the approved system-miniapp list to installation, registry, system
+      miniapp catalogs and menus, autostart, and primary launch surfaces. The
+      embedded Mentra profile uses `null`; the customer template pins Mentra Call
+      and explicitly approved utilities. Secondary shell routes to shared
+      built-in screens are not part of the v1 acceptance gate.
 - [ ] Filter the pairing picker with `glasses.allowedModelsOverride`; keep vendor
       behavior in model adapters and do not add AR99-specific schema.
 - [ ] Disable navigation, cloud speech, cloud reports, public store/registry, and

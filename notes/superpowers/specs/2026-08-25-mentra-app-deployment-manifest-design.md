@@ -411,8 +411,7 @@ scopes after the user has signed in:
 one Entra account/session
   |- ID token / account claims            -> Mentra App workspace identity
   |- Runtime API access token              -> managed streams and meeting services
-  |- ACS Teams delegated access token     -> exchanged for ACS Teams-user token
-  `- Microsoft Graph access token         -> optional /me/onlineMeetings creation
+  `- ACS Teams delegated access token     -> exchanged for ACS Teams-user token
 ```
 
 For authenticated Teams identity, the Entra registration receives the delegated
@@ -438,11 +437,13 @@ identity contract. The self-hosted v1 moves credential acquisition below the
 miniapp boundary: the native host obtains the employee's ACS Teams-user token
 from Runtime and never exposes Entra or ACS bearer tokens to miniapp JavaScript.
 
-### Creating a Teams meeting
+### Future: Creating a Teams meeting
 
-Joining an existing Teams URL needs no Microsoft Graph permission. If Mentra
-Call must create the meeting, the preferred enterprise flow uses the same MSAL
-account to request delegated `OnlineMeetings.ReadWrite` and calls
+Meeting creation is outside the first enterprise deployment. Joining an existing
+Teams URL needs no Microsoft Graph permission, and the v1 manifest requests no
+Graph scope. If a later Mentra Call release creates meetings, the preferred
+enterprise flow uses the same MSAL account to request delegated
+`OnlineMeetings.ReadWrite` and calls
 `POST /me/onlineMeetings`. This creates the meeting as the signed-in employee and
 removes the current shared licensed service account plus app-only Graph secret.
 Microsoft documents that delegated contract in
@@ -476,8 +477,7 @@ The first call-focused template is illustrative:
     "teamsScopes": [
       "https://auth.msft.communication.azure.com/Teams.ManageCalls",
       "https://auth.msft.communication.azure.com/Teams.ManageChats"
-    ],
-    "graphScopes": ["https://graph.microsoft.com/OnlineMeetings.ReadWrite"]
+    ]
   },
   "artifacts": {
     "mentraLiveOtaManifestUrl": "https://mentra.example-corp.com/artifacts/mentra-live/version.json",
@@ -560,8 +560,11 @@ Rules:
 - `systemMiniapps.configuration` remains available for genuine package-specific
   runtime values, but ACS credentials, Runtime URLs, and Entra scopes are host
   configuration and are not delivered to Mentra Call.
-- A non-approved system miniapp is not installed, registered, shown, autostarted,
-  deep-linked, or launched even though its code may exist in the shared binary.
+- A non-approved system miniapp is not installed, registered, shown in the
+  system miniapp catalog, autostarted, or launched from a primary system-miniapp
+  surface even though its code may exist in the shared binary. Comprehensive
+  blocking of every secondary shell route to a shared built-in screen is not a
+  v1 requirement.
 - `glasses.allowedModelsOverride` filters the pairing catalog by stable model
   id. It is not a pairing security boundary. Vendor-specific behavior remains
   behind glasses adapters; there is no `ar99VendorServices` field.
