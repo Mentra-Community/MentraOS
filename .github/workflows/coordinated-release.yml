@@ -68,10 +68,10 @@ jobs:
               ;;
             staging)
               echo "cloud_environment=staging" >> "$GITHUB_OUTPUT"
-              # Beta is the exact production candidate promoted by App Store
-              # Connect and Google Play, so its signed bytes must already point
-              # at production services.
-              echo "backend_environment=prod" >> "$GITHUB_OUTPUT"
+              # Beta validates the branch-associated staging cloud. Production
+              # promotion needs a follow-up design because signed mobile bytes
+              # cannot have their embedded backend rewritten after this build.
+              echo "backend_environment=staging" >> "$GITHUB_OUTPUT"
               echo "play_track=beta" >> "$GITHUB_OUTPUT"
               echo "testflight_group=Mentra Staging" >> "$GITHUB_OUTPUT"
               echo "example_testflight_group=Mentra Staging Public" >> "$GITHUB_OUTPUT"

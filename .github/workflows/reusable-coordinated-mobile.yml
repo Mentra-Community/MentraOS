@@ -258,6 +258,10 @@ jobs:
           set -euo pipefail
           case "$BACKEND_ENVIRONMENT" in
             dev) DOPPLER_TOKEN="$DOPPLER_TOKEN_MOBILE_DEV" ;;
+            # Staging has no separate mobile Doppler token. This token only
+            # reads the public Sentry DSN; checked-in staging URLs are rendered
+            # by prepare-mobile-release-env.mjs below.
+            staging) DOPPLER_TOKEN="$DOPPLER_TOKEN_MOBILE_PRD" ;;
             prod) DOPPLER_TOKEN="$DOPPLER_TOKEN_MOBILE_PRD" ;;
             *) echo "Unsupported mobile backend environment: $BACKEND_ENVIRONMENT" >&2; exit 1 ;;
           esac
@@ -517,6 +521,10 @@ jobs:
           set -euo pipefail
           case "$BACKEND_ENVIRONMENT" in
             dev) DOPPLER_TOKEN="$DOPPLER_TOKEN_MOBILE_DEV" ;;
+            # Staging has no separate mobile Doppler token. This token only
+            # reads the public Sentry DSN; checked-in staging URLs are rendered
+            # by prepare-mobile-release-env.mjs below.
+            staging) DOPPLER_TOKEN="$DOPPLER_TOKEN_MOBILE_PRD" ;;
             prod) DOPPLER_TOKEN="$DOPPLER_TOKEN_MOBILE_PRD" ;;
             *) echo "Unsupported mobile backend environment: $BACKEND_ENVIRONMENT" >&2; exit 1 ;;
           esac

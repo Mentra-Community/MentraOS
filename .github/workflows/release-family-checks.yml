@@ -5,6 +5,7 @@ on:
     branches: [dev, staging, main]
     paths:
       - ".github/release-family.json"
+      - ".github/production-mobile-promotion-blocked.md"
       - ".github/scripts/*.mjs"
       - ".github/workflows/coordinated-*.yml"
       - ".github/workflows/release-family-checks.yml"
