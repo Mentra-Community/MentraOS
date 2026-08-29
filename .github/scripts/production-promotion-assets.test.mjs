@@ -7,14 +7,19 @@ import test from "node:test"
 import {
   matchingPromotionContainers,
   nextPromotionAttempt,
+  planPromotionContainerAllocation,
   prepareEvidenceAsset,
+  productionPromotionSelectionDigest,
+  promotionContainerBody,
   promotionContainerName,
   promotionContainerTag,
+  requireNewPromotionAttemptAllowed,
   requirePromotionContainer,
   stateAssets,
   validateStateRecordChain,
 } from "./production-promotion-assets.mjs"
 import {
+  abortPromotionRecord,
   createInitialPromotionRecord,
   promotionAssetName,
   transitionPromotionRecord,
@@ -131,6 +136,116 @@ function initialRecord() {
     provenanceUrl: "https://example.com/actions/1",
   })
 }
+
+test("allows a replacement only after every prior attempt is aborted", () => {
+  const active = initialRecord()
+  assert.throws(() => requireNewPromotionAttemptAllowed([active], "3.1.0"), /attempt 1 is selected/)
+  const aborted = abortPromotionRecord({
+    record: active,
+    actor: "owner",
+    createdAt: "2026-08-28T20:02:00.000Z",
+    provenanceUrl: "https://example.com/actions/3",
+    reason: "candidate rejected before public release",
+  })
+  assert.doesNotThrow(() => requireNewPromotionAttemptAllowed([aborted], "3.1.0"))
+  assert.throws(() => requireNewPromotionAttemptAllowed([aborted], "3.2.0"), /belongs to 3.1.0/)
+})
+
+test("resumes the latest empty container only for the complete frozen selection", () => {
+  const targetCommit = "a".repeat(40)
+  const selectedBeta = "3.1.0-beta.57"
+  const selectionDigest = productionPromotionSelectionDigest({beta: selectedBeta, storeMax: 57})
+  const draft = release(2, {
+    body: promotionContainerBody("3.1.0", selectedBeta, selectionDigest),
+    target_commitish: targetCommit,
+  })
+  const aborted = abortPromotionRecord({
+    record: initialRecord(),
+    actor: "owner",
+    createdAt: "2026-08-28T20:02:00.000Z",
+    provenanceUrl: "https://example.com/actions/3",
+    reason: "candidate rejected before public release",
+  })
+  const containers = [
+    {releaseIdentity: "3.1.0", attempt: 1, release: release(1), record: aborted},
+    {releaseIdentity: "3.1.0", attempt: 2, release: draft, record: null},
+  ]
+  const allocation = planPromotionContainerAllocation(containers, {
+    releaseIdentity: "3.1.0",
+    targetCommit,
+    selectedBeta,
+    selectionDigest,
+  })
+  assert.equal(allocation.action, "reuse")
+  assert.equal(allocation.attempt, 2)
+  assert.equal(allocation.release, draft)
+  assert.throws(
+    () =>
+      planPromotionContainerAllocation(containers, {
+        releaseIdentity: "3.1.0",
+        targetCommit: "b".repeat(40),
+        selectedBeta,
+        selectionDigest,
+      }),
+    /another frozen selection/,
+  )
+  assert.throws(
+    () =>
+      planPromotionContainerAllocation(containers, {
+        releaseIdentity: "3.1.0",
+        targetCommit,
+        selectedBeta: "3.1.0-beta.58",
+        selectionDigest,
+      }),
+    /another frozen selection/,
+  )
+  assert.throws(
+    () =>
+      planPromotionContainerAllocation(containers, {
+        releaseIdentity: "3.1.0",
+        targetCommit,
+        selectedBeta,
+        selectionDigest: productionPromotionSelectionDigest({beta: selectedBeta, storeMax: 58}),
+      }),
+    /another frozen selection/,
+  )
+  assert.throws(
+    () =>
+      planPromotionContainerAllocation([...containers, {...containers[1], attempt: 3, release: release(3)}], {
+        releaseIdentity: "3.1.0",
+        targetCommit,
+        selectedBeta,
+        selectionDigest,
+      }),
+    /Multiple empty/,
+  )
+})
+
+test("selection digests are canonical and cover every frozen input", () => {
+  const selection = {
+    betaPlan: {sourceCommit: "a".repeat(40), native: {buildNumber: 57}},
+    previousManifestSha256: "b".repeat(64),
+    starterKitCommit: "c".repeat(40),
+    mentraInventory: {apple: {maxBuildNumber: 57}},
+  }
+  assert.equal(
+    productionPromotionSelectionDigest(selection),
+    productionPromotionSelectionDigest({
+      mentraInventory: selection.mentraInventory,
+      starterKitCommit: selection.starterKitCommit,
+      previousManifestSha256: selection.previousManifestSha256,
+      betaPlan: selection.betaPlan,
+    }),
+  )
+  assert.notEqual(
+    productionPromotionSelectionDigest(selection),
+    productionPromotionSelectionDigest({...selection, starterKitCommit: "d".repeat(40)}),
+  )
+  assert.notEqual(
+    productionPromotionSelectionDigest(selection),
+    productionPromotionSelectionDigest({...selection, mentraInventory: {apple: {maxBuildNumber: 58}}}),
+  )
+})
 
 test("validates every immutable state and digest before returning latest", () => {
   const initial = initialRecord()

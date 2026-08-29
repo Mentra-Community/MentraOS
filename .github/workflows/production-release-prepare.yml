@@ -13,7 +13,10 @@ permissions:
   contents: write
 
 concurrency:
-  group: production-release-prepare-${{ inputs.beta_identity }}
+  # Preparation allocates the authoritative attempt number. Serialize all
+  # production allocations so two beta selections cannot race before either
+  # attempt has published its initial state record.
+  group: production-release-prepare
   cancel-in-progress: false
 
 jobs:
@@ -178,6 +181,25 @@ jobs:
             ../stores/starter-apple.json ../stores/starter-google.json \
             > ../stores/starter-inventory.json
 
+      - name: Fingerprint every frozen preparation input
+        id: selection
+        env:
+          BETA_IDENTITY: ${{ inputs.beta_identity }}
+          BETA_TAG: ${{ steps.identity.outputs.beta_tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          node .github/scripts/production-promotion-assets.mjs selection-digest
+          --beta-plan promotion-input/beta/release-plan.json
+          --beta-manifest promotion-input/beta/release-manifest.json
+          --beta-manifest-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/$BETA_TAG/mentra-release-$BETA_IDENTITY.json"
+          --previous-plan promotion-input/current/release-plan.json
+          --previous-manifest promotion-input/current/release-manifest.json
+          --previous-manifest-url "${{ steps.previous.outputs.manifest_url }}"
+          --mentra-inventory promotion-input/stores/mentra-inventory.json
+          --starter-kit-inventory promotion-input/stores/starter-inventory.json
+          --starter-kit-commit "${{ steps.starter-kit.outputs.commit }}"
+          --github-output "$GITHUB_OUTPUT"
+
       - name: Allocate append-only promotion container
         id: container
         env:
@@ -186,6 +208,8 @@ jobs:
           node .github/scripts/production-promotion-assets.mjs create-container
           --repository "$GITHUB_REPOSITORY"
           --release "${{ steps.identity.outputs.release_identity }}"
+          --beta "${{ inputs.beta_identity }}"
+          --selection-digest "${{ steps.selection.outputs.selection_digest }}"
           --target-commit "${{ steps.beta.outputs.source_commit }}"
           --github-output "$GITHUB_OUTPUT"
 

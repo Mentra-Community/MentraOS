@@ -248,7 +248,15 @@ selected
 
 `aborted` is terminal for one promotion attempt. A new attempt can reuse the
 same source only when it allocates new unique store build numbers and clearly
-references the aborted attempt.
+references the aborted attempt. The allocator permits at most one non-aborted
+attempt for a release identity, so a second operator or direct workflow dispatch
+cannot bypass the point-of-no-return rule. Production preparation is serialized
+across release identities while it allocates the attempt, avoiding a second
+beta selection racing the initial state publication. If allocation succeeds but
+initial state publication does not, retry resumes that same empty container only
+when its draft metadata matches a deterministic digest over every input that can
+affect the frozen plan, including prior-production provenance, both store
+inventories, the release family, and the Starter Kit commit.
 
 Each transition consumes the immutable records from earlier phases and emits a
 new append-only record. It never edits an earlier successful record to make a
@@ -259,7 +267,10 @@ observation. From there the workflow creates or verifies the canonical stable
 plan and manifest in the draft `mentra-vX.Y.Z` release before it may append
 `completed`. Candidate archives remain in the private, attempt-scoped promotion
 container so an aborted attempt cannot be mistaken for a later attempt or for
-the public release.
+the public release. The exact finalizing checkpoint is copied into the stable
+draft as a public-verifiable canonical asset. Because 100 percent rollout is
+already a customer-visible point of no return, `finalizing` cannot be aborted;
+an interrupted attempt must resume finalization.
 
 Workflow-produced evidence assets use content-addressed names. Evidence is
 published before the state that references it; if state publication fails, a

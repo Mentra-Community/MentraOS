@@ -226,6 +226,9 @@ export function requireCommandState(command, record, options = {}) {
   if (command === "advance" && !new Set(["rolling-out", "finalizing"]).has(record.state)) {
     throw new Error(`Rollout advancement requires rolling-out or finalizing, not ${record.state}`)
   }
+  if (command === "abort" && record.state === "finalizing") {
+    throw new Error("Cannot abort after the 100 percent rollout checkpoint; resume finalization")
+  }
   if (command === "abort" && new Set(["aborted", "completed"]).has(record.state)) {
     throw new Error(`Cannot abort terminal promotion state ${record.state}`)
   }
@@ -245,6 +248,12 @@ export function validateAdvanceOptions(record, options) {
     throw commandError("a finalizing promotion can only be resumed with --complete")
   }
   return {action: options.complete ? "complete" : "advance", androidPercent: percent || "100"}
+}
+
+export function advanceConfirmationMessage(request) {
+  return request.action === "complete"
+    ? "This requests final verification and completion of the public release."
+    : `This requests increasing the Android production rollout to ${request.androidPercent}%.`
 }
 
 async function main(argv = process.argv.slice(2)) {
@@ -350,12 +359,7 @@ async function main(argv = process.argv.slice(2)) {
 
   if (command === "advance") {
     const request = validateAdvanceOptions(loaded.record, options)
-    await confirmEffect(
-      options.complete
-        ? "This requests final verification and completion of the public release."
-        : `This requests increasing the Android production rollout to ${percent}%.`,
-      {...options, release: releaseIdentity},
-    )
+    await confirmEffect(advanceConfirmationMessage(request), {...options, release: releaseIdentity})
     dispatch("production-release-rollout.yml", {
       release_identity: releaseIdentity,
       attempt: loaded.record.attempt,
