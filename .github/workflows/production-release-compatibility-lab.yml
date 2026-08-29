@@ -100,12 +100,12 @@ jobs:
           --root current-production-source
           --record promotion-input/current.json
           --previous-plan promotion-input/current-production/current-production-release-plan.json
-          --output promotion-input/compatibility-lab-plan.json
+          --output promotion-input/release-plan.json
 
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.inputs.outputs.plan_artifact }}
-          path: promotion-input/compatibility-lab-plan.json
+          path: promotion-input/release-plan.json
           if-no-files-found: error
           retention-days: 30
 
@@ -181,7 +181,7 @@ jobs:
           mkdir -p promotion-output
           node .github/scripts/record-production-compatibility-lab.mjs \
             --record promotion-input/current.json \
-            --plan promotion-input/plan/compatibility-lab-plan.json \
+            --plan promotion-input/plan/release-plan.json \
             --mobile promotion-input/mobile/mobile-publications.json \
             --internal-sharing promotion-input/mobile/android/android-internal-sharing.json \
             --created-at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" \

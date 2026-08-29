@@ -18,6 +18,7 @@ const contract = {
   required: {
     NODE_ENV: {kind: "enum", values: ["production"], acceptanceTest: "ready"},
     MONGO_URL: {kind: "mongo-url", acceptanceTest: "mongo"},
+    REDIS_URL: {kind: "redis-url", acceptanceTest: "redis"},
   },
   requiredAnyOf: [{id: "storage", keys: ["R2_ENDPOINT", "S3_ENDPOINT"], kind: "https-url", acceptanceTest: "storage"}],
   optional: ["LOG_LEVEL"],
@@ -28,7 +29,8 @@ const contract = {
 function validValues() {
   return {
     NODE_ENV: "production",
-    MONGO_URL: "mongodb+srv://cluster.example.com/mentra",
+    MONGO_URL: "mongodb+srv://mentra-user:encoded%40password@cluster.example.com/mentra",
+    REDIS_URL: "rediss://default:encoded%40password@redis.example.com:6380",
     R2_ENDPOINT: "https://account.r2.cloudflarestorage.com",
     PRIVATE_KEY: privateKey,
     PUBLIC_KEY: publicKey,
@@ -52,6 +54,16 @@ test("parses a pulled environment file without emitting values", () => {
     NODE_ENV: "production",
     TOKEN: "secret-value",
   })
+})
+
+test("allows credentials only in database connection URLs", () => {
+  assert.doesNotThrow(() => validateProductionCloudConfig({contract, environment: "prod", values: validValues()}))
+  const values = validValues()
+  values.R2_ENDPOINT = "https://user:password@account.r2.cloudflarestorage.com"
+  assert.throws(
+    () => validateProductionCloudConfig({contract, environment: "prod", values}),
+    /unsafe or unsupported URL shape/,
+  )
 })
 
 test("fails for missing, forbidden, local, and unclassified config", () => {

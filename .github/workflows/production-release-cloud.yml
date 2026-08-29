@@ -243,7 +243,7 @@ jobs:
           name: ${{ needs.deploy.outputs.result_artifact }}
           path: promotion-input/cloud
 
-      - name: Append cloud-approved and cloud-deployed records
+      - name: Append the protected, observed Cloud deployment
         id: records
         run: |
           set -euo pipefail
@@ -256,42 +256,25 @@ jobs:
           jq -n \
             --arg url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
             --arg sha256 "$digest" \
-            '{kind: "production-cloud-protected-approval", url: $url, sha256: $sha256, assetName: "cloud-v2-deployment.json"}' \
-            > promotion-output/approval-evidence.json
-          node .github/scripts/production-promotion-state.mjs transition \
-            --record promotion-input/current.json \
-            --to cloud-approved \
-            --actor "$GITHUB_ACTOR" \
-            --created-at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" \
-            --provenance-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
-            --evidence promotion-output/approval-evidence.json \
-            --output promotion-output/approved.json
-          jq -n \
-            --arg url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
-            --arg sha256 "$digest" \
             '{kind: "production-cloud-v2-deployment", url: $url, sha256: $sha256, assetName: "cloud-v2-deployment.json"}' \
             > promotion-output/deployment-evidence.json
           node .github/scripts/production-promotion-state.mjs transition \
-            --record promotion-output/approved.json \
+            --record promotion-input/current.json \
             --to cloud-deployed \
             --actor "$GITHUB_ACTOR" \
             --created-at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" \
             --provenance-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
             --evidence promotion-output/deployment-evidence.json \
             --output promotion-output/deployed.json
-          for state in approved deployed; do
-            # JavaScript expands process.env.STATE.
-            # shellcheck disable=SC2016
-            name=$(STATE="$state" node --input-type=module -e '
-              import {readFileSync} from "node:fs";
-              import {promotionAssetName} from "./.github/scripts/production-promotion-state.mjs";
-              process.stdout.write(promotionAssetName(JSON.parse(readFileSync(`promotion-output/${process.env.STATE}.json`, "utf8"))));
-            ')
-            mv "promotion-output/$state.json" "promotion-output/$name"
-            echo "$state=promotion-output/$name" >> "$GITHUB_OUTPUT"
-          done
+          name=$(node --input-type=module -e '
+            import {readFileSync} from "node:fs";
+            import {promotionAssetName} from "./.github/scripts/production-promotion-state.mjs";
+            process.stdout.write(promotionAssetName(JSON.parse(readFileSync("promotion-output/deployed.json", "utf8"))));
+          ')
+          mv promotion-output/deployed.json "promotion-output/$name"
+          echo "deployed=promotion-output/$name" >> "$GITHUB_OUTPUT"
 
-      - name: Publish deployment evidence and both state transitions
+      - name: Publish deployment evidence and state transition
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -302,9 +285,7 @@ jobs:
             --name cloud-v2-deployment.json \
             --release-id "${{ steps.promotion.outputs.release_id }}" \
             --repository "$GITHUB_REPOSITORY"
-          for record in "${{ steps.records.outputs.approved }}" "${{ steps.records.outputs.deployed }}"; do
-            node .github/scripts/production-promotion-assets.mjs publish-record \
-              --record "$record" \
-              --release-id "${{ steps.promotion.outputs.release_id }}" \
-              --repository "$GITHUB_REPOSITORY"
-          done
+          node .github/scripts/production-promotion-assets.mjs publish-record \
+            --record "${{ steps.records.outputs.deployed }}" \
+            --release-id "${{ steps.promotion.outputs.release_id }}" \
+            --repository "$GITHUB_REPOSITORY"

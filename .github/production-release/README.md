@@ -190,8 +190,10 @@ pass/fail results. It never compares or publishes raw values or secret hashes.
 Before approving `production-cloud`, compare the frozen source, target, previous
 revision, migration notes, and rollback coordinates in the workflow summary.
 The deploy records the observed Cloud V2 deployment result, not merely the
-request. Stop if readiness, running revision, digest, or migration evidence is
-missing.
+request. GitHub's protected-environment history records the approval; after the
+approved job succeeds, the promotion advances once from
+`production-config-ready` to `cloud-deployed`. Stop if readiness, running
+revision, digest, or migration evidence is missing.
 
 ## Phase 5 - actual Mobile N against production Cloud N+1
 
