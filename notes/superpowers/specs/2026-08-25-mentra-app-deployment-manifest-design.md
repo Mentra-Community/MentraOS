@@ -177,6 +177,51 @@ When direct glasses-to-phone SoftAP video replaces WHIP/WHEP, the same Runtime
 image runs with `RUNTIME_SERVICES=meetings`. No new container or mobile API is
 introduced.
 
+## Current implementation boundary
+
+The architecture above does not require the enterprise work to fork or rewrite
+the native ACS/media implementation currently being developed on
+`nicolo/acs-teams-v1`. The first implementation tranche starts from current
+`dev` and is limited to foundations that have no semantic dependency on that
+branch:
+
+- deployment manifest types, resolution, persistence, workspace selection, and
+  pre-network policy gating;
+- native Microsoft Entra sign-in and deployment-scoped token acquisition;
+- the generic Mentra App/Engine seam for a host-provided Runtime token with no
+  Core endpoint;
+- Runtime module composition and HTTP-only startup;
+- direct Entra JWT verification by Runtime;
+- the existing managed-stream Runtime service, including ownership and cleanup;
+- the server-side ACS Teams-user exchange behind the Runtime meetings module;
+- the Azure template, operator configuration, and server-side qualification
+  harness for that reduced Runtime.
+
+That tranche deliberately does not modify:
+
+- `mobile/modules/acs-meeting`;
+- native ACS audio/video policy or WHEP decoding;
+- the current Miniapp SDK meeting request or protocol messages;
+- `LocalMiniappRuntime` meeting dispatch;
+- ACS-specific `PhoneStreamCoordinator` behavior;
+- glasses `captureAudio` transport work;
+- the Mentra Call ACS controller or its current branch.
+
+The server-side meetings endpoint can be qualified with a test client before it
+is connected to the Mentra App. After the native ACS/media branch lands on
+`dev`, a separate integration tranche connects the trusted native host to that
+endpoint, removes credential pass-through from miniapp JavaScript, and finalizes
+the provider-neutral Miniapp SDK call contract with the native implementation's
+owner. The current API name and payload are not prerequisites for the unblocked
+foundation work.
+
+The first tranche is complete when a customer-style Azure deployment can resolve
+its manifest, sign a user in through Entra, authenticate directly to one reduced
+Runtime process, allocate and clean up a managed stream, and complete an ACS
+Teams-user token exchange from a server-side harness without Core, Redis, UDP,
+audio workers, Runtime WebSockets, or changes to the native ACS branch. It is a
+foundation milestone, not yet the end-to-end Teams-call MVP.
+
 ## One configuration path
 
 The application always consumes one typed deployment object. A new installation
@@ -513,7 +558,7 @@ start cloud audio uplink, Core-token sync, the Runtime WebSocket, reconnect
 alarms, preinstalled registry sync, support-profile sync, cloud reports, or
 cloud speech.
 
-Mentra Call changes required by this deployment:
+The eventual Mentra Call/native-host integration requires:
 
 - Bundle the release-pinned Mentra Call package in the official Mentra App.
 - Keep managed-stream requests on the existing Engine/Runtime stream contract;
@@ -528,8 +573,10 @@ Mentra Call changes required by this deployment:
 - Expose optional host-owned meeting creation that returns only a join URL.
 - Fail closed when a required Runtime capability or provider is absent.
 
-The provider-neutral `session.meeting` API remains the correct miniapp contract.
-Deployment and Microsoft-specific credential details stay below that boundary.
+A provider-neutral Miniapp SDK call capability remains the intended boundary,
+but `session.meeting` is the current spike rather than a frozen final contract.
+Deployment and Microsoft-specific credential details stay below whichever
+request shape is finalized with the native implementation.
 
 ## Network-capable behavior
 

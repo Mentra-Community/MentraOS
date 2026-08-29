@@ -32,6 +32,36 @@ the first WHIP/WHEP provider, coordinated GitHub releases.
 
 ---
 
+## Execution lanes
+
+### Lane A: unblocked foundation work from `dev`
+
+Phases 1, 2, Phase 3 Task 1, and Phase 4 can proceed without the native ACS
+branch. Lane A owns deployment resolution, Entra, generic Runtime-only Engine
+auth, modular Runtime boot, managed streams, the server-side ACS exchange, and
+the Azure reference service. The Runtime meetings endpoint is exercised through
+a server-side harness; Lane A does not connect it to native ACS.
+
+### Lane B: native ACS/media branch
+
+The owner of `nicolo/acs-teams-v1` retains the native ACS module, WHEP/raw-media
+implementation, exclusive-audio policy, `captureAudio` transport, current
+Miniapp SDK meeting request, and Mentra Call ACS controller. Lane A does not edit
+or replace those files.
+
+### Lane C: post-merge integration
+
+Phase 3 Task 2, Phase 5, final bundling, and end-to-end call qualification begin
+after Lane B lands on `dev`. This lane connects the trusted native host to the
+already-qualified Runtime meetings endpoint and finalizes the Miniapp SDK call
+contract with the native implementation's owner.
+
+Lane A exits when the official app can resolve a customer manifest, sign in with
+Entra, and authenticate directly to a reduced Runtime; that Runtime starts only
+the configured HTTP modules, allocates and cleans up a managed stream, and
+completes an ACS Teams-user exchange through a server-side harness. Lane A is not
+expected to place a Teams call.
+
 ## Phase 1: Deployment contract and pre-network boot
 
 ### Task 1: Add the typed deployment resolver
@@ -200,14 +230,16 @@ the first WHIP/WHEP provider, coordinated GitHub releases.
       localhost or Mentra endpoints.
 - [ ] Suppress cloud-disconnected UI/notifications in local-only mode.
 
-### Task 2: Bundle and constrain Mentra Call
+### Task 2: Integrate, bundle, and constrain Mentra Call after native ACS lands
+
+**Lane:** C — do not begin from current `dev` or duplicate the native branch.
 
 **Files:**
 
 - Sync the release-pinned Mentra Call package into `mobile/assets/miniapps/`
 - Regenerate `mobile/src/generated/bundledMiniapps.ts`
 - Modify bundled install/registry/launcher policy
-- Modify Mentra Call ACS branch in its external repository
+- Integrate the merged Mentra Call ACS work in its external repository
 - Add bundle and launch tests
 
 - [ ] Bundle Mentra Call in the official app and approve it in the first
@@ -247,8 +279,8 @@ Azure template, tests, and operator documentation
 
 ### Task 2: Reuse the existing managed-stream service
 
-**Files:** Runtime camera API/service/provider composition, Engine Runtime REST
-client, PhoneStreamCoordinator, ownership tests, and cleanup tests
+**Files:** Runtime camera API/service/provider composition, protocol-preservation
+tests, ownership tests, and cleanup tests
 
 - [ ] Keep the existing `/api/camera/stream` create/status/delete contract and
       Cloudflare provider implementation.
@@ -257,25 +289,27 @@ client, PhoneStreamCoordinator, ownership tests, and cleanup tests
       provider stream id as authorization.
 - [ ] Add expiration, idempotent teardown, and abandoned-stream cleanup without
       requiring Redis or a database.
-- [ ] Preserve Mentra Call's managed WHIP start, WHEP playback, recovery, and
-      stop behavior from the existing Engine stream contract.
+- [ ] Preserve the existing managed-stream response and lifecycle contract so
+      the current Engine path needs no ACS-specific modification in Lane A.
 - [ ] Never expose Cloudflare credentials to the app or miniapp.
 - [ ] Make the remaining Cloudflare hop explicit in diagnostics and operator
       documentation.
 
 ### Task 3: Add the Runtime meetings provider
 
-**Files:** Runtime meetings API/provider, ACS Identity SDK integration, native
-host credential client, token/redaction tests, and Azure configuration
+**Files:** Runtime meetings API/provider, ACS Identity SDK integration,
+server-side qualification harness, token/redaction tests, and Azure configuration
 
 - [ ] Add an `acs-teams` provider behind the Runtime meetings capability.
-- [ ] Accept the ACS-scoped Entra token only from the authenticated native host.
+- [ ] Require a valid Entra Runtime API bearer token before accepting the
+      ACS-scoped Entra subject token.
 - [ ] Validate tenant, client/app id, object id, scopes, expiry, and that the
       subject matches the authenticated Runtime user.
 - [ ] Exchange it with ACS `GetTokenForTeamsUser` using customer-owned ACS
       managed identity/RBAC where supported, with a rotated connection-string
       secret permitted for the first controlled deployment.
-- [ ] Return only the short-lived ACS Teams-user token to the native host.
+- [ ] Return only the short-lived ACS Teams-user token in a stable response that
+      Lane C can consume; do not add mobile/native integration in Lane A.
 - [ ] Keep Entra and ACS bearer tokens out of miniapp messages, logs, errors, and
       diagnostics.
 - [ ] Validate only Entra, ACS, and Cloudflare configuration in this module set;
@@ -286,6 +320,8 @@ host credential client, token/redaction tests, and Azure configuration
 The current Nicolo branch can prove native raw media first with a guest token,
 but the deployable self-hosted v1 requires the employee Teams identity. It
 reuses Phase 2; there is no second interactive SSO screen.
+
+**Lane:** C — begin only after the native ACS/media branch lands on `dev`.
 
 ### Task 1: Add Teams-user token exchange
 
@@ -389,8 +425,8 @@ templates, and runbooks
   secure logout, including the Runtime API token provider.
 - **PR 3:** Runtime module composition plus the existing managed-stream service
   in a stateless HTTP-only profile.
-- **PR 4:** Runtime meetings/ACS Teams-user token exchange and host-owned
-  credential acquisition.
+- **PR 4:** Runtime meetings/ACS Teams-user token exchange, exercised through a
+  server-side qualification harness with no native/mobile changes.
 - **PR 5:** Integrate the qualified native ACS implementation, finalize the
   provider-neutral Miniapp SDK capability, and optionally add delegated Graph
   meeting creation.
