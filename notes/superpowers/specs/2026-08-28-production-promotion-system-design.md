@@ -765,14 +765,14 @@ The operator runs:
 
 The CLI displays all customer-facing effects and requests confirmation. A
 second person approves the `production-store-release` GitHub environment. The
-approved workflow performs the exact store release through the store APIs,
-reads back public/rollout state, and records it. The UI instructions below are
-the fallback when the API reports that a human-only action is required.
+approved workflow records authorization but does not claim that approving a
+GitHub environment released either store build. The operator performs the
+exact manual-release actions below, then reruns the workflow. Read-only store
+APIs must observe the exact public/rollout state before the promotion advances.
 
 ### Apple release
 
-The primary workflow creates the manual release request for each exact version
-in `Pending Developer Release`. For the UI fallback:
+For each exact version in `Pending Developer Release`:
 
 1. Open the version page.
 2. Verify the exact build number one last time.
@@ -785,9 +785,7 @@ phased release applies only to updates.
 
 ### Google release
 
-The primary workflow publishes only the recorded ready changes and starts the
-recorded staged rollout. For the UI fallback on existing apps under managed
-publishing:
+For existing apps under managed publishing:
 
 1. Open Publishing overview.
 2. Verify all intended changes are under **Changes ready to publish** and no

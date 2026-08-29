@@ -90,7 +90,10 @@ test("production promotion is resumable and keeps irreversible actions behind se
   for (const source of [compatibilityLab, cloud, mobile, submit, release, rollout]) {
     assert.match(source, /production-promotion-assets\.mjs prepare-evidence/)
   }
-  assert.match(release, /validate-google-play-rollout\.mjs/)
+  assert.match(submit, /validate-google-play-release\.mjs/)
+  assert.match(submit, /--required-state draft/)
+  assert.match(release, /validate-google-play-release\.mjs/)
+  assert.match(release, /--required-state public/)
   assert.doesNotMatch(release, /\.tracks\.production \| map\(tonumber\)/)
   assert.equal(existsSync(new URL("../workflows/coordinated-production-promotion.yml", import.meta.url)), false)
   assert.equal(existsSync(new URL("../workflows/reusable-coordinated-mobile-promotion.yml", import.meta.url)), false)

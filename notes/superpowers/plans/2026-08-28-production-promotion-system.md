@@ -1,5 +1,5 @@
 ---
-status: active
+status: completed
 owner: Mentra
 ---
 
@@ -69,4 +69,4 @@ and Google Play.
       idempotency, and non-production behavior.
 - [x] Run all coordinated release tests, workflow syntax validation,
       formatting, and a tabletop dry run.
-- [ ] Commit only intended files and open a PR targeting `dev` with evidence.
+- [x] Commit only intended files and open a PR targeting `dev` with evidence.
