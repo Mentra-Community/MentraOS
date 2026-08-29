@@ -31,6 +31,11 @@ on:
         required: false
         default: false
         type: boolean
+      compatibility_lab:
+        description: Build Mobile N for non-promotable staging compatibility distribution
+        required: false
+        default: false
+        type: boolean
     secrets:
       UPLOAD_KEYSTORE_B64:
         required: false
@@ -156,7 +161,7 @@ jobs:
 
       - name: Verify and inspect the centrally allocated release container
         id: container
-        if: inputs.dry_run != true
+        if: inputs.dry_run != true && inputs.compatibility_lab != true
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_ID: ${{ inputs.release_id }}
@@ -167,8 +172,19 @@ jobs:
           release=$(gh api "repos/${GITHUB_REPOSITORY}/releases/$RELEASE_ID")
           [[ "$(jq -r .tag_name <<< "$release")" == "$tag" ]]
           [[ "$(jq -r .name <<< "$release")" == "$(jq -er .artifactContainerName release-intent/release-plan.json)" ]]
-          [[ "$(jq -r .draft <<< "$release")" == "false" ]]
-          [[ "$(jq -r .prerelease <<< "$release")" == "true" ]]
+          channel=$(jq -er .channel release-intent/release-plan.json)
+          if [[ "$channel" == "production" ]]; then
+            [[ "$(jq -r .prerelease <<< "$release")" == "false" ]]
+            if [[ "$(jq -r .draft <<< "$release")" == "true" ]]; then
+              [[ "$(jq -r .target_commitish <<< "$release")" == "${{ inputs.source_commit }}" ]]
+            else
+              git fetch --force origin "refs/tags/$tag:refs/tags/$tag"
+              [[ "$(git rev-parse "$tag^{commit}")" == "${{ inputs.source_commit }}" ]]
+            fi
+          else
+            [[ "$(jq -r .draft <<< "$release")" == "false" ]]
+            [[ "$(jq -r .prerelease <<< "$release")" == "true" ]]
+          fi
 
           release_id="$RELEASE_ID"
           assets=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases/$release_id/assets?per_page=100" | jq 'add')
@@ -279,6 +295,10 @@ jobs:
             --ota-manifest-url "${{ inputs.ota_manifest_url }}" \
             --mapbox-public-token "$MAPBOX_PUBLIC_TOKEN" \
             --sentry-dsn "$sentry_dsn"
+          if [[ "${{ inputs.compatibility_lab }}" == "true" ]]; then
+            identity=$(jq -er .releaseIdentity release-intent/release-plan.json)
+            sed -i "s/^EXPO_PUBLIC_MENTRAOS_VERSION=.*/EXPO_PUBLIC_MENTRAOS_VERSION=${identity}-COMPATIBILITY-LAB-NOT-FOR-PRODUCTION/" mobile/.env
+          fi
           node .github/scripts/stage-release-family.mjs --plan release-intent/release-plan.json
           metadata=(
             --family-base-version "${{ needs.prepare.outputs.marketing_version }}"
@@ -388,7 +408,7 @@ jobs:
           fi
 
       - name: Publish immutable Android release assets
-        if: inputs.dry_run != true && needs.prepare.outputs.android_assets_exist != 'true'
+        if: inputs.dry_run != true && inputs.compatibility_lab != true && needs.prepare.outputs.android_assets_exist != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -420,7 +440,7 @@ jobs:
 
       - name: Check selected Google Play track
         id: play
-        if: inputs.dry_run != true
+        if: inputs.dry_run != true && inputs.compatibility_lab != true
         working-directory: mobile-play
         env:
           GOOGLE_PLAY_TRACK: ${{ inputs.play_track }}
@@ -435,12 +455,29 @@ jobs:
           fi
 
       - name: Upload exact AAB to Google Play
-        if: inputs.dry_run != true && steps.play.outputs.exists != 'true'
+        if: inputs.dry_run != true && inputs.compatibility_lab != true && steps.play.outputs.exists != 'true'
         working-directory: mobile-play
         env:
           GOOGLE_PLAY_AAB: ${{ github.workspace }}/mobile-release/android/${{ needs.prepare.outputs.aab_name }}
           GOOGLE_PLAY_TRACK: ${{ inputs.play_track }}
         run: bundle exec fastlane google_play
+
+      - name: Checkout current non-promotable distribution tooling
+        if: inputs.dry_run != true && inputs.compatibility_lab == true
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: production-tools
+          sparse-checkout: .github/scripts
+
+      - name: Upload compatibility AAB to Google Play Internal App Sharing
+        if: inputs.dry_run != true && inputs.compatibility_lab == true
+        run: >-
+          node production-tools/.github/scripts/google-play-internal-sharing.mjs
+          --credentials "$GOOGLE_PLAY_JSON_KEY"
+          --package com.mentra.mentra
+          --bundle "mobile-release/android/${{ needs.prepare.outputs.aab_name }}"
+          --output mobile-release/android-internal-sharing.json
 
       - name: Write Android release result
         env:
@@ -542,6 +579,10 @@ jobs:
             --ota-manifest-url "${{ inputs.ota_manifest_url }}" \
             --mapbox-public-token "$MAPBOX_PUBLIC_TOKEN" \
             --sentry-dsn "$sentry_dsn"
+          if [[ "${{ inputs.compatibility_lab }}" == "true" ]]; then
+            identity=$(jq -er .releaseIdentity release-intent/release-plan.json)
+            sed -i '' "s/^EXPO_PUBLIC_MENTRAOS_VERSION=.*/EXPO_PUBLIC_MENTRAOS_VERSION=${identity}-COMPATIBILITY-LAB-NOT-FOR-PRODUCTION/" mobile/.env
+          fi
           node .github/scripts/stage-release-family.mjs --plan release-intent/release-plan.json
           metadata=(
             --family-base-version "${{ needs.prepare.outputs.marketing_version }}"
@@ -630,10 +671,14 @@ jobs:
           MENTRA_COORDINATED_RELEASE_IDENTITY: ${{ needs.prepare.outputs.release_identity }}
           SENTRY_ALLOW_FAILURE: "false"
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          MENTRA_TESTFLIGHT_INTERNAL_ONLY: ${{ inputs.compatibility_lab }}
         run: |
           export PATH="$HOME/.rbenv/shims:$HOME/.rbenv/bin:$PATH"
           security unlock-keychain -p "$MENTRA_CI_KEYCHAIN_PASSWORD" "$MENTRA_CI_KEYCHAIN"
           security set-keychain-settings "$MENTRA_CI_KEYCHAIN"
+          if [[ "$MENTRA_TESTFLIGHT_INTERNAL_ONLY" == "true" ]]; then
+            plutil -replace testFlightInternalTestingOnly -bool true ci/ios-export/ExportOptions-Match.plist
+          fi
           bun run release:ios
 
       - name: Download the existing immutable iOS app
@@ -659,7 +704,7 @@ jobs:
           [[ "$(plutil -extract CFBundleVersion raw /tmp/mentra-mobile-info.plist)" == "$EXPECTED_BUILD" ]]
 
       - name: Publish immutable iOS release asset
-        if: inputs.dry_run != true && needs.prepare.outputs.ios_asset_exists != 'true'
+        if: inputs.dry_run != true && inputs.compatibility_lab != true && needs.prepare.outputs.ios_asset_exists != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: >-

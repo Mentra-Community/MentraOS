@@ -1,0 +1,236 @@
+name: Production Release - Mobile N Compatibility Lab
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_identity:
+        required: true
+        type: string
+      attempt:
+        required: true
+        type: number
+      phase:
+        required: true
+        type: choice
+        options: [build]
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: production-release-${{ inputs.release_identity }}-attempt-${{ inputs.attempt }}
+  cancel-in-progress: false
+
+jobs:
+  load:
+    name: Load frozen Mobile N compatibility inputs
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      source_commit: ${{ steps.inputs.outputs.source_commit }}
+      plan_artifact: ${{ steps.inputs.outputs.plan_artifact }}
+      ota_url: ${{ steps.inputs.outputs.ota_url }}
+      ota_sha256: ${{ steps.inputs.outputs.ota_sha256 }}
+      build_number: ${{ steps.inputs.outputs.build_number }}
+      promotion_release_id: ${{ steps.promotion.outputs.release_id }}
+      promotion_tag: ${{ steps.promotion.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Load current immutable promotion record
+        id: promotion
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          node .github/scripts/production-promotion-assets.mjs download-latest
+          --repository "$GITHUB_REPOSITORY"
+          --release "${{ inputs.release_identity }}"
+          --attempt "${{ inputs.attempt }}"
+          --output promotion-input/current.json
+          --github-output "$GITHUB_OUTPUT"
+
+      - name: Download frozen current-production provenance
+        id: inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "${{ inputs.phase }}" == "build" ]]
+          [[ "$(jq -er .state promotion-input/current.json)" == "selected" ]]
+          [[ "$(jq '[.evidence[] | select(.kind == "staging-mobile-n-compatibility-lab")] | length' promotion-input/current.json)" == "0" ]]
+          release_id="${{ steps.promotion.outputs.release_id }}"
+          assets=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases/$release_id/assets?per_page=100" | jq 'add')
+          mkdir -p promotion-input/current-production
+          for name in current-production-release-plan.json current-production-release-manifest.json; do
+            asset_id=$(jq -er --arg name "$name" '[.[] | select(.name == $name)] | if length == 1 then .[0].id else error("required frozen asset must be unique") end' <<< "$assets")
+            gh api -H "Accept: application/octet-stream" \
+              "repos/${GITHUB_REPOSITORY}/releases/assets/$asset_id" \
+              > "promotion-input/current-production/$name"
+          done
+          plan=promotion-input/current-production/current-production-release-plan.json
+          manifest=promotion-input/current-production/current-production-release-manifest.json
+          plan_sha=$(node --input-type=module -e 'import {readFileSync} from "node:fs"; import {releaseRecordSha256} from "./.github/scripts/release-family.mjs"; process.stdout.write(releaseRecordSha256(JSON.parse(readFileSync(process.argv[1], "utf8"))))' "$plan")
+          [[ "$plan_sha" == "$(jq -er .releasePlanSha256 "$manifest")" ]]
+          source_commit=$(jq -er .coordinates.currentMentraApp.sourceCommit promotion-input/current.json)
+          [[ "$source_commit" == "$(jq -er .sourceCommit "$plan")" ]]
+          {
+            echo "source_commit=$source_commit"
+            echo "plan_artifact=production-compatibility-plan-${GITHUB_RUN_ID}"
+            echo "build_number=$(jq -er .coordinates.compatibilityLab.ios.buildNumber promotion-input/current.json)"
+            echo "ota_url=$(jq -er .otaManifest.url "$manifest")"
+            echo "ota_sha256=$(jq -er .otaManifest.sha256 "$manifest")"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Checkout exact current-production Mobile N source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.inputs.outputs.source_commit }}
+          path: current-production-source
+
+      - name: Create frozen non-promotable lab plan
+        run: >-
+          node .github/scripts/prepare-compatibility-lab.mjs
+          --root current-production-source
+          --record promotion-input/current.json
+          --previous-plan promotion-input/current-production/current-production-release-plan.json
+          --output promotion-input/compatibility-lab-plan.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.inputs.outputs.plan_artifact }}
+          path: promotion-input/compatibility-lab-plan.json
+          if-no-files-found: error
+          retention-days: 30
+
+  approve:
+    name: Approve non-promotable compatibility-lab uploads
+    needs: load
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment:
+      name: production-compatibility-lab
+    steps:
+      - run: |
+          echo "Approved Mobile N compatibility build ${{ needs.load.outputs.build_number }}."
+          echo "It targets staging and cannot be promoted to either public store."
+
+  mentra-app:
+    name: Build and distribute Mobile N compatibility apps
+    needs: [load, approve]
+    uses: ./.github/workflows/reusable-coordinated-mobile.yml
+    with:
+      source_commit: ${{ needs.load.outputs.source_commit }}
+      release_plan_artifact: ${{ needs.load.outputs.plan_artifact }}
+      ota_manifest_url: ${{ needs.load.outputs.ota_url }}
+      ota_manifest_sha256: ${{ needs.load.outputs.ota_sha256 }}
+      backend_environment: staging
+      play_track: internal-app-sharing
+      testflight_group: Mentra Compatibility Lab
+      compatibility_lab: true
+    secrets: inherit
+
+  record:
+    name: Record exact non-promotable lab distributions
+    needs: [load, mentra-app]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Reload unchanged selected state
+        id: promotion
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          node .github/scripts/production-promotion-assets.mjs download-latest
+          --repository "$GITHUB_REPOSITORY"
+          --release "${{ inputs.release_identity }}"
+          --attempt "${{ inputs.attempt }}"
+          --output promotion-input/current.json
+          --github-output "$GITHUB_OUTPUT"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.load.outputs.plan_artifact }}
+          path: promotion-input/plan
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.mentra-app.outputs.result_artifact }}
+          path: promotion-input/mobile
+
+      - name: Validate distributions and append lab evidence
+        id: next
+        run: |
+          set -euo pipefail
+          evidence_name=production-compatibility-lab.json
+          provenance="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          mkdir -p promotion-output
+          node .github/scripts/record-production-compatibility-lab.mjs \
+            --record promotion-input/current.json \
+            --plan promotion-input/plan/compatibility-lab-plan.json \
+            --mobile promotion-input/mobile/mobile-publications.json \
+            --internal-sharing promotion-input/mobile/android/android-internal-sharing.json \
+            --created-at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" \
+            --provenance-url "$provenance" \
+            --output "promotion-output/$evidence_name"
+          digest=$(sha256sum "promotion-output/$evidence_name" | cut -d' ' -f1)
+          evidence_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${{ needs.load.outputs.promotion_tag }}/$evidence_name"
+          jq -n \
+            --arg url "$evidence_url" \
+            --arg sha256 "$digest" \
+            --arg assetName "$evidence_name" \
+            '{kind: "staging-mobile-n-compatibility-lab", url: $url, sha256: $sha256, assetName: $assetName}' \
+            > promotion-output/evidence-reference.json
+          node .github/scripts/production-promotion-state.mjs transition \
+            --record promotion-input/current.json \
+            --to selected \
+            --actor "$GITHUB_ACTOR" \
+            --created-at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" \
+            --provenance-url "$provenance" \
+            --evidence promotion-output/evidence-reference.json \
+            --output promotion-output/next.json
+          name=$(node --input-type=module -e 'import {readFileSync} from "node:fs"; import {promotionAssetName} from "./.github/scripts/production-promotion-state.mjs"; process.stdout.write(promotionAssetName(JSON.parse(readFileSync("promotion-output/next.json", "utf8"))))')
+          mv promotion-output/next.json "promotion-output/$name"
+          echo "record=promotion-output/$name" >> "$GITHUB_OUTPUT"
+
+      - name: Publish immutable lab evidence and state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node .github/scripts/publish-immutable-release-asset.mjs \
+            --file promotion-output/production-compatibility-lab.json \
+            --name production-compatibility-lab.json \
+            --release-id "${{ steps.promotion.outputs.release_id }}" \
+            --repository "$GITHUB_REPOSITORY"
+          node .github/scripts/production-promotion-assets.mjs publish-record \
+            --record "${{ steps.next.outputs.record }}" \
+            --release-id "${{ steps.promotion.outputs.release_id }}" \
+            --repository "$GITHUB_REPOSITORY"
+
+      - name: Summarize lab distributions
+        run: |
+          {
+            echo "## Mobile N compatibility lab ready"
+            echo
+            echo "- Source: \`${{ needs.load.outputs.source_commit }}\`"
+            echo "- Native build: \`${{ needs.load.outputs.build_number }}\`"
+            echo "- Cloud target: \`staging\`"
+            echo "- iOS: TestFlight Internal Only, group \`Mentra Compatibility Lab\`"
+            echo "- Android: Google Play Internal App Sharing"
+            echo
+            echo "These builds cannot be submitted to public store distribution. The next action is the staging Mobile N acceptance test."
+          } >> "$GITHUB_STEP_SUMMARY"

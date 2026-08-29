@@ -43,56 +43,45 @@ test("release finalization reads the preserved OTA artifact layout", () => {
   )
 })
 
-test("production validates before approval and proves packages before mobile promotion", () => {
-  const production = workflow("coordinated-production-promotion.yml")
-  const sdkNativeWorkflow = workflow("reusable-coordinated-sdk-native.yml")
-  const sdkNative = jobBlock(sdkNativeWorkflow, "prepare")
+test("production promotion is resumable and keeps irreversible actions behind separate environments", () => {
+  const prepare = workflow("production-release-prepare.yml")
+  const compatibilityLab = workflow("production-release-compatibility-lab.yml")
+  const cloud = workflow("production-release-cloud.yml")
+  const mobile = workflow("production-release-mobile.yml")
+  const submit = workflow("production-release-store-submit.yml")
+  const release = workflow("production-release-store-release.yml")
+  const rollout = workflow("production-release-rollout.yml")
+  const status = workflow("production-release-status.yml")
 
-  const sourceCheckout = production.indexOf('git checkout --detach "$source_commit"')
-  const stagingBackendGuard = production.indexOf("production-mobile-promotion-blocked.md")
-  const protectedApproval = production.indexOf("name: Approve verified production candidate")
-  assert.ok(sourceCheckout >= 0 && sourceCheckout < stagingBackendGuard)
-  assert.ok(stagingBackendGuard < protectedApproval)
-  assert.match(production, /Reject staging-backed beta mobile binaries/)
-  assert.match(production, /Production promotion is blocked for \$\{\{ inputs\.beta_identity \}\}/)
-  assert.match(production, /if \[\[ -f "\$marker" \]\]; then[\s\S]*?exit 1[\s\S]*?fi/)
-
-  assert.doesNotMatch(jobBlock(production, "plan"), /^    needs:/m)
-  assert.match(jobBlock(production, "approve"), /^    needs: plan$/m)
-  assert.match(jobBlock(production, "approve"), /environment:\n      name: coordinated-production-release/)
-  assert.match(jobBlock(production, "npm"), /^    needs: \[plan, approve\]$/m)
-  assert.match(jobBlock(production, "sdk-native"), /^    needs: \[plan, approve\]$/m)
-  assert.match(jobBlock(production, "engine-consumer"), /^    needs: \[plan, npm, sdk-native\]$/m)
-  assert.match(jobBlock(production, "cloud-v2"), /^    needs: \[plan, approve, engine-consumer\]$/m)
-  assert.match(jobBlock(production, "cloud-v2"), /deployment_environment: prod/)
-  assert.match(jobBlock(production, "mobile"), /^    needs: \[plan, engine-consumer, cloud-v2\]$/m)
-  assert.match(jobBlock(production, "example-testflight"), /^    needs: \[plan, approve\]$/m)
-  assert.match(jobBlock(production, "example-testflight"), /app-store-connect-build\.mjs promote-approved/)
-  assert.match(jobBlock(production, "example-testflight"), /Mentra Production Public/)
-  assert.match(jobBlock(production, "example-testflight"), /example-app-ios-url/)
-  assert.match(
-    jobBlock(production, "finalize"),
-    /^    needs: \[plan, approve, npm, sdk-native, mobile, engine-consumer, cloud-v2, example-testflight\]$/m,
-  )
-  assert.match(jobBlock(production, "finalize"), /--cloud release-input\/cloud-v2\/cloud-v2-deployment\.json/)
-  assert.match(
-    jobBlock(production, "finalize"),
-    /--example-testflight release-input\/example-testflight\/example-testflight-publication\.json/,
-  )
-  assert.match(sdkNative, /channel=\$\(jq -er \.channel release-intent\/release-plan\.json\)/)
-  assert.match(
-    sdkNative,
-    /if \[\[ "\$channel" == "production" \]\]; then\s+\[\[ "\$\(jq -r \.draft <<< "\$release"\)" == "true" \]\]\s+\[\[ "\$\(jq -r \.prerelease <<< "\$release"\)" == "false" \]\]/,
-  )
-  assert.match(
-    sdkNative,
-    /else\s+\[\[ "\$\(jq -r \.draft <<< "\$release"\)" == "false" \]\]\s+\[\[ "\$\(jq -r \.prerelease <<< "\$release"\)" == "true" \]\]/,
-  )
-  assert.match(sdkNativeWorkflow, /for attempt in \{1\.\.6\}/)
-  assert.match(
-    sdkNativeWorkflow,
-    /cmp --silent native-result\/maven\/sonatype-deployment\.json persisted-deployment\.json/,
-  )
+  for (const source of [prepare, compatibilityLab, cloud, mobile, submit, release, rollout, status]) {
+    assert.match(source, /workflow_dispatch:/)
+    assert.doesNotMatch(source, /pull_request:/)
+    assert.match(source, /ref: main/)
+  }
+  assert.match(compatibilityLab, /name: production-compatibility-lab/)
+  assert.match(compatibilityLab, /backend_environment: staging/)
+  assert.match(compatibilityLab, /compatibility_lab: true/)
+  assert.match(compatibilityLab, /play_track: internal-app-sharing/)
+  assert.match(compatibilityLab, /Mentra Compatibility Lab/)
+  assert.match(compatibilityLab, /current-production-release-manifest\.json/)
+  assert.doesNotMatch(compatibilityLab, /backend_environment: prod/)
+  assert.doesNotMatch(compatibilityLab, /production-store-release/)
+  assert.match(cloud, /name: production-cloud/)
+  assert.match(mobile, /name: production-mobile-candidates/)
+  assert.match(submit, /name: production-store-submission/)
+  assert.match(release, /name: production-store-release/)
+  assert.match(rollout, /name: production-store-release/)
+  assert.match(status, /permissions:\n  contents: read/)
+  assert.match(mobile, /backend_environment: prod/)
+  assert.match(mobile, /play_track: internal/)
+  assert.match(mobile, /Mentra Production Candidates/)
+  assert.match(mobile, /Mentra SDK Example Production Candidates/)
+  assert.match(submit, /GOOGLE_PLAY_RELEASE_STATUS=draft/)
+  assert.doesNotMatch(submit, /automatic_release: true/)
+  assert.doesNotMatch(release, /automatic_release: true/)
+  assert.match(rollout, /\[\[ "\$percent" -gt "\$previous" \]\]/)
+  assert.equal(existsSync(new URL("../workflows/coordinated-production-promotion.yml", import.meta.url)), false)
+  assert.equal(existsSync(new URL("../workflows/reusable-coordinated-mobile-promotion.yml", import.meta.url)), false)
 })
 
 test("Cloud V2 deploys once per coordinated environment before mobile publication", () => {
@@ -144,6 +133,10 @@ test("mobile destinations use real TestFlight groups without changing the releas
   assert.match(coordinator, /testflight_group=Mentra Dev/)
   assert.match(coordinator, /testflight_group=Mentra Staging/)
   assert.match(mobile, /MENTRA_COORDINATED_RELEASE_CHANNEL=\$\(jq -er \.channel release-intent\/release-plan\.json\)/)
+  assert.match(mobile, /MENTRA_TESTFLIGHT_INTERNAL_ONLY: \$\{\{ inputs\.compatibility_lab \}\}/)
+  assert.match(mobile, /testFlightInternalTestingOnly -bool true/)
+  assert.match(mobile, /google-play-internal-sharing\.mjs/)
+  assert.match(mobile, /COMPATIBILITY-LAB-NOT-FOR-PRODUCTION/)
   assert.doesNotMatch(mobile, /MENTRA_COORDINATED_RELEASE_CHANNEL=\$\{\{ inputs\.testflight_group \}\}/)
   assert.match(example, /EXAMPLE_APP_ID: "6792839366"/)
   assert.match(example, /EXAMPLE_BUNDLE_ID: com\.mentra\.bluetoothsdkexample/)

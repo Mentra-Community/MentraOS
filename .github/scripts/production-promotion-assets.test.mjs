@@ -1,0 +1,125 @@
+import assert from "node:assert/strict"
+import test from "node:test"
+
+import {
+  matchingPromotionContainers,
+  nextPromotionAttempt,
+  promotionContainerName,
+  promotionContainerTag,
+  requirePromotionContainer,
+  stateAssets,
+  validateStateRecordChain,
+} from "./production-promotion-assets.mjs"
+import {
+  createInitialPromotionRecord,
+  promotionAssetName,
+  transitionPromotionRecord,
+} from "./production-promotion-state.mjs"
+
+function release(attempt, overrides = {}) {
+  return {
+    id: attempt,
+    tag_name: promotionContainerTag("3.1.0", attempt),
+    name: promotionContainerName("3.1.0", attempt),
+    draft: true,
+    prerelease: false,
+    ...overrides,
+  }
+}
+
+test("allocates monotonic promotion attempts and validates the draft container", () => {
+  const releases = [release(2), release(1), {tag_name: "unrelated"}]
+  assert.deepEqual(
+    matchingPromotionContainers(releases, "3.1.0").map((item) => item.attempt),
+    [1, 2],
+  )
+  assert.equal(nextPromotionAttempt(releases, "3.1.0"), 3)
+  assert.equal(requirePromotionContainer(releases, "3.1.0", 2).id, 2)
+  assert.throws(() => requirePromotionContainer([release(1, {draft: false})], "3.1.0", 1), /unexpected/)
+})
+
+test("sorts state assets and rejects duplicate sequence numbers", () => {
+  const assets = [
+    {id: 2, name: "production-promotion-3.1.0-attempt-1-01-staging-compatible.json"},
+    {id: 1, name: "production-promotion-3.1.0-attempt-1-00-selected.json"},
+    {id: 99, name: "human-evidence.json"},
+  ]
+  assert.deepEqual(
+    stateAssets(assets, "3.1.0", 1).map((item) => [item.sequence, item.state]),
+    [
+      [0, "selected"],
+      [1, "staging-compatible"],
+    ],
+  )
+  assert.throws(
+    () =>
+      stateAssets(
+        [...assets, {id: 3, name: "production-promotion-3.1.0-attempt-1-01-cloud-deployed.json"}],
+        "3.1.0",
+        1,
+      ),
+    /duplicate/,
+  )
+})
+
+function recordEvidence(kind) {
+  return {
+    kind,
+    url: `https://example.com/${kind}.json`,
+    sha256: "d".repeat(64),
+    assetName: `${kind}.json`,
+  }
+}
+
+function initialRecord() {
+  const coordinate = (buildNumber) => ({marketingVersion: "3.1.0", buildNumber})
+  return createInitialPromotionRecord({
+    releaseIdentity: "3.1.0",
+    attempt: 1,
+    selectedBeta: {
+      identity: "3.1.0-beta.57",
+      releaseSetId: "mentra-3.1.0-beta.57",
+      manifestUrl: "https://example.com/beta.json",
+      manifestSha256: "b".repeat(64),
+    },
+    source: {mentraosCommit: "a".repeat(40), starterKitCommit: "c".repeat(40)},
+    coordinates: {
+      currentMentraApp: {
+        sourceCommit: "f".repeat(40),
+        provenanceUrl: "https://example.com/current.json",
+        ios: coordinate(1),
+        android: coordinate(1),
+      },
+      compatibilityLab: {ios: coordinate(2), android: coordinate(2)},
+      candidates: {
+        mentraApp: {ios: coordinate(3), android: coordinate(3)},
+        starterKit: {ios: coordinate(4), android: coordinate(4)},
+      },
+    },
+    actor: "owner",
+    createdAt: "2026-08-28T20:00:00.000Z",
+    provenanceUrl: "https://example.com/actions/1",
+  })
+}
+
+test("validates every immutable state and digest before returning latest", () => {
+  const initial = initialRecord()
+  const lab = transitionPromotionRecord({
+    record: initial,
+    to: "selected",
+    actor: "owner",
+    createdAt: "2026-08-28T20:01:00.000Z",
+    provenanceUrl: "https://example.com/actions/2",
+    evidence: recordEvidence("staging-mobile-n-compatibility-lab"),
+  })
+  const entries = [initial, lab].map((record) => ({
+    sequence: record.sequence,
+    state: record.state,
+    asset: {name: promotionAssetName(record)},
+    record,
+  }))
+  assert.equal(validateStateRecordChain(entries, "3.1.0", 1), lab)
+  const tampered = structuredClone(entries)
+  tampered[1].record.coordinates.candidates.mentraApp.ios.buildNumber += 1
+  assert.throws(() => validateStateRecordChain(tampered, "3.1.0", 1), /digest|frozen field coordinates/)
+})

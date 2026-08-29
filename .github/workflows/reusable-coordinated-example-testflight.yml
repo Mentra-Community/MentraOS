@@ -18,6 +18,10 @@ on:
       testflight_audience:
         required: true
         type: string
+      production_build_number:
+        required: false
+        default: 0
+        type: number
     outputs:
       result_artifact:
         value: ${{ jobs.testflight.outputs.result_artifact }}
@@ -149,17 +153,23 @@ jobs:
           [[ "$(jq -er .releaseIdentity "$starter")" == "$release_identity" ]]
           [[ "$(jq -er .mentraos.sourceCommit "$starter")" == "$source_commit" ]]
           release_commit=$(jq -er '.starterKit.releaseCommit | select(test("^[0-9a-f]{40}$"))' "$starter")
-          expected_group=$(jq -er 'if .channel == "dev" then "Mentra Dev" elif .channel == "beta" then "Mentra Staging Public" else error("unsupported channel") end' "$plan")
+          expected_group=$(jq -er 'if .channel == "dev" then "Mentra Dev" elif .channel == "beta" then "Mentra Staging Public" elif .channel == "production" then "Mentra SDK Example Production Candidates" else error("unsupported channel") end' "$plan")
           [[ "$TESTFLIGHT_GROUP" == "$expected_group" ]]
-          expected_audience=$(jq -er 'if .channel == "dev" then "internal" else "external" end' "$plan")
+          expected_audience=$(jq -er 'if .channel == "beta" then "external" else "internal" end' "$plan")
           [[ "${{ inputs.testflight_audience }}" == "$expected_audience" ]]
+          channel=$(jq -er .channel "$plan")
+          build_number=$(jq -er .native.buildNumber "$plan")
+          if [[ "$channel" == "production" ]]; then
+            build_number="${{ inputs.production_build_number }}"
+            [[ "$build_number" =~ ^[1-9][0-9]*$ ]]
+          fi
           {
             echo "release_set_id=$release_set_id"
             echo "release_identity=$release_identity"
             echo "starter_result=$starter"
             echo "starter_release_commit=$release_commit"
             echo "marketing_version=$(jq -er .native.marketingVersion "$plan")"
-            echo "build_number=$(jq -er .native.buildNumber "$plan")"
+            echo "build_number=$build_number"
             echo "upload_artifact=coordinated-example-testflight-upload-$release_set_id"
           } >> "$GITHUB_OUTPUT"
 
@@ -240,7 +250,17 @@ jobs:
       - name: Install React Native example dependencies
         if: steps.app-store.outputs.exists != 'true'
         working-directory: starter-kit/examples/react-native
-        run: bun install --frozen-lockfile
+        env:
+          EXPECTED_VERSION: ${{ steps.coordinates.outputs.marketing_version }}
+        run: |
+          set -euo pipefail
+          if [[ "$(jq -er .channel "$GITHUB_WORKSPACE/release-input/plan/release-plan.json")" == "production" ]]; then
+            [[ "$(jq -er .expo.ios.bundleIdentifier app.json)" == "$EXAMPLE_BUNDLE_ID" ]]
+            [[ "$(jq -er .expo.android.package app.json)" == "$EXAMPLE_BUNDLE_ID" ]]
+            [[ "$(jq -er '.dependencies["@mentra/bluetooth-sdk"]' package.json)" == "$EXPECTED_VERSION" ]]
+            [[ "$(jq -er '.dependencies["@mentra/engine"]' package.json)" == "$EXPECTED_VERSION" ]]
+          fi
+          bun install --frozen-lockfile
 
       - name: Install GStreamer iOS SDK
         if: steps.app-store.outputs.exists != 'true'
@@ -255,17 +275,21 @@ jobs:
           BUILD_NUMBER: ${{ steps.coordinates.outputs.build_number }}
         run: |
           set -euo pipefail
+          MENTRA_CHANNEL="$(jq -er .channel "$GITHUB_WORKSPACE/release-input/plan/release-plan.json")"
+          export MENTRA_CHANNEL
           node --input-type=module <<'NODE'
           import {readFileSync, writeFileSync} from "node:fs"
           const file = "app.json"
           const config = JSON.parse(readFileSync(file, "utf8"))
           config.expo.version = process.env.MARKETING_VERSION
-          config.expo.ios.bundleIdentifier = process.env.EXAMPLE_BUNDLE_ID
+          if (process.env.MENTRA_CHANNEL !== "production") {
+            config.expo.ios.bundleIdentifier = process.env.EXAMPLE_BUNDLE_ID
+          }
           config.expo.ios.buildNumber = process.env.BUILD_NUMBER
           config.expo.ios.infoPlist.ITSAppUsesNonExemptEncryption = false
           writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`)
           NODE
-          bunx expo prebuild --platform ios --clean
+          bunx expo prebuild --platform ios
           test -n "$(find ios -maxdepth 1 -name '*.xcworkspace' -print -quit)"
 
       - name: Install the shared Apple distribution identity
@@ -545,15 +569,21 @@ jobs:
           [[ "$(jq -er .releaseSetId "$starter")" == "$release_set_id" ]]
           [[ "$(jq -er .releaseIdentity "$starter")" == "$release_identity" ]]
           [[ "$(jq -er .mentraos.sourceCommit "$starter")" == "$(jq -er .sourceCommit "$plan")" ]]
-          expected_group=$(jq -er 'if .channel == "dev" then "Mentra Dev" elif .channel == "beta" then "Mentra Staging Public" else error("unsupported channel") end' "$plan")
+          expected_group=$(jq -er 'if .channel == "dev" then "Mentra Dev" elif .channel == "beta" then "Mentra Staging Public" elif .channel == "production" then "Mentra SDK Example Production Candidates" else error("unsupported channel") end' "$plan")
           [[ "$TESTFLIGHT_GROUP" == "$expected_group" ]]
-          expected_audience=$(jq -er 'if .channel == "dev" then "internal" else "external" end' "$plan")
+          expected_audience=$(jq -er 'if .channel == "beta" then "external" else "internal" end' "$plan")
           [[ "${{ inputs.testflight_audience }}" == "$expected_audience" ]]
+          channel=$(jq -er .channel "$plan")
+          build_number=$(jq -er .native.buildNumber "$plan")
+          if [[ "$channel" == "production" ]]; then
+            build_number="${{ inputs.production_build_number }}"
+            [[ "$build_number" =~ ^[1-9][0-9]*$ ]]
+          fi
           {
             echo "release_identity=$release_identity"
             echo "starter_result=$starter"
             echo "marketing_version=$(jq -er .native.marketingVersion "$plan")"
-            echo "build_number=$(jq -er .native.buildNumber "$plan")"
+            echo "build_number=$build_number"
             echo "result_artifact=coordinated-example-testflight-$release_set_id"
           } >> "$GITHUB_OUTPUT"
 
@@ -648,6 +678,7 @@ jobs:
             --skip-reason "${{ needs.preflight.outputs.skip_reason }}" \
             --skip-detail "${{ needs.preflight.outputs.skip_detail }}" \
             --upload-status "$UPLOAD_STATUS" \
+            --build-number "${{ steps.coordinates.outputs.build_number }}" \
             --provenance-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
             "${args[@]}" \
             --output release-output/example-testflight-publication.json

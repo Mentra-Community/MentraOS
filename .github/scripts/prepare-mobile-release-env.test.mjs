@@ -46,6 +46,30 @@ test("requires beta builds to target staging services", () => {
   )
 })
 
+test("renders production candidates from production plans and endpoints", () => {
+  const output = prepareMobileReleaseEnvironment({
+    plan: {
+      ...plan,
+      releaseIdentity: "3.1.0",
+      releaseSetId: "mentra-3.1.0",
+      channel: "production",
+      products: {mentraos: "3.1.0"},
+      native: {...plan.native, buildNumber: 310000099},
+    },
+    template: "",
+    backendEnvironment: "prod",
+    otaManifestUrl: "https://example.com/ota.json",
+    publicValues: {
+      EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN: "pk.example",
+      EXPO_PUBLIC_SENTRY_DSN: "https://public@example.ingest.sentry.io/1",
+    },
+  })
+  assert.match(output, /^EXPO_PUBLIC_BUILD_ENV=prod$/m)
+  assert.match(output, /^EXPO_PUBLIC_CLOUD_CORE_URL=https:\/\/core\.us-west-2\.mentraglass\.com$/m)
+  assert.match(output, /^EXPO_PUBLIC_CLOUD_RUNTIME_URL=https:\/\/runtime\.us-west-2\.mentraglass\.com$/m)
+  assert.match(output, /^MENTRAOS_PINNED_BUILD_NUMBER=310000099$/m)
+})
+
 test("rejects a mismatched backend and invalid OTA URLs", () => {
   const input = {
     plan,

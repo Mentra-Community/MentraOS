@@ -33,9 +33,9 @@ derives `X.Y.Z-dev.N` or `X.Y.Z-beta.N` identities without source edits.
   new release train. `.env` and `.env.example` are not version authorities.
 - Coordinated CI supplies one pinned numeric build number to both platforms.
   Local builds use `mobile/scripts/build-number.mjs`.
-- Beta store builds are promotable production candidates and therefore target
-  production services. They are distinguished by release metadata and their
-  TestFlight/Play audience, not by a staging backend.
+- Beta store builds target staging services and are not production-promotable
+  binaries. Production candidates are rebuilt from the selected source with
+  production configuration and new store build numbers after Cloud promotion.
 - Automatic glasses OTA is enabled only when the mobile bundle contains an
   `EXPO_PUBLIC_ASG_OTA_VERSION_URL` release pin. Local and compile-only builds
   without a pin fail closed; a Super Mode manifest override remains available

@@ -92,6 +92,30 @@ test("records a skipped beta build while an earlier review is pending", () => {
   assert.equal(record.distribution.reviewState, "WAITING_FOR_REVIEW")
 })
 
+test("records an independently allocated production Starter Kit candidate", () => {
+  const productionPlan = {
+    ...plan,
+    releaseSetId: "mentra-3.1.0",
+    releaseIdentity: "3.1.0",
+    channel: "production",
+  }
+  const productionStarterKit = {
+    ...starterKit,
+    releaseSetId: productionPlan.releaseSetId,
+    releaseIdentity: productionPlan.releaseIdentity,
+  }
+  const record = createExampleTestflightRecord(
+    input({
+      plan: productionPlan,
+      starterKit: productionStarterKit,
+      groupName: "Mentra SDK Example Production Candidates",
+      buildNumber: 310000099,
+    }),
+  )
+  assert.equal(record.channel, "production")
+  assert.equal(record.version.buildNumber, 310000099)
+})
+
 test("rejects a Starter Kit result from another release", () => {
   assert.throws(
     () => createExampleTestflightRecord(input({starterKit: {...starterKit, releaseIdentity: "3.1.0-dev.44"}})),

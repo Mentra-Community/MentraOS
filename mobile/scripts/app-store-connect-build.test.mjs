@@ -4,6 +4,7 @@ import test from "node:test"
 
 import {
   assignBuildToGroup,
+  appStoreInventory,
   collectPaginatedData,
   createAppStoreConnectClient,
   ensurePublicBetaGroup,
@@ -163,6 +164,51 @@ test("waits for an uploaded build to finish processing", async () => {
   const build = await waitForProcessedBuild(api, {appId: "app-1", buildNumber: 310000057, attempts: 4, delay: 0})
   assert.equal(build.id, "build-1")
   assert.match(api.calls[0].resource, /filter%5Bversion%5D=310000057/)
+})
+
+test("inventories the current public App Store build and maximum allocated build", async () => {
+  const api = client([
+    {
+      data: [
+        {id: "build-20", attributes: {version: "20"}},
+        {id: "build-19", attributes: {version: "19"}},
+      ],
+      links: {next: null},
+    },
+    {
+      data: [
+        {id: "version-30", attributes: {versionString: "3.0.0", appStoreState: "READY_FOR_SALE"}},
+        {id: "version-29", attributes: {versionString: "2.9.0", appStoreState: "READY_FOR_DISTRIBUTION"}},
+        {id: "version-31", attributes: {versionString: "3.1.0", appStoreState: "PREPARE_FOR_SUBMISSION"}},
+      ],
+      links: {next: null},
+    },
+    {data: {id: "build-19", attributes: {version: "19"}}},
+  ])
+  const inventory = await appStoreInventory(api, {
+    app: {id: "app-1", attributes: {bundleId: "com.mentra.mentra"}},
+  })
+  assert.equal(inventory.maxBuildNumber, 20)
+  assert.deepEqual(inventory.current, {
+    versionId: "version-30",
+    buildId: "build-19",
+    marketingVersion: "3.0.0",
+    buildNumber: 19,
+    state: "READY_FOR_SALE",
+  })
+  assert.match(api.calls[0].resource, /filter%5Bapp%5D=app-1/)
+})
+
+test("allows a new App Store app with no public version", async () => {
+  const api = client([
+    {data: [], links: {next: null}},
+    {data: [], links: {next: null}},
+  ])
+  const inventory = await appStoreInventory(api, {
+    app: {id: "app-new", attributes: {bundleId: "com.mentra.bluetoothsdkexample"}},
+  })
+  assert.equal(inventory.current, null)
+  assert.equal(inventory.maxBuildNumber, 0)
 })
 
 test("can scope an exact build number to its marketing version", async () => {
