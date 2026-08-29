@@ -6,25 +6,25 @@ owner: Mentra
 # Mentra Enterprise Self-Hosted call deployment implementation plan
 
 > Execution checklist for the first customer deployment: the official Mentra
-> App, bundled Mentra Call, Microsoft Entra, a small customer-hosted Workspace
-> Gateway, and direct Teams participation through ACS. Do not package full Core
-> or Runtime for this milestone.
+> App, bundled Mentra Call, Microsoft Entra, one reduced customer-hosted Runtime
+> Services process, and direct Teams participation through ACS. Do not package
+> Core, Store, or a dedicated Mentra Call backend for this milestone.
 
 **Goal:** Run Mentra Call on Android and iOS in a restricted customer-controlled
-workspace without Mentra public Core or Runtime.
+workspace without Mentra public Core, Runtime, Store, or miniapp services.
 
 **Architecture:** The app resolves a workspace manifest before authentication.
 The first customer template selects native Microsoft Entra sign-in, disables the
-Cloud Client, enables a local-only Engine and approved bundled miniapps, and
-routes managed-stream and ACS credential requests to a customer-hosted Workspace
-Gateway. Mentra Live publishes WHIP to the configured provider; the phone
-consumes WHEP and publishes raw media through ACS to Teams. The current guest
-ACS identity is the media bring-up path. The same cached Entra account later
-supplies the delegated token exchanged for an authenticated Teams-user ACS
-token, with no second interactive login.
+Core path, enables approved bundled miniapps, and authenticates Runtime directly
+with an Entra-issued token. One Runtime process enables only managed-stream and
+meeting-provider modules. Mentra Live publishes WHIP to the configured provider;
+the phone consumes WHEP and publishes raw media through ACS to Teams. The same
+cached Entra account supplies the delegated token exchanged for an authenticated
+Teams-user ACS token, with no second interactive login. Mentra Call invokes
+host capabilities and has no required backend in this profile.
 
 **Tech stack:** React Native/Expo, TypeScript, Android/iOS MSAL, local MentraJS,
-native ACS Calling SDK, customer-hosted Workspace Gateway, Cloudflare Stream for
+native ACS Calling SDK, modular Cloud V2 Runtime Services, Cloudflare Stream for
 the first WHIP/WHEP provider, coordinated GitHub releases.
 
 **Spec source of truth:**
@@ -47,12 +47,16 @@ the first WHIP/WHEP provider, coordinated GitHub releases.
 - [ ] Define manifest v1 as an override of the complete embedded Mentra profile.
       Arrays replace; explicit null disables nullable destinations; validation
       runs on the resolved profile.
-- [ ] Add `services.workspaceGatewayUrl` and make `coreUrl` and `runtimeUrl`
-      nullable without localhost or Mentra fallbacks.
+- [ ] Make `coreUrl` and `runtimeUrl` nullable without localhost or Mentra
+      fallbacks.
+- [ ] Retain package-name-keyed `systemMiniapps.configuration` for genuine
+      package-specific values, but keep Runtime URLs and auth scopes at the host
+      deployment level.
 - [ ] Add `auth.mode: "microsoft-entra"` with exact authority URL, native client
-      id, and gateway/Teams/Graph delegated scopes.
-- [ ] Add `features.cloudSession`; false means no Cloud Client or cloud-dependent
-      services are constructed.
+      id, Runtime API scope, and Teams/Graph delegated scopes.
+- [ ] Add `features.runtimeRealtimeSession`; false disables Runtime WebSocket,
+      audio, and subscriptions while preserving authenticated Runtime REST
+      capabilities.
 - [ ] Generate the embedded Mentra profile from coordinated build inputs. It
       keeps `auth.mode: "mentra-account"`, public Core/Runtime, and the ordinary
       consumer feature set.
@@ -66,7 +70,8 @@ the first WHIP/WHEP provider, coordinated GitHub releases.
       Entra authority/scopes.
 - [ ] Reject `common`, `organizations`, personal Microsoft accounts, and any
       authority not pinned to the declared first-pilot tenant.
-- [ ] Test that null Core/Runtime never resolves to embedded Mentra endpoints.
+- [ ] Test that null Core never resolves to an embedded Mentra endpoint and the
+      selected customer Runtime never falls back to Mentra Runtime.
 
 ### Task 2: Gate the React and native startup paths
 
@@ -95,7 +100,7 @@ the first WHIP/WHEP provider, coordinated GitHub releases.
 - Create `mobile/src/app/auth/workspace.tsx`
 - Create `mobile/src/services/deployment/WorkspaceDeploymentService.ts`
 - Modify login translations, starting with `mobile/src/i18n/en.ts`
-- Add the well-known manifest route to the Workspace Gateway
+- Add the well-known manifest route to the reduced Runtime HTTP profile
 - Modify logout/reset utilities
 
 - [ ] Preserve current Google, Apple, and email controls and add a visually
@@ -105,7 +110,7 @@ the first WHIP/WHEP provider, coordinated GitHub releases.
 - [ ] Fetch `/.well-known/mentra-deployment.json` directly from that origin.
 - [ ] Reject credentials, query, fragment, invalid TLS, oversized responses, and
       cross-origin redirects.
-- [ ] Require `services.workspaceGatewayUrl` to match the entered origin.
+- [ ] Require the configured Runtime URL to match the entered origin.
 - [ ] Keep the fetched workspace pending through resolution, schema validation,
       and exact release validation.
 - [ ] Show display name, hostname, and Microsoft organization sign-in before
@@ -139,8 +144,10 @@ the first WHIP/WHEP provider, coordinated GitHub releases.
       deployment id.
 - [ ] Derive the stable local user namespace from verified `tid` plus `oid`, not
       email.
-- [ ] Acquire the Workspace Gateway scope for the selected account and refresh
-      it silently.
+- [ ] Acquire the deployment's Runtime API scope for the selected account and
+      refresh it silently.
+- [ ] Silently acquire the ACS Teams delegated token for the same account when
+      the native meeting capability needs it.
 - [ ] Keep consumer Google/Apple/email bound to the embedded Mentra profile.
 - [ ] Do not create a Cloud V2/Core session for the call-focused workspace.
 - [ ] Implement logout, disabled-user recovery, authority mismatch, token expiry,
@@ -149,23 +156,25 @@ the first WHIP/WHEP provider, coordinated GitHub releases.
       cancelled login, revoked session, and broker/browser return on both
       platforms.
 
-### Task 2: Authenticate the Workspace Gateway
+### Task 2: Authenticate Runtime directly with Entra
 
-**Files:** Workspace Gateway auth middleware and deployment guide
+**Files:** Engine Runtime auth seam, Runtime verifier config, and deployment guide
 
+- [ ] Wire the existing `auth.runtime.getToken` Cloud Client mode through the
+      Mentra App/Engine production configuration.
 - [ ] Validate exact Entra issuer, tenant, audience, signature, expiry, and
-      gateway scope on every protected endpoint.
+      configured Runtime API scope on every protected endpoint.
 - [ ] Authorize only assigned users/groups defined by customer policy.
 - [ ] Key server audit events by tenant id and object id; do not persist raw
       identity-provider tokens.
 - [ ] Return actionable 401/403 responses without exposing token contents.
 - [ ] Document the single-tenant public-client registration, official Android
-      and iOS redirects, Enterprise Application assignment, gateway API scope,
+      and iOS redirects, Enterprise Application assignment, Runtime API scope,
       and consent.
 
-## Phase 3: Cloud-session-disabled Engine and bundled Mentra Call
+## Phase 3: Runtime-only Engine and bundled Mentra Call
 
-### Task 1: Make local-only Engine startup supported
+### Task 1: Make REST-only Runtime startup supported in Engine
 
 **Files:**
 
@@ -175,15 +184,18 @@ the first WHIP/WHEP provider, coordinated GitHub releases.
 - Modify `mobile/src/services/MantleManager.ts`
 - Add local-only startup tests
 
-- [ ] When `cloudSession` is false, skip Cloud Client construction, Core token
-      sync, Runtime connection, cloud audio uplink, reconnect alarms, cloud
-      reports, support-profile sync, and cloud registry synchronization.
+- [ ] Construct the Cloud Client with no Core endpoint and the host-provided
+      Runtime token callback.
+- [ ] Expose Runtime REST capabilities without opening the Runtime WebSocket or
+      starting cloud audio, reconnect alarms, reports, support-profile sync, or
+      cloud registry synchronization.
 - [ ] Continue Bluetooth, device hydration, pairing/reconnect, local settings,
       display, local miniapp runtime/launcher, phone stream coordination, ACS,
       and configured OTA.
 - [ ] Replace the global Core-owned local-miniapp identity assumption with the
       verified deployment-scoped Entra identity.
-- [ ] Do not mint miniapp tokens from Core for approved bundled miniapps.
+- [ ] Do not expose a miniapp-backend token in the call-focused profile. Mentra Call
+      uses host capabilities and has no required backend.
 - [ ] Fail unavailable cloud-only miniapp APIs explicitly rather than retrying
       localhost or Mentra endpoints.
 - [ ] Suppress cloud-disconnected UI/notifications in local-only mode.
@@ -202,96 +214,93 @@ the first WHIP/WHEP provider, coordinated GitHub releases.
       customer manifest template.
 - [ ] Apply `systemMiniapps.approvedPackageNamesOverride` to install, registry,
       menus, deep links, autostart, and direct launch.
-- [ ] Remove the build-time hard-coded Mentra Call backend URL from its ACS path.
-- [ ] Keep provider-neutral call requests in `session.meeting`.
+- [ ] Remove the Mentra Call backend dependency from the ACS path.
+- [ ] Keep the Miniapp SDK call request provider-neutral. `session.meeting` is
+      the current spike shape, not a frozen API name or payload.
 - [ ] Keep ACS/Entra credentials below the trusted host boundary; miniapp
       JavaScript receives no bearer token.
 - [ ] Preserve existing Teams/ACS join, leave, mute, state, recovery, WHEP
       update, and incoming-audio behavior from `nicolo/acs-teams-v1`.
 
-## Phase 4: Workspace Gateway and managed media
+## Phase 4: Modular Runtime Services
 
-### Task 1: Package the minimal gateway
+### Task 1: Compose enabled Runtime modules in one process
 
-**Files:** New Workspace Gateway package, container, Azure template, tests, and
-operator documentation
+**Files:** Runtime startup, API composition, provider validation, container,
+Azure template, tests, and operator documentation
 
+- [ ] Add an explicit positive allowlist such as
+      `RUNTIME_SERVICES=managed-streams,meetings`.
+- [ ] Keep one Runtime binary, process, HTTP port, and container. Do not create a
+      container or repository per module.
+- [ ] Register routes and initialize providers only for enabled modules.
+- [ ] Fail startup when an enabled module has missing or invalid required
+      configuration. Do not infer enablement from API-key presence.
+- [ ] Do not connect Redis, bind UDP, spawn audio workers, start ownership loops,
+      or accept Runtime WebSockets when the real-time/audio module is disabled.
+- [ ] Do not initialize storage/photos, maps, TTS, or speech providers when their
+      modules are disabled.
 - [ ] Serve the exact deployment manifest at the well-known path from a mounted
       release-matched file.
-- [ ] Provide authenticated create/status/delete managed-stream endpoints.
-- [ ] Extract the existing Cloudflare Stream provider logic needed to create a
-      live input and return WHIP/WHEP URLs.
-- [ ] Hold provider credentials only in the customer secret store.
-- [ ] Provide an ACS guest-token endpoint using customer-owned ACS credentials
-      for the fastest media checkpoint.
-- [ ] Use Azure managed identity/RBAC in the reference environment where the ACS
-      SDK supports it; permit a rotated connection-string secret for the first
-      controlled deployment.
-- [ ] Validate only the configuration needed by the active provider/profile. Do
-      not require MongoDB, Recall, speech, store, or Mentra cloud variables.
-- [ ] Add rate limits, per-user resource ownership, expiration, idempotent
-      teardown, and abandoned-stream cleanup.
-- [ ] Publish a health/readiness endpoint that does not disclose secrets.
+- [ ] Publish health/readiness that reports enabled-module configuration without
+      disclosing secrets.
 
-### Task 2: Route managed streams outside Runtime
+### Task 2: Reuse the existing managed-stream service
 
-**Files:**
+**Files:** Runtime camera API/service/provider composition, Engine Runtime REST
+client, PhoneStreamCoordinator, ownership tests, and cleanup tests
 
-- Modify `mobile/modules/engine/src/services/cloudStreamApi.ts`
-- Modify `mobile/modules/engine/src/services/PhoneStreamCoordinator.ts`
-- Add a Workspace Gateway media client
-- Add provider-routing and recovery tests
-
-- [ ] Introduce a managed-stream provisioning interface independent of Cloud V2
-      Runtime.
-- [ ] Select Runtime only when a full platform profile supplies it; select the
-      Workspace Gateway for the call-focused profile.
-- [ ] Authenticate gateway calls with the deployment-scoped Entra account.
-- [ ] Preserve existing `StreamResult`, WHIP start, WHEP playback, status,
-      teardown, and reconnect behavior for Mentra Call.
-- [ ] Never expose streaming-provider credentials to the app or miniapp.
-- [ ] Make the remaining Cloudflare hop explicit in UI diagnostics and operator
+- [ ] Keep the existing `/api/camera/stream` create/status/delete contract and
+      Cloudflare provider implementation.
+- [ ] Authenticate every request with the deployment-scoped Entra Runtime token.
+- [ ] Enforce tenant/user ownership for status and delete rather than treating a
+      provider stream id as authorization.
+- [ ] Add expiration, idempotent teardown, and abandoned-stream cleanup without
+      requiring Redis or a database.
+- [ ] Preserve Mentra Call's managed WHIP start, WHEP playback, recovery, and
+      stop behavior from the existing Engine stream contract.
+- [ ] Never expose Cloudflare credentials to the app or miniapp.
+- [ ] Make the remaining Cloudflare hop explicit in diagnostics and operator
       documentation.
 
-### Task 3: Move ACS token ownership into the host
+### Task 3: Add the Runtime meetings provider
 
-**Files:**
+**Files:** Runtime meetings API/provider, ACS Identity SDK integration, native
+host credential client, token/redaction tests, and Azure configuration
 
-- Modify `mobile/modules/engine/src/services/AcsMeetingService.ts`
-- Modify Android/iOS ACS meeting modules as required
-- Modify `LocalMiniappRuntime` meeting handlers
-- Modify Mentra Call `CallManager`
-- Add token/redaction and end-to-end tests
-
-- [ ] Change the miniapp contract so `session.meeting.join` does not carry an ACS
-      token.
-- [ ] Have the trusted host call the configured gateway just before join and
-      refresh before expiry when necessary.
-- [ ] Redact ACS and Entra bearer tokens from logs, errors, diagnostics, and
-      miniapp messages.
-- [ ] Preserve native call lifecycle as the source of truth.
-- [ ] Qualify the current guest token path first and clearly label its Teams
-      roster/lobby behavior.
+- [ ] Add an `acs-teams` provider behind the Runtime meetings capability.
+- [ ] Accept the ACS-scoped Entra token only from the authenticated native host.
+- [ ] Validate tenant, client/app id, object id, scopes, expiry, and that the
+      subject matches the authenticated Runtime user.
+- [ ] Exchange it with ACS `GetTokenForTeamsUser` using customer-owned ACS
+      managed identity/RBAC where supported, with a rotated connection-string
+      secret permitted for the first controlled deployment.
+- [ ] Return only the short-lived ACS Teams-user token to the native host.
+- [ ] Keep Entra and ACS bearer tokens out of miniapp messages, logs, errors, and
+      diagnostics.
+- [ ] Validate only Entra, ACS, and Cloudflare configuration in this module set;
+      require no MongoDB, Recall, speech, Store, or Mentra cloud variables.
 
 ## Phase 5: Reuse Entra for authenticated Teams identity
 
-This phase is not required to prove raw media, but it is required before claiming
-that the user joins as their corporate Teams account. It reuses Phase 2; there is
-no second interactive SSO screen.
+The current Nicolo branch can prove native raw media first with a guest token,
+but the deployable self-hosted v1 requires the employee Teams identity. It
+reuses Phase 2; there is no second interactive SSO screen.
 
 ### Task 1: Add Teams-user token exchange
 
-**Files:** MSAL scope acquisition, Workspace Gateway ACS exchange endpoint,
-native ACS agent setup, tests, and admin guide
+**Files:** MSAL scope acquisition, native host/Engine call capability, Nicolo ACS
+native module integration, tests, and admin guide
 
 - [ ] Add delegated ACS `Teams.ManageCalls` and `Teams.ManageChats` permissions
       to the Entra registration and document admin consent/assignment.
-- [ ] Silently acquire an ACS-scoped Entra token for the same cached MSAL account.
-- [ ] Send it only to the trusted customer gateway over TLS; validate tenant,
-      client/app id, object id, scopes, and that it matches the active account.
-- [ ] Exchange it with ACS `GetTokenForTeamsUser` using the gateway's ACS
-      credential.
-- [ ] Return only the short-lived ACS Teams-user token to the native host.
+- [ ] Silently acquire an ACS-scoped Entra token for the same cached MSAL account
+      and send it only to the configured customer Runtime over TLS.
+- [ ] Have the trusted host obtain and refresh the short-lived ACS Teams-user
+      token from Runtime; do not put it in the Miniapp SDK request.
+- [ ] Treat `session.meeting.join` as the current spike shape. Finalize a
+      provider-neutral Miniapp SDK capability only after the native lifecycle is
+      stable.
 - [ ] Confirm the Android and iOS Calling SDK agent construction required by a
       Teams-user token while retaining raw media.
 - [ ] Test same-tenant and external meetings, employee roster identity, lobby
@@ -300,14 +309,14 @@ native ACS agent setup, tests, and admin guide
 
 ### Task 2: Create meetings as the signed-in user when required
 
-**Files:** Host meeting API, optional gateway proxy, Mentra Call UI adapter, and
+**Files:** Host meeting API, optional Runtime meetings provider, UI adapter, and
 Graph tests
 
 - [ ] Allow joining a supplied Teams URL without Graph permission.
 - [ ] When creation is enabled, silently request delegated Graph
       `OnlineMeetings.ReadWrite` for the same MSAL account.
-- [ ] Call `POST /me/onlineMeetings` from the trusted host or gateway and return
-      only the join URL to Mentra Call.
+- [ ] Call `POST /me/onlineMeetings` from the trusted host or Runtime meetings
+      module and return only the join URL to Mentra Call.
 - [ ] Remove the current shared licensed Graph service account and app-only
       client secret from the customer template.
 - [ ] Keep meeting creation optional so customers that only join scheduled
@@ -335,12 +344,12 @@ policy tests
 
 ### Task 2: Publish customer artifacts and guides
 
-**Files:** Coordinated release scripts/workflows, Mintlify docs, gateway deployment
+**Files:** Coordinated release scripts/workflows, Mintlify docs, Runtime deployment
 templates, and runbooks
 
 - [ ] Publish a release-matched call-focused deployment template.
-- [ ] Publish the Workspace Gateway container digest, SBOM, checksums, and Azure
-      deployment template.
+- [ ] Publish the existing Runtime image digest, SBOM, checksums, and Azure
+      deployment template with `managed-streams,meetings` enabled.
 - [ ] Publish customer-hostable Mentra Live OTA artifacts when OTA is enabled.
 - [ ] Reuse the exact normal Android and iOS app artifacts; no customer build
       lane.
@@ -349,9 +358,8 @@ templates, and runbooks
 - [ ] Publish a Microsoft Entra guide for native app redirects, single-tenant
       authority, API permissions/scopes, assignment, consent, revocation, and
       troubleshooting.
-- [ ] Publish an ACS/Cloudflare gateway guide that lists only the required
-      secrets, supports rotation, and distinguishes guest from Teams-user
-      identity.
+- [ ] Publish an ACS/Cloudflare Runtime guide that lists only the required
+      modules and secrets, supports rotation, and explains Teams-user identity.
 - [ ] Document that restricted-network means customer-approved Microsoft and
       streaming egress, not zero internet.
 
@@ -359,11 +367,11 @@ templates, and runbooks
 
 **Files:** Mentra Azure environment and end-to-end test records
 
-- [ ] Deploy the Workspace Gateway in Mentra's Azure account using Mentra's
+- [ ] Deploy one reduced Runtime process in Mentra's Azure account using Mentra's
       non-production Entra tenant and customer-style isolation.
 - [ ] Use a customer-style ACS resource, secret store/managed identity, and
       dedicated Cloudflare configuration.
-- [ ] Do not deploy or use Mentra public Core or Runtime.
+- [ ] Do not deploy customer Core or use Mentra public Core/Runtime.
 - [ ] Select the workspace using official Android and iOS Mentra App artifacts.
 - [ ] Run Entra assignment, MFA, wrong-tenant, disabled-user, expiry, logout, and
       deployment-switch tests.
@@ -378,18 +386,42 @@ templates, and runbooks
 - **PR 1:** Manifest types/resolver, landing screen, manual workspace flow,
   nullable Core/Runtime, and pre-network telemetry gating.
 - **PR 2:** Native Entra authentication plus deployment-scoped identity and
-  secure logout.
-- **PR 3:** Cloud-session-disabled Engine and approved bundled Mentra Call.
-- **PR 4:** Workspace Gateway, Cloudflare managed-stream routing, and host-owned
-  ACS guest credentials; complete direct-to-Teams media checkpoint.
-- **PR 5:** Authenticated Teams-user token exchange and optional delegated Graph
-  meeting creation if required by the pilot.
+  secure logout, including the Runtime API token provider.
+- **PR 3:** Runtime module composition plus the existing managed-stream service
+  in a stateless HTTP-only profile.
+- **PR 4:** Runtime meetings/ACS Teams-user token exchange and host-owned
+  credential acquisition.
+- **PR 5:** Integrate the qualified native ACS implementation, finalize the
+  provider-neutral Miniapp SDK capability, and optionally add delegated Graph
+  meeting creation.
 - **PR 6:** OTA/content/hardware policy, release artifacts, guides, and physical
   restricted-network qualification.
 
 The narrowed call deployment avoids the largest previous work item: packaging
-general Core and Runtime with every unrelated SaaS and data dependency. It still
-requires real mobile work—native Entra login, cloudless Engine startup, managed
-stream extraction, and secure ACS credential ownership—but those changes are
-directly tied to Mentra Call and form a reusable foundation for later workspace
-profiles.
+Core and every Runtime dependency. It still requires real mobile work—native
+Entra login, Runtime-only Engine auth, modular Runtime boot, and secure ACS
+credential ownership—but those changes form a reusable foundation for later
+workspace profiles.
+
+## Branch and dependency strategy
+
+Do not build the entire effort on `nicolo/acs-teams-v1`. At the time of this
+plan, that branch has no pull request, is 52 commits ahead and 108 commits behind
+`dev`, and contains approximately 4,900 lines of native/media/API changes. It is
+the source of the ACS media implementation, not the base for unrelated manifest,
+auth, or Runtime work.
+
+- Keep this planning PR documentation-only and based on `dev`.
+- Start manifest, Entra, Runtime-auth, and modular-Runtime implementation PRs
+  independently from current `dev`; none depends on Nicolo's branch.
+- Have Nicolo rebase or merge current `dev` into `nicolo/acs-teams-v1`, validate
+  Android/iOS, and open its own focused PR for the native ACS/media capability.
+- If native integration must proceed before that PR merges, create a narrowly
+  scoped stacked branch from `nicolo/acs-teams-v1` and target that branch. Do not
+  mix Runtime or deployment-manifest work into the stack.
+- After the native ACS PR and independent platform PRs land, create the final
+  integration PR from fresh `dev` and adapt the spike Miniapp SDK contract so
+  credentials stay below the host boundary.
+- PR #3743 is compatible but not a dependency. If its Store/Core split lands
+  first, rebase normally; do not copy its tentative implementation or make this
+  deployment wait for it.
