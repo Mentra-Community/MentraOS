@@ -234,8 +234,13 @@ jobs:
           [[ "$(jq -er .packageId "$starter_android")" == "com.mentra.bluetoothsdkexample" ]]
           mkdir -p promotion-output
           jq -s '{schemaVersion: 1, kind: "production-mobile-candidates", mentraApp: .[0], starterKit: {ios: .[1], android: .[2]}}' "$mentra" "$starter_ios" "$starter_android" > promotion-output/mobile-candidates.json
-          digest=$(sha256sum promotion-output/mobile-candidates.json | cut -d' ' -f1)
-          jq -n --arg url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" --arg sha256 "$digest" '{kind: "production-mobile-candidates", url: $url, sha256: $sha256, assetName: "production-mobile-candidates.json"}' > promotion-output/evidence.json
+          node .github/scripts/production-promotion-assets.mjs prepare-evidence \
+            --file promotion-output/mobile-candidates.json \
+            --kind production-mobile-candidates \
+            --url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --output promotion-output/evidence.json \
+            --output-directory promotion-output/evidence-assets \
+            --github-output "$GITHUB_OUTPUT"
           node .github/scripts/production-promotion-state.mjs transition \
             --record promotion-input/current.json \
             --to mobile-candidates-uploaded \
@@ -253,8 +258,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           node .github/scripts/publish-immutable-release-asset.mjs \
-            --file promotion-output/mobile-candidates.json \
-            --name production-mobile-candidates.json \
+            --file "${{ steps.next.outputs.asset_path }}" \
+            --name "${{ steps.next.outputs.asset_name }}" \
             --release-id "${{ steps.promotion.outputs.release_id }}" \
             --repository "$GITHUB_REPOSITORY"
           node .github/scripts/production-promotion-assets.mjs publish-record \

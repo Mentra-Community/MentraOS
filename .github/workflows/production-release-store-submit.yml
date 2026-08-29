@@ -55,8 +55,11 @@ jobs:
             --github-output "$GITHUB_OUTPUT"
           [[ "$(jq -er .state promotion-input/current.json)" == "mobile-candidates-accepted" ]]
           assets=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases/$(sed -n 's/^release_id=//p' "$GITHUB_OUTPUT")/assets?per_page=100" | jq 'add')
-          asset_id=$(jq -er '[.[] | select(.name == "production-mobile-candidates.json")] | if length == 1 then .[0].id else error("candidate evidence must be unique") end' <<< "$assets")
+          candidate_name=$(jq -er '[.evidence[] | select(.kind == "production-mobile-candidates")] | if length == 1 then .[0].assetName else error("candidate evidence reference must be unique") end' promotion-input/current.json)
+          candidate_sha=$(jq -er '[.evidence[] | select(.kind == "production-mobile-candidates")][0].sha256' promotion-input/current.json)
+          asset_id=$(jq -er --arg name "$candidate_name" '[.[] | select(.name == $name)] | if length == 1 then .[0].id else error("candidate evidence asset must be unique") end' <<< "$assets")
           gh api -H "Accept: application/octet-stream" "repos/${GITHUB_REPOSITORY}/releases/assets/$asset_id" > promotion-input/candidates.json
+          [[ "$(sha256sum promotion-input/candidates.json | cut -d' ' -f1)" == "$candidate_sha" ]]
 
       - name: Inject store credentials
         uses: ./.github/actions/inject-signing
@@ -155,8 +158,13 @@ jobs:
             --slurpfile starter promotion-output/play/starter.json \
             '{schemaVersion: 1, kind: "production-store-submissions", provenanceUrl: $url, apple: {mentraApp: "submitted-manual-release", starterKit: "submitted-manual-release"}, google: {mentraApp: $mentra[0], starterKit: $starter[0]}, publicReleasePerformed: false}' \
             > promotion-output/store-submissions.json
-          digest=$(sha256sum promotion-output/store-submissions.json | cut -d' ' -f1)
-          jq -n --arg url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" --arg sha256 "$digest" '{kind: "production-store-submissions", url: $url, sha256: $sha256, assetName: "production-store-submissions.json"}' > promotion-output/evidence.json
+          node .github/scripts/production-promotion-assets.mjs prepare-evidence \
+            --file promotion-output/store-submissions.json \
+            --kind production-store-submissions \
+            --url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --output promotion-output/evidence.json \
+            --output-directory promotion-output/evidence-assets \
+            --github-output "$GITHUB_OUTPUT"
           node .github/scripts/production-promotion-state.mjs transition \
             --record promotion-input/current.json --to stores-submitted --actor "$GITHUB_ACTOR" \
             --created-at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" \
@@ -170,5 +178,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          node .github/scripts/publish-immutable-release-asset.mjs --file promotion-output/store-submissions.json --name production-store-submissions.json --release-id "${{ steps.promotion.outputs.release_id }}" --repository "$GITHUB_REPOSITORY"
+          node .github/scripts/publish-immutable-release-asset.mjs --file "${{ steps.next.outputs.asset_path }}" --name "${{ steps.next.outputs.asset_name }}" --release-id "${{ steps.promotion.outputs.release_id }}" --repository "$GITHUB_REPOSITORY"
           node .github/scripts/production-promotion-assets.mjs publish-record --record "${{ steps.next.outputs.record }}" --release-id "${{ steps.promotion.outputs.release_id }}" --repository "$GITHUB_REPOSITORY"

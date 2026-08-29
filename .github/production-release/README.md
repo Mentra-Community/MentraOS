@@ -172,6 +172,10 @@ at durable credential-free HTTPS URLs, then run:
   --evidence release-evidence/X.Y.Z/staging-mobile-n.json
 ```
 
+Every `appVersion` and `appBuild` must exactly match the frozen coordinates
+shown by `status`; placeholders and coordinates from another build are
+rejected.
+
 Any failure requires a fixed beta identity. Do not carry evidence across source
 changes.
 
@@ -316,6 +320,11 @@ clicked a store button. After approval, perform the exact UI actions:
   approved staged rollout for the exact version code.
 - Starter Kit first Android release: approval may already have published it;
   treat this as the documented first-release exception and monitor immediately.
+
+The verification workflow requires the exact Google version code to be in a
+production release whose status is `inProgress` with a nonzero rollout fraction
+or `completed`. A draft, halted release, or bare production-track membership
+does not advance the promotion.
 
 Run `next` to verify the exact builds are publicly rolling out and enter
 `rolling-out`.

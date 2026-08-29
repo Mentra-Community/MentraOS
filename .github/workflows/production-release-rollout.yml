@@ -61,8 +61,7 @@ jobs:
           [[ "$(jq -er .state promotion-input/current.json)" == rolling-out ]]
           percent="${{ inputs.android_percent }}"
           [[ "$percent" =~ ^([1-9][0-9]?|100)$ ]]
-          assets=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases/${{ steps.promotion.outputs.release_id }}/assets?per_page=100" | jq 'add')
-          previous=$(jq -r '[.[].name | (try capture("^production-rollout-(?<percent>[0-9]{3})\\.json$") catch empty) | .percent | tonumber] | max // 0' <<< "$assets")
+          previous=$(jq -r '[.evidence[].assetName | (try capture("^production-rollout-(?<percent>[0-9]{3})-[0-9a-f]{64}\\.json$") catch empty) | .percent | tonumber] | max // 0' promotion-input/current.json)
           [[ "$percent" -gt "$previous" ]]
           if [[ "${{ inputs.action }}" == complete ]]; then
             [[ "$percent" == 100 ]]
@@ -72,7 +71,7 @@ jobs:
           fi
           mkdir -p promotion-output
           padded=$(printf '%03d' "$percent")
-          asset="production-rollout-$padded.json"
+          asset="production-rollout-observation.json"
           jq -n \
             --argjson androidPercent "$percent" \
             --arg action "${{ inputs.action }}" \
@@ -80,22 +79,26 @@ jobs:
             --arg url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
             '{schemaVersion: 1, kind: "production-rollout-observation", androidPercent: $androidPercent, applePhasedReleaseObserved: true, action: $action, actor: $actor, provenanceUrl: $url, note: "The protected approver confirms the matching store-console rollout setting was observed before this record was appended."}' \
             > "promotion-output/$asset"
-          digest=$(sha256sum "promotion-output/$asset" | cut -d' ' -f1)
-          jq -n --arg url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" --arg sha256 "$digest" --arg assetName "$asset" '{kind: "production-rollout-observation", url: $url, sha256: $sha256, assetName: $assetName}' > promotion-output/evidence.json
+          node .github/scripts/production-promotion-assets.mjs prepare-evidence \
+            --file "promotion-output/$asset" \
+            --kind production-rollout-observation \
+            --url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --asset-prefix "production-rollout-$padded" \
+            --output promotion-output/evidence.json \
+            --output-directory promotion-output/evidence-assets \
+            --github-output "$GITHUB_OUTPUT"
           node .github/scripts/production-promotion-state.mjs transition --record promotion-input/current.json --to "$to" --actor "$GITHUB_ACTOR" --created-at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" --provenance-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" --evidence promotion-output/evidence.json --output promotion-output/next.json
           name=$(node --input-type=module -e 'import {readFileSync} from "node:fs"; import {promotionAssetName} from "./.github/scripts/production-promotion-state.mjs"; process.stdout.write(promotionAssetName(JSON.parse(readFileSync("promotion-output/next.json", "utf8"))))')
           mv promotion-output/next.json "promotion-output/$name"
           {
             echo "record=promotion-output/$name"
-            echo "asset=promotion-output/$asset"
-            echo "asset_name=$asset"
           } >> "$GITHUB_OUTPUT"
 
       - name: Publish immutable rollout evidence and state
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          node .github/scripts/publish-immutable-release-asset.mjs --file "${{ steps.next.outputs.asset }}" --name "${{ steps.next.outputs.asset_name }}" --release-id "${{ steps.promotion.outputs.release_id }}" --repository "$GITHUB_REPOSITORY"
+          node .github/scripts/publish-immutable-release-asset.mjs --file "${{ steps.next.outputs.asset_path }}" --name "${{ steps.next.outputs.asset_name }}" --release-id "${{ steps.promotion.outputs.release_id }}" --repository "$GITHUB_REPOSITORY"
           node .github/scripts/production-promotion-assets.mjs publish-record --record "${{ steps.next.outputs.record }}" --release-id "${{ steps.promotion.outputs.release_id }}" --repository "$GITHUB_REPOSITORY"
 
       - name: Summarize completion

@@ -1,9 +1,13 @@
 import assert from "node:assert/strict"
+import {mkdtempSync, readFileSync, writeFileSync} from "node:fs"
+import {tmpdir} from "node:os"
+import path from "node:path"
 import test from "node:test"
 
 import {
   matchingPromotionContainers,
   nextPromotionAttempt,
+  prepareEvidenceAsset,
   promotionContainerName,
   promotionContainerTag,
   requirePromotionContainer,
@@ -15,6 +19,32 @@ import {
   promotionAssetName,
   transitionPromotionRecord,
 } from "./production-promotion-state.mjs"
+
+test("stages workflow evidence under an immutable content-addressed name", () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "promotion-evidence-"))
+  const source = path.join(directory, "result.json")
+  writeFileSync(source, '{"result":"pass"}\n')
+  const result = prepareEvidenceAsset({
+    file: source,
+    kind: "production-mobile-candidates",
+    url: "https://github.com/Mentra-Community/MentraOS/actions/runs/123",
+    outputDirectory: directory,
+  })
+  assert.match(result.assetName, /^production-evidence-production-mobile-candidates-[0-9a-f]{64}\.json$/)
+  assert.deepEqual(readFileSync(result.assetPath), readFileSync(source))
+  assert.equal(result.reference.assetName, result.assetName)
+  assert.equal(result.reference.url, "https://github.com/Mentra-Community/MentraOS/actions/runs/123")
+  writeFileSync(source, '{"result":"retry"}\n')
+  assert.notEqual(
+    prepareEvidenceAsset({
+      file: source,
+      kind: "production-mobile-candidates",
+      url: "https://github.com/Mentra-Community/MentraOS/actions/runs/124",
+      outputDirectory: directory,
+    }).assetName,
+    result.assetName,
+  )
+})
 
 function release(attempt, overrides = {}) {
   return {

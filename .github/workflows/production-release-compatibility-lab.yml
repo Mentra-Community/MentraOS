@@ -34,7 +34,6 @@ jobs:
       ota_sha256: ${{ steps.inputs.outputs.ota_sha256 }}
       build_number: ${{ steps.inputs.outputs.build_number }}
       promotion_release_id: ${{ steps.promotion.outputs.release_id }}
-      promotion_tag: ${{ steps.promotion.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -187,14 +186,13 @@ jobs:
             --created-at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" \
             --provenance-url "$provenance" \
             --output "promotion-output/$evidence_name"
-          digest=$(sha256sum "promotion-output/$evidence_name" | cut -d' ' -f1)
-          evidence_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${{ needs.load.outputs.promotion_tag }}/$evidence_name"
-          jq -n \
-            --arg url "$evidence_url" \
-            --arg sha256 "$digest" \
-            --arg assetName "$evidence_name" \
-            '{kind: "staging-mobile-n-compatibility-lab", url: $url, sha256: $sha256, assetName: $assetName}' \
-            > promotion-output/evidence-reference.json
+          node .github/scripts/production-promotion-assets.mjs prepare-evidence \
+            --file "promotion-output/$evidence_name" \
+            --kind staging-mobile-n-compatibility-lab \
+            --url "$provenance" \
+            --output promotion-output/evidence-reference.json \
+            --output-directory promotion-output/evidence-assets \
+            --github-output "$GITHUB_OUTPUT"
           node .github/scripts/production-promotion-state.mjs transition \
             --record promotion-input/current.json \
             --to selected \
@@ -212,8 +210,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           node .github/scripts/publish-immutable-release-asset.mjs \
-            --file promotion-output/production-compatibility-lab.json \
-            --name production-compatibility-lab.json \
+            --file "${{ steps.next.outputs.asset_path }}" \
+            --name "${{ steps.next.outputs.asset_name }}" \
             --release-id "${{ steps.promotion.outputs.release_id }}" \
             --repository "$GITHUB_REPOSITORY"
           node .github/scripts/production-promotion-assets.mjs publish-record \

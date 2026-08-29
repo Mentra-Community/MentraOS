@@ -109,9 +109,9 @@ jobs:
             for product in mentraApp starterKit; do
               apple_state=$(sed -n 's/^state=//p' "store-status/apple/$product.outputs")
               apple_build=$(sed -n 's/^build_id=//p' "store-status/apple/$product.outputs")
-              production_codes=$(jq -c .tracks.production "store-status/play/$product.json")
+              production_releases=$(jq -c .releases.production "store-status/play/$product.json")
               echo "- $product Apple: \`$apple_state\` (build id \`$apple_build\`)"
-              echo "- $product Google production version codes: \`$production_codes\`"
+              echo "- $product Google production releases: \`$production_releases\`"
             done
             echo
             echo "This workflow is read-only and does not infer approval from a Play track entry."

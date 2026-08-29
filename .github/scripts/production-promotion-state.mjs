@@ -342,6 +342,16 @@ function requireSafeText(value, label, maximum) {
   if (secretLike(value)) fail(`${label} appears to contain credential material`)
 }
 
+function attestationCoordinate(record, checkName, product, platform) {
+  const key = `${product}:${platform}`
+  const check = ATTESTATION_CHECKS[checkName]
+  if (!check.coverage.includes(key)) fail(`attestation check ${checkName} does not cover ${key}`)
+  if (checkName === "staging-mobile-n-compatibility") return record.coordinates.compatibilityLab[platform]
+  if (checkName === "production-mobile-n-compatibility") return record.coordinates.currentMentraApp[platform]
+  const productKey = product === "mentra-app" ? "mentraApp" : "starterKit"
+  return record.coordinates.candidates[productKey][platform]
+}
+
 export function validateAttestation(attestation, record, expectedCheck) {
   validatePromotionRecord(record)
   if (!attestation || typeof attestation !== "object" || Array.isArray(attestation))
@@ -373,12 +383,20 @@ export function validateAttestation(attestation, record, expectedCheck) {
       fail(`attestation.tests[${index}].platform is unsupported`)
     }
     if (item.result !== "pass") fail(`attestation.tests[${index}] did not pass`)
-    requireString(item.appVersion, `attestation.tests[${index}].appVersion`, 80)
-    requireString(String(item.appBuild), `attestation.tests[${index}].appBuild`, 80)
+    const coverageKey = `${item.product}:${item.platform}`
+    if (observed.has(coverageKey)) fail(`attestation contains duplicate coverage ${coverageKey}`)
+    const coordinate = attestationCoordinate(record, attestation.check, item.product, item.platform)
+    const appVersion = requireString(item.appVersion, `attestation.tests[${index}].appVersion`, 80)
+    const appBuild = requireString(String(item.appBuild), `attestation.tests[${index}].appBuild`, 80)
+    if (appVersion !== coordinate.marketingVersion || appBuild !== String(coordinate.buildNumber)) {
+      fail(
+        `attestation.tests[${index}] does not match frozen ${coverageKey} coordinate ${coordinate.marketingVersion} (${coordinate.buildNumber})`,
+      )
+    }
     requireString(item.deviceModel, `attestation.tests[${index}].deviceModel`, 120)
     requireString(item.osVersion, `attestation.tests[${index}].osVersion`, 80)
     requireSafeText(item.notes, `attestation.tests[${index}].notes`, 1000)
-    observed.add(`${item.product}:${item.platform}`)
+    observed.add(coverageKey)
   }
   for (const required of check.coverage) {
     if (!observed.has(required)) fail(`attestation is missing required coverage ${required}`)
