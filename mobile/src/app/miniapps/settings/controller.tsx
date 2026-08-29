@@ -12,7 +12,7 @@ import {getGlassesImage} from "@/utils/getGlassesImage"
 import {Group} from "@/components/ui"
 import {RouteButton} from "@/components/ui/RouteButton"
 
-import {DeviceTypes} from "@/../../cloud/packages/types/src"
+import {DeviceTypes} from "@mentra/engine"
 import {engine} from "@mentra/engine"
 
 import {EmptyState} from "@/components/glasses/info/EmptyState"

@@ -1,6 +1,6 @@
 import {useEffect} from "react"
 
-import {DeviceTypes} from "@/../../cloud/packages/types/src"
+import {DeviceTypes} from "@mentra/engine"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useApps, useStart, engine, SETTINGS, useSetting} from "@mentra/engine"
 import {askPermissionsUI} from "@/utils/PermissionsUtils"

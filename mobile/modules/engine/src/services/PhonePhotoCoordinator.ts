@@ -166,7 +166,7 @@ export class PhonePhotoCoordinator {
     // to time out. Fail fast with a typed error.
     //
     // We DON'T pre-check `hasCamera` here — the canonical capability data
-    // lives in `getModelCapabilities(deviceModel)` from @mentra/types and
+    // lives in `getModelCapabilities(deviceModel)` from @mentra/engine and
     // pulling that into this file would add a cross-package import. If a
     // cameraless device receives the BLE photo command, the glasses-side
     // handler will return a photo_response error within ~1s and the gated

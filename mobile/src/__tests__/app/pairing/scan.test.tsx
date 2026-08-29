@@ -12,15 +12,6 @@ jest.mock("expo-router", () => ({
   useFocusEffect: jest.fn(),
 }))
 
-jest.mock("@/../../cloud/packages/types/src", () => ({
-  DeviceTypes: {
-    LIVE: "Mentra Live",
-    G1: "Even Realities G1",
-    G2: "Even Realities G2",
-    AR99: "AR99",
-  },
-}))
-
 jest.mock("@/contexts/NavigationHistoryContext", () => ({
   focusEffectPreventBack: jest.fn(),
   usePushUnder: jest.fn(),

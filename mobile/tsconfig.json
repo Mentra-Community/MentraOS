@@ -18,7 +18,6 @@
     "paths": {
       "@/*": ["./src/*"],
       "assets/*": ["./assets/*"],
-      "@cloud/*": ["../cloud/packages/types/*"],
       "@assets/*": ["./assets/*"],
       "@plugins/*": ["./plugins/*"],
       "@mentra/bluetooth-sdk-internal": ["./modules/bluetooth-sdk/src/_internal"],

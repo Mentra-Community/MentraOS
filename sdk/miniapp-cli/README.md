@@ -205,7 +205,7 @@ Required: `packageName`, `version`, `name`, `hardwareRequirements`. Everything e
 
 `port` defaults to `3000` for `dev` and is ignored by `release` (which picks its own free port). For `dev`, this is the starting port; if the port or its sidecar neighbor is busy, the CLI scans upward until it finds a free adjacent pair.
 
-The CLI's allowed-value lists are mirrored by hand from `@mentra/types` to keep the CLI dependency-light so `bunx mentra-miniapp` stays fast. Drift between the two is caught at validation time, not import time.
+The CLI's allowed-value lists are mirrored by hand from `@mentra/engine` and `@mentra/miniapp` to keep the CLI dependency-light so `bunx mentra-miniapp` stays fast. Drift is caught at validation time, not import time.
 
 ---
 

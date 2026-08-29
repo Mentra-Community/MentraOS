@@ -1,4 +1,4 @@
-import {DeviceTypes, getModelCapabilities} from "@/../../cloud/packages/types/src"
+import {DeviceTypes, getModelCapabilities} from "@mentra/engine"
 import type {GlassesNotReadyEvent} from "@mentra/engine"
 import {useState, useEffect, type ReactNode} from "react"
 import {ActivityIndicator, Image, TouchableOpacity, View, type ImageSourcePropType, type ViewStyle} from "react-native"

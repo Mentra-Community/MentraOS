@@ -66,7 +66,7 @@ export const ota = {
   // --- actions ---
   /**
    * Start the device-status and OTA projections without starting the authenticated
-   * cloud/miniapp runtime. This is the explicit entry point for Bluetooth-only hosts.
+   * cloud connection or miniapp runtime. This is the explicit entry point for Bluetooth-only hosts.
    * Idempotent and safe when the full engine runtime is already running.
    */
   initialize: async () => {

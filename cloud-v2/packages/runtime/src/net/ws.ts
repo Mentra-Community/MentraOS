@@ -593,7 +593,8 @@ export const wsHandlers: WebSocketHandler<WsData> = {
           // cause was nginx ingress's proxy-send-timeout firing on CLIENT
           // silence, which server-side pings can't fix (they only reset the
           // server→client direction). The fix was app-level client pings plus
-          // an nginx WS-ingress timeout bump. See cloud/issues/034 + 035 (v1).
+          // an nginx WS-ingress timeout bump. The V1 incident history was
+          // retired with the V1 source tree.
           ws.send(
             JSON.stringify({
               v: PROTOCOL_MAJOR,

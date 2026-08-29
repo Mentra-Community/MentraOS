@@ -2,7 +2,7 @@
  * Local ESLint flat-config override.
  *
  * The workspace eslint config wires `eslint-import-resolver-typescript` to
- * `./mobile/tsconfig.json` + `./cloud/tsconfig.json`, so it can't see the
+ * the repository-wide TypeScript projects, so it can't see the
  * `@/*` path alias declared in this folder's tsconfig.json. Without this
  * override, `import {X} from "@/..."` lights up "Unable to resolve" even
  * though TS itself resolves fine.

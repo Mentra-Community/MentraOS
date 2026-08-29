@@ -69,7 +69,7 @@ import BluetoothSdk from "@mentra/engine/bluetooth-sdk"
 ### Mentra Live OTA flow
 
 Bluetooth-only hosts can render the OTA flow without configuring or starting
-the authenticated cloud/miniapp runtime:
+the authenticated cloud connection or miniapp runtime:
 
 ```tsx
 import {MentraLiveOtaFlow} from "@mentra/engine/ota"

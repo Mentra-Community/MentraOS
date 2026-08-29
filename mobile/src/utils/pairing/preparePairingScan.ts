@@ -2,7 +2,7 @@ import {engine} from "@mentra/engine"
 import {Linking, PermissionsAndroid, Platform} from "react-native"
 import type {Permission} from "react-native"
 
-import {DeviceTypes} from "@/../../cloud/packages/types/src"
+import {DeviceTypes} from "@mentra/engine"
 import {translate} from "@/i18n"
 import {showAlert} from "@/utils/AlertUtils"
 import {PermissionFeatures, checkConnectivityRequirementsUI, requestFeaturePermissions} from "@/utils/PermissionsUtils"
