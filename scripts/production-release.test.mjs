@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import {parseCliArgs, requireCommandState, statusSummary} from "./production-release.mjs"
+import {parseCliArgs, requireCommandState, statusSummary, validateAdvanceOptions} from "./production-release.mjs"
 
 const baseRecord = {
   schemaVersion: 1,
@@ -53,6 +53,23 @@ test("parses value and boolean options without shell sourcing", () => {
     options: {release: "3.1.0", attempt: "2", refresh: true, json: true},
     positionals: [],
   })
+})
+
+test("reserves 100 percent for the completion command", () => {
+  const rolling = {...baseRecord, state: "rolling-out"}
+  assert.deepEqual(validateAdvanceOptions(rolling, {"android-percent": "99"}), {
+    action: "advance",
+    androidPercent: "99",
+  })
+  assert.deepEqual(validateAdvanceOptions(rolling, {complete: true}), {
+    action: "complete",
+    androidPercent: "100",
+  })
+  assert.throws(() => validateAdvanceOptions(rolling, {"android-percent": "100"}), /use --complete/)
+  assert.throws(
+    () => validateAdvanceOptions({...rolling, state: "finalizing"}, {"android-percent": "99"}),
+    /only be resumed with --complete/,
+  )
 })
 
 const labReadyRecord = {

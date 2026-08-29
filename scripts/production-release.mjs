@@ -232,6 +232,21 @@ export function requireCommandState(command, record, options = {}) {
   return action
 }
 
+export function validateAdvanceOptions(record, options) {
+  requireCommandState("advance", record)
+  const percent = options["android-percent"]
+  if (Boolean(percent) === Boolean(options.complete)) {
+    throw commandError("advance requires exactly one of --android-percent N or --complete")
+  }
+  if (percent && (!/^\d+$/.test(percent) || Number(percent) < 1 || Number(percent) > 99)) {
+    throw commandError("--android-percent must be an integer from 1 through 99; use --complete for 100")
+  }
+  if (record.state === "finalizing" && !options.complete) {
+    throw commandError("a finalizing promotion can only be resumed with --complete")
+  }
+  return {action: options.complete ? "complete" : "advance", androidPercent: percent || "100"}
+}
+
 async function main(argv = process.argv.slice(2)) {
   const {command, options, positionals} = parseCliArgs(argv)
   if (!command || command === "help" || command === "--help" || positionals.length > 0) {
@@ -334,17 +349,7 @@ async function main(argv = process.argv.slice(2)) {
   }
 
   if (command === "advance") {
-    requireCommandState(command, loaded.record)
-    const percent = options["android-percent"]
-    if (Boolean(percent) === Boolean(options.complete)) {
-      throw commandError("advance requires exactly one of --android-percent N or --complete")
-    }
-    if (percent && (!/^\d+$/.test(percent) || Number(percent) < 1 || Number(percent) > 100)) {
-      throw commandError("--android-percent must be an integer from 1 through 100")
-    }
-    if (loaded.record.state === "finalizing" && !options.complete) {
-      throw commandError("a finalizing promotion can only be resumed with --complete")
-    }
+    const request = validateAdvanceOptions(loaded.record, options)
     await confirmEffect(
       options.complete
         ? "This requests final verification and completion of the public release."
@@ -354,8 +359,8 @@ async function main(argv = process.argv.slice(2)) {
     dispatch("production-release-rollout.yml", {
       release_identity: releaseIdentity,
       attempt: loaded.record.attempt,
-      action: options.complete ? "complete" : "advance",
-      android_percent: percent || "100",
+      action: request.action,
+      android_percent: request.androidPercent,
     })
     return
   }

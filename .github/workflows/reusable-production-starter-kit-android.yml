@@ -15,12 +15,18 @@ on:
       build_number:
         required: true
         type: number
+      candidate_release_id:
+        required: true
+        type: string
+      candidate_container_tag:
+        required: true
+        type: string
     outputs:
       result_artifact:
         value: ${{ jobs.android.outputs.result_artifact }}
 
 permissions:
-  contents: read
+  contents: write
 
 env:
   CI: true
@@ -93,7 +99,40 @@ jobs:
           [[ "$(jq -er '.dependencies["@mentra/bluetooth-sdk"]' package.json)" == "$version" ]]
           [[ "$(jq -er '.dependencies["@mentra/engine"]' package.json)" == "$version" ]]
 
+      - name: Resolve the attempt-scoped immutable App Bundle
+        id: candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          release_id="${{ inputs.candidate_release_id }}"
+          tag="${{ inputs.candidate_container_tag }}"
+          release=$(gh api "repos/${GITHUB_REPOSITORY}/releases/$release_id")
+          [[ "$(jq -r .tag_name <<< "$release")" == "$tag" ]]
+          [[ "$(jq -r .draft <<< "$release")" == true ]]
+          [[ "$(jq -r .target_commitish <<< "$release")" == "${{ inputs.source_commit }}" ]]
+          identity=$(jq -er .releaseIdentity release-input/plan/release-plan.json)
+          name="starter-kit-${identity}-android-${{ inputs.build_number }}.aab"
+          mkdir -p candidate-staging
+          path="$GITHUB_WORKSPACE/candidate-staging/$name"
+          assets=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases/$release_id/assets?per_page=100" | jq 'add')
+          matches=$(jq --arg name "$name" '[.[] | select(.name == $name)]' <<< "$assets")
+          [[ "$(jq length <<< "$matches")" -le 1 ]]
+          if [[ "$(jq length <<< "$matches")" == 1 ]]; then
+            asset_id=$(jq -er '.[0].id' <<< "$matches")
+            gh api -H "Accept: application/octet-stream" "repos/${GITHUB_REPOSITORY}/releases/assets/$asset_id" > "$path"
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+          {
+            echo "name=$name"
+            echo "path=$path"
+            echo "url=https://github.com/${GITHUB_REPOSITORY}/releases/download/$tag/$name"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Install and generate exact Android project
+        if: steps.candidate.outputs.exists != 'true'
         working-directory: starter-kit/examples/react-native
         env:
           BUILD_NUMBER: ${{ inputs.build_number }}
@@ -124,6 +163,7 @@ jobs:
           google-play-key-json: ${{ secrets.GOOGLE_PLAY_KEY_JSON }}
 
       - name: Build and sign customer-eligible Android App Bundle
+        if: steps.candidate.outputs.exists != 'true'
         working-directory: starter-kit/examples/react-native/android
         run: |
           set -euo pipefail
@@ -137,13 +177,33 @@ jobs:
             -keypass "$ORG_GRADLE_PROJECT_MENTRAOS_UPLOAD_KEY_PASSWORD" \
             "$aab" "$ORG_GRADLE_PROJECT_MENTRAOS_UPLOAD_KEY_ALIAS"
           jarsigner -verify -strict "$aab"
-          certificate_sha256=$(keytool -list -v \
-            -keystore "$GITHUB_WORKSPACE/mobile/credentials/upload-keystore.jks" \
-            -storepass "$ORG_GRADLE_PROJECT_MENTRAOS_UPLOAD_STORE_PASSWORD" \
-            -alias "$ORG_GRADLE_PROJECT_MENTRAOS_UPLOAD_KEY_ALIAS" \
-            | sed -n 's/^[[:space:]]*SHA256: //p' | tr -d ':')
+
+      - name: Persist and verify the exact App Bundle before Play upload
+        id: staged
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          staged="${{ steps.candidate.outputs.path }}"
+          if [[ "${{ steps.candidate.outputs.exists }}" != true ]]; then
+            built=starter-kit/examples/react-native/android/app/build/outputs/bundle/release/app-release.aab
+            cp "$built" "$staged"
+            node .github/scripts/publish-immutable-release-asset.mjs \
+              --file "$staged" \
+              --name "${{ steps.candidate.outputs.name }}" \
+              --release-id "${{ inputs.candidate_release_id }}" \
+              --repository "$GITHUB_REPOSITORY"
+          fi
+          test -s "$staged"
+          jarsigner -verify -strict "$staged"
+          certificate_sha256=$(keytool -printcert -jarfile "$staged" \
+            | sed -n 's/^[[:space:]]*SHA256: //p' | head -1 | tr -d ':')
           [[ "$certificate_sha256" =~ ^[0-9A-Fa-f]{64}$ ]]
-          echo "STARTER_ANDROID_SIGNING_CERT_SHA256=${certificate_sha256,,}" >> "$GITHUB_ENV"
+          {
+            echo "aab=$staged"
+            echo "sha256=$(sha256sum "$staged" | cut -d' ' -f1)"
+            echo "signing_certificate_sha256=${certificate_sha256,,}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Install pinned Google Play tooling
         run: |
@@ -164,6 +224,10 @@ jobs:
         run: |
           bundle exec fastlane track_version_codes
           if jq -e --argjson expected "${{ inputs.build_number }}" 'map(tonumber) | index($expected) != null' "$GOOGLE_PLAY_VERSION_CODES_OUTPUT" >/dev/null; then
+            [[ "${{ steps.candidate.outputs.exists }}" == true ]] || {
+              echo "Google Play contains this version code without this attempt's previously persisted App Bundle." >&2
+              exit 1
+            }
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
@@ -174,7 +238,7 @@ jobs:
         working-directory: starter-play
         env:
           APP_PACKAGE_NAME: com.mentra.bluetoothsdkexample
-          GOOGLE_PLAY_AAB: ${{ github.workspace }}/starter-kit/examples/react-native/android/app/build/outputs/bundle/release/app-release.aab
+          GOOGLE_PLAY_AAB: ${{ steps.staged.outputs.aab }}
           GOOGLE_PLAY_RELEASE_NAME: PRODUCTION CANDIDATE ${{ inputs.build_number }}
           GOOGLE_PLAY_TRACK: internal
         run: bundle exec fastlane google_play
@@ -187,18 +251,18 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p candidate-output
-          aab=starter-kit/examples/react-native/android/app/build/outputs/bundle/release/app-release.aab
+          aab="${{ steps.staged.outputs.aab }}"
           cp "$aab" candidate-output/starter-kit-production-candidate.aab
-          sha256=$(sha256sum "$aab" | cut -d' ' -f1)
           jq -n \
             --arg packageId "$EXAMPLE_PACKAGE_ID" \
             --argjson buildNumber "$BUILD_NUMBER" \
             --arg sourceCommit "$STARTER_KIT_COMMIT" \
-            --arg sha256 "$sha256" \
-            --arg signingCertificateSha256 "$STARTER_ANDROID_SIGNING_CERT_SHA256" \
+            --arg sha256 "${{ steps.staged.outputs.sha256 }}" \
+            --arg signingCertificateSha256 "${{ steps.staged.outputs.signing_certificate_sha256 }}" \
+            --arg artifactUrl "${{ steps.candidate.outputs.url }}" \
             --arg url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
             --arg uploadStatus "${{ steps.play.outputs.exists == 'true' && 'reused' || 'published' }}" \
-            '{schemaVersion: 1, product: "starter-kit", platform: "android", packageId: $packageId, buildNumber: $buildNumber, sourceCommit: $sourceCommit, playTrack: "internal", uploadStatus: $uploadStatus, artifactSha256: $sha256, signingCertificateSha256: $signingCertificateSha256, provenanceUrl: $url}' \
+            '{schemaVersion: 1, product: "starter-kit", platform: "android", packageId: $packageId, buildNumber: $buildNumber, sourceCommit: $sourceCommit, playTrack: "internal", uploadStatus: $uploadStatus, artifactUrl: $artifactUrl, artifactSha256: $sha256, signingCertificateSha256: $signingCertificateSha256, provenanceUrl: $url}' \
             > candidate-output/starter-kit-android-candidate.json
           echo "artifact=production-starter-kit-android-${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
 

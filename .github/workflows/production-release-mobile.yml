@@ -169,6 +169,8 @@ jobs:
       release_plan_artifact: ${{ needs.load.outputs.plan_artifact }}
       starter_kit_commit: ${{ needs.load.outputs.starter_kit_commit }}
       build_number: ${{ fromJSON(needs.load.outputs.starter_build) }}
+      candidate_release_id: ${{ needs.load.outputs.promotion_release_id }}
+      candidate_container_tag: ${{ needs.load.outputs.candidate_container_tag }}
     secrets: inherit
 
   record:
