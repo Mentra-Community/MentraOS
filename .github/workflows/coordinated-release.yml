@@ -39,6 +39,8 @@ jobs:
       backend_environment: ${{ steps.release.outputs.backend_environment }}
       play_track: ${{ steps.release.outputs.play_track }}
       testflight_group: ${{ steps.release.outputs.testflight_group }}
+      example_testflight_group: ${{ steps.release.outputs.example_testflight_group }}
+      example_testflight_audience: ${{ steps.release.outputs.example_testflight_audience }}
       dry_run: ${{ steps.release.outputs.dry_run }}
     steps:
       - uses: actions/checkout@v4
@@ -61,15 +63,19 @@ jobs:
               echo "backend_environment=dev" >> "$GITHUB_OUTPUT"
               echo "play_track=internal" >> "$GITHUB_OUTPUT"
               echo "testflight_group=Mentra Dev" >> "$GITHUB_OUTPUT"
+              echo "example_testflight_group=Mentra Dev" >> "$GITHUB_OUTPUT"
+              echo "example_testflight_audience=internal" >> "$GITHUB_OUTPUT"
               ;;
             staging)
               echo "cloud_environment=staging" >> "$GITHUB_OUTPUT"
-              # Beta is the exact production candidate promoted by App Store
-              # Connect and Google Play, so its signed bytes must already point
-              # at production services.
-              echo "backend_environment=prod" >> "$GITHUB_OUTPUT"
+              # Beta validates the branch-associated staging cloud. Production
+              # promotion needs a follow-up design because signed mobile bytes
+              # cannot have their embedded backend rewritten after this build.
+              echo "backend_environment=staging" >> "$GITHUB_OUTPUT"
               echo "play_track=beta" >> "$GITHUB_OUTPUT"
               echo "testflight_group=Mentra Staging" >> "$GITHUB_OUTPUT"
+              echo "example_testflight_group=Mentra Staging Public" >> "$GITHUB_OUTPUT"
+              echo "example_testflight_audience=external" >> "$GITHUB_OUTPUT"
               ;;
             *)
               echo "Coordinated prereleases only run from dev or staging, not $BRANCH." >&2
@@ -112,6 +118,8 @@ jobs:
           BACKEND_ENVIRONMENT: ${{ steps.channel.outputs.backend_environment }}
           PLAY_TRACK: ${{ steps.channel.outputs.play_track }}
           TESTFLIGHT_GROUP: ${{ steps.channel.outputs.testflight_group }}
+          EXAMPLE_TESTFLIGHT_GROUP: ${{ steps.channel.outputs.example_testflight_group }}
+          EXAMPLE_TESTFLIGHT_AUDIENCE: ${{ steps.channel.outputs.example_testflight_audience }}
         run: |
           set -euo pipefail
           identity=$(jq -er .releaseIdentity release-plan.json)
@@ -130,6 +138,8 @@ jobs:
             echo "backend_environment=$BACKEND_ENVIRONMENT"
             echo "play_track=$PLAY_TRACK"
             echo "testflight_group=$TESTFLIGHT_GROUP"
+            echo "example_testflight_group=$EXAMPLE_TESTFLIGHT_GROUP"
+            echo "example_testflight_audience=$EXAMPLE_TESTFLIGHT_AUDIENCE"
             echo "dry_run=$dry_run"
           } >> "$GITHUB_OUTPUT"
 
@@ -188,6 +198,7 @@ jobs:
             echo "- Mobile backend: \`${{ steps.release.outputs.backend_environment }}\`"
             echo "- Google Play: \`${{ steps.release.outputs.play_track }}\`"
             echo "- TestFlight: \`${{ steps.release.outputs.testflight_group }}\`"
+            echo "- Example TestFlight: \`${{ steps.release.outputs.example_testflight_group }}\` (\`${{ steps.release.outputs.example_testflight_audience }}\`)"
             echo "- Dry run: \`${{ steps.release.outputs.dry_run }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -586,7 +597,8 @@ jobs:
       source_commit: ${{ needs.plan.outputs.source_commit }}
       release_plan_artifact: ${{ needs.plan.outputs.plan_artifact }}
       starter_kit_result_artifact: ${{ needs.starter-kit.outputs.result_artifact }}
-      testflight_group: ${{ needs.plan.outputs.testflight_group }}
+      testflight_group: ${{ needs.plan.outputs.example_testflight_group }}
+      testflight_audience: ${{ needs.plan.outputs.example_testflight_audience }}
     secrets: inherit
 
   finalize:
@@ -786,8 +798,8 @@ jobs:
 
   docs:
     name: Publish release-matched documentation
-    needs: [plan, starter-kit, finalize]
-    if: needs.plan.result == 'success' && needs.starter-kit.result == 'success' && needs.finalize.result == 'success' && needs.plan.outputs.dry_run != 'true'
+    needs: [plan, starter-kit, example-testflight, finalize]
+    if: needs.plan.result == 'success' && needs.starter-kit.result == 'success' && needs.example-testflight.result == 'success' && needs.finalize.result == 'success' && needs.plan.outputs.dry_run != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
@@ -814,6 +826,11 @@ jobs:
         with:
           name: ${{ needs.starter-kit.outputs.result_artifact }}
           path: release-input/starter-kit
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.example-testflight.outputs.result_artifact }}
+          path: release-input/example-testflight
 
       - name: Select the documentation channel
         id: target
@@ -845,6 +862,7 @@ jobs:
           --output "$RUNNER_TEMP/mentraos-docs-source"
           --plan release-input/plan/release-plan.json
           --starter-kit "$(find release-input/starter-kit -type f -name 'starter-kit-release-*.json' -print -quit)"
+          --example-testflight "$(find release-input/example-testflight -type f -name 'example-testflight-publication.json' -print -quit)"
           --repository "${{ github.repository }}"
 
       - name: Export Mintlify docs
@@ -866,12 +884,13 @@ jobs:
           /*
             X-Robots-Tag: noindex
           HEADERS
-          grep -R --fixed-strings --quiet "$RELEASE_IDENTITY" "$export_dir/mentra-live"
-          if grep -R --fixed-strings --quiet '{{release-version}}' "$export_dir/mentra-live"; then
-            echo "Mintlify export contains an unresolved release-version variable." >&2
+          grep -R --fixed-strings --quiet "$RELEASE_IDENTITY" "$export_dir/bluetooth-sdk"
+          if grep -R --extended-regexp --ignore-case --quiet '\{\{[a-z0-9_-]+\}\}|%7b%7b[a-z0-9_-]+%7d%7d' "$export_dir/bluetooth-sdk"; then
+            echo "Mintlify export contains an unresolved documentation variable." >&2
             exit 1
           fi
-          grep -R --fixed-strings --quiet "${{ needs.starter-kit.outputs.react_native_apk_url }}" "$export_dir/mentra-live"
+          grep -R --fixed-strings --quiet "${{ needs.starter-kit.outputs.react_native_apk_url }}" "$export_dir/bluetooth-sdk"
+          grep -R --fixed-strings --quiet "${{ needs.example-testflight.outputs.install_url }}" "$export_dir/bluetooth-sdk"
 
       - name: Deploy to Cloudflare Pages
         env:
@@ -893,17 +912,22 @@ jobs:
         env:
           DOCS_URL: ${{ steps.target.outputs.docs_url }}
           RELEASE_IDENTITY: ${{ needs.plan.outputs.release_identity }}
+          EXAMPLE_APK_URL: ${{ needs.starter-kit.outputs.react_native_apk_url }}
+          EXAMPLE_IOS_URL: ${{ needs.example-testflight.outputs.install_url }}
         run: |
           set -euo pipefail
-          page="$DOCS_URL/mentra-live/software-update/"
+          page="$DOCS_URL/bluetooth-sdk/software-update/"
           body="$RUNNER_TEMP/software-update.html"
           headers="$RUNNER_TEMP/software-update.headers"
           for _ in {1..18}; do
             if curl --fail --silent --show-error --location \
               --dump-header "$headers" --output "$body" "$page" && \
               grep --fixed-strings --quiet "$RELEASE_IDENTITY" "$body" && \
+              grep --fixed-strings --quiet "href=\"$EXAMPLE_APK_URL\"" "$body" && \
+              grep --fixed-strings --quiet "href=\"$EXAMPLE_IOS_URL\"" "$body" && \
               grep --ignore-case --quiet '^x-robots-tag:.*noindex' "$headers" && \
-              ! grep --fixed-strings --quiet '{{release-version}}' "$body"; then
+              ! grep --extended-regexp --ignore-case --quiet \
+                '\{\{[a-z0-9_-]+\}\}|%7b%7b[a-z0-9_-]+%7d%7d' "$body"; then
               echo "Verified $page for $RELEASE_IDENTITY"
               exit 0
             fi
@@ -958,4 +982,9 @@ jobs:
           STARTER_KIT_APK_URL: ${{ needs.starter-kit.outputs.react_native_apk_url }}
           STARTER_KIT_RELEASE_URL: ${{ needs.starter-kit.outputs.release_url }}
           STARTER_KIT_RUN_URL: ${{ needs.starter-kit.outputs.run_url }}
+          EXAMPLE_TESTFLIGHT_DISTRIBUTION_STATUS: ${{ needs.example-testflight.outputs.distribution_status }}
+          EXAMPLE_TESTFLIGHT_INSTALL_URL: ${{ needs.example-testflight.outputs.install_url }}
+          EXAMPLE_TESTFLIGHT_REVIEW_STATE: ${{ needs.example-testflight.outputs.review_state }}
+          EXAMPLE_TESTFLIGHT_MARKETING_VERSION: ${{ needs.example-testflight.outputs.marketing_version }}
+          EXAMPLE_TESTFLIGHT_BUILD_NUMBER: ${{ needs.example-testflight.outputs.build_number }}
         run: .github/scripts/notify-coordinated-release-slack.sh

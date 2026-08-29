@@ -678,7 +678,7 @@ describes:
 `mintlify-docs/docs.json` uses Mintlify's native global variables. The checked-in
 `release-version` and production release-artifact URL use the stable family
 base, so the `main` branch remains directly buildable by Mintlify. Current
-release references throughout `mintlify-docs/mentra-live/` use those variables
+release references throughout `mintlify-docs/bluetooth-sdk/` use those variables
 instead of copied literals.
 
 The coordinated `dev` and `staging` workflow does not edit the checkout. After

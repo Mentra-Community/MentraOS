@@ -3,7 +3,7 @@ import {useRoute} from "@react-navigation/native"
 import {useCallback, useEffect, useRef, useState} from "react"
 import {Platform} from "react-native"
 
-import {ControllerTypes, DeviceTypes, getModelCapabilities} from "@/../../cloud/packages/types/src"
+import {ControllerTypes, DeviceTypes, getModelCapabilities} from "@mentra/engine"
 import {Screen} from "@/components/ignite"
 import {OnboardingGuide, OnboardingStep} from "@/components/onboarding/OnboardingGuide"
 import {focusEffectPreventBack, usePushUnder} from "@/contexts/NavigationHistoryContext"

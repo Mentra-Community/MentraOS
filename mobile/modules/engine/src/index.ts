@@ -89,6 +89,7 @@ export {
   GLOBAL_OTA_TIMEOUT_MS,
   PING_INTERVAL_MS,
   QUERY_REPLY_TIMEOUT_MS,
+  BES_RESTART_TIMEOUT_MS,
   OtaProgressMessages,
 } from "./services/otaInstallPolicy"
 export {deriveDisplayState} from "./services/otaDisplayState"
@@ -199,6 +200,7 @@ export {
   evenRealitiesG1,
   evenRealitiesG2,
   mentraLive,
+  nimo,
   vuzixZ100,
   mentraDisplay,
 } from "./types"

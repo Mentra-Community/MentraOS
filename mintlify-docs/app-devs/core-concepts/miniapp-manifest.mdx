@@ -4,6 +4,10 @@ description: "Declare your miniapp's identity, entry points, permissions, and ha
 icon: "file-code"
 ---
 
+import BetaNote from '/snippets/beta-note.mdx'
+
+<BetaNote />
+
 Every miniapp has a `miniapp.json` at its root. It declares who the miniapp is,
 where its two layers are built to, what permissions it needs, and what hardware
 it requires. The CLI validates it on every `dev`, `pack`, and `release`: bad

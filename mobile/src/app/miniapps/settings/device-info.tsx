@@ -1,6 +1,6 @@
 import {ScrollView, View} from "react-native"
 
-import {DeviceTypes} from "@/../../cloud/packages/types/src"
+import {DeviceTypes} from "@mentra/engine"
 import {Header, Screen} from "@/components/ignite"
 import {Group} from "@/components/ui/Group"
 import {RouteButton} from "@/components/ui/RouteButton"

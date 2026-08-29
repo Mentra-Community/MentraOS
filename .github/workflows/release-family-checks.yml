@@ -5,14 +5,20 @@ on:
     branches: [dev, staging, main]
     paths:
       - ".github/release-family.json"
+      - ".github/production-release/**"
       - ".github/scripts/*.mjs"
       - ".github/workflows/coordinated-*.yml"
       - ".github/workflows/release-family-checks.yml"
       - ".github/workflows/reusable-coordinated-*.yml"
+      - ".github/workflows/reusable-production-*.yml"
+      - ".github/workflows/production-release-*.yml"
       - "changelogs/*.md"
       - "asg_client/ota_manifests/firmware_live.json"
       - "package.json"
       - "mobile/package.json"
+      - "mobile/ci/fastlane-*/**"
+      - "mobile/scripts/app-store-connect-build.mjs"
+      - "scripts/production-release*.mjs"
       - "mobile/modules/bluetooth-sdk/package.json"
       - "mobile/modules/bluetooth-sdk/scripts/*.mjs"
       - "mobile/modules/bluetooth-sdk/src/generated/changelogCatalog.ts"
@@ -23,7 +29,6 @@ on:
       - "mobile/modules/engine/scripts/*.mjs"
       - "mobile/modules/jspolyfill/package.json"
       - "mobile/modules/miniapp/package.json"
-      - "cloud/packages/types/package.json"
       - "cloud-v2/packages/cloud-client/package.json"
       - "cloud-v2/packages/protocol/package.json"
 
@@ -50,6 +55,7 @@ jobs:
             mobile/modules/bluetooth-sdk/scripts \
             mobile/modules/engine/scripts \
             -maxdepth 1 -name '*.test.mjs' -print | sort)
+          tests+=(mobile/scripts/app-store-connect-build.test.mjs scripts/production-release.test.mjs)
           test "${#tests[@]}" -gt 0
           node --test "${tests[@]}"
       - name: Validate repository definition

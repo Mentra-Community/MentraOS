@@ -15,9 +15,26 @@ on:
       testflight_group:
         required: true
         type: string
+      testflight_audience:
+        required: true
+        type: string
+      production_build_number:
+        required: false
+        default: 0
+        type: number
     outputs:
       result_artifact:
         value: ${{ jobs.testflight.outputs.result_artifact }}
+      distribution_status:
+        value: ${{ jobs.testflight.outputs.distribution_status }}
+      install_url:
+        value: ${{ jobs.testflight.outputs.install_url }}
+      review_state:
+        value: ${{ jobs.testflight.outputs.review_state }}
+      marketing_version:
+        value: ${{ jobs.testflight.outputs.marketing_version }}
+      build_number:
+        value: ${{ jobs.testflight.outputs.build_number }}
 
 permissions:
   actions: read
@@ -32,8 +49,70 @@ env:
   APPLE_TEAM_ID: T5XXXL6N36
 
 jobs:
+  preflight:
+    name: Check example TestFlight distribution availability
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      skip: ${{ steps.preflight.outputs.skip }}
+      skip_reason: ${{ steps.preflight.outputs.skip_reason }}
+      skip_detail: ${{ steps.preflight.outputs.skip_detail }}
+      group_id: ${{ steps.preflight.outputs.group_id }}
+      group_name: ${{ steps.preflight.outputs.group_name }}
+      audience: ${{ steps.preflight.outputs.audience }}
+      install_url: ${{ steps.preflight.outputs.install_url }}
+      review_state: ${{ steps.preflight.outputs.review_state }}
+      review_build_id: ${{ steps.preflight.outputs.review_build_id }}
+    steps:
+      - name: Checkout MentraOS release source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_commit }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.release_plan_artifact }}
+          path: release-input/plan
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Inject App Store Connect API credential
+        uses: ./.github/actions/inject-signing
+        with:
+          ios: "true"
+          asc-api-key-p8-b64: ${{ secrets.ASC_API_KEY_P8_B64 }}
+          asc-api-key-id: ${{ secrets.ASC_API_KEY_ID }}
+          asc-api-issuer-id: ${{ secrets.ASC_API_ISSUER_ID }}
+
+      - name: Resolve App Store Connect credential path
+        id: asc
+        run: |
+          set -euo pipefail
+          key_path=$(sed -n 's/^ASC_API_KEY_PATH=//p' "$MENTRA_ASC_CONFIG_PATH")
+          test -f "$key_path"
+          echo "key_path=$key_path" >> "$GITHUB_OUTPUT"
+
+      - name: Check for an unresolved external review
+        id: preflight
+        env:
+          INTERNAL_INSTALL_URL: https://appstoreconnect.apple.com/apps/6792839366/testflight/groups/{groupId}
+        run: >-
+          node mobile/scripts/app-store-connect-build.mjs testflight-preflight
+          --issuer-id "${{ secrets.ASC_API_ISSUER_ID }}"
+          --key-id "${{ secrets.ASC_API_KEY_ID }}"
+          --key-path "${{ steps.asc.outputs.key_path }}"
+          --app-id "$EXAMPLE_APP_ID"
+          --bundle-id "$EXAMPLE_BUNDLE_ID"
+          --group-name "${{ inputs.testflight_group }}"
+          --audience "${{ inputs.testflight_audience }}"
+          --install-url "$INTERNAL_INSTALL_URL"
+          --allow-rejected-override false
+
   ios:
     name: Publish React Native example to TestFlight
+    needs: preflight
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 90
     concurrency:
@@ -74,15 +153,23 @@ jobs:
           [[ "$(jq -er .releaseIdentity "$starter")" == "$release_identity" ]]
           [[ "$(jq -er .mentraos.sourceCommit "$starter")" == "$source_commit" ]]
           release_commit=$(jq -er '.starterKit.releaseCommit | select(test("^[0-9a-f]{40}$"))' "$starter")
-          expected_group=$(jq -er 'if .channel == "dev" then "Mentra Dev" elif .channel == "beta" then "Mentra Staging" else error("unsupported channel") end' "$plan")
+          expected_group=$(jq -er 'if .channel == "dev" then "Mentra Dev" elif .channel == "beta" then "Mentra Staging Public" elif .channel == "production" then "Mentra SDK Example Production Candidates" else error("unsupported channel") end' "$plan")
           [[ "$TESTFLIGHT_GROUP" == "$expected_group" ]]
+          expected_audience=$(jq -er 'if .channel == "beta" then "external" else "internal" end' "$plan")
+          [[ "${{ inputs.testflight_audience }}" == "$expected_audience" ]]
+          channel=$(jq -er .channel "$plan")
+          build_number=$(jq -er .native.buildNumber "$plan")
+          if [[ "$channel" == "production" ]]; then
+            build_number="${{ inputs.production_build_number }}"
+            [[ "$build_number" =~ ^[1-9][0-9]*$ ]]
+          fi
           {
             echo "release_set_id=$release_set_id"
             echo "release_identity=$release_identity"
             echo "starter_result=$starter"
             echo "starter_release_commit=$release_commit"
             echo "marketing_version=$(jq -er .native.marketingVersion "$plan")"
-            echo "build_number=$(jq -er .native.buildNumber "$plan")"
+            echo "build_number=$build_number"
             echo "upload_artifact=coordinated-example-testflight-upload-$release_set_id"
           } >> "$GITHUB_OUTPUT"
 
@@ -163,7 +250,17 @@ jobs:
       - name: Install React Native example dependencies
         if: steps.app-store.outputs.exists != 'true'
         working-directory: starter-kit/examples/react-native
-        run: bun install --frozen-lockfile
+        env:
+          EXPECTED_VERSION: ${{ steps.coordinates.outputs.marketing_version }}
+        run: |
+          set -euo pipefail
+          if [[ "$(jq -er .channel "$GITHUB_WORKSPACE/release-input/plan/release-plan.json")" == "production" ]]; then
+            [[ "$(jq -er .expo.ios.bundleIdentifier app.json)" == "$EXAMPLE_BUNDLE_ID" ]]
+            [[ "$(jq -er .expo.android.package app.json)" == "$EXAMPLE_BUNDLE_ID" ]]
+            [[ "$(jq -er '.dependencies["@mentra/bluetooth-sdk"]' package.json)" == "$EXPECTED_VERSION" ]]
+            [[ "$(jq -er '.dependencies["@mentra/engine"]' package.json)" == "$EXPECTED_VERSION" ]]
+          fi
+          bun install --frozen-lockfile
 
       - name: Install GStreamer iOS SDK
         if: steps.app-store.outputs.exists != 'true'
@@ -178,17 +275,21 @@ jobs:
           BUILD_NUMBER: ${{ steps.coordinates.outputs.build_number }}
         run: |
           set -euo pipefail
+          MENTRA_CHANNEL="$(jq -er .channel "$GITHUB_WORKSPACE/release-input/plan/release-plan.json")"
+          export MENTRA_CHANNEL
           node --input-type=module <<'NODE'
           import {readFileSync, writeFileSync} from "node:fs"
           const file = "app.json"
           const config = JSON.parse(readFileSync(file, "utf8"))
           config.expo.version = process.env.MARKETING_VERSION
-          config.expo.ios.bundleIdentifier = process.env.EXAMPLE_BUNDLE_ID
+          if (process.env.MENTRA_CHANNEL !== "production") {
+            config.expo.ios.bundleIdentifier = process.env.EXAMPLE_BUNDLE_ID
+          }
           config.expo.ios.buildNumber = process.env.BUILD_NUMBER
           config.expo.ios.infoPlist.ITSAppUsesNonExemptEncryption = false
           writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`)
           NODE
-          bunx expo prebuild --platform ios --clean
+          bunx expo prebuild --platform ios
           test -n "$(find ios -maxdepth 1 -name '*.xcworkspace' -print -quit)"
 
       - name: Install the shared Apple distribution identity
@@ -211,8 +312,10 @@ jobs:
           security default-keychain -d user \
             | sed -E 's/^[[:space:]]*"(.*)"[[:space:]]*$/\1/' \
             > "$previous_default"
-          echo "MENTRA_PREVIOUS_KEYCHAINS=$previous_keychains" >> "$GITHUB_ENV"
-          echo "MENTRA_PREVIOUS_DEFAULT_KEYCHAIN=$previous_default" >> "$GITHUB_ENV"
+          {
+            echo "MENTRA_PREVIOUS_KEYCHAINS=$previous_keychains"
+            echo "MENTRA_PREVIOUS_DEFAULT_KEYCHAIN=$previous_default"
+          } >> "$GITHUB_ENV"
           MATCH_GIT_BASIC_AUTHORIZATION="$(printf '%s' "$RAW_MATCH_GIT_BASIC_AUTHORIZATION" | tr -d '\r\n')"
           export MATCH_GIT_BASIC_AUTHORIZATION
           bundle install
@@ -268,10 +371,12 @@ jobs:
           profile_name=$(/usr/libexec/PlistBuddy -c 'Print :Name' "$profile_plist")
           [[ "$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' "$profile_plist")" == "$APPLE_TEAM_ID.$EXAMPLE_BUNDLE_ID" ]]
           [[ "$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:get-task-allow' "$profile_plist")" == "false" ]]
-          echo "MENTRA_CI_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
-          echo "MENTRA_CI_KEYCHAIN_PASSWORD=$password" >> "$GITHUB_ENV"
-          echo "MENTRA_CI_CODE_SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
-          echo "MENTRA_CI_PROVISIONING_PROFILE_NAME=$profile_name" >> "$GITHUB_ENV"
+          {
+            echo "MENTRA_CI_KEYCHAIN=$keychain"
+            echo "MENTRA_CI_KEYCHAIN_PASSWORD=$password"
+            echo "MENTRA_CI_CODE_SIGN_IDENTITY=$identity"
+            echo "MENTRA_CI_PROVISIONING_PROFILE_NAME=$profile_name"
+          } >> "$GITHUB_ENV"
 
       - name: Archive and export the signed React Native example
         if: steps.app-store.outputs.exists != 'true'
@@ -415,11 +520,20 @@ jobs:
 
   testflight:
     name: Process example upload and assign TestFlight group
-    needs: ios
+    needs: [preflight, ios]
+    if: >-
+      always() &&
+      needs.preflight.result == 'success' &&
+      needs.ios.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 70
     outputs:
       result_artifact: ${{ steps.coordinates.outputs.result_artifact }}
+      distribution_status: ${{ steps.record.outputs.distribution_status }}
+      install_url: ${{ steps.record.outputs.install_url }}
+      review_state: ${{ steps.record.outputs.review_state }}
+      marketing_version: ${{ steps.coordinates.outputs.marketing_version }}
+      build_number: ${{ steps.coordinates.outputs.build_number }}
     steps:
       - name: Checkout MentraOS release source
         uses: actions/checkout@v4
@@ -455,13 +569,21 @@ jobs:
           [[ "$(jq -er .releaseSetId "$starter")" == "$release_set_id" ]]
           [[ "$(jq -er .releaseIdentity "$starter")" == "$release_identity" ]]
           [[ "$(jq -er .mentraos.sourceCommit "$starter")" == "$(jq -er .sourceCommit "$plan")" ]]
-          expected_group=$(jq -er 'if .channel == "dev" then "Mentra Dev" elif .channel == "beta" then "Mentra Staging" else error("unsupported channel") end' "$plan")
+          expected_group=$(jq -er 'if .channel == "dev" then "Mentra Dev" elif .channel == "beta" then "Mentra Staging Public" elif .channel == "production" then "Mentra SDK Example Production Candidates" else error("unsupported channel") end' "$plan")
           [[ "$TESTFLIGHT_GROUP" == "$expected_group" ]]
+          expected_audience=$(jq -er 'if .channel == "beta" then "external" else "internal" end' "$plan")
+          [[ "${{ inputs.testflight_audience }}" == "$expected_audience" ]]
+          channel=$(jq -er .channel "$plan")
+          build_number=$(jq -er .native.buildNumber "$plan")
+          if [[ "$channel" == "production" ]]; then
+            build_number="${{ inputs.production_build_number }}"
+            [[ "$build_number" =~ ^[1-9][0-9]*$ ]]
+          fi
           {
             echo "release_identity=$release_identity"
             echo "starter_result=$starter"
             echo "marketing_version=$(jq -er .native.marketingVersion "$plan")"
-            echo "build_number=$(jq -er .native.buildNumber "$plan")"
+            echo "build_number=$build_number"
             echo "result_artifact=coordinated-example-testflight-$release_set_id"
           } >> "$GITHUB_OUTPUT"
 
@@ -485,8 +607,21 @@ jobs:
           test -f "$key_path"
           echo "key_path=$key_path" >> "$GITHUB_OUTPUT"
 
+      - name: Wait for the exact uploaded build to finish processing
+        id: processed
+        run: >-
+          node mobile/scripts/app-store-connect-build.mjs wait
+          --issuer-id "${{ secrets.ASC_API_ISSUER_ID }}"
+          --key-id "${{ secrets.ASC_API_KEY_ID }}"
+          --key-path "${{ steps.asc.outputs.key_path }}"
+          --app-id "$EXAMPLE_APP_ID"
+          --bundle-id "$EXAMPLE_BUNDLE_ID"
+          --marketing-version "${{ steps.coordinates.outputs.marketing_version }}"
+          --build-number "${{ steps.coordinates.outputs.build_number }}"
+
       - name: Wait for processing and assign the example TestFlight group
         id: assignment
+        if: needs.preflight.outputs.skip != 'true'
         run: >-
           node mobile/scripts/app-store-connect-build.mjs assign
           --issuer-id "${{ secrets.ASC_API_ISSUER_ID }}"
@@ -497,9 +632,14 @@ jobs:
           --marketing-version "${{ steps.coordinates.outputs.marketing_version }}"
           --build-number "${{ steps.coordinates.outputs.build_number }}"
           --group-name "${{ inputs.testflight_group }}"
+          --audience "${{ inputs.testflight_audience }}"
+          --install-url "${{ needs.preflight.outputs.install_url }}"
+          --allow-rejected-override false
+          --review-notes ""
           --whats-new "Coordinated example release ${{ steps.coordinates.outputs.release_identity }}."
 
       - name: Write example TestFlight publication result
+        id: record
         env:
           UPLOAD_STATUS: ${{ needs.ios.outputs.upload_status }}
         run: |
@@ -507,19 +647,46 @@ jobs:
           ipa=$(find release-input/upload -type f -name '*.ipa' -print -quit)
           args=()
           [[ -z "$ipa" ]] || args+=(--ipa "$ipa")
+          if [[ "${{ needs.preflight.outputs.skip }}" == "true" ]]; then
+            app_id="$EXAMPLE_APP_ID"
+            build_id="${{ steps.processed.outputs.build_id }}"
+            group_id="${{ needs.preflight.outputs.group_id }}"
+            group_name="${{ needs.preflight.outputs.group_name }}"
+            distribution_status=skipped
+            review_state="${{ needs.preflight.outputs.review_state }}"
+          else
+            app_id="${{ steps.assignment.outputs.app_id }}"
+            build_id="${{ steps.assignment.outputs.build_id }}"
+            group_id="${{ steps.assignment.outputs.group_id }}"
+            group_name="${{ steps.assignment.outputs.group_name }}"
+            distribution_status="${{ steps.assignment.outputs.distribution_status }}"
+            review_state="${{ steps.assignment.outputs.review_state }}"
+          fi
           mkdir -p release-output
           node .github/scripts/coordinated-example-testflight-record.mjs \
             --plan release-input/plan/release-plan.json \
             --starter-kit "${{ steps.coordinates.outputs.starter_result }}" \
-            --app-id "${{ steps.assignment.outputs.app_id }}" \
+            --app-id "$app_id" \
             --bundle-id "$EXAMPLE_BUNDLE_ID" \
-            --build-id "${{ steps.assignment.outputs.build_id }}" \
-            --group-id "${{ steps.assignment.outputs.group_id }}" \
-            --group-name "${{ steps.assignment.outputs.group_name }}" \
+            --build-id "$build_id" \
+            --group-id "$group_id" \
+            --group-name "$group_name" \
+            --audience "${{ inputs.testflight_audience }}" \
+            --distribution-status "$distribution_status" \
+            --install-url "${{ needs.preflight.outputs.install_url }}" \
+            --review-state "$review_state" \
+            --skip-reason "${{ needs.preflight.outputs.skip_reason }}" \
+            --skip-detail "${{ needs.preflight.outputs.skip_detail }}" \
             --upload-status "$UPLOAD_STATUS" \
+            --build-number "${{ steps.coordinates.outputs.build_number }}" \
             --provenance-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
             "${args[@]}" \
             --output release-output/example-testflight-publication.json
+          {
+            echo "distribution_status=$distribution_status"
+            echo "install_url=${{ needs.preflight.outputs.install_url }}"
+            echo "review_state=$review_state"
+          } >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -536,6 +703,8 @@ jobs:
             echo "- Release: \`${{ steps.coordinates.outputs.release_identity }}\`"
             echo "- App: \`$EXAMPLE_BUNDLE_ID\` (\`$EXAMPLE_APP_ID\`)"
             echo "- Build: \`${{ steps.coordinates.outputs.build_number }}\`"
-            echo "- Group: \`${{ steps.assignment.outputs.group_name }}\` (\`${{ steps.assignment.outputs.group_id }}\`)"
-            echo "- Upload: \`${{ needs.ios.outputs.upload_status }}\`"
+            echo "- Group: \`${{ needs.preflight.outputs.group_name }}\` (\`${{ needs.preflight.outputs.group_id }}\`)"
+            echo "- Audience: \`${{ inputs.testflight_audience }}\`"
+            echo "- Distribution: \`${{ steps.record.outputs.distribution_status }}\`"
+            echo "- Install: ${{ needs.preflight.outputs.install_url }}"
           } >> "$GITHUB_STEP_SUMMARY"

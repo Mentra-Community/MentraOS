@@ -352,7 +352,7 @@ Android and iOS async APIs use `BluetoothSdkException` / `BluetoothSdkError` for
 React Native apps should use `MentraLiveOtaFlow` or `useMentraLiveOta` from
 `@mentra/engine/ota`. They provide the same tested Wi-Fi/hotspot,
 APK/MTK/BES, restart, retry, and verification flow as the Mentra App. See
-[Update Mentra Live](https://docs.mentraglass.com/mentra-live/software-update).
+[Update Mentra Live](https://docs.mentraglass.com/bluetooth-sdk/software-update).
 
 The Bluetooth SDK exposes the lower-level commands and transport capabilities
 that Mentra Engine and native apps build on. They are not a replacement for the
@@ -409,7 +409,7 @@ OTA requires Mentra Live glasses firmware that supports the ASG OTA protocol and
 
 For release selection, bundle verification, analytics opt-out, internal server
 requirements, and disconnected validation, see the
-[air-gapped deployment guide](https://docs.mentraglass.com/mentra-live/air-gapped-deployment).
+[air-gapped deployment guide](https://docs.mentraglass.com/bluetooth-sdk/air-gapped-deployment).
 
 Mentra Live also rejects `ota_start` before acknowledgement when its known battery level is below 5%, emitting a failed `ota_status` with `error_message: "battery_low"`. Unknown battery state remains fail-open, so apps should keep their own (typically stricter) user-facing battery policy.
 

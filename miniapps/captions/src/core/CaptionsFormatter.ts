@@ -8,10 +8,8 @@
  * Speaker label formatting and history management belong here, not in the SDK.
  */
 
-// All profiles and utilities from the vendored display-utils. In the cloud app
-// this came from "@mentra/sdk/display-utils"; here we bundle a verbatim copy of
-// cloud/packages/display-utils under src/vendor so it loads inside the on-device
-// JSContext (no native deps, only relative imports).
+// All profiles and utilities come from the vendored display-utils. The local
+// copy loads inside the on-device JSContext with no native dependencies.
 import {
   TextMeasurer,
   TextWrapper,

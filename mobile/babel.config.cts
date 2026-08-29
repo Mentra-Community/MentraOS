@@ -13,7 +13,6 @@ module.exports = function (api: any) {
             // "assets": "./assets",
             "@plugins": "./plugins",
             "@assets": "./assets",
-            "@cloud": "../cloud/packages/types",
             "@mentra/bluetooth-sdk-internal": "./modules/bluetooth-sdk/src/_internal",
           },
           extensions: [".ios.js", ".android.js", ".js", ".ts", ".tsx", ".json"],

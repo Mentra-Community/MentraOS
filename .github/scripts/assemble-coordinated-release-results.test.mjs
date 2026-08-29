@@ -180,7 +180,13 @@ test("assembles every product target and finalizes one complete release manifest
     app: {id: "6792839366", bundleId: "com.mentra.bluetoothsdkexample"},
     version: {marketingVersion: plan.native.marketingVersion, buildNumber: plan.native.buildNumber},
     build: {id: "build-1", processingState: "VALID", uploadStatus: "published"},
-    group: {id: "group-1", name: "Mentra Staging"},
+    group: {id: "group-1", name: "Mentra Staging Public"},
+    distribution: {
+      audience: "external",
+      status: "submitted",
+      installUrl: "https://testflight.apple.com/join/public123",
+      reviewState: "WAITING_FOR_REVIEW",
+    },
     provenanceUrl,
     ipa: {size: 123, sha256: "9".repeat(64)},
   }

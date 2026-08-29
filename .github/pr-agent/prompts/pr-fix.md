@@ -19,7 +19,7 @@ You receive:
    - Look for the same bug class elsewhere in the scoped directory
 3. Apply minimal fixes for all **blocking** findings and CI root causes.
 4. Run targeted verification before finishing:
-   - `cloud/**` → `cd cloud && bun test` (or scoped package test)
+   - `cloud-v2/**` → `cd cloud-v2 && bun test` (or scoped package test)
    - `mobile/**` → `cd mobile && bun test` for affected areas
    - `asg_client/**` → relevant Gradle test task if applicable
 5. Do **not** refactor unrelated code.

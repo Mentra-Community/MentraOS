@@ -238,4 +238,40 @@ describe("MentraLiveOtaFlow", () => {
     unmount()
     expect(onFirmwareRestartingChange).toHaveBeenLastCalledWith(false, false)
   })
+
+  it("presents a firmware reboot as active work with no completion action", () => {
+    useGlassesStore.getState().setGlassesInfo({
+      connection: {state: "connected", fullyBooted: true},
+    })
+    const {getByText, queryByTestId} = render(
+      <MentraLiveOtaFlow
+        initialPage="progress"
+        initializeRuntime={false}
+        onFinished={jest.fn()}
+        onOpenWifiSetup={jest.fn()}
+      />,
+    )
+
+    act(() => {
+      useGlassesStore.getState().setOtaStatus({
+        sessionId: "session",
+        totalSteps: 1,
+        currentStep: 1,
+        stepType: "bes",
+        phase: "install",
+        stepPercent: 100,
+        overallPercent: 100,
+        status: "step_complete",
+      })
+    })
+
+    expect(getByText("Restarting Mentra Live…")).toBeDefined()
+    expect(
+      getByText(
+        "The update is installed. Keep your glasses nearby and leave this screen open while they finish starting.",
+      ),
+    ).toBeDefined()
+    expect(getByText("We'll continue automatically when they're ready.")).toBeDefined()
+    expect(queryByTestId("button-Continue")).toBeNull()
+  })
 })

@@ -1,10 +1,13 @@
 ---
 title: "Overview"
 description: "Build on-device apps for smart glasses with the Mentra Miniapp SDK."
+icon: "compass"
 ---
 
 import LegacyCloudNote from '/snippets/legacy-cloud-note.mdx'
 import BetaNote from '/snippets/beta-note.mdx'
+
+<BetaNote />
 
 MentraOS is the operating system for smart glasses. A **miniapp** is an app that
 runs on the user's phone, inside the Mentra App, and drives the glasses through the
@@ -13,10 +16,8 @@ from the Mentra Miniapp Store, and it runs on their device.
 
 <Info>
 Building a mobile app that connects directly to glasses over Bluetooth? Use the
-[Bluetooth SDK docs](/mentra-live/overview) instead.
+[Bluetooth SDK docs](/bluetooth-sdk/overview) instead.
 </Info>
-
-<BetaNote />
 
 <LegacyCloudNote />
 
@@ -96,7 +97,7 @@ so a single `bun install` brings everything down.
   <Card title="The session" icon="plug" href="/app-devs/core-concepts/session">
     The object that connects you to the glasses.
   </Card>
-  <Card title="Mobile Bluetooth apps" icon="bluetooth" href="/mentra-live/overview">
+  <Card title="Mobile Bluetooth apps" icon="bluetooth" href="/bluetooth-sdk/overview">
     Connecting to glasses directly over BLE instead.
   </Card>
 </CardGroup>

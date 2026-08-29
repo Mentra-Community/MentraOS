@@ -1,12 +1,12 @@
-// Note: these enum string values must stay in sync with @mentra/types.
-// We cannot depend on @mentra/types here because this lightweight CLI package
+// Note: these enum string values must stay in sync with @mentra/engine and
+// @mentra/miniapp. We cannot depend on them here because this lightweight CLI package
 // is intentionally dependency-minimal (so `bunx @mentra/miniapp-cli` starts
 // fast). Mirror string lists manually; failing validations point authors at
 // the allowed values directly.
 //
 // Sources of truth:
-//   - AppPermissionType: cloud/packages/types/src/applet.ts
-//   - HardwareType:      cloud/packages/types/src/enums.ts
+//   - AppPermissionType: mobile/modules/engine/src/types/applet.ts
+//   - HardwareType:      mobile/modules/miniapp/src/hardware.ts
 //   - HardwareRequirementLevel: same
 //   - AppletPermission shape: {type, required?, description?}
 //   - HardwareRequirement shape: {type, level, description?}
