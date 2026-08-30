@@ -13,11 +13,13 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@azure/communication-identity": "^1.3.1",
     "@mentra/cloud-protocol": "^3.1.0",
     "@mentra/cloud-shared": "workspace:*",
     "@soniox/node": "^2.1.0",
     "hono": "^4.11.1",
     "ioredis": "^5.4.1",
+    "jose": "^5.9.6",
     "tweetnacl": "^1.0.3",
     "ulid": "^3.0.2",
     "zod": "^3.24.1"

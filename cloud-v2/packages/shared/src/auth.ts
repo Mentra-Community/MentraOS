@@ -51,9 +51,14 @@ interface RuntimeIssuerConfig {
   legacyTenantIdClaim?: string;
   fixedTenantId?: string;
   algorithms?: string[];
+  requiredScopes?: string[];
+  allowedClientIds?: string[];
 }
 
-const runtimeRemoteJwks = new Map<string, ReturnType<typeof jose.createRemoteJWKSet>>();
+const runtimeRemoteJwks = new Map<
+  string,
+  ReturnType<typeof jose.createRemoteJWKSet>
+>();
 const runtimeStaticKeys = new Map<string, Promise<jose.KeyLike>>();
 
 /** Reset the cached public key. Test-only — call after mutating env. */
@@ -99,7 +104,8 @@ export async function verifyAccessTokenSignature(
   }
 
   const sub = typeof payload.sub === "string" ? payload.sub : null;
-  const tenantId = typeof payload.tenant_id === "string" ? payload.tenant_id : null;
+  const tenantId =
+    typeof payload.tenant_id === "string" ? payload.tenant_id : null;
   const sessionId =
     typeof payload.session_id === "string" ? payload.session_id : null;
   const jti = typeof payload.jti === "string" ? payload.jti : null;
@@ -111,10 +117,17 @@ export async function verifyAccessTokenSignature(
     !jti ? "jti" : null,
   ].filter((claim): claim is string => Boolean(claim));
   if (missingClaims.length > 0) {
-    throw new AccessTokenError(`access_token missing required claims: ${missingClaims.join(", ")}`);
+    throw new AccessTokenError(
+      `access_token missing required claims: ${missingClaims.join(", ")}`,
+    );
   }
 
-  return { mentraUserId: sub!, tenantId: tenantId!, sessionId: sessionId!, jti: jti! };
+  return {
+    mentraUserId: sub!,
+    tenantId: tenantId!,
+    sessionId: sessionId!,
+    jti: jti!,
+  };
 }
 
 export async function verifyRuntimeToken(
@@ -136,13 +149,16 @@ export async function verifyRuntimeToken(
 
   const issuer = issuers.find((entry) => entry.issuer === iss);
   if (!issuer) {
-    throw new AccessTokenError(`runtime_token issuer not trusted: ${iss ?? "missing"}`);
+    throw new AccessTokenError(
+      `runtime_token issuer not trusted: ${iss ?? "missing"}`,
+    );
   }
 
   const key = await runtimeKeyForIssuer(issuer);
   try {
     const result = await jose.jwtVerify(token, key as jose.JWTVerifyGetKey, {
-      audience: process.env.CLOUD_RUNTIME_AUTH_AUDIENCE ?? RUNTIME_DEFAULT_AUDIENCE,
+      audience:
+        process.env.CLOUD_RUNTIME_AUTH_AUDIENCE ?? RUNTIME_DEFAULT_AUDIENCE,
       issuer: issuer.issuer,
       algorithms: issuer.algorithms ?? [...RUNTIME_DEFAULT_ALGORITHMS],
       clockTolerance: "5 minutes",
@@ -152,6 +168,25 @@ export async function verifyRuntimeToken(
     throw new AccessTokenError(
       `runtime_token rejected: ${(err as Error).message}`,
     );
+  }
+
+  const scopes = new Set(
+    typeof payload.scp === "string"
+      ? payload.scp.split(" ").filter(Boolean)
+      : [],
+  );
+  for (const requiredScope of issuer.requiredScopes ?? []) {
+    if (!scopes.has(requiredScope)) {
+      throw new AccessTokenError(
+        `runtime_token missing required scope: ${requiredScope}`,
+      );
+    }
+  }
+  if (issuer.allowedClientIds?.length) {
+    const clientId = stringClaim(payload.azp) ?? stringClaim(payload.appid);
+    if (!clientId || !issuer.allowedClientIds.includes(clientId)) {
+      throw new AccessTokenError("runtime_token client is not allowed");
+    }
   }
 
   const userIdClaim = issuer.userIdClaim ?? "sub";
@@ -166,7 +201,9 @@ export async function verifyRuntimeToken(
   const sessionId = stringClaim(payload.session_id) ?? `runtime_${jti}`;
 
   if (!userId || !tenantId) {
-    throw new AccessTokenError("runtime_token missing required identity claims");
+    throw new AccessTokenError(
+      "runtime_token missing required identity claims",
+    );
   }
 
   return { mentraUserId: userId, tenantId, sessionId, jti };
@@ -246,18 +283,27 @@ function parseRuntimeIssuerConfig(value: unknown): RuntimeIssuerConfig {
 
   const legacyTenantIdClaim = stringClaim(obj.oemIdClaim);
   const legacyFixedTenantId = stringClaim(obj.fixedOemId);
-  const tenantIdClaim = stringClaim(obj.tenantIdClaim) ?? (legacyTenantIdClaim ? "tenant_id" : undefined);
+  const tenantIdClaim =
+    stringClaim(obj.tenantIdClaim) ??
+    (legacyTenantIdClaim ? "tenant_id" : undefined);
   const fixedTenantId = stringClaim(obj.fixedTenantId) ?? legacyFixedTenantId;
   if (!tenantIdClaim && !fixedTenantId) {
     throw new Error(`issuer ${issuer} must set tenantIdClaim or fixedTenantId`);
   }
   if (tenantIdClaim && fixedTenantId) {
-    throw new Error(`issuer ${issuer} cannot set both tenantIdClaim and fixedTenantId`);
+    throw new Error(
+      `issuer ${issuer} cannot set both tenantIdClaim and fixedTenantId`,
+    );
   }
 
   const algorithms = Array.isArray(obj.algorithms)
     ? obj.algorithms.filter((v): v is string => typeof v === "string")
     : undefined;
+  const requiredScopes = stringArrayClaim(obj.requiredScopes, "requiredScopes");
+  const allowedClientIds = stringArrayClaim(
+    obj.allowedClientIds,
+    "allowedClientIds",
+  );
 
   return {
     issuer,
@@ -269,7 +315,20 @@ function parseRuntimeIssuerConfig(value: unknown): RuntimeIssuerConfig {
     legacyTenantIdClaim,
     fixedTenantId,
     algorithms,
+    requiredScopes,
+    allowedClientIds,
   };
+}
+
+function stringArrayClaim(value: unknown, name: string): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (
+    !Array.isArray(value) ||
+    value.some((entry) => typeof entry !== "string" || !entry.trim())
+  ) {
+    throw new Error(`${name} must be an array of non-empty strings`);
+  }
+  return value as string[];
 }
 
 async function runtimeKeyForIssuer(
@@ -287,7 +346,9 @@ async function runtimeKeyForIssuer(
     return jwks;
   }
 
-  const keyMaterial = issuer.publicKey ?? (issuer.publicKeyEnv ? process.env[issuer.publicKeyEnv] : undefined);
+  const keyMaterial =
+    issuer.publicKey ??
+    (issuer.publicKeyEnv ? process.env[issuer.publicKeyEnv] : undefined);
   if (!keyMaterial) {
     throw new AccessTokenError(`issuer ${issuer.issuer} has no key source`);
   }

@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { afterEach, describe, expect, test } from "bun:test";
+import * as jose from "jose";
 
 import {
   resetRuntimeAuthCache,
@@ -14,7 +15,10 @@ const savedEnv = {
 };
 
 afterEach(() => {
-  restoreEnv("CLOUD_RUNTIME_AUTH_AUDIENCE", savedEnv.CLOUD_RUNTIME_AUTH_AUDIENCE);
+  restoreEnv(
+    "CLOUD_RUNTIME_AUTH_AUDIENCE",
+    savedEnv.CLOUD_RUNTIME_AUTH_AUDIENCE,
+  );
   restoreEnv("CLOUD_RUNTIME_AUTH_ISSUERS", savedEnv.CLOUD_RUNTIME_AUTH_ISSUERS);
   restoreEnv("TEST_RUNTIME_PUBLIC_KEY", savedEnv.TEST_RUNTIME_PUBLIC_KEY);
   resetRuntimeAuthCache();
@@ -137,15 +141,74 @@ describe("runtime token verification", () => {
       expiresInSeconds: 60,
     });
 
-    await expect(verifyRuntimeToken(token)).rejects.toThrow("runtime_token rejected");
+    await expect(verifyRuntimeToken(token)).rejects.toThrow(
+      "runtime_token rejected",
+    );
+  });
+
+  test("enforces configured delegated scopes and native client ids", async () => {
+    const keypair = createEd25519Keypair();
+    process.env.TEST_RUNTIME_PUBLIC_KEY = keypair.publicKey;
+    process.env.CLOUD_RUNTIME_AUTH_ISSUERS = JSON.stringify([
+      {
+        issuer: "https://login.example/tenant/v2.0",
+        publicKeyEnv: "TEST_RUNTIME_PUBLIC_KEY",
+        userIdClaim: "oid",
+        fixedTenantId: "tenant-1",
+        requiredScopes: ["mentra.runtime"],
+        allowedClientIds: ["native-client"],
+      },
+    ]);
+
+    const valid = await signClaims(keypair.privateKey, {
+      iss: "https://login.example/tenant/v2.0",
+      aud: "cloud-runtime",
+      oid: "employee-1",
+      scp: "mentra.runtime",
+      azp: "native-client",
+    });
+    await expect(verifyRuntimeToken(valid)).resolves.toMatchObject({
+      mentraUserId: "employee-1",
+      tenantId: "tenant-1",
+    });
+
+    const wrongClient = await signClaims(keypair.privateKey, {
+      iss: "https://login.example/tenant/v2.0",
+      aud: "cloud-runtime",
+      oid: "employee-1",
+      scp: "mentra.runtime",
+      azp: "other-client",
+    });
+    await expect(verifyRuntimeToken(wrongClient)).rejects.toThrow(
+      "client is not allowed",
+    );
   });
 });
+
+async function signClaims(
+  privateKey: string,
+  claims: jose.JWTPayload,
+): Promise<string> {
+  const key = await jose.importPKCS8(
+    `-----BEGIN PRIVATE KEY-----\n${privateKey}\n-----END PRIVATE KEY-----`,
+    "EdDSA",
+  );
+  return new jose.SignJWT(claims)
+    .setProtectedHeader({ alg: "EdDSA" })
+    .setIssuedAt()
+    .setExpirationTime("60s")
+    .sign(key);
+}
 
 function createEd25519Keypair(): { privateKey: string; publicKey: string } {
   const { privateKey, publicKey } = crypto.generateKeyPairSync("ed25519");
   return {
-    privateKey: stripPem(privateKey.export({ type: "pkcs8", format: "pem" }).toString()),
-    publicKey: stripPem(publicKey.export({ type: "spki", format: "pem" }).toString()),
+    privateKey: stripPem(
+      privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
+    ),
+    publicKey: stripPem(
+      publicKey.export({ type: "spki", format: "pem" }).toString(),
+    ),
   };
 }
 
