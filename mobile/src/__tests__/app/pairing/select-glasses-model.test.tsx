@@ -5,7 +5,7 @@ import SelectGlassesModelScreen from "@/app/pairing/select-glasses-model"
 import {useNavigationStore} from "@/stores/navigation"
 import {preparePairingScan} from "@/utils/pairing/preparePairingScan"
 
-jest.mock("@/../../cloud/packages/types/src", () => ({
+jest.mock("@mentra/engine", () => ({
   DeviceTypes: {
     LIVE: "Mentra Live",
     G1: "Even Realities G1",
@@ -16,9 +16,6 @@ jest.mock("@/../../cloud/packages/types/src", () => ({
     NEX: "Mentra Nex",
     NIMO: "Nimo",
   },
-}))
-
-jest.mock("@mentra/engine", () => ({
   SETTINGS: {super_mode: {key: "super_mode"}},
   useSetting: () => [false],
 }))

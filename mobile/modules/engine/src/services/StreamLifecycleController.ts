@@ -3,9 +3,9 @@
  * `setActive(true)` starts the timer; each tick sends a keep-alive with a
  * fresh ackId; `maxMissedAcks` consecutive timeouts fire `onTimeout`.
  *
- * Mirror of `cloud/packages/cloud/src/services/streaming/StreamLifecycleController.ts`
- * — kept byte-equivalent except for the `LifecycleLogger` interface (pino
- * isn't a phone dep). Behavior changes must land in both files.
+ * Phone-owned successor to the retired cloud stream lifecycle controller.
+ * It uses the local `LifecycleLogger` interface because pino is not a phone
+ * dependency.
  */
 
 export interface LifecycleLogger {

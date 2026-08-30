@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "promotionId": "mentra-X.Y.Z-attempt-N",
+  "releaseIdentity": "X.Y.Z",
+  "check": "store-review-approved",
+  "result": "pass",
+  "performedAt": "YYYY-MM-DDTHH:MM:SS.000Z",
+  "tester": {"githubLogin": "employee"},
+  "tests": [
+    {
+      "product": "mentra-app",
+      "platform": "ios",
+      "result": "pass",
+      "appVersion": "X.Y.Z",
+      "appBuild": "BUILD",
+      "deviceModel": "App Store Connect",
+      "osVersion": "N/A",
+      "notes": "Exact accepted build approved and held for manual release."
+    },
+    {
+      "product": "mentra-app",
+      "platform": "android",
+      "result": "pass",
+      "appVersion": "X.Y.Z",
+      "appBuild": "BUILD",
+      "deviceModel": "Google Play Console",
+      "osVersion": "N/A",
+      "notes": "Exact version code approved and held in managed publishing."
+    },
+    {
+      "product": "starter-kit",
+      "platform": "ios",
+      "result": "pass",
+      "appVersion": "X.Y.Z",
+      "appBuild": "BUILD",
+      "deviceModel": "App Store Connect",
+      "osVersion": "N/A",
+      "notes": "Exact accepted build approved and held for manual release."
+    },
+    {
+      "product": "starter-kit",
+      "platform": "android",
+      "result": "pass",
+      "appVersion": "X.Y.Z",
+      "appBuild": "BUILD",
+      "deviceModel": "Google Play Console",
+      "osVersion": "N/A",
+      "notes": "Exact version code approved; first-public-release behavior and monitoring window acknowledged."
+    }
+  ],
+  "evidenceUrls": ["https://credential-free.example/evidence/index"],
+  "notes": "Store pages and exact coordinates were independently checked by the release owner."
+}

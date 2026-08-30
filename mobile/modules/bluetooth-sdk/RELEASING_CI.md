@@ -8,8 +8,8 @@ There is no independent SDK branch or automatic SDK publisher.
 A selected `dev` or `staging` head runs
 `.github/workflows/coordinated-release.yml` and allocates one shared identity:
 
-| Branch    | Identity       | npm tag | Mobile destination               |
-| --------- | -------------- | ------- | -------------------------------- |
+| Branch    | Identity       | npm tag | Mobile destination                        |
+| --------- | -------------- | ------- | ----------------------------------------- |
 | `dev`     | `X.Y.Z-dev.N`  | `dev`   | Play internal and TestFlight `Mentra Dev` |
 | `staging` | `X.Y.Z-beta.N` | `beta`  | Play beta and TestFlight `Mentra Staging` |
 
@@ -19,11 +19,10 @@ running publication. `dev` and `staging` have separate groups and cannot replace
 one another. Commit bursts therefore publish the running head and newest
 waiting head, not every intermediate commit.
 
-`staging` names the beta release channel, not the backend. Dev artifacts use
-development services. Beta artifacts use production services because the exact
-signed AAB and IPA are promoted through the stores without rebuilding,
-rewriting configuration, or re-signing. A staging-services diagnostic build is
-not a production candidate.
+`staging` names the beta release channel and its mobile builds use staging
+services. They are tested beta artifacts, not production-promotable binaries.
+Production mobile candidates are rebuilt from the selected source after Cloud
+deployment, with production configuration and new store build numbers.
 
 The same identity and immutable OTA manifest pin are embedded in the SDK's npm,
 Maven, and SwiftPM packages. One npm lane publishes the dependency closure in
@@ -42,16 +41,21 @@ not accumulate in a shared release.
 
 ## Production
 
-Run `.github/workflows/coordinated-production-promotion.yml` with a completed
-`X.Y.Z-beta.N` identity. The workflow verifies the selected beta before it asks
-for protected approval. After approval it:
+Follow [the production release runbook](../../../.github/production-release/README.md)
+from a clean `main` checkout and start with a completed `X.Y.Z-beta.N` identity.
+The phase-specific system verifies and freezes the selected beta before any
+protected production action. It then:
 
 1. publishes stable SDK and Engine packages from the same source and OTA pin;
 2. builds a clean external Engine host from those public packages;
-3. promotes the exact tested mobile and OTA artifacts only after that proof;
+3. rebuilds production-configured mobile candidates from the frozen source and
+   uploads them to isolated candidate groups/tracks;
 4. moves public package pointers only after all targets succeed.
 
-Production does not rebuild the ASG, OTA bundle, IPA, or Android App Bundle.
+Production consumes the immutable OTA pin and stable package family. It does
+not rebuild ASG/firmware artifacts, but it does rebuild the Mentra App IPA/AAB
+and Starter Kit app candidates because beta mobile configuration points at
+staging.
 
 ## Required Credentials
 
@@ -84,16 +88,15 @@ The coordinated workflows use these repository secrets:
 - `EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID`
 - `EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY`
 
-Configure required reviewers on the `coordinated-production-release` GitHub
-environment before enabling production promotion.
+Configure the protected environments named in the production release runbook
+before enabling production promotion.
 
 ## First Coordinated Release Gates
 
 Before the first production promotion:
 
-1. Create the `coordinated-production-release` GitHub environment and configure
-   its required reviewers. The workflow deliberately references this exact name
-   and must remain blocked until the environment protection exists.
+1. Create every protected environment listed in the production release runbook
+   and configure the required distinct reviewers.
 2. Confirm the App Store Connect API key can upload builds and distribute them
    to the existing `Mentra Dev` and `Mentra Staging` TestFlight groups. Confirm
    the Google Play credentials can use the configured internal and beta tracks.

@@ -1,0 +1,71 @@
+---
+title: "Build from Scratch"
+description: "Add the Mentra Bluetooth SDK to your own mobile app."
+icon: "screwdriver-wrench"
+---
+
+This is how to add the Mentra Bluetooth SDK to your own app from scratch. Choose
+your platform below for the complete installation, permissions, configuration,
+and connection flow.
+
+If you want to try the SDK before integrating it, start with the
+[Quickstart](/bluetooth-sdk/quickstart) and run a complete example app.
+
+<Warning>
+Use a physical phone for Bluetooth testing. Simulators and emulators are useful
+for UI and compile checks, but they do not provide the real Bluetooth path.
+</Warning>
+
+<Warning>
+Bluetooth SDK `{{release-version}}` requires the matching Mentra Live
+`{{release-version}}` glasses software. Every SDK release requires the Mentra Live
+software release with the same version number.
+</Warning>
+
+## Choose Your Platform
+
+<CardGroup cols={3}>
+  <Card title="React Native / Expo" icon="mobile-screen-button" href="/bluetooth-sdk/react-native-expo">
+    Install `@mentra/bluetooth-sdk`, configure its Expo plugin and permissions,
+    create a native build, and connect.
+  </Card>
+  <Card title="Android" icon="android" href="/bluetooth-sdk/android">
+    Add the Maven package, configure Android permissions and native libraries,
+    and connect from Kotlin.
+  </Card>
+  <Card title="iOS" icon="apple" href="/bluetooth-sdk/ios">
+    Add the Swift package, configure iOS permissions and background modes, and
+    connect from Swift.
+  </Card>
+</CardGroup>
+
+## Integration Sequence
+
+Each platform guide walks through the same core sequence:
+
+1. Add the platform package to your existing app.
+2. Configure Bluetooth, microphone, local-network, and notification permissions
+   required by the features you use.
+3. Scan for Mentra Live, let the user choose a device, and connect.
+4. Read SDK status and keep your UI derived from the latest connection state.
+5. Check for and install the [matching Mentra Live software](/bluetooth-sdk/software-update)
+   before testing SDK features.
+
+## Continue Building
+
+Once your app connects, use the guides below to add glasses features.
+
+<CardGroup cols={2}>
+  <Card title="API Reference" icon="book" href="/bluetooth-sdk/api-reference">
+    Explore lifecycle methods, commands, events, and status models.
+  </Card>
+  <Card title="Camera and Streaming" icon="camera" href="/bluetooth-sdk/camera-streaming">
+    Capture photos and video or stream to your own ingest endpoint.
+  </Card>
+  <Card title="Audio" icon="waveform" href="/bluetooth-sdk/audio">
+    Use microphone input, transcription events, and speaker playback.
+  </Card>
+  <Card title="Hardware" icon="glasses" href="/bluetooth-sdk/hardware">
+    Handle buttons, touch, LEDs, battery, and capability state.
+  </Card>
+</CardGroup>

@@ -5,9 +5,7 @@ on:
     types: [opened, synchronize, reopened, labeled]
   workflow_run:
     workflows:
-      - "🧪 Test Cloud build"
-      - "Run Cloud Tests ☁️"
-      - "🧪 Test SDK build"
+      - "Cloud V2 Validation"
       - "Mobile App Quality Checks"
       - "Bun Lockfile Checks"
       - "MentraOS ASG Client Build"

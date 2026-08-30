@@ -14,7 +14,7 @@ import {decideDevLaunchRoute, engine} from "@mentra/engine"
 import {registerDevApp, type DevAppRecord} from "@mentra/engine-host-internal"
 import {askPermissionsUI, checkPermissionsUI, PERMISSION_CONFIG} from "@/utils/PermissionsUtils"
 import {storage} from "@/utils/storage/storage"
-import type {AppletInterface, AppletPermission} from "@/../../cloud/packages/types/src"
+import type {AppletInterface, AppletPermission} from "@mentra/engine"
 
 const RECENT_KEY = "miniapp_dev_recent"
 const MAX_RECENT = 5

@@ -1,0 +1,192 @@
+name: Production Release - Store Submission
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_identity:
+        required: true
+        type: string
+      attempt:
+        required: true
+        type: number
+      phase:
+        required: true
+        type: choice
+        options: [submit]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: production-release-${{ inputs.release_identity }}-attempt-${{ inputs.attempt }}
+  cancel-in-progress: false
+
+jobs:
+  submit:
+    name: Submit exact accepted candidates without public release
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment:
+      name: production-store-submission
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+
+      - name: Load current promotion and exact candidate evidence
+        id: promotion
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          node .github/scripts/production-promotion-assets.mjs download-latest \
+            --repository "$GITHUB_REPOSITORY" \
+            --release "${{ inputs.release_identity }}" \
+            --attempt "${{ inputs.attempt }}" \
+            --output promotion-input/current.json \
+            --github-output "$GITHUB_OUTPUT"
+          [[ "$(jq -er .state promotion-input/current.json)" == "mobile-candidates-accepted" ]]
+          assets=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases/$(sed -n 's/^release_id=//p' "$GITHUB_OUTPUT")/assets?per_page=100" | jq 'add')
+          candidate_name=$(jq -er '[.evidence[] | select(.kind == "production-mobile-candidates")] | if length == 1 then .[0].assetName else error("candidate evidence reference must be unique") end' promotion-input/current.json)
+          candidate_sha=$(jq -er '[.evidence[] | select(.kind == "production-mobile-candidates")][0].sha256' promotion-input/current.json)
+          asset_id=$(jq -er --arg name "$candidate_name" '[.[] | select(.name == $name)] | if length == 1 then .[0].id else error("candidate evidence asset must be unique") end' <<< "$assets")
+          gh api -H "Accept: application/octet-stream" "repos/${GITHUB_REPOSITORY}/releases/assets/$asset_id" > promotion-input/candidates.json
+          [[ "$(sha256sum promotion-input/candidates.json | cut -d' ' -f1)" == "$candidate_sha" ]]
+
+      - name: Inject store credentials
+        uses: ./.github/actions/inject-signing
+        with:
+          play: "true"
+          ios: "true"
+          google-play-key-json: ${{ secrets.GOOGLE_PLAY_KEY_JSON }}
+          asc-api-key-p8-b64: ${{ secrets.ASC_API_KEY_P8_B64 }}
+          asc-api-key-id: ${{ secrets.ASC_API_KEY_ID }}
+          asc-api-issuer-id: ${{ secrets.ASC_API_ISSUER_ID }}
+
+      - name: Resolve App Store Connect credential path
+        id: asc
+        run: |
+          key_path=$(sed -n 's/^ASC_API_KEY_PATH=//p' "$MENTRA_ASC_CONFIG_PATH")
+          test -f "$key_path"
+          echo "key_path=$key_path" >> "$GITHUB_OUTPUT"
+
+      - name: Install pinned submission tooling
+        run: |
+          set -euo pipefail
+          mkdir -p store-tools/fastlane
+          cp mobile/ci/fastlane-ios-production/Fastfile store-tools/fastlane/Fastfile
+          cp mobile/Gemfile mobile/Gemfile.lock store-tools/
+          cd store-tools
+          bundle install
+
+      - name: Submit exact iOS candidates for review with manual release
+        working-directory: store-tools
+        env:
+          ASC_API_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+          ASC_API_ISSUER_ID: ${{ secrets.ASC_API_ISSUER_ID }}
+          ASC_API_KEY_PATH: ${{ steps.asc.outputs.key_path }}
+        run: |
+          set -euo pipefail
+          for product in mentraApp starterKit; do
+            if [[ "$product" == mentraApp ]]; then
+              bundle_id=com.mentra.mentra
+            else
+              bundle_id=com.mentra.bluetoothsdkexample
+            fi
+            build=$(jq -er ".coordinates.candidates.$product.ios.buildNumber" "$GITHUB_WORKSPACE/promotion-input/current.json")
+            APP_IDENTIFIER="$bundle_id" \
+              MENTRA_MARKETING_VERSION="${{ inputs.release_identity }}" \
+              MENTRA_BUILD_NUMBER="$build" \
+              MENTRA_PHASED_RELEASE=true \
+              bundle exec fastlane promote_app_store
+          done
+
+      - name: Create or reconcile Google Play production drafts
+        run: |
+          set -euo pipefail
+          mkdir -p play-tools/fastlane promotion-output/play
+          cp mobile/ci/fastlane-android/Fastfile mobile/ci/fastlane-android/Appfile play-tools/fastlane/
+          cp mobile/Gemfile mobile/Gemfile.lock play-tools/
+          cd play-tools
+          bundle install
+          for product in mentraApp starterKit; do
+            if [[ "$product" == mentraApp ]]; then
+              package=com.mentra.mentra
+              output=../promotion-output/play/mentra.json
+              observed=../promotion-output/play/mentra-observed.json
+            else
+              package=com.mentra.bluetoothsdkexample
+              output=../promotion-output/play/starter.json
+              observed=../promotion-output/play/starter-observed.json
+            fi
+            build=$(jq -er ".coordinates.candidates.$product.android.buildNumber" ../promotion-input/current.json)
+            APP_PACKAGE_NAME="$package" \
+              GOOGLE_PLAY_SOURCE_TRACK=internal \
+              GOOGLE_PLAY_TARGET_TRACK=production \
+              GOOGLE_PLAY_VERSION_CODE="$build" \
+              GOOGLE_PLAY_RELEASE_STATUS=draft \
+              GOOGLE_PLAY_PROMOTION_OUTPUT="$output" \
+              bundle exec fastlane promote_google_play
+            APP_PACKAGE_NAME="$package" \
+              GOOGLE_PLAY_INVENTORY_OUTPUT="$product-inventory.json" \
+              bundle exec fastlane google_play_inventory
+            node ../.github/scripts/validate-google-play-release.mjs \
+              --inventory "$product-inventory.json" \
+              --version-code "$build" \
+              --required-state draft \
+              --output "$observed"
+          done
+
+      - name: Read back exact submitted coordinates and append state
+        id: next
+        env:
+          ASC_API_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+          ASC_API_ISSUER_ID: ${{ secrets.ASC_API_ISSUER_ID }}
+          ASC_API_KEY_PATH: ${{ steps.asc.outputs.key_path }}
+        run: |
+          set -euo pipefail
+          mkdir -p promotion-output/apple
+          for product in mentraApp starterKit; do
+            if [[ "$product" == mentraApp ]]; then bundle_id=com.mentra.mentra; else bundle_id=com.mentra.bluetoothsdkexample; fi
+            build=$(jq -er ".coordinates.candidates.$product.ios.buildNumber" promotion-input/current.json)
+            GITHUB_OUTPUT="promotion-output/apple/$product.outputs" node mobile/scripts/app-store-connect-build.mjs production-status \
+              --issuer-id "$ASC_API_ISSUER_ID" --key-id "$ASC_API_KEY_ID" --key-path "$ASC_API_KEY_PATH" \
+              --bundle-id "$bundle_id" --build-number "$build" --app-version "${{ inputs.release_identity }}"
+            grep -q '^promoted=true$' "promotion-output/apple/$product.outputs"
+          done
+          jq -n \
+            --arg url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --slurpfile mentra promotion-output/play/mentra-observed.json \
+            --slurpfile starter promotion-output/play/starter-observed.json \
+            '{schemaVersion: 1, kind: "production-store-submissions", provenanceUrl: $url, apple: {mentraApp: "submitted-manual-release", starterKit: "submitted-manual-release"}, google: {mentraApp: $mentra[0], starterKit: $starter[0]}, publicReleasePerformed: false}' \
+            > promotion-output/store-submissions.json
+          node .github/scripts/production-promotion-assets.mjs prepare-evidence \
+            --file promotion-output/store-submissions.json \
+            --kind production-store-submissions \
+            --url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --output promotion-output/evidence.json \
+            --output-directory promotion-output/evidence-assets \
+            --github-output "$GITHUB_OUTPUT"
+          node .github/scripts/production-promotion-state.mjs transition \
+            --record promotion-input/current.json --to stores-submitted --actor "$GITHUB_ACTOR" \
+            --created-at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" \
+            --provenance-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --evidence promotion-output/evidence.json --output promotion-output/next.json
+          name=$(node --input-type=module -e 'import {readFileSync} from "node:fs"; import {promotionAssetName} from "./.github/scripts/production-promotion-state.mjs"; process.stdout.write(promotionAssetName(JSON.parse(readFileSync("promotion-output/next.json", "utf8"))))')
+          mv promotion-output/next.json "promotion-output/$name"
+          echo "record=promotion-output/$name" >> "$GITHUB_OUTPUT"
+
+      - name: Publish immutable submission evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node .github/scripts/publish-immutable-release-asset.mjs --file "${{ steps.next.outputs.asset_path }}" --name "${{ steps.next.outputs.asset_name }}" --release-id "${{ steps.promotion.outputs.release_id }}" --repository "$GITHUB_REPOSITORY"
+          node .github/scripts/production-promotion-assets.mjs publish-record --record "${{ steps.next.outputs.record }}" --release-id "${{ steps.promotion.outputs.release_id }}" --repository "$GITHUB_REPOSITORY"

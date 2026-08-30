@@ -452,6 +452,10 @@ const en = {
     versionChangeRestarting: "Installing a different version\u2026",
     versionChangeVerifying: "Verifying your glasses\u2026",
     versionChangeKeepNearby: "Keep your glasses nearby and connected. They will restart on their own.",
+    restartingGlasses: "Restarting {{deviceName}}…",
+    restartingGlassesMessage:
+      "The update is installed. Keep your glasses nearby and leave this screen open while they finish starting.",
+    restartingGlassesAutomatic: "We'll continue automatically when they're ready.",
     versionChangeComplete: "Version Change Complete",
     versionChangeCompleteMessage:
       "Your glasses are now on the required version. Their settings were reset and are being restored automatically.",
@@ -460,6 +464,7 @@ const en = {
       "Your glasses restarted with new firmware. One more step: they'll now continue to the required version.",
     updateComplete: "Update Complete",
     updateCompleteMessage: "Your glasses have been updated successfully.",
+    whatsNew: "What's new",
     updateFailed: "Update Failed",
     updateFailedMessage: "The update could not be completed. You can try again later from Settings.",
     glassesDisconnected: "Glasses Disconnected",

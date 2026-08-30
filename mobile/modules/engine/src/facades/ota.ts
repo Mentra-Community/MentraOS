@@ -17,7 +17,7 @@ import type {
   OtaUpdateInfo,
   ReleaseChangelog,
 } from "@mentra/bluetooth-sdk"
-import {isGlassesConnected, useGlassesStore} from "../stores/glasses"
+import {isGlassesConnected, isGlassesReady, useGlassesStore} from "../stores/glasses"
 import {resolveOtaManifestUrl} from "../services/otaManifestUrl"
 import {otaInstallCoordinator, type OtaInstallSnapshot} from "../services/OtaInstallCoordinator"
 import {startGlassesStatusProjection} from "../services/GlassesStatusProjection"
@@ -32,6 +32,7 @@ function projectSnapshot() {
   const s = useGlassesStore.getState()
   return {
     connected: isGlassesConnected(s.connection),
+    ready: isGlassesReady(s.connection),
     buildNumber: s.buildNumber || null,
     appVersion: s.appVersion || null,
     mtkFirmwareVersion: s.mtkFirmwareVersion || null,
@@ -65,7 +66,7 @@ export const ota = {
   // --- actions ---
   /**
    * Start the device-status and OTA projections without starting the authenticated
-   * cloud/miniapp runtime. This is the explicit entry point for Bluetooth-only hosts.
+   * cloud connection or miniapp runtime. This is the explicit entry point for Bluetooth-only hosts.
    * Idempotent and safe when the full engine runtime is already running.
    */
   initialize: async () => {

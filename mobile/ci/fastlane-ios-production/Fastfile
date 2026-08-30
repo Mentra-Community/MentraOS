@@ -12,11 +12,14 @@ platform :ios do
 
     deliver(
       api_key: api_key,
-      app_identifier: "com.mentra.mentra",
+      app_identifier: ENV.fetch("APP_IDENTIFIER", "com.mentra.mentra"),
       app_version: ENV.fetch("MENTRA_MARKETING_VERSION"),
       build_number: ENV.fetch("MENTRA_BUILD_NUMBER"),
       submit_for_review: true,
-      automatic_release: true,
+      # Store approval must never make a production build public. The separate
+      # protected store-release workflow performs that decision later.
+      automatic_release: false,
+      phased_release: ENV.fetch("MENTRA_PHASED_RELEASE", "true") == "true",
       force: true,
       skip_binary_upload: true,
       skip_metadata: true,

@@ -4,7 +4,7 @@ You are reviewing a pull request for **MentraOS** standards and conventions.
 
 ## Focus
 
-- Root `AGENTS.md` and relevant module `AGENTS.md` (e.g. `mobile/`, `cloud/`).
+- Root `AGENTS.md` and relevant module guidance (for example, `mobile/AGENTS.md`).
 - Naming conventions (Java `mCamelCase`, TS PascalCase/camelCase, etc.).
 - Commit/PR hygiene (no AI co-author trailers, focused scope).
 - Missing tests when backend/mobile logic changes per AGENTS.md testing guidelines.

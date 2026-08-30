@@ -22,7 +22,7 @@
  * upstream call (in-flight dedup), not just sequential ones. We cache the
  * NEUTRAL result (Route[] / {road}) above the provider, so the cache is
  * provider-agnostic. Failures are never cached, so one upstream blip can't pin an
- * error. Ported from cloud/.../client/navigation.service.ts.
+ * error. Ported from the retired V1 navigation service.
  *
  * See docs/issues/002-cloud-runtime/maps/spec.md.
  */

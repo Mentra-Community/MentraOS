@@ -14,7 +14,7 @@ import {useNavigationStore} from "@/stores/navigation"
 import {SETTINGS, useSetting} from "@mentra/engine"
 import {getGlassesImage} from "@/utils/getGlassesImage"
 
-import {Capabilities, DeviceTypes, getModelCapabilities} from "@/../../cloud/packages/types/src"
+import {Capabilities, DeviceTypes, getModelCapabilities} from "@mentra/engine"
 import {engine} from "@mentra/engine"
 
 import OtaProgressSection from "@/components/glasses/OtaProgressSection"

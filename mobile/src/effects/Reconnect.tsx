@@ -4,7 +4,7 @@ import {AppState} from "react-native"
 import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {checkConnectivityRequirementsUI} from "@/utils/PermissionsUtils"
 import {decideReconnect, engine, SETTINGS, useSetting} from "@mentra/engine"
-import {DeviceTypes} from "@/../../cloud/packages/types/src"
+import {DeviceTypes} from "@mentra/engine"
 
 export async function attemptReconnectToDefaultWearable(): Promise<boolean> {
   const reconnectOnAppForeground = await engine.settings.get(SETTINGS.reconnect_on_app_foreground.key)

@@ -90,6 +90,22 @@ starter_detail=$(artifact_link \
 if [[ -n "${STARTER_KIT_RELEASE_URL:-}" ]]; then
   starter_detail+=" - <${STARTER_KIT_RELEASE_URL}|All example builds>"
 fi
+example_testflight_detail="${EXAMPLE_TESTFLIGHT_DISTRIBUTION_STATUS:-unknown}"
+case "${EXAMPLE_TESTFLIGHT_DISTRIBUTION_STATUS:-}" in
+  available) example_testflight_icon=":white_check_mark:" ;;
+  submitted) example_testflight_icon=":hourglass_flowing_sand:" ;;
+  skipped) example_testflight_icon=":fast_forward:" ;;
+  *) example_testflight_icon="$(icon "${EXAMPLE_TESTFLIGHT_RESULT:-unknown}")" ;;
+esac
+if [[ -n "${EXAMPLE_TESTFLIGHT_MARKETING_VERSION:-}" && -n "${EXAMPLE_TESTFLIGHT_BUILD_NUMBER:-}" ]]; then
+  example_testflight_detail+=" - ${EXAMPLE_TESTFLIGHT_MARKETING_VERSION} (${EXAMPLE_TESTFLIGHT_BUILD_NUMBER})"
+fi
+if [[ -n "${EXAMPLE_TESTFLIGHT_REVIEW_STATE:-}" ]]; then
+  example_testflight_detail+=" (${EXAMPLE_TESTFLIGHT_REVIEW_STATE})"
+fi
+if [[ -n "${EXAMPLE_TESTFLIGHT_INSTALL_URL:-}" ]]; then
+  example_testflight_detail+=" - <${EXAMPLE_TESTFLIGHT_INSTALL_URL}|Open TestFlight>"
+fi
 docs_detail="<${run_url}|View run logs>"
 if [[ -n "${DOCS_URL:-}" ]]; then
   docs_detail="<${DOCS_URL}|Open docs>"
@@ -110,9 +126,9 @@ newline=$'\n'
 android_line="*$(icon "$android_result") Android* - $(label "$android_result") - ${android_detail}${newline}Google Play: ${PLAY_TRACK:-unknown}"
 ios_line="*$(icon "$ios_result") iOS* - $(label "$ios_result") - ${ios_detail}${newline}TestFlight: ${TESTFLIGHT_GROUP:-unknown}"
 asg_line="*$(icon "${OTA_RESULT:-unknown}") ASG + OTA* - $(label "${OTA_RESULT:-unknown}") - ${asg_detail}"
-starter_line="*$(icon "${STARTER_KIT_RESULT:-unknown}") Starter Kit* - $(label "${STARTER_KIT_RESULT:-unknown}") - ${starter_detail}${newline}React Native iOS TestFlight: $(icon "${EXAMPLE_TESTFLIGHT_RESULT:-unknown}") $(label "${EXAMPLE_TESTFLIGHT_RESULT:-unknown}")"
+starter_line="*$(icon "${STARTER_KIT_RESULT:-unknown}") Starter Kit* - $(label "${STARTER_KIT_RESULT:-unknown}") - ${starter_detail}${newline}React Native iOS TestFlight: ${example_testflight_icon} ${example_testflight_detail}"
 docs_line="*$(icon "${DOCS_RESULT:-unknown}") Docs* - $(label "${DOCS_RESULT:-unknown}") - ${docs_detail}"
-checks_line="*Release checks*${newline}Plan: $(icon "${PLAN_RESULT:-unknown}") $(label "${PLAN_RESULT:-unknown}") | Packages: $(icon "${NPM_RESULT:-unknown}") $(label "${NPM_RESULT:-unknown}") | Native SDK: $(icon "${SDK_NATIVE_RESULT:-unknown}") $(label "${SDK_NATIVE_RESULT:-unknown}") | Engine consumer: $(icon "${ENGINE_RESULT:-unknown}") $(label "${ENGINE_RESULT:-unknown}") | Examples: $(icon "${STARTER_KIT_RESULT:-unknown}") $(label "${STARTER_KIT_RESULT:-unknown}") | Example TestFlight: $(icon "${EXAMPLE_TESTFLIGHT_RESULT:-unknown}") $(label "${EXAMPLE_TESTFLIGHT_RESULT:-unknown}") | Finalize: $(icon "${FINALIZE_RESULT:-unknown}") $(label "${FINALIZE_RESULT:-unknown}")"
+checks_line="*Release checks*${newline}Plan: $(icon "${PLAN_RESULT:-unknown}") $(label "${PLAN_RESULT:-unknown}") | Cloud V2: $(icon "${CLOUD_V2_RESULT:-unknown}") $(label "${CLOUD_V2_RESULT:-unknown}") | Packages: $(icon "${NPM_RESULT:-unknown}") $(label "${NPM_RESULT:-unknown}") | Native SDK: $(icon "${SDK_NATIVE_RESULT:-unknown}") $(label "${SDK_NATIVE_RESULT:-unknown}") | Engine consumer: $(icon "${ENGINE_RESULT:-unknown}") $(label "${ENGINE_RESULT:-unknown}") | Examples: $(icon "${STARTER_KIT_RESULT:-unknown}") $(label "${STARTER_KIT_RESULT:-unknown}") | Example TestFlight: $(icon "${EXAMPLE_TESTFLIGHT_RESULT:-unknown}") $(label "${EXAMPLE_TESTFLIGHT_RESULT:-unknown}") | Finalize: $(icon "${FINALIZE_RESULT:-unknown}") $(label "${FINALIZE_RESULT:-unknown}")"
 
 payload=$(jq -n \
   --arg header "$header_icon $header_text" \

@@ -20,10 +20,19 @@ function fixture() {
         "release-artifacts-url": "https://example.com/stable",
         "example-app-version": "0.1.21-beta.5",
         "example-app-url": "https://example.com/example.apk",
+        "example-app-ios-url": "https://testflight.apple.com/join/source",
       },
     }),
   )
-  writeFileSync(path.join(source, "page.mdx"), "Release {{release-version}}")
+  writeFileSync(
+    path.join(source, "page.mdx"),
+    [
+      "Release {{release-version}}",
+      "[Android]({{example-app-url}})",
+      "[iPhone]({{example-app-ios-url}})",
+      "[Artifacts]({{release-artifacts-url}})",
+    ].join("\n"),
+  )
   return {root, source, output: path.join(root, "output")}
 }
 
@@ -35,12 +44,15 @@ test("renders exact coordinated release variables without changing source", (con
     releaseSetId: "mentra-3.1.0-beta.57",
     artifactContainerTag: "mentra-builds-v3.1.0",
     sourceCommit: "a".repeat(40),
+    channel: "beta",
+    native: {marketingVersion: "3.1.0", buildNumber: 310000057},
   }
   const starterKitResult = {
     schemaVersion: 1,
     releaseSetId: plan.releaseSetId,
     releaseIdentity: plan.releaseIdentity,
     mentraos: {sourceCommit: plan.sourceCommit},
+    starterKit: {releaseCommit: "b".repeat(40)},
     artifacts: [
       {
         key: "reactNative",
@@ -48,12 +60,28 @@ test("renders exact coordinated release variables without changing source", (con
       },
     ],
   }
+  const exampleTestflightResult = {
+    schemaVersion: 1,
+    releaseSetId: plan.releaseSetId,
+    releaseIdentity: plan.releaseIdentity,
+    channel: plan.channel,
+    mentraosSourceCommit: plan.sourceCommit,
+    starterKitReleaseCommit: starterKitResult.starterKit.releaseCommit,
+    version: plan.native,
+    group: {id: "group-public", name: "Mentra Staging Public"},
+    distribution: {
+      audience: "external",
+      status: "submitted",
+      installUrl: "https://testflight.apple.com/join/public123",
+    },
+  }
 
   renderCoordinatedDocs({
     sourceDir: source,
     outputDir: output,
     releasePlan: plan,
     starterKitResult,
+    exampleTestflightResult,
     repository: "Mentra/MentraOS",
   })
 
@@ -66,8 +94,39 @@ test("renders exact coordinated release variables without changing source", (con
   )
   assert.equal(rendered.variables["example-app-version"], "3.1.0-beta.57")
   assert.equal(rendered.variables["example-app-url"], starterKitResult.artifacts[0].url)
+  assert.equal(rendered.variables["example-app-ios-url"], exampleTestflightResult.distribution.installUrl)
   assert.equal(original.variables["release-version"], "3.1.0")
-  assert.equal(readFileSync(path.join(output, "page.mdx"), "utf8"), "Release {{release-version}}")
+  assert.equal(
+    readFileSync(path.join(output, "page.mdx"), "utf8"),
+    [
+      "Release {{release-version}}",
+      `[Android](${starterKitResult.artifacts[0].url})`,
+      `[iPhone](${exampleTestflightResult.distribution.installUrl})`,
+      "[Artifacts](https://github.com/Mentra/MentraOS/releases/tag/mentra-builds-v3.1.0)",
+    ].join("\n"),
+  )
+  assert.match(readFileSync(path.join(source, "page.mdx"), "utf8"), /\{\{example-app-url\}\}/)
+})
+
+test("rejects unresolved URL variables", (context) => {
+  const {root, source, output} = fixture()
+  context.after(() => rmSync(root, {recursive: true, force: true}))
+  writeFileSync(path.join(source, "page.mdx"), "[Unknown]({{unknown-url}})")
+
+  assert.throws(
+    () =>
+      renderCoordinatedDocs({
+        sourceDir: source,
+        outputDir: output,
+        releasePlan: {
+          releaseIdentity: "3.1.0",
+          releaseSetId: "mentra-3.1.0",
+          artifactContainerTag: "mentra-builds-v3.1.0",
+        },
+        repository: "Mentra/MentraOS",
+      }),
+    /Unresolved URL variable/,
+  )
 })
 
 test("rejects an inconsistent release plan", (context) => {
@@ -109,8 +168,8 @@ test("rejects prerelease docs without matching example artifacts", (context) => 
   )
 })
 
-test("Mentra Live current-release copy uses configured variables", () => {
-  const docsRoot = fileURLToPath(new URL("../../mintlify-docs/mentra-live/", import.meta.url))
+test("Bluetooth SDK current-release copy uses configured variables", () => {
+  const docsRoot = fileURLToPath(new URL("../../mintlify-docs/bluetooth-sdk/", import.meta.url))
   const files = readdirSync(docsRoot, {recursive: true}).filter((file) => file.endsWith(".mdx"))
   const content = files.map((file) => readFileSync(path.join(docsRoot, file), "utf8")).join("\n")
 

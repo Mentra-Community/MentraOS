@@ -12,7 +12,7 @@ import {decideDevLaunchRoute, engine} from "@mentra/engine"
 import {appRegistry, registerDevApp, type DevAppRecord} from "@mentra/engine-host-internal"
 import {askPermissionsUI, checkPermissionsUI, PERMISSION_CONFIG} from "@/utils/PermissionsUtils"
 import {storage} from "@/utils/storage/storage"
-import type {AppletInterface, AppletPermission} from "@/../../cloud/packages/types/src"
+import type {AppletInterface, AppletPermission} from "@mentra/engine"
 
 export default function MiniappDeveloperScannerScreen() {
   const {theme} = useAppTheme()

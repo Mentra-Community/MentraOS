@@ -164,6 +164,23 @@ jobs:
           cp .env.example .env
           bun expo prebuild --platform android
 
+      - name: Install Android NDK with transient-download retries
+        run: |
+          set -euo pipefail
+          ndk_version=$(awk -F'"' '/^ndkVersion = "/ { print $2; exit }' \
+            mobile/node_modules/react-native/gradle/libs.versions.toml)
+          [[ "$ndk_version" =~ ^[0-9]+(\.[0-9]+)+$ ]]
+          for attempt in {1..3}; do
+            if sdkmanager "ndk;$ndk_version"; then
+              exit 0
+            fi
+            if (( attempt == 3 )); then
+              exit 1
+            fi
+            echo "::warning::Android NDK download failed; retrying ($attempt/3)."
+            sleep 10
+          done
+
       - name: Inspect public Maven state
         id: existing
         env:
@@ -323,11 +340,30 @@ jobs:
             --expected-purls "${{ steps.release.outputs.sdk_purl }},${{ steps.release.outputs.lc3_purl }}" \
             --output native-result/maven/sonatype-deployment.json
           encoded_name=$(jq -rn --arg value "$ASSET_NAME" '$value | @uri')
-          gh api \
-            --method POST \
-            -H "Content-Type: application/octet-stream" \
-            --input native-result/maven/sonatype-deployment.json \
-            "https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/$RELEASE_ID/assets?name=$encoded_name" >/dev/null
+          persisted=false
+          for attempt in {1..6}; do
+            if gh api \
+              --method POST \
+              -H "Content-Type: application/octet-stream" \
+              --input native-result/maven/sonatype-deployment.json \
+              "https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/$RELEASE_ID/assets?name=$encoded_name" \
+              >/dev/null 2>deployment-upload-error.log; then
+              persisted=true
+              break
+            fi
+            (( attempt < 6 )) && sleep 5
+          done
+          if [[ "$persisted" != "true" ]]; then
+            asset_id=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases/$RELEASE_ID/assets?per_page=100" \
+              --jq ".[] | select(.name == \"$ASSET_NAME\") | .id" 2>/dev/null | head -1 || true)
+            if [[ -z "$asset_id" ]]; then
+              cat deployment-upload-error.log >&2
+              exit 1
+            fi
+            gh api -H "Accept: application/octet-stream" \
+              "repos/${GITHUB_REPOSITORY}/releases/assets/$asset_id" > persisted-deployment.json
+            cmp --silent native-result/maven/sonatype-deployment.json persisted-deployment.json
+          fi
 
       - name: Stage locally verified Maven artifacts
         run: |
