@@ -181,11 +181,11 @@ a new service or image. One Runtime process exposes:
 ```text
 GET    /.well-known/mentra-deployment.json
 GET    /healthz
-GET    /readyz
+GET    /ready
 POST   /api/camera/stream
 GET    /api/camera/stream/:streamId
 DELETE /api/camera/stream/:streamId
-POST   /api/meetings/acs-teams/token
+POST   /api/meetings/acs/teams-user-token
 ```
 
 The reduced Runtime:
@@ -272,15 +272,14 @@ foundation work.
 
 The merge sequence is explicit:
 
-1. Land this planning PR.
-2. Land the enterprise/platform foundation as one Alex-owned implementation PR
-   from current `dev`.
-3. Nicolo lands the native ACS/media PR independently; Entra and deployment work
+1. Land the design and enterprise/platform foundation together in this
+   Alex-owned PR from current `dev`.
+2. Nicolo lands the native ACS/media PR independently; Entra and deployment work
    are not prerequisites for that branch's guest-media checkpoint.
-4. After both sets of prerequisites are on `dev`, open a fresh joint integration
+3. After both sets of prerequisites are on `dev`, open a fresh joint integration
    PR. Do not build the enterprise foundation on top of Nicolo's branch and do
    not retrofit the branch's Miniapp SDK spike from a parallel branch.
-5. Pin and bundle the corresponding Mentra Call release only after the joint
+4. Pin and bundle the corresponding Mentra Call release only after the joint
    integration contract is stable.
 
 The first tranche is complete when a customer-style Azure deployment can resolve

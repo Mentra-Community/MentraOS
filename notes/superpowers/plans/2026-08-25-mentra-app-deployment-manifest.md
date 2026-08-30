@@ -89,17 +89,16 @@ expected to place a Teams call.
 
 ### Merge gates
 
-1. Merge this documentation-only planning PR.
-2. Ship all Lane A work as one Alex-owned implementation PR based on current
-   `dev`; it does not import or modify Nicolo's ACS branch. Keep the work
-   reviewable as staged commits inside that PR.
-3. Nicolo rebases or merges current `dev`, qualifies the guest ACS media path,
+1. Ship the design and all Lane A work together in this Alex-owned PR based on
+   current `dev`; it does not import or modify Nicolo's ACS branch. Keep the
+   work reviewable as staged commits inside the PR.
+2. Nicolo rebases or merges current `dev`, qualifies the guest ACS media path,
    and lands Lane B as its own focused PR. Lane B does not wait for enterprise
    Entra or Runtime work.
-4. Once the Lane A PR and Lane B are on `dev`, create Lane C from fresh
+3. Once this PR and Lane B are on `dev`, create Lane C from fresh
    `dev`. Jointly finalize the provider-neutral host/Miniapp SDK boundary and
    replace miniapp credential pass-through with host-owned Runtime exchange.
-5. Pin and bundle the matching Mentra Call package only after Lane C's contract
+4. Pin and bundle the matching Mentra Call package only after Lane C's contract
    is stable, then run the complete Azure reference deployment qualification.
 
 ## Phase 1: Deployment contract and pre-network boot
@@ -511,15 +510,15 @@ plan, that branch has no pull request, is 52 commits ahead and 108 commits behin
 the source of the ACS media implementation, not the base for unrelated manifest,
 auth, or Runtime work.
 
-- Keep this planning PR documentation-only and based on `dev`.
-- Start the single Lane A manifest, Entra, Runtime-auth, and modular-Runtime
-  implementation PR from current `dev`; it does not depend on Nicolo's branch.
+- Keep the design and the single Lane A manifest, Entra, Runtime-auth, and
+  modular-Runtime implementation together in this PR from current `dev`; it
+  does not depend on Nicolo's branch.
 - Have Nicolo rebase or merge current `dev` into `nicolo/acs-teams-v1`, validate
   Android/iOS, and open its own focused PR for the native ACS/media capability.
 - If native integration must proceed before that PR merges, create a narrowly
   scoped stacked branch from `nicolo/acs-teams-v1` and target that branch. Do not
   mix Runtime or deployment-manifest work into the stack.
-- After the native ACS PR and Lane A implementation PR land, create the final
+- After the native ACS PR and this Lane A PR land, create the final
   integration PR from fresh `dev` and adapt the spike Miniapp SDK contract so
   credentials stay below the host boundary.
 - PR #3743 is compatible but not a dependency. If its Store/Core split lands
