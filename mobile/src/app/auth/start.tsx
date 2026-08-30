@@ -14,12 +14,14 @@ import {mapAuthError} from "@/utils/auth/authErrors"
 import AppleIcon from "assets/icons/component/AppleIcon"
 import GoogleIcon from "assets/icons/component/GoogleIcon"
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
+import {useDeployment} from "@/services/deployment"
 
 export default function LoginScreen() {
-  const {push, replace, setAnimation} = useNavigationStore.getState()
+  const {push, setAnimation} = useNavigationStore.getState()
   const [isChina] = useSetting(SETTINGS.china_deployment.key)
   const {authError} = useLocalSearchParams<{authError?: string}>()
   const {theme} = useAppTheme()
+  const {store} = useDeployment()
 
   focusEffectPreventBack()
 
@@ -41,6 +43,7 @@ export default function LoginScreen() {
   }
 
   const handleGoogleSignIn = async () => {
+    store.returnToMentra()
     const res = await mentraAuth.googleSignIn()
     if (res.is_error()) {
       return
@@ -50,6 +53,7 @@ export default function LoginScreen() {
   }
 
   const handleAppleSignIn = async () => {
+    store.returnToMentra()
     const res = await mentraAuth.appleSignIn()
     if (res.is_error()) {
       console.error("Apple sign in failed:", res.error)
@@ -60,6 +64,7 @@ export default function LoginScreen() {
   }
 
   const handleSignup = async () => {
+    store.returnToMentra()
     setAnimation("simple_push")
     await new Promise((resolve) => setTimeout(resolve, 1))
     push("/auth/signup")
@@ -114,12 +119,29 @@ export default function LoginScreen() {
           {/* Already have an account? Log in */}
           <View className="flex-row justify-center items-center gap-1 mt-2">
             <Text className="text-sm text-muted-foreground">{translate("login:alreadyHaveAccount")}</Text>
-            <TouchableOpacity onPress={() => push("/auth/email-login")}>
+            <TouchableOpacity
+              onPress={() => {
+                store.returnToMentra()
+                push("/auth/email-login")
+              }}>
               <Text className="text-sm text-secondary-foreground font-semibold">{translate("login:logIn")}</Text>
             </TouchableOpacity>
           </View>
 
           <Text className="text-[11px] text-muted-foreground text-center mt-2">{translate("login:termsText")}</Text>
+
+          <View className="flex-row items-center my-6">
+            <View className="flex-1 h-px bg-border" />
+            <Text className="mx-3 text-sm text-muted-foreground">{translate("workspace:or")}</Text>
+            <View className="flex-1 h-px bg-border" />
+          </View>
+
+          <Button
+            preset="secondary"
+            text={translate("workspace:connectAction")}
+            onPress={() => push("/auth/workspace")}
+            LeftAccessory={() => <Icon name="office-building" size={20} color={theme.colors.foreground} />}
+          />
         </View>
       </View>
     </Screen>

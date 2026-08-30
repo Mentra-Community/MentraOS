@@ -160,6 +160,19 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       ...(variant.googleServicesPlist ? {googleServicesFile: variant.googleServicesPlist} : {}),
       associatedDomains: ["applinks:apps.mentra.glass", "applinks:apps.mentraglass.com"],
       infoPlist: {
+        // Native collection must remain off until the deployment profile has
+        // been restored. FirebaseAnalyticsSetup enables it for consumer or
+        // explicitly opted-in workspace deployments.
+        FIREBASE_ANALYTICS_COLLECTION_ENABLED: false,
+        CFBundleURLTypes: [
+          {
+            CFBundleURLSchemes: ["com.mentra"],
+          },
+          {
+            CFBundleURLSchemes: [`msauth.${iosBundleId}`],
+          },
+        ],
+        LSApplicationQueriesSchemes: ["msauthv2", "msauthv3"],
         NSCameraUsageDescription: "This app needs access to your camera to capture images.",
         NSMicrophoneUsageDescription:
           "Mentra uses your microphone to enable the 'Hey Mira' AI assistant and provide live captions for deaf and hard-of-hearing users on smart glasses. For example, you can say 'Hey Mira, what's on my calendar today?' or the app can caption conversations in real-time on your glasses display.",
@@ -219,6 +232,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
         usesNonExemptEncryption: false,
       },
       entitlements: {
+        "keychain-access-groups": ["$(AppIdentifierPrefix)com.microsoft.adalcache"],
         "com.apple.developer.networking.wifi-info": true,
         "com.apple.developer.networking.HotspotConfiguration": true,
       },

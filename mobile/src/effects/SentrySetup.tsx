@@ -1,6 +1,7 @@
 import * as Sentry from "@sentry/react-native"
 
 import {SETTINGS, engine} from "@mentra/engine"
+import {deploymentStore} from "@/services/deployment"
 
 export const SentryNavigationIntegration = Sentry.reactNavigationIntegration({
   enableTimeToInitialDisplay: true,
@@ -47,6 +48,7 @@ export const SentrySetup = () => {
   // Only initialize Sentry if DSN is provided
   const sentryDsn = process.env.EXPO_PUBLIC_SENTRY_DSN
   const isChina = engine.settings.get(SETTINGS.china_deployment.key)
+  const deployment = deploymentStore.getActive()
 
   if (!sentryDsn || sentryDsn === "secret" || sentryDsn.trim() === "") {
     return
@@ -54,11 +56,12 @@ export const SentrySetup = () => {
   if (isChina) {
     return
   }
+  if (deployment.kind === "workspace" && !deployment.manifest.telemetry) {
+    return
+  }
 
   const release = `${process.env.EXPO_PUBLIC_MENTRAOS_VERSION}`
   const dist = `${process.env.EXPO_PUBLIC_BUILD_TIME}-${process.env.EXPO_PUBLIC_BUILD_COMMIT}`
-  const branch = process.env.EXPO_PUBLIC_BUILD_BRANCH
-  const isProd = branch == "main" || branch == "staging"
   // const sampleRate = isProd ? 0.1 : 1.0
   const sampleRate = 1.0
 

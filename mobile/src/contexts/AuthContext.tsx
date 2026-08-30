@@ -1,151 +1,172 @@
 import * as Sentry from "@sentry/react-native"
-import {FC, createContext, useEffect, useState, useContext} from "react"
+import {FC, createContext, useContext, useEffect, useMemo, useState} from "react"
 
 import {SETTINGS, useSetting} from "@mentra/engine"
+import {
+  createDeploymentAuthProvider,
+  type DeploymentAuthProvider,
+  type DeploymentAuthSession,
+  useDeployment,
+} from "@/services/deployment"
 import {LogoutUtils} from "@/utils/LogoutUtils"
 import mentraAuth from "@/utils/auth/authClient"
-import {ensureDevModeForUser} from "@/utils/dev/devModeAllowlist"
 import {MentraAuthSession, MentraAuthUser} from "@/utils/auth/authProvider.types"
+import {ensureDevModeForUser} from "@/utils/dev/devModeAllowlist"
 
 interface AuthContextProps {
   user: MentraAuthUser | null
   session: MentraAuthSession | null
   loading: boolean
-  logout: () => void
+  logout: () => Promise<void>
+  signInWorkspace: () => Promise<void>
 }
 
 const AuthContext = createContext<AuthContextProps>({
   user: null,
   session: null,
   loading: true,
-  logout: () => {},
+  logout: async () => {},
+  signInWorkspace: async () => {},
 })
 
+function toMentraSession(session: DeploymentAuthSession | null): MentraAuthSession | null {
+  if (!session) return null
+  const {identity} = session
+  const id = `workspace:${identity.deploymentId}:${encodeURIComponent(identity.issuer)}:${identity.subject}`
+  return {
+    token: session.accessToken,
+    user: {
+      id,
+      email: identity.email,
+      name: identity.displayName ?? identity.email ?? identity.subject,
+      provider: "microsoft-entra",
+    },
+  }
+}
+
 export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
-  const [session, setSession] = useState<any>(null)
-  const [user, setUser] = useState<any>(null)
+  const [session, setSession] = useState<MentraAuthSession | null>(null)
+  const [user, setUser] = useState<MentraAuthUser | null>(null)
   const [loading, setLoading] = useState(true)
   const [_authEmail, setAuthEmail] = useSetting(SETTINGS.auth_email.key)
+  const {activeDeployment, store} = useDeployment()
+  const workspaceAuth = useMemo<DeploymentAuthProvider | null>(
+    () => (activeDeployment.kind === "workspace" ? createDeploymentAuthProvider(activeDeployment) : null),
+    [activeDeployment],
+  )
 
   useEffect(() => {
-    let subscription: {unsubscribe: () => void} | undefined
-    // onAuthStateChange() is async, so this effect can be cleaned up while the
-    // subscribe call is still in flight. The subscription would then be created
-    // *after* cleanup ran and never torn down. That used to be self-correcting,
-    // because the provider held one slot and the next subscriber overwrote the
-    // orphan; now that every listener is retained, the orphan would survive and
-    // another would accumulate on each remount, updating an unmounted provider.
     let cancelled = false
+    let unsubscribe: (() => void) | undefined
+    setLoading(true)
 
-    // 1. Check for an active session on mount
-    const getInitialSession = async () => {
-      // console.log("AuthContext: Getting initial session")
-      const res = await mentraAuth.getSession()
-      if (res.is_error()) {
-        console.error("AuthContext: Error getting initial session:", res.error)
-        setLoading(false)
-        return
+    const applySession = (next: MentraAuthSession | null, allowTelemetry: boolean) => {
+      if (cancelled) return
+      setSession(next)
+      setUser(next?.user ?? null)
+      if (allowTelemetry) {
+        Sentry.setUser({id: next?.user?.id, email: next?.user?.email})
       }
-      const session = res.value
-      setSession(session)
-      setUser(session?.user ?? null)
-      if (session?.user?.email) {
-        setAuthEmail(session.user.email)
-        void ensureDevModeForUser(session.user.email)
+      if (next?.user?.email) {
+        setAuthEmail(next.user.email)
+        if (activeDeployment.kind === "consumer") {
+          void ensureDevModeForUser(next.user.email)
+        }
       }
       setLoading(false)
     }
 
-    // 2. Setup auth state change listener
-    const setupAuthListener = async () => {
-      const res = await mentraAuth.onAuthStateChange((event, session: any) => {
-        // Whether the UI's listener actually receives auth events is the whole
-        // of OS-1828: the provider kept a single callback slot, the engine
-        // registered second and silently replaced this one, and sign-in went
-        // nowhere. There was no log either way, so the failure looked like
-        // "SSO is flaky". Never log the session itself — tokens live on it.
-        console.log(`AuthContext: auth state ${event}, session ${session ? "present" : "absent"}`)
-        setSession(session)
-        setUser(session?.user ?? null)
-        setLoading(false)
-        // set sentry user:
-        Sentry.setUser({
-          id: session?.user?.id,
-          email: session?.user?.email,
+    if (workspaceAuth && activeDeployment.kind === "workspace") {
+      const allowTelemetry = activeDeployment.manifest.telemetry
+      unsubscribe = workspaceAuth.onStateChange((next) => applySession(toMentraSession(next), allowTelemetry))
+      void workspaceAuth
+        .getSession()
+        .then((next) => applySession(toMentraSession(next), allowTelemetry))
+        .catch((error) => {
+          console.warn("AuthContext: failed to restore workspace session", error)
+          applySession(null, allowTelemetry)
         })
-        // Send user email to glasses for crash reporting
-        if (session?.user?.email) {
-          setAuthEmail(session.user.email)
-          void ensureDevModeForUser(session.user.email)
+    } else {
+      let authSubscription: {unsubscribe: () => void} | undefined
+
+      void mentraAuth.getSession().then((res) => {
+        if (res.is_error()) {
+          console.error("AuthContext: Error getting initial session:", res.error)
+          applySession(null, true)
+          return
         }
+        applySession(res.value, true)
       })
-      console.log("AuthContext: setupAuthListener()", res)
-      if (res.is_ok()) {
-        // The provider returns {unsubscribe}. This used to look for
-        // {data:{subscription}} — a Supabase shape that no provider has emitted
-        // since the Cloud V2 cutover — so `subscription` stayed undefined and
-        // the cleanup below was a silent no-op, leaking a listener on every
-        // remount. Accept the current shape, keeping the old one for safety.
+
+      void (async () => {
+        const res = await mentraAuth.onAuthStateChange((event, next: MentraAuthSession) => {
+          console.log(`AuthContext: auth state ${event}, session ${next ? "present" : "absent"}`)
+          applySession(next, true)
+        })
+        if (res.is_error()) return
         const changeData = res.value as {
           unsubscribe?: () => void
           data?: {subscription?: {unsubscribe: () => void}}
         }
-        const resolved =
+        authSubscription =
           changeData.data?.subscription ??
           (typeof changeData.unsubscribe === "function" ? {unsubscribe: changeData.unsubscribe} : undefined)
+        if (cancelled) authSubscription?.unsubscribe()
+      })()
 
-        // Cleanup already ran while we were awaiting, so nothing will unsubscribe
-        // this later. Drop it here instead of leaving it registered forever.
-        if (cancelled) resolved?.unsubscribe()
-        else subscription = resolved
-      }
+      unsubscribe = () => authSubscription?.unsubscribe()
     }
 
-    getInitialSession()
-    setupAuthListener()
-
-    // Cleanup the listener
     return () => {
       cancelled = true
-      subscription?.unsubscribe()
+      unsubscribe?.()
     }
-  }, [])
+  }, [activeDeployment, setAuthEmail, workspaceAuth])
+
+  const signInWorkspace = async () => {
+    if (!workspaceAuth) throw new Error("No organization workspace is active")
+    setLoading(true)
+    try {
+      const next = toMentraSession(await workspaceAuth.signIn())
+      setSession(next)
+      setUser(next?.user ?? null)
+      if (next?.user?.email) setAuthEmail(next.user.email)
+    } finally {
+      setLoading(false)
+    }
+  }
 
   const logout = async () => {
     console.log("AuthContext: Starting logout process")
-
     try {
-      // Use the comprehensive logout utility
-      await LogoutUtils.performCompleteLogout()
-
-      // Verify logout was successful
-      const logoutSuccessful = await LogoutUtils.verifyLogoutSuccess()
-      if (!logoutSuccessful) {
-        console.warn("AuthContext: Logout verification failed, but continuing...")
+      if (workspaceAuth && activeDeployment.kind === "workspace") {
+        const deployment = activeDeployment
+        await workspaceAuth.signOut()
+        await LogoutUtils.performCompleteLogout({skipAuthSignOut: true})
+        // Complete logout intentionally clears user settings and MMKV. Restore
+        // only the selected deployment so another employee returns to the
+        // organization's sign-in screen, never to the consumer login.
+        store.activate({
+          workspaceOrigin: deployment.workspaceOrigin,
+          manifestUrl: deployment.manifestUrl,
+          manifest: deployment.manifest,
+        })
+      } else {
+        await LogoutUtils.performCompleteLogout()
+        const logoutSuccessful = await LogoutUtils.verifyLogoutSuccess()
+        if (!logoutSuccessful) console.warn("AuthContext: Logout verification failed, but continuing...")
       }
-
-      // Update local state
-      setSession(null)
-      setUser(null)
-
-      console.log("AuthContext: Logout process completed")
     } catch (error) {
       console.error("AuthContext: Error during logout:", error)
-
-      // Even if there's an error, clear local state to prevent user from being stuck
+    } finally {
       setSession(null)
       setUser(null)
     }
   }
 
-  const value: AuthContextProps = {
-    user,
-    session,
-    loading,
-    logout,
-  }
-
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
+  return (
+    <AuthContext.Provider value={{user, session, loading, logout, signInWorkspace}}>{children}</AuthContext.Provider>
+  )
 }
 
 export function useAuth() {

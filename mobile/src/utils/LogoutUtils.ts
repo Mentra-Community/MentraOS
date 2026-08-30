@@ -13,7 +13,7 @@ export class LogoutUtils {
    * Comprehensive logout that completely nukes all user state and connections
    * This should be used for both regular logout and account deletion scenarios
    */
-  public static async performCompleteLogout(): Promise<void> {
+  public static async performCompleteLogout(options: {skipAuthSignOut?: boolean} = {}): Promise<void> {
     console.log(`${this.TAG}: Starting complete logout process...`)
 
     try {
@@ -32,7 +32,9 @@ export class LogoutUtils {
       // tree re-renders to the auth stack, which unmounts the miniapp surface
       // on its own. That delivery is what OS-1828 fixed: before that, this
       // event never reached AuthContext at all.
-      await this.clearAuthSession()
+      if (!options.skipAuthSignOut) {
+        await this.clearAuthSession()
+      }
 
       // Step 2: Let that unmount actually commit before destroying what it was
       // rendering. Without this the teardown below still races the re-render

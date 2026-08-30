@@ -335,6 +335,24 @@ function withAndroidManifestModifications(config: any) {
         app["meta-data"] = []
       }
 
+      // The official binary can be enrolled into a workspace that disables
+      // telemetry. Keep Firebase Analytics off during native startup; the
+      // JavaScript deployment gate enables collection only after the embedded
+      // consumer profile or an opted-in workspace has been resolved.
+      const analyticsCollection = app["meta-data"].find(
+        (m: any) => m.$["android:name"] === "firebase_analytics_collection_enabled",
+      )
+      if (analyticsCollection) {
+        analyticsCollection.$["android:value"] = "false"
+      } else {
+        app["meta-data"].push({
+          $: {
+            "android:name": "firebase_analytics_collection_enabled",
+            "android:value": "false",
+          },
+        })
+      }
+
       // Inject the Mapbox runtime token (pk....) as manifest meta-data
       // `com.mapbox.token`. NavigationManager.kt reads this tag from the
       // merged manifest at boot and passes it to MapboxOptions.accessToken —

@@ -1,5 +1,7 @@
 import {SETTINGS, engine} from "@mentra/engine"
 
+import {deploymentStore} from "@/services/deployment"
+
 let analyticsModule: typeof import("@react-native-firebase/analytics") | null = null
 let initialized = false
 
@@ -7,8 +9,13 @@ function isChina(): boolean {
   return engine.settings.get(SETTINGS.china_deployment.key) === true
 }
 
+function isCollectionAllowed(): boolean {
+  const deployment = deploymentStore.getActive()
+  return deployment.kind === "consumer" || deployment.manifest.telemetry
+}
+
 async function getAnalytics() {
-  if (isChina()) return null
+  if (isChina() || !isCollectionAllowed()) return null
   if (!analyticsModule) {
     try {
       analyticsModule = require("@react-native-firebase/analytics")
@@ -23,12 +30,19 @@ async function getAnalytics() {
 }
 
 export async function initAnalytics() {
-  if (initialized || isChina()) return
+  if (initialized || isChina() || !isCollectionAllowed()) return
   const analytics = await getAnalytics()
   if (!analytics) return
   await analytics.setAnalyticsCollectionEnabled(true)
   initialized = true
   console.log("Firebase Analytics initialized")
+}
+
+export async function disableAnalytics() {
+  if (!analyticsModule) return
+  const analytics = analyticsModule.default()
+  await analytics.setAnalyticsCollectionEnabled(false)
+  initialized = false
 }
 
 export async function logEvent(name: string, params?: Record<string, string | number | boolean>) {
