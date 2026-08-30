@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "deploymentId": "mentra-enterprise-reference",
+  "displayName": "Mentra Enterprise Reference",
+  "releaseIdentity": "3.1.0",
+  "services": {
+    "coreUrl": null,
+    "runtimeUrl": "https://ca-mentra-enterprise-reference.gentlehill-4ed63a4c.westus2.azurecontainerapps.io"
+  },
+  "auth": {
+    "mode": "microsoft-entra",
+    "authorityUrl": "https://login.microsoftonline.com/2e7662c0-e826-4928-95b2-60bdd48d5d95",
+    "clientId": "95ad08c2-7837-4ddf-933c-1fce3d6d2799",
+    "runtimeScopes": ["api://20424d9e-4b99-44e8-82c9-0ad06f08a8db/mentra.runtime"],
+    "teamsScopes": [
+      "https://auth.msft.communication.azure.com/Teams.ManageCalls",
+      "https://auth.msft.communication.azure.com/Teams.ManageChats"
+    ]
+  },
+  "artifacts": {
+    "mentraLiveOtaManifestUrl": null,
+    "sttModelBaseUrl": null,
+    "ttsModelBaseUrl": null
+  },
+  "appUpdates": {
+    "mode": "managed",
+    "storeUrls": {"android": null, "ios": null},
+    "reviewUrls": {"android": null, "ios": null}
+  },
+  "content": {"wallpaperUrls": []},
+  "links": {
+    "privacyPolicyUrl": "https://ca-mentra-enterprise-reference.gentlehill-4ed63a4c.westus2.azurecontainerapps.io/legal/privacy",
+    "termsOfServiceUrl": "https://ca-mentra-enterprise-reference.gentlehill-4ed63a4c.westus2.azurecontainerapps.io/legal/terms",
+    "documentationUrl": null,
+    "supportUrl": null
+  },
+  "systemMiniapps": {
+    "approvedPackageNamesOverride": ["com.mentra.call", "com.mentra.settings"]
+  },
+  "glasses": {"allowedModelsOverride": ["mentra-live"]},
+  "features": {
+    "runtimeRealtimeSession": false,
+    "managedStreams": true,
+    "nativeMeetings": true,
+    "cloudSpeech": false,
+    "onDeviceSpeech": false,
+    "navigation": false
+  },
+  "telemetry": false
+}
