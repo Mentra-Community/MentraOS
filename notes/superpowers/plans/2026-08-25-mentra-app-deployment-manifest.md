@@ -200,6 +200,7 @@ expected to place a Teams call.
 
 **Files:**
 
+- Create `mobile/src/services/auth/DeploymentAuthProvider.ts`
 - Add an Expo/native Microsoft Entra auth module for Android and iOS
 - Create `mobile/src/services/auth/EntraAuthService.ts`
 - Modify auth routing and account context
@@ -207,19 +208,25 @@ expected to place a Teams call.
 - Add unit, native integration, and end-to-end auth tests
 
 - [ ] Initialize MSAL only after a `microsoft-entra` manifest is active.
+- [ ] Put MSAL behind `DeploymentAuthProvider`; app navigation, Engine, Runtime
+      clients, and miniapps must not import the Entra adapter directly.
 - [ ] Configure it dynamically from the exact tenant authority and client id
       while using the official Mentra App's registered native redirect URI.
 - [ ] Use Authorization Code + PKCE through the system browser or supported
       Microsoft broker.
 - [ ] Persist only MSAL/account state in OS-protected storage, scoped by
       deployment id.
-- [ ] Derive the stable local user namespace from verified `tid` plus `oid`, not
-      email.
+- [ ] Return a canonical workspace identity keyed by deployment, issuer, and
+      provider subject. The Entra adapter derives its subject from verified
+      `tid` plus `oid`; email remains display metadata only.
 - [ ] Acquire the deployment's Runtime API scope for the selected account and
       refresh it silently.
 - [ ] Silently acquire the ACS Teams delegated token for the same account when
       the native meeting capability needs it.
 - [ ] Keep consumer Google/Apple/email bound to the embedded Mentra profile.
+- [ ] Let the manifest select exactly one workspace auth adapter. Do not show an
+      identity-provider picker or disabled "coming soon" providers after a
+      workspace is selected.
 - [ ] Do not create a Cloud V2/Core session for the call-focused workspace.
 - [ ] Implement logout, disabled-user recovery, authority mismatch, token expiry,
       and deployment switching without credential crossover.
@@ -459,21 +466,21 @@ templates, and runbooks
       unapproved destination.
 - [ ] Re-run ordinary consumer release gates with the embedded Mentra profile.
 
-## Suggested cut lines
+## Suggested commit stages inside the Lane A implementation PR
 
-- **PR 1:** Manifest types/resolver, landing screen, manual workspace flow,
-  nullable Core/Runtime, and pre-network telemetry gating.
-- **PR 2:** Native Entra authentication plus deployment-scoped identity and
-  secure logout, including the Runtime API token provider.
-- **PR 3:** Runtime module composition plus the existing managed-stream service
-  in a stateless HTTP-only profile.
-- **PR 4:** Runtime meetings/ACS Teams-user token exchange, exercised through a
-  server-side qualification harness with no native/mobile changes.
-- **PR 5:** Integrate the qualified native ACS implementation, finalize the
-  provider-neutral Miniapp SDK capability, and ship the join-only Mentra Call
-  product slice. Do not add delegated Graph meeting creation here.
-- **PR 6:** OTA/content/hardware policy, release artifacts, guides, and physical
-  restricted-network qualification.
+1. Manifest types/resolver, landing screen, manual workspace flow, nullable
+   Core/Runtime, and pre-network telemetry gating.
+2. Provider-neutral auth contract plus native Entra adapter,
+   deployment-scoped identity, secure logout, and Runtime API token provider.
+3. Runtime module composition plus the existing managed-stream service in a
+   stateless HTTP-only profile.
+4. Runtime meetings/ACS Teams-user token exchange, exercised through a
+   server-side qualification harness with no native/mobile changes.
+5. OTA/content/hardware policy, Azure template, guides, and restricted-network
+   qualification scaffolding.
+
+Native ACS integration remains the separate Lane C PR after Nicolo's Lane B
+lands. Do not add delegated Graph meeting creation to either V1 lane.
 
 The narrowed call deployment avoids the largest previous work item: packaging
 Core and every Runtime dependency. It still requires real mobile work—native
@@ -505,14 +512,14 @@ the source of the ACS media implementation, not the base for unrelated manifest,
 auth, or Runtime work.
 
 - Keep this planning PR documentation-only and based on `dev`.
-- Start manifest, Entra, Runtime-auth, and modular-Runtime implementation PRs
-  independently from current `dev`; none depends on Nicolo's branch.
+- Start the single Lane A manifest, Entra, Runtime-auth, and modular-Runtime
+  implementation PR from current `dev`; it does not depend on Nicolo's branch.
 - Have Nicolo rebase or merge current `dev` into `nicolo/acs-teams-v1`, validate
   Android/iOS, and open its own focused PR for the native ACS/media capability.
 - If native integration must proceed before that PR merges, create a narrowly
   scoped stacked branch from `nicolo/acs-teams-v1` and target that branch. Do not
   mix Runtime or deployment-manifest work into the stack.
-- After the native ACS PR and independent platform PRs land, create the final
+- After the native ACS PR and Lane A implementation PR land, create the final
   integration PR from fresh `dev` and adapt the spike Miniapp SDK contract so
   credentials stay below the host boundary.
 - PR #3743 is compatible but not a dependency. If its Store/Core split lands

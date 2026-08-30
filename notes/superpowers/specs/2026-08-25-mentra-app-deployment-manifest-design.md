@@ -355,6 +355,13 @@ Sign-in:   Microsoft organization account
 [ View connection details ]
 ```
 
+The manifest, not the end user, selects the authentication provider. The
+workspace flow therefore does not show a provider picker or disabled
+"coming soon" providers. After activation it renders one action derived from
+the selected adapter, such as **Continue with Microsoft** for
+`microsoft-entra`; a later OIDC workspace renders its own configured
+organization-account action through the same screen.
+
 Back or Cancel returns to the ordinary Mentra landing screen without changing
 endpoints or saving the candidate. A selected but unauthenticated workspace also
 offers Use a different workspace and Return to Mentra. Returning clears the
@@ -385,6 +392,37 @@ manifest mode can be added later, but V1 implements and qualifies only
 accepts a deployment-provided Runtime token; it does not make every OIDC or SAML
 provider work automatically.
 
+`microsoft-entra` is a permanent adapter, not temporary scaffolding that an
+existing deployment must later migrate away from. A future `oidc` adapter is an
+additive manifest mode backed by a standards-based native OIDC client. Both
+implement the same host contract:
+
+```ts
+interface WorkspaceIdentity {
+  deploymentId: string
+  issuer: string
+  subject: string
+  email?: string
+}
+
+interface WorkspaceTokenRequest {
+  audience?: string
+  scopes: string[]
+}
+
+interface DeploymentAuthProvider {
+  signIn(): Promise<WorkspaceIdentity>
+  getAccessToken(request: WorkspaceTokenRequest): Promise<string>
+  signOut(): Promise<void>
+}
+```
+
+App navigation, Engine, Runtime REST clients, and miniapps consume this contract
+and never depend directly on MSAL. Credential storage is namespaced by
+deployment and adapter. For Entra, the adapter maps verified tenant id plus
+object id into the canonical issuer/subject identity. A future generic OIDC
+adapter maps verified `iss` plus `sub`. Mutable email is display metadata only.
+
 The manifest contains only public Entra configuration: the exact tenant
 authority, native application client id, and requested scopes. It never contains
 a client secret. The customer administrator registers the official Mentra App
@@ -400,13 +438,15 @@ Mentra App resolves workspace manifest
   -> system browser or Microsoft broker opens the customer's Entra tenant
   -> user completes the organization's MFA and Conditional Access
   -> MSAL returns the verified account and caches tokens securely
-  -> app derives local identity from verified tid + oid
+  -> Entra adapter maps verified tid + oid to WorkspaceIdentity
   -> bundled Mentra Call becomes available
 ```
 
 The customer's Runtime validates bearer tokens against that exact tenant,
 issuer, audience, signature, expiry, and required scopes. The app and Runtime
-key users by stable tenant id plus object id, not mutable email.
+key users by the canonical deployment, issuer, and provider subject. For the
+Entra adapter, the provider subject is derived from stable tenant id plus object
+id, not mutable email.
 
 ### Reusing the same sign-in for Teams and ACS
 
