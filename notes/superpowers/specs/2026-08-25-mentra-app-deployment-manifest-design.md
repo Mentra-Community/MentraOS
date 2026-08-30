@@ -236,7 +236,7 @@ branch:
 
 | Lane | Owner | Starting point | Exit condition |
 |---|---|---|---|
-| Enterprise/platform foundations | Alex | Focused branches from current `dev` | Workspace resolution, Entra sign-in, Runtime-only Engine auth, reduced Runtime, managed stream, and server-harness ACS Teams-user exchange work without touching the native ACS branch |
+| Enterprise/platform foundations | Alex | One implementation branch from current `dev` | Workspace resolution, Entra sign-in, Runtime-only Engine auth, reduced Runtime, managed stream, and server-harness ACS Teams-user exchange work without touching the native ACS branch |
 | Native Mentra Call/ACS media | Nicolo | `nicolo/acs-teams-v1`, rebased or merged with current `dev` by its owner | Existing work Teams URL joins through native ACS raw media on Android/iOS using the branch's guest checkpoint, with WHEP, audio, leave, and recovery qualified |
 | Product integration | Alex and Nicolo jointly | Fresh `dev` after both prerequisite lanes merge | Host-owned enterprise credentials replace miniapp token pass-through, the bundled Mentra Call UX invokes the agreed provider-neutral host capability, and the complete enterprise call passes qualification |
 
@@ -273,7 +273,8 @@ foundation work.
 The merge sequence is explicit:
 
 1. Land this planning PR.
-2. Land independent enterprise/platform foundation PRs from current `dev`.
+2. Land the enterprise/platform foundation as one Alex-owned implementation PR
+   from current `dev`.
 3. Nicolo lands the native ACS/media PR independently; Entra and deployment work
    are not prerequisites for that branch's guest-media checkpoint.
 4. After both sets of prerequisites are on `dev`, open a fresh joint integration
@@ -376,6 +377,13 @@ The first call-focused profile uses `auth.mode: "microsoft-entra"`. The Mentra
 App uses the native Microsoft Authentication Library (MSAL) on Android and iOS
 with Authorization Code + PKCE. It does not open a customer Core callback and it
 does not create a Core-backed or real-time Runtime session.
+
+This is direct Microsoft Entra authentication, not Supabase SSO and not a claim
+of generic SSO support. The app keeps an auth-provider boundary so another
+manifest mode can be added later, but V1 implements and qualifies only
+`microsoft-entra`. The generic part of this tranche is the Engine seam that
+accepts a deployment-provided Runtime token; it does not make every OIDC or SAML
+provider work automatically.
 
 The manifest contains only public Entra configuration: the exact tenant
 authority, native application client id, and requested scopes. It never contains

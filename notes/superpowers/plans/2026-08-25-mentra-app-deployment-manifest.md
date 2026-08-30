@@ -90,8 +90,9 @@ expected to place a Teams call.
 ### Merge gates
 
 1. Merge this documentation-only planning PR.
-2. Ship Lane A as focused PRs based on current `dev`; none imports or modifies
-   Nicolo's ACS branch.
+2. Ship all Lane A work as one Alex-owned implementation PR based on current
+   `dev`; it does not import or modify Nicolo's ACS branch. Keep the work
+   reviewable as staged commits inside that PR.
 3. Nicolo rebases or merges current `dev`, qualifies the guest ACS media path,
    and lands Lane B as its own focused PR. Lane B does not wait for enterprise
    Entra or Runtime work.
