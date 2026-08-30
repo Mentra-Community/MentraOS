@@ -1,6 +1,7 @@
 import {ENGINE_RELEASE_METADATA} from "../generated/releaseMetadata"
 import {SETTINGS, useSettingsStore} from "../stores/settings"
-import {resolveOtaManifestPolicy, selectModernOtaManifestPin} from "./otaManifestPolicy"
+import {resolveDeploymentAwareOtaManifestPolicy, selectModernOtaManifestPin} from "./otaManifestPolicy"
+import {getConfigValues} from "../runtime/bootstrap"
 
 function getOtaVersionUrlDevOverride(): string | null {
   // Super mode only: a wrong OTA manifest can brick glasses, so a saved
@@ -14,8 +15,14 @@ function getOtaVersionUrlDevOverride(): string | null {
 }
 
 function getHostReleasePin(): string | null {
+  const configured = getConfigValues().otaManifestUrl
+  if (configured !== undefined) return configured?.trim() || null
   const value = process.env.EXPO_PUBLIC_ASG_OTA_VERSION_URL?.trim()
   return value || null
+}
+
+function hasDeploymentOtaPolicy(): boolean {
+  return getConfigValues().otaManifestUrl !== undefined
 }
 
 function getEmbeddedEngineReleasePin(): string | null {
@@ -34,7 +41,8 @@ export function hasConfiguredModernOtaManifestPin(): boolean {
 }
 
 export function resolveOtaManifestUrl(glassesUrl?: string | null, glassesBuildNumber?: string | null): string | null {
-  return resolveOtaManifestPolicy({
+  return resolveDeploymentAwareOtaManifestPolicy({
+    hostPolicyConfigured: hasDeploymentOtaPolicy(),
     glassesUrl,
     glassesBuildNumber,
     developerOverride: getOtaVersionUrlDevOverride(),

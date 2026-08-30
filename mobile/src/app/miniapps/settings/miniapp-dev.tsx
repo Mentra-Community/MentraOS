@@ -11,14 +11,18 @@ import {Spacer} from "@/components/ui/Spacer"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
+import {deploymentStore} from "@/services/deployment"
 import {showLeaveAppAlert} from "@/utils/AlertUtils"
 
-const DOCS_URL = "https://docs.mentraglass.com"
+const CONSUMER_DOCS_URL = "https://docs.mentraglass.com"
 
 export default function MiniappDeveloperSettingsScreen() {
   const {theme} = useAppTheme()
   const {goBack, push} = useNavigationStore.getState()
   const [showOnHomeScreen, setShowOnHomeScreen] = useSetting(SETTINGS.miniapp_dev_mode.key)
+  const deployment = deploymentStore.getActive()
+  const documentationUrl =
+    deployment.kind === "workspace" ? deployment.manifest.links.documentationUrl : CONSUMER_DOCS_URL
 
   return (
     <Screen preset="fixed">
@@ -29,12 +33,14 @@ export default function MiniappDeveloperSettingsScreen() {
           <GlassView className="bg-primary-foreground rounded-2xl px-4 py-4 gap-3">
             <Text className="text-base font-semibold text-text" tx="miniappDevSettings:headline" />
             <Text className="text-[13px] leading-[18px] text-textDim" tx="miniappDevSettings:body" />
-            <Button
-              tx="miniappDevSettings:readDocs"
-              onPress={() => showLeaveAppAlert(DOCS_URL)}
-              preset="alternate"
-              flexContainer={false}
-            />
+            {documentationUrl && (
+              <Button
+                tx="miniappDevSettings:readDocs"
+                onPress={() => showLeaveAppAlert(documentationUrl)}
+                preset="alternate"
+                flexContainer={false}
+              />
+            )}
           </GlassView>
 
           <Group title={translate("miniappDevSettings:preferencesTitle")}>

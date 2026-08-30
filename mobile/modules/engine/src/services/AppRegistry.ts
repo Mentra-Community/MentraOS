@@ -27,6 +27,7 @@ import {HardwareRequirement, HardwareRequirementLevel, HardwareType} from "../ty
 import {configuredDevHost} from "../utils/configuredDevHost"
 import {storage} from "../utils/storage/storage"
 import {printDirectory} from "../utils/storage/zip"
+import {isLocalMiniappAllowed} from "../runtime/bootstrap"
 import {checkManifestVersions} from "./manifestVersionGate"
 import {normalizeManifestActions} from "./manifestActions"
 import {miniappRunningRegistry} from "./MiniappRunningRegistry"
@@ -709,12 +710,17 @@ class AppRegistry {
    * registration in finalizeInstall. Native offline apps keep top priority.
    */
   private mergeProjectedApps(diskApps: ClientApp[]): ClientApp[] {
-    const offline = this.projectOfflineApps()
+    const offline = this.projectOfflineApps().filter((app) => isLocalMiniappAllowed(app.packageName))
     const offlinePackages = new Set(offline.map((app) => app.packageName))
-    const dev = this.projectDevApps().filter((app) => !offlinePackages.has(app.packageName))
+    const dev = this.projectDevApps().filter(
+      (app) => isLocalMiniappAllowed(app.packageName) && !offlinePackages.has(app.packageName),
+    )
     const devPackages = new Set(dev.map((app) => app.packageName))
     const installed = diskApps.filter(
-      (app) => !offlinePackages.has(app.packageName) && !devPackages.has(app.packageName),
+      (app) =>
+        isLocalMiniappAllowed(app.packageName) &&
+        !offlinePackages.has(app.packageName) &&
+        !devPackages.has(app.packageName),
     )
     return [...installed, ...dev, ...offline]
   }
@@ -980,7 +986,6 @@ export interface DevAppRecord {
 const DEV_APPS_INDEX_KEY = "dev_apps_index"
 const DEV_APP_ICONS_DIR = "dev-miniapp-icons"
 
-
 function isPrivateLanHost(hostname: string): boolean {
   return (
     hostname === "localhost" ||
@@ -1144,8 +1149,7 @@ export async function registerDevApp(record: DevAppRecord): Promise<void> {
   // Relaunch paths (developer-URL screen, loadDevMiniapp) omit mdnsHost, so an
   // omitted field keeps whatever the QR scan stored instead of wiping the
   // `.local` failover host.
-  const mdnsHost =
-    record.mdnsHost !== undefined ? record.mdnsHost.trim() || undefined : readStoredMdnsHost(packageName)
+  const mdnsHost = record.mdnsHost !== undefined ? record.mdnsHost.trim() || undefined : readStoredMdnsHost(packageName)
   const devRecord: DevAppRecord = {
     ...record,
     packageName,

@@ -11,11 +11,11 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import mantle from "@/services/MantleManager"
-import {SETTINGS, engine, useSetting} from "@mentra/engine"
+import {SETTINGS, engine, useSetting, BgTimer} from "@mentra/engine"
 import {SplashVideo} from "@/components/splash/SplashVideo"
 import {APP_STORE_URL, PLAY_STORE_URL} from "@/constants/appConfig"
 import {fetchMinimumClientVersion} from "@/utils/cloudVersion"
-import {BgTimer} from "@mentra/engine"
+import {useDeployment} from "@/services/deployment"
 
 // Types
 type ScreenState = "loading" | "connection" | "auth" | "outdated" | "success"
@@ -38,6 +38,7 @@ export default function InitScreen() {
   const {replace, replaceAll, getPendingRoute, setPendingRoute, clearHistoryAndGoHome, setAnimation} =
     useNavigationStore.getState()
   const {processUrl} = useDeeplink()
+  const {activeDeployment, store: deploymentStore} = useDeployment()
   const rootNavigationState = useRootNavigationState()
   const isNavigationReady = rootNavigationState?.key != null
 
@@ -56,12 +57,18 @@ export default function InitScreen() {
   // custom-URL detection + reset recovery operate on that setting, not the
   // retired V1 backend_url.
   const [coreUrl, setCoreUrl] = useSetting(SETTINGS.cloud_core_url.key)
-  const [onboardingCompleted, _setOnboardingCompleted] = useSetting(SETTINGS.onboarding_completed.key)
-  const [defaultWearable, _setDefaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const [superMode] = useSetting(SETTINGS.super_mode.key)
   const [appBootExtraInfo] = useSetting(SETTINGS.app_boot_extra_info.key)
   const [bootPhase, setBootPhase] = useState<string>("Starting up…")
   const [cachedRequiredVersion, setCachedRequiredVersion] = useSetting(SETTINGS.cached_required_version.key)
+  const updateUrl =
+    activeDeployment.kind === "workspace"
+      ? Platform.OS === "ios"
+        ? activeDeployment.manifest.appUpdates.storeUrls.ios
+        : activeDeployment.manifest.appUpdates.storeUrls.android
+      : Platform.OS === "ios"
+        ? APP_STORE_URL
+        : PLAY_STORE_URL
 
   // Helper Functions
   const getLocalVersion = (): string | null => {
@@ -74,6 +81,10 @@ export default function InitScreen() {
   }
 
   const checkCustomUrl = async (): Promise<boolean> => {
+    if (activeDeployment.kind === "workspace") {
+      setIsUsingCustomUrl(true)
+      return true
+    }
     const defaultUrl = SETTINGS[SETTINGS.cloud_core_url.key].defaultValue()
     // Read directly from the store to avoid stale React closure values
     const currentUrl = engine.settings.get(SETTINGS.cloud_core_url.key)
@@ -95,9 +106,11 @@ export default function InitScreen() {
 
   const navigateToDestination = useCallback(async () => {
     console.log("INDEX: navigateToDestination()")
-    if (!user?.email) {
+    if (!user?.id) {
       await new Promise((resolve) => setTimeout(resolve, NAVIGATION_DELAY))
-      replace("/auth/start", {transition: "fade"})
+      replace(activeDeployment.kind === "workspace" ? "/auth/workspace-signin" : "/auth/start", {
+        transition: "fade",
+      })
       return
     }
 
@@ -128,7 +141,7 @@ export default function InitScreen() {
 
   const checkLoggedIn = async (): Promise<void> => {
     if (!user) {
-      replaceAll("/auth/start")
+      replaceAll(activeDeployment.kind === "workspace" ? "/auth/workspace-signin" : "/auth/start")
       return
     }
     handleTokenExchange()
@@ -141,6 +154,10 @@ export default function InitScreen() {
     // itself via the auth provider. Boot just needs a valid session, then init.
     const token = session?.token
     if (!token) {
+      if (activeDeployment.kind === "workspace") {
+        replaceAll("/auth/workspace-signin")
+        return
+      }
       setState("auth")
       return
     }
@@ -168,6 +185,24 @@ export default function InitScreen() {
       console.error("Failed to get local version")
       setState("connection")
       setIsRetrying(false)
+      return
+    }
+
+    if (activeDeployment.kind === "workspace") {
+      if (localVer !== activeDeployment.manifest.releaseIdentity) {
+        console.error(
+          `Workspace release mismatch: installed=${localVer}, required=${activeDeployment.manifest.releaseIdentity}`,
+        )
+        setLocalVersion(localVer)
+        setCloudVersion(activeDeployment.manifest.releaseIdentity)
+        setCanSkipUpdate(false)
+        setIsBlockedByVersion(true)
+        setState("outdated")
+        setIsRetrying(false)
+        return
+      }
+      setIsRetrying(false)
+      checkLoggedIn()
       return
     }
 
@@ -218,10 +253,10 @@ export default function InitScreen() {
   }
 
   const handleUpdate = async (): Promise<void> => {
+    if (!updateUrl) return
     setIsUpdating(true)
     try {
-      const url = Platform.OS === "ios" ? APP_STORE_URL : PLAY_STORE_URL
-      await Linking.openURL(url)
+      await Linking.openURL(updateUrl)
     } catch (error) {
       console.error("Error opening store:", error)
     } finally {
@@ -231,6 +266,11 @@ export default function InitScreen() {
 
   const handleResetUrl = async (): Promise<void> => {
     try {
+      if (activeDeployment.kind === "workspace") {
+        deploymentStore.returnToMentra()
+        replaceAll("/auth/start")
+        return
+      }
       const defaultUrl = SETTINGS[SETTINGS.cloud_core_url.key].defaultValue()
       await setCoreUrl(defaultUrl)
       setIsUsingCustomUrl(false)
@@ -366,7 +406,7 @@ export default function InitScreen() {
           />
         )}
 
-        {state === "outdated" && (
+        {state === "outdated" && updateUrl && (
           <Button
             flexContainer
             preset="primary"
@@ -376,7 +416,7 @@ export default function InitScreen() {
           />
         )}
 
-        {(state === "connection" || state === "auth") && isUsingCustomUrl && (
+        {(state === "connection" || state === "auth" || state === "outdated") && isUsingCustomUrl && (
           <Button
             flexContainer
             onPress={handleResetUrl}

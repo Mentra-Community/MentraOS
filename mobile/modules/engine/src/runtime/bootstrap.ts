@@ -10,7 +10,11 @@ export type SubjectTokenType = "supabase" | "authing" | (string & {})
 
 export interface IslandAuth {
   /** Returns the host's current (auto-refreshed) subject token for the backend. */
-  getSubjectToken: () => Promise<{token: string; type: SubjectTokenType}>
+  getSubjectToken?: () => Promise<{token: string; type: SubjectTokenType}>
+  /** Supplies a token issued directly for Runtime in a Core-free deployment. */
+  getRuntimeToken?: (opts?: {forceRefresh?: boolean}) => Promise<string>
+  /** Stable, deployment-scoped local identity for bundled miniapp storage. */
+  getUserId?: () => Promise<string> | string
   /**
    * Optional auth-session listener. Hosts that can emit auth changes should
    * wire this so engine can reconnect backend sessions after restored login
@@ -21,9 +25,15 @@ export interface IslandAuth {
 
 export interface IslandConfigValues {
   /** cloud-v2 core service base URL (defaults resolved by the cloud client). */
-  coreUrl?: string
+  coreUrl?: string | null
   /** cloud-v2 runtime service base URL. */
-  runtimeUrl?: string
+  runtimeUrl?: string | null
+  /** Open Runtime's live WebSocket/audio session. Defaults to true. */
+  runtimeRealtimeSession?: boolean
+  /** Complete allowlist for bundled/local miniapps; null or omitted allows all. */
+  localMiniappAllowlist?: string[] | null
+  /** Deployment-pinned Mentra Live OTA manifest; explicit null disables remote OTA. */
+  otaManifestUrl?: string | null
   /** OEM identifier (Mentra is OEM #0); reserved for OEM auth/telemetry. */
   oemId?: string
   /**
@@ -72,6 +82,11 @@ export interface IslandConfigureOptions {
   config?: IslandConfigValues
   analytics?: IslandAnalytics
   ui?: IslandUiSeams
+}
+
+export function isLocalMiniappAllowed(packageName: string): boolean {
+  const allowlist = options?.config?.localMiniappAllowlist
+  return allowlist == null || allowlist.includes(packageName)
 }
 
 let options: IslandConfigureOptions | null = null

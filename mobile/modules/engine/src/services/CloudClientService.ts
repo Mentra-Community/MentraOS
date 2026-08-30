@@ -69,7 +69,7 @@ let persistentFailureNotified = false
 let audioSubscriptions: AudioSubscription[] = []
 let transportsReady = false
 /** Endpoints to build with — seeded from config, overridable via reconnect(). */
-let endpointsOverride: {core: string; runtime: string} | null = null
+let endpointsOverride: {core?: string; runtime: string} | null = null
 let runtimeStatusUnsubscribe: (() => void) | null = null
 let transcriptUnsubscribe: (() => void) | null = null
 let translationUnsubscribe: (() => void) | null = null
@@ -98,12 +98,15 @@ const translationListeners = new Set<(d: TranslationData) => void>()
 const statusListeners = new Set<(snapshot: CloudClientStatusSnapshot) => void>()
 const connectionListeners = new Set<(connected: boolean) => void>()
 
-function resolveEndpoints(): {core: string; runtime: string} {
+function resolveEndpoints(): {core?: string; runtime: string} {
   if (endpointsOverride) return endpointsOverride
   const cfg = getConfigValues()
+  const runtime = cfg.runtimeUrl === null ? "" : cfg.runtimeUrl?.trim() || FALLBACK_RUNTIME_URL
+  if (!runtime) throw new Error("cloudClient: Runtime endpoint is not configured")
+  const core = cfg.coreUrl === null ? undefined : cfg.coreUrl?.trim() || FALLBACK_CORE_URL
   return {
-    core: cfg.coreUrl?.trim() || FALLBACK_CORE_URL,
-    runtime: cfg.runtimeUrl?.trim() || FALLBACK_RUNTIME_URL,
+    ...(core ? {core} : {}),
+    runtime,
   }
 }
 
@@ -159,7 +162,7 @@ function frameSizeBytes(): Lc3FrameSizeBytes {
 
 async function getSubjectToken(): Promise<{token: string; type: SubjectTokenType}> {
   const a = getAuth()
-  if (!a) throw new Error("cloudClient: engine.configure({auth}) not called")
+  if (!a?.getSubjectToken) throw new Error("cloudClient: Core subject-token auth is not configured")
   const r = await a.getSubjectToken()
   // IslandAuth's SubjectTokenType is intentionally open (`string & {}`) so OEMs
   // can use other token kinds; cloud-client's is a closed union. The host's
@@ -408,13 +411,20 @@ function construct(): void {
   const endpoints = resolveEndpoints()
   console.log(`${LOG_TAG}: endpoints ${JSON.stringify(endpoints)}`)
 
-  const coreAuth = {getSubjectToken}
-  const auth = shouldUseLocalDevRuntimeToken(endpoints)
-    ? {
-        core: coreAuth,
-        runtime: {getToken: (opts?: {forceRefresh?: boolean}) => getLocalDevRuntimeToken(endpoints.runtime, opts)},
-      }
-    : {core: coreAuth, runtime: {source: "core" as const}}
+  const configuredAuth = getAuth()
+  if (!configuredAuth) throw new Error("cloudClient: engine.configure({auth}) not called")
+  const coreAuth = configuredAuth.getSubjectToken ? {getSubjectToken} : undefined
+  const auth = configuredAuth.getRuntimeToken
+    ? {runtime: {getToken: configuredAuth.getRuntimeToken}}
+    : shouldUseLocalDevRuntimeToken(endpoints)
+      ? {
+          ...(coreAuth ? {core: coreAuth} : {}),
+          runtime: {getToken: (opts?: {forceRefresh?: boolean}) => getLocalDevRuntimeToken(endpoints.runtime, opts)},
+        }
+      : coreAuth && endpoints.core
+        ? {core: coreAuth, runtime: {source: "core" as const}}
+        : null
+  if (!auth) throw new Error("cloudClient: no Runtime authentication mode is configured")
 
   client = new CloudClient({
     endpoints,
@@ -470,7 +480,9 @@ function construct(): void {
     connected = false
     console.log(`${LOG_TAG}: runtime disconnected (${info.reason})`)
     console.log(
-      `${LOG_TAG}: debug: ws-session-debug disconnected reason=${info.reason} willStayDown=${/superseded by newer session/i.test(info.reason)}`,
+      `${LOG_TAG}: debug: ws-session-debug disconnected reason=${
+        info.reason
+      } willStayDown=${/superseded by newer session/i.test(info.reason)}`,
     )
     // Arm the persistent-failure alarm once; if we're still down when it fires, raise
     // the notification. A reconnect within the window cancels it (onConnected above).
@@ -493,17 +505,22 @@ function construct(): void {
     console.warn(`${LOG_TAG}: runtime error: ${err.code}`)
   })
 
-  // Best-effort connect. Do not crash the app if the dev cloud is unreachable.
-  c.runtime
-    .connect()
-    .then(() => console.log(`${LOG_TAG}: connect() resolved`))
-    .catch((err) => console.warn(`${LOG_TAG}: connect() failed: ${err?.message ?? err}`))
+  if (getConfigValues().runtimeRealtimeSession !== false) {
+    // Best-effort connect. Do not crash the app if the dev cloud is unreachable.
+    c.runtime
+      .connect()
+      .then(() => console.log(`${LOG_TAG}: connect() resolved`))
+      .catch((err) => console.warn(`${LOG_TAG}: connect() failed: ${err?.message ?? err}`))
+    startLc3FrameSizeWatcher()
+  } else {
+    console.log(`${LOG_TAG}: Runtime live session disabled; REST capabilities remain available`)
+  }
 
-  syncCoreAccessTokenToBluetooth().catch((err) =>
-    console.warn(`${LOG_TAG}: initial Bluetooth core_token sync failed: ${(err as Error)?.message ?? err}`),
-  )
-
-  startLc3FrameSizeWatcher()
+  if (c.core) {
+    syncCoreAccessTokenToBluetooth().catch((err) =>
+      console.warn(`${LOG_TAG}: initial Bluetooth core_token sync failed: ${(err as Error)?.message ?? err}`),
+    )
+  }
 }
 
 /**
@@ -527,7 +544,7 @@ export const cloudClientService = {
    * a prior override and fall back to the boot config (so cleared/default cloud
    * URLs don't keep reconnecting to a stale override); omit to keep the current.
    */
-  reconnect(endpoints?: {core: string; runtime: string} | null): void {
+  reconnect(endpoints?: {core?: string; runtime: string} | null): void {
     if (endpoints !== undefined) endpointsOverride = endpoints
     try {
       client?.runtime.close()
@@ -565,6 +582,8 @@ export const cloudClientService = {
    */
   async resolveMentraUserId(): Promise<string> {
     return localMiniappUserIdentity.resolve(async () => {
+      const hostIdentity = getAuth()?.getUserId
+      if (hostIdentity) return await hostIdentity()
       if (!client) this.init()
       const c = client
       if (!c) throw new Error("cloud client not initialized")
@@ -695,7 +714,13 @@ export const cloudClientService = {
   },
 
   getCoreUrl(): string {
-    return resolveEndpoints().core
+    const core = resolveEndpoints().core
+    if (!core) throw new Error("cloud client core is unavailable")
+    return core
+  },
+
+  hasCore(): boolean {
+    return Boolean(client?.core ?? resolveEndpoints().core)
   },
 
   syncCoreTokenToBluetooth(): Promise<string> {

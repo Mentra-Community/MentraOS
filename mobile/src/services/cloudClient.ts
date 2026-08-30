@@ -16,6 +16,7 @@ import {cloudClientService} from "@mentra/engine-host-internal"
 
 import {SETTINGS, engine} from "@mentra/engine"
 import {devServerHost, METRO_AUTO} from "@/utils/cloudClient/devHost"
+import type {ActiveDeployment} from "@/services/deployment"
 
 type Lc3FrameSizeBytes = 20 | 40 | 60
 
@@ -92,15 +93,31 @@ export function lc3FrameSizeBytes(): Lc3FrameSizeBytes {
  * resolved endpoints + the live LC3 frame size.
  */
 export function cloudConfigValues(): {
-  coreUrl: string
-  runtimeUrl: string
+  coreUrl: string | null
+  runtimeUrl: string | null
   audioFrameSizeBytes: number
   devServerHost: () => string | undefined
+  runtimeRealtimeSession?: boolean
+  localMiniappAllowlist?: string[] | null
+  otaManifestUrl?: string | null
 } {
   const endpoints = resolvedEndpoints()
   return {
     coreUrl: endpoints.core,
     runtimeUrl: endpoints.runtime,
+    audioFrameSizeBytes: lc3FrameSizeBytes(),
+    devServerHost,
+  }
+}
+
+export function deploymentCloudConfigValues(deployment: ActiveDeployment): ReturnType<typeof cloudConfigValues> {
+  if (deployment.kind === "consumer") return cloudConfigValues()
+  return {
+    coreUrl: deployment.manifest.services.coreUrl,
+    runtimeUrl: deployment.manifest.services.runtimeUrl,
+    runtimeRealtimeSession: deployment.manifest.features.runtimeRealtimeSession,
+    localMiniappAllowlist: deployment.manifest.systemMiniapps.approvedPackageNamesOverride,
+    otaManifestUrl: deployment.manifest.artifacts.mentraLiveOtaManifestUrl,
     audioFrameSizeBytes: lc3FrameSizeBytes(),
     devServerHost,
   }

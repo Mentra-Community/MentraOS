@@ -26,6 +26,7 @@
 import {File} from "expo-file-system"
 
 import {decideDevLaunchRoute} from "../utils/devMiniappLaunch"
+import {isLocalMiniappAllowed} from "../runtime/bootstrap"
 import {storage} from "../utils/storage/storage"
 import appRegistry, {getLocalAppRunningState, saveLocalAppRunningState} from "./AppRegistry"
 import devServerBridge from "./DevServerBridge"
@@ -220,6 +221,9 @@ class MiniappLauncher {
    * {@link LocalMiniappRuntime.waitForConnect}.
    */
   async ensureRunning(packageName: string, hints?: LaunchHints): Promise<LaunchResult> {
+    if (!isLocalMiniappAllowed(packageName)) {
+      throw new Error(`MiniappLauncher: ${packageName} is disabled by deployment policy`)
+    }
     const router = this.requireRouter()
 
     // Already spawned: best-effort resolve for the UI entry, never throw —
