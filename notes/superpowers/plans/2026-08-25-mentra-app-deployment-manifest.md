@@ -96,7 +96,7 @@ expected to place a Teams call.
 3. Nicolo rebases or merges current `dev`, qualifies the guest ACS media path,
    and lands Lane B as its own focused PR. Lane B does not wait for enterprise
    Entra or Runtime work.
-4. Once the relevant Lane A PRs and Lane B are on `dev`, create Lane C from fresh
+4. Once the Lane A PR and Lane B are on `dev`, create Lane C from fresh
    `dev`. Jointly finalize the provider-neutral host/Miniapp SDK boundary and
    replace miniapp credential pass-through with host-owned Runtime exchange.
 5. Pin and bundle the matching Mentra Call package only after Lane C's contract
