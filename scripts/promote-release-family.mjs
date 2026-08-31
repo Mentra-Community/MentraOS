@@ -290,7 +290,7 @@ function commitTrailer(repository, commit, key) {
   return values[0]
 }
 
-function requireSuccessfulBetaRun(runId, currentVersion) {
+function requireSuccessfulBetaRun(runId) {
   if (!/^\d+$/.test(runId || "")) fail("finish requires --run RUN_ID")
   const run = ghJson(["api", `repos/${MENTRAOS_REPOSITORY}/actions/runs/${runId}`])
   if (
@@ -313,9 +313,9 @@ function requireSuccessfulBetaRun(runId, currentVersion) {
   }
 
   const plan = downloadReleasePlan(runId)
-  const expectedIdentity = `${currentVersion}-beta.${run.run_number}`
+  versionTuple(plan.familyBaseVersion)
+  const expectedIdentity = `${plan.familyBaseVersion}-beta.${run.run_number}`
   if (
-    plan.familyBaseVersion !== currentVersion ||
     plan.channel !== "beta" ||
     plan.sequence !== run.run_number ||
     plan.releaseIdentity !== expectedIdentity ||
@@ -324,21 +324,22 @@ function requireSuccessfulBetaRun(runId, currentVersion) {
     plan.starterKitSource?.branch !== "staging" ||
     plan.starterKitSource?.sourceCommit !== starterKitSource
   ) {
-    fail(`${run.html_url} release plan does not match the current ${currentVersion} beta cut`)
+    fail(`${run.html_url} release plan does not match the current staging beta cut`)
   }
   return {run, plan}
 }
 
-function requireDevCheckout() {
+function requireDevCheckout({allowDirty = false} = {}) {
   const repository = gh(["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"])
   if (repository !== MENTRAOS_REPOSITORY) fail(`this checkout is ${repository}, expected ${MENTRAOS_REPOSITORY}`)
   const dirty = execFileSync("git", ["status", "--porcelain"], {cwd: rootDir, encoding: "utf8"}).trim()
-  if (dirty) fail("release-family promotion requires a clean MentraOS checkout")
+  if (dirty && !allowDirty) fail("release-family promotion requires a clean MentraOS checkout")
   const branch = execFileSync("git", ["branch", "--show-current"], {cwd: rootDir, encoding: "utf8"}).trim()
   if (branch !== "dev") fail(`this checkout is on ${branch || "a detached HEAD"}, expected dev`)
   const head = execFileSync("git", ["rev-parse", "HEAD"], {cwd: rootDir, encoding: "utf8"}).trim()
   const remoteHead = branchHead(MENTRAOS_REPOSITORY, "dev")
   if (head !== remoteHead) fail(`local dev is ${head}, but ${MENTRAOS_REPOSITORY}:dev is ${remoteHead}`)
+  return {dirty}
 }
 
 async function confirm(command, currentVersion, nextVersion, yes) {
@@ -359,23 +360,24 @@ async function main() {
   }
   if (!new Set(["start", "finish"]).has(command)) fail(`unknown command ${command}`)
 
-  const currentVersion = JSON.parse(readFileSync(path.join(rootDir, "package.json"), "utf8")).version
-  const nextVersion = requireNextVersion(currentVersion, options.next)
-  requireDevCheckout()
-  await confirm(command, currentVersion, nextVersion, options.yes)
+  const checkoutVersion = JSON.parse(readFileSync(path.join(rootDir, "package.json"), "utf8")).version
+  versionTuple(options.next)
 
   if (command === "start") {
+    const nextVersion = requireNextVersion(checkoutVersion, options.next)
+    requireDevCheckout()
+    await confirm(command, checkoutVersion, nextVersion, options.yes)
     const starterKitStagingHead = promoteExactHead({
       repository: STARTER_KIT_REPOSITORY,
       source: "dev",
       target: "staging",
-      family: currentVersion,
+      family: checkoutVersion,
     })
     const mentraosStagingHead = promoteExactHead({
       repository: MENTRAOS_REPOSITORY,
       source: "dev",
       target: "staging",
-      family: currentVersion,
+      family: checkoutVersion,
       mergeBody: `Starter-Kit-Source: ${starterKitStagingHead}`,
     })
     const run = findCoordinatedRun(mentraosStagingHead)
@@ -386,7 +388,19 @@ async function main() {
     return
   }
 
-  requireSuccessfulBetaRun(options.run, currentVersion)
+  const resumingPreparation = checkoutVersion === options.next
+  const nextVersion = resumingPreparation ? options.next : requireNextVersion(checkoutVersion, options.next)
+  const checkout = requireDevCheckout({allowDirty: resumingPreparation})
+  if (resumingPreparation && !checkout.dirty) {
+    fail(`${nextVersion} is already active in a clean checkout; there is no interrupted preparation to resume`)
+  }
+  const {plan} = requireSuccessfulBetaRun(options.run)
+  const currentVersion = plan.familyBaseVersion
+  if (!resumingPreparation && checkoutVersion !== currentVersion) {
+    fail(`this checkout is prepared for ${checkoutVersion}, but the selected beta is ${currentVersion}`)
+  }
+  requireNextVersion(currentVersion, nextVersion)
+  await confirm(command, currentVersion, nextVersion, options.yes)
   promoteExactHead({
     repository: STARTER_KIT_REPOSITORY,
     source: "staging",

@@ -141,10 +141,13 @@ it would not advance the Starter Kit channel branches, run their protected
 validation, or publish their artifacts. It would also create a cycle: the final
 Starter Kit release commit does not exist until MentraOS has allocated the
 coordinated identity and published the dependencies that commit consumes.
-Instead, the release plan freezes the exact Starter Kit channel-head SHA before
-any publication starts, and the Starter Kit workflow rejects a different head.
-For a release-family cut, the MentraOS staging merge records that selected SHA
-in a `Starter-Kit-Source` Git trailer, so the selection is part of the exact
+Instead, the release plan freezes one exact Starter Kit source SHA before any
+publication starts, and the Starter Kit workflow rejects a different head. A
+dev release deterministically selects the latest Starter Kit `dev` commit at or
+before the immutable MentraOS source commit time, so rerunning one workflow can
+never change the source behind the same release identity. For a release-family
+cut, the MentraOS staging merge records the selected SHA in a
+`Starter-Kit-Source` Git trailer, so the beta selection is part of the exact
 MentraOS source commit rather than a later mutable branch lookup. This provides
 the useful provenance of a submodule without moving source ownership or
 requiring a second MentraOS commit after every example release.
@@ -186,10 +189,13 @@ conflicts in generated files.
 
 `bun run release:promote-family -- start --next X.Y.Z` performs steps 1 and 2
 with exact-head promotion branches and prints the coordinated beta run. After
-that run is successful, `finish --next X.Y.Z --run RUN_ID` performs step 4 and
-runs the existing next-family preparation for the follow-up MentraOS pull
-request. Both phases are rerunnable and fail rather than resolving a human
-source conflict or replacing a moving branch.
+that run is successful, `finish --next X.Y.Z --run RUN_ID` verifies that the run
+and its downloaded release plan match the current staging commit, family, and
+Starter Kit trailer before it performs step 4 and runs the existing next-family
+preparation for the follow-up MentraOS pull request. If preparation fails after
+writing its expected local diff, the same `finish` command recognizes and
+resumes that dirty partial preparation. Both phases are rerunnable and fail
+rather than resolving a human source conflict or replacing a moving branch.
 
 A bot dependency-sync commit is release output, not a new release request. It
 must carry explicit machine-readable metadata so it cannot trigger a dispatch
