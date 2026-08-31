@@ -1,4 +1,4 @@
-import {DeviceTypes} from "@/../../cloud/packages/types/src"
+import {DeviceTypes} from "@mentra/engine"
 import {useRoute} from "@react-navigation/native"
 import {Image, Platform, ScrollView, View} from "react-native"
 import type {ImageStyle, ViewStyle} from "react-native"

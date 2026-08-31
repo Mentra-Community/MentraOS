@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "promotionId": "mentra-X.Y.Z-attempt-N",
+  "releaseIdentity": "X.Y.Z",
+  "check": "production-mobile-n-compatibility",
+  "result": "pass",
+  "performedAt": "YYYY-MM-DDTHH:MM:SS.000Z",
+  "tester": {"githubLogin": "employee"},
+  "tests": [
+    {
+      "product": "mentra-app",
+      "platform": "ios",
+      "result": "pass",
+      "appVersion": "CURRENT",
+      "appBuild": "CURRENT_BUILD",
+      "deviceModel": "MODEL",
+      "osVersion": "VERSION",
+      "notes": "Installed from App Store; exact current build, production Cloud N+1, auth, glasses, Core, Runtime, transcription, media, backward compatibility, and restart verified."
+    },
+    {
+      "product": "mentra-app",
+      "platform": "android",
+      "result": "pass",
+      "appVersion": "CURRENT",
+      "appBuild": "CURRENT_BUILD",
+      "deviceModel": "MODEL",
+      "osVersion": "VERSION",
+      "notes": "Installed from Google Play; exact current build, production Cloud N+1, auth, glasses, Core, Runtime, transcription, media, backward compatibility, and restart verified."
+    }
+  ],
+  "evidenceUrls": ["https://credential-free.example/evidence/index"],
+  "notes": "Actual public-store artifacts were tested after Cloud deployment."
+}

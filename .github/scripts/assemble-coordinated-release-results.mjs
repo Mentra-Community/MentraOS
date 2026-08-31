@@ -4,6 +4,7 @@ import {readFileSync, statSync, writeFileSync} from "node:fs"
 import path from "node:path"
 import {fileURLToPath} from "node:url"
 
+import {validateCloudV2DeploymentRecord} from "./coordinated-cloud-v2-records.mjs"
 import {serializeReleaseRecord} from "./release-family.mjs"
 import {createEnginePackageArtifact, mergeReleaseResultRecords} from "./release-result-records.mjs"
 
@@ -45,7 +46,9 @@ function verifyAsgSelection(plan, ota, selectionFile) {
 }
 
 function verifyExampleTestflight(plan, starterKit, exampleTestflight) {
-  const expectedGroup = plan.channel === "dev" ? "Mentra Dev" : "Mentra Staging"
+  const expectedGroup = plan.channel === "dev" ? "Mentra Dev" : "Mentra Staging Public"
+  const expectedAudience = plan.channel === "dev" ? "internal" : "external"
+  const distribution = exampleTestflight?.distribution
   if (
     exampleTestflight?.schemaVersion !== 1 ||
     exampleTestflight.releaseSetId !== plan.releaseSetId ||
@@ -54,7 +57,7 @@ function verifyExampleTestflight(plan, starterKit, exampleTestflight) {
     exampleTestflight.mentraosSourceCommit !== plan.sourceCommit ||
     exampleTestflight.starterKitReleaseCommit !== starterKit.starterKit?.releaseCommit ||
     exampleTestflight.app?.id !== "6792839366" ||
-    exampleTestflight.app?.bundleId !== "com.mentra.bluetoothsdk.example.reactnative" ||
+    exampleTestflight.app?.bundleId !== "com.mentra.bluetoothsdkexample" ||
     exampleTestflight.version?.marketingVersion !== plan.native.marketingVersion ||
     exampleTestflight.version?.buildNumber !== plan.native.buildNumber ||
     exampleTestflight.build?.processingState !== "VALID" ||
@@ -64,6 +67,9 @@ function verifyExampleTestflight(plan, starterKit, exampleTestflight) {
     exampleTestflight.group?.name !== expectedGroup ||
     typeof exampleTestflight.group?.id !== "string" ||
     exampleTestflight.group.id.length === 0 ||
+    distribution?.audience !== expectedAudience ||
+    !["available", "submitted", "skipped"].includes(distribution?.status) ||
+    !/^https:\/\//.test(distribution?.installUrl || "") ||
     !/^https:\/\//.test(exampleTestflight.provenanceUrl || "")
   ) {
     throw new Error("Example TestFlight result does not match the release plan and Starter Kit source")
@@ -75,6 +81,15 @@ function verifyExampleTestflight(plan, starterKit, exampleTestflight) {
       exampleTestflight.ipa.size < 1)
   ) {
     throw new Error("Example TestFlight IPA evidence is invalid")
+  }
+  if (plan.channel === "dev" && distribution.status !== "available") {
+    throw new Error("Internal example TestFlight distribution must be available")
+  }
+  if (expectedAudience === "external" && !/^https:\/\/testflight\.apple\.com\/join\//.test(distribution.installUrl)) {
+    throw new Error("External example TestFlight distribution must use a public invitation link")
+  }
+  if (distribution.status === "skipped" && !distribution.skipReason) {
+    throw new Error("Skipped example TestFlight distribution must identify its reason")
   }
   return exampleTestflight
 }
@@ -142,6 +157,7 @@ export function assembleCoordinatedReleaseResults({
   npmRecords,
   native,
   mobile,
+  cloud,
   starterKit,
   starterKitResultUrl,
   exampleTestflight,
@@ -155,6 +171,7 @@ export function assembleCoordinatedReleaseResults({
   const merged = mergeReleaseResultRecords({plan, records: [...npmRecords, native, mobile]})
   const selection = verifyAsgSelection(plan, ota, asgSelectionFile)
   const verifiedStarterKit = verifyStarterKitResult(plan, starterKit, starterKitResultUrl, exampleTestflight)
+  const verifiedCloud = validateCloudV2DeploymentRecord({plan, record: cloud, allowValidated: true})
   const otaProvenanceUrl = provenanceUrl(ota)
   const artifacts = [
     ...merged.artifacts,
@@ -210,6 +227,7 @@ export function assembleCoordinatedReleaseResults({
       provenanceUrl: otaProvenanceUrl,
     },
     artifacts,
+    cloud: verifiedCloud,
     ...(verifiedStarterKit ? {starterKit: verifiedStarterKit.record} : {}),
   }
 }
@@ -233,6 +251,7 @@ function main() {
     npmRecords: [readJson(path.resolve(args.npm))],
     native: readJson(path.resolve(args.native)),
     mobile: readJson(path.resolve(args.mobile)),
+    cloud: readJson(path.resolve(args.cloud)),
     starterKit: args["starter-kit"] ? readJson(path.resolve(args["starter-kit"])) : undefined,
     starterKitResultUrl: args["starter-kit-result-url"],
     exampleTestflight: args["example-testflight"] ? readJson(path.resolve(args["example-testflight"])) : undefined,

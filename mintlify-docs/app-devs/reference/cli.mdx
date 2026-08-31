@@ -4,6 +4,10 @@ description: "The author CLI for developing, packing, and releasing Mentra minia
 icon: "terminal"
 ---
 
+import BetaNote from '/snippets/beta-note.mdx'
+
+<BetaNote />
+
 `@mentra/miniapp-cli` provides the `mentra-miniapp` command. It's installed as a
 dev dependency in every scaffolded project, so your `package.json` scripts call
 it directly (`"dev": "mentra-miniapp dev"`).
@@ -44,9 +48,9 @@ every 10 seconds and reprints the QR.
 The starting port comes from `"port"` in `miniapp.json` (default `3000`); if it or
 its sidecar neighbor is busy, the CLI scans upward for a free adjacent pair.
 
-**On the phone:** Mentra App → **Settings → Developer settings → Mini App
-Development → Scan Mini App QR Code**. Phone and laptop must share Wi-Fi. `Ctrl+C`
-stops everything.
+**On the phone:** In the Mentra App, open **Settings → Miniapp Developer Settings
+→ Scan Miniapp QR Code**. Phone and laptop must share Wi-Fi. `Ctrl+C` stops
+everything.
 
 <Warning>
 `dev` is live and temporary. Keep the CLI and computer running: the Mentra App

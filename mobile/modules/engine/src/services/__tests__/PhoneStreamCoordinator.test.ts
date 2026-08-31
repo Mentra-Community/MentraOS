@@ -349,6 +349,51 @@ describe("PhoneStreamCoordinator", () => {
       expect(stopStream).toHaveBeenCalled()
     })
 
+    test("stops the publisher before asking Cloudflare to clean up", async () => {
+      const order: string[] = []
+      stopStream.mockImplementationOnce(async () => {
+        order.push("publisher-stop")
+      })
+      teardownManagedStream.mockImplementationOnce(async () => {
+        order.push("cloud-teardown")
+      })
+      const coord = new PhoneStreamCoordinator({
+        hlsReadinessInitialDelayMs: 5,
+        hlsReadinessPollMs: 5,
+        cloudflareStatusPollMs: 1000,
+        keepAliveIntervalMs: 10_000,
+      })
+
+      const stream = await coord.startManaged("com.a", {})
+      await coord.stop("com.a", stream.streamId)
+
+      expect(order).toEqual(["publisher-stop", "cloud-teardown"])
+    })
+
+    test("does not hold the stream lock while remote cleanup is pending", async () => {
+      let finishRemoteCleanup!: () => void
+      teardownManagedStream.mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            finishRemoteCleanup = resolve
+          }),
+      )
+      const coord = new PhoneStreamCoordinator({
+        hlsReadinessInitialDelayMs: 5,
+        hlsReadinessPollMs: 5,
+        cloudflareStatusPollMs: 1000,
+        keepAliveIntervalMs: 10_000,
+      })
+
+      const first = await coord.startManaged("com.a", {})
+      await coord.stop("com.a", first.streamId)
+      const second = await coord.startManaged("com.b", {})
+
+      expect(second.streamId).not.toBe(first.streamId)
+      finishRemoteCleanup()
+      await coord.stop("com.b", second.streamId)
+    })
+
     test("managed cannot start while unmanaged is active", async () => {
       const coord = new PhoneStreamCoordinator({
         hlsReadinessInitialDelayMs: 5,

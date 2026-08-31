@@ -16,6 +16,7 @@ import {
   requirePublicHttpsUrl,
   serializeReleaseRecord,
 } from "./release-family.mjs"
+import {cloudRecordForPlan} from "./coordinated-cloud-v2-test-helpers.mjs"
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 
@@ -44,6 +45,9 @@ test("loads the repository release family and derives dependency-first publicati
   const family = loadReleaseFamily({rootDir: repositoryRoot})
 
   assert.equal(family.familyBaseVersion, "3.1.0")
+  assert.equal(family.changelog.version, "3.1.0")
+  assert.equal(family.changelog.path, "changelogs/3.1.0.md")
+  assert.match(family.changelog.sha256, /^[0-9a-f]{64}$/)
   assert.deepEqual(family.products, ["mentraos", "@mentra/engine", "@mentra/bluetooth-sdk"])
   assert.equal(family.members.length, 8)
   assert.ok(family.publicationOrder.indexOf("@mentra/jspolyfill") < family.publicationOrder.indexOf("@mentra/crust"))
@@ -111,6 +115,7 @@ test("creates a deterministic release plan with exact dependency versions", () =
   assert.equal(plan.artifactContainerName, "Mentra 3.1.0 development builds")
   assert.equal(plan.native.marketingVersion, "3.1.0")
   assert.equal(plan.native.buildNumber, 3100057)
+  assert.deepEqual(plan.changelog, family.changelog)
   assert.equal(plan.products["@mentra/engine"], "3.1.0-beta.57")
   assert.equal(plan.members["@mentra/engine"].dependencies["@mentra/bluetooth-sdk"], "3.1.0-beta.57")
   assert.equal(plan.members["@mentra/bluetooth-sdk"].publishTargets.length, 3)
@@ -165,6 +170,7 @@ test("serializes records canonically and finalizes only complete release results
   )
   const results = {
     releaseSetId: plan.releaseSetId,
+    cloud: cloudRecordForPlan(plan),
     publications,
     otaManifest: publication(plan.artifactNames.otaManifest),
     artifacts: [
@@ -181,6 +187,8 @@ test("serializes records canonically and finalizes only complete release results
   assert.equal(manifest.releasePlanSha256, releaseRecordSha256(plan))
   assert.equal(manifest.publications["@mentra/engine"].npm.coordinate, "@mentra/engine@3.1.0-beta.57")
   assert.deepEqual(manifest.native, plan.native)
+  assert.deepEqual(manifest.changelog, plan.changelog)
+  assert.equal(manifest.cloud.environment, "staging")
   assert.equal(serializeReleaseRecord({z: 1, a: 2}), '{\n  "a": 2,\n  "z": 1\n}\n')
 
   const incompletePlan = structuredClone(plan)

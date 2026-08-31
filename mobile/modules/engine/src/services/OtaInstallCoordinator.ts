@@ -26,10 +26,12 @@ import type {OtaCheckCurrentGlassesResult} from "./OtaUpdateCheckService"
 import {deriveDisplayState, type DisplayState} from "./otaDisplayState"
 import {
   BES_CONTINUE_LOCKOUT_MS,
+  BES_RESTART_TIMEOUT_MS,
   DOWNLOAD_STUCK_TIMEOUT_MS,
   GLOBAL_OTA_TIMEOUT_MS,
   LEGACY_APK_COMPLETION_SETTLE_MS,
   LEGACY_BES_CONTINUE_LOCKOUT_MS,
+  LEGACY_BES_RESTART_TIMEOUT_MS,
   LEGACY_DOWNLOAD_STUCK_TIMEOUT_MS,
   LEGACY_GLOBAL_OTA_TIMEOUT_MS,
   LEGACY_MTK_INSTALL_TIMEOUT_MS,
@@ -245,6 +247,7 @@ class OtaInstallCoordinator {
   private pingInterval: ReturnType<typeof setInterval> | null = null
   private queryReplyTimeout: ReturnType<typeof setTimeout> | null = null
   private continueLockoutTimer: ReturnType<typeof setTimeout> | null = null
+  private restartRecoveryTimeout: ReturnType<typeof setTimeout> | null = null
   private legacyApkSettleTimer: ReturnType<typeof setTimeout> | null = null
   private mtkStallDetectTimer: ReturnType<typeof setTimeout> | null = null
   private mtkSimTickTimer: ReturnType<typeof setInterval> | null = null
@@ -1000,12 +1003,22 @@ class OtaInstallCoordinator {
     // (15s unified, 35s for legacy-shaped sessions — WP 8C-f).
     if (displayStateChanged && displayState === "restarting") {
       this.clearContinueLockoutTimer()
+      this.clearRestartRecoveryTimeout()
       const lockoutMs = legacySession ? LEGACY_BES_CONTINUE_LOCKOUT_MS : BES_CONTINUE_LOCKOUT_MS
+      const restartTimeoutMs = legacySession ? LEGACY_BES_RESTART_TIMEOUT_MS : BES_RESTART_TIMEOUT_MS
       this.setContinueButtonDisabled(true)
       this.continueLockoutTimer = setTimeout(() => {
         this.continueLockoutTimer = null
         this.setContinueButtonDisabled(false)
       }, lockoutMs)
+      this.restartRecoveryTimeout = setTimeout(() => {
+        this.restartRecoveryTimeout = null
+        if (this.computeDisplayStateNow() !== "restarting") return
+        console.log(`[OTA_PROGRESS] watchdog: glasses did not finish restarting in ${restartTimeoutMs}ms`)
+        this.setErrorMsg(OtaProgressMessages.restartTimeout)
+      }, restartTimeoutMs)
+    } else if (displayStateChanged) {
+      this.clearRestartRecoveryTimeout()
     }
 
     // Legacy MTK install stall simulation (WP 8C-e): display-only. The simulation
@@ -1668,6 +1681,13 @@ class OtaInstallCoordinator {
     }
   }
 
+  private clearRestartRecoveryTimeout(): void {
+    if (this.restartRecoveryTimeout) {
+      clearTimeout(this.restartRecoveryTimeout)
+      this.restartRecoveryTimeout = null
+    }
+  }
+
   private clearLegacyApkSettleTimer(): void {
     if (this.legacyApkSettleTimer) {
       clearTimeout(this.legacyApkSettleTimer)
@@ -1706,6 +1726,7 @@ class OtaInstallCoordinator {
     this.clearPingInterval()
     this.clearLegacyApkSettleTimer()
     this.clearMtkSimulationTimers()
+    this.clearRestartRecoveryTimeout()
   }
 }
 

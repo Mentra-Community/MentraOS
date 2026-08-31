@@ -25,7 +25,11 @@ import { ulid } from "ulid";
 import { createLogger } from "@mentra/cloud-shared";
 import { getRedis } from "../../clients/redis.client";
 import { getStorageProvider } from "../storage/storage.service";
-import { getStreamProvider } from "../stream/stream.service";
+import {
+  provisionStream,
+  stopStream as stopManagedStream,
+  streamStatus as getManagedStreamStatus,
+} from "../stream/stream.service";
 import { forwardToUserSessions } from "../../net/ws";
 import { PROTOCOL_MAJOR } from "@mentra/cloud-protocol/envelope";
 import type {
@@ -155,7 +159,7 @@ export async function startStream(
   mentraUserId: string,
   opts: StreamOptions,
 ): Promise<ManagedStream> {
-  const stream = await getStreamProvider().provision(mentraUserId, opts);
+  const stream = await provisionStream(mentraUserId, opts);
   logger.info({ mentraUserId, streamId: stream.streamId }, "managed stream provisioned");
   return stream;
 }
@@ -166,11 +170,11 @@ export async function streamStatus(
   streamId: string,
 ): Promise<StreamStatusResult> {
   void mentraUserId;
-  return await getStreamProvider().status(streamId);
+  return await getManagedStreamStatus(streamId);
 }
 
 /** Stop a managed stream. */
 export async function stopStream(mentraUserId: string, streamId: string): Promise<void> {
-  await getStreamProvider().stop(streamId);
+  await stopManagedStream(streamId);
   logger.info({ mentraUserId, streamId }, "managed stream stopped");
 }

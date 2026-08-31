@@ -32,6 +32,7 @@ let currentCheckResult = checkResult
 
 let otaSnapshot = {
   connected: true,
+  ready: true,
   buildNumber: "39",
   appVersion: "3.0.0",
   mtkFirmwareVersion: "0801",
@@ -185,7 +186,7 @@ describe("useMentraLiveOta", () => {
     autoChainActive = false
     autoChainRange = null
     currentCheckResult = checkResult
-    otaSnapshot = {...otaSnapshot, appVersion: "3.0.0"}
+    otaSnapshot = {...otaSnapshot, appVersion: "3.0.0", connected: true, ready: true}
     finishPromise = Promise.resolve()
     installSnapshot = {
       displayState: "starting",
@@ -258,6 +259,27 @@ describe("useMentraLiveOta", () => {
     })
     latestController.retryInstall()
     expect(retry).toHaveBeenCalledTimes(1)
+    await act(async () => renderer.unmount())
+  })
+
+  test("does not let a host finish while glasses are still restarting", async () => {
+    autoChainActive = true
+    autoChainRange = {
+      fromVersion: "3.0.0",
+      toVersion: "3.1.0-dev.8",
+      releaseVersion: "3.1.0-dev.8",
+    }
+    installSnapshot = {...installSnapshot, connected: false, displayState: "restarting"}
+    const renderer = await renderProbe()
+
+    expect(latestController.state).toMatchObject({screen: "restarting", canFinish: false})
+    await act(async () => {
+      await latestController.finish()
+    })
+
+    expect(finish).not.toHaveBeenCalled()
+    expect(stopAutoChain).not.toHaveBeenCalled()
+    expect(latestController.state.screen).toBe("restarting")
     await act(async () => renderer.unmount())
   })
 
@@ -447,6 +469,29 @@ describe("useMentraLiveOta", () => {
     expect(fakeOta.checkForUpdates).toHaveBeenCalledTimes(1)
     expect(prepare).toHaveBeenCalledWith(currentCheckResult)
     expect(latestController.state.screen).toBe("preparing_hotspot")
+    await act(async () => renderer.unmount())
+  })
+
+  test("waits for the restarted ASG client to be fully ready before checking the next pass", async () => {
+    autoChainActive = true
+    autoChainRange = {
+      fromVersion: "3.0.0",
+      toVersion: "3.1.0-dev.8",
+      releaseVersion: "3.1.0-dev.8",
+    }
+    otaSnapshot = {...otaSnapshot, connected: true, ready: false}
+    const renderer = await renderProbe("check")
+
+    expect(latestController.state.screen).toBe("finishing")
+    expect(fakeOta.checkForUpdates).not.toHaveBeenCalled()
+
+    otaSnapshot = {...otaSnapshot, ready: true}
+    await act(async () => {
+      otaListeners.forEach((listener) => listener())
+      await new Promise((resolve) => setTimeout(resolve, 1_150))
+    })
+
+    expect(fakeOta.checkForUpdates).toHaveBeenCalledTimes(1)
     await act(async () => renderer.unmount())
   })
 

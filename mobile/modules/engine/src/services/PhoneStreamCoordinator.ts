@@ -818,12 +818,6 @@ export class PhoneStreamCoordinator {
       for (const reject of entry.hlsReadyRejecters) reject(pendingErr)
       entry.hlsReadyResolvers = []
       entry.hlsReadyRejecters = []
-      // Cloudflare DELETE is fire-and-forget — failing it doesn't undo the
-      // BLE stop we're about to do, and Cloudflare's idle-input scavenger
-      // will eventually clean up leaked inputs.
-      teardownManagedStream(entry.liveInputId).catch((err) => {
-        console.warn("[STREAM] teardownManagedStream failed:", err)
-      })
     }
 
     try {
@@ -838,6 +832,16 @@ export class PhoneStreamCoordinator {
       // Only clear if we're still the active entry (defensive — runExclusive
       // serializes us, so this should always be true).
       if (this.current === entry) this.current = null
+
+      if (entry.kind === "managed") {
+        // Start remote cleanup only after the publisher has stopped, but do not
+        // hold the local transition lock on an unbounded network request. The
+        // runtime's durable cleanup queue owns retries if this request fails or
+        // the app exits before Cloudflare finishes finalizing the recording.
+        void teardownManagedStream(entry.liveInputId).catch((err) => {
+          console.warn("[STREAM] teardownManagedStream failed:", err)
+        })
+      }
     }
   }
 }
