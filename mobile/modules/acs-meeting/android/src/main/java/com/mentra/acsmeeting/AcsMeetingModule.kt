@@ -1,6 +1,5 @@
 package com.mentra.acsmeeting
 
-import com.mentra.acsmeeting.telemetry.AcsDebugLog
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 
@@ -30,13 +29,7 @@ class AcsMeetingModule : Module() {
         },
       ).also { session = it }
       meeting.join(token, meetingUrl, whepUrl, displayName, dumpWav, audioSource)
-      val state = meeting.getState()
-      // #region agent log
-      AcsDebugLog.emit("C", "AcsMeetingModule.kt:join", "native join returned immediately", mapOf(
-        "state" to (state["state"] ?: "missing"),
-      ))
-      // #endregion
-      state
+      meeting.getState()
     }
 
     AsyncFunction("leave") {

@@ -269,78 +269,6 @@ public class WhipStreamingService extends Service {
     }
   };
 
-  // #region agent log
-  private long mDbgTick = 0;
-
-  /**
-   * The glasses->Cloudflare hop has never been measured. Dump the raw outbound-rtp,
-   * the remote-inbound-rtp (what Cloudflare reports back as lost), the selected
-   * candidate pair, and the live Wi-Fi link, all at 1 Hz on the same clock.
-   */
-  private final Runnable mDebugStatsRunnable = new Runnable() {
-    @Override
-    public void run() {
-      if (mPeerConnection == null) return;
-      final long tick = ++mDbgTick;
-      mPeerConnection.getStats(report -> {
-        for (RTCStats stats : report.getStatsMap().values()) {
-          java.util.Map<String, Object> members = stats.getMembers();
-          Object kind = members.get("kind");
-          String where = "WhipStreamingService.java:mDebugStatsRunnable";
-          try {
-            if ("outbound-rtp".equals(stats.getType()) && "video".equals(kind)) {
-              AsgDebugLog.emitJson("A,C,D", where, "glasses whip outbound-rtp",
-                  AsgDebugLog.toJson(members).put("tick", tick).put("statsTsUs", stats.getTimestampUs()));
-            } else if ("remote-inbound-rtp".equals(stats.getType()) && "video".equals(kind)) {
-              AsgDebugLog.emitJson("A,E", where, "glasses whip remote-inbound-rtp",
-                  AsgDebugLog.toJson(members).put("tick", tick).put("statsTsUs", stats.getTimestampUs()));
-            } else if ("candidate-pair".equals(stats.getType())
-                && Boolean.TRUE.equals(members.get("nominated"))) {
-              AsgDebugLog.emitJson("A,E", where, "glasses whip candidate-pair",
-                  AsgDebugLog.toJson(members).put("tick", tick).put("statsTsUs", stats.getTimestampUs()));
-            } else if ("media-source".equals(stats.getType()) && "video".equals(kind)) {
-              AsgDebugLog.emitJson("C", where, "glasses camera media-source",
-                  AsgDebugLog.toJson(members).put("tick", tick));
-            }
-          } catch (Exception ignored) {
-          }
-        }
-        AsgDebugLog.emitJson("B", "WhipStreamingService.java:wifi", "glasses wifi radio", debugWifiJson(tick));
-      });
-      mMainHandler.postDelayed(this, 1000L);
-    }
-  };
-
-  /** Hypothesis B: does the glasses radio degrade when the head moves? */
-  private JSONObject debugWifiJson(long tick) {
-    JSONObject out = new JSONObject();
-    try {
-      out.put("tick", tick);
-      out.put("cameraFps", mStreamConfig != null ? mStreamConfig.getMeasuredCameraFps() : -1);
-      out.put("configuredBitrate", mStreamConfig != null ? mStreamConfig.getVideoBitrate() : -1);
-      out.put("configuredFps", mStreamConfig != null ? mStreamConfig.getVideoFps() : -1);
-      android.net.wifi.WifiManager manager = (android.net.wifi.WifiManager)
-          getApplicationContext().getSystemService(Context.WIFI_SERVICE);
-      android.net.wifi.WifiInfo info = manager != null ? manager.getConnectionInfo() : null;
-      if (info == null) return out.put("available", false);
-      out.put("available", true);
-      out.put("rssi", info.getRssi());
-      out.put("linkSpeedMbps", info.getLinkSpeed());
-      out.put("frequencyMhz", info.getFrequency());
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-        out.put("txLinkSpeedMbps", info.getTxLinkSpeedMbps());
-        out.put("rxLinkSpeedMbps", info.getRxLinkSpeedMbps());
-      }
-    } catch (Exception error) {
-      try {
-        out.put("error", error.getClass().getSimpleName());
-      } catch (Exception ignored) {
-      }
-    }
-    return out;
-  }
-  // #endregion
-
   // -----------------------------------------------------------------------
   // Android Service lifecycle
   // -----------------------------------------------------------------------
@@ -489,9 +417,6 @@ public class WhipStreamingService extends Service {
     }
 
     mMainHandler.removeCallbacks(mStatsRunnable);
-    // #region agent log
-    mMainHandler.removeCallbacks(mDebugStatsRunnable);
-    // #endregion
     cancelStreamTimeout();
     stopBatteryMonitoring();
     Log.d(TAG, "Stopping WHIP streaming (forReconnect=" + forReconnect + ")");
@@ -899,10 +824,6 @@ public class WhipStreamingService extends Service {
     if (AsgConstants.ENABLE_PIPELINE_FPS_TELEMETRY) {
       mMainHandler.postDelayed(mStatsRunnable, AsgConstants.STREAM_METRICS_INTERVAL_MS);
     }
-    // #region agent log
-    mMainHandler.removeCallbacks(mDebugStatsRunnable);
-    mMainHandler.postDelayed(mDebugStatsRunnable, 1000L);
-    // #endregion
     scheduleStreamTimeout(mCurrentStreamId);
     startBatteryMonitoring();
     Log.i(TAG, "Streaming started via WHIP, negotiated video codec: "
@@ -1255,9 +1176,6 @@ public class WhipStreamingService extends Service {
 
   private void cleanupFailedStartup() {
     mMainHandler.removeCallbacks(mStatsRunnable);
-    // #region agent log
-    mMainHandler.removeCallbacks(mDebugStatsRunnable);
-    // #endregion
     cancelStreamTimeout();
     stopBatteryMonitoring();
     if (mWhipResourceUrl != null) {

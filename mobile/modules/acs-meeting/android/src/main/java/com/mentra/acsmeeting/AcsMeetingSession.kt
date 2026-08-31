@@ -57,7 +57,6 @@ import com.mentra.acsmeeting.source.SourceKind
 import com.mentra.acsmeeting.source.SyntheticI420Source
 import com.mentra.acsmeeting.source.TargetSize
 import com.mentra.acsmeeting.source.VideoSourceArm
-import com.mentra.acsmeeting.telemetry.AcsDebugLog
 import com.mentra.acsmeeting.telemetry.PipelineStats
 import com.mentra.acsmeeting.telemetry.PipelineTicker
 import com.mentra.acsmeeting.video.AcsFrameSender
@@ -76,18 +75,6 @@ class AcsMeetingSession(
   internal val stats = PipelineStats()
   private val ticker = PipelineTicker(stats) {
     Log.i(TAG, it)
-    // #region agent log
-    AcsDebugLog.emitJson(
-      "F", "AcsMeetingSession.kt:ticker", "phone pipeline ladder",
-      org.json.JSONObject()
-        .put("ladder", it)
-        .put("sinkCum", stats.sinkCount())
-        .put("subCum", stats.subCount())
-        .put("dropCum", stats.dropCount())
-        .put("abandonedCum", stats.abandonedCount())
-        .put("inFlight", stats.inFlightCount()),
-    )
-    // #endregion
   }
   private val executor: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor()
   private val scheduler = ExecutorPolicyScheduler(executor)
@@ -159,14 +146,6 @@ class AcsMeetingSession(
     this.audioSource = if (parsed == AudioSourceKind.PHONE) "phone" else "glasses"
     executor.execute {
       try {
-        val t0 = System.currentTimeMillis()
-        // #region agent log
-        AcsDebugLog.emit("B", "AcsMeetingSession.kt:join", "executor start before leaveLocked", mapOf(
-          "phase" to phase,
-          "hasCall" to (call != null),
-          "audioSource" to this.audioSource,
-        ))
-        // #endregion
         leaveLocked()
         this.audioSource = if (parsed == AudioSourceKind.PHONE) "phone" else "glasses"
         meetingUrl = teamsUrl
@@ -178,12 +157,6 @@ class AcsMeetingSession(
         val agentOptions = CallAgentOptions()
         agentOptions.displayName = displayName ?: "Mentra Call"
         callAgent = callClient!!.createCallAgent(context, credential, agentOptions).get()
-        // #region agent log
-        AcsDebugLog.emit("C", "AcsMeetingSession.kt:join", "createCallAgent ok", mapOf(
-          "elapsedMs" to (System.currentTimeMillis() - t0),
-          "tokenChars" to token.length,
-        ))
-        // #endregion
 
         val videoOptions = RawOutgoingVideoStreamOptions()
         videoOptions.formats = listOf(AcsFrameSender.i420Format(profile))
@@ -260,21 +233,8 @@ class AcsMeetingSession(
         joinOptions.setIncomingAudioOptions(ia)
 
         val locator = TeamsMeetingLinkLocator(teamsUrl)
-        val host = try { java.net.URI(teamsUrl).host ?: "none" } catch (_: Exception) { "parse-fail" }
         val joined = callAgent!!.join(context, locator, joinOptions)
         call = joined
-        // #region agent log
-        Log.i(TAG, "ACS teams meeting link=$teamsUrl")
-        AcsDebugLog.emit("A", "AcsMeetingSession.kt:join", "callAgent.join returned", mapOf(
-          "acsState" to joined.state.toString(),
-          "host" to host,
-          "teamsUrl" to teamsUrl,
-          "urlChars" to teamsUrl.length,
-          "armVirtual" to plan.armVirtual,
-          "transportMuted" to plan.transportMuted,
-          "elapsedMs" to (System.currentTimeMillis() - t0),
-        ))
-        // #endregion
         joined.addOnStateChangedListener { pushCallState(joined.state) }
         joined.addOnOutgoingAudioStateChangedListener {
           Log.i(TAG, "outgoing audio state changed muted=${joined.isOutgoingAudioMuted}")
@@ -308,14 +268,13 @@ class AcsMeetingSession(
       } catch (error: Exception) {
         val message = formatAcsError(error)
         Log.e(TAG, "join failed $message", error)
-        // A step after a successful ACS join (e.g. WHEP start) can throw. Tear
-        // the call down so the guest never lingers in the Teams roster with no
-        // media. leaveLocked hangs up + disposes and resets to idle.
-        leaveLocked()
+        // A step after a successful ACS join (e.g. WHEP start) can throw. Record
+        // the failure before tearing the call down: lastError makes pushCallState
+        // ignore the hang-up's async disconnected callbacks, and emitIdle=false
+        // keeps the terminal state as error instead of resetting to idle. Either
+        // would otherwise let Mentra Call treat the failed join as a clean end.
         lastError = message
-        // #region agent log
-        AcsDebugLog.emit("C", "AcsMeetingSession.kt:join", "join threw", mapOf("error" to lastError))
-        // #endregion
+        leaveLocked(emitIdle = false)
         emit("error")
       }
     }
@@ -403,6 +362,9 @@ class AcsMeetingSession(
   }
 
   private fun pushCallState(state: CallState) {
+    // A failed join has already reported a terminal error and torn the call
+    // down; ignore any late ACS state callback so it cannot overwrite error.
+    if (lastError != null) return
     val previous = phase
     phase = when (state) {
       CallState.CONNECTING -> "connecting"
@@ -414,14 +376,6 @@ class AcsMeetingSession(
     }
     val end = describeEndReason(call)
     Log.i(TAG, "ACS call state=$state phase=$phase previous=$previous end=$end")
-    // #region agent log
-    AcsDebugLog.emit(
-      if (state == CallState.DISCONNECTED || state == CallState.DISCONNECTING) "A" else "D",
-      "AcsMeetingSession.kt:pushCallState",
-      "call state",
-      mapOf("acsState" to state.toString(), "phase" to phase, "previous" to previous) + end,
-    )
-    // #endregion
     if (phase == "connected" && previous != "connected") {
       call?.let {
         attachMediaStats(it)
@@ -450,22 +404,6 @@ class AcsMeetingSession(
         if (width != null && height != null && width > 0 && height > 0) {
           stats.setSize(width, height)
         }
-        // #region agent log
-        // Hypothesis F: is the `wire` collapse real ACS backpressure, or just a
-        // slow report interval? Stamp every report arrival with its own clock.
-        AcsDebugLog.emitJson(
-          "F", "AcsMeetingSession.kt:attachMediaStats", "acs media statistics report",
-          org.json.JSONObject()
-            .put("frameRate", video?.frameRate ?: org.json.JSONObject.NULL)
-            .put("frameWidth", width ?: org.json.JSONObject.NULL)
-            .put("frameHeight", height ?: org.json.JSONObject.NULL)
-            .put("bitrateInBps", video?.bitrateInBps ?: org.json.JSONObject.NULL)
-            .put("packetCount", video?.packetCount ?: org.json.JSONObject.NULL)
-            .put("codecName", video?.codecName ?: org.json.JSONObject.NULL)
-            .put("videoStreamCount", event.report?.outgoingStatistics?.videoStatistics?.size ?: -1)
-            .put("lastUpdatedAt", event.report?.lastUpdatedAt?.toString() ?: "na"),
-        )
-        // #endregion
       }
       feature.addOnReportReceivedListener(listener)
       mediaStatsListener = listener
@@ -524,12 +462,6 @@ class AcsMeetingSession(
 
   private fun logDiagnostic(name: String, value: String) {
     Log.i(TAG, "P7 diag $name=$value")
-    // #region agent log
-    AcsDebugLog.emit("G", "AcsMeetingSession.kt:attachDiagnostics", "acs user facing diagnostic", mapOf(
-      "diagnostic" to name,
-      "value" to value,
-    ))
-    // #endregion
   }
 
   private fun detachDiagnostics() {
@@ -561,14 +493,7 @@ class AcsMeetingSession(
     }
   }
 
-  private fun leaveLocked() {
-    // #region agent log
-    AcsDebugLog.emit("B", "AcsMeetingSession.kt:leaveLocked", "leaveLocked", mapOf(
-      "phase" to phase,
-      "hasCall" to (call != null),
-      "hasAgent" to (callAgent != null),
-    ))
-    // #endregion
+  private fun leaveLocked(emitIdle: Boolean = true) {
     try {
       ticker.stop()
       detachDiagnostics()
@@ -606,7 +531,7 @@ class AcsMeetingSession(
     audioSource = "glasses"
     lastSafety = AudioSafety.DEGRADED
     meetingUrl = null
-    emit("idle")
+    if (emitIdle) emit("idle")
   }
 
   private inner class SessionAudioController : AudioStreamController {

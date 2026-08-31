@@ -69,8 +69,7 @@ android/src/main/java/com/mentra/acsmeeting/
     ├── PipelineStats.kt         Every counter, and the 1 Hz "P6 ladder" line
     ├── PipelineTicker.kt        Emits that line on a timer
     ├── RingPercentile.kt        p50/p95 over a fixed ring of samples
-    ├── ChromaProbe.kt           Plane averages, to catch a mis-packed frame
-    └── AcsDebugLog.kt           Structured one-off diagnostic events
+    └── ChromaProbe.kt           Plane averages, to catch a mis-packed frame
 ```
 
 Tests mirror this exactly under `android/src/test/java/com/mentra/acsmeeting/`.

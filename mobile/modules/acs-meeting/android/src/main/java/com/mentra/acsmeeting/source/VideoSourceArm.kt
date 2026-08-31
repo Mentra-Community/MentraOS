@@ -9,7 +9,7 @@ enum class SyntheticEntropy { CHEAP, MOTION, NOISE }
  * Ships as WHEP. Flip locally to run the experiment; do not commit SYNTHETIC.
  */
 object AcsInvestigation {
-  val videoArm = VideoSourceArm.SYNTHETIC
+  val videoArm = VideoSourceArm.WHEP
   val syntheticFps = 15
   val syntheticEntropy = SyntheticEntropy.MOTION
 }

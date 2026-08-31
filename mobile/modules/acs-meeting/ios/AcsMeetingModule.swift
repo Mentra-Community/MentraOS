@@ -144,7 +144,7 @@ final class AcsMeetingSession {
         videoFormat.pixelFormat = .nv12
         videoFormat.width = 1280
         videoFormat.height = 720
-        videoFormat.framesPerSecond = 20
+        videoFormat.framesPerSecond = 15
         let videoOptions = RawOutgoingVideoStreamOptions()
         videoOptions.formats = [videoFormat]
         let videoStream = VirtualOutgoingVideoStream(videoStreamOptions: videoOptions)
@@ -207,11 +207,13 @@ final class AcsMeetingSession {
         NSLog("ACS-SPIKE iOS ACS join started source=\(self.audioSource) armVirtual=\(plan.armVirtual) transportMuted=\(plan.transportMuted)")
       } catch {
         let message = error.localizedDescription
-        // A step after a successful ACS join (e.g. WHEP start) can throw. Tear
-        // the call down so the guest never lingers in the Teams roster with no
-        // media. leaveLocked hangs up + disposes and resets to idle.
-        self.leaveLocked()
+        // A step after a successful ACS join (e.g. WHEP start) can throw. Record
+        // the failure before teardown: lastError makes the call delegate ignore
+        // the hang-up's async disconnected callback, and emitIdle=false keeps the
+        // terminal state as error instead of resetting to idle. Either would
+        // otherwise let Mentra Call treat the failed join as a clean end.
         self.lastError = message
+        self.leaveLocked(emitIdle: false)
         self.emit("error")
       }
     }
@@ -274,7 +276,7 @@ final class AcsMeetingSession {
     onState(snapshot())
   }
 
-  private func leaveLocked() {
+  private func leaveLocked(emitIdle: Bool = true) {
     applier.reset()
     scheduler.cancelPending()
     pcmBridge?.finishDump()
@@ -300,7 +302,7 @@ final class AcsMeetingSession {
     audioSource = "glasses"
     lastSafety = .degraded
     meetingUrl = nil
-    emit("idle")
+    if emitIdle { emit("idle") }
   }
 
   fileprivate func currentCall() -> Call? { call }
@@ -377,6 +379,9 @@ final class SessionAudioController: AudioStreamController {
 
 extension AcsMeetingSession: CallDelegate {
   func call(_ call: Call, didChangeState args: PropertyChangedEventArgs) {
+    // A failed join has already reported a terminal error and torn the call
+    // down; ignore any late ACS state callback so it cannot overwrite error.
+    if lastError != nil { return }
     switch call.state {
     case .connecting: emit("connecting")
     case .inLobby: emit("lobby")

@@ -2,7 +2,6 @@ package com.mentra.acsmeeting.source
 
 import android.content.Context
 import android.util.Log
-import com.mentra.acsmeeting.telemetry.AcsDebugLog
 import com.mentra.acsmeeting.telemetry.PipelineStats
 import com.mentra.acsmeeting.video.FrameGeometry
 import com.mentra.acsmeeting.video.I420Packer
@@ -341,9 +340,6 @@ class CloudflareWhepSource(
   private fun pollDecodedStats() {
     val peer = pc ?: return
     peer.getStats { report ->
-      // #region agent log
-      emitDebugStats(report)
-      // #endregion
       for (statsReport in report.statsMap.values) {
         if (statsReport.type != "inbound-rtp") continue
         if (statsReport.members["kind"]?.toString() != "video") continue
@@ -385,66 +381,6 @@ class CloudflareWhepSource(
       }
     }
   }
-
-  // #region agent log
-  private var dbgTick = 0L
-
-  /**
-   * Hypotheses D/E: is the loss we see on the phone the Cloudflare->phone hop, or
-   * a shadow of the glasses->Cloudflare hop? Dump the raw members so no field we
-   * did not think of is missing at analysis time.
-   */
-  private fun emitDebugStats(report: org.webrtc.RTCStatsReport) {
-    val tick = ++dbgTick
-    for (entry in report.statsMap.values) {
-      val members = entry.members
-      val kind = members["kind"]?.toString()
-      val where = "CloudflareWhepSource.kt:pollDecodedStats"
-      when (entry.type) {
-        "inbound-rtp" -> if (kind == "video") {
-          AcsDebugLog.emitJson(
-            "D,E", where, "phone whep inbound-rtp",
-            AcsDebugLog.toJson(members).put("tick", tick).put("statsTsUs", entry.timestampUs),
-          )
-        }
-        "candidate-pair" -> if (members["nominated"] == true) {
-          AcsDebugLog.emitJson(
-            "E,B", where, "phone whep candidate-pair",
-            AcsDebugLog.toJson(members).put("tick", tick).put("statsTsUs", entry.timestampUs),
-          )
-        }
-        "track" -> if (kind == "video") {
-          AcsDebugLog.emitJson(
-            "D", where, "phone whep track",
-            AcsDebugLog.toJson(members).put("tick", tick),
-          )
-        }
-      }
-    }
-    AcsDebugLog.emitJson("B", "CloudflareWhepSource.kt:wifi", "phone wifi radio", wifiJson().put("tick", tick))
-  }
-
-  /** Hypothesis B: does the phone's own radio degrade at the same moment? */
-  private fun wifiJson(): org.json.JSONObject {
-    val out = org.json.JSONObject()
-    try {
-      val manager = context.applicationContext
-        .getSystemService(Context.WIFI_SERVICE) as? android.net.wifi.WifiManager
-      val info = manager?.connectionInfo ?: return out.put("available", false)
-      out.put("available", true)
-      out.put("rssi", info.rssi)
-      out.put("linkSpeedMbps", info.linkSpeed)
-      out.put("frequencyMhz", info.frequency)
-      if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-        out.put("txLinkSpeedMbps", info.txLinkSpeedMbps)
-        out.put("rxLinkSpeedMbps", info.rxLinkSpeedMbps)
-      }
-    } catch (error: Exception) {
-      out.put("error", error.javaClass.simpleName)
-    }
-    return out
-  }
-  // #endregion
 
   private fun recvOnly() = RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.RECV_ONLY)
 

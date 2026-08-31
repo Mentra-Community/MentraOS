@@ -34,6 +34,6 @@ data class VideoProfile(
     val SD = VideoProfile(width = 640, height = 360, fps = 15, maxBitrateBps = 1_000_000)
 
     /** Investigation flip. Ships as HD. SD is 360p — a quarter of the encode work. */
-    val DEFAULT = SD
+    val DEFAULT = HD
   }
 }
