@@ -10,6 +10,7 @@ final class AcsFrameSender {
   private var lastSent: CFTimeInterval = 0
 
   func attach(_ stream: VirtualOutgoingVideoStream) {
+    detach()
     self.stream = stream
     stream.delegate = self
   }
@@ -30,12 +31,16 @@ final class AcsFrameSender {
 
   func detach() {
     running = false
+    // Drop the delegate on the previous stream so a late STOPPED from a prior
+    // call cannot freeze outgoing video for the current meeting.
+    stream?.delegate = nil
     stream = nil
   }
 }
 
 extension AcsFrameSender: RawOutgoingVideoStreamDelegate {
   func rawOutgoingVideoStream(_ rawOutgoingVideoStream: RawOutgoingVideoStream, didChangeState args: VideoStreamStateChangedEventArgs) {
+    guard rawOutgoingVideoStream === stream else { return }
     running = rawOutgoingVideoStream.state == .started
     NSLog("ACS-SPIKE iOS raw video state=\(rawOutgoingVideoStream.state)")
   }

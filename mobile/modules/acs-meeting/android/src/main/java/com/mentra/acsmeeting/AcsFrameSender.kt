@@ -4,8 +4,10 @@ import android.util.Log
 import com.azure.android.communication.calling.RawOutgoingVideoStream
 import com.azure.android.communication.calling.RawVideoFrameBuffer
 import com.azure.android.communication.calling.VideoStreamFormat
+import com.azure.android.communication.calling.VideoStreamFormatChangedListener
 import com.azure.android.communication.calling.VideoStreamPixelFormat
 import com.azure.android.communication.calling.VideoStreamState
+import com.azure.android.communication.calling.VideoStreamStateChangedListener
 import com.azure.android.communication.calling.VirtualOutgoingVideoStream
 import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentLinkedQueue
@@ -28,10 +30,18 @@ class AcsFrameSender {
   private val stream = AtomicReference<RawOutgoingVideoStream?>(null)
   private val format = AtomicReference<VideoStreamFormat?>(null)
   private var lastSentNs = 0L
+  private var attachedStream: VirtualOutgoingVideoStream? = null
+  private var stateListener: VideoStreamStateChangedListener? = null
+  private var formatListener: VideoStreamFormatChangedListener? = null
 
   fun attach(outgoing: VirtualOutgoingVideoStream) {
+    detach()
     stream.set(outgoing)
-    outgoing.addOnStateChangedListener { args ->
+    attachedStream = outgoing
+    val onState = VideoStreamStateChangedListener {
+      // Ignore late events from a previous call's stream so a stale STOPPED
+      // cannot freeze outgoing video for the current meeting.
+      if (stream.get() !== outgoing) return@VideoStreamStateChangedListener
       val state = outgoing.state
       Log.i(TAG, "raw video state=$state")
       running.set(state == VideoStreamState.STARTED)
@@ -40,10 +50,15 @@ class AcsFrameSender {
         logFormat(outgoing.format)
       }
     }
-    outgoing.addOnFormatChangedListener { args ->
+    val onFormat = VideoStreamFormatChangedListener { args ->
+      if (stream.get() !== outgoing) return@VideoStreamFormatChangedListener
       format.set(args.format)
       logFormat(args.format)
     }
+    stateListener = onState
+    formatListener = onFormat
+    outgoing.addOnStateChangedListener(onState)
+    outgoing.addOnFormatChangedListener(onFormat)
   }
 
   fun sendRgba(src: ByteBuffer, width: Int, height: Int) {
@@ -77,6 +92,14 @@ class AcsFrameSender {
 
   fun detach() {
     running.set(false)
+    val previous = attachedStream
+    if (previous != null) {
+      stateListener?.let { previous.removeOnStateChangedListener(it) }
+      formatListener?.let { previous.removeOnFormatChangedListener(it) }
+    }
+    attachedStream = null
+    stateListener = null
+    formatListener = null
     stream.set(null)
     format.set(null)
     pool.clear()

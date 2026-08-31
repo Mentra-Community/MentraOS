@@ -55,7 +55,10 @@ final class WhepVideoSource: NSObject, GlassesMediaSource {
   }
 
   func restart(config: SourceConfig) {
-    if config.url == currentUrl { return }
+    // Only reuse the live subscriber when the URL is unchanged AND the peer is
+    // still healthy. After ICE failed/disconnected (e.g. a Wi-Fi drop reusing
+    // the same WHEP URL) we must rebuild, or glasses video and mic never recover.
+    if config.url == currentUrl, state != .failed { return }
     start(config: config)
   }
 
@@ -86,9 +89,14 @@ final class WhepVideoSource: NSObject, GlassesMediaSource {
   }
 
   private func attachAudio(_ track: RTCAudioTrack) {
-    if !audioTracks.contains(where: { $0 === track }) {
-      audioTracks.append(track)
+    // Unified Plan fires didAdd stream, didStartReceivingOn and add-track for
+    // the same remote audio; only wire the renderer once or Teams hears doubled
+    // PCM.
+    if audioTracks.contains(where: { $0 === track }) {
+      track.isEnabled = pcmEnabled
+      return
     }
+    audioTracks.append(track)
     track.isEnabled = pcmEnabled
     track.add(self as RTCAudioRenderer)
   }
