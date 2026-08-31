@@ -67,65 +67,76 @@ export function CustomMentraLiveOtaFlow({
     controller[action]();
   };
 
+  const content = (
+    <>
+      <StatusIcon
+        accent={palette.accent}
+        tone={presentation.tone}
+        wash={palette.wash}
+      />
+      <Text style={styles.title}>{presentation.title}</Text>
+      {presentation.message ? (
+        <Text style={styles.message}>{presentation.message}</Text>
+      ) : null}
+
+      {presentation.versionLabel ? (
+        <View style={styles.versionBadge}>
+          <Text selectable style={styles.versionLabel}>
+            {presentation.versionLabel}
+          </Text>
+        </View>
+      ) : null}
+
+      {presentation.progress !== undefined ? (
+        <View style={styles.progressBlock}>
+          <Text style={[styles.progressValue, { color: palette.accent }]}>
+            {Math.round(presentation.progress)}%
+          </Text>
+          <View style={styles.progressTrack}>
+            <View
+              style={[
+                styles.progressFill,
+                {
+                  backgroundColor: palette.accent,
+                  width: `${Math.min(Math.max(presentation.progress, 0), 100)}%`,
+                },
+              ]}
+            />
+          </View>
+        </View>
+      ) : null}
+
+      {presentation.indeterminate ? (
+        <ActivityIndicator color={palette.accent} size="large" />
+      ) : null}
+
+      {presentation.detail ? (
+        <Text style={styles.detail}>{presentation.detail}</Text>
+      ) : null}
+
+      <ChangelogList changelogs={presentation.changelogs} />
+    </>
+  );
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <Header title="Software Update" />
       <View style={styles.page} testID="custom-mentra-live-ota-flow">
-        <ScrollView
-          contentContainerStyle={[
-            styles.centerContent,
-            hasChangelogs && styles.topContent,
-          ]}
-          showsVerticalScrollIndicator={false}
-          style={styles.contentScroll}
-        >
-          <StatusIcon
-            accent={palette.accent}
-            tone={presentation.tone}
-            wash={palette.wash}
-          />
-          <Text style={styles.title}>{presentation.title}</Text>
-          {presentation.message ? (
-            <Text style={styles.message}>{presentation.message}</Text>
-          ) : null}
-
-          {presentation.versionLabel ? (
-            <View style={styles.versionBadge}>
-              <Text selectable style={styles.versionLabel}>
-                {presentation.versionLabel}
-              </Text>
-            </View>
-          ) : null}
-
-          {presentation.progress !== undefined ? (
-            <View style={styles.progressBlock}>
-              <Text style={[styles.progressValue, { color: palette.accent }]}>
-                {Math.round(presentation.progress)}%
-              </Text>
-              <View style={styles.progressTrack}>
-                <View
-                  style={[
-                    styles.progressFill,
-                    {
-                      backgroundColor: palette.accent,
-                      width: `${Math.min(Math.max(presentation.progress, 0), 100)}%`,
-                    },
-                  ]}
-                />
-              </View>
-            </View>
-          ) : null}
-
-          {presentation.indeterminate ? (
-            <ActivityIndicator color={palette.accent} size="large" />
-          ) : null}
-
-          {presentation.detail ? (
-            <Text style={styles.detail}>{presentation.detail}</Text>
-          ) : null}
-
-          <ChangelogList changelogs={presentation.changelogs} />
-        </ScrollView>
+        {hasChangelogs ? (
+          <View
+            style={[styles.contentScroll, styles.centerContent, styles.topContent]}
+          >
+            {content}
+          </View>
+        ) : (
+          <ScrollView
+            contentContainerStyle={styles.centerContent}
+            showsVerticalScrollIndicator={false}
+            style={styles.contentScroll}
+          >
+            {content}
+          </ScrollView>
+        )}
 
         {presentation.primary || presentation.secondary ? (
           <View style={styles.actions}>
