@@ -180,9 +180,14 @@ to TestFlight.
 ### Coordinated example release
 
 `coordinated-example-release.yml` is invoked by an authenticated dispatch from
-MentraOS. The coordinator uses GitHub's cross-repository `repository_dispatch`
-endpoint, which is covered by the GitHub App's existing Contents write grant;
-manual `workflow_dispatch` remains available for operators. Required inputs are:
+MentraOS. The coordinator uses GitHub's cross-repository `workflow_dispatch`
+endpoint and selects the Starter Kit branch that owns the release channel:
+`dev` for dev, `staging` for beta, and `main` for production. This makes the
+workflow implementation and checked-out source come from the same channel
+instead of running default-branch orchestration against another branch. The
+coordinator GitHub App therefore requires Actions write in addition to its
+existing grants. Operators can invoke the same workflow manually. Required
+inputs are:
 
 - `releaseSetId`;
 - `releaseIdentity`;
