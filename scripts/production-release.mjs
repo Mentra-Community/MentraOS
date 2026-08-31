@@ -197,6 +197,12 @@ function promoteExactCommit({repository, sourceCommit, target, releaseIdentity, 
   execFileSync("gh", ["pr", "checks", pull.url, "--repo", repository, "--watch", "--fail-fast"], {
     stdio: "inherit",
   })
+  const currentTargetHead = branchHead(repository, target)
+  if (currentTargetHead !== targetHead) {
+    throw new Error(
+      `${repository}:${target} moved from ${targetHead} to ${currentTargetHead} while checks ran; rerun promotion`,
+    )
+  }
   const mergeArgs = ["pr", "merge", pull.url, "--repo", repository, "--merge", "--match-head-commit", sourceCommit]
   if (mergeBody) mergeArgs.push("--body", mergeBody)
   execGh(mergeArgs)
