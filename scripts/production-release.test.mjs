@@ -27,7 +27,7 @@ const baseRecord = {
     manifestUrl: "https://example.com/beta.json",
     manifestSha256: "b".repeat(64),
   },
-  source: {mentraosCommit: "a".repeat(40), starterKitCommit: "c".repeat(40)},
+  source: {mentraosCommit: "a".repeat(40)},
   coordinates: {
     currentMentraApp: {
       sourceCommit: "f".repeat(40),
@@ -43,10 +43,6 @@ const baseRecord = {
       mentraApp: {
         ios: {marketingVersion: "3.1.0", buildNumber: 3},
         android: {marketingVersion: "3.1.0", buildNumber: 4},
-      },
-      starterKit: {
-        ios: {marketingVersion: "3.1.0", buildNumber: 5},
-        android: {marketingVersion: "3.1.0", buildNumber: 6},
       },
     },
   },
