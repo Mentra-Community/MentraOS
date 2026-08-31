@@ -140,6 +140,21 @@ class AcsMeetingService {
       audioSourceReason: resolved.reason,
     }
     console.log("[AcsMeeting] phase=join-native-ok", {state: state.state, muted: state.muted})
+    // #region agent log
+    fetch("http://127.0.0.1:7331/ingest/3cce15b2-06a7-47f9-8f9c-924fd72ec258", {
+      method: "POST",
+      headers: {"Content-Type": "application/json", "X-Debug-Session-Id": "f88263"},
+      body: JSON.stringify({
+        sessionId: "f88263",
+        runId: "pre-fix",
+        hypothesisId: "C",
+        location: "AcsMeetingService.ts:join",
+        message: "join-native-ok",
+        data: {state: state.state, muted: state.muted, teamsUrl: args.meetingUrl},
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {})
+    // #endregion
     await this.ensurePcmPlayback(packageName)
     console.log("[AcsMeeting] phase=pcm-playback", {streamId: this.pcmStreamId})
     return this.lastState
@@ -229,6 +244,30 @@ class AcsMeetingService {
           activeStream: state.activeStream,
           audioSafety: state.audioSafety,
         })
+        // #region agent log
+        const extra = event as Record<string, unknown>
+        fetch("http://127.0.0.1:7331/ingest/3cce15b2-06a7-47f9-8f9c-924fd72ec258", {
+          method: "POST",
+          headers: {"Content-Type": "application/json", "X-Debug-Session-Id": "f88263"},
+          body: JSON.stringify({
+            sessionId: "f88263",
+            runId: "pre-fix",
+            hypothesisId: state.state === "disconnected" || state.state === "error" ? "A" : "D",
+            location: "AcsMeetingService.ts:onState",
+            message: "native-state",
+            data: {
+              state: state.state,
+              error: state.error ?? null,
+              audioSafety: state.audioSafety ?? null,
+              activeStream: state.activeStream ?? null,
+              endReason_code: extra.endReason_code ?? extra.endReason_hasCall ?? null,
+              endReason_subcode: extra.endReason_subcode ?? null,
+              endReason_message: extra.endReason_message ?? null,
+            },
+            timestamp: Date.now(),
+          }),
+        }).catch(() => {})
+        // #endregion
         this.onState?.(packageName, state)
       }),
       native.addListener("onIncomingPcm", (event) => {
