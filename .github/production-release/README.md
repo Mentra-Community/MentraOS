@@ -16,7 +16,11 @@ no GitHub runner waits for it.
 
 ## Safety rules
 
-- Start only from a completed coordinated beta whose source is in `main`.
+- Promote only a completed coordinated beta whose MentraOS and Starter Kit
+  sources already contain their respective `main` branches. If either branch
+  has production-only commits, back-merge them into `staging` and complete a new
+  beta before promotion.
+- Start only after the selected beta's exact sources are in `main`.
 - Never patch or re-sign a beta binary. Production mobile candidates are rebuilt
   from the frozen source with production configuration.
 - Never edit or replace an existing promotion asset. Retry the same phase or
@@ -81,7 +85,23 @@ Console:
 
 ## Operator commands
 
-From a clean, up-to-date `main` checkout:
+First, from a clean, up-to-date `staging` checkout, promote the exact commits
+recorded by the completed coordinated beta:
+
+```bash
+git switch staging
+git pull --ff-only origin staging
+./scripts/production-release.mjs promote --beta X.Y.Z-beta.N
+```
+
+This creates and merges the Starter Kit `staging` to `main` pull request first,
+then the MentraOS `staging` to `main` pull request. It only advances branch
+history. It does not build or publish the Starter Kit, deploy Cloud, upload
+mobile apps, submit stores, or create production-promotion state. It fails
+before opening either pull request if the selected beta does not already
+contain both `main` heads.
+
+Then, from a clean, up-to-date MentraOS `main` checkout:
 
 ```bash
 git switch main
