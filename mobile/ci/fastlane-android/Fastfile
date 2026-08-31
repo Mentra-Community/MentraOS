@@ -60,7 +60,7 @@ platform :android do
     upload_to_play_store(
       track: ENV.fetch("GOOGLE_PLAY_TRACK", "internal"),
       aab: ENV.fetch("GOOGLE_PLAY_AAB", "app/build/outputs/bundle/release/app-release.aab"),
-      release_name: ENV["GOOGLE_PLAY_RELEASE_NAME"],
+      version_name: ENV["GOOGLE_PLAY_RELEASE_NAME"],
       skip_upload_apk: true,
       skip_upload_metadata: true,
       skip_upload_images: true,
