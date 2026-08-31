@@ -3,6 +3,7 @@ import test from "node:test"
 
 import {
   advanceConfirmationMessage,
+  branchPromotionState,
   parseCliArgs,
   releaseBranchSources,
   requireCommandState,
@@ -73,6 +74,13 @@ test("reads exact branch sources from a completed coordinated beta", () => {
     ),
     {mentraosCommit: "a".repeat(40), starterKitCommit: "b".repeat(40)},
   )
+})
+
+test("accepts ready and already-complete branch promotion retries", () => {
+  assert.equal(branchPromotionState({behind_by: 5}, {behind_by: 0}), "ready")
+  assert.equal(branchPromotionState({behind_by: 0}, {behind_by: 5}), "complete")
+  assert.equal(branchPromotionState({behind_by: 0}, {behind_by: 0}), "complete")
+  assert.equal(branchPromotionState({behind_by: 2}, {behind_by: 3}), "diverged")
 })
 
 test("rejects incomplete or mismatched beta branch sources", () => {

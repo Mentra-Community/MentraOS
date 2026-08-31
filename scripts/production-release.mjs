@@ -94,14 +94,24 @@ function ensureCommitIsOnBranch(repository, commit, branch) {
   }
 }
 
-function ensureTargetIsInSource(repository, target, sourceCommit) {
+export function branchPromotionState(sourceToTarget, targetToSource) {
+  if (sourceToTarget.behind_by === 0) return "complete"
+  if (targetToSource.behind_by === 0) return "ready"
+  return "diverged"
+}
+
+function requirePromotionRelationship(repository, target, sourceCommit) {
   const targetHead = branchHead(repository, target)
-  const comparison = compareCommits(repository, targetHead, sourceCommit)
-  if (comparison.behind_by !== 0) {
+  const sourceToTarget = compareCommits(repository, sourceCommit, targetHead)
+  if (sourceToTarget.behind_by === 0) return {state: "complete", targetHead}
+  const targetToSource = compareCommits(repository, targetHead, sourceCommit)
+  const state = branchPromotionState(sourceToTarget, targetToSource)
+  if (state === "diverged") {
     throw new Error(
       `${repository}:${sourceCommit} does not contain ${target} at ${targetHead}; back-merge ${target} into staging and complete a new coordinated beta before promotion`,
     )
   }
+  return {state, targetHead}
 }
 
 function promotionBranchHead(repository, branch) {
@@ -137,12 +147,12 @@ function ensurePromotionBranch(repository, branch, commit) {
 
 function promoteExactCommit({repository, sourceCommit, target, releaseIdentity, mergeBody}) {
   ensureCommitIsOnBranch(repository, sourceCommit, "staging")
-  const targetHead = branchHead(repository, target)
-  if (compareCommits(repository, sourceCommit, targetHead).behind_by === 0) {
+  const relationship = requirePromotionRelationship(repository, target, sourceCommit)
+  const {targetHead} = relationship
+  if (relationship.state === "complete") {
     console.log(`${repository}:${target} already contains ${sourceCommit}`)
     return targetHead
   }
-  ensureTargetIsInSource(repository, target, sourceCommit)
 
   const branch = `release/promote-${releaseIdentity}-staging-to-${target}-${sourceCommit.slice(0, 8)}`
   ensurePromotionBranch(repository, branch, sourceCommit)
@@ -464,8 +474,8 @@ async function main(argv = process.argv.slice(2)) {
     const sources = loadReleaseBranchSources(options.beta)
     ensureCommitIsOnBranch(REPOSITORY, sources.mentraosCommit, "staging")
     ensureCommitIsOnBranch(STARTER_KIT_REPOSITORY, sources.starterKitCommit, "staging")
-    ensureTargetIsInSource(REPOSITORY, "main", sources.mentraosCommit)
-    ensureTargetIsInSource(STARTER_KIT_REPOSITORY, "main", sources.starterKitCommit)
+    requirePromotionRelationship(REPOSITORY, "main", sources.mentraosCommit)
+    requirePromotionRelationship(STARTER_KIT_REPOSITORY, "main", sources.starterKitCommit)
     await confirmBranchPromotion(options.beta, options)
     promoteExactCommit({
       repository: STARTER_KIT_REPOSITORY,
