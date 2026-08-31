@@ -14,6 +14,10 @@ function mobileFastfile(name) {
   return readFileSync(new URL(`../../mobile/ci/${name}/Fastfile`, import.meta.url), "utf8")
 }
 
+function repositoryScript(name) {
+  return readFileSync(new URL(`../../scripts/${name}`, import.meta.url), "utf8")
+}
+
 function jobBlock(source, name) {
   const start = source.indexOf(`\n  ${name}:\n`)
   assert.notEqual(start, -1, `Missing workflow job ${name}`)
@@ -240,6 +244,11 @@ test("coordinated docs publish only after finalization to the matching channel",
   assert.match(starterKit, /^    needs: \[plan, ota\]$/m)
   assert.match(engineConsumer, /^    needs: \[plan, npm\]$/m)
   assert.match(starterKit, /coordinated-example-release\.yml/)
+  assert.match(coordinator, /Freeze the Starter Kit channel source/)
+  assert.match(coordinator, /--starter-kit-source starter-kit-source\.json/)
+  assert.match(coordinator, /trailers:key=Starter-Kit-Source,valueonly/)
+  assert.match(starterKit, /expected_head=\$\(jq -er \.starterKitSource\.sourceCommit "\$plan"\)/)
+  assert.doesNotMatch(starterKit, /expected_head=\$\(gh api/)
   assert.match(starterKit, /event_type: "coordinated_example_release"/)
   assert.match(starterKit, /--event repository_dispatch/)
   assert.doesNotMatch(starterKit, /gh workflow run coordinated-example-release\.yml/)
@@ -323,6 +332,26 @@ test("coordinated docs publish only after finalization to the matching channel",
     example,
     /token: \$\{\{ steps\.starter-kit-app-token\.outputs\.token \|\| secrets\.STARTER_KIT_COORDINATOR_TOKEN/,
   )
+})
+
+test("release-family promotion orders both repositories and reconciles Starter Kit ancestry", () => {
+  const script = repositoryScript("promote-release-family.mjs")
+  const start = script.indexOf('if (command === "start")')
+  const starterPromotion = script.indexOf("repository: STARTER_KIT_REPOSITORY", start)
+  const mentraosPromotion = script.indexOf("repository: MENTRAOS_REPOSITORY", starterPromotion)
+  const finish = script.indexOf("requireSuccessfulBetaRun(options.run)", mentraosPromotion)
+  const starterReconciliation = script.indexOf("repository: STARTER_KIT_REPOSITORY", finish)
+  const preparation = script.indexOf("scripts/prepare-next-release-family.mjs", starterReconciliation)
+
+  assert.ok(start >= 0)
+  assert.ok(starterPromotion > start)
+  assert.ok(mentraosPromotion > starterPromotion)
+  assert.ok(finish > mentraosPromotion)
+  assert.ok(starterReconciliation > finish)
+  assert.ok(preparation > starterReconciliation)
+  assert.match(script, /--match-head-commit", sourceHead/)
+  assert.match(script, /mergeBody: `Starter-Kit-Source: \$\{starterKitStagingHead\}`/)
+  assert.match(script, /run\.path !== "\.github\/workflows\/coordinated-release\.yml"/)
 })
 
 test("external example review replacements are manual and exact-build only", () => {

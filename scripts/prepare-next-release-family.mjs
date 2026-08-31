@@ -231,12 +231,14 @@ function updateStableDocs(currentVersion, nextVersion) {
   if (docs.variables?.["release-artifacts-url"] !== currentUrl) {
     fail(`${relativePath} release-artifacts-url does not match ${currentUrl}`)
   }
-  const output = input
-    .replace(`"release-version": "${currentVersion}"`, `"release-version": "${nextVersion}"`)
-    .replace(
-      `"release-artifacts-url": "${currentUrl}"`,
-      `"release-artifacts-url": "https://github.com/Mentra-Community/MentraOS/releases/tag/mentra-v${nextVersion}"`,
-    )
+  let output = replaceJsonStringProperty(input, "release-version", nextVersion, 1, relativePath)
+  output = replaceJsonStringProperty(
+    output,
+    "release-artifacts-url",
+    `https://github.com/Mentra-Community/MentraOS/releases/tag/mentra-v${nextVersion}`,
+    1,
+    relativePath,
+  )
   writeFileSync(path.join(rootDir, relativePath), output)
 }
 
@@ -248,8 +250,7 @@ function updateLicenseInventory(currentVersion, nextVersion, family) {
   let output = input
 
   for (const entry of inventory.packages.filter(({name}) => familyNames.has(name))) {
-    const resumesLowerInventoryEntry =
-      currentVersion === nextVersion && compareVersions(entry.version, nextVersion) < 0
+    const resumesLowerInventoryEntry = currentVersion === nextVersion && compareVersions(entry.version, nextVersion) < 0
     if (entry.version !== currentVersion && !resumesLowerInventoryEntry) {
       fail(`${relativePath} lists ${entry.name} at ${entry.version}, expected ${currentVersion}`)
     }

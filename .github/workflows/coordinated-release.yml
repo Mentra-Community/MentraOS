@@ -89,6 +89,29 @@ jobs:
       - name: Verify generated changelog catalogs
         run: node .github/scripts/generate-changelog-catalog.mjs --check
 
+      - name: Freeze the Starter Kit channel source
+        run: |
+          set -euo pipefail
+          case "${{ github.ref_name }}" in
+            dev) starter_branch=dev ;;
+            staging)
+              starter_branch=staging
+              starter_head=$(git log -1 --format='%(trailers:key=Starter-Kit-Source,valueonly)' | tr -d '[:space:]')
+              ;;
+            *) echo "Unsupported Starter Kit channel for ${{ github.ref_name }}" >&2; exit 1 ;;
+          esac
+          starter_repository=Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit
+          if [[ -z "${starter_head:-}" ]]; then
+            starter_head=$(git ls-remote "https://github.com/$starter_repository.git" "refs/heads/$starter_branch" | awk '{print $1}')
+          fi
+          [[ "$starter_head" =~ ^[0-9a-f]{40}$ ]]
+          jq -n \
+            --arg repository "$starter_repository" \
+            --arg branch "$starter_branch" \
+            --arg sourceCommit "$starter_head" \
+            '{repository: $repository, branch: $branch, sourceCommit: $sourceCommit}' \
+            > starter-kit-source.json
+
       - name: Create deterministic release plan
         run: |
           set -euo pipefail
@@ -98,6 +121,7 @@ jobs:
             --source-commit "${{ github.sha }}" \
             --native-build-number "$((310000000 + ${{ github.run_number }}))" \
             --ota-inputs ota-release-inputs.json \
+            --starter-kit-source starter-kit-source.json \
             --require-version-mirrors true \
             --output release-plan.json
           cp release-plan.json release-plan.first.json
@@ -107,6 +131,7 @@ jobs:
             --source-commit "${{ github.sha }}" \
             --native-build-number "$((310000000 + ${{ github.run_number }}))" \
             --ota-inputs ota-release-inputs.json \
+            --starter-kit-source starter-kit-source.json \
             --require-version-mirrors true \
             --output release-plan.json
           cmp release-plan.first.json release-plan.json
@@ -341,7 +366,9 @@ jobs:
             *) echo "Unsupported prerelease Starter Kit channel $channel" >&2; exit 1 ;;
           esac
 
-          expected_head=$(gh api "repos/$STARTER_KIT_REPOSITORY/branches/$target_branch" --jq .commit.sha)
+          [[ "$(jq -er .starterKitSource.repository "$plan")" == "$STARTER_KIT_REPOSITORY" ]]
+          [[ "$(jq -er .starterKitSource.branch "$plan")" == "$target_branch" ]]
+          expected_head=$(jq -er .starterKitSource.sourceCommit "$plan")
           payload=$(jq -cn \
             --arg releaseSetId "$release_set_id" \
             --arg releaseIdentity "$identity" \

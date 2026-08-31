@@ -139,6 +139,37 @@ test("creates a deterministic release plan with exact dependency versions", () =
   assert.equal(productionPlan.artifactContainerName, `Mentra ${baseVersion}`)
 })
 
+test("pins the exact Starter Kit source for the selected channel", () => {
+  const family = loadReleaseFamily({rootDir: repositoryRoot})
+  const starterKitSource = {
+    repository: "Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit",
+    branch: "staging",
+    sourceCommit: "c".repeat(40),
+  }
+  const plan = createReleasePlan({
+    family,
+    channel: "beta",
+    sequence: 57,
+    sourceCommit: "a".repeat(40),
+    nativeBuildNumber: 3100057,
+    starterKitSource,
+  })
+
+  assert.deepEqual(plan.starterKitSource, starterKitSource)
+  assert.throws(
+    () =>
+      createReleasePlan({
+        family,
+        channel: "beta",
+        sequence: 57,
+        sourceCommit: "a".repeat(40),
+        nativeBuildNumber: 3100057,
+        starterKitSource: {...starterKitSource, branch: "dev"},
+      }),
+    /exact channel branch and commit/,
+  )
+})
+
 test("serializes records canonically and finalizes only complete release results", () => {
   const family = loadReleaseFamily({rootDir: repositoryRoot})
   const plan = createReleasePlan({

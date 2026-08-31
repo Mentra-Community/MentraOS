@@ -474,6 +474,15 @@ Bug fixes may land on `staging` first and must be merged back into `dev`.
 Features land on `dev` and move to `staging` only when selected for the release
 candidate. Do not merge all of `dev` into `staging` merely to produce a build.
 
+A release-family cut promotes the selected heads in dependency order: Starter
+Kit `dev` to `staging` first, then MentraOS `dev` to `staging`. The coordinated
+release plan freezes the resulting Starter Kit `staging` SHA before publishing
+anything. Once that beta succeeds, Starter Kit `staging` is merged back into
+`dev` before MentraOS `dev` is prepared for the next family. This reconciliation
+preserves the beta-generated dependency and lockfile commit as shared ancestry;
+it is necessary because the Starter Kit coordinated workflow intentionally
+writes channel-specific release output to its branch.
+
 The coordinator has no path filters: every selected branch release gets an
 auditable identity. Every public product and package in that set is published
 under the shared version, even when its source is unchanged. Jobs may reuse

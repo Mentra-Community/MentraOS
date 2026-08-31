@@ -136,6 +136,19 @@ accepting that exact Starter Kit result.
 This boundary avoids both a Git submodule and copied build logic. MentraOS
 consumes a validated result from the repository that owns the source.
 
+A submodule would make one Starter Kit commit visible in the MentraOS tree, but
+it would not advance the Starter Kit channel branches, run their protected
+validation, or publish their artifacts. It would also create a cycle: the final
+Starter Kit release commit does not exist until MentraOS has allocated the
+coordinated identity and published the dependencies that commit consumes.
+Instead, the release plan freezes the exact Starter Kit channel-head SHA before
+any publication starts, and the Starter Kit workflow rejects a different head.
+For a release-family cut, the MentraOS staging merge records that selected SHA
+in a `Starter-Kit-Source` Git trailer, so the selection is part of the exact
+MentraOS source commit rather than a later mutable branch lookup. This provides
+the useful provenance of a submodule without moving source ownership or
+requiring a second MentraOS commit after every example release.
+
 ## Branch and Channel Model
 
 The Starter Kit mirrors the coordinated product channels:
@@ -150,6 +163,33 @@ Human Starter Kit features land on `dev`. Stabilization fixes may land on
 `staging` first and must be merged back into `dev`. Production changes move
 through `staging`; automation must not treat `main` as an independent feature
 branch.
+
+### Release-family cut
+
+The release-family cut is ordered across both repositories:
+
+1. promote an exact Starter Kit `dev` head into Starter Kit `staging`;
+2. promote an exact MentraOS `dev` head into MentraOS `staging`, which starts
+   the coordinated beta release;
+3. let the beta release synchronize its exact beta dependency versions into
+   Starter Kit `staging` and finish all release gates;
+4. after that coordinated beta run succeeds, merge Starter Kit `staging` back
+   into Starter Kit `dev`; and
+5. prepare the next MentraOS family on `dev`, whose first coordinated dev run
+   then synchronizes the Starter Kit `dev` dependencies to that family.
+
+The reverse merge in step 4 is required release bookkeeping, not an optional
+source cleanup. The coordinated beta creates channel-owned version and lockfile
+commits on `staging`; reconciling that commit before the next dev-family sync
+keeps the next `dev` to `staging` promotion from manufacturing predictable
+conflicts in generated files.
+
+`bun run release:promote-family -- start --next X.Y.Z` performs steps 1 and 2
+with exact-head promotion branches and prints the coordinated beta run. After
+that run is successful, `finish --next X.Y.Z --run RUN_ID` performs step 4 and
+runs the existing next-family preparation for the follow-up MentraOS pull
+request. Both phases are rerunnable and fail rather than resolving a human
+source conflict or replacing a moving branch.
 
 A bot dependency-sync commit is release output, not a new release request. It
 must carry explicit machine-readable metadata so it cannot trigger a dispatch
