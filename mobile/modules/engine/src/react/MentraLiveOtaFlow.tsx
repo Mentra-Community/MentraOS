@@ -1,5 +1,5 @@
 /* eslint-disable react-native/no-raw-text -- BodyText and PercentText are local Text wrappers. */
-import React, {useMemo} from "react"
+import React, {useMemo, useState} from "react"
 import {
   ActivityIndicator,
   Pressable,
@@ -99,6 +99,7 @@ const ENGLISH_COPY: Record<string, string> = {
   "ota:updateLater": "Later",
   "ota:updateComplete": "Update complete",
   "ota:whatsNew": "What's new",
+  "ota:scrollForMore": "Scroll for more",
   "ota:upToDate": "Up To Date",
   "ota:devBuild": "Development Build",
   "ota:devBuildNoOta":
@@ -322,7 +323,12 @@ function OtaFlowContent({
             {translate("ota:updatedToVersion", {version: state.releaseTransition.toVersion})}
           </BodyText>
         ) : null}
-        <ChangelogList changelogs={state.changelogs} colors={colors} title={translate("ota:whatsNew")} />
+        <ChangelogList
+          changelogs={state.changelogs}
+          colors={colors}
+          scrollHint={translate("ota:scrollForMore")}
+          title={translate("ota:whatsNew")}
+        />
       </FlowPage>
     )
   }
@@ -456,7 +462,12 @@ function OtaFlowContent({
             {translate("ota:updatedToVersion", {version: state.releaseTransition.toVersion})}
           </BodyText>
         ) : null}
-        <ChangelogList changelogs={state.changelogs} colors={colors} title={translate("ota:whatsNew")} />
+        <ChangelogList
+          changelogs={state.changelogs}
+          colors={colors}
+          scrollHint={translate("ota:scrollForMore")}
+          title={translate("ota:whatsNew")}
+        />
       </FlowPage>
     )
   }
@@ -621,19 +632,39 @@ function ChangelogMarkdown({colors, markdown}: {colors: MentraLiveOtaFlowTheme; 
 export function ChangelogList({
   changelogs,
   colors,
+  scrollHint,
   title,
 }: {
   changelogs: MentraLiveOtaController["state"]["changelogs"]
   colors: MentraLiveOtaFlowTheme
+  scrollHint: string
   title: string
 }) {
+  const [contentHeight, setContentHeight] = useState(0)
+  const [viewportHeight, setViewportHeight] = useState(0)
+  const [isAtEnd, setIsAtEnd] = useState(false)
+
   if (changelogs.length === 0) return null
+
+  const showScrollHint = viewportHeight > 0 && contentHeight > viewportHeight + 1 && !isAtEnd
+
   return (
     <View style={[styles.changelogCard, {borderColor: colors.border}]} testID="ota-changelog-card">
       <Text style={[styles.changelogTitle, {color: colors.foreground}]}>{title}</Text>
       <ScrollView
         contentContainerStyle={styles.changelogContent}
         nestedScrollEnabled
+        onContentSizeChange={(_width, height) => {
+          setContentHeight(height)
+          setIsAtEnd(false)
+        }}
+        onLayout={({nativeEvent}) => setViewportHeight(nativeEvent.layout.height)}
+        onScroll={({nativeEvent}) => {
+          const distanceFromEnd =
+            nativeEvent.contentSize.height - (nativeEvent.contentOffset.y + nativeEvent.layoutMeasurement.height)
+          setIsAtEnd(distanceFromEnd <= 8)
+        }}
+        scrollEventThrottle={16}
         showsVerticalScrollIndicator
         style={styles.changelogList}
         testID="ota-changelog-scroll">
@@ -652,6 +683,13 @@ export function ChangelogList({
           </View>
         ))}
       </ScrollView>
+      <View style={styles.changelogScrollHintSlot}>
+        {showScrollHint ? (
+          <Text style={[styles.changelogScrollHint, {color: colors.textDim}]} testID="ota-changelog-scroll-hint">
+            {scrollHint} ↓
+          </Text>
+        ) : null}
+      </View>
     </View>
   )
 }
@@ -716,7 +754,7 @@ const styles = StyleSheet.create({
   },
   page: {flex: 1, paddingBottom: 24, paddingHorizontal: 24},
   centerContent: {alignItems: "center", flex: 1, gap: 16, justifyContent: "center"},
-  topContent: {justifyContent: "flex-start", paddingTop: 12},
+  topContent: {justifyContent: "flex-start", paddingBottom: 16, paddingTop: 12},
   actionSpacer: {height: 48},
   actions: {gap: 12},
   icon: {fontSize: 64, fontWeight: "500", lineHeight: 72, textAlign: "center"},
@@ -728,20 +766,21 @@ const styles = StyleSheet.create({
   changelogCard: {
     borderRadius: 16,
     borderWidth: 1,
-    flexShrink: 1,
+    flex: 1,
     gap: 12,
-    maxHeight: 300,
     maxWidth: 420,
     padding: 16,
     width: "100%",
   },
   changelogTitle: {fontSize: 16, fontWeight: "700"},
-  changelogList: {flexShrink: 1, maxHeight: 232, width: "100%"},
-  changelogContent: {gap: 20, paddingBottom: 2},
+  changelogList: {flex: 1, width: "100%"},
+  changelogContent: {gap: 20, paddingBottom: 4},
   changelogEntry: {gap: 8},
   changelogEntryDivider: {borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 20},
   changelogVersion: {fontSize: 14, fontWeight: "600"},
   changelogMarkdownContent: {gap: 10},
+  changelogScrollHintSlot: {alignItems: "center", height: 18, justifyContent: "center"},
+  changelogScrollHint: {fontSize: 12, fontWeight: "500", lineHeight: 16},
   button: {
     alignItems: "center",
     borderRadius: 50,

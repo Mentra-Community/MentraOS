@@ -1,4 +1,4 @@
-import {render} from "@testing-library/react-native"
+import {act, render} from "@testing-library/react-native"
 
 import {ChangelogList, type MentraLiveOtaFlowTheme} from "@/../modules/engine/src/react/MentraLiveOtaFlow"
 
@@ -14,7 +14,7 @@ const colors: MentraLiveOtaFlowTheme = {
 
 describe("OTA changelog presentation", () => {
   it("places release notes in a scrollable card and renders standard Markdown", () => {
-    const {getAllByTestId, getByRole, getByTestId, getByText, queryByText} = render(
+    const {getAllByTestId, getByRole, getByTestId, getByText, queryByTestId, queryByText} = render(
       <ChangelogList
         changelogs={[
           {
@@ -34,12 +34,14 @@ Use \`safe mode\`.`,
           },
         ]}
         colors={colors}
+        scrollHint="Scroll for more"
         title="What's new"
       />,
     )
 
     expect(getByTestId("ota-changelog-card")).toBeDefined()
-    expect(getByTestId("ota-changelog-scroll")).toHaveStyle({maxHeight: 232})
+    expect(getByTestId("ota-changelog-card")).toHaveStyle({flex: 1})
+    expect(getByTestId("ota-changelog-scroll")).toHaveStyle({flex: 1})
     expect(getByTestId("ota-changelog-markdown")).toBeDefined()
     expect(getByText("What's new")).toBeDefined()
     expect(getByText("Highlights")).toBeDefined()
@@ -51,5 +53,23 @@ Use \`safe mode\`.`,
     expect(getAllByTestId("marked-list-item")).toHaveLength(3)
     expect(queryByText("# Highlights")).toBeNull()
     expect(queryByText("**overview**")).toBeNull()
+
+    const scrollView = getByTestId("ota-changelog-scroll")
+    act(() => {
+      scrollView.props.onLayout({nativeEvent: {layout: {height: 200}}})
+      scrollView.props.onContentSizeChange(320, 400)
+    })
+    expect(getByTestId("ota-changelog-scroll-hint")).toHaveTextContent("Scroll for more ↓")
+
+    act(() => {
+      scrollView.props.onScroll({
+        nativeEvent: {
+          contentOffset: {y: 200},
+          contentSize: {height: 400},
+          layoutMeasurement: {height: 200},
+        },
+      })
+    })
+    expect(queryByTestId("ota-changelog-scroll-hint")).toBeNull()
   })
 })
