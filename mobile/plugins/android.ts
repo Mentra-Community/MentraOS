@@ -10,6 +10,8 @@ import {
   withAndroidManifest,
 } from "@expo/config-plugins"
 
+import {withDebugAbiFilters} from "../scripts/android-abi-filters.mjs"
+
 /**
  * Expo Config Plugin to apply android-working modifications
  * This ensures that after running expo prebuild, all custom Android configurations are preserved
@@ -173,6 +175,9 @@ if (project.hasProperty("sentryUploadEnabled") && project.property("sentryUpload
         "release {\n            // signingConfigs.release has built-in fallback to debug keystore\n            signingConfig signingConfigs.release",
       )
     }
+
+    // 8. Filter debug APK native libs to reactNativeArchitectures. Release/AAB stay unfiltered.
+    buildGradle = withDebugAbiFilters(buildGradle)
 
     config.modResults.contents = buildGradle
     return config
