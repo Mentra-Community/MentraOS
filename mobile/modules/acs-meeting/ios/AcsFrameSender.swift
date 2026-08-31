@@ -16,7 +16,7 @@ final class AcsFrameSender {
 
   func send(_ pixelBuffer: CVPixelBuffer) {
     guard running, let stream else { return }
-    let fps = stream.format?.framesPerSecond ?? 15
+    let fps = stream.format?.framesPerSecond ?? 20
     let now = CFAbsoluteTimeGetCurrent()
     if lastSent > 0, now - lastSent < 1.0 / max(fps, 1) { return }
     lastSent = now
