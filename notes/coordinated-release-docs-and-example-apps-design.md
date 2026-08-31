@@ -145,12 +145,13 @@ Instead, the release plan freezes one exact Starter Kit source SHA before any
 publication starts, and the Starter Kit workflow rejects a different head. A
 dev release deterministically selects the latest Starter Kit `dev` commit at or
 before the immutable MentraOS source commit time, so rerunning one workflow can
-never change the source behind the same release identity. For a release-family
-cut, the MentraOS staging merge records the selected SHA in a
-`Starter-Kit-Source` Git trailer, so the beta selection is part of the exact
-MentraOS source commit rather than a later mutable branch lookup. This provides
-the useful provenance of a submodule without moving source ownership or
-requiring a second MentraOS commit after every example release.
+never change the source behind the same release identity. Beta uses the same
+rule for an ordinary staging fix. For a release-family cut, the MentraOS staging
+merge instead records the selected SHA in a `Starter-Kit-Source` Git trailer, so
+the explicit cross-repository selection remains part of the exact MentraOS
+source commit. This provides the useful provenance of a submodule without
+moving source ownership or requiring a second MentraOS commit after every
+example release.
 
 ## Branch and Channel Model
 

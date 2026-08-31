@@ -250,7 +250,7 @@ test("coordinated docs publish only after finalization to the matching channel",
   assert.match(coordinator, /source_timestamp=\$\(git show -s --format=%cI/)
   assert.match(coordinator, /gh api --method GET "repos\/\$starter_repository\/commits"/)
   assert.match(coordinator, /-f until="\$source_timestamp"/)
-  assert.match(coordinator, /\[\[ -z "\$\{starter_head:-\}" && "\$starter_branch" != "dev" \]\]/)
+  assert.doesNotMatch(coordinator, /git ls-remote/)
   assert.match(starterKit, /expected_head=\$\(jq -er \.starterKitSource\.sourceCommit "\$plan"\)/)
   assert.doesNotMatch(starterKit, /expected_head=\$\(gh api/)
   assert.match(starterKit, /event_type: "coordinated_example_release"/)

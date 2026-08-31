@@ -96,23 +96,20 @@ jobs:
           set -euo pipefail
           starter_repository=Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit
           case "${{ github.ref_name }}" in
-            dev)
-              starter_branch=dev
-              source_timestamp=$(git show -s --format=%cI "${{ github.sha }}")
-              starter_head=$(gh api --method GET "repos/$starter_repository/commits" \
-                -f sha="$starter_branch" \
-                -f until="$source_timestamp" \
-                -f per_page=1 \
-                --jq '.[0].sha')
-              ;;
+            dev) starter_branch=dev ;;
             staging)
               starter_branch=staging
               starter_head=$(git log -1 --format='%(trailers:key=Starter-Kit-Source,valueonly)' | tr -d '[:space:]')
               ;;
             *) echo "Unsupported Starter Kit channel for ${{ github.ref_name }}" >&2; exit 1 ;;
           esac
-          if [[ -z "${starter_head:-}" && "$starter_branch" != "dev" ]]; then
-            starter_head=$(git ls-remote "https://github.com/$starter_repository.git" "refs/heads/$starter_branch" | awk '{print $1}')
+          if [[ -z "${starter_head:-}" ]]; then
+            source_timestamp=$(git show -s --format=%cI "${{ github.sha }}")
+            starter_head=$(gh api --method GET "repos/$starter_repository/commits" \
+              -f sha="$starter_branch" \
+              -f until="$source_timestamp" \
+              -f per_page=1 \
+              --jq '.[0].sha')
           fi
           [[ "$starter_head" =~ ^[0-9a-f]{40}$ ]]
           jq -n \
