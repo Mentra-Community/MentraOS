@@ -362,6 +362,7 @@ test("release-family promotion orders both repositories and reconciles Starter K
   assert.match(script, /plan\.starterKitSource\?\.sourceCommit !== starterKitSource/)
   assert.match(script, /createMetadataCommit\(repository, targetHead, family, mergeBody\)/)
   assert.match(script, /release\/promote-\$\{family\}-refresh-pin-\$\{marker\}/)
+  assert.match(script, /promotionBranchHead\(repository, branch\) \|\|/)
   assert.match(script, /resumingPreparation = checkoutVersion === options\.next/)
   assert.match(script, /requireDevCheckout\(\{allowDirty: resumingPreparation\}\)/)
   assert.match(script, /there is no interrupted preparation to resume/)

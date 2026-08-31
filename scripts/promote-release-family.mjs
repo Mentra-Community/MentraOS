@@ -74,16 +74,24 @@ function branchHead(repository, branch) {
   return gh(["api", `repos/${repository}/branches/${branch}`, "--jq", ".commit.sha"])
 }
 
-function ensurePromotionBranch(repository, branch, head) {
+function promotionBranchHead(repository, branch) {
   const encoded = encodeURIComponent(`heads/${branch}`)
   try {
-    const existing = execFileSync("gh", ["api", `repos/${repository}/git/ref/${encoded}`, "--jq", ".object.sha"], {
+    return execFileSync("gh", ["api", `repos/${repository}/git/ref/${encoded}`, "--jq", ".object.sha"], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     }).trim()
-    if (existing !== head) fail(`${repository}:${branch} already points to ${existing}, expected ${head}`)
   } catch (error) {
     if (!String(error.stderr || error.message).includes("HTTP 404")) throw error
+    return undefined
+  }
+}
+
+function ensurePromotionBranch(repository, branch, head) {
+  const existing = promotionBranchHead(repository, branch)
+  if (existing) {
+    if (existing !== head) fail(`${repository}:${branch} already points to ${existing}, expected ${head}`)
+  } else {
     const payload = JSON.stringify({ref: `refs/heads/${branch}`, sha: head})
     gh(["api", "--method", "POST", `repos/${repository}/git/refs`, "--input", "-"], {
       input: payload,
@@ -198,7 +206,10 @@ function promoteExactHead({repository, source, target, family, mergeBody}) {
       requireMergeBody(repository, pull.mergeCommit.oid, mergeBody)
       return pull.mergeCommit.oid
     }
-    const promotionHead = pull?.headRefOid || createMetadataCommit(repository, targetHead, family, mergeBody)
+    const promotionHead =
+      pull?.headRefOid ||
+      promotionBranchHead(repository, branch) ||
+      createMetadataCommit(repository, targetHead, family, mergeBody)
     requireMergeBody(repository, promotionHead, mergeBody)
     const parent = gh(["api", `repos/${repository}/git/commits/${promotionHead}`, "--jq", ".parents[0].sha"])
     if (parent !== targetHead) fail(`${repository}:${promotionHead} is not based on ${targetHead}`)
