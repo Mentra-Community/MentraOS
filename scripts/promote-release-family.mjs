@@ -109,11 +109,20 @@ function existingPromotionPullRequest(repository, branch, target) {
   return pulls[0]
 }
 
+function requireMergeBody(repository, commit, mergeBody) {
+  if (!mergeBody) return
+  const message = gh(["api", `repos/${repository}/commits/${commit}`, "--jq", ".commit.message"])
+  if (!message.split("\n").includes(mergeBody)) {
+    fail(`${repository}:${commit} does not contain ${JSON.stringify(mergeBody)}`)
+  }
+}
+
 function promoteExactHead({repository, source, target, family, mergeBody}) {
   const sourceHead = branchHead(repository, source)
   const targetHead = branchHead(repository, target)
   const compare = ghJson(["api", `repos/${repository}/compare/${targetHead}...${sourceHead}`])
   if (compare.ahead_by === 0) {
+    requireMergeBody(repository, targetHead, mergeBody)
     console.log(`${repository}:${target} already contains ${sourceHead}`)
     return targetHead
   }
@@ -123,7 +132,10 @@ function promoteExactHead({repository, source, target, family, mergeBody}) {
   if (pull?.headRefOid !== undefined && pull.headRefOid !== sourceHead) {
     fail(`${pull.url} head changed to ${pull.headRefOid}, expected ${sourceHead}`)
   }
-  if (pull?.state === "MERGED") return pull.mergeCommit.oid
+  if (pull?.state === "MERGED") {
+    requireMergeBody(repository, pull.mergeCommit.oid, mergeBody)
+    return pull.mergeCommit.oid
+  }
 
   ensurePromotionBranch(repository, branch, sourceHead)
   if (!pull) {
@@ -158,6 +170,7 @@ function promoteExactHead({repository, source, target, family, mergeBody}) {
   gh(mergeArgs)
   const merged = ghJson(["pr", "view", pull.url, "--repo", repository, "--json", "state,mergeCommit"])
   if (merged.state !== "MERGED" || !merged.mergeCommit?.oid) fail(`${pull.url} did not merge`)
+  requireMergeBody(repository, merged.mergeCommit.oid, mergeBody)
   return merged.mergeCommit.oid
 }
 
