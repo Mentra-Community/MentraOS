@@ -26,8 +26,6 @@ jobs:
     timeout-minutes: 30
     environment:
       name: production-store-status
-    env:
-      STARTER_KIT_REPOSITORY: Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit
     steps:
       - uses: actions/checkout@v4
         with:
@@ -108,17 +106,6 @@ jobs:
             echo "manifest_url=$url"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Resolve exact stable Starter Kit source
-        id: starter-kit
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_IDENTITY: ${{ steps.identity.outputs.release_identity }}
-        run: |
-          set -euo pipefail
-          commit=$(gh api "repos/$STARTER_KIT_REPOSITORY/commits/sdk-$RELEASE_IDENTITY" --jq .sha)
-          [[ "$commit" =~ ^[0-9a-f]{40}$ ]]
-          echo "commit=$commit" >> "$GITHUB_OUTPUT"
-
       - name: Inject read-only store credentials
         uses: ./.github/actions/inject-signing
         with:
@@ -147,13 +134,6 @@ jobs:
             --key-path "${{ steps.asc.outputs.key_path }}" \
             --bundle-id com.mentra.mentra \
             --output promotion-input/stores/mentra-apple.json
-          node mobile/scripts/app-store-connect-build.mjs inventory \
-            --issuer-id "${{ secrets.ASC_API_ISSUER_ID }}" \
-            --key-id "${{ secrets.ASC_API_KEY_ID }}" \
-            --key-path "${{ steps.asc.outputs.key_path }}" \
-            --app-id 6792839366 \
-            --bundle-id com.mentra.bluetoothsdkexample \
-            --output promotion-input/stores/starter-apple.json
 
       - name: Install pinned Google Play inventory tooling
         run: |
@@ -171,15 +151,9 @@ jobs:
           APP_PACKAGE_NAME=com.mentra.mentra \
             GOOGLE_PLAY_INVENTORY_OUTPUT=../stores/mentra-google.json \
             bundle exec fastlane google_play_inventory
-          APP_PACKAGE_NAME=com.mentra.bluetoothsdkexample \
-            GOOGLE_PLAY_INVENTORY_OUTPUT=../stores/starter-google.json \
-            bundle exec fastlane google_play_inventory
           jq -s '{apple: .[0], google: .[1]}' \
             ../stores/mentra-apple.json ../stores/mentra-google.json \
             > ../stores/mentra-inventory.json
-          jq -s '{apple: .[0], google: .[1]}' \
-            ../stores/starter-apple.json ../stores/starter-google.json \
-            > ../stores/starter-inventory.json
 
       - name: Fingerprint every frozen preparation input
         id: selection
@@ -196,8 +170,6 @@ jobs:
           --previous-manifest promotion-input/current/release-manifest.json
           --previous-manifest-url "${{ steps.previous.outputs.manifest_url }}"
           --mentra-inventory promotion-input/stores/mentra-inventory.json
-          --starter-kit-inventory promotion-input/stores/starter-inventory.json
-          --starter-kit-commit "${{ steps.starter-kit.outputs.commit }}"
           --github-output "$GITHUB_OUTPUT"
 
       - name: Allocate append-only promotion container
@@ -231,8 +203,6 @@ jobs:
             --previous-manifest promotion-input/current/release-manifest.json \
             --previous-manifest-url "${{ steps.previous.outputs.manifest_url }}" \
             --mentra-inventory promotion-input/stores/mentra-inventory.json \
-            --starter-kit-inventory promotion-input/stores/starter-inventory.json \
-            --starter-kit-commit "${{ steps.starter-kit.outputs.commit }}" \
             --attempt "${{ steps.container.outputs.attempt }}" \
             --actor "$GITHUB_ACTOR" \
             --created-at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" \
@@ -280,7 +250,6 @@ jobs:
             echo "- Attempt: \`${{ steps.container.outputs.attempt }}\`"
             echo "- Selected beta: \`${{ inputs.beta_identity }}\`"
             echo "- MentraOS source: \`$(jq -er .source.mentraosCommit "$record")\`"
-            echo "- Starter Kit source: \`$(jq -er .source.starterKitCommit "$record")\`"
             echo "- State: \`selected\`"
             echo
             echo "No Cloud or app-store state was changed. The next action builds non-promotable Mobile N compatibility-lab apps."

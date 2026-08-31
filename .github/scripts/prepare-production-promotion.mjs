@@ -58,8 +58,6 @@ export function prepareProductionPromotion({
   betaManifestSha256,
   previousManifest,
   mentraInventory,
-  starterKitInventory,
-  starterKitCommit,
   attempt,
   actor,
   createdAt,
@@ -85,15 +83,7 @@ export function prepareProductionPromotion({
   ) {
     throw new Error("Selected beta has no immutable OTA manifest pin")
   }
-  const betaStarterKitCommit = betaManifest.starterKit?.starterKit?.releaseCommit
-  if (!COMMIT_PATTERN.test(betaStarterKitCommit || "")) {
-    throw new Error("Selected beta has no exact Starter Kit release commit")
-  }
-  if (!COMMIT_PATTERN.test(starterKitCommit || "")) {
-    throw new Error("Stable Starter Kit tag has no exact release commit")
-  }
   validateInventory(mentraInventory, {bundleId: "com.mentra.mentra", allowNoCurrent: false})
-  validateInventory(starterKitInventory, {bundleId: "com.mentra.bluetoothsdkexample", allowNoCurrent: true})
   const currentMentraApp = validateCurrentMentraApp(previousManifest, mentraInventory)
   const lastMentraBuildNumber = Math.max(
     mentraInventory.apple.maxBuildNumber,
@@ -102,8 +92,6 @@ export function prepareProductionPromotion({
   )
   const compatibilityLabBuildNumber = lastMentraBuildNumber + 1
   const mentraBuildNumber = lastMentraBuildNumber + 2
-  const starterKitBuildNumber =
-    Math.max(starterKitInventory.apple.maxBuildNumber, starterKitInventory.google.maxVersionCode, mentraBuildNumber) + 1
   const productionPlan = createReleasePlan({
     family,
     channel: "production",
@@ -126,7 +114,7 @@ export function prepareProductionPromotion({
       manifestUrl: betaManifestUrl,
       manifestSha256: betaManifestSha256,
     },
-    source: {mentraosCommit: betaPlan.sourceCommit, starterKitCommit},
+    source: {mentraosCommit: betaPlan.sourceCommit},
     coordinates: {
       currentMentraApp,
       compatibilityLab: {
@@ -140,10 +128,6 @@ export function prepareProductionPromotion({
         mentraApp: {
           ios: {marketingVersion: productionPlan.native.marketingVersion, buildNumber: mentraBuildNumber},
           android: {marketingVersion: productionPlan.native.marketingVersion, buildNumber: mentraBuildNumber},
-        },
-        starterKit: {
-          ios: {marketingVersion: productionPlan.native.marketingVersion, buildNumber: starterKitBuildNumber},
-          android: {marketingVersion: productionPlan.native.marketingVersion, buildNumber: starterKitBuildNumber},
         },
       },
     },
@@ -190,8 +174,6 @@ function main() {
     betaManifestSha256: sha256File(betaManifestPath),
     previousManifest,
     mentraInventory: readJson(args["mentra-inventory"]),
-    starterKitInventory: readJson(args["starter-kit-inventory"]),
-    starterKitCommit: args["starter-kit-commit"],
     attempt: Number(args.attempt),
     actor: args.actor,
     createdAt: args["created-at"],
