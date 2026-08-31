@@ -63,7 +63,7 @@ function finalizingRecord() {
       manifestUrl: "https://example.com/beta.json",
       manifestSha256: "b".repeat(64),
     },
-    source: {mentraosCommit: "a".repeat(40), starterKitCommit: "e".repeat(40)},
+    source: {mentraosCommit: "a".repeat(40)},
     coordinates: {
       currentMentraApp: {
         sourceCommit: "f".repeat(40),
@@ -79,10 +79,6 @@ function finalizingRecord() {
         mentraApp: {
           ios: {marketingVersion: "3.1.0", buildNumber: 310000102},
           android: {marketingVersion: "3.1.0", buildNumber: 310000102},
-        },
-        starterKit: {
-          ios: {marketingVersion: "3.1.0", buildNumber: 310000103},
-          android: {marketingVersion: "3.1.0", buildNumber: 310000103},
         },
       },
     },
@@ -122,7 +118,7 @@ test("creates the canonical production manifest from the finalizing checkpoint",
   assert.equal(manifest.kind, "mentra-production-release")
   assert.equal(manifest.releaseIdentity, "3.1.0")
   assert.equal(manifest.native.buildNumber, 310000102)
-  assert.equal(manifest.applications.starterKit.ios.buildNumber, 310000103)
+  assert.deepEqual(Object.keys(manifest.applications), ["mentraApp"])
   assert.equal(manifest.promotion.attempt, 2)
   assert.equal(manifest.promotion.checkpoint.state, "finalizing")
   assert.equal(manifest.completedAt, record.createdAt)
