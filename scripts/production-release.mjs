@@ -16,9 +16,11 @@ import {
 import {ATTESTATION_CHECKS, nextAction, validateAttestation} from "../.github/scripts/production-promotion-state.mjs"
 
 const REPOSITORY = "Mentra-Community/MentraOS"
+const STARTER_KIT_REPOSITORY = "Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit"
 const DEFAULT_REF = "main"
 const VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
 const BETA_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-beta\.([1-9]\d*)$/
+const SHA_PATTERN = /^[0-9a-f]{40}$/
 
 function commandError(message) {
   const error = new Error(message)
@@ -53,6 +55,7 @@ function usage() {
   return `Usage: scripts/production-release.mjs <command> [options]
 
 Commands:
+  promote  --beta X.Y.Z-beta.N [--yes]
   start    --beta X.Y.Z-beta.N
   status   --release X.Y.Z [--attempt N] [--refresh] [--json]
   next     --release X.Y.Z [--attempt N] [--yes]
@@ -73,6 +76,163 @@ function execGh(args, options = {}) {
 
 function ghJson(args) {
   return JSON.parse(execGh(args))
+}
+
+function branchHead(repository, branch) {
+  return execGh(["api", `repos/${repository}/branches/${branch}`, "--jq", ".commit.sha"]).trim()
+}
+
+function compareCommits(repository, base, head) {
+  return ghJson(["api", `repos/${repository}/compare/${base}...${head}`])
+}
+
+function ensureCommitIsOnBranch(repository, commit, branch) {
+  const head = branchHead(repository, branch)
+  const comparison = compareCommits(repository, commit, head)
+  if (comparison.behind_by !== 0) {
+    throw new Error(`${repository}:${commit} is not contained in ${branch}`)
+  }
+}
+
+function ensureTargetIsInSource(repository, target, sourceCommit) {
+  const targetHead = branchHead(repository, target)
+  const comparison = compareCommits(repository, targetHead, sourceCommit)
+  if (comparison.behind_by !== 0) {
+    throw new Error(
+      `${repository}:${sourceCommit} does not contain ${target} at ${targetHead}; back-merge ${target} into staging and complete a new coordinated beta before promotion`,
+    )
+  }
+}
+
+function promotionBranchHead(repository, branch) {
+  const encoded = encodeURIComponent(`heads/${branch}`)
+  try {
+    return execFileSync("gh", ["api", `repos/${repository}/git/ref/${encoded}`, "--jq", ".object.sha"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim()
+  } catch (error) {
+    if (!String(error.stderr || error.message).includes("HTTP 404")) throw error
+    return undefined
+  }
+}
+
+function ensurePromotionBranch(repository, branch, commit) {
+  const existing = promotionBranchHead(repository, branch)
+  if (existing) {
+    if (existing !== commit) throw new Error(`${repository}:${branch} points to ${existing}, expected ${commit}`)
+    return
+  }
+  execGh([
+    "api",
+    "--method",
+    "POST",
+    `repos/${repository}/git/refs`,
+    "-f",
+    `ref=refs/heads/${branch}`,
+    "-f",
+    `sha=${commit}`,
+  ])
+}
+
+function promoteExactCommit({repository, sourceCommit, target, releaseIdentity, mergeBody}) {
+  ensureCommitIsOnBranch(repository, sourceCommit, "staging")
+  const targetHead = branchHead(repository, target)
+  if (compareCommits(repository, sourceCommit, targetHead).behind_by === 0) {
+    console.log(`${repository}:${target} already contains ${sourceCommit}`)
+    return targetHead
+  }
+  ensureTargetIsInSource(repository, target, sourceCommit)
+
+  const branch = `release/promote-${releaseIdentity}-staging-to-${target}-${sourceCommit.slice(0, 8)}`
+  ensurePromotionBranch(repository, branch, sourceCommit)
+  const pulls = ghJson([
+    "pr",
+    "list",
+    "--repo",
+    repository,
+    "--head",
+    branch,
+    "--base",
+    target,
+    "--state",
+    "all",
+    "--json",
+    "url,state,headRefOid,mergeCommit",
+  ])
+  if (pulls.length > 1) throw new Error(`${repository}:${branch} has more than one promotion pull request`)
+  let pull = pulls[0]
+  if (pull && pull.headRefOid !== sourceCommit) {
+    throw new Error(`${pull.url} head is ${pull.headRefOid}, expected ${sourceCommit}`)
+  }
+  if (pull?.state === "MERGED") {
+    ensureCommitIsOnBranch(repository, sourceCommit, target)
+    return pull.mergeCommit.oid
+  }
+  if (!pull) {
+    const body = [
+      `Promote the exact coordinated beta source \`${sourceCommit}\` from \`staging\` into \`${target}\`.`,
+      "",
+      "This pull request was created by `production-release promote` and must retain the exact recorded head.",
+    ].join("\n")
+    const url = execGh([
+      "pr",
+      "create",
+      "--repo",
+      repository,
+      "--base",
+      target,
+      "--head",
+      branch,
+      "--title",
+      `Promote staging to ${target} for ${releaseIdentity}`,
+      "--body",
+      body,
+    ]).trim()
+    pull = {url, state: "OPEN", headRefOid: sourceCommit}
+  }
+  if (pull.state !== "OPEN") throw new Error(`${pull.url} is ${pull.state.toLowerCase()}`)
+
+  console.log(`Waiting for ${pull.url}`)
+  execFileSync("gh", ["pr", "checks", pull.url, "--repo", repository, "--watch", "--fail-fast"], {
+    stdio: "inherit",
+  })
+  const mergeArgs = ["pr", "merge", pull.url, "--repo", repository, "--merge", "--match-head-commit", sourceCommit]
+  if (mergeBody) mergeArgs.push("--body", mergeBody)
+  execGh(mergeArgs)
+  const merged = ghJson(["pr", "view", pull.url, "--repo", repository, "--json", "state,mergeCommit"])
+  if (merged.state !== "MERGED" || !merged.mergeCommit?.oid) throw new Error(`${pull.url} did not merge`)
+  ensureCommitIsOnBranch(repository, sourceCommit, target)
+  return merged.mergeCommit.oid
+}
+
+export function releaseBranchSources(result, betaIdentity) {
+  if (result?.schemaVersion !== 1 || result.releaseIdentity !== betaIdentity || result.channel !== "beta") {
+    throw new Error(`The coordinated release result does not describe completed beta ${betaIdentity}`)
+  }
+  const mentraosCommit = result.sourceCommit
+  const starterKitCommit = result.starterKit?.starterKit?.mergeCommit
+  if (!SHA_PATTERN.test(mentraosCommit || "")) throw new Error("The beta result has no valid MentraOS source commit")
+  if (!SHA_PATTERN.test(starterKitCommit || ""))
+    throw new Error("The beta result has no valid Starter Kit merge commit")
+  if (!result.completedAt) throw new Error("The beta result is not complete")
+  return {mentraosCommit, starterKitCommit}
+}
+
+function loadReleaseBranchSources(betaIdentity) {
+  const family = betaIdentity.slice(0, betaIdentity.indexOf("-beta."))
+  const assetName = `mentra-release-${betaIdentity}.json`
+  const release = ghJson(["release", "view", `mentra-builds-v${family}`, "--repo", REPOSITORY, "--json", "assets"])
+  const asset = release.assets.find((candidate) => candidate.name === assetName)
+  if (!asset) throw new Error(`Completed release asset ${assetName} was not found`)
+  const contents = execGh(["api", "-H", "Accept: application/octet-stream", asset.apiUrl], {
+    maxBuffer: 20 * 1024 * 1024,
+  })
+  if (asset.digest) {
+    const digest = `sha256:${createHash("sha256").update(contents).digest("hex")}`
+    if (digest !== asset.digest) throw new Error(`${assetName} digest is ${digest}, expected ${asset.digest}`)
+  }
+  return releaseBranchSources(JSON.parse(contents), betaIdentity)
 }
 
 function listReleases() {
@@ -181,6 +341,28 @@ function verifyCheckoutForStart() {
   if (dirty) throw new Error("start requires a clean checkout; commit or move local changes first")
 }
 
+function verifyCheckoutForPromotion() {
+  verifyCheckoutForStart()
+  const root = execFileSync("git", ["rev-parse", "--show-toplevel"], {encoding: "utf8"}).trim()
+  const branch = execFileSync("git", ["branch", "--show-current"], {cwd: root, encoding: "utf8"}).trim()
+  if (branch !== "staging") throw new Error(`promote requires a staging checkout, not ${branch || "detached HEAD"}`)
+  const localHead = execFileSync("git", ["rev-parse", "HEAD"], {cwd: root, encoding: "utf8"}).trim()
+  const remoteHead = branchHead(REPOSITORY, "staging")
+  if (localHead !== remoteHead) throw new Error(`local staging is ${localHead}, but remote staging is ${remoteHead}`)
+}
+
+async function confirmBranchPromotion(betaIdentity, options) {
+  if (options.yes) return
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    throw new Error("Refusing branch promotion without an interactive terminal; rerun with --yes after reviewing it")
+  }
+  console.log(`This promotes the exact ${betaIdentity} Starter Kit and MentraOS sources from staging to main.`)
+  const reader = createInterface({input: process.stdin, output: process.stdout})
+  const answer = await reader.question("Type the beta identity to continue: ")
+  reader.close()
+  if (answer !== betaIdentity) throw new Error("Confirmation did not match the beta identity")
+}
+
 function uploadAttestation({release, record, check, evidenceFile}) {
   const original = path.resolve(evidenceFile)
   const contents = readFileSync(original)
@@ -267,6 +449,32 @@ async function main(argv = process.argv.slice(2)) {
   if (command === "watch") {
     if (!/^\d+$/.test(options.run || "")) throw commandError("watch requires --run RUN_ID")
     execFileSync("gh", ["run", "watch", options.run, "--repo", REPOSITORY, "--exit-status"], {stdio: "inherit"})
+    return
+  }
+
+  if (command === "promote") {
+    if (!BETA_PATTERN.test(options.beta || "")) throw commandError("promote requires --beta X.Y.Z-beta.N")
+    verifyCheckoutForPromotion()
+    const sources = loadReleaseBranchSources(options.beta)
+    ensureCommitIsOnBranch(REPOSITORY, sources.mentraosCommit, "staging")
+    ensureCommitIsOnBranch(STARTER_KIT_REPOSITORY, sources.starterKitCommit, "staging")
+    ensureTargetIsInSource(REPOSITORY, "main", sources.mentraosCommit)
+    ensureTargetIsInSource(STARTER_KIT_REPOSITORY, "main", sources.starterKitCommit)
+    await confirmBranchPromotion(options.beta, options)
+    promoteExactCommit({
+      repository: STARTER_KIT_REPOSITORY,
+      sourceCommit: sources.starterKitCommit,
+      target: "main",
+      releaseIdentity: options.beta,
+    })
+    promoteExactCommit({
+      repository: REPOSITORY,
+      sourceCommit: sources.mentraosCommit,
+      target: "main",
+      releaseIdentity: options.beta,
+      mergeBody: `Starter-Kit-Source: ${sources.starterKitCommit}`,
+    })
+    console.log(`Branch promotion for ${options.beta} is complete. Continue from a clean, up-to-date main checkout.`)
     return
   }
 
