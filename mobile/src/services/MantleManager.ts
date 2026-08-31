@@ -5,15 +5,19 @@ import * as Calendar from "expo-calendar"
 import {router} from "expo-router"
 
 import {bootstrapMentraJS} from "@/services/mentraJsBootstrap"
-import {preinstalledMiniappSync} from "@/services/miniapps/preinstalledMiniappSync"
+import {storeUpdateScheduler} from "@/services/miniapps/storeUpdateScheduler"
 import builtInMiniappCatalog from "@/services/miniapps/BuiltInMiniappCatalog"
-import {BUNDLED_MINIAPPS} from "@/generated/bundledMiniapps"
+import {
+  BUNDLED_MINIAPPS,
+  BUNDLED_SYSTEM_MINIAPP_PACKAGES,
+  BUNDLED_SYSTEM_MINIAPP_PUBLISHER_KEYS,
+} from "@/generated/bundledMiniapps"
 import {CHINA_HIDDEN_APPS, isChinaBuild, notifyPackageName} from "@/constants/miniapps"
 import {migrate} from "@/services/Migrations"
 import {buildSpokenNotification} from "@/services/notifications/spokenNotification"
 import {cloudConfigValues} from "@/services/cloudClient"
 import {requestPhoneQrScan} from "@/services/qrScanRequest"
-import {engine, BgTimer, SETTINGS} from "@mentra/engine"
+import {engine, BgTimer, isSystemMiniappPackage, SETTINGS} from "@mentra/engine"
 import {
   appRegistry,
   audioPlaybackService,
@@ -23,10 +27,11 @@ import {
   localMiniappRuntime,
   micStateCoordinator,
   miniappLauncher,
+  isHostTrustedSystemMiniapp,
   offlineSpeechModelService,
   phoneLocationService,
   ttsModelManager,
-  useAppStatusStore,
+  shouldActivateBundledVersion,
 } from "@mentra/engine-host-internal"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import {useDebugStore} from "@/stores/debug"
@@ -35,7 +40,16 @@ import {attemptReconnectToDefaultWearable} from "@/effects/Reconnect"
 import {ensureDevModeForUser} from "@/utils/dev/devModeAllowlist"
 import mentraAuth from "@/utils/auth/authClient"
 import {showAlert} from "@/utils/AlertUtils"
+import type {GlassesMenuItem} from "@/utils/glassesMenu"
 import {Buffer} from "@craftzdog/react-native-buffer"
+
+// Build-time Store trust table. OEM builds may add Store packages here and
+// assign SYSTEM bundle ownership below; the same list configures install
+// authority and invisible update scheduling so multiple Stores can coexist.
+const BUNDLED_STORE_MINIAPP_PACKAGES = ["com.mentra.store"] as const
+const BUNDLED_SYSTEM_MINIAPP_STORE_OWNERS = Object.fromEntries(
+  BUNDLED_SYSTEM_MINIAPP_PACKAGES.map((packageName) => [packageName, "com.mentra.store"]),
+)
 
 /**
  * Miniapp bundles shipped inside the app binary, installed on first launch by
@@ -97,6 +111,7 @@ class MantleManager {
   private lastMicDataAt: number = 0
   private subs: Array<any> = []
   private initialized: boolean = false
+  private storePreviewUnsubscribe: (() => void) | null = null
   private activePhoneNotificationId: string | null = null
   /** A notification is being read aloud right now. */
   private speakingNotification: boolean = false
@@ -118,9 +133,7 @@ class MantleManager {
   private constructor() {}
 
   private isNotifyRunning(): boolean {
-    return useAppStatusStore
-      .getState()
-      .apps.some((miniapp) => miniapp.packageName === notifyPackageName && miniapp.running)
+    return engine.miniapps.list().some((miniapp) => miniapp.packageName === notifyPackageName && miniapp.running)
   }
 
   /**
@@ -399,7 +412,13 @@ class MantleManager {
       },
       // Resolved cloud endpoints + LC3 frame size. island builds its cloud
       // client from these; the host keeps the dev/settings URL resolution.
-      config: cloudConfigValues(),
+      config: {
+        ...cloudConfigValues(),
+        bundledSystemMiniappPackages: BUNDLED_SYSTEM_MINIAPP_PACKAGES,
+        bundledStoreMiniappPackages: BUNDLED_STORE_MINIAPP_PACKAGES,
+        bundledSystemMiniappStoreOwners: BUNDLED_SYSTEM_MINIAPP_STORE_OWNERS,
+        bundledSystemMiniappPublisherKeys: BUNDLED_SYSTEM_MINIAPP_PUBLISHER_KEYS,
+      },
       // Named host-UI seams: island dispatches the miniapp request, the host
       // owns the screen (branding/navigation).
       ui: {
@@ -492,6 +511,9 @@ class MantleManager {
     // Remove all event subscriptions
     this.subs.forEach((sub) => sub.remove())
     this.subs = []
+    storeUpdateScheduler.stop()
+    this.storePreviewUnsubscribe?.()
+    this.storePreviewUnsubscribe = null
     this.activePhoneNotificationId = null
 
     phoneLocationService.stopPhoneLocation()
@@ -556,10 +578,18 @@ class MantleManager {
     // already-installed check below sees the real on-disk state.
     await this.installBundledMiniapps()
 
-    // Then reconcile the admin-managed preinstall registry from Cloud V2. This
-    // lets Core move users to newer bundled miniapp releases without shipping a
-    // new mobile binary.
-    await preinstalledMiniappSync.sync()
+    // The Store ships as a real build-owned SYSTEM miniapp so its trust and
+    // update paths are exercised before launch, but it is a host-gated preview:
+    // normal users get no Home tile, running-tray entry, catalog traffic, or
+    // maintenance warnings. miniapp.json cannot opt into this gate.
+    await this.applyStorePreview(Boolean(engine.settings.get(SETTINGS.miniapp_store_preview_enabled.key)))
+    this.storePreviewUnsubscribe?.()
+    this.storePreviewUnsubscribe = engine.settings.onChanged<boolean>(
+      SETTINGS.miniapp_store_preview_enabled.key,
+      (enabled) => {
+        void this.applyStorePreview(Boolean(enabled))
+      },
+    )
 
     // Re-spawn local miniapps that were running when the app was last killed.
     // Cloud apps get resurrected by the cloud on reconnect; local (phone-hosted)
@@ -568,6 +598,35 @@ class MantleManager {
     // upgraded bundles are on disk first. Best-effort — never block miniapp
     // init on it.
     miniappLauncher.autostartLocalMiniapps().catch((e) => console.warn("MANTLE: autostartLocalMiniapps failed", e))
+  }
+
+  private async applyStorePreview(enabled: boolean): Promise<void> {
+    for (const packageName of BUNDLED_STORE_MINIAPP_PACKAGES) {
+      engine.miniapps.setHiddenStatus(packageName, !enabled)
+    }
+    if (enabled) {
+      // Store maintenance is a host-triggered transient action. It wakes each
+      // bundled Store without projecting it into the running tray and tears the
+      // context down after reconciliation unless the user opens it.
+      void storeUpdateScheduler.start(BUNDLED_STORE_MINIAPP_PACKAGES)
+      return
+    }
+
+    storeUpdateScheduler.stop()
+    const menuItems = engine.settings.get(SETTINGS.menu_apps.key) as GlassesMenuItem[] | null
+    const visibleMenuItems = menuItems?.filter(
+      (item) => !BUNDLED_STORE_MINIAPP_PACKAGES.some((packageName) => packageName === item.packageName),
+    )
+    if (menuItems && visibleMenuItems && visibleMenuItems.length !== menuItems.length) {
+      await engine.settings.set(SETTINGS.menu_apps.key, visibleMenuItems)
+    }
+    for (const packageName of BUNDLED_STORE_MINIAPP_PACKAGES) {
+      const app = engine.miniapps.list().find((candidate) => candidate.packageName === packageName)
+      if (app?.foregrounded) engine.miniapps.clearForeground()
+      // Also clears the persisted running bit so a Store opened in preview
+      // cannot reappear in the tray after preview is later disabled.
+      if (app) await engine.miniapps.stop(packageName)
+    }
   }
 
   /**
@@ -599,8 +658,45 @@ class MantleManager {
           continue
         }
 
-        if (appRegistry.getInstalledVersions(packageName).includes(version)) {
+        // Bundling is an initial-delivery/update channel, not a way to undo a
+        // user's uninstall choice. SYSTEM packages are the deliberate
+        // exception: the build owns them and AppRegistry does not permit their
+        // removal in the first place.
+        if (!isSystemMiniappPackage(packageName) && appRegistry.wasUserUninstalled(packageName)) {
           continue
+        }
+
+        const installedVersions = appRegistry.getInstalledVersions(packageName)
+        if (installedVersions.length > 0) {
+          const activeVersion = await appRegistry.getActiveVersion(packageName)
+          const activeIdentity = appRegistry.getReleaseIdentity(packageName, activeVersion)
+          if (
+            !shouldActivateBundledVersion(
+              version,
+              activeVersion,
+              isHostTrustedSystemMiniapp(packageName, activeIdentity),
+            )
+          ) {
+            console.log(
+              `MANTLE: preserving newer trusted SYSTEM miniapp ${packageName}@${activeVersion} over bundled ${version}`,
+            )
+            continue
+          }
+        }
+
+        if (installedVersions.includes(version)) {
+          // The directory alone is not enough for privileged bundled apps: an
+          // older direct/dev install may have claimed the same package and
+          // version. Reinstall once unless host-owned bundled provenance is
+          // already recorded, which also migrates pre-provenance installs.
+          const identity = appRegistry.getReleaseIdentity(packageName, version)
+          if (
+            identity?.source === "bundled_asset" &&
+            appRegistry.getPublisherKeyFingerprint(packageName) ===
+              BUNDLED_SYSTEM_MINIAPP_PUBLISHER_KEYS[packageName as keyof typeof BUNDLED_SYSTEM_MINIAPP_PUBLISHER_KEYS]
+          ) {
+            continue
+          }
         }
 
         let superMode = await engine.settings.get(SETTINGS.super_mode.key)
@@ -630,12 +726,9 @@ class MantleManager {
   private async setupPeriodicTasks() {
     this.sendCalendarEvents()
     // Calendar sync every hour
-    this.calendarSyncTimer = BgTimer.setInterval(
-      () => {
-        this.sendCalendarEvents()
-      },
-      60 * 60 * 1000,
-    ) // 1 hour
+    this.calendarSyncTimer = BgTimer.setInterval(() => {
+      this.sendCalendarEvents()
+    }, 60 * 60 * 1000) // 1 hour
 
     try {
       // only start location updates if we have the location permission (host UI gate);
@@ -684,8 +777,7 @@ class MantleManager {
     // core owner projected from the app store so a notification can briefly
     // replace Captions and then restore the latest caption frame.
     let notifyWasRunning = this.isNotifyRunning()
-    const syncAppPresentationState = () => {
-      const apps = useAppStatusStore.getState().apps
+    const syncAppPresentationState = (apps = engine.miniapps.list()) => {
       const coreApp = apps.find((app) => app.running && (app.type === "standard" || !app.type))
       localDisplayManager.onCoreAppChange(coreApp?.packageName ?? null)
 
@@ -696,7 +788,7 @@ class MantleManager {
       notifyWasRunning = notifyIsRunning
     }
     syncAppPresentationState()
-    const unsubscribeAppPresentationState = useAppStatusStore.subscribe(syncAppPresentationState)
+    const unsubscribeAppPresentationState = engine.miniapps.onChanged(syncAppPresentationState)
     this.subs.push({remove: unsubscribeAppPresentationState})
 
     // A remembered speaker-capable model survives disconnects, but its audio

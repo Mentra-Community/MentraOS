@@ -2,7 +2,7 @@
   "name": "cloud-v2",
   "version": "0.0.0",
   "private": true,
-  "description": "MentraOS cloud rewrite. Local JS miniapp SDK backend, horizontally scalable, three packages (core / runtime / proxy).",
+  "description": "MentraOS cloud services: identity Core, Miniapp Store, runtime, and proxy.",
   "workspaces": ["packages/*", "test/*", "websites/*"],
   "engines": {
     "bun": ">=1.3.0"
@@ -14,16 +14,17 @@
     "dev": "bun scripts/dev.ts",
     "dev:local": "bash scripts/dev-local.sh",
     "dev:core": "bun --watch packages/core/src/index.ts",
+    "dev:store": "bun --watch packages/store/src/index.ts",
     "dev:runtime": "bun --watch packages/runtime/src/index.ts",
     "dev:proxy": "bun --watch packages/proxy/src/index.ts",
     "dev:test-oem": "bun --watch test/test-oem/src/index.ts",
     "dev:console": "bun --cwd websites/console dev",
     "dev:admin": "bun --cwd websites/admin dev",
     "dev:portal": "bun --cwd websites/portal dev",
-    "mentra:local": "bun packages/cli/src/index.ts",
-    "mentra:dev": "doppler run --project cloud-v2 --config dev_aws -- env MENTRA_CORE_URL=https://core.dev.us-west-2.mentraglass.com MENTRA_CONSOLE_URL=https://console2.dev.mentraglass.com bun packages/cli/src/index.ts",
-    "mentra:staging": "doppler run --project cloud-v2 --config staging -- env MENTRA_CORE_URL=https://core.staging.us-west-2.mentraglass.com MENTRA_CONSOLE_URL=https://console2.staging.mentraglass.com bun packages/cli/src/index.ts",
-    "mentra:prod": "doppler run --project cloud-v2 --config prod -- env MENTRA_CORE_URL=https://core.mentraglass.com MENTRA_CONSOLE_URL=https://console2.mentraglass.com bun packages/cli/src/index.ts",
+    "mentra:local": "MENTRA_CORE_URL=http://localhost:3000 MENTRA_STORE_URL=http://localhost:3003 MENTRA_CONSOLE_URL=http://localhost:5173 bun packages/cli/src/index.ts",
+    "mentra:dev": "doppler run --project cloud-v2 --config dev_aws -- env MENTRA_CORE_URL=https://core.dev.us-west-2.mentraglass.com MENTRA_STORE_URL=https://store.dev.us-west-2.mentraglass.com MENTRA_CONSOLE_URL=https://console2.dev.mentraglass.com bun packages/cli/src/index.ts",
+    "mentra:staging": "doppler run --project cloud-v2 --config staging -- env MENTRA_CORE_URL=https://core.staging.us-west-2.mentraglass.com MENTRA_STORE_URL=https://store.staging.us-west-2.mentraglass.com MENTRA_CONSOLE_URL=https://console2.staging.mentraglass.com bun packages/cli/src/index.ts",
+    "mentra:prod": "doppler run --project cloud-v2 --config prod -- env MENTRA_CORE_URL=https://core.mentraglass.com MENTRA_STORE_URL=https://store.mentraglass.com MENTRA_CONSOLE_URL=https://console2.mentraglass.com bun packages/cli/src/index.ts",
     "build:console": "bun --cwd websites/console build",
     "build:admin": "bun --cwd websites/admin build",
     "build:portal": "bun --cwd websites/portal build",
@@ -36,7 +37,9 @@
     "test": "bun test"
   },
   "devDependencies": {
+    "@mentra/miniapp-cli": "file:../sdk/miniapp-cli",
     "@types/bun": "latest",
+    "jszip": "^3.10.1",
     "typescript": "^5.7.0"
   }
 }

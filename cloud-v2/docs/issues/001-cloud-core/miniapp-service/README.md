@@ -2,9 +2,10 @@
 
 **Status:** First developer registry slice implemented.
 
-Cloud Core owns miniapp package identity, release metadata, installable release
-bundles, store media metadata, and the future admin review/preinstalled registry
-workflow. The first vertical slice supports Console2 and the CLI:
+This historical first-slice document predates the independent Store service.
+The Store now owns miniapp package identity, release metadata, installable
+release bundles, store media metadata, and admin review. The first vertical
+slice supports Console2 and the CLI:
 
 1. Reserve a MiniApp package name.
 2. Build and pack a miniapp locally.
@@ -129,4 +130,3 @@ All routes accept the Console browser session cookie or the CLI bearer token.
 
 - [`../../011-miniapp-registry/`](../../011-miniapp-registry/)
 - [`../../012-mentra-cli-v2/`](../../012-mentra-cli-v2/)
-- [`preinstalled-local-miniapps.md`](./preinstalled-local-miniapps.md)

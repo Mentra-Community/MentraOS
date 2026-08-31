@@ -47,6 +47,16 @@ export const miniapps = {
     useAppStatusStore.getState().setForeground(...args),
   /** Clear the current foreground miniapp. */
   clearForeground: () => useAppStatusStore.getState().clearForeground(),
+  /**
+   * Invoke a manifest-declared action as the trusted host. Host-only actions
+   * are intentionally unavailable through session.actions.invoke.
+   */
+  invokeAction: (
+    packageName: string,
+    actionId: string,
+    params?: Record<string, unknown>,
+    timeoutMs?: number,
+  ): Promise<unknown> => localMiniappRuntime.invokeActionFromHost(packageName, actionId, params, timeoutMs),
   /** Stop all running miniapps. */
   stopAll: () => useAppStatusStore.getState().stopAll(),
   /** Install a miniapp from a bundle URL. */

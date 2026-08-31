@@ -26,15 +26,14 @@ import type { AppEnv } from "../types/hono.types";
 import { OauthError } from "../types/oauth.types";
 import { AccountError } from "../services/account/account-error";
 import { requestContext } from "./middleware/context.middleware";
-import adminPreinstalled from "./admin/preinstalled.api";
+import internalAdmin from "./admin/admin.api";
 import reportAgent from "./agent/reports.api";
 import clientAuth from "./client/auth.api";
 import clientReports from "./client/reports.api";
 import clientSupportProfile from "./client/support-profile.api";
-import clientMiniapps from "./client/miniapps.api";
 import accountApi from "./account/account.api";
 import accountOauth from "./account/oauth.api";
-import consoleAuth from "./console/cli-auth.api";
+import internalIdentity from "./internal/identity.api";
 import portalEnterprise from "./portal/enterprise.api";
 import wellKnown from "./well-known.api";
 
@@ -84,12 +83,11 @@ export function createApp(opts: CreateAppOptions): Hono<AppEnv> {
   app.route("/api/client/reports", clientReports);
   app.route("/api/client/support-profile", clientSupportProfile);
   app.route("/api/agent/reports", reportAgent);
-  app.route("/api/client/miniapps", clientMiniapps);
   app.route("/api/account", accountApi);
   app.route("/api/account/oauth", accountOauth);
-  app.route("/api/console", consoleAuth);
+  app.route("/api/internal/identity", internalIdentity);
   app.route("/api/portal", portalEnterprise);
-  app.route("/api/admin", adminPreinstalled);
+  app.route("/api/internal/admin", internalAdmin);
 
   // Global error translator.
   app.onError((err, c) => {
@@ -106,10 +104,7 @@ export function createApp(opts: CreateAppOptions): Hono<AppEnv> {
     // is correlated to the originating request.
     const log = c.var.logger ?? logger;
     log.error({ err }, "unhandled error");
-    return c.json(
-      { error: "server_error", error_description: "internal server error" },
-      500,
-    );
+    return c.json({ error: "server_error", error_description: "internal server error" }, 500);
   });
 
   return app;

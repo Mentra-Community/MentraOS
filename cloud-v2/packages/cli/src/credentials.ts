@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { getConfig } from "./config";
 
 const SERVICE = "mentra-cli-v2";
 const LEGACY_NAME = "credentials";
@@ -22,14 +23,16 @@ export interface CliCredentials {
   workosUserId: string;
   email: string;
   organizationId?: string | null;
+  developerOrgId?: string | null;
   authenticationMethod?: string;
   coreUrl: string;
+  storeUrl: string;
   storedAt: string;
   expiresAt?: string;
 }
 
 export interface CliSigningKey {
-  coreUrl: string;
+  storeUrl: string;
   signingKeyId: string;
   publicKeyJwk: CliJwk;
   privateKeyJwk: CliJwk;
@@ -66,7 +69,9 @@ export async function loadCredentials(coreUrl?: string): Promise<CliCredentials 
       workosUserId: process.env.MENTRA_CLI_WORKOS_USER_ID || "unknown",
       email: process.env.MENTRA_CLI_EMAIL || "unknown",
       organizationId: process.env.MENTRA_CLI_ORGANIZATION_ID,
-      coreUrl: targetCoreUrl || process.env.MENTRA_CORE_URL || "http://localhost:3000",
+      developerOrgId: process.env.MENTRA_CLI_DEVELOPER_ORG_ID,
+      coreUrl: targetCoreUrl || getConfig().coreUrl,
+      storeUrl: getConfig().storeUrl,
       storedAt: new Date().toISOString(),
     };
   }
@@ -82,7 +87,7 @@ export async function loadCredentials(coreUrl?: string): Promise<CliCredentials 
       });
       if (value) {
         const legacy = JSON.parse(value) as CliCredentials;
-        if (!targetCoreUrl || normalizeCoreUrl(legacy.coreUrl) === targetCoreUrl) return legacy;
+        if (!targetCoreUrl || normalizeCoreUrl(legacy.coreUrl) === targetCoreUrl) return withCurrentStoreUrl(legacy);
       }
     }
   } catch {
@@ -92,7 +97,7 @@ export async function loadCredentials(coreUrl?: string): Promise<CliCredentials 
   try {
     if (existsSync(LEGACY_CREDS_FILE)) {
       const legacy = JSON.parse(readFileSync(LEGACY_CREDS_FILE, "utf8")) as CliCredentials;
-      if (!targetCoreUrl || normalizeCoreUrl(legacy.coreUrl) === targetCoreUrl) return legacy;
+      if (!targetCoreUrl || normalizeCoreUrl(legacy.coreUrl) === targetCoreUrl) return withCurrentStoreUrl(legacy);
     }
   } catch {
     // Treat corrupt credentials as logged out.
@@ -124,7 +129,7 @@ export async function clearCredentials(coreUrl?: string): Promise<void> {
 
 export async function saveSigningKey(key: CliSigningKey): Promise<"keychain" | "file"> {
   const payload = JSON.stringify(key);
-  const name = credentialName(key.coreUrl);
+  const name = credentialName(key.storeUrl);
 
   try {
     if (typeof Bun !== "undefined" && Bun.secrets) {
@@ -140,17 +145,17 @@ export async function saveSigningKey(key: CliSigningKey): Promise<"keychain" | "
   }
 
   mkdirSync(CREDS_DIR, { recursive: true });
-  writeFileSync(signingKeyFile(key.coreUrl), `${payload}\n`, { mode: 0o600 });
+  writeFileSync(signingKeyFile(key.storeUrl), `${payload}\n`, { mode: 0o600 });
   return "file";
 }
 
-export async function loadSigningKey(coreUrl: string): Promise<CliSigningKey | null> {
-  const targetCoreUrl = normalizeCoreUrl(coreUrl);
+export async function loadSigningKey(storeUrl: string): Promise<CliSigningKey | null> {
+  const targetStoreUrl = normalizeCoreUrl(storeUrl);
   try {
     if (typeof Bun !== "undefined" && Bun.secrets) {
       const value = await Bun.secrets.get({
         service: SIGNING_KEY_SERVICE,
-        name: credentialName(targetCoreUrl),
+        name: credentialName(targetStoreUrl),
       });
       if (value) return JSON.parse(value) as CliSigningKey;
     }
@@ -159,7 +164,7 @@ export async function loadSigningKey(coreUrl: string): Promise<CliSigningKey | n
   }
 
   try {
-    const path = signingKeyFile(targetCoreUrl);
+    const path = signingKeyFile(targetStoreUrl);
     if (existsSync(path)) return JSON.parse(readFileSync(path, "utf8")) as CliSigningKey;
   } catch {
     // Treat corrupt key storage as missing.
@@ -175,7 +180,7 @@ async function loadScopedCredentials(coreUrl: string): Promise<CliCredentials | 
         service: SERVICE,
         name: credentialName(coreUrl),
       });
-      if (value) return JSON.parse(value) as CliCredentials;
+      if (value) return withCurrentStoreUrl(JSON.parse(value) as CliCredentials);
     }
   } catch {
     // Fall through.
@@ -183,12 +188,16 @@ async function loadScopedCredentials(coreUrl: string): Promise<CliCredentials | 
 
   try {
     const path = credentialsFile(coreUrl);
-    if (existsSync(path)) return JSON.parse(readFileSync(path, "utf8")) as CliCredentials;
+    if (existsSync(path)) return withCurrentStoreUrl(JSON.parse(readFileSync(path, "utf8")) as CliCredentials);
   } catch {
     // Treat corrupt credentials as logged out.
   }
 
   return null;
+}
+
+function withCurrentStoreUrl(credentials: CliCredentials): CliCredentials {
+  return {...credentials, storeUrl: getConfig().storeUrl};
 }
 
 function credentialName(coreUrl: string): string {

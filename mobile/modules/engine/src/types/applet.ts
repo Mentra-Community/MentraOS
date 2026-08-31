@@ -89,6 +89,10 @@ export interface DeclaredAction {
   parameters?: Record<string, unknown>
   /** JSON-Schema descriptor for the action's structured result. */
   outputSchema?: Record<string, unknown>
+  /** Defaults to normal user-visible, retained activity. */
+  lifecycle: "persistent" | "transient"
+  /** Host-only actions are not exposed through session.miniapps.list. */
+  audience: "system" | "host"
 }
 
 export interface ClientApp extends AppletInterface {

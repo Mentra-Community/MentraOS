@@ -12,6 +12,8 @@ export function normalizeManifestActions(raw: unknown): DeclaredAction[] {
     description?: unknown
     parameters?: unknown
     outputSchema?: unknown
+    lifecycle?: unknown
+    audience?: unknown
   }>) {
     if (a && typeof a.id === "string" && typeof a.description === "string") {
       out.push({
@@ -23,8 +25,21 @@ export function normalizeManifestActions(raw: unknown): DeclaredAction[] {
         ...(a.outputSchema && typeof a.outputSchema === "object" && !Array.isArray(a.outputSchema)
           ? {outputSchema: a.outputSchema as Record<string, unknown>}
           : {}),
+        lifecycle: a.lifecycle === "transient" ? "transient" : "persistent",
+        audience: a.audience === "host" ? "host" : "system",
       })
     }
   }
   return out
+}
+
+/** Project only available miniapp-callable actions; host scheduling stays undiscoverable. */
+export function projectSystemActions(
+  actions: readonly DeclaredAction[],
+  available = true,
+): Array<Omit<DeclaredAction, "audience">> {
+  if (!available) return []
+  return actions
+    .filter((action) => action.audience === "system")
+    .map(({audience: _audience, ...action}) => action)
 }

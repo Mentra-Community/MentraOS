@@ -33,7 +33,11 @@ describe("mobile migrations", () => {
   beforeEach(() => {
     jest.clearAllMocks()
     mockSave.mockReturnValue(Res.ok(undefined))
-    mockSet.mockImplementation(() => Res.try_async(async () => undefined))
+    // The workspace resolves the app and engine copies of typesafe-ts as
+    // separate nominal classes; bridge that test-only package boundary.
+    mockSet.mockImplementation(
+      () => Res.try_async(async () => undefined) as unknown as ReturnType<typeof engine.settings.set>,
+    )
   })
 
   it("resets MentraOS onboarding once for users upgrading from version 3", async () => {

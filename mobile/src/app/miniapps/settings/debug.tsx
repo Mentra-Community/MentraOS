@@ -15,7 +15,7 @@ import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import {SETTINGS, useSetting} from "@mentra/engine"
 import {navigationService} from "@mentra/engine-host-internal"
-import showAlert from "@/utils/AlertUtils"
+import {showAlert} from "@/utils/AlertUtils"
 
 // Hardcoded test destination for the nav POC. SF Ferry Building.
 const TEST_NAV_DESTINATION = {lat: 37.7956, lng: -122.3933}
@@ -33,6 +33,9 @@ export default function DebugSettingsScreen() {
   const {goBack, push, replaceAll, clearHistoryAndGoHome} = useNavigationStore.getState()
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const [debugMode, setDebugMode] = useSetting(SETTINGS.debug_mode.key)
+  const [miniappStorePreviewEnabled, setMiniappStorePreviewEnabled] = useSetting(
+    SETTINGS.miniapp_store_preview_enabled.key,
+  )
   const [androidNotificationListenerEnabled, setAndroidNotificationListenerEnabled] = useSetting(
     SETTINGS.android_notification_listener_enabled.key,
   )
@@ -76,6 +79,12 @@ export default function DebugSettingsScreen() {
               subtitle="Enable debug mode"
               value={debugMode}
               onValueChange={(value) => setDebugMode(value)}
+            />
+            <ToggleSetting
+              label="Mentra Miniapp Store"
+              subtitle="Preview the Store and enable its automatic update checks"
+              value={miniappStorePreviewEnabled}
+              onValueChange={(value) => setMiniappStorePreviewEnabled(value)}
             />
             {Platform.OS === "android" && (
               <ToggleSetting

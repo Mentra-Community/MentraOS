@@ -21,6 +21,7 @@ export function getDeveloperOrg(): Promise<{ org: DeveloperOrg | null }> {
 export function saveDeveloperOrg(input: {
   displayName: string;
   packagePrefix: string;
+  createNew?: boolean;
 }): Promise<{ org: DeveloperOrg }> {
   return apiRequest("/console/org", z.object({ org: developerOrgSchema }), {
     method: "PUT",

@@ -135,6 +135,11 @@ jest.mock("react-native-localize", () => ({
   removeEventListener: jest.fn(),
 }))
 
+jest.mock("react-native-share", () => ({
+  __esModule: true,
+  default: {open: jest.fn(() => Promise.resolve({success: true}))},
+}))
+
 // Mock native WebView for Jest runs. Several service tests import screens
 // transitively; they only need the module to load, not a native webview.
 jest.mock("react-native-webview", () => {
@@ -245,6 +250,12 @@ jest.mock("expo-audio", () => ({
   })),
 }))
 
+// AppRegistry uses Expo's native stream-capable fetch in production. Jest has
+// no ExpoFetchModule native base class, so delegate test calls to Node's fetch.
+jest.mock("expo/fetch", () => ({
+  fetch: jest.fn((input, init) => globalThis.fetch(input, init)),
+}))
+
 // Mock react-native-nitro-bg-timer for non-native Jest runs
 jest.mock("react-native-nitro-bg-timer", () => ({
   BackgroundTimer: {
@@ -338,6 +349,9 @@ const mockIslandEntries = () => {
   const realGallerySyncClock = jest.requireActual("./modules/engine/src/services/gallerySyncClock")
   const realOtaManifestUrl = jest.requireActual("./modules/engine/src/services/otaManifestUrl")
   const realOtaUpdateCheck = jest.requireActual("./modules/engine/src/services/OtaUpdateCheckService")
+  // SYSTEM identity is a pure build-owned policy. Host surfaces use the real
+  // predicate so test behavior cannot drift from AppRegistry enforcement.
+  const realSystemMiniappPolicy = jest.requireActual("./modules/engine/src/services/SystemMiniappPolicy")
   // OTA install policy constants + display-state derivation + the install state
   // machine (WP 8B) — real implementations so the host shim
   // (@/app/ota/otaProgressTimeouts), the OTA screens and their tests exercise the
@@ -402,6 +416,7 @@ const mockIslandEntries = () => {
     ...realOtaAutoChain,
     ...realOtaErrorMapping,
     deriveDisplayState: realOtaDisplayState.deriveDisplayState,
+    isSystemMiniappPackage: realSystemMiniappPolicy.isSystemMiniappPackage,
     // Settings contract on the public entry (real store-backed): SETTINGS registry,
     // per-key hook, and the pure device-model key helpers.
     SETTINGS: realSettings.SETTINGS,
@@ -613,6 +628,7 @@ const mockIslandEntries = () => {
         stop: jest.fn((...a) => appStatusState.stop(...a) ?? Promise.resolve()),
         setForeground: jest.fn((...a) => appStatusState.setForeground(...a) ?? Promise.resolve()),
         clearForeground: jest.fn(() => appStatusState.clearForeground()),
+        invokeAction: jest.fn(() => Promise.resolve()),
         stopAll: jest.fn((...a) => appStatusState.stopAll(...a) ?? Promise.resolve({is_ok: () => true})),
         install: jest.fn(() => Promise.resolve({is_ok: () => true})),
         uninstall: jest.fn(() => Promise.resolve({is_ok: () => true})),
@@ -885,7 +901,6 @@ const mockIslandEntries = () => {
       stopManagedStream: jest.fn(() => Promise.resolve()),
       isConnected: jest.fn(() => false),
       onConnectionChange: jest.fn(() => () => {}),
-      getPreinstalledMiniappRegistry: jest.fn(() => Promise.resolve({entries: []})),
     },
     // Bluetooth SDK passthrough — the same mock singleton @mentra/bluetooth-sdk
     // is mocked with, so emitBluetoothSdkEvent/resetBluetoothSdkMock still drive
@@ -1028,6 +1043,10 @@ global.__reanimatedWorkletInit = jest.fn()
 // subscription, and session state into the next test in the same file. detach()
 // after every test (a no-op when not attached) so each test starts clean.
 afterEach(() => {
+  // Tests that replace @mentra/engine with a file-local mock never initialize
+  // the shared real-engine facade, so there is no island state to clean. Do
+  // not force-load native-backed engine modules solely from global teardown.
+  if (!mockIslandEntriesCache) return
   jest.requireActual("./modules/engine/src/services/OtaInstallCoordinator").otaInstallCoordinator.detach()
   // The pairing mocks above delegate identity reads/writes to the REAL
   // PairingIdentity over the shared settings store; scrub the identity keys so

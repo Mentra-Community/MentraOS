@@ -225,6 +225,22 @@
           "outputSchema": {
             "type": "object",
             "description": "JSON-Schema descriptor for the structured action result (MCP outputSchema)."
+          },
+          "lifecycle": {
+            "type": "string",
+            "enum": [
+              "persistent",
+              "transient"
+            ],
+            "description": "Action lifecycle. 'persistent' opens or preserves normal user-visible activity; 'transient' may run in an invisible context that is released after the invocation."
+          },
+          "audience": {
+            "type": "string",
+            "enum": [
+              "system",
+              "host"
+            ],
+            "description": "Who may invoke the action. Host actions are omitted from miniapp action discovery."
           }
         }
       }

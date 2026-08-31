@@ -135,7 +135,16 @@ export type {
   ScanQrOptions,
   ScanQrResult,
 } from "./modules/system"
-export type {MiniappInfo, MiniappActionInfo, MiniappCompatibility, ListMiniappsOptions} from "./modules/miniapps"
+export type {
+  MiniappInfo,
+  MiniappActionInfo,
+  MiniappCompatibility,
+  ListMiniappsOptions,
+  InstallMiniappRequest,
+  InstallMiniappResult,
+  InstallMiniappPhase,
+  InstallMiniappProgress,
+} from "./modules/miniapps"
 export type {ActionContext, ActionHandler, InvokeOptions} from "./modules/actions"
 
 // Domain module types — exported so consumers can type module references

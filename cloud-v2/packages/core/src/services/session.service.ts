@@ -407,6 +407,46 @@ export async function verifyAccessToken(token: string): Promise<VerifiedAccessTo
   return verified;
 }
 
+export interface VerifiedMiniappToken {
+  mentraUserId: string;
+  tenantId: string;
+  packageName: string;
+  jti: string;
+}
+
+/**
+ * Verify a miniapp-scoped token for a Core endpoint that deliberately accepts
+ * one of the named miniapps. Miniapp tokens are not general Core credentials:
+ * callers must supply the complete audience allowlist for the endpoint.
+ */
+export async function verifyMiniappToken(
+  token: string,
+  allowedPackageNames: readonly string[],
+): Promise<VerifiedMiniappToken> {
+  if (allowedPackageNames.length === 0) throw new InvalidGrant("miniapp token audience is not allowed");
+  const { publicKey } = await getMiniappKeys();
+  let payload: jose.JWTPayload;
+  try {
+    const verified = await jose.jwtVerify(token, publicKey, {
+      audience: [...allowedPackageNames],
+      issuer: MINIAPP_ISSUER,
+      algorithms: [MENTRA_ALG],
+    });
+    payload = verified.payload;
+  } catch (error) {
+    throw new InvalidGrant(`miniapp token rejected: ${(error as Error).message}`);
+  }
+
+  const packageName = typeof payload.aud === "string" ? payload.aud : null;
+  const mentraUserId = typeof payload.sub === "string" ? payload.sub : null;
+  const tenantId = typeof payload.tenantId === "string" ? payload.tenantId : null;
+  const jti = typeof payload.jti === "string" ? payload.jti : null;
+  if (!packageName || !allowedPackageNames.includes(packageName) || !mentraUserId || !tenantId || !jti) {
+    throw new InvalidGrant("miniapp token missing required claims");
+  }
+  return { packageName, mentraUserId, tenantId, jti };
+}
+
 /**
  * Mint a miniapp-scoped token for one packageName.
  *

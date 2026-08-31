@@ -58,12 +58,19 @@ jobs:
         working-directory: sdk/miniapp-cli
         run: bun run tsc --noEmit -p tsconfig.json
 
+      - name: Build published workspace dependencies
+        working-directory: cloud-v2/packages/auth
+        # @mentra/auth intentionally exports its compiled package entry point so
+        # the same artifact is exercised by Store and by external consumers.
+        run: bun run build
+
       - name: Run package tests
         working-directory: cloud-v2
         # Keep CI deterministic and local: integration, soak, and external-service
         # tests under cloud-v2/tests require a separately designed environment.
-        # Run before typecheck creates dist output, which would duplicate tests.
-        run: bun test packages
+        # Serialize tests because several legacy suites temporarily replace the
+        # process-global fetch implementation.
+        run: bun test --max-concurrency=1 packages
 
       - name: Typecheck backend packages
         working-directory: cloud-v2

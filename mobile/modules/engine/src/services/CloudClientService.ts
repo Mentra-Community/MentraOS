@@ -14,7 +14,7 @@
  * this service.
  */
 import {CloudClient, setNativeHttp, setNativeUdp, setSecureStorage} from "@mentra/cloud-client/react-native"
-import type {PreinstalledMiniappRegistry, RuntimeSnapshot} from "@mentra/cloud-client/react-native"
+import type {RuntimeSnapshot} from "@mentra/cloud-client/react-native"
 import type {SubjectTokenType} from "@mentra/cloud-client"
 import {Platform} from "react-native"
 import type {AudioSubscription, TranscriptionData, TranslationData} from "@mentra/cloud-protocol"
@@ -31,6 +31,7 @@ import {useCloudClientStatusStore} from "../stores/cloudClientStatus"
 import {islandNotifications} from "./NotificationsEmitter"
 import {BgTimer} from "../utils/timers"
 import {logCloudV2TranscriptMetric} from "./CloudTranscriptE2EMetrics"
+import {mintCoreDownloadAuthorization} from "./CoreDownloadAuthorization"
 import {LocalMiniappUserIdentity} from "./LocalMiniappUserIdentity"
 import {nativeHttpResponseBody} from "./NativeHttpResponse"
 
@@ -69,7 +70,7 @@ let persistentFailureNotified = false
 let audioSubscriptions: AudioSubscription[] = []
 let transportsReady = false
 /** Endpoints to build with — seeded from config, overridable via reconnect(). */
-let endpointsOverride: {core: string; runtime: string} | null = null
+let endpointsOverride: {core: string; store?: string; runtime: string} | null = null
 let runtimeStatusUnsubscribe: (() => void) | null = null
 let transcriptUnsubscribe: (() => void) | null = null
 let translationUnsubscribe: (() => void) | null = null
@@ -98,13 +99,25 @@ const translationListeners = new Set<(d: TranslationData) => void>()
 const statusListeners = new Set<(snapshot: CloudClientStatusSnapshot) => void>()
 const connectionListeners = new Set<(connected: boolean) => void>()
 
-function resolveEndpoints(): {core: string; runtime: string} {
-  if (endpointsOverride) return endpointsOverride
+function resolveEndpoints(): {core: string; store: string; runtime: string} {
+  if (endpointsOverride) {
+    return {...endpointsOverride, store: endpointsOverride.store ?? deriveStoreUrl(endpointsOverride.core)}
+  }
   const cfg = getConfigValues()
+  const core = cfg.coreUrl?.trim() || FALLBACK_CORE_URL
   return {
-    core: cfg.coreUrl?.trim() || FALLBACK_CORE_URL,
+    core,
+    store: cfg.storeUrl?.trim() || deriveStoreUrl(core),
     runtime: cfg.runtimeUrl?.trim() || FALLBACK_RUNTIME_URL,
   }
+}
+
+function deriveStoreUrl(core: string): string {
+  const url = new URL(core)
+  if (url.hostname === "core.mentraglass.com") return "https://store.mentraglass.com"
+  if (url.hostname.startsWith("core.")) url.hostname = url.hostname.replace(/^core\./, "store.")
+  else if (url.protocol === "http:" && url.port === "3000") url.port = "3003"
+  return url.origin
 }
 
 function getCoreClient(): CloudCore {
@@ -470,7 +483,9 @@ function construct(): void {
     connected = false
     console.log(`${LOG_TAG}: runtime disconnected (${info.reason})`)
     console.log(
-      `${LOG_TAG}: debug: ws-session-debug disconnected reason=${info.reason} willStayDown=${/superseded by newer session/i.test(info.reason)}`,
+      `${LOG_TAG}: debug: ws-session-debug disconnected reason=${
+        info.reason
+      } willStayDown=${/superseded by newer session/i.test(info.reason)}`,
     )
     // Arm the persistent-failure alarm once; if we're still down when it fires, raise
     // the notification. A reconnect within the window cancels it (onConnected above).
@@ -527,7 +542,7 @@ export const cloudClientService = {
    * a prior override and fall back to the boot config (so cleared/default cloud
    * URLs don't keep reconnecting to a stale override); omit to keep the current.
    */
-  reconnect(endpoints?: {core: string; runtime: string} | null): void {
+  reconnect(endpoints?: {core: string; store?: string; runtime: string} | null): void {
     if (endpoints !== undefined) endpointsOverride = endpoints
     try {
       client?.runtime.close()
@@ -547,11 +562,18 @@ export const cloudClientService = {
     construct()
   },
 
-  async getPreinstalledMiniappRegistry(): Promise<PreinstalledMiniappRegistry> {
+  /** Fresh Core credential for host-owned downloads; never exposed to a miniapp. */
+  async getCoreDownloadAuthorization(): Promise<{origin: string; bearerToken: string}> {
     if (!client) this.init()
-    const c = client
-    if (!c?.core) throw new Error("cloud client core is unavailable")
-    return c.core.miniapps.getRegistry()
+    return mintCoreDownloadAuthorization(() => {
+      const c = client
+      if (!c) return null
+      return {
+        client: c,
+        origin: resolveEndpoints().core,
+        getBearerToken: () => c.auth.getCoreToken(),
+      }
+    })
   },
 
   /**
@@ -595,6 +617,7 @@ export const cloudClientService = {
     return {
       mentraUserId: identity.mentraUserId,
       tenantId: identity.tenantId,
+      coreUrl: resolveEndpoints().core,
       token,
       expiresAt: normalizeExpiresAt(expiresAt),
     }
@@ -696,6 +719,10 @@ export const cloudClientService = {
 
   getCoreUrl(): string {
     return resolveEndpoints().core
+  },
+
+  getStoreUrl(): string {
+    return resolveEndpoints().store
   },
 
   syncCoreTokenToBluetooth(): Promise<string> {

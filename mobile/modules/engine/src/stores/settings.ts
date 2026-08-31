@@ -52,6 +52,13 @@ export const SETTINGS: Record<string, Setting> = {
   // feature flags / mantle settings:
   dev_mode: {key: "dev_mode", defaultValue: () => __DEV__, writable: true, saveOnServer: true, persist: true}, // deprecated
   debug_mode: {key: "debug_mode", defaultValue: () => __DEV__, writable: true, saveOnServer: true, persist: true},
+  miniapp_store_preview_enabled: {
+    key: "miniapp_store_preview_enabled",
+    defaultValue: () => false,
+    writable: true,
+    saveOnServer: true,
+    persist: true,
+  },
   android_notification_listener_enabled: {
     key: "android_notification_listener_enabled",
     // Operational kill switch. The listener now runs in a guarded lightweight
@@ -187,6 +194,14 @@ export const SETTINGS: Record<string, Setting> = {
     persist: true,
     resetOnBuildEnvChange: true,
   },
+  cloud_store_url: {
+    key: "cloud_store_url",
+    defaultValue: () => "",
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+    resetOnBuildEnvChange: true,
+  },
   cloud_runtime_url: {
     key: "cloud_runtime_url",
     defaultValue: () => "",
@@ -195,9 +210,9 @@ export const SETTINGS: Record<string, Setting> = {
     persist: true,
     resetOnBuildEnvChange: true,
   },
-  // Bookmarked Cloud V2 endpoint pairs. Each entry is {label, coreUrl,
-  // runtimeUrl} — core + runtime are saved together because they are always
-  // applied as a matched set (presets fill both; Save & Test verifies both).
+  // Bookmarked Cloud V2 endpoint sets. Each entry is {label, coreUrl,
+  // storeUrl, runtimeUrl}; all service endpoints are selected and verified as
+  // one profile.
   saved_cloud_url_pairs: {
     key: "saved_cloud_url_pairs",
     defaultValue: () => [],
@@ -978,7 +993,7 @@ export const useSettingsStore = create<SettingsState>()(
         // persist normally.
         // Reset the cloud backend override when the build's environment changes.
         //
-        // cloud_core_url / cloud_runtime_url are persist:true and outrank both
+        // cloud_core_url / cloud_store_url / cloud_runtime_url are persist:true and outrank both
         // the build's env and the compiled default (see resolveUrl in
         // cloudClient.ts). That is what we want inside one environment: a
         // developer's METRO_AUTO pin should survive a rebuild. It is wrong

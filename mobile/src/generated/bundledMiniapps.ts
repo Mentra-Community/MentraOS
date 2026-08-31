@@ -13,6 +13,39 @@ export const BUNDLED_MINIAPPS: number[] = [
   require("@assets/miniapps/com.mentra.navigation-1.1.29.zip"),
   require("@assets/miniapps/com.mentra.notes-1.0.16.zip"),
   require("@assets/miniapps/com.mentra.recorder-1.0.8.zip"),
+  require("@assets/miniapps/com.mentra.store-1.0.15.zip"),
   require("@assets/miniapps/com.mentra.teleprompter-1.0.6.zip"),
   require("@assets/miniapps/com.mentra.translation-1.0.19.zip"),
 ]
+
+// Build-owned package identities. A manifest cannot request SYSTEM; changing
+// this set requires shipping a Mentra App build containing the corresponding
+// ZIP asset.
+export const BUNDLED_SYSTEM_MINIAPP_PACKAGES = [
+  "com.mentra.ai",
+  "com.mentra.captions",
+  "com.mentra.livestreamer",
+  "com.mentra.merge",
+  "com.mentra.navigation",
+  "com.mentra.notes",
+  "com.mentra.recorder",
+  "com.mentra.store",
+  "com.mentra.teleprompter",
+  "com.mentra.translation",
+] as const
+
+// Publisher identities are extracted from the signed ZIPs at build time. The
+// host verifies the embedded signature again before activation and requires
+// Store updates to retain this build-pinned identity.
+export const BUNDLED_SYSTEM_MINIAPP_PUBLISHER_KEYS = {
+  "com.mentra.ai": "sha256:d2ceb878c0aa74f8dc509fbefe296280a09b9cffe2a988fe033629d8eb56ccc6",
+  "com.mentra.captions": "sha256:d4fdcf1f83a7efb5927c439ff964c056734f01007895f2acad6866afc8ccae5b",
+  "com.mentra.livestreamer": "sha256:4c67331b89de826fcb0937f90489b3e7746449d94c3df0bcea3b2d42a22b6541",
+  "com.mentra.merge": "sha256:74adad5ecbefd1d5b2af7bbef4290e1d9cc474787e13903a7b0682a96086c579",
+  "com.mentra.navigation": "sha256:070e10caacfdafab4845ba96fe47752a40bcbbd16c97b7bed867094ee362a1b2",
+  "com.mentra.notes": "sha256:5c9a71a1e2d924cc3e66a9768382e15f896de8b09c082c18687f476a1c9bc844",
+  "com.mentra.recorder": "sha256:87763c8ec428af0e79b48b722d1c603435df01eff65daf44c9f829d054918250",
+  "com.mentra.store": "sha256:7e417acc33e7508e9defb5f598398c65c41a337d5816fa46b16fbe187117e386",
+  "com.mentra.teleprompter": "sha256:f12740d283fc41d697c7ccc85177f3132e2c067ea27eb08ed7884f8dd5093452",
+  "com.mentra.translation": "sha256:34d1b237c95a0d3427e6fa09bdebd55588cf1aa27d6e303da79101d3f4e228ea",
+} as const

@@ -5,7 +5,7 @@ export function cloudRecordForPlan(plan) {
   const target = resolveCloudV2Target({plan, environment, sourceCommit: plan.sourceCommit})
   return {
     schemaVersion: 1,
-    component: "cloud-v2-core-runtime",
+    component: "cloud-v2-core-store-runtime",
     releaseSetId: plan.releaseSetId,
     releaseIdentity: plan.releaseIdentity,
     sourceCommit: plan.sourceCommit,
@@ -22,7 +22,7 @@ export function cloudRecordForPlan(plan) {
       requestedTag: plan.sourceCommit,
     },
     deploymentId: "porter:revision-42",
-    observedServices: ["core", "runtime"].map((service, index) => ({
+    observedServices: ["core", "store", "runtime"].map((service, index) => ({
       service,
       digest: `sha256:${String(index + 1).repeat(64)}`,
       images: [`registry.example.com/cloud-v2:${plan.sourceCommit}`],

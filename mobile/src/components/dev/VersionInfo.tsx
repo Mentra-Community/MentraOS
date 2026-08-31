@@ -18,6 +18,7 @@ export const VersionInfo = () => {
   const [debugMode, setDebugMode] = useSetting(SETTINGS.debug_mode.key)
   const [_superMode, setSuperMode] = useSetting(SETTINGS.super_mode.key)
   const [coreUrl] = useSetting(SETTINGS.cloud_core_url.key)
+  const [storeUrl] = useSetting(SETTINGS.cloud_store_url.key)
   const audioTransport = useEngineSnapshot(engine.session.status, (onChange) =>
     engine.session.onStatus(onChange),
   ).audioTransport
@@ -76,6 +77,7 @@ export const VersionInfo = () => {
       `time: ${process.env.EXPO_PUBLIC_BUILD_TIME}`,
       `commit: ${process.env.EXPO_PUBLIC_BUILD_COMMIT}`,
       `cloud_core_url: ${coreUrl || "(default)"}`,
+      `cloud_store_url: ${storeUrl || "(default)"}`,
       `audio: ${audioTransport}`,
     ]
 
@@ -136,6 +138,9 @@ export const VersionInfo = () => {
           </View>
           <View className="flex-row gap-2">
             <Text style={themed($buildInfo)} text={`${coreUrl || "(default cloud)"}`} />
+          </View>
+          <View className="flex-row gap-2">
+            <Text style={themed($buildInfo)} text={`${storeUrl || "(default Store)"}`} />
           </View>
           <View className="flex-row gap-2">
             <Text style={themed($buildInfo)} text={`audio: ${audioTransport}`} />

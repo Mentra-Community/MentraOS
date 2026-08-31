@@ -96,6 +96,9 @@ interface SpawnCache {
   miniappJs: string
   permissions: string[]
   installedManifest?: InstalledMiniappManifest
+  hostTrustedSystem: boolean
+  /** Whether this context represents user-visible running activity. */
+  projectRunning: boolean
 }
 
 export class MentraJSRouter {
@@ -192,19 +195,26 @@ export class MentraJSRouter {
    * (e.g. {@link spawnAndRegister} below, or the host's miniapp launch
    * pipeline) should call this once per spawn.
    */
-  registerApp(packageName: string, installedManifest?: InstalledMiniappManifest): void {
+  registerApp(
+    packageName: string,
+    installedManifest?: InstalledMiniappManifest,
+    hostTrustedSystem = false,
+    projectRunning = true,
+  ): void {
     this.runtime.registerApp(
       packageName,
       (raw: string) => {
         this.dispatchBridgeRaw(packageName, raw)
       },
       installedManifest,
+      hostTrustedSystem,
+      projectRunning,
     )
     this.registered.add(packageName)
-    // JSContext is the source-of-truth for "miniapp running". The
-    // home tile / tray reads this registry to project the `running`
-    // flag — UI WebView open/close is separate.
-    miniappRunningRegistry.add(packageName)
+    // Most contexts represent ordinary user activity and project into the
+    // running tray. Transient action contexts deliberately do not: context
+    // liveness and user-visible activity are separate concepts.
+    if (projectRunning) miniappRunningRegistry.add(packageName)
   }
 
   /**
@@ -218,7 +228,13 @@ export class MentraJSRouter {
   async spawnAndRegister(
     packageName: string,
     miniappJs: string,
-    options?: {permissions?: string[]; installedManifest?: InstalledMiniappManifest},
+    options?: {
+      permissions?: string[]
+      installedManifest?: InstalledMiniappManifest
+      hostTrustedSystem?: boolean
+      /** False for invocation-scoped transient action wakes. */
+      projectRunning?: boolean
+    },
   ): Promise<boolean> {
     if (!this.crust.mentraJsSpawn) {
       this.logger.warn("mentraJsSpawn not available — host binding missing native function")
@@ -243,7 +259,8 @@ export class MentraJSRouter {
     if (options?.permissions && options.permissions.length > 0) {
       await this.crust.mentraJsSetManifest(packageName, options.permissions)
     }
-    this.registerApp(packageName, options?.installedManifest)
+    const projectRunning = options?.projectRunning ?? true
+    this.registerApp(packageName, options?.installedManifest, options?.hostTrustedSystem ?? false, projectRunning)
     // Cache spawn arguments so the crash controller can respawn the
     // same code after a backoff. permissions + manifest are cached too
     // because the native side resets setManifest on every spawn and
@@ -253,6 +270,8 @@ export class MentraJSRouter {
       miniappJs,
       permissions: options?.permissions ?? [],
       installedManifest: options?.installedManifest,
+      hostTrustedSystem: options?.hostTrustedSystem ?? false,
+      projectRunning,
     })
     this.crashController?.onSpawn(packageName)
 
@@ -320,7 +339,7 @@ export class MentraJSRouter {
         if (cached.permissions.length > 0) {
           await this.crust.mentraJsSetManifest(packageName, cached.permissions)
         }
-        this.registerApp(packageName, cached.installedManifest)
+        this.registerApp(packageName, cached.installedManifest, cached.hostTrustedSystem, cached.projectRunning)
         controller.onSpawn(packageName)
         // Re-fire the init envelope so the respawned context's
         // `registerMiniapp` handler runs again.
@@ -330,6 +349,19 @@ export class MentraJSRouter {
       })()
     }, outcome.scheduleRespawnAfterMs)
     this.respawnTimers.set(packageName, timer)
+  }
+
+  /** Promote an already-spawned transient context into normal user activity. */
+  projectRunning(packageName: string): void {
+    if (!this.registered.has(packageName) || miniappRunningRegistry.has(packageName)) return
+    miniappRunningRegistry.add(packageName)
+    this.runtime.onUserActivated(packageName)
+    const cached = this.spawnCache.get(packageName)
+    if (cached) cached.projectRunning = true
+  }
+
+  isProjectedRunning(packageName: string): boolean {
+    return miniappRunningRegistry.has(packageName)
   }
 
   private summarizeReason(payload: unknown, method: string): string {

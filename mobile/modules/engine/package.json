@@ -104,8 +104,10 @@
     "@mentra/miniapp": "3.1.0",
     "buffer": "^6.0.3",
     "events": "^3.3.0",
+    "jszip": "^3.10.1",
     "react-native-marked": "8.1.1",
     "semver": "^7.7.4",
+    "tweetnacl": "^1.0.3",
     "typesafe-ts": "^1.7.1"
   },
   "devDependencies": {

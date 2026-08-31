@@ -83,7 +83,7 @@ tests
 **Files:** reusable workflow, `cloud-v2/docs/runbooks/porter/deploys.md`
 
 - [x] Require DNS resolution for every expected endpoint.
-- [x] Probe `/healthz` and `/ready` for both Core and Runtime with bounded
+- [x] Probe `/healthz` and `/ready` for Core, Store, and Runtime with bounded
       retries.
 - [x] Remove the current warning-and-success path when DNS is absent.
 - [x] Read back the deployed service image digest(s) and Porter deployment ID.

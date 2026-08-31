@@ -22,6 +22,8 @@ export interface MiniappActionInfo {
   parameters?: Record<string, unknown>
   /** JSON-Schema descriptor for the structured value returned by the action. */
   outputSchema?: Record<string, unknown>
+  /** Whether invocation leaves normal user-visible miniapp activity running. */
+  lifecycle: "persistent" | "transient"
 }
 
 /**
@@ -43,6 +45,12 @@ export interface MiniappInfo {
   version: string
   running: boolean
   compatibility: MiniappCompatibility
+  /** True when this package identity is backed by a ZIP in the host build. */
+  system: boolean
+  /** Store package that owns this active release, if it was Store-installed. */
+  storeOwnerPackageName?: string
+  /** Store package selected by the host build to update this SYSTEM identity. */
+  systemStoreOwnerPackageName?: string
   /** Declared actions (empty if the miniapp declares none). */
   actions: MiniappActionInfo[]
 }
@@ -52,7 +60,55 @@ export interface ListMiniappsOptions {
   includeIncompatible?: boolean
 }
 
+/** Backend-neutral bundle request accepted only from a host-trusted SYSTEM Store. */
+export interface InstallMiniappRequest {
+  packageName: string
+  version: string
+  bundleUrl: string
+  bundleSha256: string
+  /** Minimum Mentra App/host version declared by the release manifest. */
+  minHostVersion?: string
+  /** Mentra Miniapp SDK ABI version declared by the release manifest. */
+  sdkVersion?: string
+  /** Glasses hardware requirements declared by the release manifest. */
+  hardwareRequirements?: MiniappHardwareRequirement[]
+  releaseId?: string
+  channel?: string
+}
+
+export interface InstallMiniappResult {
+  packageName: string
+  version: string
+  installedByStore: string
+}
+
+export interface InstallMiniappCompatibilityRequest {
+  minHostVersion?: string | null
+  sdkVersion?: string | null
+  hardwareRequirements?: MiniappHardwareRequirement[]
+}
+
+export interface MiniappHardwareRequirement {
+  type: string
+  level: string
+  description?: string
+}
+
+export type InstallMiniappCompatibility =
+  | {compatible: true}
+  | {compatible: false; blocker: "host" | "sdk" | "hardware"; reason: string}
+
+export type InstallMiniappPhase = "downloading" | "verifying" | "extracting" | "activating" | "complete"
+
+export interface InstallMiniappProgress {
+  packageName: string
+  version: string
+  phase: InstallMiniappPhase
+}
+
 export class MiniappsModule {
+  private readonly progressHandlers = new Set<(progress: InstallMiniappProgress) => void>()
+
   constructor(private readonly session: MiniappSession) {}
 
   /**
@@ -82,10 +138,68 @@ export class MiniappsModule {
     })
   }
 
+  /**
+   * Start another miniapp and foreground its phone UI. SYSTEM-only.
+   * Store miniapps should use this for an installed app's Open action.
+   */
+  async open(packageName: string): Promise<void> {
+    await this.session.sendRequest<void>({
+      type: MiniappRequestType.MINIAPPS_START,
+      packageName,
+      foreground: true,
+    })
+  }
+
   /** Stop another miniapp. SYSTEM-only. */
   async stop(packageName: string): Promise<void> {
     await this.session.sendRequest<void>({
       type: MiniappRequestType.MINIAPPS_STOP,
+      packageName,
+    })
+  }
+
+  /**
+   * Download, verify, and install a Store release through the phone host.
+   * SYSTEM-only; ordinary miniapps receive NOT_PERMITTED.
+   */
+  async install(request: InstallMiniappRequest): Promise<InstallMiniappResult> {
+    return this.session.sendRequest<InstallMiniappResult>(
+      {
+        ...request,
+        type: MiniappRequestType.MINIAPPS_INSTALL,
+      },
+      // Downloading, validating, extracting, and launching a bundle can
+      // legitimately take longer than the SDK's default request timeout.
+      // The request still settles on the host response or session disconnect.
+      {timeoutMs: 0},
+    )
+  }
+
+  /** Check host and Mentra Miniapp SDK compatibility before offering or automatically applying an update. */
+  async checkInstallCompatibility(request: InstallMiniappCompatibilityRequest): Promise<InstallMiniappCompatibility> {
+    return this.session.sendRequest<InstallMiniappCompatibility>({
+      type: MiniappRequestType.MINIAPPS_INSTALL_CHECK,
+      minHostVersion: request.minHostVersion ?? undefined,
+      sdkVersion: request.sdkVersion ?? undefined,
+      hardwareRequirements: request.hardwareRequirements ?? [],
+    })
+  }
+
+  /** Subscribe to host-owned install/update progress. Returns an unsubscribe function. */
+  onInstallProgress(handler: (progress: InstallMiniappProgress) => void): () => void {
+    this.progressHandlers.add(handler)
+    return () => this.progressHandlers.delete(handler)
+  }
+
+  /** @internal */
+  _deliverInstallProgress(progress: InstallMiniappProgress): void {
+    for (const handler of this.progressHandlers) handler(progress)
+  }
+
+  /** Uninstall a package managed by this Store. SYSTEM-only. */
+  async uninstall(packageName: string): Promise<void> {
+    await this.session.sendRequest<void>({
+      type: MiniappRequestType.MINIAPPS_UNINSTALL,
       packageName,
     })
   }

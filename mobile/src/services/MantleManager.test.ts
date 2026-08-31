@@ -2,6 +2,7 @@ import {waitFor} from "@testing-library/react-native"
 import {router} from "expo-router"
 
 import mantle from "@/services/MantleManager"
+import {storeUpdateScheduler} from "@/services/miniapps/storeUpdateScheduler"
 import {
   audioPlaybackService,
   localDisplayManager,
@@ -120,7 +121,7 @@ describe("MantleManager", () => {
     }))
     await mantle.init()
     requestWifiSetup = (engine.configure as jest.Mock).mock.calls[0][0].ui.requestWifiSetup
-    syncCoreDisplayOwner = (useAppStatusStore.subscribe as jest.Mock).mock.calls.at(-1)![0]
+    syncCoreDisplayOwner = (engine.miniapps.onChanged as jest.Mock).mock.calls.at(-1)![0]
     syncGlassesPresentationState = (engine.glasses.onStatus as jest.Mock).mock.calls.at(-1)![0]
   })
 
@@ -131,6 +132,7 @@ describe("MantleManager", () => {
   })
 
   afterAll(() => {
+    storeUpdateScheduler.stop()
     jest.clearAllTimers()
     jest.useRealTimers()
   })
@@ -533,5 +535,42 @@ describe("MantleManager", () => {
       pathname: "/wifi/scan",
       params: {returnToMiniapp: "com.mentra.livestreamer"},
     })
+  })
+
+  it("keeps the bundled Store hidden and unscheduled until Store preview is enabled", async () => {
+    expect(SETTINGS.miniapp_store_preview_enabled.defaultValue()).toBe(false)
+    const start = jest.spyOn(storeUpdateScheduler, "start").mockResolvedValue()
+    const stop = jest.spyOn(storeUpdateScheduler, "stop").mockImplementation(() => {})
+    useAppStatusStore.setState({
+      apps: [
+        {
+          packageName: "com.mentra.store",
+          local: true,
+          running: true,
+          foregrounded: true,
+        },
+      ] as any,
+    })
+    await engine.settings.set(SETTINGS.menu_apps.key, [
+      {name: "Store", packageName: "com.mentra.store", running: true},
+      {name: "Notes", packageName: "com.mentra.notes", running: false},
+    ])
+
+    await (mantle as any).applyStorePreview(false)
+    expect(engine.miniapps.setHiddenStatus).toHaveBeenLastCalledWith("com.mentra.store", true)
+    expect(stop).toHaveBeenCalled()
+    expect(engine.miniapps.clearForeground).toHaveBeenCalled()
+    expect(engine.miniapps.stop).toHaveBeenCalledWith("com.mentra.store")
+    expect(engine.settings.get(SETTINGS.menu_apps.key)).toEqual([
+      {name: "Notes", packageName: "com.mentra.notes", running: false},
+    ])
+    expect(start).not.toHaveBeenCalled()
+
+    await (mantle as any).applyStorePreview(true)
+    expect(engine.miniapps.setHiddenStatus).toHaveBeenLastCalledWith("com.mentra.store", false)
+    expect(start).toHaveBeenCalledWith(["com.mentra.store"])
+
+    start.mockRestore()
+    stop.mockRestore()
   })
 })

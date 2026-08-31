@@ -14,9 +14,8 @@ import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
-import {engine, useApps, useRefresh} from "@mentra/engine"
+import {engine, isSystemMiniappPackage, useApps, useRefresh} from "@mentra/engine"
 
-import {SYSTEM_APPS} from "@/constants/miniapps"
 import {ThemedStyle} from "@/theme"
 import {showAlert} from "@/utils/AlertUtils"
 import {captureRef} from "react-native-view-shot"
@@ -81,7 +80,7 @@ export default function AppSettings() {
     }
   }, [appsLoaded, appInfo, packageName, replaceAll])
 
-  const uninstallable = !SYSTEM_APPS.includes(packageName)
+  const uninstallable = Boolean(appInfo && !appInfo.offline && !isSystemMiniappPackage(packageName))
 
   const viewShotRef = useRef(null)
   const saveScreenshot = async () => {

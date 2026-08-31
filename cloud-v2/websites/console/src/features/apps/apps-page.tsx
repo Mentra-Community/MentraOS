@@ -40,11 +40,14 @@ export function AppsPage() {
                 </div>
                 <h2 className="mt-5 font-display text-[21px] font-bold">No miniapps yet</h2>
                 <p className="mt-2 max-w-md text-sm leading-6 text-[#747780]">
-                  Miniapps are created and published from your project with the CLI. Initialize one, then ship the first release.
+                  Package creation and signed release upload are CLI-only. Reserve the package, create and back up its
+                  publisher key, then publish from your project.
                 </p>
-                <div className="mt-6 rounded-[12px] bg-[#111217] px-4 py-3 font-mono text-sm text-white">
-                  mentra init &nbsp;&amp;&amp;&nbsp; mentra publish
-                </div>
+                <pre className="mt-6 max-w-full overflow-x-auto rounded-[12px] bg-[#111217] px-4 py-3 text-left font-mono text-xs leading-6 text-white sm:text-sm">
+                  {`mentra miniapps create com.example.app --name 'My miniapp'
+mentra miniapps keys create --package com.example.app
+mentra publish`}
+                </pre>
               </div>
             ) : (
               <div className="divide-y divide-[#eceeeb]">

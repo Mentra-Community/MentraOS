@@ -6,14 +6,17 @@ import {fileURLToPath} from "node:url"
 const CLOUDS = {
   dev: {
     core: "https://core.dev.us-west-2.mentraglass.com",
+    store: "https://store.dev.us-west-2.mentraglass.com",
     runtime: "https://runtime.dev.us-west-2.mentraglass.com",
   },
   staging: {
     core: "https://core.staging.us-west-2.mentraglass.com",
+    store: "https://store.staging.us-west-2.mentraglass.com",
     runtime: "https://runtime.staging.us-west-2.mentraglass.com",
   },
   prod: {
     core: "https://core.us-west-2.mentraglass.com",
+    store: "https://store.us-west-2.mentraglass.com",
     runtime: "https://runtime.us-west-2.mentraglass.com",
   },
 }
@@ -60,6 +63,7 @@ export function prepareMobileReleaseEnvironment({plan, template, backendEnvironm
     EXPO_PUBLIC_ASG_OTA_VERSION_URL: requireHttps(otaManifestUrl, "OTA manifest URL"),
     EXPO_PUBLIC_BUILD_ENV: backendEnvironment,
     EXPO_PUBLIC_CLOUD_CORE_URL: cloud.core,
+    EXPO_PUBLIC_CLOUD_STORE_URL: cloud.store,
     EXPO_PUBLIC_CLOUD_RUNTIME_URL: cloud.runtime,
     EXPO_PUBLIC_MENTRAOS_VERSION: plan.releaseIdentity,
     MENTRAOS_NATIVE_MARKETING_VERSION: plan.native.marketingVersion,

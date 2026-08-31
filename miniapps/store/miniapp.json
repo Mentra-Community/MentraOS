@@ -1,0 +1,145 @@
+{
+  "$schema": "./node_modules/@mentra/miniapp-cli/schema/miniapp.schema.json",
+  "packageName": "com.mentra.store",
+  "version": "1.0.15",
+  "name": "Mentra Miniapp Store",
+  "description": "Discover, install, update, and manage Mentra miniapps.",
+  "icon": "icon.png",
+  "type": "standard",
+  "sdkVersion": "0.3.0",
+  "minHostVersion": "2.13.0",
+  "entry": {
+    "background": "background/index.js",
+    "ui": "ui/index.html"
+  },
+  "permissions": [],
+  "hardwareRequirements": [],
+  "actions": [
+    {
+      "id": "reconcile_updates",
+      "description": "Check the Store catalog and install every eligible update owned by this Store.",
+      "lifecycle": "transient",
+      "audience": "host",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "checkedAt": {
+            "type": "number"
+          },
+          "candidateCount": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "checkedAt",
+          "candidateCount"
+        ]
+      }
+    },
+    {
+      "id": "search_miniapps",
+      "description": "Search the Mentra Miniapp Store. Use when the user asks what miniapps are available or wants a miniapp for a task. Returns compatible catalog results with package names, installation state, and whether a beta offer is installable yet.",
+      "lifecycle": "transient",
+      "audience": "system",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Optional natural-language search, such as 'navigation', 'record meetings', or 'camera'. Omit to browse featured miniapps."
+          },
+          "limit": {
+            "type": "number",
+            "description": "Maximum results from 1 through 10. Defaults to 5."
+          }
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string"
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        },
+        "required": [
+          "query",
+          "results"
+        ]
+      }
+    },
+    {
+      "id": "get_miniapp_details",
+      "description": "Get authoritative Mentra Miniapp Store details for a package, including its description, permissions, hardware compatibility, release track, and installation state. Use before answering detailed questions about a miniapp.",
+      "lifecycle": "transient",
+      "audience": "system",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "packageName": {
+            "type": "string",
+            "description": "The exact package name returned by search_miniapps."
+          }
+        },
+        "required": [
+          "packageName"
+        ]
+      },
+      "outputSchema": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "install_miniapp",
+      "description": "Install a miniapp from the Mentra Miniapp Store. Use when the user asks to install a specific installable result. Pass only the exact package name; the Store resolves and validates the current compatible release. A beta-only offer must first be joined in the Store.",
+      "lifecycle": "transient",
+      "audience": "system",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "packageName": {
+            "type": "string",
+            "description": "The exact package name returned by search_miniapps."
+          }
+        },
+        "required": [
+          "packageName"
+        ]
+      },
+      "outputSchema": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "update_miniapp",
+      "description": "Update an installed miniapp to the current compatible Mentra Miniapp Store release. Use when the user asks to update a specific miniapp.",
+      "lifecycle": "transient",
+      "audience": "system",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "packageName": {
+            "type": "string",
+            "description": "The exact installed package name."
+          }
+        },
+        "required": [
+          "packageName"
+        ]
+      },
+      "outputSchema": {
+        "type": "object"
+      }
+    }
+  ],
+  "port": 3180
+}

@@ -201,6 +201,12 @@ export enum MiniappRequestType {
   MINIAPPS_START = "miniapp_apps_start",
   /** Stop another miniapp. */
   MINIAPPS_STOP = "miniapp_apps_stop",
+  /** Install/update an approved bundle. SYSTEM callers only. */
+  MINIAPPS_INSTALL = "miniapp_apps_install",
+  /** Preflight a release's host/SDK requirements without downloading it. */
+  MINIAPPS_INSTALL_CHECK = "miniapp_apps_install_check",
+  /** Uninstall a package owned by the calling Store. SYSTEM callers only. */
+  MINIAPPS_UNINSTALL = "miniapp_apps_uninstall",
   /** Invoke a declared action on another miniapp; headless-wakes it if stopped. */
   ACTION_INVOKE = "miniapp_action_invoke",
   /** Target → host: the result of a delivered ACTION_CALL, correlated by callId. */
@@ -229,6 +235,9 @@ export enum MiniappResponseType {
 
   /** Push: host color scheme (light/dark) changed. */
   COLOR_SCHEME_CHANGE = "miniapp_color_scheme_change",
+
+  /** Push: a SYSTEM Store installation moved to another host-side phase. */
+  MINIAPPS_INSTALL_PROGRESS = "miniapp_apps_install_progress",
 
   /**
    * Push: speaker playback state transitioned. Per-miniapp; the runtime sends
@@ -368,6 +377,12 @@ export enum MiniappErrorCode {
   APP_NOT_FOUND = "APP_NOT_FOUND",
   /** Target miniapp is incompatible with the connected glasses. */
   APP_NOT_COMPATIBLE = "APP_NOT_COMPATIBLE",
+  /** Bundle download, validation, or activation failed. */
+  INSTALL_FAILED = "INSTALL_FAILED",
+  /** Another host installation is already mutating the registry. */
+  INSTALL_IN_PROGRESS = "INSTALL_IN_PROGRESS",
+  /** Another Store owns the installed package's update provenance. */
+  STORE_OWNERSHIP_CONFLICT = "STORE_OWNERSHIP_CONFLICT",
   /** Target miniapp does not declare the requested action. */
   ACTION_NOT_FOUND = "ACTION_NOT_FOUND",
   /** Target connected but never registered a handler for the action (within the buffer window). */
