@@ -380,11 +380,13 @@ function withAndroidManifestModifications(config: any) {
       )
       if (analyticsCollection) {
         analyticsCollection.$["android:value"] = "false"
+        analyticsCollection.$["tools:replace"] = "android:value"
       } else {
         app["meta-data"].push({
           $: {
             "android:name": "firebase_analytics_collection_enabled",
             "android:value": "false",
+            "tools:replace": "android:value",
           },
         })
       }
