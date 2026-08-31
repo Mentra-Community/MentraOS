@@ -206,7 +206,12 @@ final class AcsMeetingSession {
         self.applyAudioPolicyOnQueue("join")
         NSLog("ACS-SPIKE iOS ACS join started source=\(self.audioSource) armVirtual=\(plan.armVirtual) transportMuted=\(plan.transportMuted)")
       } catch {
-        self.lastError = error.localizedDescription
+        let message = error.localizedDescription
+        // A step after a successful ACS join (e.g. WHEP start) can throw. Tear
+        // the call down so the guest never lingers in the Teams roster with no
+        // media. leaveLocked hangs up + disposes and resets to idle.
+        self.leaveLocked()
+        self.lastError = message
         self.emit("error")
       }
     }

@@ -306,8 +306,13 @@ class AcsMeetingSession(
             "armVirtual=${plan.armVirtual} transportMuted=${plan.transportMuted}",
         )
       } catch (error: Exception) {
-        lastError = formatAcsError(error)
-        Log.e(TAG, "join failed $lastError", error)
+        val message = formatAcsError(error)
+        Log.e(TAG, "join failed $message", error)
+        // A step after a successful ACS join (e.g. WHEP start) can throw. Tear
+        // the call down so the guest never lingers in the Teams roster with no
+        // media. leaveLocked hangs up + disposes and resets to idle.
+        leaveLocked()
+        lastError = message
         // #region agent log
         AcsDebugLog.emit("C", "AcsMeetingSession.kt:join", "join threw", mapOf("error" to lastError))
         // #endregion

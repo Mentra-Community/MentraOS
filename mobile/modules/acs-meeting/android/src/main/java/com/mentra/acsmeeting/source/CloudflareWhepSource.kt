@@ -108,7 +108,11 @@ class CloudflareWhepSource(
   }
 
   override fun restart(config: SourceConfig) {
-    if (config.url == currentUrl && config.kind == SourceKind.WHEP) return
+    // Reuse the live subscriber only when the URL is unchanged AND the peer is
+    // still healthy. After ICE DISCONNECTED/FAILED (e.g. a Wi-Fi drop that
+    // reuses the same Cloudflare WHEP URL) we must rebuild, or glasses video and
+    // mic never recover.
+    if (config.url == currentUrl && config.kind == SourceKind.WHEP && state != SourceState.FAILED) return
     start(config)
   }
 
