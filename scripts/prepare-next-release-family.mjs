@@ -160,6 +160,7 @@ function updateManifests({currentVersion, nextVersion, family}) {
   const familyNames = new Set(family.members.map((member) => member.name))
 
   const changedManifests = []
+  const pendingWrites = []
   for (const relativePath of trackedPackageManifests()) {
     const input = readFileSync(path.join(rootDir, relativePath), "utf8")
     const manifest = JSON.parse(input)
@@ -203,9 +204,12 @@ function updateManifests({currentVersion, nextVersion, family}) {
       if (JSON.stringify(JSON.parse(output)) !== JSON.stringify(manifest)) {
         fail(`${relativePath} property edits did not produce the expected manifest`)
       }
-      writeFileSync(path.join(rootDir, relativePath), output)
+      pendingWrites.push({relativePath, output})
       changedManifests.push(relativePath)
     }
+  }
+  for (const {relativePath, output} of pendingWrites) {
+    writeFileSync(path.join(rootDir, relativePath), output)
   }
   return changedManifests
 }
@@ -220,7 +224,7 @@ function createChangelog(nextVersion) {
   )
 }
 
-function updateStableDocs(currentVersion, nextVersion) {
+function stableDocs(currentVersion) {
   const relativePath = "mintlify-docs/docs.json"
   const input = readFileSync(path.join(rootDir, relativePath), "utf8")
   const docs = JSON.parse(input)
@@ -231,6 +235,10 @@ function updateStableDocs(currentVersion, nextVersion) {
   if (docs.variables?.["release-artifacts-url"] !== currentUrl) {
     fail(`${relativePath} release-artifacts-url does not match ${currentUrl}`)
   }
+  return {relativePath, input}
+}
+
+function updateStableDocs(currentVersion, nextVersion, {relativePath, input} = stableDocs(currentVersion)) {
   let output = replaceJsonStringProperty(input, "release-version", nextVersion, 1, relativePath)
   output = replaceJsonStringProperty(
     output,
@@ -290,9 +298,10 @@ function main() {
     fail(`${nextVersion} must not be lower than the current family base ${currentVersion}`)
   }
 
+  const docs = stableDocs(currentVersion)
   updateManifests({currentVersion, nextVersion, family})
   createChangelog(nextVersion)
-  updateStableDocs(currentVersion, nextVersion)
+  updateStableDocs(currentVersion, nextVersion, docs)
   updateLicenseInventory(currentVersion, nextVersion, family)
   generateChangelogCatalog(rootDir)
   loadReleaseFamily({rootDir, requireVersionMirrors: true})
