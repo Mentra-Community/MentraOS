@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import {execFileSync} from "node:child_process"
-import {readFileSync} from "node:fs"
+import {createHash} from "node:crypto"
+import {mkdtempSync, readFileSync, rmSync} from "node:fs"
+import {tmpdir} from "node:os"
 import path from "node:path"
 import {fileURLToPath} from "node:url"
 import {createInterface} from "node:readline/promises"
@@ -109,39 +111,44 @@ function existingPromotionPullRequest(repository, branch, target) {
   return pulls[0]
 }
 
-function requireMergeBody(repository, commit, mergeBody) {
-  if (!mergeBody) return
+function hasMergeBody(repository, commit, mergeBody) {
   const message = gh(["api", `repos/${repository}/commits/${commit}`, "--jq", ".commit.message"])
-  if (!message.split("\n").includes(mergeBody)) {
+  return message.split("\n").includes(mergeBody)
+}
+
+function requireMergeBody(repository, commit, mergeBody) {
+  if (mergeBody && !hasMergeBody(repository, commit, mergeBody)) {
     fail(`${repository}:${commit} does not contain ${JSON.stringify(mergeBody)}`)
   }
 }
 
-function promoteExactHead({repository, source, target, family, mergeBody}) {
-  const sourceHead = branchHead(repository, source)
-  const targetHead = branchHead(repository, target)
-  const compare = ghJson(["api", `repos/${repository}/compare/${targetHead}...${sourceHead}`])
-  if (compare.ahead_by === 0) {
-    requireMergeBody(repository, targetHead, mergeBody)
-    console.log(`${repository}:${target} already contains ${sourceHead}`)
-    return targetHead
-  }
+function createMetadataCommit(repository, parent, family, mergeBody) {
+  const tree = gh(["api", `repos/${repository}/git/commits/${parent}`, "--jq", ".tree.sha"])
+  const payload = JSON.stringify({
+    message: `chore(release): refresh ${family} release inputs\n\n${mergeBody}`,
+    tree,
+    parents: [parent],
+  })
+  return gh(["api", "--method", "POST", `repos/${repository}/git/commits`, "--input", "-", "--jq", ".sha"], {
+    input: payload,
+    stdio: ["pipe", "pipe", "inherit"],
+  })
+}
 
-  const branch = `release/promote-${family}-${source}-to-${target}-${sourceHead.slice(0, 8)}`
-  let pull = existingPromotionPullRequest(repository, branch, target)
-  if (pull?.headRefOid !== undefined && pull.headRefOid !== sourceHead) {
-    fail(`${pull.url} head changed to ${pull.headRefOid}, expected ${sourceHead}`)
+function mergePromotionPullRequest({repository, branch, source, target, family, promotionHead, mergeBody, pull}) {
+  if (pull?.headRefOid !== undefined && pull.headRefOid !== promotionHead) {
+    fail(`${pull.url} head changed to ${pull.headRefOid}, expected ${promotionHead}`)
   }
   if (pull?.state === "MERGED") {
     requireMergeBody(repository, pull.mergeCommit.oid, mergeBody)
     return pull.mergeCommit.oid
   }
 
-  ensurePromotionBranch(repository, branch, sourceHead)
+  ensurePromotionBranch(repository, branch, promotionHead)
   if (!pull) {
-    const title = `Promote ${source} to ${target} for ${family}`
+    const title = `Promote ${branch.includes("refresh-pin") ? "release inputs" : source} to ${target} for ${family}`
     const body = [
-      `Promote the exact \`${source}\` head \`${sourceHead}\` into \`${target}\` for the ${family} release cut.`,
+      `Promote the exact recorded head \`${promotionHead}\` into \`${target}\` for the ${family} release cut.`,
       "",
       "This pull request was created by `release:promote-family` and must retain the exact recorded head.",
     ].join("\n")
@@ -159,19 +166,57 @@ function promoteExactHead({repository, source, target, family, mergeBody}) {
       "--body",
       body,
     ])
-    pull = {url, state: "OPEN", headRefOid: sourceHead}
+    pull = {url, state: "OPEN", headRefOid: promotionHead}
   }
   if (pull.state !== "OPEN") fail(`${pull.url} is ${pull.state.toLowerCase()}`)
 
   console.log(`Waiting for ${pull.url}`)
   execFileSync("gh", ["pr", "checks", pull.url, "--repo", repository, "--watch", "--fail-fast"], {stdio: "inherit"})
-  const mergeArgs = ["pr", "merge", pull.url, "--repo", repository, "--merge", "--match-head-commit", sourceHead]
+  const mergeArgs = ["pr", "merge", pull.url, "--repo", repository, "--merge", "--match-head-commit", promotionHead]
   if (mergeBody) mergeArgs.push("--body", mergeBody)
   gh(mergeArgs)
   const merged = ghJson(["pr", "view", pull.url, "--repo", repository, "--json", "state,mergeCommit"])
   if (merged.state !== "MERGED" || !merged.mergeCommit?.oid) fail(`${pull.url} did not merge`)
   requireMergeBody(repository, merged.mergeCommit.oid, mergeBody)
   return merged.mergeCommit.oid
+}
+
+function promoteExactHead({repository, source, target, family, mergeBody}) {
+  const sourceHead = branchHead(repository, source)
+  const targetHead = branchHead(repository, target)
+  const compare = ghJson(["api", `repos/${repository}/compare/${targetHead}...${sourceHead}`])
+  if (compare.ahead_by === 0) {
+    if (!mergeBody || hasMergeBody(repository, targetHead, mergeBody)) {
+      console.log(`${repository}:${target} already contains ${sourceHead}`)
+      return targetHead
+    }
+
+    const marker = createHash("sha256").update(`${targetHead}\n${mergeBody}`).digest("hex").slice(0, 12)
+    const branch = `release/promote-${family}-refresh-pin-${marker}`
+    let pull = existingPromotionPullRequest(repository, branch, target)
+    if (pull?.state === "MERGED") {
+      requireMergeBody(repository, pull.mergeCommit.oid, mergeBody)
+      return pull.mergeCommit.oid
+    }
+    const promotionHead = pull?.headRefOid || createMetadataCommit(repository, targetHead, family, mergeBody)
+    requireMergeBody(repository, promotionHead, mergeBody)
+    const parent = gh(["api", `repos/${repository}/git/commits/${promotionHead}`, "--jq", ".parents[0].sha"])
+    if (parent !== targetHead) fail(`${repository}:${promotionHead} is not based on ${targetHead}`)
+    return mergePromotionPullRequest({repository, branch, source, target, family, promotionHead, mergeBody, pull})
+  }
+
+  const branch = `release/promote-${family}-${source}-to-${target}-${sourceHead.slice(0, 8)}`
+  const pull = existingPromotionPullRequest(repository, branch, target)
+  return mergePromotionPullRequest({
+    repository,
+    branch,
+    source,
+    target,
+    family,
+    promotionHead: sourceHead,
+    mergeBody,
+    pull,
+  })
 }
 
 function findCoordinatedRun(headSha) {
@@ -199,7 +244,53 @@ function findCoordinatedRun(headSha) {
   fail(`no coordinated staging run appeared for ${headSha}`)
 }
 
-function requireSuccessfulBetaRun(runId) {
+function downloadReleasePlan(runId) {
+  const artifacts = ghJson([
+    "api",
+    `repos/${MENTRAOS_REPOSITORY}/actions/runs/${runId}/artifacts?per_page=100`,
+  ]).artifacts
+  const candidates = artifacts.filter(
+    (artifact) => !artifact.expired && artifact.name.startsWith("coordinated-release-plan-"),
+  )
+  if (candidates.length !== 1) {
+    fail(`run ${runId} has ${candidates.length} available coordinated release-plan artifacts, expected 1`)
+  }
+
+  const directory = mkdtempSync(path.join(tmpdir(), "mentra-release-plan-"))
+  try {
+    execFileSync(
+      "gh",
+      [
+        "run",
+        "download",
+        String(runId),
+        "--repo",
+        MENTRAOS_REPOSITORY,
+        "--name",
+        candidates[0].name,
+        "--dir",
+        directory,
+      ],
+      {stdio: "inherit"},
+    )
+    return JSON.parse(readFileSync(path.join(directory, "release-plan.json"), "utf8"))
+  } finally {
+    rmSync(directory, {recursive: true, force: true})
+  }
+}
+
+function commitTrailer(repository, commit, key) {
+  const message = gh(["api", `repos/${repository}/commits/${commit}`, "--jq", ".commit.message"])
+  const prefix = `${key}: `
+  const values = message
+    .split("\n")
+    .filter((line) => line.startsWith(prefix))
+    .map((line) => line.slice(prefix.length).trim())
+  if (values.length !== 1) fail(`${repository}:${commit} must contain exactly one ${key} trailer`)
+  return values[0]
+}
+
+function requireSuccessfulBetaRun(runId, currentVersion) {
   if (!/^\d+$/.test(runId || "")) fail("finish requires --run RUN_ID")
   const run = ghJson(["api", `repos/${MENTRAOS_REPOSITORY}/actions/runs/${runId}`])
   if (
@@ -211,7 +302,31 @@ function requireSuccessfulBetaRun(runId) {
   ) {
     fail(`${run.html_url || `run ${runId}`} is not a successful coordinated staging release`)
   }
-  return run
+
+  const stagingHead = branchHead(MENTRAOS_REPOSITORY, "staging")
+  if (run.head_sha !== stagingHead) {
+    fail(`${run.html_url} released ${run.head_sha}, but the current staging release cut is ${stagingHead}`)
+  }
+  const starterKitSource = commitTrailer(MENTRAOS_REPOSITORY, stagingHead, "Starter-Kit-Source")
+  if (!/^[0-9a-f]{40}$/.test(starterKitSource)) {
+    fail(`${MENTRAOS_REPOSITORY}:${stagingHead} has an invalid Starter-Kit-Source trailer`)
+  }
+
+  const plan = downloadReleasePlan(runId)
+  const expectedIdentity = `${currentVersion}-beta.${run.run_number}`
+  if (
+    plan.familyBaseVersion !== currentVersion ||
+    plan.channel !== "beta" ||
+    plan.sequence !== run.run_number ||
+    plan.releaseIdentity !== expectedIdentity ||
+    plan.sourceCommit !== stagingHead ||
+    plan.starterKitSource?.repository !== STARTER_KIT_REPOSITORY ||
+    plan.starterKitSource?.branch !== "staging" ||
+    plan.starterKitSource?.sourceCommit !== starterKitSource
+  ) {
+    fail(`${run.html_url} release plan does not match the current ${currentVersion} beta cut`)
+  }
+  return {run, plan}
 }
 
 function requireDevCheckout() {
@@ -271,7 +386,7 @@ async function main() {
     return
   }
 
-  requireSuccessfulBetaRun(options.run)
+  requireSuccessfulBetaRun(options.run, currentVersion)
   promoteExactHead({
     repository: STARTER_KIT_REPOSITORY,
     source: "staging",

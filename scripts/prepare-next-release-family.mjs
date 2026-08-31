@@ -250,7 +250,7 @@ function updateStableDocs(currentVersion, nextVersion, {relativePath, input} = s
   writeFileSync(path.join(rootDir, relativePath), output)
 }
 
-function updateLicenseInventory(currentVersion, nextVersion, family) {
+function prepareLicenseInventory(currentVersion, nextVersion, family) {
   const relativePath = "mintlify-docs/third-party-licenses.json"
   const input = readFileSync(path.join(rootDir, relativePath), "utf8")
   const inventory = JSON.parse(input)
@@ -270,7 +270,7 @@ function updateLicenseInventory(currentVersion, nextVersion, family) {
   }
 
   JSON.parse(output)
-  writeFileSync(path.join(rootDir, relativePath), output)
+  return {relativePath, output}
 }
 
 function installWorkspaces(arguments_) {
@@ -299,10 +299,11 @@ function main() {
   }
 
   const docs = stableDocs(currentVersion)
+  const licenseInventory = prepareLicenseInventory(currentVersion, nextVersion, family)
   updateManifests({currentVersion, nextVersion, family})
   createChangelog(nextVersion)
   updateStableDocs(currentVersion, nextVersion, docs)
-  updateLicenseInventory(currentVersion, nextVersion, family)
+  writeFileSync(path.join(rootDir, licenseInventory.relativePath), licenseInventory.output)
   generateChangelogCatalog(rootDir)
   loadReleaseFamily({rootDir, requireVersionMirrors: true})
   installWorkspaces([])

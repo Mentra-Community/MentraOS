@@ -339,7 +339,7 @@ test("release-family promotion orders both repositories and reconciles Starter K
   const start = script.indexOf('if (command === "start")')
   const starterPromotion = script.indexOf("repository: STARTER_KIT_REPOSITORY", start)
   const mentraosPromotion = script.indexOf("repository: MENTRAOS_REPOSITORY", starterPromotion)
-  const finish = script.indexOf("requireSuccessfulBetaRun(options.run)", mentraosPromotion)
+  const finish = script.indexOf("requireSuccessfulBetaRun(options.run, currentVersion)", mentraosPromotion)
   const starterReconciliation = script.indexOf("repository: STARTER_KIT_REPOSITORY", finish)
   const preparation = script.indexOf("scripts/prepare-next-release-family.mjs", starterReconciliation)
 
@@ -349,9 +349,26 @@ test("release-family promotion orders both repositories and reconciles Starter K
   assert.ok(finish > mentraosPromotion)
   assert.ok(starterReconciliation > finish)
   assert.ok(preparation > starterReconciliation)
-  assert.match(script, /--match-head-commit", sourceHead/)
+  assert.match(script, /--match-head-commit", promotionHead/)
   assert.match(script, /mergeBody: `Starter-Kit-Source: \$\{starterKitStagingHead\}`/)
   assert.match(script, /run\.path !== "\.github\/workflows\/coordinated-release\.yml"/)
+  assert.match(script, /run\.head_sha !== stagingHead/)
+  assert.match(script, /plan\.familyBaseVersion !== currentVersion/)
+  assert.match(script, /plan\.sourceCommit !== stagingHead/)
+  assert.match(script, /plan\.starterKitSource\?\.sourceCommit !== starterKitSource/)
+  assert.match(script, /createMetadataCommit\(repository, targetHead, family, mergeBody\)/)
+  assert.match(script, /release\/promote-\$\{family\}-refresh-pin-\$\{marker\}/)
+})
+
+test("next-family preparation validates license inventory before mutating files", () => {
+  const script = repositoryScript("prepare-next-release-family.mjs")
+  const licensePreflight = script.indexOf("prepareLicenseInventory(currentVersion, nextVersion, family)")
+  const firstManifestWrite = script.indexOf("updateManifests({currentVersion, nextVersion, family})", licensePreflight)
+  const licenseWrite = script.indexOf("licenseInventory.output", firstManifestWrite)
+
+  assert.ok(licensePreflight >= 0)
+  assert.ok(firstManifestWrite > licensePreflight)
+  assert.ok(licenseWrite > firstManifestWrite)
 })
 
 test("external example review replacements are manual and exact-build only", () => {
