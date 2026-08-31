@@ -1,6 +1,6 @@
 {
   "name": "@mentra/crust",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "description": "Mentra Native Module",
   "main": "build/index.js",
   "types": "build/index.d.ts",
@@ -35,7 +35,7 @@
   "license": "MIT",
   "homepage": "https://github.com/fossephate/crust#readme",
   "dependencies": {
-    "@mentra/jspolyfill": "3.1.0"
+    "@mentra/jspolyfill": "3.2.0"
   },
   "devDependencies": {
     "@expo/config-plugins": ">=8.0.0",

@@ -1,6 +1,6 @@
 {
   "name": "@mentra/engine",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "description": "Mentra Engine — miniapp registry, WebView bridge, and miniapp store",
   "main": "build/index.js",
   "react-native": "src/index.ts",
@@ -97,11 +97,11 @@
     "registry": "https://registry.npmjs.org/"
   },
   "dependencies": {
-    "@mentra/bluetooth-sdk": "3.1.0",
-    "@mentra/cloud-client": "3.1.0",
-    "@mentra/cloud-protocol": "3.1.0",
-    "@mentra/crust": "3.1.0",
-    "@mentra/miniapp": "3.1.0",
+    "@mentra/bluetooth-sdk": "3.2.0",
+    "@mentra/cloud-client": "3.2.0",
+    "@mentra/cloud-protocol": "3.2.0",
+    "@mentra/crust": "3.2.0",
+    "@mentra/miniapp": "3.2.0",
     "buffer": "^6.0.3",
     "events": "^3.3.0",
     "react-native-marked": "8.1.1",
