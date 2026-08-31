@@ -21,8 +21,8 @@
     "web": "expo start --web"
   },
   "dependencies": {
-    "@mentra/bluetooth-sdk": "3.1.0-dev.37",
-    "@mentra/engine": "3.1.0-dev.37",
+    "@mentra/bluetooth-sdk": "3.1.0-dev.102",
+    "@mentra/engine": "3.1.0-dev.102",
     "@mentra/react-native-barcode-scanner": "file:modules/mentra-barcode-scanner",
     "@mentra/react-native-video-stream-receiver": "file:modules/mentra-video-stream-receiver",
     "expo": "~55.0.24",
@@ -43,6 +43,7 @@
     "expo-video": "~55.0.17",
     "react": "19.2.0",
     "react-native": "0.83.6",
+    "react-native-marked": "8.1.1",
     "react-native-safe-area-context": "~5.6.2",
     "react-native-svg": "15.15.3",
     "react-native-wifi-reborn": "^4.13.6",

@@ -1,7 +1,10 @@
 name: Coordinated Example Release
-run-name: Coordinated example ${{ inputs.channel }} ${{ fromJSON(inputs.payload).releaseIdentity }}
+run-name: Coordinated example ${{ inputs.channel || github.event.client_payload.channel }} ${{ fromJSON(inputs.payload || github.event.client_payload.payload).releaseIdentity }}
 
 "on":
+  repository_dispatch:
+    types:
+      - coordinated_example_release
   workflow_dispatch:
     inputs:
       channel:
@@ -20,16 +23,18 @@ run-name: Coordinated example ${{ inputs.channel }} ${{ fromJSON(inputs.payload)
 permissions:
   actions: read
   contents: write
-  pull-requests: read
+  pull-requests: write
 
 concurrency:
   # Dev and beta for one train share a GitHub release container, so serialize
   # the family even though their source branches are independent.
-  group: coordinated-example-release-${{ fromJSON(inputs.payload).familyBaseVersion }}
+  group: coordinated-example-release-${{ fromJSON(inputs.payload || github.event.client_payload.payload).familyBaseVersion }}
   cancel-in-progress: false
 
 env:
   CI: true
+  COORDINATED_CHANNEL: ${{ inputs.channel || github.event.client_payload.channel }}
+  COORDINATED_PAYLOAD: ${{ inputs.payload || github.event.client_payload.payload }}
   GH_TOKEN: ${{ github.token }}
   STARTER_KIT_REPOSITORY: Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit
 
@@ -52,8 +57,7 @@ jobs:
       - name: Validate the coordinated payload
         id: release
         env:
-          COORDINATED_PAYLOAD: ${{ inputs.payload }}
-          DISPATCH_CHANNEL: ${{ inputs.channel }}
+          DISPATCH_CHANNEL: ${{ env.COORDINATED_CHANNEL }}
         run: |
           set -euo pipefail
           printf '%s' "$COORDINATED_PAYLOAD" > coordinated-payload.json
@@ -66,8 +70,8 @@ jobs:
         id: existing
         env:
           RELEASE_IDENTITY: ${{ steps.release.outputs.releaseIdentity }}
-          RELEASE_SET_ID: ${{ fromJSON(inputs.payload).releaseSetId }}
-          MENTRAOS_SOURCE_COMMIT: ${{ fromJSON(inputs.payload).mentraos.sourceCommit }}
+          RELEASE_SET_ID: ${{ fromJSON(env.COORDINATED_PAYLOAD).releaseSetId }}
+          MENTRAOS_SOURCE_COMMIT: ${{ fromJSON(env.COORDINATED_PAYLOAD).mentraos.sourceCommit }}
           TARGET_BRANCH: ${{ steps.release.outputs.targetBranch }}
           ARTIFACT_CONTAINER_TAG: ${{ steps.release.outputs.artifactContainerTag }}
         run: |
@@ -106,8 +110,8 @@ jobs:
         if: steps.existing.outputs.already_published != 'true'
         env:
           RELEASE_IDENTITY: ${{ steps.release.outputs.releaseIdentity }}
-          OTA_MANIFEST_URL: ${{ fromJSON(inputs.payload).ota.manifestUrl }}
-          OTA_MANIFEST_SHA256: ${{ fromJSON(inputs.payload).ota.manifestSha256 }}
+          OTA_MANIFEST_URL: ${{ fromJSON(env.COORDINATED_PAYLOAD).ota.manifestUrl }}
+          OTA_MANIFEST_SHA256: ${{ fromJSON(env.COORDINATED_PAYLOAD).ota.manifestSha256 }}
         run: |
           set -euo pipefail
           retry() {
@@ -143,7 +147,7 @@ jobs:
           RELEASE_IDENTITY: ${{ steps.release.outputs.releaseIdentity }}
           TARGET_BRANCH: ${{ steps.release.outputs.targetBranch }}
           CANDIDATE_BRANCH: ${{ steps.release.outputs.candidateBranch }}
-          EXPECTED_HEAD: ${{ fromJSON(inputs.payload).expectedStarterKitHead }}
+          EXPECTED_HEAD: ${{ fromJSON(env.COORDINATED_PAYLOAD).expectedStarterKitHead }}
         run: |
           set -euo pipefail
           git fetch origin "$TARGET_BRANCH" "$CANDIDATE_BRANCH" 2>/dev/null || git fetch origin "$TARGET_BRANCH"
@@ -173,14 +177,21 @@ jobs:
             node .github/scripts/coordinated-example-release.mjs sync \
               --root . \
               --identity "$RELEASE_IDENTITY"
-            (
-              cd examples/react-native
-              bun install --lockfile-only
-            )
-            (
-              cd examples/react-native-elevenlabs-audio
-              bun install --lockfile-only
-            )
+            update_lockfile() {
+              local directory="$1"
+              for attempt in {1..12}; do
+                if (cd "$directory" && bun install --lockfile-only); then
+                  return 0
+                fi
+                if (( attempt == 12 )); then
+                  return 1
+                fi
+                echo "Package metadata has not propagated to Bun yet; retrying $directory ($attempt/12)."
+                sleep 10
+              done
+            }
+            update_lockfile examples/react-native
+            update_lockfile examples/react-native-elevenlabs-audio
             cp "$canonical_payload" .github/coordinated-example-release.json
             git config user.name "mentra-release-bot"
             git config user.email "actions@users.noreply.github.com"
@@ -200,52 +211,79 @@ jobs:
 
           echo "release_commit=$release_commit" >> "$GITHUB_OUTPUT"
 
-      - name: Wait for the coordinator synchronization pull request
+      - name: Create pull request token
+        if: steps.existing.outputs.already_published != 'true'
+        id: pull-request-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.STARTER_KIT_COORDINATOR_APP_ID }}
+          private-key: ${{ secrets.STARTER_KIT_COORDINATOR_APP_PRIVATE_KEY }}
+          owner: Mentra-Community
+          repositories: Mentra-Bluetooth-SDK-Starter-Kit
+          permission-contents: read
+          permission-pull-requests: write
+          skip-token-revoke: true
+
+      - name: Create or reuse the synchronization pull request
         if: steps.existing.outputs.already_published != 'true'
         id: pull-request
         env:
+          GH_TOKEN: ${{ steps.pull-request-token.outputs.token }}
           RELEASE_IDENTITY: ${{ steps.release.outputs.releaseIdentity }}
           TARGET_BRANCH: ${{ steps.release.outputs.targetBranch }}
           CANDIDATE_BRANCH: ${{ steps.release.outputs.candidateBranch }}
-          MENTRAOS_RUN_URL: ${{ fromJSON(inputs.payload).mentraos.coordinatorRunUrl }}
+          RELEASE_COMMIT: ${{ steps.candidate.outputs.release_commit }}
+          MENTRAOS_RUN_URL: ${{ fromJSON(env.COORDINATED_PAYLOAD).mentraos.coordinatorRunUrl }}
         run: |
           set -euo pipefail
-          pr_url=""
-          for _ in {1..60}; do
-            pr_json=$(gh pr list --state all --base "$TARGET_BRANCH" --head "$CANDIDATE_BRANCH" \
-              --limit 1 --json number,url,state,mergedAt)
-            if [[ "$(jq 'length' <<<"$pr_json")" != "0" ]]; then
-              pr_url=$(jq -r '.[0].url' <<<"$pr_json")
-              state=$(jq -r '.[0].state' <<<"$pr_json")
-              merged_at=$(jq -r '.[0].mergedAt // empty' <<<"$pr_json")
-              if [[ "$state" == "CLOSED" && -z "$merged_at" ]]; then
-                echo "Coordinator PR $pr_url was closed without merging." >&2
-                exit 1
-              fi
-              break
-            fi
-            sleep 10
-          done
+          pr_json=$(gh pr list --state all --base "$TARGET_BRANCH" --head "$CANDIDATE_BRANCH" \
+            --limit 1 --json url,state,mergedAt,headRefOid)
+          pr_url=$(jq -r '.[0].url // empty' <<< "$pr_json")
           if [[ -z "$pr_url" ]]; then
-            echo "MentraOS did not create the synchronization PR for $RELEASE_IDENTITY." >&2
-            echo "Coordinator: $MENTRAOS_RUN_URL" >&2
+            pr_body=$(printf '%s\n\n%s\n%s\n' \
+              "Automated dependency synchronization for coordinated release \`$RELEASE_IDENTITY\`." \
+              "Coordinator: $MENTRAOS_RUN_URL" \
+              "Starter Kit workflow: https://github.com/$STARTER_KIT_REPOSITORY/actions/runs/$GITHUB_RUN_ID")
+            pr_url=$(gh pr create \
+              --base "$TARGET_BRANCH" \
+              --head "$CANDIDATE_BRANCH" \
+              --title "chore(release): synchronize examples to $RELEASE_IDENTITY" \
+              --body "$pr_body")
+            pr_json=$(gh pr view "$pr_url" --json url,state,mergedAt,headRefOid)
+          else
+            pr_json=$(jq '.[0]' <<< "$pr_json")
+          fi
+          state=$(jq -r .state <<< "$pr_json")
+          merged_at=$(jq -r '.mergedAt // empty' <<< "$pr_json")
+          if [[ "$state" == "CLOSED" && -z "$merged_at" ]]; then
+            echo "Synchronization PR $pr_url was closed without merging." >&2
             exit 1
           fi
+          [[ "$(jq -r .headRefOid <<< "$pr_json")" == "$RELEASE_COMMIT" ]]
           echo "url=$pr_url" >> "$GITHUB_OUTPUT"
+
+      - name: Revoke pull request token
+        if: always() && steps.existing.outputs.already_published != 'true' && steps.pull-request-token.outputs.token != ''
+        env:
+          GH_TOKEN: ${{ steps.pull-request-token.outputs.token }}
+        run: gh api --method DELETE /installation/token
 
       - name: Wait for pull request validation of the candidate commit
         if: steps.existing.outputs.already_published != 'true'
         id: validation
         env:
-          RELEASE_IDENTITY: ${{ steps.release.outputs.releaseIdentity }}
           CANDIDATE_BRANCH: ${{ steps.release.outputs.candidateBranch }}
           RELEASE_COMMIT: ${{ steps.candidate.outputs.release_commit }}
         run: |
           set -euo pipefail
-          run_id=""
+          run_id=$(gh run list --workflow example-app-builds.yml --branch "$CANDIDATE_BRANCH" \
+            --limit 20 --json databaseId,headSha \
+            --jq ".[] | select(.headSha == \"$RELEASE_COMMIT\") | .databaseId" \
+            | head -1)
           for _ in {1..60}; do
+            [[ -n "$run_id" ]] && break
             run_id=$(gh run list --workflow example-app-builds.yml --branch "$CANDIDATE_BRANCH" \
-              --event pull_request --limit 20 \
+              --limit 20 \
               --json databaseId,headSha \
               --jq ".[] | select(.headSha == \"$RELEASE_COMMIT\") | .databaseId" \
               | head -1)
@@ -257,27 +295,38 @@ jobs:
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
           echo "url=https://github.com/$STARTER_KIT_REPOSITORY/actions/runs/$run_id" >> "$GITHUB_OUTPUT"
 
-      - name: Wait for the coordinator to merge the validated pull request
+      - name: Create pull request merge token
+        if: steps.existing.outputs.already_published != 'true'
+        id: pull-request-merge-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.STARTER_KIT_COORDINATOR_APP_ID }}
+          private-key: ${{ secrets.STARTER_KIT_COORDINATOR_APP_PRIVATE_KEY }}
+          owner: Mentra-Community
+          repositories: Mentra-Bluetooth-SDK-Starter-Kit
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Merge the validated pull request
         if: steps.existing.outputs.already_published != 'true'
         id: merge
         env:
+          GH_TOKEN: ${{ steps.pull-request-merge-token.outputs.token }}
           PR_URL: ${{ steps.pull-request.outputs.url }}
           RELEASE_COMMIT: ${{ steps.candidate.outputs.release_commit }}
           TARGET_BRANCH: ${{ steps.release.outputs.targetBranch }}
         run: |
           set -euo pipefail
-          for _ in {1..60}; do
-            pr_json=$(gh pr view "$PR_URL" --json state,headRefOid,mergeCommit)
-            [[ "$(jq -r .headRefOid <<< "$pr_json")" == "$RELEASE_COMMIT" ]]
-            state=$(jq -r .state <<< "$pr_json")
-            if [[ "$state" == "MERGED" ]]; then break; fi
-            if [[ "$state" == "CLOSED" ]]; then
-              echo "Coordinator closed $PR_URL without merging it." >&2
-              exit 1
-            fi
-            sleep 10
-          done
-          [[ "$state" == "MERGED" ]]
+          pr_json=$(gh pr view "$PR_URL" --json state,headRefOid,mergeCommit)
+          [[ "$(jq -r .headRefOid <<< "$pr_json")" == "$RELEASE_COMMIT" ]]
+          state=$(jq -r .state <<< "$pr_json")
+          if [[ "$state" == "OPEN" ]]; then
+            gh pr merge "$PR_URL" --merge --match-head-commit "$RELEASE_COMMIT"
+          elif [[ "$state" != "MERGED" ]]; then
+            echo "Coordinator PR $PR_URL was closed without merging." >&2
+            exit 1
+          fi
+
           merge_commit=$(gh pr view "$PR_URL" --json mergeCommit --jq .mergeCommit.oid)
           git fetch origin "$TARGET_BRANCH"
           git merge-base --is-ancestor "$RELEASE_COMMIT" "origin/$TARGET_BRANCH"

@@ -5,6 +5,7 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
+    "icon": "./assets/app-icon.png",
     "splash": {
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
@@ -21,7 +22,8 @@
         "NSBluetoothPeripheralUsageDescription": "This example app uses Bluetooth to connect to smart glasses.",
         "NSCameraUsageDescription": "This example app can trigger camera capture on connected smart glasses.",
         "NSLocalNetworkUsageDescription": "This example app can talk to local media upload and streaming preview servers.",
-        "NSMicrophoneUsageDescription": "This example app can stream microphone audio from connected smart glasses."
+        "NSMicrophoneUsageDescription": "This example app can stream microphone audio from connected smart glasses.",
+        "NSPhotoLibraryUsageDescription": "This example app can save photos from connected smart glasses to your photo library."
       }
     },
     "android": {
@@ -52,6 +54,9 @@
       [
         "expo-build-properties",
         {
+          "ios": {
+            "deploymentTarget": "15.5"
+          },
           "android": {
             "minSdkVersion": 33,
             "usesCleartextTraffic": true,
