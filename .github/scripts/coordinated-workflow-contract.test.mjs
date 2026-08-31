@@ -14,6 +14,10 @@ function mobileFastfile(name) {
   return readFileSync(new URL(`../../mobile/ci/${name}/Fastfile`, import.meta.url), "utf8")
 }
 
+function repositoryScript(name) {
+  return readFileSync(new URL(`../../scripts/${name}`, import.meta.url), "utf8")
+}
+
 function jobBlock(source, name) {
   const start = source.indexOf(`\n  ${name}:\n`)
   assert.notEqual(start, -1, `Missing workflow job ${name}`)
@@ -231,6 +235,7 @@ test("mobile destinations use real TestFlight groups without changing the releas
 
 test("coordinated docs publish only after finalization to the matching channel", () => {
   const coordinator = workflow("coordinated-release.yml")
+  const plan = jobBlock(coordinator, "plan")
   const starterKit = jobBlock(coordinator, "starter-kit")
   const engineConsumer = jobBlock(coordinator, "engine-consumer")
   const exampleTestflight = jobBlock(coordinator, "example-testflight")
@@ -240,6 +245,19 @@ test("coordinated docs publish only after finalization to the matching channel",
   assert.match(starterKit, /^    needs: \[plan, ota\]$/m)
   assert.match(engineConsumer, /^    needs: \[plan, npm\]$/m)
   assert.match(starterKit, /coordinated-example-release\.yml/)
+  assert.match(coordinator, /Freeze the Starter Kit channel source/)
+  assert.match(coordinator, /--starter-kit-source starter-kit-source\.json/)
+  assert.match(coordinator, /trailers:key=Starter-Kit-Source,valueonly/)
+  assert.match(plan, /Restore the release plan selected by an earlier attempt/)
+  assert.match(plan, /actions\/runs\/\$GITHUB_RUN_ID\/artifacts/)
+  assert.match(plan, /gh run download "\$GITHUB_RUN_ID"/)
+  assert.match(plan, /jq -e \.starterKitSource release-plan\.json > starter-kit-source\.json/)
+  assert.match(plan, /output=release-plan\.verify\.json/)
+  assert.match(plan, /cmp release-plan\.json "\$output"/)
+  assert.equal([...plan.matchAll(/if: steps\.restore-plan\.outputs\.restored != 'true'/g)].length, 2)
+  assert.doesNotMatch(plan, /source_timestamp/)
+  assert.match(starterKit, /expected_head=\$\(jq -er \.starterKitSource\.sourceCommit "\$plan"\)/)
+  assert.doesNotMatch(starterKit, /expected_head=\$\(gh api/)
   assert.match(starterKit, /event_type: "coordinated_example_release"/)
   assert.match(starterKit, /--event repository_dispatch/)
   assert.doesNotMatch(starterKit, /gh workflow run coordinated-example-release\.yml/)
@@ -323,6 +341,48 @@ test("coordinated docs publish only after finalization to the matching channel",
     example,
     /token: \$\{\{ steps\.starter-kit-app-token\.outputs\.token \|\| secrets\.STARTER_KIT_COORDINATOR_TOKEN/,
   )
+})
+
+test("release-family promotion orders both repositories and reconciles Starter Kit ancestry", () => {
+  const script = repositoryScript("promote-release-family.mjs")
+  const start = script.indexOf('if (command === "start")')
+  const starterPromotion = script.indexOf("repository: STARTER_KIT_REPOSITORY", start)
+  const mentraosPromotion = script.indexOf("repository: MENTRAOS_REPOSITORY", starterPromotion)
+  const finish = script.indexOf("requireSuccessfulBetaRun(options.run)", mentraosPromotion)
+  const starterReconciliation = script.indexOf("repository: STARTER_KIT_REPOSITORY", finish)
+  const preparation = script.indexOf("scripts/prepare-next-release-family.mjs", starterReconciliation)
+
+  assert.ok(start >= 0)
+  assert.ok(starterPromotion > start)
+  assert.ok(mentraosPromotion > starterPromotion)
+  assert.ok(finish > mentraosPromotion)
+  assert.ok(starterReconciliation > finish)
+  assert.ok(preparation > starterReconciliation)
+  assert.match(script, /--match-head-commit", promotionHead/)
+  assert.match(script, /mergeBody: `Starter-Kit-Source: \$\{starterKitStagingHead\}`/)
+  assert.match(script, /run\.path !== "\.github\/workflows\/coordinated-release\.yml"/)
+  assert.match(script, /run\.head_sha !== stagingHead/)
+  assert.match(script, /expectedIdentity = `\$\{plan\.familyBaseVersion\}-beta\.\$\{run\.run_number\}`/)
+  assert.match(script, /plan\.sourceCommit !== stagingHead/)
+  assert.match(script, /plan\.starterKitSource\?\.sourceCommit !== starterKitSource/)
+  assert.match(script, /createMetadataCommit\(repository, targetHead, family, mergeBody\)/)
+  assert.match(script, /release\/promote-\$\{family\}-refresh-pin-\$\{marker\}/)
+  assert.match(script, /promotionBranchHead\(repository, branch\) \|\|/)
+  assert.match(script, /resumingPreparation = checkoutVersion === options\.next/)
+  assert.match(script, /requireDevCheckout\(\{allowDirty: resumingPreparation\}\)/)
+  assert.match(script, /there is no interrupted preparation to resume/)
+  assert.match(script, /requireNextVersion\(currentVersion, nextVersion\)/)
+})
+
+test("next-family preparation validates license inventory before mutating files", () => {
+  const script = repositoryScript("prepare-next-release-family.mjs")
+  const licensePreflight = script.indexOf("prepareLicenseInventory(currentVersion, nextVersion, family)")
+  const firstManifestWrite = script.indexOf("updateManifests({currentVersion, nextVersion, family})", licensePreflight)
+  const licenseWrite = script.indexOf("licenseInventory.output", firstManifestWrite)
+
+  assert.ok(licensePreflight >= 0)
+  assert.ok(firstManifestWrite > licensePreflight)
+  assert.ok(licenseWrite > firstManifestWrite)
 })
 
 test("external example review replacements are manual and exact-build only", () => {

@@ -1,11 +1,12 @@
 {
   "name": "mentraos",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "private": true,
   "main": "expo-router/entry",
   "workspaces": [
     "modules/*",
-    "../cloud-v2/packages/*"
+    "../cloud-v2/packages/cloud-client",
+    "../cloud-v2/packages/protocol"
   ],
   "scripts": {
     "preinstall": "zx ./scripts/preinstall.mjs",

@@ -243,7 +243,15 @@ export function loadReleaseFamily({rootDir = process.cwd(), requireVersionMirror
   }
 }
 
-export function createReleasePlan({family, channel, sequence, sourceCommit, nativeBuildNumber, otaInputs = {}}) {
+export function createReleasePlan({
+  family,
+  channel,
+  sequence,
+  sourceCommit,
+  nativeBuildNumber,
+  otaInputs = {},
+  starterKitSource,
+}) {
   if (!family?.members || !family?.familyBaseVersion) throw new Error("A validated release family is required")
   const changelog = validateChangelog(family.changelog, family.familyBaseVersion)
   if (!CHANNELS.has(channel)) throw new Error(`Unknown release channel ${JSON.stringify(channel)}`)
@@ -255,6 +263,16 @@ export function createReleasePlan({family, channel, sequence, sourceCommit, nati
   }
 
   const releaseIdentity = deriveReleaseIdentity(family.familyBaseVersion, channel, sequence)
+  if (starterKitSource !== undefined) {
+    const expectedBranch = channel === "dev" ? "dev" : channel === "beta" ? "staging" : "main"
+    if (
+      starterKitSource.repository !== "Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit" ||
+      starterKitSource.branch !== expectedBranch ||
+      !COMMIT_PATTERN.test(starterKitSource.sourceCommit || "")
+    ) {
+      throw new Error("starterKitSource must identify the exact channel branch and commit")
+    }
+  }
   const members = Object.fromEntries(
     family.members.map((member) => [
       member.name,
@@ -289,6 +307,7 @@ export function createReleasePlan({family, channel, sequence, sourceCommit, nati
     products: Object.fromEntries(family.products.map((product) => [product, releaseIdentity])),
     members,
     publicationOrder: family.publicationOrder,
+    ...(starterKitSource ? {starterKitSource: {...starterKitSource}} : {}),
     artifactNames: {
       releasePlan: `mentra-release-plan-${releaseIdentity}.json`,
       releaseManifest: `mentra-release-${releaseIdentity}.json`,
@@ -395,6 +414,7 @@ function validateStarterKitEvidence(plan, starterKit, artifacts) {
     starterKit.familyBaseVersion !== plan.familyBaseVersion ||
     starterKit.channel !== plan.channel ||
     starterKit.mentraos?.sourceCommit !== plan.sourceCommit ||
+    (plan.starterKitSource && starterKit.starterKit?.baseCommit !== plan.starterKitSource.sourceCommit) ||
     !Array.isArray(starterKit.artifacts) ||
     ![3, 4].includes(starterKit.artifacts.length)
   ) {
