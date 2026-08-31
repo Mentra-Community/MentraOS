@@ -63,8 +63,9 @@ public final class JSCRuntime: NSObject {
         /// Monotonic per-context counter for native-issued reqIds.
         var nextTimerToken: Int = 1
         /// signalReady NACK timer. Armed at spawn (15s cold-start) and
-        /// on every dispatchToJs (3s steady-state). Disarmed when the
-        /// polyfill calls __runtime.ready or when the call completes.
+        /// when a __deliver evaluate actually starts (3s steady-state).
+        /// Disarmed when the polyfill calls __runtime.ready or when the
+        /// evaluate returns (success or throw).
         var readyNackTimer: DispatchSourceTimer?
         /// True once the polyfill has signalled ready. Cleared on respawn.
         var readyAcked: Bool = false
@@ -304,14 +305,13 @@ public final class JSCRuntime: NSObject {
             os_log("MentraJS: bad envelope, drop", log: Self.log, type: .error)
             return
         }
-        // Steady-state NACK: re-arm the timer so a wedged JSContext
-        // surfaces a __error/ready_nack frame after 3s instead of silently
-        // swallowing the delivery. Only fires if a cold-start ack already
-        // landed — otherwise the cold-start timer is still ticking.
-        if record.readyAcked {
-            armReadyNackTimer(record: record, timeoutSeconds: Self.steadyStateNackTimeoutSeconds, cold: false)
-        }
         record.queue.async {
+            // Arm only once evaluate is about to run. Queue wait during a
+            // long previous turn must not count — that was firing
+            // ready_nack while the context was merely busy.
+            if record.readyAcked {
+                self.armReadyNackTimer(record: record, timeoutSeconds: Self.steadyStateNackTimeoutSeconds, cold: false)
+            }
             let escaped = Self.jsStringLiteral(json)
             // Soft watchdog: every evaluateScript outside spawn gets a
             // wall-clock timer. If the eval is still running at the warn
@@ -319,16 +319,16 @@ public final class JSCRuntime: NSObject {
             // the context down and emit __error/watchdog_kill so the
             // crash controller (if wired) can drive respawn.
             self.armSoftWatchdog(record: record, label: "__deliver")
+            defer {
+                self.disarmSoftWatchdog(record: record)
+                record.readyNackTimer?.cancel()
+                record.readyNackTimer = nil
+            }
             _ = self.evaluateCatching(
                 record: record,
                 label: "__deliver",
                 source: "globalThis.__deliver(\(escaped));",
             )
-            self.disarmSoftWatchdog(record: record)
-            // On a successful delivery, clear the NACK — the host
-            // observed the eval complete, so the context is responsive.
-            record.readyNackTimer?.cancel()
-            record.readyNackTimer = nil
         }
     }
 
