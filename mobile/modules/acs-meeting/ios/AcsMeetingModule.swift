@@ -144,7 +144,7 @@ final class AcsMeetingSession {
         videoFormat.pixelFormat = .nv12
         videoFormat.width = 1280
         videoFormat.height = 720
-        videoFormat.framesPerSecond = 15
+        videoFormat.framesPerSecond = 20
         let videoOptions = RawOutgoingVideoStreamOptions()
         videoOptions.formats = [videoFormat]
         let videoStream = VirtualOutgoingVideoStream(videoStreamOptions: videoOptions)
