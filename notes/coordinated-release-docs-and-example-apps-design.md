@@ -276,7 +276,7 @@ uses one token for the bounded request phase, waits for the immutable public
 result without credentials, and mints a fresh read-only token for final
 provenance verification. The App is
 installed only on `MentraOS` and `Mentra-Bluetooth-SDK-Starter-Kit` with
-Actions read, Checks read, Contents read/write, and Pull requests read/write
+Actions read/write, Checks read, Contents read/write, and Pull requests read/write
 permissions. Each job requests only the subset it uses when minting its token.
 
 During bootstrap, the implementation may fall back to the existing scoped SDK
