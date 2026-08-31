@@ -95,13 +95,16 @@ test("production promotion is resumable and keeps irreversible actions behind se
   assert.match(mobile, /backend_environment: prod/)
   assert.match(mobile, /play_track: internal/)
   assert.match(mobile, /Mentra Production Candidates/)
-  assert.match(mobile, /Mentra SDK Example Production Candidates/)
+  for (const source of [prepare, mobile, submit, release, status]) {
+    assert.doesNotMatch(source, /com\.mentra\.bluetoothsdkexample|starterKitCommit/)
+  }
+  assert.doesNotMatch(mobile, /starter-kit-ios:|starter-kit-android:|reusable-production-starter-kit-android/)
+  assert.match(mobile, /needs: \[load, mentra-app\]/)
   const androidFastfile = mobileFastfile("fastlane-android")
   assert.match(androidFastfile, /version_name: ENV\["GOOGLE_PLAY_RELEASE_NAME"\]/)
   assert.doesNotMatch(androidFastfile, /release_name:/)
   assert.match(mobile, /release_id: \$\{\{ needs\.load\.outputs\.promotion_release_id \}\}/)
   assert.match(mobile, /artifact_container_tag: \$\{\{ needs\.load\.outputs\.candidate_container_tag \}\}/)
-  assert.match(mobile, /candidate_release_id: \$\{\{ needs\.load\.outputs\.promotion_release_id \}\}/)
   assert.doesNotMatch(mobile, /allocate stable artifact container/i)
   assert.match(submit, /GOOGLE_PLAY_RELEASE_STATUS=draft/)
   assert.doesNotMatch(submit, /automatic_release: true/)
@@ -125,14 +128,6 @@ test("production promotion is resumable and keeps irreversible actions behind se
   assert.match(release, /validate-google-play-release\.mjs/)
   assert.match(release, /--required-state public/)
   assert.doesNotMatch(release, /\.tracks\.production \| map\(tonumber\)/)
-  const starterAndroid = workflow("reusable-production-starter-kit-android.yml")
-  assert.match(starterAndroid, /Persist and verify the exact App Bundle before Play upload/)
-  assert.match(starterAndroid, /publish-immutable-release-asset\.mjs/)
-  assert.match(starterAndroid, /GOOGLE_PLAY_AAB: \$\{\{ steps\.staged\.outputs\.aab \}\}/)
-  assert.match(
-    starterAndroid,
-    /Google Play contains this version code without this attempt's previously persisted App Bundle/,
-  )
   assert.equal(existsSync(new URL("../workflows/coordinated-production-promotion.yml", import.meta.url)), false)
   assert.equal(existsSync(new URL("../workflows/reusable-coordinated-mobile-promotion.yml", import.meta.url)), false)
 })

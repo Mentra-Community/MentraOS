@@ -77,13 +77,10 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p store-status/apple
-          for product in mentraApp starterKit; do
-            if [[ "$product" == mentraApp ]]; then bundle_id=com.mentra.mentra; else bundle_id=com.mentra.bluetoothsdkexample; fi
-            build=$(jq -er ".coordinates.candidates.$product.ios.buildNumber" promotion-input/current.json)
-            GITHUB_OUTPUT="store-status/apple/$product.outputs" node mobile/scripts/app-store-connect-build.mjs production-status \
-              --issuer-id "$ASC_API_ISSUER_ID" --key-id "$ASC_API_KEY_ID" --key-path "$ASC_API_KEY_PATH" \
-              --bundle-id "$bundle_id" --build-number "$build" --app-version "${{ inputs.release_identity }}"
-          done
+          build=$(jq -er .coordinates.candidates.mentraApp.ios.buildNumber promotion-input/current.json)
+          GITHUB_OUTPUT=store-status/apple/mentraApp.outputs node mobile/scripts/app-store-connect-build.mjs production-status \
+            --issuer-id "$ASC_API_ISSUER_ID" --key-id "$ASC_API_KEY_ID" --key-path "$ASC_API_KEY_PATH" \
+            --bundle-id com.mentra.mentra --build-number "$build" --app-version "${{ inputs.release_identity }}"
 
       - name: Read Google Play track state
         run: |
@@ -93,10 +90,7 @@ jobs:
           cp mobile/Gemfile mobile/Gemfile.lock store-status/play/
           cd store-status/play
           bundle install
-          for product in mentraApp starterKit; do
-            if [[ "$product" == mentraApp ]]; then package=com.mentra.mentra; else package=com.mentra.bluetoothsdkexample; fi
-            APP_PACKAGE_NAME="$package" GOOGLE_PLAY_INVENTORY_OUTPUT="$product.json" bundle exec fastlane google_play_inventory
-          done
+          APP_PACKAGE_NAME=com.mentra.mentra GOOGLE_PLAY_INVENTORY_OUTPUT=mentraApp.json bundle exec fastlane google_play_inventory
 
       - name: Summarize observed state and exact next action
         run: |
@@ -106,14 +100,12 @@ jobs:
             echo "## Production store status"
             echo
             echo "- Promotion state: \`$state\`"
-            for product in mentraApp starterKit; do
-              apple_state=$(sed -n 's/^state=//p' "store-status/apple/$product.outputs")
-              apple_build=$(sed -n 's/^build_id=//p' "store-status/apple/$product.outputs")
-              production_releases=$(jq -c .releases.production "store-status/play/$product.json")
-              echo "- $product Apple: \`$apple_state\` (build id \`$apple_build\`)"
-              echo "- $product Google production releases: \`$production_releases\`"
-            done
+            apple_state=$(sed -n 's/^state=//p' store-status/apple/mentraApp.outputs)
+            apple_build=$(sed -n 's/^build_id=//p' store-status/apple/mentraApp.outputs)
+            production_releases=$(jq -c .releases.production store-status/play/mentraApp.json)
+            echo "- Mentra App Apple: \`$apple_state\` (build id \`$apple_build\`)"
+            echo "- Mentra App Google production releases: \`$production_releases\`"
             echo
             echo "This workflow is read-only and does not infer approval from a Play track entry."
-            echo "When both consoles show review complete for the exact builds, attach the store-review-approved evidence template."
+            echo "When Apple and Google show review complete for the exact Mentra App builds, attach the store-review-approved evidence template."
           } >> "$GITHUB_STEP_SUMMARY"
