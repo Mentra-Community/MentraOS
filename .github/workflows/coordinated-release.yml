@@ -83,6 +83,33 @@ jobs:
               ;;
           esac
 
+      - name: Restore the release plan selected by an earlier attempt
+        id: restore-plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          artifacts=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100")
+          matches=$(jq '[.artifacts[] | select(.name | startswith("coordinated-release-plan-"))]' <<< "$artifacts")
+          count=$(jq 'length' <<< "$matches")
+          if (( count > 1 )); then
+            echo "Run $GITHUB_RUN_ID has $count release-plan artifacts; refusing an ambiguous retry." >&2
+            exit 1
+          fi
+          if (( count == 0 )); then
+            echo "restored=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ "$(jq -r '.[0].expired' <<< "$matches")" != "false" ]]; then
+            echo "The immutable release plan for run $GITHUB_RUN_ID has expired; allocate a new release instead." >&2
+            exit 1
+          fi
+          artifact=$(jq -er '.[0].name' <<< "$matches")
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$artifact" --dir restored-plan
+          cp restored-plan/release-plan.json release-plan.json
+          jq -e .starterKitSource release-plan.json > starter-kit-source.json
+          echo "restored=true" >> "$GITHUB_OUTPUT"
+
       - name: Collect promoted firmware inputs
         run: node .github/scripts/collect-ota-release-inputs.mjs
 
@@ -90,8 +117,7 @@ jobs:
         run: node .github/scripts/generate-changelog-catalog.mjs --check
 
       - name: Freeze the Starter Kit channel source
-        env:
-          GH_TOKEN: ${{ github.token }}
+        if: steps.restore-plan.outputs.restored != 'true'
         run: |
           set -euo pipefail
           starter_repository=Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit
@@ -104,12 +130,7 @@ jobs:
             *) echo "Unsupported Starter Kit channel for ${{ github.ref_name }}" >&2; exit 1 ;;
           esac
           if [[ -z "${starter_head:-}" ]]; then
-            source_timestamp=$(git show -s --format=%cI "${{ github.sha }}")
-            starter_head=$(gh api --method GET "repos/$starter_repository/commits" \
-              -f sha="$starter_branch" \
-              -f until="$source_timestamp" \
-              -f per_page=1 \
-              --jq '.[0].sha')
+            starter_head=$(git ls-remote "https://github.com/$starter_repository.git" "refs/heads/$starter_branch" | awk '{print $1}')
           fi
           [[ "$starter_head" =~ ^[0-9a-f]{40}$ ]]
           jq -n \
@@ -122,6 +143,11 @@ jobs:
       - name: Create deterministic release plan
         run: |
           set -euo pipefail
+          if [[ "${{ steps.restore-plan.outputs.restored }}" == "true" ]]; then
+            output=release-plan.verify.json
+          else
+            output=release-plan.json
+          fi
           node .github/scripts/create-release-plan.mjs \
             --branch "${{ github.ref_name }}" \
             --sequence "${{ github.run_number }}" \
@@ -130,8 +156,12 @@ jobs:
             --ota-inputs ota-release-inputs.json \
             --starter-kit-source starter-kit-source.json \
             --require-version-mirrors true \
-            --output release-plan.json
-          cp release-plan.json release-plan.first.json
+            --output "$output"
+          if [[ "$output" == "release-plan.verify.json" ]]; then
+            cmp release-plan.json "$output"
+            exit 0
+          fi
+          cp "$output" release-plan.first.json
           node .github/scripts/create-release-plan.mjs \
             --branch "${{ github.ref_name }}" \
             --sequence "${{ github.run_number }}" \
@@ -211,6 +241,7 @@ jobs:
           echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@v4
+        if: steps.restore-plan.outputs.restored != 'true'
         with:
           name: ${{ steps.release.outputs.plan_artifact }}
           path: |
