@@ -5,6 +5,7 @@ import path from "node:path"
 import {fileURLToPath} from "node:url"
 
 import {generateChangelogCatalog} from "../.github/scripts/generate-changelog-catalog.mjs"
+import {loadReleaseFamily} from "../.github/scripts/release-family.mjs"
 
 const STABLE_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
 const DEPENDENCY_SECTIONS = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"]
@@ -212,7 +213,7 @@ function updateManifests({currentVersion, nextVersion, family}) {
 function createChangelog(nextVersion) {
   const relativePath = `changelogs/${nextVersion}.md`
   const output = path.join(rootDir, relativePath)
-  if (existsSync(output)) fail(`${relativePath} already exists`)
+  if (existsSync(output)) return
   writeFileSync(
     output,
     "This release is under active development. User-facing changes will be documented as they land.\n",
@@ -247,11 +248,13 @@ function updateLicenseInventory(currentVersion, nextVersion, family) {
   let output = input
 
   for (const entry of inventory.packages.filter(({name}) => familyNames.has(name))) {
-    if (entry.version !== currentVersion) {
+    const resumesLowerInventoryEntry =
+      currentVersion === nextVersion && compareVersions(entry.version, nextVersion) < 0
+    if (entry.version !== currentVersion && !resumesLowerInventoryEntry) {
       fail(`${relativePath} lists ${entry.name} at ${entry.version}, expected ${currentVersion}`)
     }
     const namePattern = JSON.stringify(entry.name).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-    const versionPattern = JSON.stringify(currentVersion).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+    const versionPattern = JSON.stringify(entry.version).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
     const pattern = new RegExp(`("name"\\s*:\\s*${namePattern}\\s*,\\s*"version"\\s*:\\s*)${versionPattern}`)
     if (!pattern.test(output)) fail(`${relativePath} does not contain the expected ${entry.name} entry`)
     output = output.replace(pattern, `$1${JSON.stringify(nextVersion)}`)
@@ -282,8 +285,8 @@ function main() {
   const versionSource = readJson(family.versionSource)
   const currentVersion = versionSource.version
   versionTuple(currentVersion)
-  if (compareVersions(nextVersion, currentVersion) <= 0) {
-    fail(`${nextVersion} must be greater than the current family base ${currentVersion}`)
+  if (compareVersions(nextVersion, currentVersion) < 0) {
+    fail(`${nextVersion} must not be lower than the current family base ${currentVersion}`)
   }
 
   updateManifests({currentVersion, nextVersion, family})
@@ -291,11 +294,16 @@ function main() {
   updateStableDocs(currentVersion, nextVersion)
   updateLicenseInventory(currentVersion, nextVersion, family)
   generateChangelogCatalog(rootDir)
+  loadReleaseFamily({rootDir, requireVersionMirrors: true})
   installWorkspaces([])
   syncLockfileWorkspaceMetadata(family)
   installWorkspaces(["--frozen-lockfile"])
 
-  console.log(`Prepared release family ${nextVersion} from ${currentVersion}`)
+  console.log(
+    currentVersion === nextVersion
+      ? `Resumed release family preparation for ${nextVersion}`
+      : `Prepared release family ${nextVersion} from ${currentVersion}`,
+  )
 }
 
 main()
