@@ -299,8 +299,6 @@ function main() {
       previousManifestSha256: fileSha256("previous-manifest"),
       previousManifestUrl: args["previous-manifest-url"],
       mentraInventory: readJson("mentra-inventory"),
-      starterKitInventory: readJson("starter-kit-inventory"),
-      starterKitCommit: args["starter-kit-commit"],
     })
     output({selection_digest: digest}, args["github-output"])
     return

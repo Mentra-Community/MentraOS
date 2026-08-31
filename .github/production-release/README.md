@@ -1,8 +1,14 @@
 # Production release runbook
 
 This is the employee procedure for promoting one completed coordinated beta to
-production. It covers Cloud V2, the Mentra App on iOS and Android, and the
-Bluetooth SDK Starter Kit example on iOS and Android.
+production. It covers Cloud V2 and the Mentra App on iOS and Android.
+
+The Bluetooth SDK Starter Kit example app is explicitly outside this production
+promotion system. These workflows do not build it, upload it to TestFlight or
+Google Play, submit it for review, or release it publicly. Do not add the example
+app manually to a promotion attempt. Its coordinated beta pipeline remains
+separate and unchanged. Publishing it to app stores later requires a reviewed
+workflow and runbook change; it is not an operator-time option.
 
 The process is resumable. It records immutable state in a draft GitHub release
 named `mentra-production-promotion-vX.Y.Z-attempt-N`. Store review may take days;
@@ -57,12 +63,11 @@ Configure these GitHub environments:
 | `production-store-release`     | Public release and rollout evidence | Required reviewer different from initiator |
 
 Required secrets are the existing Porter, App Store Connect, Google Play,
-Android upload-signing, Apple Match, Doppler, Mapbox, Sentry, and Starter Kit
-checkout credentials used by the reusable release workflows. Operators do not
-download them locally.
+Android upload-signing, Apple Match, Doppler, Mapbox, and Sentry credentials
+used by the reusable release workflows. Operators do not download them locally.
 
-Before launch week, verify in App Store Connect and Play Console for both app
-records:
+Before launch week, verify the Mentra App record in App Store Connect and Play
+Console:
 
 - agreements, tax, banking, compliance, privacy, export, data safety, content
   rating, countries, support/privacy URLs, screenshots, and listing copy;
@@ -70,27 +75,9 @@ records:
 - internal tester membership and dedicated test devices;
 - a `Mentra Compatibility Lab` internal TestFlight group;
 - automatic TestFlight distribution is off for the production groups;
-- managed publishing is enabled for existing Google Play apps; and
+- managed publishing is enabled in Google Play; and
 - alerting, dashboards, incident channel, release owner, QA owner, approver, and
   rollback owner are staffed for the release window.
-
-### Starter Kit first release prerequisites
-
-The Starter Kit has not previously been public in the stores. Before starting:
-
-- finalize `com.mentra.bluetoothsdkexample` in source, App Store Connect, and
-  Google Play;
-- create the Play app record, enable Play App Signing and API access, and
-  bootstrap internal testing early;
-- ensure the stable `sdk-X.Y.Z` Starter Kit tag consumes exact public
-  `@mentra/bluetooth-sdk` and `@mentra/engine` version `X.Y.Z`;
-- complete the product-quality gate in the design document: this must be a
-  finished developer utility, not a placeholder/demo shell; and
-- arrange the hardware, account, instructions, and reviewer access Apple needs.
-
-Google Play does not support managed publishing or staged rollout for an app's
-first public release. Approval may make that first Starter Kit Android release
-public. Submit it only during a staffed release period and monitor continuously.
 
 ## Operator commands
 
@@ -122,7 +109,6 @@ Preparation fails if:
 - the beta is incomplete or its immutable artifacts fail verification;
 - its source is not contained in `main`;
 - the public Mentra App does not match the previous production manifest;
-- the stable Starter Kit tag is missing;
 - store build numbers cannot be allocated monotonically; or
 - the current production release lacks provenance. For a one-time provenance
   bootstrap, create and review an accurate immutable current-production record;
@@ -232,14 +218,12 @@ Run:
 ./scripts/production-release.mjs next --release X.Y.Z
 ```
 
-After `production-mobile-candidates` approval, the workflow rebuilds all four
-candidates. Mentra App targets production Cloud and uses the frozen OTA pin.
-Starter Kit source must already contain the final identifiers and exact stable
-SDK dependencies; the workflow refuses to rewrite them. Outputs go only to:
+After `production-mobile-candidates` approval, the workflow rebuilds the two
+Mentra App candidates. They target production Cloud and use the frozen OTA pin.
+Outputs go only to:
 
 - TestFlight `Mentra Production Candidates`;
-- TestFlight `Mentra SDK Example Production Candidates`; and
-- each app's isolated Play internal-testing track.
+- the Mentra App Play internal-testing track.
 
 They are normal customer-eligible candidates, never TestFlight Internal Only or
 Internal App Sharing artifacts. A retry reuses only an exact matching coordinate
@@ -251,8 +235,7 @@ Install through TestFlight and Play, not local archives. On iOS and Android test
 the Mentra App clean install/upgrade, production auth/session, pair/reconnect,
 Core/Runtime, transcription, media/BLE, OTA identity, permissions/background,
 telemetry environment, no staging endpoints, and every release-specific config
-check. Test Starter Kit launch, stable SDK identity, pair/reconnect, display,
-audio/transcription-local flow, media flow, permissions, and restart.
+check.
 
 Use `evidence/production-candidates.template.json` and attest:
 
@@ -272,10 +255,10 @@ numbers. For Apple select manual release; use phased release for normal Mentra
 App updates unless the approver documents an exception. For Play verify managed
 publishing before an existing-app production submission.
 
-Then run `next`. The protected workflow submits the exact iOS builds with manual
-release and creates/reconciles exact Google production drafts. If a store field
-blocks the API, finish only the equivalent UI action and rerun; the workflow
-must read back the same build.
+Then run `next`. The protected workflow submits the exact iOS build with manual
+release and creates or reconciles the exact Google production draft. If a store
+field blocks the API, finish only the equivalent UI action and rerun; the
+workflow must read back the same build.
 
 Apple UI fallback:
 
@@ -302,7 +285,7 @@ Record rejection messages and responses. Metadata-only corrections may reuse
 the exact binary. Any binary/config change requires a new candidate and full
 candidate acceptance.
 
-When Apple and Google show review complete for all four exact coordinates, fill
+When Apple and Google show review complete for both exact coordinates, fill
 `evidence/store-review-approved.template.json` and run:
 
 ```bash
@@ -322,12 +305,10 @@ Request the protected two-person release approval:
 This first appends approval only. It does not pretend that a GitHub approval
 clicked a store button. After approval, perform the exact UI actions:
 
-- Apple: release the exact approved versions; leave Mentra App phased release
+- Apple: release the exact approved version; leave Mentra App phased release
   enabled unless an exception was approved.
-- Google existing apps: Publishing overview -> Publish changes, then start the
+- Google: Publishing overview -> Publish changes, then start the
   approved staged rollout for the exact version code.
-- Starter Kit first Android release: approval may already have published it;
-  treat this as the documented first-release exception and monitor immediately.
 
 The verification workflow requires the exact Google version code to be in a
 production release whose status is `inProgress` with a nonzero rollout fraction
@@ -361,9 +342,10 @@ chain. If finalization is interrupted, rerun the same `--complete` command; it
 verifies identical existing assets and resumes. Do not abort or start a
 replacement attempt after `finalizing`: the 100 percent rollout is already
 public, so the only valid recovery is to finish reconciling this attempt.
-Do not complete until both store pages are publicly reachable in intended
-territories, install/update returns the exact coordinates, production Cloud is
-healthy, and the release owner has recorded the final observation window.
+Do not complete until both Mentra App store pages are publicly reachable in
+intended territories, install/update returns the exact coordinates, production
+Cloud is healthy, and the release owner has recorded the final observation
+window.
 
 After completion, inspect the two canonical assets and perform the final public
 availability checks. Publish the already-staged GitHub release manually; no
@@ -386,7 +368,8 @@ the 100 percent `finalizing` checkpoint. Preparation runs are serialized while
 they allocate attempts, so starting two beta selections does not create two
 active promotions. A retry resumes a zero-state container only when its selected
 beta, source commit, prior-production provenance, store inventories, release
-family, and Starter Kit commit match exactly through one deterministic digest.
+family, and Mentra App coordinates match exactly through one deterministic
+digest.
 
 Common stop conditions include source/lock mismatch, missing store provenance,
 unclassified Cloud config, non-backward-compatible migration, Mobile N failure,
