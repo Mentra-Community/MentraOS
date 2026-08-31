@@ -10,6 +10,10 @@ function mobileScript(name) {
   return readFileSync(new URL(`../../mobile/scripts/${name}`, import.meta.url), "utf8")
 }
 
+function mobileFastfile(name) {
+  return readFileSync(new URL(`../../mobile/ci/${name}/Fastfile`, import.meta.url), "utf8")
+}
+
 function jobBlock(source, name) {
   const start = source.indexOf(`\n  ${name}:\n`)
   assert.notEqual(start, -1, `Missing workflow job ${name}`)
@@ -88,6 +92,9 @@ test("production promotion is resumable and keeps irreversible actions behind se
   assert.match(mobile, /play_track: internal/)
   assert.match(mobile, /Mentra Production Candidates/)
   assert.match(mobile, /Mentra SDK Example Production Candidates/)
+  const androidFastfile = mobileFastfile("fastlane-android")
+  assert.match(androidFastfile, /version_name: ENV\["GOOGLE_PLAY_RELEASE_NAME"\]/)
+  assert.doesNotMatch(androidFastfile, /release_name:/)
   assert.match(mobile, /release_id: \$\{\{ needs\.load\.outputs\.promotion_release_id \}\}/)
   assert.match(mobile, /artifact_container_tag: \$\{\{ needs\.load\.outputs\.candidate_container_tag \}\}/)
   assert.match(mobile, /candidate_release_id: \$\{\{ needs\.load\.outputs\.promotion_release_id \}\}/)
