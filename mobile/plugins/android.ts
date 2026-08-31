@@ -8,6 +8,7 @@ import {
   withSettingsGradle,
   withGradleProperties,
   withAndroidManifest,
+  withProjectBuildGradle,
 } from "@expo/config-plugins"
 
 /**
@@ -16,6 +17,7 @@ import {
  */
 const withAndroidWorkingConfig: ConfigPlugin = (config) => {
   // Apply all modifications in sequence
+  config = withProjectBuildGradleModifications(config)
   config = withAppBuildGradleModifications(config)
   config = withAndroidManifestModifications(config)
   config = withXmlResourceFiles(config)
@@ -23,6 +25,40 @@ const withAndroidWorkingConfig: ConfigPlugin = (config) => {
   config = withSettingsGradleModifications(config)
 
   return config
+}
+
+/**
+ * MSAL's `common` dependency still references the Surface Duo display-mask
+ * artifact, which Microsoft publishes outside Maven Central. Restrict this
+ * repository to that one group so other dependencies continue resolving from
+ * the normal repositories.
+ */
+function withProjectBuildGradleModifications(config: any) {
+  return withProjectBuildGradle(config, (config) => {
+    let buildGradle = config.modResults.contents
+    const marker = "entra-auth: Microsoft display-mask Maven repository"
+
+    if (!buildGradle.includes(marker)) {
+      const repository = `    maven {
+      // ${marker}
+      url 'https://pkgs.dev.azure.com/MicrosoftDeviceSDK/DuoSDK-Public/_packaging/Duo-SDK-Feed/maven/v1'
+      content {
+        includeGroup("com.microsoft.device.display")
+      }
+    }`
+      const repositories = buildGradle.match(/allprojects\s*\{[\s\S]*?repositories\s*\{/)
+
+      if (repositories) {
+        const insertionPoint = (repositories.index ?? 0) + repositories[0].length
+        buildGradle = buildGradle.slice(0, insertionPoint) + "\n" + repository + buildGradle.slice(insertionPoint)
+      } else {
+        buildGradle += `\nallprojects {\n  repositories {\n${repository}\n  }\n}\n`
+      }
+    }
+
+    config.modResults.contents = buildGradle
+    return config
+  })
 }
 
 // Derive the active Android applicationId. Honors MENTRAOS_BUILD_NAME so that
