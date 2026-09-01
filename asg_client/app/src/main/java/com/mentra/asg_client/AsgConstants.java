@@ -34,6 +34,12 @@ public class AsgConstants {
     /** Protocol version for phone-served OTA artifacts over the Mentra Live hotspot. */
     public static final int HOTSPOT_OTA_VERSION = 1;
 
+    /** Protocol version for session-correlated {@code wifi_forget_result} responses. */
+    public static final int WIFI_FORGET_RESULT_VERSION = 1;
+
+    /** Protocol version for session-correlated saved WiFi network responses. */
+    public static final int SAVED_WIFI_NETWORKS_VERSION = 1;
+
     /** Canonical camera crop defaults shared with the phone and Bluetooth SDK. */
     public static final int CAMERA_FOV_DEFAULT = 118;
 
@@ -207,8 +213,7 @@ public class AsgConstants {
     public static final String BES_OTA_PRODUCT = "best1502x_ibrt_bpone";
 
     /** Prefix for hash-addressed ADB-only artifacts, separate from phone-owned BES OTA data. */
-    public static final String DEBUG_BES_OTA_ARTIFACT_PREFIX =
-            "/storage/emulated/0/asg/debug_bes_";
+    public static final String DEBUG_BES_OTA_ARTIFACT_PREFIX = "/storage/emulated/0/asg/debug_bes_";
 
     /** Debug BES intent extra carrying the exact post-reboot firmware version. */
     public static final String DEBUG_BES_OTA_TARGET_VERSION_EXTRA = "target_version";
@@ -220,8 +225,7 @@ public class AsgConstants {
     public static final String DEBUG_BES_OTA_ARTIFACT_ID_EXTRA = "artifact_id";
 
     /** ADB/local command that reboots BES before handing MTK to a factory USB flasher. */
-    public static final String COMMAND_REBOOT_BES_FOR_MTK_FLASH =
-            "reboot_bes_for_mtk_flash";
+    public static final String COMMAND_REBOOT_BES_FOR_MTK_FLASH = "reboot_bes_for_mtk_flash";
 
     /** Correlation field used to prove that the requested BES reboot reached the UART worker. */
     public static final String MTK_FLASH_REQUEST_ID_FIELD = "request_id";
@@ -255,9 +259,9 @@ public class AsgConstants {
     public static final long UART_BOOT_RECOVERY_INITIAL_DELAY_MS = 8000;
 
     /**
-     * Grace after bounded UART recovery is exhausted before a BES OTA timeout becomes terminal.
-     * BES can finish rebooting after the transport scan, and an exact target-version reply from
-     * that later Linux boot is authoritative.
+     * Grace after bounded UART recovery is exhausted before a BES OTA timeout becomes terminal. BES
+     * can finish rebooting after the transport scan, and an exact target-version reply from that
+     * later Linux boot is authoritative.
      */
     public static final long BES_OTA_RECOVERY_FAILURE_GRACE_MS = 30000;
 
@@ -476,8 +480,8 @@ public class AsgConstants {
     public static final int BLE_PHOTO_MAX_TARGET_PX = 1920;
 
     /**
-     * Phone → glasses JSON command type to enable or disable Wi-Fi ADB (Mentra Live).
-     * Persisted via AsgSettings and applied at boot (default off).
+     * Phone → glasses JSON command type to enable or disable Wi-Fi ADB (Mentra Live). Persisted via
+     * AsgSettings and applied at boot (default off).
      */
     public static final String COMMAND_SET_WIFI_ADB_STATE = "set_wifi_adb_state";
 }

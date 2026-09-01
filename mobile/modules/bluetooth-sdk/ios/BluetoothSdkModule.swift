@@ -296,7 +296,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
 
         AsyncFunction("getSavedWifiNetworks") {
             let sdk = await MainActor.run { self.bluetoothSdk() }
-            return try await sdk.getSavedWifiNetworks()
+            return try await sdk.getSavedWifiNetworks().values
         }
 
         AsyncFunction("sendWifiCredentials") { (ssid: String, password: String) in
@@ -521,12 +521,12 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             try await MainActor.run { try sdk.sendAr99FactoryReset() }
         }
 
-
         Function("buildAr99OtaSignature") { (secret: String, appName: String, currentVersion: String, serialNumber: String, nonce: String) in
             let raw = secret + appName + "juxinOTA" + currentVersion + serialNumber.trimmingCharacters(in: .whitespacesAndNewlines) + nonce
             let digest = Insecure.MD5.hash(data: Data(raw.utf8))
             return digest.map { String(format: "%02x", $0) }.joined()
         }
+
         // MARK: - Version Info Commands
 
         AsyncFunction("requestVersionInfo") {
@@ -940,5 +940,3 @@ private extension ConnectOptions {
         )
     }
 }
-
-

@@ -2772,7 +2772,11 @@ class MentraLive: NSObject, SGCManager {
             // Record the session id BEFORE marking ready: an unsolicited glasses_ready
             // already runs this full remote-reset flow, so recording (not re-triggering)
             // is correct here; version_info detection covers the restart case.
-            if let sid = json["sid"] as? String, !sid.isEmpty { glassesSessionId = sid }
+            glassesSessionId = (json["sid"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            Bridge.sendTypedMessage(
+                "wifi_protocol_session_ready",
+                body: ["sid": glassesSessionId ?? ""]
+            )
             readinessCompletedThisBleSession = true
             handleGlassesReady()
 
@@ -2813,9 +2817,12 @@ class MentraLive: NSObject, SGCManager {
         case "wifi_forget_result":
             Bridge.sendWifiForgetResult(
                 requestId: json["requestId"] as? String ?? "",
+                sid: json["sid"] as? String ?? "",
                 ssid: json["ssid"] as? String ?? "",
-                dispatched: json["dispatched"] as? Bool ?? false,
-                connected: json["connected"] as? Bool ?? false,
+                protocolVersion: (json["protocol_version"] as? NSNumber)?.intValue ?? 0,
+                outcome: json["outcome"] as? String ?? "",
+                legacyDispatched: json["dispatched"] as? Bool,
+                connected: json["connected"] as? Bool,
                 currentSsid: json["current_ssid"] as? String ?? "",
                 localIp: json["local_ip"] as? String ?? "",
                 error: (json["error"] as? String).flatMap { $0.isEmpty ? nil : $0 }
@@ -2824,6 +2831,9 @@ class MentraLive: NSObject, SGCManager {
         case "saved_wifi_networks":
             Bridge.sendSavedWifiNetworks(
                 requestId: json["requestId"] as? String ?? "",
+                sid: json["sid"] as? String ?? "",
+                protocolVersion: (json["protocol_version"] as? NSNumber)?.intValue ?? 0,
+                outcome: json["outcome"] as? String ?? "",
                 networks: json["networks"] as? [String] ?? [],
                 error: (json["error"] as? String).flatMap { $0.isEmpty ? nil : $0 }
             )
@@ -2936,7 +2946,7 @@ class MentraLive: NSObject, SGCManager {
             Bridge.log("LIVE: Received pong response - connection healthy")
 
         case "entering_pairing_mode":
-            let windowMs = max(5_000, min(180_000, json["window_ms"] as? Int ?? 120_000))
+            let windowMs = max(5000, min(180_000, json["window_ms"] as? Int ?? 120_000))
             Bridge.log("LIVE: Glasses entering pairing mode — yield \(windowMs)ms (no forget)")
             enterPairingYield(windowMs: windowMs)
             let body: [String: Any] = [
@@ -3079,6 +3089,7 @@ class MentraLive: NSObject, SGCManager {
 
                 // Extract all fields from JSON (except "type")
                 var fields: [String: Any] = [:]
+                fields["version_info_type"] = type
                 for (key, value) in json {
                     if key != "type" {
                         fields[key] = value
@@ -3641,6 +3652,10 @@ class MentraLive: NSObject, SGCManager {
     }
 
     func forgetWifiNetwork(_ ssid: String, requestId: String?) {
+        forgetWifiNetwork(ssid, requestId: requestId, sid: nil)
+    }
+
+    func forgetWifiNetwork(_ ssid: String, requestId: String?, sid: String?) {
         Bridge.log("LIVE: 📶 Sending WiFi forget command for SSID: \(ssid)")
 
         guard !ssid.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -3648,9 +3663,12 @@ class MentraLive: NSObject, SGCManager {
             if let requestId {
                 Bridge.sendWifiForgetResult(
                     requestId: requestId,
+                    sid: sid ?? "",
                     ssid: ssid,
-                    dispatched: false,
-                    connected: false,
+                    protocolVersion: 1,
+                    outcome: "failed",
+                    legacyDispatched: nil,
+                    connected: nil,
                     currentSsid: "",
                     localIp: "",
                     error: "invalid_ssid"
@@ -3666,13 +3684,24 @@ class MentraLive: NSObject, SGCManager {
         if let requestId, !requestId.isEmpty {
             json["requestId"] = requestId
         }
+        if let sid, !sid.isEmpty {
+            json["sid"] = sid
+        }
 
         sendJson(json, wakeUp: true)
     }
 
     func requestSavedWifiNetworks(requestId: String) {
+        requestSavedWifiNetworks(requestId: requestId, sid: "")
+    }
+
+    func requestSavedWifiNetworks(requestId: String, sid: String) {
+        var command: [String: Any] = ["type": "request_saved_wifi_networks", "requestId": requestId]
+        if !sid.isEmpty {
+            command["sid"] = sid
+        }
         sendJson(
-            ["type": "request_saved_wifi_networks", "requestId": requestId],
+            command,
             wakeUp: true
         )
     }

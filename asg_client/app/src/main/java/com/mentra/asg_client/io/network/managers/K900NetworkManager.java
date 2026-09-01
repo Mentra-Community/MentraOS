@@ -12,9 +12,10 @@ import android.provider.Settings;
 import android.util.Log;
 import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.network.core.BaseNetworkManager;
-import com.mentra.asg_client.io.network.utils.WifiSecurityChooser;
 import com.mentra.asg_client.io.network.interfaces.IWifiScanCallback;
+import com.mentra.asg_client.io.network.interfaces.WifiForgetOutcome;
 import com.mentra.asg_client.io.network.utils.DebugNotificationManager;
+import com.mentra.asg_client.io.network.utils.WifiSecurityChooser;
 import com.mentra.asg_client.io.ota.session.OtaSessionManager;
 import com.mentra.asg_client.service.system.core.SystemControllerFactory;
 import com.mentra.asg_client.service.system.interfaces.ISystemController;
@@ -134,10 +135,7 @@ public class K900NetworkManager extends BaseNetworkManager {
             notificationManager.showHotspotStateNotification(true);
             Log.i(
                     TAG,
-                    "🔥 Adopted existing K900 vendor hotspot: "
-                            + ssid
-                            + " gateway="
-                            + gatewayIp);
+                    "🔥 Adopted existing K900 vendor hotspot: " + ssid + " gateway=" + gatewayIp);
         }
     }
 
@@ -229,8 +227,7 @@ public class K900NetworkManager extends BaseNetworkManager {
             mHotspotStarting = true;
             generation = ++mHotspotGeneration;
             mHotspotReadinessDeadlineMs =
-                    SystemClock.elapsedRealtime()
-                            + AsgConstants.LOCAL_HOTSPOT_READINESS_TIMEOUT_MS;
+                    SystemClock.elapsedRealtime() + AsgConstants.LOCAL_HOTSPOT_READINESS_TIMEOUT_MS;
         }
 
         requestVendorHotspot(generation);
@@ -321,8 +318,7 @@ public class K900NetworkManager extends BaseNetworkManager {
 
     private void checkVendorHotspotReadiness(int generation) {
         String gatewayIp = findLocalHotspotGatewayIp();
-        String ssid =
-                readVendorHotspotSetting(AsgConstants.K900_VENDOR_HOTSPOT_SSID_SETTING);
+        String ssid = readVendorHotspotSetting(AsgConstants.K900_VENDOR_HOTSPOT_SSID_SETTING);
         String password =
                 readVendorHotspotSetting(AsgConstants.K900_VENDOR_HOTSPOT_PASSWORD_SETTING);
         synchronized (mHotspotLock) {
@@ -334,8 +330,7 @@ public class K900NetworkManager extends BaseNetworkManager {
                 mHotspotStarting = false;
                 onHotspotStarted(ssid, password, gatewayIp);
                 notificationManager.showHotspotStateNotification(true);
-                notificationManager.showDebugNotification(
-                        "Mentra Live Hotspot Active", ssid);
+                notificationManager.showDebugNotification("Mentra Live Hotspot Active", ssid);
                 Log.i(TAG, "🔥 K900 vendor hotspot ready: " + ssid + " gateway=" + gatewayIp);
                 return;
             }
@@ -345,8 +340,7 @@ public class K900NetworkManager extends BaseNetworkManager {
             }
             mPendingHotspotReadiness = () -> checkVendorHotspotReadiness(generation);
             mHotspotHandler.postDelayed(
-                    mPendingHotspotReadiness,
-                    AsgConstants.LOCAL_HOTSPOT_READINESS_POLL_MS);
+                    mPendingHotspotReadiness, AsgConstants.LOCAL_HOTSPOT_READINESS_POLL_MS);
         }
     }
 
@@ -573,8 +567,8 @@ public class K900NetworkManager extends BaseNetworkManager {
     }
 
     /**
-     * Latest scan capabilities string for an SSID (strongest BSS wins), or null when the
-     * SSID is not in current scan results.
+     * Latest scan capabilities string for an SSID (strongest BSS wins), or null when the SSID is
+     * not in current scan results.
      */
     private String findScanCapabilitiesForSsid(String ssid) {
         try {
@@ -622,7 +616,7 @@ public class K900NetworkManager extends BaseNetworkManager {
     }
 
     @Override
-    public boolean forgetWifiNetwork(String ssid) {
+    public WifiForgetOutcome forgetWifiNetwork(String ssid) {
         Log.d(TAG, "📶 =========================================");
         Log.d(TAG, "📶 FORGET WIFI NETWORK: " + ssid);
         Log.d(TAG, "📶 =========================================");
@@ -636,13 +630,18 @@ public class K900NetworkManager extends BaseNetworkManager {
             Log.i(TAG, "📶 WiFi forget command dispatched for: " + ssid);
             notificationManager.showDebugNotification(
                     "WiFi Forget Requested", "Dispatched removal request for: " + ssid);
-            return true;
+            return WifiForgetOutcome.DISPATCHED;
         } catch (Exception e) {
             Log.e(TAG, "📶 💥 Error forgetting WiFi network", e);
             notificationManager.showDebugNotification(
                     "WiFi Error", "Failed to forget: " + e.getMessage());
-            return false;
+            return WifiForgetOutcome.FAILED;
         }
+    }
+
+    @Override
+    public int getSavedWifiNetworksVersion() {
+        return 0;
     }
 
     @Override

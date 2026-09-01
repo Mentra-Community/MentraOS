@@ -366,6 +366,8 @@ class Bridge {
     static func sendVersionInfo(_ values: [String: Any]) {
         var body: [String: Any] = [
             "type": "version_info",
+            "versionInfoType": stringValue(values, "versionInfoType", "version_info_type") ?? "",
+            "sid": stringValue(values, "sid") ?? "",
             "androidVersion": stringValue(values, "androidVersion", "android_version") ?? "",
             "firmwareVersion": stringValue(values, "firmwareVersion", "firmware_version") ?? "",
             "besFirmwareVersion": stringValue(values, "besFirmwareVersion", "bes_fw_version") ?? "",
@@ -381,6 +383,16 @@ class Bridge {
             ?? intValue(values["hotspot_ota_version"])
         {
             body["hotspotOtaVersion"] = hotspotOtaVersion
+        }
+        if let version = intValue(values["wifiForgetResultVersion"])
+            ?? intValue(values["wifi_forget_result_version"])
+        {
+            body["wifiForgetResultVersion"] = version
+        }
+        if let version = intValue(values["savedWifiNetworksVersion"])
+            ?? intValue(values["saved_wifi_networks_version"])
+        {
+            body["savedWifiNetworksVersion"] = version
         }
         Bridge.sendTypedMessage("version_info", body: body)
     }
@@ -468,30 +480,47 @@ class Bridge {
 
     static func sendWifiForgetResult(
         requestId: String,
+        sid: String,
         ssid: String,
-        dispatched: Bool,
-        connected: Bool,
+        protocolVersion: Int,
+        outcome: String,
+        legacyDispatched: Bool?,
+        connected: Bool?,
         currentSsid: String,
         localIp: String,
         error: String?
     ) {
-        var body: [String: Any] = [
-            "requestId": requestId,
-            "ssid": ssid,
-            "dispatched": dispatched,
-            "connected": connected,
-            "currentSsid": currentSsid,
-            "localIp": localIp,
-        ]
-        if let error {
-            body["error"] = error
+        guard let body = normalizeWifiForgetResultEvent(
+            requestId: requestId,
+            sid: sid,
+            ssid: ssid,
+            protocolVersion: protocolVersion,
+            outcome: outcome,
+            legacyDispatched: legacyDispatched,
+            connected: connected,
+            currentSsid: currentSsid,
+            localIp: localIp,
+            error: error
+        ) else {
+            log("Dropping malformed wifi_forget_result without modern or legacy fields")
+            return
         }
         Bridge.sendTypedMessage("wifi_forget_result", body: body)
     }
 
-    static func sendSavedWifiNetworks(requestId: String, networks: [String], error: String?) {
+    static func sendSavedWifiNetworks(
+        requestId: String,
+        sid: String,
+        protocolVersion: Int,
+        outcome: String,
+        networks: [String],
+        error: String?
+    ) {
         var body: [String: Any] = [
             "requestId": requestId,
+            "sid": sid,
+            "protocolVersion": protocolVersion,
+            "outcome": outcome,
             "networks": networks,
         ]
         if let error {
@@ -689,4 +718,3 @@ class Bridge {
         return payload
     }
 }
-

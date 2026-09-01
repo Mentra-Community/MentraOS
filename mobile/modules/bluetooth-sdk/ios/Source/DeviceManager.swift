@@ -11,7 +11,7 @@ import CoreBluetooth
 import Foundation
 import UIKit
 #if SWIFT_PACKAGE
-import MentraBluetoothSDKCoreObjC
+    import MentraBluetoothSDKCoreObjC
 #endif
 
 struct ViewState {
@@ -313,9 +313,9 @@ struct ViewState {
     private var lastLc3Sequence: Int?
     private var micReinitTimer: Timer?
 
-    /// STT:
+    // STT:
     #if !SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT
-    private var transcriber: SherpaOnnxTranscriber?
+        private var transcriber: SherpaOnnxTranscriber?
     #endif
 
     var viewStates: [ViewState] = [
@@ -337,10 +337,10 @@ struct ViewState {
         ),
     ]
 
-    // Scene slots - one whole SceneFrame per view (main/dashboard), parallel to
-    // viewStates. When a slot holds a scene, viewStates carries a "scene"
-    // sentinel so sendCurrentState routes here. Holding the WHOLE frame keeps
-    // native re-dispatch coherent (dashboard exit re-applies a complete scene).
+    /// Scene slots - one whole SceneFrame per view (main/dashboard), parallel to
+    /// viewStates. When a slot holds a scene, viewStates carries a "scene"
+    /// sentinel so sendCurrentState routes here. Holding the WHOLE frame keeps
+    /// native re-dispatch coherent (dashboard exit re-applies a complete scene).
     var sceneStates: [SceneFrame?] = [nil, nil]
 
     override init() {
@@ -352,20 +352,20 @@ struct ViewState {
 
         // Initialize SherpaOnnx Transcriber
         #if !SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT
-        if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-           let window = windowScene.windows.first,
-           let rootViewController = window.rootViewController
-        {
-            transcriber = SherpaOnnxTranscriber(context: rootViewController)
-        } else {
-            Bridge.log("Failed to create SherpaOnnxTranscriber - no root view controller found")
-        }
+            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+               let window = windowScene.windows.first,
+               let rootViewController = window.rootViewController
+            {
+                transcriber = SherpaOnnxTranscriber(context: rootViewController)
+            } else {
+                Bridge.log("Failed to create SherpaOnnxTranscriber - no root view controller found")
+            }
 
-        // Initialize the transcriber
-        if let transcriber = transcriber {
-            transcriber.initialize()
-            Bridge.log("SherpaOnnxTranscriber fully initialized")
-        }
+            // Initialize the transcriber
+            if let transcriber = transcriber {
+                transcriber.initialize()
+                Bridge.log("SherpaOnnxTranscriber fully initialized")
+            }
         #endif
 
         // Initialize persistent LC3 converter for unified audio encoding
@@ -500,11 +500,11 @@ struct ViewState {
         handleSendingPcm(pcmData)
 
         // Send PCM to local transcriber.
-#if !SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT
-        if shouldSendTranscript || localSttFallbackActive {
-            transcriber?.acceptAudio(pcm16le: pcmData)
-        }
-#endif
+        #if !SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT
+            if shouldSendTranscript || localSttFallbackActive {
+                transcriber?.acceptAudio(pcm16le: pcmData)
+            }
+        #endif
     }
 
     func updateMicState() {
@@ -710,21 +710,21 @@ struct ViewState {
         } else if wearable.contains(DeviceTypes.FRAME) {
             // sgc = FrameManager()
         }
-#if !SWIFT_PACKAGE || MENTRA_FEATURE_NEX
-        if sgc == nil && wearable.contains(DeviceTypes.NEX) {
-            sgc = MentraNexSGC.getInstance()
-        }
-#endif
-#if !SWIFT_PACKAGE || MENTRA_FEATURE_VUZIX
-        if sgc == nil {
-            if wearable.contains(DeviceTypes.MACH1) {
-                sgc = Mach1()
-            } else if wearable.contains(DeviceTypes.Z100) {
-                sgc = Mach1() // Z100 uses same hardware/SDK as Mach1
-                sgc?.type = DeviceTypes.Z100 // Override type to Z100
+        #if !SWIFT_PACKAGE || MENTRA_FEATURE_NEX
+            if sgc == nil && wearable.contains(DeviceTypes.NEX) {
+                sgc = MentraNexSGC.getInstance()
             }
-        }
-#endif
+        #endif
+        #if !SWIFT_PACKAGE || MENTRA_FEATURE_VUZIX
+            if sgc == nil {
+                if wearable.contains(DeviceTypes.MACH1) {
+                    sgc = Mach1()
+                } else if wearable.contains(DeviceTypes.Z100) {
+                    sgc = Mach1() // Z100 uses same hardware/SDK as Mach1
+                    sgc?.type = DeviceTypes.Z100 // Override type to Z100
+                }
+            }
+        #endif
         // update device model:
         DeviceStore.shared.apply("glasses", "deviceModel", sgc?.type ?? "")
     }
@@ -989,10 +989,10 @@ struct ViewState {
 
     func restartTranscriber() {
         #if !SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT
-        Bridge.log("MAN: Restarting SherpaOnnxTranscriber via command")
-        transcriber?.restart()
+            Bridge.log("MAN: Restarting SherpaOnnxTranscriber via command")
+            transcriber?.restart()
         #else
-        Bridge.log("MAN: Local STT is not included in this SwiftPM build")
+            Bridge.log("MAN: Local STT is not included in this SwiftPM build")
         #endif
     }
 
@@ -1018,7 +1018,7 @@ struct ViewState {
 
         let connectionKey = "\(sgc.type):\(deviceName)"
         syncSystemTimeOnceForConnection(sgc, connectionKey: connectionKey)
-        
+
         // re-apply display height/depth after reconnection
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
             // Re-read the current sgc rather than capturing the connect-time instance: the user may
@@ -1064,7 +1064,6 @@ struct ViewState {
             let projectName = (DeviceStore.shared.get("bluetooth", "project_name") as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             Bridge.saveSetting("project_name", projectName)
         }
-
     }
 
     private func syncSystemTimeOnceForConnection(_ sgc: SGCManager, connectionKey: String) {
@@ -1411,9 +1410,9 @@ struct ViewState {
         sgc?.requestWifiScan(scanId: scanId)
     }
 
-    func requestSavedWifiNetworks(requestId: String) {
+    func requestSavedWifiNetworks(requestId: String, sid: String) {
         Bridge.log("MAN: Requesting saved wifi networks")
-        sgc?.requestSavedWifiNetworks(requestId: requestId)
+        sgc?.requestSavedWifiNetworks(requestId: requestId, sid: sid)
     }
 
     func sendIncidentId(_ incidentId: String, apiBaseUrl: String? = nil) {
@@ -1426,9 +1425,9 @@ struct ViewState {
         sgc?.sendWifiCredentials(ssid, password)
     }
 
-    func forgetWifiNetwork(_ ssid: String, requestId: String? = nil) {
+    func forgetWifiNetwork(_ ssid: String, requestId: String? = nil, sid: String? = nil) {
         Bridge.log("MAN: Forgetting wifi network: \(ssid)")
-        sgc?.forgetWifiNetwork(ssid, requestId: requestId)
+        sgc?.forgetWifiNetwork(ssid, requestId: requestId, sid: sid)
     }
 
     func setHotspotState(_ enabled: Bool) {
@@ -1569,7 +1568,8 @@ struct ViewState {
             // Fail fast like other camera commands so the SDK promise rejects immediately instead
             // of hanging until the request timeout with no camera_status.
             throw BluetoothSdkError(
-                code: "unsupported_device", message: "This command requires Mentra Live glasses.")
+                code: "unsupported_device", message: "This command requires Mentra Live glasses."
+            )
         }
         live.warmUpCamera(
             requestId: requestId,
@@ -1938,10 +1938,10 @@ struct ViewState {
 
     func cleanup() {
         // Clean up transcriber resources
-#if !SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT
-        transcriber?.shutdown()
-        transcriber = nil
-#endif
+        #if !SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT
+            transcriber?.shutdown()
+            transcriber = nil
+        #endif
 
         // Clean up LC3 converter
         lc3Converter = nil

@@ -8,9 +8,9 @@ private final class ActiveStreamKeepAlive {
     var pendingAckId: String?
     var missedAckCount = 0
     var task: Task<Void, Never>?
-    // Missed-ACK counting only begins once the stream is confirmed live/coming up, so a slow
-    // startup (glasses can't ACK until they reach starting/streaming) can't trip a false
-    // keep-alive timeout before the stream is ever up.
+    /// Missed-ACK counting only begins once the stream is confirmed live/coming up, so a slow
+    /// startup (glasses can't ACK until they reach starting/streaming) can't trip a false
+    /// keep-alive timeout before the stream is ever up.
     var armed = false
 
     init(streamId: String, intervalSeconds: Int) {
@@ -44,8 +44,8 @@ private final class PendingWifiScan {
     let pending: PendingResponse<[WifiScanResult]>
     let scanId: String
     var latestResults: [WifiScanResult] = []
-    // Chunks accumulated from scanId-echoing glasses, deduplicated by SSID;
-    // resolved only when the glasses flag the scan complete.
+    /// Chunks accumulated from scanId-echoing glasses, deduplicated by SSID;
+    /// resolved only when the glasses flag the scan complete.
     var accumulated: [WifiScanResult] = []
 
     init(pending: PendingResponse<[WifiScanResult]>, scanId: String) {
@@ -54,44 +54,72 @@ private final class PendingWifiScan {
     }
 }
 
-private enum WifiStatusOperation {
-    case connect
-    case forget
+@MainActor
+private final class PendingWifiStatusRequest {
+    let ssid: String
+    let pending: PendingResponse<WifiStatusEvent>
+
+    init(
+        ssid: String,
+        pending: PendingResponse<WifiStatusEvent>
+    ) {
+        self.ssid = ssid
+        self.pending = pending
+    }
 }
 
 @MainActor
-private final class PendingWifiStatusRequest {
-    let operation: WifiStatusOperation
+private final class PendingWifiForgetRequest {
     let ssid: String
-    let pending: PendingResponse<WifiStatusEvent>
-    let requestId: String?
-    let legacyFallbackDeadlineMs: Int64
-    var legacyFallbackEvent: WifiStatusEvent?
-    var legacyFallbackTask: Task<Void, Never>?
+    let requestId: String
+    let sid: String
+    let epoch: UInt64
+    let pending: PendingResponse<WifiForgetResult>
+    var mode: WifiRequestMode
+    var commandSent = false
+    var timeoutTask: Task<Void, Never>?
+    var timeoutToken: UUID?
 
     init(
-        operation: WifiStatusOperation,
         ssid: String,
-        pending: PendingResponse<WifiStatusEvent>,
-        requestId: String? = nil,
-        legacyFallbackDeadlineMs: Int64 = 0
+        requestId: String,
+        sid: String,
+        epoch: UInt64,
+        pending: PendingResponse<WifiForgetResult>,
+        mode: WifiRequestMode
     ) {
-        self.operation = operation
         self.ssid = ssid
-        self.pending = pending
         self.requestId = requestId
-        self.legacyFallbackDeadlineMs = legacyFallbackDeadlineMs
+        self.sid = sid
+        self.epoch = epoch
+        self.pending = pending
+        self.mode = mode
     }
 }
 
 @MainActor
 private final class PendingSavedWifiNetworks {
     let requestId: String
-    let pending: PendingResponse<[String]>
+    let sid: String
+    let epoch: UInt64
+    let pending: PendingResponse<SavedWifiNetworksResult>
+    var mode: WifiRequestMode
+    var commandSent = false
+    var timeoutTask: Task<Void, Never>?
+    var timeoutToken: UUID?
 
-    init(requestId: String, pending: PendingResponse<[String]>) {
+    init(
+        requestId: String,
+        sid: String,
+        epoch: UInt64,
+        pending: PendingResponse<SavedWifiNetworksResult>,
+        mode: WifiRequestMode
+    ) {
         self.requestId = requestId
+        self.sid = sid
+        self.epoch = epoch
         self.pending = pending
+        self.mode = mode
     }
 }
 
@@ -121,17 +149,17 @@ private final class PendingVideoRecordingRequest {
     }
 }
 
-// seq records send order (assigned and handed to the BLE queue in a single
-// MainActor turn) so that an id-carrying status for a newer start can
-// identify which older in-flight starts it preempted.
+/// seq records send order (assigned and handed to the BLE queue in a single
+/// MainActor turn) so that an id-carrying status for a newer start can
+/// identify which older in-flight starts it preempted.
 @MainActor
 private final class PendingStreamStart {
     let seq: Int
     let pending: PendingResponse<StreamStatusEvent>
-    // Set when an id-carrying error arrives: a fatal publisher error never
-    // reaches the reconnect machinery and winds down with a streamId-less
-    // stopped, so the stash both attributes that stopped to this start and
-    // preserves the real error details for the rejection.
+    /// Set when an id-carrying error arrives: a fatal publisher error never
+    /// reaches the reconnect machinery and winds down with a streamId-less
+    /// stopped, so the stash both attributes that stopped to this start and
+    /// preserves the real error details for the rejection.
     var lastError: StreamStatusEvent?
 
     init(seq: Int, pending: PendingResponse<StreamStatusEvent>) {
@@ -141,7 +169,7 @@ private final class PendingStreamStart {
 }
 
 @MainActor
-private final class PendingResponse<T> {
+final class PendingResponse<T> {
     private let operation: String
     private var continuation: CheckedContinuation<T, Error>?
     private var timeoutTask: Task<Void, Never>?
@@ -170,22 +198,39 @@ private final class PendingResponse<T> {
         continuation = nil
     }
 
-    func wait(timeoutMs: Int = 15_000) async throws -> T {
+    func wait(timeoutMs: Int? = 15000) async throws -> T {
+        if Task.isCancelled {
+            throw BluetoothSdkError(code: "request_cancelled", message: "\(operation) was cancelled.")
+        }
         if let result {
             return try result.get()
         }
-        return try await withCheckedThrowingContinuation { continuation in
-            self.continuation = continuation
-            timeoutTask = Task { @MainActor [weak self] in
-                do {
-                    try await Task.sleep(nanoseconds: UInt64(timeoutMs) * 1_000_000)
-                } catch {
-                    return
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                self.continuation = continuation
+                if let timeoutMs {
+                    timeoutTask = Task { @MainActor [weak self] in
+                        do {
+                            try await Task.sleep(nanoseconds: UInt64(timeoutMs) * 1_000_000)
+                        } catch {
+                            return
+                        }
+                        self?.reject(
+                            BluetoothSdkError(
+                                code: "request_timeout",
+                                message: "\(self?.operation ?? "Request") timed out waiting for glasses response."
+                            )
+                        )
+                    }
                 }
-                self?.reject(
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                reject(
                     BluetoothSdkError(
-                        code: "request_timeout",
-                        message: "\(self?.operation ?? "Request") timed out waiting for glasses response."
+                        code: "request_cancelled",
+                        message: "\(operation) was cancelled."
                     )
                 )
             }
@@ -195,12 +240,12 @@ private final class PendingResponse<T> {
 
 @MainActor
 public final class MentraBluetoothSDK {
-    private static let wifiScanTimeoutMs = 20_000
+    private static let wifiScanTimeoutMs = 20000
     // A photo response is terminal only after capture, encoding, transport, and upload.
     // Max-quality BLE fallback can legitimately exceed the generic command deadline.
-    private static let photoRequestTimeoutMs = 30_000
-    private static let otaBesVersionWaitMs = 5_000
-    private static let otaMtkVersionWaitMs = 2_000
+    private static let photoRequestTimeoutMs = 30000
+    private static let otaBesVersionWaitMs = 5000
+    private static let otaMtkVersionWaitMs = 2000
     private static let otaVersionPollMs = 100
     private static let defaultStreamKeepAliveIntervalSeconds = 5
 
@@ -238,8 +283,10 @@ public final class MentraBluetoothSDK {
     private var pendingSavedWifiNetworks: PendingSavedWifiNetworks?
     private var wifiScanTask: Task<[WifiScanResult], Error>?
     private var pendingWifiStatus: PendingWifiStatusRequest?
+    private var pendingWifiForget: PendingWifiForgetRequest?
     private var pendingHotspotStatus: PendingHotspotStatusRequest?
     private var pendingVersionInfo: PendingResponse<VersionInfoResult>?
+    private let wifiSessionCapabilities = WifiSessionCapabilities()
     private var configuredOtaVersionUrl: String?
 
     public init(configuration: MentraBluetoothSDKConfiguration = .default) {
@@ -596,7 +643,8 @@ public final class MentraBluetoothSDK {
                     for key in ["button_photo_zsl_mfnr", "button_photo_mfnr", "button_photo_zsl", "button_photo_noise_reduction",
                                 "button_photo_edge_enhancement", "button_photo_isp_digital_gain",
                                 "button_photo_isp_analog_gain", "button_photo_ae_exposure_divisor",
-                                "button_photo_iso_cap", "button_photo_compress", "button_photo_sound"] {
+                                "button_photo_iso_cap", "button_photo_compress", "button_photo_sound"]
+                    {
                         DeviceStore.shared.remove(cat, key)
                     }
                 }
@@ -850,7 +898,8 @@ public final class MentraBluetoothSDK {
                 return try await pending.wait(timeoutMs: MentraBluetoothSDK.wifiScanTimeoutMs)
             } catch {
                 if (error as? BluetoothSdkError)?.code == "request_timeout",
-                   !request.latestResults.isEmpty {
+                   !request.latestResults.isEmpty
+                {
                     return request.latestResults
                 }
                 throw error
@@ -861,14 +910,14 @@ public final class MentraBluetoothSDK {
     }
 
     public func sendWifiCredentials(ssid: String, password: String) async throws -> WifiStatusEvent {
-        guard pendingWifiStatus == nil else {
+        guard pendingWifiStatus == nil, pendingWifiForget == nil else {
             throw BluetoothSdkError(
                 code: "request_in_flight",
                 message: "A WiFi status command is already waiting for a glasses response."
             )
         }
         let pending = PendingResponse<WifiStatusEvent>(operation: "WiFi connect request")
-        pendingWifiStatus = PendingWifiStatusRequest(operation: .connect, ssid: ssid, pending: pending)
+        pendingWifiStatus = PendingWifiStatusRequest(ssid: ssid, pending: pending)
         DeviceManager.shared.sendWifiCredentials(ssid, password)
         do {
             let event = try await pending.wait()
@@ -884,66 +933,88 @@ public final class MentraBluetoothSDK {
         }
     }
 
-    public func forgetWifiNetwork(ssid: String) async throws -> WifiStatusEvent {
+    public func forgetWifiNetwork(ssid: String) async throws -> WifiForgetResult {
         guard wifiSsidIsValid(ssid) else {
             throw BluetoothSdkError(code: "invalid_ssid", message: "WiFi SSID cannot be empty.")
         }
-        guard pendingWifiStatus == nil else {
+        guard pendingWifiStatus == nil, pendingWifiForget == nil else {
             throw BluetoothSdkError(
                 code: "request_in_flight",
                 message: "A WiFi status command is already waiting for a glasses response."
             )
         }
-        let pending = PendingResponse<WifiStatusEvent>(operation: "WiFi forget request")
+        let pending = PendingResponse<WifiForgetResult>(operation: "WiFi forget request")
         let requestId = "forget-\(UUID().uuidString)"
-        pendingWifiStatus = PendingWifiStatusRequest(
-            operation: .forget,
+        let request = PendingWifiForgetRequest(
             ssid: ssid,
-            pending: pending,
             requestId: requestId,
-            legacyFallbackDeadlineMs: Self.monotonicMilliseconds() + Int64(wifiForgetCorrelatedPriorityWindowMs)
+            sid: wifiSessionCapabilities.sessionId,
+            epoch: wifiSessionCapabilities.epoch,
+            pending: pending,
+            mode: wifiSessionCapabilities.forgetMode()
         )
-        DeviceManager.shared.forgetWifiNetwork(ssid, requestId: requestId)
+        pendingWifiForget = request
+        scheduleWifiForgetCapabilityDeadline(request)
+        dispatchWifiForgetIfReady(request)
         do {
-            let event = try await pending.wait()
-            if pendingWifiStatus?.pending === pending {
-                pendingWifiStatus?.legacyFallbackTask?.cancel()
-                pendingWifiStatus = nil
+            let event = try await pending.wait(timeoutMs: nil)
+            if pendingWifiForget === request {
+                pendingWifiForget = nil
             }
+            request.timeoutTask?.cancel()
             return event
         } catch {
-            if pendingWifiStatus?.pending === pending {
-                pendingWifiStatus?.legacyFallbackTask?.cancel()
-                pendingWifiStatus = nil
+            if pendingWifiForget === request {
+                pendingWifiForget = nil
             }
+            request.timeoutTask?.cancel()
             throw error
         }
     }
 
-    public func getSavedWifiNetworks() async throws -> [String] {
+    public func getSavedWifiNetworks() async throws -> SavedWifiNetworksResult {
         guard pendingSavedWifiNetworks == nil else {
             throw BluetoothSdkError(
                 code: "request_in_flight",
                 message: "A saved WiFi networks request is already waiting for a glasses response."
             )
         }
-        let pending = PendingResponse<[String]>(operation: "Saved WiFi networks request")
+        let requestId = "saved-\(UUID().uuidString)"
+        let mode = wifiSessionCapabilities.savedNetworksMode()
+        if mode == .legacy {
+            return SavedWifiNetworksResult(
+                mode: "unsupported",
+                capabilityVersion: nil,
+                requestId: requestId,
+                sid: wifiSessionCapabilities.sessionId,
+                outcome: .unsupported,
+                networks: [],
+                error: "saved_wifi_networks_unsupported"
+            )
+        }
+        let pending = PendingResponse<SavedWifiNetworksResult>(operation: "Saved WiFi networks request")
         let request = PendingSavedWifiNetworks(
-            requestId: "saved-\(UUID().uuidString)",
-            pending: pending
+            requestId: requestId,
+            sid: wifiSessionCapabilities.sessionId,
+            epoch: wifiSessionCapabilities.epoch,
+            pending: pending,
+            mode: mode
         )
         pendingSavedWifiNetworks = request
-        DeviceManager.shared.requestSavedWifiNetworks(requestId: request.requestId)
+        scheduleSavedWifiNetworksCapabilityDeadline(request)
+        dispatchSavedWifiNetworksIfReady(request)
         do {
-            let networks = try await pending.wait()
+            let networks = try await pending.wait(timeoutMs: nil)
             if pendingSavedWifiNetworks === request {
                 pendingSavedWifiNetworks = nil
             }
+            request.timeoutTask?.cancel()
             return networks
         } catch {
             if pendingSavedWifiNetworks === request {
                 pendingSavedWifiNetworks = nil
             }
+            request.timeoutTask?.cancel()
             throw error
         }
     }
@@ -1091,7 +1162,7 @@ public final class MentraBluetoothSDK {
         stopStreamKeepAliveMonitor()
         DeviceManager.shared.startStream(values)
         do {
-            let event = try await pending.wait(timeoutMs: 30_000)
+            let event = try await pending.wait(timeoutMs: 30000)
             pendingStreamStarts.removeValue(forKey: streamId)
             if startSdkKeepAlive {
                 startStreamKeepAliveMonitor(
@@ -1150,7 +1221,7 @@ public final class MentraBluetoothSDK {
         stopStreamKeepAliveMonitor()
         DeviceManager.shared.stopStream()
         do {
-            let event = try await pending.wait(timeoutMs: 15_000)
+            let event = try await pending.wait(timeoutMs: 15000)
             if pendingStreamStop?.pending === pending {
                 pendingStreamStop = nil
             }
@@ -1222,7 +1293,7 @@ public final class MentraBluetoothSDK {
         )
         DeviceManager.shared.stopVideoRecording(requestId, webhookUrl, authToken)
         do {
-            let timeoutMs = waitForUpload ? videoUploadStopTimeoutMs : 15_000
+            let timeoutMs = waitForUpload ? videoUploadStopTimeoutMs : 15000
             let event = try await pending.wait(timeoutMs: timeoutMs)
             pendingVideoRecordingRequests.removeValue(forKey: requestId)
             return event
@@ -1400,7 +1471,9 @@ public final class MentraBluetoothSDK {
         try await startOtaCommand(otaVersionUrl: otaVersionUrl)
     }
 
-    func sendOtaQueryStatus() async throws -> OtaQueryResult { try await queryOtaStatus() }
+    func sendOtaQueryStatus() async throws -> OtaQueryResult {
+        try await queryOtaStatus()
+    }
 
     func startAr99OtaFromFile(_ path: String) throws -> Bool {
         try requireGlassesConnected(operation: "start AR99 OTA")
@@ -1464,7 +1537,7 @@ public final class MentraBluetoothSDK {
         timeoutMs: Int,
         isReady: (GlassesStatus) -> Bool
     ) async -> GlassesStatus {
-        let deadline = Date().addingTimeInterval(Double(timeoutMs) / 1_000)
+        let deadline = Date().addingTimeInterval(Double(timeoutMs) / 1000)
         var status = initialStatus
         while Date() < deadline {
             status = glassesStatus
@@ -1472,7 +1545,7 @@ public final class MentraBluetoothSDK {
                 return status
             }
 
-            let remainingMs = max(0, Int(deadline.timeIntervalSinceNow * 1_000))
+            let remainingMs = max(0, Int(deadline.timeIntervalSinceNow * 1000))
             let sleepMs = min(Self.otaVersionPollMs, remainingMs)
             if sleepMs <= 0 {
                 break
@@ -1514,6 +1587,7 @@ public final class MentraBluetoothSDK {
 
     public func invalidate() {
         stopStreamKeepAliveMonitor()
+        resetWifiProtocolSession(sessionId: "", code: "sdk_closed")
         if let bluetoothAvailabilityListenerId {
             BluetoothAvailability.shared.removeStateListener(bluetoothAvailabilityListenerId)
             self.bluetoothAvailabilityListenerId = nil
@@ -1757,13 +1831,13 @@ public final class MentraBluetoothSDK {
         }
     }
 
-    // The glasses process BLE commands FIFO and every start_stream begins by
-    // stopping whatever runs, so an id-carrying status proving start X's
-    // start path ran on the glasses also proves every lower-seq start has
-    // already been preempted. Their only verdict on current firmware is a
-    // streamId-less stopped, which the id-less heuristic deliberately
-    // ignores — without this they would run out the 30s timeout instead of
-    // failing fast.
+    /// The glasses process BLE commands FIFO and every start_stream begins by
+    /// stopping whatever runs, so an id-carrying status proving start X's
+    /// start path ran on the glasses also proves every lower-seq start has
+    /// already been preempted. Their only verdict on current firmware is a
+    /// streamId-less stopped, which the id-less heuristic deliberately
+    /// ignores — without this they would run out the 30s timeout instead of
+    /// failing fast.
     private func rejectPreemptedStreamStarts(winnerSeq: Int) {
         for (streamId, start) in pendingStreamStarts where start.seq < winnerSeq {
             pendingStreamStarts.removeValue(forKey: streamId)
@@ -1777,11 +1851,11 @@ public final class MentraBluetoothSDK {
         }
     }
 
-    // The glasses process BLE commands FIFO, so this stop's ack also settles
-    // every start sent before it: whatever those starts brought up (or would
-    // have brought up) has been stopped, and no further status will arrive
-    // for them. Without this they would run out the 30s start timeout.
-    // Starts sent after the stop keep waiting for their own statuses.
+    /// The glasses process BLE commands FIFO, so this stop's ack also settles
+    /// every start sent before it: whatever those starts brought up (or would
+    /// have brought up) has been stopped, and no further status will arrive
+    /// for them. Without this they would run out the 30s start timeout.
+    /// Starts sent after the stop keep waiting for their own statuses.
     private func rejectStreamStartsSuperseded(byStopSeq stopSeq: Int) {
         for (streamId, start) in pendingStreamStarts where start.seq < stopSeq {
             pendingStreamStarts.removeValue(forKey: streamId)
@@ -1983,9 +2057,9 @@ public final class MentraBluetoothSDK {
         request.pending.resolve(results)
     }
 
-    // scanId-echoing glasses: results for another scan are ignored instead of
-    // resolving the pending request, and matching chunks accumulate until the
-    // glasses flag the scan complete.
+    /// scanId-echoing glasses: results for another scan are ignored instead of
+    /// resolving the pending request, and matching chunks accumulate until the
+    /// glasses flag the scan complete.
     private func handleCorrelatedWifiScanChunk(
         scanId: String,
         results: [WifiScanResult],
@@ -2011,142 +2085,313 @@ public final class MentraBluetoothSDK {
     }
 
     private func handleWifiStatusForRequests(_ event: WifiStatusEvent) {
-        guard let request = pendingWifiStatus else { return }
+        let connectRequest = pendingWifiStatus
         // A wifi_status carrying the explicit error field is the glasses' failure
         // verdict for the in-flight connect: reject now instead of running out the
         // request timeout. Only the error field counts as failure — the glasses'
         // connect sequence emits a debounced bare connected=false ~1-2s after
         // credentials while association is still in progress, and rejecting on that
         // would kill every connect attempt early.
-        if request.operation == .connect, let error = event.error {
-            if pendingWifiStatus === request {
+        if let connectRequest, let error = event.error {
+            if pendingWifiStatus === connectRequest {
                 pendingWifiStatus = nil
             }
-            request.pending.reject(
+            connectRequest.pending.reject(
                 BluetoothSdkError(
                     code: error,
-                    message: "Glasses failed to join \"\(request.ssid)\": \(error)"
+                    message: "Glasses failed to join \"\(connectRequest.ssid)\": \(error)"
                 )
             )
             return
         }
-        guard wifiStatusMatches(event.status, request: request) else { return }
-        if request.operation == .forget {
-            deferLegacyWifiForgetFallback(request, event: event)
+        if let connectRequest, wifiStatusMatchesConnect(event.status, ssid: connectRequest.ssid) {
+            if pendingWifiStatus === connectRequest {
+                pendingWifiStatus = nil
+            }
+            connectRequest.pending.resolve(event)
             return
         }
-        if pendingWifiStatus === request {
-            pendingWifiStatus = nil
+
+        // Modern requests ignore uncorrelated wifi_status completely. Only a
+        // negotiated legacy request may use it as an unverified compatibility result.
+        guard let forgetRequest = pendingWifiForget,
+              forgetRequest.mode == .legacy,
+              wifiStatusMatchesLegacyForget(event.status, ssid: forgetRequest.ssid)
+        else { return }
+        if pendingWifiForget === forgetRequest {
+            pendingWifiForget = nil
         }
-        request.pending.resolve(event)
+        forgetRequest.timeoutTask?.cancel()
+        forgetRequest.pending.resolve(
+            legacyWifiForgetResult(
+                requestId: forgetRequest.requestId,
+                sid: forgetRequest.sid,
+                ssid: forgetRequest.ssid,
+                event: event
+            )
+        )
     }
 
     private func handleWifiForgetResultForRequests(_ data: [String: Any]) {
-        guard let request = pendingWifiStatus, request.operation == .forget else { return }
-        guard let requestId = request.requestId,
+        guard let request = pendingWifiForget,
+              request.mode == .modern,
+              request.epoch == wifiSessionCapabilities.epoch,
+              case let .supported(version) = wifiSessionCapabilities.forgetResult,
               let result = parseWifiForgetResult(
-                  expectedRequestId: requestId,
+                  expectedRequestId: request.requestId,
+                  expectedSid: request.sid,
                   expectedSsid: request.ssid,
+                  capabilityVersion: version,
                   data: data
               )
         else { return }
-        if pendingWifiStatus === request {
-            request.legacyFallbackTask?.cancel()
-            pendingWifiStatus = nil
+        if pendingWifiForget === request, request.epoch == wifiSessionCapabilities.epoch {
+            pendingWifiForget = nil
         }
-        switch result {
-        case let .failure(error):
-            request.pending.reject(
-                BluetoothSdkError(
-                    code: error,
-                    message: "Glasses could not dispatch forget for \"\(request.ssid)\": \(error)"
-                )
-            )
-        case let .dispatched(connected, currentSsid, localIp):
-            request.pending.resolve(
-                WifiStatusEvent(
-                    connected: connected,
-                    ssid: currentSsid,
-                    localIp: localIp
-                )
-            )
-        }
-    }
-
-    private func deferLegacyWifiForgetFallback(
-        _ request: PendingWifiStatusRequest,
-        event: WifiStatusEvent
-    ) {
-        guard pendingWifiStatus === request, let requestId = request.requestId else { return }
-        request.legacyFallbackEvent = event
-        request.legacyFallbackTask?.cancel()
-        let delayMs = wifiForgetLegacyFallbackDelayMs(
-            priorityDeadlineMs: request.legacyFallbackDeadlineMs,
-            nowMs: Self.monotonicMilliseconds()
-        )
-        guard delayMs > 0 else {
-            pendingWifiStatus = nil
-            request.pending.resolve(event)
-            return
-        }
-        request.legacyFallbackTask = Task { @MainActor [weak self, weak request] in
-            do {
-                try await Task.sleep(nanoseconds: UInt64(delayMs) * 1_000_000)
-            } catch {
-                return
-            }
-            guard let self, let request,
-                  self.pendingWifiStatus === request,
-                  wifiForgetFallbackStillApplies(
-                      scheduledRequestId: requestId,
-                      activeRequestId: self.pendingWifiStatus?.requestId
-                  ),
-                  let fallback = request.legacyFallbackEvent
-            else { return }
-            self.pendingWifiStatus = nil
-            request.legacyFallbackTask = nil
-            request.pending.resolve(fallback)
-        }
+        request.timeoutTask?.cancel()
+        request.pending.resolve(result)
     }
 
     private func handleSavedWifiNetworksForRequests(_ data: [String: Any]) {
         guard let request = pendingSavedWifiNetworks,
-              let result = parseSavedWifiNetworks(expectedRequestId: request.requestId, data: data)
+              request.mode == .modern,
+              request.epoch == wifiSessionCapabilities.epoch,
+              case let .supported(version) = wifiSessionCapabilities.savedNetworks,
+              let result = parseSavedWifiNetworks(
+                  expectedRequestId: request.requestId,
+                  expectedSid: request.sid,
+                  capabilityVersion: version,
+                  data: data
+              )
         else { return }
-        if pendingSavedWifiNetworks === request {
+        if pendingSavedWifiNetworks === request, request.epoch == wifiSessionCapabilities.epoch {
             pendingSavedWifiNetworks = nil
         }
-        if let error = result.error {
+        request.timeoutTask?.cancel()
+        request.pending.resolve(result)
+    }
+
+    private func wifiStatusMatchesConnect(_ status: WifiStatus, ssid: String) -> Bool {
+        if case let .connected(currentSsid, _) = status {
+            return currentSsid == ssid
+        }
+        return false
+    }
+
+    private func wifiStatusMatchesLegacyForget(_ status: WifiStatus, ssid: String) -> Bool {
+        switch status {
+        case .disconnected:
+            return true
+        case let .connected(currentSsid, _):
+            return currentSsid != ssid
+        }
+    }
+
+    private func dispatchWifiForgetIfReady(_ request: PendingWifiForgetRequest) {
+        guard pendingWifiForget === request,
+              request.epoch == wifiSessionCapabilities.epoch,
+              request.mode != .discovering,
+              !request.commandSent
+        else { return }
+        request.commandSent = true
+        let timeoutToken = UUID()
+        request.timeoutToken = timeoutToken
+        request.timeoutTask = wifiForgetTimeoutTask(request, token: timeoutToken)
+        DeviceManager.shared.forgetWifiNetwork(
+            request.ssid,
+            requestId: request.requestId,
+            sid: request.sid
+        )
+    }
+
+    private func dispatchSavedWifiNetworksIfReady(_ request: PendingSavedWifiNetworks) {
+        guard pendingSavedWifiNetworks === request,
+              request.epoch == wifiSessionCapabilities.epoch,
+              request.mode == .modern,
+              !request.commandSent
+        else { return }
+        request.commandSent = true
+        let timeoutToken = UUID()
+        request.timeoutToken = timeoutToken
+        request.timeoutTask = savedWifiNetworksTimeoutTask(request, token: timeoutToken)
+        DeviceManager.shared.requestSavedWifiNetworks(requestId: request.requestId, sid: request.sid)
+    }
+
+    private func wifiForgetTimeoutTask(
+        _ request: PendingWifiForgetRequest,
+        token: UUID
+    ) -> Task<Void, Never> {
+        Task { @MainActor [weak self, weak request] in
+            do {
+                try await Task.sleep(nanoseconds: 15_000_000_000)
+            } catch {
+                return
+            }
+            guard let self, let request,
+                  wifiDelayedCallbackApplies(
+                      expectedEpoch: request.epoch,
+                      currentEpoch: wifiSessionCapabilities.epoch,
+                      isCurrentRequest: pendingWifiForget === request && request.timeoutToken == token
+                  )
+            else { return }
+            pendingWifiForget = nil
             request.pending.reject(
                 BluetoothSdkError(
-                    code: error,
-                    message: "Glasses could not list saved WiFi networks: \(error)"
+                    code: "request_timeout",
+                    message: "WiFi forget request timed out waiting for glasses response."
                 )
             )
-            return
         }
-        request.pending.resolve(result.networks)
     }
 
-    private static func monotonicMilliseconds() -> Int64 {
-        Int64(ProcessInfo.processInfo.systemUptime * 1_000)
+    private func savedWifiNetworksTimeoutTask(
+        _ request: PendingSavedWifiNetworks,
+        token: UUID
+    ) -> Task<Void, Never> {
+        Task { @MainActor [weak self, weak request] in
+            do {
+                try await Task.sleep(nanoseconds: 15_000_000_000)
+            } catch {
+                return
+            }
+            guard let self, let request,
+                  wifiDelayedCallbackApplies(
+                      expectedEpoch: request.epoch,
+                      currentEpoch: wifiSessionCapabilities.epoch,
+                      isCurrentRequest: pendingSavedWifiNetworks === request && request.timeoutToken == token
+                  )
+            else { return }
+            pendingSavedWifiNetworks = nil
+            request.pending.reject(
+                BluetoothSdkError(
+                    code: "request_timeout",
+                    message: "Saved WiFi networks request timed out waiting for glasses response."
+                )
+            )
+        }
     }
 
-    private func wifiStatusMatches(_ status: WifiStatus, request: PendingWifiStatusRequest) -> Bool {
-        switch request.operation {
-        case .connect:
-            if case let .connected(ssid, _) = status {
-                return ssid == request.ssid
+    private func scheduleWifiForgetCapabilityDeadline(_ request: PendingWifiForgetRequest) {
+        guard pendingWifiForget === request,
+              request.epoch == wifiSessionCapabilities.epoch,
+              wifiCapabilityDiscoveryDeadlineRequired(request.mode)
+        else { return }
+        let timeoutToken = UUID()
+        request.timeoutToken = timeoutToken
+        request.timeoutTask = Task { @MainActor [weak self, weak request] in
+            do {
+                try await Task.sleep(nanoseconds: 15_000_000_000)
+            } catch {
+                return
             }
-            return false
-        case .forget:
-            switch status {
-            case .disconnected:
-                return true
-            case let .connected(ssid, _):
-                return ssid != request.ssid
+            guard let self, let request,
+                  wifiDelayedCallbackApplies(
+                      expectedEpoch: request.epoch,
+                      currentEpoch: wifiSessionCapabilities.epoch,
+                      isCurrentRequest: pendingWifiForget === request && request.timeoutToken == timeoutToken
+                  )
+            else { return }
+            pendingWifiForget = nil
+            request.pending.reject(
+                BluetoothSdkError(
+                    code: wifiCapabilityNegotiationTimeoutCode,
+                    message: "WiFi forget request timed out waiting for capability negotiation."
+                )
+            )
+        }
+    }
+
+    private func scheduleSavedWifiNetworksCapabilityDeadline(_ request: PendingSavedWifiNetworks) {
+        guard pendingSavedWifiNetworks === request,
+              request.epoch == wifiSessionCapabilities.epoch,
+              wifiCapabilityDiscoveryDeadlineRequired(request.mode)
+        else { return }
+        let timeoutToken = UUID()
+        request.timeoutToken = timeoutToken
+        request.timeoutTask = Task { @MainActor [weak self, weak request] in
+            do {
+                try await Task.sleep(nanoseconds: 15_000_000_000)
+            } catch {
+                return
+            }
+            guard let self, let request,
+                  wifiDelayedCallbackApplies(
+                      expectedEpoch: request.epoch,
+                      currentEpoch: wifiSessionCapabilities.epoch,
+                      isCurrentRequest: pendingSavedWifiNetworks === request && request.timeoutToken == timeoutToken
+                  )
+            else { return }
+            pendingSavedWifiNetworks = nil
+            request.pending.reject(
+                BluetoothSdkError(
+                    code: wifiCapabilityNegotiationTimeoutCode,
+                    message: "Saved WiFi networks request timed out waiting for capability negotiation."
+                )
+            )
+        }
+    }
+
+    private func applyWifiProtocolCapabilities(_ data: [String: Any]) {
+        wifiSessionCapabilities.applyVersionInfo1(data)
+        if let request = pendingWifiForget,
+           request.epoch == wifiSessionCapabilities.epoch,
+           request.mode == .discovering
+        {
+            request.timeoutTask?.cancel()
+            request.timeoutTask = nil
+            request.timeoutToken = nil
+            request.mode = wifiSessionCapabilities.forgetMode()
+            dispatchWifiForgetIfReady(request)
+        }
+        if let request = pendingSavedWifiNetworks,
+           request.epoch == wifiSessionCapabilities.epoch,
+           request.mode == .discovering
+        {
+            request.timeoutTask?.cancel()
+            request.timeoutTask = nil
+            request.timeoutToken = nil
+            request.mode = wifiSessionCapabilities.savedNetworksMode()
+            if request.mode == .legacy {
+                pendingSavedWifiNetworks = nil
+                request.pending.resolve(
+                    SavedWifiNetworksResult(
+                        mode: "unsupported",
+                        capabilityVersion: nil,
+                        requestId: request.requestId,
+                        sid: request.sid,
+                        outcome: .unsupported,
+                        networks: [],
+                        error: "saved_wifi_networks_unsupported"
+                    )
+                )
+            } else {
+                dispatchSavedWifiNetworksIfReady(request)
             }
         }
+    }
+
+    private func resetWifiProtocolSession(sessionId: String, code: String) {
+        let error = BluetoothSdkError(code: code, message: "The glasses WiFi protocol session changed.")
+        let wifiStatus = pendingWifiStatus?.pending
+        let wifiForget = pendingWifiForget?.pending
+        let wifiForgetTimeout = pendingWifiForget?.timeoutTask
+        let savedNetworks = pendingSavedWifiNetworks?.pending
+        let savedNetworksTimeout = pendingSavedWifiNetworks?.timeoutTask
+        let wifiScan = pendingWifiScan?.pending
+        let hotspot = pendingHotspotStatus?.pending
+        wifiSessionCapabilities.reset(sessionId: sessionId)
+        pendingWifiStatus = nil
+        pendingWifiForget = nil
+        pendingSavedWifiNetworks = nil
+        pendingWifiScan = nil
+        pendingHotspotStatus = nil
+        wifiForgetTimeout?.cancel()
+        savedNetworksTimeout?.cancel()
+        wifiStatus?.reject(error)
+        wifiForget?.reject(error)
+        savedNetworks?.reject(error)
+        wifiScan?.reject(error)
+        hotspot?.reject(error)
     }
 
     private func handleHotspotStatusForRequests(_ event: HotspotStatusEvent) {
@@ -2181,6 +2426,9 @@ public final class MentraBluetoothSDK {
     private func dispatchStoreUpdate(_ category: String, _ changes: [String: Any]) {
         switch ObservableStore.normalizeCategory(category) {
         case "glasses":
+            if changes["connected"] as? Bool == false {
+                resetWifiProtocolSession(sessionId: "", code: "wifi_session_disconnected")
+            }
             analytics.observeGlassesStatus(glassesStatus)
             let nextState = state
             delegate?.mentraBluetoothSDK(self, didUpdate: nextState)
@@ -2225,7 +2473,8 @@ public final class MentraBluetoothSDK {
             projectName: projectName
         )
     }
-private func dispatchDiscoveredDevices(_ rawSearchResults: Any?) {
+
+    private func dispatchDiscoveredDevices(_ rawSearchResults: Any?) {
         guard let results = rawSearchResults as? [[String: Any]] else { return }
         for result in results {
             guard let name = result["name"] as? String else { continue }
@@ -2316,6 +2565,17 @@ private func dispatchDiscoveredDevices(_ rawSearchResults: Any?) {
         case "saved_wifi_networks":
             handleSavedWifiNetworksForRequests(data)
             delegate?.mentraBluetoothSDK(self, didReceive: .raw(name: eventName, values: data))
+        case "wifi_protocol_session_ready":
+            resetWifiProtocolSession(
+                sessionId: data["sid"] as? String ?? "",
+                code: "wifi_session_restarted"
+            )
+        case "glasses_session_changed":
+            resetWifiProtocolSession(
+                sessionId: data["sid"] as? String ?? "",
+                code: "wifi_session_changed"
+            )
+            delegate?.mentraBluetoothSDK(self, didReceive: .raw(name: eventName, values: data))
         case "wifi_scan_result":
             let networks = (data["networks"] as? [[String: Any]])?.map(WifiScanResult.init(values:)) ?? []
             let hasCompletionFlag = data.keys.contains("scanComplete") || data.keys.contains("scan_complete")
@@ -2397,6 +2657,9 @@ private func dispatchDiscoveredDevices(_ rawSearchResults: Any?) {
             handleSettingsAckForRequests(event)
             delegate?.mentraBluetoothSDK(self, didReceive: .settingsAck(event))
         case "version_info":
+            if data["versionInfoType"] as? String == "version_info_1" {
+                applyWifiProtocolCapabilities(data)
+            }
             let event = VersionInfoResult(values: data)
             pendingVersionInfo?.resolve(event)
             delegate?.mentraBluetoothSDK(self, didReceive: .versionInfo(event))

@@ -305,10 +305,16 @@ abstract class SGCManager {
     open fun requestSavedWifiNetworks(requestId: String) {
         Bridge.log("SGC: saved WiFi network listing not supported on $type")
     }
+    open fun requestSavedWifiNetworks(requestId: String, sid: String) {
+        requestSavedWifiNetworks(requestId)
+    }
     abstract fun sendWifiCredentials(ssid: String, password: String)
     abstract fun forgetWifiNetwork(ssid: String)
     open fun forgetWifiNetwork(ssid: String, requestId: String?) {
         forgetWifiNetwork(ssid)
+    }
+    open fun forgetWifiNetwork(ssid: String, requestId: String?, sid: String?) {
+        forgetWifiNetwork(ssid, requestId)
     }
     abstract fun sendHotspotState(enabled: Boolean)
 

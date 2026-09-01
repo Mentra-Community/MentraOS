@@ -22,7 +22,6 @@ import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.NetworkUtils;
 import com.mentra.asg_client.camera.UvcStreamingState;
 import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
-import com.mentra.asg_client.io.media.utils.MediaStorage;
 import com.mentra.asg_client.io.bluetooth.interfaces.TransportListener;
 import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
 import com.mentra.asg_client.io.file.core.FileManager;
@@ -31,11 +30,11 @@ import com.mentra.asg_client.io.hardware.interfaces.RgbLedConstants;
 import com.mentra.asg_client.io.media.core.MediaCaptureService;
 import com.mentra.asg_client.io.media.interfaces.ServiceCallbackInterface;
 import com.mentra.asg_client.io.media.managers.MediaUploadQueueManager;
+import com.mentra.asg_client.io.media.utils.MediaStorage;
 import com.mentra.asg_client.io.network.interfaces.INetworkManager;
 import com.mentra.asg_client.io.network.interfaces.NetworkStateListener;
 import com.mentra.asg_client.io.ota.helpers.OtaHelper;
 import com.mentra.asg_client.io.ota.interfaces.IBesOtaRegistry;
-import com.mentra.asg_client.io.ota.utils.OtaConstants;
 import com.mentra.asg_client.io.streaming.events.StreamingEvent;
 import com.mentra.asg_client.logging.BleTraceLogger;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
@@ -92,8 +91,8 @@ public class AsgClientService extends Service implements NetworkStateListener, T
     @Inject Provider<ICompanionTransport> companionTransportProvider;
 
     /**
-     * Provider for the device-appropriate network manager, deferred for the same reason as
-     * {@link #companionTransportProvider}.
+     * Provider for the device-appropriate network manager, deferred for the same reason as {@link
+     * #companionTransportProvider}.
      */
     @Inject Provider<INetworkManager> networkManagerProvider;
 
@@ -243,22 +242,37 @@ public class AsgClientService extends Service implements NetworkStateListener, T
                             3000);
 
             // Apply persisted Wi-Fi ADB preference (default off for security — OS-1627)
-            new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                try {
-                    boolean wifiAdbEnabled = false;
-                    if (serviceInitializer != null
-                            && serviceInitializer.getServiceManager() != null
-                            && serviceInitializer.getServiceManager().getAsgSettings() != null) {
-                        wifiAdbEnabled =
-                                serviceInitializer.getServiceManager().getAsgSettings().isWifiAdbEnabled();
-                    }
-                    Log.d(TAG, "🔧 Applying Wi-Fi ADB state on boot: " + wifiAdbEnabled);
-                    SystemControllerFactory.get(this).setWifiAdb(wifiAdbEnabled);
-                } catch (Exception e) {
-                    Log.w(TAG, "Could not apply Wi-Fi ADB state on boot; forcing disabled", e);
-                    SystemControllerFactory.get(this).setWifiAdb(false);
-                }
-            }, 3000);
+            new Handler(Looper.getMainLooper())
+                    .postDelayed(
+                            () -> {
+                                try {
+                                    boolean wifiAdbEnabled = false;
+                                    if (serviceInitializer != null
+                                            && serviceInitializer.getServiceManager() != null
+                                            && serviceInitializer
+                                                            .getServiceManager()
+                                                            .getAsgSettings()
+                                                    != null) {
+                                        wifiAdbEnabled =
+                                                serviceInitializer
+                                                        .getServiceManager()
+                                                        .getAsgSettings()
+                                                        .isWifiAdbEnabled();
+                                    }
+                                    Log.d(
+                                            TAG,
+                                            "🔧 Applying Wi-Fi ADB state on boot: "
+                                                    + wifiAdbEnabled);
+                                    SystemControllerFactory.get(this).setWifiAdb(wifiAdbEnabled);
+                                } catch (Exception e) {
+                                    Log.w(
+                                            TAG,
+                                            "Could not apply Wi-Fi ADB state on boot; forcing disabled",
+                                            e);
+                                    SystemControllerFactory.get(this).setWifiAdb(false);
+                                }
+                            },
+                            3000);
 
             // Register receivers
             Log.d(TAG, "📻 Registering broadcast receivers");
@@ -510,7 +524,10 @@ public class AsgClientService extends Service implements NetworkStateListener, T
                             rateHz = Integer.parseInt(outputRate);
                             body.put("rate", rateHz);
                         } catch (NumberFormatException e) {
-                            Log.w(TAG, "[I2S-RATE] Unexpected PROPERTY_OUTPUT_SAMPLE_RATE value: " + outputRate);
+                            Log.w(
+                                    TAG,
+                                    "[I2S-RATE] Unexpected PROPERTY_OUTPUT_SAMPLE_RATE value: "
+                                            + outputRate);
                         }
                     } else {
                         Log.w(TAG, "[I2S-RATE] HAL sample-rate property missing");
@@ -1161,11 +1178,11 @@ public class AsgClientService extends Service implements NetworkStateListener, T
 
     /**
      * Send version information to phone in chunks to work around BLE MTU limitations. Chunk 1
-     * (version_info_1): app_version, build_number, device_model, android_version. Chunk 3
-     * (version_info_3): bes_fw_version, mtk_fw_version, bt_mac_address, wifi_mac_address,
-     * serial_number. The phone parses any version_info* message field-by-field, so chunk numbering
-     * gaps are fine (version_info_2 used to carry ota_version_url; the glasses no longer advertise
-     * a manifest).
+     * (version_info_1): app_version, build_number, device_model, android_version, and
+     * backend-derived WiFi protocol capability versions. Chunk 3 (version_info_3): bes_fw_version,
+     * mtk_fw_version, bt_mac_address, wifi_mac_address, serial_number. The phone parses any
+     * version_info* message field-by-field, so chunk numbering gaps are fine (version_info_2 used
+     * to carry ota_version_url; the glasses no longer advertise a manifest).
      */
     public void sendVersionInfo() {
         Log.i(TAG, "📊 Sending version information (chunked for MTU)");
@@ -1248,9 +1265,15 @@ public class AsgClientService extends Service implements NetworkStateListener, T
                 chunk1.put("sid", ProcessSessionId.SID);
                 chunk1.put(
                         "hotspot_ota_version",
-                        DeviceProfile.detect(this).isK900()
-                                ? AsgConstants.HOTSPOT_OTA_VERSION
-                                : 0);
+                        DeviceProfile.detect(this).isK900() ? AsgConstants.HOTSPOT_OTA_VERSION : 0);
+                INetworkManager networkManager =
+                        serviceInitializer.getServiceManager().getNetworkManager();
+                chunk1.put(
+                        "wifi_forget_result_version",
+                        AsgConstants.WIFI_FORGET_RESULT_VERSION);
+                chunk1.put(
+                        "saved_wifi_networks_version",
+                        networkManager != null ? networkManager.getSavedWifiNetworksVersion() : 0);
 
                 Log.d(TAG, "📤 Sending version_info_1: " + chunk1.toString());
                 serviceInitializer
@@ -1482,7 +1505,9 @@ public class AsgClientService extends Service implements NetworkStateListener, T
                     if (started) {
                         Log.i(TAG, "✅ In-memory BLE file transfer started for: " + fileName);
                     } else {
-                        Log.e(TAG, "❌ Failed to start in-memory BLE file transfer for: " + fileName);
+                        Log.e(
+                                TAG,
+                                "❌ Failed to start in-memory BLE file transfer for: " + fileName);
                     }
                     return started;
                 } else {

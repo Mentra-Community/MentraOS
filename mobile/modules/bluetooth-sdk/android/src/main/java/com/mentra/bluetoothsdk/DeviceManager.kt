@@ -1728,9 +1728,8 @@ class DeviceManager {
         sgc?.requestWifiScan(scanId)
     }
 
-    fun requestSavedWifiNetworks(requestId: String) {
-        Bridge.log("MAN: Requesting saved wifi networks")
-        sgc?.requestSavedWifiNetworks(requestId)
+    fun requestSavedWifiNetworks(requestId: String, sid: String) {
+        sgc?.requestSavedWifiNetworks(requestId, sid)
     }
 
     fun sendIncidentId(incidentId: String, apiBaseUrl: String? = null) {
@@ -1743,9 +1742,8 @@ class DeviceManager {
         sgc?.sendWifiCredentials(ssid, password)
     }
 
-    fun forgetWifiNetwork(ssid: String, requestId: String? = null) {
-        Bridge.log("MAN: Forgetting wifi network: $ssid")
-        sgc?.forgetWifiNetwork(ssid, requestId)
+    fun forgetWifiNetwork(ssid: String, requestId: String? = null, sid: String? = null) {
+        sgc?.forgetWifiNetwork(ssid, requestId, sid)
     }
 
     fun setHotspotState(enabled: Boolean) {
