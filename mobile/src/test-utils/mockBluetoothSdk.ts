@@ -129,6 +129,7 @@ export const bluetoothSdkMock = {
   showDashboard: jest.fn(() => Promise.resolve()),
   ping: jest.fn(() => Promise.resolve()),
   sendIncidentId: jest.fn(() => Promise.resolve()),
+  getNativeLogs: jest.fn(() => Promise.resolve([])),
   requestWifiScan: jest.fn(() => Promise.resolve([])),
   sendWifiCredentials: jest.fn((ssid: string) =>
     Promise.resolve({type: "wifi_status_change", state: "connected", ssid}),
