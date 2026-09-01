@@ -5,7 +5,8 @@ import Foundation
 final class ActiveStreamKeepAlive {
     enum StatusDisposition: Equatable {
         case preserve
-        case awaitRecovery
+        case restartRecoveryDeadline
+        case cancelRecoveryDeadline
         case stop
     }
 
@@ -34,30 +35,31 @@ final class ActiveStreamKeepAlive {
         case .error where event.willRetry == true:
             retryPending = true
             suspendMissDetection()
-            return .preserve
+            return .restartRecoveryDeadline
         case .reconnecting:
             retryPending = true
             suspendMissDetection()
-            return .preserve
+            return .restartRecoveryDeadline
         case .stopped where retryPending:
             // Some publisher implementations report a stopped transition
             // between the retryable error and their reconnect attempt. Give
             // that reconnect a bounded window instead of preserving a dead
             // monitor indefinitely if no recovery status follows.
             suspendMissDetection()
-            return .awaitRecovery
+            return .restartRecoveryDeadline
         case .reconnected, .streaming:
             retryPending = false
             armMissDetection()
-            return .preserve
+            return .cancelRecoveryDeadline
         case .initializing:
             // A fresh start does not have a monitor until its request resolves.
             // During recovery, initializing is still pre-live and must not make
             // missed ACKs terminal before the publisher is connected again.
             if !retryPending {
                 armMissDetection()
+                return .preserve
             }
-            return .preserve
+            return .restartRecoveryDeadline
         case .stopped, .stopping, .error, .reconnectFailed:
             return .stop
         }
@@ -1674,7 +1676,7 @@ public final class MentraBluetoothSDK {
         switch tracker.handle(event) {
         case .stop:
             stopStreamKeepAliveMonitor()
-        case .awaitRecovery:
+        case .restartRecoveryDeadline:
             tracker.recoveryStopTask?.cancel()
             tracker.recoveryStopTask = Task { @MainActor [weak self, weak tracker] in
                 try? await Task.sleep(nanoseconds: Self.streamRecoveryStatusTimeoutNanoseconds)
@@ -1687,11 +1689,11 @@ public final class MentraBluetoothSDK {
                 }
                 self.stopStreamKeepAliveMonitor()
             }
+        case .cancelRecoveryDeadline:
+            tracker.recoveryStopTask?.cancel()
+            tracker.recoveryStopTask = nil
         case .preserve:
-            if event.state == .reconnecting || event.state == .reconnected || event.state == .streaming {
-                tracker.recoveryStopTask?.cancel()
-                tracker.recoveryStopTask = nil
-            }
+            break
         }
     }
 

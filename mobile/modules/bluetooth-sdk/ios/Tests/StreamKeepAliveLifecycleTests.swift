@@ -6,13 +6,13 @@ final class StreamKeepAliveLifecycleTests: XCTestCase {
     func testRetryableErrorPreservesMonitorThroughTransientStoppedStatus() {
         let tracker = makeArmedTracker()
 
-        XCTAssertEqual(tracker.handle(event(status: "error", willRetry: true)), .preserve)
+        XCTAssertEqual(tracker.handle(event(status: "error", willRetry: true)), .restartRecoveryDeadline)
         XCTAssertFalse(tracker.armed)
         XCTAssertTrue(tracker.retryPending)
         XCTAssertNil(tracker.pendingAckId)
         XCTAssertEqual(tracker.missedAckCount, 0)
 
-        XCTAssertEqual(tracker.handle(event(status: "stopped")), .awaitRecovery)
+        XCTAssertEqual(tracker.handle(event(status: "stopped")), .restartRecoveryDeadline)
         XCTAssertFalse(tracker.armed)
         XCTAssertTrue(tracker.retryPending)
     }
@@ -20,17 +20,17 @@ final class StreamKeepAliveLifecycleTests: XCTestCase {
     func testReconnectLifecycleRearmsExistingMonitorWithoutAnotherStart() {
         let tracker = makeArmedTracker()
 
-        XCTAssertEqual(tracker.handle(event(status: "error", willRetry: true)), .preserve)
-        XCTAssertEqual(tracker.handle(event(status: "reconnecting")), .preserve)
+        XCTAssertEqual(tracker.handle(event(status: "error", willRetry: true)), .restartRecoveryDeadline)
+        XCTAssertEqual(tracker.handle(event(status: "reconnecting")), .restartRecoveryDeadline)
         XCTAssertFalse(tracker.armed)
 
-        XCTAssertEqual(tracker.handle(event(status: "reconnected")), .preserve)
+        XCTAssertEqual(tracker.handle(event(status: "reconnected")), .cancelRecoveryDeadline)
         XCTAssertTrue(tracker.armed)
         XCTAssertFalse(tracker.retryPending)
 
         tracker.pendingAckId = "ack-new"
         tracker.missedAckCount = 1
-        XCTAssertEqual(tracker.handle(event(status: "streaming")), .preserve)
+        XCTAssertEqual(tracker.handle(event(status: "streaming")), .cancelRecoveryDeadline)
         XCTAssertEqual(tracker.pendingAckId, "ack-new")
         XCTAssertEqual(tracker.missedAckCount, 1)
     }
@@ -38,8 +38,8 @@ final class StreamKeepAliveLifecycleTests: XCTestCase {
     func testStreamingStatusCanRearmDirectlyAfterRetryableError() {
         let tracker = makeArmedTracker()
 
-        XCTAssertEqual(tracker.handle(event(status: "error", willRetry: true)), .preserve)
-        XCTAssertEqual(tracker.handle(event(status: "streaming")), .preserve)
+        XCTAssertEqual(tracker.handle(event(status: "error", willRetry: true)), .restartRecoveryDeadline)
+        XCTAssertEqual(tracker.handle(event(status: "streaming")), .cancelRecoveryDeadline)
         XCTAssertTrue(tracker.armed)
         XCTAssertFalse(tracker.retryPending)
     }
@@ -49,6 +49,31 @@ final class StreamKeepAliveLifecycleTests: XCTestCase {
             let tracker = makeArmedTracker()
             XCTAssertEqual(tracker.handle(event(status: status)), .stop, status)
         }
+    }
+
+    func testRetryableErrorAfterTransientStoppedRestartsRecoveryDeadline() {
+        let tracker = makeArmedTracker()
+
+        XCTAssertEqual(tracker.handle(event(status: "error", willRetry: true)), .restartRecoveryDeadline)
+        XCTAssertEqual(tracker.handle(event(status: "stopped")), .restartRecoveryDeadline)
+        XCTAssertEqual(tracker.handle(event(status: "error", willRetry: true)), .restartRecoveryDeadline)
+        XCTAssertTrue(tracker.retryPending)
+        XCTAssertFalse(tracker.armed)
+    }
+
+    func testRetryProgressRestartsDeadlineUntilStreamIsLive() {
+        let tracker = makeArmedTracker()
+
+        XCTAssertEqual(tracker.handle(event(status: "error", willRetry: true)), .restartRecoveryDeadline)
+        XCTAssertEqual(tracker.handle(event(status: "stopped")), .restartRecoveryDeadline)
+        XCTAssertEqual(tracker.handle(event(status: "reconnecting")), .restartRecoveryDeadline)
+        XCTAssertEqual(tracker.handle(event(status: "initializing")), .restartRecoveryDeadline)
+        XCTAssertTrue(tracker.retryPending)
+        XCTAssertFalse(tracker.armed)
+
+        XCTAssertEqual(tracker.handle(event(status: "reconnected")), .cancelRecoveryDeadline)
+        XCTAssertFalse(tracker.retryPending)
+        XCTAssertTrue(tracker.armed)
     }
 
     private func makeArmedTracker() -> ActiveStreamKeepAlive {
