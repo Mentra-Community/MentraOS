@@ -3,51 +3,126 @@ import {readFileSync} from "node:fs"
 import path from "node:path"
 import test from "node:test"
 import {fileURLToPath} from "node:url"
-import ts from "typescript"
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 
 test("publishes externally managed streaming on the frozen root API", () => {
   const source = readFileSync(path.join(packageRoot, "src/index.ts"), "utf8")
-  const sourceFile = ts.createSourceFile("index.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
-  const bluetoothSdk = findVariable(sourceFile, "BluetoothSdk")
-  const publicEvents = findVariable(sourceFile, "PUBLIC_EVENT_NAMES")
-
-  assert.ok(bluetoothSdk && ts.isCallExpression(bluetoothSdk), "missing frozen BluetoothSdk public object")
-  assert.equal(bluetoothSdk.expression.getText(), "Object.freeze")
-  const publicObject = bluetoothSdk.arguments[0]
-  assert.ok(publicObject && ts.isObjectLiteralExpression(publicObject), "BluetoothSdk must freeze an object literal")
+  const publicObject = extractDelimitedInitializer(source, "export const BluetoothSdk", "Object.freeze", "{", "}")
   assertBoundMethod(publicObject, "startExternallyManagedStream")
   assertBoundMethod(publicObject, "sendExternallyManagedStreamKeepAlive")
 
-  assert.ok(publicEvents && ts.isNewExpression(publicEvents), "missing BluetoothSdk public event allowlist")
-  const eventNames = publicEvents.arguments?.[0]
-  assert.ok(eventNames && ts.isArrayLiteralExpression(eventNames), "public event allowlist must be an array")
+  const publicEvents = extractDelimitedInitializer(source, "const PUBLIC_EVENT_NAMES", "new Set", "[", "]")
   assert.ok(
-    eventNames.elements.some((element) => ts.isStringLiteral(element) && element.text === "keep_alive_ack"),
-    "missing keep_alive_ack public event",
+    splitTopLevel(publicEvents)
+      .map((item) => item.trim())
+      .includes('"keep_alive_ack"'),
   )
 })
 
-function findVariable(sourceFile, name) {
-  let initializer
-  sourceFile.forEachChild((node) => {
-    if (!ts.isVariableStatement(node)) return
-    const declaration = node.declarationList.declarations.find(
-      (candidate) => ts.isIdentifier(candidate.name) && candidate.name.text === name,
-    )
-    if (declaration) initializer = declaration.initializer
-  })
-  return initializer
+function extractDelimitedInitializer(source, declaration, initializer, open, close) {
+  const declarationIndex = source.indexOf(declaration)
+  assert.notEqual(declarationIndex, -1, `missing ${declaration}`)
+  const initializerIndex = source.indexOf(initializer, declarationIndex)
+  assert.notEqual(initializerIndex, -1, `missing ${initializer} initializer for ${declaration}`)
+  const openIndex = source.indexOf(open, initializerIndex)
+  assert.notEqual(openIndex, -1, `missing ${open} after ${initializer}`)
+  return extractBalanced(source, openIndex, open, close)
 }
 
 function assertBoundMethod(publicObject, methodName) {
-  const property = publicObject.properties.find(
-    (candidate) => ts.isPropertyAssignment(candidate) && candidate.name.getText() === methodName,
-  )
-  assert.ok(property && ts.isCallExpression(property.initializer), `missing ${methodName} public method`)
-  assert.equal(property.initializer.expression.getText(), "bindPublicMethod")
-  assert.equal(property.initializer.arguments[0]?.getText(), `"${methodName}"`)
+  const property = splitTopLevel(publicObject).find((item) => item.trimStart().startsWith(`${methodName}:`))
+  assert.ok(property, `missing ${methodName} public method`)
+  assert.equal(property.replace(/\s+/g, " ").trim(), `${methodName}: bindPublicMethod("${methodName}")`)
+}
+
+function extractBalanced(source, openIndex, open, close) {
+  let depth = 0
+  let quote = null
+  let escaped = false
+  let lineComment = false
+  let blockComment = false
+
+  for (let index = openIndex; index < source.length; index += 1) {
+    const character = source[index]
+    const next = source[index + 1]
+
+    if (lineComment) {
+      if (character === "\n") lineComment = false
+      continue
+    }
+    if (blockComment) {
+      if (character === "*" && next === "/") {
+        blockComment = false
+        index += 1
+      }
+      continue
+    }
+    if (quote) {
+      if (escaped) {
+        escaped = false
+      } else if (character === "\\") {
+        escaped = true
+      } else if (character === quote) {
+        quote = null
+      }
+      continue
+    }
+    if (character === "/" && next === "/") {
+      lineComment = true
+      index += 1
+      continue
+    }
+    if (character === "/" && next === "*") {
+      blockComment = true
+      index += 1
+      continue
+    }
+    if (character === '"' || character === "'" || character === "`") {
+      quote = character
+      continue
+    }
+    if (character === open) depth += 1
+    if (character !== close) continue
+    depth -= 1
+    if (depth === 0) return source.slice(openIndex + 1, index)
+  }
+
+  assert.fail(`unterminated ${open}${close} initializer`)
+}
+
+function splitTopLevel(source) {
+  const items = []
+  let start = 0
+  let depth = 0
+  let quote = null
+  let escaped = false
+
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index]
+    if (quote) {
+      if (escaped) {
+        escaped = false
+      } else if (character === "\\") {
+        escaped = true
+      } else if (character === quote) {
+        quote = null
+      }
+      continue
+    }
+    if (character === '"' || character === "'" || character === "`") {
+      quote = character
+      continue
+    }
+    if (character === "(" || character === "[" || character === "{") depth += 1
+    if (character === ")" || character === "]" || character === "}") depth -= 1
+    if (character === "," && depth === 0) {
+      items.push(source.slice(start, index))
+      start = index + 1
+    }
+  }
+  items.push(source.slice(start))
+  return items
 }
 
 test("publishes externally managed streaming methods and request types", () => {
