@@ -98,6 +98,18 @@ private final class PendingVideoRecordingRequest {
     }
 }
 
+@MainActor
+private final class PendingVersionInfoRequest {
+    let pending: PendingResponse<VersionInfoResult>
+    let accumulator: VersionInfoResponseAccumulator
+    var settleTask: Task<Void, Never>?
+
+    init(pending: PendingResponse<VersionInfoResult>, requestId: String) {
+        self.pending = pending
+        accumulator = VersionInfoResponseAccumulator(expectedRequestId: requestId)
+    }
+}
+
 // seq records send order (assigned and handed to the BLE queue in a single
 // MainActor turn) so that an id-carrying status for a newer start can
 // identify which older in-flight starts it preempted.
@@ -179,6 +191,7 @@ public final class MentraBluetoothSDK {
     private static let otaBesVersionWaitMs = 5_000
     private static let otaMtkVersionWaitMs = 2_000
     private static let otaVersionPollMs = 100
+    private static let versionInfoSettleMs = 500
     private static let defaultStreamKeepAliveIntervalSeconds = 5
 
     public weak var delegate: MentraBluetoothSDKDelegate?
@@ -215,7 +228,7 @@ public final class MentraBluetoothSDK {
     private var wifiScanTask: Task<[WifiScanResult], Error>?
     private var pendingWifiStatus: PendingWifiStatusRequest?
     private var pendingHotspotStatus: PendingHotspotStatusRequest?
-    private var pendingVersionInfo: PendingResponse<VersionInfoResult>?
+    private var pendingVersionInfo: PendingVersionInfoRequest?
     private var configuredOtaVersionUrl: String?
 
     public init(configuration: MentraBluetoothSDKConfiguration = .default) {
@@ -1205,17 +1218,21 @@ public final class MentraBluetoothSDK {
                 message: "A version info request is already waiting for a glasses response."
             )
         }
+        let requestId = UUID().uuidString
         let pending = PendingResponse<VersionInfoResult>(operation: "version info request")
-        pendingVersionInfo = pending
-        DeviceManager.shared.requestVersionInfo()
+        let request = PendingVersionInfoRequest(pending: pending, requestId: requestId)
+        pendingVersionInfo = request
+        DeviceManager.shared.requestVersionInfo(requestId: requestId)
         do {
             let status = try await pending.wait()
-            if pendingVersionInfo === pending {
+            request.settleTask?.cancel()
+            if pendingVersionInfo === request {
                 pendingVersionInfo = nil
             }
             return status
         } catch {
-            if pendingVersionInfo === pending {
+            request.settleTask?.cancel()
+            if pendingVersionInfo === request {
                 pendingVersionInfo = nil
             }
             throw error
@@ -2101,6 +2118,36 @@ private func dispatchDiscoveredDevices(_ rawSearchResults: Any?) {
         activeSession.onComplete(activeSession.latestResults)
     }
 
+    private func handleVersionInfoForRequest(_ data: [String: Any]) {
+        guard let request = pendingVersionInfo else { return }
+        switch request.accumulator.accept(data) {
+        case .ignored:
+            break
+        case .waiting:
+            request.settleTask?.cancel()
+            request.settleTask = Task { @MainActor [weak self, weak request] in
+                do {
+                    try await Task.sleep(
+                        nanoseconds: UInt64(Self.versionInfoSettleMs) * 1_000_000
+                    )
+                } catch {
+                    return
+                }
+                guard let self, let request, pendingVersionInfo === request,
+                      let partial = request.accumulator.finishAfterQuietPeriod()
+                else {
+                    return
+                }
+                pendingVersionInfo = nil
+                request.pending.resolve(partial)
+            }
+        case let .complete(result):
+            request.settleTask?.cancel()
+            pendingVersionInfo = nil
+            request.pending.resolve(result)
+        }
+    }
+
     private func dispatchBridgeEvent(_ eventName: String, _ data: [String: Any]) {
         switch eventName {
         case "log":
@@ -2233,7 +2280,7 @@ private func dispatchDiscoveredDevices(_ rawSearchResults: Any?) {
             delegate?.mentraBluetoothSDK(self, didReceive: .settingsAck(event))
         case "version_info":
             let event = VersionInfoResult(values: data)
-            pendingVersionInfo?.resolve(event)
+            handleVersionInfoForRequest(data)
             delegate?.mentraBluetoothSDK(self, didReceive: .versionInfo(event))
         case "compatible_glasses_search_stop":
             delegate?.mentraBluetoothSDK(self, didStopScan: .completed)

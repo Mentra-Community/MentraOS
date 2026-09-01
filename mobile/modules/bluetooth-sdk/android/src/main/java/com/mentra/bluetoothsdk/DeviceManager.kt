@@ -1952,9 +1952,14 @@ class DeviceManager {
      * Request version info from glasses. Glasses will respond with version_info message containing
      * build number, firmware version, etc.
      */
-    fun requestVersionInfo() {
+    fun requestVersionInfo(requestId: String? = null) {
         Bridge.log("MAN: 📱 Requesting version info from glasses")
-        sgc?.requestVersionInfo()
+        val controller = sgc
+        if (controller is MentraLive) {
+            controller.requestVersionInfo(requestId)
+        } else {
+            controller?.requestVersionInfo()
+        }
     }
 
     /** Send shutdown command to glasses. This will initiate a graceful shutdown of the device. */

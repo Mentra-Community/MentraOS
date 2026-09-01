@@ -3129,7 +3129,7 @@ class MentraLive: NSObject, SGCManager {
                 maybeSendWireHandshake()
                 handleGlassesSessionId(json)
 
-                Bridge.sendVersionInfo(fields)
+                Bridge.sendVersionInfo(fields, responseChunk: type)
             } else {
                 Bridge.log("Unhandled message type: \(type)")
             }
@@ -4992,7 +4992,14 @@ class MentraLive: NSObject, SGCManager {
     }
 
     func requestVersionInfo() {
-        let json: [String: Any] = ["type": "request_version"]
+        requestVersionInfo(requestId: nil)
+    }
+
+    func requestVersionInfo(requestId: String?) {
+        var json: [String: Any] = ["type": "request_version"]
+        if let requestId {
+            json["request_id"] = requestId
+        }
         sendJson(json)
     }
 
