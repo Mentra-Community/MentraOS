@@ -5,10 +5,13 @@ final class VersionInfoResponseAccumulatorTests: XCTestCase {
     func testMergesCurrentChunksAndCompletesOnFirmwareChunk() {
         let accumulator = VersionInfoResponseAccumulator(expectedRequestId: "request-1")
 
-        guard case .waiting = accumulator.accept(chunk("version_info_1", "request-1", ["buildNumber": "42"]))
+        guard case let .waiting(allowQuietPeriod) = accumulator.accept(
+            chunk("version_info_1", "request-1", ["buildNumber": "42"])
+        ), !allowQuietPeriod
         else {
             return XCTFail("Expected first chunk to wait")
         }
+        XCTAssertNil(accumulator.finishAfterQuietPeriod())
 
         let outcome = accumulator.accept(
             chunk(
@@ -68,7 +71,9 @@ final class VersionInfoResponseAccumulatorTests: XCTestCase {
         _ = accumulator.accept(chunk("version_info_1", nil, ["appVersion": "old"]))
         _ = accumulator.accept(chunk("version_info_1", nil, ["buildNumber": "43"]))
 
-        guard case .waiting = accumulator.accept(chunk("version_info_3", nil, ["besFirmwareVersion": "new"]))
+        guard case let .waiting(allowQuietPeriod) = accumulator.accept(
+            chunk("version_info_3", nil, ["besFirmwareVersion": "new"])
+        ), allowQuietPeriod
         else {
             return XCTFail("Expected uncorrelated fallback to wait for the quiet period")
         }

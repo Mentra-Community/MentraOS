@@ -1545,8 +1545,10 @@ class MentraBluetoothSdk private constructor(
             val request = pendingVersionInfo ?: return
             when (val outcome = request.accumulator.accept(data)) {
                 VersionInfoAccumulatorOutcome.Ignored -> Unit
-                VersionInfoAccumulatorOutcome.Waiting -> {
+                is VersionInfoAccumulatorOutcome.Waiting -> {
                     request.settleRunnable?.let(mainHandler::removeCallbacks)
+                    request.settleRunnable = null
+                    if (!outcome.allowQuietPeriod) return@synchronized
                     val settle =
                         Runnable {
                             synchronized(oneShotLock) {

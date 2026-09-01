@@ -9,7 +9,8 @@ class VersionInfoResponseAccumulatorTest {
         val accumulator = VersionInfoResponseAccumulator("request-1")
 
         assertThat(accumulator.accept(chunk("version_info_1", "request-1", "buildNumber" to "42")))
-            .isEqualTo(VersionInfoAccumulatorOutcome.Waiting)
+            .isEqualTo(VersionInfoAccumulatorOutcome.Waiting(allowQuietPeriod = false))
+        assertThat(accumulator.finishAfterQuietPeriod()).isNull()
 
         val complete =
             accumulator.accept(
@@ -60,7 +61,7 @@ class VersionInfoResponseAccumulatorTest {
         accumulator.accept(chunk("version_info_1", null, "buildNumber" to "43"))
 
         assertThat(accumulator.accept(chunk("version_info_3", null, "besFirmwareVersion" to "new")))
-            .isEqualTo(VersionInfoAccumulatorOutcome.Waiting)
+            .isEqualTo(VersionInfoAccumulatorOutcome.Waiting(allowQuietPeriod = true))
         val complete = accumulator.finishAfterQuietPeriod()!!
 
         assertThat(complete.appVersion).isEmpty()

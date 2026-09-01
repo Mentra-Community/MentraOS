@@ -2123,8 +2123,10 @@ private func dispatchDiscoveredDevices(_ rawSearchResults: Any?) {
         switch request.accumulator.accept(data) {
         case .ignored:
             break
-        case .waiting:
+        case let .waiting(allowQuietPeriod):
             request.settleTask?.cancel()
+            request.settleTask = nil
+            guard allowQuietPeriod else { return }
             request.settleTask = Task { @MainActor [weak self, weak request] in
                 do {
                     try await Task.sleep(

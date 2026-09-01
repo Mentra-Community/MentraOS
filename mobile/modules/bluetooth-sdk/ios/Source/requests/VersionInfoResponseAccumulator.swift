@@ -2,7 +2,7 @@ import Foundation
 
 enum VersionInfoAccumulatorOutcome {
     case ignored
-    case waiting
+    case waiting(allowQuietPeriod: Bool)
     case complete(VersionInfoResult)
 }
 
@@ -59,11 +59,13 @@ final class VersionInfoResponseAccumulator {
 
         mergeNonEmptyFields(event)
         let result = VersionInfoResult(values: values)
-        return chunk == Self.finalChunk && isCorrelated ? .complete(result) : .waiting
+        return chunk == Self.finalChunk && isCorrelated
+            ? .complete(result)
+            : .waiting(allowQuietPeriod: !isCorrelated)
     }
 
     func finishAfterQuietPeriod() -> VersionInfoResult? {
-        started ? VersionInfoResult(values: values) : nil
+        started && startedRequestId == nil ? VersionInfoResult(values: values) : nil
     }
 
     private func mergeNonEmptyFields(_ event: [String: Any]) {
