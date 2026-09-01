@@ -7,7 +7,7 @@ private final class ActiveStreamKeepAlive {
     let intervalSeconds: Int
     // Managed monitors are created after startStream receives a successful status, so the
     // first keep-alive request can immediately participate in missed-ACK detection.
-    let ackWindow = StreamKeepAliveAckWindow.forStartedStream(maxTrackedAckIds: 3, maxMissedAcks: 3)
+    let ackWindow = StreamKeepAliveAckWindow.forStartedStream(maxTrackedAckIds: 4, maxMissedAcks: 3)
     var task: Task<Void, Never>?
 
     init(streamId: String, intervalSeconds: Int) {

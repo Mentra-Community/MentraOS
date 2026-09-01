@@ -142,7 +142,7 @@ class MentraBluetoothSdk private constructor(
         // first keep-alive request can immediately participate in missed-ACK detection.
         val ackWindow: StreamKeepAliveAckWindow =
             StreamKeepAliveAckWindow.forStartedStream(
-                maxTrackedAckIds = MAX_MISSED_STREAM_KEEP_ALIVE_ACKS,
+                maxTrackedAckIds = MAX_MISSED_STREAM_KEEP_ALIVE_ACKS + 1,
                 maxMissedAcks = MAX_MISSED_STREAM_KEEP_ALIVE_ACKS,
             ),
         var nextTick: Runnable? = null,

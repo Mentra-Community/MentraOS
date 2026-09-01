@@ -38,6 +38,22 @@ final class StreamKeepAliveAckWindowTests: XCTestCase {
         }
     }
 
+    func testThreeIntervalsLateAckRemainsTrackableAtThreshold() {
+        let window = StreamKeepAliveAckWindow(maxTrackedAckIds: 4, maxMissedAcks: 3)
+        window.arm()
+        window.recordSent(ackId: "ack-1")
+
+        XCTAssertNil(window.recordTick())
+        window.recordSent(ackId: "ack-2")
+        XCTAssertNil(window.recordTick())
+        window.recordSent(ackId: "ack-3")
+        XCTAssertEqual(window.recordTick(), 3)
+        window.recordSent(ackId: "ack-4")
+
+        XCTAssertTrue(window.acknowledge(ackId: "ack-1"))
+        XCTAssertEqual(window.missedAckCount, 0)
+    }
+
     func testNewerAckDiscardsOlderOutstandingRequests() {
         let window = StreamKeepAliveAckWindow(maxTrackedAckIds: 3, maxMissedAcks: 3)
         window.arm()

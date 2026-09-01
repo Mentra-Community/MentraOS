@@ -44,6 +44,23 @@ class StreamKeepAliveAckWindowTest {
     }
 
     @Test
+    fun threeIntervalsLateAckRemainsTrackableAtThreshold() {
+        val window = StreamKeepAliveAckWindow(maxTrackedAckIds = 4, maxMissedAcks = 3)
+        window.arm()
+        window.recordSent("ack-1")
+
+        assertThat(window.recordTick()).isNull()
+        window.recordSent("ack-2")
+        assertThat(window.recordTick()).isNull()
+        window.recordSent("ack-3")
+        assertThat(window.recordTick()).isEqualTo(3)
+        window.recordSent("ack-4")
+
+        assertThat(window.acknowledge("ack-1")).isTrue()
+        assertThat(window.missedAckCount).isZero()
+    }
+
+    @Test
     fun newerAckDiscardsOlderOutstandingRequests() {
         val window = StreamKeepAliveAckWindow(maxTrackedAckIds = 3, maxMissedAcks = 3)
         window.arm()
