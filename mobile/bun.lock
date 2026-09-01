@@ -274,7 +274,7 @@
     },
     "modules/entra-auth": {
       "name": "@mentra/entra-auth",
-      "version": "3.1.0",
+      "version": "3.2.0",
       "devDependencies": {
         "expo-module-scripts": "^55.0.2",
         "typescript": "~5.9.2",

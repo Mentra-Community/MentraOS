@@ -37,8 +37,10 @@ and the configured WHIP/WHEP streaming provider.
   AWS account.
 - **Modular Runtime Services** is the existing Cloud V2 Runtime binary started
   with an explicit allowlist of service modules. The first deployment runs one
-  stateless HTTP process containing only managed-stream and meeting-provider
-  services. It is not a new gateway or a container per capability.
+  HTTP-only process containing only managed-stream and meeting-provider
+  services. The first reference deployment deliberately runs one replica:
+  managed-stream ownership is process-local and abandoned inputs are reclaimed
+  after a restart. It is not a new gateway or a container per capability.
 - **Restricted-network deployment** describes the v1 network posture: only
   customer-approved destinations are reachable.
 - **Air-gapped deployment** is reserved for a future zero-egress qualification
@@ -509,7 +511,7 @@ The first call-focused template is illustrative:
   "schemaVersion": 1,
   "deploymentId": "example-corp",
   "displayName": "Example Corp Mentra",
-  "releaseIdentity": "3.1.0",
+  "releaseIdentity": "<exact coordinated Mentra App release identity>",
   "services": {
     "coreUrl": null,
     "runtimeUrl": "https://mentra.example-corp.com"

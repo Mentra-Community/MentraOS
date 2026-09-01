@@ -10,10 +10,10 @@ import {useAuth} from "@/contexts/AuthContext"
 import showAlert from "@/utils/AlertUtils"
 
 export default function WorkspaceSignInScreen() {
-  const {activeDeployment, store} = useDeployment()
+  const {activeDeployment} = useDeployment()
   const {replaceAll} = useNavigationStore.getState()
   const {theme} = useAppTheme()
-  const {signInWorkspace} = useAuth()
+  const {signInWorkspace, leaveWorkspace} = useAuth()
   const [loading, setLoading] = useState(false)
 
   if (activeDeployment.kind !== "workspace") {
@@ -28,9 +28,24 @@ export default function WorkspaceSignInScreen() {
     )
   }
 
-  const cancelWorkspace = () => {
-    store.returnToMentra()
-    replaceAll("/auth/start")
+  const cancelWorkspace = async () => {
+    setLoading(true)
+    try {
+      await leaveWorkspace("consumer")
+      replaceAll("/auth/start")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const changeWorkspace = async () => {
+    setLoading(true)
+    try {
+      await leaveWorkspace("selector")
+      replaceAll("/auth/workspace")
+    } finally {
+      setLoading(false)
+    }
   }
 
   const signIn = async () => {
@@ -53,7 +68,7 @@ export default function WorkspaceSignInScreen() {
       <Header
         title={activeDeployment.manifest.displayName}
         rightText={translate("workspace:change")}
-        onRightPress={() => replaceAll("/auth/workspace")}
+        onRightPress={() => void changeWorkspace()}
       />
       <View className="flex-1 items-center justify-center p-6">
         <Icon name="office-building" size={64} color={theme.colors.foreground} />
@@ -73,7 +88,8 @@ export default function WorkspaceSignInScreen() {
         <Button
           preset="secondary"
           text={translate("workspace:returnToMentra")}
-          onPress={cancelWorkspace}
+          onPress={() => void cancelWorkspace()}
+          disabled={loading}
           className="mt-4"
         />
       </View>

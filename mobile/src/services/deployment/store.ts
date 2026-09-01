@@ -1,14 +1,16 @@
 import {storage} from "@/utils/storage/storage"
 
-import type {ActiveDeployment, DeploymentCandidate, WorkspaceDeployment} from "./types"
+import type {ActiveDeployment, ConsumerDeployment, DeploymentCandidate, WorkspaceDeployment} from "./types"
 import {deploymentManifestSchema} from "./schema"
 
 const ACTIVE_DEPLOYMENT_KEY = "mentra.deployment.active.v1"
-const CONSUMER_DEPLOYMENT: ActiveDeployment = Object.freeze({kind: "consumer", source: "embedded"})
+const CONSUMER_DEPLOYMENT: ConsumerDeployment = Object.freeze({kind: "consumer", source: "embedded"})
+
+type PersistedDeploymentSelection = ConsumerDeployment | WorkspaceDeployment
 
 export interface DeploymentStorage {
   load(): unknown | null
-  save(value: WorkspaceDeployment): void
+  save(value: PersistedDeploymentSelection): void
   remove(): void
 }
 
@@ -18,7 +20,7 @@ class MmkvDeploymentStorage implements DeploymentStorage {
     return result.is_ok() ? result.value : null
   }
 
-  save(value: WorkspaceDeployment): void {
+  save(value: PersistedDeploymentSelection): void {
     const result = storage.save(ACTIVE_DEPLOYMENT_KEY, value)
     if (result.is_error()) throw result.error
   }
@@ -31,14 +33,28 @@ class MmkvDeploymentStorage implements DeploymentStorage {
 
 export class DeploymentStore {
   private active: ActiveDeployment
-  private readonly listeners = new Set<(deployment: ActiveDeployment) => void>()
+  private resolved: boolean
+  private readonly listeners = new Set<(deployment: ActiveDeployment, resolved: boolean) => void>()
 
   constructor(private readonly persistence: DeploymentStorage = new MmkvDeploymentStorage()) {
-    this.active = restoreWorkspaceDeployment(persistence.load()) ?? CONSUMER_DEPLOYMENT
+    const restored = restoreDeploymentSelection(persistence.load())
+    this.active = restored ?? CONSUMER_DEPLOYMENT
+    this.resolved = restored !== null
   }
 
   getActive(): ActiveDeployment {
     return this.active
+  }
+
+  /** False only while a fresh install is waiting for Mentra vs workspace selection. */
+  isResolved(): boolean {
+    return this.resolved
+  }
+
+  /** Whether Mentra-owned telemetry may initialize for the current selection. */
+  isTelemetryAllowed(): boolean {
+    if (!this.resolved) return false
+    return this.active.kind === "consumer" || this.active.manifest.telemetry
   }
 
   activate(candidate: DeploymentCandidate): WorkspaceDeployment {
@@ -56,23 +72,33 @@ export class DeploymentStore {
   }
 
   returnToMentra(): void {
-    this.persistence.remove()
-    this.setActive(CONSUMER_DEPLOYMENT)
+    this.persistence.save(CONSUMER_DEPLOYMENT)
+    this.setActive(CONSUMER_DEPLOYMENT, true)
   }
 
-  subscribe(listener: (deployment: ActiveDeployment) => void): () => void {
+  /** Return to the neutral selector without opting into consumer telemetry. */
+  clearSelection(): void {
+    this.persistence.remove()
+    this.setActive(CONSUMER_DEPLOYMENT, false)
+  }
+
+  subscribe(listener: (deployment: ActiveDeployment, resolved: boolean) => void): () => void {
     this.listeners.add(listener)
     return () => this.listeners.delete(listener)
   }
 
-  private setActive(deployment: ActiveDeployment): void {
+  private setActive(deployment: ActiveDeployment, resolved = true): void {
     this.active = deployment
-    for (const listener of this.listeners) listener(deployment)
+    this.resolved = resolved
+    for (const listener of this.listeners) listener(deployment, resolved)
   }
 }
 
-function restoreWorkspaceDeployment(value: unknown): WorkspaceDeployment | null {
+function restoreDeploymentSelection(value: unknown): PersistedDeploymentSelection | null {
   if (!value || typeof value !== "object") return null
+  const persisted = value as Partial<PersistedDeploymentSelection>
+  if (persisted.kind === "consumer" && persisted.source === "embedded") return CONSUMER_DEPLOYMENT
+
   const candidate = value as Partial<WorkspaceDeployment>
   if (
     candidate.kind !== "workspace" ||

@@ -102,3 +102,8 @@ Before customer use, verify at least:
 - logout and workspace switching without account crossover;
 - revoked consent and disabled-user behavior;
 - both official Android and iOS redirect URIs.
+
+The reference Bicep template additionally requires `releaseIdentity` to equal
+the exact `EXPO_PUBLIC_MENTRAOS_VERSION` embedded in the mobile artifact. This
+is commonly `X.Y.Z-dev.N` for an internal build, not merely the package's base
+`X.Y.Z` version.

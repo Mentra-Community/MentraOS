@@ -65,7 +65,7 @@ import {
   type MiniappAuthToken,
   type TtsSynthesisResult,
 } from "../runtime/config"
-import {getAnalytics, getUiSeams} from "../runtime/bootstrap"
+import {getAnalytics, getUiSeams, isFeatureEnabled} from "../runtime/bootstrap"
 import {invokeScanQrSeam} from "../runtime/scanQrSeam"
 import {normalizeStreamAudioConfig, normalizeStreamVideoConfig} from "../runtime/streamConfig"
 import {toLanguageHint} from "@mentra/cloud-protocol/languages"
@@ -1668,6 +1668,34 @@ class LocalMiniappRuntime {
       return
     }
 
+    for (const subscription of rawStreams ?? []) {
+      const stream = typeof subscription === "string" ? subscription : subscription.stream
+      if (stream.startsWith("translation:") && !isFeatureEnabled("cloudSpeech")) {
+        this.sendResult(packageName, requestId, false, undefined, {
+          code: MiniappErrorCode.NOT_IMPLEMENTED,
+          message: "Cloud speech is disabled by this deployment",
+        })
+        return
+      }
+      if (!stream.startsWith("transcription:")) continue
+      const forceLocal = typeof subscription === "object" && subscription.forceLocal === true
+      const includeCloud = typeof subscription === "object" && subscription.includeCloud === true
+      if (forceLocal && !isFeatureEnabled("onDeviceSpeech")) {
+        this.sendResult(packageName, requestId, false, undefined, {
+          code: MiniappErrorCode.NOT_IMPLEMENTED,
+          message: "On-device speech is disabled by this deployment",
+        })
+        return
+      }
+      if ((!forceLocal || includeCloud) && !isFeatureEnabled("cloudSpeech")) {
+        this.sendResult(packageName, requestId, false, undefined, {
+          code: MiniappErrorCode.NOT_IMPLEMENTED,
+          message: "Cloud speech is disabled by this deployment",
+        })
+        return
+      }
+    }
+
     console.log(`${LOG_TAG}: SUBSCRIBE from ${packageName}: [${streams.join(", ")}]`)
 
     // Gate each stream on the permission type its data requires. The manifest
@@ -2292,6 +2320,7 @@ class LocalMiniappRuntime {
 
       const playOfflineTts = async (reason?: string): Promise<boolean> => {
         if (run.cancelled) return true
+        if (!isFeatureEnabled("onDeviceSpeech")) return false
         if (!offlineSupportsVoice || !(await ttsModelManager.isModelAvailable())) {
           return false
         }
@@ -3097,11 +3126,7 @@ class LocalMiniappRuntime {
    * session.system.scanQr — host camera overlay. Must not clear miniapp
    * foreground; the host seam is responsible for presenting a Modal on top.
    */
-  private async handleScanQr(
-    packageName: string,
-    payload: Record<string, unknown>,
-    requestId?: string,
-  ): Promise<void> {
+  private async handleScanQr(packageName: string, payload: Record<string, unknown>, requestId?: string): Promise<void> {
     try {
       const result = await invokeScanQrSeam(getUiSeams().scanQr, payload)
       this.sendResult(packageName, requestId, true, result)

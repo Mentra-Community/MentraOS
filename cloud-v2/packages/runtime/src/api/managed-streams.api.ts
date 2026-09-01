@@ -137,11 +137,16 @@ export function createManagedStreamsApi(
     .discover?.()
     .then((result) => {
       for (const input of result.inputs) {
-        owned.set(input.streamId, {
-          ownerId: "__orphaned__",
-          expiresAt: input.createdAt + streamTtlMs,
-          cleanup: "reclaim",
-        });
+        // Discovery runs concurrently with request handling. Never replace an
+        // ownership claim made by a stream created while discovery was in
+        // flight; only previously unknown inputs are restart orphans.
+        if (!owned.has(input.streamId)) {
+          owned.set(input.streamId, {
+            ownerId: "__orphaned__",
+            expiresAt: input.createdAt + streamTtlMs,
+            cleanup: "reclaim",
+          });
+        }
       }
       if (result.truncated)
         logger.warn("managed stream discovery was truncated");

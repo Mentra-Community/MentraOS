@@ -96,7 +96,7 @@ export const engine = {
     startOtaService()
     // Forward glasses mic_lc3 frames to the v2 cloud session so cloud transcription
     // works for any host (not just the Mentra app's host-side MantleManager fork).
-    if (getConfigValues().runtimeRealtimeSession !== false) {
+    if (getConfigValues().runtimeRealtimeSession !== false && getConfigValues().features?.cloudSpeech !== false) {
       startAudioCloudUplink()
     }
     if (cloudClientService.hasCore()) {

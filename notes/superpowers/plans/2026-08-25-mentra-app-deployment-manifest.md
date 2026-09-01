@@ -472,7 +472,7 @@ templates, and runbooks
 2. Provider-neutral auth contract plus native Entra adapter,
    deployment-scoped identity, secure logout, and Runtime API token provider.
 3. Runtime module composition plus the existing managed-stream service in a
-   stateless HTTP-only profile.
+   single-replica HTTP-only profile with restart orphan reclamation.
 4. Runtime meetings/ACS Teams-user token exchange, exercised through a
    server-side qualification harness with no native/mobile changes.
 5. OTA/content/hardware policy, Azure template, guides, and restricted-network

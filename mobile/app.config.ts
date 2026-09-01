@@ -232,7 +232,13 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
         usesNonExemptEncryption: false,
       },
       entitlements: {
-        "keychain-access-groups": ["$(AppIdentifierPrefix)com.microsoft.adalcache"],
+        // Preserve the app's default keychain namespace while adding MSAL's
+        // shared cache group. Replacing the default group makes existing app
+        // credentials unreadable after an upgrade.
+        "keychain-access-groups": [
+          `$(AppIdentifierPrefix)${iosBundleId}`,
+          "$(AppIdentifierPrefix)com.microsoft.adalcache",
+        ],
         "com.apple.developer.networking.wifi-info": true,
         "com.apple.developer.networking.HotspotConfiguration": true,
       },

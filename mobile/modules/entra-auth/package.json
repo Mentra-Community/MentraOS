@@ -1,6 +1,6 @@
 {
   "name": "@mentra/entra-auth",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "description": "Native Microsoft Entra authentication for the Mentra App",
   "main": "src/index.ts",
   "types": "src/index.ts",

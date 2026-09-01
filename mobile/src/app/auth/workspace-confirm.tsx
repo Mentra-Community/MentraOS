@@ -1,3 +1,4 @@
+import {useState} from "react"
 import {View} from "react-native"
 
 import {Button, Header, Icon, Screen, Text} from "@/components/ignite"
@@ -5,11 +6,13 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {useDeployment} from "@/services/deployment"
 import {useNavigationStore} from "@/stores/navigation"
+import {LogoutUtils} from "@/utils/LogoutUtils"
 
 export default function WorkspaceConfirmScreen() {
   const {candidate, clearCandidate, store} = useDeployment()
   const {goBack, replace} = useNavigationStore.getState()
   const {theme} = useAppTheme()
+  const [activating, setActivating] = useState(false)
 
   if (!candidate) {
     return (
@@ -29,10 +32,21 @@ export default function WorkspaceConfirmScreen() {
       ? translate("workspace:microsoftOrganizationAccount")
       : translate("workspace:mentraAccount")
 
-  const activate = () => {
-    store.activate(candidate)
-    clearCandidate()
-    replace("/auth/workspace-signin")
+  const activate = async () => {
+    if (activating) return
+    setActivating(true)
+    try {
+      // Workspace activation is a hard local identity boundary. Clear any
+      // consumer settings, cached miniapp data, and connected device before
+      // persisting the customer deployment. Do not call Mentra sign-out: a
+      // fresh workspace enrollment must not contact Mentra infrastructure.
+      await LogoutUtils.performCompleteLogout({skipAuthSignOut: true})
+      store.activate(candidate)
+      clearCandidate()
+      replace("/auth/workspace-signin")
+    } finally {
+      setActivating(false)
+    }
   }
 
   return (
@@ -69,7 +83,8 @@ export default function WorkspaceConfirmScreen() {
         <Button
           preset="primary"
           text={translate("workspace:continueTo", {name: candidate.manifest.displayName})}
-          onPress={activate}
+          onPress={() => void activate()}
+          disabled={activating}
         />
       </View>
     </Screen>

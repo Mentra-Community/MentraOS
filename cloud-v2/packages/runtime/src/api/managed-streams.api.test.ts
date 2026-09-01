@@ -30,7 +30,7 @@ afterEach(() => {
   resetRuntimeAuthCache();
 });
 
-describe("stateless managed stream API", () => {
+describe("managed stream API", () => {
   test("preserves the camera contract and enforces owner access", async () => {
     const calls: string[] = [];
     const provider: StreamProvider = {
@@ -87,6 +87,66 @@ describe("stateless managed stream API", () => {
     });
     expect(stopped.status).toBe(200);
     expect(calls).toEqual(["provision", "status:stream-1", "stop:stream-1"]);
+    await handle.stop();
+  });
+
+  test("does not overwrite a stream created while startup discovery is in flight", async () => {
+    let finishDiscovery!: (value: {
+      inputs: Array<{ streamId: string; createdAt: number }>;
+      truncated: boolean;
+    }) => void;
+    const discovery = new Promise<{
+      inputs: Array<{ streamId: string; createdAt: number }>;
+      truncated: boolean;
+    }>((resolve) => {
+      finishDiscovery = resolve;
+    });
+    const provider: StreamProvider = {
+      name: "test",
+      async provision() {
+        return {
+          streamId: "stream-race",
+          ingest: { webrtcPublishUrl: "https://publish.invalid/whip" },
+          playback: { webrtc: "https://watch.invalid/whep" },
+        };
+      },
+      async status(streamId) {
+        return { streamId, isConnected: true, state: "live" };
+      },
+      async stop() {
+        return { recordings: 0, input: "deleted" };
+      },
+      discover() {
+        return discovery;
+      },
+    };
+    const handle = createManagedStreamsApi({
+      provider,
+      sweepIntervalMs: 60_000,
+    });
+    const ownerToken = await tokenFor("user-1");
+
+    const created = await handle.api.request("/stream", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${ownerToken}`,
+        "Content-Type": "application/json",
+      },
+      body: "{}",
+    });
+    expect(created.status).toBe(200);
+
+    finishDiscovery({
+      inputs: [{ streamId: "stream-race", createdAt: Date.now() }],
+      truncated: false,
+    });
+    await discovery;
+    await Promise.resolve();
+
+    const status = await handle.api.request("/stream/stream-race", {
+      headers: { Authorization: `Bearer ${ownerToken}` },
+    });
+    expect(status.status).toBe(200);
     await handle.stop();
   });
 });

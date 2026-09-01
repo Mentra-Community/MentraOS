@@ -34,6 +34,8 @@ export interface IslandConfigValues {
   localMiniappAllowlist?: string[] | null
   /** Deployment-pinned Mentra Live OTA manifest; explicit null disables remote OTA. */
   otaManifestUrl?: string | null
+  /** Deployment capability policy. Omitted entries preserve consumer behavior. */
+  features?: Partial<Record<IslandFeatureName, boolean>>
   /** OEM identifier (Mentra is OEM #0); reserved for OEM auth/telemetry. */
   oemId?: string
   /**
@@ -47,6 +49,8 @@ export interface IslandConfigValues {
    */
   devServerHost?: () => string | undefined
 }
+
+export type IslandFeatureName = "managedStreams" | "nativeMeetings" | "cloudSpeech" | "onDeviceSpeech" | "navigation"
 
 export type IslandAnalytics = (event: string, props?: Record<string, unknown>) => void
 
@@ -87,6 +91,10 @@ export interface IslandConfigureOptions {
 export function isLocalMiniappAllowed(packageName: string): boolean {
   const allowlist = options?.config?.localMiniappAllowlist
   return allowlist == null || allowlist.includes(packageName)
+}
+
+export function isFeatureEnabled(feature: IslandFeatureName): boolean {
+  return options?.config?.features?.[feature] !== false
 }
 
 let options: IslandConfigureOptions | null = null

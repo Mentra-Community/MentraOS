@@ -92,7 +92,7 @@ export const AllProviders = withWrappers(
   (props) => {
     const posthogApiKey = process.env.EXPO_PUBLIC_POSTHOG_API_KEY
     const isChina = engine.settings.get(SETTINGS.china_deployment.key)
-    const {activeDeployment} = useDeployment()
+    const {activeDeployment, selectionResolved} = useDeployment()
 
     // If no API key is provided, disable PostHog to prevent errors
     if (!posthogApiKey) {
@@ -105,7 +105,7 @@ export const AllProviders = withWrappers(
       return <>{props.children}</>
     }
 
-    if (activeDeployment.kind === "workspace" && !activeDeployment.manifest.telemetry) {
+    if (!selectionResolved || (activeDeployment.kind === "workspace" && !activeDeployment.manifest.telemetry)) {
       console.log("PostHog is disabled by the active deployment")
       return <>{props.children}</>
     }

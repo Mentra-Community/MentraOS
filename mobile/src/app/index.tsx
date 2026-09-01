@@ -38,7 +38,7 @@ export default function InitScreen() {
   const {replace, replaceAll, getPendingRoute, setPendingRoute, clearHistoryAndGoHome, setAnimation} =
     useNavigationStore.getState()
   const {processUrl} = useDeeplink()
-  const {activeDeployment, store: deploymentStore} = useDeployment()
+  const {activeDeployment, selectionResolved, store: deploymentStore} = useDeployment()
   const rootNavigationState = useRootNavigationState()
   const isNavigationReady = rootNavigationState?.key != null
 
@@ -327,13 +327,20 @@ export default function InitScreen() {
     if (initStartedRef.current) return
     initStartedRef.current = true
 
+    // A fresh install has not selected Mentra or a customer workspace yet.
+    // Render the local selector without performing Mentra's cloud version call.
+    if (!selectionResolved) {
+      replaceAll("/auth/start")
+      return
+    }
+
     const init = async () => {
       console.log("INDEX: init()")
       await checkCustomUrl()
       await checkCloudVersion()
     }
     init()
-  }, [authLoading, isNavigationReady])
+  }, [authLoading, isNavigationReady, selectionResolved])
 
   // Clear cached required version when backend URL changes so a stricter
   // server's requirement doesn't block access to a different backend.

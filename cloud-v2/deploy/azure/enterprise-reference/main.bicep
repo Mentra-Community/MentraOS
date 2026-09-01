@@ -4,6 +4,9 @@ param location string = resourceGroup().location
 @description('Built Runtime image, including registry host and immutable tag or digest.')
 param runtimeImage string
 
+@description('Existing Azure Container Registry created by bootstrap.bicep.')
+param registryName string
+
 @secure()
 @description('Cloudflare Stream account id.')
 param cloudflareAccountId string
@@ -16,25 +19,31 @@ param tenantId string
 param runtimeApiClientId string
 param mobileClientId string
 
-var registryName = 'mentraenterpriseref'
-var environmentName = 'cae-mentra-enterprise-reference'
-var runtimeName = 'ca-mentra-enterprise-reference'
-var communicationName = 'mentra-enterprise-reference'
+@description('Exact Mentra App release identity allowed to activate this workspace.')
+param releaseIdentity string
+
+param deploymentId string = 'mentra-enterprise-reference'
+param displayName string = 'Mentra Enterprise Reference'
+param environmentName string = 'cae-mentra-enterprise-reference'
+param runtimeName string = 'ca-mentra-enterprise-reference'
+param pullIdentityName string = 'id-mentra-enterprise-reference-pull'
+param communicationName string = take('mentra-${uniqueString(subscription().id, resourceGroup().id)}', 63)
+param approvedSystemMiniapps array = ['com.mentra.call', 'com.mentra.settings']
+param allowedGlassesModels array = ['mentra-live']
+param telemetryEnabled bool = false
+
 var loginEndpoint = az.environment().authentication.loginEndpoint
 var acrPullRoleDefinitionId = subscriptionResourceId(
   'Microsoft.Authorization/roleDefinitions',
   '7f951dda-4ed3-4680-a7ca-43fe172d538d'
 )
 
-resource registry 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
+resource registry 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
   name: registryName
-  location: location
-  sku: { name: 'Basic' }
-  properties: { adminUserEnabled: false }
 }
 
 resource pullIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
-  name: 'id-mentra-enterprise-reference-pull'
+  name: pullIdentityName
   location: location
 }
 
@@ -58,6 +67,56 @@ resource environment 'Microsoft.App/managedEnvironments@2024-03-01' = {
   name: environmentName
   location: location
   properties: {}
+}
+
+var workspaceOrigin = 'https://${runtimeName}.${environment.properties.defaultDomain}'
+var deploymentManifest = {
+  schemaVersion: 1
+  deploymentId: deploymentId
+  displayName: displayName
+  releaseIdentity: releaseIdentity
+  services: {
+    coreUrl: null
+    runtimeUrl: workspaceOrigin
+  }
+  auth: {
+    mode: 'microsoft-entra'
+    authorityUrl: '${loginEndpoint}${tenantId}'
+    clientId: mobileClientId
+    runtimeScopes: ['api://${runtimeApiClientId}/mentra.runtime']
+    teamsScopes: [
+      'https://auth.msft.communication.azure.com/Teams.ManageCalls'
+      'https://auth.msft.communication.azure.com/Teams.ManageChats'
+    ]
+  }
+  artifacts: {
+    mentraLiveOtaManifestUrl: null
+    sttModelBaseUrl: null
+    ttsModelBaseUrl: null
+  }
+  appUpdates: {
+    mode: 'managed'
+    storeUrls: { android: null, ios: null }
+    reviewUrls: { android: null, ios: null }
+  }
+  content: { wallpaperUrls: [] }
+  links: {
+    privacyPolicyUrl: '${workspaceOrigin}/legal/privacy'
+    termsOfServiceUrl: '${workspaceOrigin}/legal/terms'
+    documentationUrl: null
+    supportUrl: null
+  }
+  systemMiniapps: { approvedPackageNamesOverride: approvedSystemMiniapps }
+  glasses: { allowedModelsOverride: allowedGlassesModels }
+  features: {
+    runtimeRealtimeSession: false
+    managedStreams: true
+    nativeMeetings: true
+    cloudSpeech: false
+    onDeviceSpeech: false
+    navigation: false
+  }
+  telemetry: telemetryEnabled
 }
 
 resource runtime 'Microsoft.App/containerApps@2024-03-01' = {
@@ -99,8 +158,8 @@ resource runtime 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'PORT', value: '3001' }
             { name: 'RUNTIME_SERVICES', value: 'managed-streams,meetings' }
             {
-              name: 'DEPLOYMENT_MANIFEST_PATH'
-              value: '/app/cloud-v2/deploy/azure/enterprise-reference/mentra-deployment.json'
+              name: 'DEPLOYMENT_MANIFEST_JSON'
+              value: string(deploymentManifest)
             }
             { name: 'DEPLOYMENT_PRIVACY_PATH', value: '/app/cloud-v2/deploy/azure/enterprise-reference/privacy.html' }
             { name: 'DEPLOYMENT_TERMS_PATH', value: '/app/cloud-v2/deploy/azure/enterprise-reference/terms.html' }
@@ -130,6 +189,6 @@ resource runtime 'Microsoft.App/containerApps@2024-03-01' = {
   dependsOn: [registryPull]
 }
 
-output workspaceOrigin string = 'https://${runtime.properties.configuration.ingress.fqdn}'
+output workspaceOrigin string = workspaceOrigin
 output communicationResourceId string = communication.id
 output registryLoginServer string = registry.properties.loginServer

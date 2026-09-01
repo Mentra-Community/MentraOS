@@ -22,6 +22,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.security.MessageDigest
+import java.util.concurrent.atomic.AtomicBoolean
 
 class MentraEntraAuthModule : Module() {
   private var application: ISingleAccountPublicClientApplication? = null
@@ -32,19 +33,7 @@ class MentraEntraAuthModule : Module() {
 
     AsyncFunction("getAccount") { configuration: Map<String, String>, promise: Promise ->
       withApplication(configuration, promise) { app ->
-        app.getCurrentAccountAsync(object : ISingleAccountPublicClientApplication.CurrentAccountCallback {
-          override fun onAccountLoaded(activeAccount: IAccount?) {
-            promise.resolve(activeAccount?.let(::accountMap))
-          }
-
-          override fun onAccountChanged(priorAccount: IAccount?, currentAccount: IAccount?) {
-            promise.resolve(currentAccount?.let(::accountMap))
-          }
-
-          override fun onError(exception: MsalException) {
-            reject(promise, exception)
-          }
-        })
+        withCurrentAccount(app, promise) { account -> promise.resolve(account?.let(::accountMap)) }
       }
     }
 
@@ -67,19 +56,9 @@ class MentraEntraAuthModule : Module() {
     AsyncFunction("acquireToken") {
         configuration: Map<String, String>, scopes: List<String>, forceRefresh: Boolean?, promise: Promise ->
       withApplication(configuration, promise) { app ->
-        app.getCurrentAccountAsync(object : ISingleAccountPublicClientApplication.CurrentAccountCallback {
-          override fun onAccountLoaded(activeAccount: IAccount?) {
-            acquireSilent(app, configuration, activeAccount, scopes, forceRefresh == true, promise)
-          }
-
-          override fun onAccountChanged(priorAccount: IAccount?, currentAccount: IAccount?) {
-            acquireSilent(app, configuration, currentAccount, scopes, forceRefresh == true, promise)
-          }
-
-          override fun onError(exception: MsalException) {
-            reject(promise, exception)
-          }
-        })
+        withCurrentAccount(app, promise) { account ->
+          acquireSilent(app, configuration, account, scopes, forceRefresh == true, promise)
+        }
       }
     }
 
@@ -96,6 +75,32 @@ class MentraEntraAuthModule : Module() {
         })
       }
     }
+  }
+
+  /**
+   * MSAL may report both the initially loaded account and a subsequent account
+   * change through the same callback. An Expo promise/token request is one-shot,
+   * so accept only the first terminal callback for this invocation.
+   */
+  private fun withCurrentAccount(
+    app: ISingleAccountPublicClientApplication,
+    promise: Promise,
+    block: (IAccount?) -> Unit,
+  ) {
+    val completed = AtomicBoolean(false)
+    app.getCurrentAccountAsync(object : ISingleAccountPublicClientApplication.CurrentAccountCallback {
+      private fun deliver(account: IAccount?) {
+        if (completed.compareAndSet(false, true)) block(account)
+      }
+
+      override fun onAccountLoaded(activeAccount: IAccount?) = deliver(activeAccount)
+
+      override fun onAccountChanged(priorAccount: IAccount?, currentAccount: IAccount?) = deliver(currentAccount)
+
+      override fun onError(exception: MsalException) {
+        if (completed.compareAndSet(false, true)) reject(promise, exception)
+      }
+    })
   }
 
   private fun withApplication(

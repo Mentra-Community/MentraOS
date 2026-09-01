@@ -12,31 +12,38 @@ import NavigationHost from "@/effects/NavigationHost"
 import CapsuleMenu from "@/effects/CapsuleMenu"
 import Compositor from "@/effects/Compositor"
 import {QrScanOverlay} from "@/effects/QrScanOverlay"
+import {useDeployment} from "@/services/deployment"
 // import TranscriptionsListener from "@/effects/TranscriptionsListener"
 // import SherpaTest from "@/effects/SherpaTest"
 // import WhisperTest from "@/effects/WhisperTest"
 // import SherpaTest from "@/effects/SherpaTest"
 
 export const AllEffects = () => {
+  const {selectionResolved} = useDeployment()
+
   return (
     <>
-      <Reconnect />
-      <BtClassicPairing />
       <NavigationHost />
-      {/* <WhisperTest /> */}
-      {/* <SherpaTest /> */}
-      {/* <TranscriptionsListener /> */}
-      <MtkUpdateAlert />
-      <OtaUpdateChecker />
-      <ButtonActions />
-      <GalleryModeSync />
-      <ConsoleLogger />
       <FirebaseAnalyticsSetup />
-      <ScreenshotFeedbackPrompt />
-      <CapsuleMenu forceShow={false} />
-      <Compositor />
-      <QrScanOverlay />
-      <MemoryWarningMonitor />
+      {selectionResolved && (
+        <>
+          <Reconnect />
+          <BtClassicPairing />
+          {/* <WhisperTest /> */}
+          {/* <SherpaTest /> */}
+          {/* <TranscriptionsListener /> */}
+          <MtkUpdateAlert />
+          <OtaUpdateChecker />
+          <ButtonActions />
+          <GalleryModeSync />
+          <ConsoleLogger />
+          <ScreenshotFeedbackPrompt />
+          <CapsuleMenu forceShow={false} />
+          <Compositor />
+          <QrScanOverlay />
+          <MemoryWarningMonitor />
+        </>
+      )}
     </>
   )
 }

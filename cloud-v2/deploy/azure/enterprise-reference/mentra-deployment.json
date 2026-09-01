@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "deploymentId": "mentra-enterprise-reference",
   "displayName": "Mentra Enterprise Reference",
-  "releaseIdentity": "3.1.0",
+  "releaseIdentity": "3.2.0",
   "services": {
     "coreUrl": null,
     "runtimeUrl": "https://ca-mentra-enterprise-reference.gentlehill-4ed63a4c.westus2.azurecontainerapps.io"

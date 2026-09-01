@@ -1,6 +1,6 @@
 import {DeploymentResolutionError, normalizeWorkspaceOrigin, resolveDeploymentCandidate} from "./resolver"
 import {DeploymentStore, type DeploymentStorage} from "./store"
-import type {DeploymentManifest, WorkspaceDeployment} from "./types"
+import type {ActiveDeployment, DeploymentManifest, WorkspaceDeployment} from "./types"
 import {MicrosoftEntraDeploymentAuthProvider} from "./auth/MicrosoftEntraDeploymentAuthProvider"
 
 const RELEASE = "3.1.0-dev.99"
@@ -168,13 +168,13 @@ describe("resolveDeploymentCandidate", () => {
 })
 
 class MemoryDeploymentStorage implements DeploymentStorage {
-  value: WorkspaceDeployment | null = null
+  value: ActiveDeployment | null = null
 
   load(): unknown | null {
     return this.value
   }
 
-  save(value: WorkspaceDeployment): void {
+  save(value: ActiveDeployment): void {
     this.value = value
   }
 
@@ -184,10 +184,12 @@ class MemoryDeploymentStorage implements DeploymentStorage {
 }
 
 describe("DeploymentStore", () => {
-  it("defaults to Mentra and persists an activated workspace", () => {
+  it("starts unresolved and persists an explicit Mentra or workspace selection", () => {
     const persistence = new MemoryDeploymentStorage()
     const store = new DeploymentStore(persistence)
     expect(store.getActive()).toEqual({kind: "consumer", source: "embedded"})
+    expect(store.isResolved()).toBe(false)
+    expect(store.isTelemetryAllowed()).toBe(false)
 
     store.activate({
       workspaceOrigin: WORKSPACE,
@@ -198,15 +200,24 @@ describe("DeploymentStore", () => {
       kind: "workspace",
       workspaceOrigin: WORKSPACE,
     })
+    expect(store.isTelemetryAllowed()).toBe(false)
 
     store.returnToMentra()
     expect(store.getActive()).toEqual({kind: "consumer", source: "embedded"})
+    expect(store.isResolved()).toBe(true)
+    expect(store.isTelemetryAllowed()).toBe(true)
+    expect(new DeploymentStore(persistence).isResolved()).toBe(true)
+
+    store.clearSelection()
+    expect(store.isResolved()).toBe(false)
+    expect(store.isTelemetryAllowed()).toBe(false)
   })
 
   it("fails closed to consumer for malformed persisted data", () => {
     const persistence = new MemoryDeploymentStorage()
     persistence.value = {kind: "workspace"} as WorkspaceDeployment
     expect(new DeploymentStore(persistence).getActive()).toEqual({kind: "consumer", source: "embedded"})
+    expect(new DeploymentStore(persistence).isResolved()).toBe(false)
   })
 })
 

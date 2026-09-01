@@ -10,8 +10,7 @@ function isChina(): boolean {
 }
 
 function isCollectionAllowed(): boolean {
-  const deployment = deploymentStore.getActive()
-  return deployment.kind === "consumer" || deployment.manifest.telemetry
+  return deploymentStore.isTelemetryAllowed()
 }
 
 async function getAnalytics() {

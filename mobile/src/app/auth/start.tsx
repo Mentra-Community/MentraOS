@@ -139,7 +139,13 @@ export default function LoginScreen() {
           <Button
             preset="secondary"
             text={translate("workspace:connectAction")}
-            onPress={() => push("/auth/workspace")}
+            onPress={() => {
+              // Stop Mentra telemetry/cloud effects before contacting the
+              // customer workspace, even when a prior consumer selection was
+              // persisted on this installation.
+              store.clearSelection()
+              push("/auth/workspace")
+            }}
             LeftAccessory={() => <Icon name="office-building" size={20} color={theme.colors.foreground} />}
           />
         </View>

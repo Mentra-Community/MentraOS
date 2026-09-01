@@ -59,6 +59,10 @@ import {
 } from "./services/runtime-services";
 import { getStreamProvider } from "./services/stream/stream.service";
 import { assertAcsTeamsConfigured } from "./services/meetings/acs-teams.service";
+import {
+  assertManifestMatchesRuntimeServices,
+  parseDeploymentManifest,
+} from "./services/deployment-manifest";
 
 const logger = createLogger("runtime");
 
@@ -239,9 +243,15 @@ export async function startRuntime(
   if (services.has("meetings")) assertAcsTeamsConfigured();
   const deploymentManifest =
     opts.deploymentManifest ?? (await loadDeploymentManifest());
+  if (deploymentManifest) {
+    assertManifestMatchesRuntimeServices(
+      parseDeploymentManifest(deploymentManifest).manifest,
+      services,
+    );
+  }
   const legalDocuments = opts.legalDocuments ?? (await loadLegalDocuments());
   if (services.has("meetings") && !deploymentManifest) {
-    throw new Error("meetings service requires DEPLOYMENT_MANIFEST_PATH");
+    throw new Error("meetings service requires a deployment manifest");
   }
 
   const httpPort =
@@ -329,7 +339,10 @@ export async function startRuntime(
   // a stop() -- a disconnect, a closed app, a pod restart. Left alone these
   // accumulate until the account hits its storage quota, at which point
   // Cloudflare accepts new live inputs but rejects the broadcast at publish.
-  if (realtimeAudio && services.has("managed-streams")) startStreamSweepLoop();
+  // cameraApi's legacy durable registry is mounted with managed-photos. The
+  // HTTP-only managed-streams module owns a separate in-process cleanup loop;
+  // running both against the same Cloudflare account races stream deletion.
+  if (realtimeAudio && services.has("managed-photos")) startStreamSweepLoop();
 
   // The REST surface (Hono): subscriptions today, health, camera later. The WS
   // upgrade is tried first; everything else falls through to this app.
@@ -386,28 +399,18 @@ export async function startRuntime(
 }
 
 async function loadDeploymentManifest(): Promise<string | undefined> {
+  const inline = process.env.DEPLOYMENT_MANIFEST_JSON?.trim();
   const path = process.env.DEPLOYMENT_MANIFEST_PATH?.trim();
+  if (inline && path)
+    throw new Error(
+      "set only one of DEPLOYMENT_MANIFEST_JSON or DEPLOYMENT_MANIFEST_PATH",
+    );
+  if (inline) return parseDeploymentManifest(inline).body;
   if (!path) return undefined;
   const file = Bun.file(path);
   if (!(await file.exists()))
     throw new Error(`DEPLOYMENT_MANIFEST_PATH does not exist: ${path}`);
-  if (file.size > 256 * 1024)
-    throw new Error("deployment manifest exceeds 256 KiB");
-  const body = await file.text();
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(body);
-  } catch {
-    throw new Error("deployment manifest is not valid JSON");
-  }
-  if (
-    !parsed ||
-    typeof parsed !== "object" ||
-    (parsed as { schemaVersion?: unknown }).schemaVersion !== 1
-  ) {
-    throw new Error("deployment manifest must use schemaVersion 1");
-  }
-  return `${JSON.stringify(parsed)}\n`;
+  return parseDeploymentManifest(await file.text()).body;
 }
 
 async function loadLegalDocuments(): Promise<{

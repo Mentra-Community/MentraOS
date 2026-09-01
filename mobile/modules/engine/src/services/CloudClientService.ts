@@ -21,7 +21,7 @@ import type {AudioSubscription, TranscriptionData, TranslationData} from "@mentr
 
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import CrustModule from "@mentra/crust"
-import {getAuth, getConfigValues} from "../runtime/bootstrap"
+import {getAuth, getConfigValues, isFeatureEnabled} from "../runtime/bootstrap"
 import {useSettingsStore, SETTINGS} from "../stores/settings"
 import {type CloudClientStatusSnapshot, type MiniappAuthToken} from "../runtime/config"
 import {createCloudUdpSocket} from "../utils/cloudClient/RnUdpAdapter"
@@ -655,14 +655,17 @@ export const cloudClientService = {
 
   /** Managed stream (cloud-v2): provision ingest+playback on the runtime. */
   startManagedStream(opts: Record<string, unknown> = {}) {
+    if (!isFeatureEnabled("managedStreams")) throw new Error("managed streams are disabled by this deployment")
     if (!client) throw new Error("cloud client not connected")
     return client.runtime.startManagedStream(opts)
   },
   getManagedStreamStatus(streamId: string) {
+    if (!isFeatureEnabled("managedStreams")) throw new Error("managed streams are disabled by this deployment")
     if (!client) throw new Error("cloud client not connected")
     return client.runtime.getManagedStreamStatus(streamId)
   },
   stopManagedStream(streamId: string) {
+    if (!isFeatureEnabled("managedStreams")) throw new Error("managed streams are disabled by this deployment")
     if (!client) throw new Error("cloud client not connected")
     return client.runtime.stopManagedStream(streamId)
   },
@@ -736,6 +739,7 @@ export const cloudClientService = {
 
   tts: {
     speak(text: string, options?: Parameters<CloudClient["runtime"]["tts"]["speak"]>[1]) {
+      if (!isFeatureEnabled("cloudSpeech")) throw new Error("cloud speech is disabled by this deployment")
       if (!client) throw new Error("cloud client not connected")
       return client.runtime.tts.speak(text, options)
     },
@@ -743,18 +747,22 @@ export const cloudClientService = {
 
   maps: {
     directions(req: Parameters<CloudClient["runtime"]["maps"]["directions"]>[0]) {
+      if (!isFeatureEnabled("navigation")) throw new Error("navigation is disabled by this deployment")
       if (!client) throw new Error("cloud client not connected")
       return client.runtime.maps.directions(req)
     },
     reverseGeocode(coord: Parameters<CloudClient["runtime"]["maps"]["reverseGeocode"]>[0]) {
+      if (!isFeatureEnabled("navigation")) throw new Error("navigation is disabled by this deployment")
       if (!client) throw new Error("cloud client not connected")
       return client.runtime.maps.reverseGeocode(coord)
     },
     placeAutocomplete(req: Parameters<CloudClient["runtime"]["maps"]["placeAutocomplete"]>[0]) {
+      if (!isFeatureEnabled("navigation")) throw new Error("navigation is disabled by this deployment")
       if (!client) throw new Error("cloud client not connected")
       return client.runtime.maps.placeAutocomplete(req)
     },
     placeDetails(req: Parameters<CloudClient["runtime"]["maps"]["placeDetails"]>[0]) {
+      if (!isFeatureEnabled("navigation")) throw new Error("navigation is disabled by this deployment")
       if (!client) throw new Error("cloud client not connected")
       return client.runtime.maps.placeDetails(req)
     },

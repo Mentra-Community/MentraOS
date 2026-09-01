@@ -100,6 +100,13 @@ export function cloudConfigValues(): {
   runtimeRealtimeSession?: boolean
   localMiniappAllowlist?: string[] | null
   otaManifestUrl?: string | null
+  features?: {
+    managedStreams: boolean
+    nativeMeetings: boolean
+    cloudSpeech: boolean
+    onDeviceSpeech: boolean
+    navigation: boolean
+  }
 } {
   const endpoints = resolvedEndpoints()
   return {
@@ -118,6 +125,13 @@ export function deploymentCloudConfigValues(deployment: ActiveDeployment): Retur
     runtimeRealtimeSession: deployment.manifest.features.runtimeRealtimeSession,
     localMiniappAllowlist: deployment.manifest.systemMiniapps.approvedPackageNamesOverride,
     otaManifestUrl: deployment.manifest.artifacts.mentraLiveOtaManifestUrl,
+    features: {
+      managedStreams: deployment.manifest.features.managedStreams,
+      nativeMeetings: deployment.manifest.features.nativeMeetings,
+      cloudSpeech: deployment.manifest.features.cloudSpeech,
+      onDeviceSpeech: deployment.manifest.features.onDeviceSpeech,
+      navigation: deployment.manifest.features.navigation,
+    },
     audioFrameSizeBytes: lc3FrameSizeBytes(),
     devServerHost,
   }

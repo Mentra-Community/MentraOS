@@ -9,6 +9,7 @@ import {
   useDeployment,
 } from "@/services/deployment"
 import {LogoutUtils} from "@/utils/LogoutUtils"
+import {storage} from "@/utils/storage"
 import mentraAuth from "@/utils/auth/authClient"
 import {MentraAuthSession, MentraAuthUser} from "@/utils/auth/authProvider.types"
 import {ensureDevModeForUser} from "@/utils/dev/devModeAllowlist"
@@ -19,6 +20,7 @@ interface AuthContextProps {
   loading: boolean
   logout: () => Promise<void>
   signInWorkspace: () => Promise<void>
+  leaveWorkspace: (destination: "consumer" | "selector") => Promise<void>
 }
 
 const AuthContext = createContext<AuthContextProps>({
@@ -27,6 +29,7 @@ const AuthContext = createContext<AuthContextProps>({
   loading: true,
   logout: async () => {},
   signInWorkspace: async () => {},
+  leaveWorkspace: async () => {},
 })
 
 function toMentraSession(session: DeploymentAuthSession | null): MentraAuthSession | null {
@@ -49,7 +52,7 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
   const [user, setUser] = useState<MentraAuthUser | null>(null)
   const [loading, setLoading] = useState(true)
   const [_authEmail, setAuthEmail] = useSetting(SETTINGS.auth_email.key)
-  const {activeDeployment, store} = useDeployment()
+  const {activeDeployment, selectionResolved, store} = useDeployment()
   const workspaceAuth = useMemo<DeploymentAuthProvider | null>(
     () => (activeDeployment.kind === "workspace" ? createDeploymentAuthProvider(activeDeployment) : null),
     [activeDeployment],
@@ -64,9 +67,7 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
       if (cancelled) return
       setSession(next)
       setUser(next?.user ?? null)
-      if (allowTelemetry) {
-        Sentry.setUser({id: next?.user?.id, email: next?.user?.email})
-      }
+      Sentry.setUser(allowTelemetry && next?.user ? {id: next.user.id, email: next.user.email} : null)
       if (next?.user?.email) {
         setAuthEmail(next.user.email)
         if (activeDeployment.kind === "consumer") {
@@ -76,7 +77,20 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
       setLoading(false)
     }
 
-    if (workspaceAuth && activeDeployment.kind === "workspace") {
+    if (activeDeployment.kind === "consumer" && !selectionResolved) {
+      // A fresh install must not contact Mentra account services until the user
+      // chooses the consumer path. Preserve seamless upgrades for already
+      // signed-in consumers by recognizing their existing local token pair.
+      const access = storage.load<string>("mentra.account.accessToken")
+      const refresh = storage.load<string>("mentra.account.refreshToken")
+      const hasExistingConsumerSession =
+        (access.is_ok() && Boolean(access.value)) || (refresh.is_ok() && Boolean(refresh.value))
+      if (hasExistingConsumerSession) {
+        store.returnToMentra()
+      } else {
+        applySession(null, false)
+      }
+    } else if (workspaceAuth && activeDeployment.kind === "workspace") {
       const allowTelemetry = activeDeployment.manifest.telemetry
       unsubscribe = workspaceAuth.onStateChange((next) => applySession(toMentraSession(next), allowTelemetry))
       void workspaceAuth
@@ -121,7 +135,7 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
       cancelled = true
       unsubscribe?.()
     }
-  }, [activeDeployment, setAuthEmail, workspaceAuth])
+  }, [activeDeployment, selectionResolved, setAuthEmail, store, workspaceAuth])
 
   const signInWorkspace = async () => {
     if (!workspaceAuth) throw new Error("No organization workspace is active")
@@ -164,8 +178,20 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
     }
   }
 
+  const leaveWorkspace = async (destination: "consumer" | "selector") => {
+    if (workspaceAuth) await workspaceAuth.signOut()
+    await LogoutUtils.performCompleteLogout({skipAuthSignOut: true})
+    if (destination === "consumer") store.returnToMentra()
+    else store.clearSelection()
+    setSession(null)
+    setUser(null)
+    Sentry.setUser(null)
+  }
+
   return (
-    <AuthContext.Provider value={{user, session, loading, logout, signInWorkspace}}>{children}</AuthContext.Provider>
+    <AuthContext.Provider value={{user, session, loading, logout, signInWorkspace, leaveWorkspace}}>
+      {children}
+    </AuthContext.Provider>
   )
 }
 

@@ -4,8 +4,9 @@ import {useDeployment} from "@/services/deployment"
 import {disableAnalytics, initAnalytics} from "@/utils/analytics"
 
 export const FirebaseAnalyticsSetup = () => {
-  const {activeDeployment} = useDeployment()
-  const telemetryEnabled = activeDeployment.kind === "consumer" || activeDeployment.manifest.telemetry
+  const {activeDeployment, selectionResolved} = useDeployment()
+  const telemetryEnabled =
+    selectionResolved && (activeDeployment.kind === "consumer" || activeDeployment.manifest.telemetry)
 
   useEffect(() => {
     const updateCollection = telemetryEnabled ? initAnalytics : disableAnalytics
