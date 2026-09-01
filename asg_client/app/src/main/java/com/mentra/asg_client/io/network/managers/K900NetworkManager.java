@@ -17,6 +17,7 @@ import com.mentra.asg_client.io.network.interfaces.IWifiScanCallback;
 import com.mentra.asg_client.io.network.utils.DebugNotificationManager;
 import com.mentra.asg_client.io.ota.session.OtaSessionManager;
 import com.mentra.asg_client.service.system.core.SystemControllerFactory;
+import com.mentra.asg_client.service.system.interfaces.ISystemController;
 import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
@@ -36,6 +37,7 @@ public class K900NetworkManager extends BaseNetworkManager {
 
     private final WifiManager wifiManager;
     private final DebugNotificationManager notificationManager;
+    private final ISystemController systemController;
     private BroadcastReceiver wifiStateReceiver;
     private final boolean isSystemApp;
 
@@ -53,9 +55,14 @@ public class K900NetworkManager extends BaseNetworkManager {
      * @param context The application context
      */
     public K900NetworkManager(Context context) {
+        this(context, SystemControllerFactory.get(context));
+    }
+
+    K900NetworkManager(Context context, ISystemController systemController) {
         super(context);
         this.wifiManager = (WifiManager) context.getSystemService(Context.WIFI_SERVICE);
         this.notificationManager = new DebugNotificationManager(context);
+        this.systemController = systemController;
         this.isSystemApp = checkIsSystemApp(context);
 
         Log.i(TAG, "📶 K900NetworkManager initialized, isSystemApp=" + isSystemApp);
@@ -621,12 +628,14 @@ public class K900NetworkManager extends BaseNetworkManager {
         Log.d(TAG, "📶 =========================================");
 
         try {
-            // Use SysControl to forget - the SmartXY broadcast reliably removes saved networks
-            Log.d(TAG, "📶 📡 Forgetting WiFi network via SysControl...");
-            SystemControllerFactory.get(context).disconnectFromWifi(ssid);
+            // SysControl only dispatches an asynchronous SystemUI broadcast. Reaching this point
+            // confirms local dispatch, not vendor receipt or completed credential removal.
+            Log.d(TAG, "📶 📡 Dispatching WiFi forget request via SysControl...");
+            systemController.disconnectFromWifi(ssid);
 
-            Log.i(TAG, "📶 ✅ WiFi forget command sent for: " + ssid);
-            notificationManager.showDebugNotification("WiFi Network Forgotten", "Removed: " + ssid);
+            Log.i(TAG, "📶 WiFi forget command dispatched for: " + ssid);
+            notificationManager.showDebugNotification(
+                    "WiFi Forget Requested", "Dispatched removal request for: " + ssid);
             return true;
         } catch (Exception e) {
             Log.e(TAG, "📶 💥 Error forgetting WiFi network", e);
@@ -634,6 +643,15 @@ public class K900NetworkManager extends BaseNetworkManager {
                     "WiFi Error", "Failed to forget: " + e.getMessage());
             return false;
         }
+    }
+
+    @Override
+    public List<String> getConfiguredWifiNetworks() {
+        // K900 credentials are owned by SystemUI/SysControl. The vendor surface used here has no
+        // response callback for get_configured_networks, and WifiManager may be empty or stale, so
+        // fail explicitly instead of returning a list that cannot be trusted for forget commands.
+        throw new UnsupportedOperationException(
+                "K900 saved WiFi network listing has no vendor response path");
     }
 
     private void promptConnectToWifi(String ssid, String password) {

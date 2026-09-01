@@ -51,10 +51,11 @@ public interface ICommunicationManager {
      * Send the terminal result for a forget_wifi command.
      * @param requestId Correlation id supplied by the phone, or null for a legacy request
      * @param ssid Network the phone asked the glasses to forget
-     * @param success Whether the glasses accepted the forget operation
-     * @param error Stable failure code, or null on success
+     * @param dispatched Whether ASG dispatched the forget command through its platform integration;
+     *     asynchronous vendor completion may still be unverified
+     * @param error Stable failure code, or null when dispatched
      */
-    void sendWifiForgetResultOverBle(String requestId, String ssid, boolean success, String error);
+    void sendWifiForgetResultOverBle(String requestId, String ssid, boolean dispatched, String error);
 
     /**
      * Send the configured WiFi SSIDs stored on the glasses.

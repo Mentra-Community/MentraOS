@@ -2814,7 +2814,7 @@ class MentraLive: NSObject, SGCManager {
             Bridge.sendWifiForgetResult(
                 requestId: json["requestId"] as? String ?? "",
                 ssid: json["ssid"] as? String ?? "",
-                success: json["success"] as? Bool ?? false,
+                dispatched: json["dispatched"] as? Bool ?? false,
                 connected: json["connected"] as? Bool ?? false,
                 currentSsid: json["current_ssid"] as? String ?? "",
                 localIp: json["local_ip"] as? String ?? "",
@@ -3643,8 +3643,19 @@ class MentraLive: NSObject, SGCManager {
     func forgetWifiNetwork(_ ssid: String, requestId: String?) {
         Bridge.log("LIVE: 📶 Sending WiFi forget command for SSID: \(ssid)")
 
-        guard !ssid.isEmpty else {
+        guard !ssid.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             Bridge.log("LIVE: Cannot forget WiFi network - SSID is empty")
+            if let requestId {
+                Bridge.sendWifiForgetResult(
+                    requestId: requestId,
+                    ssid: ssid,
+                    dispatched: false,
+                    connected: false,
+                    currentSsid: "",
+                    localIp: "",
+                    error: "invalid_ssid"
+                )
+            }
             return
         }
 

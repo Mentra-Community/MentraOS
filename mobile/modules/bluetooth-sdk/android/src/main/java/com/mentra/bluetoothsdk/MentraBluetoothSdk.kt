@@ -7,6 +7,7 @@ import android.content.Context
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import com.mentra.bluetoothsdk.utils.ControllerTypes
 import com.mentra.bluetoothsdk.utils.PhoneAudioMonitor
 import java.util.Collections
@@ -193,6 +194,9 @@ class MentraBluetoothSdk private constructor(
         val ssid: String,
         val pending: PendingResponse<WifiStatusEvent>,
         val requestId: String? = null,
+        val legacyFallbackDeadlineMs: Long = 0L,
+        var legacyFallbackEvent: WifiStatusEvent? = null,
+        var legacyFallbackPosted: Boolean = false,
     )
 
     private data class PendingSavedWifiNetworks(
@@ -875,6 +879,9 @@ class MentraBluetoothSdk private constructor(
     }
 
     suspend fun forgetWifiNetwork(ssid: String): WifiStatusEvent {
+        if (!wifiSsidIsValid(ssid)) {
+            throw BluetoothSdkException("invalid_ssid", "WiFi SSID cannot be empty.")
+        }
         val pending = PendingResponse<WifiStatusEvent>("WiFi forget request")
         val requestId = "forget-${UUID.randomUUID()}"
         synchronized(oneShotLock) {
@@ -890,6 +897,8 @@ class MentraBluetoothSdk private constructor(
                     ssid,
                     pending,
                     requestId = requestId,
+                    legacyFallbackDeadlineMs =
+                        SystemClock.elapsedRealtime() + WIFI_FORGET_CORRELATED_PRIORITY_WINDOW_MS,
                 )
         }
         try {
@@ -2180,6 +2189,10 @@ class MentraBluetoothSdk private constructor(
             return
         }
         if (!wifiStatusMatches(event.status, request)) return
+        if (request.operation == WifiStatusOperation.FORGET) {
+            deferLegacyWifiForgetFallback(request, event)
+            return
+        }
         synchronized(oneShotLock) {
             if (pendingWifiStatus === request) {
                 pendingWifiStatus = null
@@ -2191,54 +2204,106 @@ class MentraBluetoothSdk private constructor(
     private fun handleWifiForgetResultForRequests(data: Map<String, Any>) {
         val request = synchronized(oneShotLock) { pendingWifiStatus } ?: return
         if (request.operation != WifiStatusOperation.FORGET) return
-        val responseRequestId = data["requestId"] as? String
-        if (!responseRequestId.isNullOrEmpty() && responseRequestId != request.requestId) return
-        if ((data["ssid"] as? String) != request.ssid) return
+        val requestId = request.requestId ?: return
+        val result = parseWifiForgetResult(requestId, request.ssid, data) ?: return
 
+        var isCurrentRequest = false
         synchronized(oneShotLock) {
             if (pendingWifiStatus === request) {
                 pendingWifiStatus = null
+                isCurrentRequest = true
             }
         }
-        val success = data["success"] as? Boolean ?: false
-        if (!success) {
-            val error = (data["error"] as? String)?.takeIf { it.isNotEmpty() } ?: "wifi_forget_failed"
-            request.pending.reject(
-                BluetoothSdkException(error, "Glasses failed to forget \"${request.ssid}\": $error")
-            )
+        if (!isCurrentRequest) return
+        when (result) {
+            is ParsedWifiForgetResult.Failure ->
+                request.pending.reject(
+                    BluetoothSdkException(
+                        result.error,
+                        "Glasses could not dispatch forget for \"${request.ssid}\": ${result.error}",
+                    )
+                )
+            is ParsedWifiForgetResult.Dispatched ->
+                request.pending.resolve(
+                    WifiStatusEvent(
+                        connected = result.connected,
+                        ssid = result.currentSsid,
+                        localIp = result.localIp,
+                    )
+                )
+        }
+    }
+
+    private fun deferLegacyWifiForgetFallback(
+        request: PendingWifiStatusRequest,
+        event: WifiStatusEvent,
+    ) {
+        var resolveNow = false
+        var postDelayMs: Long? = null
+        synchronized(oneShotLock) {
+            if (pendingWifiStatus !== request) return
+            request.legacyFallbackEvent = event
+            val delayMs =
+                wifiForgetLegacyFallbackDelayMs(
+                    request.legacyFallbackDeadlineMs,
+                    SystemClock.elapsedRealtime(),
+                )
+            if (delayMs == 0L) {
+                pendingWifiStatus = null
+                resolveNow = true
+            } else if (!request.legacyFallbackPosted) {
+                request.legacyFallbackPosted = true
+                postDelayMs = delayMs
+            }
+        }
+        if (resolveNow) {
+            request.pending.resolve(event)
             return
         }
-
-        request.pending.resolve(
-            WifiStatusEvent(
-                connected = data["connected"] as? Boolean ?: false,
-                ssid = data["currentSsid"] as? String,
-                localIp = data["localIp"] as? String,
-            )
+        val delayMs = postDelayMs ?: return
+        val scheduledRequestId = request.requestId ?: return
+        mainHandler.postDelayed(
+            {
+                var fallback: WifiStatusEvent? = null
+                synchronized(oneShotLock) {
+                    val activeRequest = pendingWifiStatus
+                    if (activeRequest === request
+                        && wifiForgetFallbackStillApplies(
+                            scheduledRequestId,
+                            activeRequest.requestId,
+                        )
+                    ) {
+                        fallback = request.legacyFallbackEvent
+                        if (fallback != null) {
+                            pendingWifiStatus = null
+                        }
+                    }
+                    request.legacyFallbackPosted = false
+                }
+                fallback?.let { request.pending.resolve(it) }
+            },
+            delayMs,
         )
     }
 
     private fun handleSavedWifiNetworksForRequests(data: Map<String, Any>) {
         val request = synchronized(oneShotLock) { pendingSavedWifiNetworks } ?: return
-        if ((data["requestId"] as? String) != request.requestId) return
+        val result = parseSavedWifiNetworks(request.requestId, data) ?: return
         synchronized(oneShotLock) {
             if (pendingSavedWifiNetworks === request) {
                 pendingSavedWifiNetworks = null
             }
         }
-        val error = (data["error"] as? String)?.takeIf { it.isNotEmpty() }
-        if (error != null) {
+        if (result.error != null) {
             request.pending.reject(
-                BluetoothSdkException(error, "Glasses could not list saved WiFi networks: $error")
+                BluetoothSdkException(
+                    result.error,
+                    "Glasses could not list saved WiFi networks: ${result.error}",
+                )
             )
             return
         }
-        val networks =
-            (data["networks"] as? List<*>)
-                ?.mapNotNull { (it as? String)?.trim()?.takeIf(String::isNotEmpty) }
-                ?.distinct()
-                ?: emptyList()
-        request.pending.resolve(networks)
+        request.pending.resolve(result.networks)
     }
 
     private fun wifiStatusMatches(status: WifiStatus, request: PendingWifiStatusRequest): Boolean =

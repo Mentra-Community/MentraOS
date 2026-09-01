@@ -58,7 +58,9 @@ public interface INetworkManager {
     /**
      * Forget a saved WiFi network (removes it from saved networks)
      * @param ssid The SSID of the network to forget
-     * @return true when the platform accepted the forget operation
+     * @return true when ASG dispatched the forget command through the available platform
+     *     integration. This does not necessarily prove that an asynchronous vendor receiver
+     *     removed the network.
      */
     boolean forgetWifiNetwork(String ssid);
     

@@ -580,7 +580,7 @@ public class Bridge private constructor() {
         fun sendWifiForgetResult(
                 requestId: String,
                 ssid: String,
-                success: Boolean,
+                dispatched: Boolean,
                 connected: Boolean,
                 currentSsid: String,
                 localIp: String,
@@ -589,7 +589,7 @@ public class Bridge private constructor() {
             val body = HashMap<String, Any>()
             body["requestId"] = requestId
             body["ssid"] = ssid
-            body["success"] = success
+            body["dispatched"] = dispatched
             body["connected"] = connected
             body["currentSsid"] = currentSsid
             body["localIp"] = localIp

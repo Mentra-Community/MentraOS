@@ -365,7 +365,7 @@ These are the supported React Native app developer entrypoints:
 | Status and subscriptions | `useMentraBluetooth`, `useBluetoothScan`, and `useBluetoothEvent` for React components; `addListener` is available as the lower-level non-React subscription API |
 | Default device | `getDefaultDevice`, `setDefaultDevice`, `clearDefaultDevice` |
 | Connection | `scan`, `startScan`, `stopScan`, `connect`, `connectDefault`, `cancelConnectionAttempt`, `disconnect`, `forget` |
-| Wi-Fi and hotspot | `requestWifiScan`, `sendWifiCredentials`, `forgetWifiNetwork`, `setHotspotState` |
+| Wi-Fi and hotspot | `requestWifiScan`, `getSavedWifiNetworks`, `sendWifiCredentials`, `forgetWifiNetwork`, `setHotspotState` |
 | Camera and gallery | `requestPhoto`, `warmUpCamera`, `stopCameraWarmUp`, `queryGalleryStatus`, `setGalleryModeEnabled`, `setPhotoCaptureDefaults` (deprecated), `setVideoRecordingDefaults`, `setMaxVideoRecordingDuration`, `setCameraFov`, `setCameraFovOverride`, `releaseCameraFovOverride`, `startVideoRecording`, `stopVideoRecording`, `queryVideoRecordingStatus` |
 | Streaming | `startStream`, `stopStream` |
 | Audio | `setMicState`, `setVoiceActivityDetectionEnabled`, `setLoudnessGateEnabled`, `setPreferredMic`, `setOwnAppAudioPlaying`, `getGlassesMediaVolume`, `setGlassesMediaVolume` |
@@ -401,8 +401,9 @@ React Native exposes the narrowest return types for clear branching after `await
 | API | Resolves With | Rejection / Throw Criteria |
 | --- | --- | --- |
 | `requestWifiScan()` | Final `WifiSearchResult[]` from `wifi_scan_result` where `scanComplete: true`, including `[]` when no networks are found. | Scan response timeout, send failure, or another Wi-Fi scan already in flight. |
+| `getSavedWifiNetworks()` | Exact saved SSID strings from glasses with a reliable configured-network enumeration API. Whitespace is preserved so a returned SSID can be passed back to `forgetWifiNetwork`. | `list_saved_networks_unsupported` on K900, whose vendor credential store has no response callback; request timeout on older glasses; send failure; or another saved-list request in flight. |
 | `sendWifiCredentials(ssid, password)` | `WifiStatusChangeEvent` whose state is `connected` for the requested SSID. Success typically resolves within a few seconds. | Glasses-reported provisioning failure, with the reason as the error code: `wrong_password` (typically ~7s), `connect_timeout` (~12s, network unreachable or join never completed), or `connected_to_other_network` (the glasses ended up on a different SSID than requested). Also request timeout, send failure, or another Wi-Fi status command in flight. Routine `disconnected` events during association do **not** reject — the glasses briefly report disconnected while switching networks. Glasses running older software never send failure reasons; failed attempts there surface as request timeouts. |
-| `forgetWifiNetwork(ssid)` | `WifiStatusChangeEvent` once the requested SSID is no longer connected. | Timeout, send failure, or another Wi-Fi status command in flight. |
+| `forgetWifiNetwork(ssid)` | Current `WifiStatusChangeEvent` snapshot after ASG dispatches the platform forget command. The exact correlated result gets a 750 ms priority window over matching legacy status; older glasses then resolve from `wifi_status_change`. On K900, `dispatched: true` means the asynchronous SystemUI broadcast was queued, not that credential removal was verified. | ASG dispatch failure, empty SSID, timeout, send failure, or another Wi-Fi status command in flight. |
 | `setHotspotState(enabled)` | `HotspotStatusChangeEvent` matching the requested enabled/disabled state. | `hotspot_error`, timeout, send failure, or another hotspot command in flight. |
 | `requestVersionInfo()` | `VersionInfoResult` from the ASG `version_info` response. | Timeout, send failure, or another version query in flight. |
 | Gallery capture settings | `SettingsAckSuccessEvent` with a non-failure status such as `applied` or `ready`; the SDK local settings store updates only after this ASG ack resolves. | `settings_ack.status` of `error`, `failed`, `failure`, or `rejected`; timeout; or send failure. |
@@ -443,7 +444,7 @@ Use `setGalleryModeEnabled(true)` to enable local button capture, and `setGaller
 | Area | Commands |
 | --- | --- |
 | Connection | `scan`, `startScan`, `stopScan`, `connect`, `connectDefault`, `disconnect`, `forget` |
-| Wi-Fi and hotspot | `requestWifiScan`, `sendWifiCredentials`, `forgetWifiNetwork`, `setHotspotState` |
+| Wi-Fi and hotspot | `requestWifiScan`, `getSavedWifiNetworks`, `sendWifiCredentials`, `forgetWifiNetwork`, `setHotspotState` |
 | Camera | `requestPhoto`, gallery mode, photo capture defaults, video recording defaults, camera field of view |
 | Streaming | `startStream`, `stopStream` |
 | Audio | `setMicState`, Voice Activity Detection setting and events, audio callbacks, local transcription, media volume |
@@ -574,6 +575,8 @@ The React Native event surface is typed through `BluetoothSdkEventMap`. These ar
 | `local_transcription` | `LocalTranscriptionEvent` | SDK local transcription text update. |
 | `wifi_status_change` | `WifiStatusChangeEvent` | Glasses Wi-Fi connection state changes. When the event is the verdict of a failed `sendWifiCredentials` attempt it carries an `error` reason (`wrong_password`, `connect_timeout`, `connected_to_other_network`); the reason describes the attempt, not the link, so `connected_to_other_network` arrives on a `connected` state. Routine link updates carry no `error`. |
 | `wifi_scan_result` | `WifiScanResultEvent` | Wi-Fi scan results. Intermediate events can have `scanComplete: false`; the final event has `scanComplete: true` and is what `requestWifiScan()` awaits. |
+| `wifi_forget_result` | `WifiForgetResultEvent` | Exact-ID ASG dispatch result for `forgetWifiNetwork`; K900 `dispatched: true` does not prove the asynchronous vendor receiver removed the credential. |
+| `saved_wifi_networks` | `SavedWifiNetworksEvent` | Exact-ID saved SSID result or terminal capability/error code for `getSavedWifiNetworks()`. |
 | `version_info` | `VersionInfoEvent` | Glasses version metadata response. Also returned by `requestVersionInfo()`. |
 | `hotspot_status_change` | `HotspotStatusChangeEvent` | Glasses hotspot state changes. |
 | `hotspot_error` | `HotspotErrorEvent` | Hotspot operation fails. |

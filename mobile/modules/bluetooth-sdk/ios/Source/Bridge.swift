@@ -469,7 +469,7 @@ class Bridge {
     static func sendWifiForgetResult(
         requestId: String,
         ssid: String,
-        success: Bool,
+        dispatched: Bool,
         connected: Bool,
         currentSsid: String,
         localIp: String,
@@ -478,7 +478,7 @@ class Bridge {
         var body: [String: Any] = [
             "requestId": requestId,
             "ssid": ssid,
-            "success": success,
+            "dispatched": dispatched,
             "connected": connected,
             "currentSsid": currentSsid,
             "localIp": localIp,
@@ -689,5 +689,4 @@ class Bridge {
         return payload
     }
 }
-
 

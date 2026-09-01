@@ -28,6 +28,8 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             "battery_status",
             "wifi_status_change",
             "wifi_scan_result",
+            "wifi_forget_result",
+            "saved_wifi_networks",
             "hotspot_status_change",
             "hotspot_error",
             "photo_response",
@@ -938,6 +940,5 @@ private extension ConnectOptions {
         )
     }
 }
-
 
 

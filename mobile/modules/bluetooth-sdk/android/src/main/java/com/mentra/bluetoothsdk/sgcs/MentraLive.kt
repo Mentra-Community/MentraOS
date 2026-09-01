@@ -3870,7 +3870,7 @@ class MentraLive : SGCManager() {
                 Bridge.sendWifiForgetResult(
                         requestId = json.optString("requestId", ""),
                         ssid = json.optString("ssid", ""),
-                        success = json.optBoolean("success", false),
+                        dispatched = json.optBoolean("dispatched", false),
                         connected = json.optBoolean("connected", false),
                         currentSsid = json.optString("current_ssid", ""),
                         localIp = json.optString("local_ip", ""),
@@ -3882,7 +3882,7 @@ class MentraLive : SGCManager() {
                 val networkArray = json.optJSONArray("networks")
                 if (networkArray != null) {
                     for (i in 0 until networkArray.length()) {
-                        networkArray.optString(i, "").trim().takeIf { it.isNotEmpty() }?.let {
+                        networkArray.optString(i, "").takeIf { it.trim().isNotEmpty() }?.let {
                             networks.add(it)
                         }
                     }

@@ -128,6 +128,24 @@ export type WifiStatusChangeEvent = WifiStatus & {
   error?: string
 }
 
+export type WifiForgetResultEvent = {
+  type: "wifi_forget_result"
+  requestId: string
+  ssid: string
+  dispatched: boolean
+  connected: boolean
+  currentSsid?: string
+  localIp?: string
+  error?: string
+}
+
+export type SavedWifiNetworksEvent = {
+  type: "saved_wifi_networks"
+  requestId: string
+  networks: string[]
+  error?: string
+}
+
 export type HotspotStatus = {state: "disabled"} | {state: "enabled"; ssid: string; password: string; localIp: string}
 
 export type EnabledHotspotStatus = Extract<HotspotStatus, {state: "enabled"}>
@@ -908,6 +926,8 @@ export type BluetoothSdkModuleEvents = {
   phone_notification_dismissed: (event: PhoneNotificationDismissedEvent) => void
   wifi_status_change: (event: WifiStatusChangeEvent) => void
   wifi_scan_result: (event: WifiScanResultEvent) => void
+  wifi_forget_result: (event: WifiForgetResultEvent) => void
+  saved_wifi_networks: (event: SavedWifiNetworksEvent) => void
   hotspot_status_change: (event: HotspotStatusChangeEvent) => void
   hotspot_error: (event: HotspotErrorEvent) => void
   photo_response: (event: PhotoResponseEvent) => void
@@ -1018,6 +1038,8 @@ export type BluetoothSdkEventMap = {
   local_transcription: LocalTranscriptionEvent
   wifi_status_change: WifiStatusChangeEvent
   wifi_scan_result: WifiScanResultEvent
+  wifi_forget_result: WifiForgetResultEvent
+  saved_wifi_networks: SavedWifiNetworksEvent
   hotspot_status_change: HotspotStatusChangeEvent
   hotspot_error: HotspotErrorEvent
   photo_response: PhotoResponseEvent
@@ -1106,7 +1128,7 @@ export interface BluetoothSdkPublicModule {
   ping(): Promise<void>
 
   requestWifiScan(): Promise<WifiSearchResult[]>
-  /** List WiFi network names currently saved on the glasses. */
+  /** List exact WiFi SSIDs from glasses that support reliable saved-network enumeration. */
   getSavedWifiNetworks(): Promise<string[]>
   sendWifiCredentials(ssid: string, password: string): Promise<WifiStatusChangeEvent>
   forgetWifiNetwork(ssid: string): Promise<WifiStatusChangeEvent>

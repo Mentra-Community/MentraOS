@@ -65,17 +65,22 @@ private final class PendingWifiStatusRequest {
     let ssid: String
     let pending: PendingResponse<WifiStatusEvent>
     let requestId: String?
+    let legacyFallbackDeadlineMs: Int64
+    var legacyFallbackEvent: WifiStatusEvent?
+    var legacyFallbackTask: Task<Void, Never>?
 
     init(
         operation: WifiStatusOperation,
         ssid: String,
         pending: PendingResponse<WifiStatusEvent>,
-        requestId: String? = nil
+        requestId: String? = nil,
+        legacyFallbackDeadlineMs: Int64 = 0
     ) {
         self.operation = operation
         self.ssid = ssid
         self.pending = pending
         self.requestId = requestId
+        self.legacyFallbackDeadlineMs = legacyFallbackDeadlineMs
     }
 }
 
@@ -880,6 +885,9 @@ public final class MentraBluetoothSDK {
     }
 
     public func forgetWifiNetwork(ssid: String) async throws -> WifiStatusEvent {
+        guard wifiSsidIsValid(ssid) else {
+            throw BluetoothSdkError(code: "invalid_ssid", message: "WiFi SSID cannot be empty.")
+        }
         guard pendingWifiStatus == nil else {
             throw BluetoothSdkError(
                 code: "request_in_flight",
@@ -892,17 +900,20 @@ public final class MentraBluetoothSDK {
             operation: .forget,
             ssid: ssid,
             pending: pending,
-            requestId: requestId
+            requestId: requestId,
+            legacyFallbackDeadlineMs: Self.monotonicMilliseconds() + Int64(wifiForgetCorrelatedPriorityWindowMs)
         )
         DeviceManager.shared.forgetWifiNetwork(ssid, requestId: requestId)
         do {
             let event = try await pending.wait()
             if pendingWifiStatus?.pending === pending {
+                pendingWifiStatus?.legacyFallbackTask?.cancel()
                 pendingWifiStatus = nil
             }
             return event
         } catch {
             if pendingWifiStatus?.pending === pending {
+                pendingWifiStatus?.legacyFallbackTask?.cancel()
                 pendingWifiStatus = nil
             }
             throw error
@@ -2020,6 +2031,10 @@ public final class MentraBluetoothSDK {
             return
         }
         guard wifiStatusMatches(event.status, request: request) else { return }
+        if request.operation == .forget {
+            deferLegacyWifiForgetFallback(request, event: event)
+            return
+        }
         if pendingWifiStatus === request {
             pendingWifiStatus = nil
         }
@@ -2028,41 +2043,80 @@ public final class MentraBluetoothSDK {
 
     private func handleWifiForgetResultForRequests(_ data: [String: Any]) {
         guard let request = pendingWifiStatus, request.operation == .forget else { return }
-        let responseRequestId = data["requestId"] as? String
-        if let responseRequestId, !responseRequestId.isEmpty, responseRequestId != request.requestId {
-            return
-        }
-        guard data["ssid"] as? String == request.ssid else { return }
+        guard let requestId = request.requestId,
+              let result = parseWifiForgetResult(
+                  expectedRequestId: requestId,
+                  expectedSsid: request.ssid,
+                  data: data
+              )
+        else { return }
         if pendingWifiStatus === request {
+            request.legacyFallbackTask?.cancel()
             pendingWifiStatus = nil
         }
-        guard data["success"] as? Bool == true else {
-            let error = (data["error"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "wifi_forget_failed"
+        switch result {
+        case let .failure(error):
             request.pending.reject(
                 BluetoothSdkError(
                     code: error,
-                    message: "Glasses failed to forget \"\(request.ssid)\": \(error)"
+                    message: "Glasses could not dispatch forget for \"\(request.ssid)\": \(error)"
                 )
             )
+        case let .dispatched(connected, currentSsid, localIp):
+            request.pending.resolve(
+                WifiStatusEvent(
+                    connected: connected,
+                    ssid: currentSsid,
+                    localIp: localIp
+                )
+            )
+        }
+    }
+
+    private func deferLegacyWifiForgetFallback(
+        _ request: PendingWifiStatusRequest,
+        event: WifiStatusEvent
+    ) {
+        guard pendingWifiStatus === request, let requestId = request.requestId else { return }
+        request.legacyFallbackEvent = event
+        request.legacyFallbackTask?.cancel()
+        let delayMs = wifiForgetLegacyFallbackDelayMs(
+            priorityDeadlineMs: request.legacyFallbackDeadlineMs,
+            nowMs: Self.monotonicMilliseconds()
+        )
+        guard delayMs > 0 else {
+            pendingWifiStatus = nil
+            request.pending.resolve(event)
             return
         }
-        request.pending.resolve(
-            WifiStatusEvent(
-                connected: data["connected"] as? Bool ?? false,
-                ssid: data["currentSsid"] as? String,
-                localIp: data["localIp"] as? String
-            )
-        )
+        request.legacyFallbackTask = Task { @MainActor [weak self, weak request] in
+            do {
+                try await Task.sleep(nanoseconds: UInt64(delayMs) * 1_000_000)
+            } catch {
+                return
+            }
+            guard let self, let request,
+                  self.pendingWifiStatus === request,
+                  wifiForgetFallbackStillApplies(
+                      scheduledRequestId: requestId,
+                      activeRequestId: self.pendingWifiStatus?.requestId
+                  ),
+                  let fallback = request.legacyFallbackEvent
+            else { return }
+            self.pendingWifiStatus = nil
+            request.legacyFallbackTask = nil
+            request.pending.resolve(fallback)
+        }
     }
 
     private func handleSavedWifiNetworksForRequests(_ data: [String: Any]) {
         guard let request = pendingSavedWifiNetworks,
-              data["requestId"] as? String == request.requestId
+              let result = parseSavedWifiNetworks(expectedRequestId: request.requestId, data: data)
         else { return }
         if pendingSavedWifiNetworks === request {
             pendingSavedWifiNetworks = nil
         }
-        if let error = (data["error"] as? String).flatMap({ $0.isEmpty ? nil : $0 }) {
+        if let error = result.error {
             request.pending.reject(
                 BluetoothSdkError(
                     code: error,
@@ -2071,13 +2125,11 @@ public final class MentraBluetoothSDK {
             )
             return
         }
-        var seen = Set<String>()
-        let networks = (data["networks"] as? [String] ?? []).compactMap { network -> String? in
-            let trimmed = network.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty, seen.insert(trimmed).inserted else { return nil }
-            return trimmed
-        }
-        request.pending.resolve(networks)
+        request.pending.resolve(result.networks)
+    }
+
+    private static func monotonicMilliseconds() -> Int64 {
+        Int64(ProcessInfo.processInfo.systemUptime * 1_000)
     }
 
     private func wifiStatusMatches(_ status: WifiStatus, request: PendingWifiStatusRequest) -> Bool {
