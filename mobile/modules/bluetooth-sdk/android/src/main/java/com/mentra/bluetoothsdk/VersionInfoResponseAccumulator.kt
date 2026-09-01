@@ -3,7 +3,7 @@ package com.mentra.bluetoothsdk
 internal sealed interface VersionInfoAccumulatorOutcome {
     data object Ignored : VersionInfoAccumulatorOutcome
 
-    data object Waiting : VersionInfoAccumulatorOutcome
+    data class Waiting(val allowQuietPeriod: Boolean) : VersionInfoAccumulatorOutcome
 
     data class Complete(val result: VersionInfoResult) : VersionInfoAccumulatorOutcome
 }
@@ -55,12 +55,12 @@ internal class VersionInfoResponseAccumulator(
         return if (chunk == FINAL_CHUNK && isCorrelated) {
             VersionInfoAccumulatorOutcome.Complete(result)
         } else {
-            VersionInfoAccumulatorOutcome.Waiting
+            VersionInfoAccumulatorOutcome.Waiting(allowQuietPeriod = !isCorrelated)
         }
     }
 
     fun finishAfterQuietPeriod(): VersionInfoResult? =
-        if (started) VersionInfoResult.fromMap(values) else null
+        if (started && startedRequestId == null) VersionInfoResult.fromMap(values) else null
 
     private fun mergeNonEmptyFields(event: Map<String, Any>) {
         event.forEach { (key, value) ->
