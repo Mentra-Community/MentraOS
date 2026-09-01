@@ -2,20 +2,74 @@ import CoreBluetooth
 import Foundation
 
 @MainActor
-private final class ActiveStreamKeepAlive {
+final class ActiveStreamKeepAlive {
+    enum StatusDisposition: Equatable {
+        case preserve
+        case stop
+    }
+
     let streamId: String
     let intervalSeconds: Int
     var pendingAckId: String?
     var missedAckCount = 0
     var task: Task<Void, Never>?
-    // Missed-ACK counting only begins once the stream is confirmed live/coming up, so a slow
-    // startup (glasses can't ACK until they reach starting/streaming) can't trip a false
-    // keep-alive timeout before the stream is ever up.
+    /// Missed-ACK counting only begins once the stream is confirmed live/coming up, so a slow
+    /// startup (glasses can't ACK until they reach starting/streaming) can't trip a false
+    /// keep-alive timeout before the stream is ever up.
     var armed = false
+    /// A retryable publisher error can be followed by a transient `stopped`
+    /// before `reconnecting`. Remember that recovery is still in flight so the
+    /// intermediate status does not permanently discard this monitor.
+    var retryPending = false
 
     init(streamId: String, intervalSeconds: Int) {
         self.streamId = streamId
         self.intervalSeconds = intervalSeconds
+    }
+
+    func handle(_ event: StreamStatusEvent) -> StatusDisposition {
+        switch event.state {
+        case .error where event.willRetry == true:
+            retryPending = true
+            suspendMissDetection()
+            return .preserve
+        case .reconnecting:
+            retryPending = true
+            suspendMissDetection()
+            return .preserve
+        case .stopped where retryPending:
+            // Some publisher implementations report a stopped transition
+            // between the retryable error and their reconnect attempt.
+            suspendMissDetection()
+            return .preserve
+        case .reconnected, .streaming:
+            retryPending = false
+            armMissDetection()
+            return .preserve
+        case .initializing:
+            // A fresh start does not have a monitor until its request resolves.
+            // During recovery, initializing is still pre-live and must not make
+            // missed ACKs terminal before the publisher is connected again.
+            if !retryPending {
+                armMissDetection()
+            }
+            return .preserve
+        case .stopped, .stopping, .error, .reconnectFailed:
+            return .stop
+        }
+    }
+
+    private func suspendMissDetection() {
+        armed = false
+        pendingAckId = nil
+        missedAckCount = 0
+    }
+
+    private func armMissDetection() {
+        guard !armed else { return }
+        armed = true
+        pendingAckId = nil
+        missedAckCount = 0
     }
 }
 
@@ -1603,26 +1657,19 @@ public final class MentraBluetoothSDK {
         return true
     }
 
-    private func handleStreamStatusForKeepAlive(_ status: StreamStatus) {
-        guard let streamId = status.streamId,
+    private func handleStreamStatusForKeepAlive(_ event: StreamStatusEvent) {
+        guard let streamId = event.streamId,
               activeStreamKeepAlive?.streamId == streamId
         else {
             return
         }
 
-        switch status.state {
-        case .stopped, .stopping, .error, .reconnectFailed:
+        guard let tracker = activeStreamKeepAlive else { return }
+        switch tracker.handle(event) {
+        case .stop:
             stopStreamKeepAliveMonitor()
-        default:
-            // A non-terminal status means the stream is live or coming up and the glasses can
-            // now ACK; arm the missed-ACK detector from here so a slow startup before the first
-            // ACK can't trip a false keep-alive timeout. On the arming transition, drop any
-            // pre-arm bookkeeping so a stale unacked id can't immediately count as a miss.
-            if let tracker = activeStreamKeepAlive, !tracker.armed {
-                tracker.armed = true
-                tracker.pendingAckId = nil
-                tracker.missedAckCount = 0
-            }
+        case .preserve:
+            break
         }
     }
 
@@ -2203,7 +2250,7 @@ private func dispatchDiscoveredDevices(_ rawSearchResults: Any?) {
         case "stream_status":
             let event = StreamStatusEvent(values: data)
             handleStreamStatusForRequests(event)
-            handleStreamStatusForKeepAlive(event.status)
+            handleStreamStatusForKeepAlive(event)
             delegate?.mentraBluetoothSDK(self, didReceive: .streamStatus(event))
         case "keep_alive_ack":
             let event = KeepAliveAckEvent(values: data)
