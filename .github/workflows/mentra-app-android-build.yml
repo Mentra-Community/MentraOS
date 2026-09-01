@@ -10,6 +10,11 @@ on:
       - main
       - dev
   workflow_dispatch:
+    inputs:
+      build_number:
+        description: Optional Android versionCode for an installable test build
+        required: false
+        type: number
 
 # Cancel a branch's in-flight build when a newer commit is pushed to it.
 # Scoped per-ref so branches never cancel each other; keeps the runner
@@ -33,6 +38,7 @@ jobs:
     env:
       EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID }}
       EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY }}
+      MENTRAOS_PINNED_BUILD_NUMBER: ${{ inputs.build_number || '' }}
       # Compile-check APKs are phone sideloads. Full ABI belongs on the
       # coordinated release workflow, not on this compile-check workflow.
       ORG_GRADLE_PROJECT_reactNativeArchitectures: arm64-v8a
