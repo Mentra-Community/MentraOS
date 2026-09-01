@@ -7293,10 +7293,10 @@ class MentraLive : SGCManager() {
                         device.address +
                         ")"
         )
-        val isActiveDevice =
-                connectedDevice?.address?.equals(device.address, ignoreCase = true) == true
-        if (isActiveDevice) {
-            classicAudioConnectionTracker.clear(device.address)
+        // The BLE device reference may already be cleared after a GATT drop. The tracker owns the
+        // authoritative target address, so let it decide whether this teardown belongs to the
+        // active Classic session instead of consulting connectedDevice.
+        if (classicAudioConnectionTracker.clear(device.address)) {
             audioConnected = false
         }
 
