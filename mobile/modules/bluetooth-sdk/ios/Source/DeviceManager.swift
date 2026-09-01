@@ -1411,7 +1411,6 @@ struct ViewState {
     }
 
     func requestSavedWifiNetworks(requestId: String, sid: String) {
-        Bridge.log("MAN: Requesting saved wifi networks")
         sgc?.requestSavedWifiNetworks(requestId: requestId, sid: sid)
     }
 
@@ -1426,7 +1425,6 @@ struct ViewState {
     }
 
     func forgetWifiNetwork(_ ssid: String, requestId: String? = nil, sid: String? = nil) {
-        Bridge.log("MAN: Forgetting wifi network: \(ssid)")
         sgc?.forgetWifiNetwork(ssid, requestId: requestId, sid: sid)
     }
 
