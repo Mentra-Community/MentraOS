@@ -568,8 +568,8 @@ class MentraLive : SGCManager() {
     private var bluetoothScanner: BluetoothLeScanner? = null
     @Volatile private var bluetoothGatt: BluetoothGatt? = null
     private val gattLifecycleHandler = Handler(Looper.getMainLooper())
-    private var gattTeardownToken: Long? = null
-    private var gattTeardownTimeoutRunnable: Runnable? = null
+    @Volatile private var gattTeardownToken: Long? = null
+    @Volatile private var gattTeardownTimeoutRunnable: Runnable? = null
     private var connectedDevice: BluetoothDevice? = null
     private var txCharacteristic: BluetoothGattCharacteristic? = null
     private var rxCharacteristic: BluetoothGattCharacteristic? = null
