@@ -197,7 +197,7 @@ Runtime service selection is an explicit positive allowlist, for example:
 
 ```text
 RUNTIME_SERVICES=meetings
-MEETING_PROVIDER=acs-teams
+MEETING_PROVIDERS=acs-teams
 ```
 
 This is boot composition inside one process, not one container per module. An

@@ -114,7 +114,8 @@ Deploy [main.bicep](./main.bicep) with:
 The template creates:
 
 - an Azure Container Apps environment;
-- a single-replica, HTTP-only Runtime with `RUNTIME_SERVICES=meetings`;
+- a single-replica, HTTP-only Runtime with `RUNTIME_SERVICES=meetings` and
+  `MEETING_PROVIDERS=acs-teams`;
 - a customer-owned ACS resource;
 - a managed identity for private ACR image pulls; and
 - an ACS connection-string Container App secret.
@@ -209,4 +210,3 @@ end-to-end call test.
 | ACS exchange returns 403 | Missing ACS delegated permission/admin consent, wrong tenant/client, or mismatched employee object id |
 | Workspace is rejected before login | Manifest schema, origin, TLS, or exact release identity does not match the app |
 | Login works but a Teams call cannot start | SoftAP/native ACS integration is absent, ACS configuration is invalid, or Teams policy/license blocks the employee |
-

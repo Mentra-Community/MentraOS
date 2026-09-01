@@ -321,6 +321,9 @@ Azure template, tests, and operator documentation
 
 - [ ] Add an explicit positive allowlist: `RUNTIME_SERVICES=meetings` for the
       first enterprise template.
+- [ ] Select provider implementations independently with
+      `MEETING_PROVIDERS=acs-teams`; enabling a module must not implicitly select
+      a vendor.
 - [ ] Keep one Runtime binary, process, HTTP port, and container. Do not create a
       container or repository per module.
 - [ ] Register routes and initialize providers only for enabled modules.

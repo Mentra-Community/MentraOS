@@ -147,6 +147,7 @@ resource runtime 'Microsoft.App/containerApps@2024-03-01' = {
           env: [
             { name: 'PORT', value: '3001' }
             { name: 'RUNTIME_SERVICES', value: 'meetings' }
+            { name: 'MEETING_PROVIDERS', value: 'acs-teams' }
             {
               name: 'DEPLOYMENT_MANIFEST_JSON'
               value: string(deploymentManifest)

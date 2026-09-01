@@ -1,7 +1,8 @@
 # Mentra Enterprise reference deployment
 
 This is Mentra's non-production, customer-shaped validation environment. It
-runs the ordinary Cloud V2 Runtime image with only `meetings`.
+runs the ordinary Cloud V2 Runtime image with only `meetings` and its
+`acs-teams` provider.
 It intentionally deploys no Core, MongoDB, Redis, UDP listener, Runtime
 WebSocket, audio worker, speech provider, Store, or Mentra-hosted identity.
 

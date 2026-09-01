@@ -59,6 +59,7 @@ import {
 } from "./services/runtime-services";
 import { getStreamProvider } from "./services/stream/stream.service";
 import { assertAcsTeamsConfigured } from "./services/meetings/acs-teams.service";
+import { resolveMeetingProviders } from "./services/meetings/meeting-providers";
 import {
   assertManifestMatchesRuntimeServices,
   parseDeploymentManifest,
@@ -240,7 +241,10 @@ export async function startRuntime(
     Boolean(process.env.RUNTIME_SERVICES?.trim());
   if (explicitServiceProfile && services.has("managed-streams"))
     getStreamProvider();
-  if (services.has("meetings")) assertAcsTeamsConfigured();
+  if (services.has("meetings")) {
+    const meetingProviders = resolveMeetingProviders();
+    if (meetingProviders.has("acs-teams")) assertAcsTeamsConfigured();
+  }
   const deploymentManifest =
     opts.deploymentManifest ?? (await loadDeploymentManifest());
   if (deploymentManifest) {
