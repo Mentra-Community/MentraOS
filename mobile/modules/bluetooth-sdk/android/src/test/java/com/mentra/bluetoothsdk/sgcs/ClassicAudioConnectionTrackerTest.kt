@@ -76,4 +76,16 @@ class ClassicAudioConnectionTrackerTest {
         assertThat(changes).containsExactly(true, false)
         assertThat(tracker.connected).isFalse()
     }
+
+    @Test
+    fun `target teardown clears profiles without an external device reference`() {
+        val changes = mutableListOf<Boolean>()
+        val tracker = ClassicAudioConnectionTracker(changes::add)
+        tracker.setTarget("AA:BB:CC:DD:EE:FF")
+        tracker.update(ClassicAudioProfile.A2DP, "AA:BB:CC:DD:EE:FF", connected = true)
+
+        assertThat(tracker.clear("AA:BB:CC:DD:EE:FF")).isTrue()
+        assertThat(changes).containsExactly(true, false)
+        assertThat(tracker.connected).isFalse()
+    }
 }
