@@ -37,7 +37,7 @@ public class WifiCommandHandlerSavedNetworksTest {
     }
 
     @Test
-    public void forgetWifi_sendsTerminalSuccessWithCorrelationId() throws Exception {
+    public void forgetWifi_sendsDispatchAcceptanceWithCorrelationId() throws Exception {
         when(networkManager.forgetWifiNetwork("Field AP")).thenReturn(true);
         JSONObject command =
                 new JSONObject()
@@ -63,7 +63,7 @@ public class WifiCommandHandlerSavedNetworksTest {
         assertThat(handler.handleCommand("forget_wifi", command)).isFalse();
 
         verify(communicationManager)
-                .sendWifiForgetResultOverBle("forget-8", "Field AP", false, "forget_not_supported");
+                .sendWifiForgetResultOverBle("forget-8", "Field AP", false, "forget_dispatch_failed");
     }
 
     @Test
@@ -79,6 +79,22 @@ public class WifiCommandHandlerSavedNetworksTest {
 
         verify(communicationManager)
                 .sendSavedWifiNetworksOverBle(
-                        "saved-3", Arrays.asList("Field AP", "Warehouse"), null);
+                        "saved-3", Arrays.asList(" Field AP ", "Warehouse"), null);
+    }
+
+    @Test
+    public void requestSavedWifiNetworks_reportsUnsupportedManager() throws Exception {
+        when(networkManager.getConfiguredWifiNetworks())
+                .thenThrow(new UnsupportedOperationException("no vendor response"));
+        JSONObject command =
+                new JSONObject()
+                        .put("type", "request_saved_wifi_networks")
+                        .put("requestId", "saved-4");
+
+        assertThat(handler.handleCommand("request_saved_wifi_networks", command)).isFalse();
+
+        verify(communicationManager)
+                .sendSavedWifiNetworksOverBle(
+                        "saved-4", java.util.Collections.emptyList(), "list_saved_networks_unsupported");
     }
 }

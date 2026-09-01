@@ -452,7 +452,7 @@ public class WifiCommandHandler implements ICommandHandler {
         String requestId = data.optString("requestId", "");
         String ssid = data.optString("ssid", "");
         try {
-            if (ssid.isEmpty()) {
+            if (ssid.trim().isEmpty()) {
                 Log.e(TAG, "📶 Cannot forget WiFi - missing SSID");
                 communicationManager.sendWifiForgetResultOverBle(
                         requestId, ssid, false, "invalid_ssid");
@@ -463,11 +463,14 @@ public class WifiCommandHandler implements ICommandHandler {
 
             INetworkManager networkManager = serviceManager.getNetworkManager();
             if (networkManager != null) {
-                boolean accepted = networkManager.forgetWifiNetwork(ssid);
+                boolean dispatched = networkManager.forgetWifiNetwork(ssid);
                 communicationManager.sendWifiForgetResultOverBle(
-                        requestId, ssid, accepted, accepted ? null : "forget_not_supported");
-                Log.d(TAG, "📶 WiFi forget command result for " + ssid + ": " + accepted);
-                return accepted;
+                        requestId,
+                        ssid,
+                        dispatched,
+                        dispatched ? null : "forget_dispatch_failed");
+                Log.d(TAG, "📶 WiFi forget dispatch result for " + ssid + ": " + dispatched);
+                return dispatched;
             } else {
                 Log.e(TAG, "📶 Network manager not available for WiFi forget");
                 communicationManager.sendWifiForgetResultOverBle(
@@ -477,7 +480,7 @@ public class WifiCommandHandler implements ICommandHandler {
         } catch (Exception e) {
             Log.e(TAG, "📶 Error handling WiFi forget command", e);
             communicationManager.sendWifiForgetResultOverBle(
-                    requestId, ssid, false, "forget_failed");
+                    requestId, ssid, false, "forget_dispatch_failed");
             return false;
         }
     }
@@ -505,13 +508,19 @@ public class WifiCommandHandler implements ICommandHandler {
             java.util.List<String> sanitizedNetworks =
                     networks.stream()
                             .filter(java.util.Objects::nonNull)
-                            .map(String::trim)
-                            .filter(network -> !network.isEmpty())
+                            .filter(network -> !network.trim().isEmpty())
                             .distinct()
                             .sorted()
                             .collect(java.util.stream.Collectors.toList());
             communicationManager.sendSavedWifiNetworksOverBle(requestId, sanitizedNetworks, null);
             return true;
+        } catch (UnsupportedOperationException e) {
+            Log.w(TAG, "📶 Saved WiFi network listing is unsupported", e);
+            communicationManager.sendSavedWifiNetworksOverBle(
+                    requestId,
+                    java.util.Collections.emptyList(),
+                    "list_saved_networks_unsupported");
+            return false;
         } catch (Exception e) {
             Log.e(TAG, "📶 Error listing saved WiFi networks", e);
             communicationManager.sendSavedWifiNetworksOverBle(

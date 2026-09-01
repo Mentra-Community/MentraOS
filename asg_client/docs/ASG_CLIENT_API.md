@@ -469,24 +469,26 @@ No response is required (fire-and-forget).
 {"type": "forget_wifi", "ssid": "OldNetwork", "requestId": "forget-123"}
 ```
 
-`ssid` is required. Current builds return a reliable, correlated terminal result; `success: true`
-means the glasses accepted the platform forget operation. `connected`, `current_ssid`, and
-`local_ip` are the current link snapshot, not a claim that disconnection has already propagated.
+`ssid` is required. Current builds return a reliable, correlated dispatch result; `dispatched: true`
+means ASG dispatched the command through its platform integration. On K900 the vendor API is an
+asynchronous SystemUI broadcast with no completion callback, so this is not proof that the vendor
+receiver removed the credential. `connected`, `current_ssid`, and `local_ip` are the current link
+snapshot, not a claim that disconnection has already propagated.
 
 ```json
 {
   "type": "wifi_forget_result",
   "requestId": "forget-123",
   "ssid": "OldNetwork",
-  "success": true,
+  "dispatched": true,
   "connected": false,
   "current_ssid": "",
   "local_ip": ""
 }
 ```
 
-On failure, `success` is `false` and `error` is a stable code such as
-`forget_not_supported`, `invalid_ssid`, or `network_manager_unavailable`. Older glasses ignore
+On failure, `dispatched` is `false` and `error` is a stable code such as
+`forget_dispatch_failed`, `invalid_ssid`, or `network_manager_unavailable`. Older glasses ignore
 `requestId` and do not send this result; phone SDKs retain their legacy `wifi_status` fallback.
 
 #### `request_saved_wifi_networks`
@@ -505,8 +507,10 @@ List SSIDs configured on the glasses. The response echoes the required correlati
 }
 ```
 
-The list is sorted, deduplicated, and contains SSIDs only (never credentials). A terminal error
-response includes an empty `networks` array plus `error`.
+The list is sorted, deduplicated, preserves exact SSID spelling/whitespace, and contains SSIDs only
+(never credentials). A terminal error response includes an empty `networks` array plus `error`.
+K900 currently returns `list_saved_networks_unsupported`: its credentials are vendor-owned and the
+available broadcast has no result path, while Android `WifiManager` can be empty or stale.
 
 ---
 

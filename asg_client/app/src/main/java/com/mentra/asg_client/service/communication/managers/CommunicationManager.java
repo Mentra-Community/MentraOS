@@ -136,7 +136,7 @@ public class CommunicationManager
 
     @Override
     public void sendWifiForgetResultOverBle(
-            String requestId, String ssid, boolean success, String error) {
+            String requestId, String ssid, boolean dispatched, String error) {
         try {
             JSONObject response = new JSONObject();
             response.put("type", "wifi_forget_result");
@@ -144,7 +144,7 @@ public class CommunicationManager
                 response.put("requestId", requestId);
             }
             response.put("ssid", ssid);
-            response.put("success", success);
+            response.put("dispatched", dispatched);
             if (error != null && !error.isEmpty()) {
                 response.put("error", error);
             }
