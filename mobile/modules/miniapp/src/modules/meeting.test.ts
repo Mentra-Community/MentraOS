@@ -57,6 +57,18 @@ describe("MeetingModule", () => {
     ])
   })
 
+  test("join forwards optional ACS outgoing video", async () => {
+    const calls: unknown[] = []
+    const {session} = mockSession(async (payload) => {
+      calls.push(payload)
+      return {state: "connecting", muted: false, provider: "acs-teams"}
+    })
+    const meeting = new MeetingModule(session)
+    const video = {width: 960, height: 540, fps: 30, maxBitrateBps: 1_500_000}
+    await meeting.join({...joinArgs, video})
+    expect(calls[0]).toMatchObject({video})
+  })
+
   test("updateVideoSource and getState hit the host APIs", async () => {
     const calls: unknown[] = []
     const {session} = mockSession(async (payload) => {

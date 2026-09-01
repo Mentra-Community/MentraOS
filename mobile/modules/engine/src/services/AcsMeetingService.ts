@@ -39,6 +39,33 @@ export function resolveAcsAudioSource(): ResolvedAudioSource {
   })
 }
 
+export type AcsOutgoingVideo = {
+  width: number
+  height: number
+  fps: number
+  maxBitrateBps: number
+}
+
+/** ACS VirtualOutgoingVideoStream documented 16:9 sizes. P540 is 960×540, not 540×960. */
+const ACS_VIRTUAL_CAMERA_SIZES = new Set(["1280x720", "960x540"])
+
+export function parseAcsOutgoingVideo(raw: unknown): AcsOutgoingVideo | undefined {
+  if (raw == null) return undefined
+  if (typeof raw !== "object") throw new Error("video must be an object")
+  const value = raw as Record<string, unknown>
+  const width = Number(value.width)
+  const height = Number(value.height)
+  const fps = Number(value.fps)
+  const maxBitrateBps = Number(value.maxBitrateBps)
+  if (![width, height, fps, maxBitrateBps].every(Number.isFinite)) {
+    throw new Error("video requires width, height, fps, and maxBitrateBps")
+  }
+  if (!ACS_VIRTUAL_CAMERA_SIZES.has(`${width}x${height}`) || fps < 1 || fps > 30 || maxBitrateBps <= 0) {
+    throw new Error(`unsupported ACS video ${width}x${height}@${fps}`)
+  }
+  return {width, height, fps, maxBitrateBps}
+}
+
 type NativeModule = {
   join(options: {
     meetingUrl: string
@@ -47,6 +74,7 @@ type NativeModule = {
     displayName?: string
     dumpPcmWav?: boolean
     audioSource?: "glasses" | "phone"
+    video?: AcsOutgoingVideo
   }): Promise<MeetingState>
   leave(): Promise<void>
   setMuted(muted: boolean): Promise<MeetingState>
@@ -105,7 +133,13 @@ class AcsMeetingService {
 
   async join(
     packageName: string,
-    args: {meetingUrl: string; token: string; whepUrl: string; displayName?: string},
+    args: {
+      meetingUrl: string
+      token: string
+      whepUrl: string
+      displayName?: string
+      video?: AcsOutgoingVideo
+    },
   ): Promise<MeetingState> {
     const native = getNative()
     if (!native) {
@@ -118,6 +152,7 @@ class AcsMeetingService {
     this.owner = packageName
     this.bindNative(native, packageName)
     const resolved = resolveAcsAudioSource()
+    const video = args.video ? parseAcsOutgoingVideo(args.video) : undefined
     console.log("[AcsMeeting] phase=join-native", {
       packageName,
       nativeLoaded: true,
@@ -133,6 +168,7 @@ class AcsMeetingService {
       whepUrl: args.whepUrl,
       displayName: args.displayName,
       audioSource: resolved.source,
+      ...(video ? {video} : {}),
     })
     this.lastState = {
       ...state,

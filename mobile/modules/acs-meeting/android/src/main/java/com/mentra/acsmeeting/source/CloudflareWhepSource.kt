@@ -33,8 +33,8 @@ import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * Recvonly WHEP subscriber. Decoded I420 is packed tight and handed to ACS
- * as native I420 (no RGB convert). Scale uses libyuv cropAndScale in buffer
+ * Recvonly WHEP subscriber. Decoded I420 planes are handed to ACS (no RGB
+ * convert, no pack-then-split). Scale uses libyuv cropAndScale in buffer
  * coordinates. Remote AudioTrackSink PCM is the P4 hard gate.
  */
 class CloudflareWhepSource(
@@ -48,10 +48,6 @@ class CloudflareWhepSource(
   private var egl: EglBase? = null
   private var pc: PeerConnection? = null
   private var currentUrl: String? = null
-  // Written by ensureDest on the decode thread, cleared by stop() on the session thread.
-  @Volatile private var dest: ByteBuffer? = null
-  @Volatile private var destWidth = 0
-  @Volatile private var destHeight = 0
   @Volatile private var offerPosted = false
   @Volatile private var pcmEnabled = true
   @Volatile override var state: SourceState = SourceState.IDLE
@@ -156,9 +152,6 @@ class CloudflareWhepSource(
     } catch (error: Exception) {
       Log.w(TAG, "WHEP peer dispose failed", error)
     }
-    dest = null
-    destWidth = 0
-    destHeight = 0
   }
 
   private fun ensureFactory() {
@@ -166,11 +159,17 @@ class CloudflareWhepSource(
     PeerConnectionFactory.initialize(
       PeerConnectionFactory.InitializationOptions.builder(context).createInitializationOptions(),
     )
-    egl = EglBase.create()
+    val mode = AcsInvestigation.decoderMode
+    val shared = if (mode == DecoderMode.TEXTURE) {
+      EglBase.create().also { egl = it }.eglBaseContext
+    } else {
+      null
+    }
     factory = PeerConnectionFactory.builder()
-      .setVideoEncoderFactory(DefaultVideoEncoderFactory(egl!!.eglBaseContext, true, true))
-      .setVideoDecoderFactory(DefaultVideoDecoderFactory(egl!!.eglBaseContext))
+      .setVideoEncoderFactory(DefaultVideoEncoderFactory(shared, true, true))
+      .setVideoDecoderFactory(DefaultVideoDecoderFactory(shared))
       .createPeerConnectionFactory()
+    Log.i(TAG, "P3 factory decoderMode=$mode egl=${shared != null}")
   }
 
   @Synchronized
@@ -259,9 +258,11 @@ class CloudflareWhepSource(
   }
 
   private val videoSink = VideoSink { frame ->
+    val sinkStart = System.nanoTime()
     stats.onSink()
     stats.recordGap()
     val buffer = frame.buffer
+    stats.onFrameBuffer(classifyBuffer(buffer))
     val geometry = FrameGeometry.packSize(buffer.width, buffer.height, frame.rotation)
     if (geometry.rotationNonZero) {
       stats.onRotation()
@@ -283,38 +284,46 @@ class CloudflareWhepSource(
     } else {
       buffer
     }
-    val i420 = source.toI420() ?: run {
+    val i420Start = System.nanoTime()
+    val i420 = source.toI420()
+    stats.toI420.record(System.nanoTime() - i420Start)
+    if (i420 == null) {
       stats.onDropNullI420()
       scaled?.release()
+      stats.sinkCb.record(System.nanoTime() - sinkStart)
       return@VideoSink
     }
     try {
       val w = i420.width
       val h = i420.height
-      val dest = ensureDest(w, h)
-      val packStart = System.nanoTime()
-      I420Packer.pack(i420.dataY, i420.strideY, i420.dataU, i420.strideU, i420.dataV, i420.strideV, w, h, dest)
-      stats.pack.record(System.nanoTime() - packStart)
+      stats.onStrides(i420.strideY, i420.strideU, i420.strideV, w)
       stats.setSize(w, h)
-      videoListener.onVideoFrame(dest, w, h, frame.timestampNs)
+      videoListener.onVideoFrame(
+        I420Planes(
+          y = i420.dataY,
+          strideY = i420.strideY,
+          u = i420.dataU,
+          strideU = i420.strideU,
+          v = i420.dataV,
+          strideV = i420.strideV,
+          width = w,
+          height = h,
+          timestampNs = frame.timestampNs,
+          retain = { i420.retain() },
+          release = { i420.release() },
+        ),
+      )
     } finally {
       i420.release()
       scaled?.release()
+      stats.sinkCb.record(System.nanoTime() - sinkStart)
     }
   }
 
-  private fun ensureDest(width: Int, height: Int): ByteBuffer {
-    val needed = I420Packer.packedSize(width, height)
-    val existing = dest
-    if (existing != null && destWidth == width && destHeight == height && existing.capacity() >= needed) {
-      existing.clear()
-      return existing
-    }
-    destWidth = width
-    destHeight = height
-    val next = ByteBuffer.allocateDirect(needed)
-    dest = next
-    return next
+  private fun classifyBuffer(buffer: VideoFrame.Buffer): String = when (buffer) {
+    is VideoFrame.TextureBuffer -> "tex"
+    is VideoFrame.I420Buffer -> "i420"
+    else -> "other"
   }
 
   private fun attachAudio(track: AudioTrack) {
@@ -375,6 +384,7 @@ class CloudflareWhepSource(
             decodeSec = (members["totalDecodeTime"] as? Number)?.toDouble() ?: -1.0,
             jitterBufferSec = (members["jitterBufferDelay"] as? Number)?.toDouble() ?: -1.0,
             jitterBufferEmits = (members["jitterBufferEmittedCount"] as? Number)?.toLong() ?: -1L,
+            decImpl = members["decoderImplementation"]?.toString().orEmpty(),
           ),
         )
         return@getStats

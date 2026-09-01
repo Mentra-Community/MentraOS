@@ -22,6 +22,14 @@ export interface MeetingVideoSource {
   url: string
 }
 
+/** Advertised ACS outgoing format. Omitted hosts keep 1280×720@15. */
+export interface MeetingOutgoingVideo {
+  width: number
+  height: number
+  fps: number
+  maxBitrateBps: number
+}
+
 export interface MeetingJoinOptions {
   provider: MeetingProvider
   meetingUrl: string
@@ -29,6 +37,7 @@ export interface MeetingJoinOptions {
   /** V1-only: Porter-minted ACS guest token. Do not persist. */
   token: string
   displayName?: string
+  video?: MeetingOutgoingVideo
 }
 
 export interface MeetingState {
@@ -96,6 +105,7 @@ export class MeetingModule {
           videoSource: options.videoSource,
           token: options.token,
           displayName: options.displayName,
+          ...(options.video ? {video: options.video} : {}),
         },
         {timeoutMs: 0},
       )

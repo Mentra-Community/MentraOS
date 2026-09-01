@@ -51,6 +51,24 @@ class AcsFrameSenderFormatTest {
   }
 
   @Test
+  fun parseOrNullAllowsDocumentedVirtualCameraSizesOnly() {
+    assertThat(I420FormatSpec.parseOrNull(1280, 720, 15f)).isNotNull()
+    assertThat(I420FormatSpec.parseOrNull(960, 540, 30f)).isNotNull()
+    assertThat(I420FormatSpec.parseOrNull(540, 960, 30f)).isNull()
+    assertThat(I420FormatSpec.parseOrNull(854, 480, 15f)).isNull()
+  }
+
+  @Test
+  fun namedResolutionMapsAcsEnumsAndRejectsNearMatches() {
+    assertThat(I420FormatSpec.of(1280, 720).namedResolution()).isEqualTo(AcsNamedResolution.P720)
+    assertThat(I420FormatSpec.of(960, 540).namedResolution()).isEqualTo(AcsNamedResolution.P540)
+    assertThat(I420FormatSpec.of(858, 480).namedResolution()).isEqualTo(AcsNamedResolution.P480)
+    assertThat(I420FormatSpec.of(640, 360).namedResolution()).isEqualTo(AcsNamedResolution.P360)
+    assertThat(I420FormatSpec.of(854, 480).namedResolution()).isNull()
+    assertThat(I420FormatSpec.of(540, 960).namedResolution()).isNull()
+  }
+
+  @Test
   fun outOfRangeGeometryIsReportedNotSilentlyClamped() {
     assertThat(I420FormatSpec.of(width = 3, height = 3).withinAcsBounds()).isFalse()
     assertThat(I420FormatSpec.of(width = 4096, height = 2160).withinAcsBounds()).isFalse()

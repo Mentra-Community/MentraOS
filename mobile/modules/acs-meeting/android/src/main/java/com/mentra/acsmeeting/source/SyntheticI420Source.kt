@@ -39,6 +39,9 @@ class SyntheticI420Source(
   @Volatile private var dest: ByteBuffer? = null
   @Volatile private var destWidth = 0
   @Volatile private var destHeight = 0
+  @Volatile private var destY: ByteBuffer? = null
+  @Volatile private var destU: ByteBuffer? = null
+  @Volatile private var destV: ByteBuffer? = null
   private var scheduler: ScheduledExecutorService? = null
 
   /** Test-visible gate transitions. Production also writes them to ACS-SPIKE. */
@@ -81,6 +84,9 @@ class SyntheticI420Source(
     dest = null
     destWidth = 0
     destHeight = 0
+    destY = null
+    destU = null
+    destV = null
     state = SourceState.IDLE
   }
 
@@ -122,13 +128,23 @@ class SyntheticI420Source(
     val index = frameIndex.getAndIncrement()
     stampFps = sampleStampFps()
     factory.write(buffer, w, h, index, stampFps)
-    val packStart = System.nanoTime()
-    buffer.rewind()
-    stats.pack.record(System.nanoTime() - packStart)
     stats.onSink()
     stats.recordGap()
     stats.setSize(w, h)
-    video.onVideoFrame(buffer, w, h, System.nanoTime())
+    val chroma = I420Packer.chromaStride(w)
+    video.onVideoFrame(
+      I420Planes(
+        y = destY!!,
+        strideY = w,
+        u = destU!!,
+        strideU = chroma,
+        v = destV!!,
+        strideV = chroma,
+        width = w,
+        height = h,
+        timestampNs = System.nanoTime(),
+      ),
+    )
     val count = emitted.incrementAndGet()
     if (firstLogged.compareAndSet(false, true)) {
       logEvent(
@@ -170,7 +186,18 @@ class SyntheticI420Source(
     dest = next
     destWidth = width
     destHeight = height
+    slicePlanes(next, width, height)
     return next
+  }
+
+  private fun slicePlanes(packed: ByteBuffer, width: Int, height: Int) {
+    val ySize = width * height
+    val uvSize = I420Packer.chromaStride(width) * I420Packer.chromaStride(height)
+    val view = packed.duplicate()
+    view.clear()
+    destY = view.duplicate().apply { position(0); limit(ySize) }.slice()
+    destU = view.duplicate().apply { position(ySize); limit(ySize + uvSize) }.slice()
+    destV = view.duplicate().apply { position(ySize + uvSize); limit(ySize + 2 * uvSize) }.slice()
   }
 
   private fun logEvent(line: String) {

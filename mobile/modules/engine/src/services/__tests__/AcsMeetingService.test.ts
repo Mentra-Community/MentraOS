@@ -52,7 +52,7 @@ mock.module("@mentra/bluetooth-sdk/internal", () => ({
   default: {},
 }))
 
-const {default: acsMeetingService, setAcsMeetingNativeForTests} = require("../AcsMeetingService") as typeof import("../AcsMeetingService")
+const {default: acsMeetingService, parseAcsOutgoingVideo, setAcsMeetingNativeForTests} = require("../AcsMeetingService") as typeof import("../AcsMeetingService")
 
 type NativeJoin = {
   meetingUrl: string
@@ -60,6 +60,7 @@ type NativeJoin = {
   whepUrl: string
   displayName?: string
   audioSource?: "glasses" | "phone"
+  video?: {width: number; height: number; fps: number; maxBitrateBps: number}
 }
 
 function fakeNative() {
@@ -129,6 +130,40 @@ describe("AcsMeetingService", () => {
     expect(settingsSubscribe).not.toHaveBeenCalled()
     expect(coreSubscribe).not.toHaveBeenCalled()
     expect(native.setAudioSource).not.toHaveBeenCalled()
+  })
+
+  test("join forwards optional outgoing video to native", async () => {
+    const native = fakeNative()
+    setAcsMeetingNativeForTests(native)
+    const video = {width: 960, height: 540, fps: 30, maxBitrateBps: 1_500_000}
+    await acsMeetingService.join("com.mentra.call", {
+      meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
+      token: "tok",
+      whepUrl: "https://example.com/whep",
+      video,
+    })
+    expect(native.join).toHaveBeenCalledWith(expect.objectContaining({video}))
+  })
+
+  test("parseAcsOutgoingVideo accepts documented 16:9 sizes and rejects 540×960 and 854×480", () => {
+    expect(parseAcsOutgoingVideo({width: 1280, height: 720, fps: 15, maxBitrateBps: 2_500_000})).toEqual({
+      width: 1280,
+      height: 720,
+      fps: 15,
+      maxBitrateBps: 2_500_000,
+    })
+    expect(parseAcsOutgoingVideo({width: 960, height: 540, fps: 30, maxBitrateBps: 1_500_000})).toEqual({
+      width: 960,
+      height: 540,
+      fps: 30,
+      maxBitrateBps: 1_500_000,
+    })
+    expect(() => parseAcsOutgoingVideo({width: 540, height: 960, fps: 30, maxBitrateBps: 1_500_000})).toThrow(
+      /unsupported ACS video 540x960/,
+    )
+    expect(() => parseAcsOutgoingVideo({width: 854, height: 480, fps: 15, maxBitrateBps: 1_500_000})).toThrow(
+      /unsupported ACS video 854x480/,
+    )
   })
 
   test("a second join on a reused session does not inherit the previous audioSource", async () => {

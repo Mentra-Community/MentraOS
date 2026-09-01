@@ -8,4 +8,19 @@ class AcsInvestigationTest {
   fun videoArmDefaultsToWhep() {
     assertThat(AcsInvestigation.videoArm).isEqualTo(VideoSourceArm.WHEP)
   }
+
+  @Test
+  fun decoderModeDefaultsToTexture() {
+    assertThat(AcsInvestigation.decoderMode).isEqualTo(DecoderMode.TEXTURE)
+  }
+
+  @Test
+  fun zeroCopyDefaultsToOff() {
+    assertThat(AcsInvestigation.zeroCopy).isFalse()
+  }
+
+  @Test
+  fun pixelFormatDefaultsToI420() {
+    assertThat(AcsInvestigation.pixelFormat).isEqualTo(PixelFormatArm.I420)
+  }
 }

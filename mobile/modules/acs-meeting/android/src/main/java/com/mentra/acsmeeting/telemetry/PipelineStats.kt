@@ -1,5 +1,6 @@
 package com.mentra.acsmeeting.telemetry
 
+import com.mentra.acsmeeting.video.I420Packer
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.roundToInt
@@ -27,6 +28,9 @@ class PipelineStats(
   private val dup = AtomicInteger(0)
   private val rot = AtomicInteger(0)
 
+  private val destAlloc = AtomicInteger(0)
+  private val planeAlloc = AtomicInteger(0)
+
   private val lastTickSink = AtomicInteger(0)
   private val lastTickSub = AtomicInteger(0)
   private val lastTickMs = AtomicLong(0)
@@ -36,6 +40,10 @@ class PipelineStats(
   val gap = RingPercentile()
   val pack = RingPercentile()
   val scale = RingPercentile()
+  val toI420 = RingPercentile()
+  val sinkCb = RingPercentile()
+  val split = RingPercentile()
+  val copy = RingPercentile()
   val send = RingPercentile()
 
   /**
@@ -54,12 +62,24 @@ class PipelineStats(
     val decodeSec: Double = -1.0,
     val jitterBufferSec: Double = -1.0,
     val jitterBufferEmits: Long = -1L,
+    val decImpl: String = "",
   )
 
   @Volatile var arm: String = "whep"
+  /** texture | bytebuf — which decoder factory we built. */
+  @Volatile var pathMode: String = "texture"
+  /** packsplit | planes | zerocopy | nv12 — how pixels reach ACS. */
+  @Volatile var pathCopy: String = "packsplit"
+  /** i420 | nv12 — pixel format advertised to ACS. */
+  @Volatile var pix: String = "i420"
+  /** MEDIA_STATISTICS codecName, underscored. Empty until the first report. */
+  @Volatile var codecName: String = ""
   @Volatile var decodedFps: Double? = null
   @Volatile var recvFps: Double? = null
   @Volatile var wireFps: Double? = null
+  @Volatile var wireWidth: Int? = null
+  @Volatile var wireHeight: Int? = null
+  @Volatile var wireBitrateBps: Long? = null
   @Volatile private var recv: RecvHealth? = null
   @Volatile private var recvPrev: RecvHealth? = null
   @Volatile var width: Int = 0
@@ -67,6 +87,21 @@ class PipelineStats(
   @Volatile var chromaY: Int = 0
   @Volatile var chromaU: Int = 0
   @Volatile var chromaV: Int = 0
+  @Volatile var strideY: Int = 0
+  @Volatile var strideU: Int = 0
+  @Volatile var strideV: Int = 0
+  @Volatile var zcOn: Int = 0
+
+  private val bufTex = AtomicInteger(0)
+  private val bufI420 = AtomicInteger(0)
+  private val bufOther = AtomicInteger(0)
+  private val strideTight = AtomicInteger(0)
+  private val stridePadded = AtomicInteger(0)
+  private val zcUsed = AtomicInteger(0)
+  private val zcFell = AtomicInteger(0)
+  private val zcPadded = AtomicInteger(0)
+  private val zcHeldMax = AtomicInteger(0)
+  private val zcTimeout = AtomicInteger(0)
 
   fun onSink() {
     sink.incrementAndGet()
@@ -100,6 +135,53 @@ class PipelineStats(
   fun onDropNullI420() = dropNullI420.incrementAndGet()
   fun onDup() = dup.incrementAndGet()
   fun onRotation() = rot.incrementAndGet()
+  fun onDestAlloc() = destAlloc.incrementAndGet()
+  fun onPlaneAlloc() = planeAlloc.incrementAndGet()
+  fun destAllocCount(): Int = destAlloc.get()
+  fun planeAllocCount(): Int = planeAlloc.get()
+
+  /**
+   * Classify the WebRTC [VideoFrame.Buffer] without importing WebRTC here.
+   * [kind] is "tex", "i420", or anything else ("other").
+   */
+  fun onFrameBuffer(kind: String) {
+    when (kind) {
+      "tex" -> bufTex.incrementAndGet()
+      "i420" -> bufI420.incrementAndGet()
+      else -> bufOther.incrementAndGet()
+    }
+  }
+
+  fun onStrides(strideY: Int, strideU: Int, strideV: Int, width: Int) {
+    this.strideY = strideY
+    this.strideU = strideU
+    this.strideV = strideV
+    val chroma = I420Packer.chromaStride(width)
+    if (strideY == width && strideU == chroma && strideV == chroma) {
+      strideTight.incrementAndGet()
+    } else {
+      stridePadded.incrementAndGet()
+    }
+  }
+
+  fun onZcUsed(heldNow: Int) {
+    zcUsed.incrementAndGet()
+    zcHeldMax.updateAndGet { current -> if (heldNow > current) heldNow else current }
+  }
+
+  fun onZcFell() = zcFell.incrementAndGet()
+  fun onZcPadded() = zcPadded.incrementAndGet()
+  fun onZcTimeout() = zcTimeout.incrementAndGet()
+
+  fun zcUsedCount(): Int = zcUsed.get()
+  fun zcFellCount(): Int = zcFell.get()
+  fun zcTimeoutCount(): Int = zcTimeout.get()
+  fun zcHeldMax(): Int = zcHeldMax.get()
+  fun strideTightCount(): Int = strideTight.get()
+  fun stridePaddedCount(): Int = stridePadded.get()
+  fun bufTexCount(): Int = bufTex.get()
+  fun bufI420Count(): Int = bufI420.get()
+  fun bufOtherCount(): Int = bufOther.get()
 
   fun setSize(w: Int, h: Int) {
     width = w
@@ -125,9 +207,10 @@ class PipelineStats(
       else format(now.decodeSec * 1000.0 / now.assembled)
     val jbMs = if (now.jitterBufferSec < 0 || now.jitterBufferEmits <= 0) "na"
       else format(now.jitterBufferSec * 1000.0 / now.jitterBufferEmits)
+    val impl = now.decImpl.ifBlank { "na" }.replace(' ', '_')
     return "recv{drop=${d { it.dropped }} lost=${d { it.packetsLost }} nack=${d { it.nack }} " +
       "pli=${d { it.pli }} freeze=${d { it.freezes }} freezeSec=${format(now.freezeSec)} " +
-      "jit=${format(now.jitter * 1000.0)} decMs=$decodeMs jbMs=$jbMs}"
+      "jit=${format(now.jitter * 1000.0)} decMs=$decodeMs jbMs=$jbMs decImpl=$impl}"
   }
 
   fun setChroma(sample: ChromaProbe.Sample) {
@@ -164,14 +247,24 @@ class PipelineStats(
     val subRate = rate(subDelta, dt)
     val dec = decodedFps?.let { formatRate(it) } ?: "na"
     val rcv = recvFps?.let { formatRate(it) } ?: "na"
-    val wire = wireFps?.let { formatRate(it) } ?: "na"
+    val wireFpsLabel = wireFps?.let { formatRate(it) } ?: "na"
+    val wireW = wireWidth ?: 0
+    val wireH = wireHeight ?: 0
+    val wireKbps = wireBitrateBps?.let { (it / 1000).toString() } ?: "na"
+    val codec = codecName.ifBlank { "na" }.replace(' ', '_')
+    val wire = "${wireW}x${wireH}@$wireFpsLabel kbps=$wireKbps codec=$codec"
     val sizeLabel = if (width > 0 && height > 0) "${width}x${height}" else "0x0"
     val inFlightNow = inFlightCount()
     val conserve = if (inFlightNow >= 0) "" else " CONSERVE_FAIL"
     return "P6 ladder arm=$arm $sizeLabel recv=$rcv dec=$dec sink=$sinkRate dup=${dup.get()} sub=$subRate wire=$wire rot=${rot.get()} " +
       "drop{size=${dropSize.get()} busy=${dropBusy.get()} notStarted=${dropNotStarted.get()} fail=${dropFail.get()} nullI420=${dropNullI420.get()} abandoned=${abandoned.get()}} " +
       "${recvLabel()} " +
-      "ms{gapP50=${gap.p50()} gapP95=${gap.p95()} packP95=${pack.p95()} scaleP95=${scale.p95()} sendP95=${send.p95()}} " +
+      "path{mode=$pathMode copy=$pathCopy pix=$pix} " +
+      "buf{tex=${bufTex.get()} i420=${bufI420.get()} other=${bufOther.get()}} " +
+      "stride{y=$strideY u=$strideU v=$strideV tight=${strideTight.get()} padded=${stridePadded.get()}} " +
+      "zc{on=$zcOn used=${zcUsed.get()} fell=${zcFell.get()} padded=${zcPadded.get()} heldMax=${zcHeldMax.get()} timeout=${zcTimeout.get()}} " +
+      "ms{gapP50=${gap.p50()} gapP95=${gap.p95()} i420P95=${toI420.p95()} packP95=${pack.p95()} scaleP95=${scale.p95()} sinkCbP95=${sinkCb.p95()} splitP95=${split.p95()} copyP95=${copy.p95()} sendP95=${send.p95()}} " +
+      "alloc{dest=${destAlloc.get()} plane=${planeAlloc.get()}} " +
       "chroma{y=$chromaY u=$chromaU v=$chromaV} " +
       "cum{sink=$sinkNow sub=$subNow drop=${dropCount()} inFlight=$inFlightNow}" +
       conserve

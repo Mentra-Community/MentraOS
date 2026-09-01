@@ -17,6 +17,7 @@ public class AcsMeetingModule: Module {
       let displayName = options["displayName"] as? String
       let dumpWav = options["dumpPcmWav"] as? Bool ?? false
       let audioSource = options["audioSource"] as? String ?? "glasses"
+      let video = try parseAcsOutgoingVideo(options["video"])
       let meeting = self.session ?? AcsMeetingSession(
         onState: { [weak self] state in self?.sendEvent("onState", state) },
         onIncomingPcm: { [weak self] base64, rate, channels in
@@ -24,7 +25,7 @@ public class AcsMeetingModule: Module {
         }
       )
       self.session = meeting
-      try meeting.join(token: token, meetingUrl: meetingUrl, whepUrl: whepUrl, displayName: displayName, dumpWav: dumpWav, audioSource: audioSource)
+      try meeting.join(token: token, meetingUrl: meetingUrl, whepUrl: whepUrl, displayName: displayName, dumpWav: dumpWav, audioSource: audioSource, video: video)
       return meeting.snapshot()
     }
 
@@ -118,7 +119,7 @@ final class AcsMeetingSession {
     return result
   }
 
-  func join(token: String, meetingUrl: String, whepUrl: String, displayName: String?, dumpWav: Bool, audioSource: String = "glasses") throws {
+  func join(token: String, meetingUrl: String, whepUrl: String, displayName: String?, dumpWav: Bool, audioSource: String = "glasses", video: AcsOutgoingVideo = .hd) throws {
     let parsed = AcsAudioPolicy.parseSource(audioSource)
     if parsed == nil {
       NSLog("ACS-SPIKE unknown audioSource=\(audioSource), arming glasses (no local mic)")
@@ -142,9 +143,9 @@ final class AcsMeetingSession {
 
         let videoFormat = VideoStreamFormat()
         videoFormat.pixelFormat = .nv12
-        videoFormat.width = 1280
-        videoFormat.height = 720
-        videoFormat.framesPerSecond = 15
+        videoFormat.width = Int32(video.width)
+        videoFormat.height = Int32(video.height)
+        videoFormat.framesPerSecond = Float(video.fps)
         let videoOptions = RawOutgoingVideoStreamOptions()
         videoOptions.formats = [videoFormat]
         let videoStream = VirtualOutgoingVideoStream(videoStreamOptions: videoOptions)
@@ -204,7 +205,7 @@ final class AcsMeetingSession {
         source.start(config: SourceConfig(url: whepUrl))
         self.whep = source
         self.applyAudioPolicyOnQueue("join")
-        NSLog("ACS-SPIKE iOS ACS join started source=\(self.audioSource) armVirtual=\(plan.armVirtual) transportMuted=\(plan.transportMuted)")
+        NSLog("ACS-SPIKE iOS ACS join started source=\(self.audioSource) profile=\(video.width)x\(video.height)@\(video.fps) armVirtual=\(plan.armVirtual) transportMuted=\(plan.transportMuted)")
       } catch {
         let message = error.localizedDescription
         // A step after a successful ACS join (e.g. WHEP start) can throw. Record
@@ -411,4 +412,33 @@ extension AcsMeetingSession: RawIncomingAudioStreamDelegate {
     guard let data = args.audioBuffer?.data else { return }
     onIncomingPcm(data.base64EncodedString(), 16000, 1)
   }
+}
+
+struct AcsOutgoingVideo {
+  let width: Int
+  let height: Int
+  let fps: Int
+  let maxBitrateBps: Int
+
+  static let hd = AcsOutgoingVideo(width: 1280, height: 720, fps: 15, maxBitrateBps: 2_500_000)
+  static let allowedSizes: Set<String> = ["1280x720", "960x540"]
+}
+
+private func parseAcsOutgoingVideo(_ raw: Any?) throws -> AcsOutgoingVideo {
+  guard let raw else { return .hd }
+  guard let map = raw as? [String: Any] else {
+    throw NSError(domain: "MentraAcsMeeting", code: 1, userInfo: [NSLocalizedDescriptionKey: "video must be an object"])
+  }
+  guard
+    let width = (map["width"] as? NSNumber)?.intValue,
+    let height = (map["height"] as? NSNumber)?.intValue,
+    let fps = (map["fps"] as? NSNumber)?.intValue,
+    let bitrate = (map["maxBitrateBps"] as? NSNumber)?.intValue
+  else {
+    throw NSError(domain: "MentraAcsMeeting", code: 1, userInfo: [NSLocalizedDescriptionKey: "video requires width, height, fps, and maxBitrateBps"])
+  }
+  guard AcsOutgoingVideo.allowedSizes.contains("\(width)x\(height)"), fps >= 1, fps <= 30, bitrate > 0 else {
+    throw NSError(domain: "MentraAcsMeeting", code: 1, userInfo: [NSLocalizedDescriptionKey: "unsupported ACS video \(width)x\(height)@\(fps)"])
+  }
+  return AcsOutgoingVideo(width: width, height: height, fps: fps, maxBitrateBps: bitrate)
 }

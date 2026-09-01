@@ -80,7 +80,7 @@ import {resolveForegroundLocationPermission} from "./ForegroundLocationPermissio
 import {advanceMiniappPingLiveness} from "./MiniappLiveness"
 import {listPhoneCalendarEvents, PhoneCalendarError} from "./PhoneCalendarService"
 import {LocalMiniappStorage} from "./LocalMiniappStorage"
-import acsMeetingService, {resolveAcsAudioSource} from "./AcsMeetingService"
+import acsMeetingService, {parseAcsOutgoingVideo, resolveAcsAudioSource} from "./AcsMeetingService"
 
 // =============================================================================
 // Types
@@ -3532,7 +3532,23 @@ class LocalMiniappRuntime {
       return
     }
     try {
-      const state = await acsMeetingService.join(packageName, {meetingUrl, token, whepUrl, displayName})
+      let video: ReturnType<typeof parseAcsOutgoingVideo>
+      try {
+        video = parseAcsOutgoingVideo(payload.video)
+      } catch (error) {
+        this.sendResult(packageName, requestId, false, undefined, {
+          code: MiniappErrorCode.INVALID_ARGUMENT,
+          message: error instanceof Error ? error.message : "Invalid meeting video",
+        })
+        return
+      }
+      const state = await acsMeetingService.join(packageName, {
+        meetingUrl,
+        token,
+        whepUrl,
+        displayName,
+        ...(video ? {video} : {}),
+      })
       this.sendResult(packageName, requestId, true, state)
     } catch (err) {
       this.sendResult(packageName, requestId, false, undefined, {

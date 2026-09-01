@@ -12,12 +12,28 @@ An investigation-only synthetic arm can generate packed I420 locally at a fixed 
 (`AcsInvestigation.videoArm`). It ships as `WHEP`. Flip it locally, rebuild native, and
 do not commit `SYNTHETIC`.
 
+`AcsInvestigation.decoderMode` ships as `TEXTURE` (shared EGL, MediaCodec to Surface).
+`BYTE_BUFFER` skips the GL readback. A 720p hop on `SM_S948U` decoded in hardware
+with `i420P95=0`, but did not clear the campaign gates; keep the flag on TEXTURE.
+`AcsInvestigation.zeroCopy` ships off; when on,
+tight retainable WebRTC planes go straight to ACS, with an automatic copy fallback.
+`AcsInvestigation.pixelFormat` ships as `I420`. `NV12` is the encoder-flip A/B:
+advertise and send biplanar NV12 and read `codec=` on the ladder. Revert unless
+`codecName` leaves `h264 sw`.
+
+Mentra Call's persisted default is `720p15` (`VideoProfile.DEFAULT = HD`,
+1280×720@15 / 2.5 Mbps). `540p15` (960×540@15 / 1.5 Mbps) is a user-selectable
+preset on the Home settings picker. It is not migrated onto existing installs
+and is not the native default. Miniapp joins pass width, height, fps, and
+`maxBitrateBps` through to native, so a selected `540p15` reaches both glasses
+WHIP and ACS without changing `VideoProfile.DEFAULT`.
+
 ## The pipeline in one picture
 
 ```
  glasses ──WHIP──▶ Cloudflare ──WHEP──▶ │ phone (this module)                │ ──▶ ACS ──▶ Teams
                                         │                                    │
-   video:  H.264 ─▶ WebRTC decoder ─▶ I420 ─▶ cropAndScale ─▶ pack ─▶ sendRawVideoFrame
+   video:  H.264 ─▶ WebRTC decoder ─▶ I420 ─▶ cropAndScale ─▶ I420 copy or NV12 interleave ─▶ sendRawVideoFrame
    audio:  Opus  ─▶ WebRTC decoder ─▶ PCM16 ─▶ resample 16k ─▶ sendRawAudioBuffer
 
    return audio: ACS RawIncomingAudioStream ─▶ base64 ─▶ Expo event ─▶ AudioPlaybackService ─▶ A2DP
@@ -44,19 +60,21 @@ android/src/main/java/com/mentra/acsmeeting/
 ├── AcsMeetingSession.kt     Orchestrator. Owns the ACS Call and wires the four packages together
 │
 ├── source/                  Upstream — getting glasses media into the process
-│   ├── MediaListeners.kt        VideoFrameListener, PcmListener, VideoSource
+│   ├── MediaListeners.kt        I420Planes, VideoFrameListener, PcmListener
 │   ├── GlassesMediaSource.kt    The transport interface + controller. WHEP is one implementation
 │   ├── CloudflareWhepSource.kt  The recvonly WHEP subscriber (PeerConnection, sinks, scaling)
 │   ├── SyntheticFrameFactory.kt Packed I420 generator (CHEAP / MOTION pan / NOISE)
 │   ├── SyntheticI420Source.kt   Fixed-rate GlassesMediaSource wrapping the factory
-│   ├── VideoSourceArm.kt        Investigation switch. Ships as WHEP
+│   ├── VideoSourceArm.kt        Investigation switch. Ships as WHEP / TEXTURE / I420 / zeroCopy=off
 │   └── TrackRegistry.kt         Deduplicates track attachment
 │
 ├── video/                   Downstream — pixels into ACS
 │   ├── AcsFrameSender.kt        Owns the RawOutgoingVideoStream and the send executor
-│   ├── I420FormatSpec.kt        The format we advertise, as plain values
+│   ├── I420FormatSpec.kt        The I420 format we advertise, as plain values
+│   ├── Nv12FormatSpec.kt        The NV12 format we advertise, as plain values
 │   ├── AcsTimestamp.kt          100-ns ticks for RawVideoFrame. Zero means freeze.
-│   ├── I420Packer.kt            Stride-aware planar copy into one tight buffer
+│   ├── I420Packer.kt            Stride-aware planar copy; planeMinBytes for malformed guards
+│   ├── Nv12Packer.kt            I420 → interleaved UV; used only on the NV12 arm
 │   ├── FrameGeometry.kt         Buffer-vs-display coordinates under rotation
 │   └── SendGate.kt              Single-in-flight backpressure
 │
@@ -85,13 +103,15 @@ reaching into `video/I420Packer` for stride math. Nothing in `audio/` touches vi
 
 1. If ACS negotiated a different size than the decoder is producing, scale with
    `buffer.cropAndScale(...)` — libyuv, not Kotlin.
-2. `toI420()`, then `I420Packer.pack(...)` into one pooled direct buffer, Y then U then V.
-3. Hand off to `AcsFrameSender.sendI420`.
+2. `toI420()`, then hand the three planes to `AcsFrameSender.sendPlanes` as `I420Planes`.
+3. The sender copies each plane once into a pooled ACS buffer (`copyP95`), or — when
+   `zeroCopy` is on and the planes are tight, direct, and retainable — retains the
+   WebRTC buffer and submits those planes without a copy. The NV12 investigation arm
+   always converts: Y is copied, U/V are interleaved, and ACS gets two buffers.
 
-`AcsFrameSender` splits that tight buffer back into **three independent direct
-`ByteBuffer`s** and submits them on its own `acs-i420-send` thread. This is not an
-optimization — ACS's I420 contract requires three separate plane buffers, and passing one
-packed buffer throws `CallingCommunicationException` and produces a black tile.
+ACS's I420 contract still requires three separate plane buffers. NV12 is two
+(Y + interleaved UV). The old pack-then-split path is gone. A timed-out zero-copy
+send schedules `release()` after a 1 s grace window so the decoder pool is not starved.
 
 Three constraints worth knowing before changing this code:
 
@@ -155,11 +175,14 @@ adb logcat -s ACS-SPIKE | grep "P6 ladder"
 One line per second, tracing a frame through every hop:
 
 ```
-P6 ladder arm=whep 1280x720 recv=14.8 dec=8.1 sink=8.0 dup=4 sub=8.0 wire=8.0 rot=0
+P6 ladder arm=whep 1280x720 recv=14.8 dec=8.1 sink=8.0 dup=4 sub=8.0 wire=1280x720@8.0 kbps=1400 codec=h264_sw rot=0
   drop{size=0 busy=0 notStarted=0 fail=0 nullI420=0 abandoned=0}
-  recv{drop=6 lost=0 nack=0 pli=0 freeze=2 freezeSec=3.4 jit=4.0 decMs=3.2 jbMs=210.0}
-  ms{gapP50=68.3 gapP95=523.4 packP95=6.7 scaleP95=0.1 sendP95=4.4}
-  chroma{y=162 u=132 v=132} cum{sink=1000 sub=1000 drop=0 inFlight=0}
+  recv{drop=6 lost=0 nack=0 pli=0 freeze=2 freezeSec=3.4 jit=4.0 decMs=3.2 jbMs=210.0 decImpl=OMX.qcom.video.decoder.avc}
+  path{mode=texture copy=planes pix=i420} buf{tex=12 i420=0 other=0}
+  stride{y=1280 u=768 v=768 tight=0 padded=12} zc{on=0 used=0 fell=0 padded=0 heldMax=0 timeout=0}
+  ms{gapP50=68.3 gapP95=523.4 i420P95=12.0 packP95=na scaleP95=na sinkCbP95=20.0 splitP95=na copyP95=4.1 sendP95=2.7}
+  alloc{dest=0 plane=3} chroma{y=162 u=132 v=132} cum{sink=1000 sub=1000 drop=0 inFlight=0}
+  cpu{proc=112.4 cores=8}
 ```
 
 The rates form a ladder, and the first place two adjacent numbers diverge is the bottleneck:
@@ -183,9 +206,135 @@ The rest:
   `sink - sub - drop`, which makes conservation an identity — a tracked counter cannot be
   read atomically alongside the others and produced false `CONSERVE_FAIL` alarms on a
   perfectly healthy pipeline.
-- **`ms{}`** is our own cost. At 15 fps the budget is 66 ms; `pack + scale + send` normally
-  sums to around 11 ms. `gapP50` is the real arrival cadence and `gapP95` exposes stalls
-  that an average would hide.
+- **`ms{}`** is our own cost. At 15 fps the budget is 66 ms. `i420P95` is `toI420()`
+  (GL readback when `path.mode=texture`; libyuv when `bytebuf`). `copyP95` is the single
+  plane copy into ACS buffers. `packP95`/`splitP95` stay in the line for old captures
+  and print `na` on the planes path. `sinkCbP95` is the whole decode-thread callback.
+- **`path{}` / `buf{}` / `stride{}` / `zc{}`** say which arm produced the line. `buf.tex`
+  climbing with `mode=texture` is the Surface decoder. `buf.i420` climbing with
+  `mode=bytebuf` is the A/B succeeding. `pix=nv12` plus `copy=nv12` is the encoder-flip
+  arm. `codec=` is ACS `OutgoingVideoStatistics.codecName` — the NV12 experiment
+  succeeds only if this leaves `h264_sw`. `stride.padded` dominating means zero-copy will
+  fall back (tight-plane only). `decImpl` turning into a software name is an abort for
+  the byte-buffer arm.
+- **`cpu{proc}`** is process CPU% the same way `top` reports it (can exceed 100 on
+  multi-core). Pair it with the `ms{}` stages: high `i420`/`sinkCb` + high `proc` supports
+  convert-on-decode-thread; high `sendP95` with low `i420` blames ACS encode/submit.
+  Preview is JS/UI and is not in this line — toggle it and watch `cpu{proc}`.
+- **`alloc{}`** counts dest/plane direct-buffer allocations. After the first frames these
+  should stay flat if pooling holds. Climbing values mean we are still allocating per frame.
+
+A/B capture (preview off, ~90 s of steady motion, same room):
+
+```bash
+adb logcat -c
+# join the Teams call, hold steady motion
+adb logcat -d -s ACS-SPIKE > /tmp/acs-<arm>.txt
+bun scripts/acs-ladder.ts --compare /tmp/acs-baseline.txt /tmp/acs-<arm>.txt --skip-ms 20000
+```
+
+Compare uses medians, not the last tick. A 15% `recv` gap or a 2x `lost` gap prints a
+confound warning: the network differed and the CPU delta is not attributable. Capture
+order is baseline (texture + planes, `zeroCopy=false`, `pixelFormat=I420`) first,
+then one flag at a time. The NV12 encoder-flip is `pixelFormat=NV12`; keep it
+only if `codec=` leaves `h264_sw`.
+
+### 540p15 + BYTE_BUFFER campaign (operator steps)
+
+`720p15` stays the Home and native default. `540p15` is selectable. Arms 1–2
+were captured on `SM_S906U` (Snapdragon, not the A54) with preview off,
+`pixelFormat=I420`, `zeroCopy=false`. Loss on the 720p window was >2× the 540p
+window, so the CPU delta is **not** attributable. Wire fps is.
+
+Hold these constants for arm 3: same phone, same network, same Teams meeting,
+same ~90 s walking/head-turn motion after a 20 s warmup, preview off, picker
+still on `540p · 15 fps`.
+
+Confirm the join logs before saving each dump:
+
+- glasses WHIP: `whip start (1280x720@15)` or `whip start (960x540@15)`
+- miniapp ACS handoff: `requestedAcs=1280×720 @15` or `requestedAcs=960×540 @15`
+- native: `P5 negotiated ... 1280x720 fps=15` or `P5 negotiated ... 960x540 fps=15`
+- ladder: `wire=1280x720@...` or `wire=960x540@...`
+
+**Arm 1 — 720p15 / TEXTURE (baseline).** Leave Glasses video on `720p · 15 fps`.
+Confirm `AcsInvestigation.decoderMode` is still `TEXTURE`. Clear logcat, join,
+hold motion, dump:
+
+```bash
+adb logcat -c
+# join Teams on the A54, 90 s of steady motion, preview off
+adb logcat -d -s ACS-SPIKE > /tmp/acs-720p15-texture.txt
+```
+
+Leave the call.
+
+**Arm 2 — 540p15 / TEXTURE (resolution savings).** On Home → Glasses video, select
+`540p · 15 fps`. The summary under the picker should read
+`960×540 @ 15 · 1.5 Mbps`. Decoder stays `TEXTURE`. Rejoin the same meeting,
+same motion, dump `/tmp/acs-540p15-texture.txt`. Leave.
+
+Compare resolution-only savings (still no decoder flip):
+
+```bash
+bun scripts/acs-ladder.ts --compare /tmp/acs-720p15-texture.txt /tmp/acs-540p15-texture.txt --skip-ms 20000
+```
+
+Recorded on `SM_S906U` 2026-09-01 (medians, 20 s warmup on 540p; 720p is the
+long 15:52 window). `recv` matched (14.9 vs 14.8). `lost` 39 → 7 (confound).
+
+| field | 720p15 / TEXTURE | 540p15 / TEXTURE |
+|---|---:|---:|
+| recv | 14.9 | 14.8 |
+| dec / sink / sub | 11 / 11 / 11 | 12.9 / 12 / 12 |
+| wire fps | 8.6 | 13.2 |
+| kbps | 1332 | 1357 |
+| i420P95 / sinkCbP95 / copyP95 | 10.9 / 16.8 / 5.4 | 10.1 / 14.7 / 3.9 |
+| cpu{proc} | 109 | 95 (confounded) |
+| decImpl | `c2.qti.avc.decoder` | `c2.qti.avc.decoder` |
+| codec | `h264_sw` | `h264_sw` |
+
+Wire is the win: same ~1.4 Mbps, ~9 → ~13 fps. Encoder stayed software. Keep
+540p15 selectable; do not make it the default.
+
+**Arm 3 — 540p15 / BYTE_BUFFER (decoder savings).** Keep the picker on 540p15.
+Flip `AcsInvestigation.decoderMode` to `BYTE_BUFFER` locally. Rebuild native,
+rejoin, dump `/tmp/acs-540p15-bytebuffer.txt`. Leave.
+
+```bash
+bun scripts/acs-ladder.ts --compare /tmp/acs-540p15-texture.txt /tmp/acs-540p15-bytebuffer.txt --skip-ms 20000
+```
+
+Recorded on `SM_S948U` 2026-09-01 at **720p15** (wrong profile vs the plan;
+different SoC vs arms 1–2). Mechanical decode passed; campaign gates did not.
+
+| field | 720p15 / BYTE_BUFFER (`SM_S948U`) |
+|---|---:|
+| path / buf | `bytebuf`, `tex=0`, `i420` climbing |
+| recv / dec / sink | 15 / 15 / 15 |
+| i420P95 / sinkCbP95 / copyP95 | 0.0 / 1.0 / 0.4 |
+| cpu{proc} | ~44 (not comparable to SM_S906U ~109) |
+| decImpl | `c2.qti.avc.decoder` |
+| wire / codec | `na` / `na` |
+| drop.busy | climbing (~18–34) |
+
+Do not promote BYTE_BUFFER: no wire fps, no `codec=`, busy backpressure, and
+no same-phone 540p TEXTURE compare. `decoderMode` stays `TEXTURE`.
+
+Promote BYTE_BUFFER as the guarded default only when every gate passes:
+
+- `path{mode=bytebuf}`, `buf{i420}` rises, and `buf{tex}=0`
+- `recv` differs by at most 15% and packet loss by at most 2× (else confounded)
+- `decImpl` stays hardware (`OMX.qcom`, `c2.qti`, vendor). Abort on
+  `c2.android`, `c2.google`, `OMX.google`, or a blank/stalled decoder
+- median process CPU improves by at least 8 percentage points;
+  `i420P95`/`sinkCbP95` improve; `wire` does not regress by more than 5%
+- no malformed frames, busy/fail drops, chroma corruption, or remote freezes
+
+If it fails, revert only `decoderMode` to `TEXTURE`. 540p15 stays a selectable
+Home preset. Switching Glasses video back to `720p · 15 fps` is the profile
+rollback; it takes effect on the next join.
+
 - **`chroma{}`** should sit near `u≈v≈128` on neutral content. Values pinned at 0 or 255
   mean the planes are mis-packed, which is the signature of a stride or geometry bug.
 - **`dup`** counts refused duplicate track attachments. WebRTC delivers the same track

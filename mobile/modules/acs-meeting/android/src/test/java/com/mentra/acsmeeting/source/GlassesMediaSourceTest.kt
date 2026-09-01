@@ -2,7 +2,6 @@ package com.mentra.acsmeeting.source
 
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.Test
-import java.nio.ByteBuffer
 
 class FakeGlassesMediaSource : GlassesMediaSource {
   val started = mutableListOf<SourceConfig>()
@@ -56,7 +55,7 @@ class GlassesMediaSourceContractTest {
 
     assertThat(controller.state).isEqualTo(SourceState.IDLE)
     controller.attach(
-      video = VideoFrameListener { _i420: ByteBuffer, _: Int, _: Int, _: Long -> },
+      video = VideoFrameListener { _ -> },
       pcm = { bytes, _, _ -> pcm.add(bytes) },
       config = SourceConfig("https://example.com/whep"),
     )
@@ -90,7 +89,7 @@ class GlassesMediaSourceContractTest {
   @Test
   fun syntheticSourceHonorsStartRestartStopAndState() {
     val source = SyntheticI420Source(
-      video = { _, _, _, _ -> },
+      video = { _ -> },
       stats = com.mentra.acsmeeting.telemetry.PipelineStats(),
       isReady = { false },
     )
@@ -98,7 +97,7 @@ class GlassesMediaSourceContractTest {
 
     assertThat(controller.state).isEqualTo(SourceState.IDLE)
     controller.attach(
-      video = { _, _, _, _ -> },
+      video = { _ -> },
       pcm = { _, _, _ -> },
       config = SourceConfig("https://example.com/whep", SourceKind.DIRECT),
     )

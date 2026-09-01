@@ -4,7 +4,6 @@ import com.mentra.acsmeeting.telemetry.PipelineStats
 import com.mentra.acsmeeting.video.I420Packer
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.Test
-import java.nio.ByteBuffer
 import java.util.concurrent.atomic.AtomicBoolean
 
 class SyntheticI420SourceTest {
@@ -13,8 +12,8 @@ class SyntheticI420SourceTest {
     val ready = AtomicBoolean(false)
     val frames = ArrayList<Triple<Int, Int, Int>>()
     val stats = PipelineStats()
-    val source = source(stats, ready) { i420, w, h, _ ->
-      frames.add(Triple(i420.remaining(), w, h))
+    val source = source(stats, ready) { planes ->
+      frames.add(Triple(I420Planes.remaining(planes.y) + I420Planes.remaining(planes.u) + I420Planes.remaining(planes.v), planes.width, planes.height))
     }
     source.becomeLive()
     source.setTargetSize(TargetSize(1280, 720))
@@ -37,7 +36,7 @@ class SyntheticI420SourceTest {
   fun withheldWhileTargetSizeIsNull() {
     val frames = ArrayList<Int>()
     val stats = PipelineStats()
-    val source = source(stats, AtomicBoolean(true)) { _, _, _, _ -> frames.add(1) }
+    val source = source(stats, AtomicBoolean(true)) { _ -> frames.add(1) }
     source.becomeLive()
 
     assertThat(source.emitOnce()).isFalse()
@@ -53,7 +52,7 @@ class SyntheticI420SourceTest {
   fun nReadyCallsDeliverNFramesAndHonorResize() {
     val frames = ArrayList<Pair<Int, Int>>()
     val stats = PipelineStats()
-    val source = source(stats, AtomicBoolean(true)) { _, w, h, _ -> frames.add(w to h) }
+    val source = source(stats, AtomicBoolean(true)) { planes -> frames.add(planes.width to planes.height) }
     source.becomeLive()
     source.setTargetSize(TargetSize(1280, 720))
     repeat(4) { source.emitOnce() }
@@ -73,7 +72,7 @@ class SyntheticI420SourceTest {
   @Test
   fun withheldTicksTouchNoCounters() {
     val stats = PipelineStats()
-    val source = source(stats, AtomicBoolean(false)) { _, _, _, _ -> }
+    val source = source(stats, AtomicBoolean(false)) { _ -> }
     source.becomeLive()
     source.setTargetSize(TargetSize(1280, 720))
     repeat(5) { source.emitOnce() }
@@ -86,7 +85,7 @@ class SyntheticI420SourceTest {
   @Test
   fun readinessFlapProducesOnePauseAndOneResume() {
     val ready = AtomicBoolean(true)
-    val source = source(PipelineStats(), ready) { _, _, _, _ -> }
+    val source = source(PipelineStats(), ready) { _ -> }
     source.becomeLive()
     source.setTargetSize(TargetSize(1280, 720))
     source.emitOnce()
@@ -105,8 +104,8 @@ class SyntheticI420SourceTest {
   fun stopEmitsNothingAndRestartResetsIndex() {
     val indexes = ArrayList<Int>()
     val ready = AtomicBoolean(true)
-    val source = source(PipelineStats(), ready) { i420, w, h, _ ->
-      indexes.add(yCorner(i420, w, h))
+    val source = source(PipelineStats(), ready) { planes ->
+      indexes.add(yCorner(planes))
     }
     source.becomeLive()
     source.setTargetSize(TargetSize(64, 64))
@@ -125,7 +124,7 @@ class SyntheticI420SourceTest {
 
   @Test
   fun restartLeavesSourceLive() {
-    val source = source(PipelineStats(), AtomicBoolean(false)) { _, _, _, _ -> }
+    val source = source(PipelineStats(), AtomicBoolean(false)) { _ -> }
     source.start(SourceConfig("ignored", SourceKind.DIRECT))
     source.restart(SourceConfig("ignored-2", SourceKind.DIRECT))
     assertThat(source.state).isEqualTo(SourceState.LIVE)
@@ -136,7 +135,7 @@ class SyntheticI420SourceTest {
   @Test
   fun pcmListenerIsNeverInvoked() {
     val source = SyntheticI420Source(
-      video = { _, _, _, _ -> },
+      video = { _ -> },
       stats = PipelineStats(),
       isReady = { true },
     )
@@ -156,8 +155,22 @@ class SyntheticI420SourceTest {
     isReady = { ready.get() },
   )
 
-  private fun yCorner(src: ByteBuffer, width: Int, height: Int): Int {
-    src.rewind()
-    return src.get(0).toInt() and 0xFF
+  @Test
+  fun emitsTightStridePlanesAliasingThePackedBuffer() {
+    val seen = ArrayList<I420Planes>()
+    val source = source(PipelineStats(), AtomicBoolean(true)) { seen.add(it) }
+    source.becomeLive()
+    source.setTargetSize(TargetSize(64, 64))
+    assertThat(source.emitOnce()).isTrue()
+    val planes = seen.single()
+    assertThat(planes.isTight()).isTrue()
+    assertThat(planes.retain == null).isTrue()
+    assertThat(planes.release == null).isTrue()
+    assertThat(I420Planes.remaining(planes.y)).isEqualTo(64 * 64)
+    assertThat(I420Planes.remaining(planes.u)).isEqualTo(32 * 32)
+  }
+
+  private fun yCorner(planes: I420Planes): Int {
+    return planes.y.duplicate().get(0).toInt() and 0xFF
   }
 }

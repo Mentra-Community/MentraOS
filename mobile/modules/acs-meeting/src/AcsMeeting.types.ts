@@ -15,6 +15,13 @@ export type AcsMeetingState = {
   audioSafety?: AcsAudioSafety
 }
 
+export type AcsOutgoingVideo = {
+  width: number
+  height: number
+  fps: number
+  maxBitrateBps: number
+}
+
 export type AcsMeetingJoinOptions = {
   meetingUrl: string
   token: string
@@ -24,6 +31,8 @@ export type AcsMeetingJoinOptions = {
   audioSource?: AcsAudioSource
   /** Dump WHEP PCM to a WAV in cache for P4 verification. */
   dumpPcmWav?: boolean
+  /** When omitted, native keeps 1280×720@15 / 2.5 Mbps. */
+  video?: AcsOutgoingVideo
 }
 
 export type AcsIncomingPcmEvent = {

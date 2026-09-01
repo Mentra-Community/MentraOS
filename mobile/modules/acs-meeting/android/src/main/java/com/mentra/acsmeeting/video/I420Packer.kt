@@ -14,6 +14,16 @@ object I420Packer {
   fun chromaStride(width: Int): Int = (width + 1) / 2
 
   /**
+   * Bytes a reader must be able to see for a plane with [stride], starting at
+   * the buffer's current position. Last row is only [width] bytes, not a full
+   * stride, so this is `stride*(height-1)+width`.
+   */
+  fun planeMinBytes(stride: Int, width: Int, height: Int): Int {
+    if (width <= 0 || height <= 0 || stride < width) return 0
+    return stride * (height - 1) + width
+  }
+
+  /**
    * Packs padded WebRTC planes into tight I420 (strideY=width, strideU=strideV=(width+1)/2).
    */
   fun pack(

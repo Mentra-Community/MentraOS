@@ -19,6 +19,31 @@ class I420PackerTest {
   }
 
   @Test
+  fun planeMinBytesIsLastRowPlusFullStrides() {
+    assertThat(I420Packer.planeMinBytes(8, 8, 4)).isEqualTo(32)
+    assertThat(I420Packer.planeMinBytes(16, 8, 4)).isEqualTo(16 * 3 + 8)
+    assertThat(I420Packer.planeMinBytes(4, 8, 4)).isEqualTo(0)
+  }
+
+  @Test
+  fun copyPlaneFromPaddedStrideWritesTightDest() {
+    val width = 4
+    val height = 4
+    val padded = buildPlanes(width, height, strideY = 8, strideUv = 4, seed = 7)
+    val dest = ByteBuffer.allocate(width * height)
+    I420Packer.copyPlane(padded.y, 8, width, height, dest)
+    dest.flip()
+    val out = ByteArray(dest.remaining())
+    dest.get(out)
+    assertThat(out).containsExactly(
+      7, 8, 9, 10,
+      11, 12, 13, 14,
+      15, 16, 17, 18,
+      19, 20, 21, 22,
+    )
+  }
+
+  @Test
   fun chromaStrideMatchesAcsI420Offer() {
     assertThat(I420Packer.chromaStride(1280)).isEqualTo(640)
     assertThat(I420Packer.chromaStride(3)).isEqualTo(2)

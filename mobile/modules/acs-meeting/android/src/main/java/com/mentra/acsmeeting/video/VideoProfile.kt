@@ -35,5 +35,23 @@ data class VideoProfile(
 
     /** Investigation flip. Ships as HD. SD is 360p — a quarter of the encode work. */
     val DEFAULT = HD
+
+    /**
+     * ACS P540. VirtualOutgoingVideoStream documents 960×540, not 540×960.
+     * 540p A/B uses this size on both WHIP and ACS.
+     */
+    val P540 = VideoProfile(width = 960, height = 540, fps = 30, maxBitrateBps = 1_500_000)
+
+    /**
+     * Same P540 geometry at 15 fps. Selectable from Mentra Call; not the default.
+     * Isolates pixel-count savings without doubling frame work versus [P540].
+     */
+    val P540_15 = VideoProfile(width = 960, height = 540, fps = 15, maxBitrateBps = 1_500_000)
+
+    fun parse(width: Int, height: Int, fps: Int, maxBitrateBps: Int): VideoProfile? {
+      if (maxBitrateBps <= 0) return null
+      I420FormatSpec.parseOrNull(width, height, fps.toFloat()) ?: return null
+      return VideoProfile(width, height, fps, maxBitrateBps)
+    }
   }
 }

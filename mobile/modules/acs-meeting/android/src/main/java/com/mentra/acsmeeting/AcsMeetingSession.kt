@@ -50,6 +50,8 @@ import com.mentra.acsmeeting.audio.ExecutorPolicyScheduler
 import com.mentra.acsmeeting.audio.PcmBridge
 import com.mentra.acsmeeting.source.AcsInvestigation
 import com.mentra.acsmeeting.source.CloudflareWhepSource
+import com.mentra.acsmeeting.source.DecoderMode
+import com.mentra.acsmeeting.source.PixelFormatArm
 import com.mentra.acsmeeting.source.GlassesMediaController
 import com.mentra.acsmeeting.source.GlassesMediaSourceFactory
 import com.mentra.acsmeeting.source.SourceConfig
@@ -64,7 +66,9 @@ import com.mentra.acsmeeting.video.VideoProfile
 import java.nio.ByteBuffer
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 class AcsMeetingSession(
   private val context: Context,
@@ -81,7 +85,7 @@ class AcsMeetingSession(
   private val outgoingReady = AtomicBoolean(false)
   private val muted = AtomicBoolean(false)
   private val frameSender = AcsFrameSender(stats)
-  private val profile = VideoProfile.DEFAULT
+  private var profile = VideoProfile.DEFAULT
   private val resolvedFactory = mediaSourceFactory ?: GlassesMediaSourceFactory { video, pcm ->
     when (AcsInvestigation.videoArm) {
       VideoSourceArm.SYNTHETIC -> SyntheticI420Source(video, stats, frameSender::isReady)
@@ -94,6 +98,7 @@ class AcsMeetingSession(
   private val media = GlassesMediaController(resolvedFactory)
   private var mediaStatsListener: MediaStatisticsReportReceivedListener? = null
   private var mediaStatsFeature: MediaStatisticsCallFeature? = null
+  private val mediaStatsReports = AtomicInteger(0)
   private var netDiagnostics: NetworkDiagnostics? = null
   private var sendQualityListener: DiagnosticQualityChangedListener? = null
   private var reconnectListener: DiagnosticQualityChangedListener? = null
@@ -138,7 +143,8 @@ class AcsMeetingSession(
     displayName: String?,
     dumpWav: Boolean,
     audioSource: String = "glasses",
-  ): Map<String, Any> {
+    video: VideoProfile = VideoProfile.DEFAULT,
+  ) {
     val parsed = AcsAudioPolicy.parseSource(audioSource)
     if (parsed == null) {
       Log.w(TAG, "unknown audioSource=$audioSource, arming glasses (no local mic)")
@@ -153,6 +159,7 @@ class AcsMeetingSession(
     executor.execute {
       try {
         leaveLocked()
+        this.profile = video
         this.audioSource = if (parsed == AudioSourceKind.PHONE) "phone" else "glasses"
         meetingUrl = teamsUrl
         lastError = null
@@ -165,7 +172,7 @@ class AcsMeetingSession(
         callAgent = callClient!!.createCallAgent(context, credential, agentOptions).get()
 
         val videoOptions = RawOutgoingVideoStreamOptions()
-        videoOptions.formats = listOf(AcsFrameSender.i420Format(profile))
+        videoOptions.formats = listOf(AcsFrameSender.outgoingFormat(profile))
         val videoStream = VirtualOutgoingVideoStream(videoOptions)
         videoOut = videoStream
         frameSender.attach(videoStream) { size -> media.setTargetSize(size) }
@@ -249,9 +256,17 @@ class AcsMeetingSession(
         pushCallState(joined.state)
 
         stats.arm = if (synthetic) "synthetic" else "whep"
+        stats.pathMode = if (AcsInvestigation.decoderMode == DecoderMode.BYTE_BUFFER) "bytebuf" else "texture"
+        stats.pathCopy = when {
+          AcsInvestigation.pixelFormat == PixelFormatArm.NV12 -> "nv12"
+          AcsInvestigation.zeroCopy -> "zerocopy"
+          else -> "planes"
+        }
+        stats.pix = AcsInvestigation.pixelFormat.name.lowercase()
+        stats.zcOn = if (AcsInvestigation.zeroCopy) 1 else 0
         media.attach(
-          video = { i420, width, height, timestampNs ->
-            frameSender.sendI420(i420, width, height, timestampNs)
+          video = { planes ->
+            frameSender.sendPlanes(planes)
           },
           pcm = { pcm, rate, channels -> feedOutgoingPcm(pcm, rate, channels) },
           config = SourceConfig(
@@ -261,6 +276,12 @@ class AcsMeetingSession(
         )
         media.setTargetSize(TargetSize(profile.width, profile.height))
         ticker.start()
+        Log.i(
+          TAG,
+          "CPU probe: 1 Hz P6 ladder includes path{mode copy}, buf{tex i420}, stride{tight padded}, " +
+            "copyP95, zc{}, cpu{proc}. i420P95 is toI420; copyP95 is the single plane copy. " +
+            "BYTE_BUFFER should drop i420P95 and set buf{tex=0}. zerocopy should drop copyP95.",
+        )
         applyAudioPolicy("join")
         Log.i(
           TAG,
@@ -268,6 +289,8 @@ class AcsMeetingSession(
             "profile=${profile.width}x${profile.height}@${profile.fps} " +
             "maxBitrate=${profile.maxBitrateBps} bitsPerFrame=${profile.bitsPerFrame()} " +
             "syntheticFps=${AcsInvestigation.syntheticFps} entropy=${AcsInvestigation.syntheticEntropy} " +
+            "decoderMode=${AcsInvestigation.decoderMode} zeroCopy=${AcsInvestigation.zeroCopy} " +
+            "pixelFormat=${AcsInvestigation.pixelFormat} " +
             "source=${this.audioSource} audio=${if (synthetic) "off" else "on"} " +
             "armVirtual=${plan.armVirtual} transportMuted=${plan.transportMuted}",
         )
@@ -401,11 +424,31 @@ class AcsMeetingSession(
 
   private fun attachMediaStats(joined: Call) {
     detachMediaStats()
+    mediaStatsReports.set(0)
     try {
       val feature = joined.feature(Features.MEDIA_STATISTICS)
       val listener = MediaStatisticsReportReceivedListener { event ->
-        val video = event.report?.outgoingStatistics?.videoStatistics?.firstOrNull()
+        val outgoing = event.report?.outgoingStatistics
+        val videos = outgoing?.videoStatistics
+        val n = mediaStatsReports.incrementAndGet()
+        val video = videos?.firstOrNull()
+        if (n <= 8 || video == null) {
+          Log.i(
+            TAG,
+            "P6 wire report #$n videos=${videos?.size ?: 0} " +
+              "audios=${outgoing?.audioStatistics?.size ?: 0} " +
+              "codec=${video?.codecName ?: "na"} fps=${video?.frameRate ?: "na"}",
+          )
+        }
         stats.wireFps = video?.frameRate?.toDouble()
+        stats.wireWidth = video?.frameWidth
+        stats.wireHeight = video?.frameHeight
+        stats.wireBitrateBps = video?.bitrateInBps?.toLong()
+        val codec = video?.codecName.orEmpty()
+        if (codec.isNotBlank() && codec != stats.codecName) {
+          Log.i(TAG, "P6 wire codec=$codec ${video?.frameWidth}x${video?.frameHeight} fps=${video?.frameRate}")
+        }
+        stats.codecName = codec
         val width = video?.frameWidth
         val height = video?.frameHeight
         if (width != null && height != null && width > 0 && height > 0) {
@@ -415,18 +458,32 @@ class AcsMeetingSession(
       feature.addOnReportReceivedListener(listener)
       mediaStatsListener = listener
       mediaStatsFeature = feature
-      // Interval is a tuning knob, not a prerequisite. It throws while the call is
-      // still CONNECTING; losing it must not cost us the listener.
-      val interval = try {
-        feature.updateReportIntervalInSeconds(1)
-        "1s"
-      } catch (error: Exception) {
-        "default (${error.javaClass.simpleName})"
-      }
-      Log.i(TAG, "P6 wire hop attached interval=$interval")
+      // First attempt often throws while ACS is still spinning up the media
+      // stack (S26 Ultra never emitted a default-interval report). Retry after
+      // CONNECTED so codecName is not stuck at na.
+      scheduleMediaStatsInterval(feature, 0)
+      Log.i(TAG, "P6 wire hop attached")
     } catch (error: Exception) {
       Log.w(TAG, "MEDIA_STATISTICS attach failed", error)
     }
+  }
+
+  private fun scheduleMediaStatsInterval(feature: MediaStatisticsCallFeature, attempt: Int) {
+    executor.schedule({
+      if (mediaStatsFeature !== feature) return@schedule
+      try {
+        feature.updateReportIntervalInSeconds(1)
+        Log.i(TAG, "P6 wire interval=1s attempt=$attempt")
+      } catch (error: Exception) {
+        Log.w(
+          TAG,
+          "P6 wire interval attempt=$attempt failed ${error.javaClass.simpleName}: ${error.message}",
+        )
+        if (attempt < 5) {
+          scheduleMediaStatsInterval(feature, attempt + 1)
+        }
+      }
+    }, if (attempt == 0) 0L else 2L, TimeUnit.SECONDS)
   }
 
   /**
