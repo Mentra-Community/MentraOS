@@ -23,6 +23,11 @@ if (useManagedAndroidSdkVersions) {
     defaultConfig {
       minSdkVersion safeExtGet("minSdkVersion", 24)
       targetSdkVersion safeExtGet("targetSdkVersion", 36)
+      externalNativeBuild {
+        cmake {
+          cppFlags "-std=c++17"
+        }
+      }
     }
   }
 }
@@ -45,6 +50,12 @@ android {
   testOptions {
     unitTests {
       includeAndroidResources = true
+    }
+  }
+  externalNativeBuild {
+    cmake {
+      path "src/main/cpp/CMakeLists.txt"
+      version "3.22.1"
     }
   }
 }

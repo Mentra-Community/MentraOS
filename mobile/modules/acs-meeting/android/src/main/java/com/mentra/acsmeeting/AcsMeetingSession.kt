@@ -165,6 +165,8 @@ class AcsMeetingSession(
         emit("connecting")
         pcmBridge = PcmBridge(context.cacheDir, dumpWav)
         val credential = CommunicationTokenCredential(token)
+        val encoderOverride = AcsEncoderOverride.apply()
+        Log.w(TAG, "ACS hardware encoder selection: $encoderOverride")
         callClient = CallClient()
         val agentOptions = CallAgentOptions()
         agentOptions.displayName = displayName ?: "Mentra Call"
