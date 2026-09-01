@@ -37,6 +37,19 @@ class MentraLiveGattLifecycleTest {
     }
 
     @Test
+    fun `newest deferred connection replaces an older retry`() {
+        val barrier = MentraLiveGattTeardownBarrier()
+        val events = mutableListOf<String>()
+        val teardown = barrier.beginTeardown()
+
+        assertTrue(barrier.deferUntilIdle { events.add("stale reconnect") })
+        assertTrue(barrier.deferUntilIdle { events.add("current user retry") })
+        barrier.completeTeardown(teardown)
+
+        assertEquals(listOf("current user retry"), events)
+    }
+
+    @Test
     fun `timeout releases connection and late disconnect cannot release it twice`() {
         val barrier = MentraLiveGattTeardownBarrier()
         var connections = 0
