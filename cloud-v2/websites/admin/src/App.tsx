@@ -106,6 +106,7 @@ interface ReportLogEntry {
   level: string;
   message: string;
   source?: string;
+  metadata?: Record<string, unknown>;
 }
 
 const queryClient = new QueryClient({
@@ -1126,11 +1127,21 @@ function LogArtifactViewer({ url }: { url: string }) {
         <div key={index} className="whitespace-pre-wrap">
           <span className="text-[#a0a3aa]">{new Date(entry.timestamp).toISOString()}</span>{" "}
           <span className={entry.level === "error" ? "font-semibold text-[#a64235]" : "text-[#087d50]"}>{entry.level}</span>{" "}
-          {entry.source ? <span className="text-[#68746d]">[{entry.source}]</span> : null} {entry.message}
+          {entry.source ? <span className="text-[#68746d]">[{entry.source}]</span> : null}
+          {formatLogMetadata(entry.metadata) ? <span className="text-[#68746d]"> [{formatLogMetadata(entry.metadata)}]</span> : null} {entry.message}
         </div>
       ))}
     </div>
   );
+}
+
+function formatLogMetadata(metadata: Record<string, unknown> | undefined): string {
+  if (!metadata) return "";
+  return [
+    typeof metadata.tag === "string" ? metadata.tag : null,
+    typeof metadata.pid === "number" ? `pid=${metadata.pid}` : null,
+    typeof metadata.tid === "number" ? `tid=${metadata.tid}` : null,
+  ].filter(Boolean).join(" ");
 }
 
 function ReportKindTag({ kind }: { kind: ReportKind }) {
