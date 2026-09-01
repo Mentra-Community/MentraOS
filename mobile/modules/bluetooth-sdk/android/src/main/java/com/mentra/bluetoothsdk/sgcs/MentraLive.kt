@@ -6740,7 +6740,16 @@ class MentraLive : SGCManager() {
                                                 "ctkd_bond_none",
                                                 "prev=$previousBondState queueSize=${sendQueue.size}"
                                         )
-                                        classicAudioConnectionTracker.clear(device.address)
+                                        if (previousBondState == BluetoothDevice.BOND_BONDED) {
+                                            // A real unpair ends this Classic session. Invalidate
+                                            // the target so delayed profile broadcasts cannot
+                                            // make pairing look connected again.
+                                            classicAudioConnectionTracker.invalidate(device.address)
+                                        } else {
+                                            // A failed/cancelled bond may be retried below, so keep
+                                            // the target while clearing any partial profile state.
+                                            classicAudioConnectionTracker.clear(device.address)
+                                        }
                                         audioConnected = false
                                         if (previousBondState == BluetoothDevice.BOND_BONDING) {
                                             // User cancelled or bonding failed - retry up to
