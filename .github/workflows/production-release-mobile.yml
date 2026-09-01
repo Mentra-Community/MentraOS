@@ -29,11 +29,8 @@ jobs:
     timeout-minutes: 10
     outputs:
       plan_artifact: ${{ steps.inputs.outputs.plan_artifact }}
-      starter_result_artifact: ${{ steps.inputs.outputs.starter_result_artifact }}
       source_commit: ${{ steps.inputs.outputs.source_commit }}
-      starter_kit_commit: ${{ steps.inputs.outputs.starter_kit_commit }}
       mentra_build: ${{ steps.inputs.outputs.mentra_build }}
-      starter_build: ${{ steps.inputs.outputs.starter_build }}
       ota_url: ${{ steps.inputs.outputs.ota_url }}
       ota_sha256: ${{ steps.inputs.outputs.ota_sha256 }}
       candidate_container_tag: ${{ steps.inputs.outputs.candidate_container_tag }}
@@ -71,7 +68,7 @@ jobs:
           name="production-release-plan-${{ inputs.release_identity }}.json"
           assets=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases/$release_id/assets?per_page=100" | jq 'add')
           asset_id=$(jq -er --arg name "$name" '[.[] | select(.name == $name)] | if length == 1 then .[0].id else error("production plan must be unique") end' <<< "$assets")
-          mkdir -p release-input/plan release-input/starter
+          mkdir -p release-input/plan
           gh api -H "Accept: application/octet-stream" "repos/${GITHUB_REPOSITORY}/releases/assets/$asset_id" > release-input/plan/release-plan.json
           plan=release-input/plan/release-plan.json
           [[ "$(jq -er .channel "$plan")" == "production" ]]
@@ -81,23 +78,11 @@ jobs:
           [[ "$(jq -r .draft <<< "$candidate_container")" == "true" ]]
           [[ "$(jq -r .prerelease <<< "$candidate_container")" == "false" ]]
           [[ "$(jq -r .target_commitish <<< "$candidate_container")" == "$source_commit" ]]
-          starter_commit=$(jq -er .source.starterKitCommit promotion-input/current.json)
-          jq -n \
-            --arg releaseSetId "$(jq -er .releaseSetId "$plan")" \
-            --arg releaseIdentity "${{ inputs.release_identity }}" \
-            --arg sourceCommit "$source_commit" \
-            --arg starterCommit "$starter_commit" \
-            '{schemaVersion: 1, releaseSetId: $releaseSetId, releaseIdentity: $releaseIdentity, mentraos: {sourceCommit: $sourceCommit}, starterKit: {releaseCommit: $starterCommit}}' \
-            > "release-input/starter/starter-kit-release-${{ inputs.release_identity }}.json"
           plan_artifact="production-plan-${GITHUB_RUN_ID}"
-          starter_artifact="production-starter-result-${GITHUB_RUN_ID}"
           {
             echo "plan_artifact=$plan_artifact"
-            echo "starter_result_artifact=$starter_artifact"
             echo "source_commit=$source_commit"
-            echo "starter_kit_commit=$starter_commit"
             echo "mentra_build=$(jq -er .coordinates.candidates.mentraApp.ios.buildNumber promotion-input/current.json)"
-            echo "starter_build=$(jq -er .coordinates.candidates.starterKit.ios.buildNumber promotion-input/current.json)"
             echo "ota_url=$(jq -er .promotion.otaManifest.url "$plan")"
             echo "ota_sha256=$(jq -er .promotion.otaManifest.sha256 "$plan")"
             echo "candidate_container_tag=$(jq -er .tag_name <<< "$candidate_container")"
@@ -108,13 +93,6 @@ jobs:
         with:
           name: ${{ steps.inputs.outputs.plan_artifact }}
           path: release-input/plan/release-plan.json
-          if-no-files-found: error
-          retention-days: 30
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ steps.inputs.outputs.starter_result_artifact }}
-          path: release-input/starter
           if-no-files-found: error
           retention-days: 30
 
@@ -147,35 +125,9 @@ jobs:
       testflight_group: Mentra Production Candidates
     secrets: inherit
 
-  starter-kit-ios:
-    name: Rebuild Starter Kit iOS candidate
-    needs: [load, approve]
-    uses: ./.github/workflows/reusable-coordinated-example-testflight.yml
-    with:
-      source_commit: ${{ needs.load.outputs.source_commit }}
-      release_plan_artifact: ${{ needs.load.outputs.plan_artifact }}
-      starter_kit_result_artifact: ${{ needs.load.outputs.starter_result_artifact }}
-      testflight_group: Mentra SDK Example Production Candidates
-      testflight_audience: internal
-      production_build_number: ${{ fromJSON(needs.load.outputs.starter_build) }}
-    secrets: inherit
-
-  starter-kit-android:
-    name: Rebuild Starter Kit Android candidate
-    needs: [load, approve]
-    uses: ./.github/workflows/reusable-production-starter-kit-android.yml
-    with:
-      source_commit: ${{ needs.load.outputs.source_commit }}
-      release_plan_artifact: ${{ needs.load.outputs.plan_artifact }}
-      starter_kit_commit: ${{ needs.load.outputs.starter_kit_commit }}
-      build_number: ${{ fromJSON(needs.load.outputs.starter_build) }}
-      candidate_release_id: ${{ needs.load.outputs.promotion_release_id }}
-      candidate_container_tag: ${{ needs.load.outputs.candidate_container_tag }}
-    secrets: inherit
-
   record:
     name: Record exact uploaded production candidates
-    needs: [load, mentra-app, starter-kit-ios, starter-kit-android]
+    needs: [load, mentra-app]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -204,33 +156,16 @@ jobs:
           name: ${{ needs.mentra-app.outputs.result_artifact }}
           path: candidate-input/mentra
 
-      - uses: actions/download-artifact@v4
-        with:
-          name: ${{ needs.starter-kit-ios.outputs.result_artifact }}
-          path: candidate-input/starter-ios
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: ${{ needs.starter-kit-android.outputs.result_artifact }}
-          path: candidate-input/starter-android
-
       - name: Validate candidate coordinates and append state
         id: next
         run: |
           set -euo pipefail
           [[ "$(jq -er .state promotion-input/current.json)" == "current-clients-accepted" ]]
           mentra=candidate-input/mentra/mobile-publications.json
-          starter_ios=candidate-input/starter-ios/example-testflight-publication.json
-          starter_android=candidate-input/starter-android/starter-kit-android-candidate.json
           [[ "$(jq -er '.publications.mentraos["google-play"].coordinate' "$mentra")" == "com.mentra.mentra:${{ needs.load.outputs.mentra_build }}:internal" ]]
           [[ "$(jq -er '.publications.mentraos["app-store-connect"].coordinate' "$mentra")" == "com.mentra.mentra:${{ inputs.release_identity }}:${{ needs.load.outputs.mentra_build }}:Mentra Production Candidates" ]]
-          [[ "$(jq -er .version.buildNumber "$starter_ios")" == "${{ needs.load.outputs.starter_build }}" ]]
-          [[ "$(jq -er .app.bundleId "$starter_ios")" == "com.mentra.bluetoothsdkexample" ]]
-          [[ "$(jq -er .build.processingState "$starter_ios")" == "VALID" ]]
-          [[ "$(jq -er .buildNumber "$starter_android")" == "${{ needs.load.outputs.starter_build }}" ]]
-          [[ "$(jq -er .packageId "$starter_android")" == "com.mentra.bluetoothsdkexample" ]]
           mkdir -p promotion-output
-          jq -s '{schemaVersion: 1, kind: "production-mobile-candidates", mentraApp: .[0], starterKit: {ios: .[1], android: .[2]}}' "$mentra" "$starter_ios" "$starter_android" > promotion-output/mobile-candidates.json
+          jq '{schemaVersion: 1, kind: "production-mobile-candidates", mentraApp: .}' "$mentra" > promotion-output/mobile-candidates.json
           node .github/scripts/production-promotion-assets.mjs prepare-evidence \
             --file promotion-output/mobile-candidates.json \
             --kind production-mobile-candidates \

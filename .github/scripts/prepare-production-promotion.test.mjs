@@ -22,7 +22,6 @@ const betaManifest = {
   native: betaPlan.native,
   releasePlanSha256: releaseRecordSha256(betaPlan),
   completedAt: "2026-08-28T10:00:00.000Z",
-  starterKit: {starterKit: {releaseCommit: "c".repeat(40)}},
   otaManifest: {url: "https://example.com/ota.json", sha256: "d".repeat(64)},
 }
 const previousManifest = {
@@ -57,8 +56,6 @@ function prepare(overrides = {}) {
       310000060,
       310000059,
     ),
-    starterKitInventory: inventory("com.mentra.bluetoothsdkexample", null, 42, 0),
-    starterKitCommit: "d".repeat(40),
     attempt: 1,
     actor: "release-owner",
     createdAt: "2026-08-28T20:00:00.000Z",
@@ -73,8 +70,8 @@ test("freezes selected source and allocates new store build numbers", () => {
   assert.equal(record.coordinates.compatibilityLab.ios.buildNumber, 310000061)
   assert.equal(productionPlan.native.buildNumber, 310000062)
   assert.equal(record.coordinates.candidates.mentraApp.ios.buildNumber, 310000062)
-  assert.equal(record.coordinates.candidates.starterKit.android.buildNumber, 310000063)
-  assert.equal(record.source.starterKitCommit, "d".repeat(40))
+  assert.deepEqual(Object.keys(record.coordinates.candidates), ["mentraApp"])
+  assert.deepEqual(Object.keys(record.source), ["mentraosCommit"])
   assert.deepEqual(productionPlan.promotion.otaManifest, betaManifest.otaManifest)
   assert.equal(record.coordinates.currentMentraApp.sourceCommit, "f".repeat(40))
 })
@@ -94,7 +91,6 @@ test("rejects store state that does not match current production provenance", ()
   )
 })
 
-test("rejects an incomplete selected beta or missing Starter Kit provenance", () => {
+test("rejects an incomplete selected beta", () => {
   assert.throws(() => prepare({betaManifest: {...betaManifest, completedAt: undefined}}), /not complete/)
-  assert.throws(() => prepare({betaManifest: {...betaManifest, starterKit: undefined}}), /Starter Kit/)
 })
