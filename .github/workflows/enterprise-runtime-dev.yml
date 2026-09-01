@@ -1,0 +1,164 @@
+name: Deploy enterprise Runtime dev
+
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Commit or branch to deploy (workflow itself must run from dev)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  # Preserve the running deployment and coalesce queued pushes so an older
+  # commit can never finish after a newer one.
+  group: enterprise-runtime-dev
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build and deploy Azure enterprise Runtime
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      AZURE_RESOURCE_GROUP: rg-mentra-enterprise-reference
+      AZURE_REGISTRY: mentraenterpriseref
+      AZURE_COMMUNICATION_SERVICE: mentra-enterprise-reference
+      ENTRA_TENANT_ID: 2e7662c0-e826-4928-95b2-60bdd48d5d95
+      ENTRA_RUNTIME_CLIENT_ID: 20424d9e-4b99-44e8-82c9-0ad06f08a8db
+      ENTRA_MOBILE_CLIENT_ID: 95ad08c2-7837-4ddf-933c-1fce3d6d2799
+    steps:
+      - name: Require the trusted dev workflow definition
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" != "refs/heads/dev" ]]; then
+            echo "Run this workflow from dev; use source_ref to deploy another commit." >&2
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
+
+      - name: Resolve exact source commit
+        id: source
+        run: |
+          set -euo pipefail
+          source_commit=$(git rev-parse HEAD)
+          [[ "$source_commit" =~ ^[0-9a-f]{40}$ ]]
+          echo "commit=$source_commit" >> "$GITHUB_OUTPUT"
+          echo "image=$AZURE_REGISTRY.azurecr.io/mentra-runtime-enterprise:$source_commit" >> "$GITHUB_OUTPUT"
+
+      - name: Sign in to Azure with GitHub OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.ENTERPRISE_DEV_AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.ENTERPRISE_DEV_AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.ENTERPRISE_DEV_AZURE_SUBSCRIPTION_ID }}
+
+      - name: Build the ordinary Runtime image in Azure
+        run: >-
+          az acr build
+          --registry "$AZURE_REGISTRY"
+          --image "mentra-runtime-enterprise:${{ steps.source.outputs.commit }}"
+          --file cloud-v2/docker/Dockerfile
+          .
+
+      - name: Deploy the meetings-only enterprise profile
+        run: |
+          set -euo pipefail
+          az deployment group create \
+            --name enterprise-runtime-dev \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --template-file cloud-v2/deploy/azure/enterprise-reference/main.bicep \
+            --parameters \
+              runtimeImage="${{ steps.source.outputs.image }}" \
+              registryName="$AZURE_REGISTRY" \
+              communicationName="$AZURE_COMMUNICATION_SERVICE" \
+              tenantId="$ENTRA_TENANT_ID" \
+              runtimeApiClientId="$ENTRA_RUNTIME_CLIENT_ID" \
+              mobileClientId="$ENTRA_MOBILE_CLIENT_ID" \
+              manageAcrPullRoleAssignment=false \
+            --query properties.provisioningState \
+            --output tsv \
+            | grep --fixed-strings --line-regexp Succeeded
+
+      - name: Verify the live enterprise contract
+        id: verify
+        run: |
+          set -euo pipefail
+          workspace_origin=$(az deployment group show \
+            --name enterprise-runtime-dev \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --query properties.outputs.workspaceOrigin.value \
+            --output tsv)
+          [[ "$workspace_origin" == https://* ]]
+
+          curl_json() {
+            curl \
+              --fail \
+              --silent \
+              --show-error \
+              --location \
+              --retry 12 \
+              --retry-delay 10 \
+              --retry-all-errors \
+              "$1"
+          }
+
+          health=$(curl_json "$workspace_origin/healthz")
+          jq -e '.status == "ok" and .package == "runtime" and .services == ["meetings"]' <<< "$health"
+          curl_json "$workspace_origin/ready" >/dev/null
+
+          version_policy=$(curl_json "$workspace_origin/api/client/min-version")
+          jq -e \
+            '.success == true and (.data.required | type == "string") and (.data.recommended | type == "string")' \
+            <<< "$version_policy"
+
+          manifest=$(curl_json "$workspace_origin/.well-known/mentra-deployment.json")
+          jq -e \
+            --arg origin "$workspace_origin" \
+            --arg tenant "$ENTRA_TENANT_ID" \
+            --arg mobile "$ENTRA_MOBILE_CLIENT_ID" \
+            '.schemaVersion == 1
+             and (has("releaseIdentity") | not)
+             and .services.coreUrl == null
+             and .services.runtimeUrl == $origin
+             and .auth.mode == "microsoft-entra"
+             and .auth.authorityUrl == ("https://login.microsoftonline.com/" + $tenant)
+             and .auth.clientId == $mobile
+             and .features.runtimeRealtimeSession == false
+             and .features.managedStreams == false
+             and .features.nativeMeetings == true
+             and .telemetry == false' \
+            <<< "$manifest"
+
+          curl_json "$workspace_origin/legal/privacy" >/dev/null
+          curl_json "$workspace_origin/legal/terms" >/dev/null
+          unauthenticated_status=$(curl \
+            --silent \
+            --show-error \
+            --output /dev/null \
+            --write-out '%{http_code}' \
+            --request POST \
+            "$workspace_origin/api/meetings/acs/teams-user-token")
+          [[ "$unauthenticated_status" == "401" ]]
+
+          echo "workspace_origin=$workspace_origin" >> "$GITHUB_OUTPUT"
+
+      - name: Summarize deployment
+        run: |
+          {
+            echo "## Enterprise Runtime dev"
+            echo
+            echo "- Source: \`${{ steps.source.outputs.commit }}\`"
+            echo "- Image: \`${{ steps.source.outputs.image }}\`"
+            echo "- Workspace: ${{ steps.verify.outputs.workspace_origin }}"
+            echo "- Services: \`meetings\`"
+            echo "- Provider: \`acs-teams\`"
+          } >> "$GITHUB_STEP_SUMMARY"

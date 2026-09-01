@@ -11,6 +11,9 @@ param tenantId string
 param runtimeApiClientId string
 param mobileClientId string
 
+@description('Create the AcrPull assignment. Set false for CI after an administrator has bootstrapped it.')
+param manageAcrPullRoleAssignment bool = true
+
 @description('Oldest Mentra App version allowed to use this deployment.')
 param clientMinVersion string = '0.0.0'
 
@@ -42,7 +45,7 @@ resource pullIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-
   location: location
 }
 
-resource registryPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource registryPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (manageAcrPullRoleAssignment) {
   name: guid(registry.id, pullIdentity.id, acrPullRoleDefinitionId)
   scope: registry
   properties: {

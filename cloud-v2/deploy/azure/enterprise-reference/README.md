@@ -36,6 +36,25 @@ using a store/MDM artifact. iOS registers `msauth.com.mentra.mentra://auth`.
 See [customer-setup.md](./customer-setup.md) for the full enterprise setup
 runbook and [entra-setup.md](./entra-setup.md) for the detailed identity contract.
 
+## Automatic dev deployment
+
+Every push to `dev` runs `.github/workflows/enterprise-runtime-dev.yml`. The
+workflow uses GitHub OIDC to build the exact source commit in the reference ACR,
+applies this Bicep template with `RUNTIME_SERVICES=meetings`, and verifies the
+live health, version-policy, manifest, legal, and authenticated-route contract.
+The Azure identity is a Contributor only within the dedicated reference
+resource group. It cannot create role assignments; an administrator creates the
+managed identity's `AcrPull` assignment during the initial bootstrap.
+
+To deploy an unmerged commit, run the trusted workflow definition from `dev`
+and supply the desired commit as `source_ref`:
+
+```bash
+gh workflow run enterprise-runtime-dev.yml \
+  --ref dev \
+  -f source_ref=<full-git-sha>
+```
+
 ## Deploy from a clean resource group
 
 Create a globally unique registry first. This is deliberately separate because
