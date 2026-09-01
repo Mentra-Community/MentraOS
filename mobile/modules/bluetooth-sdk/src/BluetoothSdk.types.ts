@@ -1043,6 +1043,7 @@ export type BluetoothSdkEventMap = {
   mic_lc3: MicLc3Event
   mic_health: MicHealthEvent
   stream_status: StreamStatusEvent
+  keep_alive_ack: KeepAliveAckEvent
   /** Mentra Live MTK updater completed and the glasses are about to restart. */
   mtk_update_complete: MtkUpdateCompleteEvent
   /** The ASG process restarted while the BES kept the BLE connection alive. */
@@ -1171,7 +1172,19 @@ export interface BluetoothSdkPublicModule {
   queryVideoRecordingStatus(requestId: string): Promise<VideoRecordingStatusEvent>
 
   startStream(params: StreamStartRequest): Promise<StreamStatusEvent>
+  /**
+   * Start a stream without the SDK-owned keep-alive monitor.
+   *
+   * The caller must send periodic keep-alives with
+   * {@link sendExternallyManagedStreamKeepAlive} for the returned stream.
+   */
+  startExternallyManagedStream(params: StreamStartRequest): Promise<StreamStatusEvent>
   stopStream(): Promise<StreamStatusEvent>
+  /**
+   * Send one caller-owned keep-alive for an externally managed stream.
+   * Resolving confirms native dispatch, not receipt of the matching glasses ACK.
+   */
+  sendExternallyManagedStreamKeepAlive(params: StreamKeepAliveRequest): Promise<void>
 
   setMicState(enabled: boolean, useGlassesMic?: boolean, sendTranscript?: boolean, sendLc3Data?: boolean): Promise<void>
   setPreferredMic(preferredMic: MicPreference): Promise<void>
