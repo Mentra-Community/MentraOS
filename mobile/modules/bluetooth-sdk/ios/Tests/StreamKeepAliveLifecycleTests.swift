@@ -12,7 +12,7 @@ final class StreamKeepAliveLifecycleTests: XCTestCase {
         XCTAssertNil(tracker.pendingAckId)
         XCTAssertEqual(tracker.missedAckCount, 0)
 
-        XCTAssertEqual(tracker.handle(event(status: "stopped")), .preserve)
+        XCTAssertEqual(tracker.handle(event(status: "stopped")), .awaitRecovery)
         XCTAssertFalse(tracker.armed)
         XCTAssertTrue(tracker.retryPending)
     }

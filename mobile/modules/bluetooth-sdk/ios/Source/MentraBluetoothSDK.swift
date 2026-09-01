@@ -5,6 +5,7 @@ import Foundation
 final class ActiveStreamKeepAlive {
     enum StatusDisposition: Equatable {
         case preserve
+        case awaitRecovery
         case stop
     }
 
@@ -13,6 +14,7 @@ final class ActiveStreamKeepAlive {
     var pendingAckId: String?
     var missedAckCount = 0
     var task: Task<Void, Never>?
+    var recoveryStopTask: Task<Void, Never>?
     /// Missed-ACK counting only begins once the stream is confirmed live/coming up, so a slow
     /// startup (glasses can't ACK until they reach starting/streaming) can't trip a false
     /// keep-alive timeout before the stream is ever up.
@@ -39,9 +41,11 @@ final class ActiveStreamKeepAlive {
             return .preserve
         case .stopped where retryPending:
             // Some publisher implementations report a stopped transition
-            // between the retryable error and their reconnect attempt.
+            // between the retryable error and their reconnect attempt. Give
+            // that reconnect a bounded window instead of preserving a dead
+            // monitor indefinitely if no recovery status follows.
             suspendMissDetection()
-            return .preserve
+            return .awaitRecovery
         case .reconnected, .streaming:
             retryPending = false
             armMissDetection()
@@ -234,6 +238,7 @@ public final class MentraBluetoothSDK {
     private static let otaMtkVersionWaitMs = 2_000
     private static let otaVersionPollMs = 100
     private static let defaultStreamKeepAliveIntervalSeconds = 5
+    private static let streamRecoveryStatusTimeoutNanoseconds: UInt64 = 15_000_000_000
 
     public weak var delegate: MentraBluetoothSDKDelegate?
 
@@ -1605,6 +1610,7 @@ public final class MentraBluetoothSDK {
 
     private func stopStreamKeepAliveMonitor() {
         activeStreamKeepAlive?.task?.cancel()
+        activeStreamKeepAlive?.recoveryStopTask?.cancel()
         activeStreamKeepAlive = nil
     }
 
@@ -1668,8 +1674,24 @@ public final class MentraBluetoothSDK {
         switch tracker.handle(event) {
         case .stop:
             stopStreamKeepAliveMonitor()
+        case .awaitRecovery:
+            tracker.recoveryStopTask?.cancel()
+            tracker.recoveryStopTask = Task { @MainActor [weak self, weak tracker] in
+                try? await Task.sleep(nanoseconds: Self.streamRecoveryStatusTimeoutNanoseconds)
+                guard !Task.isCancelled,
+                      let self, let tracker,
+                      self.activeStreamKeepAlive === tracker,
+                      tracker.retryPending
+                else {
+                    return
+                }
+                self.stopStreamKeepAliveMonitor()
+            }
         case .preserve:
-            break
+            if event.state == .reconnecting || event.state == .reconnected || event.state == .streaming {
+                tracker.recoveryStopTask?.cancel()
+                tracker.recoveryStopTask = nil
+            }
         }
     }
 
