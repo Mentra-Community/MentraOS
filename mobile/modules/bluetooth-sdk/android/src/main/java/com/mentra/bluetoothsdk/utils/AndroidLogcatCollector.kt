@@ -14,19 +14,12 @@ internal object AndroidLogcatCollector {
 
     private val epochLine =
         Regex("""^\s*(\d+(?:\.\d+)?)\s+(\d+)\s+(\d+)\s+([VDIWEFA])\s+(.+?)\s*:\s?(.*)$""")
+    private val sensitiveMessage =
+        Regex("""\b(token|password|secret|authorization|auth|bearer|key|api[_-]?key)\b""", RegexOption.IGNORE_CASE)
 
     fun collectCurrentProcess(): List<Map<String, Any>> {
         val process =
-            ProcessBuilder(
-                    "logcat",
-                    "--pid=${Process.myPid()}",
-                    "-d",
-                    "-v",
-                    "epoch",
-                    "-t",
-                    MAX_LINES.toString(),
-                    "*:V",
-                )
+            ProcessBuilder(logcatCommand(Process.myPid()))
                 .redirectErrorStream(true)
                 .start()
 
@@ -71,7 +64,12 @@ internal object AndroidLogcatCollector {
         val match = epochLine.matchEntire(line) ?: return null
         val (epochSeconds, pid, tid, priority, tag, rawMessage) = match.destructured
         val timestamp = epochSeconds.toBigDecimalOrNull()?.movePointRight(3)?.toLong() ?: return null
-        val message = rawMessage.take(MAX_MESSAGE_CHARS)
+        val message =
+            if (sensitiveMessage.containsMatchIn(rawMessage)) {
+                "[REDACTED]"
+            } else {
+                rawMessage.take(MAX_MESSAGE_CHARS)
+            }
         return mapOf(
             "timestamp" to timestamp,
             "level" to priority.toLogLevel(),
@@ -86,6 +84,18 @@ internal object AndroidLogcatCollector {
                 ),
         )
     }
+
+    internal fun logcatCommand(pid: Int): List<String> =
+        listOf(
+            "logcat",
+            "--pid=$pid",
+            "-d",
+            "-v",
+            "epoch",
+            "-t",
+            MAX_LINES.toString(),
+            "*:D",
+        )
 
     private fun String.toLogLevel(): String =
         when (this) {
