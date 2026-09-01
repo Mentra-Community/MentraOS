@@ -16,7 +16,8 @@ public class AcsMeetingModule: Module {
       let whepUrl = options["whepUrl"] as? String ?? ""
       let displayName = options["displayName"] as? String
       let dumpWav = options["dumpPcmWav"] as? Bool ?? false
-      let audioSource = options["audioSource"] as? String ?? "glasses"
+      // TEMP: force phone mic. Host still passes a source; session ignores it.
+      let audioSource = "phone"
       let video = try parseAcsOutgoingVideo(options["video"])
       let meeting = self.session ?? AcsMeetingSession(
         onState: { [weak self] state in self?.sendEvent("onState", state) },
@@ -120,11 +121,10 @@ final class AcsMeetingSession {
   }
 
   func join(token: String, meetingUrl: String, whepUrl: String, displayName: String?, dumpWav: Bool, audioSource: String = "glasses", video: AcsOutgoingVideo = .hd) throws {
-    let parsed = AcsAudioPolicy.parseSource(audioSource)
-    if parsed == nil {
-      NSLog("ACS-SPIKE unknown audioSource=\(audioSource), arming glasses (no local mic)")
-    }
-    self.audioSource = parsed == .phone ? "phone" : "glasses"
+    // TEMP: force phone mic. Ignore host/resolver until the glasses path is back on.
+    NSLog("ACS-SPIKE TEMP force phone mic (host asked \(audioSource))")
+    let parsed = AudioSourceKind.phone
+    self.audioSource = "phone"
     queue.async { [weak self] in
       guard let self else { return }
       do {

@@ -145,11 +145,10 @@ class AcsMeetingSession(
     audioSource: String = "glasses",
     video: VideoProfile = VideoProfile.DEFAULT,
   ) {
-    val parsed = AcsAudioPolicy.parseSource(audioSource)
-    if (parsed == null) {
-      Log.w(TAG, "unknown audioSource=$audioSource, arming glasses (no local mic)")
-    }
-    this.audioSource = if (parsed == AudioSourceKind.PHONE) "phone" else "glasses"
+    // TEMP: force phone mic. Ignore host/resolver until the glasses path is back on.
+    Log.i(TAG, "TEMP force phone mic (host asked $audioSource)")
+    val parsed = AudioSourceKind.PHONE
+    this.audioSource = "phone"
     // The ACS work below is queued, so callers must not receive the pre-join
     // phase. Reflect the intent synchronously so the resolved snapshot is
     // "connecting" and cannot overwrite a fresher onState with a stale idle.

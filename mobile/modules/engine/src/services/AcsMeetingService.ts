@@ -6,9 +6,7 @@
 
 import audioPlaybackService from "./AudioPlaybackService"
 import {SETTINGS, useSettingsStore} from "../stores/settings"
-import {useCoreStore} from "../stores/core"
-import {isGlassesConnected, useGlassesStore} from "../stores/glasses"
-import {resolveAudioSource, type ResolvedAudioSource, type SourceReason} from "./acsAudioSource"
+import {type ResolvedAudioSource, type SourceReason} from "./acsAudioSource"
 
 export type {ResolvedAudioSource, SourceReason}
 
@@ -31,12 +29,9 @@ export interface MeetingState {
 
 /** MentraOS preferred_mic → ACS capture. bluetooth uses the OS local capture path. */
 export function resolveAcsAudioSource(): ResolvedAudioSource {
-  return resolveAudioSource({
-    preferred: String(useSettingsStore.getState().getSetting(SETTINGS.preferred_mic.key) ?? "auto"),
-    currentMic: useCoreStore.getState().currentMic,
-    micRanking: useCoreStore.getState().micRanking,
-    glassesConnected: isGlassesConnected(useGlassesStore.getState().connection),
-  })
+  // TEMP: force phone mic. Restore the preferred_mic / ranking table below when
+  // the glasses path is back on.
+  return {source: "phone", reason: "explicit"}
 }
 
 export type AcsOutgoingVideo = {

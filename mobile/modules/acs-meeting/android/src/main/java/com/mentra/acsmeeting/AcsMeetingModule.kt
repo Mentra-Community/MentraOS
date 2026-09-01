@@ -17,7 +17,8 @@ class AcsMeetingModule : Module() {
       val whepUrl = options["whepUrl"] as? String ?: throw IllegalArgumentException("whepUrl is required")
       val displayName = options["displayName"] as? String
       val dumpWav = options["dumpPcmWav"] as? Boolean ?: false
-      val audioSource = options["audioSource"] as? String ?: "glasses"
+      // TEMP: force phone mic. Host still passes a source; session ignores it.
+      val audioSource = "phone"
       val video = parseVideo(options["video"])
       val context = appContext.reactContext ?: throw IllegalStateException("no react context")
       val meeting = session ?: AcsMeetingSession(

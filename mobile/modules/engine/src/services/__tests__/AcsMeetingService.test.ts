@@ -123,9 +123,9 @@ describe("AcsMeetingService", () => {
       whepUrl: "https://example.com/whep",
     })
     expect(native.join).toHaveBeenCalledWith(
-      expect.objectContaining({audioSource: "glasses"}),
+      expect.objectContaining({audioSource: "phone"}),
     )
-    expect(state.audioSource).toBe("glasses")
+    expect(state.audioSource).toBe("phone")
     expect(state.audioSourceReason).toBe("explicit")
     expect(settingsSubscribe).not.toHaveBeenCalled()
     expect(coreSubscribe).not.toHaveBeenCalled()
