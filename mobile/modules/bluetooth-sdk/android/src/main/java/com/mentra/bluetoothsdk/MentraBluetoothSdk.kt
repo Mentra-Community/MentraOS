@@ -138,11 +138,10 @@ class MentraBluetoothSdk private constructor(
     private data class ActiveStreamKeepAlive(
         val streamId: String,
         val intervalMs: Long,
-        // Missed-ACK counting only begins once the stream is confirmed live/coming up, so a
-        // slow startup (glasses can't ACK until they reach starting/streaming) can't trip a
-        // false keep-alive timeout before the stream is ever up.
+        // Managed monitors are created after startStream receives a successful status, so the
+        // first keep-alive request can immediately participate in missed-ACK detection.
         val ackWindow: StreamKeepAliveAckWindow =
-            StreamKeepAliveAckWindow(
+            StreamKeepAliveAckWindow.forStartedStream(
                 maxTrackedAckIds = MAX_MISSED_STREAM_KEEP_ALIVE_ACKS,
                 maxMissedAcks = MAX_MISSED_STREAM_KEEP_ALIVE_ACKS,
             ),

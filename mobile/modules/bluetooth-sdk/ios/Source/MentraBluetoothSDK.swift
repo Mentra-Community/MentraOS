@@ -5,10 +5,9 @@ import Foundation
 private final class ActiveStreamKeepAlive {
     let streamId: String
     let intervalSeconds: Int
-    // Missed-ACK counting only begins once the stream is confirmed live/coming up, so a slow
-    // startup (glasses can't ACK until they reach starting/streaming) can't trip a false
-    // keep-alive timeout before the stream is ever up.
-    let ackWindow = StreamKeepAliveAckWindow(maxTrackedAckIds: 3, maxMissedAcks: 3)
+    // Managed monitors are created after startStream receives a successful status, so the
+    // first keep-alive request can immediately participate in missed-ACK detection.
+    let ackWindow = StreamKeepAliveAckWindow.forStartedStream(maxTrackedAckIds: 3, maxMissedAcks: 3)
     var task: Task<Void, Never>?
 
     init(streamId: String, intervalSeconds: Int) {

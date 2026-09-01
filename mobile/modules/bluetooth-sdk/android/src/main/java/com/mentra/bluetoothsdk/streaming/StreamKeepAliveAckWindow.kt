@@ -13,6 +13,14 @@ internal class StreamKeepAliveAckWindow(
     private val maxTrackedAckIds: Int,
     private val maxMissedAcks: Int,
 ) {
+    companion object {
+        fun forStartedStream(
+            maxTrackedAckIds: Int,
+            maxMissedAcks: Int,
+        ): StreamKeepAliveAckWindow =
+            StreamKeepAliveAckWindow(maxTrackedAckIds, maxMissedAcks).apply { arm() }
+    }
+
     private val pendingAckIds = ArrayDeque<String>()
     var missedAckCount: Int = 0
         private set

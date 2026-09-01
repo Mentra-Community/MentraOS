@@ -20,6 +20,15 @@ final class StreamKeepAliveAckWindow {
         self.maxMissedAcks = maxMissedAcks
     }
 
+    static func forStartedStream(maxTrackedAckIds: Int, maxMissedAcks: Int) -> StreamKeepAliveAckWindow {
+        let window = StreamKeepAliveAckWindow(
+            maxTrackedAckIds: maxTrackedAckIds,
+            maxMissedAcks: maxMissedAcks
+        )
+        window.arm()
+        return window
+    }
+
     func arm() {
         armed = true
         resetPendingState()

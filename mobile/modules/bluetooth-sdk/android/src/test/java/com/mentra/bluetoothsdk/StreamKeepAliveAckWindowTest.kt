@@ -5,6 +5,17 @@ import org.junit.Test
 
 class StreamKeepAliveAckWindowTest {
     @Test
+    fun startedStreamWindowMonitorsFirstRequest() {
+        val window = StreamKeepAliveAckWindow.forStartedStream(maxTrackedAckIds = 3, maxMissedAcks = 3)
+        window.recordSent("ack-1")
+
+        assertThat(window.armed).isTrue()
+        assertThat(window.recordTick()).isNull()
+        assertThat(window.recordTick()).isNull()
+        assertThat(window.recordTick()).isEqualTo(3)
+    }
+
+    @Test
     fun lateAckWithinWindowResetsMissCount() {
         val window = StreamKeepAliveAckWindow(maxTrackedAckIds = 3, maxMissedAcks = 3)
         window.arm()

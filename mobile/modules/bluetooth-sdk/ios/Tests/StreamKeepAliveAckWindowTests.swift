@@ -2,6 +2,16 @@
 import XCTest
 
 final class StreamKeepAliveAckWindowTests: XCTestCase {
+    func testStartedStreamWindowMonitorsFirstRequest() {
+        let window = StreamKeepAliveAckWindow.forStartedStream(maxTrackedAckIds: 3, maxMissedAcks: 3)
+        window.recordSent(ackId: "ack-1")
+
+        XCTAssertTrue(window.armed)
+        XCTAssertNil(window.recordTick())
+        XCTAssertNil(window.recordTick())
+        XCTAssertEqual(window.recordTick(), 3)
+    }
+
     func testLateAckWithinWindowResetsMissCount() {
         let window = StreamKeepAliveAckWindow(maxTrackedAckIds: 3, maxMissedAcks: 3)
         window.arm()
