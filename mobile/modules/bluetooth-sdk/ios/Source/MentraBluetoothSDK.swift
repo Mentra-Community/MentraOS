@@ -240,7 +240,10 @@ public final class MentraBluetoothSDK {
     private static let otaMtkVersionWaitMs = 2_000
     private static let otaVersionPollMs = 100
     private static let defaultStreamKeepAliveIntervalSeconds = 5
-    private static let streamRecoveryStatusTimeoutNanoseconds: UInt64 = 15_000_000_000
+    // The glasses' RTMP retry schedule reaches roughly 39 seconds at its last
+    // exponential-backoff attempt. Keep the orphaned-recovery guard above that
+    // bound so an in-progress retry cannot discard the keep-alive monitor.
+    private static let streamRecoveryStatusTimeoutNanoseconds: UInt64 = 60_000_000_000
 
     public weak var delegate: MentraBluetoothSDKDelegate?
 
