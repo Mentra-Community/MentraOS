@@ -55,6 +55,21 @@ class AndroidLogcatCollectorTest {
     }
 
     @Test
+    fun redactsJsonAndNaturalLanguageCredentialAssignments() {
+        val json =
+            AndroidLogcatCollector.parseEpochLine(
+                "1788222984.999 1 2 D ApiClient: request={\"token\":\"private-value\"}",
+            )
+        val naturalLanguage =
+            AndroidLogcatCollector.parseEpochLine(
+                "1788222984.999 1 2 D Crypto: Secret key is: private-value",
+            )
+
+        assertEquals("[REDACTED]", json?.get("message"))
+        assertEquals("[REDACTED]", naturalLanguage?.get("message"))
+    }
+
+    @Test
     fun preservesBenignKeyAndAuthenticationMessages() {
         val cacheKey =
             AndroidLogcatCollector.parseEpochLine(
