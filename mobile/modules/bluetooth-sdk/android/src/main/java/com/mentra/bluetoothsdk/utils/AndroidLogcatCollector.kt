@@ -21,7 +21,7 @@ internal object AndroidLogcatCollector {
         )
     private val credentialAssignment =
         Regex(
-            """(?<![A-Za-z0-9])(?:token|password|secret|authorization|auth|key)(?![A-Za-z0-9])\s*[:=]\s*\S+""",
+            """(?<![A-Za-z0-9])(?:token|password|secret|authorization|auth|key)(?![A-Za-z0-9])\s*["']?\s*(?:is\s*)?[:=]\s*["']?\S+""",
             RegexOption.IGNORE_CASE,
         )
     private val bearerCredential =

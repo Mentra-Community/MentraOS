@@ -74,7 +74,6 @@ public class AES {
     {
         try
         {
-            Log.d(TAG, "Secret key is: " + secret);
             setKey(secret);
             Cipher cipher = Cipher.getInstance("AES/ECB/PKCS7PADDING");
             cipher.init(Cipher.DECRYPT_MODE, secretKey);
