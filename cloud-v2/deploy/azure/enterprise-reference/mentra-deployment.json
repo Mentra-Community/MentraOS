@@ -4,7 +4,7 @@
   "displayName": "Mentra Enterprise Reference",
   "services": {
     "coreUrl": null,
-    "runtimeUrl": "https://ca-mentra-enterprise-reference.gentlehill-4ed63a4c.westus2.azurecontainerapps.io"
+    "runtimeUrl": "https://enterprisedev.mentraglass.com"
   },
   "auth": {
     "mode": "microsoft-entra",
@@ -28,8 +28,8 @@
   },
   "content": {"wallpaperUrls": []},
   "links": {
-    "privacyPolicyUrl": "https://ca-mentra-enterprise-reference.gentlehill-4ed63a4c.westus2.azurecontainerapps.io/legal/privacy",
-    "termsOfServiceUrl": "https://ca-mentra-enterprise-reference.gentlehill-4ed63a4c.westus2.azurecontainerapps.io/legal/terms",
+    "privacyPolicyUrl": "https://enterprisedev.mentraglass.com/legal/privacy",
+    "termsOfServiceUrl": "https://enterprisedev.mentraglass.com/legal/terms",
     "documentationUrl": null,
     "supportUrl": null
   },

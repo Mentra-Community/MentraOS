@@ -191,6 +191,7 @@ test("enterprise Runtime is release-matched and recorded by the dev coordinator"
   assert.match(enterprise, /group: coordinated-enterprise-runtime-dev/)
   assert.match(enterprise, /\[\[ "\$source_commit" == "\$\{\{ inputs\.source_commit \}\}" \]\]/)
   assert.match(enterprise, /coordinated-enterprise-runtime-records\.mjs create/)
+  assert.match(enterprise, /workspaceHostname=enterprisedev\.mentraglass\.com/)
   assert.match(enterprise, /az acr manifest show-metadata/)
   assert.match(enterprise, /latestReadyRevisionName/)
   assert.match(finalize, /needs\.enterprise-runtime\.result == 'success'/)

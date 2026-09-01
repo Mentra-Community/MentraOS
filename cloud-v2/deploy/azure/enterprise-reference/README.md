@@ -26,13 +26,12 @@ manifest.
 - Runtime API: `20424d9e-4b99-44e8-82c9-0ad06f08a8db`
 - Runtime scope: `api://20424d9e-4b99-44e8-82c9-0ad06f08a8db/mentra.runtime`
 - ACS resource: `mentra-enterprise-reference`
-- Workspace: `https://ca-mentra-enterprise-reference.gentlehill-4ed63a4c.westus2.azurecontainerapps.io`
+- Workspace: `https://enterprisedev.mentraglass.com`
 
 The public client is single-tenant, assignment-required, and declares the
-Runtime scope plus ACS `Teams.ManageCalls` and `Teams.ManageChats`. Android
-qualification currently registers the local debug-signing redirect; a release
-qualification must add the official APK signing-certificate redirect before
-using a store/MDM artifact. iOS registers `msauth.com.mentra.mentra://auth`.
+Runtime scope plus ACS `Teams.ManageCalls` and `Teams.ManageChats`. It registers
+the Android debug, Mentra release-APK, and Google Play app-signing redirects;
+iOS registers `msauth.com.mentra.mentra://auth`.
 See [customer-setup.md](./customer-setup.md) for the full enterprise setup
 runbook and [entra-setup.md](./entra-setup.md) for the detailed identity contract.
 
@@ -89,6 +88,22 @@ az deployment group create \
     mobileClientId=95ad08c2-7837-4ddf-933c-1fce3d6d2799
 ```
 
+For a custom workspace hostname, first deploy without `workspaceHostname` so
+Azure allocates the Container Apps domain. Create a direct DNS-only CNAME to
+the `generatedRuntimeHostname` output and an `asuid.<hostname>` TXT record with
+the `customDomainVerificationId` output. Attach the hostname once:
+
+```bash
+az containerapp hostname add \
+  --resource-group rg-mentra-enterprise-reference \
+  --name ca-mentra-enterprise-reference \
+  --hostname <customer-workspace-hostname>
+```
+
+Then repeat the Bicep deployment with
+`workspaceHostname=<customer-workspace-hostname>`. Bicep creates and retains
+the Azure-managed certificate and publishes the custom origin in the manifest.
+
 Set `clientMinVersion` or `clientRecommendedVersion` only when the deployment
 needs to enforce or recommend a real Mentra App version floor. Both default to
 `0.0.0`, which permits every workspace-capable release.
@@ -102,52 +117,32 @@ restricted-network/self-hosted, not literally air-gapped.
 
 Follow [entra-setup.md](./entra-setup.md), then confirm that your employee is
 assigned to the **Mentra Enterprise Reference Mobile** Enterprise Application.
-The checked-in Mentra tenant already has both app registrations and the debug
-Android plus production iOS redirects. A differently signed Android build needs
-its own redirect before sign-in can return to the app.
+The checked-in Mentra tenant already has both app registrations; debug,
+Mentra-signed APK, Google Play, and iOS redirects; administrator consent; and
+the pilot-user assignment.
 
-### 2. Build and deploy Runtime
+### 2. Observe the coordinated Runtime deployment
 
-The current shared resource group already exists. Build a new Runtime image from
-the repository root, using an immutable tag:
-
-```bash
-az acr build \
-  --registry mentraenterpriseref \
-  --image mentra-runtime-enterprise:<git-sha> \
-  --file cloud-v2/docker/Dockerfile .
-```
-
-Deploy that image. Supplying the existing ACS name updates the current reference
-resources instead of creating a second ACS resource:
+The shared reference workspace deploys only through the coordinated `dev`
+release. Do not manually replace its image. After the coordinated job succeeds,
+inspect the exact release-matched image and revision:
 
 ```bash
-az deployment group create \
-  --name enterprise-runtime \
+az containerapp show \
+  --name ca-mentra-enterprise-reference \
   --resource-group rg-mentra-enterprise-reference \
-  --template-file cloud-v2/deploy/azure/enterprise-reference/main.bicep \
-  --parameters \
-    runtimeImage=mentraenterpriseref.azurecr.io/mentra-runtime-enterprise:<git-sha> \
-    registryName=mentraenterpriseref \
-    communicationName=mentra-enterprise-reference \
-    tenantId=2e7662c0-e826-4928-95b2-60bdd48d5d95 \
-    runtimeApiClientId=20424d9e-4b99-44e8-82c9-0ad06f08a8db \
-    mobileClientId=95ad08c2-7837-4ddf-933c-1fce3d6d2799
+  --query '{image:properties.template.containers[0].image,revision:properties.latestReadyRevisionName}'
 ```
 
-No Cloudflare variables are required. Bicep creates the customer-owned ACS
-resource and stores its connection string directly as a Container App secret.
+Cloudflare hosts DNS only; the `enterprisedev` CNAME points directly to Azure
+Container Apps and Azure manages the TLS certificate. No Cloudflare Runtime or
+Stream credentials are required. Bicep creates the ACS resource and stores its
+connection string directly as a Container App secret.
 
 ### 3. Smoke-test the deployment before opening the app
 
 ```bash
-export MENTRA_WORKSPACE="$(
-  az deployment group show \
-    --name enterprise-runtime \
-    --resource-group rg-mentra-enterprise-reference \
-    --query properties.outputs.workspaceOrigin.value \
-    --output tsv
-)"
+export MENTRA_WORKSPACE=https://enterprisedev.mentraglass.com
 
 curl --fail --show-error "$MENTRA_WORKSPACE/healthz"
 curl --fail --show-error "$MENTRA_WORKSPACE/ready"

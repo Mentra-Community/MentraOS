@@ -108,6 +108,7 @@ jobs:
               tenantId="$ENTRA_TENANT_ID" \
               runtimeApiClientId="$ENTRA_RUNTIME_CLIENT_ID" \
               mobileClientId="$ENTRA_MOBILE_CLIENT_ID" \
+              workspaceHostname=enterprisedev.mentraglass.com \
               manageAcrPullRoleAssignment=false \
             --query properties.provisioningState \
             --output tsv \

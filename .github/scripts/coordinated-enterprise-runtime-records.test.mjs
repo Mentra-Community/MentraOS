@@ -16,7 +16,7 @@ const plan = createReleasePlan({
   sourceCommit,
   nativeBuildNumber: 310000091,
 })
-const workspaceOrigin = "https://enterprise.example.com"
+const workspaceOrigin = "https://enterprisedev.mentraglass.com"
 
 function create(status = "deployed") {
   return createEnterpriseRuntimeDeploymentRecord({

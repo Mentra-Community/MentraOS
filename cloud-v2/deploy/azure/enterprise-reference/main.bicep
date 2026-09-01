@@ -11,6 +11,9 @@ param tenantId string
 param runtimeApiClientId string
 param mobileClientId string
 
+@description('Optional canonical workspace hostname. DNS must point directly to the Container App before enabling it.')
+param workspaceHostname string = ''
+
 @description('Create the AcrPull assignment. Set false for CI after an administrator has bootstrapped it.')
 param manageAcrPullRoleAssignment bool = true
 
@@ -67,7 +70,18 @@ resource environment 'Microsoft.App/managedEnvironments@2024-03-01' = {
   properties: {}
 }
 
-var workspaceOrigin = 'https://${runtimeName}.${environment.properties.defaultDomain}'
+resource workspaceCertificate 'Microsoft.App/managedEnvironments/managedCertificates@2024-03-01' = if (!empty(workspaceHostname)) {
+  parent: environment
+  name: '${runtimeName}-workspace'
+  location: location
+  properties: {
+    subjectName: workspaceHostname
+    domainControlValidation: 'CNAME'
+  }
+}
+
+var generatedRuntimeHostname = '${runtimeName}.${environment.properties.defaultDomain}'
+var workspaceOrigin = 'https://${empty(workspaceHostname) ? generatedRuntimeHostname : workspaceHostname}'
 var deploymentManifest = {
   schemaVersion: 1
   deploymentId: deploymentId
@@ -132,6 +146,13 @@ resource runtime 'Microsoft.App/containerApps@2024-03-01' = {
         targetPort: 3001
         transport: 'auto'
         allowInsecure: false
+        customDomains: empty(workspaceHostname) ? [] : [
+          {
+            name: workspaceHostname
+            bindingType: 'SniEnabled'
+            certificateId: workspaceCertificate.id
+          }
+        ]
       }
       registries: [
         {
@@ -186,5 +207,7 @@ resource runtime 'Microsoft.App/containerApps@2024-03-01' = {
 }
 
 output workspaceOrigin string = workspaceOrigin
+output generatedRuntimeHostname string = generatedRuntimeHostname
+output customDomainVerificationId string = environment.properties.customDomainConfiguration.customDomainVerificationId
 output communicationResourceId string = communication.id
 output registryLoginServer string = registry.properties.loginServer

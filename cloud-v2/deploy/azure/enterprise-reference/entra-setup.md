@@ -37,6 +37,14 @@ Add platform redirects for the exact official binary being distributed:
 Android debug and release certificates produce different redirects. Customer
 qualification must register the hash of the Mentra-signed release APK or AAB;
 the reference tenant also contains a local debug redirect for development.
+The current official redirects are:
+
+- Mentra-signed downloadable APK:
+  `msauth://com.mentra.mentra/q%2FZbvbReOLgD1T6V3o1PK%2Fzjwz0%3D`;
+- Google Play App Signing:
+  `msauth://com.mentra.mentra/Pwi%2FLvF9HHWTAMonaqwan%2BeIX6A%3D`.
+
+These certificate hashes are public application identifiers, not private keys.
 
 Add delegated API permissions for:
 

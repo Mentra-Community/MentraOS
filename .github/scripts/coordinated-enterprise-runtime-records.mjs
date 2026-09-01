@@ -11,6 +11,7 @@ const TARGET = Object.freeze({
   registry: "mentraenterpriseref",
   containerApp: "ca-mentra-enterprise-reference",
   imageRepository: "mentra-runtime-enterprise",
+  workspaceOrigin: "https://enterprisedev.mentraglass.com",
   services: Object.freeze(["meetings"]),
   meetingProvider: "acs-teams",
 })
@@ -114,6 +115,9 @@ export function createEnterpriseRuntimeDeploymentRecord({
       throw new Error("Enterprise Runtime deployment is missing immutable Azure image evidence")
     }
     const origin = requireHttps(workspaceOrigin, "workspaceOrigin")
+    if (origin !== TARGET.workspaceOrigin) {
+      throw new Error("Enterprise Runtime deployment uses the wrong workspace origin")
+    }
     record.azure.image = image
     record.azure.imageDigest = imageDigest
     record.azure.revision = revision

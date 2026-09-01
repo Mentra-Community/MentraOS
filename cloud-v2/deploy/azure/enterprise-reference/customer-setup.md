@@ -75,6 +75,13 @@ A locally signed test build and the official Mentra-signed release generally
 have different hashes. Mentra supplies the official redirect with the release
 artifact; do not copy a developer redirect into production.
 
+For the current Mentra-signed binaries, register both distribution redirects:
+
+- downloadable APK:
+  `msauth://com.mentra.mentra/q%2FZbvbReOLgD1T6V3o1PK%2Fzjwz0%3D`;
+- Google Play installation:
+  `msauth://com.mentra.mentra/Pwi%2FLvF9HHWTAMonaqwan%2BeIX6A%3D`.
+
 Add delegated permissions for:
 
 - the Runtime registration's `mentra.runtime` scope;
