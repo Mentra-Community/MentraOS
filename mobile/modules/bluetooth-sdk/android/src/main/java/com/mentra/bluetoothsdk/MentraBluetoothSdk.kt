@@ -138,13 +138,15 @@ class MentraBluetoothSdk private constructor(
     private data class ActiveStreamKeepAlive(
         val streamId: String,
         val intervalMs: Long,
-        var pendingAckId: String? = null,
-        var missedAckCount: Int = 0,
-        var nextTick: Runnable? = null,
         // Missed-ACK counting only begins once the stream is confirmed live/coming up, so a
         // slow startup (glasses can't ACK until they reach starting/streaming) can't trip a
         // false keep-alive timeout before the stream is ever up.
-        var armed: Boolean = false,
+        val ackWindow: StreamKeepAliveAckWindow =
+            StreamKeepAliveAckWindow(
+                maxTrackedAckIds = MAX_MISSED_STREAM_KEEP_ALIVE_ACKS,
+                maxMissedAcks = MAX_MISSED_STREAM_KEEP_ALIVE_ACKS,
+            ),
+        var nextTick: Runnable? = null,
     )
 
     // seq records send order (assigned and handed to the BLE queue under
@@ -2192,53 +2194,39 @@ class MentraBluetoothSdk private constructor(
                 return
             }
 
-            if (tracker.armed && tracker.pendingAckId != null) {
-                tracker.missedAckCount += 1
-                if (tracker.missedAckCount >= MAX_MISSED_STREAM_KEEP_ALIVE_ACKS) {
-                    activeStreamKeepAlive = null
-                    tracker.nextTick?.let { mainHandler.removeCallbacks(it) }
-                    timeoutEvent =
-                            StreamStatusEvent(
-                                    StreamStatus.Error(
-                                            streamId = tracker.streamId,
-                                            errorDetails =
-                                                    "Stream keep-alive timed out after ${tracker.missedAckCount} missed ACKs",
-                                            timestamp = System.currentTimeMillis(),
-                                            resolvedConfig = null,
-                                    )
-                            )
-                    return@synchronized
-                }
+            tracker.ackWindow.recordTick()?.let { missedAckThreshold ->
+                timeoutEvent =
+                    StreamStatusEvent(
+                        StreamStatus.Error(
+                            streamId = tracker.streamId,
+                            errorDetails =
+                                "Stream keep-alive timed out after $missedAckThreshold missed ACKs; monitoring continues",
+                            timestamp = System.currentTimeMillis(),
+                            resolvedConfig = null,
+                        )
+                    )
             }
 
             val ackId = "ack-${System.currentTimeMillis()}"
-            tracker.pendingAckId = ackId
+            tracker.ackWindow.recordSent(ackId)
             request = StreamKeepAliveRequest(streamId = tracker.streamId, ackId = ackId)
             val nextTick = Runnable { sendNextStreamKeepAlive(tracker) }
             tracker.nextTick = nextTick
             mainHandler.postDelayed(nextTick, tracker.intervalMs)
         }
 
-        timeoutEvent?.let { event ->
-            dispatchToListeners { it.onStreamStatus(event) }
-            stopStreamKeepAliveMonitor()
-            deviceManager.stopStream()
-            return
-        }
-
         request?.let { keepAlive ->
             deviceManager.keepStreamAlive(keepAlive.toMap().toMutableMap())
         }
+        timeoutEvent?.let { event -> dispatchToListeners { it.onStreamStatus(event) } }
     }
 
     private fun handleStreamKeepAliveAck(event: KeepAliveAckEvent): Boolean {
         synchronized(streamKeepAliveLock) {
             val tracker = activeStreamKeepAlive ?: return false
-            if (event.streamId != tracker.streamId || event.ackId != tracker.pendingAckId) {
+            if (event.streamId != tracker.streamId || !tracker.ackWindow.acknowledge(event.ackId)) {
                 return false
             }
-            tracker.pendingAckId = null
-            tracker.missedAckCount = 0
             return true
         }
     }
@@ -2262,10 +2250,8 @@ class MentraBluetoothSdk private constructor(
             else ->
                     synchronized(streamKeepAliveLock) {
                         activeStreamKeepAlive?.let {
-                            if (it.streamId == streamId && !it.armed) {
-                                it.armed = true
-                                it.pendingAckId = null
-                                it.missedAckCount = 0
+                            if (it.streamId == streamId && !it.ackWindow.armed) {
+                                it.ackWindow.arm()
                             }
                         }
                     }

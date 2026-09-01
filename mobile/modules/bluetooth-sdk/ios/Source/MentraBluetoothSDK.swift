@@ -5,13 +5,11 @@ import Foundation
 private final class ActiveStreamKeepAlive {
     let streamId: String
     let intervalSeconds: Int
-    var pendingAckId: String?
-    var missedAckCount = 0
-    var task: Task<Void, Never>?
     // Missed-ACK counting only begins once the stream is confirmed live/coming up, so a slow
     // startup (glasses can't ACK until they reach starting/streaming) can't trip a false
     // keep-alive timeout before the stream is ever up.
-    var armed = false
+    let ackWindow = StreamKeepAliveAckWindow(maxTrackedAckIds: 3, maxMissedAcks: 3)
+    var task: Task<Void, Never>?
 
     init(streamId: String, intervalSeconds: Int) {
         self.streamId = streamId
@@ -1557,28 +1555,10 @@ public final class MentraBluetoothSDK {
     private func sendNextStreamKeepAlive(for tracker: ActiveStreamKeepAlive) {
         guard activeStreamKeepAlive === tracker else { return }
 
-        if tracker.armed, tracker.pendingAckId != nil {
-            tracker.missedAckCount += 1
-            if tracker.missedAckCount >= 3 {
-                activeStreamKeepAlive = nil
-                tracker.task?.cancel()
-                let event = StreamStatusEvent(
-                    status: .error(
-                        streamId: tracker.streamId,
-                        errorDetails: "Stream keep-alive timed out after \(tracker.missedAckCount) missed ACKs",
-                        timestamp: Int(Date().timeIntervalSince1970 * 1000),
-                        resolvedConfig: nil
-                    )
-                )
-                delegate?.mentraBluetoothSDK(self, didReceive: .streamStatus(event))
-                stopStreamKeepAliveMonitor()
-                DeviceManager.shared.stopStream()
-                return
-            }
-        }
+        let missedAckThreshold = tracker.ackWindow.recordTick()
 
         let ackId = "ack-\(Int(Date().timeIntervalSince1970 * 1000))"
-        tracker.pendingAckId = ackId
+        tracker.ackWindow.recordSent(ackId: ackId)
         DeviceManager.shared.keepStreamAlive(
             StreamKeepAliveRequest(streamId: tracker.streamId, ackId: ackId).values
         )
@@ -1589,17 +1569,27 @@ public final class MentraBluetoothSDK {
             try? await Task.sleep(nanoseconds: UInt64(tracker.intervalSeconds) * 1_000_000_000)
             self?.sendNextStreamKeepAlive(for: tracker)
         }
+
+        if let missedAckThreshold {
+            let event = StreamStatusEvent(
+                status: .error(
+                    streamId: tracker.streamId,
+                    errorDetails: "Stream keep-alive timed out after \(missedAckThreshold) missed ACKs; monitoring continues",
+                    timestamp: Int(Date().timeIntervalSince1970 * 1000),
+                    resolvedConfig: nil
+                )
+            )
+            delegate?.mentraBluetoothSDK(self, didReceive: .streamStatus(event))
+        }
     }
 
     private func handleStreamKeepAliveAck(_ event: KeepAliveAckEvent) -> Bool {
         guard let tracker = activeStreamKeepAlive,
               event.streamId == tracker.streamId,
-              event.ackId == tracker.pendingAckId
+              tracker.ackWindow.acknowledge(ackId: event.ackId)
         else {
             return false
         }
-        tracker.pendingAckId = nil
-        tracker.missedAckCount = 0
         return true
     }
 
@@ -1618,10 +1608,8 @@ public final class MentraBluetoothSDK {
             // now ACK; arm the missed-ACK detector from here so a slow startup before the first
             // ACK can't trip a false keep-alive timeout. On the arming transition, drop any
             // pre-arm bookkeeping so a stale unacked id can't immediately count as a miss.
-            if let tracker = activeStreamKeepAlive, !tracker.armed {
-                tracker.armed = true
-                tracker.pendingAckId = nil
-                tracker.missedAckCount = 0
+            if let tracker = activeStreamKeepAlive, !tracker.ackWindow.armed {
+                tracker.ackWindow.arm()
             }
         }
     }
