@@ -11,6 +11,7 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useCapsuleStore} from "@/stores/capsule"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
+import {useDeployment} from "@/services/deployment"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 import mentraAuth from "@/utils/auth/authClient"
@@ -43,6 +44,12 @@ export default function ProfileSettingsPage() {
 
   const {goBack, push, replaceAll} = useNavigationStore.getState()
   const {logout} = useAuth()
+  const {activeDeployment} = useDeployment()
+
+  const workspaceName =
+    activeDeployment.kind === "workspace"
+      ? activeDeployment.manifest.displayName
+      : translate("profileSettings:mentraWorkspace")
 
   useEffect(() => {
     const fetchUserData = async () => {
@@ -299,6 +306,15 @@ export default function ProfileSettingsPage() {
             <Text tx="profileSettings:errorGettingUserInfo" />
           </>
         )}
+
+        <Spacer height={theme.spacing.s6} />
+
+        <Group title={translate("workspace:workspaceLabel")}>
+          <RouteButton label={translate("profileSettings:workspaceName")} text={workspaceName} />
+          {activeDeployment.kind === "workspace" && (
+            <RouteButton label={translate("profileSettings:workspaceUrl")} text={activeDeployment.workspaceOrigin} />
+          )}
+        </Group>
       </ScrollView>
 
       {/* Loading overlay for sign out */}

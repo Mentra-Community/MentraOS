@@ -798,6 +798,9 @@ const en = {
   },
   profileSettings: {
     title: "Profile Settings",
+    workspaceName: "Name",
+    workspaceUrl: "Workspace URL",
+    mentraWorkspace: "Mentra",
     noProfilePicture: "No profile picture available.",
     name: "Name",
     email: "Email",
