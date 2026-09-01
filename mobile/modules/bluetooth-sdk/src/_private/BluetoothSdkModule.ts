@@ -71,6 +71,19 @@ type GlassesListener = (changed: Partial<GlassesStatus>) => void
 type BluetoothStatusListener = (changed: Partial<PublicBluetoothStatus>) => void
 type MaybePromise<T> = T | Promise<T>
 
+export type NativeLogEntry = {
+  timestamp: number
+  level: "debug" | "info" | "warn" | "error"
+  message: string
+  source: "android-logcat"
+  metadata?: {
+    tag?: string
+    pid?: number
+    tid?: number
+    priority?: string
+  }
+}
+
 declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEvents> {
   // Observable Store Functions (native)
   getGlassesStatus(): Promise<GlassesStatus>
@@ -119,6 +132,8 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
 
   // Incident Reporting
   sendIncidentId(incidentId: string, apiBaseUrl?: string | null): Promise<void>
+  /** Return a bounded snapshot of native logs for this Android app process. */
+  getNativeLogs(): Promise<NativeLogEntry[]>
 
   // WiFi Commands
   requestWifiScan(): Promise<WifiSearchResult[]>
