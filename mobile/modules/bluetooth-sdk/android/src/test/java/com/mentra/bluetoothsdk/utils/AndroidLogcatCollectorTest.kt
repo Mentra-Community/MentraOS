@@ -40,6 +40,36 @@ class AndroidLogcatCollectorTest {
     }
 
     @Test
+    fun redactsCompoundCredentialNamesWithUnderscores() {
+        val accessToken =
+            AndroidLogcatCollector.parseEpochLine(
+                "1788222984.999 1 2 D AuthClient: access_token=private-value",
+            )
+        val clientSecret =
+            AndroidLogcatCollector.parseEpochLine(
+                "1788222984.999 1 2 D AuthClient: client_secret: private-value",
+            )
+
+        assertEquals("[REDACTED]", accessToken?.get("message"))
+        assertEquals("[REDACTED]", clientSecret?.get("message"))
+    }
+
+    @Test
+    fun preservesBenignKeyAndAuthenticationMessages() {
+        val cacheKey =
+            AndroidLogcatCollector.parseEpochLine(
+                "1788222984.999 1 2 D Cache: cache key lookup completed",
+            )
+        val authentication =
+            AndroidLogcatCollector.parseEpochLine(
+                "1788222984.999 1 2 I MentraLive: authentication completed",
+            )
+
+        assertEquals("cache key lookup completed", cacheKey?.get("message"))
+        assertEquals("authentication completed", authentication?.get("message"))
+    }
+
+    @Test
     fun collectsDebugAndHigherForOnlyTheAppProcess() {
         val command = AndroidLogcatCollector.logcatCommand(1234)
 
