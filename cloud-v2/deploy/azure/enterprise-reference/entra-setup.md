@@ -103,7 +103,6 @@ Before customer use, verify at least:
 - revoked consent and disabled-user behavior;
 - both official Android and iOS redirect URIs.
 
-The reference Bicep template additionally requires `releaseIdentity` to equal
-the exact `EXPO_PUBLIC_MENTRAOS_VERSION` embedded in the mobile artifact. This
-is commonly `X.Y.Z-dev.N` for an internal build, not merely the package's base
-`X.Y.Z` version.
+The reference Runtime exposes the same minimum-client-version policy used by
+Mentra's public deployment. It is independent of the Entra registration and
+defaults to allowing every workspace-capable Mentra App release.

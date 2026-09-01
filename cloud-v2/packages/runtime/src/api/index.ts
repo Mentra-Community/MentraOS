@@ -58,6 +58,18 @@ export function createApiApp(opts: CreateApiAppOptions): ApiAppHandle {
     ]);
   let managedStreams: ManagedStreamsHandle | undefined;
 
+  // Public and available in every Runtime profile. Core keeps the same route
+  // temporarily for already-released clients.
+  app.get("/api/client/min-version", (c) =>
+    c.json({
+      success: true,
+      data: {
+        required: process.env.CLOUD_CLIENT_MIN_VERSION ?? "0.0.0",
+        recommended: process.env.CLOUD_CLIENT_RECOMMENDED_VERSION ?? "0.0.0",
+      },
+    }),
+  );
+
   if (services.has("realtime-audio")) app.route("/api/audio", audioApi);
   if (services.has("managed-photos")) app.route("/api/camera", cameraApi);
   if (services.has("managed-streams") && !services.has("managed-photos")) {

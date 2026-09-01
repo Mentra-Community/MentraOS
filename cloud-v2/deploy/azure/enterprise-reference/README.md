@@ -7,9 +7,9 @@ It intentionally deploys no Core, MongoDB, Redis, UDP listener, Runtime
 WebSocket, audio worker, speech provider, Store, or Mentra-hosted identity.
 
 Runtime generates the served manifest from Bicep parameters so tenant ids,
-resource ids, resource names, and the exact app release can be changed without
-rebuilding the image. The checked-in manifest is an example of Mentra's current
-reference environment and contains only public identifiers.
+resource ids, resource names, and the supported app-version policy can be
+changed without rebuilding the image. The checked-in manifest is an example of
+Mentra's current reference environment and contains only public identifiers.
 The Azure Communication Services connection string is a Container App secret;
 do not put it in the manifest or mobile app. The enterprise profile assumes the
 direct SoftAP glasses-to-phone media path and therefore needs no Cloudflare
@@ -66,15 +66,14 @@ az deployment group create \
   --parameters \
     runtimeImage=<registry-name>.azurecr.io/mentra-runtime-enterprise:<git-sha> \
     registryName=<registry-name> \
-    releaseIdentity=<exact-EXPO_PUBLIC_MENTRAOS_VERSION> \
     tenantId=2e7662c0-e826-4928-95b2-60bdd48d5d95 \
     runtimeApiClientId=20424d9e-4b99-44e8-82c9-0ad06f08a8db \
     mobileClientId=95ad08c2-7837-4ddf-933c-1fce3d6d2799
 ```
 
-Use the exact release identity embedded in the test app, including a development
-or beta suffix. The Mentra App deliberately rejects a workspace pinned to a
-different binary.
+Set `clientMinVersion` or `clientRecommendedVersion` only when the deployment
+needs to enforce or recommend a real Mentra App version floor. Both default to
+`0.0.0`, which permits every workspace-capable release.
 
 This profile has customer-approved Microsoft, ACS, and Azure egress. It is
 restricted-network/self-hosted, not literally air-gapped.
@@ -89,7 +88,7 @@ The checked-in Mentra tenant already has both app registrations and the debug
 Android plus production iOS redirects. A differently signed Android build needs
 its own redirect before sign-in can return to the app.
 
-### 2. Build and deploy the exact app release
+### 2. Build and deploy Runtime
 
 The current shared resource group already exists. Build a new Runtime image from
 the repository root, using an immutable tag:
@@ -113,14 +112,11 @@ az deployment group create \
     runtimeImage=mentraenterpriseref.azurecr.io/mentra-runtime-enterprise:<git-sha> \
     registryName=mentraenterpriseref \
     communicationName=mentra-enterprise-reference \
-    releaseIdentity=3.2.0 \
     tenantId=2e7662c0-e826-4928-95b2-60bdd48d5d95 \
     runtimeApiClientId=20424d9e-4b99-44e8-82c9-0ad06f08a8db \
     mobileClientId=95ad08c2-7837-4ddf-933c-1fce3d6d2799
 ```
 
-Replace `3.2.0` with the exact value embedded as
-`EXPO_PUBLIC_MENTRAOS_VERSION` if testing a suffixed development or beta build.
 No Cloudflare variables are required. Bicep creates the customer-owned ACS
 resource and stores its connection string directly as a Container App secret.
 
@@ -137,18 +133,18 @@ export MENTRA_WORKSPACE="$(
 
 curl --fail --show-error "$MENTRA_WORKSPACE/healthz"
 curl --fail --show-error "$MENTRA_WORKSPACE/ready"
+curl --fail --show-error "$MENTRA_WORKSPACE/api/client/min-version"
 curl --fail --show-error \
   "$MENTRA_WORKSPACE/.well-known/mentra-deployment.json"
 ```
 
-Inspect the returned manifest. Its `releaseIdentity` must exactly match the app,
-`runtimeUrl` must equal `MENTRA_WORKSPACE`, `coreUrl` must be `null`, and
-`telemetry` must be `false`.
+Inspect the responses. The version endpoint should return the configured
+`required` and `recommended` floors. In the manifest, `runtimeUrl` must equal
+`MENTRA_WORKSPACE`, `coreUrl` must be `null`, and `telemetry` must be `false`.
 
 ### 4. Build and exercise the Mentra App
 
-Set `EXPO_PUBLIC_MENTRAOS_VERSION` to the same release identity used above. A
-native rebuild is required because this branch adds MSAL native code and iOS
+A native rebuild is required because this branch adds MSAL native code and iOS
 entitlements:
 
 ```bash
@@ -178,8 +174,9 @@ Then verify this flow:
    account and local workspace state; returning to Mentra must show the consumer
    landing page again.
 
-Also try an unassigned employee and a workspace manifest with a deliberately
-wrong `releaseIdentity`; both must be rejected.
+Also try an unassigned employee. To exercise version policy, redeploy with a
+`clientMinVersion` above the installed app, confirm the app requires an update,
+then restore the floor to `0.0.0`.
 
 ### 5. Check the restricted-network claim
 

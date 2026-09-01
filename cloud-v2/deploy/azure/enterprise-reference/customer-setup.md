@@ -36,7 +36,7 @@ The deployment operator needs:
 - Runtime API application client id;
 - Mentra App public-client application client id;
 - exact Android and iOS redirect URIs for the distributed Mentra App binaries;
-- exact `EXPO_PUBLIC_MENTRAOS_VERSION` release identity being distributed; and
+- optional minimum and recommended Mentra App version policy; and
 - the Runtime container image tag or digest supplied for that release.
 
 Tenant ids, application client ids, scopes, redirect URIs, and workspace URLs
@@ -106,7 +106,6 @@ Deploy [main.bicep](./main.bicep) with:
 
 - the Runtime image reference;
 - registry name;
-- exact app release identity;
 - tenant id;
 - Runtime API client id; and
 - mobile public-client id.
@@ -137,7 +136,6 @@ https://<customer-workspace>/.well-known/mentra-deployment.json
 
 Verify that:
 
-- `releaseIdentity` exactly matches the distributed Mentra App;
 - `services.coreUrl` is `null`;
 - `services.runtimeUrl` is the same workspace origin;
 - `auth.authorityUrl` names the exact customer tenant, never `common` or
@@ -150,6 +148,11 @@ Verify that:
 
 Runtime refuses to start when the manifest advertises modules that are not
 actually enabled.
+
+Runtime also serves `GET /api/client/min-version` before authentication. Its
+`required` and `recommended` values come from `CLOUD_CLIENT_MIN_VERSION` and
+`CLOUD_CLIENT_RECOMMENDED_VERSION`; both default to `0.0.0`. Use a real floor
+only when older app versions are genuinely unsupported.
 
 ## 5. Configure network policy
 
@@ -208,5 +211,5 @@ end-to-end call test.
 | An employee cannot open the Microsoft login | They or their group are not assigned to the Enterprise Application |
 | Runtime returns 401 | Wrong issuer, audience, Runtime scope, authorized mobile client, or expired token |
 | ACS exchange returns 403 | Missing ACS delegated permission/admin consent, wrong tenant/client, or mismatched employee object id |
-| Workspace is rejected before login | Manifest schema, origin, TLS, or exact release identity does not match the app |
+| Workspace is rejected before login | Manifest schema, origin, or TLS policy is invalid |
 | Login works but a Teams call cannot start | SoftAP/native ACS integration is absent, ACS configuration is invalid, or Teams policy/license blocks the employee |

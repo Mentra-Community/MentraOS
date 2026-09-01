@@ -11,8 +11,11 @@ param tenantId string
 param runtimeApiClientId string
 param mobileClientId string
 
-@description('Exact Mentra App release identity allowed to activate this workspace.')
-param releaseIdentity string
+@description('Oldest Mentra App version allowed to use this deployment.')
+param clientMinVersion string = '0.0.0'
+
+@description('Mentra App version recommended by this deployment.')
+param clientRecommendedVersion string = '0.0.0'
 
 param deploymentId string = 'mentra-enterprise-reference'
 param displayName string = 'Mentra Enterprise Reference'
@@ -66,7 +69,6 @@ var deploymentManifest = {
   schemaVersion: 1
   deploymentId: deploymentId
   displayName: displayName
-  releaseIdentity: releaseIdentity
   services: {
     coreUrl: null
     runtimeUrl: workspaceOrigin
@@ -148,6 +150,8 @@ resource runtime 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'PORT', value: '3001' }
             { name: 'RUNTIME_SERVICES', value: 'meetings' }
             { name: 'MEETING_PROVIDERS', value: 'acs-teams' }
+            { name: 'CLOUD_CLIENT_MIN_VERSION', value: clientMinVersion }
+            { name: 'CLOUD_CLIENT_RECOMMENDED_VERSION', value: clientRecommendedVersion }
             {
               name: 'DEPLOYMENT_MANIFEST_JSON'
               value: string(deploymentManifest)

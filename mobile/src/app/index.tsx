@@ -14,6 +14,7 @@ import mantle from "@/services/MantleManager"
 import {SETTINGS, engine, useSetting, BgTimer} from "@mentra/engine"
 import {SplashVideo} from "@/components/splash/SplashVideo"
 import {APP_STORE_URL, PLAY_STORE_URL} from "@/constants/appConfig"
+import {resolvedEndpoints} from "@/services/cloudClient"
 import {fetchMinimumClientVersion} from "@/utils/cloudVersion"
 import {useDeployment} from "@/services/deployment"
 
@@ -53,10 +54,10 @@ export default function InitScreen() {
   const [isRetrying, setIsRetrying] = useState(false)
   const [isBlockedByVersion, setIsBlockedByVersion] = useState(false)
   // Zustand store hooks
-  // The boot version gate hits cloud_core_url (resolvedEndpoints().core), so the
-  // custom-URL detection + reset recovery operate on that setting, not the
-  // retired V1 backend_url.
-  const [coreUrl, setCoreUrl] = useSetting(SETTINGS.cloud_core_url.key)
+  // Runtime is the canonical boot version-policy service. Core keeps its
+  // legacy endpoint only for already-released clients.
+  const [, setCoreUrl] = useSetting(SETTINGS.cloud_core_url.key)
+  const [runtimeUrl, setRuntimeUrl] = useSetting(SETTINGS.cloud_runtime_url.key)
   const [superMode] = useSetting(SETTINGS.super_mode.key)
   const [appBootExtraInfo] = useSetting(SETTINGS.app_boot_extra_info.key)
   const [bootPhase, setBootPhase] = useState<string>("Starting up…")
@@ -85,10 +86,12 @@ export default function InitScreen() {
       setIsUsingCustomUrl(true)
       return true
     }
-    const defaultUrl = SETTINGS[SETTINGS.cloud_core_url.key].defaultValue()
+    const defaultCoreUrl = SETTINGS[SETTINGS.cloud_core_url.key].defaultValue()
+    const defaultRuntimeUrl = SETTINGS[SETTINGS.cloud_runtime_url.key].defaultValue()
     // Read directly from the store to avoid stale React closure values
-    const currentUrl = engine.settings.get(SETTINGS.cloud_core_url.key)
-    const isCustom = currentUrl !== defaultUrl
+    const currentCoreUrl = engine.settings.get(SETTINGS.cloud_core_url.key)
+    const currentRuntimeUrl = engine.settings.get(SETTINGS.cloud_runtime_url.key)
+    const isCustom = currentCoreUrl !== defaultCoreUrl || currentRuntimeUrl !== defaultRuntimeUrl
     setIsUsingCustomUrl(isCustom)
     return isCustom
   }
@@ -188,36 +191,23 @@ export default function InitScreen() {
       return
     }
 
-    if (activeDeployment.kind === "workspace") {
-      if (localVer !== activeDeployment.manifest.releaseIdentity) {
-        console.error(
-          `Workspace release mismatch: installed=${localVer}, required=${activeDeployment.manifest.releaseIdentity}`,
-        )
-        setLocalVersion(localVer)
-        setCloudVersion(activeDeployment.manifest.releaseIdentity)
-        setCanSkipUpdate(false)
-        setIsBlockedByVersion(true)
-        setState("outdated")
-        setIsRetrying(false)
-        return
-      }
-      setIsRetrying(false)
-      checkLoggedIn()
-      return
-    }
+    const versionRuntimeUrl =
+      activeDeployment.kind === "workspace"
+        ? activeDeployment.manifest.services.runtimeUrl!
+        : resolvedEndpoints().runtime
+    const cachedVersion = activeDeployment.kind === "consumer" ? cachedRequiredVersion : null
 
-    // Cloud V2 core serves the version gate (V1's copy is retired with
-    // RestComms). Retries cover the boot-time DNS blips that historically
-    // dumped users at the connection-error screen (which blocks login).
-    const res = await fetchMinimumClientVersion(3, 1000)
+    // Runtime serves the policy before authentication. Retries cover boot-time
+    // DNS blips that would otherwise dump users at the connection screen.
+    const res = await fetchMinimumClientVersion(versionRuntimeUrl, 3, 1000)
     if (res.is_error()) {
-      console.error("Failed to fetch cloud version:", res.error)
+      console.error("Failed to fetch minimum client version:", res.error)
 
       // Even offline, check cached required version to block outdated apps
-      if (cachedRequiredVersion && semver.lt(localVer, cachedRequiredVersion)) {
-        console.log(`INDEX: Offline but app is below cached required version (${localVer} < ${cachedRequiredVersion})`)
+      if (cachedVersion && semver.lt(localVer, cachedVersion)) {
+        console.log(`INDEX: Offline but app is below cached required version (${localVer} < ${cachedVersion})`)
         setLocalVersion(localVer)
-        setCloudVersion(cachedRequiredVersion)
+        setCloudVersion(cachedVersion)
         setCanSkipUpdate(false)
         setIsBlockedByVersion(true)
         setState("outdated")
@@ -234,7 +224,7 @@ export default function InitScreen() {
     console.log(`INDEX: Version check: local=${localVer}, required=${required}, recommended=${recommended}`)
 
     // Cache the required version for offline enforcement
-    if (required && required !== cachedRequiredVersion) {
+    if (activeDeployment.kind === "consumer" && required && required !== cachedRequiredVersion) {
       setCachedRequiredVersion(required)
     }
 
@@ -271,8 +261,9 @@ export default function InitScreen() {
         replaceAll("/auth/start")
         return
       }
-      const defaultUrl = SETTINGS[SETTINGS.cloud_core_url.key].defaultValue()
-      await setCoreUrl(defaultUrl)
+      const defaultCoreUrl = SETTINGS[SETTINGS.cloud_core_url.key].defaultValue()
+      const defaultRuntimeUrl = SETTINGS[SETTINGS.cloud_runtime_url.key].defaultValue()
+      await Promise.all([setCoreUrl(defaultCoreUrl), setRuntimeUrl(defaultRuntimeUrl)])
       setIsUsingCustomUrl(false)
       await checkCloudVersion(true) // Pass true for retry to avoid flash
     } catch (error) {
@@ -342,18 +333,18 @@ export default function InitScreen() {
     init()
   }, [authLoading, isNavigationReady, selectionResolved])
 
-  // Clear cached required version when backend URL changes so a stricter
+  // Clear the legacy consumer cache when its Runtime changes so a stricter
   // server's requirement doesn't block access to a different backend.
   // Skip the initial mount so the cached value is preserved for offline enforcement.
-  const coreUrlRef = useRef(coreUrl)
+  const runtimeUrlRef = useRef(runtimeUrl)
   useEffect(() => {
-    if (coreUrlRef.current !== coreUrl) {
-      coreUrlRef.current = coreUrl
+    if (runtimeUrlRef.current !== runtimeUrl) {
+      runtimeUrlRef.current = runtimeUrl
       if (cachedRequiredVersion) {
         setCachedRequiredVersion("")
       }
     }
-  }, [coreUrl])
+  }, [runtimeUrl])
 
   useEffect(() => {
     setAnimation("fade")

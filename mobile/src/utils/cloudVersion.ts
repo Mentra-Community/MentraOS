@@ -1,13 +1,15 @@
 /**
- * @fileoverview Minimum-client-version gate against Cloud V2 core
- * (GET /api/client/min-version, unauthenticated). Replaces the retired V1
- * RestComms.getMinimumClientVersion in the boot version check.
+ * @fileoverview Minimum-client-version gate against Cloud V2 Runtime
+ * (GET /api/client/min-version, unauthenticated).
  */
 import {AsyncResult, result as Res} from "typesafe-ts"
 
-import {resolvedEndpoints} from "@/services/cloudClient"
+function normalizedBaseUrl(baseUrl: string): string {
+  return baseUrl.replace(/\/+$/, "")
+}
 
 export function fetchMinimumClientVersion(
+  runtimeUrl: string,
   attempts = 3,
   delayMs = 1000,
 ): AsyncResult<{required: string; recommended: string}, Error> {
@@ -15,8 +17,7 @@ export function fetchMinimumClientVersion(
     let lastErr: unknown
     for (let i = 0; i < attempts; i++) {
       try {
-        const core = resolvedEndpoints().core.replace(/\/+$/, "")
-        const res = await fetch(`${core}/api/client/min-version`)
+        const res = await fetch(`${normalizedBaseUrl(runtimeUrl)}/api/client/min-version`)
         if (!res.ok) throw new Error(`min-version HTTP ${res.status}`)
         const body = (await res.json()) as {data?: {required?: string; recommended?: string}}
         const data = body?.data ?? (body as {required?: string; recommended?: string})

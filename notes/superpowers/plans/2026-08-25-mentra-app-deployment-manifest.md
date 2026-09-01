@@ -136,7 +136,11 @@ server-side harness. Lane A is not expected to place a Teams call.
 - [ ] Persist workspace origin and last valid manifest under `deploymentId`.
 - [ ] Namespace credentials, settings, miniapp state, and caches by
       `deploymentId`.
-- [ ] Require exact `releaseIdentity` and HTTPS outside development.
+- [ ] Require HTTPS outside development. Do not couple a deployment manifest to
+      one exact mobile release.
+- [ ] Use Runtime's common unauthenticated `/api/client/min-version` policy for
+      required and recommended app-version floors. Keep Core's existing route
+      temporarily for already-released clients.
 - [ ] Validate all URLs, deployment links, package names, glasses model ids, and
       Entra authority/scopes.
 - [ ] Reject `common`, `organizations`, personal Microsoft accounts, and any
@@ -183,7 +187,7 @@ server-side harness. Lane A is not expected to place a Teams call.
       cross-origin redirects.
 - [ ] Require the configured Runtime URL to match the entered origin.
 - [ ] Keep the fetched workspace pending through resolution, schema validation,
-      and exact release validation.
+      and security-policy validation.
 - [ ] Show display name, hostname, and Microsoft organization sign-in before
       activation, with technical details expandable.
 - [ ] Provide Back and Cancel before activation. Neither may persist state or

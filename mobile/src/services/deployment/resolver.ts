@@ -18,7 +18,6 @@ export class DeploymentResolutionError extends Error {
       | "redirect"
       | "response-too-large"
       | "invalid-manifest"
-      | "release-mismatch"
       | "origin-mismatch",
   ) {
     super(message)
@@ -27,7 +26,6 @@ export class DeploymentResolutionError extends Error {
 }
 
 export interface ResolveDeploymentOptions {
-  installedReleaseIdentity: string
   fetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
   timeoutMs?: number
   maxBytes?: number
@@ -120,25 +118,19 @@ export async function resolveDeploymentCandidate(
     throw new DeploymentResolutionError("Workspace manifest does not match the supported schema.", "invalid-manifest")
   }
 
-  validateDeploymentManifest(parsed.data, workspaceOrigin, options)
+  validateDeploymentManifest(parsed.data, workspaceOrigin, options.allowInsecureLocalhost)
   return {workspaceOrigin, manifestUrl, manifest: parsed.data}
 }
 
 function validateDeploymentManifest(
   manifest: DeploymentManifest,
   workspaceOrigin: string,
-  options: Pick<ResolveDeploymentOptions, "installedReleaseIdentity" | "allowInsecureLocalhost">,
+  allowInsecureLocalhost = false,
 ): void {
-  if (manifest.releaseIdentity !== options.installedReleaseIdentity) {
-    throw new DeploymentResolutionError(
-      `This workspace requires Mentra App ${manifest.releaseIdentity}.`,
-      "release-mismatch",
-    )
-  }
   if (!manifest.services.runtimeUrl) {
     throw new DeploymentResolutionError("This workspace does not configure Runtime.", "invalid-manifest")
   }
-  const runtimeOrigin = secureUrlOrigin(manifest.services.runtimeUrl, options.allowInsecureLocalhost)
+  const runtimeOrigin = secureUrlOrigin(manifest.services.runtimeUrl, allowInsecureLocalhost)
   if (runtimeOrigin !== workspaceOrigin) {
     throw new DeploymentResolutionError(
       "Runtime must use the workspace origin in deployment schema v1.",
@@ -146,7 +138,7 @@ function validateDeploymentManifest(
     )
   }
   for (const url of allConfiguredUrls(manifest)) {
-    secureUrlOrigin(url, options.allowInsecureLocalhost)
+    secureUrlOrigin(url, allowInsecureLocalhost)
   }
   if (manifest.auth.mode !== "microsoft-entra") {
     throw new DeploymentResolutionError(

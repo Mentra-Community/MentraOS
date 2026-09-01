@@ -24,4 +24,31 @@ describe("Runtime API composition", () => {
     expect((await handle.app.request("/api/audio/session")).status).toBe(404);
     await handle.stop();
   });
+
+  test("serves the minimum client version policy in every profile", async () => {
+    const previousRequired = process.env.CLOUD_CLIENT_MIN_VERSION;
+    const previousRecommended = process.env.CLOUD_CLIENT_RECOMMENDED_VERSION;
+    process.env.CLOUD_CLIENT_MIN_VERSION = "3.1.0";
+    process.env.CLOUD_CLIENT_RECOMMENDED_VERSION = "3.2.0";
+
+    try {
+      const handle = createApiApp({
+        readinessChecks: [],
+        services: new Set(["meetings"]),
+      });
+      const response = await handle.app.request("/api/client/min-version");
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({
+        success: true,
+        data: { required: "3.1.0", recommended: "3.2.0" },
+      });
+      await handle.stop();
+    } finally {
+      if (previousRequired === undefined) delete process.env.CLOUD_CLIENT_MIN_VERSION;
+      else process.env.CLOUD_CLIENT_MIN_VERSION = previousRequired;
+      if (previousRecommended === undefined) delete process.env.CLOUD_CLIENT_RECOMMENDED_VERSION;
+      else process.env.CLOUD_CLIENT_RECOMMENDED_VERSION = previousRecommended;
+    }
+  });
 });

@@ -23,7 +23,6 @@ export const deploymentManifestSchema: z.ZodType<DeploymentManifest> = z
     schemaVersion: z.literal(1),
     deploymentId: z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/),
     displayName: z.string().min(1).max(120),
-    releaseIdentity: z.string().min(1).max(120),
     services: z
       .object({
         coreUrl: nullableUrl,

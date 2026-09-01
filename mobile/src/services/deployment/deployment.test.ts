@@ -3,7 +3,6 @@ import {DeploymentStore, type DeploymentStorage} from "./store"
 import type {ActiveDeployment, DeploymentManifest, WorkspaceDeployment} from "./types"
 import {MicrosoftEntraDeploymentAuthProvider} from "./auth/MicrosoftEntraDeploymentAuthProvider"
 
-const RELEASE = "3.1.0-dev.99"
 const WORKSPACE = "https://mentra.enterprise.example"
 
 function manifest(overrides: Partial<DeploymentManifest> = {}): DeploymentManifest {
@@ -11,7 +10,6 @@ function manifest(overrides: Partial<DeploymentManifest> = {}): DeploymentManife
     schemaVersion: 1,
     deploymentId: "mentra-enterprise-dev",
     displayName: "Mentra Enterprise Dev",
-    releaseIdentity: RELEASE,
     services: {coreUrl: null, runtimeUrl: WORKSPACE},
     auth: {
       mode: "microsoft-entra",
@@ -86,10 +84,7 @@ describe("normalizeWorkspaceOrigin", () => {
 describe("resolveDeploymentCandidate", () => {
   it("resolves and validates a customer manifest", async () => {
     const fetch = jest.fn(async () => response(JSON.stringify(manifest())))
-    const candidate = await resolveDeploymentCandidate(WORKSPACE, {
-      installedReleaseIdentity: RELEASE,
-      fetch,
-    })
+    const candidate = await resolveDeploymentCandidate(WORKSPACE, {fetch})
 
     expect(candidate.workspaceOrigin).toBe(WORKSPACE)
     expect(candidate.manifest.auth.mode).toBe("microsoft-entra")
@@ -99,32 +94,23 @@ describe("resolveDeploymentCandidate", () => {
     )
   })
 
-  it("rejects a different coordinated release", async () => {
-    const fetch = jest.fn(async () => response(JSON.stringify(manifest({releaseIdentity: "3.2.0"}))))
-    await expect(
-      resolveDeploymentCandidate(WORKSPACE, {installedReleaseIdentity: RELEASE, fetch}),
-    ).rejects.toMatchObject({code: "release-mismatch"})
-  })
-
   it("rejects cross-origin Runtime", async () => {
     const fetch = jest.fn(async () =>
       response(JSON.stringify(manifest({services: {coreUrl: null, runtimeUrl: "https://runtime.attacker.example"}}))),
     )
-    await expect(
-      resolveDeploymentCandidate(WORKSPACE, {installedReleaseIdentity: RELEASE, fetch}),
-    ).rejects.toMatchObject({code: "origin-mismatch"})
+    await expect(resolveDeploymentCandidate(WORKSPACE, {fetch})).rejects.toMatchObject({code: "origin-mismatch"})
   })
 
   it("rejects redirects and oversized responses", async () => {
     const redirectFetch = jest.fn(async () => response("", {status: 302}))
-    await expect(
-      resolveDeploymentCandidate(WORKSPACE, {installedReleaseIdentity: RELEASE, fetch: redirectFetch}),
-    ).rejects.toMatchObject({code: "redirect"})
+    await expect(resolveDeploymentCandidate(WORKSPACE, {fetch: redirectFetch})).rejects.toMatchObject({
+      code: "redirect",
+    })
 
     const largeFetch = jest.fn(async () => response("{}", {contentLength: 500_000}))
-    await expect(
-      resolveDeploymentCandidate(WORKSPACE, {installedReleaseIdentity: RELEASE, fetch: largeFetch}),
-    ).rejects.toMatchObject({code: "response-too-large"})
+    await expect(resolveDeploymentCandidate(WORKSPACE, {fetch: largeFetch})).rejects.toMatchObject({
+      code: "response-too-large",
+    })
   })
 
   it("requires an exact Entra tenant authority", async () => {
@@ -143,16 +129,12 @@ describe("resolveDeploymentCandidate", () => {
         ),
       ),
     )
-    await expect(
-      resolveDeploymentCandidate(WORKSPACE, {installedReleaseIdentity: RELEASE, fetch}),
-    ).rejects.toMatchObject({code: "invalid-manifest"})
+    await expect(resolveDeploymentCandidate(WORKSPACE, {fetch})).rejects.toMatchObject({code: "invalid-manifest"})
   })
 
   it("rejects workspace auth modes not implemented by this release", async () => {
     const fetch = jest.fn(async () => response(JSON.stringify(manifest({auth: {mode: "mentra-account"}}))))
-    await expect(
-      resolveDeploymentCandidate(WORKSPACE, {installedReleaseIdentity: RELEASE, fetch}),
-    ).rejects.toMatchObject({code: "invalid-manifest"})
+    await expect(resolveDeploymentCandidate(WORKSPACE, {fetch})).rejects.toMatchObject({code: "invalid-manifest"})
   })
 
   it("requires the fixed ACS Teams scope pair for native meetings", async () => {
@@ -161,9 +143,7 @@ describe("resolveDeploymentCandidate", () => {
     value.auth.teamsScopes = ["https://auth.msft.communication.azure.com/Teams.ManageCalls"]
     const fetch = jest.fn(async () => response(JSON.stringify(value)))
 
-    await expect(
-      resolveDeploymentCandidate(WORKSPACE, {installedReleaseIdentity: RELEASE, fetch}),
-    ).rejects.toMatchObject({code: "invalid-manifest"})
+    await expect(resolveDeploymentCandidate(WORKSPACE, {fetch})).rejects.toMatchObject({code: "invalid-manifest"})
   })
 })
 

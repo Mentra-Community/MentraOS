@@ -4,12 +4,7 @@ import {ActivityIndicator, Keyboard, View} from "react-native"
 import {Button, Header, Screen, Text, TextField} from "@/components/ignite"
 import {translate} from "@/i18n"
 import {useNavigationStore} from "@/stores/navigation"
-import {
-  DeploymentResolutionError,
-  installedReleaseIdentity,
-  resolveDeploymentCandidate,
-  useDeployment,
-} from "@/services/deployment"
+import {DeploymentResolutionError, resolveDeploymentCandidate, useDeployment} from "@/services/deployment"
 
 export default function WorkspaceScreen() {
   const [workspaceUrl, setWorkspaceUrl] = useState("")
@@ -24,7 +19,6 @@ export default function WorkspaceScreen() {
     setLoading(true)
     try {
       const candidate = await resolveDeploymentCandidate(workspaceUrl, {
-        installedReleaseIdentity: installedReleaseIdentity(),
         allowInsecureLocalhost: __DEV__,
       })
       setCandidate(candidate)

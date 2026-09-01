@@ -16,7 +16,6 @@ export interface DeploymentManifest {
   schemaVersion: 1
   deploymentId: string
   displayName: string
-  releaseIdentity: string
   services: {
     coreUrl: string | null
     runtimeUrl: string | null

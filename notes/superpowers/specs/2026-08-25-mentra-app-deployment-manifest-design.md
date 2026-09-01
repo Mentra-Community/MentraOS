@@ -179,6 +179,7 @@ a new service or image. One Runtime process exposes:
 GET    /.well-known/mentra-deployment.json
 GET    /healthz
 GET    /ready
+GET    /api/client/min-version
 POST   /api/meetings/acs/teams-user-token
 ```
 
@@ -324,10 +325,10 @@ manifest itself, while an ingress may still serve static workspace content.
 Optional Core, Store, artifact, and content hosts may be different when a future
 profile uses them.
 
-Entering a workspace creates a candidate only. The app downloads, resolves, and
-validates the manifest and exact `releaseIdentity`, then shows the deployment
-display name, workspace hostname, and declared sign-in type. It persists and
-activates the workspace only after the user confirms.
+Entering a workspace creates a candidate only. The app downloads and validates
+the manifest schema and security policy, then shows the deployment display name,
+workspace hostname, and declared sign-in type. It persists and activates the
+workspace only after the user confirms.
 
 ```text
 < Cancel
@@ -496,7 +497,6 @@ The first call-focused template is illustrative:
   "schemaVersion": 1,
   "deploymentId": "example-corp",
   "displayName": "Example Corp Mentra",
-  "releaseIdentity": "<exact coordinated Mentra App release identity>",
   "services": {
     "coreUrl": null,
     "runtimeUrl": "https://mentra.example-corp.com"
@@ -578,7 +578,11 @@ Rules:
 - The embedded Mentra profile uses `auth.mode: "mentra-account"` and complete
   Core and Runtime URLs. It retains Google, Apple, email signup, login,
   verification, and recovery.
-- `releaseIdentity` exactly matches the installed coordinated release.
+- Runtime serves the common unauthenticated `GET /api/client/min-version`
+  policy. `required` blocks older clients, `recommended` permits continuation
+  with an update prompt, and both default to `0.0.0`.
+- Manifest `schemaVersion` and Runtime protocol/API versioning govern wire
+  compatibility; deployment manifests do not pin one exact mobile release.
 - URLs are absolute HTTPS outside development.
 - `content.wallpaperUrls` is the complete preset catalog. An empty array makes
   no wallpaper request.
@@ -617,10 +621,11 @@ load local settings
   -> otherwise render local consumer/workspace landing screen
   -> consumer choice activates embedded Mentra deployment
   -> workspace choice fetches /.well-known/mentra-deployment.json
-  -> resolve and validate candidate plus exact release identity
+  -> resolve and validate the candidate manifest
   -> show workspace and sign-in type for confirmation
   -> atomically persist immutable active deployment
   -> initialize telemetry only when enabled
+  -> fetch required/recommended client versions from the selected Runtime
   -> create the selected auth provider
   -> for Microsoft Entra, initialize deployment-scoped MSAL and sign in
   -> configure Engine from the active deployment
