@@ -2171,12 +2171,16 @@ class MentraLive : SGCManager() {
                         return
                     }
                     val teardownToken = gattTeardownToken
-                    if (
-                            teardownToken != null &&
-                                    (newState == BluetoothProfile.STATE_DISCONNECTED ||
-                                            status != BluetoothGatt.GATT_SUCCESS)
-                    ) {
-                        completeGattTeardown(gatt, teardownToken, "disconnected_callback")
+                    if (teardownToken != null) {
+                        if (
+                                newState == BluetoothProfile.STATE_DISCONNECTED ||
+                                        status != BluetoothGatt.GATT_SUCCESS
+                        ) {
+                            completeGattTeardown(gatt, teardownToken, "disconnected_callback")
+                        }
+                        // Once teardown starts, a queued successful CONNECTED callback belongs to
+                        // the closing transport. It must not resurrect application connection
+                        // state while the disconnect callback is still pending.
                         return
                     }
 
