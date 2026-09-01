@@ -6907,7 +6907,19 @@ class MentraLive : SGCManager() {
     ) {
         if (isKilled) return
 
-        val connected = state == BluetoothProfile.STATE_CONNECTED
+        val connected = classicProfileConnectedState(state)
+        if (connected == null) {
+            Bridge.log(
+                    "LIVE: Classic: ignoring transitional " +
+                            profile.name +
+                            " state=" +
+                            state +
+                            " (" +
+                            source +
+                            ")"
+            )
+            return
+        }
         if (!classicAudioConnectionTracker.update(profile, device.address, connected)) {
             Bridge.log(
                     "LIVE: Classic: ignoring stale " +

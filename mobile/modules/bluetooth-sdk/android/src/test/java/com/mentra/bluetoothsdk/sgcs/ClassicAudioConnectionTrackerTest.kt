@@ -1,10 +1,19 @@
 package com.mentra.bluetoothsdk.sgcs
 
+import android.bluetooth.BluetoothProfile
 import java.lang.reflect.Modifier
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.Test
 
 class ClassicAudioConnectionTrackerTest {
+    @Test
+    fun `maps only terminal Android profile states`() {
+        assertThat(classicProfileConnectedState(BluetoothProfile.STATE_CONNECTED)).isTrue()
+        assertThat(classicProfileConnectedState(BluetoothProfile.STATE_DISCONNECTED)).isFalse()
+        assertThat(classicProfileConnectedState(BluetoothProfile.STATE_CONNECTING)).isNull()
+        assertThat(classicProfileConnectedState(BluetoothProfile.STATE_DISCONNECTING)).isNull()
+    }
+
     @Test
     fun `serializes every public state access`() {
         val synchronizedMethods = setOf("getConnected", "setTarget", "update", "clear", "reset")
