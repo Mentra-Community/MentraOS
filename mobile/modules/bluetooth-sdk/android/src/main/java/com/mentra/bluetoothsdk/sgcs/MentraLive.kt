@@ -3866,6 +3866,33 @@ class MentraLive : SGCManager() {
                         wifiError.takeIf { it.isNotEmpty() }
                 )
             }
+            "wifi_forget_result" -> {
+                Bridge.sendWifiForgetResult(
+                        requestId = json.optString("requestId", ""),
+                        ssid = json.optString("ssid", ""),
+                        success = json.optBoolean("success", false),
+                        connected = json.optBoolean("connected", false),
+                        currentSsid = json.optString("current_ssid", ""),
+                        localIp = json.optString("local_ip", ""),
+                        error = json.optString("error", "").ifEmpty { null },
+                )
+            }
+            "saved_wifi_networks" -> {
+                val networks = mutableListOf<String>()
+                val networkArray = json.optJSONArray("networks")
+                if (networkArray != null) {
+                    for (i in 0 until networkArray.length()) {
+                        networkArray.optString(i, "").trim().takeIf { it.isNotEmpty() }?.let {
+                            networks.add(it)
+                        }
+                    }
+                }
+                Bridge.sendSavedWifiNetworks(
+                        requestId = json.optString("requestId", ""),
+                        networks = networks,
+                        error = json.optString("error", "").ifEmpty { null },
+                )
+            }
             "hotspot_status_update" -> {
                 // Process hotspot status information (same pattern as "wifi_status")
                 val hotspotEnabled = json.optBoolean("hotspot_enabled", false)
@@ -9189,16 +9216,30 @@ class MentraLive : SGCManager() {
      * K900 SystemUI can properly clear the cached credentials
      */
     override fun forgetWifiNetwork(ssid: String) {
+        forgetWifiNetwork(ssid, null)
+    }
+
+    override fun forgetWifiNetwork(ssid: String, requestId: String?) {
         Bridge.log("LIVE: 📶 Sending WiFi forget command for SSID: " + ssid)
 
         try {
             val wifiCommand = JSONObject()
             wifiCommand.put("type", "forget_wifi")
             wifiCommand.put("ssid", ssid)
+            if (!requestId.isNullOrEmpty()) {
+                wifiCommand.put("requestId", requestId)
+            }
             sendJson(wifiCommand, true)
         } catch (e: JSONException) {
             Log.e(TAG, "Error creating WiFi forget JSON", e)
         }
+    }
+
+    override fun requestSavedWifiNetworks(requestId: String) {
+        val command = JSONObject()
+        command.put("type", "request_saved_wifi_networks")
+        command.put("requestId", requestId)
+        sendJson(command, true)
     }
 
     override fun sendHotspotState(enabled: Boolean) {

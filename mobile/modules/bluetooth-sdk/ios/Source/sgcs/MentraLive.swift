@@ -2810,6 +2810,24 @@ class MentraLive: NSObject, SGCManager {
             }
             updateWifiStatus(connected: connected, ssid: ssid, ip: ip, error: wifiError.isEmpty ? nil : wifiError)
 
+        case "wifi_forget_result":
+            Bridge.sendWifiForgetResult(
+                requestId: json["requestId"] as? String ?? "",
+                ssid: json["ssid"] as? String ?? "",
+                success: json["success"] as? Bool ?? false,
+                connected: json["connected"] as? Bool ?? false,
+                currentSsid: json["current_ssid"] as? String ?? "",
+                localIp: json["local_ip"] as? String ?? "",
+                error: (json["error"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            )
+
+        case "saved_wifi_networks":
+            Bridge.sendSavedWifiNetworks(
+                requestId: json["requestId"] as? String ?? "",
+                networks: json["networks"] as? [String] ?? [],
+                error: (json["error"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            )
+
         case "hotspot_status_update":
             let enabled = json["hotspot_enabled"] as? Bool ?? false
             let ssid = json["hotspot_ssid"] as? String ?? ""
@@ -3619,6 +3637,10 @@ class MentraLive: NSObject, SGCManager {
     }
 
     func forgetWifiNetwork(_ ssid: String) {
+        forgetWifiNetwork(ssid, requestId: nil)
+    }
+
+    func forgetWifiNetwork(_ ssid: String, requestId: String?) {
         Bridge.log("LIVE: 📶 Sending WiFi forget command for SSID: \(ssid)")
 
         guard !ssid.isEmpty else {
@@ -3626,12 +3648,22 @@ class MentraLive: NSObject, SGCManager {
             return
         }
 
-        let json: [String: Any] = [
+        var json: [String: Any] = [
             "type": "forget_wifi",
             "ssid": ssid,
         ]
+        if let requestId, !requestId.isEmpty {
+            json["requestId"] = requestId
+        }
 
         sendJson(json, wakeUp: true)
+    }
+
+    func requestSavedWifiNetworks(requestId: String) {
+        sendJson(
+            ["type": "request_saved_wifi_networks", "requestId": requestId],
+            wakeUp: true
+        )
     }
 
     func queryGalleryStatus() {

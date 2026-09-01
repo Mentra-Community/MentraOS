@@ -276,7 +276,7 @@ public class SystemNetworkManager extends BaseNetworkManager {
     }
 
     @Override
-    public void forgetWifiNetwork(String ssid) {
+    public boolean forgetWifiNetwork(String ssid) {
         Log.d(TAG, "Forgetting WiFi network: " + ssid);
 
         try {
@@ -285,19 +285,21 @@ public class SystemNetworkManager extends BaseNetworkManager {
                 Log.w(TAG, "Android 10+ has limited WiFi forget capabilities");
                 notificationManager.showDebugNotification(
                         "WiFi Forget", "Please forget '" + ssid + "' manually via system settings");
+                return false;
             } else {
                 // Legacy Android - can remove network programmatically
-                forgetWifiLegacy(ssid);
+                return forgetWifiLegacy(ssid);
             }
         } catch (Exception e) {
             Log.e(TAG, "Error forgetting WiFi network", e);
             notificationManager.showDebugNotification(
                     "WiFi Error", "Error forgetting WiFi network: " + e.getMessage());
+            return false;
         }
     }
 
     @SuppressLint("MissingPermission")
-    private void forgetWifiLegacy(String ssid) {
+    private boolean forgetWifiLegacy(String ssid) {
         try {
             if (wifiManager != null) {
                 List<WifiConfiguration> configs = wifiManager.getConfiguredNetworks();
@@ -314,7 +316,7 @@ public class SystemNetworkManager extends BaseNetworkManager {
                                 notificationManager.showDebugNotification(
                                         "WiFi Error", "Failed to forget network: " + ssid);
                             }
-                            return;
+                            return removed;
                         }
                     }
                 }
@@ -323,6 +325,7 @@ public class SystemNetworkManager extends BaseNetworkManager {
         } catch (Exception e) {
             Log.e(TAG, "Error forgetting WiFi network (legacy)", e);
         }
+        return false;
     }
 
     @SuppressLint("MissingPermission")

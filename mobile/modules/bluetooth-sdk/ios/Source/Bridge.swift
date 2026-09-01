@@ -466,6 +466,40 @@ class Bridge {
         Bridge.sendTypedMessage("wifi_status_change", body: body)
     }
 
+    static func sendWifiForgetResult(
+        requestId: String,
+        ssid: String,
+        success: Bool,
+        connected: Bool,
+        currentSsid: String,
+        localIp: String,
+        error: String?
+    ) {
+        var body: [String: Any] = [
+            "requestId": requestId,
+            "ssid": ssid,
+            "success": success,
+            "connected": connected,
+            "currentSsid": currentSsid,
+            "localIp": localIp,
+        ]
+        if let error {
+            body["error"] = error
+        }
+        Bridge.sendTypedMessage("wifi_forget_result", body: body)
+    }
+
+    static func sendSavedWifiNetworks(requestId: String, networks: [String], error: String?) {
+        var body: [String: Any] = [
+            "requestId": requestId,
+            "networks": networks,
+        ]
+        if let error {
+            body["error"] = error
+        }
+        Bridge.sendTypedMessage("saved_wifi_networks", body: body)
+    }
+
     /// Claim the WiFi scan-results store for a newly requested scan. Called by the
     /// SDK when it generates the scanId, BEFORE the scan command goes out: store
     /// ownership is decided at request time, not by whichever chunk arrives first,
@@ -655,6 +689,5 @@ class Bridge {
         return payload
     }
 }
-
 
 

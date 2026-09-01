@@ -1106,6 +1106,8 @@ export interface BluetoothSdkPublicModule {
   ping(): Promise<void>
 
   requestWifiScan(): Promise<WifiSearchResult[]>
+  /** List WiFi network names currently saved on the glasses. */
+  getSavedWifiNetworks(): Promise<string[]>
   sendWifiCredentials(ssid: string, password: string): Promise<WifiStatusChangeEvent>
   forgetWifiNetwork(ssid: string): Promise<WifiStatusChangeEvent>
   setHotspotState(enabled: boolean): Promise<HotspotStatusChangeEvent>

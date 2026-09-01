@@ -135,6 +135,49 @@ public class CommunicationManager
     }
 
     @Override
+    public void sendWifiForgetResultOverBle(
+            String requestId, String ssid, boolean success, String error) {
+        try {
+            JSONObject response = new JSONObject();
+            response.put("type", "wifi_forget_result");
+            if (requestId != null && !requestId.isEmpty()) {
+                response.put("requestId", requestId);
+            }
+            response.put("ssid", ssid);
+            response.put("success", success);
+            if (error != null && !error.isEmpty()) {
+                response.put("error", error);
+            }
+            if (networkManager != null) {
+                boolean connected = networkManager.isConnectedToWifi();
+                response.put("connected", connected);
+                response.put("current_ssid", connected ? networkManager.getCurrentWifiSsid() : "");
+                response.put("local_ip", connected ? networkManager.getLocalIpAddress() : "");
+            }
+            reliableManager.sendMessage(response);
+        } catch (JSONException e) {
+            Log.e(TAG, "Error creating WiFi forget result", e);
+        }
+    }
+
+    @Override
+    public void sendSavedWifiNetworksOverBle(
+            String requestId, List<String> networks, String error) {
+        try {
+            JSONObject response = new JSONObject();
+            response.put("type", "saved_wifi_networks");
+            response.put("requestId", requestId);
+            response.put("networks", new org.json.JSONArray(networks));
+            if (error != null && !error.isEmpty()) {
+                response.put("error", error);
+            }
+            reliableManager.sendMessage(response);
+        } catch (JSONException e) {
+            Log.e(TAG, "Error creating saved WiFi networks response", e);
+        }
+    }
+
+    @Override
     public void sendBatteryStatusOverBle() {
         Log.d(TAG, "🔋 =========================================");
         Log.d(TAG, "🔋 SEND BATTERY STATUS OVER BLE");

@@ -46,6 +46,24 @@ public interface ICommunicationManager {
      *               every chunk; null when the request carried none
      */
     void sendWifiScanResultsOverBleEnhanced(java.util.List<NetworkInfo> networks, boolean scanComplete, String scanId);
+
+    /**
+     * Send the terminal result for a forget_wifi command.
+     * @param requestId Correlation id supplied by the phone, or null for a legacy request
+     * @param ssid Network the phone asked the glasses to forget
+     * @param success Whether the glasses accepted the forget operation
+     * @param error Stable failure code, or null on success
+     */
+    void sendWifiForgetResultOverBle(String requestId, String ssid, boolean success, String error);
+
+    /**
+     * Send the configured WiFi SSIDs stored on the glasses.
+     * @param requestId Correlation id supplied by the phone
+     * @param networks Saved SSIDs; never null
+     * @param error Stable failure code, or null on success
+     */
+    void sendSavedWifiNetworksOverBle(
+            String requestId, java.util.List<String> networks, String error);
     
     /**
      * Send acknowledgment response

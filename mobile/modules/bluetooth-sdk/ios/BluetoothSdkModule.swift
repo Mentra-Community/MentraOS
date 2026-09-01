@@ -292,6 +292,11 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             return try await sdk.requestWifiScan().map(\.dictionary)
         }
 
+        AsyncFunction("getSavedWifiNetworks") {
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await sdk.getSavedWifiNetworks()
+        }
+
         AsyncFunction("sendWifiCredentials") { (ssid: String, password: String) in
             let sdk = await MainActor.run { self.bluetoothSdk() }
             return try await sdk.sendWifiCredentials(ssid: ssid, password: password).values
@@ -933,7 +938,6 @@ private extension ConnectOptions {
         )
     }
 }
-
 
 
 

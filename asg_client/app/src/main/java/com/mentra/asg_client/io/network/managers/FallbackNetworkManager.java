@@ -246,12 +246,13 @@ public class FallbackNetworkManager extends BaseNetworkManager {
     }
 
     @Override
-    public void forgetWifiNetwork(String ssid) {
+    public boolean forgetWifiNetwork(String ssid) {
         Log.d(TAG, "Forgetting WiFi network: " + ssid);
         // Fallback to manual WiFi forget
         notificationManager.showDebugNotification(
                 "Manual WiFi Forget", "Please forget network '" + ssid + "' via system settings");
         Log.d(TAG, "Manual WiFi forget prompt shown for: " + ssid);
+        return false;
     }
 
     private void promptDisconnectFromWifi() {

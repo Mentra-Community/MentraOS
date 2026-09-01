@@ -112,6 +112,7 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
   setScreenDisabled: bindPublicMethod("setScreenDisabled"),
   ping: bindPublicMethod("ping"),
   requestWifiScan: bindPublicMethod("requestWifiScan"),
+  getSavedWifiNetworks: bindPublicMethod("getSavedWifiNetworks"),
   sendWifiCredentials: bindPublicMethod("sendWifiCredentials"),
   forgetWifiNetwork: bindPublicMethod("forgetWifiNetwork"),
   setHotspotState: bindPublicMethod("setHotspotState"),

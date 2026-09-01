@@ -68,6 +68,7 @@ class MentraBluetoothSdk private constructor(
     private var pendingOtaStart: PendingResponse<OtaStartAckEvent>? = null
     private var pendingStreamStop: PendingStreamStop? = null
     private var pendingWifiScan: PendingWifiScan? = null
+    private var pendingSavedWifiNetworks: PendingSavedWifiNetworks? = null
     private var pendingWifiStatus: PendingWifiStatusRequest? = null
     private var pendingHotspotStatus: PendingHotspotStatusRequest? = null
     private var pendingVersionInfo: PendingResponse<VersionInfoResult>? = null
@@ -191,6 +192,12 @@ class MentraBluetoothSdk private constructor(
         val operation: WifiStatusOperation,
         val ssid: String,
         val pending: PendingResponse<WifiStatusEvent>,
+        val requestId: String? = null,
+    )
+
+    private data class PendingSavedWifiNetworks(
+        val requestId: String,
+        val pending: PendingResponse<List<String>>,
     )
 
     private enum class WifiStatusOperation {
@@ -869,6 +876,7 @@ class MentraBluetoothSdk private constructor(
 
     suspend fun forgetWifiNetwork(ssid: String): WifiStatusEvent {
         val pending = PendingResponse<WifiStatusEvent>("WiFi forget request")
+        val requestId = "forget-${UUID.randomUUID()}"
         synchronized(oneShotLock) {
             if (pendingWifiStatus != null) {
                 throw BluetoothSdkException(
@@ -876,15 +884,45 @@ class MentraBluetoothSdk private constructor(
                     "A WiFi status command is already waiting for a glasses response.",
                 )
             }
-            pendingWifiStatus = PendingWifiStatusRequest(WifiStatusOperation.FORGET, ssid, pending)
+            pendingWifiStatus =
+                PendingWifiStatusRequest(
+                    WifiStatusOperation.FORGET,
+                    ssid,
+                    pending,
+                    requestId = requestId,
+                )
         }
         try {
-            deviceManager.forgetWifiNetwork(ssid)
+            deviceManager.forgetWifiNetwork(ssid, requestId)
             return pending.await()
         } finally {
             synchronized(oneShotLock) {
                 if (pendingWifiStatus?.pending === pending) {
                     pendingWifiStatus = null
+                }
+            }
+        }
+    }
+
+    suspend fun getSavedWifiNetworks(): List<String> {
+        val pending = PendingResponse<List<String>>("Saved WiFi networks request")
+        val request = PendingSavedWifiNetworks("saved-${UUID.randomUUID()}", pending)
+        synchronized(oneShotLock) {
+            if (pendingSavedWifiNetworks != null) {
+                throw BluetoothSdkException(
+                    "request_in_flight",
+                    "A saved WiFi networks request is already waiting for a glasses response.",
+                )
+            }
+            pendingSavedWifiNetworks = request
+        }
+        try {
+            deviceManager.requestSavedWifiNetworks(request.requestId)
+            return pending.await()
+        } finally {
+            synchronized(oneShotLock) {
+                if (pendingSavedWifiNetworks === request) {
+                    pendingSavedWifiNetworks = null
                 }
             }
         }
@@ -1581,6 +1619,14 @@ class MentraBluetoothSdk private constructor(
                 handleWifiStatusForRequests(event)
                 dispatchToListeners { it.onWifiStatusChanged(event) }
             }
+            "wifi_forget_result" -> {
+                handleWifiForgetResultForRequests(data)
+                dispatchToListeners { it.onRawEvent(eventName, data) }
+            }
+            "saved_wifi_networks" -> {
+                handleSavedWifiNetworksForRequests(data)
+                dispatchToListeners { it.onRawEvent(eventName, data) }
+            }
             "wifi_scan_result" -> {
                 val networks =
                     (data["networks"] as? List<*>)
@@ -2140,6 +2186,59 @@ class MentraBluetoothSdk private constructor(
             }
         }
         request.pending.resolve(event)
+    }
+
+    private fun handleWifiForgetResultForRequests(data: Map<String, Any>) {
+        val request = synchronized(oneShotLock) { pendingWifiStatus } ?: return
+        if (request.operation != WifiStatusOperation.FORGET) return
+        val responseRequestId = data["requestId"] as? String
+        if (!responseRequestId.isNullOrEmpty() && responseRequestId != request.requestId) return
+        if ((data["ssid"] as? String) != request.ssid) return
+
+        synchronized(oneShotLock) {
+            if (pendingWifiStatus === request) {
+                pendingWifiStatus = null
+            }
+        }
+        val success = data["success"] as? Boolean ?: false
+        if (!success) {
+            val error = (data["error"] as? String)?.takeIf { it.isNotEmpty() } ?: "wifi_forget_failed"
+            request.pending.reject(
+                BluetoothSdkException(error, "Glasses failed to forget \"${request.ssid}\": $error")
+            )
+            return
+        }
+
+        request.pending.resolve(
+            WifiStatusEvent(
+                connected = data["connected"] as? Boolean ?: false,
+                ssid = data["currentSsid"] as? String,
+                localIp = data["localIp"] as? String,
+            )
+        )
+    }
+
+    private fun handleSavedWifiNetworksForRequests(data: Map<String, Any>) {
+        val request = synchronized(oneShotLock) { pendingSavedWifiNetworks } ?: return
+        if ((data["requestId"] as? String) != request.requestId) return
+        synchronized(oneShotLock) {
+            if (pendingSavedWifiNetworks === request) {
+                pendingSavedWifiNetworks = null
+            }
+        }
+        val error = (data["error"] as? String)?.takeIf { it.isNotEmpty() }
+        if (error != null) {
+            request.pending.reject(
+                BluetoothSdkException(error, "Glasses could not list saved WiFi networks: $error")
+            )
+            return
+        }
+        val networks =
+            (data["networks"] as? List<*>)
+                ?.mapNotNull { (it as? String)?.trim()?.takeIf(String::isNotEmpty) }
+                ?.distinct()
+                ?: emptyList()
+        request.pending.resolve(networks)
     }
 
     private fun wifiStatusMatches(status: WifiStatus, request: PendingWifiStatusRequest): Boolean =

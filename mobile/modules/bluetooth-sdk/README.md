@@ -294,6 +294,9 @@ await BluetoothSdk.setDashboardPosition(4, 2)
 const networks = await BluetoothSdk.requestWifiScan()
 console.log(networks.map((network) => network.ssid))
 
+const savedNetworks = await BluetoothSdk.getSavedWifiNetworks()
+console.log(savedNetworks)
+
 const wifiStatus = await BluetoothSdk.sendWifiCredentials('Office WiFi', 'secret')
 console.log(wifiStatus.state)
 
@@ -328,7 +331,9 @@ console.log(ledAck.state)
 Settings commands that return `SettingsAckSuccessEvent` reject when the ASG reports an error ack. The SDK updates its local settings store only after that ASG ack resolves successfully, so observed SDK state reflects the acknowledged glasses state rather than a queued request. Raw `settings_ack` listener events still use `SettingsAckEvent` because they can include both success and failure statuses. `rgbLedControl(...)` resolves from a successful ASG `rgb_led_control_response` and rejects when the ASG reports `state: "error"`; raw `settings_ack` and `rgb_led_control_response` events remain available through listeners.
 
 WiFi, hotspot, and version-info commands resolve from the ASG response path, not local dispatch:
-`requestWifiScan()` resolves from the ASG `wifi_scan_result` completion response with the updated scan list, including `[]` when no networks are found. Intermediate `wifi_scan_result` events can arrive with `scanComplete: false` while the glasses stream discovered networks; the final event uses `scanComplete: true`. If older glasses stream non-empty scan results but never send the completion event, the request resolves with the accumulated scan list when the request times out. `sendWifiCredentials()` resolves when the requested SSID is connected, `forgetWifiNetwork()` resolves when that SSID is no longer connected, `setHotspotState()` resolves when the requested hotspot state is reported, and `requestVersionInfo()` resolves from the ASG `version_info` response instead of local store changes.
+`requestWifiScan()` resolves from the ASG `wifi_scan_result` completion response with the updated scan list, including `[]` when no networks are found. Intermediate `wifi_scan_result` events can arrive with `scanComplete: false` while the glasses stream discovered networks; the final event uses `scanComplete: true`. If older glasses stream non-empty scan results but never send the completion event, the request resolves with the accumulated scan list when the request times out. `sendWifiCredentials()` resolves when the requested SSID is connected, `forgetWifiNetwork()` resolves when the forget is accepted (and returns the current link snapshot), `setHotspotState()` resolves when the requested hotspot state is reported, and `requestVersionInfo()` resolves from the ASG `version_info` response instead of local store changes.
+
+Current Mentra Live builds acknowledge `forgetWifiNetwork()` with a correlated `wifi_forget_result`, so a successful forget resolves immediately without occupying the WiFi command slot for the generic 15-second timeout. Older glasses remain supported through the existing `wifi_status` completion path. `getSavedWifiNetworks()` returns the SSIDs configured on current Mentra Live builds; older glasses that do not support `request_saved_wifi_networks` reject with the normal request timeout.
 
 The SDK automatically sends the phone wall clock once shortly after a glasses connection becomes ready. It waits for the initial command burst to drain before timestamping the command so startup queue delay does not become clock skew. The once-per-connection guard resets after disconnect, so every successful reconnect synchronizes again. The SDK does not periodically verify or correct clock skew during a long-lived connection; apps that require periodic reconciliation can compare `requestVersionInfo().systemTimeMs` with the phone clock.
 

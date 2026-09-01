@@ -576,6 +576,36 @@ public class Bridge private constructor() {
             sendTypedMessage("wifi_status_change", payload)
         }
 
+        @JvmStatic
+        fun sendWifiForgetResult(
+                requestId: String,
+                ssid: String,
+                success: Boolean,
+                connected: Boolean,
+                currentSsid: String,
+                localIp: String,
+                error: String?,
+        ) {
+            val body = HashMap<String, Any>()
+            body["requestId"] = requestId
+            body["ssid"] = ssid
+            body["success"] = success
+            body["connected"] = connected
+            body["currentSsid"] = currentSsid
+            body["localIp"] = localIp
+            if (error != null) body["error"] = error
+            sendTypedMessage("wifi_forget_result", body)
+        }
+
+        @JvmStatic
+        fun sendSavedWifiNetworks(requestId: String, networks: List<String>, error: String?) {
+            val body = HashMap<String, Any>()
+            body["requestId"] = requestId
+            body["networks"] = networks
+            if (error != null) body["error"] = error
+            sendTypedMessage("saved_wifi_networks", body)
+        }
+
         /**
          * Claim the WiFi scan-results store for a newly requested scan. Called by the
          * SDK when it generates the scanId, BEFORE the scan command goes out: store
