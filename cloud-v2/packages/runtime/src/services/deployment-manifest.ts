@@ -61,7 +61,7 @@ export function assertManifestMatchesRuntimeServices(
   const advertised = manifest.features;
   const actual = {
     runtimeRealtimeSession: services.has("realtime-audio"),
-    managedStreams: services.has("managed-streams"),
+    managedStreams: services.has("managed-photos"),
     nativeMeetings: services.has("meetings"),
     cloudSpeech: services.has("realtime-audio") || services.has("tts"),
     navigation: services.has("maps"),

@@ -21,10 +21,6 @@ import { cameraApi } from "./camera.api";
 import { mapsApi } from "./maps.api";
 import { ttsApi } from "./tts.api";
 import { meetingsApi } from "./meetings.api";
-import {
-  createManagedStreamsApi,
-  type ManagedStreamsHandle,
-} from "./managed-streams.api";
 import type { RuntimeServiceName } from "../services/runtime-services";
 import { serviceList } from "../services/runtime-services";
 
@@ -39,24 +35,17 @@ export interface CreateApiAppOptions {
   };
 }
 
-export interface ApiAppHandle {
-  app: Hono;
-  stop(): Promise<void>;
-}
-
 /** Build the runtime's HTTP app. Called once at boot in `index.ts`. */
-export function createApiApp(opts: CreateApiAppOptions): ApiAppHandle {
+export function createApiApp(opts: CreateApiAppOptions): Hono {
   const app = new Hono();
   const services =
     opts.services ??
     new Set<RuntimeServiceName>([
       "realtime-audio",
       "managed-photos",
-      "managed-streams",
       "maps",
       "tts",
     ]);
-  let managedStreams: ManagedStreamsHandle | undefined;
 
   // Public and available in every Runtime profile. Core keeps the same route
   // temporarily for already-released clients.
@@ -72,10 +61,6 @@ export function createApiApp(opts: CreateApiAppOptions): ApiAppHandle {
 
   if (services.has("realtime-audio")) app.route("/api/audio", audioApi);
   if (services.has("managed-photos")) app.route("/api/camera", cameraApi);
-  if (services.has("managed-streams") && !services.has("managed-photos")) {
-    managedStreams = createManagedStreamsApi();
-    app.route("/api/camera", managedStreams.api);
-  }
   if (services.has("maps")) app.route("/api/maps", mapsApi);
   if (services.has("tts")) app.route("/api/tts", ttsApi);
   if (services.has("meetings")) app.route("/api/meetings", meetingsApi);
@@ -108,10 +93,5 @@ export function createApiApp(opts: CreateApiAppOptions): ApiAppHandle {
   });
   app.route("/", health);
 
-  return {
-    app,
-    async stop() {
-      await managedStreams?.stop();
-    },
-  };
+  return app;
 }

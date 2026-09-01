@@ -57,7 +57,6 @@ import {
   serviceList,
   type RuntimeServiceName,
 } from "./services/runtime-services";
-import { getStreamProvider } from "./services/stream/stream.service";
 import { assertAcsTeamsConfigured } from "./services/meetings/acs-teams.service";
 import { resolveMeetingProviders } from "./services/meetings/meeting-providers";
 import {
@@ -236,11 +235,6 @@ export async function startRuntime(
   if (services.has("managed-photos") && !realtimeAudio) {
     throw new Error("managed-photos currently requires realtime-audio");
   }
-  const explicitServiceProfile =
-    opts.services !== undefined ||
-    Boolean(process.env.RUNTIME_SERVICES?.trim());
-  if (explicitServiceProfile && services.has("managed-streams"))
-    getStreamProvider();
   if (services.has("meetings")) {
     const meetingProviders = resolveMeetingProviders();
     if (meetingProviders.has("acs-teams")) assertAcsTeamsConfigured();
@@ -343,14 +337,12 @@ export async function startRuntime(
   // a stop() -- a disconnect, a closed app, a pod restart. Left alone these
   // accumulate until the account hits its storage quota, at which point
   // Cloudflare accepts new live inputs but rejects the broadcast at publish.
-  // cameraApi's legacy durable registry is mounted with managed-photos. The
-  // HTTP-only managed-streams module owns a separate in-process cleanup loop;
-  // running both against the same Cloudflare account races stream deletion.
+  // cameraApi's durable registry is mounted with managed-photos.
   if (realtimeAudio && services.has("managed-photos")) startStreamSweepLoop();
 
   // The REST surface (Hono): subscriptions today, health, camera later. The WS
   // upgrade is tried first; everything else falls through to this app.
-  const apiHandle = createApiApp({
+  const api = createApiApp({
     readinessChecks: realtimeAudio ? [redisReadinessCheck] : [],
     services,
     deploymentManifest,
@@ -364,7 +356,7 @@ export async function startRuntime(
         const wsResult = await tryWsUpgrade(req, srv);
         if (wsResult !== HTTP_FALLTHROUGH) return wsResult;
       }
-      return apiHandle.app.fetch(req);
+      return api.fetch(req);
     },
     websocket: wsHandlers,
   });
@@ -392,7 +384,6 @@ export async function startRuntime(
         stopStreamSweepLoop();
         await stopWorkerPool();
       }
-      await apiHandle.stop();
       server.stop();
       if (realtimeAudio) {
         await stopUdpIngress();
