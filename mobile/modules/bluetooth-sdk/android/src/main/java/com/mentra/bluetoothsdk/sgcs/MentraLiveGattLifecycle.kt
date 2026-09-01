@@ -6,11 +6,12 @@ package com.mentra.bluetoothsdk.sgcs
  * Android can keep the physical link alive after a disconnect request until it delivers the
  * disconnected callback. Starting another GATT session before that callback can reuse the old link,
  * including its already-consumed MTU exchange. Callers queue connection work here and release it
- * only after every outstanding teardown has completed or timed out.
+ * only after every outstanding teardown has completed or timed out. A newer deferred connection
+ * replaces the previous one so reconnect retries cannot start multiple GATT sessions together.
  */
 internal class MentraLiveGattTeardownBarrier {
     private val activeTeardowns = mutableSetOf<Long>()
-    private val waitingConnections = ArrayDeque<() -> Unit>()
+    private var waitingConnection: (() -> Unit)? = null
     private var nextToken = 1L
 
     @Synchronized
@@ -26,7 +27,7 @@ internal class MentraLiveGattTeardownBarrier {
         if (activeTeardowns.isEmpty()) {
             return false
         }
-        waitingConnections.addLast(work)
+        waitingConnection = work
         return true
     }
 
@@ -36,13 +37,9 @@ internal class MentraLiveGattTeardownBarrier {
                 if (!activeTeardowns.remove(token) || activeTeardowns.isNotEmpty()) {
                     return
                 }
-                buildList {
-                    while (waitingConnections.isNotEmpty()) {
-                        add(waitingConnections.removeFirst())
-                    }
-                }
+                waitingConnection.also { waitingConnection = null }
             }
-        ready.forEach { it() }
+        ready?.invoke()
     }
 }
 
