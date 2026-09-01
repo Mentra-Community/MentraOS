@@ -22,6 +22,11 @@ export type UseGlassesConnectionOptions = {
   autoConnectDefault?: boolean
   defaultDeviceStorage?: DefaultDeviceStorage
   onError?: (error: unknown) => void
+  /**
+   * Whether iOS should require ANCS authorization when automatically connecting.
+   * Defaults to true. Android accepts this option as a no-op.
+   */
+  requiresAncs?: boolean
   scanModel?: DeviceModel
   scanTimeoutMs?: number
 }
@@ -117,8 +122,8 @@ export function useGlassesConnection(
     }
 
     autoConnectAttemptedRef.current = true
-    void connectDefault().catch(() => undefined)
-  }, [defaultDevice, options.autoConnectDefault, status.connected])
+    void connectDefault({requiresAncs: options.requiresAncs ?? true}).catch(() => undefined)
+  }, [defaultDevice, options.autoConnectDefault, options.requiresAncs, status.connected])
 
   async function runConnectionAction<T>(
     nextAction: Exclude<GlassesConnectionAction, "idle" | "scanning">,
