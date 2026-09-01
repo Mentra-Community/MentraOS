@@ -1384,6 +1384,13 @@ enum MentraLiveConnectionState {
     case connected
 }
 
+enum MentraLiveConnectionOptions {
+    static func coreBluetoothOptions(requiresAncs: Bool) -> [String: Any]? {
+        guard requiresAncs else { return nil }
+        return [CBConnectPeripheralOptionRequiresANCS: true]
+    }
+}
+
 /// Type aliases for compatibility
 typealias JSONObject = [String: Any]
 
@@ -1743,6 +1750,7 @@ class MentraLive: NSObject, SGCManager {
 
     private var connectionTimeoutTimer: Timer?
     private var reconnectionWorkItem: DispatchWorkItem?
+    private var requiresAncs = true
 
     // MARK: - Initialization
 
@@ -1773,6 +1781,10 @@ class MentraLive: NSObject, SGCManager {
 
     func cleanup() {
         destroy()
+    }
+
+    func setRequiresAncs(_ requiresAncs: Bool) {
+        self.requiresAncs = requiresAncs
     }
 
     // MARK: - React Native Interface
@@ -2448,11 +2460,12 @@ class MentraLive: NSObject, SGCManager {
         centralManager?.connect(peripheral, options: nil)
         #else
         // ANCS is hosted by iOS and is only exposed to authorized accessories.
-        // Requiring it at connect time lets the system complete that authorization
-        // flow before the glasses subscribe to the ANCS characteristics.
+        // The default requirement lets the system complete that authorization flow
+        // before the glasses subscribe; apps that do not relay notifications can opt out.
+        Bridge.log("LIVE: ANCS connection requirement \(requiresAncs ? "enabled" : "disabled")")
         centralManager?.connect(
             peripheral,
-            options: [CBConnectPeripheralOptionRequiresANCS: true]
+            options: MentraLiveConnectionOptions.coreBluetoothOptions(requiresAncs: requiresAncs)
         )
         #endif
     }
