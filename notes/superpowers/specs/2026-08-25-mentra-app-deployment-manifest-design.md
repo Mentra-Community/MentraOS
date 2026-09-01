@@ -27,7 +27,7 @@ air-gapped. The app must not contact Mentra's public Core, Runtime, telemetry,
 artifact, content, or miniapp services after a self-hosted profile is active.
 It may reach destinations explicitly approved by the deployment operator,
 including the customer's Microsoft Entra tenant, customer Runtime, ACS resource,
-and the configured WHIP/WHEP streaming provider.
+and Microsoft Teams.
 
 ## Terminology
 
@@ -37,10 +37,8 @@ and the configured WHIP/WHEP streaming provider.
   AWS account.
 - **Modular Runtime Services** is the existing Cloud V2 Runtime binary started
   with an explicit allowlist of service modules. The first deployment runs one
-  HTTP-only process containing only managed-stream and meeting-provider
-  services. The first reference deployment deliberately runs one replica:
-  managed-stream ownership is process-local and abandoned inputs are reclaimed
-  after a restart. It is not a new gateway or a container per capability.
+  HTTP-only process containing only the meeting-provider service. It is not a
+  new gateway or a container per capability.
 - **Restricted-network deployment** describes the v1 network posture: only
   customer-approved destinations are reachable.
 - **Air-gapped deployment** is reserved for a future zero-egress qualification
@@ -60,11 +58,10 @@ The first Mentra Enterprise Self-Hosted deployment requires:
 - Mentra Live as the only glasses model qualified for the first pilot.
 - A customer workspace URL and deployment manifest reachable before sign-in.
 - Native Microsoft Entra sign-in against the deployment operator's tenant.
-- One customer-hosted Runtime Services process with only `managed-streams` and
-  `meetings` enabled.
+- One customer-hosted Runtime Services process with only `meetings` enabled.
 - A customer-owned ACS resource.
-- A customer-approved WHIP/WHEP streaming provider. The current
-  `nicolo/acs-teams-v1` implementation uses Cloudflare Stream.
+- The direct SoftAP glasses-to-phone media transport integrated with the native
+  ACS host. The existing Cloudflare/WHEP spike is not the enterprise media path.
 - Customer-hosted Mentra Live OTA artifacts if OTA is enabled for the pilot.
 - No unapproved public-network access after app and device provisioning.
 
@@ -72,10 +69,8 @@ The initial media path is:
 
 ```text
 Mentra Live camera
-  -> WHIP
-  -> customer-approved streaming provider
-  -> WHEP
-  -> Mentra App native decoder
+  -> local SoftAP glasses-to-phone transport
+  -> Mentra App native media host
   -> ACS raw outgoing media
   -> Microsoft Teams
 
@@ -85,10 +80,9 @@ Microsoft Teams
   -> glasses speakers
 ```
 
-"Direct to Teams through ACS" means that the phone is the Teams participant and
-there is no Recall bot. It does not mean the current implementation has no media
-relay: Cloudflare remains between the glasses' WHIP publisher and the phone's
-WHEP consumer until a direct glasses-to-phone transport is implemented.
+"Direct to Teams through ACS" means that the phone is the Teams participant,
+there is no Recall bot, and the enterprise media path has no public streaming
+relay between the glasses and phone.
 
 ## Mentra Call product slice and roadmap boundary
 
@@ -100,8 +94,8 @@ first deployment.
 
 | Concern | First integrated deployment | Later evolution |
 |---|---|---|
-| Product experience | Join an existing work/school Teams meeting by pasting its URL; one primary **Join Teams call** action; clear Wi-Fi-required, joining, in-call, failure, and leave states; leaving returns to the Mentra Call home screen | Create/invite/end meetings, calendar discovery, chat, custom display names, native sharing, and additional in-call controls |
-| Media transport | Mentra Live publishes video-only WHIP to Cloudflare; the phone consumes WHEP, uses its microphone for outgoing voice, and sends native ACS raw media to Teams; incoming voice plays through the glasses | Direct SoftAP glasses-to-phone media removes the managed-stream module and Cloudflare hop |
+| Product experience | Join an existing work/school Teams meeting by pasting its URL; one primary **Join Teams call** action; clear SoftAP connection, joining, in-call, failure, and leave states; leaving returns to the Mentra Call home screen | Create/invite/end meetings, calendar discovery, chat, custom display names, native sharing, and additional in-call controls |
+| Media transport | Mentra Live sends video directly to the phone over the local SoftAP transport; the native phone host sends ACS raw media to Teams and returns incoming voice to the glasses | Additional local transport optimization and qualified media/audio modes |
 | Identity and deployment | Nicolo's branch first proves the media path with an ACS guest identity; the enterprise integration replaces that credential source with the same employee Entra identity used to enter the workspace | Other IdPs, non-Entra deployments, and other meeting-provider identity models |
 | Meeting providers | Microsoft 365 work/school Teams through ACS | Google Meet, Zoom, and any consumer Recall-backed compatibility remain separate Mentra Call roadmap work |
 
@@ -114,16 +108,16 @@ The first combined product slice therefore requires:
   formats are negotiation ceilings, so qualification records the observed
   receiver resolution, frame rate, bitrate, and latency rather than assuming
   the requested format was delivered.
-- Show the existing Mentra Live Wi-Fi connection prompt when the Cloudflare
-  transport cannot start because the glasses are not connected to Wi-Fi.
-- Preserve Nicolo's current exclusive-microphone policy: the glasses WHIP stream
-  is video-only (`captureAudio: false`), the phone microphone supplies outgoing
-  Teams audio, and remote Teams audio plays through the glasses without a second
-  competing uplink.
+- Show clear SoftAP connection and recovery UX when the local glasses-to-phone
+  media link cannot start or is interrupted.
+- Preserve one unambiguous outgoing microphone source. The current phone-
+  microphone policy remains the baseline unless the integrated SoftAP media
+  contract explicitly qualifies glasses microphone audio; remote Teams audio
+  plays through the glasses without a competing second uplink.
 - Provide an unambiguous Leave action, confirm that the call ended, tear down
   stream and ACS resources, and return to the Mentra Call home screen.
 - Keep meeting creation, calendar integration, invitation UX, chat, Google Meet,
-  Zoom, and the SoftAP transport outside the first enterprise acceptance gate.
+  and Zoom outside the first enterprise acceptance gate.
   Existing mute or recovery behavior already present on the native branch may
   ship and must not regress, but this effort does not add new in-call product
   controls.
@@ -149,9 +143,9 @@ publishing, review, artifacts, and Console behavior move to Store. This first
 deployment needs neither product surface because its identity issuer is the
 customer's Entra tenant and its approved miniapps are bundled locally.
 
-Runtime still owns the trusted server half of live host capabilities. For the
-first deployment that means Cloudflare live-input allocation and ACS Teams-user
-token exchange. It does not mean running Runtime's speech pipeline or real-time
+Runtime still owns the trusted server half of the ACS identity capability. For
+the first deployment that means only ACS Teams-user token exchange. It does not
+sit in the media path or run Runtime's speech pipeline or real-time
 audio/WebSocket session.
 
 The Mentra App therefore needs a supported runtime-only Engine mode:
@@ -167,8 +161,9 @@ The Mentra App therefore needs a supported runtime-only Engine mode:
   manifest.
 - Cloud-backed settings, reports, speech, registry synchronization, and remote
   miniapps are unavailable.
-- Mentra Call requests the existing managed-stream and native-meeting host
-  capabilities. It does not call an app-specific backend for ACS mode.
+- Mentra Call requests the native-meeting host capability. The native host owns
+  the local SoftAP media transport and does not call an app-specific backend for
+  ACS mode.
 
 Core and Runtime URLs remain independently optional in the common manifest
 contract. Core is explicitly `null` and Runtime names the customer deployment in
@@ -184,9 +179,6 @@ a new service or image. One Runtime process exposes:
 GET    /.well-known/mentra-deployment.json
 GET    /healthz
 GET    /ready
-POST   /api/camera/stream
-GET    /api/camera/stream/:streamId
-DELETE /api/camera/stream/:streamId
 POST   /api/meetings/acs/teams-user-token
 ```
 
@@ -194,9 +186,7 @@ The reduced Runtime:
 
 - validates Runtime API access tokens directly against the configured Microsoft
   Entra issuer, JWKS, audience, tenant, signature, expiry, and scope;
-- authorizes the user or assigned group before allocating resources;
-- holds streaming-provider credentials and creates short-lived WHIP/WHEP
-  resources;
+- authorizes the user or assigned group before exchanging credentials;
 - holds an ACS server credential, or uses Azure managed identity/RBAC, to mint or
   exchange short-lived ACS credentials;
 - never receives the user's Microsoft password;
@@ -206,8 +196,7 @@ The reduced Runtime:
 Runtime service selection is an explicit positive allowlist, for example:
 
 ```text
-RUNTIME_SERVICES=managed-streams,meetings
-STREAM_PROVIDER=cloudflare
+RUNTIME_SERVICES=meetings
 MEETING_PROVIDER=acs-teams
 ```
 
@@ -220,13 +209,10 @@ inferred solely from the presence or absence of API keys.
 
 The existing Runtime startup must be split so this profile does not connect to
 Redis, bind UDP, spawn audio workers, start ownership loops, or accept Runtime
-WebSockets. The existing managed-stream REST contract and Cloudflare provider
-remain in place. The meetings module adds the trusted ACS exchange used by the
-native meeting host.
-
-When direct glasses-to-phone SoftAP video replaces WHIP/WHEP, the same Runtime
-image runs with `RUNTIME_SERVICES=meetings`. No new container or mobile API is
-introduced.
+WebSockets. The meetings module adds the trusted ACS exchange used by the native
+meeting host. The generic managed-stream module may remain available for other
+MentraOS profiles, but it is disabled and requires no Cloudflare configuration
+in the enterprise template.
 
 ## Ownership and merge boundary
 
@@ -238,8 +224,8 @@ branch:
 
 | Lane | Owner | Starting point | Exit condition |
 |---|---|---|---|
-| Enterprise/platform foundations | Alex | One implementation branch from current `dev` | Workspace resolution, Entra sign-in, Runtime-only Engine auth, reduced Runtime, managed stream, and server-harness ACS Teams-user exchange work without touching the native ACS branch |
-| Native Mentra Call/ACS media | Nicolo | `nicolo/acs-teams-v1`, rebased or merged with current `dev` by its owner | Existing work Teams URL joins through native ACS raw media on Android/iOS using the branch's guest checkpoint, with WHEP, audio, leave, and recovery qualified |
+| Enterprise/platform foundations | Alex | One implementation branch from current `dev` | Workspace resolution, Entra sign-in, Runtime-only Engine auth, meetings-only Runtime, and server-harness ACS Teams-user exchange work without touching the native ACS branch |
+| Native Mentra Call/ACS media | Nicolo | `nicolo/acs-teams-v1`, rebased or merged with current `dev` by its owner | Existing Teams/ACS work is adapted to the direct SoftAP source and qualified on Android/iOS with audio, leave, and recovery |
 | Product integration | Alex and Nicolo jointly | Fresh `dev` after both prerequisite lanes merge | Host-owned enterprise credentials replace miniapp token pass-through, the bundled Mentra Call UX invokes the agreed provider-neutral host capability, and the complete enterprise call passes qualification |
 
 - deployment manifest types, resolution, persistence, workspace selection, and
@@ -249,7 +235,6 @@ branch:
   Core endpoint;
 - Runtime module composition and HTTP-only startup;
 - direct Entra JWT verification by Runtime;
-- the existing managed-stream Runtime service, including ownership and cleanup;
 - the server-side ACS Teams-user exchange behind the Runtime meetings module;
 - the Azure template, operator configuration, and server-side qualification
   harness for that reduced Runtime.
@@ -257,7 +242,7 @@ branch:
 That tranche deliberately does not modify:
 
 - `mobile/modules/acs-meeting`;
-- native ACS audio/video policy or WHEP decoding;
+- native ACS audio/video policy or SoftAP media transport;
 - the current Miniapp SDK meeting request or protocol messages;
 - `LocalMiniappRuntime` meeting dispatch;
 - ACS-specific `PhoneStreamCoordinator` behavior;
@@ -680,9 +665,8 @@ cloud speech.
 The eventual Mentra Call/native-host integration requires:
 
 - Bundle the release-pinned Mentra Call package in the official Mentra App.
-- Keep managed-stream requests on the existing Engine/Runtime stream contract;
-  Runtime creates and tears down the Cloudflare live input and returns WHIP/WHEP
-  coordinates.
+- Keep high-rate SoftAP and ACS media entirely native. Runtime is used only for
+  authenticated ACS credential exchange and is not a video relay.
 - Keep the Miniapp SDK call provider-neutral. `session.meeting.join` is the
   current spike API, not a frozen name or payload.
 - Remove provider credentials from the miniapp request. The trusted native host
@@ -712,8 +696,8 @@ In the first call-focused template:
 - Only Mentra Live is shown in pairing.
 - Cloud speech is unavailable; the reduced Runtime starts no speech module and
   requires no speech SaaS credentials.
-- The only call-media destinations are the selected streaming provider, the
-  customer ACS resource, and Microsoft Teams endpoints.
+- The only remote call-media destinations are the customer ACS resource and
+  Microsoft Teams endpoints; glasses-to-phone traffic remains local over SoftAP.
 - The official binary may still contain dormant optional vendor SDK code. A
   customer policy forbidding those bytes requires a separate native build and
   is outside this same-binary design.
@@ -733,7 +717,7 @@ Publish these release artifacts after implementation exists:
 - the release-pinned bundled Mentra Call package
 - the existing Mentra Live OTA bundle
 - the existing Runtime image plus an Azure template and administrator runbook
-  for its `managed-streams,meetings` module set
+  for its `meetings` module set
 
 Do not create a second mobile build lane.
 
@@ -749,11 +733,11 @@ The first Android-and-iOS call-focused pilot is complete when:
    pairs Mentra Live, and launches the approved bundled Mentra Call miniapp
    without opening a Runtime WebSocket or raising cloud connection alarms.
 4. Mentra Call presents one primary join action, accepts an existing work/school
-   Teams URL, shows the established Wi-Fi-required UX when Mentra Live cannot
-   publish, and requires no calendar or meeting-creation permission.
-5. The customer-hosted Runtime allocates a WHIP/WHEP stream through the approved
-   provider using the existing managed-stream contract, and the glasses stream
-   reaches the phone.
+   Teams URL, shows clear SoftAP connection/recovery UX, and requires no calendar
+   or meeting-creation permission.
+5. Mentra Live sends media directly to the phone over SoftAP without a public
+   relay, and the customer Runtime exposes no managed-stream route or Cloudflare
+   credential.
 6. The phone joins a work/school Teams meeting through native ACS raw media on
    Android and iOS, with no Recall bot, using the same employee identity that
    signed into the workspace through Entra.
@@ -779,9 +763,7 @@ The first Android-and-iOS call-focused pilot is complete when:
   invitations/native sharing, chat, and custom meeting display names.
 - Enterprise-qualified Google Meet and Zoom paths. Existing consumer-provider
   behavior is not changed by this deployment work.
-- Direct glasses-to-phone media transport that removes Cloudflare or another
-  WHIP/WHEP relay.
-- Streaming providers other than the first qualified Cloudflare path.
+- Public WHIP/WHEP relay providers for the enterprise profile.
 - Local email/password accounts, signup, verification, and recovery.
 - Okta, Google, generic OIDC, SAML, and non-Entra identity providers.
 - MDM workspace injection. Distribution through MDM is already supported; only

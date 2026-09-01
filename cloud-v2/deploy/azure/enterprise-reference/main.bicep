@@ -7,14 +7,6 @@ param runtimeImage string
 @description('Existing Azure Container Registry created by bootstrap.bicep.')
 param registryName string
 
-@secure()
-@description('Cloudflare Stream account id.')
-param cloudflareAccountId string
-
-@secure()
-@description('Cloudflare API token with Stream Edit permission.')
-param cloudflareApiToken string
-
 param tenantId string
 param runtimeApiClientId string
 param mobileClientId string
@@ -110,7 +102,7 @@ var deploymentManifest = {
   glasses: { allowedModelsOverride: allowedGlassesModels }
   features: {
     runtimeRealtimeSession: false
-    managedStreams: true
+    managedStreams: false
     nativeMeetings: true
     cloudSpeech: false
     onDeviceSpeech: false
@@ -144,8 +136,6 @@ resource runtime 'Microsoft.App/containerApps@2024-03-01' = {
       ]
       secrets: [
         { name: 'acs-connection-string', value: communication.listKeys().primaryConnectionString }
-        { name: 'cloudflare-account-id', value: cloudflareAccountId }
-        { name: 'cloudflare-api-token', value: cloudflareApiToken }
       ]
     }
     template: {
@@ -156,7 +146,7 @@ resource runtime 'Microsoft.App/containerApps@2024-03-01' = {
           command: ['bun', 'packages/runtime/src/index.ts']
           env: [
             { name: 'PORT', value: '3001' }
-            { name: 'RUNTIME_SERVICES', value: 'managed-streams,meetings' }
+            { name: 'RUNTIME_SERVICES', value: 'meetings' }
             {
               name: 'DEPLOYMENT_MANIFEST_JSON'
               value: string(deploymentManifest)
@@ -171,8 +161,6 @@ resource runtime 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'ENTRA_TENANT_ID', value: tenantId }
             { name: 'ENTRA_CLIENT_ID', value: mobileClientId }
             { name: 'ACS_CONNECTION_STRING', secretRef: 'acs-connection-string' }
-            { name: 'CF_STREAM_ACCOUNT_ID', secretRef: 'cloudflare-account-id' }
-            { name: 'CF_STREAM_API_TOKEN', secretRef: 'cloudflare-api-token' }
             { name: 'LOG_STDOUT_JSON', value: 'true' }
             { name: 'SERVICE_NAME', value: 'runtime-enterprise-reference' }
           ]

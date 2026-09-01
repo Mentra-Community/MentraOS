@@ -1,7 +1,7 @@
 # Mentra Enterprise reference deployment
 
 This is Mentra's non-production, customer-shaped validation environment. It
-runs the ordinary Cloud V2 Runtime image with only `managed-streams,meetings`.
+runs the ordinary Cloud V2 Runtime image with only `meetings`.
 It intentionally deploys no Core, MongoDB, Redis, UDP listener, Runtime
 WebSocket, audio worker, speech provider, Store, or Mentra-hosted identity.
 
@@ -9,8 +9,10 @@ Runtime generates the served manifest from Bicep parameters so tenant ids,
 resource ids, resource names, and the exact app release can be changed without
 rebuilding the image. The checked-in manifest is an example of Mentra's current
 reference environment and contains only public identifiers.
-The Azure Communication Services connection string and Cloudflare credentials
-are Container App secrets; do not put them in the manifest or mobile app.
+The Azure Communication Services connection string is a Container App secret;
+do not put it in the manifest or mobile app. The enterprise profile assumes the
+direct SoftAP glasses-to-phone media path and therefore needs no Cloudflare
+Stream account or credentials.
 The checked-in privacy notice and terms are explicitly non-production
 placeholders. A customer deployment must replace them with organization-approved
 documents; Runtime serves them from the same workspace origin named by the
@@ -30,7 +32,8 @@ Runtime scope plus ACS `Teams.ManageCalls` and `Teams.ManageChats`. Android
 qualification currently registers the local debug-signing redirect; a release
 qualification must add the official APK signing-certificate redirect before
 using a store/MDM artifact. iOS registers `msauth.com.mentra.mentra://auth`.
-See [entra-setup.md](./entra-setup.md) for the customer registration contract.
+See [customer-setup.md](./customer-setup.md) for the full enterprise setup
+runbook and [entra-setup.md](./entra-setup.md) for the detailed identity contract.
 
 ## Deploy from a clean resource group
 
@@ -53,7 +56,7 @@ az acr build \
   --file cloud-v2/docker/Dockerfile .
 ```
 
-Deploy with Cloudflare secrets supplied from the operator's secret manager:
+Deploy the meetings-only Runtime:
 
 ```bash
 az deployment group create \
@@ -65,17 +68,15 @@ az deployment group create \
     releaseIdentity=<exact-EXPO_PUBLIC_MENTRAOS_VERSION> \
     tenantId=2e7662c0-e826-4928-95b2-60bdd48d5d95 \
     runtimeApiClientId=20424d9e-4b99-44e8-82c9-0ad06f08a8db \
-    mobileClientId=95ad08c2-7837-4ddf-933c-1fce3d6d2799 \
-    cloudflareAccountId="$CF_STREAM_ACCOUNT_ID" \
-    cloudflareApiToken="$CF_STREAM_API_TOKEN"
+    mobileClientId=95ad08c2-7837-4ddf-933c-1fce3d6d2799
 ```
 
 Use the exact release identity embedded in the test app, including a development
 or beta suffix. The Mentra App deliberately rejects a workspace pinned to a
 different binary.
 
-This profile has customer-approved Microsoft, ACS, Azure, and Cloudflare
-egress. It is restricted-network/self-hosted, not literally air-gapped.
+This profile has customer-approved Microsoft, ACS, and Azure egress. It is
+restricted-network/self-hosted, not literally air-gapped.
 
 ## Qualify the reference deployment yourself
 
@@ -114,15 +115,13 @@ az deployment group create \
     releaseIdentity=3.2.0 \
     tenantId=2e7662c0-e826-4928-95b2-60bdd48d5d95 \
     runtimeApiClientId=20424d9e-4b99-44e8-82c9-0ad06f08a8db \
-    mobileClientId=95ad08c2-7837-4ddf-933c-1fce3d6d2799 \
-    cloudflareAccountId="$CF_STREAM_ACCOUNT_ID" \
-    cloudflareApiToken="$CF_STREAM_API_TOKEN"
+    mobileClientId=95ad08c2-7837-4ddf-933c-1fce3d6d2799
 ```
 
 Replace `3.2.0` with the exact value embedded as
 `EXPO_PUBLIC_MENTRAOS_VERSION` if testing a suffixed development or beta build.
-The Cloudflare variables must come from Mentra's secret manager; do not commit
-them or paste them into the manifest.
+No Cloudflare variables are required. Bicep creates the customer-owned ACS
+resource and stores its connection string directly as a Container App secret.
 
 ### 3. Smoke-test the deployment before opening the app
 
@@ -188,10 +187,10 @@ Before choosing Mentra or a workspace, the app must not initialize Mentra Sentry
 Firebase Analytics, PostHog, Core, Runtime, OTA, or glasses reconnect effects.
 With this workspace active and `telemetry: false`, there must be no traffic to
 Mentra Core/Runtime, Sentry, Firebase Analytics, or PostHog. Expected traffic is
-limited to the selected workspace and the configured Microsoft, ACS, and
-Cloudflare services used by the test.
+limited to the selected workspace and the configured Microsoft and ACS services
+used by the test.
 
 This branch can qualify manifest resolution, Microsoft sign-in, Runtime token
-acquisition, deployment isolation, and managed-stream/meeting HTTP services.
+acquisition, deployment isolation, and the meeting credential HTTP service.
 The complete glasses-to-Teams media call becomes testable after Nicolo's native
 ACS meeting work is integrated; this deployment does not fake that media path.

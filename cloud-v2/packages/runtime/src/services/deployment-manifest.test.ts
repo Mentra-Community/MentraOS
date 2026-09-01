@@ -14,7 +14,7 @@ describe("Runtime deployment manifest", () => {
     const parsed = parseDeploymentManifest(
       manifest({
         runtimeRealtimeSession: false,
-        managedStreams: true,
+        managedStreams: false,
         nativeMeetings: true,
         cloudSpeech: false,
         navigation: false,
@@ -24,7 +24,7 @@ describe("Runtime deployment manifest", () => {
     expect(() =>
       assertManifestMatchesRuntimeServices(
         parsed.manifest,
-        new Set(["managed-streams", "meetings"]),
+        new Set(["meetings"]),
       ),
     ).not.toThrow();
   });

@@ -40,7 +40,7 @@
   "glasses": {"allowedModelsOverride": ["mentra-live"]},
   "features": {
     "runtimeRealtimeSession": false,
-    "managedStreams": true,
+    "managedStreams": false,
     "nativeMeetings": true,
     "cloudSpeech": false,
     "onDeviceSpeech": false,
