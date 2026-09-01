@@ -16,7 +16,8 @@ class ClassicAudioConnectionTrackerTest {
 
     @Test
     fun `serializes every public state access`() {
-        val synchronizedMethods = setOf("getConnected", "setTarget", "update", "clear", "reset")
+        val synchronizedMethods =
+                setOf("getConnected", "setTarget", "update", "clear", "invalidate", "reset")
 
         val methods =
                 ClassicAudioConnectionTracker::class.java.declaredMethods.associateBy { it.name }
@@ -114,13 +115,34 @@ class ClassicAudioConnectionTrackerTest {
     }
 
     @Test
-    fun `target teardown rejects delayed callbacks from the cleared session`() {
+    fun `profile reset retains target for a reconnect`() {
         val changes = mutableListOf<Boolean>()
         val tracker = ClassicAudioConnectionTracker(changes::add)
         tracker.setTarget("AA:BB:CC:DD:EE:FF")
         tracker.update(ClassicAudioProfile.A2DP, "AA:BB:CC:DD:EE:FF", connected = true)
 
         assertThat(tracker.clear("AA:BB:CC:DD:EE:FF")).isTrue()
+        assertThat(
+                        tracker.update(
+                                ClassicAudioProfile.HEADSET,
+                                "AA:BB:CC:DD:EE:FF",
+                                connected = true
+                        )
+                )
+                .isTrue()
+
+        assertThat(changes).containsExactly(true, false, true)
+        assertThat(tracker.connected).isTrue()
+    }
+
+    @Test
+    fun `target teardown rejects delayed callbacks from the invalidated session`() {
+        val changes = mutableListOf<Boolean>()
+        val tracker = ClassicAudioConnectionTracker(changes::add)
+        tracker.setTarget("AA:BB:CC:DD:EE:FF")
+        tracker.update(ClassicAudioProfile.A2DP, "AA:BB:CC:DD:EE:FF", connected = true)
+
+        assertThat(tracker.invalidate("AA:BB:CC:DD:EE:FF")).isTrue()
         val accepted =
                 tracker.update(
                         ClassicAudioProfile.HEADSET,

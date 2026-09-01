@@ -7074,7 +7074,7 @@ class MentraLive : SGCManager() {
             val method = device.javaClass.getMethod("removeBond")
             val result = method.invoke(device) as Boolean
             Bridge.log("LIVE: CTKD: Bond removal initiated, result: " + result)
-            classicAudioConnectionTracker.clear(device.address)
+            classicAudioConnectionTracker.invalidate(device.address)
             return result
         } catch (e: Exception) {
             Bridge.log("LIVE: CTKD: Error removing bond: " + e.message)
@@ -7308,7 +7308,7 @@ class MentraLive : SGCManager() {
         // The BLE device reference may already be cleared after a GATT drop. The tracker owns the
         // authoritative target address, so let it decide whether this teardown belongs to the
         // active Classic session instead of consulting connectedDevice.
-        if (classicAudioConnectionTracker.clear(device.address)) {
+        if (classicAudioConnectionTracker.invalidate(device.address)) {
             audioConnected = false
         }
 

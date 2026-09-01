@@ -55,6 +55,14 @@ internal class ClassicAudioConnectionTracker(
     fun clear(address: String): Boolean {
         if (targetAddress != address.normalizedBluetoothAddress()) return false
 
+        clearConnectedProfiles()
+        return true
+    }
+
+    @Synchronized
+    fun invalidate(address: String): Boolean {
+        if (targetAddress != address.normalizedBluetoothAddress()) return false
+
         targetAddress = null
         clearConnectedProfiles()
         return true
