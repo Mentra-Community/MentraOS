@@ -1,6 +1,6 @@
 export const RUNTIME_SERVICE_NAMES = [
   "realtime-audio",
-  "managed-photos",
+  "camera",
   "maps",
   "tts",
   "meetings",
@@ -10,7 +10,7 @@ export type RuntimeServiceName = (typeof RUNTIME_SERVICE_NAMES)[number];
 
 const FULL_RUNTIME_SERVICES = new Set<RuntimeServiceName>([
   "realtime-audio",
-  "managed-photos",
+  "camera",
   "maps",
   "tts",
 ]);

@@ -17,7 +17,7 @@ describe("Runtime service composition", () => {
   test("keeps the existing full profile when the variable is absent", () => {
     expect(serviceList(resolveRuntimeServices(undefined))).toEqual([
       "realtime-audio",
-      "managed-photos",
+      "camera",
       "maps",
       "tts",
     ]);

@@ -232,8 +232,8 @@ export async function startRuntime(
 
   const services = new Set(opts.services ?? resolveRuntimeServices());
   const realtimeAudio = services.has("realtime-audio");
-  if (services.has("managed-photos") && !realtimeAudio) {
-    throw new Error("managed-photos currently requires realtime-audio");
+  if (services.has("camera") && !realtimeAudio) {
+    throw new Error("camera currently requires realtime-audio");
   }
   if (services.has("meetings")) {
     const meetingProviders = resolveMeetingProviders();
@@ -337,8 +337,8 @@ export async function startRuntime(
   // a stop() -- a disconnect, a closed app, a pod restart. Left alone these
   // accumulate until the account hits its storage quota, at which point
   // Cloudflare accepts new live inputs but rejects the broadcast at publish.
-  // cameraApi's durable registry is mounted with managed-photos.
-  if (realtimeAudio && services.has("managed-photos")) startStreamSweepLoop();
+  // cameraApi's durable registry is mounted with camera.
+  if (realtimeAudio && services.has("camera")) startStreamSweepLoop();
 
   // The REST surface (Hono): subscriptions today, health, camera later. The WS
   // upgrade is tried first; everything else falls through to this app.

@@ -42,7 +42,7 @@ export function createApiApp(opts: CreateApiAppOptions): Hono {
     opts.services ??
     new Set<RuntimeServiceName>([
       "realtime-audio",
-      "managed-photos",
+      "camera",
       "maps",
       "tts",
     ]);
@@ -60,7 +60,7 @@ export function createApiApp(opts: CreateApiAppOptions): Hono {
   );
 
   if (services.has("realtime-audio")) app.route("/api/audio", audioApi);
-  if (services.has("managed-photos")) app.route("/api/camera", cameraApi);
+  if (services.has("camera")) app.route("/api/camera", cameraApi);
   if (services.has("maps")) app.route("/api/maps", mapsApi);
   if (services.has("tts")) app.route("/api/tts", ttsApi);
   if (services.has("meetings")) app.route("/api/meetings", meetingsApi);

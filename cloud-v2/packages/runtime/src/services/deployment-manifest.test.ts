@@ -43,7 +43,7 @@ describe("Runtime deployment manifest", () => {
     expect(() =>
       assertManifestMatchesRuntimeServices(
         parsed.manifest,
-        new Set(["managed-photos", "meetings"]),
+        new Set(["camera", "meetings"]),
       ),
     ).toThrow("managedStreams");
   });
