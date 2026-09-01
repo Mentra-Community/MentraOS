@@ -929,11 +929,11 @@ private extension ConnectOptions {
     init(dictionary values: [String: Any]?) {
         self.init(
             saveAsDefault: values?["saveAsDefault"] as? Bool ?? true,
-            cancelExistingConnectionAttempt: values?["cancelExistingConnectionAttempt"] as? Bool ?? true
+            cancelExistingConnectionAttempt: values?["cancelExistingConnectionAttempt"] as? Bool ?? true,
+            requiresAncs: values?["requiresAncs"] as? Bool ?? true
         )
     }
 }
-
 
 
 

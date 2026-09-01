@@ -133,6 +133,17 @@ const versionInfo = await BluetoothSdk.requestVersionInfo()
 console.log(versionInfo.buildNumber)
 ```
 
+On iOS, Mentra Live connections require Apple Notification Center Service
+(ANCS) authorization by default. Apps that do not use notification relay can
+skip that system authorization requirement for a connection:
+
+```ts
+await BluetoothSdk.connect(device, {requiresAncs: false})
+```
+
+The option defaults to `true` for backward compatibility and is an intentional
+no-op on Android.
+
 In multi-device environments, present an explicit picker instead of
 auto-connecting to the first nearby device.
 

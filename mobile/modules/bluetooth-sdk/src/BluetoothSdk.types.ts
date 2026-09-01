@@ -1400,6 +1400,13 @@ export interface Device {
 export interface ConnectOptions {
   saveAsDefault?: boolean
   cancelExistingConnectionAttempt?: boolean
+  /**
+   * iOS Mentra Live only. When true, CoreBluetooth requires ANCS authorization
+   * as part of the connection. Set false when the app does not use notification
+   * relay and must avoid the system ANCS authorization flow. Defaults to true.
+   * Android accepts this option as a no-op.
+   */
+  requiresAncs?: boolean
 }
 
 export type ScanResultsCallback = (devices: Device[]) => void

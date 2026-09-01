@@ -1724,7 +1724,7 @@ struct ViewState {
         sgc.requestPhoto(routed)
     }
 
-    func connectDefault() {
+    func connectDefault(requiresAncs: Bool = true) {
         if defaultWearable.isEmpty {
             Bridge.log("MAN: No default wearable, returning")
             return
@@ -1740,6 +1740,7 @@ struct ViewState {
             return
         }
         initSGC(defaultWearable)
+        (sgc as? MentraLive)?.setRequiresAncs(requiresAncs)
         if let live = sgc as? MentraLive, live.isPairingYieldActive() {
             Bridge.log("MAN: connectDefault skipped — Mentra Live pairing yield active")
             return
@@ -1763,7 +1764,7 @@ struct ViewState {
         controller?.connectById(controllerDeviceName)
     }
 
-    func connectByName(_ dName: String) {
+    func connectByName(_ dName: String, requiresAncs: Bool = true) {
         Bridge.log("MAN: Connecting to wearable: \(dName)")
         var name = dName
 
@@ -1796,6 +1797,7 @@ struct ViewState {
             self.pendingDeviceName = name
 
             initSGC(self.pendingWearable)
+            (sgc as? MentraLive)?.setRequiresAncs(requiresAncs)
             sgc?.connectById(name)
         }
     }
