@@ -14,8 +14,18 @@ internal object AndroidLogcatCollector {
 
     private val epochLine =
         Regex("""^\s*(\d+(?:\.\d+)?)\s+(\d+)\s+(\d+)\s+([VDIWEFA])\s+(.+?)\s*:\s?(.*)$""")
-    private val sensitiveMessage =
-        Regex("""\b(token|password|secret|authorization|auth|bearer|key|api[_-]?key)\b""", RegexOption.IGNORE_CASE)
+    private val compoundCredentialName =
+        Regex(
+            """(?<![A-Za-z0-9])(?:access[_-]?token|refresh[_-]?token|auth[_-]?token|id[_-]?token|client[_-]?secret|api[_-]?key)(?![A-Za-z0-9])""",
+            RegexOption.IGNORE_CASE,
+        )
+    private val credentialAssignment =
+        Regex(
+            """(?<![A-Za-z0-9])(?:token|password|secret|authorization|auth|key)(?![A-Za-z0-9])\s*[:=]\s*\S+""",
+            RegexOption.IGNORE_CASE,
+        )
+    private val bearerCredential =
+        Regex("""(?<![A-Za-z0-9])bearer(?![A-Za-z0-9])\s+\S+""", RegexOption.IGNORE_CASE)
 
     fun collectCurrentProcess(): List<Map<String, Any>> {
         val process =
@@ -65,7 +75,11 @@ internal object AndroidLogcatCollector {
         val (epochSeconds, pid, tid, priority, tag, rawMessage) = match.destructured
         val timestamp = epochSeconds.toBigDecimalOrNull()?.movePointRight(3)?.toLong() ?: return null
         val message =
-            if (sensitiveMessage.containsMatchIn(rawMessage)) {
+            if (
+                compoundCredentialName.containsMatchIn(rawMessage) ||
+                    credentialAssignment.containsMatchIn(rawMessage) ||
+                    bearerCredential.containsMatchIn(rawMessage)
+            ) {
                 "[REDACTED]"
             } else {
                 rawMessage.take(MAX_MESSAGE_CHARS)
