@@ -121,6 +121,11 @@ export type UseMentraBluetoothOptions = {
   defaultDeviceStorage?: DefaultDeviceStorage
   defaultModel?: DeviceModel
   onError?: (error: unknown) => void
+  /**
+   * Whether iOS should require ANCS authorization when automatically connecting.
+   * Defaults to true. Android accepts this option as a no-op.
+   */
+  requiresAncs?: boolean
   scanTimeoutMs?: number
 }
 
@@ -269,6 +274,7 @@ export function useMentraBluetooth(options: UseMentraBluetoothOptions = {}): Men
     autoConnectDefault: options.autoConnectDefault,
     defaultDeviceStorage: options.defaultDeviceStorage,
     onError: options.onError,
+    requiresAncs: options.requiresAncs,
     scanModel: options.defaultModel ?? DeviceModels.MentraLive,
     scanTimeoutMs: options.scanTimeoutMs,
   })
