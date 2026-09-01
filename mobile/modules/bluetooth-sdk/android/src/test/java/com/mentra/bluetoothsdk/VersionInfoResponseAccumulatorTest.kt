@@ -55,6 +55,24 @@ class VersionInfoResponseAccumulatorTest {
     }
 
     @Test
+    fun staleUncorrelatedResponsesCannotReplaceCorrelatedSequence() {
+        val accumulator = VersionInfoResponseAccumulator("request-1")
+        accumulator.accept(chunk("version_info_1", "request-1", "buildNumber" to "42"))
+
+        assertThat(accumulator.accept(chunk("version_info_1", null, "buildNumber" to "stale")))
+            .isEqualTo(VersionInfoAccumulatorOutcome.Ignored)
+        assertThat(accumulator.accept(chunk("version_info", null, "buildNumber" to "legacy")))
+            .isEqualTo(VersionInfoAccumulatorOutcome.Ignored)
+
+        val complete =
+            accumulator.accept(
+                chunk("version_info_3", "request-1", "besFirmwareVersion" to "current")
+            ) as VersionInfoAccumulatorOutcome.Complete
+        assertThat(complete.result.buildNumber).isEqualTo("42")
+        assertThat(complete.result.besFirmwareVersion).isEqualTo("current")
+    }
+
+    @Test
     fun repeatedFirstChunkResetsRatherThanMixingResponses() {
         val accumulator = VersionInfoResponseAccumulator("request-1")
         accumulator.accept(chunk("version_info_1", null, "appVersion" to "old"))
