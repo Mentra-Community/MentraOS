@@ -8,6 +8,7 @@ import static org.mockito.Mockito.verify;
 
 import android.content.Context;
 import androidx.test.core.app.ApplicationProvider;
+import com.mentra.asg_client.io.network.interfaces.WifiForgetOutcome;
 import com.mentra.asg_client.service.system.interfaces.ISystemController;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -23,7 +24,7 @@ public class K900NetworkManagerForgetDispatchTest {
         Context context = ApplicationProvider.getApplicationContext();
         K900NetworkManager manager = new K900NetworkManager(context, systemController);
 
-        assertThat(manager.forgetWifiNetwork(" Field AP ")).isTrue();
+        assertThat(manager.forgetWifiNetwork(" Field AP ")).isEqualTo(WifiForgetOutcome.DISPATCHED);
 
         verify(systemController).disconnectFromWifi(" Field AP ");
     }
@@ -37,17 +38,17 @@ public class K900NetworkManagerForgetDispatchTest {
         Context context = ApplicationProvider.getApplicationContext();
         K900NetworkManager manager = new K900NetworkManager(context, systemController);
 
-        assertThat(manager.forgetWifiNetwork("Field AP")).isFalse();
+        assertThat(manager.forgetWifiNetwork("Field AP")).isEqualTo(WifiForgetOutcome.FAILED);
     }
 
     @Test
     public void rejectsSavedListWhenVendorHasNoResponsePath() {
         Context context = ApplicationProvider.getApplicationContext();
-        K900NetworkManager manager =
-                new K900NetworkManager(context, mock(ISystemController.class));
+        K900NetworkManager manager = new K900NetworkManager(context, mock(ISystemController.class));
 
         assertThatThrownBy(manager::getConfiguredWifiNetworks)
                 .isInstanceOf(UnsupportedOperationException.class)
                 .hasMessageContaining("no vendor response path");
+        assertThat(manager.getSavedWifiNetworksVersion()).isZero();
     }
 }

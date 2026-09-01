@@ -1,24 +1,25 @@
 package com.mentra.asg_client.service.communication.managers;
 
 import android.util.Log;
-
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.bluetooth.interfaces.IBluetoothManager;
 import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
 import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.LinkStateMachine;
 import com.mentra.asg_client.io.network.interfaces.INetworkManager;
+import com.mentra.asg_client.io.network.interfaces.SavedWifiNetworksOutcome;
+import com.mentra.asg_client.io.network.interfaces.WifiForgetOutcome;
 import com.mentra.asg_client.io.network.models.NetworkInfo;
 import com.mentra.asg_client.io.ota.helpers.OtaHelper;
 import com.mentra.asg_client.logging.BleTraceLogger;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
 import com.mentra.asg_client.service.communication.reliability.ReliableMessageManager;
-
-import org.json.JSONException;
-import org.json.JSONObject;
-
+import com.mentra.asg_client.service.utils.ProcessSessionId;
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.List;
+import org.json.JSONException;
+import org.json.JSONObject;
 
 /**
  * Manages all communication operations (Bluetooth, WiFi status, etc.). Follows Single
@@ -136,38 +137,69 @@ public class CommunicationManager
 
     @Override
     public void sendWifiForgetResultOverBle(
-            String requestId, String ssid, boolean dispatched, String error) {
+            String requestId, String ssid, WifiForgetOutcome outcome, String error) {
+        JSONObject response = new JSONObject();
         try {
-            JSONObject response = new JSONObject();
             response.put("type", "wifi_forget_result");
             if (requestId != null && !requestId.isEmpty()) {
                 response.put("requestId", requestId);
             }
             response.put("ssid", ssid);
-            response.put("dispatched", dispatched);
+            response.put("outcome", outcome.getWireValue());
+            response.put("sid", ProcessSessionId.SID);
+            response.put("protocol_version", AsgConstants.WIFI_FORGET_RESULT_VERSION);
             if (error != null && !error.isEmpty()) {
                 response.put("error", error);
             }
-            if (networkManager != null) {
-                boolean connected = networkManager.isConnectedToWifi();
-                response.put("connected", connected);
-                response.put("current_ssid", connected ? networkManager.getCurrentWifiSsid() : "");
-                response.put("local_ip", connected ? networkManager.getLocalIpAddress() : "");
-            }
-            reliableManager.sendMessage(response);
         } catch (JSONException e) {
             Log.e(TAG, "Error creating WiFi forget result", e);
+            return;
+        }
+
+        // Link state is diagnostic context only. Never let a flaky snapshot overwrite or suppress
+        // the backend's terminal forget outcome, and never ask the handler to repeat the mutation.
+        if (networkManager != null) {
+            boolean connected = false;
+            try {
+                connected = networkManager.isConnectedToWifi();
+                response.put("connected", connected);
+            } catch (Exception e) {
+                Log.w(TAG, "Could not snapshot WiFi connectivity for forget result", e);
+            }
+            if (connected) {
+                try {
+                    response.put("current_ssid", networkManager.getCurrentWifiSsid());
+                } catch (Exception e) {
+                    Log.w(TAG, "Could not snapshot current SSID for forget result", e);
+                }
+                try {
+                    response.put("local_ip", networkManager.getLocalIpAddress());
+                } catch (Exception e) {
+                    Log.w(TAG, "Could not snapshot local IP for forget result", e);
+                }
+            }
+        }
+        try {
+            reliableManager.sendMessage(response);
+        } catch (Exception e) {
+            Log.e(TAG, "Could not send terminal WiFi forget result", e);
         }
     }
 
     @Override
     public void sendSavedWifiNetworksOverBle(
-            String requestId, List<String> networks, String error) {
+            String requestId,
+            List<String> networks,
+            SavedWifiNetworksOutcome outcome,
+            String error) {
         try {
             JSONObject response = new JSONObject();
             response.put("type", "saved_wifi_networks");
             response.put("requestId", requestId);
             response.put("networks", new org.json.JSONArray(networks));
+            response.put("outcome", outcome.getWireValue());
+            response.put("sid", ProcessSessionId.SID);
+            response.put("protocol_version", AsgConstants.SAVED_WIFI_NETWORKS_VERSION);
             if (error != null && !error.isEmpty()) {
                 response.put("error", error);
             }

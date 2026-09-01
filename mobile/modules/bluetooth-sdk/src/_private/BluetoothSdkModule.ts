@@ -55,6 +55,8 @@ import {
   VideoRecordingStatusEvent,
   VersionInfoResult,
   WarmUpCameraParams,
+  SavedWifiNetworksResult,
+  WifiForgetResult,
   WifiSearchResult,
   WifiStatusChangeEvent,
 } from "../BluetoothSdk.types"
@@ -125,9 +127,9 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
 
   // WiFi Commands
   requestWifiScan(): Promise<WifiSearchResult[]>
-  getSavedWifiNetworks(): Promise<string[]>
+  getSavedWifiNetworks(): Promise<SavedWifiNetworksResult>
   sendWifiCredentials(ssid: string, password: string): Promise<WifiStatusChangeEvent>
-  forgetWifiNetwork(ssid: string): Promise<WifiStatusChangeEvent>
+  forgetWifiNetwork(ssid: string): Promise<WifiForgetResult>
   setHotspotState(enabled: boolean): Promise<HotspotStatusChangeEvent>
   /** Enable or disable Wi-Fi ADB on Mentra Live (no-op on other devices). */
   setWifiAdbState(enabled: boolean): Promise<void>
