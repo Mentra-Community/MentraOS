@@ -30,6 +30,24 @@ class AndroidLogcatCollectorTest {
     }
 
     @Test
+    fun redactsSecretBearingMessages() {
+        val parsed =
+            AndroidLogcatCollector.parseEpochLine(
+                "1788222984.999 1 2 D AuthClient: Bearer private-value",
+            )
+
+        assertEquals("[REDACTED]", parsed?.get("message"))
+    }
+
+    @Test
+    fun collectsDebugAndHigherForOnlyTheAppProcess() {
+        val command = AndroidLogcatCollector.logcatCommand(1234)
+
+        assertEquals("--pid=1234", command[1])
+        assertEquals("*:D", command.last())
+    }
+
+    @Test
     fun ignoresNonEntryLines() {
         assertNull(AndroidLogcatCollector.parseEpochLine("--------- beginning of main"))
     }
