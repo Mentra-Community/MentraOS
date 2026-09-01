@@ -174,6 +174,30 @@ test("Cloud V2 deploys once per coordinated environment before mobile publicatio
   }
 })
 
+test("enterprise Runtime is release-matched and recorded by the dev coordinator", () => {
+  const coordinator = workflow("coordinated-release.yml")
+  const enterprise = workflow("enterprise-runtime-dev.yml")
+  const enterpriseJob = jobBlock(coordinator, "enterprise-runtime")
+  const finalize = jobBlock(coordinator, "finalize")
+  const notify = jobBlock(coordinator, "notify-slack")
+
+  assert.match(enterpriseJob, /^    needs: plan$/m)
+  assert.match(enterpriseJob, /needs\.plan\.outputs\.cloud_environment == 'dev'/)
+  assert.match(enterpriseJob, /source_commit: \$\{\{ needs\.plan\.outputs\.source_commit \}\}/)
+  assert.match(enterpriseJob, /release_plan_artifact: \$\{\{ needs\.plan\.outputs\.plan_artifact \}\}/)
+  assert.match(enterprise, /workflow_call:/)
+  assert.doesNotMatch(enterprise, /push:/)
+  assert.doesNotMatch(enterprise, /workflow_dispatch:/)
+  assert.match(enterprise, /group: coordinated-enterprise-runtime-dev/)
+  assert.match(enterprise, /\[\[ "\$source_commit" == "\$\{\{ inputs\.source_commit \}\}" \]\]/)
+  assert.match(enterprise, /coordinated-enterprise-runtime-records\.mjs create/)
+  assert.match(enterprise, /az acr manifest show-metadata/)
+  assert.match(enterprise, /latestReadyRevisionName/)
+  assert.match(finalize, /needs\.enterprise-runtime\.result == 'success'/)
+  assert.match(finalize, /--enterprise-runtime release-input\/enterprise-runtime\/enterprise-runtime-deployment\.json/)
+  assert.match(notify, /ENTERPRISE_RUNTIME_RESULT: \$\{\{ needs\.enterprise-runtime\.result \}\}/)
+})
+
 test("mobile destinations use real TestFlight groups without changing the release channel", () => {
   const coordinator = workflow("coordinated-release.yml")
   const mobile = workflow("reusable-coordinated-mobile.yml")
@@ -322,7 +346,7 @@ test("coordinated docs publish only after finalization to the matching channel",
   assert.match(docs, /%7b%7b\[a-z0-9_-\]\+%7d%7d/)
   assert.match(
     notify,
-    /^    needs:\n      \[plan, cloud-v2, ota, npm, sdk-native, mobile, engine-consumer, starter-kit, example-testflight, finalize, docs\]$/m,
+    /^    needs:\n      \[plan, cloud-v2, enterprise-runtime, ota, npm, sdk-native, mobile, engine-consumer, starter-kit, example-testflight, finalize, docs\]$/m,
   )
   assert.match(notify, /STARTER_KIT_RESULT: \$\{\{ needs\.starter-kit\.result \}\}/)
   assert.match(notify, /EXAMPLE_TESTFLIGHT_RESULT: \$\{\{ needs\.example-testflight\.result \}\}/)

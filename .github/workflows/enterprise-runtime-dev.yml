@@ -1,60 +1,83 @@
-name: Deploy enterprise Runtime dev
+name: Coordinated Enterprise Runtime Dev
 
 on:
-  push:
-    branches: [dev]
-  workflow_dispatch:
+  workflow_call:
     inputs:
-      source_ref:
-        description: Commit or branch to deploy (workflow itself must run from dev)
-        required: false
+      source_commit:
+        required: true
         type: string
-
+      release_plan_artifact:
+        required: true
+        type: string
+      dry_run:
+        required: false
+        default: false
+        type: boolean
+    outputs:
+      result_artifact:
+        value: ${{ jobs.deploy.outputs.result_artifact }}
+      workspace_origin:
+        value: ${{ jobs.deploy.outputs.workspace_origin }}
 permissions:
   contents: read
   id-token: write
-
-concurrency:
-  # Preserve the running deployment and coalesce queued pushes so an older
-  # commit can never finish after a newer one.
-  group: enterprise-runtime-dev
-  cancel-in-progress: false
 
 jobs:
   deploy:
     name: Build and deploy Azure enterprise Runtime
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    concurrency:
+      # Preserve deployment order if coordinated runs overlap.
+      group: coordinated-enterprise-runtime-dev
+      cancel-in-progress: false
+    outputs:
+      result_artifact: ${{ steps.artifact.outputs.name }}
+      workspace_origin: ${{ steps.verify.outputs.workspace_origin }}
     env:
       AZURE_RESOURCE_GROUP: rg-mentra-enterprise-reference
       AZURE_REGISTRY: mentraenterpriseref
       AZURE_COMMUNICATION_SERVICE: mentra-enterprise-reference
+      AZURE_CONTAINER_APP: ca-mentra-enterprise-reference
       ENTRA_TENANT_ID: 2e7662c0-e826-4928-95b2-60bdd48d5d95
       ENTRA_RUNTIME_CLIENT_ID: 20424d9e-4b99-44e8-82c9-0ad06f08a8db
       ENTRA_MOBILE_CLIENT_ID: 95ad08c2-7837-4ddf-933c-1fce3d6d2799
     steps:
-      - name: Require the trusted dev workflow definition
-        run: |
-          set -euo pipefail
-          if [[ "$GITHUB_REF" != "refs/heads/dev" ]]; then
-            echo "Run this workflow from dev; use source_ref to deploy another commit." >&2
-            exit 1
-          fi
-
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.source_ref || github.sha }}
+          ref: ${{ inputs.source_commit }}
 
-      - name: Resolve exact source commit
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.release_plan_artifact }}
+          path: release-input/plan
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Resolve and verify exact source
         id: source
         run: |
           set -euo pipefail
           source_commit=$(git rev-parse HEAD)
           [[ "$source_commit" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$source_commit" == "${{ inputs.source_commit }}" ]]
+          [[ "$(jq -er .sourceCommit release-input/plan/release-plan.json)" == "$source_commit" ]]
+          [[ "$(jq -er .channel release-input/plan/release-plan.json)" == "dev" ]]
           echo "commit=$source_commit" >> "$GITHUB_OUTPUT"
           echo "image=$AZURE_REGISTRY.azurecr.io/mentra-runtime-enterprise:$source_commit" >> "$GITHUB_OUTPUT"
 
+      - name: Validate the enterprise deployment source
+        run: |
+          set -euo pipefail
+          test -s cloud-v2/docker/Dockerfile
+          az bicep build \
+            --file cloud-v2/deploy/azure/enterprise-reference/main.bicep \
+            --outfile "$RUNNER_TEMP/enterprise-reference.json"
+
       - name: Sign in to Azure with GitHub OIDC
+        if: inputs.dry_run != true
         uses: azure/login@v2
         with:
           client-id: ${{ vars.ENTERPRISE_DEV_AZURE_CLIENT_ID }}
@@ -62,6 +85,7 @@ jobs:
           subscription-id: ${{ vars.ENTERPRISE_DEV_AZURE_SUBSCRIPTION_ID }}
 
       - name: Build the ordinary Runtime image in Azure
+        if: inputs.dry_run != true
         run: >-
           az acr build
           --registry "$AZURE_REGISTRY"
@@ -70,6 +94,7 @@ jobs:
           .
 
       - name: Deploy the meetings-only enterprise profile
+        if: inputs.dry_run != true
         run: |
           set -euo pipefail
           az deployment group create \
@@ -90,6 +115,7 @@ jobs:
 
       - name: Verify the live enterprise contract
         id: verify
+        if: inputs.dry_run != true
         run: |
           set -euo pipefail
           workspace_origin=$(az deployment group show \
@@ -99,7 +125,7 @@ jobs:
             --output tsv)
           [[ "$workspace_origin" == https://* ]]
 
-          curl_json() {
+          curl_status() {
             curl \
               --fail \
               --silent \
@@ -108,19 +134,30 @@ jobs:
               --retry 12 \
               --retry-delay 10 \
               --retry-all-errors \
+              --output "$2" \
+              --write-out '%{http_code}' \
               "$1"
           }
 
-          health=$(curl_json "$workspace_origin/healthz")
-          jq -e '.status == "ok" and .package == "runtime" and .services == ["meetings"]' <<< "$health"
-          curl_json "$workspace_origin/ready" >/dev/null
+          : > enterprise-runtime-checks.ndjson
+          for probe in healthz ready; do
+            url="$workspace_origin/$probe"
+            body="$RUNNER_TEMP/$probe.json"
+            status=$(curl_status "$url" "$body")
+            jq -nc --arg url "$url" --argjson statusCode "$status" \
+              '{url: $url, ready: true, statusCode: $statusCode}' >> enterprise-runtime-checks.ndjson
+          done
+          jq -e '.status == "ok" and .package == "runtime" and .services == ["meetings"]' \
+            "$RUNNER_TEMP/healthz.json"
 
-          version_policy=$(curl_json "$workspace_origin/api/client/min-version")
+          version_policy=$(curl --fail --silent --show-error --location \
+            "$workspace_origin/api/client/min-version")
           jq -e \
             '.success == true and (.data.required | type == "string") and (.data.recommended | type == "string")' \
             <<< "$version_policy"
 
-          manifest=$(curl_json "$workspace_origin/.well-known/mentra-deployment.json")
+          manifest=$(curl --fail --silent --show-error --location \
+            "$workspace_origin/.well-known/mentra-deployment.json")
           jq -e \
             --arg origin "$workspace_origin" \
             --arg tenant "$ENTRA_TENANT_ID" \
@@ -138,8 +175,8 @@ jobs:
              and .telemetry == false' \
             <<< "$manifest"
 
-          curl_json "$workspace_origin/legal/privacy" >/dev/null
-          curl_json "$workspace_origin/legal/terms" >/dev/null
+          curl --fail --silent --show-error --location "$workspace_origin/legal/privacy" >/dev/null
+          curl --fail --silent --show-error --location "$workspace_origin/legal/terms" >/dev/null
           unauthenticated_status=$(curl \
             --silent \
             --show-error \
@@ -149,7 +186,68 @@ jobs:
             "$workspace_origin/api/meetings/acs/teams-user-token")
           [[ "$unauthenticated_status" == "401" ]]
 
-          echo "workspace_origin=$workspace_origin" >> "$GITHUB_OUTPUT"
+          jq -s . enterprise-runtime-checks.ndjson > enterprise-runtime-checks.json
+          image_digest=$(az acr manifest show-metadata \
+            --registry "$AZURE_REGISTRY" \
+            --name "mentra-runtime-enterprise:${{ steps.source.outputs.commit }}" \
+            --query digest \
+            --output tsv)
+          [[ "$image_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          revision=$(az containerapp show \
+            --name "$AZURE_CONTAINER_APP" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --query properties.latestReadyRevisionName \
+            --output tsv)
+          test -n "$revision"
+
+          {
+            echo "workspace_origin=$workspace_origin"
+            echo "image_digest=$image_digest"
+            echo "revision=$revision"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Record validation-only evidence
+        if: inputs.dry_run
+        run: >-
+          node .github/scripts/coordinated-enterprise-runtime-records.mjs create
+          --plan release-input/plan/release-plan.json
+          --source-commit "${{ steps.source.outputs.commit }}"
+          --requested-tag "${{ steps.source.outputs.commit }}"
+          --status validated
+          --completed-at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
+          --provenance-url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          --output enterprise-runtime-deployment.json
+
+      - name: Record observed deployment evidence
+        if: inputs.dry_run != true
+        run: >-
+          node .github/scripts/coordinated-enterprise-runtime-records.mjs create
+          --plan release-input/plan/release-plan.json
+          --source-commit "${{ steps.source.outputs.commit }}"
+          --requested-tag "${{ steps.source.outputs.commit }}"
+          --status deployed
+          --image "${{ steps.source.outputs.image }}"
+          --image-digest "${{ steps.verify.outputs.image_digest }}"
+          --revision "${{ steps.verify.outputs.revision }}"
+          --workspace-origin "${{ steps.verify.outputs.workspace_origin }}"
+          --checks enterprise-runtime-checks.json
+          --completed-at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
+          --provenance-url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          --output enterprise-runtime-deployment.json
+
+      - name: Name coordinated result artifact
+        id: artifact
+        run: |
+          set -euo pipefail
+          release_set_id=$(jq -er .releaseSetId release-input/plan/release-plan.json)
+          echo "name=coordinated-enterprise-runtime-$release_set_id" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.artifact.outputs.name }}
+          path: enterprise-runtime-deployment.json
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Summarize deployment
         run: |
@@ -158,7 +256,8 @@ jobs:
             echo
             echo "- Source: \`${{ steps.source.outputs.commit }}\`"
             echo "- Image: \`${{ steps.source.outputs.image }}\`"
-            echo "- Workspace: ${{ steps.verify.outputs.workspace_origin }}"
+            echo "- Workspace: ${{ steps.verify.outputs.workspace_origin || 'validation only' }}"
             echo "- Services: \`meetings\`"
             echo "- Provider: \`acs-teams\`"
+            echo "- Coordinated release: \`true\`"
           } >> "$GITHUB_STEP_SUMMARY"

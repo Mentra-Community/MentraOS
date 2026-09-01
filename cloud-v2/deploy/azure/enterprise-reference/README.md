@@ -36,24 +36,23 @@ using a store/MDM artifact. iOS registers `msauth.com.mentra.mentra://auth`.
 See [customer-setup.md](./customer-setup.md) for the full enterprise setup
 runbook and [entra-setup.md](./entra-setup.md) for the detailed identity contract.
 
-## Automatic dev deployment
+## Coordinated dev deployment
 
-Every push to `dev` runs `.github/workflows/enterprise-runtime-dev.yml`. The
-workflow uses GitHub OIDC to build the exact source commit in the reference ACR,
-applies this Bicep template with `RUNTIME_SERVICES=meetings`, and verifies the
-live health, version-policy, manifest, legal, and authenticated-route contract.
+The `dev` coordinated release calls `.github/workflows/enterprise-runtime-dev.yml`
+with its immutable release plan. The workflow uses GitHub OIDC to build that
+plan's exact source commit in the reference ACR, applies this Bicep template with
+`RUNTIME_SERVICES=meetings`, verifies the live health, version-policy, manifest,
+legal, and authenticated-route contract, and contributes its deployment record
+to the final release bill of materials. This keeps the enterprise Runtime,
+public Cloud V2, Mentra App, ASG client, SDKs, and OTA artifacts tied to one
+source commit and release identity.
 The Azure identity is a Contributor only within the dedicated reference
 resource group. It cannot create role assignments; an administrator creates the
 managed identity's `AcrPull` assignment during the initial bootstrap.
 
-To deploy an unmerged commit, run the trusted workflow definition from `dev`
-and supply the desired commit as `source_ref`:
-
-```bash
-gh workflow run enterprise-runtime-dev.yml \
-  --ref dev \
-  -f source_ref=<full-git-sha>
-```
+The shared reference environment has no independent push or manual deployment
+path. That prevents an uncoordinated build from replacing the release-matched
+Runtime behind the workspace URL.
 
 ## Deploy from a clean resource group
 

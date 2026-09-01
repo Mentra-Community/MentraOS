@@ -5,6 +5,7 @@ import path from "node:path"
 import {fileURLToPath} from "node:url"
 
 import {validateCloudV2DeploymentRecord} from "./coordinated-cloud-v2-records.mjs"
+import {validateEnterpriseRuntimeDeploymentRecord} from "./coordinated-enterprise-runtime-records.mjs"
 import {serializeReleaseRecord} from "./release-family.mjs"
 import {createEnginePackageArtifact, mergeReleaseResultRecords} from "./release-result-records.mjs"
 
@@ -159,6 +160,7 @@ export function assembleCoordinatedReleaseResults({
   native,
   mobile,
   cloud,
+  enterpriseRuntime,
   starterKit,
   starterKitResultUrl,
   exampleTestflight,
@@ -173,6 +175,10 @@ export function assembleCoordinatedReleaseResults({
   const selection = verifyAsgSelection(plan, ota, asgSelectionFile)
   const verifiedStarterKit = verifyStarterKitResult(plan, starterKit, starterKitResultUrl, exampleTestflight)
   const verifiedCloud = validateCloudV2DeploymentRecord({plan, record: cloud, allowValidated: true})
+  const verifiedEnterpriseRuntime =
+    plan.channel === "dev"
+      ? validateEnterpriseRuntimeDeploymentRecord({plan, record: enterpriseRuntime, allowValidated: true})
+      : undefined
   const otaProvenanceUrl = provenanceUrl(ota)
   const artifacts = [
     ...merged.artifacts,
@@ -229,6 +235,7 @@ export function assembleCoordinatedReleaseResults({
     },
     artifacts,
     cloud: verifiedCloud,
+    ...(verifiedEnterpriseRuntime ? {enterpriseRuntime: verifiedEnterpriseRuntime} : {}),
     ...(verifiedStarterKit ? {starterKit: verifiedStarterKit.record} : {}),
   }
 }
@@ -253,6 +260,9 @@ function main() {
     native: readJson(path.resolve(args.native)),
     mobile: readJson(path.resolve(args.mobile)),
     cloud: readJson(path.resolve(args.cloud)),
+    enterpriseRuntime: args["enterprise-runtime"]
+      ? readJson(path.resolve(args["enterprise-runtime"]))
+      : undefined,
     starterKit: args["starter-kit"] ? readJson(path.resolve(args["starter-kit"])) : undefined,
     starterKitResultUrl: args["starter-kit-result-url"],
     exampleTestflight: args["example-testflight"] ? readJson(path.resolve(args["example-testflight"])) : undefined,
