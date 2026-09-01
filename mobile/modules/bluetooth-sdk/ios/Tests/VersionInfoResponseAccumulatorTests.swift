@@ -66,6 +66,29 @@ final class VersionInfoResponseAccumulatorTests: XCTestCase {
         XCTAssertEqual(result.besFirmwareVersion, "current")
     }
 
+    func testStaleUncorrelatedResponsesCannotReplaceCorrelatedSequence() {
+        let accumulator = VersionInfoResponseAccumulator(expectedRequestId: "request-1")
+        _ = accumulator.accept(chunk("version_info_1", "request-1", ["buildNumber": "42"]))
+
+        guard case .ignored = accumulator.accept(chunk("version_info_1", nil, ["buildNumber": "stale"]))
+        else {
+            return XCTFail("Expected stale first chunk to be ignored")
+        }
+        guard case .ignored = accumulator.accept(chunk("version_info", nil, ["buildNumber": "legacy"]))
+        else {
+            return XCTFail("Expected stale legacy response to be ignored")
+        }
+
+        let outcome = accumulator.accept(
+            chunk("version_info_3", "request-1", ["besFirmwareVersion": "current"])
+        )
+        guard case let .complete(result) = outcome else {
+            return XCTFail("Expected correlated final chunk to complete")
+        }
+        XCTAssertEqual(result.buildNumber, "42")
+        XCTAssertEqual(result.besFirmwareVersion, "current")
+    }
+
     func testRepeatedFirstChunkResetsRatherThanMixingResponses() {
         let accumulator = VersionInfoResponseAccumulator(expectedRequestId: "request-1")
         _ = accumulator.accept(chunk("version_info_1", nil, ["appVersion": "old"]))

@@ -29,6 +29,10 @@ internal class VersionInfoResponseAccumulator(
             return VersionInfoAccumulatorOutcome.Ignored
         }
         val isCorrelated = responseRequestId == expectedRequestId
+        if (started && startedRequestId == expectedRequestId && !isCorrelated) {
+            // Once current firmware identifies this response, stale legacy traffic cannot replace it.
+            return VersionInfoAccumulatorOutcome.Ignored
+        }
 
         val chunk = event[RESPONSE_CHUNK_KEY] as? String ?: LEGACY_CHUNK
         if (chunk == LEGACY_CHUNK) {

@@ -38,6 +38,10 @@ final class VersionInfoResponseAccumulator {
             return .ignored
         }
         let isCorrelated = event[Self.responseRequestIdKey] as? String == expectedRequestId
+        if started, startedRequestId == expectedRequestId, !isCorrelated {
+            // Once current firmware identifies this response, stale legacy traffic cannot replace it.
+            return .ignored
+        }
 
         let chunk = event[Self.responseChunkKey] as? String ?? Self.legacyChunk
         if chunk == Self.legacyChunk {
