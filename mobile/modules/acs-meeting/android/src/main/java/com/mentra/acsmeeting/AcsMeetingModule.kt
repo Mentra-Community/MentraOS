@@ -29,7 +29,6 @@ class AcsMeetingModule : Module() {
         },
       ).also { session = it }
       meeting.join(token, meetingUrl, whepUrl, displayName, dumpWav, audioSource)
-      meeting.getState()
     }
 
     AsyncFunction("leave") {

@@ -138,12 +138,18 @@ class AcsMeetingSession(
     displayName: String?,
     dumpWav: Boolean,
     audioSource: String = "glasses",
-  ) {
+  ): Map<String, Any> {
     val parsed = AcsAudioPolicy.parseSource(audioSource)
     if (parsed == null) {
       Log.w(TAG, "unknown audioSource=$audioSource, arming glasses (no local mic)")
     }
     this.audioSource = if (parsed == AudioSourceKind.PHONE) "phone" else "glasses"
+    // The ACS work below is queued, so callers must not receive the pre-join
+    // phase. Reflect the intent synchronously so the resolved snapshot is
+    // "connecting" and cannot overwrite a fresher onState with a stale idle.
+    phase = "connecting"
+    lastError = null
+    meetingUrl = teamsUrl
     executor.execute {
       try {
         leaveLocked()
@@ -278,6 +284,7 @@ class AcsMeetingSession(
         emit("error")
       }
     }
+    return snapshot()
   }
 
   fun updateVideoSource(whepUrl: String) {
@@ -531,7 +538,13 @@ class AcsMeetingSession(
     audioSource = "glasses"
     lastSafety = AudioSafety.DEGRADED
     meetingUrl = null
-    if (emitIdle) emit("idle")
+    // Clearing lastError is scoped to the clean idle reset. A failed join tears
+    // down with emitIdle=false and relies on lastError staying set so emit("error")
+    // still carries it and pushCallState keeps ignoring late disconnected callbacks.
+    if (emitIdle) {
+      lastError = null
+      emit("idle")
+    }
   }
 
   private inner class SessionAudioController : AudioStreamController {
