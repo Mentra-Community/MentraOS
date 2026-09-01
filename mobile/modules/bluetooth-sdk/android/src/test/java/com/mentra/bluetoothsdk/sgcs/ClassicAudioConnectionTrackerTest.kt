@@ -1,9 +1,24 @@
 package com.mentra.bluetoothsdk.sgcs
 
+import java.lang.reflect.Modifier
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.Test
 
 class ClassicAudioConnectionTrackerTest {
+    @Test
+    fun `serializes every public state access`() {
+        val synchronizedMethods = setOf("getConnected", "setTarget", "update", "clear", "reset")
+
+        val methods =
+                ClassicAudioConnectionTracker::class.java.declaredMethods.associateBy { it.name }
+
+        synchronizedMethods.forEach { name ->
+            assertThat(Modifier.isSynchronized(methods.getValue(name).modifiers))
+                    .describedAs("%s must synchronize tracker state", name)
+                    .isTrue()
+        }
+    }
+
     @Test
     fun `publishes A2DP connect and disconnect transitions`() {
         val changes = mutableListOf<Boolean>()
@@ -85,6 +100,26 @@ class ClassicAudioConnectionTrackerTest {
         tracker.update(ClassicAudioProfile.A2DP, "AA:BB:CC:DD:EE:FF", connected = true)
 
         assertThat(tracker.clear("AA:BB:CC:DD:EE:FF")).isTrue()
+        assertThat(changes).containsExactly(true, false)
+        assertThat(tracker.connected).isFalse()
+    }
+
+    @Test
+    fun `target teardown rejects delayed callbacks from the cleared session`() {
+        val changes = mutableListOf<Boolean>()
+        val tracker = ClassicAudioConnectionTracker(changes::add)
+        tracker.setTarget("AA:BB:CC:DD:EE:FF")
+        tracker.update(ClassicAudioProfile.A2DP, "AA:BB:CC:DD:EE:FF", connected = true)
+
+        assertThat(tracker.clear("AA:BB:CC:DD:EE:FF")).isTrue()
+        val accepted =
+                tracker.update(
+                        ClassicAudioProfile.HEADSET,
+                        "AA:BB:CC:DD:EE:FF",
+                        connected = true
+                )
+
+        assertThat(accepted).isFalse()
         assertThat(changes).containsExactly(true, false)
         assertThat(tracker.connected).isFalse()
     }
