@@ -18,9 +18,11 @@ internal class ClassicAudioConnectionTracker(
     private var targetAddress: String? = null
     private val connectedProfiles = mutableSetOf<ClassicAudioProfile>()
 
+    @get:Synchronized
     val connected: Boolean
         get() = connectedProfiles.isNotEmpty()
 
+    @Synchronized
     fun setTarget(address: String) {
         val normalizedAddress = address.normalizedBluetoothAddress()
         if (targetAddress == normalizedAddress) return
@@ -29,6 +31,7 @@ internal class ClassicAudioConnectionTracker(
         clearConnectedProfiles()
     }
 
+    @Synchronized
     fun update(
         profile: ClassicAudioProfile,
         address: String,
@@ -46,13 +49,16 @@ internal class ClassicAudioConnectionTracker(
         return true
     }
 
+    @Synchronized
     fun clear(address: String): Boolean {
         if (targetAddress != address.normalizedBluetoothAddress()) return false
 
+        targetAddress = null
         clearConnectedProfiles()
         return true
     }
 
+    @Synchronized
     fun reset() {
         targetAddress = null
         clearConnectedProfiles()
