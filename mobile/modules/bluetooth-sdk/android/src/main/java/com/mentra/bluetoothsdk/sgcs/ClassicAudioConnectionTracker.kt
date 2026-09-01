@@ -1,5 +1,7 @@
 package com.mentra.bluetoothsdk.sgcs
 
+import android.bluetooth.BluetoothProfile
+
 internal enum class ClassicAudioProfile {
     A2DP,
     HEADSET,
@@ -76,5 +78,12 @@ internal class ClassicAudioConnectionTracker(
         }
     }
 }
+
+internal fun classicProfileConnectedState(state: Int): Boolean? =
+        when (state) {
+            BluetoothProfile.STATE_CONNECTED -> true
+            BluetoothProfile.STATE_DISCONNECTED -> false
+            else -> null
+        }
 
 private fun String.normalizedBluetoothAddress(): String = trim().uppercase()
