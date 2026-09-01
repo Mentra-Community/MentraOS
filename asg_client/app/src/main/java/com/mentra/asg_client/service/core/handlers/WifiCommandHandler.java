@@ -72,7 +72,14 @@ public class WifiCommandHandler implements ICommandHandler {
 
     @Override
     public Set<String> getSupportedCommandTypes() {
-        return Set.of("set_wifi_credentials", "request_wifi_status", "request_wifi_scan", "set_hotspot_state", "disconnect_wifi", "forget_wifi");
+        return Set.of(
+                "set_wifi_credentials",
+                "request_wifi_status",
+                "request_wifi_scan",
+                "request_saved_wifi_networks",
+                "set_hotspot_state",
+                "disconnect_wifi",
+                "forget_wifi");
     }
 
     @Override
@@ -85,6 +92,8 @@ public class WifiCommandHandler implements ICommandHandler {
                     return handleRequestWifiStatus();
                 case "request_wifi_scan":
                     return handleRequestWifiScan(data);
+                case "request_saved_wifi_networks":
+                    return handleRequestSavedWifiNetworks(data);
                 case "set_hotspot_state":
                     return handleSetHotspotState(data);
                 case "disconnect_wifi":
@@ -440,10 +449,13 @@ public class WifiCommandHandler implements ICommandHandler {
      * Handle forget WiFi command - removes a saved network from the device
      */
     private boolean handleForgetWifi(JSONObject data) {
+        String requestId = data.optString("requestId", "");
+        String ssid = data.optString("ssid", "");
         try {
-            String ssid = data.optString("ssid", "");
             if (ssid.isEmpty()) {
                 Log.e(TAG, "📶 Cannot forget WiFi - missing SSID");
+                communicationManager.sendWifiForgetResultOverBle(
+                        requestId, ssid, false, "invalid_ssid");
                 return false;
             }
 
@@ -451,15 +463,59 @@ public class WifiCommandHandler implements ICommandHandler {
 
             INetworkManager networkManager = serviceManager.getNetworkManager();
             if (networkManager != null) {
-                networkManager.forgetWifiNetwork(ssid);
-                Log.d(TAG, "📶 ✅ WiFi forget command executed for: " + ssid);
-                return true;
+                boolean accepted = networkManager.forgetWifiNetwork(ssid);
+                communicationManager.sendWifiForgetResultOverBle(
+                        requestId, ssid, accepted, accepted ? null : "forget_not_supported");
+                Log.d(TAG, "📶 WiFi forget command result for " + ssid + ": " + accepted);
+                return accepted;
             } else {
                 Log.e(TAG, "📶 Network manager not available for WiFi forget");
+                communicationManager.sendWifiForgetResultOverBle(
+                        requestId, ssid, false, "network_manager_unavailable");
                 return false;
             }
         } catch (Exception e) {
             Log.e(TAG, "📶 Error handling WiFi forget command", e);
+            communicationManager.sendWifiForgetResultOverBle(
+                    requestId, ssid, false, "forget_failed");
+            return false;
+        }
+    }
+
+    /** Return the WiFi SSIDs configured on the glasses. */
+    private boolean handleRequestSavedWifiNetworks(JSONObject data) {
+        String requestId = data.optString("requestId", "");
+        if (requestId.isEmpty()) {
+            Log.e(TAG, "📶 Cannot list saved WiFi networks - missing requestId");
+            return false;
+        }
+
+        try {
+            INetworkManager networkManager = serviceManager.getNetworkManager();
+            if (networkManager == null) {
+                Log.e(TAG, "📶 Network manager not available for saved WiFi network list");
+                communicationManager.sendSavedWifiNetworksOverBle(
+                        requestId,
+                        java.util.Collections.emptyList(),
+                        "network_manager_unavailable");
+                return false;
+            }
+
+            java.util.List<String> networks = networkManager.getConfiguredWifiNetworks();
+            java.util.List<String> sanitizedNetworks =
+                    networks.stream()
+                            .filter(java.util.Objects::nonNull)
+                            .map(String::trim)
+                            .filter(network -> !network.isEmpty())
+                            .distinct()
+                            .sorted()
+                            .collect(java.util.stream.Collectors.toList());
+            communicationManager.sendSavedWifiNetworksOverBle(requestId, sanitizedNetworks, null);
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "📶 Error listing saved WiFi networks", e);
+            communicationManager.sendSavedWifiNetworksOverBle(
+                    requestId, java.util.Collections.emptyList(), "list_saved_networks_failed");
             return false;
         }
     }

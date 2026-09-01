@@ -58,8 +58,9 @@ public interface INetworkManager {
     /**
      * Forget a saved WiFi network (removes it from saved networks)
      * @param ssid The SSID of the network to forget
+     * @return true when the platform accepted the forget operation
      */
-    void forgetWifiNetwork(String ssid);
+    boolean forgetWifiNetwork(String ssid);
     
     /**
      * Add a listener for WiFi state changes

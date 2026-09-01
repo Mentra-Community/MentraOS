@@ -592,6 +592,8 @@ class BluetoothSdkModule : Module() {
 
         SdkCoroutineFunction("requestWifiScan") { -> requireSdk().requestWifiScan().map { it.toMap() } }
 
+        SdkCoroutineFunction("getSavedWifiNetworks") { -> requireSdk().getSavedWifiNetworks() }
+
         SdkCoroutineFunction("sendWifiCredentials") { ssid: String, password: String ->
             requireSdk().sendWifiCredentials(ssid, password).values
         }

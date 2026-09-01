@@ -92,6 +92,8 @@ public class BaseNetworkManagerHotspotActivityTest {
         public void disconnectFromWifi() {}
 
         @Override
-        public void forgetWifiNetwork(String ssid) {}
+        public boolean forgetWifiNetwork(String ssid) {
+            return false;
+        }
     }
 }

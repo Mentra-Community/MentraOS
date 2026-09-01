@@ -17,7 +17,6 @@ import com.mentra.asg_client.io.network.interfaces.IWifiScanCallback;
 import com.mentra.asg_client.io.network.utils.DebugNotificationManager;
 import com.mentra.asg_client.io.ota.session.OtaSessionManager;
 import com.mentra.asg_client.service.system.core.SystemControllerFactory;
-import java.util.ArrayList;
 import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
@@ -616,7 +615,7 @@ public class K900NetworkManager extends BaseNetworkManager {
     }
 
     @Override
-    public void forgetWifiNetwork(String ssid) {
+    public boolean forgetWifiNetwork(String ssid) {
         Log.d(TAG, "📶 =========================================");
         Log.d(TAG, "📶 FORGET WIFI NETWORK: " + ssid);
         Log.d(TAG, "📶 =========================================");
@@ -628,10 +627,12 @@ public class K900NetworkManager extends BaseNetworkManager {
 
             Log.i(TAG, "📶 ✅ WiFi forget command sent for: " + ssid);
             notificationManager.showDebugNotification("WiFi Network Forgotten", "Removed: " + ssid);
+            return true;
         } catch (Exception e) {
             Log.e(TAG, "📶 💥 Error forgetting WiFi network", e);
             notificationManager.showDebugNotification(
                     "WiFi Error", "Failed to forget: " + e.getMessage());
+            return false;
         }
     }
 
@@ -708,27 +709,6 @@ public class K900NetworkManager extends BaseNetworkManager {
                 Log.w(TAG, "Receiver already unregistered", e);
             }
         }
-    }
-
-    @Override
-    public List<String> getConfiguredWifiNetworks() {
-        Log.d(TAG, "Getting configured WiFi networks from K900");
-        List<String> networks = new ArrayList<>();
-
-        // Use K900-specific broadcast to get configured networks
-        try {
-            Intent intent = new Intent(K900_BROADCAST_ACTION);
-            intent.putExtra("command", "get_configured_networks");
-            context.sendBroadcast(intent);
-
-            // For now, return empty list as K900 response handling is complex
-            // In a real implementation, you would register a receiver for the response
-            Log.d(TAG, "K900 configured networks request sent");
-        } catch (Exception e) {
-            Log.e(TAG, "Error getting configured networks from K900", e);
-        }
-
-        return networks;
     }
 
     @Override
