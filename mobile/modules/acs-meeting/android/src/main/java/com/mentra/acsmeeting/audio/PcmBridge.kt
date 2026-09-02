@@ -18,6 +18,7 @@ class PcmBridge(
   private var dumpChannels = 0
   private var dumped = false
   private val outgoing = ByteArrayOutputStream()
+  private val resampler = PcmResampler(TARGET_RATE)
   private var lastRmsLogMs = 0L
 
   fun ingest(pcm16Le: ByteArray, sampleRate: Int, channels: Int): List<ByteArray> {
@@ -29,7 +30,9 @@ class PcmBridge(
       if (dump!!.size() >= needed) finishDump()
     }
     logLevel(pcm16Le, sampleRate, channels)
-    val mono16k = toMono16k(pcm16Le, sampleRate, channels)
+    // Stateful: filter history and fractional phase carry across WebRTC's
+    // 10 ms callbacks, so there is no seam every 480 samples.
+    val mono16k = resampler.process(pcm16Le, sampleRate, channels)
     outgoing.write(mono16k)
     val frameBytes = 16000 * 2 / 50 // 20 ms
     val frames = mutableListOf<ByteArray>()
@@ -78,29 +81,9 @@ class PcmBridge(
     private const val TAG = "ACS-SPIKE"
     const val TARGET_RATE = 16000
 
-    fun toMono16k(pcm16Le: ByteArray, sampleRate: Int, channels: Int): ByteArray {
-      val samples = ShortArray(pcm16Le.size / 2)
-      ByteBuffer.wrap(pcm16Le).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(samples)
-      val mono = if (channels <= 1) samples else ShortArray(samples.size / channels) { i ->
-        var acc = 0
-        for (c in 0 until channels) acc += samples[i * channels + c]
-        (acc / channels).toShort()
-      }
-      if (sampleRate == TARGET_RATE) {
-        val out = ByteArray(mono.size * 2)
-        ByteBuffer.wrap(out).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().put(mono)
-        return out
-      }
-      val outCount = (mono.size.toLong() * TARGET_RATE / sampleRate).toInt().coerceAtLeast(1)
-      val resampled = ShortArray(outCount)
-      for (i in 0 until outCount) {
-        val src = (i.toLong() * sampleRate / TARGET_RATE).toInt().coerceIn(0, mono.lastIndex)
-        resampled[i] = mono[src]
-      }
-      val out = ByteArray(resampled.size * 2)
-      ByteBuffer.wrap(out).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().put(resampled)
-      return out
-    }
+    /** One-shot convenience (fresh filter state). Streams must use a [PcmResampler] instance. */
+    fun toMono16k(pcm16Le: ByteArray, sampleRate: Int, channels: Int): ByteArray =
+      PcmResampler(TARGET_RATE).process(pcm16Le, sampleRate, channels)
 
     fun wav(pcm: ByteArray, sampleRate: Int, channels: Int): ByteArray {
       val header = ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN)
