@@ -35,7 +35,7 @@ export function WorkspaceBrand({displayName, logoUrls, showFallbackName = false}
   return (
     <View className="items-center">
       <View className="w-[180px] h-24 items-center justify-center">
-        <Icon name="office-building" size={64} color={theme.colors.foreground} />
+        <Icon name="building" size={64} color={theme.colors.foreground} />
       </View>
       {showFallbackName ? <Text className="text-[36px] text-foreground text-center mt-4" text={displayName} /> : null}
     </View>

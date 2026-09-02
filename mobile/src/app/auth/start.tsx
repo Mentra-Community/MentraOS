@@ -146,7 +146,7 @@ export default function LoginScreen() {
               store.clearSelection()
               push("/auth/workspace")
             }}
-            LeftAccessory={() => <Icon name="office-building" size={20} color={theme.colors.foreground} />}
+            LeftAccessory={() => <Icon name="building" size={20} color={theme.colors.foreground} />}
           />
         </View>
       </View>

@@ -2,6 +2,7 @@ import {useState} from "react"
 import {View, Image, ActivityIndicator, ScrollView, ImageStyle, ViewStyle, Modal} from "react-native"
 import Svg, {Path} from "react-native-svg"
 
+import {WorkspaceBrand} from "@/components/auth/WorkspaceBrand"
 import {Header, Screen, Text} from "@/components/ignite"
 import {Group} from "@/components/ui/Group"
 import {RouteButton} from "@/components/ui/RouteButton"
@@ -228,7 +229,12 @@ export default function ProfileSettingsPage() {
         ) : userData ? (
           <>
             <View style={themed($profileSection)}>
-              {userData.avatarUrl ? (
+              {activeDeployment.kind === "workspace" ? (
+                <WorkspaceBrand
+                  displayName={activeDeployment.manifest.displayName}
+                  logoUrls={activeDeployment.manifest.branding?.logoUrls}
+                />
+              ) : userData.avatarUrl ? (
                 <Image source={{uri: userData.avatarUrl}} style={themed($profileImage)} />
               ) : (
                 <View style={themed($profilePlaceholder)}>
