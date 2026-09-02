@@ -45,7 +45,7 @@ import {SystemModule} from "./modules/system"
 import {MiniappsModule} from "./modules/miniapps"
 import {ActionsModule} from "./modules/actions"
 import {BlobModule} from "./modules/blob"
-import {MeetingModule} from "./modules/meeting"
+import {MeetingModule, parseMeetingParticipants} from "./modules/meeting"
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -687,12 +687,17 @@ export class MiniappSession<TChannels extends object = any> {
       case MiniappResponseType.MEETING_STATE: {
         const state = payload.state as import("./modules/meeting").MeetingPhase | undefined
         if (!state) return
-        const event = {
+        const event: import("./modules/meeting").MeetingState = {
           state,
           muted: Boolean(payload.muted),
           error: payload.error as string | undefined,
           meetingUrl: payload.meetingUrl as string | undefined,
           provider: payload.provider as import("./modules/meeting").MeetingProvider | undefined,
+          audioSource: payload.audioSource as import("./modules/meeting").MeetingState["audioSource"],
+          audioSourceReason: payload.audioSourceReason as import("./modules/meeting").MeetingState["audioSourceReason"],
+          activeStream: payload.activeStream as import("./modules/meeting").MeetingState["activeStream"],
+          audioSafety: payload.audioSafety as import("./modules/meeting").MeetingState["audioSafety"],
+          participants: parseMeetingParticipants(payload.participants),
         }
         this.meeting._applyState(event)
         this.emitter.emit("meetingState", event)
