@@ -154,17 +154,18 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
     console.log("AuthContext: Starting logout process")
     try {
       if (workspaceAuth && activeDeployment.kind === "workspace") {
-        const deployment = activeDeployment
-        await workspaceAuth.signOut()
-        await LogoutUtils.performCompleteLogout({skipAuthSignOut: true})
-        // Complete logout intentionally clears user settings and MMKV. Restore
-        // only the selected deployment so another employee returns to the
-        // organization's sign-in screen, never to the consumer login.
-        store.activate({
-          workspaceOrigin: deployment.workspaceOrigin,
-          manifestUrl: deployment.manifestUrl,
-          manifest: deployment.manifest,
-        })
+        try {
+          await workspaceAuth.signOut()
+        } catch (error) {
+          console.warn("AuthContext: failed to clear workspace provider account", error)
+        }
+        try {
+          await LogoutUtils.performCompleteLogout({skipAuthSignOut: true})
+        } finally {
+          // Log out means leaving the workspace, including its cached manifest.
+          // A future same-workspace account switch must be a separate action.
+          store.clearSelection()
+        }
       } else {
         await LogoutUtils.performCompleteLogout()
         const logoutSuccessful = await LogoutUtils.verifyLogoutSuccess()

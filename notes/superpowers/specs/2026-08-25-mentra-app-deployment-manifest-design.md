@@ -678,6 +678,10 @@ Changing deployment is controlled logout:
 4. Restart through the normal boot route.
 
 Credentials and app state must not cross deployment ids.
+Signing out of a workspace clears its cached manifest and returns the app to
+the neutral Mentra/workspace landing screen, including after an app restart.
+Keeping a workspace selected while changing employees is a distinct future
+account-switching action, not logout behavior.
 
 ## Engine and Mentra Call contract
 

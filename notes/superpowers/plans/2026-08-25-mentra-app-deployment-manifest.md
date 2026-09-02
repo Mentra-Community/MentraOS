@@ -197,6 +197,8 @@ server-side harness. Lane A is not expected to place a Teams call.
       managed-app configuration injection in v1.
 - [ ] Cache the last valid manifest for disconnected boot and never fall back to
       the consumer profile after custom selection.
+- [ ] Clear the cached manifest on workspace logout and return to the neutral
+      Mentra/workspace landing screen, including after restart.
 
 ## Phase 2: Native Microsoft Entra authentication
 
