@@ -10,6 +10,7 @@ import android.util.Log;
 import com.mentra.asg_client.io.media.core.MediaCaptureService;
 import com.mentra.asg_client.io.network.interfaces.INetworkManager;
 import com.mentra.asg_client.io.network.utils.HotspotNetworkUtils;
+import com.mentra.asg_client.io.streaming.LivestreamEisPolicy;
 import com.mentra.asg_client.io.streaming.config.RtmpStreamConfig;
 import com.mentra.asg_client.io.streaming.config.WhipStreamConfig;
 import com.mentra.asg_client.io.streaming.services.RtmpStreamingService;
@@ -38,20 +39,6 @@ import java.util.Set;
  */
 public class StreamCommandHandler implements ICommandHandler {
     private static final String TAG = "StreamCommandHandler";
-
-    /**
-     * Toggle Electronic Image Stabilization for livestreams. When true, livestreams enable EIS
-     * (Pixsmart vendor stack: system property + per-CaptureRequest SPORTS scene mode and vendor
-     * key). When false, EIS is disabled for the duration of the stream to reduce camera HAL thermal
-     * load.
-     */
-    private static final boolean EIS_IN_LIVESTREAMS = false;
-
-    /**
-     * EIS only kicks in below this pixel budget. Higher resolutions push the camera HAL into
-     * thermal/throughput regimes where EIS makes the stream worse.
-     */
-    private static final int EIS_MAX_PIXELS = 500_000;
 
     private final Context context;
     private final IStateManager stateManager;
@@ -211,7 +198,7 @@ public class StreamCommandHandler implements ICommandHandler {
                         if (!preflightCameraCaptureForPackStreaming(config, streamId)) {
                             return false;
                         }
-                        // Toggle EIS for the duration of the stream (see EIS_IN_LIVESTREAMS).
+                        // Toggle EIS for the duration of the stream (500k pixel gate).
                         // Gate on resolution so EIS only runs when the camera HAL can handle it.
                         applyEisForStreaming(config.getVideoWidth(), config.getVideoHeight());
                         eisChanged = true;
@@ -285,21 +272,12 @@ public class StreamCommandHandler implements ICommandHandler {
     }
 
     /**
-     * Apply EIS configuration for an active livestream. Updates the Pixsmart system property used
-     * by the camera pipeline.
-     *
-     * <p>EIS is only enabled when the requested resolution is at or below {@link #EIS_MAX_PIXELS};
-     * above that, EIS is forced off because the camera HAL cannot sustain it without degrading the
-     * stream.
+     * Arm livestream EIS only under the 500k pixel gate. Mentra Call 540p/720p stay
+     * off. WHIP also applies {@code EisController} on its own repeating request.
      */
     private void applyEisForStreaming(int width, int height) {
-        boolean withinEisBudget = ((long) width * (long) height) < EIS_MAX_PIXELS;
-        boolean enable = EIS_IN_LIVESTREAMS && withinEisBudget;
-        if (EIS_IN_LIVESTREAMS && !withinEisBudget) {
-            Log.i(
-                    TAG,
-                    "EIS disabled for " + width + "x" + height + " (>= " + EIS_MAX_PIXELS + " px)");
-        }
+        boolean enable = LivestreamEisPolicy.logDecision(TAG, "stream-start", width, height);
+        CameraController.enablePixsmartEisOnRequest = enable;
         SystemControllerFactory.get(context).setEisEnabled(enable);
     }
 
@@ -308,6 +286,8 @@ public class StreamCommandHandler implements ICommandHandler {
      * AsgClientService boot-time configuration.
      */
     private void restoreEisAfterStreaming() {
+        Log.i(TAG, "EIS stage=stream-stop enable=false reason=restore-default-off");
+        CameraController.enablePixsmartEisOnRequest = false;
         SystemControllerFactory.get(context).setEisEnabled(false);
     }
 
@@ -561,6 +541,13 @@ public class StreamCommandHandler implements ICommandHandler {
                 if (valid || WhipStreamingService.isStreaming()) {
                     if (valid) {
                         mHotspotActivityTracker.onKeepAlive();
+                    } else {
+                        // The ACK below keeps the phone's session alive, but the glasses
+                        // watchdog was NOT reset: this keep-alive names a stream that is not
+                        // the one running. Make the split visible so a 60 s "stream timed
+                        // out" that follows can be traced to the id mismatch.
+                        Log.w(TAG, "Keep-alive streamId mismatch: got " + streamId
+                                + ", active WHIP stream differs - ACKing without resetting watchdog");
                     }
                     streamingManager.sendKeepAliveAck(streamId, ackId);
                     return true;
