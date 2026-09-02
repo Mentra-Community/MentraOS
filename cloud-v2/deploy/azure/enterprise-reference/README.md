@@ -113,8 +113,9 @@ Set `clientMinVersion` or `clientRecommendedVersion` only when the deployment
 needs to enforce or recommend a real Mentra App version floor. Both default to
 `0.0.0`, which permits every workspace-capable release.
 
-This profile has customer-approved Microsoft, ACS, and Azure egress. It is
-restricted-network/self-hosted, not literally air-gapped.
+This Mentra Private Deployment profile has customer-approved Microsoft, ACS,
+and Azure egress. It is customer-hosted and restricted-network, not literally
+air-gapped.
 
 ## Qualify the reference deployment yourself
 
@@ -124,7 +125,9 @@ Follow [entra-setup.md](./entra-setup.md), then confirm that your employee is
 assigned to the **Mentra Enterprise Reference Mobile** Enterprise Application.
 The checked-in Mentra tenant already has both app registrations; debug,
 Mentra-signed APK, Google Play, and iOS redirects; administrator consent; and
-the pilot-user assignment.
+the pilot-user assignments. Both reference service principals carry Entra's
+integrated-application tag so they appear in the **Enterprise applications**
+list.
 
 ### 2. Observe the coordinated Runtime deployment
 

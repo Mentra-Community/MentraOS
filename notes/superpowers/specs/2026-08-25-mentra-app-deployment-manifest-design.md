@@ -3,17 +3,17 @@ status: draft
 owner: Mentra
 ---
 
-# Mentra Enterprise Self-Hosted deployment design
+# Mentra Private Deployment design
 
 ## Outcome
 
 The same official Mentra App binary can run against Mentra's public services or
-as part of a Mentra Enterprise Self-Hosted deployment. A deployment manifest is
+as part of a Mentra Private Deployment. A deployment manifest is
 resolved before sign-in and selects the authentication, services, artifacts,
 content, hardware catalog, and network-capable behavior for that workspace.
 
-The first customer deployment is deliberately narrower than a self-hosted copy
-of the complete MentraOS cloud. It supports the bundled Mentra Call miniapp,
+The first customer deployment is deliberately narrower than a customer-hosted
+copy of the complete MentraOS cloud. It supports the bundled Mentra Call miniapp,
 Mentra Live, Microsoft Entra sign-in, and direct Microsoft Teams participation
 through Azure Communication Services (ACS). It uses a reduced, customer-hosted
 configuration of the existing Runtime Services process. It does not require
@@ -24,14 +24,14 @@ fork, branded build, or second release pipeline.
 
 The v1 network posture is customer-controlled and restricted, not literally
 air-gapped. The app must not contact Mentra's public Core, Runtime, telemetry,
-artifact, content, or miniapp services after a self-hosted profile is active.
-It may reach destinations explicitly approved by the deployment operator,
-including the customer's Microsoft Entra tenant, customer Runtime, ACS resource,
-and Microsoft Teams.
+artifact, content, or miniapp services after a Private Deployment profile is
+active. It may reach destinations explicitly approved by the deployment
+operator, including the customer's Microsoft Entra tenant, customer Runtime,
+ACS resource, and Microsoft Teams.
 
 ## Terminology
 
-- **Mentra Enterprise Self-Hosted** is the deployment offering.
+- **Mentra Private Deployment** is the deployment offering.
 - **Customer-hosted deployment** means its required server component runs in
   infrastructure controlled by the customer, including the customer's Azure or
   AWS account.
@@ -46,12 +46,13 @@ and Microsoft Teams.
 - **On-premises deployment** is used only when the customer runs services in its
   own data center.
 
-Do not use "private deployment" as the product or architecture name because it
-does not identify who hosts the services.
+Use **customer-hosted** to describe ownership of the server components and
+**restricted-network** to describe the permitted network posture. Do not call
+this profile air-gapped or on-premises unless it meets those stricter meanings.
 
 ## First supported deployment
 
-The first Mentra Enterprise Self-Hosted deployment requires:
+The first Mentra Private Deployment requires:
 
 - The official Android and iOS Mentra App binaries from one coordinated release.
 - The bundled, phone-hosted Mentra Call miniapp.
@@ -130,8 +131,7 @@ it must not attempt to override that identity with the guest display name.
 
 This specification does not replace the broader Mentra Call product roadmap or
 change the existing consumer Google Meet/Zoom behavior. It defines only the
-Mentra Call capability consumed by the first Mentra Enterprise Self-Hosted
-deployment.
+Mentra Call capability consumed by the first Mentra Private Deployment.
 
 ### Why Core is not required and Runtime remains small
 
@@ -467,9 +467,10 @@ and [Teams interoperability](https://learn.microsoft.com/en-us/azure/communicati
 The current `nicolo/acs-teams-v1` branch mints an anonymous ACS communication
 user and passes its token through the miniapp. That is useful for internal native
 media bring-up, but it joins as a guest and is not the deployable enterprise
-identity contract. The self-hosted v1 moves credential acquisition below the
-miniapp boundary: the native host obtains the employee's ACS Teams-user token
-from Runtime and never exposes Entra or ACS bearer tokens to miniapp JavaScript.
+identity contract. The Private Deployment v1 moves credential acquisition below
+the miniapp boundary: the native host obtains the employee's ACS Teams-user
+token from Runtime and never exposes Entra or ACS bearer tokens to miniapp
+JavaScript.
 
 ### Future: Creating a Teams meeting
 

@@ -55,9 +55,22 @@ Add delegated API permissions for:
 Grant tenant-wide admin consent. No Microsoft Graph meeting-creation or
 calendar permission is required for the join-only deployment.
 
-On the resulting Enterprise Application, enable **Assignment required** and
-assign only the users or groups authorized for the Mentra workspace. Runtime
-still validates token claims; assignment is the tenant-side enrollment gate.
+From the Mobile app registration's **Overview** page, select **Managed
+application in local directory** to open the resulting service principal. This
+path works even if the default **Enterprise applications** list does not show
+it. Service principals created through Microsoft Graph or Azure CLI should have
+the `WindowsAzureActiveDirectoryIntegratedApp` tag so they appear normally in
+that list. Apply the tag to both the Mobile and Runtime service principals; it
+is portal metadata and does not affect tokens.
+
+On the Mobile service principal, enable **Assignment required** and assign only
+the users or groups authorized for the Mentra workspace. Do not assign employees
+to the Runtime service principal. Runtime still validates token claims;
+assignment to the Mobile application is the tenant-side enrollment gate.
+
+Leave custom token-signing keys and custom **Attributes & Claims** unconfigured.
+Runtime relies on Entra's standard OIDC claims, including issuer, tenant,
+audience, scope, authorized client, expiry, and employee object id.
 
 ## 3. Configure the deployment manifest
 

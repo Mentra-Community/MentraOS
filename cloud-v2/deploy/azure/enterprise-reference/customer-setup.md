@@ -1,4 +1,4 @@
-# Mentra Enterprise Self-Hosted customer setup
+# Mentra Private Deployment customer setup
 
 This is the administrator runbook for connecting the official Mentra App to a
 customer-controlled Microsoft 365/Azure deployment. It is intended for the
@@ -92,11 +92,25 @@ Grant tenant-wide administrator consent. These permissions allow joining an
 existing work/school Teams meeting as the signed-in employee. The join-only
 profile does not need Microsoft Graph calendar or meeting-creation permissions.
 
-In **Enterprise applications**, open the resulting service principal:
+From the Mobile app registration's **Overview** page, select **Managed
+application in local directory** to open its service principal. This path works
+even when the service principal is not visible in the default **Enterprise
+applications** list. If the registrations were created with Microsoft Graph or
+Azure CLI, add the `WindowsAzureActiveDirectoryIntegratedApp` tag to both the
+Mobile and Runtime service principals so administrators can find them normally
+under **Enterprise applications**. The tag affects portal visibility only; it
+does not change authentication or authorization.
+
+On the Mobile service principal:
 
 1. Set **Assignment required** to **Yes**.
 2. Assign only the pilot users or groups.
 3. Apply the customer's normal MFA and Conditional Access policy.
+
+Do not assign employees to the Runtime service principal. The Mobile public
+client requests the delegated Runtime scope on each employee's behalf. Do not
+configure custom token-signing keys or custom **Attributes & Claims** for either
+registration; Runtime uses the standard OIDC claims emitted by Entra.
 
 The user signs in once through Microsoft's supported browser or broker. Mentra
 never receives the user's password.

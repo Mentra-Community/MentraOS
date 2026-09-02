@@ -3,7 +3,7 @@ status: draft
 owner: Mentra
 ---
 
-# Mentra Enterprise Self-Hosted call deployment implementation plan
+# Mentra Private Deployment call implementation plan
 
 > Execution checklist for the first customer deployment: the official Mentra
 > App, bundled Mentra Call, Microsoft Entra, one reduced customer-hosted Runtime
@@ -365,8 +365,8 @@ server-side qualification harness, token/redaction tests, and Azure configuratio
 ## Phase 5: Reuse Entra for authenticated Teams identity
 
 The current Nicolo branch can prove native raw media first with a guest token,
-but the deployable self-hosted v1 requires the employee Teams identity. It
-reuses Phase 2; there is no second interactive SSO screen.
+but the deployable Private Deployment v1 requires the employee Teams identity.
+It reuses Phase 2; there is no second interactive SSO screen.
 
 **Lane:** C — begin only after the native ACS/media branch lands on `dev`.
 
