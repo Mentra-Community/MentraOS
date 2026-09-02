@@ -1,6 +1,7 @@
 package com.mentra.acsmeeting.source
 
 import android.content.Context
+import android.media.AudioAttributes
 import android.util.Log
 import com.mentra.acsmeeting.telemetry.PipelineStats
 import com.mentra.acsmeeting.video.FrameGeometry
@@ -25,6 +26,7 @@ import org.webrtc.SessionDescription
 import org.webrtc.VideoFrame
 import org.webrtc.VideoSink
 import org.webrtc.VideoTrack
+import org.webrtc.audio.JavaAudioDeviceModule
 import java.nio.ByteBuffer
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeUnit
@@ -49,7 +51,10 @@ class CloudflareWhepSource(
   private var pc: PeerConnection? = null
   private var currentUrl: String? = null
   @Volatile private var offerPosted = false
-  @Volatile private var pcmEnabled = true
+  // Fail closed: the audio policy turns delivery on once the ACS virtual
+  // stream is live. Survives restart() so a WHEP rebuild cannot silently
+  // re-open the uplink (or the local playout) against the current decision.
+  @Volatile private var pcmEnabled = false
   @Volatile override var state: SourceState = SourceState.IDLE
     private set
   // attachAudio runs on the WebRTC signaling thread, setPcmDeliveryEnabled on the RN
@@ -113,8 +118,7 @@ class CloudflareWhepSource(
 
   override fun setPcmDeliveryEnabled(enabled: Boolean) {
     pcmEnabled = enabled
-    audioTracks.forEach { it.setEnabled(enabled) }
-    Log.i(TAG, "WHEP audio track enabled=$enabled")
+    Log.i(TAG, "WHEP audio PCM delivery enabled=$enabled")
   }
 
   override fun setTargetSize(size: TargetSize?) {
@@ -124,7 +128,6 @@ class CloudflareWhepSource(
   override fun stop() {
     currentUrl = null
     offerPosted = false
-    pcmEnabled = true
     pendingOfferPost?.let { mainHandler.removeCallbacks(it) }
     pendingOfferPost = null
     mainHandler.removeCallbacks(statsPoll)
@@ -165,11 +168,51 @@ class CloudflareWhepSource(
     } else {
       null
     }
+    // libwebrtc renders every received audio track through its device module.
+    // That is the wearer's own mic coming back out of the phone (or, over
+    // A2DP, the glasses) — the feedback loop. The mixer must still run so the
+    // AudioTrackSink gets PCM, so we keep playout but make it inert: media
+    // attributes (never a voice-call route) and per-track volume 0 below.
+    val adm = JavaAudioDeviceModule.builder(context)
+      .setAudioAttributes(
+        AudioAttributes.Builder()
+          .setUsage(AudioAttributes.USAGE_MEDIA)
+          .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+          .build(),
+      )
+      .setUseHardwareAcousticEchoCanceler(false)
+      .setUseHardwareNoiseSuppressor(false)
+      .setAudioTrackStateCallback(object : JavaAudioDeviceModule.AudioTrackStateCallback {
+        override fun onWebRtcAudioTrackStart() {
+          Log.i(TAG, "WHEP ADM playout started (silenced; sink-only)")
+        }
+
+        override fun onWebRtcAudioTrackStop() {
+          Log.i(TAG, "WHEP ADM playout stopped")
+        }
+      })
+      .setAudioRecordStateCallback(object : JavaAudioDeviceModule.AudioRecordStateCallback {
+        override fun onWebRtcAudioRecordStart() {
+          // recv-only transceivers must never open the phone microphone.
+          Log.e(TAG, "WHEP ADM started RECORDING — unexpected phone mic capture")
+        }
+
+        override fun onWebRtcAudioRecordStop() {
+          Log.i(TAG, "WHEP ADM recording stopped")
+        }
+      })
+      .createAudioDeviceModule()
+    // Belt and braces with the per-track volume: the device module zeroes
+    // its playout buffer, and recording is disabled outright.
+    adm.setSpeakerMute(true)
+    adm.setAudioRecordEnabled(false)
     factory = PeerConnectionFactory.builder()
+      .setAudioDeviceModule(adm)
       .setVideoEncoderFactory(DefaultVideoEncoderFactory(shared, true, true))
       .setVideoDecoderFactory(DefaultVideoDecoderFactory(shared))
       .createPeerConnectionFactory()
-    Log.i(TAG, "P3 factory decoderMode=$mode egl=${shared != null}")
+    adm.release()
+    Log.i(TAG, "P3 factory decoderMode=$mode egl=${shared != null} adm=media-silent")
   }
 
   @Synchronized
@@ -334,9 +377,12 @@ class CloudflareWhepSource(
       return
     }
     audioTracks.add(track)
-    track.setEnabled(pcmEnabled)
+    // Output gain is applied after the raw sink callback in ChannelReceive, so
+    // volume 0 silences local playout while the sink still gets full-scale PCM.
+    track.setVolume(0.0)
+    track.setEnabled(true)
     track.addSink(audioSink)
-    Log.i(TAG, "P3 attach kind=audio id=$id attached=${audioIds.size()} skipped=${audioIds.skipped()}")
+    Log.i(TAG, "P3 attach kind=audio id=$id attached=${audioIds.size()} skipped=${audioIds.skipped()} playoutVolume=0")
   }
 
   private val audioSink = AudioTrackSink { audioData, bitsPerSample, sampleRate, numberOfChannels, numberOfFrames, _ ->
