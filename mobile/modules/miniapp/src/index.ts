@@ -181,8 +181,17 @@ export type {PhoneModule, PhoneNotificationsModule, PhoneCalendarModule} from ".
 export type {TranscriptionModule, TranscriptionConfig, TranscriptionOptions} from "./modules/transcription"
 export type {TranslationModule} from "./modules/translation"
 export type {SpeakerModule} from "./modules/speaker"
-export type {MeetingModule, MeetingJoinOptions, MeetingState, MeetingPhase, MeetingProvider, MeetingVideoSource} from "./modules/meeting"
-export {MEETING_HOST_UPDATE_MESSAGE} from "./modules/meeting"
+export type {
+  MeetingModule,
+  MeetingJoinOptions,
+  MeetingState,
+  MeetingPhase,
+  MeetingProvider,
+  MeetingVideoSource,
+  MeetingParticipant,
+  MeetingParticipantState,
+} from "./modules/meeting"
+export {MEETING_HOST_UPDATE_MESSAGE, parseMeetingParticipants} from "./modules/meeting"
 
 // Permission types
 export type {PermissionType, PermissionRecord} from "./session"
