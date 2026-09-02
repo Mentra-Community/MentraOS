@@ -306,6 +306,7 @@ class AcsMeetingSession(
         emit("error")
       }
     }
+    return snapshot()
   }
 
   fun updateVideoSource(whepUrl: String) {
