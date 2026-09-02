@@ -47,6 +47,7 @@ import com.mentra.acsmeeting.audio.AudioSourceKind
 import com.mentra.acsmeeting.audio.AudioStreamController
 import com.mentra.acsmeeting.audio.CallGuard
 import com.mentra.acsmeeting.audio.ExecutorPolicyScheduler
+import com.mentra.acsmeeting.audio.IncomingAudioPump
 import com.mentra.acsmeeting.audio.PcmBridge
 import com.mentra.acsmeeting.source.AcsInvestigation
 import com.mentra.acsmeeting.source.CloudflareWhepSource
@@ -94,7 +95,24 @@ class AcsMeetingSession(
   }
   @Volatile private var lastGatedLogMs = 0L
   @Volatile private var lastSentLogMs = 0L
+  @Volatile private var lastInLogMs = 0L
   private var pcmBridge: PcmBridge? = null
+  // Emits already-normalized 16 kHz mono; the host opens its PCM player with
+  // exactly that format, so whatever ACS actually delivers cannot change pitch.
+  private val incomingPump = IncomingAudioPump { chunk ->
+    onIncomingPcm(PcmBridge.encodeBase64(chunk), IncomingAudioPump.OUT_RATE, IncomingAudioPump.OUT_CHANNELS)
+  }
+  // isSpeaking flips several times a second per participant; coalesce so the
+  // host and miniapp see one roster snapshot per burst instead of a storm.
+  private val rosterPushPending = AtomicBoolean(false)
+  private val roster = RemoteRoster {
+    if (rosterPushPending.compareAndSet(false, true)) {
+      executor.schedule({
+        rosterPushPending.set(false)
+        if (call != null) onState(snapshot())
+      }, ROSTER_COALESCE_MS, TimeUnit.MILLISECONDS)
+    }
+  }
   private val media = GlassesMediaController(resolvedFactory)
   private var mediaStatsListener: MediaStatisticsReportReceivedListener? = null
   private var mediaStatsFeature: MediaStatisticsCallFeature? = null
@@ -127,6 +145,7 @@ class AcsMeetingSession(
       "audioSource" to audioSource,
       "activeStream" to controller.readActive().name.lowercase(),
       "audioSafety" to lastSafety.name.lowercase(),
+      "participants" to roster.snapshot(),
     )
     meetingUrl?.let { result["meetingUrl"] = it }
     lastError?.let { result["error"] = it }
@@ -145,10 +164,15 @@ class AcsMeetingSession(
     audioSource: String = "glasses",
     video: VideoProfile = VideoProfile.DEFAULT,
   ): Map<String, Any> {
-    // TEMP: force phone mic. Ignore host/resolver until the glasses path is back on.
-    Log.i(TAG, "TEMP force phone mic (host asked $audioSource)")
-    val parsed = AudioSourceKind.PHONE
-    this.audioSource = "phone"
+    // Glasses is the product path: the wearer's mic only exists in the WHEP
+    // stream, and the RawOutgoingAudioStream keeps ACS out of the phone's
+    // audio routing (no MODE_IN_COMMUNICATION, no forced phone speaker).
+    // Phone is kept only as an explicit fallback for glasses without a mic.
+    val parsed = AcsAudioPolicy.parseSource(audioSource) ?: AudioSourceKind.GLASSES
+    if (parsed == AudioSourceKind.PHONE) {
+      Log.w(TAG, "audioSource=phone: ACS will own the phone audio route for this call")
+    }
+    this.audioSource = if (parsed == AudioSourceKind.PHONE) "phone" else "glasses"
     // The ACS work below is queued, so callers must not receive the pre-join
     // phase. Reflect the intent synchronously so the resolved snapshot is
     // "connecting" and cannot overwrite a fresher onState with a stale idle.
@@ -190,9 +214,20 @@ class AcsMeetingSession(
           applyAudioPolicy("virtual-stream-state")
         }
 
-        val local = LocalOutgoingAudioStream()
+        val synthetic = AcsInvestigation.videoArm == VideoSourceArm.SYNTHETIC
+        if (synthetic) muted.set(true)
+        val desired = desiredKind()
+        val plan = if (synthetic) {
+          JoinAudioPlan(armVirtual = true, transportMuted = true)
+        } else {
+          AcsAudioPolicy.planJoin(desired, muted.get(), GLASSES_REQUIRES_UNMUTED_TRANSPORT)
+        }
+
+        // Only the phone path gets a LocalOutgoingAudioStream. Creating one
+        // for the glasses path would hand ACS a microphone it must never open.
+        val local = if (plan.armVirtual) null else LocalOutgoingAudioStream()
         localOut = local
-        local.addOnStateChangedListener {
+        local?.addOnStateChangedListener {
           Log.i(TAG, "local outgoing audio state=${local.state}")
           applyAudioPolicy("local-stream-state")
         }
@@ -204,25 +239,25 @@ class AcsMeetingSession(
         val inAudioOptions = RawIncomingAudioStreamOptions().setProperties(incomingProperties)
         val incoming = RawIncomingAudioStream(inAudioOptions)
         audioIn = incoming
+        incomingPump.reset()
+        incoming.addOnStateChangedListener {
+          Log.i(TAG, "raw incoming audio state=${incoming.state}")
+        }
         incoming.addOnMixedAudioBufferReceivedListener { event: IncomingMixedAudioEvent ->
           if (AcsInvestigation.videoArm == VideoSourceArm.SYNTHETIC) return@addOnMixedAudioBufferReceivedListener
           try {
             val data = event.audioBuffer?.buffer ?: return@addOnMixedAudioBufferReceivedListener
             val bytes = ByteArray(data.remaining())
             data.get(bytes)
-            onIncomingPcm(PcmBridge.encodeBase64(bytes), 16000, 1)
+            // Trust the event's format over what we asked for.
+            val props = event.streamProperties
+            val rate = sampleRateHz(props?.sampleRate) ?: 16000
+            val channels = if (props?.channelMode == AudioStreamChannelMode.STEREO) 2 else 1
+            incomingPump.push(bytes, rate, channels)
+            logIncomingRate(rate, channels, bytes.size)
           } catch (error: Exception) {
             Log.w(TAG, "incoming PCM callback failed", error)
           }
-        }
-
-        val synthetic = AcsInvestigation.videoArm == VideoSourceArm.SYNTHETIC
-        if (synthetic) muted.set(true)
-        val desired = desiredKind()
-        val plan = if (synthetic) {
-          JoinAudioPlan(armVirtual = true, transportMuted = true)
-        } else {
-          AcsAudioPolicy.planJoin(desired, muted.get(), GLASSES_REQUIRES_UNMUTED_TRANSPORT)
         }
         val joinOptions = JoinCallOptions()
         val constraints = OutgoingVideoConstraints()
@@ -234,19 +269,27 @@ class AcsMeetingSession(
           .setOutgoingVideoStreams(listOf(videoStream))
           .setConstraints(constraints)
         joinOptions.setOutgoingVideoOptions(ov)
+        // Glasses path: virtual outgoing stream and MODE_IN_COMMUNICATION off.
+        // With communication mode on, the ACS SDK calls setMode(3) on connect
+        // and requests the phone speaker as the communication device, which
+        // yanks A2DP playback off the glasses and opens the echo loop.
         val oa = OutgoingAudioOptions()
-          .setStream(if (plan.armVirtual) outgoing else local)
+          .setStream(if (plan.armVirtual) outgoing else requireNotNull(local))
           .setMuted(plan.transportMuted)
           .setCommunicationAudioModeEnabled(!plan.armVirtual)
         joinOptions.setOutgoingAudioOptions(oa)
+        // Raw incoming replaces SDK playout: buffers come to us, the SDK plays
+        // nothing. Do not start it "speaker muted" — that flag gates the very
+        // stream we read from.
         val ia = IncomingAudioOptions()
           .setStream(incoming)
-          .setMuted(true)
+          .setMuted(false)
         joinOptions.setIncomingAudioOptions(ia)
 
         val locator = TeamsMeetingLinkLocator(teamsUrl)
         val joined = callAgent!!.join(context, locator, joinOptions)
         call = joined
+        roster.attach(joined)
         joined.addOnStateChangedListener { pushCallState(joined.state) }
         joined.addOnOutgoingAudioStateChangedListener {
           Log.i(TAG, "outgoing audio state changed muted=${joined.isOutgoingAudioMuted}")
@@ -355,6 +398,17 @@ class AcsMeetingSession(
       Log.e(TAG, "audioSafety=unsafe — mute and stopAudio both failed; unintended mic may be live")
     }
     onState(snapshot())
+  }
+
+  private fun logIncomingRate(rate: Int, channels: Int, bytes: Int) {
+    val now = System.currentTimeMillis()
+    if (now - lastInLogMs < 1000) return
+    lastInLogMs = now
+    Log.i(
+      TAG,
+      "P8 audio-in rate=$rate ch=$channels bytes=$bytes events=${incomingPump.eventsIn} " +
+        "in=${incomingPump.bytesIn} out16k=${incomingPump.bytesOut} formatChanges=${incomingPump.formatChanges}",
+    )
   }
 
   private fun feedOutgoingPcm(pcm: ByteArray, sampleRate: Int, channels: Int) {
@@ -561,6 +615,8 @@ class AcsMeetingSession(
       ticker.stop()
       detachDiagnostics()
       detachMediaStats()
+      roster.detach()
+      incomingPump.reset()
       applier.reset()
       scheduler.cancelPending()
       pcmBridge?.finishDump()
@@ -641,6 +697,17 @@ class AcsMeetingSession(
   companion object {
     private const val TAG = "ACS-SPIKE"
     const val GLASSES_REQUIRES_UNMUTED_TRANSPORT = true
+    private const val ROSTER_COALESCE_MS = 150L
+
+    fun sampleRateHz(rate: AudioStreamSampleRate?): Int? = when (rate) {
+      AudioStreamSampleRate.HZ_16000 -> 16000
+      AudioStreamSampleRate.HZ_22050 -> 22050
+      AudioStreamSampleRate.HZ_24000 -> 24000
+      AudioStreamSampleRate.HZ_32000 -> 32000
+      AudioStreamSampleRate.HZ_44100 -> 44100
+      AudioStreamSampleRate.HZ_48000 -> 48000
+      null -> null
+    }
 
     private fun describeEndReason(call: Call?): Map<String, Any?> {
       if (call == null) return mapOf("hasCall" to false)
