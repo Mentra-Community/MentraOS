@@ -144,7 +144,7 @@ class AcsMeetingSession(
     dumpWav: Boolean,
     audioSource: String = "glasses",
     video: VideoProfile = VideoProfile.DEFAULT,
-  ) {
+  ): Map<String, Any> {
     // TEMP: force phone mic. Ignore host/resolver until the glasses path is back on.
     Log.i(TAG, "TEMP force phone mic (host asked $audioSource)")
     val parsed = AudioSourceKind.PHONE

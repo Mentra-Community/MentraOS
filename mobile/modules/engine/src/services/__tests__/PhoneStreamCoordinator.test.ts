@@ -51,6 +51,23 @@ mock.module("../GlassesReadiness", () => ({
   isGlassesConnected: () => true,
 }))
 
+mock.module("../utils/timers", () => ({
+  BgTimer: {
+    setInterval: (callback: () => void, delay: number) => setInterval(callback, delay) as unknown as number,
+    clearInterval: (intervalId: number) => clearInterval(intervalId),
+    setTimeout: (callback: () => void, delay: number) => setTimeout(callback, delay) as unknown as number,
+    clearTimeout: (timeoutId: number) => clearTimeout(timeoutId),
+  },
+}))
+mock.module("../../utils/timers", () => ({
+  BgTimer: {
+    setInterval: (callback: () => void, delay: number) => setInterval(callback, delay) as unknown as number,
+    clearInterval: (intervalId: number) => clearInterval(intervalId),
+    setTimeout: (callback: () => void, delay: number) => setTimeout(callback, delay) as unknown as number,
+    clearTimeout: (timeoutId: number) => clearTimeout(timeoutId),
+  },
+}))
+
 
 // Patch global fetch so the HLS readiness HEAD probe is deterministic.
 let hlsHeadResponder: () => Response = () => new Response(null, {status: 200})

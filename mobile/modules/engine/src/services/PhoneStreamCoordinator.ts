@@ -557,6 +557,7 @@ export class PhoneStreamCoordinator {
     return `phone-${prefix}-${Date.now().toString(36)}-${this.idCounter}`
   }
 
+  /** BLE keep-alives. StreamLifecycleController uses BgTimer so they survive MentraOS backgrounding. */
   private startLifecycle(streamId: string): void {
     this.lifecycle?.dispose()
     const ctrl = new StreamLifecycleController(
