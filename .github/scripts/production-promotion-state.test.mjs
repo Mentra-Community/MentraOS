@@ -33,7 +33,7 @@ function initial() {
       manifestUrl: "https://github.com/Mentra-Community/MentraOS/releases/download/mentra-builds-v3.1.0/beta.json",
       manifestSha256: "b".repeat(64),
     },
-    source: {mentraosCommit: "a".repeat(40), starterKitCommit: "c".repeat(40)},
+    source: {mentraosCommit: "a".repeat(40)},
     coordinates: {
       currentMentraApp: {
         sourceCommit: "f".repeat(40),
@@ -44,7 +44,6 @@ function initial() {
       compatibilityLab: {ios: coordinate(310000090), android: coordinate(310000090)},
       candidates: {
         mentraApp: {ios: coordinate(310000100), android: coordinate(310000101)},
-        starterKit: {ios: coordinate(310000200), android: coordinate(310000201)},
       },
     },
     actor: "release-owner",
@@ -225,6 +224,14 @@ test("requires complete platform coverage and rejects credential-like evidence",
   assert.throws(
     () =>
       validateAttestation(
+        {...attestation, tests: [...attestation.tests, {...attestation.tests[0], product: "starter-kit"}]},
+        record,
+      ),
+    /product is unsupported/,
+  )
+  assert.throws(
+    () =>
+      validateAttestation(
         {...attestation, tests: [{...attestation.tests[0], appBuild: "BUILD"}, attestation.tests[1]]},
         record,
       ),
@@ -262,18 +269,12 @@ test("binds every human gate to its check-specific frozen coordinates", () => {
     {
       check: "production-mobile-candidate-acceptance",
       record: atState("mobile-candidates-uploaded"),
-      coordinates: {
-        "mentra-app": initialRecord.coordinates.candidates.mentraApp,
-        "starter-kit": initialRecord.coordinates.candidates.starterKit,
-      },
+      coordinates: {"mentra-app": initialRecord.coordinates.candidates.mentraApp},
     },
     {
       check: "store-review-approved",
       record: atState("stores-submitted"),
-      coordinates: {
-        "mentra-app": initialRecord.coordinates.candidates.mentraApp,
-        "starter-kit": initialRecord.coordinates.candidates.starterKit,
-      },
+      coordinates: {"mentra-app": initialRecord.coordinates.candidates.mentraApp},
     },
   ]
   for (const {check, record, coordinates} of cases) {
@@ -306,6 +307,28 @@ test("binds every human gate to its check-specific frozen coordinates", () => {
     wrong.tests[0].appBuild += 1
     assert.throws(() => validateAttestation(wrong, record), /does not match frozen/)
   }
+})
+
+test("rejects Starter Kit fields from the Mentra-App-only production schema", () => {
+  const record = initial()
+  assert.throws(
+    () => validatePromotionRecord({...record, source: {...record.source, starterKitCommit: "c".repeat(40)}}),
+    /source must contain only mentraosCommit/,
+  )
+  assert.throws(
+    () =>
+      validatePromotionRecord({
+        ...record,
+        coordinates: {
+          ...record.coordinates,
+          candidates: {
+            ...record.coordinates.candidates,
+            starterKit: {ios: coordinate(310000200), android: coordinate(310000201)},
+          },
+        },
+      }),
+    /coordinates.candidates must contain only mentraApp/,
+  )
 })
 
 test("aborting is terminal and preserves the previous digest", () => {

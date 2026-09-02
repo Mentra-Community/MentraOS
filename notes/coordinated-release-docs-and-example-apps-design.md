@@ -227,9 +227,14 @@ to TestFlight.
 ### Coordinated example release
 
 `coordinated-example-release.yml` is invoked by an authenticated dispatch from
-MentraOS. The coordinator uses GitHub's cross-repository `repository_dispatch`
-endpoint, which is covered by the GitHub App's existing Contents write grant;
-manual `workflow_dispatch` remains available for operators. Required inputs are:
+MentraOS. The coordinator uses GitHub's cross-repository `workflow_dispatch`
+endpoint and selects the Starter Kit branch that owns the release channel:
+`dev` for dev, `staging` for beta, and `main` for production. This makes the
+workflow implementation and checked-out source come from the same channel
+instead of running default-branch orchestration against another branch. The
+coordinator GitHub App therefore requires Actions write in addition to its
+existing grants. Operators can invoke the same workflow manually. Required
+inputs are:
 
 - `releaseSetId`;
 - `releaseIdentity`;
@@ -512,16 +517,23 @@ release set.
 ### Production docs
 
 Production remains a Mintlify Git deployment from `main`. The checked-in
-variables use the stable family base and stable URLs. The protected production
-flow must publish and verify the stable Starter Kit result before production
-documentation is declared complete. Moving Mintlify's configured source branch
-from `staging` to `main` is an operator action.
+variables use the stable family base and stable URLs. Before production starts,
+an operator promotes the exact Starter Kit merge commit recorded by the selected
+completed beta from Starter Kit `staging` to `main`, then promotes the exact
+MentraOS beta source from MentraOS `staging` to `main`. Both selected sources
+must already contain their repository's `main`; otherwise `main` is back-merged
+to `staging` and a new coordinated beta is required.
 
-The initial cross-repository implementation focuses on `dev` and `staging`,
-where CI controls rendering and ordering. Stable Starter Kit synchronization
-and the exact Mintlify publication check are added before the first production
-release under this model. A temporary not-found production link is not an
-accepted steady state.
+This branch cut keeps both repositories aligned but does not add the Starter Kit
+example app to the production artifact workflow. Production promotion remains
+Mentra-App-only: it does not rebuild, upload, submit, or release the example app.
+Moving Mintlify's configured source branch from `staging` to `main` is an
+operator action.
+
+The cross-repository prerelease implementation focuses on `dev` and `staging`,
+where CI controls rendering and ordering. Stable branch synchronization is an
+explicit pre-production operation over the immutable completed beta result. A
+temporary not-found production link is not an accepted steady state.
 
 ## Slack Notifications
 

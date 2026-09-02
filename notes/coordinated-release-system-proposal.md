@@ -483,6 +483,14 @@ preserves the beta-generated dependency and lockfile commit as shared ancestry;
 it is necessary because the Starter Kit coordinated workflow intentionally
 writes channel-specific release output to its branch.
 
+Before starting production, promote the completed beta's exact recorded Starter
+Kit merge commit from Starter Kit `staging` to `main`, then promote its exact
+MentraOS source commit from MentraOS `staging` to `main`. The branch cut refuses
+either promotion unless the selected source already contains that repository's
+current `main`; production-only history must be back-merged and validated in a
+new beta first. This keeps both source repositories aligned without adding
+Starter Kit artifacts or store publishing to the Mentra-App production flow.
+
 The coordinator has no path filters: every selected branch release gets an
 auditable identity. Every public product and package in that set is published
 under the shared version, even when its source is unchanged. Jobs may reuse

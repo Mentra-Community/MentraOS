@@ -117,7 +117,7 @@ function initialRecord() {
       manifestUrl: "https://example.com/beta.json",
       manifestSha256: "b".repeat(64),
     },
-    source: {mentraosCommit: "a".repeat(40), starterKitCommit: "c".repeat(40)},
+    source: {mentraosCommit: "a".repeat(40)},
     coordinates: {
       currentMentraApp: {
         sourceCommit: "f".repeat(40),
@@ -128,7 +128,6 @@ function initialRecord() {
       compatibilityLab: {ios: coordinate(2), android: coordinate(2)},
       candidates: {
         mentraApp: {ios: coordinate(3), android: coordinate(3)},
-        starterKit: {ios: coordinate(4), android: coordinate(4)},
       },
     },
     actor: "owner",
@@ -225,21 +224,19 @@ test("selection digests are canonical and cover every frozen input", () => {
   const selection = {
     betaPlan: {sourceCommit: "a".repeat(40), native: {buildNumber: 57}},
     previousManifestSha256: "b".repeat(64),
-    starterKitCommit: "c".repeat(40),
     mentraInventory: {apple: {maxBuildNumber: 57}},
   }
   assert.equal(
     productionPromotionSelectionDigest(selection),
     productionPromotionSelectionDigest({
       mentraInventory: selection.mentraInventory,
-      starterKitCommit: selection.starterKitCommit,
       previousManifestSha256: selection.previousManifestSha256,
       betaPlan: selection.betaPlan,
     }),
   )
   assert.notEqual(
     productionPromotionSelectionDigest(selection),
-    productionPromotionSelectionDigest({...selection, starterKitCommit: "d".repeat(40)}),
+    productionPromotionSelectionDigest({...selection, previousManifestSha256: "d".repeat(64)}),
   )
   assert.notEqual(
     productionPromotionSelectionDigest(selection),

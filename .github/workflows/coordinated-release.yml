@@ -384,7 +384,7 @@ jobs:
           repositories: |
             MentraOS
             Mentra-Bluetooth-SDK-Starter-Kit
-          permission-actions: read
+          permission-actions: write
           permission-contents: write
 
       - name: Request the exact Starter Kit release
@@ -454,7 +454,8 @@ jobs:
 
           if ! curl --fail --silent --show-error --location "$result_url" --output /dev/null 2>&1; then
             run_json=$(gh run list --repo "$STARTER_KIT_REPOSITORY" \
-              --workflow coordinated-example-release.yml --event repository_dispatch --limit 100 \
+              --workflow coordinated-example-release.yml --event workflow_dispatch \
+              --branch "$target_branch" --limit 100 \
               --json databaseId,displayTitle,status,url \
               --jq ".[] | select(.displayTitle == \"$run_title\" and .status != \"completed\")" \
               | head -1)
@@ -465,14 +466,11 @@ jobs:
               echo "run_url=$run_url" >> "$GITHUB_OUTPUT"
             else
               dispatched_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-              dispatch=$(jq -cn \
-                --arg channel "$channel" \
-                --arg payload "$payload" \
-                '{
-                  event_type: "coordinated_example_release",
-                  client_payload: {channel: $channel, payload: $payload}
-                }')
-              gh api --method POST "repos/$STARTER_KIT_REPOSITORY/dispatches" --input - <<< "$dispatch"
+              gh workflow run coordinated-example-release.yml \
+                --repo "$STARTER_KIT_REPOSITORY" \
+                --ref "$target_branch" \
+                --field channel="$channel" \
+                --field payload="$payload"
             fi
 
             candidate_branch="coordinated/$identity"
@@ -481,7 +479,8 @@ jobs:
             for _ in {1..180}; do
               if [[ -z "$run_id" ]]; then
                 run_json=$(gh run list --repo "$STARTER_KIT_REPOSITORY" \
-                  --workflow coordinated-example-release.yml --event repository_dispatch --limit 30 \
+                  --workflow coordinated-example-release.yml --event workflow_dispatch \
+                  --branch "$target_branch" --limit 30 \
                   --json databaseId,displayTitle,createdAt,url \
                   --jq ".[] | select(.displayTitle == \"$run_title\" and .createdAt >= \"$dispatched_at\")" \
                   2>/dev/null | head -1 || true)
@@ -977,6 +976,7 @@ jobs:
           unzip -q "$RUNNER_TEMP/mentraos-docs.zip" -d "$export_dir"
           cat > "$export_dir/_headers" <<'HEADERS'
           /*
+            Cache-Control: public, max-age=0, must-revalidate
             X-Robots-Tag: noindex
           HEADERS
           grep -R --fixed-strings --quiet "$RELEASE_IDENTITY" "$export_dir/bluetooth-sdk"
@@ -1003,6 +1003,31 @@ jobs:
             --commit-message "Deploy MentraOS docs for $RELEASE_IDENTITY" \
             --commit-dirty=true
 
+      - name: Purge release-sensitive documentation routes
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_PAGES_API_TOKEN }}
+          CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_ZONE_ID }}
+          DOCS_URL: ${{ steps.target.outputs.docs_url }}
+        run: |
+          set -euo pipefail
+          [[ -n "$CLOUDFLARE_ZONE_ID" ]] || {
+            echo "CLOUDFLARE_ZONE_ID repository variable is required." >&2
+            exit 1
+          }
+          payload="$(jq -nc \
+            --arg canonical "$DOCS_URL/bluetooth-sdk/software-update/" \
+            --arg canonical_no_slash "$DOCS_URL/bluetooth-sdk/software-update" \
+            --arg legacy "$DOCS_URL/mentra-live/software-update/" \
+            --arg legacy_no_slash "$DOCS_URL/mentra-live/software-update" \
+            '{files: [$canonical, $canonical_no_slash, $legacy, $legacy_no_slash]}')"
+          response="$(curl --fail-with-body --silent --show-error \
+            --request POST \
+            --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            --header "Content-Type: application/json" \
+            --data "$payload" \
+            "https://api.cloudflare.com/client/v4/zones/$CLOUDFLARE_ZONE_ID/purge_cache")"
+          jq --exit-status '.success == true' <<< "$response" >/dev/null
+
       - name: Verify the published custom domain
         env:
           DOCS_URL: ${{ steps.target.outputs.docs_url }}
@@ -1011,24 +1036,29 @@ jobs:
           EXAMPLE_IOS_URL: ${{ needs.example-testflight.outputs.install_url }}
         run: |
           set -euo pipefail
-          page="$DOCS_URL/bluetooth-sdk/software-update/"
+          canonical_page="$DOCS_URL/bluetooth-sdk/software-update/"
+          legacy_page="$DOCS_URL/mentra-live/software-update/"
           body="$RUNNER_TEMP/software-update.html"
           headers="$RUNNER_TEMP/software-update.headers"
-          for _ in {1..18}; do
-            if curl --fail --silent --show-error --location \
+          page_is_current() {
+            local page="$1"
+            curl --fail --silent --show-error --location \
               --dump-header "$headers" --output "$body" "$page" && \
               grep --fixed-strings --quiet "$RELEASE_IDENTITY" "$body" && \
               grep --fixed-strings --quiet "href=\"$EXAMPLE_APK_URL\"" "$body" && \
               grep --fixed-strings --quiet "href=\"$EXAMPLE_IOS_URL\"" "$body" && \
               grep --ignore-case --quiet '^x-robots-tag:.*noindex' "$headers" && \
               ! grep --extended-regexp --ignore-case --quiet \
-                '\{\{[a-z0-9_-]+\}\}|%7b%7b[a-z0-9_-]+%7d%7d' "$body"; then
-              echo "Verified $page for $RELEASE_IDENTITY"
+                '\{\{[a-z0-9_-]+\}\}|%7b%7b[a-z0-9_-]+%7d%7d' "$body"
+          }
+          for _ in {1..18}; do
+            if page_is_current "$canonical_page" && page_is_current "$legacy_page"; then
+              echo "Verified $canonical_page and $legacy_page for $RELEASE_IDENTITY"
               exit 0
             fi
             sleep 10
           done
-          echo "Published docs did not converge to $RELEASE_IDENTITY at $page" >&2
+          echo "Published docs did not converge to $RELEASE_IDENTITY at $canonical_page and $legacy_page" >&2
           exit 1
 
   notify-slack:

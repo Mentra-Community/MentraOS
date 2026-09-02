@@ -26,26 +26,6 @@
       "deviceModel": "MODEL",
       "osVersion": "VERSION",
       "notes": "Installed through Play internal testing; full acceptance passed against production Cloud."
-    },
-    {
-      "product": "starter-kit",
-      "platform": "ios",
-      "result": "pass",
-      "appVersion": "X.Y.Z",
-      "appBuild": "BUILD",
-      "deviceModel": "MODEL",
-      "osVersion": "VERSION",
-      "notes": "Installed through TestFlight; stable SDK identity, pair/reconnect, display, audio/transcription, media, permissions, and restart passed."
-    },
-    {
-      "product": "starter-kit",
-      "platform": "android",
-      "result": "pass",
-      "appVersion": "X.Y.Z",
-      "appBuild": "BUILD",
-      "deviceModel": "MODEL",
-      "osVersion": "VERSION",
-      "notes": "Installed through Play internal testing; stable SDK identity, pair/reconnect, display, audio/transcription, media, permissions, and restart passed."
     }
   ],
   "evidenceUrls": ["https://credential-free.example/evidence/index"],

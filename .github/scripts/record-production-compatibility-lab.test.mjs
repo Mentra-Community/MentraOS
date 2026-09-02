@@ -22,7 +22,7 @@ const record = {
     manifestUrl: "https://example.com/beta.json",
     manifestSha256: sha("b"),
   },
-  source: {mentraosCommit: sha("a").slice(0, 40), starterKitCommit: sha("c").slice(0, 40)},
+  source: {mentraosCommit: sha("a").slice(0, 40)},
   coordinates: {
     currentMentraApp: {
       sourceCommit: sha("f").slice(0, 40),
@@ -38,10 +38,6 @@ const record = {
       mentraApp: {
         ios: {marketingVersion: "3.1.0", buildNumber: 102},
         android: {marketingVersion: "3.1.0", buildNumber: 102},
-      },
-      starterKit: {
-        ios: {marketingVersion: "3.1.0", buildNumber: 103},
-        android: {marketingVersion: "3.1.0", buildNumber: 103},
       },
     },
   },
