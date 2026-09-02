@@ -40,6 +40,18 @@ export interface MeetingJoinOptions {
   video?: MeetingOutgoingVideo
 }
 
+export type MeetingParticipantState = "idle" | "connecting" | "connected" | "lobby" | "hold" | "disconnected"
+
+/** A remote participant as reported by the phone-native meeting client. */
+export interface MeetingParticipant {
+  /** Stable provider identifier (ACS raw id). */
+  id: string
+  displayName: string | null
+  state: MeetingParticipantState
+  isMuted: boolean
+  isSpeaking: boolean
+}
+
 export interface MeetingState {
   state: MeetingPhase
   muted: boolean
@@ -55,6 +67,29 @@ export interface MeetingState {
     | "fallback-no-glasses"
   activeStream?: "none" | "virtual" | "local"
   audioSafety?: "safe" | "degraded" | "unsafe"
+  /** Remote roster. Omitted by hosts that predate participant reporting. */
+  participants?: MeetingParticipant[]
+}
+
+const PARTICIPANT_STATES: ReadonlySet<string> = new Set(["idle", "connecting", "connected", "lobby", "hold", "disconnected"])
+
+/** Tolerant parse of a host `participants` payload. Unknown shapes are skipped. */
+export function parseMeetingParticipants(raw: unknown): MeetingParticipant[] | undefined {
+  if (!Array.isArray(raw)) return undefined
+  const result: MeetingParticipant[] = []
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object") continue
+    const value = entry as Record<string, unknown>
+    if (typeof value.id !== "string" || !value.id) continue
+    result.push({
+      id: value.id,
+      displayName: typeof value.displayName === "string" && value.displayName ? value.displayName : null,
+      state: PARTICIPANT_STATES.has(String(value.state)) ? (value.state as MeetingParticipantState) : "idle",
+      isMuted: Boolean(value.isMuted),
+      isSpeaking: Boolean(value.isSpeaking),
+    })
+  }
+  return result
 }
 
 export type MeetingStateHandler = (state: MeetingState) => void
@@ -178,6 +213,7 @@ export class MeetingModule {
       audioSourceReason: event.audioSourceReason,
       activeStream: event.activeStream,
       audioSafety: event.audioSafety,
+      participants: parseMeetingParticipants(event.participants),
     }
   }
 }
