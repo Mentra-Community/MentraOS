@@ -137,6 +137,17 @@ function validateDeploymentManifest(
       "origin-mismatch",
     )
   }
+  if (manifest.branding) {
+    const logoOrigins = Object.values(manifest.branding.logoUrls).map((logoUrl) =>
+      secureUrlOrigin(logoUrl, allowInsecureLocalhost),
+    )
+    if (logoOrigins.some((origin) => origin !== workspaceOrigin)) {
+      throw new DeploymentResolutionError(
+        "Workspace logos must use the workspace origin in deployment schema v1.",
+        "origin-mismatch",
+      )
+    }
+  }
   for (const url of allConfiguredUrls(manifest)) {
     secureUrlOrigin(url, allowInsecureLocalhost)
   }
@@ -198,6 +209,8 @@ function allConfiguredUrls(manifest: DeploymentManifest): string[] {
   return [
     manifest.services.coreUrl,
     manifest.services.runtimeUrl,
+    manifest.branding?.logoUrls.light ?? null,
+    manifest.branding?.logoUrls.dark ?? null,
     manifest.artifacts.mentraLiveOtaManifestUrl,
     manifest.artifacts.sttModelBaseUrl,
     manifest.artifacts.ttsModelBaseUrl,

@@ -24,7 +24,7 @@ param clientMinVersion string = '0.0.0'
 param clientRecommendedVersion string = '0.0.0'
 
 param deploymentId string = 'mentra-enterprise-reference'
-param displayName string = 'Mentra Enterprise Reference'
+param displayName string = 'Mentra Enterprise Demo'
 param environmentName string = 'cae-mentra-enterprise-reference'
 param runtimeName string = 'ca-mentra-enterprise-reference'
 param pullIdentityName string = 'id-mentra-enterprise-reference-pull'
@@ -86,6 +86,12 @@ var deploymentManifest = {
   schemaVersion: 1
   deploymentId: deploymentId
   displayName: displayName
+  branding: {
+    logoUrls: {
+      light: '${workspaceOrigin}/branding/logo-light.png'
+      dark: '${workspaceOrigin}/branding/logo-dark.png'
+    }
+  }
   services: {
     coreUrl: null
     runtimeUrl: workspaceOrigin
@@ -182,6 +188,8 @@ resource runtime 'Microsoft.App/containerApps@2024-03-01' = {
             }
             { name: 'DEPLOYMENT_PRIVACY_PATH', value: '/app/cloud-v2/deploy/azure/enterprise-reference/privacy.html' }
             { name: 'DEPLOYMENT_TERMS_PATH', value: '/app/cloud-v2/deploy/azure/enterprise-reference/terms.html' }
+            { name: 'DEPLOYMENT_LOGO_LIGHT_PATH', value: '/app/cloud-v2/deploy/azure/enterprise-reference/assets/logo-light.png' }
+            { name: 'DEPLOYMENT_LOGO_DARK_PATH', value: '/app/cloud-v2/deploy/azure/enterprise-reference/assets/logo-dark.png' }
             { name: 'CLOUD_RUNTIME_AUTH_AUDIENCE', value: runtimeApiClientId }
             {
               name: 'CLOUD_RUNTIME_AUTH_ISSUERS'

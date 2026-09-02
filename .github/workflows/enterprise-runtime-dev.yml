@@ -167,6 +167,8 @@ jobs:
              and (has("releaseIdentity") | not)
              and .services.coreUrl == null
              and .services.runtimeUrl == $origin
+             and .branding.logoUrls.light == ($origin + "/branding/logo-light.png")
+             and .branding.logoUrls.dark == ($origin + "/branding/logo-dark.png")
              and .auth.mode == "microsoft-entra"
              and .auth.authorityUrl == ("https://login.microsoftonline.com/" + $tenant)
              and .auth.clientId == $mobile
@@ -178,6 +180,12 @@ jobs:
 
           curl --fail --silent --show-error --location "$workspace_origin/legal/privacy" >/dev/null
           curl --fail --silent --show-error --location "$workspace_origin/legal/terms" >/dev/null
+          for logo in logo-light.png logo-dark.png; do
+            curl --fail --silent --show-error --location \
+              "$workspace_origin/branding/$logo" \
+              --output "$RUNNER_TEMP/$logo"
+            [[ "$(file --brief --mime-type "$RUNNER_TEMP/$logo")" == "image/png" ]]
+          done
           unauthenticated_status=$(curl \
             --silent \
             --show-error \

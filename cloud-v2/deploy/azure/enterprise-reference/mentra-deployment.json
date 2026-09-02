@@ -1,7 +1,13 @@
 {
   "schemaVersion": 1,
   "deploymentId": "mentra-enterprise-reference",
-  "displayName": "Mentra Enterprise Reference",
+  "displayName": "Mentra Enterprise Demo",
+  "branding": {
+    "logoUrls": {
+      "light": "https://enterprisedev.mentraglass.com/branding/logo-light.png",
+      "dark": "https://enterprisedev.mentraglass.com/branding/logo-dark.png"
+    }
+  },
   "services": {
     "coreUrl": null,
     "runtimeUrl": "https://enterprisedev.mentraglass.com"

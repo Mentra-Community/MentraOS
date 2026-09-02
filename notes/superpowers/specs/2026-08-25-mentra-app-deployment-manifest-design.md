@@ -331,15 +331,14 @@ workspace hostname, and declared sign-in type. It persists and activates the
 workspace only after the user confirms.
 
 ```text
-< Cancel
+< Back
 
 Connect to Example Corp
 
 Workspace: mentra.example-corp.com
 Sign-in:   Microsoft organization account
 
-[ Continue to Example Corp ]
-[ View connection details ]
+[ Continue ]
 ```
 
 The manifest, not the end user, selects the authentication provider. The
@@ -497,6 +496,12 @@ The first call-focused template is illustrative:
   "schemaVersion": 1,
   "deploymentId": "example-corp",
   "displayName": "Example Corp Mentra",
+  "branding": {
+    "logoUrls": {
+      "light": "https://mentra.example-corp.com/branding/logo-light.png",
+      "dark": "https://mentra.example-corp.com/branding/logo-dark.png"
+    }
+  },
   "services": {
     "coreUrl": null,
     "runtimeUrl": "https://mentra.example-corp.com"
@@ -563,6 +568,11 @@ Rules:
 
 - `deploymentId` namespaces credentials, token caches, local settings, and
   installed/running miniapp state.
+- `branding` is optional. When present, both transparent PNG logo variants are
+  required and must use the workspace origin. `light` is rendered on the app's
+  light background and `dark` on its dark background. A deployment may use the
+  same PNG URL for both. A failed or omitted logo falls back to the organization
+  icon and `displayName`; branding never blocks enrollment or sign-in.
 - The resolved Runtime URL equals the entered workspace origin in v1. Runtime or
   its ingress serves the well-known manifest.
 - `services.coreUrl` and `services.runtimeUrl` are nullable. Null means the
@@ -776,6 +786,6 @@ The first Android-and-iOS call-focused pilot is complete when:
 - Workspace discovery by email domain or organization code.
 - Signed manifests, customer-managed manifest keys, and dynamic certificate
   pinning.
-- Customer branding or bundle identifiers.
+- Custom color themes or bundle identifiers beyond the manifest logo pair.
 - Non-Mentra glasses restricted-network qualification, including AR99 vendor
   services.

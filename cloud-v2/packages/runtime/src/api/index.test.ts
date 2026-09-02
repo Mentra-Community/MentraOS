@@ -9,17 +9,35 @@ describe("Runtime API composition", () => {
       services: new Set(["meetings"]),
       deploymentManifest: '{"schemaVersion":1}\n',
       legalDocuments: { privacy: "<h1>Privacy</h1>", terms: "<h1>Terms</h1>" },
+      deploymentBranding: {
+        logos: {
+          light: {
+            body: Uint8Array.from([137, 80, 78, 71]).buffer,
+            contentType: "image/png",
+          },
+          dark: {
+            body: Uint8Array.from([137, 80, 78, 71, 1]).buffer,
+            contentType: "image/png",
+          },
+        },
+      },
     });
 
-    const manifest = await app.request(
-      "/.well-known/mentra-deployment.json",
-    );
+    const manifest = await app.request("/.well-known/mentra-deployment.json");
     expect(manifest.status).toBe(200);
     expect(await manifest.text()).toBe('{"schemaVersion":1}\n');
 
     const privacy = await app.request("/legal/privacy");
     expect(privacy.status).toBe(200);
     expect(await privacy.text()).toBe("<h1>Privacy</h1>");
+
+    const logo = await app.request("/branding/logo-light.png");
+    expect(logo.status).toBe(200);
+    expect(logo.headers.get("content-type")).toBe("image/png");
+    expect([...new Uint8Array(await logo.arrayBuffer())]).toEqual([
+      137, 80, 78, 71,
+    ]);
+    expect((await app.request("/branding/logo-dark.png")).status).toBe(200);
 
     expect((await app.request("/api/audio/session")).status).toBe(404);
   });
@@ -43,9 +61,11 @@ describe("Runtime API composition", () => {
         data: { required: "3.1.0", recommended: "3.2.0" },
       });
     } finally {
-      if (previousRequired === undefined) delete process.env.CLOUD_CLIENT_MIN_VERSION;
+      if (previousRequired === undefined)
+        delete process.env.CLOUD_CLIENT_MIN_VERSION;
       else process.env.CLOUD_CLIENT_MIN_VERSION = previousRequired;
-      if (previousRecommended === undefined) delete process.env.CLOUD_CLIENT_RECOMMENDED_VERSION;
+      if (previousRecommended === undefined)
+        delete process.env.CLOUD_CLIENT_RECOMMENDED_VERSION;
       else process.env.CLOUD_CLIENT_RECOMMENDED_VERSION = previousRecommended;
     }
   });

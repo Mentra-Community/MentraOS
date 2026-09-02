@@ -216,6 +216,13 @@ export interface StartRuntimeOptions {
     privacy?: string;
     terms?: string;
   };
+  /** Optional customer logo exposed from the workspace origin. */
+  deploymentBranding?: {
+    logos?: {
+      light: { body: ArrayBuffer; contentType: "image/png" };
+      dark: { body: ArrayBuffer; contentType: "image/png" };
+    };
+  };
 }
 
 export interface RuntimeHandle {
@@ -248,6 +255,8 @@ export async function startRuntime(
     );
   }
   const legalDocuments = opts.legalDocuments ?? (await loadLegalDocuments());
+  const deploymentBranding =
+    opts.deploymentBranding ?? (await loadDeploymentBranding());
   if (services.has("meetings") && !deploymentManifest) {
     throw new Error("meetings service requires a deployment manifest");
   }
@@ -347,6 +356,7 @@ export async function startRuntime(
     services,
     deploymentManifest,
     legalDocuments,
+    deploymentBranding,
   });
 
   const server = Bun.serve({
@@ -417,6 +427,43 @@ async function loadLegalDocuments(): Promise<{
     loadOptionalDocument("DEPLOYMENT_TERMS_PATH"),
   ]);
   return { privacy, terms };
+}
+
+async function loadDeploymentBranding(): Promise<{
+  logos?: {
+    light: { body: ArrayBuffer; contentType: "image/png" };
+    dark: { body: ArrayBuffer; contentType: "image/png" };
+  };
+}> {
+  const paths = [
+    process.env.DEPLOYMENT_LOGO_LIGHT_PATH?.trim(),
+    process.env.DEPLOYMENT_LOGO_DARK_PATH?.trim(),
+  ];
+  if (paths.every((path) => !path)) return {};
+  if (paths.some((path) => !path))
+    throw new Error(
+      "DEPLOYMENT_LOGO_LIGHT_PATH and DEPLOYMENT_LOGO_DARK_PATH must be configured together",
+    );
+
+  const [light, dark] = await Promise.all(
+    paths.map(async (path, index) => {
+      const envName =
+        index === 0
+          ? "DEPLOYMENT_LOGO_LIGHT_PATH"
+          : "DEPLOYMENT_LOGO_DARK_PATH";
+      const file = Bun.file(path!);
+      if (!(await file.exists()))
+        throw new Error(`${envName} does not exist: ${path}`);
+      if (file.size > 512 * 1024) throw new Error(`${envName} exceeds 512 KiB`);
+      if (file.type !== "image/png")
+        throw new Error(`${envName} must be a PNG image`);
+      return {
+        body: await file.arrayBuffer(),
+        contentType: "image/png" as const,
+      };
+    }),
+  );
+  return { logos: { light, dark } };
 }
 
 async function loadOptionalDocument(

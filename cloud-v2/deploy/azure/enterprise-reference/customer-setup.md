@@ -133,6 +133,14 @@ Before production use, replace [privacy.html](./privacy.html) and
 [terms.html](./terms.html) with the customer's approved documents and rebuild
 the Runtime image.
 
+Replace `assets/logo-light.png` and `assets/logo-dark.png` with the customer's
+approved transparent PNG marks before building the customer Runtime image. Keep
+each image under 512 KiB and use the same aspect ratio. The light variant must remain
+legible on a light app background and the dark variant on a dark app background.
+If one mark works on both, use the same PNG for both image inputs. Runtime serves
+them from the workspace origin; the phone does not fetch branding from a
+third-party host.
+
 ## 4. Verify the generated workspace manifest
 
 The deployed Runtime serves:
@@ -145,6 +153,7 @@ Verify that:
 
 - `services.coreUrl` is `null`;
 - `services.runtimeUrl` is the same workspace origin;
+- both `branding.logoUrls` resolve from the workspace origin;
 - `auth.authorityUrl` names the exact customer tenant, never `common` or
   `organizations`;
 - the Runtime and ACS delegated scopes match the registrations;

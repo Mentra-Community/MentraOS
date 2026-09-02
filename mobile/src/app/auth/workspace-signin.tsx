@@ -1,25 +1,30 @@
 import {useState} from "react"
-import {ActivityIndicator, View} from "react-native"
+import {ActivityIndicator, TouchableOpacity, View} from "react-native"
 
-import {Button, Header, Icon, Screen, Text} from "@/components/ignite"
+import MicrosoftIcon from "assets/icons/component/MicrosoftIcon"
+
+import {WorkspaceBrand} from "@/components/auth/WorkspaceBrand"
+import {Button, Screen, Text} from "@/components/ignite"
+import {useAuth} from "@/contexts/AuthContext"
+import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {useDeployment} from "@/services/deployment"
 import {useNavigationStore} from "@/stores/navigation"
-import {useAuth} from "@/contexts/AuthContext"
 import showAlert from "@/utils/AlertUtils"
 
 export default function WorkspaceSignInScreen() {
   const {activeDeployment} = useDeployment()
   const {replaceAll} = useNavigationStore.getState()
-  const {theme} = useAppTheme()
   const {signInWorkspace, leaveWorkspace} = useAuth()
+  const {theme} = useAppTheme()
   const [loading, setLoading] = useState(false)
+
+  focusEffectPreventBack()
 
   if (activeDeployment.kind !== "workspace") {
     return (
       <Screen preset="fixed">
-        <Header title={translate("workspace:title")} />
         <View className="flex-1 items-center justify-center p-6">
           <Text className="text-center text-muted-foreground mb-6">{translate("workspace:noActiveWorkspace")}</Text>
           <Button text={translate("workspace:returnToMentra")} onPress={() => replaceAll("/auth/start")} />
@@ -33,16 +38,6 @@ export default function WorkspaceSignInScreen() {
     try {
       await leaveWorkspace("consumer")
       replaceAll("/auth/start")
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const changeWorkspace = async () => {
-    setLoading(true)
-    try {
-      await leaveWorkspace("selector")
-      replaceAll("/auth/workspace")
     } finally {
       setLoading(false)
     }
@@ -65,33 +60,40 @@ export default function WorkspaceSignInScreen() {
 
   return (
     <Screen preset="fixed">
-      <Header
-        title={activeDeployment.manifest.displayName}
-        rightText={translate("workspace:change")}
-        onRightPress={() => void changeWorkspace()}
-      />
-      <View className="flex-1 items-center justify-center p-6">
-        <Icon name="office-building" size={64} color={theme.colors.foreground} />
-        <Text preset="heading" className="text-2xl font-bold text-foreground text-center mt-6">
-          {activeDeployment.manifest.displayName}
-        </Text>
-        <Text className="text-base text-muted-foreground text-center mt-3 mb-10">
-          {translate("workspace:signInDescription")}
-        </Text>
-        <Button
-          preset="primary"
-          text={translate("workspace:continueWithMicrosoft")}
-          onPress={signIn}
-          disabled={loading}
-          LeftAccessory={loading ? () => <ActivityIndicator /> : undefined}
-        />
-        <Button
-          preset="secondary"
-          text={translate("workspace:returnToMentra")}
-          onPress={() => void cancelWorkspace()}
-          disabled={loading}
-          className="mt-4"
-        />
+      <View className="flex-1">
+        <View className="flex-1 justify-center p-4">
+          <View className="items-center mb-6">
+            <WorkspaceBrand
+              displayName={activeDeployment.manifest.displayName}
+              logoUrls={activeDeployment.manifest.branding?.logoUrls}
+            />
+          </View>
+
+          <Text className="text-[36px] text-foreground text-center mb-3" text={activeDeployment.manifest.displayName} />
+          <Text className="text-xl text-secondary-foreground text-center mb-8">
+            {translate("workspace:signInDescription")}
+          </Text>
+
+          <Button
+            preset="secondary"
+            text={translate("workspace:continueWithMicrosoft")}
+            onPress={() => void signIn()}
+            disabled={loading}
+            LeftAccessory={
+              loading ? () => <ActivityIndicator color={theme.colors.foreground} /> : () => <MicrosoftIcon />
+            }
+          />
+
+          <TouchableOpacity
+            className="self-center mt-6 px-4 py-2"
+            disabled={loading}
+            onPress={() => void cancelWorkspace()}>
+            <Text
+              className="text-sm text-secondary-foreground font-semibold"
+              text={translate("workspace:returnToMentra")}
+            />
+          </TouchableOpacity>
+        </View>
       </View>
     </Screen>
   )

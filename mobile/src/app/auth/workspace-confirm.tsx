@@ -1,7 +1,8 @@
 import {useState} from "react"
-import {View} from "react-native"
+import {ActivityIndicator, ScrollView, View} from "react-native"
 
-import {Button, Header, Icon, Screen, Text} from "@/components/ignite"
+import {WorkspaceBrand} from "@/components/auth/WorkspaceBrand"
+import {Button, Header, Screen, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {useDeployment} from "@/services/deployment"
@@ -53,40 +54,46 @@ export default function WorkspaceConfirmScreen() {
     <Screen preset="fixed">
       <Header
         title={translate("workspace:confirmTitle")}
-        leftText={translate("common:cancel")}
+        leftIcon="chevron-left"
         onLeftPress={() => {
           clearCandidate()
           goBack()
         }}
       />
-      <View className="flex-1 p-4">
-        <View className="items-center py-8">
-          <Icon name="office-building" size={52} color={theme.colors.foreground} />
-          <Text preset="heading" className="text-2xl font-bold text-foreground text-center mt-5">
-            {translate("workspace:connectTo", {name: candidate.manifest.displayName})}
-          </Text>
-        </View>
-
-        <View className="border border-border rounded-xl p-4 gap-4">
-          <View>
-            <Text className="text-xs text-muted-foreground">{translate("workspace:workspaceLabel")}</Text>
-            <Text className="text-base text-foreground mt-1">{hostname}</Text>
+      <ScrollView contentContainerClassName="flex-grow" showsVerticalScrollIndicator={false}>
+        <View className="flex-1 p-4">
+          <View className="items-center pt-6 pb-8">
+            <WorkspaceBrand
+              displayName={candidate.manifest.displayName}
+              logoUrls={candidate.manifest.branding?.logoUrls}
+            />
+            <Text preset="heading" className="text-2xl font-bold text-foreground text-center mt-5">
+              {translate("workspace:connectTo", {name: candidate.manifest.displayName})}
+            </Text>
           </View>
-          <View>
-            <Text className="text-xs text-muted-foreground">{translate("workspace:signInLabel")}</Text>
-            <Text className="text-base text-foreground mt-1">{authLabel}</Text>
-          </View>
-        </View>
 
-        <Text className="text-sm text-muted-foreground mt-4">{translate("workspace:confirmDescription")}</Text>
-        <View className="flex-1" />
-        <Button
-          preset="primary"
-          text={translate("workspace:continueTo", {name: candidate.manifest.displayName})}
-          onPress={() => void activate()}
-          disabled={activating}
-        />
-      </View>
+          <View className="bg-primary-foreground rounded-2xl p-4 gap-4">
+            <View>
+              <Text className="text-xs text-muted-foreground">{translate("workspace:workspaceLabel")}</Text>
+              <Text className="text-base text-foreground mt-1">{hostname}</Text>
+            </View>
+            <View>
+              <Text className="text-xs text-muted-foreground">{translate("workspace:signInLabel")}</Text>
+              <Text className="text-base text-foreground mt-1">{authLabel}</Text>
+            </View>
+          </View>
+
+          <Text className="text-sm text-muted-foreground mt-4">{translate("workspace:confirmDescription")}</Text>
+          <Button
+            className="mt-6"
+            preset="primary"
+            text={translate("common:continue")}
+            onPress={() => void activate()}
+            disabled={activating}
+            LeftAccessory={activating ? () => <ActivityIndicator color={theme.colors.background} /> : undefined}
+          />
+        </View>
+      </ScrollView>
     </Screen>
   )
 }

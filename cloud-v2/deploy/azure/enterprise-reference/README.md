@@ -18,6 +18,11 @@ The checked-in privacy notice and terms are explicitly non-production
 placeholders. A customer deployment must replace them with organization-approved
 documents; Runtime serves them from the same workspace origin named by the
 manifest.
+Runtime also serves the reference transparent PNG marks at
+`/branding/logo-light.png` and `/branding/logo-dark.png`. Customer images must
+be under 512 KiB each. Replace both image inputs when producing a customer
+Runtime image at `assets/logo-light.png` and `assets/logo-dark.png`, or use the
+same PNG for both variants when one mark works in both app themes.
 
 ## Reference identities
 
@@ -177,7 +182,7 @@ Then verify this flow:
 1. Launch the Mentra App. The normal Google, Apple, and email choices remain
    available, and no deployment has yet been selected.
 2. Tap **Connect to organization** and enter `MENTRA_WORKSPACE`.
-3. Confirm that the app shows **Mentra Enterprise Reference**, the expected host,
+3. Confirm that the app shows **Mentra Enterprise Demo**, the expected host,
    and Microsoft organization sign-in before activation.
 4. Continue, complete Microsoft sign-in with an assigned Mentra employee, and
    confirm that MFA or Conditional Access returns to the app.

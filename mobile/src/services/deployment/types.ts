@@ -16,6 +16,12 @@ export interface DeploymentManifest {
   schemaVersion: 1
   deploymentId: string
   displayName: string
+  branding?: {
+    logoUrls: {
+      light: string
+      dark: string
+    }
+  }
   services: {
     coreUrl: string | null
     runtimeUrl: string | null

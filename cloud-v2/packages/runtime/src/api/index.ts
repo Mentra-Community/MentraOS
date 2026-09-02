@@ -33,6 +33,12 @@ export interface CreateApiAppOptions {
     privacy?: string;
     terms?: string;
   };
+  deploymentBranding?: {
+    logos?: {
+      light: { body: ArrayBuffer; contentType: "image/png" };
+      dark: { body: ArrayBuffer; contentType: "image/png" };
+    };
+  };
 }
 
 /** Build the runtime's HTTP app. Called once at boot in `index.ts`. */
@@ -82,6 +88,25 @@ export function createApiApp(opts: CreateApiAppOptions): Hono {
   if (opts.legalDocuments?.terms) {
     const terms = opts.legalDocuments.terms;
     app.get("/legal/terms", (c) => c.html(terms));
+  }
+
+  if (opts.deploymentBranding?.logos) {
+    for (const [path, logo] of [
+      ["/branding/logo-light.png", opts.deploymentBranding.logos.light],
+      ["/branding/logo-dark.png", opts.deploymentBranding.logos.dark],
+    ] as const) {
+      app.get(
+        path,
+        () =>
+          new Response(logo.body.slice(0), {
+            headers: {
+              "Content-Type": logo.contentType,
+              "Cache-Control": "public, max-age=3600",
+              "X-Content-Type-Options": "nosniff",
+            },
+          }),
+      );
+    }
   }
 
   // Health/readiness routes (/healthz, /readyz). Mounted at the root so its

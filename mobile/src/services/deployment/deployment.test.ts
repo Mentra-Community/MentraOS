@@ -10,6 +10,12 @@ function manifest(overrides: Partial<DeploymentManifest> = {}): DeploymentManife
     schemaVersion: 1,
     deploymentId: "mentra-enterprise-dev",
     displayName: "Mentra Enterprise Dev",
+    branding: {
+      logoUrls: {
+        light: `${WORKSPACE}/branding/logo-light.png`,
+        dark: `${WORKSPACE}/branding/logo-dark.png`,
+      },
+    },
     services: {coreUrl: null, runtimeUrl: WORKSPACE},
     auth: {
       mode: "microsoft-entra",
@@ -88,6 +94,7 @@ describe("resolveDeploymentCandidate", () => {
 
     expect(candidate.workspaceOrigin).toBe(WORKSPACE)
     expect(candidate.manifest.auth.mode).toBe("microsoft-entra")
+    expect(candidate.manifest.branding?.logoUrls.light).toBe(`${WORKSPACE}/branding/logo-light.png`)
     expect(fetch).toHaveBeenCalledWith(
       `${WORKSPACE}/.well-known/mentra-deployment.json`,
       expect.objectContaining({redirect: "manual"}),
@@ -97,6 +104,24 @@ describe("resolveDeploymentCandidate", () => {
   it("rejects cross-origin Runtime", async () => {
     const fetch = jest.fn(async () =>
       response(JSON.stringify(manifest({services: {coreUrl: null, runtimeUrl: "https://runtime.attacker.example"}}))),
+    )
+    await expect(resolveDeploymentCandidate(WORKSPACE, {fetch})).rejects.toMatchObject({code: "origin-mismatch"})
+  })
+
+  it("rejects a cross-origin workspace logo", async () => {
+    const fetch = jest.fn(async () =>
+      response(
+        JSON.stringify(
+          manifest({
+            branding: {
+              logoUrls: {
+                light: "https://images.attacker.example/logo.png",
+                dark: `${WORKSPACE}/branding/logo-dark.png`,
+              },
+            },
+          }),
+        ),
+      ),
     )
     await expect(resolveDeploymentCandidate(WORKSPACE, {fetch})).rejects.toMatchObject({code: "origin-mismatch"})
   })
