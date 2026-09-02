@@ -4,7 +4,7 @@ import {ActivityIndicator, TouchableOpacity, View} from "react-native"
 import MicrosoftIcon from "assets/icons/component/MicrosoftIcon"
 
 import {WorkspaceBrand} from "@/components/auth/WorkspaceBrand"
-import {Button, Header, Screen, Text} from "@/components/ignite"
+import {Button, Screen, Text} from "@/components/ignite"
 import {useAuth} from "@/contexts/AuthContext"
 import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
@@ -61,16 +61,15 @@ export default function WorkspaceSignInScreen() {
   return (
     <Screen preset="fixed">
       <View className="flex-1">
-        <Header leftIcon="chevron-left" onLeftPress={cancelWorkspace} />
         <View className="flex-1 justify-center p-4">
           <View className="items-center mb-6">
             <WorkspaceBrand
               displayName={activeDeployment.manifest.displayName}
               logoUrls={activeDeployment.manifest.branding?.logoUrls}
+              showFallbackName
             />
           </View>
 
-          <Text className="text-[36px] text-foreground text-center mb-3" text={activeDeployment.manifest.displayName} />
           <Text className="text-xl text-secondary-foreground text-center mb-8">
             {translate("workspace:signInDescription")}
           </Text>
