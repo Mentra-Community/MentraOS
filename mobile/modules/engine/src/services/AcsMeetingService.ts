@@ -15,6 +15,16 @@ type MeetingPhase = "idle" | "connecting" | "lobby" | "connected" | "disconnecte
 export type AudioSafety = "safe" | "degraded" | "unsafe"
 export type ActiveStream = "none" | "virtual" | "local"
 
+export type MeetingParticipantState = "idle" | "connecting" | "connected" | "lobby" | "hold" | "disconnected"
+
+export interface MeetingParticipant {
+  id: string
+  displayName: string | null
+  state: MeetingParticipantState
+  isMuted: boolean
+  isSpeaking: boolean
+}
+
 export interface MeetingState {
   state: MeetingPhase
   muted: boolean
@@ -25,13 +35,48 @@ export interface MeetingState {
   audioSourceReason?: SourceReason
   activeStream?: ActiveStream
   audioSafety?: AudioSafety
+  participants?: MeetingParticipant[]
 }
 
-/** MentraOS preferred_mic → ACS capture. bluetooth uses the OS local capture path. */
+/**
+ * The call microphone is the glasses microphone. The wearer's voice only
+ * exists in the glasses WHIP/WHEP stream, and the phone path makes the ACS
+ * SDK own the phone audio route (MODE_IN_COMMUNICATION + forced phone
+ * speaker), which pulls A2DP playback off the glasses and opens an echo loop.
+ * preferred_mic governs MentraOS STT capture, not this call.
+ */
 export function resolveAcsAudioSource(): ResolvedAudioSource {
-  // TEMP: force phone mic. Restore the preferred_mic / ranking table below when
-  // the glasses path is back on.
-  return {source: "phone", reason: "explicit"}
+  return {source: "glasses", reason: "explicit"}
+}
+
+const PARTICIPANT_STATES = new Set<MeetingParticipantState>([
+  "idle",
+  "connecting",
+  "connected",
+  "lobby",
+  "hold",
+  "disconnected",
+])
+
+export function parseMeetingParticipants(raw: unknown): MeetingParticipant[] | undefined {
+  if (!Array.isArray(raw)) return undefined
+  const result: MeetingParticipant[] = []
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object") continue
+    const value = entry as Record<string, unknown>
+    if (typeof value.id !== "string" || !value.id) continue
+    const state = PARTICIPANT_STATES.has(value.state as MeetingParticipantState)
+      ? (value.state as MeetingParticipantState)
+      : "idle"
+    result.push({
+      id: value.id,
+      displayName: typeof value.displayName === "string" && value.displayName ? value.displayName : null,
+      state,
+      isMuted: Boolean(value.isMuted),
+      isSpeaking: Boolean(value.isSpeaking),
+    })
+  }
+  return result
 }
 
 export type AcsOutgoingVideo = {
@@ -107,9 +152,17 @@ function parseAudioSafety(value: unknown): AudioSafety | undefined {
   return undefined
 }
 
+/** Formats the native PcmStreamPlayer accepts (mono only). */
+const PCM_SAMPLE_RATES = new Set([16000, 24000, 48000])
+const PCM_BACKLOG_WARN_MS = 600
+
 class AcsMeetingService {
   private owner: string | null = null
   private pcmStreamId: string | null = null
+  private pcmFormat: {sampleRate: number; channels: number} | null = null
+  private pcmReopen: Promise<void> | null = null
+  private pcmWriteChain: Promise<void> = Promise.resolve()
+  private lastBacklogWarnAt = 0
   private subscriptions: Array<{remove: () => void}> = []
   private lastState: MeetingState = {state: "idle", muted: false}
   private onState: ((packageName: string, state: MeetingState) => void) | null = null
@@ -240,6 +293,7 @@ class AcsMeetingService {
             audioSource: event.audioSource,
           })
         }
+        const participants = parseMeetingParticipants(event.participants)
         const state: MeetingState = {
           state: (event.state as MeetingPhase) ?? "idle",
           muted: Boolean(event.muted),
@@ -250,6 +304,7 @@ class AcsMeetingService {
           audioSourceReason: this.lastState.audioSourceReason,
           activeStream: parseActiveStream(event.activeStream),
           audioSafety,
+          ...(participants ? {participants} : {}),
         }
         this.lastState = state
         console.log("[AcsMeeting] phase=native-state", {
@@ -259,38 +314,96 @@ class AcsMeetingService {
           audioSource: state.audioSource,
           activeStream: state.activeStream,
           audioSafety: state.audioSafety,
+          participants: participants?.length,
         })
         this.onState?.(packageName, state)
       }),
       native.addListener("onIncomingPcm", (event) => {
         const base64 = event.base64 as string | undefined
-        if (!base64 || !this.pcmStreamId) return
-        void audioPlaybackService.writeStreamChunk(this.pcmStreamId, base64).catch((error) => {
-          console.warn("[AcsMeeting] incoming PCM write failed", error)
-        })
+        if (!base64 || !this.owner) return
+        // Serialize: native async calls may complete out of order, and PCM
+        // chunks written out of order are audible as garbling.
+        this.pcmWriteChain = this.pcmWriteChain
+          .then(() => this.writeIncomingPcm(packageName, base64, event.sampleRate, event.channels))
+          .catch(() => undefined)
       }),
     ]
   }
 
-  private async ensurePcmPlayback(packageName: string): Promise<void> {
+  /**
+   * Native normalizes to 16 kHz mono, so this is normally a straight write.
+   * If the format ever differs, reopen the player to match rather than play
+   * the bytes at the wrong rate (that is what slows and deepens the audio).
+   */
+  private async writeIncomingPcm(
+    packageName: string,
+    base64: string,
+    rawRate: unknown,
+    rawChannels: unknown,
+  ): Promise<void> {
+    const sampleRate = Number(rawRate) || 16000
+    const channels = Number(rawChannels) || 1
+    if (!PCM_SAMPLE_RATES.has(sampleRate) || channels !== 1) {
+      console.warn("[AcsMeeting] incoming PCM format unsupported; dropping chunk", {sampleRate, channels})
+      return
+    }
+    if (this.pcmFormat && (this.pcmFormat.sampleRate !== sampleRate || this.pcmFormat.channels !== channels)) {
+      if (!this.pcmReopen) {
+        console.warn("[AcsMeeting] incoming PCM format changed; reopening player", {
+          from: this.pcmFormat,
+          to: {sampleRate, channels},
+        })
+        this.pcmReopen = this.stopPcm()
+          .then(() => this.ensurePcmPlayback(packageName, sampleRate, channels))
+          .finally(() => {
+            this.pcmReopen = null
+          })
+      }
+      await this.pcmReopen
+    } else if (!this.pcmStreamId) {
+      await this.ensurePcmPlayback(packageName, sampleRate, channels)
+    }
+    const streamId = this.pcmStreamId
+    if (!streamId) return
+    try {
+      const result = await audioPlaybackService.writeStreamChunk(streamId, base64)
+      const bufferedMs = result?.bufferedMs
+      if (typeof bufferedMs === "number" && bufferedMs > PCM_BACKLOG_WARN_MS) {
+        const now = Date.now()
+        if (now - this.lastBacklogWarnAt > 5000) {
+          this.lastBacklogWarnAt = now
+          console.warn("[AcsMeeting] incoming PCM backlog high", {bufferedMs})
+        }
+      }
+    } catch (error) {
+      console.warn("[AcsMeeting] incoming PCM write failed", error)
+    }
+  }
+
+  private async ensurePcmPlayback(packageName: string, sampleRate = 16000, channels = 1): Promise<void> {
     if (this.pcmStreamId) return
     const streamId = `acs-in-${packageName}-${Date.now()}`
     await audioPlaybackService.openStream({
       streamId,
       appId: packageName,
-      sampleRate: 16000,
-      channels: 1,
+      sampleRate,
+      channels,
       stopOtherAudio: true,
       onEnded: () => {
-        if (this.pcmStreamId === streamId) this.pcmStreamId = null
+        if (this.pcmStreamId === streamId) {
+          this.pcmStreamId = null
+          this.pcmFormat = null
+        }
       },
     })
     this.pcmStreamId = streamId
+    this.pcmFormat = {sampleRate, channels}
   }
 
   private async stopPcm(): Promise<void> {
     const streamId = this.pcmStreamId
     this.pcmStreamId = null
+    this.pcmFormat = null
     if (!streamId) return
     await audioPlaybackService.abortStream(streamId).catch(() => undefined)
   }
