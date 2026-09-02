@@ -33,9 +33,9 @@ mock.module("../../stores/glasses", () => ({
   },
 }))
 
-const openStream = mock(async () => {})
+const openStream = mock(async (_request: {streamId: string; sampleRate: number; channels: number}) => {})
 const abortStream = mock(async () => {})
-const writeStreamChunk = mock(async () => {})
+const writeStreamChunk = mock(async (_streamId: string, _base64: string) => ({bufferedMs: 0}))
 mock.module("../AudioPlaybackService", () => ({
   default: {openStream, abortStream, writeStreamChunk},
 }))
@@ -52,7 +52,15 @@ mock.module("@mentra/bluetooth-sdk/internal", () => ({
   default: {},
 }))
 
-const {default: acsMeetingService, parseAcsOutgoingVideo, setAcsMeetingNativeForTests} = require("../AcsMeetingService") as typeof import("../AcsMeetingService")
+const {
+  default: acsMeetingService,
+  parseAcsOutgoingVideo,
+  parseMeetingParticipants,
+  resolveAcsAudioSource,
+  setAcsMeetingNativeForTests,
+} = require("../AcsMeetingService") as typeof import("../AcsMeetingService")
+
+const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
 
 type NativeJoin = {
   meetingUrl: string
@@ -107,6 +115,7 @@ describe("AcsMeetingService", () => {
     coreSubscribe.mockClear()
     openStream.mockClear()
     abortStream.mockClear()
+    writeStreamChunk.mockClear()
   })
 
   afterEach(async () => {
@@ -114,22 +123,115 @@ describe("AcsMeetingService", () => {
     setAcsMeetingNativeForTests(undefined)
   })
 
-  test("join passes the resolved audioSource and does not watch stores", async () => {
+  test("the call microphone is always the glasses, regardless of preferred_mic", () => {
+    for (const mic of ["glasses", "phone", "bluetooth", "auto", ""]) {
+      preferredMic = mic
+      expect(resolveAcsAudioSource()).toEqual({source: "glasses", reason: "explicit"})
+    }
+  })
+
+  test("join passes the glasses audioSource, opens 16 kHz mono playback, and does not watch stores", async () => {
     const native = fakeNative()
     setAcsMeetingNativeForTests(native)
+    preferredMic = "phone"
     const state = await acsMeetingService.join("com.mentra.call", {
       meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
       token: "tok",
       whepUrl: "https://example.com/whep",
     })
     expect(native.join).toHaveBeenCalledWith(
-      expect.objectContaining({audioSource: "phone"}),
+      expect.objectContaining({audioSource: "glasses"}),
     )
-    expect(state.audioSource).toBe("phone")
+    expect(state.audioSource).toBe("glasses")
     expect(state.audioSourceReason).toBe("explicit")
+    expect(openStream).toHaveBeenCalledTimes(1)
+    expect(openStream.mock.calls[0]?.[0]).toMatchObject({sampleRate: 16000, channels: 1, stopOtherAudio: true})
     expect(settingsSubscribe).not.toHaveBeenCalled()
     expect(coreSubscribe).not.toHaveBeenCalled()
     expect(native.setAudioSource).not.toHaveBeenCalled()
+  })
+
+  test("incoming PCM is written in order to the open stream", async () => {
+    const native = fakeNative()
+    setAcsMeetingNativeForTests(native)
+    await acsMeetingService.join("com.mentra.call", {
+      meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
+      token: "tok",
+      whepUrl: "https://example.com/whep",
+    })
+    native.emit("onIncomingPcm", {base64: "AAAA", sampleRate: 16000, channels: 1})
+    native.emit("onIncomingPcm", {base64: "BBBB", sampleRate: 16000, channels: 1})
+    await flush()
+    await flush()
+    expect(writeStreamChunk.mock.calls.map((call) => call[1])).toEqual(["AAAA", "BBBB"])
+    expect(openStream).toHaveBeenCalledTimes(1)
+  })
+
+  test("a different incoming PCM format reopens the player instead of playing at the wrong rate", async () => {
+    const native = fakeNative()
+    setAcsMeetingNativeForTests(native)
+    await acsMeetingService.join("com.mentra.call", {
+      meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
+      token: "tok",
+      whepUrl: "https://example.com/whep",
+    })
+    native.emit("onIncomingPcm", {base64: "AAAA", sampleRate: 48000, channels: 1})
+    await flush()
+    await flush()
+    expect(abortStream).toHaveBeenCalledTimes(1)
+    expect(openStream).toHaveBeenCalledTimes(2)
+    expect(openStream.mock.calls[1]?.[0]).toMatchObject({sampleRate: 48000, channels: 1})
+    expect(writeStreamChunk).toHaveBeenCalledTimes(1)
+  })
+
+  test("unsupported incoming PCM formats are dropped, never played", async () => {
+    const native = fakeNative()
+    setAcsMeetingNativeForTests(native)
+    await acsMeetingService.join("com.mentra.call", {
+      meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
+      token: "tok",
+      whepUrl: "https://example.com/whep",
+    })
+    const original = console.warn
+    console.warn = () => {}
+    try {
+      native.emit("onIncomingPcm", {base64: "AAAA", sampleRate: 44100, channels: 2})
+      await flush()
+      await flush()
+    } finally {
+      console.warn = original
+    }
+    expect(writeStreamChunk).not.toHaveBeenCalled()
+    expect(openStream).toHaveBeenCalledTimes(1)
+  })
+
+  test("native participants are parsed into the meeting state", async () => {
+    const native = fakeNative()
+    setAcsMeetingNativeForTests(native)
+    await acsMeetingService.join("com.mentra.call", {
+      meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
+      token: "tok",
+      whepUrl: "https://example.com/whep",
+    })
+    native.emit("onState", {
+      state: "connected",
+      muted: false,
+      audioSource: "glasses",
+      activeStream: "virtual",
+      audioSafety: "safe",
+      participants: [
+        {id: "8:orgid:abc", displayName: "Israelov", state: "connected", isMuted: false, isSpeaking: true},
+        {id: "8:orgid:def", displayName: "", state: "weird", isMuted: true},
+        {id: "", displayName: "dropped"},
+        "garbage",
+      ],
+    })
+    expect(acsMeetingService.getState().participants).toEqual([
+      {id: "8:orgid:abc", displayName: "Israelov", state: "connected", isMuted: false, isSpeaking: true},
+      {id: "8:orgid:def", displayName: null, state: "idle", isMuted: true, isSpeaking: false},
+    ])
+    expect(parseMeetingParticipants(undefined)).toBeUndefined()
+    expect(parseMeetingParticipants([])).toEqual([])
   })
 
   test("join forwards optional outgoing video to native", async () => {
@@ -166,7 +268,7 @@ describe("AcsMeetingService", () => {
     )
   })
 
-  test("a second join on a reused session does not inherit the previous audioSource", async () => {
+  test("a second join on a reused session re-resolves the audioSource and reopens playback", async () => {
     const native = fakeNative()
     setAcsMeetingNativeForTests(native)
     await acsMeetingService.join("com.mentra.call", {
@@ -175,15 +277,17 @@ describe("AcsMeetingService", () => {
       whepUrl: "https://example.com/whep",
     })
     await acsMeetingService.leave("com.mentra.call")
+    expect(abortStream).toHaveBeenCalledTimes(1)
     preferredMic = "phone"
     const state = await acsMeetingService.join("com.mentra.call", {
       meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
       token: "tok",
       whepUrl: "https://example.com/whep",
     })
-    expect(native.join.mock.calls[1]?.[0]).toMatchObject({audioSource: "phone"})
-    expect(state.audioSource).toBe("phone")
+    expect(native.join.mock.calls[1]?.[0]).toMatchObject({audioSource: "glasses"})
+    expect(state.audioSource).toBe("glasses")
     expect(state.audioSourceReason).toBe("explicit")
+    expect(openStream).toHaveBeenCalledTimes(2)
   })
 
   test("audioSafety unsafe is logged and does not end the meeting", async () => {
