@@ -179,13 +179,27 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
   }
 
   const leaveWorkspace = async (destination: "consumer" | "selector") => {
-    if (workspaceAuth) await workspaceAuth.signOut()
-    await LogoutUtils.performCompleteLogout({skipAuthSignOut: true})
+    const workspaceAuthToClear = workspaceAuth
+
+    // Leaving the unauthenticated workspace screen must never be blocked by
+    // native provider cleanup. Workspace activation and workspace logout have
+    // already performed the full local-data teardown; this path only removes
+    // a possibly cached provider account and changes the deployment selection.
+    // Switch immediately so a rejected or slow MSAL sign-out cannot trap the
+    // user inside a workspace they have not signed in to.
     if (destination === "consumer") store.returnToMentra()
     else store.clearSelection()
     setSession(null)
     setUser(null)
     Sentry.setUser(null)
+
+    if (workspaceAuthToClear) {
+      try {
+        await workspaceAuthToClear.signOut()
+      } catch (error) {
+        console.warn("AuthContext: failed to clear workspace provider account", error)
+      }
+    }
   }
 
   return (

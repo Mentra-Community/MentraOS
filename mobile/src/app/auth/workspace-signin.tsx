@@ -4,7 +4,7 @@ import {ActivityIndicator, TouchableOpacity, View} from "react-native"
 import MicrosoftIcon from "assets/icons/component/MicrosoftIcon"
 
 import {WorkspaceBrand} from "@/components/auth/WorkspaceBrand"
-import {Button, Screen, Text} from "@/components/ignite"
+import {Button, Header, Screen, Text} from "@/components/ignite"
 import {useAuth} from "@/contexts/AuthContext"
 import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
@@ -20,7 +20,17 @@ export default function WorkspaceSignInScreen() {
   const {theme} = useAppTheme()
   const [loading, setLoading] = useState(false)
 
-  focusEffectPreventBack()
+  const cancelWorkspace = () => {
+    if (loading) return
+    setLoading(true)
+    // leaveWorkspace changes the deployment synchronously before its
+    // best-effort native account cleanup. Navigate immediately so the user is
+    // never stranded here by an MSAL callback failure.
+    void leaveWorkspace("consumer")
+    replaceAll("/auth/start")
+  }
+
+  focusEffectPreventBack(() => cancelWorkspace())
 
   if (activeDeployment.kind !== "workspace") {
     return (
@@ -31,16 +41,6 @@ export default function WorkspaceSignInScreen() {
         </View>
       </Screen>
     )
-  }
-
-  const cancelWorkspace = async () => {
-    setLoading(true)
-    try {
-      await leaveWorkspace("consumer")
-      replaceAll("/auth/start")
-    } finally {
-      setLoading(false)
-    }
   }
 
   const signIn = async () => {
@@ -61,6 +61,7 @@ export default function WorkspaceSignInScreen() {
   return (
     <Screen preset="fixed">
       <View className="flex-1">
+        <Header leftIcon="chevron-left" onLeftPress={cancelWorkspace} />
         <View className="flex-1 justify-center p-4">
           <View className="items-center mb-6">
             <WorkspaceBrand
@@ -84,10 +85,7 @@ export default function WorkspaceSignInScreen() {
             }
           />
 
-          <TouchableOpacity
-            className="self-center mt-6 px-4 py-2"
-            disabled={loading}
-            onPress={() => void cancelWorkspace()}>
+          <TouchableOpacity className="self-center mt-6 px-4 py-2" disabled={loading} onPress={cancelWorkspace}>
             <Text
               className="text-sm text-secondary-foreground font-semibold"
               text={translate("workspace:returnToMentra")}
