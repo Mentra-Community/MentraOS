@@ -119,11 +119,18 @@ export function cloudConfigValues(): {
 
 export function deploymentCloudConfigValues(deployment: ActiveDeployment): ReturnType<typeof cloudConfigValues> {
   if (deployment.kind === "consumer") return cloudConfigValues()
+  const systemAllowlist = deployment.manifest.systemMiniapps.approvedPackageNamesOverride
   return {
     coreUrl: deployment.manifest.services.coreUrl,
     runtimeUrl: deployment.manifest.services.runtimeUrl,
     runtimeRealtimeSession: deployment.manifest.features.runtimeRealtimeSession,
-    localMiniappAllowlist: deployment.manifest.systemMiniapps.approvedPackageNamesOverride,
+    // Island's local registry contains both embedded SYSTEM miniapps and
+    // manifest-managed userland miniapps. Keep the manifest concepts separate,
+    // then combine them only at this internal registry boundary.
+    localMiniappAllowlist:
+      systemAllowlist === null
+        ? null
+        : [...new Set([...systemAllowlist, ...deployment.manifest.miniapps.managed.map((entry) => entry.packageName)])],
     otaManifestUrl: deployment.manifest.artifacts.mentraLiveOtaManifestUrl,
     features: {
       managedStreams: deployment.manifest.features.managedStreams,

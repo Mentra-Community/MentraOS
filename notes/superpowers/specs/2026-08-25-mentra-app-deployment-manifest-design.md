@@ -550,6 +550,16 @@ The first call-focused template is illustrative:
       "com.mentra.settings"
     ]
   },
+  "miniapps": {
+    "managed": [
+      {
+        "packageName": "com.example.remoteassist",
+        "version": "1.2.0",
+        "bundleUrl": "https://mentra.example-corp.com/miniapps/remoteassist-1.2.0.zip",
+        "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      }
+    ]
+  },
   "glasses": {
     "allowedModelsOverride": ["mentra-live"]
   },
@@ -606,9 +616,23 @@ Rules:
   allowlist. `null` uses the release's full built-in catalog, `[]` approves none,
   and a populated array approves only those package names. The embedded Mentra
   profile uses `null`; customer templates use an explicit release-pinned list.
-- `systemMiniapps.configuration` remains available for genuine package-specific
-  runtime values, but ACS credentials, Runtime URLs, and Entra scopes are host
-  configuration and are not delivered to Mentra Call.
+- ACS credentials, Runtime URLs, and Entra scopes are host configuration and
+  are not delivered to Mentra Call or another miniapp.
+- `miniapps.managed` contains customer-managed userland miniapps. It is not a
+  list of SYSTEM miniapps. Each entry pins a package name, semantic version,
+  same-origin ZIP URL, and SHA-256 digest. The Mentra App verifies the digest
+  and the ZIP's declared package/version before activating it.
+- Runtime may serve these pinned ZIPs from its existing deployment-asset
+  surface under `/miniapps/`; this does not enable another Runtime module or
+  add a service/container. Runtime verifies image-bundled ZIP hashes at boot.
+- A successful version change replaces the prior version owned by the same
+  deployment. Removing an entry uninstalls the version previously installed by
+  that deployment. An empty list therefore means no managed userland miniapps.
+  A failed download or install leaves the prior working version active, and the
+  reconciler never adopts or removes installs it does not own.
+- V1 reconciles the validated manifest snapshot on activation and boot. A
+  customer manifest change is picked up when the workspace is selected again;
+  background manifest refresh is explicitly later work.
 - A non-approved system miniapp is not installed, registered, shown in the
   system miniapp catalog, autostarted, or launched from a primary system-miniapp
   surface even though its code may exist in the shared binary. Comprehensive
@@ -643,6 +667,7 @@ load local settings
   -> supply Entra-backed Runtime token acquisition to Engine
   -> start Runtime REST capabilities without the real-time Runtime session
   -> install/launch only approved bundled miniapps
+  -> reconcile customer-managed userland miniapps by version and digest
 ```
 
 Changing deployment is controlled logout:
@@ -677,6 +702,12 @@ It constructs the authenticated Runtime REST capability surface but does not
 start cloud audio uplink, Core-token sync, the Runtime WebSocket, reconnect
 alarms, preinstalled registry sync, support-profile sync, cloud reports, or
 cloud speech.
+
+The Profile and debug surfaces read identity from the selected auth provider.
+They do not call Mentra account APIs in a Private Deployment. Consumer-only
+password, email-change, export, and account-deletion controls are hidden. Local
+miniapps still run, but backend auto-auth reports unavailable immediately when
+Core is absent instead of retrying Core token minting.
 
 The eventual Mentra Call/native-host integration requires:
 

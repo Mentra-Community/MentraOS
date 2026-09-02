@@ -1431,6 +1431,9 @@ class LocalMiniappRuntime {
   }
 
   private async requestMiniappAuth(packageName: string, opts?: {minTtlMs?: number}): Promise<MiniappAuthToken | null> {
+    // Core owns miniapp-backend token minting. A Runtime-only deployment has
+    // no such capability, so fail once instead of entering the retry loop.
+    if (!cloudClientService.hasCore()) return null
     const authPackageName = getDevAppSourcePackage(packageName) ?? packageName
     const devAttestation = getDevAppAttestation(packageName) ?? undefined
     return cloudClientService.getMiniappAuthToken(authPackageName, {

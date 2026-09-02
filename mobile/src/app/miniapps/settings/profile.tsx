@@ -1,4 +1,4 @@
-import {useState, useEffect} from "react"
+import {useState} from "react"
 import {View, Image, ActivityIndicator, ScrollView, ImageStyle, ViewStyle, Modal} from "react-native"
 import Svg, {Path} from "react-native-svg"
 
@@ -32,59 +32,25 @@ const DefaultUserIcon = ({size = 100, color = "#999"}: {size?: number; color?: s
 }
 
 export default function ProfileSettingsPage() {
-  const [userData, setUserData] = useState<{
-    fullName: string | null
-    avatarUrl: string | null
-    email: string | null
-    createdAt: string | null
-    provider: string | null
-  } | null>(null)
-  const [loading, setLoading] = useState<boolean>(true)
   const [isSigningOut, setIsSigningOut] = useState(false)
 
   const {goBack, push, replaceAll} = useNavigationStore.getState()
-  const {logout} = useAuth()
+  const {loading, logout, user} = useAuth()
   const {activeDeployment} = useDeployment()
+  const userData = user
+    ? {
+        fullName: user.name || null,
+        avatarUrl: user.avatarUrl || null,
+        email: user.email || null,
+        createdAt: user.createdAt || null,
+        provider: user.provider || null,
+      }
+    : null
 
   const workspaceName =
     activeDeployment.kind === "workspace"
       ? activeDeployment.manifest.displayName
       : translate("profileSettings:mentraWorkspace")
-
-  useEffect(() => {
-    const fetchUserData = async () => {
-      setLoading(true)
-      const res = await mentraAuth.getUser()
-      if (res.is_error()) {
-        console.error(res.error)
-        setUserData(null)
-        return
-      }
-      const user = res.value
-      if (!user) {
-        setUserData(null)
-        setLoading(false)
-        return
-      }
-
-      const fullName = user.name || null
-      const avatarUrl = user.avatarUrl || null
-      const email = user.email || null
-      const createdAt = user.createdAt || null
-      const provider = user.provider || null
-
-      setUserData({
-        fullName,
-        avatarUrl,
-        email,
-        createdAt,
-        provider,
-      })
-      setLoading(false)
-    }
-
-    fetchUserData()
-  }, [])
 
   const handleRequestDataExport = () => {
     console.log("Profile: Navigating to data export screen")
@@ -274,28 +240,37 @@ export default function ProfileSettingsPage() {
             <Group>
               <RouteButton label={translate("profileSettings:name")} text={userData.fullName || "N/A"} />
               <RouteButton label={translate("profileSettings:email")} text={userData.email || "N/A"} />
-              <RouteButton
-                label={translate("profileSettings:createdAt")}
-                text={userData.createdAt ? new Date(userData.createdAt).toLocaleString() : "N/A"}
-              />
+              {activeDeployment.kind === "consumer" && (
+                <RouteButton
+                  label={translate("profileSettings:createdAt")}
+                  text={userData.createdAt ? new Date(userData.createdAt).toLocaleString() : "N/A"}
+                />
+              )}
             </Group>
 
             <Spacer height={theme.spacing.s6} />
 
             <Group title={translate("account:appSettings")}>
-              {/* Show password/email options only for email/password users (not OAuth) */}
-              {userData.provider !== "google" && userData.provider !== "apple" && (
-                <RouteButton label={translate("profileSettings:changePassword")} onPress={handleChangePassword} />
+              {activeDeployment.kind === "consumer" && (
+                <>
+                  {/* Show password/email options only for email/password users (not OAuth) */}
+                  {userData.provider !== "google" && userData.provider !== "apple" && (
+                    <RouteButton label={translate("profileSettings:changePassword")} onPress={handleChangePassword} />
+                  )}
+                  {userData.provider !== "google" && userData.provider !== "apple" && (
+                    <RouteButton label={translate("profileSettings:changeEmail")} onPress={handleChangeEmail} />
+                  )}
+                  <RouteButton
+                    label={translate("profileSettings:requestDataExport")}
+                    onPress={handleRequestDataExport}
+                  />
+                  <RouteButton
+                    label={translate("profileSettings:deleteAccount")}
+                    onPress={handleDeleteAccount}
+                    preset="destructive"
+                  />
+                </>
               )}
-              {userData.provider !== "google" && userData.provider !== "apple" && (
-                <RouteButton label={translate("profileSettings:changeEmail")} onPress={handleChangeEmail} />
-              )}
-              <RouteButton label={translate("profileSettings:requestDataExport")} onPress={handleRequestDataExport} />
-              <RouteButton
-                label={translate("profileSettings:deleteAccount")}
-                onPress={handleDeleteAccount}
-                preset="destructive"
-              />
               <RouteButton label={translate("common:logOut")} onPress={confirmSignOut} preset="destructive" />
             </Group>
           </>

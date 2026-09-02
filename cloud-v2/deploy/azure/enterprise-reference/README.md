@@ -1,4 +1,4 @@
-# Mentra Enterprise reference deployment
+# Mentra Private Deployment Azure reference
 
 This is Mentra's non-production, customer-shaped validation environment. It
 runs the ordinary Cloud V2 Runtime image with only `meetings` and its
@@ -23,6 +23,9 @@ Runtime also serves the reference transparent PNG marks at
 be under 512 KiB each. Replace both image inputs when producing a customer
 Runtime image at `assets/logo-light.png` and `assets/logo-dark.png`, or use the
 same PNG for both variants when one mark works in both app themes.
+`Dockerfile.customer-assets` adds customer legal, logo, and managed miniapp
+files as a small layer on top of an imported digest-pinned Runtime image; it
+does not rebuild or modify Runtime code.
 
 ## Reference identities
 
@@ -39,6 +42,21 @@ the Android debug, Mentra release-APK, and Google Play app-signing redirects;
 iOS registers `msauth.com.mentra.mentra://auth`.
 See [customer-setup.md](./customer-setup.md) for the full enterprise setup
 runbook and [entra-setup.md](./entra-setup.md) for the detailed identity contract.
+Use [operations.md](./operations.md) for immutable image delivery, customer
+configuration, smoke testing, upgrades, rollback, and managed userland miniapps.
+
+The Entra registrations can be created or reconciled idempotently:
+
+```bash
+cloud-v2/deploy/azure/enterprise-reference/scripts/configure-entra.sh \
+  --runtime-name "ACME Mentra Runtime" \
+  --mobile-name "ACME Mentra Mobile"
+```
+
+Review the resulting registrations and permissions, assign the approved pilot
+users/groups, then rerun with the returned client ids and
+`--grant-admin-consent`. Existing registrations can always be selected by
+client id so a duplicate display name is never guessed.
 
 ## Coordinated dev deployment
 
@@ -157,6 +175,9 @@ curl --fail --show-error "$MENTRA_WORKSPACE/ready"
 curl --fail --show-error "$MENTRA_WORKSPACE/api/client/min-version"
 curl --fail --show-error \
   "$MENTRA_WORKSPACE/.well-known/mentra-deployment.json"
+
+cloud-v2/deploy/azure/enterprise-reference/scripts/smoke-test.sh \
+  "$MENTRA_WORKSPACE"
 ```
 
 Inspect the responses. The version endpoint should return the configured

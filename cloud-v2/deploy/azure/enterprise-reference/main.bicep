@@ -29,9 +29,22 @@ param environmentName string = 'cae-mentra-enterprise-reference'
 param runtimeName string = 'ca-mentra-enterprise-reference'
 param pullIdentityName string = 'id-mentra-enterprise-reference-pull'
 param communicationName string = take('mentra-${uniqueString(subscription().id, resourceGroup().id)}', 63)
+@description('ACS data location approved by the customer, for example United States or Europe.')
+param communicationDataLocation string = 'United States'
 param approvedSystemMiniapps array = ['com.mentra.call', 'com.mentra.settings']
+@description('Customer-managed userland miniapp entries: packageName, version, bundleUrl, and sha256.')
+param managedMiniapps array = []
+@description('Container directory holding managed miniapp ZIPs. Empty delegates these routes to customer ingress.')
+param managedMiniappDirectory string = '/app/cloud-v2/deploy/azure/enterprise-reference/miniapps'
 param allowedGlassesModels array = ['mentra-live']
 param telemetryEnabled bool = false
+
+@description('Organization privacy-policy URL. Empty serves the image-bundled same-origin document.')
+param privacyPolicyUrl string = ''
+@description('Organization terms URL. Empty serves the image-bundled same-origin document.')
+param termsOfServiceUrl string = ''
+param documentationUrl string = ''
+param supportUrl string = ''
 
 var loginEndpoint = az.environment().authentication.loginEndpoint
 var acrPullRoleDefinitionId = subscriptionResourceId(
@@ -61,7 +74,7 @@ resource registryPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = if 
 resource communication 'Microsoft.Communication/communicationServices@2023-04-01' = {
   name: communicationName
   location: 'global'
-  properties: { dataLocation: 'United States' }
+  properties: { dataLocation: communicationDataLocation }
 }
 
 resource environment 'Microsoft.App/managedEnvironments@2024-03-01' = {
@@ -118,12 +131,13 @@ var deploymentManifest = {
   }
   content: { wallpaperUrls: [] }
   links: {
-    privacyPolicyUrl: '${workspaceOrigin}/legal/privacy'
-    termsOfServiceUrl: '${workspaceOrigin}/legal/terms'
-    documentationUrl: null
-    supportUrl: null
+    privacyPolicyUrl: empty(privacyPolicyUrl) ? '${workspaceOrigin}/legal/privacy' : privacyPolicyUrl
+    termsOfServiceUrl: empty(termsOfServiceUrl) ? '${workspaceOrigin}/legal/terms' : termsOfServiceUrl
+    documentationUrl: empty(documentationUrl) ? null : documentationUrl
+    supportUrl: empty(supportUrl) ? null : supportUrl
   }
   systemMiniapps: { approvedPackageNamesOverride: approvedSystemMiniapps }
+  miniapps: { managed: managedMiniapps }
   glasses: { allowedModelsOverride: allowedGlassesModels }
   features: {
     runtimeRealtimeSession: false
@@ -152,13 +166,15 @@ resource runtime 'Microsoft.App/containerApps@2024-03-01' = {
         targetPort: 3001
         transport: 'auto'
         allowInsecure: false
-        customDomains: empty(workspaceHostname) ? [] : [
-          {
-            name: workspaceHostname
-            bindingType: 'SniEnabled'
-            certificateId: workspaceCertificate.id
-          }
-        ]
+        customDomains: empty(workspaceHostname)
+          ? []
+          : [
+              {
+                name: workspaceHostname
+                bindingType: 'SniEnabled'
+                certificateId: workspaceCertificate.id
+              }
+            ]
       }
       registries: [
         {
@@ -188,8 +204,18 @@ resource runtime 'Microsoft.App/containerApps@2024-03-01' = {
             }
             { name: 'DEPLOYMENT_PRIVACY_PATH', value: '/app/cloud-v2/deploy/azure/enterprise-reference/privacy.html' }
             { name: 'DEPLOYMENT_TERMS_PATH', value: '/app/cloud-v2/deploy/azure/enterprise-reference/terms.html' }
-            { name: 'DEPLOYMENT_LOGO_LIGHT_PATH', value: '/app/cloud-v2/deploy/azure/enterprise-reference/assets/logo-light.png' }
-            { name: 'DEPLOYMENT_LOGO_DARK_PATH', value: '/app/cloud-v2/deploy/azure/enterprise-reference/assets/logo-dark.png' }
+            {
+              name: 'DEPLOYMENT_LOGO_LIGHT_PATH'
+              value: '/app/cloud-v2/deploy/azure/enterprise-reference/assets/logo-light.png'
+            }
+            {
+              name: 'DEPLOYMENT_LOGO_DARK_PATH'
+              value: '/app/cloud-v2/deploy/azure/enterprise-reference/assets/logo-dark.png'
+            }
+            {
+              name: 'DEPLOYMENT_MANAGED_MINIAPP_DIR'
+              value: managedMiniappDirectory
+            }
             { name: 'CLOUD_RUNTIME_AUTH_AUDIENCE', value: runtimeApiClientId }
             {
               name: 'CLOUD_RUNTIME_AUTH_ISSUERS'

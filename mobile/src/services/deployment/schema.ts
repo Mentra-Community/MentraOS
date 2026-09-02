@@ -1,9 +1,10 @@
+import semver from "semver"
 import {z} from "zod"
-
-import type {DeploymentManifest} from "./types"
 
 const nullableUrl = z.string().url().nullable()
 const packageName = z.string().regex(/^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z0-9_]+)+$/)
+const semanticVersion = z.string().refine((value) => semver.valid(value) !== null)
+const sha256 = z.string().regex(/^[0-9a-f]{64}$/i)
 
 const authSchema = z.discriminatedUnion("mode", [
   z.object({mode: z.literal("mentra-account")}).strict(),
@@ -18,7 +19,7 @@ const authSchema = z.discriminatedUnion("mode", [
     .strict(),
 ])
 
-export const deploymentManifestSchema: z.ZodType<DeploymentManifest> = z
+export const deploymentManifestSchema = z
   .object({
     schemaVersion: z.literal(1),
     deploymentId: z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/),
@@ -58,6 +59,23 @@ export const deploymentManifestSchema: z.ZodType<DeploymentManifest> = z
       })
       .strict(),
     systemMiniapps: z.object({approvedPackageNamesOverride: z.array(packageName).max(100).nullable()}).strict(),
+    miniapps: z
+      .object({
+        managed: z
+          .array(
+            z
+              .object({
+                packageName,
+                version: semanticVersion,
+                bundleUrl: z.string().url(),
+                sha256,
+              })
+              .strict(),
+          )
+          .max(100),
+      })
+      .strict()
+      .default({managed: []}),
     glasses: z.object({allowedModelsOverride: z.array(z.string().min(1).max(120)).max(100).nullable()}).strict(),
     features: z
       .object({

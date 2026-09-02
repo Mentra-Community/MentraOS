@@ -42,6 +42,9 @@
   "systemMiniapps": {
     "approvedPackageNamesOverride": ["com.mentra.call", "com.mentra.settings"]
   },
+  "miniapps": {
+    "managed": []
+  },
   "glasses": {"allowedModelsOverride": ["mentra-live"]},
   "features": {
     "runtimeRealtimeSession": false,

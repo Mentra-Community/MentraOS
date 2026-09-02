@@ -69,4 +69,24 @@ describe("Runtime API composition", () => {
       else process.env.CLOUD_CLIENT_RECOMMENDED_VERSION = previousRecommended;
     }
   });
+
+  test("serves deployment-managed userland bundles as immutable assets", async () => {
+    const body = new TextEncoder().encode("miniapp zip bytes").buffer;
+    const app = createApiApp({
+      readinessChecks: [],
+      services: new Set(["meetings"]),
+      deploymentMiniappBundles: [
+        { path: "/miniapps/remoteassist-1.2.0.zip", body },
+      ],
+    });
+
+    const response = await app.request("/miniapps/remoteassist-1.2.0.zip");
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("application/zip");
+    expect(response.headers.get("cache-control")).toContain("immutable");
+    expect(await response.text()).toBe("miniapp zip bytes");
+    expect(
+      await (await app.request("/miniapps/remoteassist-1.2.0.zip")).text(),
+    ).toBe("miniapp zip bytes");
+  });
 });

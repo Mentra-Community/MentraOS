@@ -5,16 +5,17 @@ import Toast from "react-native-toast-message"
 
 import {Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useAuth} from "@/contexts/AuthContext"
 import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {translate} from "@/i18n"
 import {engine} from "@mentra/engine"
 import {SETTINGS, useSetting} from "@mentra/engine"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
-import mentraAuth from "@/utils/auth/authClient"
 
 export const VersionInfo = () => {
   const {themed} = useAppTheme()
+  const {user} = useAuth()
   const [debugMode, setDebugMode] = useSetting(SETTINGS.debug_mode.key)
   const [_superMode, setSuperMode] = useSetting(SETTINGS.super_mode.key)
   const [coreUrl] = useSetting(SETTINGS.cloud_core_url.key)
@@ -65,11 +66,6 @@ export const VersionInfo = () => {
   }
 
   const copyVersionInfo = async () => {
-    const res = await mentraAuth.getUser()
-    let user = null
-    if (res.is_ok()) {
-      user = res.value
-    }
     const info = [
       `version: ${process.env.EXPO_PUBLIC_MENTRAOS_VERSION}`,
       `branch: ${process.env.EXPO_PUBLIC_BUILD_BRANCH}`,

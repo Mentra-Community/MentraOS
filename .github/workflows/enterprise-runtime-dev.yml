@@ -175,6 +175,7 @@ jobs:
              and .features.runtimeRealtimeSession == false
              and .features.managedStreams == false
              and .features.nativeMeetings == true
+             and .miniapps.managed == []
              and .telemetry == false' \
             <<< "$manifest"
 

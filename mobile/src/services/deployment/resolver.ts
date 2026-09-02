@@ -148,6 +148,44 @@ function validateDeploymentManifest(
       )
     }
   }
+  const managedPackageNames = new Set<string>()
+  const managedBundlePaths = new Set<string>()
+  for (const entry of manifest.miniapps.managed) {
+    if (managedPackageNames.has(entry.packageName)) {
+      throw new DeploymentResolutionError(
+        `Managed miniapp ${entry.packageName} is listed more than once.`,
+        "invalid-manifest",
+      )
+    }
+    managedPackageNames.add(entry.packageName)
+    const bundleUrl = new URL(entry.bundleUrl)
+    if (secureUrlOrigin(entry.bundleUrl, allowInsecureLocalhost) !== workspaceOrigin) {
+      throw new DeploymentResolutionError(
+        "Managed miniapp bundles must use the workspace origin in deployment schema v1.",
+        "origin-mismatch",
+      )
+    }
+    if (!bundleUrl.pathname.startsWith("/miniapps/") || bundleUrl.pathname.endsWith("/")) {
+      throw new DeploymentResolutionError(
+        "Managed miniapp bundle URLs must use a file path under /miniapps/.",
+        "invalid-manifest",
+      )
+    }
+    if (managedBundlePaths.has(bundleUrl.pathname)) {
+      throw new DeploymentResolutionError(
+        `Managed miniapp bundle path ${bundleUrl.pathname} is listed more than once.`,
+        "invalid-manifest",
+      )
+    }
+    managedBundlePaths.add(bundleUrl.pathname)
+  }
+  const approvedSystemMiniapps = manifest.systemMiniapps.approvedPackageNamesOverride
+  if (approvedSystemMiniapps?.some((packageName) => managedPackageNames.has(packageName))) {
+    throw new DeploymentResolutionError(
+      "A package cannot be both a system miniapp and a manifest-managed userland miniapp.",
+      "invalid-manifest",
+    )
+  }
   for (const url of allConfiguredUrls(manifest)) {
     secureUrlOrigin(url, allowInsecureLocalhost)
   }
@@ -223,5 +261,6 @@ function allConfiguredUrls(manifest: DeploymentManifest): string[] {
     manifest.links.documentationUrl,
     manifest.links.supportUrl,
     ...manifest.content.wallpaperUrls,
+    ...manifest.miniapps.managed.map((entry) => entry.bundleUrl),
   ].filter((url): url is string => url !== null)
 }

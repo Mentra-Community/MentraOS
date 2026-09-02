@@ -45,6 +45,17 @@ client secrets in the deployment manifest.
 
 ## 1. Register the customer Runtime API
 
+For an assisted or repeatable deployment, run the idempotent Entra helper and
+review its output before granting consent:
+
+```bash
+cloud-v2/deploy/azure/enterprise-reference/scripts/configure-entra.sh \
+  --runtime-name "ACME Mentra Runtime" \
+  --mobile-name "ACME Mentra Mobile"
+```
+
+The remaining portal steps below explain exactly what the helper configures.
+
 In **Microsoft Entra admin center → App registrations**:
 
 1. Create an app registration such as `ACME Mentra Runtime`.
@@ -142,6 +153,8 @@ The template creates:
 
 No Cloudflare account or API token is required. The mobile public client also
 requires no secret. See [README.md](./README.md) for complete Azure CLI commands.
+See [operations.md](./operations.md) for digest-pinned image import, customer
+configuration, upgrade, rollback, and smoke-test commands.
 
 Before production use, replace [privacy.html](./privacy.html) and
 [terms.html](./terms.html) with the customer's approved documents and rebuild
@@ -175,6 +188,8 @@ Verify that:
 - `features.nativeMeetings` is `true`;
 - telemetry is set to the customer's approved value; and
 - the approved miniapp and glasses lists contain only the qualified products.
+- `systemMiniapps` lists only embedded SYSTEM miniapps, while
+  `miniapps.managed` lists separately installed customer userland bundles.
 
 Runtime refuses to start when the manifest advertises modules that are not
 actually enabled.

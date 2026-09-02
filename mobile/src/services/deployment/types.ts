@@ -12,6 +12,13 @@ export interface MicrosoftEntraAuthConfig {
 
 export type DeploymentAuthConfig = MentraAccountAuthConfig | MicrosoftEntraAuthConfig
 
+export interface DeploymentManagedMiniapp {
+  packageName: string
+  version: string
+  bundleUrl: string
+  sha256: string
+}
+
 export interface DeploymentManifest {
   schemaVersion: 1
   deploymentId: string
@@ -54,6 +61,9 @@ export interface DeploymentManifest {
   }
   systemMiniapps: {
     approvedPackageNamesOverride: string[] | null
+  }
+  miniapps: {
+    managed: DeploymentManagedMiniapp[]
   }
   glasses: {
     allowedModelsOverride: string[] | null

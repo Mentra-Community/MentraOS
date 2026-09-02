@@ -45,6 +45,7 @@ function manifest(overrides: Partial<DeploymentManifest> = {}): DeploymentManife
       supportUrl: `${WORKSPACE}/support`,
     },
     systemMiniapps: {approvedPackageNamesOverride: ["com.mentra.call", "com.mentra.settings"]},
+    miniapps: {managed: []},
     glasses: {allowedModelsOverride: ["mentra-live"]},
     features: {
       runtimeRealtimeSession: false,
@@ -101,6 +102,15 @@ describe("resolveDeploymentCandidate", () => {
     )
   })
 
+  it("defaults older schema-v1 manifests to no managed userland miniapps", async () => {
+    const {miniapps: _managedMiniapps, ...value} = manifest()
+    const fetch = jest.fn(async () => response(JSON.stringify(value)))
+
+    await expect(resolveDeploymentCandidate(WORKSPACE, {fetch})).resolves.toMatchObject({
+      manifest: {miniapps: {managed: []}},
+    })
+  })
+
   it("rejects cross-origin Runtime", async () => {
     const fetch = jest.fn(async () =>
       response(JSON.stringify(manifest({services: {coreUrl: null, runtimeUrl: "https://runtime.attacker.example"}}))),
@@ -124,6 +134,64 @@ describe("resolveDeploymentCandidate", () => {
       ),
     )
     await expect(resolveDeploymentCandidate(WORKSPACE, {fetch})).rejects.toMatchObject({code: "origin-mismatch"})
+  })
+
+  it("accepts same-origin manifest-managed userland miniapps", async () => {
+    const value = manifest({
+      miniapps: {
+        managed: [
+          {
+            packageName: "com.example.remoteassist",
+            version: "1.2.0",
+            bundleUrl: `${WORKSPACE}/miniapps/remote-assist-1.2.0.zip`,
+            sha256: "a".repeat(64),
+          },
+        ],
+      },
+    })
+    const fetch = jest.fn(async () => response(JSON.stringify(value)))
+
+    await expect(resolveDeploymentCandidate(WORKSPACE, {fetch})).resolves.toMatchObject({manifest: value})
+  })
+
+  it("rejects cross-origin, duplicate, and SYSTEM-overlapping managed miniapps", async () => {
+    const entry = {
+      packageName: "com.example.remoteassist",
+      version: "1.2.0",
+      bundleUrl: `${WORKSPACE}/miniapps/remote-assist-1.2.0.zip`,
+      sha256: "a".repeat(64),
+    }
+    const crossOriginFetch = jest.fn(async () =>
+      response(
+        JSON.stringify(
+          manifest({miniapps: {managed: [{...entry, bundleUrl: "https://attacker.example/miniapp.zip"}]}}),
+        ),
+      ),
+    )
+    await expect(resolveDeploymentCandidate(WORKSPACE, {fetch: crossOriginFetch})).rejects.toMatchObject({
+      code: "origin-mismatch",
+    })
+
+    const duplicateFetch = jest.fn(async () =>
+      response(JSON.stringify(manifest({miniapps: {managed: [entry, {...entry}]}}))),
+    )
+    await expect(resolveDeploymentCandidate(WORKSPACE, {fetch: duplicateFetch})).rejects.toMatchObject({
+      code: "invalid-manifest",
+    })
+
+    const overlapFetch = jest.fn(async () =>
+      response(
+        JSON.stringify(
+          manifest({
+            systemMiniapps: {approvedPackageNamesOverride: ["com.example.remoteassist"]},
+            miniapps: {managed: [entry]},
+          }),
+        ),
+      ),
+    )
+    await expect(resolveDeploymentCandidate(WORKSPACE, {fetch: overlapFetch})).rejects.toMatchObject({
+      code: "invalid-manifest",
+    })
   })
 
   it("rejects redirects and oversized responses", async () => {

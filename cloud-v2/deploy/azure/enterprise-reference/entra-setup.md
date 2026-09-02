@@ -11,6 +11,20 @@ the customer does not provide credentials to Mentra.
 
 ## 1. Register the Runtime API
 
+The supported setup helper performs sections 1–2 idempotently and prints the
+tenant id, both client ids, Runtime scope, and Mobile service-principal id:
+
+```bash
+cloud-v2/deploy/azure/enterprise-reference/scripts/configure-entra.sh \
+  --runtime-name "ACME Mentra Runtime" \
+  --mobile-name "ACME Mentra Mobile"
+```
+
+Run it without `--grant-admin-consent` first so the administrator can review the
+registrations and requested permissions. Then rerun with the printed
+`--runtime-client-id`, `--mobile-client-id`, and `--grant-admin-consent`.
+Employee/group assignment remains an explicit administrator action.
+
 Create an app registration in the customer's tenant for the customer-hosted
 Runtime:
 

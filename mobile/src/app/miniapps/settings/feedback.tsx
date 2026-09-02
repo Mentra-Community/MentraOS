@@ -1,11 +1,12 @@
 import {useLocalSearchParams} from "expo-router"
 import * as ImagePicker from "expo-image-picker"
-import {useState, useEffect, useRef} from "react"
+import {useRef, useState} from "react"
 import {Image, Platform, Pressable, ScrollView, TextInput, View, Linking, ActivityIndicator} from "react-native"
 
 import {APP_STORE_REVIEW_URL, PLAY_STORE_URL} from "@/constants/appConfig"
 import {Button, Icon, Screen, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useAuth} from "@/contexts/AuthContext"
 import {translate} from "@/i18n"
 import {RadioGroup, RatingButtons, StarRating} from "@/components/ui"
 import {
@@ -18,7 +19,6 @@ import {buildReportTrigger} from "@/services/bugReport/bugReportCategorization"
 import {useNavigationStore} from "@/stores/navigation"
 import {engine, SETTINGS, useSetting} from "@mentra/engine"
 import showAlert from "@/utils/AlertUtils"
-import mentraAuth from "@/utils/auth/authClient"
 import {useRegisterCapsule} from "@/stores/capsule"
 import {deploymentStore} from "@/services/deployment"
 
@@ -44,6 +44,7 @@ export default function FeedbackPage() {
   const MAX_SCREENSHOTS = 5
 
   const {theme} = useAppTheme()
+  const {user} = useAuth()
   const viewShotRef = useRef<View>(null)
   const {goBack, getPreviousRoute} = useNavigationStore.getState()
   const deployment = deploymentStore.getActive()
@@ -62,23 +63,7 @@ export default function FeedbackPage() {
     visibleOnRoutes: ["/miniapps/settings/feedback"],
   })
 
-  const [userEmail, setUserEmail] = useState("")
-
-  useEffect(() => {
-    const fetchUserEmail = async () => {
-      const res = await mentraAuth.getUser()
-      if (res.is_error()) {
-        console.error("Error fetching user email:", res.error)
-        return
-      }
-      const user = res.value
-      if (user?.email) {
-        setUserEmail(user.email)
-      }
-    }
-
-    fetchUserEmail()
-  }, [])
+  const userEmail = user?.email ?? ""
 
   const isApplePrivateRelay = userEmail.includes("@privaterelay.appleid.com") || userEmail.includes("@icloud.com")
 

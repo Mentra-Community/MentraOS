@@ -6,6 +6,7 @@ import {router} from "expo-router"
 
 import {bootstrapMentraJS} from "@/services/mentraJsBootstrap"
 import {preinstalledMiniappSync} from "@/services/miniapps/preinstalledMiniappSync"
+import {deploymentManagedMiniappSync} from "@/services/miniapps/deploymentManagedMiniappSync"
 import builtInMiniappCatalog from "@/services/miniapps/BuiltInMiniappCatalog"
 import {BUNDLED_MINIAPPS} from "@/generated/bundledMiniapps"
 import {CHINA_HIDDEN_APPS, isChinaBuild, notifyPackageName} from "@/constants/miniapps"
@@ -579,6 +580,10 @@ class MantleManager {
     // yet (or are an older version). Runs after the registry is warm so the
     // already-installed check below sees the real on-disk state.
     await this.installBundledMiniapps()
+
+    // Reconcile customer-owned userland bundles independently from SYSTEM
+    // miniapps embedded in the Mentra App binary.
+    await deploymentManagedMiniappSync.sync(deploymentStore.getActive())
 
     // Then reconcile the admin-managed preinstall registry from Cloud V2. This
     // lets Core move users to newer bundled miniapp releases without shipping a

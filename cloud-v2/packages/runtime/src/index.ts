@@ -63,6 +63,7 @@ import {
   assertManifestMatchesRuntimeServices,
   parseDeploymentManifest,
 } from "./services/deployment-manifest";
+import { loadDeploymentMiniappBundles } from "./services/deployment-miniapps";
 
 const logger = createLogger("runtime");
 
@@ -223,6 +224,8 @@ export interface StartRuntimeOptions {
       dark: { body: ArrayBuffer; contentType: "image/png" };
     };
   };
+  /** Optional same-origin userland miniapp ZIPs declared by the deployment manifest. */
+  deploymentMiniappBundles?: Array<{ path: string; body: Blob | ArrayBuffer }>;
 }
 
 export interface RuntimeHandle {
@@ -257,6 +260,9 @@ export async function startRuntime(
   const legalDocuments = opts.legalDocuments ?? (await loadLegalDocuments());
   const deploymentBranding =
     opts.deploymentBranding ?? (await loadDeploymentBranding());
+  const deploymentMiniappBundles =
+    opts.deploymentMiniappBundles ??
+    (await loadDeploymentMiniappBundles(deploymentManifest));
   if (services.has("meetings") && !deploymentManifest) {
     throw new Error("meetings service requires a deployment manifest");
   }
@@ -357,6 +363,7 @@ export async function startRuntime(
     deploymentManifest,
     legalDocuments,
     deploymentBranding,
+    deploymentMiniappBundles,
   });
 
   const server = Bun.serve({

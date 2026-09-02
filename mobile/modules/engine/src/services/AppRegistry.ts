@@ -30,6 +30,7 @@ import {printDirectory} from "../utils/storage/zip"
 import {isLocalMiniappAllowed} from "../runtime/bootstrap"
 import {checkManifestVersions} from "./manifestVersionGate"
 import {normalizeManifestActions} from "./manifestActions"
+import {miniappInstallIdentityError, type MiniappInstallExpectations} from "./miniappInstallIdentity"
 import {miniappRunningRegistry} from "./MiniappRunningRegistry"
 
 export {normalizeManifestActions} from "./manifestActions"
@@ -141,10 +142,12 @@ interface InstalledLma {
 }
 
 export interface MiniappReleaseIdentity {
-  source: "direct_download" | "bundled_asset" | "preinstalled_registry" | "dev_snapshot"
+  source: "direct_download" | "bundled_asset" | "preinstalled_registry" | "deployment_manifest" | "dev_snapshot"
   releaseId?: string
   bundleSha256?: string
   channel?: string
+  deploymentId?: string
+  deploymentOrigin?: string
 }
 
 function releaseIdentityKey(packageName: string, version: string): string {
@@ -209,6 +212,7 @@ async function downloadMiniAppZip(url: string): Promise<string> {
 async function unpackMiniApp(
   zipPath: string,
   versionOverride?: string,
+  expected?: MiniappInstallExpectations,
 ): Promise<{packageName: string; version: string}> {
   const unzipDir = new Directory(Paths.cache, "lma_unzip")
   try {
@@ -246,6 +250,8 @@ async function unpackMiniApp(
     throw "READ_MANIFEST_FAILED"
   }
   const version = versionOverride ?? manifestVersion
+  const identityError = miniappInstallIdentityError({packageName, version: manifestVersion}, expected)
+  if (identityError) throw new Error(identityError)
   console.log(`ZIP: installing ${packageName} as version ${version}`)
 
   const basePackageDir = new Directory(Paths.document, "lmas", packageName)
@@ -260,6 +266,9 @@ async function unpackMiniApp(
 
   const versionDir = new Directory(basePackageDir, version)
   try {
+    if (expected?.rejectExistingVersion && versionDir.exists) {
+      throw new Error(`Miniapp ${packageName}@${version} is already installed`)
+    }
     if (!versionDir.exists) {
       versionDir.create()
     } else {
@@ -299,10 +308,11 @@ async function unpackMiniApp(
 async function downloadAndInstallMiniApp(
   url: string,
   versionOverride?: string,
+  expected?: MiniappInstallExpectations,
 ): Promise<{packageName: string; version: string}> {
   const downloadedZipPath = await downloadMiniAppZip(url)
   console.log("ZIP: done downloading, starting unzip")
-  return unpackMiniApp(downloadedZipPath, versionOverride)
+  return unpackMiniApp(downloadedZipPath, versionOverride, expected)
 }
 
 type Listener = () => void
@@ -445,10 +455,20 @@ class AppRegistry {
    */
   public installFromUrl(
     url: string,
-    opts?: {versionOverride?: string; releaseIdentity?: MiniappReleaseIdentity},
+    opts?: {
+      versionOverride?: string
+      releaseIdentity?: MiniappReleaseIdentity
+      expectedPackageName?: string
+      expectedVersion?: string
+      rejectExistingVersion?: boolean
+    },
   ): AsyncResult<void, Error> {
     return Res.try_async(async () => {
-      const {packageName, version} = await downloadAndInstallMiniApp(url, opts?.versionOverride)
+      const {packageName, version} = await downloadAndInstallMiniApp(url, opts?.versionOverride, {
+        packageName: opts?.expectedPackageName,
+        version: opts?.expectedVersion,
+        rejectExistingVersion: opts?.rejectExistingVersion,
+      })
       console.log("APP_REGISTRY: Downloaded and installed mini app")
       this.finalizeInstall(
         packageName,
@@ -467,10 +487,20 @@ class AppRegistry {
    */
   public installFromLocalZip(
     zipPath: string,
-    opts?: {versionOverride?: string; releaseIdentity?: MiniappReleaseIdentity},
+    opts?: {
+      versionOverride?: string
+      releaseIdentity?: MiniappReleaseIdentity
+      expectedPackageName?: string
+      expectedVersion?: string
+      rejectExistingVersion?: boolean
+    },
   ): AsyncResult<{packageName: string; version: string}, Error> {
     return Res.try_async(async () => {
-      const {packageName, version} = await unpackMiniApp(zipPath, opts?.versionOverride)
+      const {packageName, version} = await unpackMiniApp(zipPath, opts?.versionOverride, {
+        packageName: opts?.expectedPackageName,
+        version: opts?.expectedVersion,
+        rejectExistingVersion: opts?.rejectExistingVersion,
+      })
       console.log("APP_REGISTRY: Installed mini app from local zip")
       this.finalizeInstall(packageName, version, opts?.releaseIdentity ?? {source: "bundled_asset"})
       return {packageName, version}

@@ -39,6 +39,10 @@ export interface CreateApiAppOptions {
       dark: { body: ArrayBuffer; contentType: "image/png" };
     };
   };
+  deploymentMiniappBundles?: Array<{
+    path: string;
+    body: Blob | ArrayBuffer;
+  }>;
 }
 
 /** Build the runtime's HTTP app. Called once at boot in `index.ts`. */
@@ -46,12 +50,7 @@ export function createApiApp(opts: CreateApiAppOptions): Hono {
   const app = new Hono();
   const services =
     opts.services ??
-    new Set<RuntimeServiceName>([
-      "realtime-audio",
-      "camera",
-      "maps",
-      "tts",
-    ]);
+    new Set<RuntimeServiceName>(["realtime-audio", "camera", "maps", "tts"]);
 
   // Public and available in every Runtime profile. Core keeps the same route
   // temporarily for already-released clients.
@@ -107,6 +106,20 @@ export function createApiApp(opts: CreateApiAppOptions): Hono {
           }),
       );
     }
+  }
+
+  for (const bundle of opts.deploymentMiniappBundles ?? []) {
+    app.get(
+      bundle.path,
+      () =>
+        new Response(bundle.body, {
+          headers: {
+            "Content-Type": "application/zip",
+            "Cache-Control": "public, max-age=31536000, immutable",
+            "X-Content-Type-Options": "nosniff",
+          },
+        }),
+    );
   }
 
   // Health/readiness routes (/healthz, /readyz). Mounted at the root so its
