@@ -21,7 +21,7 @@
     "mentrajs",
     "polyfill"
   ],
-  "license": "MIT",
+  "license": "Apache-2.0",
   "devDependencies": {
     "esbuild": "^0.23.0"
   },
