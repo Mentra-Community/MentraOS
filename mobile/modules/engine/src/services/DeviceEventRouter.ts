@@ -58,11 +58,15 @@ export function startDeviceEventRouter(): void {
       (s) => {
         const linkConnected = isGlassesConnected(s.connection)
         const connected = linkConnected && s.wifi.state === "connected"
+        // ssid/localIp describe how to reach the glasses over Wi-Fi, so they are
+        // only meaningful under effective connectivity. Gate them on `connected`
+        // (not raw wifi.state) so a BLE drop with a stale "connected" Wi-Fi leg
+        // never hands miniapps an unreachable address.
         return {
           connected,
           linkConnected,
-          ssid: s.wifi.state === "connected" ? s.wifi.ssid : undefined,
-          localIp: s.wifi.state === "connected" ? s.wifi.localIp : undefined,
+          ssid: linkConnected && s.wifi.state === "connected" ? s.wifi.ssid : undefined,
+          localIp: linkConnected && s.wifi.state === "connected" ? s.wifi.localIp : undefined,
         }
       },
       (wifi) => localMiniappRuntime.forwardEvent("glasses_wifi", wifi),
