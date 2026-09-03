@@ -64,41 +64,37 @@ Persistent signing keys and the refresh pepper live as GitHub Actions secrets
 for this Mentra-owned reference environment and become Container App secrets.
 Customer deployments use their own approved secret manager.
 
-## Manual customer-shaped deployment
+## Customer-shaped deployment
 
-Bootstrap an ACR, import a coordinated digest, and keep the printed ACR digest:
-
-```bash
-az deployment group create \
-  --resource-group <resource-group> \
-  --template-file cloud-v2/deploy/azure/enterprise-reference/bootstrap.bicep
-
-cloud-v2/deploy/azure/enterprise-reference/scripts/import-runtime-image.sh \
-  <registry-name> \
-  ghcr.io/mentra-community/mentra-cloud@sha256:<release-digest> \
-  <release-identity>
-```
-
-Generate the two distinct Ed25519 keypairs and refresh-token pepper once, into
-a new mode-0600 file outside the repository:
+The supported assisted path takes one public configuration file and one
+mode-0600 secret file. Copy and edit the example, then generate the durable
+signing material before deploying:
 
 ```bash
+cp cloud-v2/deploy/azure/enterprise-reference/deployment.config.example.json \
+  /secure/path/mentra-private.config.json
 cloud-v2/deploy/azure/enterprise-reference/scripts/generate-private-secrets.sh \
+  /secure/path/mentra-private-secrets.json
+cloud-v2/deploy/azure/enterprise-reference/scripts/deploy.sh --validate-only \
+  /secure/path/mentra-private.config.json \
+  /secure/path/mentra-private-secrets.json
+cloud-v2/deploy/azure/enterprise-reference/scripts/deploy.sh \
+  /secure/path/mentra-private.config.json \
   /secure/path/mentra-private-secrets.json
 ```
 
-Import those five values into the customer's approved secret manager. Reuse
-them across upgrades; replacing them is a deliberate session/key rotation, not
-a normal redeploy.
-
-Deploy `main.bicep` with `cloudImage`, the registry/Entra/ACS parameters, and
-persistent values for the five secure parameters documented by the template.
-The coordinated workflow is the canonical copy-paste example.
+The helper creates the resource group, bootstraps ACR, imports and verifies the
+digest, deploys Core and Runtime through a protected temporary parameter file,
+removes that file, runs the smoke test, and prints the deployment outputs.
+Import the durable secret file into approved secret management; replacing its
+values is a deliberate session/key rotation, not an ordinary redeploy.
 
 For a custom hostname, first deploy without `workspaceHostname`, create a
-DNS-only CNAME to `generatedRuntimeHostname` plus the Azure `asuid` TXT record,
-then redeploy with the hostname. The Core reference uses its Azure-generated
-TLS hostname and is declared separately in `services.coreUrl`.
+DNS-only CNAME to the printed `generatedRuntimeHostname`, and create
+`asuid.<workspace-hostname>` as a TXT record whose value is the printed
+`customDomainVerificationId`. Then set `workspaceHostname` and rerun the same
+helper. The Core reference uses its Azure-generated TLS hostname and is declared
+separately in `services.coreUrl`.
 
 ## Smoke test
 

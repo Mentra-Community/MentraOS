@@ -41,6 +41,8 @@ export const userAuth = createMiddleware<AppEnv>(async (c, next) => {
     mentraUserId: verified.mentraUserId,
     tenantId: verified.tenantId,
     sessionId: verified.sessionId,
+    accessTokenJti: verified.jti,
+    accessTokenExpiresAt: verified.exp,
     ...(verified.federatedIdentity ? {federatedIdentity: verified.federatedIdentity} : {}),
   })
 

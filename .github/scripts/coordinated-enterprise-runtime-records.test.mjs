@@ -25,7 +25,7 @@ function runtimeImage(status = "published") {
   }
 }
 const workspaceOrigin = "https://enterprisedev.mentraglass.com"
-const coreOrigin = "https://ca-mentra-enterprise-reference-core.example.azurecontainerapps.io"
+const coreOrigin = "https://ca-mentra-ent-ref-core.example.azurecontainerapps.io"
 
 function create(status = "deployed") {
   return createEnterpriseRuntimeDeploymentRecord({
@@ -41,7 +41,7 @@ function create(status = "deployed") {
         : undefined,
     imageDigest: status === "deployed" ? `sha256:${"b".repeat(64)}` : undefined,
     revision: status === "deployed" ? "ca-mentra-enterprise-reference--0000091" : undefined,
-    coreRevision: status === "deployed" ? "ca-mentra-enterprise-reference-core--0000091" : undefined,
+    coreRevision: status === "deployed" ? "ca-mentra-ent-ref-core--0000091" : undefined,
     workspaceOrigin: status === "deployed" ? workspaceOrigin : undefined,
     coreOrigin: status === "deployed" ? coreOrigin : undefined,
     checks:
@@ -101,4 +101,31 @@ test("rejects mutable or mismatched deployment evidence", () => {
     () => validateEnterpriseRuntimeDeploymentRecord({plan, record: create(), runtimeImage: substitutedPublication}),
     /does not match the coordinated Runtime image/,
   )
+
+  assert.throws(
+    () => createEnterpriseRuntimeDeploymentRecord({...deploymentArgs(), coreOrigin: "https://unrelated.example.com"}),
+    /expected Azure Core Container App ingress/,
+  )
 })
+
+function deploymentArgs() {
+  return {
+    plan,
+    sourceCommit,
+    requestedTag: sourceCommit,
+    status: "deployed",
+    sourceImage: "ghcr.io/mentra-community/mentra-cloud",
+    sourceImageDigest: `sha256:${"b".repeat(64)}`,
+    image: `mentraenterpriseref.azurecr.io/mentra-cloud-enterprise@sha256:${"b".repeat(64)}`,
+    imageDigest: `sha256:${"b".repeat(64)}`,
+    revision: "ca-mentra-enterprise-reference--0000091",
+    coreRevision: "ca-mentra-ent-ref-core--0000091",
+    workspaceOrigin,
+    coreOrigin,
+    checks: [workspaceOrigin, coreOrigin].flatMap((origin) =>
+      ["healthz", "ready"].map((probe) => ({url: `${origin}/${probe}`, ready: true, statusCode: 200})),
+    ),
+    completedAt: "2026-09-01T12:00:00.000Z",
+    provenanceUrl: "https://github.com/Mentra-Community/MentraOS/actions/runs/123",
+  }
+}

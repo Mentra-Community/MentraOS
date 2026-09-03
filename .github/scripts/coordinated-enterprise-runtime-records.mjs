@@ -11,7 +11,7 @@ const TARGET = Object.freeze({
   resourceGroup: "rg-mentra-enterprise-reference",
   registry: "mentraenterpriseref",
   containerApp: "ca-mentra-enterprise-reference",
-  coreContainerApp: "ca-mentra-enterprise-reference-core",
+  coreContainerApp: "ca-mentra-ent-ref-core",
   imageRepository: "mentra-cloud-enterprise",
   workspaceOrigin: "https://enterprisedev.mentraglass.com",
   services: Object.freeze(["meetings"]),
@@ -29,6 +29,20 @@ function requireHttps(value, label) {
     throw new Error(`${label} must be credential-free HTTPS without a fragment`)
   }
   return parsed.toString().replace(/\/$/, "")
+}
+
+function requireCoreContainerAppOrigin(value) {
+  const origin = requireHttps(value, "coreOrigin")
+  const parsed = new URL(origin)
+  if (
+    parsed.pathname !== "/" ||
+    parsed.search ||
+    !parsed.hostname.startsWith(`${TARGET.coreContainerApp}.`) ||
+    !parsed.hostname.endsWith(".azurecontainerapps.io")
+  ) {
+    throw new Error("coreOrigin must be the expected Azure Core Container App ingress")
+  }
+  return origin
 }
 
 function requireIsoUtc(value, label) {
@@ -147,7 +161,7 @@ export function createEnterpriseRuntimeDeploymentRecord({
     record.azure.revision = revision
     record.azure.coreRevision = coreRevision
     record.workspaceOrigin = origin
-    record.coreOrigin = requireHttps(coreOrigin, "coreOrigin")
+    record.coreOrigin = requireCoreContainerAppOrigin(coreOrigin)
     record.checks = validateChecks(checks, origin, record.coreOrigin)
   }
   return record

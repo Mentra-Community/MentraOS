@@ -26,7 +26,7 @@ import {decodeClaims} from "./jwt"
  * Namespaced so it cannot collide with anything else a host keeps in the same
  * secure store.
  */
-const REFRESH_TOKEN_KEY = "mentra.cloud-client.refreshToken"
+export const DEFAULT_REFRESH_TOKEN_KEY = "mentra.cloud-client.refreshToken"
 
 /** The access token plus its Unix-seconds expiry, held in memory only. */
 interface AccessTokenState {
@@ -51,7 +51,7 @@ export class TokenStore {
 
   constructor(deps: {storage: KeyValueStore; storageKey?: string}) {
     this.storage = deps.storage
-    this.storageKey = deps.storageKey ?? REFRESH_TOKEN_KEY
+    this.storageKey = deps.storageKey ?? DEFAULT_REFRESH_TOKEN_KEY
   }
 
   /**

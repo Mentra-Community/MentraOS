@@ -167,21 +167,30 @@ Optional same-origin assets use `DEPLOYMENT_PRIVACY_PATH`,
 ## Cloud-neutral Compose example
 
 This shows the process boundary. Put secrets in an uncommitted Compose secret
-mechanism and terminate TLS in customer ingress. Mongo is not host-exposed.
+mechanism and terminate TLS in customer ingress. Mongo is authenticated and is
+not host-exposed. Generate `secrets/mongo-password` as a URL-safe value, for
+example with `openssl rand -hex 32`.
 
 ```yaml
 services:
   mongo:
     image: mongo:7
     restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: mentra
+      MONGO_INITDB_ROOT_PASSWORD_FILE: /run/secrets/mongo_password
+    secrets: [mongo_password]
     volumes: ["mongo-data:/data/db"]
 
   core:
     image: ghcr.io/mentra-community/mentra-cloud@sha256:<release-digest>
-    command: ["bun", "packages/core/src/index.ts"]
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - >-
+        export MONGO_URL="mongodb://mentra:$$(cat /run/secrets/mongo_password)@mongo:27017/mentra-private?authSource=admin";
+        exec bun packages/core/src/index.ts
     restart: unless-stopped
     environment:
-      MONGO_URL: mongodb://mongo:27017/mentra-private
       REFRESH_TOKEN_PEPPER: ${REFRESH_TOKEN_PEPPER:?required}
       MENTRA_JWT_PRIVATE_KEY: ${MENTRA_JWT_PRIVATE_KEY:?required}
       MENTRA_JWT_PUBLIC_KEY: ${MENTRA_JWT_PUBLIC_KEY:?required}
@@ -189,6 +198,7 @@ services:
       MENTRA_MINIAPP_JWT_PUBLIC_KEY: ${MENTRA_MINIAPP_JWT_PUBLIC_KEY:?required}
       CLOUD_CORE_ISSUER: https://core.workspace.example
       CLOUD_CORE_OIDC_PROVIDERS: ${CLOUD_CORE_OIDC_PROVIDERS:?required}
+    secrets: [mongo_password]
     depends_on: [mongo]
 
   runtime:
@@ -209,6 +219,10 @@ services:
 
 volumes:
   mongo-data:
+
+secrets:
+  mongo_password:
+    file: ./secrets/mongo-password
 ```
 
 ## Validation, upgrades, and rollback

@@ -31,6 +31,17 @@
 import {Schema, type InferSchemaType} from "mongoose"
 import {registerModel} from "./register-model"
 
+const FederatedIdentitySchema = new Schema(
+  {
+    providerId: {type: String},
+    providerKind: {type: String},
+    issuer: {type: String},
+    subject: {type: String},
+    directoryTenantId: {type: String},
+  },
+  {_id: false},
+)
+
 const RefreshTokenSchema = new Schema(
   {
     /**
@@ -68,14 +79,7 @@ const RefreshTokenSchema = new Schema(
     tenantId: {type: String, required: true},
 
     /** Upstream workforce identity, retained across Core refresh rotation. */
-    federatedIdentity: {
-      providerId: {type: String},
-      providerKind: {type: String},
-      issuer: {type: String},
-      subject: {type: String},
-      directoryTenantId: {type: String},
-      _id: false,
-    },
+    federatedIdentity: {type: FederatedIdentitySchema},
 
     issuedAt: {type: Date, required: true, default: () => new Date()},
 

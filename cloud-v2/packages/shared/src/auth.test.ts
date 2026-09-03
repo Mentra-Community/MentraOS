@@ -45,7 +45,7 @@ describe("runtime token verification", () => {
       expiresInSeconds: 60,
     })
 
-    await expect(verifyRuntimeToken(token)).resolves.toEqual({
+    await expect(verifyRuntimeToken(token)).resolves.toMatchObject({
       mentraUserId: "user-1",
       tenantId: "oem-1",
       sessionId: "runtime_runtime-jti",
@@ -114,7 +114,7 @@ describe("runtime token verification", () => {
       expiresInSeconds: 60,
     })
 
-    await expect(verifyRuntimeToken(token)).resolves.toEqual({
+    await expect(verifyRuntimeToken(token)).resolves.toMatchObject({
       mentraUserId: "user-1",
       tenantId: "tenant-1",
       sessionId: "runtime_runtime-jti",
@@ -143,7 +143,7 @@ describe("runtime token verification", () => {
       expiresInSeconds: 60,
     })
 
-    await expect(verifyRuntimeToken(token)).resolves.toEqual({
+    await expect(verifyRuntimeToken(token)).resolves.toMatchObject({
       mentraUserId: "user-1",
       tenantId: "tenant-legacy",
       sessionId: "runtime_runtime-jti",
@@ -209,6 +209,37 @@ describe("runtime token verification", () => {
       azp: "other-client",
     })
     await expect(verifyRuntimeToken(wrongClient)).rejects.toThrow("client is not allowed")
+  })
+
+  test("rejects symmetric algorithms and an explicitly empty client allowlist", async () => {
+    const keypair = createEd25519Keypair()
+    process.env.TEST_RUNTIME_PUBLIC_KEY = keypair.publicKey
+    process.env.CLOUD_RUNTIME_AUTH_ISSUERS = JSON.stringify([
+      {
+        issuer: "test-runtime",
+        publicKeyEnv: "TEST_RUNTIME_PUBLIC_KEY",
+        fixedTenantId: "tenant-1",
+        algorithms: ["HS256"],
+      },
+    ])
+    await expect(verifyRuntimeToken("not-reached")).rejects.toThrow("algorithms must use EdDSA, RS256, or ES256")
+
+    process.env.CLOUD_RUNTIME_AUTH_ISSUERS = JSON.stringify([
+      {
+        issuer: "test-runtime",
+        publicKeyEnv: "TEST_RUNTIME_PUBLIC_KEY",
+        fixedTenantId: "tenant-1",
+        allowedClientIds: [],
+      },
+    ])
+    const token = await signRuntimeToken({
+      privateKey: keypair.privateKey,
+      issuer: "test-runtime",
+      subject: "user-1",
+      tenantId: "tenant-1",
+      expiresInSeconds: 60,
+    })
+    await expect(verifyRuntimeToken(token)).rejects.toThrow("client is not allowed")
   })
 })
 

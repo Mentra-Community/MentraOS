@@ -155,6 +155,10 @@ export class Auth implements AuthModule {
    * host exactly once instead of on every subsequent call.
    */
   private expiredFired = false
+  /** Incremented on logout so late async results cannot repopulate credentials. */
+  private sessionGeneration = 0
+  /** A logged-out client stays inert until the host constructs a fresh client. */
+  private sessionCleared = false
 
   constructor(deps: {
     http?: HttpClient
@@ -181,8 +185,12 @@ export class Auth implements AuthModule {
    * single-flight so concurrent callers share the same request.
    */
   async getRuntimeToken(opts?: {forceRefresh?: boolean}): Promise<string> {
+    this.assertSessionActive()
     if ("getToken" in this.runtimeConfig) {
-      return this.runtimeConfig.getToken(opts)
+      const generation = this.sessionGeneration
+      const token = await this.runtimeConfig.getToken(opts)
+      this.assertSessionActive(generation)
+      return token
     }
 
     if (opts?.forceRefresh) {
@@ -191,10 +199,14 @@ export class Auth implements AuthModule {
       return this.runtimeToken.token
     }
 
-    return this.store.singleFlight(FLIGHT_RUNTIME, () => this.obtainCoreBrokeredRuntimeToken())
+    const generation = this.sessionGeneration
+    return this.store.singleFlight(`${FLIGHT_RUNTIME}:${generation}`, () =>
+      this.obtainCoreBrokeredRuntimeToken(generation),
+    )
   }
 
   async getCoreToken(opts?: {forceRefresh?: boolean}): Promise<string> {
+    this.assertSessionActive()
     this.requireCoreConfig()
     // A forced refresh drops the cached access token first, so the cache check
     // below misses and we go straight to the single-flight refresh. The
@@ -210,7 +222,8 @@ export class Auth implements AuthModule {
     }
 
     // De-dupe: if a refresh/exchange is already running, await that one result.
-    return this.store.singleFlight(FLIGHT_ACCESS, () => this.obtainAccessToken())
+    const generation = this.sessionGeneration
+    return this.store.singleFlight(`${FLIGHT_ACCESS}:${generation}`, () => this.obtainAccessToken(generation))
   }
 
   /**
@@ -226,13 +239,15 @@ export class Auth implements AuthModule {
     packageName: string,
     opts?: {minTtlMs?: number; devAttestation?: string},
   ): Promise<{token: string; expiresAt: number}> {
+    this.assertSessionActive()
+    const generation = this.sessionGeneration
     const marginSeconds = this.tokenMarginSeconds(opts?.minTtlMs)
     const cached = this.miniappCache.get(packageName)
     if (cached && !this.isExpiring(cached.expiresAt, marginSeconds)) {
       return {token: cached.token, expiresAt: cached.expiresAt}
     }
 
-    return this.store.singleFlight(MINIAPP_FLIGHT_PREFIX + packageName, async () => {
+    return this.store.singleFlight(`${MINIAPP_FLIGHT_PREFIX}${packageName}:${generation}`, async () => {
       // Re-check the cache inside the flight: a concurrent mint that resolved
       // while we were queued may have already filled it.
       const fresh = this.miniappCache.get(packageName)
@@ -251,6 +266,7 @@ export class Auth implements AuthModule {
         {bearer: accessToken},
       )
 
+      this.assertSessionActive(generation)
       const entry: MiniappTokenEntry = {token: res.token, expiresAt: res.expiresAt}
       this.miniappCache.set(packageName, entry)
       this.logger.debug("minted miniapp token", {packageName})
@@ -281,12 +297,25 @@ export class Auth implements AuthModule {
   }
 
   async clearSession(): Promise<void> {
+    this.sessionGeneration += 1
+    this.sessionCleared = true
+    let revokeError: unknown
     try {
       if (this.coreConfig && this.http) {
-        const accessToken = await this.getCoreToken()
-        await this.http.post(REVOKE_PATH, {}, {bearer: accessToken})
+        const current = this.store.current()
+        const refreshToken = await this.store.refreshToken()
+        let accessToken: string | null = null
+        if (current && current.exp > Math.floor(Date.now() / 1000)) {
+          accessToken = current.accessToken
+        } else if (refreshToken) {
+          const body = new URLSearchParams({grant_type: "refresh_token", refresh_token: refreshToken})
+          const tokens = await this.postForm(REFRESH_PATH, body, "logout refresh")
+          accessToken = tokens.access_token
+        }
+        if (accessToken) await this.http.post(REVOKE_PATH, {}, {bearer: accessToken})
       }
     } catch (err) {
+      revokeError = err
       this.logger.warn("Core session revocation failed during local logout", {
         error: (err as Error)?.message,
       })
@@ -296,6 +325,7 @@ export class Auth implements AuthModule {
       this.miniappCache.clear()
       this.expiredFired = false
     }
+    if (revokeError) throw revokeError
   }
 
   /**
@@ -338,16 +368,16 @@ export class Auth implements AuthModule {
    * do the first-use exchange. Runs inside the single-flight from
    * `getCoreToken`, so only one of these is ever in flight.
    */
-  private async obtainAccessToken(): Promise<string> {
+  private async obtainAccessToken(generation: number): Promise<string> {
     const refreshToken = await this.store.refreshToken()
     if (refreshToken) {
       try {
-        return await this.refresh(refreshToken, {deferExpired: this.canExchangeFreshSubject()})
+        return await this.refresh(refreshToken, {deferExpired: this.canExchangeFreshSubject(), generation})
       } catch (err) {
         if (this.canExchangeFreshSubject()) {
           this.logger.info("refresh failed; exchanging fresh subject token")
           try {
-            return await this.exchange()
+            return await this.exchange(generation)
           } catch {
             this.fireExpired()
           }
@@ -355,7 +385,7 @@ export class Auth implements AuthModule {
         throw err
       }
     }
-    return this.exchange()
+    return this.exchange(generation)
   }
 
   /**
@@ -368,17 +398,20 @@ export class Auth implements AuthModule {
    * no subject token at all: we persist its refresh token and refresh, since we
    * only reach `exchange` when no refresh token is stored.
    */
-  private async exchange(): Promise<string> {
+  private async exchange(generation = this.sessionGeneration): Promise<string> {
     const config = this.requireCoreConfig()
     // Pre-exchanged credentials: seed the store and refresh, no /exchange call.
     if ("refreshToken" in config) {
-      await this.store.save({
-        accessToken: config.accessToken,
-        refreshToken: config.refreshToken,
-      })
+      await this.saveTokenPair(
+        {
+          accessToken: config.accessToken,
+          refreshToken: config.refreshToken,
+        },
+        generation,
+      )
       // The seeded access token may already be near expiry, so refresh through
       // the normal path to guarantee a fresh one.
-      return this.refresh(config.refreshToken)
+      return this.refresh(config.refreshToken, {generation})
     }
 
     const subject = await this.resolveSubjectToken(config)
@@ -389,10 +422,13 @@ export class Auth implements AuthModule {
     })
 
     const tokens = await this.postForm(EXCHANGE_PATH, body, "exchange")
-    await this.store.save({
-      accessToken: tokens.access_token,
-      refreshToken: tokens.refresh_token,
-    })
+    await this.saveTokenPair(
+      {
+        accessToken: tokens.access_token,
+        refreshToken: tokens.refresh_token,
+      },
+      generation,
+    )
     // A successful exchange means credentials are live again; clear the latch so
     // a future failure can notify the host once more.
     this.expiredFired = false
@@ -410,7 +446,7 @@ export class Auth implements AuthModule {
    * `AuthExpiredError`. We do not retry refresh forever: a dead refresh token
    * will not heal on its own, and retrying would loop.
    */
-  private async refresh(refreshToken: string, opts?: {deferExpired?: boolean}): Promise<string> {
+  private async refresh(refreshToken: string, opts?: {deferExpired?: boolean; generation?: number}): Promise<string> {
     const body = new URLSearchParams({
       grant_type: "refresh_token",
       refresh_token: refreshToken,
@@ -429,10 +465,13 @@ export class Auth implements AuthModule {
       throw new AuthExpiredError("token refresh failed; re-auth required")
     }
 
-    await this.store.save({
-      accessToken: tokens.access_token,
-      refreshToken: tokens.refresh_token,
-    })
+    await this.saveTokenPair(
+      {
+        accessToken: tokens.access_token,
+        refreshToken: tokens.refresh_token,
+      },
+      opts?.generation ?? this.sessionGeneration,
+    )
     this.expiredFired = false
     this.logger.debug("refreshed access token")
     return tokens.access_token
@@ -473,7 +512,7 @@ export class Auth implements AuthModule {
     return this.http
   }
 
-  private async obtainCoreBrokeredRuntimeToken(): Promise<string> {
+  private async obtainCoreBrokeredRuntimeToken(generation: number): Promise<string> {
     const fresh = this.runtimeToken
     if (fresh && !this.isExpiring(fresh.expiresAt)) {
       return fresh.token
@@ -486,9 +525,24 @@ export class Auth implements AuthModule {
       throw new AuthExpiredError("core returned an invalid runtime token response")
     }
 
+    this.assertSessionActive(generation)
     const expiresAt = Math.floor(Date.now() / 1000) + res.expires_in
     this.runtimeToken = {token: res.access_token, expiresAt}
     return res.access_token
+  }
+
+  /** Persist a token pair without allowing a concurrent logout to restore it. */
+  private async saveTokenPair(tokens: {accessToken: string; refreshToken: string}, generation: number): Promise<void> {
+    this.assertSessionActive(generation)
+    await this.store.save(tokens)
+    try {
+      this.assertSessionActive(generation)
+    } catch (error) {
+      // A storage adapter may have completed its write after logout cleared the
+      // key. Clear once more so the late write cannot resurrect the session.
+      await this.store.clear()
+      throw error
+    }
   }
 
   /**
@@ -553,6 +607,12 @@ export class Auth implements AuthModule {
           error: err instanceof Error ? err.message : String(err),
         })
       }
+    }
+  }
+
+  private assertSessionActive(generation = this.sessionGeneration): void {
+    if (this.sessionCleared || generation !== this.sessionGeneration) {
+      throw new AuthExpiredError("auth session was cleared")
     }
   }
 }

@@ -209,6 +209,106 @@ describe("CloudClient construction", () => {
     ])
     expect(await storage.get("mentra.cloud-client.workspace-1.refreshToken")).toBeNull()
   })
+
+  test("logout without local credentials does not acquire a fresh subject token", async () => {
+    let subjectRequests = 0
+    let networkRequests = 0
+    const cloud = new CloudClient(
+      config({
+        endpoints: {core: "https://core.example.test", runtime: "https://runtime.example.test"},
+        auth: {
+          core: {
+            getSubjectToken: async () => {
+              subjectRequests += 1
+              return {token: "fresh-subject", type: "oidc"}
+            },
+          },
+          runtime: {source: "core"},
+        },
+        http: async () => {
+          networkRequests += 1
+          throw new Error("network must not be called")
+        },
+      }),
+    )
+
+    await expect(cloud.auth.clearSession()).resolves.toBeUndefined()
+    expect(subjectRequests).toBe(0)
+    expect(networkRequests).toBe(0)
+    await expect(cloud.auth.getCoreToken()).rejects.toThrow("auth session was cleared")
+  })
+
+  test("logout clears local credentials and surfaces Core revocation failure", async () => {
+    const nowSeconds = Math.floor(Date.now() / 1000)
+    const key = "mentra.cloud-client.workspace-1.refreshToken"
+    const storage = memoryStorage({[key]: "refresh-1"})
+    const cloud = new CloudClient({
+      ...config({
+        endpoints: {core: "https://core.example.test", runtime: "https://runtime.example.test"},
+        auth: {
+          core: {subjectToken: "subject", subjectTokenType: "oidc"},
+          runtime: {source: "core"},
+        },
+        storage,
+        http: async (input) => {
+          const url = String(input)
+          if (url.endsWith("/api/client/auth/refresh")) {
+            return jsonResponse({
+              access_token: testJwt({sub: "user-1", tenant_id: "tenant-1", exp: nowSeconds + 3600}),
+              refresh_token: "refresh-2",
+              token_type: "Bearer",
+              expires_in: 3600,
+            })
+          }
+          if (url.endsWith("/api/client/auth/revoke")) return new Response("unavailable", {status: 503})
+          throw new Error(`unexpected fetch: ${url}`)
+        },
+      }),
+      authStorageKey: key,
+    })
+
+    await expect(cloud.auth.clearSession()).rejects.toThrow()
+    expect(await storage.get(key)).toBeNull()
+    await expect(cloud.auth.getRuntimeToken()).rejects.toThrow("auth session was cleared")
+  })
+
+  test("an in-flight exchange cannot restore credentials after logout", async () => {
+    const nowSeconds = Math.floor(Date.now() / 1000)
+    const storage = memoryStorage()
+    let finishExchange!: (response: Response) => void
+    const exchangeResponse = new Promise<Response>((resolve) => {
+      finishExchange = resolve
+    })
+    const cloud = new CloudClient(
+      config({
+        endpoints: {core: "https://core.example.test", runtime: "https://runtime.example.test"},
+        auth: {
+          core: {subjectToken: "subject", subjectTokenType: "oidc"},
+          runtime: {source: "core"},
+        },
+        storage,
+        http: async (input) => {
+          if (String(input).endsWith("/api/client/auth/exchange")) return exchangeResponse
+          throw new Error(`unexpected fetch: ${String(input)}`)
+        },
+      }),
+    )
+
+    const inFlight = cloud.auth.getCoreToken()
+    await Promise.resolve()
+    await cloud.auth.clearSession()
+    finishExchange(
+      jsonResponse({
+        access_token: testJwt({sub: "user-1", tenant_id: "tenant-1", exp: nowSeconds + 3600}),
+        refresh_token: "late-refresh",
+        token_type: "Bearer",
+        expires_in: 3600,
+      }),
+    )
+
+    await expect(inFlight).rejects.toThrow("auth session was cleared")
+    expect(await storage.get("mentra.cloud-client.refreshToken")).toBeNull()
+  })
 })
 
 function config(

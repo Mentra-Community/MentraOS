@@ -38,7 +38,7 @@ param deploymentId string = 'mentra-enterprise-reference'
 param displayName string = 'Mentra Enterprise Demo'
 param environmentName string = 'cae-mentra-enterprise-reference'
 param runtimeName string = 'ca-mentra-enterprise-reference'
-param coreName string = 'ca-mentra-enterprise-reference-core'
+param coreName string = 'ca-mentra-ent-ref-core'
 param mongoAccountName string = take('cosmos-${uniqueString(subscription().id, resourceGroup().id)}', 44)
 param pullIdentityName string = 'id-mentra-enterprise-reference-pull'
 param communicationName string = take('mentra-${uniqueString(subscription().id, resourceGroup().id)}', 63)
@@ -47,6 +47,8 @@ param communicationDataLocation string = 'United States'
 param approvedSystemMiniapps array = ['com.mentra.call', 'com.mentra.settings']
 @description('Customer-managed userland miniapp entries: packageName, version, bundleUrl, and sha256.')
 param managedMiniapps array = []
+@description('Non-secret, package-scoped configuration exposed to opted-in miniapps.')
+param miniappConfiguration object = {}
 @description('Container directory holding managed miniapp ZIPs. Empty delegates these routes to customer ingress.')
 param managedMiniappDirectory string = '/app/cloud-v2/deploy/azure/enterprise-reference/miniapps'
 param allowedGlassesModels array = ['mentra-live']
@@ -176,7 +178,7 @@ var deploymentManifest = {
     supportUrl: empty(supportUrl) ? null : supportUrl
   }
   systemMiniapps: { approvedPackageNamesOverride: approvedSystemMiniapps }
-  miniapps: { managed: managedMiniapps, configuration: {} }
+  miniapps: { managed: managedMiniapps, configuration: miniappConfiguration }
   glasses: { allowedModelsOverride: allowedGlassesModels }
   features: {
     runtimeRealtimeSession: false

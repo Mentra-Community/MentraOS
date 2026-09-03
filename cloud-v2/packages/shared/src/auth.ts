@@ -30,6 +30,7 @@ export interface VerifiedAccessToken {
   tenantId: string
   sessionId: string
   jti: string
+  exp: number
   federatedIdentity?: FederatedIdentity
 }
 
@@ -48,6 +49,7 @@ export class AccessTokenError extends Error {
 let publicKeyPromise: Promise<jose.KeyLike> | null = null
 const RUNTIME_DEFAULT_AUDIENCE = "cloud-runtime"
 const RUNTIME_DEFAULT_ALGORITHMS = ["EdDSA", "RS256", "ES256"] as const
+const RUNTIME_ALLOWED_ALGORITHMS = new Set<string>(RUNTIME_DEFAULT_ALGORITHMS)
 
 interface RuntimeIssuerConfig {
   issuer: string
@@ -108,6 +110,7 @@ export async function verifyAccessTokenSignature(token: string): Promise<Verifie
   const tenantId = typeof payload.tenant_id === "string" ? payload.tenant_id : null
   const sessionId = typeof payload.session_id === "string" ? payload.session_id : null
   const jti = typeof payload.jti === "string" ? payload.jti : null
+  const exp = typeof payload.exp === "number" ? payload.exp : null
   const federatedIdentity = parseFederatedIdentity(payload.federated_identity)
 
   const missingClaims = [
@@ -115,6 +118,7 @@ export async function verifyAccessTokenSignature(token: string): Promise<Verifie
     !tenantId ? "tenant_id" : null,
     !sessionId ? "session_id" : null,
     !jti ? "jti" : null,
+    !exp ? "exp" : null,
   ].filter((claim): claim is string => Boolean(claim))
   if (missingClaims.length > 0) {
     throw new AccessTokenError(`access_token missing required claims: ${missingClaims.join(", ")}`)
@@ -125,6 +129,7 @@ export async function verifyAccessTokenSignature(token: string): Promise<Verifie
     tenantId: tenantId!,
     sessionId: sessionId!,
     jti: jti!,
+    exp: exp!,
     ...(federatedIdentity ? {federatedIdentity} : {}),
   }
 }
@@ -168,7 +173,7 @@ export async function verifyRuntimeToken(token: string): Promise<VerifiedAccessT
       throw new AccessTokenError(`runtime_token missing required scope: ${requiredScope}`)
     }
   }
-  if (issuer.allowedClientIds?.length) {
+  if (issuer.allowedClientIds !== undefined) {
     const clientId = stringClaim(payload.azp) ?? stringClaim(payload.appid)
     if (!clientId || !issuer.allowedClientIds.includes(clientId)) {
       throw new AccessTokenError("runtime_token client is not allowed")
@@ -183,8 +188,9 @@ export async function verifyRuntimeToken(token: string): Promise<VerifiedAccessT
     (issuer.legacyTenantIdClaim ? stringClaim(payload[issuer.legacyTenantIdClaim]) : undefined)
   const jti = stringClaim(payload.jti) ?? cryptoRandomId()
   const sessionId = stringClaim(payload.session_id) ?? `runtime_${jti}`
+  const exp = typeof payload.exp === "number" ? payload.exp : undefined
 
-  if (!userId || !tenantId) {
+  if (!userId || !tenantId || !exp) {
     throw new AccessTokenError("runtime_token missing required identity claims")
   }
 
@@ -194,6 +200,7 @@ export async function verifyRuntimeToken(token: string): Promise<VerifiedAccessT
     tenantId,
     sessionId,
     jti,
+    exp,
     ...(federatedIdentity ? {federatedIdentity} : {}),
   }
 }
@@ -312,6 +319,12 @@ function parseRuntimeIssuerConfig(value: unknown): RuntimeIssuerConfig {
   const algorithms = Array.isArray(obj.algorithms)
     ? obj.algorithms.filter((v): v is string => typeof v === "string")
     : undefined
+  if (
+    algorithms !== undefined &&
+    (algorithms.length === 0 || algorithms.some((algorithm) => !RUNTIME_ALLOWED_ALGORITHMS.has(algorithm)))
+  ) {
+    throw new Error(`issuer ${issuer} algorithms must use EdDSA, RS256, or ES256`)
+  }
   const requiredScopes = stringArrayClaim(obj.requiredScopes, "requiredScopes")
   const allowedClientIds = stringArrayClaim(obj.allowedClientIds, "allowedClientIds")
 

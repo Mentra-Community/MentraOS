@@ -33,6 +33,7 @@ const logger = createLogger("core").child({service: "oem.service"})
 /** Algorithms Mentra accepts on OEM-signed JWTs. `none` is rejected. */
 const SUPPORTED_ALGS = ["EdDSA", "RS256", "ES256"] as const
 type SupportedAlg = (typeof SUPPORTED_ALGS)[number]
+const RESERVED_TENANT_IDS = new Set(["mentra"])
 
 /** Required claim shape on an OEM JWT. */
 export interface VerifiedTenantJwt {
@@ -255,11 +256,15 @@ function parseConfiguredOidcProvider(value: unknown, index: number): ConfiguredO
       throw new OauthServerError(`OIDC provider ${index} ${name} must be an HTTPS URL`)
     }
   }
+  const tenantId = required("tenantId")
+  if (RESERVED_TENANT_IDS.has(tenantId)) {
+    throw new OauthServerError(`OIDC provider ${index} tenantId is reserved`)
+  }
   return {
     id: required("id"),
     protocol: "oidc",
     providerKind: required("providerKind"),
-    tenantId: required("tenantId"),
+    tenantId,
     issuer,
     jwksUrl,
     audience: required("audience"),

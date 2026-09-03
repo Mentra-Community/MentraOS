@@ -18,7 +18,8 @@ export class LogoutUtils {
     console.log(`${this.TAG}: Starting complete logout process...`)
 
     try {
-      // Step 1: Sign out first, so the UI leaves the screen that called us.
+      // Step 1: Revoke the Core session, then sign out so the UI leaves the
+      // screen that called us.
       //
       // Logout is almost always triggered from Settings → Profile → Log Out,
       // and that screen renders *inside the miniapp surface*. Step 2 tears that
@@ -29,14 +30,21 @@ export class LogoutUtils {
       // to a host exception, and the ReactHost is destroyed — leaving a white
       // screen that survives navigation and only a force-quit clears (OS-1834).
       //
-      // Signing out emits SIGNED_OUT, AuthContext drops the session, and the
+      // Revocation runs first because an expired Core access token may need the
+      // still-active upstream provider session to refresh it. Signing out then
+      // emits SIGNED_OUT, AuthContext drops the session, and the
       // tree re-renders to the auth stack, which unmounts the miniapp surface
       // on its own. That delivery is what OS-1828 fixed: before that, this
       // event never reached AuthContext at all.
+      // A revocation outage must not prevent local logout and teardown.
+      try {
+        await cloudClient.clearAuthSession()
+      } catch (error) {
+        console.warn(`${this.TAG}: Core session revocation failed; local credentials were cleared`, error)
+      }
       if (!options.skipAuthSignOut) {
         await this.clearAuthSession()
       }
-      await cloudClient.clearAuthSession()
 
       // Step 2: Let that unmount actually commit before destroying what it was
       // rendering. Without this the teardown below still races the re-render

@@ -55,7 +55,7 @@ jobs:
       AZURE_REGISTRY: mentraenterpriseref
       AZURE_COMMUNICATION_SERVICE: mentra-enterprise-reference
       AZURE_CONTAINER_APP: ca-mentra-enterprise-reference
-      AZURE_CORE_CONTAINER_APP: ca-mentra-enterprise-reference-core
+      AZURE_CORE_CONTAINER_APP: ca-mentra-ent-ref-core
       ENTRA_TENANT_ID: 2e7662c0-e826-4928-95b2-60bdd48d5d95
       ENTRA_CORE_CLIENT_ID: 20424d9e-4b99-44e8-82c9-0ad06f08a8db
       ENTRA_MOBILE_CLIENT_ID: 95ad08c2-7837-4ddf-933c-1fce3d6d2799
@@ -161,24 +161,41 @@ jobs:
           MINIAPP_JWT_PUBLIC_KEY: ${{ secrets.ENTERPRISE_DEV_MINIAPP_JWT_PUBLIC_KEY }}
         run: |
           set -euo pipefail
+          parameters="$RUNNER_TEMP/enterprise-runtime-dev.parameters.json"
+          trap 'rm -f "$parameters"' EXIT
+          umask 077
+          jq -n \
+            --arg cloudImage "${{ steps.source.outputs.image }}" \
+            --arg registryName "$AZURE_REGISTRY" \
+            --arg communicationName "$AZURE_COMMUNICATION_SERVICE" \
+            --arg tenantId "$ENTRA_TENANT_ID" \
+            --arg coreApiClientId "$ENTRA_CORE_CLIENT_ID" \
+            --arg mobileClientId "$ENTRA_MOBILE_CLIENT_ID" \
+            --arg workspaceHostname "enterprisedev.mentraglass.com" \
+            '{
+              "$schema":"https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+              contentVersion:"1.0.0.0",
+              parameters:{
+                cloudImage:{value:$cloudImage},
+                registryName:{value:$registryName},
+                communicationName:{value:$communicationName},
+                tenantId:{value:$tenantId},
+                coreApiClientId:{value:$coreApiClientId},
+                mobileClientId:{value:$mobileClientId},
+                refreshTokenPepper:{value:env.REFRESH_TOKEN_PEPPER},
+                mentraJwtPrivateKey:{value:env.MENTRA_JWT_PRIVATE_KEY},
+                mentraJwtPublicKey:{value:env.MENTRA_JWT_PUBLIC_KEY},
+                miniappJwtPrivateKey:{value:env.MINIAPP_JWT_PRIVATE_KEY},
+                miniappJwtPublicKey:{value:env.MINIAPP_JWT_PUBLIC_KEY},
+                workspaceHostname:{value:$workspaceHostname},
+                manageAcrPullRoleAssignment:{value:false}
+              }
+            }' > "$parameters"
           az deployment group create \
             --name enterprise-runtime-dev \
             --resource-group "$AZURE_RESOURCE_GROUP" \
             --template-file cloud-v2/deploy/azure/enterprise-reference/main.bicep \
-            --parameters \
-              cloudImage="${{ steps.source.outputs.image }}" \
-              registryName="$AZURE_REGISTRY" \
-              communicationName="$AZURE_COMMUNICATION_SERVICE" \
-              tenantId="$ENTRA_TENANT_ID" \
-              coreApiClientId="$ENTRA_CORE_CLIENT_ID" \
-              mobileClientId="$ENTRA_MOBILE_CLIENT_ID" \
-              refreshTokenPepper="$REFRESH_TOKEN_PEPPER" \
-              mentraJwtPrivateKey="$MENTRA_JWT_PRIVATE_KEY" \
-              mentraJwtPublicKey="$MENTRA_JWT_PUBLIC_KEY" \
-              miniappJwtPrivateKey="$MINIAPP_JWT_PRIVATE_KEY" \
-              miniappJwtPublicKey="$MINIAPP_JWT_PUBLIC_KEY" \
-              workspaceHostname=enterprisedev.mentraglass.com \
-              manageAcrPullRoleAssignment=false \
+            --parameters "@$parameters" \
             --query properties.provisioningState \
             --output tsv \
             | grep --fixed-strings --line-regexp Succeeded

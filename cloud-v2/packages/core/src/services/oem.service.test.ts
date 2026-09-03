@@ -79,6 +79,32 @@ describe("configured workforce OIDC", () => {
 
     await expect(verifyTenantJwt(token)).rejects.toBeInstanceOf(InvalidGrant)
   })
+
+  test("rejects a configured symmetric OIDC algorithm", async () => {
+    const providers = JSON.parse(process.env.CLOUD_CORE_OIDC_PROVIDERS!)
+    providers[0].algorithms = ["HS256"]
+    process.env.CLOUD_CORE_OIDC_PROVIDERS = JSON.stringify(providers)
+
+    await expect(verifyTenantJwt(await workforceToken())).rejects.toThrow(
+      "OIDC algorithms must use EdDSA, RS256, or ES256",
+    )
+  })
+
+  test("rejects the reserved Mentra tenant namespace", () => {
+    const providers = JSON.parse(process.env.CLOUD_CORE_OIDC_PROVIDERS!)
+    providers[0].tenantId = "mentra"
+    process.env.CLOUD_CORE_OIDC_PROVIDERS = JSON.stringify(providers)
+
+    expect(() => isConfiguredOidcTenant("mentra")).toThrow("tenantId is reserved")
+  })
+
+  test("treats an explicitly empty client allowlist as deny-all", async () => {
+    const providers = JSON.parse(process.env.CLOUD_CORE_OIDC_PROVIDERS!)
+    providers[0].allowedClientIds = []
+    process.env.CLOUD_CORE_OIDC_PROVIDERS = JSON.stringify(providers)
+
+    await expect(verifyTenantJwt(await workforceToken())).rejects.toThrow("client is not allowed")
+  })
 })
 
 async function workforceToken(overrides: Record<string, unknown> = {}): Promise<string> {

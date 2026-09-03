@@ -14,7 +14,8 @@ export class ConfigurationModule {
   /** Return one configured value, or undefined when the host supplied no override. */
   async get(key: string): Promise<string | undefined> {
     await this.session.waitForReady()
-    return this.session._getConfiguration()[key]
+    const configuration = this.session._getConfiguration()
+    return Object.prototype.hasOwnProperty.call(configuration, key) ? configuration[key] : undefined
   }
 
   /** Return one configured value or reject with a typed error when it is absent. */
@@ -27,6 +28,6 @@ export class ConfigurationModule {
   /** Return a defensive snapshot of every value supplied to this package. */
   async getAll(): Promise<Readonly<Record<string, string>>> {
     await this.session.waitForReady()
-    return this.session._getConfiguration()
+    return Object.assign(Object.create(null) as Record<string, string>, this.session._getConfiguration())
   }
 }

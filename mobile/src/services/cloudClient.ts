@@ -134,7 +134,7 @@ export function deploymentCloudConfigValues(deployment: ActiveDeployment): Retur
         ? null
         : [...new Set([...systemAllowlist, ...deployment.manifest.miniapps.managed.map((entry) => entry.packageName)])],
     miniappConfiguration: deployment.manifest.miniapps.configuration,
-    cloudAuthStorageKey: `mentra.cloud-client.${deployment.manifest.deploymentId}.refreshToken`,
+    cloudAuthStorageKey: `mentra.cloud-client.${deployment.manifest.deploymentId}.${encodeURIComponent(deployment.workspaceOrigin)}.refreshToken`,
     otaManifestUrl: deployment.manifest.artifacts.mentraLiveOtaManifestUrl,
     features: {
       managedStreams: deployment.manifest.features.managedStreams,

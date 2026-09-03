@@ -314,15 +314,23 @@ async function assertTenantStillAuthorized(tenantId: string): Promise<void> {
 }
 
 /**
- * Revoke a single session. Deletes its refresh-token doc. The associated
- * access-token jti is not known here (we didn't store it), so until the
- * access token's natural expiry, callers must either accept a 1-hour
- * blast-radius window or extend this service to also write a per-session
- * blacklist entry. For now: refresh dies immediately, access token expires
- * within the hour.
+ * Revoke a single session. The refresh token is removed first, then the access
+ * token used to authorize the logout request is blacklisted until its natural
+ * expiry. If the blacklist write fails, the caller receives an error and may
+ * safely retry with the still-cryptographically-valid access token.
  */
-export async function revokeSession(args: {sessionId: string}): Promise<void> {
+export async function revokeSession(args: {
+  sessionId: string
+  accessToken?: {jti: string; expiresAt: number}
+}): Promise<void> {
   await RefreshTokenModel.deleteOne({sessionId: args.sessionId})
+  if (args.accessToken) {
+    await RevokedJtiModel.updateOne(
+      {jti: args.accessToken.jti},
+      {$set: {expiresAt: new Date(args.accessToken.expiresAt * 1000)}},
+      {upsert: true},
+    )
+  }
   logger.info({sessionId: args.sessionId}, "session revoked")
 }
 
@@ -386,13 +394,9 @@ export async function verifyAccessToken(token: string): Promise<VerifiedAccessTo
     throw err
   }
 
-  // Core-only blacklist check. NOTE: nothing currently WRITES RevokedJtiModel —
-  // revokeSession / revokeAllForOem only delete the refresh token (the access
-  // jti isn't stored at issue time), so this lookup is effectively a no-op today
-  // and a revoked session's access token stays valid until natural expiry (≤1h).
-  // Refresh-token deletion is the real revocation mechanism. To make access-token
-  // revocation take effect, store the access jti at issue and populate this model
-  // in the revoke paths. Audio/proxy skip this check entirely (no Mongo).
+  // Core-only blacklist check. Session logout writes the authorizing access
+  // token's jti here so subsequent Core calls fail immediately. Audio/proxy do
+  // not consult Mongo and therefore retain their bounded token lifetime.
   const revoked = await RevokedJtiModel.findOne({jti: verified.jti}).lean()
   if (revoked) throw new InvalidGrant("access_token revoked")
 

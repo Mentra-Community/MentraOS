@@ -879,11 +879,11 @@ the legacy `cloud-core` issuer for compatibility.
 The existing `@mentra/auth` API already supports this single-Core shape through
 its `jwksUrl` and `issuer` options and the corresponding environment variables.
 No V1 API change to `@mentra/auth` is required for a backend dedicated to one
-Private Deployment. Core itself does require the deployment-wide
-`CLOUD_CORE_ISSUER` behavior described above because its miniapp tokens
-currently emit the hard-coded `cloud-core` issuer. Customer deployment templates
-must configure the same exact issuer on Core and the backend, alongside the
-customer Core JWKS URL and package name.
+Private Deployment. Core's miniapp-token issuer already follows the
+deployment-wide `CLOUD_CORE_ISSUER` setting and falls back to `cloud-core` only
+for compatibility. Customer deployment templates must configure the same exact
+issuer on Core and the backend, alongside the customer Core JWKS URL and
+package name.
 
 A backend serving multiple independent deployments must configure paired trust
 records, not independent issuer and JWKS lists. Before Mentra supports that

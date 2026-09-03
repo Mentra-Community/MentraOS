@@ -45,18 +45,44 @@ The employee signs in once. Customer Core exchanges the Entra token for a
 Mentra session; Runtime accepts only Core-issued Runtime tokens. The same MSAL
 account can separately supply the employee's ACS token.
 
-## 2. Import and deploy the image
+## 2. Deploy the image and infrastructure
 
-Verify and import the release digest instead of rebuilding it:
+Copy the complete public configuration example and replace every placeholder:
 
 ```bash
-cloud-v2/deploy/azure/enterprise-reference/scripts/import-runtime-image.sh \
-  <customer-acr> \
-  ghcr.io/mentra-community/mentra-cloud@sha256:<digest> \
-  <release-identity>
+cp cloud-v2/deploy/azure/enterprise-reference/deployment.config.example.json \
+  /secure/path/mentra-private.config.json
 ```
 
-Deploy [main.bicep](./main.bicep). It creates:
+Generate the customer-owned signing material before deployment. Keep this file
+outside the repository, import it into the customer's approved secret manager,
+and reuse the same values across ordinary upgrades:
+
+```bash
+cloud-v2/deploy/azure/enterprise-reference/scripts/generate-private-secrets.sh \
+  /secure/path/mentra-private-secrets.json
+```
+
+Validate both files locally before making Azure changes:
+
+```bash
+cloud-v2/deploy/azure/enterprise-reference/scripts/deploy.sh --validate-only \
+  /secure/path/mentra-private.config.json \
+  /secure/path/mentra-private-secrets.json
+```
+
+The deployment helper performs the proven sequence: create/update the resource
+group, bootstrap ACR, import and verify the release digest, construct a
+mode-0600 temporary Azure parameter file, deploy, remove that temporary file,
+and run the smoke test:
+
+```bash
+cloud-v2/deploy/azure/enterprise-reference/scripts/deploy.sh \
+  /secure/path/mentra-private.config.json \
+  /secure/path/mentra-private-secrets.json
+```
+
+The templates create:
 
 - one Container Apps environment;
 - separate Core and meetings-only Runtime apps using the same digest;
@@ -66,18 +92,24 @@ Deploy [main.bicep](./main.bicep). It creates:
 - a generated deployment manifest; and
 - Container App secrets for ACS, Mongo, signing keys, and refresh pepper.
 
-Generate the customer-owned signing material once with
-`scripts/generate-private-secrets.sh /secure/path/mentra-private-secrets.json`,
-then import its values into the customer's approved secret manager. Never
-regenerate those values during an ordinary upgrade.
-
 For customer production, use the customer's normal database, backup, private
 networking, and secret-management requirements. The template's public network
-defaults are a reference starting point, not a universal security posture.
+Cosmos endpoint is an authenticated, customer-owned reference starting point,
+not a universal production network posture. It never connects to Mentra, but a
+customer requiring private data-plane ingress should supply its approved Mongo
+deployment or extend the reference with its standard VNet/private-endpoint
+module before qualification.
 
 Replace the reference legal documents and light/dark transparent PNGs. Managed
 miniapp ZIPs may be added as an asset layer or served by customer ingress; each
 manifest entry pins package name, semantic version, URL, and SHA-256.
+
+For a custom hostname, deploy once with `workspaceHostname` empty. Read
+`generatedRuntimeHostname` and `customDomainVerificationId` from the printed
+deployment outputs. Create a DNS-only CNAME from the workspace hostname to the
+generated Runtime hostname and a TXT record named `asuid.<workspace-hostname>`
+whose value is `customDomainVerificationId`. Set `workspaceHostname` in the
+configuration file and run the same deployment command again.
 
 ## 3. Verify the manifest
 

@@ -160,7 +160,10 @@ async function postRuntimeToken(c: AppContext) {
 async function postRevoke(c: AppContext) {
   const user = c.var.user
   if (!user) throw new InvalidRequest("missing authenticated user")
-  await revokeSession({sessionId: user.sessionId})
+  await revokeSession({
+    sessionId: user.sessionId,
+    accessToken: {jti: user.accessTokenJti, expiresAt: user.accessTokenExpiresAt},
+  })
   return c.json({success: true})
 }
 

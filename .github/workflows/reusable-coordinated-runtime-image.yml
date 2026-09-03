@@ -1,4 +1,4 @@
-name: Publish Coordinated Runtime Image
+name: Publish Coordinated Mentra Cloud Image
 
 on:
   workflow_call:

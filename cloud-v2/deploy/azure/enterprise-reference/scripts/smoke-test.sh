@@ -4,6 +4,10 @@ set -euo pipefail
 WORKSPACE="${1:-${MENTRA_WORKSPACE:-}}"
 [[ -n "$WORKSPACE" ]] || { printf 'Usage: %s https://workspace.example\n' "$0" >&2; exit 2; }
 WORKSPACE="${WORKSPACE%/}"
+[[ "$WORKSPACE" =~ ^https://[^/]+$ ]] || {
+  printf 'Workspace must be an HTTPS origin without a path: %s\n' "$WORKSPACE" >&2
+  exit 2
+}
 
 for command in curl jq; do
   command -v "$command" >/dev/null || { printf '%s is required\n' "$command" >&2; exit 1; }
@@ -11,20 +15,26 @@ done
 
 curl --fail --show-error --silent "$WORKSPACE/healthz" >/dev/null
 curl --fail --show-error --silent "$WORKSPACE/ready" >/dev/null
-curl --fail --show-error --silent "$WORKSPACE/api/client/min-version" | jq -e '.data.required and .data.recommended' >/dev/null
+curl --fail --show-error --silent "$WORKSPACE/api/client/min-version" | jq -e '
+  def semver: test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$");
+  (.data.required | type == "string" and semver) and
+  (.data.recommended | type == "string" and semver)
+' >/dev/null
 manifest="$(curl --fail --show-error --silent "$WORKSPACE/.well-known/mentra-deployment.json")"
 if ! jq -e --arg origin "$WORKSPACE" '
   .schemaVersion == 1 and
   (.services.coreUrl | startswith("https://")) and
   .services.runtimeUrl == $origin and
   .auth.mode == "microsoft-entra" and
-  (.auth.authorityUrl | startswith("https://login.microsoftonline.com/")) and
+  (.auth.authorityUrl | test("^https://login\\.microsoftonline\\.com/[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$")) and
   .features.managedStreams == false and
   .features.nativeMeetings == true and
-  .telemetry == false and
-  (.auth.sessionScopes | all(endswith("/mentra.session"))) and
+  (.telemetry | type == "boolean") and
+  (.auth.sessionScopes | length > 0 and all(endswith("/mentra.session"))) and
   (.miniapps.managed | type == "array") and
-  (.miniapps.configuration | type == "object")
+  ((.miniapps.configuration // {}) | type == "object") and
+  (.branding.logoUrls.light | startswith($origin + "/")) and
+  (.branding.logoUrls.dark | startswith($origin + "/"))
 ' <<<"$manifest" >/dev/null; then
   printf 'Workspace manifest does not match the Mentra Private Deployment v1 contract.\n' >&2
   exit 1

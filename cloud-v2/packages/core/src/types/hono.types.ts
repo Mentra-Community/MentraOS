@@ -35,6 +35,8 @@ export interface AppVariables {
     mentraUserId: string
     tenantId: string
     sessionId: string
+    accessTokenJti: string
+    accessTokenExpiresAt: number
     federatedIdentity?: FederatedIdentity
   }
 

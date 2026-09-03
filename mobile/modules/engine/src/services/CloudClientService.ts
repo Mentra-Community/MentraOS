@@ -14,6 +14,7 @@
  * this service.
  */
 import {CloudClient, setNativeHttp, setNativeUdp, setSecureStorage} from "@mentra/cloud-client/react-native"
+import {DEFAULT_REFRESH_TOKEN_KEY} from "@mentra/cloud-client"
 import type {PreinstalledMiniappRegistry, RuntimeSnapshot} from "@mentra/cloud-client/react-native"
 import type {SubjectTokenType} from "@mentra/cloud-client"
 import {Platform} from "react-native"
@@ -530,7 +531,11 @@ function construct(): void {
  */
 export const cloudClientService = {
   async clearAuthSession(): Promise<void> {
-    await client?.auth.clearSession()
+    if (client) {
+      await client.auth.clearSession()
+      return
+    }
+    await cloudSecureStore.delete(getConfigValues().cloudAuthStorageKey ?? DEFAULT_REFRESH_TOKEN_KEY)
   },
 
   /**

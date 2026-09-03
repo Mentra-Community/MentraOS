@@ -1,13 +1,13 @@
 import crypto from "node:crypto"
 import {readFileSync} from "node:fs"
-import {afterAll, beforeAll, describe, expect, test} from "bun:test"
+import {afterAll, beforeAll, describe, expect, mock, test} from "bun:test"
 import * as jose from "jose"
 
 import {createMentraAuth} from "../packages/auth/src/index"
 import {startCore, type CoreHandle} from "../packages/core/src/index"
 import {resetSigningKeyCache} from "../packages/core/src/services/session.service"
-import {startRuntime, type RuntimeHandle} from "../packages/runtime/src/index"
-import {resetOidcVerifierCache, resetRuntimeAuthCache} from "../packages/shared/src/index"
+import type {RuntimeHandle} from "../packages/runtime/src/index"
+import {resetMentraKeyCache, resetOidcVerifierCache, resetRuntimeAuthCache} from "../packages/shared/src/index"
 
 const RUN = process.env.RUN_PRIVATE_DEPLOYMENT_E2E === "true" && !!process.env.MONGO_URL
 const describePrivateDeployment = RUN ? describe : describe.skip
@@ -23,9 +23,27 @@ let oidcPrivateKey: jose.KeyLike
 let oidcPublicJwk: jose.JWK
 let core: CoreHandle
 let runtime: RuntimeHandle
+let resetAcsTeamsAuthCache: (() => void) | undefined
 
 describePrivateDeployment("Mentra Private Deployment identity path", () => {
   beforeAll(async () => {
+    mock.module("@azure/communication-identity", () => ({
+      CommunicationIdentityClient: class {
+        async getTokenForTeamsUser(input: {teamsUserAadToken: string; clientId: string; userObjectId: string}) {
+          if (
+            input.clientId !== MOBILE_CLIENT_ID ||
+            input.userObjectId !== "employee-object-id" ||
+            !input.teamsUserAadToken
+          ) {
+            throw new Error("ACS exchange received the wrong bound identity")
+          }
+          return {token: "acs-user-token", expiresOn: new Date("2030-01-01T00:00:00.000Z")}
+        }
+      },
+    }))
+    const runtimeModule = await import("../packages/runtime/src/index")
+    ;({resetAcsTeamsAuthCache} = await import("../packages/runtime/src/services/meetings/acs-teams.service"))
+
     configureSigningKeys()
     const oidcKeys = await jose.generateKeyPair("RS256", {extractable: true})
     oidcPrivateKey = oidcKeys.privateKey
@@ -82,14 +100,16 @@ describePrivateDeployment("Mentra Private Deployment identity path", () => {
     }) as typeof fetch
 
     resetSigningKeyCache()
+    resetMentraKeyCache()
     resetOidcVerifierCache()
     resetRuntimeAuthCache()
+    resetAcsTeamsAuthCache?.()
     core = await startCore({port: 0, mongoUrl: process.env.MONGO_URL})
     const manifest = readFileSync(
       new URL("../deploy/azure/enterprise-reference/mentra-deployment.json", import.meta.url),
       "utf8",
     )
-    runtime = await startRuntime({
+    runtime = await runtimeModule.startRuntime({
       httpPort: 0,
       services: new Set(["meetings"]),
       deploymentManifest: manifest,
@@ -105,8 +125,10 @@ describePrivateDeployment("Mentra Private Deployment identity path", () => {
       else process.env[name] = value
     }
     resetSigningKeyCache()
+    resetMentraKeyCache()
     resetOidcVerifierCache()
     resetRuntimeAuthCache()
+    resetAcsTeamsAuthCache?.()
   })
 
   test("exchanges OIDC through Core, brokers Runtime and miniapp tokens, refreshes, and revokes", async () => {
@@ -140,9 +162,10 @@ describePrivateDeployment("Mentra Private Deployment identity path", () => {
         "authorization": `Bearer ${runtimeToken.access_token}`,
         "content-type": "application/json",
       },
-      body: JSON.stringify({}),
+      body: JSON.stringify({teamsUserAadToken: await teamsToken()}),
     })
-    expect(runtimeAuthResponse.status).toBe(400)
+    expect(runtimeAuthResponse.status).toBe(200)
+    await expect(runtimeAuthResponse.json()).resolves.toMatchObject({token: "acs-user-token"})
 
     const miniappResponse = await fetch(`${core.url}/api/client/auth/miniapp-token`, {
       method: "POST",
@@ -176,6 +199,12 @@ describePrivateDeployment("Mentra Private Deployment identity path", () => {
     })
     expect(revoke.status).toBe(200)
 
+    const rejectedAccess = await fetch(`${core.url}/api/client/auth/runtime-token`, {
+      method: "POST",
+      headers: {authorization: `Bearer ${rotated.access_token}`},
+    })
+    expect(rejectedAccess.status).toBe(400)
+
     const rejectedRefresh = await postForm(`${core.url}/api/client/auth/refresh`, {
       grant_type: "refresh_token",
       refresh_token: rotated.refresh_token,
@@ -194,6 +223,21 @@ async function workforceToken(): Promise<string> {
     .setProtectedHeader({alg: "RS256", kid: "private-test-key"})
     .setIssuer(OIDC_ISSUER)
     .setAudience(CORE_CLIENT_ID)
+    .setIssuedAt()
+    .setExpirationTime("5m")
+    .sign(oidcPrivateKey)
+}
+
+async function teamsToken(): Promise<string> {
+  return new jose.SignJWT({
+    oid: "employee-object-id",
+    tid: "private-test-tenant",
+    azp: MOBILE_CLIENT_ID,
+    scp: "Teams.ManageCalls Teams.ManageChats",
+  })
+    .setProtectedHeader({alg: "RS256", kid: "private-test-key"})
+    .setIssuer(OIDC_ISSUER)
+    .setAudience("https://auth.msft.communication.azure.com")
     .setIssuedAt()
     .setExpirationTime("5m")
     .sign(oidcPrivateKey)

@@ -37,4 +37,14 @@ describe("session.configuration", () => {
     await expect(session.configuration.get("backendUrl")).resolves.toBe("https://customer.example")
     session.disconnect()
   })
+
+  test("does not expose inherited object properties as configuration", async () => {
+    const session = new MiniappSession({
+      transport: new MockTransport({silent: true, configuration: {backendUrl: "https://customer.example"}}),
+    })
+
+    await expect(session.configuration.get("toString")).resolves.toBeUndefined()
+    expect(Object.getPrototypeOf(await session.configuration.getAll())).toBeNull()
+    session.disconnect()
+  })
 })

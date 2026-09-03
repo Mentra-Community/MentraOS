@@ -17,8 +17,14 @@ export class OidcTokenError extends Error {
 }
 
 const remoteJwks = new Map<string, ReturnType<typeof jose.createRemoteJWKSet>>()
+const ALLOWED_OIDC_ALGORITHMS = new Set(["EdDSA", "RS256", "ES256"])
 
 export async function verifyOidcToken(token: string, config: OidcProviderConfig): Promise<jose.JWTPayload> {
+  const algorithms = config.algorithms ?? ["RS256"]
+  if (algorithms.length === 0 || algorithms.some((algorithm) => !ALLOWED_OIDC_ALGORITHMS.has(algorithm))) {
+    throw new OidcTokenError("OIDC algorithms must use EdDSA, RS256, or ES256")
+  }
+
   let keySet = remoteJwks.get(config.jwksUrl)
   if (!keySet) {
     let url: URL
@@ -42,7 +48,7 @@ export async function verifyOidcToken(token: string, config: OidcProviderConfig)
     ;({payload} = await jose.jwtVerify(token, keySet, {
       issuer: config.issuer,
       audience: config.audience,
-      algorithms: config.algorithms ?? ["RS256"],
+      algorithms,
       clockTolerance: "5 minutes",
     }))
   } catch (err) {
@@ -56,7 +62,7 @@ export async function verifyOidcToken(token: string, config: OidcProviderConfig)
     }
   }
 
-  if (config.allowedClientIds?.length) {
+  if (config.allowedClientIds !== undefined) {
     const clientId = stringClaim(payload.azp) ?? stringClaim(payload.appid)
     if (!clientId || !config.allowedClientIds.includes(clientId)) {
       throw new OidcTokenError("OIDC token client is not allowed")
