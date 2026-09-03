@@ -39,6 +39,7 @@ import com.mentra.bluetoothsdk.PhotoSize
 import com.mentra.bluetoothsdk.PhotoMode
 import com.mentra.bluetoothsdk.DeviceStore
 import com.mentra.bluetoothsdk.ObservableStore
+import com.mentra.bluetoothsdk.incomingGlassesMessageAckId
 import com.mentra.bluetoothsdk.debug.BleTraceLogger
 import com.mentra.bluetoothsdk.utils.BlePhotoUploadService
 import com.mentra.bluetoothsdk.utils.ConnTypes
@@ -3073,8 +3074,12 @@ class MentraLive : SGCManager() {
         return messageId
     }
 
-    /** Send a JSON object to the glasses with message ID and ACK tracking */
+    /** Send a JSON object to the glasses with message ID and ACK tracking. */
     private fun sendJson(json: JSONObject?, wakeup: Boolean) {
+        sendJson(json, wakeup, true)
+    }
+
+    private fun sendJson(json: JSONObject?, wakeup: Boolean, bridgeLogging: Boolean) {
         if (json != null) {
             try {
                 val sessionGeneration = bleSessionGeneration.get()
@@ -3093,7 +3098,7 @@ class MentraLive : SGCManager() {
                             json,
                             jsonStr.length
                     )
-                    sendDataToGlasses(jsonStr, wakeup, sessionGeneration)
+                    sendDataToGlasses(jsonStr, wakeup, sessionGeneration, bridgeLogging)
                 } else {
                     // Add esoteric message ID to the JSON
                     val messageId = generateEsotericMessageId()
@@ -3118,12 +3123,13 @@ class MentraLive : SGCManager() {
                             // Calculate dynamic timeout for chunked message
                             val estimatedChunks = Math.ceil(jsonStr.length / 300.0).toInt()
                             ackTimeout = ACK_TIMEOUT_MS + (estimatedChunks * 50L) + 2000L
-                            Bridge.log(
+                            transportLog(
                                     "LIVE: Message will be chunked into ~" +
                                             estimatedChunks +
                                             " chunks, using dynamic timeout: " +
                                             ackTimeout +
-                                            "ms"
+                                            "ms",
+                                    bridgeLogging,
                             )
                         }
                     } catch (e: JSONException) {
@@ -3135,7 +3141,13 @@ class MentraLive : SGCManager() {
                     }
 
                     // Track the message for ACK with appropriate timeout
-                    trackMessageForAck(messageId, jsonStr, ackTimeout, sessionGeneration)
+                    trackMessageForAck(
+                            messageId,
+                            jsonStr,
+                            ackTimeout,
+                            sessionGeneration,
+                            bridgeLogging,
+                    )
 
                     // Send the data
                     if ("take_photo" == json.optString("type", "")) {
@@ -3154,7 +3166,7 @@ class MentraLive : SGCManager() {
                             json,
                             jsonStr.length
                     )
-                    sendDataToGlasses(jsonStr, wakeup, sessionGeneration)
+                    sendDataToGlasses(jsonStr, wakeup, sessionGeneration, bridgeLogging)
                 }
             } catch (e: JSONException) {
                 Log.e(TAG, "Error adding message ID to JSON", e)
@@ -3179,20 +3191,25 @@ class MentraLive : SGCManager() {
             messageId: Long,
             messageData: String,
             timeoutMs: Long,
-            sessionGeneration: Long
+            sessionGeneration: Long,
+            bridgeLogging: Boolean = true,
     ) {
         if (!isConnected || sessionGeneration != bleSessionGeneration.get()) {
-            Bridge.log("LIVE: Not connected, skipping ACK tracking for message " + messageId)
+            transportLog(
+                    "LIVE: Not connected, skipping ACK tracking for message " + messageId,
+                    bridgeLogging,
+            )
             return
         }
 
         // Skip ACK tracking for glasses with build number < 5 (older firmware)
         if (buildNumberInt < 5) {
-            Bridge.log(
+            transportLog(
                     "LIVE: Glasses build number (" +
                             buildNumberInt +
                             ") < 5, skipping ACK tracking for message " +
-                            messageId
+                            messageId,
+                    bridgeLogging,
             )
             return
         }
@@ -3214,9 +3231,18 @@ class MentraLive : SGCManager() {
         // Schedule ACK timeout with custom timeout
         handler.postDelayed({ checkMessageAck(messageId, sessionGeneration) }, timeoutMs)
 
-        Bridge.log(
-                "LIVE: 📋 Tracking message " + messageId + " for ACK (timeout: " + timeoutMs + "ms)"
+        transportLog(
+                "LIVE: 📋 Tracking message " + messageId + " for ACK (timeout: " + timeoutMs + "ms)",
+                bridgeLogging,
         )
+    }
+
+    private fun transportLog(message: String, bridgeLogging: Boolean) {
+        if (bridgeLogging) {
+            Bridge.log(message)
+        } else {
+            Log.d(TAG, message)
+        }
     }
 
     /**
@@ -3712,6 +3738,9 @@ class MentraLive : SGCManager() {
             }
         }
 
+        val incomingMessageId = if (json.has("mId")) json.optLong("mId") else null
+        incomingGlassesMessageAckId(type, incomingMessageId)?.let(::sendAckToGlasses)
+
         // Check if this is a K900 command format (has "C" field instead of "type")
         if (json.has("C")) {
             processK900JsonMessage(json)
@@ -3864,6 +3893,41 @@ class MentraLive : SGCManager() {
                         ssid,
                         localIp,
                         wifiError.takeIf { it.isNotEmpty() }
+                )
+            }
+            "wifi_forget_result" -> {
+                Bridge.sendWifiForgetResult(
+                        requestId = json.optString("requestId", ""),
+                        sid = json.optString("sid", ""),
+                        ssid = json.optString("ssid", ""),
+                        protocolVersion = json.optInt("protocol_version", 0),
+                        outcome = json.optString("outcome", ""),
+                        legacyDispatched =
+                                if (json.has("dispatched")) json.optBoolean("dispatched") else null,
+                        connected =
+                                if (json.has("connected")) json.optBoolean("connected") else null,
+                        currentSsid = json.optString("current_ssid", ""),
+                        localIp = json.optString("local_ip", ""),
+                        error = json.optString("error", "").ifEmpty { null },
+                )
+            }
+            "saved_wifi_networks" -> {
+                val networks = mutableListOf<String>()
+                val networkArray = json.optJSONArray("networks")
+                if (networkArray != null) {
+                    for (i in 0 until networkArray.length()) {
+                        networkArray.optString(i, "").takeIf { it.trim().isNotEmpty() }?.let {
+                            networks.add(it)
+                        }
+                    }
+                }
+                Bridge.sendSavedWifiNetworks(
+                        requestId = json.optString("requestId", ""),
+                        sid = json.optString("sid", ""),
+                        protocolVersion = json.optInt("protocol_version", 0),
+                        outcome = json.optString("outcome", ""),
+                        networks = networks,
+                        error = json.optString("error", "").ifEmpty { null },
                 )
             }
             "hotspot_status_update" -> {
@@ -4246,7 +4310,11 @@ class MentraLive : SGCManager() {
                 // Record the session id BEFORE marking ready: an unsolicited glasses_ready
                 // already runs this full remote-reset flow, so recording (not re-triggering)
                 // is correct here; version_info detection covers the restart case.
-                json.optString("sid", "").takeIf { it.isNotEmpty() }?.let { glassesSessionId = it }
+                glassesSessionId = json.optString("sid", "").takeIf { it.isNotEmpty() }
+                Bridge.sendTypedMessage(
+                        "wifi_protocol_session_ready",
+                        mapOf("sid" to (glassesSessionId ?: "")),
+                )
                 readinessCompletedThisBleSession = true
 
                 // Set the ready flag to stop any future readiness checks
@@ -4623,6 +4691,7 @@ class MentraLive : SGCManager() {
 
                     // Extract all fields from JSON (except "type")
                     val fields = HashMap<String, Any>()
+                    fields["version_info_type"] = type
                     val keys = json.keys()
                     while (keys.hasNext()) {
                         val key = keys.next()
@@ -8618,9 +8687,10 @@ class MentraLive : SGCManager() {
             wireBytes: Int,
             packetCount: Int,
             protocolVersion: Int,
-            direction: String
+            direction: String,
+            bridgeLogging: Boolean = true,
     ) {
-        Bridge.log(
+        transportLog(
                 "BLE_TRACE direction=" +
                         direction +
                         " proto=v" +
@@ -8630,7 +8700,8 @@ class MentraLive : SGCManager() {
                         " wire=" +
                         wireBytes +
                         " packets=" +
-                        packetCount
+                        packetCount,
+                bridgeLogging,
         )
     }
 
@@ -8648,14 +8719,18 @@ class MentraLive : SGCManager() {
     private fun sendDataToGlasses(
             data: String?,
             wakeup: Boolean,
-            sessionGeneration: Long
+            sessionGeneration: Long,
+            bridgeLogging: Boolean = true,
     ) {
         if (data == null || data.isEmpty()) {
             Log.e(TAG, "Cannot send empty data to glasses")
             return
         }
         if (sessionGeneration != bleSessionGeneration.get()) {
-            Bridge.log("LIVE: Dropping send request from stale BLE session $sessionGeneration")
+            transportLog(
+                    "LIVE: Dropping send request from stale BLE session $sessionGeneration",
+                    bridgeLogging,
+            )
             return
         }
 
@@ -8689,7 +8764,8 @@ class MentraLive : SGCManager() {
                         wakeup,
                         commandTraceInfo,
                         isPhotoRequest,
-                        sessionGeneration
+                        sessionGeneration,
+                        bridgeLogging,
                 )
                 return
             }
@@ -8705,7 +8781,7 @@ class MentraLive : SGCManager() {
 
             // Check if chunking is needed
             if (MessageChunker.needsChunking(testWrappedJson)) {
-                Bridge.log("LIVE: Message exceeds threshold, chunking required")
+                transportLog("LIVE: Message exceeds threshold, chunking required", bridgeLogging)
                 if (isPhotoRequest) {
                     Bridge.log(
                             "LIVE: PHOTO PIPELINE BLE handoff — chunking enabled for request payload"
@@ -8723,7 +8799,7 @@ class MentraLive : SGCManager() {
 
                 // Create chunks
                 val chunks = MessageChunker.createChunks(wireData, messageId, wakeup)
-                Bridge.log("LIVE: Sending " + chunks.size + " chunks")
+                transportLog("LIVE: Sending " + chunks.size + " chunks", bridgeLogging)
                 if (isPhotoRequest) {
                     Bridge.log(
                             "LIVE: PHOTO PIPELINE BLE handoff — created " +
@@ -8781,13 +8857,13 @@ class MentraLive : SGCManager() {
                     }
                 }
 
-                Bridge.log("LIVE: All chunks queued for transmission")
+                transportLog("LIVE: All chunks queued for transmission", bridgeLogging)
                 if (isPhotoRequest) {
                     Bridge.log("LIVE: PHOTO PIPELINE BLE handoff — all photo chunks queued")
                 }
             } else {
                 // Normal single message transmission
-                Bridge.log("LIVE: Sending data to glasses: " + wireData)
+                transportLog("LIVE: Sending data to glasses: " + wireData, bridgeLogging)
 
                 // Pack the data using the centralized utility with the negotiated endianness
                 val packedData =
@@ -8829,7 +8905,8 @@ class MentraLive : SGCManager() {
             wakeup: Boolean,
             commandTraceInfo: OutgoingBleCommandTraceInfo,
             isPhotoRequest: Boolean,
-            sessionGeneration: Long
+            sessionGeneration: Long,
+            bridgeLogging: Boolean,
     ) {
         val payloadBytes = data.toByteArray(StandardCharsets.UTF_8)
         var messageId = 0
@@ -8897,7 +8974,8 @@ class MentraLive : SGCManager() {
                 totalWireBytes,
                 fragments.size,
                 BleWireProtocol.PROTOCOL_V2,
-                "phone_to_glasses"
+                "phone_to_glasses",
+                bridgeLogging,
         )
 
         if (isPhotoRequest) {
@@ -9189,16 +9267,46 @@ class MentraLive : SGCManager() {
      * K900 SystemUI can properly clear the cached credentials
      */
     override fun forgetWifiNetwork(ssid: String) {
-        Bridge.log("LIVE: 📶 Sending WiFi forget command for SSID: " + ssid)
+        forgetWifiNetwork(ssid, null)
+    }
+
+    override fun forgetWifiNetwork(ssid: String, requestId: String?) {
+        forgetWifiNetwork(ssid, requestId, null)
+    }
+
+    override fun forgetWifiNetwork(ssid: String, requestId: String?, sid: String?) {
+        Log.d(TAG, "LIVE: 📶 Sending WiFi forget command for SSID: " + ssid)
 
         try {
             val wifiCommand = JSONObject()
             wifiCommand.put("type", "forget_wifi")
             wifiCommand.put("ssid", ssid)
-            sendJson(wifiCommand, true)
+            if (!requestId.isNullOrEmpty()) {
+                wifiCommand.put("requestId", requestId)
+            }
+            if (!sid.isNullOrEmpty()) {
+                wifiCommand.put("sid", sid)
+            }
+            // This dispatch runs under the WiFi lifecycle lock. Keep its transport logs
+            // native-only so a public log listener cannot re-enter reset before it is queued.
+            sendJson(wifiCommand, true, bridgeLogging = false)
         } catch (e: JSONException) {
             Log.e(TAG, "Error creating WiFi forget JSON", e)
         }
+    }
+
+    override fun requestSavedWifiNetworks(requestId: String) {
+        requestSavedWifiNetworks(requestId, "")
+    }
+
+    override fun requestSavedWifiNetworks(requestId: String, sid: String) {
+        val command = JSONObject()
+        command.put("type", "request_saved_wifi_networks")
+        command.put("requestId", requestId)
+        if (sid.isNotEmpty()) {
+            command.put("sid", sid)
+        }
+        sendJson(command, true, bridgeLogging = false)
     }
 
     override fun sendHotspotState(enabled: Boolean) {
@@ -9303,6 +9411,13 @@ class MentraLive : SGCManager() {
         } else {
             Bridge.log("LIVE: Cannot send JSON to ASG, JSON is null")
         }
+    }
+
+    private fun sendAckToGlasses(messageId: Long) {
+        val ack = JSONObject()
+        ack.put("type", "msg_ack")
+        ack.put("mId", messageId)
+        sendJsonWithoutAck(ack, false)
     }
 
     private fun sendJsonWithoutAck(json: JSONObject?) {

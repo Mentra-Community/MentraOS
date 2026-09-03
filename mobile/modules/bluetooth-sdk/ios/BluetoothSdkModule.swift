@@ -28,6 +28,8 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             "battery_status",
             "wifi_status_change",
             "wifi_scan_result",
+            "wifi_forget_result",
+            "saved_wifi_networks",
             "hotspot_status_change",
             "hotspot_error",
             "photo_response",
@@ -292,6 +294,11 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             return try await sdk.requestWifiScan().map(\.dictionary)
         }
 
+        AsyncFunction("getSavedWifiNetworks") {
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await sdk.getSavedWifiNetworks().values
+        }
+
         AsyncFunction("sendWifiCredentials") { (ssid: String, password: String) in
             let sdk = await MainActor.run { self.bluetoothSdk() }
             return try await sdk.sendWifiCredentials(ssid: ssid, password: password).values
@@ -514,12 +521,12 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             try await MainActor.run { try sdk.sendAr99FactoryReset() }
         }
 
-
         Function("buildAr99OtaSignature") { (secret: String, appName: String, currentVersion: String, serialNumber: String, nonce: String) in
             let raw = secret + appName + "juxinOTA" + currentVersion + serialNumber.trimmingCharacters(in: .whitespacesAndNewlines) + nonce
             let digest = Insecure.MD5.hash(data: Data(raw.utf8))
             return digest.map { String(format: "%02x", $0) }.joined()
         }
+
         // MARK: - Version Info Commands
 
         AsyncFunction("requestVersionInfo") {
@@ -933,7 +940,3 @@ private extension ConnectOptions {
         )
     }
 }
-
-
-
-

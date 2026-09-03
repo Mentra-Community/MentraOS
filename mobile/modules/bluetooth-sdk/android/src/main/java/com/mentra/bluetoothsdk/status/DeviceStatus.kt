@@ -180,6 +180,10 @@ data class VersionInfoResult(
     val otaVersionUrl: String,
     val appVersion: String,
     val hotspotOtaVersion: Int,
+    val wifiForgetResultVersion: Int? = null,
+    val savedWifiNetworksVersion: Int? = null,
+    val versionInfoType: String? = null,
+    val sid: String? = null,
 ) {
     internal fun toMap(): Map<String, Any> =
         buildMap {
@@ -192,6 +196,10 @@ data class VersionInfoResult(
             put("otaVersionUrl", otaVersionUrl)
             put("appVersion", appVersion)
             put("hotspotOtaVersion", hotspotOtaVersion)
+            wifiForgetResultVersion?.let { put("wifiForgetResultVersion", it) }
+            savedWifiNetworksVersion?.let { put("savedWifiNetworksVersion", it) }
+            versionInfoType?.let { put("versionInfoType", it) }
+            sid?.let { put("sid", it) }
         }
 
     companion object {
@@ -220,6 +228,12 @@ data class VersionInfoResult(
                 appVersion = stringValue(values, "appVersion", "app_version") ?: "",
                 hotspotOtaVersion =
                     numberValue(values, "hotspotOtaVersion", "hotspot_ota_version") ?: 0,
+                wifiForgetResultVersion =
+                    numberValue(values, "wifiForgetResultVersion", "wifi_forget_result_version"),
+                savedWifiNetworksVersion =
+                    numberValue(values, "savedWifiNetworksVersion", "saved_wifi_networks_version"),
+                versionInfoType = stringValue(values, "versionInfoType", "version_info_type"),
+                sid = stringValue(values, "sid"),
             )
     }
 }

@@ -78,17 +78,17 @@ Capture a still photo. The handler routes through `transferMethod` to one of thr
 }
 ```
 
-| Field            | Type    | Default             | Description                                                 |
-| ---------------- | ------- | ------------------- | ----------------------------------------------------------- |
-| `requestId`      | string  | —                   | Required; correlates request with response                  |
-| `packageName`    | string  | resolved by handler | Originating app package                                     |
-| `webhookUrl`     | string  | ""                  | HTTPS endpoint for `direct` / `auto` upload                 |
-| `authToken`      | string  | ""                  | Bearer token for the webhook                                |
-| `transferMethod` | string  | `"direct"`          | One of `direct`, `ble`, `auto`. `auto` requires `bleImgId`. |
-| `bleImgId`       | string  | ""                  | Required for `ble` and `auto` transfer methods              |
-| `save`           | boolean | `false`             | Also save the photo to local gallery                        |
-| `size`               | string  | `"medium"`          | `low`, `medium`, `high`, or `max` (legacy `small`→`low`, `large`→`high`, `full`→`max`) |
-| `mode`               | string  | `"photo"`           | `photo` for normal capture, or `text` for ASG text-sensor constants + text-aware BLE processing |
+| Field            | Type    | Default             | Description                                                                                     |
+| ---------------- | ------- | ------------------- | ----------------------------------------------------------------------------------------------- |
+| `requestId`      | string  | —                   | Required; correlates request with response                                                      |
+| `packageName`    | string  | resolved by handler | Originating app package                                                                         |
+| `webhookUrl`     | string  | ""                  | HTTPS endpoint for `direct` / `auto` upload                                                     |
+| `authToken`      | string  | ""                  | Bearer token for the webhook                                                                    |
+| `transferMethod` | string  | `"direct"`          | One of `direct`, `ble`, `auto`. `auto` requires `bleImgId`.                                     |
+| `bleImgId`       | string  | ""                  | Required for `ble` and `auto` transfer methods                                                  |
+| `save`           | boolean | `false`             | Also save the photo to local gallery                                                            |
+| `size`           | string  | `"medium"`          | `low`, `medium`, `high`, or `max` (legacy `small`→`low`, `large`→`high`, `full`→`max`)          |
+| `mode`           | string  | `"photo"`           | `photo` for normal capture, or `text` for ASG text-sensor constants + text-aware BLE processing |
 
 **Text mode behavior**
 
@@ -97,19 +97,19 @@ Capture a still photo. The handler routes through `transferMethod` to one of thr
 - Uses a dedicated 2880 px long-edge cap after a successful text crop; the configured BLE codec and quality apply afterward (currently JPEG quality 80).
 - If detection finds no usable text region or fails, the pipeline preserves the full frame and retains the smaller 1920 px fallback cap.
 - Best results on documents, signs, and windshield VIN stickers; plain scenes may look similar to `photo` when the full-frame fallback is used.
-| `compress`           | string  | `"none"`            | Compression preset passed to capture pipeline               |
-| `flash`              | boolean | `true`              | Fire the privacy LED during capture                         |
-| `sound`              | boolean | `true`              | Play shutter sound                                          |
-| `exposureTimeNs`     | number  | absent              | Optional one-shot manual sensor exposure time in ns         |
-| `iso`                | number  | absent              | Optional one-shot manual sensor ISO; ignored without manual exposure |
-| `aeExposureDivisor`  | number  | absent              | After AE convergence, divide metered exposure by this factor (scan tuning) |
-| `isoCap`             | number  | absent              | Cap ISO after AE metering (scan tuning)                     |
-| `noiseReduction`     | boolean | absent              | Parsed; warn-only if unsupported (`not_implemented` in metadata) |
-| `edgeEnhancement`    | boolean | absent              | `false` disables edge enhancement on still capture          |
-| `zsl`                | boolean | absent              | ZSL preview/capture buffering. Enabled by default; pass `false` to disable. Manual and scan exposure force it off on the still request because buffered capture conflicts with fixed sensor controls. |
-| `mfnr`               | boolean | absent              | Vendor multi-frame noise reduction on still capture. Enabled by default; pass `false` for the single-frame pipeline. Manual and scan exposure force it off because the vendor pipeline can override fixed sensor controls. MFNR arms ZSL buffering in preview even when `zsl` is false. |
-| `ispDigitalGain`     | number  | absent              | Parsed; warn-only if unsupported                            |
-| `ispAnalogGain`      | string  | absent              | Parsed; warn-only if unsupported                            |
+  | `compress` | string | `"none"` | Compression preset passed to capture pipeline |
+  | `flash` | boolean | `true` | Fire the privacy LED during capture |
+  | `sound` | boolean | `true` | Play shutter sound |
+  | `exposureTimeNs` | number | absent | Optional one-shot manual sensor exposure time in ns |
+  | `iso` | number | absent | Optional one-shot manual sensor ISO; ignored without manual exposure |
+  | `aeExposureDivisor` | number | absent | After AE convergence, divide metered exposure by this factor (scan tuning) |
+  | `isoCap` | number | absent | Cap ISO after AE metering (scan tuning) |
+  | `noiseReduction` | boolean | absent | Parsed; warn-only if unsupported (`not_implemented` in metadata) |
+  | `edgeEnhancement` | boolean | absent | `false` disables edge enhancement on still capture |
+  | `zsl` | boolean | absent | ZSL preview/capture buffering. Enabled by default; pass `false` to disable. Manual and scan exposure force it off on the still request because buffered capture conflicts with fixed sensor controls. |
+  | `mfnr` | boolean | absent | Vendor multi-frame noise reduction on still capture. Enabled by default; pass `false` for the single-frame pipeline. Manual and scan exposure force it off because the vendor pipeline can override fixed sensor controls. MFNR arms ZSL buffering in preview even when `zsl` is false. |
+  | `ispDigitalGain` | number | absent | Parsed; warn-only if unsupported |
+  | `ispAnalogGain` | string | absent | Parsed; warn-only if unsupported |
 
 In `text` mode, Mentra Live captures the source JPEG using ASG text-mode sensor constants
 (`TEXT_MODE_SENSOR_CAPTURE_WIDTH` × `TEXT_MODE_SENSOR_CAPTURE_HEIGHT`, currently 3840×2160),
@@ -179,13 +179,13 @@ software AVIF encode) changes both paths at once.
 
 Status metadata is stage-specific:
 
-| Status | Optional fields | Description |
-| ------ | --------------- | ----------- |
-| `configuring` | `resolvedConfig` | Effective JPEG dimensions, quality, requested size, source (`sdk` or `button`), transfer method, compression, and manual exposure fields when present |
-| `capturing` | `requestedCaptureConfig`, `meteredPreview` | Camera2 still request about to be submitted, plus the latest AE preview estimate before capture |
-| `captured` | `captureMetadata` | HAL-applied still capture result, including actual exposure time, ISO, frame duration, AE state/name, sensor timestamp, and related camera modes when available |
-| `uploading`, `compressing`, `ble_fallback_compression`, `ready_for_transfer`, `transferring` | none | Transport progress only; capture metadata is not repeated here. `ble_fallback_compression` means Wi-Fi/webhook upload failed and the photo is being compressed for Bluetooth fallback |
-| `failed` | `errorCode`, `errorMessage` | Capture or transfer failure details |
+| Status                                                                                       | Optional fields                            | Description                                                                                                                                                                           |
+| -------------------------------------------------------------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `configuring`                                                                                | `resolvedConfig`                           | Effective JPEG dimensions, quality, requested size, source (`sdk` or `button`), transfer method, compression, and manual exposure fields when present                                 |
+| `capturing`                                                                                  | `requestedCaptureConfig`, `meteredPreview` | Camera2 still request about to be submitted, plus the latest AE preview estimate before capture                                                                                       |
+| `captured`                                                                                   | `captureMetadata`                          | HAL-applied still capture result, including actual exposure time, ISO, frame duration, AE state/name, sensor timestamp, and related camera modes when available                       |
+| `uploading`, `compressing`, `ble_fallback_compression`, `ready_for_transfer`, `transferring` | none                                       | Transport progress only; capture metadata is not repeated here. `ble_fallback_compression` means Wi-Fi/webhook upload failed and the photo is being compressed for Bluetooth fallback |
+| `failed`                                                                                     | `errorCode`, `errorMessage`                | Capture or transfer failure details                                                                                                                                                   |
 
 `captureMetadata` on `captured` is the right place to read the actual still capture values:
 
@@ -332,7 +332,12 @@ See [features/rtmp-streaming.md](features/rtmp-streaming.md) for stream lifecycl
 While a stream is active, supported firmware also emits this status periodically with live encoder and device telemetry:
 
 ```json
-{"type": "stream_status", "status": "streaming", "streamId": "stream-123", "stats": {"bitrate": 2450000, "fps": 29.8, "droppedFrames": 3, "duration": 42, "temperatureC": 54.6}}
+{
+  "type": "stream_status",
+  "status": "streaming",
+  "streamId": "stream-123",
+  "stats": {"bitrate": 2450000, "fps": 29.8, "droppedFrames": 3, "duration": 42, "temperatureC": 54.6}
+}
 ```
 
 `bitrate` is in bits per second, `duration` is in seconds, and `temperatureC` is omitted when the CPU thermal sensor is unavailable.
@@ -354,7 +359,14 @@ Stops whichever stream service is active. Status: `stopping`; if no stream is ac
 Response includes a `streaming` boolean and a `reconnecting` flag. When reconnecting, RTMP/SRT include an `attempt` counter:
 
 ```json
-{"type": "stream_status", "kind": "snapshot", "status": "streaming", "streaming": true, "reconnecting": false, "timestamp": 1708963201234}
+{
+  "type": "stream_status",
+  "kind": "snapshot",
+  "status": "streaming",
+  "streaming": true,
+  "reconnecting": false,
+  "timestamp": 1708963201234
+}
 ```
 
 #### `keep_stream_alive`
@@ -466,10 +478,66 @@ No response is required (fire-and-forget).
 #### `forget_wifi`
 
 ```json
-{"type": "forget_wifi", "ssid": "OldNetwork"}
+{"type": "forget_wifi", "ssid": "OldNetwork", "requestId": "forget-123", "sid": "asg-session-id"}
 ```
 
-`ssid` is required; empty SSID returns `false` without action.
+`ssid` is required. A modern request also carries the `requestId` and expected process-session
+`sid` advertised by `version_info_1`. ASG rejects a mismatched session before invoking the network
+backend. `connected`, `current_ssid`, and `local_ip` are a best-effort current link snapshot, not a
+claim that disconnection has already propagated. If ASG cannot read link state, it omits
+`connected` and the dependent snapshot fields instead of reporting a fabricated disconnection.
+Terminal `wifi_forget_result` and `saved_wifi_networks` frames use at-least-once delivery: ASG adds
+`mId` and retries until the phone returns `msg_ack`. Consumers of raw events should deduplicate by
+`requestId` and `sid`; native Promise coordinators accept only the first matching terminal frame.
+
+```json
+{
+  "type": "wifi_forget_result",
+  "requestId": "forget-123",
+  "sid": "asg-session-id",
+  "ssid": "OldNetwork",
+  "protocol_version": 1,
+  "outcome": "dispatched",
+  "connected": false,
+  "current_ssid": "",
+  "local_ip": ""
+}
+```
+
+`outcome` is `confirmed`, `dispatched`, `not_found`, `unsupported`, or `failed`. `confirmed` means
+the platform API synchronously reported removal; `dispatched` means only that an asynchronous
+platform command was queued. K900 always uses `dispatched` on successful broadcast dispatch because
+its vendor SystemUI API has no completion callback. Failures can include a stable `error` such as
+`forget_failed`, `invalid_ssid`, `stale_session`, or `network_manager_unavailable`. Older glasses
+ignore the extra correlation fields and do not send this result; phone SDKs isolate that legacy path.
+Preview builds of the result protocol emitted `requestId`, `ssid`, and `dispatched` without
+`sid`, `protocol_version`, or `outcome`; current phone SDKs preserve that wire shape as a raw
+`mode: legacy` event and do not treat it as a modern correlated result.
+
+#### `request_saved_wifi_networks`
+
+List SSIDs configured on the glasses. The response echoes the required correlation id.
+
+```json
+{"type": "request_saved_wifi_networks", "requestId": "saved-123", "sid": "asg-session-id"}
+```
+
+```json
+{
+  "type": "saved_wifi_networks",
+  "requestId": "saved-123",
+  "sid": "asg-session-id",
+  "protocol_version": 1,
+  "outcome": "confirmed",
+  "networks": ["Field AP", "Warehouse"]
+}
+```
+
+The list is sorted, deduplicated, preserves exact SSID spelling/whitespace, and contains SSIDs only
+(never credentials). `outcome` is `confirmed`, `unsupported`, or `failed`; a non-confirmed response
+has an empty `networks` array plus an `error`. K900 advertises this protocol as unsupported: its
+credentials are vendor-owned and the available broadcast has no result path, while Android
+`WifiManager` can be empty or stale.
 
 ---
 
@@ -507,7 +575,7 @@ The glasses also emit `battery_status` outbound:
 
 Returns version information in chunks to fit the BLE MTU:
 
-- `version_info_1`: `app_version`, `build_number`, `device_model`, `android_version`, `system_time_ms`, `sid`
+- `version_info_1`: `app_version`, `build_number`, `device_model`, `android_version`, `system_time_ms`, `sid`, `wifi_forget_result_version`, `saved_wifi_networks_version`
 - `version_info_3`: `bes_fw_version`, `mtk_fw_version`, `bt_mac_address`, `wifi_mac_address`, `serial_number`
 
 `serial_number` is the Android firmware product serial from `ro.serialno`; the
@@ -516,6 +584,11 @@ generic `0123456789ABCDEF` Android/ADB placeholder is omitted.
 after BES responds to the MAC-address request.
 `wifi_mac_address` is the MTK Wi-Fi interface MAC and is omitted when Android
 does not expose a valid address.
+`wifi_forget_result_version` describes the ASG handler's correlated result protocol, so this build
+advertises version `1` for every active network backend; a backend that cannot remove credentials
+still returns a correlated `unsupported` outcome. `saved_wifi_networks_version` is derived from the
+active backend because reliable enumeration is not universal, and `0` means unsupported for this
+process session. K900 advertises forget result version `1` and saved-network listing `0`.
 
 ---
 
@@ -764,7 +837,11 @@ The missing/factory base is the full sensor at `fov: 118`, `roi_position: 0`; ex
 #### `camera_fov_override` / `camera_fov_override_release`
 
 ```json
-{"type":"camera_fov_override","request_id":"settings-1","params":{"lease_id":"fov-1","fov":82,"roi_position":1,"ttl_ms":300000}}
+{
+  "type": "camera_fov_override",
+  "request_id": "settings-1",
+  "params": {"lease_id": "fov-1", "fov": 82, "roi_position": 1, "ttl_ms": 300000}
+}
 ```
 
 Applies a memory-only FOV/ROI lease without changing the persistent base. Re-sending the same lease and configuration refreshes its TTL without restarting the HAL. `camera_fov_override_release` takes the same `lease_id` and restores the base; releasing a stale lease is a no-op. Expiry is capped at ten minutes.

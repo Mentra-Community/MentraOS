@@ -3,7 +3,7 @@ export const GENERATED_RELEASE_CHANGELOGS = Object.freeze(
 [
   {
     "version": "3.2.0",
-    "markdown": "This release is under active development. User-facing changes will be documented as they land."
+    "markdown": "This release is under active development. User-facing changes will be documented as they land.\n\n- Breaking Bluetooth SDK change: `forgetWifiNetwork(ssid)` now returns `WifiForgetResult` instead of `WifiStatusChangeEvent`. Migrate status-only consumers to the semantic `outcome`; the requested network remains `ssid`, while optional post-command connectivity is reported by `connected`, `currentSsid`, and `localIp`."
   },
   {
     "version": "3.1.0",

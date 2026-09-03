@@ -141,6 +141,8 @@ Camera and streaming features must leave LEDs in a safe state on stop, error, se
 
 The phone can configure WiFi behavior through `asg_client`. Mentra Live-specific network managers should be used when platform APIs are required; generic Android fallbacks exist for non-K900 paths.
 
+The phone can request saved SSIDs with a correlated request/response and can ask the glasses to forget a network. K900's current vendor API only dispatches an asynchronous SystemUI broadcast: the correlated forget result reports whether ASG dispatched the command, not verified credential removal. The current WiFi link snapshot is included separately because Android may propagate disconnection later. Phone SDKs give the exact correlated result a short priority window, then retain the older `wifi_status` completion path for glasses builds that predate it. K900 saved-network enumeration is explicitly unsupported until the vendor API exposes a response path; do not substitute the potentially empty/stale framework configured-network list.
+
 When the phone requests the Mentra Live hotspot, `asg_client` starts the K900 firmware hotspot through the SmartXY `ap_start` intent. It waits for the AP gateway and firmware-configured SSID/password before returning them to the phone over BLE. Clients must use the latest BLE status rather than assume fixed credentials. The hotspot remains active while the local HTTP server is receiving requests or streaming response data, or while a hotspot-local stream receives its standard stream keep-alives. It automatically stops after 120 seconds without any of those activity signals.
 
 ### OTA and updates
