@@ -97,18 +97,12 @@ if [[ -z "$CORE_SCOPE_ID" ]]; then
 fi
 
 core_app="$(az ad app show --id "$CORE_OBJECT_ID" -o json)"
-if jq -e '.api.oauth2PermissionScopes // [] | any(.value == "mentra.runtime" and .isEnabled == true)' <<<"$core_app" >/dev/null; then
-  disable_legacy_body="$(jq -cn --argjson existing "$core_app" \
-    '{api:(($existing.api // {}) + {oauth2PermissionScopes:(($existing.api.oauth2PermissionScopes // []) | map(if .value == "mentra.runtime" then . + {isEnabled:false} else . end))})}')"
-  az rest --method PATCH --uri "https://graph.microsoft.com/v1.0/applications/$CORE_OBJECT_ID" \
-    --headers 'Content-Type=application/json' --body "$disable_legacy_body" --output none
-  core_app="$(az ad app show --id "$CORE_OBJECT_ID" -o json)"
-fi
+LEGACY_SCOPE_IDS="$(jq -c '[.api.oauth2PermissionScopes // [] | .[] | select(.value == "mentra.runtime") | .id]' <<<"$core_app")"
 core_body="$(jq -cn \
   --arg uri "api://$CORE_CLIENT_ID" \
   --arg scope_id "$CORE_SCOPE_ID" \
   --argjson existing "$core_app" \
-  '{identifierUris: (($existing.identifierUris // []) + [$uri] | unique), api:(($existing.api // {}) + {requestedAccessTokenVersion:2, oauth2PermissionScopes: ((($existing.api.oauth2PermissionScopes // []) | map(select(.value != "mentra.session" and .value != "mentra.runtime"))) + [{adminConsentDescription:"Allow the Mentra App to access this organization Core on behalf of the signed-in user.",adminConsentDisplayName:"Access Mentra Core",id:$scope_id,isEnabled:true,type:"User",userConsentDescription:"Allow the Mentra App to access your organization Core.",userConsentDisplayName:"Access Mentra Core",value:"mentra.session"}])})}')"
+  '{identifierUris: (($existing.identifierUris // []) + [$uri] | unique), api:(($existing.api // {}) + {requestedAccessTokenVersion:2, oauth2PermissionScopes: ((($existing.api.oauth2PermissionScopes // []) | map(select(.value != "mentra.session"))) + [{adminConsentDescription:"Allow the Mentra App to access this organization Core on behalf of the signed-in user.",adminConsentDisplayName:"Access Mentra Core",id:$scope_id,isEnabled:true,type:"User",userConsentDescription:"Allow the Mentra App to access your organization Core.",userConsentDisplayName:"Access Mentra Core",value:"mentra.session"}])})}')"
 az rest --method PATCH --uri "https://graph.microsoft.com/v1.0/applications/$CORE_OBJECT_ID" \
   --headers 'Content-Type=application/json' --body "$core_body" --output none
 
@@ -125,11 +119,23 @@ mobile_app="$(az ad app show --id "$MOBILE_OBJECT_ID" -o json)"
 mobile_body="$(jq -cn \
   --arg ios "$IOS_REDIRECT" --arg apk "$APK_REDIRECT" --arg play "$PLAY_REDIRECT" \
   --arg core_app "$CORE_CLIENT_ID" --arg session_scope "$CORE_SCOPE_ID" \
+  --argjson legacy_scopes "$LEGACY_SCOPE_IDS" \
   --arg acs_app "$ACS_APP_ID" --arg calls "$ACS_CALLS_SCOPE_ID" --arg chats "$ACS_CHATS_SCOPE_ID" \
   --argjson existing "$mobile_app" \
-  '{isFallbackPublicClient:true, publicClient:{redirectUris: (($existing.publicClient.redirectUris // []) + [$ios,$apk,$play] | unique)}, requiredResourceAccess: (((($existing.requiredResourceAccess // []) | map(select(.resourceAppId != $core_app and .resourceAppId != $acs_app)))) + [{resourceAppId:$core_app,resourceAccess: (((($existing.requiredResourceAccess // []) | map(select(.resourceAppId == $core_app)) | .[0].resourceAccess // []) + [{id:$session_scope,type:"Scope"}]) | unique_by(.id))},{resourceAppId:$acs_app,resourceAccess: (((($existing.requiredResourceAccess // []) | map(select(.resourceAppId == $acs_app)) | .[0].resourceAccess // []) + [{id:$calls,type:"Scope"},{id:$chats,type:"Scope"}]) | unique_by(.id))}])}')"
+  '{isFallbackPublicClient:true, publicClient:{redirectUris: (($existing.publicClient.redirectUris // []) + [$ios,$apk,$play] | unique)}, requiredResourceAccess: (((($existing.requiredResourceAccess // []) | map(select(.resourceAppId != $core_app and .resourceAppId != $acs_app)))) + [{resourceAppId:$core_app,resourceAccess: (((($existing.requiredResourceAccess // []) | map(select(.resourceAppId == $core_app)) | .[0].resourceAccess // [] | map(select(.id as $id | $legacy_scopes | index($id) | not))) + [{id:$session_scope,type:"Scope"}]) | unique_by(.id))},{resourceAppId:$acs_app,resourceAccess: (((($existing.requiredResourceAccess // []) | map(select(.resourceAppId == $acs_app)) | .[0].resourceAccess // []) + [{id:$calls,type:"Scope"},{id:$chats,type:"Scope"}]) | unique_by(.id))}])}')"
 az rest --method PATCH --uri "https://graph.microsoft.com/v1.0/applications/$MOBILE_OBJECT_ID" \
   --headers 'Content-Type=application/json' --body "$mobile_body" --output none
+
+# Graph will not delete a delegated scope while any client still references it.
+# Migrate the Mobile registration first, then leave the legacy scope disabled so
+# this helper remains safe when another administrator-owned client still uses it.
+core_app="$(az ad app show --id "$CORE_OBJECT_ID" -o json)"
+if jq -e '.api.oauth2PermissionScopes // [] | any(.value == "mentra.runtime" and .isEnabled == true)' <<<"$core_app" >/dev/null; then
+  disable_legacy_body="$(jq -cn --argjson existing "$core_app" \
+    '{api:(($existing.api // {}) + {oauth2PermissionScopes:(($existing.api.oauth2PermissionScopes // []) | map(if .value == "mentra.runtime" then . + {isEnabled:false} else . end))})}')"
+  az rest --method PATCH --uri "https://graph.microsoft.com/v1.0/applications/$CORE_OBJECT_ID" \
+    --headers 'Content-Type=application/json' --body "$disable_legacy_body" --output none
+fi
 
 CORE_SP_ID="$(ensure_service_principal "$CORE_CLIENT_ID")"
 MOBILE_SP_ID="$(ensure_service_principal "$MOBILE_CLIENT_ID")"
