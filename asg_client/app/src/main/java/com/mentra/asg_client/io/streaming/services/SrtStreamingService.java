@@ -112,6 +112,7 @@ public class SrtStreamingService extends Service {
   private PeriodicStreamMetricsReporter mMetricsReporter;
 
   private IHardwareManager mHardwareManager;
+  private final Object mPrivacyLightOwner = new Object();
   private boolean mLedEnabled = false;
   private boolean mSoundEnabled = false;
 
@@ -363,7 +364,7 @@ public class SrtStreamingService extends Service {
             updateNotificationIfImportant();
 
             if (mLedEnabled && mHardwareManager != null && mHardwareManager.supportsRecordingLed()) {
-              mHardwareManager.setRecordingLedOn();
+              mHardwareManager.acquireRecordingLed(mPrivacyLightOwner);
             }
             if (mSoundEnabled && mHardwareManager != null && mHardwareManager.supportsAudioPlayback()) {
               mHardwareManager.playAudioAsset(AudioAssets.VIDEO_RECORDING_START);
@@ -717,7 +718,7 @@ public class SrtStreamingService extends Service {
     updateNotificationIfImportant();
 
     if (mLedEnabled && mHardwareManager != null && mHardwareManager.supportsRecordingLed()) {
-      if (!preserveSession) mHardwareManager.setRecordingLedOff();
+      if (!preserveSession) mHardwareManager.releaseRecordingLed(mPrivacyLightOwner);
     }
     if (!preserveSession && mSoundEnabled && mHardwareManager != null && mHardwareManager.supportsAudioPlayback()) {
       mHardwareManager.playAudioAsset(AudioAssets.VIDEO_RECORDING_STOP);

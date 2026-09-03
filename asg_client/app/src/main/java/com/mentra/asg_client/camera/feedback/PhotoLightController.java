@@ -58,17 +58,8 @@ public final class PhotoLightController {
 
             token.mPrivacyLightActive = true;
             mActivePrivacyLights.add(token);
-            token.mPrivacyLightSafetyTimeout =
-                    () -> finishPrivacyLight(token, "safety timeout");
-            mHandler.postDelayed(
-                    token.mPrivacyLightSafetyTimeout,
-                    AsgConstants.PHOTO_PRIVACY_LIGHT_SAFETY_TIMEOUT_MS);
-            if (mActivePrivacyLights.size() > 1) {
-                return;
-            }
-
-            Log.i(TAG, "Turning privacy light on from " + timingSource);
-            mHandler.post(mHardwareManager::setRecordingLedOn);
+            Log.i(TAG, "Acquiring privacy light from " + timingSource);
+            mHandler.post(() -> mHardwareManager.acquireRecordingLed(token));
         }
     }
 
@@ -90,14 +81,12 @@ public final class PhotoLightController {
                 return;
             }
             token.mPrivacyLightActive = false;
-            if (!mActivePrivacyLights.isEmpty()
-                    || mHardwareManager == null
-                    || !mHardwareManager.supportsRecordingLed()) {
+            if (mHardwareManager == null) {
                 return;
             }
 
-            Log.i(TAG, "Turning privacy light off from " + timingSource);
-            mHandler.post(mHardwareManager::setRecordingLedOff);
+            Log.i(TAG, "Releasing privacy light from " + timingSource);
+            mHandler.post(() -> mHardwareManager.releaseRecordingLed(token));
         }
     }
 
@@ -114,11 +103,11 @@ public final class PhotoLightController {
                 }
                 token.mPrivacyLightActive = false;
                 token.mPrivacyLightTerminal = true;
+                if (mHardwareManager != null) {
+                    mHandler.post(() -> mHardwareManager.releaseRecordingLed(token));
+                }
             }
             mActivePrivacyLights.clear();
-            if (mHardwareManager != null && mHardwareManager.supportsRecordingLed()) {
-                mHandler.post(mHardwareManager::setRecordingLedOff);
-            }
         }
     }
 
@@ -133,6 +122,7 @@ public final class PhotoLightController {
      */
     public void onCaptureBoundary(
             Token token, String timingSource, long estimatedExposureDurationNs) {
+        armPrivacyLightSafetyTimeout(token);
         if (!token.mEnabled || !token.mTriggered.compareAndSet(false, true)) {
             return;
         }
@@ -153,6 +143,21 @@ public final class PhotoLightController {
                     mHardwareManager.flashRgbLedWhite(
                             durationMs, RgbLedConstants.DEFAULT_BRIGHTNESS);
                 });
+    }
+
+    private void armPrivacyLightSafetyTimeout(Token token) {
+        synchronized (mPrivacyLightLock) {
+            if (!token.mPrivacyLightActive
+                    || token.mPrivacyLightTerminal
+                    || token.mPrivacyLightSafetyTimeout != null) {
+                return;
+            }
+            token.mPrivacyLightSafetyTimeout =
+                    () -> finishPrivacyLight(token, "safety timeout");
+            mHandler.postDelayed(
+                    token.mPrivacyLightSafetyTimeout,
+                    AsgConstants.PHOTO_PRIVACY_LIGHT_SAFETY_TIMEOUT_MS);
+        }
     }
 
     static int lightDurationMs(long estimatedExposureDurationNs) {

@@ -5,7 +5,6 @@ import android.os.Looper;
 
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.robolectric.Shadows.shadowOf;
@@ -43,11 +42,11 @@ public class PhotoLightControllerTest {
 
         controller.startPrivacyLight(token, "photo request");
         ShadowLooper.idleMainLooper();
-        verify(hardwareManager).setRecordingLedOn();
+        verify(hardwareManager).acquireRecordingLed(token);
 
         controller.finishPrivacyLight(token, "JPEG frame available");
         ShadowLooper.idleMainLooper();
-        verify(hardwareManager).setRecordingLedOff();
+        verify(hardwareManager).releaseRecordingLed(token);
     }
 
     @Test
@@ -58,15 +57,16 @@ public class PhotoLightControllerTest {
         controller.startPrivacyLight(first, "first request");
         controller.startPrivacyLight(second, "second request");
         ShadowLooper.idleMainLooper();
-        verify(hardwareManager, times(1)).setRecordingLedOn();
+        verify(hardwareManager).acquireRecordingLed(first);
+        verify(hardwareManager).acquireRecordingLed(second);
 
         controller.finishPrivacyLight(first, "first JPEG");
         ShadowLooper.idleMainLooper();
-        verify(hardwareManager, never()).setRecordingLedOff();
+        verify(hardwareManager).releaseRecordingLed(first);
 
         controller.finishPrivacyLight(second, "second JPEG");
         ShadowLooper.idleMainLooper();
-        verify(hardwareManager).setRecordingLedOff();
+        verify(hardwareManager).releaseRecordingLed(second);
     }
 
     @Test
@@ -77,23 +77,30 @@ public class PhotoLightControllerTest {
         controller.finishPrivacyLight(token, "JPEG frame available");
         ShadowLooper.idleMainLooper();
 
-        verify(hardwareManager, never()).setRecordingLedOn();
-        verify(hardwareManager, never()).setRecordingLedOff();
+        verify(hardwareManager, never()).acquireRecordingLed(token);
+        verify(hardwareManager, never()).releaseRecordingLed(token);
     }
 
     @Test
-    public void missingCaptureCallback_releasesPrivacyLightAtSafetyTimeout() {
+    public void queuedRequest_startsSafetyTimeoutAtCaptureBoundary() {
         PhotoLightController.Token token = controller.prepare(true);
 
         controller.startPrivacyLight(token, "photo request");
         ShadowLooper.idleMainLooper();
+        shadowOf(Looper.getMainLooper())
+                .idleFor(
+                        AsgConstants.PHOTO_PRIVACY_LIGHT_SAFETY_TIMEOUT_MS,
+                        TimeUnit.MILLISECONDS);
+        verify(hardwareManager, never()).releaseRecordingLed(token);
+
+        controller.onCaptureBoundary(token, "sensor exposure");
 
         shadowOf(Looper.getMainLooper())
                 .idleFor(
                         AsgConstants.PHOTO_PRIVACY_LIGHT_SAFETY_TIMEOUT_MS,
                         TimeUnit.MILLISECONDS);
 
-        verify(hardwareManager).setRecordingLedOff();
+        verify(hardwareManager).releaseRecordingLed(token);
     }
 
     @Test

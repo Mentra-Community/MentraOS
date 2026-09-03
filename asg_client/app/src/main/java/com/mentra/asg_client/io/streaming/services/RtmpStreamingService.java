@@ -137,6 +137,7 @@ public class RtmpStreamingService extends Service {
 
     // LED and sound control
     private IHardwareManager mHardwareManager;
+    private final Object mPrivacyLightOwner = new Object();
     private boolean mLedEnabled = false;
     private boolean mSoundEnabled = false;
 
@@ -516,7 +517,7 @@ public class RtmpStreamingService extends Service {
 
                         // Turn on LED if enabled for livestream
                         if (mLedEnabled && mHardwareManager != null && mHardwareManager.supportsRecordingLed()) {
-                            mHardwareManager.setRecordingLedOn();
+                            mHardwareManager.acquireRecordingLed(mPrivacyLightOwner);
                             Log.d(TAG, "📹 Recording LED turned ON for livestream");
                         }
 
@@ -1203,7 +1204,7 @@ public class RtmpStreamingService extends Service {
             if (preserveSession) {
                 Log.d(TAG, "📹 Preserving recording LED state during reconnection");
             } else {
-                mHardwareManager.setRecordingLedOff();
+                mHardwareManager.releaseRecordingLed(mPrivacyLightOwner);
                 Log.d(TAG, "📹 Recording LED turned OFF (stream stopped)");
             }
         }
