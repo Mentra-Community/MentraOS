@@ -104,7 +104,8 @@ public class MediaCaptureService {
     // captureId key, while written on the start/callback threads — needs cross-thread visibility.
     private volatile String currentVideoPath = null;
     private long recordingStartTime = 0;
-    private final AtomicReference<Object> currentVideoPrivacyLightOwner = new AtomicReference<>();
+    private final Object mVideoPrivacyLightLock = new Object();
+    @Nullable private Object currentVideoPrivacyLightOwner;
     private boolean currentVideoSoundEnabled =
             false; // Track if sound was enabled for current recording
 
@@ -1244,7 +1245,9 @@ public class MediaCaptureService {
         currentVideoPath = videoFilePath;
         currentVideoSoundEnabled = enableSound; // Track sound state for this recording
         final Object videoPrivacyLightOwner = enableFlash ? new Object() : null;
-        currentVideoPrivacyLightOwner.set(videoPrivacyLightOwner);
+        synchronized (mVideoPrivacyLightLock) {
+            currentVideoPrivacyLightOwner = videoPrivacyLightOwner;
+        }
         final String captureIdAtStart = captureIdFromVideoAbsPath(videoFilePath);
         if (captureIdAtStart != null) {
             videoCaptureIdsInFlight.add(captureIdAtStart);
@@ -1280,19 +1283,19 @@ public class MediaCaptureService {
                                     .post(() -> startBatteryMonitoring());
 
                             // Turn on recording flash LED if enabled with controlled brightness
-                            if (!isCleaningUp.get()
-                                    && videoPrivacyLightOwner != null
+                            if (videoPrivacyLightOwner != null
                                     && hardwareManager.supportsLedBrightness()) {
                                 // TODO: RESTORE LOWER LED BRIGHTNESS LATER
                                 // hardwareManager.setRecordingLedBrightness(50); // 50% brightness
                                 // for video
-                                hardwareManager.acquireRecordingLed(videoPrivacyLightOwner);
-                                Log.d(TAG, "Recording flash LED turned ON at 50% brightness");
-                            } else if (!isCleaningUp.get()
-                                    && videoPrivacyLightOwner != null
+                                if (acquireVideoPrivacyLight(videoPrivacyLightOwner)) {
+                                    Log.d(TAG, "Recording flash LED turned ON at 50% brightness");
+                                }
+                            } else if (videoPrivacyLightOwner != null
                                     && hardwareManager.supportsRecordingLed()) {
-                                hardwareManager.acquireRecordingLed(videoPrivacyLightOwner);
-                                Log.d(TAG, "Recording flash LED turned ON (full brightness)");
+                                if (acquireVideoPrivacyLight(videoPrivacyLightOwner)) {
+                                    Log.d(TAG, "Recording flash LED turned ON (full brightness)");
+                                }
                             }
 
                             // Notify listener
@@ -1822,7 +1825,10 @@ public class MediaCaptureService {
             }
 
             // Ensure the privacy light is released even if stop dispatch fails.
-            Object videoPrivacyLightOwner = currentVideoPrivacyLightOwner.get();
+            final Object videoPrivacyLightOwner;
+            synchronized (mVideoPrivacyLightLock) {
+                videoPrivacyLightOwner = currentVideoPrivacyLightOwner;
+            }
             if (videoPrivacyLightOwner != null) {
                 releaseVideoPrivacyLight(videoPrivacyLightOwner);
                 Log.d(TAG, "Recording LED turned OFF (stop error recovery)");
@@ -1831,12 +1837,26 @@ public class MediaCaptureService {
         }
     }
 
+    private boolean acquireVideoPrivacyLight(Object owner) {
+        synchronized (mVideoPrivacyLightLock) {
+            if (isCleaningUp.get() || currentVideoPrivacyLightOwner != owner) {
+                return false;
+            }
+            hardwareManager.acquireRecordingLed(owner);
+            return true;
+        }
+    }
+
     private void releaseVideoPrivacyLight(Object owner) {
         if (owner == null) {
             return;
         }
-        hardwareManager.releaseRecordingLed(owner);
-        currentVideoPrivacyLightOwner.compareAndSet(owner, null);
+        synchronized (mVideoPrivacyLightLock) {
+            if (currentVideoPrivacyLightOwner == owner) {
+                currentVideoPrivacyLightOwner = null;
+            }
+            hardwareManager.releaseRecordingLed(owner);
+        }
     }
 
     /**

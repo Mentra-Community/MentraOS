@@ -2,9 +2,12 @@ package com.mentra.asg_client.hardware;
 
 import android.os.Handler;
 import android.os.HandlerThread;
+import android.os.Looper;
 import android.util.Log;
 
 import com.dev.api.DevApi;
+
+import java.util.concurrent.CountDownLatch;
 
 /**
  * Singleton controller for managing the K900 recording LED.
@@ -97,12 +100,14 @@ public class K900LedController {
             Log.w(TAG, "LED controller not initialized, attempting to initialize...");
             initializeLed();
         }
-        
-        ledHandler.post(() -> {
-            stopBlinkingInternal();
-            setLedStateInternal(true);
-            Log.d(TAG, "LED turned ON");
-        });
+
+        runLedCommandAndWait(
+                "turn ON",
+                () -> {
+                    stopBlinkingInternal();
+                    setLedStateInternal(true);
+                    Log.d(TAG, "LED turned ON");
+                });
     }
     
     /**
@@ -114,11 +119,39 @@ public class K900LedController {
             initializeLed();
         }
 
-        ledHandler.post(() -> {
-            stopBlinkingInternal();
-            setLedStateInternal(false);
-            Log.d(TAG, "LED turned OFF");
-        });
+        runLedCommandAndWait(
+                "turn OFF",
+                () -> {
+                    stopBlinkingInternal();
+                    setLedStateInternal(false);
+                    Log.d(TAG, "LED turned OFF");
+                });
+    }
+
+    private void runLedCommandAndWait(String command, Runnable action) {
+        if (Looper.myLooper() == ledHandler.getLooper()) {
+            action.run();
+            return;
+        }
+
+        CountDownLatch completed = new CountDownLatch(1);
+        if (!ledHandler.post(
+                () -> {
+                    try {
+                        action.run();
+                    } finally {
+                        completed.countDown();
+                    }
+                })) {
+            Log.e(TAG, "Could not queue LED worker command to " + command);
+            return;
+        }
+        try {
+            completed.await();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            Log.e(TAG, "Interrupted while waiting for LED worker to " + command, e);
+        }
     }
     
     /**
