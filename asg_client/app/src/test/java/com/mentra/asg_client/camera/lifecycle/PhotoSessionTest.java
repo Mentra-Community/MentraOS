@@ -339,6 +339,49 @@ public class PhotoSessionTest {
     }
 
     @Test
+    public void cancelActiveCapture_matchingPath_cancelsOnlyThatCapture() throws Exception {
+        PhotoSession.Hooks hooks = mockConfiguredCameraHooks();
+        CameraNeoService.PhotoCaptureCallback callback =
+                mock(CameraNeoService.PhotoCaptureCallback.class);
+        PhotoSession session = new PhotoSession(hooks);
+        activateQueuedRequest(
+                session,
+                new QueuedPhotoRequest(
+                        "/tmp/timed-out.jpg", "large", false, true, null, callback));
+
+        boolean cancelled =
+                session.cancelActiveCapture("/tmp/timed-out.jpg", "capture timed out");
+
+        assertThat(cancelled).isTrue();
+        assertThat(activeCapture(session)).isNull();
+        assertThat(session.shotState()).isEqualTo(AeStateMachine.ShotState.IDLE);
+        verify(callback).onPhotoFailureDetected();
+        ArgumentCaptor<CameraOperationError> error =
+                ArgumentCaptor.forClass(CameraOperationError.class);
+        verify(callback).onPhotoError(error.capture());
+        assertThat(error.getValue().message()).isEqualTo("capture timed out");
+    }
+
+    @Test
+    public void cancelActiveCapture_nonMatchingPath_leavesCaptureRunning() throws Exception {
+        PhotoSession.Hooks hooks = mockConfiguredCameraHooks();
+        CameraNeoService.PhotoCaptureCallback callback =
+                mock(CameraNeoService.PhotoCaptureCallback.class);
+        PhotoSession session = new PhotoSession(hooks);
+        activateQueuedRequest(
+                session,
+                new QueuedPhotoRequest(
+                        "/tmp/current.jpg", "large", false, true, null, callback));
+
+        boolean cancelled = session.cancelActiveCapture("/tmp/other.jpg", "capture timed out");
+
+        assertThat(cancelled).isFalse();
+        assertThat(activeCapture(session)).isNotNull();
+        verify(callback, never()).onPhotoFailureDetected();
+        verify(callback, never()).onPhotoError(any(CameraOperationError.class));
+    }
+
+    @Test
     public void willReuseConfiguredCamera_matchesWarmUpZslMfnrBaseline() throws Exception {
         // Warm-up stores resolved zsl/mfnr in configuredCameraConfig; a later take_photo with the
         // same size/SDK/exposure must reuse even when still-side MFNR toggles (preview buffer stays).
