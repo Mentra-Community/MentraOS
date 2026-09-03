@@ -90,7 +90,7 @@
     "url": "https://github.com/Mentra-Community/MentraOS/issues"
   },
   "author": "Mentra Community",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "homepage": "https://github.com/Mentra-Community/MentraOS/tree/dev/mobile/modules/engine#readme",
   "publishConfig": {
     "access": "public",
