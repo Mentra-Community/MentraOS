@@ -3,7 +3,7 @@ import {createHash} from "node:crypto"
 import path from "node:path"
 
 import {validateCloudV2DeploymentRecord} from "./coordinated-cloud-v2-records.mjs"
-import {validateEnterpriseRuntimeDeploymentRecord} from "./coordinated-enterprise-runtime-records.mjs"
+import {validatePrivateDeploymentRecord} from "./coordinated-private-deployment-records.mjs"
 import {validateRuntimeImageRecord} from "./coordinated-runtime-image-records.mjs"
 
 const STABLE_VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
@@ -582,11 +582,11 @@ export function finalizeReleaseManifest({plan, results, completedAt}) {
   const cloud = validateCloudV2DeploymentRecord({plan, record: results.cloud})
   const runtimeImage =
     plan.channel === "production" ? undefined : validateRuntimeImageRecord({plan, record: results.runtimeImage})
-  const enterpriseRuntime =
+  const privateDeployment =
     plan.channel === "dev"
-      ? validateEnterpriseRuntimeDeploymentRecord({
+      ? validatePrivateDeploymentRecord({
           plan,
-          record: results.enterpriseRuntime,
+          record: results.privateDeployment,
           runtimeImage,
         })
       : undefined
@@ -625,7 +625,7 @@ export function finalizeReleaseManifest({plan, results, completedAt}) {
     artifacts,
     cloud,
     ...(runtimeImage ? {runtimeImage} : {}),
-    ...(enterpriseRuntime ? {enterpriseRuntime} : {}),
+    ...(privateDeployment ? {privateDeployment} : {}),
     ...(starterKit ? {starterKit} : {}),
     ...(exampleTestflight ? {exampleTestflight} : {}),
     ...(promotion ? {promotion} : {}),

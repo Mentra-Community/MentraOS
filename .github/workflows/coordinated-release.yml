@@ -292,7 +292,7 @@ jobs:
       dry_run: ${{ needs.plan.outputs.dry_run == 'true' }}
     secrets: inherit
 
-  enterprise-runtime:
+  private-deployment:
     name: Deploy release-matched private stack
     needs: [plan, runtime-image]
     if: needs.plan.outputs.cloud_environment == 'dev'
@@ -301,7 +301,7 @@ jobs:
       contents: read
       id-token: write
       packages: read
-    uses: ./.github/workflows/enterprise-runtime-dev.yml
+    uses: ./.github/workflows/private-deployment-dev.yml
     with:
       source_commit: ${{ needs.plan.outputs.source_commit }}
       release_plan_artifact: ${{ needs.plan.outputs.plan_artifact }}
@@ -705,7 +705,7 @@ jobs:
         plan,
         cloud-v2,
         runtime-image,
-        enterprise-runtime,
+        private-deployment,
         ota,
         npm,
         sdk-native,
@@ -719,8 +719,8 @@ jobs:
       needs.plan.result == 'success' &&
       needs.cloud-v2.result == 'success' &&
       needs.runtime-image.result == 'success' &&
-      (needs.enterprise-runtime.result == 'success' ||
-        (needs.plan.outputs.cloud_environment != 'dev' && needs.enterprise-runtime.result == 'skipped')) &&
+      (needs.private-deployment.result == 'success' ||
+        (needs.plan.outputs.cloud_environment != 'dev' && needs.private-deployment.result == 'skipped')) &&
       needs.ota.result == 'success' &&
       needs.npm.result == 'success' &&
       needs.sdk-native.result == 'success' &&
@@ -758,8 +758,8 @@ jobs:
       - uses: actions/download-artifact@v4
         if: needs.plan.outputs.cloud_environment == 'dev'
         with:
-          name: ${{ needs.enterprise-runtime.outputs.result_artifact }}
-          path: release-input/enterprise-runtime
+          name: ${{ needs.private-deployment.outputs.result_artifact }}
+          path: release-input/private-deployment
 
       - uses: actions/download-artifact@v4
         with:
@@ -806,10 +806,10 @@ jobs:
           engine_package=$(find release-input/npm -type f -name 'mentra-engine-*.tgz' -print -quit)
           test -n "$engine_package"
           starter_kit_args=()
-          enterprise_runtime_args=()
+          private_deployment_args=()
           if [[ "${{ needs.plan.outputs.cloud_environment }}" == "dev" ]]; then
-            enterprise_runtime_args=(
-              --enterprise-runtime release-input/enterprise-runtime/enterprise-runtime-deployment.json
+            private_deployment_args=(
+              --private-deployment release-input/private-deployment/private-deployment.json
             )
           fi
           if [[ "${{ needs.plan.outputs.dry_run }}" != "true" ]]; then
@@ -831,7 +831,7 @@ jobs:
             --mobile release-input/mobile/mobile-publications.json \
             --cloud release-input/cloud-v2/cloud-v2-deployment.json \
             --runtime-image release-input/runtime-image/runtime-image-publication.json \
-            "${enterprise_runtime_args[@]}" \
+            "${private_deployment_args[@]}" \
             "${starter_kit_args[@]}" \
             --asg-selection "$asg_selection" \
             --engine-package "$engine_package" \
@@ -923,7 +923,7 @@ jobs:
             echo "- Cloud deployment: \`$(jq -er .cloud.deploymentId finalized-release/publication-results.json 2>/dev/null || echo validated-only)\`"
             echo "- Runtime image: \`$(jq -er '.runtimeImage.reference // "validated-only"' finalized-release/publication-results.json)\`"
             if [[ "${{ needs.plan.outputs.cloud_environment }}" == "dev" ]]; then
-              echo "- Private deployment Runtime: \`$(jq -er '.enterpriseRuntime.azure.revision // "validated-only"' finalized-release/publication-results.json)\`"
+              echo "- Private deployment Runtime: \`$(jq -er '.privateDeployment.azure.revision // "validated-only"' finalized-release/publication-results.json)\`"
             fi
             echo "- OTA manifest: ${{ needs.ota.outputs.manifest_url }}"
             echo "- Dry run: \`${{ needs.plan.outputs.dry_run }}\`"
@@ -1110,7 +1110,7 @@ jobs:
         plan,
         cloud-v2,
         runtime-image,
-        enterprise-runtime,
+        private-deployment,
         ota,
         npm,
         sdk-native,
@@ -1143,7 +1143,7 @@ jobs:
           PLAN_RESULT: ${{ needs.plan.result }}
           CLOUD_V2_RESULT: ${{ needs.cloud-v2.result }}
           RUNTIME_IMAGE_RESULT: ${{ needs.runtime-image.result }}
-          ENTERPRISE_RUNTIME_RESULT: ${{ needs.enterprise-runtime.result }}
+          PRIVATE_DEPLOYMENT_RESULT: ${{ needs.private-deployment.result }}
           OTA_RESULT: ${{ needs.ota.result }}
           NPM_RESULT: ${{ needs.npm.result }}
           SDK_NATIVE_RESULT: ${{ needs.sdk-native.result }}

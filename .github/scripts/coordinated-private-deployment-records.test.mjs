@@ -3,9 +3,9 @@ import test from "node:test"
 import {fileURLToPath} from "node:url"
 
 import {
-  createEnterpriseRuntimeDeploymentRecord,
-  validateEnterpriseRuntimeDeploymentRecord,
-} from "./coordinated-enterprise-runtime-records.mjs"
+  createPrivateDeploymentRecord,
+  validatePrivateDeploymentRecord,
+} from "./coordinated-private-deployment-records.mjs"
 import {createReleasePlan, loadReleaseFamily} from "./release-family.mjs"
 
 const sourceCommit = "a".repeat(40)
@@ -28,7 +28,7 @@ const workspaceOrigin = "https://enterprisedev.mentraglass.com"
 const coreOrigin = "https://ca-mentra-ent-ref-core.example.azurecontainerapps.io"
 
 function create(status = "deployed") {
-  return createEnterpriseRuntimeDeploymentRecord({
+  return createPrivateDeploymentRecord({
     plan,
     sourceCommit,
     requestedTag: sourceCommit,
@@ -59,7 +59,7 @@ function create(status = "deployed") {
   })
 }
 
-test("records an immutable release-matched enterprise Runtime deployment", () => {
+test("records an immutable release-matched Private Deployment", () => {
   const record = create()
   assert.equal(record.sourceCommit, plan.sourceCommit)
   assert.equal(record.azure.requestedTag, plan.sourceCommit)
@@ -67,43 +67,43 @@ test("records an immutable release-matched enterprise Runtime deployment", () =>
   assert.equal(record.source.image, "ghcr.io/mentra-community/mentra-cloud")
   assert.equal(record.source.imageDigest, record.azure.imageDigest)
   assert.equal(
-    validateEnterpriseRuntimeDeploymentRecord({plan, record, runtimeImage: runtimeImage()}).azure.revision,
+    validatePrivateDeploymentRecord({plan, record, runtimeImage: runtimeImage()}).azure.revision,
     record.azure.revision,
   )
 })
 
 test("permits validation-only evidence only when explicitly requested", () => {
   const record = create("validated")
-  assert.throws(() => validateEnterpriseRuntimeDeploymentRecord({plan, record}), /not a completed deployment/)
-  assert.equal(validateEnterpriseRuntimeDeploymentRecord({plan, record, allowValidated: true}).status, "validated")
+  assert.throws(() => validatePrivateDeploymentRecord({plan, record}), /not a completed deployment/)
+  assert.equal(validatePrivateDeploymentRecord({plan, record, allowValidated: true}).status, "validated")
 })
 
 test("rejects mutable or mismatched deployment evidence", () => {
   const wrongDigest = structuredClone(create())
   wrongDigest.azure.imageDigest = "latest"
-  assert.throws(() => validateEnterpriseRuntimeDeploymentRecord({plan, record: wrongDigest}), /canonical GHCR source/)
+  assert.throws(() => validatePrivateDeploymentRecord({plan, record: wrongDigest}), /canonical GHCR source/)
 
   const wrongSource = structuredClone(create())
   wrongSource.sourceCommit = "c".repeat(40)
   assert.throws(
-    () => validateEnterpriseRuntimeDeploymentRecord({plan, record: wrongSource}),
+    () => validatePrivateDeploymentRecord({plan, record: wrongSource}),
     /do not match a dev release plan/,
   )
 
   const rebuilt = structuredClone(create())
   rebuilt.azure.imageDigest = `sha256:${"d".repeat(64)}`
   rebuilt.azure.image = `mentraenterpriseref.azurecr.io/mentra-cloud-enterprise@${rebuilt.azure.imageDigest}`
-  assert.throws(() => validateEnterpriseRuntimeDeploymentRecord({plan, record: rebuilt}), /canonical GHCR source/)
+  assert.throws(() => validatePrivateDeploymentRecord({plan, record: rebuilt}), /canonical GHCR source/)
 
   const substitutedPublication = runtimeImage()
   substitutedPublication.digest = `sha256:${"d".repeat(64)}`
   assert.throws(
-    () => validateEnterpriseRuntimeDeploymentRecord({plan, record: create(), runtimeImage: substitutedPublication}),
-    /does not match the coordinated Runtime image/,
+    () => validatePrivateDeploymentRecord({plan, record: create(), runtimeImage: substitutedPublication}),
+    /does not match the coordinated Mentra Cloud image/,
   )
 
   assert.throws(
-    () => createEnterpriseRuntimeDeploymentRecord({...deploymentArgs(), coreOrigin: "https://unrelated.example.com"}),
+    () => createPrivateDeploymentRecord({...deploymentArgs(), coreOrigin: "https://unrelated.example.com"}),
     /expected Azure Core Container App ingress/,
   )
 })

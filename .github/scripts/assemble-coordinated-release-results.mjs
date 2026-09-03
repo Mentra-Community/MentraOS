@@ -5,7 +5,7 @@ import path from "node:path"
 import {fileURLToPath} from "node:url"
 
 import {validateCloudV2DeploymentRecord} from "./coordinated-cloud-v2-records.mjs"
-import {validateEnterpriseRuntimeDeploymentRecord} from "./coordinated-enterprise-runtime-records.mjs"
+import {validatePrivateDeploymentRecord} from "./coordinated-private-deployment-records.mjs"
 import {validateRuntimeImageRecord} from "./coordinated-runtime-image-records.mjs"
 import {serializeReleaseRecord} from "./release-family.mjs"
 import {createEnginePackageArtifact, mergeReleaseResultRecords} from "./release-result-records.mjs"
@@ -162,7 +162,7 @@ export function assembleCoordinatedReleaseResults({
   mobile,
   cloud,
   runtimeImage,
-  enterpriseRuntime,
+  privateDeployment,
   starterKit,
   starterKitResultUrl,
   exampleTestflight,
@@ -182,11 +182,11 @@ export function assembleCoordinatedReleaseResults({
     record: runtimeImage,
     allowValidated: true,
   })
-  const verifiedEnterpriseRuntime =
+  const verifiedPrivateDeployment =
     plan.channel === "dev"
-      ? validateEnterpriseRuntimeDeploymentRecord({
+      ? validatePrivateDeploymentRecord({
           plan,
-          record: enterpriseRuntime,
+          record: privateDeployment,
           allowValidated: true,
           runtimeImage: verifiedRuntimeImage,
         })
@@ -248,7 +248,7 @@ export function assembleCoordinatedReleaseResults({
     artifacts,
     cloud: verifiedCloud,
     runtimeImage: verifiedRuntimeImage,
-    ...(verifiedEnterpriseRuntime ? {enterpriseRuntime: verifiedEnterpriseRuntime} : {}),
+    ...(verifiedPrivateDeployment ? {privateDeployment: verifiedPrivateDeployment} : {}),
     ...(verifiedStarterKit ? {starterKit: verifiedStarterKit.record} : {}),
   }
 }
@@ -274,7 +274,7 @@ function main() {
     mobile: readJson(path.resolve(args.mobile)),
     cloud: readJson(path.resolve(args.cloud)),
     runtimeImage: readJson(path.resolve(args["runtime-image"])),
-    enterpriseRuntime: args["enterprise-runtime"] ? readJson(path.resolve(args["enterprise-runtime"])) : undefined,
+    privateDeployment: args["private-deployment"] ? readJson(path.resolve(args["private-deployment"])) : undefined,
     starterKit: args["starter-kit"] ? readJson(path.resolve(args["starter-kit"])) : undefined,
     starterKitResultUrl: args["starter-kit-result-url"],
     exampleTestflight: args["example-testflight"] ? readJson(path.resolve(args["example-testflight"])) : undefined,

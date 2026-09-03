@@ -45,7 +45,7 @@ jobs:
     timeout-minutes: 60
     concurrency:
       # Preserve deployment order if coordinated runs overlap.
-      group: coordinated-enterprise-runtime-dev
+      group: coordinated-private-deployment-dev
       cancel-in-progress: false
     outputs:
       result_artifact: ${{ steps.artifact.outputs.name }}
@@ -161,7 +161,7 @@ jobs:
           MINIAPP_JWT_PUBLIC_KEY: ${{ secrets.ENTERPRISE_DEV_MINIAPP_JWT_PUBLIC_KEY }}
         run: |
           set -euo pipefail
-          parameters="$RUNNER_TEMP/enterprise-runtime-dev.parameters.json"
+          parameters="$RUNNER_TEMP/private-deployment-dev.parameters.json"
           trap 'rm -f "$parameters"' EXIT
           umask 077
           jq -n \
@@ -192,7 +192,7 @@ jobs:
               }
             }' > "$parameters"
           az deployment group create \
-            --name enterprise-runtime-dev \
+            --name private-deployment-dev \
             --resource-group "$AZURE_RESOURCE_GROUP" \
             --template-file cloud-v2/deploy/azure/enterprise-reference/main.bicep \
             --parameters "@$parameters" \
@@ -206,13 +206,13 @@ jobs:
         run: |
           set -euo pipefail
           workspace_origin=$(az deployment group show \
-            --name enterprise-runtime-dev \
+            --name private-deployment-dev \
             --resource-group "$AZURE_RESOURCE_GROUP" \
             --query properties.outputs.workspaceOrigin.value \
             --output tsv)
           [[ "$workspace_origin" == https://* ]]
           core_origin=$(az deployment group show \
-            --name enterprise-runtime-dev \
+            --name private-deployment-dev \
             --resource-group "$AZURE_RESOURCE_GROUP" \
             --query properties.outputs.coreOrigin.value \
             --output tsv)
@@ -232,20 +232,20 @@ jobs:
               "$1"
           }
 
-          : > enterprise-runtime-checks.ndjson
+          : > private-deployment-checks.ndjson
           for probe in healthz ready; do
             url="$workspace_origin/$probe"
             body="$RUNNER_TEMP/$probe.json"
             status=$(curl_status "$url" "$body")
             jq -nc --arg url "$url" --argjson statusCode "$status" \
-              '{url: $url, ready: true, statusCode: $statusCode}' >> enterprise-runtime-checks.ndjson
+              '{url: $url, ready: true, statusCode: $statusCode}' >> private-deployment-checks.ndjson
           done
           for probe in healthz ready; do
             url="$core_origin/$probe"
             body="$RUNNER_TEMP/core-$probe.json"
             status=$(curl_status "$url" "$body")
             jq -nc --arg url "$url" --argjson statusCode "$status" \
-              '{url: $url, ready: true, statusCode: $statusCode}' >> enterprise-runtime-checks.ndjson
+              '{url: $url, ready: true, statusCode: $statusCode}' >> private-deployment-checks.ndjson
           done
           jq -e '.status == "ok" and .package == "runtime" and .services == ["meetings"]' \
             "$RUNNER_TEMP/healthz.json"
@@ -300,7 +300,7 @@ jobs:
             "$workspace_origin/api/meetings/acs/teams-user-token")
           [[ "$unauthenticated_status" == "401" ]]
 
-          jq -s . enterprise-runtime-checks.ndjson > enterprise-runtime-checks.json
+          jq -s . private-deployment-checks.ndjson > private-deployment-checks.json
           image_digest=$(az acr manifest show-metadata \
             --registry "$AZURE_REGISTRY" \
             --name "${{ steps.source.outputs.acr_tag }}" \
@@ -332,19 +332,19 @@ jobs:
       - name: Record validation-only evidence
         if: inputs.dry_run
         run: >-
-          node .github/scripts/coordinated-enterprise-runtime-records.mjs create
+          node .github/scripts/coordinated-private-deployment-records.mjs create
           --plan release-input/plan/release-plan.json
           --source-commit "${{ steps.source.outputs.commit }}"
           --requested-tag "${{ steps.source.outputs.commit }}"
           --status validated
           --completed-at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
           --provenance-url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          --output enterprise-runtime-deployment.json
+          --output private-deployment.json
 
       - name: Record observed deployment evidence
         if: inputs.dry_run != true
         run: >-
-          node .github/scripts/coordinated-enterprise-runtime-records.mjs create
+          node .github/scripts/coordinated-private-deployment-records.mjs create
           --plan release-input/plan/release-plan.json
           --source-commit "${{ steps.source.outputs.commit }}"
           --requested-tag "${{ steps.source.outputs.commit }}"
@@ -357,22 +357,22 @@ jobs:
           --core-revision "${{ steps.verify.outputs.core_revision }}"
           --workspace-origin "${{ steps.verify.outputs.workspace_origin }}"
           --core-origin "${{ steps.verify.outputs.core_origin }}"
-          --checks enterprise-runtime-checks.json
+          --checks private-deployment-checks.json
           --completed-at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
           --provenance-url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          --output enterprise-runtime-deployment.json
+          --output private-deployment.json
 
       - name: Name coordinated result artifact
         id: artifact
         run: |
           set -euo pipefail
           release_set_id=$(jq -er .releaseSetId release-input/plan/release-plan.json)
-          echo "name=coordinated-enterprise-runtime-$release_set_id" >> "$GITHUB_OUTPUT"
+          echo "name=coordinated-private-deployment-$release_set_id" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.artifact.outputs.name }}
-          path: enterprise-runtime-deployment.json
+          path: private-deployment.json
           if-no-files-found: error
           retention-days: 90
 

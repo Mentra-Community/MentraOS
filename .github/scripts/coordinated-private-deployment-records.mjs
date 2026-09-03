@@ -60,7 +60,7 @@ function validatePlan(plan, sourceCommit) {
     plan.releaseSetId !== `mentra-${plan.releaseIdentity}` ||
     plan.sourceCommit !== sourceCommit
   ) {
-    throw new Error("Enterprise Runtime deployment inputs do not match a dev release plan")
+    throw new Error("Private Deployment inputs do not match a dev release plan")
   }
 }
 
@@ -82,14 +82,14 @@ function validateChecks(checks, workspaceOrigin, coreOrigin) {
       check.statusCode < 200 ||
       check.statusCode >= 300
     ) {
-      throw new Error("Enterprise Runtime deployment contains an invalid readiness check")
+      throw new Error("Private Deployment contains an invalid readiness check")
     }
   }
-  if (expected.size !== 0) throw new Error("Enterprise Runtime deployment checks are incomplete")
+  if (expected.size !== 0) throw new Error("Private Deployment checks are incomplete")
   return [...checks].sort((left, right) => left.url.localeCompare(right.url))
 }
 
-export function createEnterpriseRuntimeDeploymentRecord({
+export function createPrivateDeploymentRecord({
   plan,
   sourceCommit,
   requestedTag,
@@ -111,11 +111,11 @@ export function createEnterpriseRuntimeDeploymentRecord({
     throw new Error("requestedTag must equal the full sourceCommit")
   }
   if (!["deployed", "validated"].includes(status)) {
-    throw new Error("Enterprise Runtime deployment status must be deployed or validated")
+    throw new Error("Private Deployment status must be deployed or validated")
   }
   const record = {
     schemaVersion: 1,
-    component: "enterprise-runtime",
+    component: "private-deployment",
     releaseSetId: plan.releaseSetId,
     releaseIdentity: plan.releaseIdentity,
     sourceCommit,
@@ -141,15 +141,15 @@ export function createEnterpriseRuntimeDeploymentRecord({
       !DIGEST_PATTERN.test(sourceImageDigest || "") ||
       sourceImageDigest !== imageDigest
     ) {
-      throw new Error("Enterprise Runtime deployment is missing its canonical GHCR source")
+      throw new Error("Private Deployment is missing its canonical GHCR source")
     }
     const expectedImage = `${TARGET.registry}.azurecr.io/${TARGET.imageRepository}@${imageDigest}`
     if (image !== expectedImage || !DIGEST_PATTERN.test(imageDigest || "") || !revision || !coreRevision) {
-      throw new Error("Enterprise Runtime deployment is missing immutable Azure image evidence")
+      throw new Error("Private Deployment is missing immutable Azure image evidence")
     }
     const origin = requireHttps(workspaceOrigin, "workspaceOrigin")
     if (origin !== TARGET.workspaceOrigin) {
-      throw new Error("Enterprise Runtime deployment uses the wrong workspace origin")
+      throw new Error("Private Deployment uses the wrong workspace origin")
     }
     record.source = {
       image: sourceImage,
@@ -176,15 +176,15 @@ function assertCanonicalRuntimeImage(record, runtimeImage) {
     runtimeImage.image !== CANONICAL_IMAGE ||
     record.source?.imageDigest !== runtimeImage.digest
   ) {
-    throw new Error("Enterprise Runtime deployment does not match the coordinated Runtime image")
+    throw new Error("Private Deployment does not match the coordinated Mentra Cloud image")
   }
 }
 
-export function validateEnterpriseRuntimeDeploymentRecord({plan, record, allowValidated = false, runtimeImage}) {
+export function validatePrivateDeploymentRecord({plan, record, allowValidated = false, runtimeImage}) {
   validatePlan(plan, record?.sourceCommit)
   if (
     record.schemaVersion !== 1 ||
-    record.component !== "enterprise-runtime" ||
+    record.component !== "private-deployment" ||
     record.releaseSetId !== plan.releaseSetId ||
     record.releaseIdentity !== plan.releaseIdentity ||
     record.channel !== plan.channel ||
@@ -198,10 +198,10 @@ export function validateEnterpriseRuntimeDeploymentRecord({plan, record, allowVa
     record.azure?.imageRepository !== TARGET.imageRepository ||
     record.azure?.requestedTag !== plan.sourceCommit
   ) {
-    throw new Error("Enterprise Runtime deployment record does not match the release plan and target")
+    throw new Error("Private Deployment record does not match the release plan and target")
   }
-  requireIsoUtc(record.completedAt, "enterpriseRuntime.completedAt")
-  requireHttps(record.provenanceUrl, "enterpriseRuntime.provenanceUrl")
+  requireIsoUtc(record.completedAt, "privateDeployment.completedAt")
+  requireHttps(record.provenanceUrl, "privateDeployment.provenanceUrl")
   if (record.status === "validated") {
     if (
       record.azure.image !== undefined ||
@@ -213,18 +213,18 @@ export function validateEnterpriseRuntimeDeploymentRecord({plan, record, allowVa
       record.coreOrigin !== undefined ||
       record.checks !== undefined
     ) {
-      throw new Error("Validation-only Enterprise Runtime evidence must not claim a live deployment")
+      throw new Error("Validation-only Private Deployment evidence must not claim a live deployment")
     }
     if (allowValidated) {
       assertCanonicalRuntimeImage(record, runtimeImage)
       return record
     }
   }
-  if (record.status !== "deployed") throw new Error("Enterprise Runtime record is not a completed deployment")
+  if (record.status !== "deployed") throw new Error("Private Deployment record is not a completed deployment")
   if (record.source?.reference !== `${CANONICAL_IMAGE}@${record.source?.imageDigest}`) {
-    throw new Error("Enterprise Runtime canonical source reference is inconsistent")
+    throw new Error("Private Deployment canonical source reference is inconsistent")
   }
-  const validated = createEnterpriseRuntimeDeploymentRecord({
+  const validated = createPrivateDeploymentRecord({
     plan,
     sourceCommit: record.sourceCommit,
     requestedTag: record.azure.requestedTag,
@@ -264,7 +264,7 @@ function main() {
   const [command, ...rest] = process.argv.slice(2)
   if (command !== "create") throw new Error(`Unknown command ${JSON.stringify(command)}`)
   const args = parseArgs(rest)
-  const record = createEnterpriseRuntimeDeploymentRecord({
+  const record = createPrivateDeploymentRecord({
     plan: readJson(args.plan),
     sourceCommit: args["source-commit"],
     requestedTag: args["requested-tag"],
