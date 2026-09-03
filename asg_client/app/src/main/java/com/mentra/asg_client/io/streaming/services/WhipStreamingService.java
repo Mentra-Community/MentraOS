@@ -427,7 +427,7 @@ public class WhipStreamingService extends Service {
         mStreamState = StreamState.RECONNECTING;
       }
     } else {
-      if (mLedEnabled && mHardwareManager != null && mHardwareManager.supportsRecordingLed()) {
+      if (mHardwareManager != null && mHardwareManager.supportsRecordingLed()) {
         mHardwareManager.releaseRecordingLed(mPrivacyLightOwner);
       }
       if (mSoundEnabled && mHardwareManager != null && mHardwareManager.supportsAudioPlayback()) {
@@ -1175,7 +1175,7 @@ public class WhipStreamingService extends Service {
       mWhipResourceUrl = null;
     }
     releaseWebRtc();
-    if (mLedEnabled && mHardwareManager != null && mHardwareManager.supportsRecordingLed()) {
+    if (mHardwareManager != null && mHardwareManager.supportsRecordingLed()) {
       mHardwareManager.releaseRecordingLed(mPrivacyLightOwner);
     }
     mIsReconnecting = false;

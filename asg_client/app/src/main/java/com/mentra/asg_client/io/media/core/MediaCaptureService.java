@@ -632,7 +632,8 @@ public class MediaCaptureService {
                 "photo request",
                 () ->
                         CameraNeoService.cancelPhotoCapture(
-                                photoFilePath, "Photo capture timed out before sensor exposure"));
+                                photoFilePath,
+                                "Photo capture cancelled before privacy light release"));
     }
 
     /** Clear request-scoped photo state after capture/upload/BLE handoff. */
