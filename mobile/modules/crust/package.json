@@ -32,7 +32,7 @@
     "url": "https://github.com/fossephate/crust/issues"
   },
   "author": "fossephate <6175367+fossephate@users.noreply.github.com> (https://github.com/fossephate)",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "homepage": "https://github.com/fossephate/crust#readme",
   "dependencies": {
     "@mentra/jspolyfill": "3.2.0"
