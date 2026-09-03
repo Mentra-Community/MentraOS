@@ -1199,14 +1199,15 @@ public class RtmpStreamingService extends Service {
         // Notify listeners
         updateNotificationIfImportant();
 
-        // Turn off LED if it was on
-        if (mLedEnabled && mHardwareManager != null && mHardwareManager.supportsRecordingLed()) {
-            if (preserveSession) {
-                Log.d(TAG, "📹 Preserving recording LED state during reconnection");
-            } else {
-                mHardwareManager.releaseRecordingLed(mPrivacyLightOwner);
-                Log.d(TAG, "📹 Recording LED turned OFF (stream stopped)");
-            }
+        // A replacement request may already have overwritten mLedEnabled. Release by ownership,
+        // which is idempotent, rather than by the incoming request's configuration.
+        if (!preserveSession
+                && mHardwareManager != null
+                && mHardwareManager.supportsRecordingLed()) {
+            mHardwareManager.releaseRecordingLed(mPrivacyLightOwner);
+            Log.d(TAG, "📹 Recording LED turned OFF (stream stopped)");
+        } else if (preserveSession && mLedEnabled) {
+            Log.d(TAG, "📹 Preserving recording LED state during reconnection");
         }
 
         // Play stream stop sound (only on actual stop, not reconnection)

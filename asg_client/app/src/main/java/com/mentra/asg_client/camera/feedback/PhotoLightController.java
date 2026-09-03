@@ -93,17 +93,21 @@ public final class PhotoLightController {
                 mHandler.removeCallbacks(token.mPrivacyLightSafetyTimeout);
                 token.mPrivacyLightSafetyTimeout = null;
             }
-            if (!token.mPrivacyLightActive || !mActivePrivacyLights.remove(token)) {
-                return;
-            }
-            token.mPrivacyLightActive = false;
-            if (mHardwareManager == null) {
-                return;
-            }
-
-            Log.i(TAG, "Releasing privacy light from " + timingSource);
-            mHardwareManager.releaseRecordingLed(token);
+            releasePrivacyLightOwner(token, timingSource);
         }
+    }
+
+    private void releasePrivacyLightOwner(Token token, String timingSource) {
+        if (!token.mPrivacyLightActive || !mActivePrivacyLights.remove(token)) {
+            return;
+        }
+        token.mPrivacyLightActive = false;
+        if (mHardwareManager == null) {
+            return;
+        }
+
+        Log.i(TAG, "Releasing privacy light from " + timingSource);
+        mHardwareManager.releaseRecordingLed(token);
     }
 
     /** Releases any privacy-light ownership left behind during service teardown. */
@@ -182,12 +186,25 @@ public final class PhotoLightController {
             if (token.mPrivacyLightTerminal) {
                 return;
             }
+            // Claim the terminal transition before leaving the lock. A JPEG callback that races
+            // this fallback must not complete the token and then be cancelled as a stale request.
+            token.mPrivacyLightTerminal = true;
             cancelCaptureAction = token.mCancelCaptureAction;
+            token.mCancelCaptureAction = null;
+            if (token.mPrivacyLightSafetyTimeout != null) {
+                mHandler.removeCallbacks(token.mPrivacyLightSafetyTimeout);
+                token.mPrivacyLightSafetyTimeout = null;
+            }
         }
-        if (cancelCaptureAction != null) {
-            cancelCaptureAction.run();
+        try {
+            if (cancelCaptureAction != null) {
+                cancelCaptureAction.run();
+            }
+        } finally {
+            synchronized (mPrivacyLightLock) {
+                releasePrivacyLightOwner(token, timingSource);
+            }
         }
-        finishPrivacyLight(token, timingSource);
     }
 
     static int lightDurationMs(long estimatedExposureDurationNs) {
