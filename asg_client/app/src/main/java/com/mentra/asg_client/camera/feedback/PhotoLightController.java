@@ -59,7 +59,7 @@ public final class PhotoLightController {
             token.mPrivacyLightActive = true;
             mActivePrivacyLights.add(token);
             Log.i(TAG, "Acquiring privacy light from " + timingSource);
-            mHandler.post(() -> mHardwareManager.acquireRecordingLed(token));
+            mHardwareManager.acquireRecordingLed(token);
         }
     }
 
@@ -86,7 +86,7 @@ public final class PhotoLightController {
             }
 
             Log.i(TAG, "Releasing privacy light from " + timingSource);
-            mHandler.post(() -> mHardwareManager.releaseRecordingLed(token));
+            mHardwareManager.releaseRecordingLed(token);
         }
     }
 
@@ -104,7 +104,7 @@ public final class PhotoLightController {
                 token.mPrivacyLightActive = false;
                 token.mPrivacyLightTerminal = true;
                 if (mHardwareManager != null) {
-                    mHandler.post(() -> mHardwareManager.releaseRecordingLed(token));
+                    mHardwareManager.releaseRecordingLed(token);
                 }
             }
             mActivePrivacyLights.clear();

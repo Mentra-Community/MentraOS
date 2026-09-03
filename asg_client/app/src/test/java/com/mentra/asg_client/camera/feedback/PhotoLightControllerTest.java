@@ -37,15 +37,13 @@ public class PhotoLightControllerTest {
     }
 
     @Test
-    public void privacyLight_turnsOffWhenJpegArrives() {
+    public void privacyLight_acquiresBeforeReturningAndReleasesWhenJpegArrives() {
         PhotoLightController.Token token = controller.prepare(true);
 
         controller.startPrivacyLight(token, "photo request");
-        ShadowLooper.idleMainLooper();
         verify(hardwareManager).acquireRecordingLed(token);
 
         controller.finishPrivacyLight(token, "JPEG frame available");
-        ShadowLooper.idleMainLooper();
         verify(hardwareManager).releaseRecordingLed(token);
     }
 

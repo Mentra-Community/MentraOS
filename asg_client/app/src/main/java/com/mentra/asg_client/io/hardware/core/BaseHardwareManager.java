@@ -57,25 +57,22 @@ public class BaseHardwareManager implements IHardwareManager {
             return;
         }
 
-        boolean shouldTurnOn;
         synchronized (mRecordingLedOwnerLock) {
-            shouldTurnOn = mRecordingLedOwners.add(owner) && mRecordingLedOwners.size() == 1;
-        }
-        if (shouldTurnOn) {
-            setRecordingLedOn();
+            if (mRecordingLedOwners.add(owner) && mRecordingLedOwners.size() == 1) {
+                setRecordingLedOn();
+            }
         }
     }
 
     @Override
     public void releaseRecordingLed(Object owner) {
         Objects.requireNonNull(owner, "owner");
-        boolean shouldTurnOff;
         synchronized (mRecordingLedOwnerLock) {
-            shouldTurnOff =
-                    mRecordingLedOwners.remove(owner) && mRecordingLedOwners.isEmpty();
-        }
-        if (shouldTurnOff && supportsRecordingLed()) {
-            setRecordingLedOff();
+            if (mRecordingLedOwners.remove(owner)
+                    && mRecordingLedOwners.isEmpty()
+                    && supportsRecordingLed()) {
+                setRecordingLedOff();
+            }
         }
     }
 
