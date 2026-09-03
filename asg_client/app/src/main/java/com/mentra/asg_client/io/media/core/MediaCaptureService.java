@@ -2382,7 +2382,7 @@ public class MediaCaptureService {
             }
         }
         if (textModeRequested) {
-            startCaptureSafetyTimeout(requestId, captureLightToken);
+            startCaptureSafetyTimeout(requestId, photoFilePath, captureLightToken);
         }
         final PhotoFeedbackController.Token captureFeedbackToken = feedbackToken;
 
@@ -2808,7 +2808,7 @@ public class MediaCaptureService {
                     startPhotoPrivacyLight(captureLightToken, photoFilePath);
                 }
             }
-            startCaptureSafetyTimeout(requestId, captureLightToken);
+            startCaptureSafetyTimeout(requestId, photoFilePath, captureLightToken);
             final PhotoFeedbackController.Token captureFeedbackToken = feedbackToken;
 
             // Use the new enqueuePhotoRequest for thread-safe rapid capture
@@ -3140,7 +3140,9 @@ public class MediaCaptureService {
      * upload.
      */
     private void startCaptureSafetyTimeout(
-            String requestId, PhotoLightController.Token captureLightToken) {
+            String requestId,
+            String photoFilePath,
+            PhotoLightController.Token captureLightToken) {
         Runnable timeout =
                 new Runnable() {
                     @Override
@@ -3154,6 +3156,8 @@ public class MediaCaptureService {
                                 captureSafetyTimeoutRequestId = null;
                             }
                         }
+                        CameraNeoService.cancelPhotoCapture(
+                                photoFilePath, "Photo capture job timed out");
                         photoLightController.finishPrivacyLight(
                                 captureLightToken, "photo job safety timeout");
                         photoFeedbackController.stopForTimeout(requestId);
@@ -5211,7 +5215,7 @@ public class MediaCaptureService {
                 startPhotoPrivacyLight(captureLightToken, photoFilePath);
             }
         }
-        startCaptureSafetyTimeout(requestId, captureLightToken);
+        startCaptureSafetyTimeout(requestId, photoFilePath, captureLightToken);
         final PhotoFeedbackController.Token captureFeedbackToken = feedbackToken;
 
         try {
