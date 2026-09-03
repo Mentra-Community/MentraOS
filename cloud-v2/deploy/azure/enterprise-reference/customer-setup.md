@@ -1,5 +1,9 @@
 # Mentra Private Deployment customer setup
 
+Start with the cloud-neutral
+[Mentra Private Runtime deployment contract](../../private-runtime.md). This
+runbook applies that contract to Azure Container Apps, ACR, Entra, and ACS.
+
 This is the administrator runbook for connecting the official Mentra App to a
 customer-controlled Microsoft 365/Azure deployment. It is intended for the
 customer's Microsoft Entra administrator and Azure operator.
@@ -131,8 +135,8 @@ For the detailed token and claim contract, see [entra-setup.md](./entra-setup.md
 ## 3. Deploy the customer-owned Azure resources
 
 Create a resource group and deploy [bootstrap.bicep](./bootstrap.bicep) to create
-a uniquely named Azure Container Registry. Import or build the release-matched
-Runtime image into that registry.
+a uniquely named Azure Container Registry. Verify and import the release-matched
+GHCR Runtime digest into that registry; do not rebuild it.
 
 Deploy [main.bicep](./main.bicep) with:
 
@@ -250,11 +254,11 @@ end-to-end call test.
 
 ## Troubleshooting
 
-| Symptom | Most likely cause |
-|---|---|
-| Microsoft reports a redirect mismatch | The Android signing-certificate hash or iOS redirect does not match the installed binary |
-| An employee cannot open the Microsoft login | They or their group are not assigned to the Enterprise Application |
-| Runtime returns 401 | Wrong issuer, audience, Runtime scope, authorized mobile client, or expired token |
-| ACS exchange returns 403 | Missing ACS delegated permission/admin consent, wrong tenant/client, or mismatched employee object id |
-| Workspace is rejected before login | Manifest schema, origin, or TLS policy is invalid |
-| Login works but a Teams call cannot start | SoftAP/native ACS integration is absent, ACS configuration is invalid, or Teams policy/license blocks the employee |
+| Symptom                                     | Most likely cause                                                                                                  |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Microsoft reports a redirect mismatch       | The Android signing-certificate hash or iOS redirect does not match the installed binary                           |
+| An employee cannot open the Microsoft login | They or their group are not assigned to the Enterprise Application                                                 |
+| Runtime returns 401                         | Wrong issuer, audience, Runtime scope, authorized mobile client, or expired token                                  |
+| ACS exchange returns 403                    | Missing ACS delegated permission/admin consent, wrong tenant/client, or mismatched employee object id              |
+| Workspace is rejected before login          | Manifest schema, origin, or TLS policy is invalid                                                                  |
+| Login works but a Teams call cannot start   | SoftAP/native ACS integration is absent, ACS configuration is invalid, or Teams policy/license blocks the employee |

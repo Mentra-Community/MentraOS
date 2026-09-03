@@ -9,6 +9,9 @@ on:
       release_plan_artifact:
         required: true
         type: string
+      runtime_image_artifact:
+        required: true
+        type: string
       dry_run:
         required: false
         default: false
@@ -19,12 +22,14 @@ on:
       workspace_origin:
         value: ${{ jobs.deploy.outputs.workspace_origin }}
 permissions:
+  actions: read
   contents: read
   id-token: write
+  packages: read
 
 jobs:
   deploy:
-    name: Build and deploy Azure enterprise Runtime
+    name: Import and deploy Azure enterprise Runtime
     runs-on: ubuntu-latest
     timeout-minutes: 60
     concurrency:
@@ -52,6 +57,11 @@ jobs:
           name: ${{ inputs.release_plan_artifact }}
           path: release-input/plan
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.runtime_image_artifact }}
+          path: release-input/runtime-image
+
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
@@ -65,8 +75,24 @@ jobs:
           [[ "$source_commit" == "${{ inputs.source_commit }}" ]]
           [[ "$(jq -er .sourceCommit release-input/plan/release-plan.json)" == "$source_commit" ]]
           [[ "$(jq -er .channel release-input/plan/release-plan.json)" == "dev" ]]
+          node .github/scripts/coordinated-runtime-image-records.mjs validate \
+            --plan release-input/plan/release-plan.json \
+            --record release-input/runtime-image/runtime-image-publication.json \
+            --allow-validated true
           echo "commit=$source_commit" >> "$GITHUB_OUTPUT"
-          echo "image=$AZURE_REGISTRY.azurecr.io/mentra-runtime-enterprise:$source_commit" >> "$GITHUB_OUTPUT"
+          if [[ "${{ inputs.dry_run }}" != "true" ]]; then
+            source_image=$(jq -er .image release-input/runtime-image/runtime-image-publication.json)
+            source_digest=$(jq -er .digest release-input/runtime-image/runtime-image-publication.json)
+            [[ "$source_image" == "ghcr.io/mentra-community/mentra-runtime" ]]
+            [[ "$source_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+            {
+              echo "source_image=$source_image"
+              echo "source_digest=$source_digest"
+              echo "source_reference=$source_image@$source_digest"
+              echo "acr_tag=mentra-runtime-enterprise:$source_commit"
+              echo "image=$AZURE_REGISTRY.azurecr.io/mentra-runtime-enterprise@$source_digest"
+            } >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Validate the enterprise deployment source
         run: |
@@ -84,14 +110,34 @@ jobs:
           tenant-id: ${{ vars.ENTERPRISE_DEV_AZURE_TENANT_ID }}
           subscription-id: ${{ vars.ENTERPRISE_DEV_AZURE_SUBSCRIPTION_ID }}
 
-      - name: Build the ordinary Runtime image in Azure
+      - name: Import the canonical Runtime digest into Azure
         if: inputs.dry_run != true
-        run: >-
-          az acr build
-          --registry "$AZURE_REGISTRY"
-          --image "mentra-runtime-enterprise:${{ steps.source.outputs.commit }}"
-          --file cloud-v2/docker/Dockerfile
-          .
+        env:
+          GHCR_USERNAME: ${{ github.actor }}
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          existing_digest=$(az acr manifest show-metadata \
+            --registry "$AZURE_REGISTRY" \
+            --name "${{ steps.source.outputs.acr_tag }}" \
+            --query digest \
+            --output tsv 2>/dev/null || true)
+          if [[ -n "$existing_digest" ]]; then
+            [[ "$existing_digest" == "${{ steps.source.outputs.source_digest }}" ]]
+          else
+            az acr import \
+              --name "$AZURE_REGISTRY" \
+              --source "${{ steps.source.outputs.source_reference }}" \
+              --image "${{ steps.source.outputs.acr_tag }}" \
+              --username "$GHCR_USERNAME" \
+              --password "$GHCR_TOKEN"
+          fi
+          imported_digest=$(az acr manifest show-metadata \
+            --registry "$AZURE_REGISTRY" \
+            --name "${{ steps.source.outputs.acr_tag }}" \
+            --query digest \
+            --output tsv)
+          [[ "$imported_digest" == "${{ steps.source.outputs.source_digest }}" ]]
 
       - name: Deploy the meetings-only enterprise profile
         if: inputs.dry_run != true
@@ -199,10 +245,11 @@ jobs:
           jq -s . enterprise-runtime-checks.ndjson > enterprise-runtime-checks.json
           image_digest=$(az acr manifest show-metadata \
             --registry "$AZURE_REGISTRY" \
-            --name "mentra-runtime-enterprise:${{ steps.source.outputs.commit }}" \
+            --name "${{ steps.source.outputs.acr_tag }}" \
             --query digest \
             --output tsv)
           [[ "$image_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$image_digest" == "${{ steps.source.outputs.source_digest }}" ]]
           revision=$(az containerapp show \
             --name "$AZURE_CONTAINER_APP" \
             --resource-group "$AZURE_RESOURCE_GROUP" \
@@ -236,6 +283,8 @@ jobs:
           --source-commit "${{ steps.source.outputs.commit }}"
           --requested-tag "${{ steps.source.outputs.commit }}"
           --status deployed
+          --source-image "${{ steps.source.outputs.source_image }}"
+          --source-image-digest "${{ steps.source.outputs.source_digest }}"
           --image "${{ steps.source.outputs.image }}"
           --image-digest "${{ steps.verify.outputs.image_digest }}"
           --revision "${{ steps.verify.outputs.revision }}"
@@ -265,7 +314,8 @@ jobs:
             echo "## Enterprise Runtime dev"
             echo
             echo "- Source: \`${{ steps.source.outputs.commit }}\`"
-            echo "- Image: \`${{ steps.source.outputs.image }}\`"
+            echo "- Canonical image: \`${{ steps.source.outputs.source_reference || 'validation only' }}\`"
+            echo "- Azure mirror: \`${{ steps.source.outputs.image || 'validation only' }}\`"
             echo "- Workspace: ${{ steps.verify.outputs.workspace_origin || 'validation only' }}"
             echo "- Services: \`meetings\`"
             echo "- Provider: \`acs-teams\`"

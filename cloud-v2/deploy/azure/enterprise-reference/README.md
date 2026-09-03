@@ -1,5 +1,10 @@
 # Mentra Private Deployment Azure reference
 
+The cloud-neutral image, module, provider, secret, manifest, endpoint, and
+attestation contract is documented in
+[private-runtime.md](../../private-runtime.md). This directory adds only the
+Azure resources and Mentra reference configuration for that common contract.
+
 This is Mentra's non-production, customer-shaped validation environment. It
 runs the ordinary Cloud V2 Runtime image with only `meetings` and its
 `acs-teams` provider.
@@ -61,13 +66,14 @@ client id so a duplicate display name is never guessed.
 ## Coordinated dev deployment
 
 The `dev` coordinated release calls `.github/workflows/enterprise-runtime-dev.yml`
-with its immutable release plan. The workflow uses GitHub OIDC to build that
-plan's exact source commit in the reference ACR, applies this Bicep template with
-`RUNTIME_SERVICES=meetings`, verifies the live health, version-policy, manifest,
-legal, and authenticated-route contract, and contributes its deployment record
-to the final release bill of materials. This keeps the enterprise Runtime,
-public Cloud V2, Mentra App, ASG client, SDKs, and OTA artifacts tied to one
-source commit and release identity.
+with its immutable release plan. The coordinated image job builds the exact
+source once, publishes and attests it in GHCR, and records its digest. The
+reference workflow imports that digest into ACR, applies this Bicep template
+with `RUNTIME_SERVICES=meetings`, verifies the live health, version-policy,
+manifest, legal, and authenticated-route contract, and contributes both image
+and deployment evidence to the final release bill of materials. This keeps the
+Private Runtime, public Cloud V2, Mentra App, ASG client, SDKs, and OTA artifacts
+tied to one source commit and release identity.
 The Azure identity is a Contributor only within the dedicated reference
 resource group. It cannot create role assignments; an administrator creates the
 managed identity's `AcrPull` assignment during the initial bootstrap.
@@ -87,14 +93,14 @@ az deployment group create \
   --template-file cloud-v2/deploy/azure/enterprise-reference/bootstrap.bicep
 ```
 
-Copy the `registryName` output, then build the normal repository image from the
-repository root:
+Copy the `registryName` output, then import the coordinated, digest-pinned GHCR
+image. The helper prints the resulting ACR digest reference:
 
 ```bash
-az acr build \
-  --registry <registry-name> \
-  --image mentra-runtime-enterprise:<git-sha> \
-  --file cloud-v2/docker/Dockerfile .
+cloud-v2/deploy/azure/enterprise-reference/scripts/import-runtime-image.sh \
+  <registry-name> \
+  ghcr.io/mentra-community/mentra-runtime@sha256:<release-digest> \
+  <release-identity>
 ```
 
 Deploy the meetings-only Runtime:
@@ -104,7 +110,7 @@ az deployment group create \
   --resource-group rg-mentra-enterprise-reference \
   --template-file cloud-v2/deploy/azure/enterprise-reference/main.bicep \
   --parameters \
-    runtimeImage=<registry-name>.azurecr.io/mentra-runtime-enterprise:<git-sha> \
+    runtimeImage=<registry-name>.azurecr.io/mentra-runtime-enterprise@sha256:<imported-digest> \
     registryName=<registry-name> \
     tenantId=2e7662c0-e826-4928-95b2-60bdd48d5d95 \
     runtimeApiClientId=20424d9e-4b99-44e8-82c9-0ad06f08a8db \

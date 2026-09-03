@@ -276,14 +276,36 @@ jobs:
       dry_run: ${{ needs.plan.outputs.dry_run == 'true' }}
     secrets: inherit
 
+  runtime-image:
+    name: Publish canonical Mentra Runtime image
+    needs: plan
+    permissions:
+      actions: read
+      attestations: write
+      contents: read
+      id-token: write
+      packages: write
+    uses: ./.github/workflows/reusable-coordinated-runtime-image.yml
+    with:
+      source_commit: ${{ needs.plan.outputs.source_commit }}
+      release_plan_artifact: ${{ needs.plan.outputs.plan_artifact }}
+      dry_run: ${{ needs.plan.outputs.dry_run == 'true' }}
+    secrets: inherit
+
   enterprise-runtime:
     name: Deploy release-matched enterprise Runtime
-    needs: plan
+    needs: [plan, runtime-image]
     if: needs.plan.outputs.cloud_environment == 'dev'
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: read
     uses: ./.github/workflows/enterprise-runtime-dev.yml
     with:
       source_commit: ${{ needs.plan.outputs.source_commit }}
       release_plan_artifact: ${{ needs.plan.outputs.plan_artifact }}
+      runtime_image_artifact: ${{ needs.runtime-image.outputs.result_artifact }}
       dry_run: ${{ needs.plan.outputs.dry_run == 'true' }}
     secrets: inherit
 
@@ -679,11 +701,24 @@ jobs:
   finalize:
     name: Finalize immutable release bill of materials
     needs:
-      [plan, cloud-v2, enterprise-runtime, ota, npm, sdk-native, mobile, engine-consumer, starter-kit, example-testflight]
+      [
+        plan,
+        cloud-v2,
+        runtime-image,
+        enterprise-runtime,
+        ota,
+        npm,
+        sdk-native,
+        mobile,
+        engine-consumer,
+        starter-kit,
+        example-testflight,
+      ]
     if: >-
       always() &&
       needs.plan.result == 'success' &&
       needs.cloud-v2.result == 'success' &&
+      needs.runtime-image.result == 'success' &&
       (needs.enterprise-runtime.result == 'success' ||
         (needs.plan.outputs.cloud_environment != 'dev' && needs.enterprise-runtime.result == 'skipped')) &&
       needs.ota.result == 'success' &&
@@ -714,6 +749,11 @@ jobs:
         with:
           name: ${{ needs.cloud-v2.outputs.result_artifact }}
           path: release-input/cloud-v2
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.runtime-image.outputs.result_artifact }}
+          path: release-input/runtime-image
 
       - uses: actions/download-artifact@v4
         if: needs.plan.outputs.cloud_environment == 'dev'
@@ -790,6 +830,7 @@ jobs:
             --native release-input/sdk-native/sdk-native-publications.json \
             --mobile release-input/mobile/mobile-publications.json \
             --cloud release-input/cloud-v2/cloud-v2-deployment.json \
+            --runtime-image release-input/runtime-image/runtime-image-publication.json \
             "${enterprise_runtime_args[@]}" \
             "${starter_kit_args[@]}" \
             --asg-selection "$asg_selection" \
@@ -880,6 +921,7 @@ jobs:
             echo "- Release: \`${{ steps.results.outputs.identity }}\`"
             echo "- Source: \`${{ needs.plan.outputs.source_commit }}\`"
             echo "- Cloud deployment: \`$(jq -er .cloud.deploymentId finalized-release/publication-results.json 2>/dev/null || echo validated-only)\`"
+            echo "- Runtime image: \`$(jq -er '.runtimeImage.reference // "validated-only"' finalized-release/publication-results.json)\`"
             if [[ "${{ needs.plan.outputs.cloud_environment }}" == "dev" ]]; then
               echo "- Enterprise Runtime: \`$(jq -er '.enterpriseRuntime.azure.revision // "validated-only"' finalized-release/publication-results.json)\`"
             fi
@@ -1064,7 +1106,21 @@ jobs:
   notify-slack:
     name: Notify release Slack channel
     needs:
-      [plan, cloud-v2, enterprise-runtime, ota, npm, sdk-native, mobile, engine-consumer, starter-kit, example-testflight, finalize, docs]
+      [
+        plan,
+        cloud-v2,
+        runtime-image,
+        enterprise-runtime,
+        ota,
+        npm,
+        sdk-native,
+        mobile,
+        engine-consumer,
+        starter-kit,
+        example-testflight,
+        finalize,
+        docs,
+      ]
     if: always() && github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
@@ -1086,6 +1142,7 @@ jobs:
           TESTFLIGHT_GROUP: ${{ needs.plan.outputs.testflight_group }}
           PLAN_RESULT: ${{ needs.plan.result }}
           CLOUD_V2_RESULT: ${{ needs.cloud-v2.result }}
+          RUNTIME_IMAGE_RESULT: ${{ needs.runtime-image.result }}
           ENTERPRISE_RUNTIME_RESULT: ${{ needs.enterprise-runtime.result }}
           OTA_RESULT: ${{ needs.ota.result }}
           NPM_RESULT: ${{ needs.npm.result }}

@@ -422,8 +422,9 @@ policy tests
 templates, and runbooks
 
 - [ ] Publish a release-matched call-focused deployment template.
-- [ ] Publish the existing Runtime image digest, SBOM, checksums, and Azure
-      deployment template with only `meetings` enabled.
+- [x] Publish the existing Runtime image once through public GHCR with an
+      immutable digest, signed SPDX SBOM and build provenance; mirror that exact
+      digest into the Azure reference deployment with only `meetings` enabled.
 - [ ] Publish customer-hostable Mentra Live OTA artifacts when OTA is enabled.
 - [ ] Reuse the exact normal Android and iOS app artifacts; no customer build
       lane.

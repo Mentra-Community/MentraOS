@@ -1,5 +1,10 @@
 # Mentra Private Deployment operations
 
+Image configuration, module/provider values, manifest rules, endpoints, and
+SBOM/provenance verification are defined once in
+[private-runtime.md](../../private-runtime.md). This runbook covers the
+Azure-specific mirror and lifecycle steps.
+
 This runbook covers the customer-owned Runtime image lifecycle and deployment
 checks. Use the release identity and Runtime digest from one coordinated Mentra
 release bill of materials; do not combine a Runtime from one release with a
@@ -10,22 +15,23 @@ Mentra App selected from another without explicit compatibility qualification.
 Mentra provides a digest-pinned source such as:
 
 ```text
-mentraenterpriseref.azurecr.io/mentra-runtime-enterprise@sha256:<digest>
+ghcr.io/mentra-community/mentra-runtime@sha256:<digest>
 ```
 
-Grant the customer registry's import identity temporary pull access to the
-source, then import and verify it:
+Verify its signed provenance and SBOM as described in the common contract, then
+import and verify it:
 
 ```bash
 cloud-v2/deploy/azure/enterprise-reference/scripts/import-runtime-image.sh \
   <customer-acr-name> \
-  mentraenterpriseref.azurecr.io/mentra-runtime-enterprise@sha256:<digest> \
+  ghcr.io/mentra-community/mentra-runtime@sha256:<digest> \
   <release-identity>
 ```
 
 The helper refuses a mutable source tag and prints the customer-owned
 digest-pinned image reference. Use that printed reference as `runtimeImage` in
-the Bicep deployment. Revoke the temporary source-registry access after import.
+the Bicep deployment. The public GHCR package requires no customer registry
+credentials.
 
 If the customer uses its own legal, logo, or managed miniapp files, replace the
 reference files, add the ZIPs, and build the small asset layer on top of the

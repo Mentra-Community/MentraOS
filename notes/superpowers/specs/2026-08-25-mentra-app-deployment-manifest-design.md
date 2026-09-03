@@ -93,12 +93,12 @@ It tracks the concerns separately so enterprise work does not accidentally
 rescope Nicolo's native ACS work or pull later Mentra Call features into the
 first deployment.
 
-| Concern | First integrated deployment | Later evolution |
-|---|---|---|
-| Product experience | Join an existing work/school Teams meeting by pasting its URL; one primary **Join Teams call** action; clear SoftAP connection, joining, in-call, failure, and leave states; leaving returns to the Mentra Call home screen | Create/invite/end meetings, calendar discovery, chat, custom display names, native sharing, and additional in-call controls |
-| Media transport | Mentra Live sends video directly to the phone over the local SoftAP transport; the native phone host sends ACS raw media to Teams and returns incoming voice to the glasses | Additional local transport optimization and qualified media/audio modes |
-| Identity and deployment | Nicolo's branch first proves the media path with an ACS guest identity; the enterprise integration replaces that credential source with the same employee Entra identity used to enter the workspace | Other IdPs, non-Entra deployments, and other meeting-provider identity models |
-| Meeting providers | Microsoft 365 work/school Teams through ACS | Google Meet, Zoom, and any consumer Recall-backed compatibility remain separate Mentra Call roadmap work |
+| Concern                 | First integrated deployment                                                                                                                                                                                                 | Later evolution                                                                                                             |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| Product experience      | Join an existing work/school Teams meeting by pasting its URL; one primary **Join Teams call** action; clear SoftAP connection, joining, in-call, failure, and leave states; leaving returns to the Mentra Call home screen | Create/invite/end meetings, calendar discovery, chat, custom display names, native sharing, and additional in-call controls |
+| Media transport         | Mentra Live sends video directly to the phone over the local SoftAP transport; the native phone host sends ACS raw media to Teams and returns incoming voice to the glasses                                                 | Additional local transport optimization and qualified media/audio modes                                                     |
+| Identity and deployment | Nicolo's branch first proves the media path with an ACS guest identity; the enterprise integration replaces that credential source with the same employee Entra identity used to enter the workspace                        | Other IdPs, non-Entra deployments, and other meeting-provider identity models                                               |
+| Meeting providers       | Microsoft 365 work/school Teams through ACS                                                                                                                                                                                 | Google Meet, Zoom, and any consumer Recall-backed compatibility remain separate Mentra Call roadmap work                    |
 
 The first combined product slice therefore requires:
 
@@ -223,11 +223,11 @@ the native ACS/media implementation currently being developed on
 `dev` and is limited to foundations that have no semantic dependency on that
 branch:
 
-| Lane | Owner | Starting point | Exit condition |
-|---|---|---|---|
-| Enterprise/platform foundations | Alex | One implementation branch from current `dev` | Workspace resolution, Entra sign-in, Runtime-only Engine auth, meetings-only Runtime, and server-harness ACS Teams-user exchange work without touching the native ACS branch |
-| Native Mentra Call/ACS media | Nicolo | `nicolo/acs-teams-v1`, rebased or merged with current `dev` by its owner | Existing Teams/ACS work is adapted to the direct SoftAP source and qualified on Android/iOS with audio, leave, and recovery |
-| Product integration | Alex and Nicolo jointly | Fresh `dev` after both prerequisite lanes merge | Host-owned enterprise credentials replace miniapp token pass-through, the bundled Mentra Call UX invokes the agreed provider-neutral host capability, and the complete enterprise call passes qualification |
+| Lane                            | Owner                   | Starting point                                                           | Exit condition                                                                                                                                                                                              |
+| ------------------------------- | ----------------------- | ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Enterprise/platform foundations | Alex                    | One implementation branch from current `dev`                             | Workspace resolution, Entra sign-in, Runtime-only Engine auth, meetings-only Runtime, and server-harness ACS Teams-user exchange work without touching the native ACS branch                                |
+| Native Mentra Call/ACS media    | Nicolo                  | `nicolo/acs-teams-v1`, rebased or merged with current `dev` by its owner | Existing Teams/ACS work is adapted to the direct SoftAP source and qualified on Android/iOS with audio, leave, and recovery                                                                                 |
+| Product integration             | Alex and Nicolo jointly | Fresh `dev` after both prerequisite lanes merge                          | Host-owned enterprise credentials replace miniapp token pass-through, the bundled Mentra Call UX invokes the agreed provider-neutral host capability, and the complete enterprise call passes qualification |
 
 - deployment manifest types, resolution, persistence, workspace selection, and
   pre-network policy gating;
@@ -513,9 +513,7 @@ The first call-focused template is illustrative:
     "mode": "microsoft-entra",
     "authorityUrl": "https://login.microsoftonline.com/11111111-2222-3333-4444-555555555555",
     "clientId": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-    "runtimeScopes": [
-      "api://bbbbbbbb-cccc-dddd-eeee-ffffffffffff/mentra.runtime"
-    ],
+    "runtimeScopes": ["api://bbbbbbbb-cccc-dddd-eeee-ffffffffffff/mentra.runtime"],
     "teamsScopes": [
       "https://auth.msft.communication.azure.com/Teams.ManageCalls",
       "https://auth.msft.communication.azure.com/Teams.ManageChats"
@@ -547,10 +545,7 @@ The first call-focused template is illustrative:
     "supportUrl": "https://mentra.example-corp.com/support"
   },
   "systemMiniapps": {
-    "approvedPackageNamesOverride": [
-      "com.mentra.call",
-      "com.mentra.settings"
-    ]
+    "approvedPackageNamesOverride": ["com.mentra.call", "com.mentra.settings"]
   },
   "miniapps": {
     "managed": [
@@ -769,8 +764,11 @@ Publish these release artifacts after implementation exists:
 - `mentra-deployment-template-<identity>.json`
 - the release-pinned bundled Mentra Call package
 - the existing Mentra Live OTA bundle
-- the existing Runtime image plus an Azure template and administrator runbook
-  for its `meetings` module set
+- the canonical public `ghcr.io/mentra-community/mentra-runtime` image pinned by
+  digest, with signed SPDX SBOM and build-provenance attestations; and
+- cloud-specific deployment adapters, beginning with the Azure template and
+  administrator runbook for the `meetings` module set. Customer ACR/ECR/private
+  registries mirror the canonical digest rather than rebuilding it.
 
 Do not create a second mobile build lane.
 

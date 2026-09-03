@@ -16,6 +16,14 @@ const plan = createReleasePlan({
   sourceCommit,
   nativeBuildNumber: 310000091,
 })
+
+function runtimeImage(status = "published") {
+  return {
+    status,
+    image: "ghcr.io/mentra-community/mentra-runtime",
+    digest: status === "published" ? `sha256:${"b".repeat(64)}` : undefined,
+  }
+}
 const workspaceOrigin = "https://enterprisedev.mentraglass.com"
 
 function create(status = "deployed") {
@@ -24,9 +32,11 @@ function create(status = "deployed") {
     sourceCommit,
     requestedTag: sourceCommit,
     status,
+    sourceImage: status === "deployed" ? "ghcr.io/mentra-community/mentra-runtime" : undefined,
+    sourceImageDigest: status === "deployed" ? `sha256:${"b".repeat(64)}` : undefined,
     image:
       status === "deployed"
-        ? `mentraenterpriseref.azurecr.io/mentra-runtime-enterprise:${sourceCommit}`
+        ? `mentraenterpriseref.azurecr.io/mentra-runtime-enterprise@sha256:${"b".repeat(64)}`
         : undefined,
     imageDigest: status === "deployed" ? `sha256:${"b".repeat(64)}` : undefined,
     revision: status === "deployed" ? "ca-mentra-enterprise-reference--0000091" : undefined,
@@ -49,33 +59,41 @@ test("records an immutable release-matched enterprise Runtime deployment", () =>
   assert.equal(record.sourceCommit, plan.sourceCommit)
   assert.equal(record.azure.requestedTag, plan.sourceCommit)
   assert.equal(record.azure.imageDigest, `sha256:${"b".repeat(64)}`)
-  assert.equal(validateEnterpriseRuntimeDeploymentRecord({plan, record}).azure.revision, record.azure.revision)
+  assert.equal(record.source.image, "ghcr.io/mentra-community/mentra-runtime")
+  assert.equal(record.source.imageDigest, record.azure.imageDigest)
+  assert.equal(
+    validateEnterpriseRuntimeDeploymentRecord({plan, record, runtimeImage: runtimeImage()}).azure.revision,
+    record.azure.revision,
+  )
 })
 
 test("permits validation-only evidence only when explicitly requested", () => {
   const record = create("validated")
-  assert.throws(
-    () => validateEnterpriseRuntimeDeploymentRecord({plan, record}),
-    /not a completed deployment/,
-  )
-  assert.equal(
-    validateEnterpriseRuntimeDeploymentRecord({plan, record, allowValidated: true}).status,
-    "validated",
-  )
+  assert.throws(() => validateEnterpriseRuntimeDeploymentRecord({plan, record}), /not a completed deployment/)
+  assert.equal(validateEnterpriseRuntimeDeploymentRecord({plan, record, allowValidated: true}).status, "validated")
 })
 
 test("rejects mutable or mismatched deployment evidence", () => {
   const wrongDigest = structuredClone(create())
   wrongDigest.azure.imageDigest = "latest"
-  assert.throws(
-    () => validateEnterpriseRuntimeDeploymentRecord({plan, record: wrongDigest}),
-    /immutable Azure image evidence/,
-  )
+  assert.throws(() => validateEnterpriseRuntimeDeploymentRecord({plan, record: wrongDigest}), /canonical GHCR source/)
 
   const wrongSource = structuredClone(create())
   wrongSource.sourceCommit = "c".repeat(40)
   assert.throws(
     () => validateEnterpriseRuntimeDeploymentRecord({plan, record: wrongSource}),
     /do not match a dev release plan/,
+  )
+
+  const rebuilt = structuredClone(create())
+  rebuilt.azure.imageDigest = `sha256:${"d".repeat(64)}`
+  rebuilt.azure.image = `mentraenterpriseref.azurecr.io/mentra-runtime-enterprise@${rebuilt.azure.imageDigest}`
+  assert.throws(() => validateEnterpriseRuntimeDeploymentRecord({plan, record: rebuilt}), /canonical GHCR source/)
+
+  const substitutedPublication = runtimeImage()
+  substitutedPublication.digest = `sha256:${"d".repeat(64)}`
+  assert.throws(
+    () => validateEnterpriseRuntimeDeploymentRecord({plan, record: create(), runtimeImage: substitutedPublication}),
+    /does not match the coordinated Runtime image/,
   )
 })

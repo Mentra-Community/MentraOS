@@ -171,27 +171,52 @@ test("Cloud V2 deploys once per coordinated environment before mobile publicatio
 
 test("enterprise Runtime is release-matched and recorded by the dev coordinator", () => {
   const coordinator = workflow("coordinated-release.yml")
+  const runtimeImage = workflow("reusable-coordinated-runtime-image.yml")
   const enterprise = workflow("enterprise-runtime-dev.yml")
+  const runtimeImageJob = jobBlock(coordinator, "runtime-image")
   const enterpriseJob = jobBlock(coordinator, "enterprise-runtime")
   const finalize = jobBlock(coordinator, "finalize")
   const notify = jobBlock(coordinator, "notify-slack")
 
-  assert.match(enterpriseJob, /^    needs: plan$/m)
+  assert.match(runtimeImageJob, /^    needs: plan$/m)
+  assert.match(runtimeImageJob, /reusable-coordinated-runtime-image\.yml/)
+  assert.match(runtimeImage, /ghcr\.io\/mentra-community\/mentra-runtime/)
+  assert.match(runtimeImage, /docker\/build-push-action@/)
+  assert.match(runtimeImage, /anchore\/sbom-action@/)
+  assert.equal((runtimeImage.match(/uses: actions\/attest@/g) || []).length, 2)
+  assert.match(runtimeImage, /tags: \$\{\{ steps\.coordinates\.outputs\.temporary_tag \}\}/)
+  assert.match(runtimeImage, /provenance: false/)
+  assert.ok(
+    runtimeImage.indexOf("- name: Attest new build provenance") <
+      runtimeImage.indexOf("- name: Publish immutable release and source tags"),
+  )
+  assert.match(runtimeImage, /- name: Verify reused image provenance/)
+  assert.match(runtimeImage, /--predicate-type https:\/\/spdx\.dev\/Document\/v2\.3/)
+  assert.match(runtimeImage, /coordinated-runtime-image-records\.mjs create/)
+  assert.match(enterpriseJob, /^    needs: \[plan, runtime-image\]$/m)
   assert.match(enterpriseJob, /needs\.plan\.outputs\.cloud_environment == 'dev'/)
   assert.match(enterpriseJob, /source_commit: \$\{\{ needs\.plan\.outputs\.source_commit \}\}/)
   assert.match(enterpriseJob, /release_plan_artifact: \$\{\{ needs\.plan\.outputs\.plan_artifact \}\}/)
+  assert.match(enterpriseJob, /runtime_image_artifact: \$\{\{ needs\.runtime-image\.outputs\.result_artifact \}\}/)
   assert.match(enterprise, /workflow_call:/)
   assert.doesNotMatch(enterprise, /push:/)
   assert.doesNotMatch(enterprise, /workflow_dispatch:/)
   assert.match(enterprise, /group: coordinated-enterprise-runtime-dev/)
   assert.match(enterprise, /\[\[ "\$source_commit" == "\$\{\{ inputs\.source_commit \}\}" \]\]/)
   assert.match(enterprise, /coordinated-enterprise-runtime-records\.mjs create/)
+  assert.match(enterprise, /az acr import/)
+  assert.doesNotMatch(enterprise, /az acr build/)
+  assert.match(enterprise, /ghcr\.io\/mentra-community\/mentra-runtime/)
+  assert.match(enterprise, /source_digest.*image_digest|image_digest.*source_digest/s)
   assert.match(enterprise, /workspaceHostname=enterprisedev\.mentraglass\.com/)
   assert.match(enterprise, /az acr manifest show-metadata/)
   assert.match(enterprise, /latestReadyRevisionName/)
   assert.match(finalize, /needs\.enterprise-runtime\.result == 'success'/)
+  assert.match(finalize, /needs\.runtime-image\.result == 'success'/)
+  assert.match(finalize, /--runtime-image release-input\/runtime-image\/runtime-image-publication\.json/)
   assert.match(finalize, /--enterprise-runtime release-input\/enterprise-runtime\/enterprise-runtime-deployment\.json/)
   assert.match(notify, /ENTERPRISE_RUNTIME_RESULT: \$\{\{ needs\.enterprise-runtime\.result \}\}/)
+  assert.match(notify, /RUNTIME_IMAGE_RESULT: \$\{\{ needs\.runtime-image\.result \}\}/)
 })
 
 test("mobile destinations use real TestFlight groups without changing the release channel", () => {
@@ -350,7 +375,7 @@ test("coordinated docs publish only after finalization to the matching channel",
   assert.match(docs, /%7b%7b\[a-z0-9_-\]\+%7d%7d/)
   assert.match(
     notify,
-    /^    needs:\n      \[plan, cloud-v2, enterprise-runtime, ota, npm, sdk-native, mobile, engine-consumer, starter-kit, example-testflight, finalize, docs\]$/m,
+    /^    needs:\n      \[\n        plan,\n        cloud-v2,\n        runtime-image,\n        enterprise-runtime,\n        ota,\n        npm,\n        sdk-native,\n        mobile,\n        engine-consumer,\n        starter-kit,\n        example-testflight,\n        finalize,\n        docs,\n      \]$/m,
   )
   assert.match(notify, /STARTER_KIT_RESULT: \$\{\{ needs\.starter-kit\.result \}\}/)
   assert.match(notify, /EXAMPLE_TESTFLIGHT_RESULT: \$\{\{ needs\.example-testflight\.result \}\}/)

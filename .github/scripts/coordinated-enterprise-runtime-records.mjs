@@ -5,6 +5,7 @@ import {fileURLToPath} from "node:url"
 
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/
+const CANONICAL_IMAGE = "ghcr.io/mentra-community/mentra-runtime"
 const TARGET = Object.freeze({
   environment: "enterprise-dev",
   resourceGroup: "rg-mentra-enterprise-reference",
@@ -73,6 +74,8 @@ export function createEnterpriseRuntimeDeploymentRecord({
   sourceCommit,
   requestedTag,
   status,
+  sourceImage,
+  sourceImageDigest,
   image,
   imageDigest,
   revision,
@@ -110,13 +113,25 @@ export function createEnterpriseRuntimeDeploymentRecord({
     provenanceUrl: requireHttps(provenanceUrl, "provenanceUrl"),
   }
   if (status === "deployed") {
-    const expectedImage = `${TARGET.registry}.azurecr.io/${TARGET.imageRepository}:${requestedTag}`
+    if (
+      sourceImage !== CANONICAL_IMAGE ||
+      !DIGEST_PATTERN.test(sourceImageDigest || "") ||
+      sourceImageDigest !== imageDigest
+    ) {
+      throw new Error("Enterprise Runtime deployment is missing its canonical GHCR source")
+    }
+    const expectedImage = `${TARGET.registry}.azurecr.io/${TARGET.imageRepository}@${imageDigest}`
     if (image !== expectedImage || !DIGEST_PATTERN.test(imageDigest || "") || !revision) {
       throw new Error("Enterprise Runtime deployment is missing immutable Azure image evidence")
     }
     const origin = requireHttps(workspaceOrigin, "workspaceOrigin")
     if (origin !== TARGET.workspaceOrigin) {
       throw new Error("Enterprise Runtime deployment uses the wrong workspace origin")
+    }
+    record.source = {
+      image: sourceImage,
+      imageDigest: sourceImageDigest,
+      reference: `${sourceImage}@${sourceImageDigest}`,
     }
     record.azure.image = image
     record.azure.imageDigest = imageDigest
@@ -127,7 +142,20 @@ export function createEnterpriseRuntimeDeploymentRecord({
   return record
 }
 
-export function validateEnterpriseRuntimeDeploymentRecord({plan, record, allowValidated = false}) {
+function assertCanonicalRuntimeImage(record, runtimeImage) {
+  if (!runtimeImage) return
+  if (record.status === "validated" && runtimeImage.status === "validated") return
+  if (
+    record.status !== "deployed" ||
+    runtimeImage.status !== "published" ||
+    runtimeImage.image !== CANONICAL_IMAGE ||
+    record.source?.imageDigest !== runtimeImage.digest
+  ) {
+    throw new Error("Enterprise Runtime deployment does not match the coordinated Runtime image")
+  }
+}
+
+export function validateEnterpriseRuntimeDeploymentRecord({plan, record, allowValidated = false, runtimeImage}) {
   validatePlan(plan, record?.sourceCommit)
   if (
     record.schemaVersion !== 1 ||
@@ -153,19 +181,28 @@ export function validateEnterpriseRuntimeDeploymentRecord({plan, record, allowVa
       record.azure.image !== undefined ||
       record.azure.imageDigest !== undefined ||
       record.azure.revision !== undefined ||
+      record.source !== undefined ||
       record.workspaceOrigin !== undefined ||
       record.checks !== undefined
     ) {
       throw new Error("Validation-only Enterprise Runtime evidence must not claim a live deployment")
     }
-    if (allowValidated) return record
+    if (allowValidated) {
+      assertCanonicalRuntimeImage(record, runtimeImage)
+      return record
+    }
   }
   if (record.status !== "deployed") throw new Error("Enterprise Runtime record is not a completed deployment")
-  return createEnterpriseRuntimeDeploymentRecord({
+  if (record.source?.reference !== `${CANONICAL_IMAGE}@${record.source?.imageDigest}`) {
+    throw new Error("Enterprise Runtime canonical source reference is inconsistent")
+  }
+  const validated = createEnterpriseRuntimeDeploymentRecord({
     plan,
     sourceCommit: record.sourceCommit,
     requestedTag: record.azure.requestedTag,
     status: record.status,
+    sourceImage: record.source.image,
+    sourceImageDigest: record.source.imageDigest,
     image: record.azure.image,
     imageDigest: record.azure.imageDigest,
     revision: record.azure.revision,
@@ -174,6 +211,8 @@ export function validateEnterpriseRuntimeDeploymentRecord({plan, record, allowVa
     completedAt: record.completedAt,
     provenanceUrl: record.provenanceUrl,
   })
+  assertCanonicalRuntimeImage(validated, runtimeImage)
+  return validated
 }
 
 function parseArgs(args) {
@@ -200,6 +239,8 @@ function main() {
     sourceCommit: args["source-commit"],
     requestedTag: args["requested-tag"],
     status: args.status,
+    sourceImage: args["source-image"],
+    sourceImageDigest: args["source-image-digest"],
     image: args.image,
     imageDigest: args["image-digest"],
     revision: args.revision,
