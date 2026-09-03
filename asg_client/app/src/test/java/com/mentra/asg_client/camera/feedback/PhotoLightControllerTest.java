@@ -5,8 +5,10 @@ import android.os.Looper;
 
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.robolectric.Shadows.shadowOf;
 
 import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
@@ -19,6 +21,8 @@ import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 import org.robolectric.shadows.ShadowLooper;
 
+import java.util.concurrent.TimeUnit;
+
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 33)
 public class PhotoLightControllerTest {
@@ -29,7 +33,67 @@ public class PhotoLightControllerTest {
     public void setUp() {
         hardwareManager = mock(IHardwareManager.class);
         when(hardwareManager.supportsRgbLed()).thenReturn(true);
+        when(hardwareManager.supportsRecordingLed()).thenReturn(true);
         controller = new PhotoLightController(hardwareManager, new Handler(Looper.getMainLooper()));
+    }
+
+    @Test
+    public void privacyLight_turnsOffWhenJpegArrives() {
+        PhotoLightController.Token token = controller.prepare(true);
+
+        controller.startPrivacyLight(token, "photo request");
+        ShadowLooper.idleMainLooper();
+        verify(hardwareManager).setRecordingLedOn();
+
+        controller.finishPrivacyLight(token, "JPEG frame available");
+        ShadowLooper.idleMainLooper();
+        verify(hardwareManager).setRecordingLedOff();
+    }
+
+    @Test
+    public void queuedPhotos_keepPrivacyLightOnUntilLastPhotoCompletes() {
+        PhotoLightController.Token first = controller.prepare(true);
+        PhotoLightController.Token second = controller.prepare(true);
+
+        controller.startPrivacyLight(first, "first request");
+        controller.startPrivacyLight(second, "second request");
+        ShadowLooper.idleMainLooper();
+        verify(hardwareManager, times(1)).setRecordingLedOn();
+
+        controller.finishPrivacyLight(first, "first JPEG");
+        ShadowLooper.idleMainLooper();
+        verify(hardwareManager, never()).setRecordingLedOff();
+
+        controller.finishPrivacyLight(second, "second JPEG");
+        ShadowLooper.idleMainLooper();
+        verify(hardwareManager).setRecordingLedOff();
+    }
+
+    @Test
+    public void disabledCapture_neverChangesPrivacyLight() {
+        PhotoLightController.Token token = controller.prepare(false);
+
+        controller.startPrivacyLight(token, "photo request");
+        controller.finishPrivacyLight(token, "JPEG frame available");
+        ShadowLooper.idleMainLooper();
+
+        verify(hardwareManager, never()).setRecordingLedOn();
+        verify(hardwareManager, never()).setRecordingLedOff();
+    }
+
+    @Test
+    public void missingCaptureCallback_releasesPrivacyLightAtSafetyTimeout() {
+        PhotoLightController.Token token = controller.prepare(true);
+
+        controller.startPrivacyLight(token, "photo request");
+        ShadowLooper.idleMainLooper();
+
+        shadowOf(Looper.getMainLooper())
+                .idleFor(
+                        AsgConstants.PHOTO_PRIVACY_LIGHT_SAFETY_TIMEOUT_MS,
+                        TimeUnit.MILLISECONDS);
+
+        verify(hardwareManager).setRecordingLedOff();
     }
 
     @Test

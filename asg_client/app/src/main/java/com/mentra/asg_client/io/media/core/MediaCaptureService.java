@@ -884,25 +884,6 @@ public class MediaCaptureService {
         return photoFeedbackController.start(requestId, cameraWarm);
     }
 
-    /** Flash privacy LED synchronized with shutter sound for photo capture */
-    private void flashPrivacyLedForPhoto() {
-        if (hardwareManager == null) {
-            Log.w(TAG, "⚠️ hardwareManager is null, cannot flash privacy LED");
-            return;
-        }
-
-        if (!hardwareManager.supportsRecordingLed()) {
-            Log.w(TAG, "⚠️ Privacy LED not supported on this device");
-            return;
-        }
-
-        Log.d(TAG, "📸 Flashing privacy LED synchronized with shutter sound at 50% brightness");
-        // TODO: RESTORE LOWER LED BRIGHTNESS LATER
-        // hardwareManager.setRecordingLedBrightness(50, 1000); // 50% brightness, 1000ms flash
-        // duration
-        hardwareManager.flashRecordingLed(1000);
-    }
-
     /** Trigger solid white LED for video recording duration (default brightness) */
     private void triggerVideoRecordingLed() {
         triggerVideoRecordingLed(RgbLedConstants.DEFAULT_BRIGHTNESS);
@@ -2089,13 +2070,15 @@ public class MediaCaptureService {
                         startPhotoFeedback(requestId, size, false, null, captureSettings);
             }
             if (enableFlash) {
-                flashPrivacyLedForPhoto(); // Flash privacy LED
+                photoLightController.startPrivacyLight(captureLightToken, "photo request");
             }
         }
         final PhotoFeedbackController.Token captureFeedbackToken = feedbackToken;
 
         // TESTING: Check for fake camera capture failure
         if (PhotoCaptureTestHooks.shouldFail("CAMERA_CAPTURE")) {
+            photoLightController.finishPrivacyLight(
+                    captureLightToken, "simulated capture failure");
             photoFeedbackController.stopForFailure(captureFeedbackToken);
             Log.e(TAG, "TESTING: Simulating camera capture failure");
             sendPhotoErrorResponse(
@@ -2161,6 +2144,8 @@ public class MediaCaptureService {
 
                     @Override
                     public void onPhotoFrameAvailable(long sensorTimestampNs) {
+                        photoLightController.finishPrivacyLight(
+                                captureLightToken, "JPEG frame available");
                         photoLightController.onCaptureBoundary(
                                 captureLightToken, "JPEG frame fallback");
                         photoFeedbackController.playSnap(
@@ -2174,6 +2159,8 @@ public class MediaCaptureService {
 
                     @Override
                     public void onPhotoCaptured(String filePath, JSONObject captureMetadata) {
+                        photoLightController.finishPrivacyLight(
+                                captureLightToken, "photo completion fallback");
                         photoLightController.onCaptureBoundary(
                                 captureLightToken, "photo completion fallback");
                         photoFeedbackController.playSnap(
@@ -2198,9 +2185,6 @@ public class MediaCaptureService {
                                 null,
                                 captureMetadata);
 
-                        // LED is now managed by CameraNeoService and will turn off when camera
-                        // closes
-
                         // Notify through standard capture listener if set up
                         if (mMediaCaptureListener != null) {
                             mMediaCaptureListener.onPhotoCaptured(requestId, filePath);
@@ -2213,6 +2197,8 @@ public class MediaCaptureService {
 
                     @Override
                     public void onPhotoFailureDetected() {
+                        photoLightController.finishPrivacyLight(
+                                captureLightToken, "capture failure");
                         photoFeedbackController.stopForFailure(captureFeedbackToken);
                     }
 
@@ -2223,12 +2209,10 @@ public class MediaCaptureService {
 
                     @Override
                     public void onPhotoError(CameraOperationError error) {
+                        photoLightController.finishPrivacyLight(captureLightToken, "photo error");
                         photoFeedbackController.stopForFailure(captureFeedbackToken);
                         Log.e(TAG, "Failed to capture offline photo: " + error.message());
                         sendPhotoStatus(requestId, "failed", null, error.code(), error.message());
-
-                        // LED is now managed by CameraNeoService and will turn off when camera
-                        // closes
 
                         if (mMediaCaptureListener != null) {
                             mMediaCaptureListener.onMediaError(
@@ -2239,6 +2223,7 @@ public class MediaCaptureService {
                     }
                 });
         } catch (Exception e) {
+            photoLightController.finishPrivacyLight(captureLightToken, "enqueue failure");
             photoFeedbackController.stopForFailure(captureFeedbackToken);
             Log.e(TAG, "Failed to enqueue button photo", e);
             sendPhotoStatus(
@@ -2350,7 +2335,7 @@ public class MediaCaptureService {
                                 captureSettings);
             }
             if (enableFlash) {
-                flashPrivacyLedForPhoto();
+                photoLightController.startPrivacyLight(captureLightToken, "photo request");
             }
         }
         final PhotoFeedbackController.Token captureFeedbackToken = feedbackToken;
@@ -2407,6 +2392,8 @@ public class MediaCaptureService {
 
                         @Override
                         public void onPhotoFrameAvailable(long sensorTimestampNs) {
+                            photoLightController.finishPrivacyLight(
+                                    captureLightToken, "JPEG frame available");
                             photoLightController.onCaptureBoundary(
                                     captureLightToken, "JPEG frame fallback");
                             photoFeedbackController.playSnap(
@@ -2428,6 +2415,8 @@ public class MediaCaptureService {
                                 String filePath,
                                 JSONObject captureMetadata,
                                 CapturedPhoto capturedPhoto) {
+                            photoLightController.finishPrivacyLight(
+                                    captureLightToken, "photo completion fallback");
                             photoLightController.onCaptureBoundary(
                                     captureLightToken, "photo completion fallback");
                             photoFeedbackController.playSnap(
@@ -2506,6 +2495,8 @@ public class MediaCaptureService {
 
                         @Override
                         public void onPhotoFailureDetected() {
+                            photoLightController.finishPrivacyLight(
+                                    captureLightToken, "capture failure");
                             photoFeedbackController.stopForFailure(captureFeedbackToken);
                         }
 
@@ -2516,6 +2507,8 @@ public class MediaCaptureService {
 
                         @Override
                         public void onPhotoError(CameraOperationError error) {
+                            photoLightController.finishPrivacyLight(
+                                    captureLightToken, "photo error");
                             photoFeedbackController.stopForFailure(captureFeedbackToken);
                             try {
                                 Log.e(
@@ -2539,6 +2532,7 @@ public class MediaCaptureService {
                     });
             return true;
         } catch (Exception e) {
+            photoLightController.finishPrivacyLight(captureLightToken, "enqueue failure");
             photoFeedbackController.stopForFailure(captureFeedbackToken);
             try {
                 Log.e(TAG, "Error taking local-save photo", e);
@@ -2727,7 +2721,7 @@ public class MediaCaptureService {
         }
         sendPhotoStatus(requestId, "queued");
 
-        // LED control is now handled by CameraNeoService tied to camera lifecycle
+        // Photo lights are scoped to the camera callbacks below.
 
         // TESTING: Check for fake camera capture failure
         if (PhotoCaptureTestHooks.shouldFail("CAMERA_CAPTURE")) {
@@ -2766,7 +2760,7 @@ public class MediaCaptureService {
                                     captureSettings);
                 }
                 if (enableFlash) {
-                    flashPrivacyLedForPhoto();
+                    photoLightController.startPrivacyLight(captureLightToken, "photo request");
                 }
             }
             final PhotoFeedbackController.Token captureFeedbackToken = feedbackToken;
@@ -2850,6 +2844,8 @@ public class MediaCaptureService {
 
                         @Override
                         public void onPhotoFrameAvailable(long sensorTimestampNs) {
+                            photoLightController.finishPrivacyLight(
+                                    captureLightToken, "JPEG frame available");
                             photoLightController.onCaptureBoundary(
                                     captureLightToken, "JPEG frame fallback");
                             photoFeedbackController.playSnap(
@@ -2891,9 +2887,6 @@ public class MediaCaptureService {
                                     null,
                                     captureMetadata);
 
-                            // LED is now managed by CameraNeoService and will turn off when camera
-                            // closes
-
                             // Notify that we've captured the photo
                             if (mMediaCaptureListener != null) {
                                 mMediaCaptureListener.onPhotoCaptured(requestId, filePath);
@@ -2922,6 +2915,8 @@ public class MediaCaptureService {
                                 String filePath,
                                 JSONObject captureMetadata,
                                 CapturedPhoto capturedPhoto) {
+                            photoLightController.finishPrivacyLight(
+                                    captureLightToken, "photo completion fallback");
                             photoLightController.onCaptureBoundary(
                                     captureLightToken, "photo completion fallback");
                             photoFeedbackController.playSnap(
@@ -3004,6 +2999,8 @@ public class MediaCaptureService {
 
                         @Override
                         public void onPhotoFailureDetected() {
+                            photoLightController.finishPrivacyLight(
+                                    captureLightToken, "capture failure");
                             photoFeedbackController.stopForFailure(captureFeedbackToken);
                         }
 
@@ -3014,6 +3011,8 @@ public class MediaCaptureService {
 
                         @Override
                         public void onPhotoError(CameraOperationError error) {
+                            photoLightController.finishPrivacyLight(
+                                    captureLightToken, "photo error");
                             photoFeedbackController.stopForFailure(captureFeedbackToken);
                             cleanupPhotoArtifacts(requestId, photoFilePath, false);
                             clearPhotoTracking(requestId);
@@ -3021,9 +3020,6 @@ public class MediaCaptureService {
 
                             Log.e(TAG, "Failed to capture photo: " + error.message());
                             sendPhotoErrorResponse(requestId, error.code(), error.message());
-
-                            // LED is now managed by CameraNeoService and will turn off when camera
-                            // closes
 
                             dumpTimings(requestId);
 
@@ -3037,6 +3033,7 @@ public class MediaCaptureService {
                     });
             return true;
         } catch (Exception e) {
+            photoLightController.finishPrivacyLight(captureLightToken, "enqueue failure");
             photoFeedbackController.stopForFailure(feedbackToken);
             cleanupPhotoArtifacts(requestId, photoFilePath, false);
             clearPhotoTracking(requestId);
@@ -5122,7 +5119,7 @@ public class MediaCaptureService {
         sendPhotoStatus(requestId, "queued");
         logBlePhotoStep(requestId, "photo_status_queued");
 
-        // LED control is now handled by CameraNeoService tied to camera lifecycle
+        // Photo lights are scoped to the camera callbacks below.
 
         // TESTING: Check for fake camera capture failure
         if (PhotoCaptureTestHooks.shouldFail("CAMERA_CAPTURE")) {
@@ -5163,7 +5160,7 @@ public class MediaCaptureService {
                                 captureSettings);
             }
             if (enableFlash) {
-                flashPrivacyLedForPhoto();
+                photoLightController.startPrivacyLight(captureLightToken, "photo request");
             }
         }
         final PhotoFeedbackController.Token captureFeedbackToken = feedbackToken;
@@ -5253,6 +5250,8 @@ public class MediaCaptureService {
 
                         @Override
                         public void onPhotoFrameAvailable(long sensorTimestampNs) {
+                            photoLightController.finishPrivacyLight(
+                                    captureLightToken, "JPEG frame available");
                             photoLightController.onCaptureBoundary(
                                     captureLightToken, "JPEG frame fallback");
                             photoFeedbackController.playSnap(
@@ -5274,6 +5273,8 @@ public class MediaCaptureService {
                                 String filePath,
                                 JSONObject captureMetadata,
                                 CapturedPhoto capturedPhoto) {
+                            photoLightController.finishPrivacyLight(
+                                    captureLightToken, "photo completion fallback");
                             photoLightController.onCaptureBoundary(
                                     captureLightToken, "photo completion fallback");
                             photoFeedbackController.playSnap(
@@ -5317,9 +5318,6 @@ public class MediaCaptureService {
                                     null,
                                     captureMetadata);
 
-                            // LED is now managed by CameraNeoService and will turn off when camera
-                            // closes
-
                             // Notify that we've captured the photo
                             if (mMediaCaptureListener != null) {
                                 mMediaCaptureListener.onPhotoCaptured(requestId, filePath);
@@ -5333,6 +5331,8 @@ public class MediaCaptureService {
 
                         @Override
                         public void onPhotoFailureDetected() {
+                            photoLightController.finishPrivacyLight(
+                                    captureLightToken, "capture failure");
                             photoFeedbackController.stopForFailure(captureFeedbackToken);
                         }
 
@@ -5343,6 +5343,8 @@ public class MediaCaptureService {
 
                         @Override
                         public void onPhotoError(CameraOperationError error) {
+                            photoLightController.finishPrivacyLight(
+                                    captureLightToken, "photo error");
                             photoFeedbackController.stopForFailure(captureFeedbackToken);
                             BlePhotoTimingLog.unbindPhaseSink(capturePhaseSink);
                             cleanupPhotoArtifacts(requestId, photoFilePath, false);
@@ -5350,9 +5352,6 @@ public class MediaCaptureService {
                             releasePhotoJob(requestId);
 
                             Log.e(TAG, "Failed to capture photo for BLE: " + error.message());
-
-                            // LED is now managed by CameraNeoService and will turn off when camera
-                            // closes
 
                             dumpTimings(requestId);
                             sendPhotoErrorResponse(requestId, error.code(), error.message());
@@ -5367,6 +5366,7 @@ public class MediaCaptureService {
                     });
             return true;
         } catch (Exception e) {
+            photoLightController.finishPrivacyLight(captureLightToken, "enqueue failure");
             photoFeedbackController.stopForFailure(captureFeedbackToken);
             BlePhotoTimingLog.unbindPhaseSink(null);
             cleanupPhotoArtifacts(requestId, photoFilePath, false);
@@ -7060,6 +7060,7 @@ public class MediaCaptureService {
         videoRecordingLifecycle.cancelPendingStart();
 
         try {
+            photoLightController.cleanup();
             photoFeedbackController.cleanup();
 
             // Stop battery monitoring

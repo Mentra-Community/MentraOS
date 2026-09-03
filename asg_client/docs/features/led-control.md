@@ -177,7 +177,7 @@ The current camera paths use the two LED systems as follows:
 
 | Event | Local MTK recording/privacy LED | RGB status LED |
 | --- | --- | --- |
-| Photo capture | Brief flash | White for approximately 2.2 seconds |
+| Photo capture | On while capture is pending; off when the JPEG frame arrives | White for approximately 2.2 seconds |
 | Video recording start | Solid on | Solid white, with a 30-minute command duration |
 | Video recording stop or error | Off | Off |
 | RTMP, SRT, or WHIP stream start | Solid on | Unchanged |
