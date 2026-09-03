@@ -96,6 +96,25 @@ public class QueuedPhotoRequestQueueTest {
     }
 
     @Test
+    public void removeByFilePath_removesOnlyTimedOutRequestAndRestoresCallback() {
+        QueuedPhotoRequestQueue q = QueuedPhotoRequestQueue.getInstance();
+        CameraNeoService.PhotoCaptureCallback cb = mock(CameraNeoService.PhotoCaptureCallback.class);
+        QueuedPhotoRequest timedOut =
+                new QueuedPhotoRequest("/timed-out", "s", false, true, null, cb);
+        QueuedPhotoRequest retained =
+                new QueuedPhotoRequest("/retained", "s", false, true, null, null);
+        q.offer(timedOut);
+        q.offer(retained);
+        timedOut.callback = null;
+
+        QueuedPhotoRequest removed = q.removeByFilePath("/timed-out");
+
+        assertThat(removed).isSameAs(timedOut);
+        assertThat(removed.callback).isSameAs(cb);
+        assertThat(q.poll()).isSameAs(retained);
+    }
+
+    @Test
     public void callbackRegistry_attachedOnPoll_whenRequestHadCallback() {
         QueuedPhotoRequestQueue q = QueuedPhotoRequestQueue.getInstance();
         CameraNeoService.PhotoCaptureCallback cb = mock(CameraNeoService.PhotoCaptureCallback.class);

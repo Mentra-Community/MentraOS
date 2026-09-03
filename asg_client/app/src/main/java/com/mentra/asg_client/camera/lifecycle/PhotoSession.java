@@ -822,6 +822,16 @@ public final class PhotoSession {
         }
     }
 
+    /** Cancels the active still capture only when it owns the requested output path. */
+    public boolean cancelActiveCapture(String filePath, String errorMessage) {
+        synchronized (hooks.serviceLock()) {
+            if (activeCapture == null || !Objects.equals(activeCapture.filePath, filePath)) {
+                return false;
+            }
+            return cancelActiveCapture(errorMessage);
+        }
+    }
+
     /**
      * Cancel and briefly await deferred disk writes so a wipe cannot race a late JPEG persistence.
      *

@@ -47,6 +47,12 @@ public final class PhotoLightController {
 
     /** Turns on the front-facing privacy light until the camera produces this photo. */
     public void startPrivacyLight(Token token, String timingSource) {
+        startPrivacyLight(token, timingSource, null);
+    }
+
+    /** Turns on the privacy light and optionally cancels a request that stalls before exposure. */
+    public void startPrivacyLight(
+            Token token, String timingSource, @Nullable Runnable preExposureTimeoutAction) {
         synchronized (mPrivacyLightLock) {
             if (!token.mEnabled
                     || token.mPrivacyLightActive
@@ -60,6 +66,16 @@ public final class PhotoLightController {
             mActivePrivacyLights.add(token);
             Log.i(TAG, "Acquiring privacy light from " + timingSource);
             mHardwareManager.acquireRecordingLed(token);
+            if (preExposureTimeoutAction != null) {
+                token.mPrivacyLightSafetyTimeout =
+                        () -> {
+                            preExposureTimeoutAction.run();
+                            finishPrivacyLight(token, "pre-exposure safety timeout");
+                        };
+                mHandler.postDelayed(
+                        token.mPrivacyLightSafetyTimeout,
+                        AsgConstants.PHOTO_PRIVACY_LIGHT_SAFETY_TIMEOUT_MS);
+            }
         }
     }
 
@@ -147,10 +163,11 @@ public final class PhotoLightController {
 
     private void armPrivacyLightSafetyTimeout(Token token) {
         synchronized (mPrivacyLightLock) {
-            if (!token.mPrivacyLightActive
-                    || token.mPrivacyLightTerminal
-                    || token.mPrivacyLightSafetyTimeout != null) {
+            if (!token.mPrivacyLightActive || token.mPrivacyLightTerminal) {
                 return;
+            }
+            if (token.mPrivacyLightSafetyTimeout != null) {
+                mHandler.removeCallbacks(token.mPrivacyLightSafetyTimeout);
             }
             token.mPrivacyLightSafetyTimeout =
                     () -> finishPrivacyLight(token, "safety timeout");

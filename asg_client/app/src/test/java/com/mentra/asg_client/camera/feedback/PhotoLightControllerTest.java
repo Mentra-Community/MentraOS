@@ -102,6 +102,37 @@ public class PhotoLightControllerTest {
     }
 
     @Test
+    public void preExposureTimeout_cancelsRequestBeforeReleasingPrivacyLight() {
+        PhotoLightController.Token token = controller.prepare(true);
+        Runnable cancelRequest = mock(Runnable.class);
+
+        controller.startPrivacyLight(token, "photo request", cancelRequest);
+        shadowOf(Looper.getMainLooper())
+                .idleFor(
+                        AsgConstants.PHOTO_PRIVACY_LIGHT_SAFETY_TIMEOUT_MS,
+                        TimeUnit.MILLISECONDS);
+
+        verify(cancelRequest).run();
+        verify(hardwareManager).releaseRecordingLed(token);
+    }
+
+    @Test
+    public void captureBoundary_replacesPreExposureTimeoutWithLostCallbackLease() {
+        PhotoLightController.Token token = controller.prepare(true);
+        Runnable cancelRequest = mock(Runnable.class);
+
+        controller.startPrivacyLight(token, "photo request", cancelRequest);
+        controller.onCaptureBoundary(token, "sensor exposure");
+        shadowOf(Looper.getMainLooper())
+                .idleFor(
+                        AsgConstants.PHOTO_PRIVACY_LIGHT_SAFETY_TIMEOUT_MS,
+                        TimeUnit.MILLISECONDS);
+
+        verify(cancelRequest, never()).run();
+        verify(hardwareManager).releaseRecordingLed(token);
+    }
+
+    @Test
     public void exposureBoundary_flashesPhotoLightOnce() {
         PhotoLightController.Token token = controller.prepare(true);
 

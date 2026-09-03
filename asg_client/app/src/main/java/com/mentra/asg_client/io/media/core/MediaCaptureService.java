@@ -625,6 +625,16 @@ public class MediaCaptureService {
                 finalPhotoPath(requestId, transportPath), transportPath);
     }
 
+    private void startPhotoPrivacyLight(
+            PhotoLightController.Token token, String photoFilePath) {
+        photoLightController.startPrivacyLight(
+                token,
+                "photo request",
+                () ->
+                        CameraNeoService.cancelPhotoCapture(
+                                photoFilePath, "Photo capture timed out before sensor exposure"));
+    }
+
     /** Clear request-scoped photo state after capture/upload/BLE handoff. */
     private void clearPhotoRequestTracking(String requestId) {
         photoSaveFlags.remove(requestId);
@@ -2104,7 +2114,7 @@ public class MediaCaptureService {
                         startPhotoFeedback(requestId, size, false, null, captureSettings);
             }
             if (enableFlash) {
-                photoLightController.startPrivacyLight(captureLightToken, "photo request");
+                startPhotoPrivacyLight(captureLightToken, photoFilePath);
             }
         }
         final PhotoFeedbackController.Token captureFeedbackToken = feedbackToken;
@@ -2368,7 +2378,7 @@ public class MediaCaptureService {
                                 captureSettings);
             }
             if (enableFlash) {
-                photoLightController.startPrivacyLight(captureLightToken, "photo request");
+                startPhotoPrivacyLight(captureLightToken, photoFilePath);
             }
         }
         if (textModeRequested) {
@@ -2795,7 +2805,7 @@ public class MediaCaptureService {
                                     captureSettings);
                 }
                 if (enableFlash) {
-                    photoLightController.startPrivacyLight(captureLightToken, "photo request");
+                    startPhotoPrivacyLight(captureLightToken, photoFilePath);
                 }
             }
             startCaptureSafetyTimeout(requestId, captureLightToken);
@@ -5198,7 +5208,7 @@ public class MediaCaptureService {
                                 captureSettings);
             }
             if (enableFlash) {
-                photoLightController.startPrivacyLight(captureLightToken, "photo request");
+                startPhotoPrivacyLight(captureLightToken, photoFilePath);
             }
         }
         startCaptureSafetyTimeout(requestId, captureLightToken);
