@@ -23,6 +23,7 @@ public final class PhotoLightController {
         private final AtomicBoolean mTriggered = new AtomicBoolean();
         private boolean mPrivacyLightActive;
         private boolean mPrivacyLightTerminal;
+        @Nullable private Runnable mCancelCaptureAction;
         @Nullable private Runnable mPrivacyLightSafetyTimeout;
 
         private Token(boolean enabled) {
@@ -50,9 +51,9 @@ public final class PhotoLightController {
         startPrivacyLight(token, timingSource, null);
     }
 
-    /** Turns on the privacy light and optionally cancels a request that stalls before exposure. */
+    /** Turns on the privacy light and optionally cancels a request before any fallback release. */
     public void startPrivacyLight(
-            Token token, String timingSource, @Nullable Runnable preExposureTimeoutAction) {
+            Token token, String timingSource, @Nullable Runnable cancelCaptureAction) {
         synchronized (mPrivacyLightLock) {
             if (!token.mEnabled
                     || token.mPrivacyLightActive
@@ -63,15 +64,13 @@ public final class PhotoLightController {
             }
 
             token.mPrivacyLightActive = true;
+            token.mCancelCaptureAction = cancelCaptureAction;
             mActivePrivacyLights.add(token);
             Log.i(TAG, "Acquiring privacy light from " + timingSource);
             mHardwareManager.acquireRecordingLed(token);
-            if (preExposureTimeoutAction != null) {
+            if (cancelCaptureAction != null) {
                 token.mPrivacyLightSafetyTimeout =
-                        () -> {
-                            preExposureTimeoutAction.run();
-                            finishPrivacyLight(token, "pre-exposure safety timeout");
-                        };
+                        () -> cancelCaptureAndFinish(token, "pre-exposure safety timeout");
                 mHandler.postDelayed(
                         token.mPrivacyLightSafetyTimeout,
                         AsgConstants.PHOTO_PRIVACY_LIGHT_SAFETY_TIMEOUT_MS);
@@ -89,6 +88,7 @@ public final class PhotoLightController {
                 return;
             }
             token.mPrivacyLightTerminal = true;
+            token.mCancelCaptureAction = null;
             if (token.mPrivacyLightSafetyTimeout != null) {
                 mHandler.removeCallbacks(token.mPrivacyLightSafetyTimeout);
                 token.mPrivacyLightSafetyTimeout = null;
@@ -108,22 +108,21 @@ public final class PhotoLightController {
 
     /** Releases any privacy-light ownership left behind during service teardown. */
     public void cleanup() {
+        final Token[] activeTokens;
         synchronized (mPrivacyLightLock) {
             if (mActivePrivacyLights.isEmpty()) {
                 return;
             }
-            for (Token token : mActivePrivacyLights) {
+            activeTokens = mActivePrivacyLights.toArray(new Token[0]);
+            for (Token token : activeTokens) {
                 if (token.mPrivacyLightSafetyTimeout != null) {
                     mHandler.removeCallbacks(token.mPrivacyLightSafetyTimeout);
                     token.mPrivacyLightSafetyTimeout = null;
                 }
-                token.mPrivacyLightActive = false;
-                token.mPrivacyLightTerminal = true;
-                if (mHardwareManager != null) {
-                    mHardwareManager.releaseRecordingLed(token);
-                }
             }
-            mActivePrivacyLights.clear();
+        }
+        for (Token token : activeTokens) {
+            cancelCaptureAndFinish(token, "service teardown");
         }
     }
 
@@ -170,11 +169,25 @@ public final class PhotoLightController {
                 mHandler.removeCallbacks(token.mPrivacyLightSafetyTimeout);
             }
             token.mPrivacyLightSafetyTimeout =
-                    () -> finishPrivacyLight(token, "safety timeout");
+                    () -> cancelCaptureAndFinish(token, "lost-callback safety timeout");
             mHandler.postDelayed(
                     token.mPrivacyLightSafetyTimeout,
                     AsgConstants.PHOTO_PRIVACY_LIGHT_SAFETY_TIMEOUT_MS);
         }
+    }
+
+    private void cancelCaptureAndFinish(Token token, String timingSource) {
+        final Runnable cancelCaptureAction;
+        synchronized (mPrivacyLightLock) {
+            if (token.mPrivacyLightTerminal) {
+                return;
+            }
+            cancelCaptureAction = token.mCancelCaptureAction;
+        }
+        if (cancelCaptureAction != null) {
+            cancelCaptureAction.run();
+        }
+        finishPrivacyLight(token, timingSource);
     }
 
     static int lightDurationMs(long estimatedExposureDurationNs) {

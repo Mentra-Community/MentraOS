@@ -3,6 +3,7 @@ package com.mentra.asg_client.camera.feedback;
 import android.os.Handler;
 import android.os.Looper;
 
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -16,6 +17,7 @@ import com.mentra.asg_client.io.hardware.interfaces.RgbLedConstants;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.mockito.InOrder;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 import org.robolectric.shadows.ShadowLooper;
@@ -112,12 +114,13 @@ public class PhotoLightControllerTest {
                         AsgConstants.PHOTO_PRIVACY_LIGHT_SAFETY_TIMEOUT_MS,
                         TimeUnit.MILLISECONDS);
 
-        verify(cancelRequest).run();
-        verify(hardwareManager).releaseRecordingLed(token);
+        InOrder order = inOrder(cancelRequest, hardwareManager);
+        order.verify(cancelRequest).run();
+        order.verify(hardwareManager).releaseRecordingLed(token);
     }
 
     @Test
-    public void captureBoundary_replacesPreExposureTimeoutWithLostCallbackLease() {
+    public void captureBoundary_replacesPreExposureTimeoutAndCancelsBeforeLeaseRelease() {
         PhotoLightController.Token token = controller.prepare(true);
         Runnable cancelRequest = mock(Runnable.class);
 
@@ -128,8 +131,22 @@ public class PhotoLightControllerTest {
                         AsgConstants.PHOTO_PRIVACY_LIGHT_SAFETY_TIMEOUT_MS,
                         TimeUnit.MILLISECONDS);
 
-        verify(cancelRequest, never()).run();
-        verify(hardwareManager).releaseRecordingLed(token);
+        InOrder order = inOrder(cancelRequest, hardwareManager);
+        order.verify(cancelRequest).run();
+        order.verify(hardwareManager).releaseRecordingLed(token);
+    }
+
+    @Test
+    public void cleanup_cancelsCaptureBeforeReleasingPrivacyLight() {
+        PhotoLightController.Token token = controller.prepare(true);
+        Runnable cancelRequest = mock(Runnable.class);
+
+        controller.startPrivacyLight(token, "photo request", cancelRequest);
+        controller.cleanup();
+
+        InOrder order = inOrder(cancelRequest, hardwareManager);
+        order.verify(cancelRequest).run();
+        order.verify(hardwareManager).releaseRecordingLed(token);
     }
 
     @Test

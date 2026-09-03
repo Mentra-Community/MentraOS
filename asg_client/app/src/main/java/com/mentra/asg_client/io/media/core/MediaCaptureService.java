@@ -3156,8 +3156,9 @@ public class MediaCaptureService {
                                 captureSafetyTimeoutRequestId = null;
                             }
                         }
-                        CameraNeoService.cancelPhotoCapture(
-                                photoFilePath, "Photo capture job timed out");
+                        boolean cameraRequestCancelled =
+                                CameraNeoService.cancelPhotoCapture(
+                                        photoFilePath, "Photo capture job timed out");
                         photoLightController.finishPrivacyLight(
                                 captureLightToken, "photo job safety timeout");
                         photoFeedbackController.stopForTimeout(requestId);
@@ -3169,10 +3170,12 @@ public class MediaCaptureService {
                                         + requestId);
                         dumpTimings(requestId);
                         clearBlePhotoTimingTracking(requestId);
-                        sendPhotoErrorResponse(
-                                requestId,
-                                "CAPTURE_TIMEOUT",
-                                "Photo job timed out on glasses - no terminal callback fired");
+                        if (!cameraRequestCancelled) {
+                            sendPhotoErrorResponse(
+                                    requestId,
+                                    "CAPTURE_TIMEOUT",
+                                    "Photo job timed out on glasses - no terminal callback fired");
+                        }
                     }
                 };
         synchronized (captureSafetyTimeoutLock) {
