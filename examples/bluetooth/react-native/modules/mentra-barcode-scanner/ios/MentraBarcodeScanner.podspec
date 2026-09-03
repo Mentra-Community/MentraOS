@@ -4,7 +4,7 @@ Pod::Spec.new do |s|
   s.summary        = 'Mentra local barcode scanner'
   s.description    = 'Small native barcode scanner used by Mentra Bluetooth SDK React Native examples to scan received photo previews.'
   s.author         = 'Mentra'
-  s.license        = { :type => 'MIT' }
+  s.license        = { :type => 'Apache-2.0' }
   s.homepage       = 'https://mentra.glass'
   s.platforms      = {
     :ios => '15.1'
