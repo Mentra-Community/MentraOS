@@ -51,6 +51,7 @@ public class K900LedController {
         }
     };
     private Runnable customBlinkRunnable;
+    private Runnable flashOffRunnable;
     
     private K900LedController() {
         // Create a dedicated thread for LED control to avoid blocking main thread
@@ -105,6 +106,7 @@ public class K900LedController {
                 "turn ON",
                 () -> {
                     stopBlinkingInternal();
+                    cancelPendingFlashOffInternal();
                     setLedStateInternal(true);
                     Log.d(TAG, "LED turned ON");
                 });
@@ -123,6 +125,7 @@ public class K900LedController {
                 "turn OFF",
                 () -> {
                     stopBlinkingInternal();
+                    cancelPendingFlashOffInternal();
                     setLedStateInternal(false);
                     Log.d(TAG, "LED turned OFF");
                 });
@@ -168,7 +171,8 @@ public class K900LedController {
                 Log.d(TAG, "LED already blinking");
                 return;
             }
-            
+
+            cancelPendingFlashOffInternal();
             isBlinking = true;
             Log.d(TAG, "LED blinking started");
             ledHandler.post(blinkRunnable);
@@ -188,6 +192,7 @@ public class K900LedController {
         
         ledHandler.post(() -> {
             stopBlinkingInternal();
+            cancelPendingFlashOffInternal();
             isBlinking = true;
             Log.d(TAG, String.format("LED custom blinking started (on=%dms, off=%dms)", 
                                      onDurationMs, offDurationMs));
@@ -217,6 +222,7 @@ public class K900LedController {
     public void stopBlinking() {
         ledHandler.post(() -> {
             stopBlinkingInternal();
+            cancelPendingFlashOffInternal();
             setLedStateInternal(false);
             Log.d(TAG, "LED blinking stopped");
         });
@@ -229,6 +235,14 @@ public class K900LedController {
         if (customBlinkRunnable != null) {
             ledHandler.removeCallbacks(customBlinkRunnable);
             customBlinkRunnable = null;
+        }
+    }
+
+    /** Cancels only the delayed OFF belonging to an earlier flash operation. */
+    private void cancelPendingFlashOffInternal() {
+        if (flashOffRunnable != null) {
+            ledHandler.removeCallbacks(flashOffRunnable);
+            flashOffRunnable = null;
         }
     }
     
@@ -275,13 +289,17 @@ public class K900LedController {
         
         ledHandler.post(() -> {
             stopBlinkingInternal();
+            cancelPendingFlashOffInternal();
             setLedStateInternal(true);
             Log.d(TAG, "LED flash for " + durationMs + "ms");
-            
-            ledHandler.postDelayed(() -> {
-                setLedStateInternal(false);
-                Log.d(TAG, "LED flash completed");
-            }, durationMs);
+
+            flashOffRunnable =
+                    () -> {
+                        flashOffRunnable = null;
+                        setLedStateInternal(false);
+                        Log.d(TAG, "LED flash completed");
+                    };
+            ledHandler.postDelayed(flashOffRunnable, durationMs);
         });
     }
     
@@ -303,6 +321,7 @@ public class K900LedController {
         ledHandler.post(() -> {
             try {
                 stopBlinkingInternal();
+                cancelPendingFlashOffInternal();
                 DevApi.setLedCustomBright(clampedPercent, clampedShowTime);
                 currentBrightness = clampedPercent;
                 isLedOn = (clampedPercent > 0);
