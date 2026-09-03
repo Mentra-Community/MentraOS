@@ -2331,7 +2331,6 @@ public class MediaCaptureService {
             return false;
         }
         if (textModeRequested) {
-            startCaptureSafetyTimeout(requestId);
             textRoiDetector.warmUp();
         }
 
@@ -2371,6 +2370,9 @@ public class MediaCaptureService {
             if (enableFlash) {
                 photoLightController.startPrivacyLight(captureLightToken, "photo request");
             }
+        }
+        if (textModeRequested) {
+            startCaptureSafetyTimeout(requestId, captureLightToken);
         }
         final PhotoFeedbackController.Token captureFeedbackToken = feedbackToken;
 
@@ -2734,7 +2736,6 @@ public class MediaCaptureService {
             sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Another photo job is in progress");
             return false;
         }
-        startCaptureSafetyTimeout(requestId);
         sendPhotoStatus(requestId, "accepted");
 
         // Store the save flag for this request
@@ -2797,6 +2798,7 @@ public class MediaCaptureService {
                     photoLightController.startPrivacyLight(captureLightToken, "photo request");
                 }
             }
+            startCaptureSafetyTimeout(requestId, captureLightToken);
             final PhotoFeedbackController.Token captureFeedbackToken = feedbackToken;
 
             // Use the new enqueuePhotoRequest for thread-safe rapid capture
@@ -3127,7 +3129,8 @@ public class MediaCaptureService {
      * CAPTURE_SAFETY_TIMEOUT_MS to prevent permanent lockout. Sized to outlast a slow webhook
      * upload.
      */
-    private void startCaptureSafetyTimeout(String requestId) {
+    private void startCaptureSafetyTimeout(
+            String requestId, PhotoLightController.Token captureLightToken) {
         Runnable timeout =
                 new Runnable() {
                     @Override
@@ -3141,6 +3144,8 @@ public class MediaCaptureService {
                                 captureSafetyTimeoutRequestId = null;
                             }
                         }
+                        photoLightController.finishPrivacyLight(
+                                captureLightToken, "photo job safety timeout");
                         photoFeedbackController.stopForTimeout(requestId);
                         Log.e(
                                 TAG,
@@ -5136,7 +5141,6 @@ public class MediaCaptureService {
             return false;
         }
         logBlePhotoStep(requestId, "photo_job_acquired", "single-flight camera job lock acquired");
-        startCaptureSafetyTimeout(requestId);
         sendPhotoStatus(requestId, "accepted");
         logBlePhotoStep(requestId, "photo_status_accepted");
 
@@ -5197,6 +5201,7 @@ public class MediaCaptureService {
                 photoLightController.startPrivacyLight(captureLightToken, "photo request");
             }
         }
+        startCaptureSafetyTimeout(requestId, captureLightToken);
         final PhotoFeedbackController.Token captureFeedbackToken = feedbackToken;
 
         try {
