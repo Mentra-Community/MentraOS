@@ -74,15 +74,19 @@ function response(body: string, options: {status?: number; url?: string; content
 }
 
 describe("normalizeWorkspaceOrigin", () => {
-  it("adds HTTPS and normalizes the origin", () => {
-    expect(normalizeWorkspaceOrigin("mentra.enterprise.example/")).toBe(WORKSPACE)
+  it.each([
+    "mentra.enterprise.example/",
+    "https://mentra.enterprise.example/path/to/a/homepage",
+    "https://mentra.enterprise.example/.well-known/mentra-deployment.json",
+    "https://mentra.enterprise.example?workspace=example#sign-in",
+  ])("normalizes a user-provided organization address %s", (input) => {
+    expect(normalizeWorkspaceOrigin(input)).toBe(WORKSPACE)
   })
 
   it.each([
     "http://mentra.enterprise.example",
     "https://user:password@mentra.enterprise.example",
-    "https://mentra.enterprise.example/path",
-    "https://mentra.enterprise.example?workspace=evil",
+    "ftp://mentra.enterprise.example",
   ])("rejects unsafe workspace input %s", (input) => {
     expect(() => normalizeWorkspaceOrigin(input)).toThrow(DeploymentResolutionError)
   })

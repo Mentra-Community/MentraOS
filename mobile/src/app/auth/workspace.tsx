@@ -26,8 +26,8 @@ export default function WorkspaceScreen() {
       setCandidate(candidate)
       push("/auth/workspace-confirm")
     } catch (cause) {
-      const message =
-        cause instanceof DeploymentResolutionError ? cause.message : translate("workspace:unknownResolutionError")
+      console.warn("Workspace resolution failed", cause)
+      const message = workspaceResolutionMessage(cause)
       setError(message)
     } finally {
       setLoading(false)
@@ -95,4 +95,11 @@ export default function WorkspaceScreen() {
       </ScrollView>
     </Screen>
   )
+}
+
+function workspaceResolutionMessage(cause: unknown): string {
+  if (!(cause instanceof DeploymentResolutionError)) return translate("workspace:unknownResolutionError")
+  if (cause.code === "invalid-workspace") return cause.message
+  if (cause.code === "network") return translate("workspace:notFoundError")
+  return translate("workspace:configurationError")
 }

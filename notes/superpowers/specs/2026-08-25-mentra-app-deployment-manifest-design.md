@@ -360,9 +360,11 @@ or validation. QR enrollment and a Mentra-hosted workspace directory are not in
 v1.
 
 HTTPS and the device trust store authenticate the workspace server. A device
-administrator may install a private CA. V1 rejects URL credentials, query
-strings, fragments, invalid TLS, oversized responses, and cross-origin
-redirects. Manifest signing is not required initially.
+administrator may install a private CA. The end-user field accepts a bare
+hostname, homepage URL, or complete well-known manifest URL and derives the
+workspace origin by discarding any path, query, or fragment. V1 rejects URL
+credentials, non-HTTPS origins, invalid TLS, oversized responses, and
+cross-origin redirects. Manifest signing is not required initially.
 
 ## Microsoft Entra is the main workspace sign-in
 

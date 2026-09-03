@@ -35,30 +35,29 @@ export interface ResolveDeploymentOptions {
 export function normalizeWorkspaceOrigin(input: string, allowInsecureLocalhost = false): string {
   const trimmed = input.trim()
   if (!trimmed) {
-    throw new DeploymentResolutionError("Enter a workspace URL.", "invalid-workspace")
+    throw new DeploymentResolutionError("Enter an organization address.", "invalid-workspace")
   }
 
   let url: URL
   try {
     url = new URL(trimmed.includes("://") ? trimmed : `https://${trimmed}`)
   } catch {
-    throw new DeploymentResolutionError("The workspace URL is invalid.", "invalid-workspace")
+    throw new DeploymentResolutionError("Enter a valid organization address.", "invalid-workspace")
   }
 
   const isLocalhost = url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "::1"
   if (url.protocol !== "https:" && !(allowInsecureLocalhost && isLocalhost && url.protocol === "http:")) {
-    throw new DeploymentResolutionError("The workspace must use HTTPS.", "invalid-workspace")
+    throw new DeploymentResolutionError("The organization address must use HTTPS.", "invalid-workspace")
   }
-  if (url.username || url.password || url.search || url.hash) {
+  if (url.username || url.password) {
     throw new DeploymentResolutionError(
-      "The workspace URL cannot contain credentials, query parameters, or fragments.",
+      "Enter an organization address without a username or password.",
       "invalid-workspace",
     )
   }
-  if (url.pathname !== "/" && url.pathname !== "") {
-    throw new DeploymentResolutionError("Enter only the workspace origin, without a path.", "invalid-workspace")
-  }
 
+  // People commonly paste a homepage or the complete well-known manifest URL.
+  // Discovery is origin-based, so paths, queries, and fragments are irrelevant.
   return url.origin
 }
 

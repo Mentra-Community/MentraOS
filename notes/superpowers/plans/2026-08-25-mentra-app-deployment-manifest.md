@@ -181,10 +181,12 @@ server-side harness. Lane A is not expected to place a Teams call.
 - [ ] Preserve current Google, Apple, and email controls and add a visually
       separate Connect to a workspace action.
 - [ ] Make consumer actions activate the embedded profile before auth.
-- [ ] Ask for a human-facing HTTPS workspace origin, not a JSON/Core/Runtime URL.
+- [ ] Ask for an organization address and normalize bare hostnames, homepage
+      URLs, and complete well-known manifest URLs to the workspace origin.
 - [ ] Fetch `/.well-known/mentra-deployment.json` directly from that origin.
-- [ ] Reject credentials, query, fragment, invalid TLS, oversized responses, and
-      cross-origin redirects.
+- [ ] Discard pasted paths, queries, and fragments; reject credentials,
+      non-HTTPS origins, invalid TLS, oversized responses, and cross-origin
+      redirects.
 - [ ] Require the configured Runtime URL to match the entered origin.
 - [ ] Keep the fetched workspace pending through resolution, schema validation,
       and security-policy validation.
