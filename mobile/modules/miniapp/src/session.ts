@@ -22,6 +22,7 @@ import {Transport} from "./transport/types"
 import {CameraModule} from "./modules/camera"
 import {AuthModule} from "./modules/auth"
 import {CloudModule} from "./modules/cloud"
+import {ConfigurationModule} from "./modules/configuration"
 import {DashboardAPI} from "./modules/dashboard"
 import {DisplayManager} from "./modules/display"
 import {EventManager, type TranscriptionEventRoute, type UnsubscribeFn} from "./modules/events"
@@ -105,6 +106,8 @@ export interface ConnectAckPayload {
   permissions?: PermissionRecord
   /** Miniapp-scoped backend auth. Never a Core or runtime token. */
   auth?: MiniappAuthState
+  /** Optional read-only configuration supplied to this exact package by the host. */
+  configuration?: Readonly<Record<string, string>>
 }
 
 export interface MiniappAuthState {
@@ -200,6 +203,7 @@ type SessionEmitterEvents = {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export class MiniappSession<TChannels extends object = any> {
   public readonly auth: AuthModule
+  public readonly configuration: ConfigurationModule
   public readonly display: DisplayManager
   /**
    * Internal subscription registry + escape hatch.
@@ -269,6 +273,7 @@ export class MiniappSession<TChannels extends object = any> {
   private readonly connectTimeoutMs: number
   private readonly emitter = new EventEmitter<SessionEmitterEvents>()
   private authState: MiniappAuthState | null = null
+  private configurationState: Readonly<Record<string, string>> = {}
   private readonly authWaiters = new Set<{
     minTtlMs: number
     resolve: (auth: MiniappAuthState) => void
@@ -306,6 +311,7 @@ export class MiniappSession<TChannels extends object = any> {
     }
 
     this.auth = new AuthModule(this)
+    this.configuration = new ConfigurationModule(this)
     this.events = new EventManager(this)
     this.speaker = new SpeakerModule(this)
     this.camera = new CameraModule(this)
@@ -361,6 +367,11 @@ export class MiniappSession<TChannels extends object = any> {
   /** @internal — current miniapp-scoped backend auth, if the host provided one. */
   _getAuth(): MiniappAuthState | null {
     return this.authState ? {...this.authState} : null
+  }
+
+  /** @internal — immutable package configuration received in CONNECT_ACK. */
+  _getConfiguration(): Readonly<Record<string, string>> {
+    return {...this.configurationState}
   }
 
   /**
@@ -627,6 +638,7 @@ export class MiniappSession<TChannels extends object = any> {
           this.applyAuth(ack.auth)
           if (!this.userId) this.userId = ack.auth.mentraUserId
         }
+        this.configurationState = Object.freeze({...ack.configuration})
         // Populate the manifest-declared permission cache. Older runtimes
         // that don't send `permissions` leave the all-false default in place
         // — `hasPermission` getters will simply return false.

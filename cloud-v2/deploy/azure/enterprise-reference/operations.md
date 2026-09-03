@@ -2,20 +2,19 @@
 
 Image configuration, module/provider values, manifest rules, endpoints, and
 SBOM/provenance verification are defined once in
-[private-runtime.md](../../private-runtime.md). This runbook covers the
+[private-deployment.md](../../private-deployment.md). This runbook covers the
 Azure-specific mirror and lifecycle steps.
 
-This runbook covers the customer-owned Runtime image lifecycle and deployment
-checks. Use the release identity and Runtime digest from one coordinated Mentra
-release bill of materials; do not combine a Runtime from one release with a
+Use the release identity and Mentra Cloud digest from one coordinated Mentra
+release bill of materials. Do not combine a Runtime from one release with a
 Mentra App selected from another without explicit compatibility qualification.
 
-## Import an immutable Runtime image
+## Import an immutable Mentra Cloud image
 
 Mentra provides a digest-pinned source such as:
 
 ```text
-ghcr.io/mentra-community/mentra-runtime@sha256:<digest>
+ghcr.io/mentra-community/mentra-cloud@sha256:<digest>
 ```
 
 Verify its signed provenance and SBOM as described in the common contract, then
@@ -24,12 +23,12 @@ import and verify it:
 ```bash
 cloud-v2/deploy/azure/enterprise-reference/scripts/import-runtime-image.sh \
   <customer-acr-name> \
-  ghcr.io/mentra-community/mentra-runtime@sha256:<digest> \
+  ghcr.io/mentra-community/mentra-cloud@sha256:<digest> \
   <release-identity>
 ```
 
 The helper refuses a mutable source tag and prints the customer-owned
-digest-pinned image reference. Use that printed reference as `runtimeImage` in
+digest-pinned image reference. Use that printed reference as `cloudImage` in
 the Bicep deployment. The public GHCR package requires no customer registry
 credentials.
 
@@ -40,14 +39,14 @@ imported digest instead of rebuilding MentraOS:
 ```bash
 az acr build \
   --registry <customer-acr-name> \
-  --build-arg MENTRA_RUNTIME_IMAGE=<imported-image@sha256:digest> \
-  --image mentra-runtime-enterprise:<release-identity>-customer \
+  --build-arg MENTRA_CLOUD_IMAGE=<imported-image@sha256:digest> \
+  --image mentra-cloud-enterprise:<release-identity>-customer \
   --file cloud-v2/deploy/azure/enterprise-reference/Dockerfile.customer-assets \
   .
 ```
 
 Resolve and record the derived image's digest, then pass that digest—not its
-mutable tag—to `runtimeImage`.
+mutable tag—to `cloudImage`.
 
 If the customer cannot allow registry-to-registry transfer, Mentra may export
 the same OCI image through the customer's approved offline artifact-transfer
@@ -60,9 +59,11 @@ Record and approve these values before deployment:
 
 - Azure subscription, resource group, region, and ACS data location;
 - workspace hostname and DNS ownership;
-- Entra tenant, Runtime application client id, and Mobile application client id;
+- Entra tenant, Core API client id, and Mobile application client id;
 - the Android/iOS Mentra App distribution channels and matching redirect URIs;
 - employee/group assignment, administrator consent, MFA, and Conditional Access;
+- persistent Mongo, refresh pepper, access/Runtime signing key, miniapp signing
+  key, backup, and rotation ownership;
 - approved SYSTEM miniapps and glasses models;
 - customer-managed userland miniapp package, version, URL, and SHA-256 pins;
 - privacy, terms, documentation, support, logo, and wallpaper assets;
@@ -75,6 +76,16 @@ location, legal/support URLs, SYSTEM allowlist, userland managed list, glasses
 allowlist, version policy, and telemetry. The reference logo and same-origin
 legal files are image assets; replace them in a customer-derived image or place
 equivalent routes behind the customer workspace ingress.
+
+For a new deployment, generate the five persistent secret values once:
+
+```bash
+cloud-v2/deploy/azure/enterprise-reference/scripts/generate-private-secrets.sh \
+  /secure/path/mentra-private-secrets.json
+```
+
+Import the file into approved secret management. The helper refuses to
+overwrite an existing file and never writes the values to stdout.
 
 ## Customer-managed userland miniapps
 
@@ -111,9 +122,9 @@ changed managed list, the employee uses the workspace-change flow and selects
 the same workspace again. Automatic background manifest refresh is a later
 delivery feature; Runtime minimum-version policy remains live and independent.
 
-The reference Runtime image does not contain customer miniapp ZIPs. Put them in
+The reference Mentra Cloud image does not contain customer miniapp ZIPs. Put them in
 `cloud-v2/deploy/azure/enterprise-reference/miniapps/` when producing the
-customer-derived Runtime image, or provide the same path through a
+customer-derived Mentra Cloud image, or provide the same path through a
 customer-owned ingress. Runtime verifies every image-bundled ZIP against the
 manifest at startup and serves its declared `/miniapps/*` path with immutable
 cache headers. A missing or mismatched bundle prevents Runtime startup. Keep the
@@ -125,10 +136,10 @@ files.
 
 ## Upgrade
 
-1. Save the currently deployed Runtime digest and Bicep parameter set.
-2. Import the new coordinated Runtime by digest.
+1. Save the currently deployed Mentra Cloud digest and Bicep parameter set.
+2. Import the new coordinated Mentra Cloud by digest.
 3. Review manifest/configuration changes and keep the old image in the registry.
-4. Deploy `main.bicep` with the new digest-pinned `runtimeImage`.
+4. Deploy `main.bicep` with the new digest-pinned `cloudImage`.
 5. Run the smoke test:
 
    ```bash
@@ -141,9 +152,9 @@ files.
 
 ## Rollback
 
-Redeploy the previous Bicep parameters with the saved previous image digest,
-then rerun the smoke test and sign-in/call checks. Do not roll back the Runtime
-alone if the manifest schema or mobile protocol requires a coordinated mobile
+Redeploy both Core and Runtime with the previous Bicep parameters and saved
+image digest, then rerun the smoke test and sign-in/call checks. Do not roll
+back only one service if the token, manifest, or mobile contract requires a coordinated
 rollback; use the matching prior coordinated release set.
 
 Managed miniapps roll forward independently through their manifest version and

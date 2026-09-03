@@ -18,30 +18,31 @@
  * `InvalidRequest`.
  */
 
-import { createMiddleware } from "hono/factory";
-import { InvalidRequest } from "../../types/oauth.types";
-import { verifyAccessToken } from "../../services/session.service";
-import type { AppEnv } from "../../types/hono.types";
+import {createMiddleware} from "hono/factory"
+import {InvalidRequest} from "../../types/oauth.types"
+import {verifyAccessToken} from "../../services/session.service"
+import type {AppEnv} from "../../types/hono.types"
 
-const BEARER_PREFIX = "Bearer ";
+const BEARER_PREFIX = "Bearer "
 
 export const userAuth = createMiddleware<AppEnv>(async (c, next) => {
-  const header = c.req.header("authorization");
+  const header = c.req.header("authorization")
   if (!header || !header.startsWith(BEARER_PREFIX)) {
-    throw new InvalidRequest("missing or malformed Authorization header");
+    throw new InvalidRequest("missing or malformed Authorization header")
   }
-  const token = header.slice(BEARER_PREFIX.length).trim();
+  const token = header.slice(BEARER_PREFIX.length).trim()
   if (!token) {
-    throw new InvalidRequest("Authorization header has empty bearer token");
+    throw new InvalidRequest("Authorization header has empty bearer token")
   }
 
-  const verified = await verifyAccessToken(token);
+  const verified = await verifyAccessToken(token)
 
   c.set("user", {
     mentraUserId: verified.mentraUserId,
     tenantId: verified.tenantId,
     sessionId: verified.sessionId,
-  });
+    ...(verified.federatedIdentity ? {federatedIdentity: verified.federatedIdentity} : {}),
+  })
 
-  await next();
-});
+  await next()
+})

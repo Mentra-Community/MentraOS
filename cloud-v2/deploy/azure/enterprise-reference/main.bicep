@@ -1,15 +1,26 @@
-@description('Azure region for the Runtime container and registry.')
+@description('Azure region for the Core, Runtime, and database.')
 param location string = resourceGroup().location
 
-@description('Built Runtime image, including registry host and immutable tag or digest.')
-param runtimeImage string
+@description('Built Mentra Cloud image, including registry host and immutable digest.')
+param cloudImage string
 
 @description('Existing Azure Container Registry created by bootstrap.bicep.')
 param registryName string
 
 param tenantId string
-param runtimeApiClientId string
+param coreApiClientId string
 param mobileClientId string
+
+@secure()
+param refreshTokenPepper string
+@secure()
+param mentraJwtPrivateKey string
+@secure()
+param mentraJwtPublicKey string
+@secure()
+param miniappJwtPrivateKey string
+@secure()
+param miniappJwtPublicKey string
 
 @description('Optional canonical workspace hostname. DNS must point directly to the Container App before enabling it.')
 param workspaceHostname string = ''
@@ -27,6 +38,8 @@ param deploymentId string = 'mentra-enterprise-reference'
 param displayName string = 'Mentra Enterprise Demo'
 param environmentName string = 'cae-mentra-enterprise-reference'
 param runtimeName string = 'ca-mentra-enterprise-reference'
+param coreName string = 'ca-mentra-enterprise-reference-core'
+param mongoAccountName string = take('cosmos-${uniqueString(subscription().id, resourceGroup().id)}', 44)
 param pullIdentityName string = 'id-mentra-enterprise-reference-pull'
 param communicationName string = take('mentra-${uniqueString(subscription().id, resourceGroup().id)}', 63)
 @description('ACS data location approved by the customer, for example United States or Europe.')
@@ -83,6 +96,29 @@ resource environment 'Microsoft.App/managedEnvironments@2024-03-01' = {
   properties: {}
 }
 
+resource mongo 'Microsoft.DocumentDB/databaseAccounts@2024-11-15' = {
+  name: mongoAccountName
+  location: location
+  kind: 'MongoDB'
+  properties: {
+    apiProperties: { serverVersion: '4.2' }
+    databaseAccountOfferType: 'Standard'
+    locations: [
+      {
+        locationName: location
+        failoverPriority: 0
+        isZoneRedundant: false
+      }
+    ]
+    capabilities: [
+      { name: 'EnableMongo' }
+      { name: 'EnableServerless' }
+    ]
+    consistencyPolicy: { defaultConsistencyLevel: 'Session' }
+    publicNetworkAccess: 'Enabled'
+  }
+}
+
 resource workspaceCertificate 'Microsoft.App/managedEnvironments/managedCertificates@2024-03-01' = if (!empty(workspaceHostname)) {
   parent: environment
   name: '${runtimeName}-workspace'
@@ -94,7 +130,10 @@ resource workspaceCertificate 'Microsoft.App/managedEnvironments/managedCertific
 }
 
 var generatedRuntimeHostname = '${runtimeName}.${environment.properties.defaultDomain}'
+var generatedCoreHostname = '${coreName}.${environment.properties.defaultDomain}'
 var workspaceOrigin = 'https://${empty(workspaceHostname) ? generatedRuntimeHostname : workspaceHostname}'
+var coreOrigin = 'https://${generatedCoreHostname}'
+var mongoConnectionString = replace(mongo.listConnectionStrings().connectionStrings[0].connectionString, '/?', '/mentra-private?')
 var deploymentManifest = {
   schemaVersion: 1
   deploymentId: deploymentId
@@ -106,14 +145,14 @@ var deploymentManifest = {
     }
   }
   services: {
-    coreUrl: null
+    coreUrl: coreOrigin
     runtimeUrl: workspaceOrigin
   }
   auth: {
     mode: 'microsoft-entra'
     authorityUrl: '${loginEndpoint}${tenantId}'
     clientId: mobileClientId
-    runtimeScopes: ['api://${runtimeApiClientId}/mentra.runtime']
+    sessionScopes: ['api://${coreApiClientId}/mentra.session']
     teamsScopes: [
       'https://auth.msft.communication.azure.com/Teams.ManageCalls'
       'https://auth.msft.communication.azure.com/Teams.ManageChats'
@@ -137,7 +176,7 @@ var deploymentManifest = {
     supportUrl: empty(supportUrl) ? null : supportUrl
   }
   systemMiniapps: { approvedPackageNamesOverride: approvedSystemMiniapps }
-  miniapps: { managed: managedMiniapps }
+  miniapps: { managed: managedMiniapps, configuration: {} }
   glasses: { allowedModelsOverride: allowedGlassesModels }
   features: {
     runtimeRealtimeSession: false
@@ -148,6 +187,73 @@ var deploymentManifest = {
     navigation: false
   }
   telemetry: telemetryEnabled
+}
+
+resource core 'Microsoft.App/containerApps@2024-03-01' = {
+  name: coreName
+  location: location
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: { '${pullIdentity.id}': {} }
+  }
+  properties: {
+    managedEnvironmentId: environment.id
+    configuration: {
+      activeRevisionsMode: 'Single'
+      ingress: {
+        external: true
+        targetPort: 3000
+        transport: 'auto'
+        allowInsecure: false
+      }
+      registries: [
+        {
+          server: registry.properties.loginServer
+          identity: pullIdentity.id
+        }
+      ]
+      secrets: [
+        { name: 'mongo-url', value: mongoConnectionString }
+        { name: 'refresh-token-pepper', value: refreshTokenPepper }
+        { name: 'mentra-jwt-private-key', value: mentraJwtPrivateKey }
+        { name: 'mentra-jwt-public-key', value: mentraJwtPublicKey }
+        { name: 'miniapp-jwt-private-key', value: miniappJwtPrivateKey }
+        { name: 'miniapp-jwt-public-key', value: miniappJwtPublicKey }
+      ]
+    }
+    template: {
+      containers: [
+        {
+          name: 'core'
+          image: cloudImage
+          command: ['bun', 'packages/core/src/index.ts']
+          env: [
+            { name: 'PORT', value: '3000' }
+            { name: 'MONGO_URL', secretRef: 'mongo-url' }
+            { name: 'REFRESH_TOKEN_PEPPER', secretRef: 'refresh-token-pepper' }
+            { name: 'MENTRA_JWT_PRIVATE_KEY', secretRef: 'mentra-jwt-private-key' }
+            { name: 'MENTRA_JWT_PUBLIC_KEY', secretRef: 'mentra-jwt-public-key' }
+            { name: 'MENTRA_MINIAPP_JWT_PRIVATE_KEY', secretRef: 'miniapp-jwt-private-key' }
+            { name: 'MENTRA_MINIAPP_JWT_PUBLIC_KEY', secretRef: 'miniapp-jwt-public-key' }
+            { name: 'CLOUD_CORE_ISSUER', value: coreOrigin }
+            {
+              name: 'CLOUD_CORE_OIDC_PROVIDERS'
+              value: '[{"id":"workforce","protocol":"oidc","providerKind":"microsoft-entra","tenantId":"${deploymentId}","issuer":"${loginEndpoint}${tenantId}/v2.0","jwksUrl":"${loginEndpoint}${tenantId}/discovery/v2.0/keys","audience":"${coreApiClientId}","subjectClaim":"oid","directoryTenantClaim":"tid","expectedDirectoryTenantId":"${tenantId}","requiredScopes":["mentra.session"],"allowedClientIds":["${mobileClientId}"]}]'
+            }
+            { name: 'LOG_STDOUT_JSON', value: 'true' }
+            { name: 'SERVICE_NAME', value: 'core-enterprise-reference' }
+          ]
+          resources: { cpu: json('0.5'), memory: '1Gi' }
+          probes: [
+            { type: 'Liveness', httpGet: { path: '/healthz', port: 3000 }, initialDelaySeconds: 20, periodSeconds: 10 }
+            { type: 'Readiness', httpGet: { path: '/ready', port: 3000 }, initialDelaySeconds: 10, periodSeconds: 5 }
+          ]
+        }
+      ]
+      scale: { minReplicas: 1, maxReplicas: 1 }
+    }
+  }
+  dependsOn: [registryPull]
 }
 
 resource runtime 'Microsoft.App/containerApps@2024-03-01' = {
@@ -190,7 +296,7 @@ resource runtime 'Microsoft.App/containerApps@2024-03-01' = {
       containers: [
         {
           name: 'runtime'
-          image: runtimeImage
+          image: cloudImage
           command: ['bun', 'packages/runtime/src/index.ts']
           env: [
             { name: 'PORT', value: '3001' }
@@ -216,10 +322,10 @@ resource runtime 'Microsoft.App/containerApps@2024-03-01' = {
               name: 'DEPLOYMENT_MANAGED_MINIAPP_DIR'
               value: managedMiniappDirectory
             }
-            { name: 'CLOUD_RUNTIME_AUTH_AUDIENCE', value: runtimeApiClientId }
+            { name: 'CLOUD_RUNTIME_AUTH_AUDIENCE', value: 'cloud-runtime' }
             {
               name: 'CLOUD_RUNTIME_AUTH_ISSUERS'
-              value: '[{"issuer":"${loginEndpoint}${tenantId}/v2.0","jwksUrl":"${loginEndpoint}${tenantId}/discovery/v2.0/keys","userIdClaim":"oid","fixedTenantId":"${tenantId}","requiredScopes":["mentra.runtime"],"allowedClientIds":["${mobileClientId}"]}]'
+              value: '[{"issuer":"${coreOrigin}","jwksUrl":"${coreOrigin}/.well-known/jwks.json","userIdClaim":"sub","tenantIdClaim":"tenant_id","algorithms":["EdDSA"]}]'
             }
             { name: 'ENTRA_TENANT_ID', value: tenantId }
             { name: 'ENTRA_CLIENT_ID', value: mobileClientId }
@@ -241,7 +347,9 @@ resource runtime 'Microsoft.App/containerApps@2024-03-01' = {
 }
 
 output workspaceOrigin string = workspaceOrigin
+output coreOrigin string = coreOrigin
 output generatedRuntimeHostname string = generatedRuntimeHostname
+output generatedCoreHostname string = generatedCoreHostname
 output customDomainVerificationId string = environment.properties.customDomainConfiguration.customDomainVerificationId
 output communicationResourceId string = communication.id
 output registryLoginServer string = registry.properties.loginServer

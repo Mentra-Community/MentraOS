@@ -1,264 +1,118 @@
 # Mentra Private Deployment customer setup
 
-Start with the cloud-neutral
-[Mentra Private Runtime deployment contract](../../private-runtime.md). This
-runbook applies that contract to Azure Container Apps, ACR, Entra, and ACS.
+Start with the [cloud-neutral contract](../../private-deployment.md). This runbook
+applies it to Azure Container Apps, Cosmos DB's Mongo-compatible API, Entra,
+ACS, and ACR.
 
-This is the administrator runbook for connecting the official Mentra App to a
-customer-controlled Microsoft 365/Azure deployment. It is intended for the
-customer's Microsoft Entra administrator and Azure operator.
+## Customer delivery package
 
-The first supported profile uses:
+- Official signed Mentra App through the customer's Android/iOS channel.
+- Public `mentra-cloud` image pinned by digest, with signed provenance and SBOM.
+- `bootstrap.bicep` and `main.bicep`.
+- Idempotent `configure-entra.sh` helper and administrator review steps.
+- One-time signing-key/refresh-pepper generator for import into customer secret management.
+- Deployment manifest/branding/legal configuration.
+- Smoke tests and digest-based upgrade/rollback instructions.
 
-- the normal, Mentra-signed Android and iOS Mentra App binaries;
-- two app registrations in the customer's Microsoft Entra tenant;
-- one customer-owned Azure Communication Services (ACS) resource;
-- one customer-hosted, meetings-only Cloud V2 Runtime container; and
-- direct SoftAP media from Mentra Live to the phone, followed by native ACS media
-  from the phone to Microsoft Teams.
+## Information and approvals
 
-It does **not** require Mentra Core, Supabase, MongoDB, Redis, Cloudflare Stream,
-a Mentra Call backend, or credentials for Mentra-hosted infrastructure.
+Collect and approve:
 
-```text
-Mentra Live --SoftAP--> Mentra App --ACS media--> Microsoft Teams
-                              |
-                              +--Entra token--> customer Runtime
-                                                   |
-                                                   +--ACS token exchange
-```
+- Azure subscription, resource group, region, and ACS data location;
+- workspace DNS name;
+- Entra tenant, Core API client id, and Mobile client id;
+- assigned employees/groups, admin consent, MFA, and Conditional Access;
+- official Android/iOS distribution channels and redirect URIs;
+- persistent database, signing-key, refresh-pepper, backup, and rotation policy;
+- SYSTEM miniapp/glasses allowlists and managed userland miniapps;
+- branding, privacy, terms, support, wallpapers, and version policy;
+- telemetry policy; and
+- customer-approved workspace, Core, Microsoft, ACS, and Teams egress.
 
-Runtime handles authentication and the short-lived ACS Teams-user token. It is
-not in the audio/video media path.
+Tenant ids, client ids, scopes, certificate fingerprints, and URLs are public
+identifiers. Database credentials, private keys, peppers, connection strings,
+and bearer tokens are secrets.
 
-## Information to collect
+## 1. Configure Entra
 
-The deployment operator needs:
+Follow [entra-setup.md](./entra-setup.md). The helper provisions:
 
-- Azure subscription and resource-group names;
-- Microsoft Entra tenant id;
-- Runtime API application client id;
-- Mentra App public-client application client id;
-- exact Android and iOS redirect URIs for the distributed Mentra App binaries;
-- optional minimum and recommended Mentra App version policy; and
-- the Runtime container image tag or digest supplied for that release.
+- a single-tenant Core API exposing `mentra.session`; and
+- an assignment-required public Mobile client with Core and ACS delegated
+  permissions and official binary redirects.
 
-Tenant ids, application client ids, scopes, redirect URIs, and workspace URLs
-are identifiers, not secrets. Do not put connection strings, bearer tokens, or
-client secrets in the deployment manifest.
+The employee signs in once. Customer Core exchanges the Entra token for a
+Mentra session; Runtime accepts only Core-issued Runtime tokens. The same MSAL
+account can separately supply the employee's ACS token.
 
-## 1. Register the customer Runtime API
+## 2. Import and deploy the image
 
-For an assisted or repeatable deployment, run the idempotent Entra helper and
-review its output before granting consent:
+Verify and import the release digest instead of rebuilding it:
 
 ```bash
-cloud-v2/deploy/azure/enterprise-reference/scripts/configure-entra.sh \
-  --runtime-name "ACME Mentra Runtime" \
-  --mobile-name "ACME Mentra Mobile"
+cloud-v2/deploy/azure/enterprise-reference/scripts/import-runtime-image.sh \
+  <customer-acr> \
+  ghcr.io/mentra-community/mentra-cloud@sha256:<digest> \
+  <release-identity>
 ```
 
-The remaining portal steps below explain exactly what the helper configures.
+Deploy [main.bicep](./main.bicep). It creates:
 
-In **Microsoft Entra admin center → App registrations**:
+- one Container Apps environment;
+- separate Core and meetings-only Runtime apps using the same digest;
+- Cosmos DB with MongoDB-compatible API for Core identity/session state;
+- customer-owned ACS;
+- managed ACR pull identity;
+- a generated deployment manifest; and
+- Container App secrets for ACS, Mongo, signing keys, and refresh pepper.
 
-1. Create an app registration such as `ACME Mentra Runtime`.
-2. Select **Accounts in this organizational directory only**.
-3. Under **Expose an API**, set the Application ID URI to
-   `api://<runtime-application-client-id>`.
-4. Add a delegated scope named `mentra.runtime`.
-5. Configure the registration to issue v2 access tokens.
-6. Record the tenant id, application client id, and full scope:
-   `api://<runtime-application-client-id>/mentra.runtime`.
+Generate the customer-owned signing material once with
+`scripts/generate-private-secrets.sh /secure/path/mentra-private-secrets.json`,
+then import its values into the customer's approved secret manager. Never
+regenerate those values during an ordinary upgrade.
 
-The Runtime container validates the token issuer, tenant, signature, audience,
-scope, authorized mobile client, expiry, and employee object id on every
-protected request.
+For customer production, use the customer's normal database, backup, private
+networking, and secret-management requirements. The template's public network
+defaults are a reference starting point, not a universal security posture.
 
-## 2. Register the Mentra App public client
+Replace the reference legal documents and light/dark transparent PNGs. Managed
+miniapp ZIPs may be added as an asset layer or served by customer ingress; each
+manifest entry pins package name, semantic version, URL, and SHA-256.
 
-Create a second single-tenant app registration such as `ACME Mentra Mobile`.
-This is a native public client and must not have a client secret.
+## 3. Verify the manifest
 
-Register these mobile redirects:
+Confirm:
 
-- iOS: `msauth.com.mentra.mentra://auth`
-- Android: `msauth://com.mentra.mentra/<base64-signing-certificate-hash>`
+- `services.coreUrl` is the customer's Core and `services.runtimeUrl` is the
+  workspace Runtime;
+- the exact Entra authority, Mobile client id, and Core `mentra.session` scope;
+- branding/legal URLs and customer policy values;
+- only approved SYSTEM miniapps, managed userland miniapps, and glasses;
+- `nativeMeetings: true`, with unneeded capabilities false; and
+- the approved telemetry value.
 
-The Android value is tied to the certificate used to sign the exact APK/AAB.
-A locally signed test build and the official Mentra-signed release generally
-have different hashes. Mentra supplies the official redirect with the release
-artifact; do not copy a developer redirect into production.
+`miniapps.configuration` is optional non-secret configuration scoped by package
+name. It does not install a bundle. `miniapps.managed` installs/removes
+deployment-owned userland bundles and does not refer to SYSTEM miniapps.
 
-For the current Mentra-signed binaries, register both distribution redirects:
+## 4. Distribute and qualify
 
-- downloadable APK:
-  `msauth://com.mentra.mentra/q%2FZbvbReOLgD1T6V3o1PK%2Fzjwz0%3D`;
-- Google Play installation:
-  `msauth://com.mentra.mentra/Pwi%2FLvF9HHWTAMonaqwan%2BeIX6A%3D`.
+Distribute the ordinary signed Mentra App through MDM, Play, App Store/Apple
+Business Manager, or another approved channel. V1 users enter the workspace
+origin through **Connect to organization**; later MDM enrollment can supply the
+same origin without changing the manifest or auth contract.
 
-Add delegated permissions for:
+Before pilot use verify:
 
-- the Runtime registration's `mentra.runtime` scope;
-- Azure Communication Services `Teams.ManageCalls`; and
-- Azure Communication Services `Teams.ManageChats`.
+- assigned sign-in on Android and iOS;
+- unassigned, wrong-tenant, wrong-audience, and wrong-client rejection;
+- MFA/Conditional Access return;
+- silent Core refresh, relaunch, logout, and workspace switching;
+- Core and Runtime health/readiness plus Core JWKS;
+- manifest, legal, logos, and minimum-version policy;
+- ACS token exchange bound to the same Entra employee; and
+- restricted-network traffic contains no Mentra consumer infrastructure when
+  telemetry is disabled.
 
-Grant tenant-wide administrator consent. These permissions allow joining an
-existing work/school Teams meeting as the signed-in employee. The join-only
-profile does not need Microsoft Graph calendar or meeting-creation permissions.
-
-From the Mobile app registration's **Overview** page, select **Managed
-application in local directory** to open its service principal. This path works
-even when the service principal is not visible in the default **Enterprise
-applications** list. If the registrations were created with Microsoft Graph or
-Azure CLI, add the `WindowsAzureActiveDirectoryIntegratedApp` tag to both the
-Mobile and Runtime service principals so administrators can find them normally
-under **Enterprise applications**. The tag affects portal visibility only; it
-does not change authentication or authorization.
-
-On the Mobile service principal:
-
-1. Set **Assignment required** to **Yes**.
-2. Assign only the pilot users or groups.
-3. Apply the customer's normal MFA and Conditional Access policy.
-
-Do not assign employees to the Runtime service principal. The Mobile public
-client requests the delegated Runtime scope on each employee's behalf. Do not
-configure custom token-signing keys or custom **Attributes & Claims** for either
-registration; Runtime uses the standard OIDC claims emitted by Entra.
-
-The user signs in once through Microsoft's supported browser or broker. Mentra
-never receives the user's password.
-
-For the detailed token and claim contract, see [entra-setup.md](./entra-setup.md).
-
-## 3. Deploy the customer-owned Azure resources
-
-Create a resource group and deploy [bootstrap.bicep](./bootstrap.bicep) to create
-a uniquely named Azure Container Registry. Verify and import the release-matched
-GHCR Runtime digest into that registry; do not rebuild it.
-
-Deploy [main.bicep](./main.bicep) with:
-
-- the Runtime image reference;
-- registry name;
-- tenant id;
-- Runtime API client id; and
-- mobile public-client id.
-
-The template creates:
-
-- an Azure Container Apps environment;
-- a single-replica, HTTP-only Runtime with `RUNTIME_SERVICES=meetings` and
-  `MEETING_PROVIDERS=acs-teams`;
-- a customer-owned ACS resource;
-- a managed identity for private ACR image pulls; and
-- an ACS connection-string Container App secret.
-
-No Cloudflare account or API token is required. The mobile public client also
-requires no secret. See [README.md](./README.md) for complete Azure CLI commands.
-See [operations.md](./operations.md) for digest-pinned image import, customer
-configuration, upgrade, rollback, and smoke-test commands.
-
-Before production use, replace [privacy.html](./privacy.html) and
-[terms.html](./terms.html) with the customer's approved documents and rebuild
-the Runtime image.
-
-Replace `assets/logo-light.png` and `assets/logo-dark.png` with the customer's
-approved transparent PNG marks before building the customer Runtime image. Keep
-each image under 512 KiB and use the same aspect ratio. The light variant must remain
-legible on a light app background and the dark variant on a dark app background.
-If one mark works on both, use the same PNG for both image inputs. Runtime serves
-them from the workspace origin; the phone does not fetch branding from a
-third-party host.
-
-## 4. Verify the generated workspace manifest
-
-The deployed Runtime serves:
-
-```text
-https://<customer-workspace>/.well-known/mentra-deployment.json
-```
-
-Verify that:
-
-- `services.coreUrl` is `null`;
-- `services.runtimeUrl` is the same workspace origin;
-- both `branding.logoUrls` resolve from the workspace origin;
-- `auth.authorityUrl` names the exact customer tenant, never `common` or
-  `organizations`;
-- the Runtime and ACS delegated scopes match the registrations;
-- `features.managedStreams` is `false`;
-- `features.nativeMeetings` is `true`;
-- telemetry is set to the customer's approved value; and
-- the approved miniapp and glasses lists contain only the qualified products.
-- `systemMiniapps` lists only embedded SYSTEM miniapps, while
-  `miniapps.managed` lists separately installed customer userland bundles.
-
-Runtime refuses to start when the manifest advertises modules that are not
-actually enabled.
-
-Runtime also serves `GET /api/client/min-version` before authentication. Its
-`required` and `recommended` values come from `CLOUD_CLIENT_MIN_VERSION` and
-`CLOUD_CLIENT_RECOMMENDED_VERSION`; both default to `0.0.0`. Use a real floor
-only when older app versions are genuinely unsupported.
-
-## 5. Configure network policy
-
-Allow the phone and Runtime to reach the customer-approved Microsoft Entra,
-ACS, and Teams endpoints required by the customer's Microsoft cloud. Allow the
-phone to reach the workspace origin over HTTPS.
-
-There is no required Mentra Core, Mentra Runtime, Sentry, Firebase Analytics,
-PostHog, Supabase, Cloudflare Stream, Soniox, ElevenLabs, or Recall destination
-in this profile. Microsoft publishes the authoritative endpoint list for its
-cloud; sovereign clouds use different authorities and require separate
-qualification.
-
-## 6. Distribute and enroll the Mentra App
-
-Distribute the normal release-matched Mentra App through the customer's chosen
-channel:
-
-- Android: import the Mentra-signed APK/AAB into the customer's MDM; or
-- iOS: use the App Store app through Apple Business Manager/MDM.
-
-For the first release, the employee taps **Connect to organization** and enters
-the workspace origin. The app downloads and confirms the manifest, then shows
-one Microsoft organization sign-in action. The workspace URL does not sign the
-employee in and contains no credential.
-
-Managed-app configuration can supply the same workspace origin automatically in
-a later release without changing the manifest or authentication architecture.
-
-## 7. Qualification checklist
-
-Before pilot use, verify:
-
-- assigned employee login on Android and iOS;
-- unassigned and wrong-tenant rejection;
-- MFA and Conditional Access browser/broker return;
-- silent token renewal, disabled-user behavior, and revoked consent;
-- logout and workspace switching without account crossover;
-- Runtime health, manifest, legal-document, and ACS exchange endpoints;
-- direct SoftAP glasses-to-phone media with no Cloudflare fallback;
-- Teams lobby, join, incoming/outgoing audio, video, leave, and recovery;
-- a 30–60 minute call on both platforms; and
-- a packet capture showing no Mentra-hosted service or telemetry traffic while
-  the telemetry-disabled customer workspace is active.
-
-The meetings-only template intentionally cannot qualify the call-media path
-until the native SoftAP and ACS integration has landed. Deployment discovery and
-Microsoft sign-in can be qualified earlier, but that is not a substitute for an
-end-to-end call test.
-
-## Troubleshooting
-
-| Symptom                                     | Most likely cause                                                                                                  |
-| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| Microsoft reports a redirect mismatch       | The Android signing-certificate hash or iOS redirect does not match the installed binary                           |
-| An employee cannot open the Microsoft login | They or their group are not assigned to the Enterprise Application                                                 |
-| Runtime returns 401                         | Wrong issuer, audience, Runtime scope, authorized mobile client, or expired token                                  |
-| ACS exchange returns 403                    | Missing ACS delegated permission/admin consent, wrong tenant/client, or mismatched employee object id              |
-| Workspace is rejected before login          | Manifest schema, origin, or TLS policy is invalid                                                                  |
-| Login works but a Teams call cannot start   | SoftAP/native ACS integration is absent, ACS configuration is invalid, or Teams policy/license blocks the employee |
+The complete glasses-to-Teams media path is qualified after the matching native
+ACS implementation is integrated; this stack does not fake that media path.

@@ -15,18 +15,25 @@ curl --fail --show-error --silent "$WORKSPACE/api/client/min-version" | jq -e '.
 manifest="$(curl --fail --show-error --silent "$WORKSPACE/.well-known/mentra-deployment.json")"
 if ! jq -e --arg origin "$WORKSPACE" '
   .schemaVersion == 1 and
-  .services.coreUrl == null and
+  (.services.coreUrl | startswith("https://")) and
   .services.runtimeUrl == $origin and
   .auth.mode == "microsoft-entra" and
   (.auth.authorityUrl | startswith("https://login.microsoftonline.com/")) and
   .features.managedStreams == false and
   .features.nativeMeetings == true and
   .telemetry == false and
-  (.miniapps.managed | type == "array")
+  (.auth.sessionScopes | all(endswith("/mentra.session"))) and
+  (.miniapps.managed | type == "array") and
+  (.miniapps.configuration | type == "object")
 ' <<<"$manifest" >/dev/null; then
   printf 'Workspace manifest does not match the Mentra Private Deployment v1 contract.\n' >&2
   exit 1
 fi
+
+CORE="$(jq -r .services.coreUrl <<<"$manifest")"
+curl --fail --show-error --silent "$CORE/healthz" | jq -e '.package == "core"' >/dev/null
+curl --fail --show-error --silent "$CORE/ready" >/dev/null
+curl --fail --show-error --silent "$CORE/.well-known/jwks.json" | jq -e '.keys | length >= 2' >/dev/null
 
 for url in $(jq -r '[.branding.logoUrls.light,.branding.logoUrls.dark,.links.privacyPolicyUrl,.links.termsOfServiceUrl] | .[]' <<<"$manifest"); do
   curl --fail --show-error --silent --output /dev/null "$url"

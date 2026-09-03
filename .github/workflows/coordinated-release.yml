@@ -277,7 +277,7 @@ jobs:
     secrets: inherit
 
   runtime-image:
-    name: Publish canonical Mentra Runtime image
+    name: Publish canonical Mentra Cloud image
     needs: plan
     permissions:
       actions: read
@@ -293,7 +293,7 @@ jobs:
     secrets: inherit
 
   enterprise-runtime:
-    name: Deploy release-matched enterprise Runtime
+    name: Deploy release-matched private stack
     needs: [plan, runtime-image]
     if: needs.plan.outputs.cloud_environment == 'dev'
     permissions:
@@ -923,7 +923,7 @@ jobs:
             echo "- Cloud deployment: \`$(jq -er .cloud.deploymentId finalized-release/publication-results.json 2>/dev/null || echo validated-only)\`"
             echo "- Runtime image: \`$(jq -er '.runtimeImage.reference // "validated-only"' finalized-release/publication-results.json)\`"
             if [[ "${{ needs.plan.outputs.cloud_environment }}" == "dev" ]]; then
-              echo "- Enterprise Runtime: \`$(jq -er '.enterpriseRuntime.azure.revision // "validated-only"' finalized-release/publication-results.json)\`"
+              echo "- Private deployment Runtime: \`$(jq -er '.enterpriseRuntime.azure.revision // "validated-only"' finalized-release/publication-results.json)\`"
             fi
             echo "- OTA manifest: ${{ needs.ota.outputs.manifest_url }}"
             echo "- Dry run: \`${{ needs.plan.outputs.dry_run }}\`"

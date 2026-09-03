@@ -27,6 +27,8 @@ export type {
   MiniappVisibility,
 } from "./session"
 export type {AuthFetchOptions, AuthModule} from "./modules/auth"
+export {MiniappConfigurationError} from "./modules/configuration"
+export type {ConfigurationModule} from "./modules/configuration"
 
 export {makeRequestId, parseEnvelope, serializeEnvelope} from "./envelope"
 export type {MiniappEnvelope} from "./envelope"

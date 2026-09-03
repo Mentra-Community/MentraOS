@@ -24,7 +24,7 @@ function create(status = "published") {
       status === "published"
         ? {
             format: "spdx-json",
-            name: `mentra-runtime-${plan.releaseIdentity}.spdx.json`,
+            name: `mentra-cloud-${plan.releaseIdentity}.spdx.json`,
             sha256: "c".repeat(64),
             size: 1234,
             attestationUrl: "https://github.com/Mentra-Community/MentraOS/attestations/456",

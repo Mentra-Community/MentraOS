@@ -32,6 +32,10 @@ export interface IslandConfigValues {
   runtimeRealtimeSession?: boolean
   /** Complete allowlist for bundled/local miniapps; null or omitted allows all. */
   localMiniappAllowlist?: string[] | null
+  /** Optional per-package configuration supplied by the host deployment. */
+  miniappConfiguration?: Readonly<Record<string, Readonly<Record<string, string>>>>
+  /** Deployment-scoped key for the persisted Core refresh token. */
+  cloudAuthStorageKey?: string
   /** Deployment-pinned Mentra Live OTA manifest; explicit null disables remote OTA. */
   otaManifestUrl?: string | null
   /** Deployment capability policy. Omitted entries preserve consumer behavior. */
@@ -91,6 +95,12 @@ export interface IslandConfigureOptions {
 export function isLocalMiniappAllowed(packageName: string): boolean {
   const allowlist = options?.config?.localMiniappAllowlist
   return allowlist == null || allowlist.includes(packageName)
+}
+
+/** Read a defensive package-scoped configuration snapshot. */
+export function getMiniappConfiguration(packageName: string): Record<string, string> {
+  const configuration = options?.config?.miniappConfiguration?.[packageName]
+  return configuration ? {...configuration} : {}
 }
 
 export function isFeatureEnabled(feature: IslandFeatureName): boolean {

@@ -126,6 +126,9 @@ function validateDeploymentManifest(
   workspaceOrigin: string,
   allowInsecureLocalhost = false,
 ): void {
+  if (!manifest.services.coreUrl) {
+    throw new DeploymentResolutionError("This workspace does not configure Core.", "invalid-manifest")
+  }
   if (!manifest.services.runtimeUrl) {
     throw new DeploymentResolutionError("This workspace does not configure Runtime.", "invalid-manifest")
   }
@@ -185,6 +188,18 @@ function validateDeploymentManifest(
       "invalid-manifest",
     )
   }
+  if (approvedSystemMiniapps !== null) {
+    const approvedPackages = new Set([...approvedSystemMiniapps, ...managedPackageNames])
+    const orphanedConfiguration = Object.keys(manifest.miniapps.configuration).find(
+      (packageName) => !approvedPackages.has(packageName),
+    )
+    if (orphanedConfiguration) {
+      throw new DeploymentResolutionError(
+        `Miniapp configuration targets unapproved package ${orphanedConfiguration}.`,
+        "invalid-manifest",
+      )
+    }
+  }
   for (const url of allConfiguredUrls(manifest)) {
     secureUrlOrigin(url, allowInsecureLocalhost)
   }
@@ -208,8 +223,8 @@ function validateDeploymentManifest(
     ) {
       throw new DeploymentResolutionError("Microsoft Entra authority must name an exact tenant.", "invalid-manifest")
     }
-    if (!manifest.auth.runtimeScopes.every((scope) => /^api:\/\/[0-9a-f-]{36}\/[a-zA-Z0-9._-]+$/i.test(scope))) {
-      throw new DeploymentResolutionError("Runtime scopes must target an application API scope.", "invalid-manifest")
+    if (!manifest.auth.sessionScopes.every((scope) => /^api:\/\/[0-9a-f-]{36}\/[a-zA-Z0-9._-]+$/i.test(scope))) {
+      throw new DeploymentResolutionError("Session scopes must target an application API scope.", "invalid-manifest")
     }
     const teamsScopes = new Set(manifest.auth.teamsScopes)
     const validTeamsScopes =

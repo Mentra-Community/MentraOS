@@ -1,94 +1,68 @@
 # Microsoft Entra setup for a Mentra workspace
 
-Deployment schema v1 uses one single-tenant Microsoft Entra public client. The
-same cached employee account supplies two separate access tokens:
+The employee signs in once through the official Mentra App. MSAL obtains two
+separate tokens from the same cached account:
 
-- a Runtime API token with `mentra.runtime`;
+- a customer Core API token with delegated `mentra.session` scope; and
 - an ACS resource token with `Teams.ManageCalls` and `Teams.ManageChats`.
 
-The employee signs in once. The Mentra App never receives their password, and
-the customer does not provide credentials to Mentra.
+The Mentra App exchanges the first token with customer Core for a
+deployment-scoped Mentra session. Runtime accepts only short-lived tokens issued
+by that Core. Neither Mentra nor customer services receive the employee's
+Microsoft password.
 
-## 1. Register the Runtime API
+## Automated setup
 
-The supported setup helper performs sections 1–2 idempotently and prints the
-tenant id, both client ids, Runtime scope, and Mobile service-principal id:
+Run the idempotent helper while signed into the customer's tenant as an
+Application, Cloud Application, or Global Administrator:
 
 ```bash
 cloud-v2/deploy/azure/enterprise-reference/scripts/configure-entra.sh \
-  --runtime-name "ACME Mentra Runtime" \
+  --core-name "ACME Mentra Core" \
   --mobile-name "ACME Mentra Mobile"
 ```
 
-Run it without `--grant-admin-consent` first so the administrator can review the
-registrations and requested permissions. Then rerun with the printed
-`--runtime-client-id`, `--mobile-client-id`, and `--grant-admin-consent`.
-Employee/group assignment remains an explicit administrator action.
+Run without `--grant-admin-consent` first, review the two registrations and
+permissions, then rerun with the printed ids:
 
-Create an app registration in the customer's tenant for the customer-hosted
-Runtime:
+```bash
+cloud-v2/deploy/azure/enterprise-reference/scripts/configure-entra.sh \
+  --core-client-id <core-api-client-id> \
+  --mobile-client-id <mobile-public-client-id> \
+  --grant-admin-consent
+```
 
-1. Select **Accounts in this organizational directory only**.
-2. Set the Application ID URI to `api://<runtime-application-client-id>`.
-3. Request v2 access tokens.
-4. Expose the delegated scope `mentra.runtime`.
-5. Record the tenant id, Runtime application client id, and full scope string.
+The helper creates or reconciles:
 
-Runtime validates the exact tenant issuer, Microsoft JWKS signature, Runtime
-application audience, `mentra.runtime` scope, employee object id, and approved
-mobile client id on every protected request.
+1. A single-tenant Core API registration with identifier URI
+   `api://<core-api-client-id>`, v2 tokens, and delegated `mentra.session`.
+2. A single-tenant public mobile client with the Core and ACS delegated
+   permissions and official binary redirect URIs.
+3. Integrated-app service-principal tags so both apps appear normally in the
+   Entra portal.
+4. `Assignment required` on the Mobile enterprise application.
 
-## 2. Register the Mentra App public client
+Assign approved users/groups to the Mobile enterprise application. Do not
+assign employees to Core. Core still validates the issuer, audience, scope,
+authorized mobile client, directory tenant, expiry, and employee object id.
 
-Create a second, single-tenant app registration as a mobile/desktop public
-client. It has no client secret.
+## Official Mentra App redirects
 
-Add platform redirects for the exact official binary being distributed:
+The public mobile client has no client secret. Register:
 
-- iOS: `msauth.com.mentra.mentra://auth`;
-- Android: `msauth://com.mentra.mentra/<base64-signing-certificate-hash>`.
-
-Android debug and release certificates produce different redirects. Customer
-qualification must register the hash of the Mentra-signed release APK or AAB;
-the reference tenant also contains a local debug redirect for development.
-The current official redirects are:
-
-- Mentra-signed downloadable APK:
-  `msauth://com.mentra.mentra/q%2FZbvbReOLgD1T6V3o1PK%2Fzjwz0%3D`;
+- iOS: `msauth.com.mentra.mentra://auth`
+- Mentra-signed Android APK:
+  `msauth://com.mentra.mentra/q%2FZbvbReOLgD1T6V3o1PK%2Fzjwz0%3D`
 - Google Play App Signing:
-  `msauth://com.mentra.mentra/Pwi%2FLvF9HHWTAMonaqwan%2BeIX6A%3D`.
+  `msauth://com.mentra.mentra/Pwi%2FLvF9HHWTAMonaqwan%2BeIX6A%3D`
 
 These certificate hashes are public application identifiers, not private keys.
+Add another redirect only when qualifying a differently signed binary.
 
-Add delegated API permissions for:
+Do not configure custom signing keys or custom Attributes & Claims. The private
+stack relies on standard Entra OIDC claims.
 
-- the Runtime registration's `mentra.runtime` scope;
-- Azure Communication Services `Teams.ManageCalls`;
-- Azure Communication Services `Teams.ManageChats`.
-
-Grant tenant-wide admin consent. No Microsoft Graph meeting-creation or
-calendar permission is required for the join-only deployment.
-
-From the Mobile app registration's **Overview** page, select **Managed
-application in local directory** to open the resulting service principal. This
-path works even if the default **Enterprise applications** list does not show
-it. Service principals created through Microsoft Graph or Azure CLI should have
-the `WindowsAzureActiveDirectoryIntegratedApp` tag so they appear normally in
-that list. Apply the tag to both the Mobile and Runtime service principals; it
-is portal metadata and does not affect tokens.
-
-On the Mobile service principal, enable **Assignment required** and assign only
-the users or groups authorized for the Mentra workspace. Do not assign employees
-to the Runtime service principal. Runtime still validates token claims;
-assignment to the Mobile application is the tenant-side enrollment gate.
-
-Leave custom token-signing keys and custom **Attributes & Claims** unconfigured.
-Runtime relies on Entra's standard OIDC claims, including issuer, tenant,
-audience, scope, authorized client, expiry, and employee object id.
-
-## 3. Configure the deployment manifest
-
-Use the exact tenant and public-client registration:
+## Manifest
 
 ```json
 {
@@ -96,7 +70,7 @@ Use the exact tenant and public-client registration:
     "mode": "microsoft-entra",
     "authorityUrl": "https://login.microsoftonline.com/<tenant-id>",
     "clientId": "<mobile-public-client-id>",
-    "runtimeScopes": ["api://<runtime-application-client-id>/mentra.runtime"],
+    "sessionScopes": ["api://<core-api-client-id>/mentra.session"],
     "teamsScopes": [
       "https://auth.msft.communication.azure.com/Teams.ManageCalls",
       "https://auth.msft.communication.azure.com/Teams.ManageChats"
@@ -105,39 +79,26 @@ Use the exact tenant and public-client registration:
 }
 ```
 
-The Mentra App accepts an exact tenant authority only. It does not accept
-`common`, `organizations`, `consumers`, redirects, or an identity-provider
-picker after the workspace has been selected.
+The Mentra App accepts an exact tenant only—not `common`, `organizations`, or
+`consumers`.
 
-## 4. Configure Runtime
+## Core and Runtime
 
-Set:
+Core receives `CLOUD_CORE_OIDC_PROVIDERS` with the Entra issuer/JWKS, Core API
+audience, `oid` subject, `tid` directory, `mentra.session` requirement, and
+allowed Mobile client id. See [the cloud-neutral contract](../../private-deployment.md).
 
-- `CLOUD_RUNTIME_AUTH_AUDIENCE` to the Runtime application client id;
-- `CLOUD_RUNTIME_AUTH_ISSUERS` to the exact tenant v2 issuer and discovery JWKS,
-  with `userIdClaim: "oid"`, the fixed tenant id, `requiredScopes:
-  ["mentra.runtime"]`, and `allowedClientIds` containing the mobile public
-  client id;
-- `ENTRA_TENANT_ID` and `ENTRA_CLIENT_ID` to the same tenant and mobile client;
-- `ACS_CONNECTION_STRING` through the deployment secret store.
+Runtime receives the Core issuer/JWKS as `CLOUD_RUNTIME_AUTH_ISSUERS`, plus
+`ENTRA_TENANT_ID`, the Mobile `ENTRA_CLIENT_ID`, and secret
+`ACS_CONNECTION_STRING`. For ACS exchange, Runtime requires Core's explicit
+`providerKind: microsoft-entra` binding and then verifies that the ACS token's
+`oid` and `tid` match the same employee and directory.
 
-Never place the ACS connection string, a user token, or a client secret in the
-manifest. The mobile app sends the ACS-scoped employee token only to the
-configured Runtime over TLS. Runtime verifies that its tenant, client, and
-employee object id match the authenticated Runtime identity before exchanging
-it for a short-lived ACS Teams-user token.
+## Qualification
 
-## 5. Qualification
-
-Before customer use, verify at least:
-
-- assigned employee sign-in and silent Runtime/Teams token acquisition;
-- unassigned and wrong-tenant rejection;
-- MFA and Conditional Access browser return;
-- logout and workspace switching without account crossover;
-- revoked consent and disabled-user behavior;
-- both official Android and iOS redirect URIs.
-
-The reference Runtime exposes the same minimum-client-version policy used by
-Mentra's public deployment. It is independent of the Entra registration and
-defaults to allowing every workspace-capable Mentra App release.
+- Assigned employee sign-in and silent Core/Teams token acquisition.
+- Unassigned employee, wrong tenant, wrong audience, and wrong client rejection.
+- MFA and Conditional Access browser return.
+- Logout and workspace switching without credential crossover.
+- Revoked consent and disabled-user behavior.
+- Official Android APK/Play and iOS redirect paths.

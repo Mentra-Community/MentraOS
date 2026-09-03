@@ -9,14 +9,14 @@
     }
   },
   "services": {
-    "coreUrl": null,
+    "coreUrl": "https://ca-mentra-enterprise-reference-core.gentlehill-4ed63a4c.westus2.azurecontainerapps.io",
     "runtimeUrl": "https://enterprisedev.mentraglass.com"
   },
   "auth": {
     "mode": "microsoft-entra",
     "authorityUrl": "https://login.microsoftonline.com/2e7662c0-e826-4928-95b2-60bdd48d5d95",
     "clientId": "95ad08c2-7837-4ddf-933c-1fce3d6d2799",
-    "runtimeScopes": ["api://20424d9e-4b99-44e8-82c9-0ad06f08a8db/mentra.runtime"],
+    "sessionScopes": ["api://20424d9e-4b99-44e8-82c9-0ad06f08a8db/mentra.session"],
     "teamsScopes": [
       "https://auth.msft.communication.azure.com/Teams.ManageCalls",
       "https://auth.msft.communication.azure.com/Teams.ManageChats"
@@ -43,7 +43,8 @@
     "approvedPackageNamesOverride": ["com.mentra.call", "com.mentra.settings"]
   },
   "miniapps": {
-    "managed": []
+    "managed": [],
+    "configuration": {}
   },
   "glasses": {"allowedModelsOverride": ["mentra-live"]},
   "features": {

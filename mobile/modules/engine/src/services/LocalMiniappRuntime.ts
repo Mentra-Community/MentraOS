@@ -65,7 +65,7 @@ import {
   type MiniappAuthToken,
   type TtsSynthesisResult,
 } from "../runtime/config"
-import {getAnalytics, getUiSeams, isFeatureEnabled} from "../runtime/bootstrap"
+import {getAnalytics, getMiniappConfiguration, getUiSeams, isFeatureEnabled} from "../runtime/bootstrap"
 import {invokeScanQrSeam} from "../runtime/scanQrSeam"
 import {normalizeStreamAudioConfig, normalizeStreamVideoConfig} from "../runtime/streamConfig"
 import {toLanguageHint} from "@mentra/cloud-protocol/languages"
@@ -1409,6 +1409,7 @@ class LocalMiniappRuntime {
         packageName,
         capabilities,
         permissions: declaredPermissions,
+        configuration: getMiniappConfiguration(packageName),
         ...(initialAuth ? {auth: initialAuth} : {}),
       },
       requestId,

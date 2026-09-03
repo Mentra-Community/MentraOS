@@ -61,7 +61,7 @@ Iteration: save a file, Bun restarts the affected package in well under a second
 
 ## Where to read more
 
-- [Mentra Private Runtime deployment contract](./deploy/private-runtime.md) —
+- [Mentra Private Deployment contract](./deploy/private-deployment.md) —
   portable OCI image, configuration, manifest, health, and verification contract
 - [`docs/issues/`](./docs/issues/) — spec + design per work item
   - [001-oem-auth](./docs/issues/001-oem-auth/) — runtime OEM auth (JWT exchange)

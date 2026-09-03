@@ -256,7 +256,7 @@ test("serializes records canonically and finalizes only complete release results
   assert.deepEqual(manifest.native, plan.native)
   assert.deepEqual(manifest.changelog, plan.changelog)
   assert.equal(manifest.cloud.environment, "staging")
-  assert.equal(manifest.runtimeImage.reference, `ghcr.io/mentra-community/mentra-runtime@sha256:${"8".repeat(64)}`)
+  assert.equal(manifest.runtimeImage.reference, `ghcr.io/mentra-community/mentra-cloud@sha256:${"8".repeat(64)}`)
   assert.equal(serializeReleaseRecord({z: 1, a: 2}), '{\n  "a": 2,\n  "z": 1\n}\n')
 
   const incompletePlan = structuredClone(plan)

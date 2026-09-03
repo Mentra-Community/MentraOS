@@ -99,6 +99,8 @@ export function cloudConfigValues(): {
   devServerHost: () => string | undefined
   runtimeRealtimeSession?: boolean
   localMiniappAllowlist?: string[] | null
+  miniappConfiguration?: Readonly<Record<string, Readonly<Record<string, string>>>>
+  cloudAuthStorageKey?: string
   otaManifestUrl?: string | null
   features?: {
     managedStreams: boolean
@@ -131,6 +133,8 @@ export function deploymentCloudConfigValues(deployment: ActiveDeployment): Retur
       systemAllowlist === null
         ? null
         : [...new Set([...systemAllowlist, ...deployment.manifest.miniapps.managed.map((entry) => entry.packageName)])],
+    miniappConfiguration: deployment.manifest.miniapps.configuration,
+    cloudAuthStorageKey: `mentra.cloud-client.${deployment.manifest.deploymentId}.refreshToken`,
     otaManifestUrl: deployment.manifest.artifacts.mentraLiveOtaManifestUrl,
     features: {
       managedStreams: deployment.manifest.features.managedStreams,
@@ -151,6 +155,7 @@ export function deploymentCloudConfigValues(deployment: ActiveDeployment): Retur
  * untouched. `reconnect()` re-resolves the host endpoints before rebuilding.
  */
 export const cloudClient = {
+  clearAuthSession: (): Promise<void> => cloudClientService.clearAuthSession(),
   init: (): void => cloudClientService.init(),
   reconnect: (): void => cloudClientService.reconnect(resolvedEndpoints()),
   getPreinstalledMiniappRegistry: () => cloudClientService.getPreinstalledMiniappRegistry(),

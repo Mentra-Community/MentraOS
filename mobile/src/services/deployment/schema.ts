@@ -5,6 +5,15 @@ const nullableUrl = z.string().url().nullable()
 const packageName = z.string().regex(/^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z0-9_]+)+$/)
 const semanticVersion = z.string().refine((value) => semver.valid(value) !== null)
 const sha256 = z.string().regex(/^[0-9a-f]{64}$/i)
+const miniappConfigurationKey = z.string().regex(/^[A-Za-z][A-Za-z0-9._-]{0,63}$/)
+const miniappConfigurationValue = z.string().refine((value) => new TextEncoder().encode(value).byteLength <= 2_048)
+const miniappConfiguration = z
+  .record(miniappConfigurationKey, miniappConfigurationValue)
+  .refine((value) => Object.keys(value).length <= 32, "Miniapp configuration may contain at most 32 entries")
+  .refine(
+    (value) => new TextEncoder().encode(JSON.stringify(value)).byteLength <= 16 * 1_024,
+    "Miniapp configuration may contain at most 16 KiB",
+  )
 
 const authSchema = z.discriminatedUnion("mode", [
   z.object({mode: z.literal("mentra-account")}).strict(),
@@ -13,7 +22,7 @@ const authSchema = z.discriminatedUnion("mode", [
       mode: z.literal("microsoft-entra"),
       authorityUrl: z.string().url(),
       clientId: z.string().uuid(),
-      runtimeScopes: z.array(z.string().min(1)).min(1),
+      sessionScopes: z.array(z.string().min(1)).min(1),
       teamsScopes: z.array(z.string().min(1)),
     })
     .strict(),
@@ -73,9 +82,13 @@ export const deploymentManifestSchema = z
               .strict(),
           )
           .max(100),
+        configuration: z
+          .record(packageName, miniappConfiguration)
+          .refine((value) => Object.keys(value).length <= 100)
+          .default({}),
       })
       .strict()
-      .default({managed: []}),
+      .default({managed: [], configuration: {}}),
     glasses: z.object({allowedModelsOverride: z.array(z.string().min(1).max(120)).max(100).nullable()}).strict(),
     features: z
       .object({

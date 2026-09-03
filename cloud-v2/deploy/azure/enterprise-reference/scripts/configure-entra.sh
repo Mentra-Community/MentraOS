@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-RUNTIME_NAME="${RUNTIME_NAME:-Mentra Runtime}"
+CORE_NAME="${CORE_NAME:-Mentra Core}"
 MOBILE_NAME="${MOBILE_NAME:-Mentra Mobile}"
-RUNTIME_CLIENT_ID="${RUNTIME_CLIENT_ID:-}"
+CORE_CLIENT_ID="${CORE_CLIENT_ID:-}"
 MOBILE_CLIENT_ID="${MOBILE_CLIENT_ID:-}"
 GRANT_ADMIN_CONSENT=false
 IOS_REDIRECT="msauth.com.mentra.mentra://auth"
@@ -18,9 +18,9 @@ usage() {
     "" \
     "Creates or reconciles the two single-tenant Entra registrations used by a Mentra Private Deployment." \
     "" \
-    "  --runtime-name NAME          Display name when creating/finding Runtime (default: $RUNTIME_NAME)" \
+    "  --core-name NAME          Display name when creating/finding Core (default: $CORE_NAME)" \
     "  --mobile-name NAME           Display name when creating/finding Mobile (default: $MOBILE_NAME)" \
-    "  --runtime-client-id UUID     Reconcile this existing Runtime registration" \
+    "  --core-client-id UUID     Reconcile this existing Core registration" \
     "  --mobile-client-id UUID      Reconcile this existing Mobile registration" \
     "  --grant-admin-consent        Grant tenant-wide consent after configuring permissions" \
     "  --help                       Show this help" \
@@ -30,9 +30,9 @@ usage() {
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --runtime-name) RUNTIME_NAME="$2"; shift 2 ;;
+    --core-name) CORE_NAME="$2"; shift 2 ;;
     --mobile-name) MOBILE_NAME="$2"; shift 2 ;;
-    --runtime-client-id) RUNTIME_CLIENT_ID="$2"; shift 2 ;;
+    --core-client-id) CORE_CLIENT_ID="$2"; shift 2 ;;
     --mobile-client-id) MOBILE_CLIENT_ID="$2"; shift 2 ;;
     --grant-admin-consent) GRANT_ADMIN_CONSENT=true; shift ;;
     --help|-h) usage; exit 0 ;;
@@ -89,21 +89,28 @@ tag_service_principal() {
     --headers 'Content-Type=application/json' --body "$body" --output none
 }
 
-RUNTIME_OBJECT_ID="$(find_or_create_app "$RUNTIME_CLIENT_ID" "$RUNTIME_NAME")"
-RUNTIME_CLIENT_ID="$(az ad app show --id "$RUNTIME_OBJECT_ID" --query appId -o tsv)"
-RUNTIME_SCOPE_ID="$(az ad app show --id "$RUNTIME_OBJECT_ID" --query "api.oauth2PermissionScopes[?value=='mentra.runtime'].id | [0]" -o tsv)"
-if [[ -z "$RUNTIME_SCOPE_ID" ]]; then
-  RUNTIME_SCOPE_ID="$(uuidgen | tr '[:upper:]' '[:lower:]')"
+CORE_OBJECT_ID="$(find_or_create_app "$CORE_CLIENT_ID" "$CORE_NAME")"
+CORE_CLIENT_ID="$(az ad app show --id "$CORE_OBJECT_ID" --query appId -o tsv)"
+CORE_SCOPE_ID="$(az ad app show --id "$CORE_OBJECT_ID" --query "api.oauth2PermissionScopes[?value=='mentra.session'].id | [0]" -o tsv)"
+if [[ -z "$CORE_SCOPE_ID" ]]; then
+  CORE_SCOPE_ID="$(uuidgen | tr '[:upper:]' '[:lower:]')"
 fi
 
-runtime_app="$(az ad app show --id "$RUNTIME_OBJECT_ID" -o json)"
-runtime_body="$(jq -cn \
-  --arg uri "api://$RUNTIME_CLIENT_ID" \
-  --arg scope_id "$RUNTIME_SCOPE_ID" \
-  --argjson existing "$runtime_app" \
-  '{identifierUris: (($existing.identifierUris // []) + [$uri] | unique), api:(($existing.api // {}) + {requestedAccessTokenVersion:2, oauth2PermissionScopes: ((($existing.api.oauth2PermissionScopes // []) | map(select(.value != "mentra.runtime"))) + [{adminConsentDescription:"Allow the Mentra App to access this organization Runtime on behalf of the signed-in user.",adminConsentDisplayName:"Access Mentra Runtime",id:$scope_id,isEnabled:true,type:"User",userConsentDescription:"Allow the Mentra App to access your organization Runtime.",userConsentDisplayName:"Access Mentra Runtime",value:"mentra.runtime"}])})}')"
-az rest --method PATCH --uri "https://graph.microsoft.com/v1.0/applications/$RUNTIME_OBJECT_ID" \
-  --headers 'Content-Type=application/json' --body "$runtime_body" --output none
+core_app="$(az ad app show --id "$CORE_OBJECT_ID" -o json)"
+if jq -e '.api.oauth2PermissionScopes // [] | any(.value == "mentra.runtime" and .isEnabled == true)' <<<"$core_app" >/dev/null; then
+  disable_legacy_body="$(jq -cn --argjson existing "$core_app" \
+    '{api:(($existing.api // {}) + {oauth2PermissionScopes:(($existing.api.oauth2PermissionScopes // []) | map(if .value == "mentra.runtime" then . + {isEnabled:false} else . end))})}')"
+  az rest --method PATCH --uri "https://graph.microsoft.com/v1.0/applications/$CORE_OBJECT_ID" \
+    --headers 'Content-Type=application/json' --body "$disable_legacy_body" --output none
+  core_app="$(az ad app show --id "$CORE_OBJECT_ID" -o json)"
+fi
+core_body="$(jq -cn \
+  --arg uri "api://$CORE_CLIENT_ID" \
+  --arg scope_id "$CORE_SCOPE_ID" \
+  --argjson existing "$core_app" \
+  '{identifierUris: (($existing.identifierUris // []) + [$uri] | unique), api:(($existing.api // {}) + {requestedAccessTokenVersion:2, oauth2PermissionScopes: ((($existing.api.oauth2PermissionScopes // []) | map(select(.value != "mentra.session" and .value != "mentra.runtime"))) + [{adminConsentDescription:"Allow the Mentra App to access this organization Core on behalf of the signed-in user.",adminConsentDisplayName:"Access Mentra Core",id:$scope_id,isEnabled:true,type:"User",userConsentDescription:"Allow the Mentra App to access your organization Core.",userConsentDisplayName:"Access Mentra Core",value:"mentra.session"}])})}')"
+az rest --method PATCH --uri "https://graph.microsoft.com/v1.0/applications/$CORE_OBJECT_ID" \
+  --headers 'Content-Type=application/json' --body "$core_body" --output none
 
 MOBILE_OBJECT_ID="$(find_or_create_app "$MOBILE_CLIENT_ID" "$MOBILE_NAME")"
 MOBILE_CLIENT_ID="$(az ad app show --id "$MOBILE_OBJECT_ID" --query appId -o tsv)"
@@ -117,16 +124,16 @@ ACS_CHATS_SCOPE_ID="$(jq -r '.oauth2PermissionScopes[] | select(.value == "Teams
 mobile_app="$(az ad app show --id "$MOBILE_OBJECT_ID" -o json)"
 mobile_body="$(jq -cn \
   --arg ios "$IOS_REDIRECT" --arg apk "$APK_REDIRECT" --arg play "$PLAY_REDIRECT" \
-  --arg runtime_app "$RUNTIME_CLIENT_ID" --arg runtime_scope "$RUNTIME_SCOPE_ID" \
+  --arg core_app "$CORE_CLIENT_ID" --arg session_scope "$CORE_SCOPE_ID" \
   --arg acs_app "$ACS_APP_ID" --arg calls "$ACS_CALLS_SCOPE_ID" --arg chats "$ACS_CHATS_SCOPE_ID" \
   --argjson existing "$mobile_app" \
-  '{isFallbackPublicClient:true, publicClient:{redirectUris: (($existing.publicClient.redirectUris // []) + [$ios,$apk,$play] | unique)}, requiredResourceAccess: (((($existing.requiredResourceAccess // []) | map(select(.resourceAppId != $runtime_app and .resourceAppId != $acs_app)))) + [{resourceAppId:$runtime_app,resourceAccess: (((($existing.requiredResourceAccess // []) | map(select(.resourceAppId == $runtime_app)) | .[0].resourceAccess // []) + [{id:$runtime_scope,type:"Scope"}]) | unique_by(.id))},{resourceAppId:$acs_app,resourceAccess: (((($existing.requiredResourceAccess // []) | map(select(.resourceAppId == $acs_app)) | .[0].resourceAccess // []) + [{id:$calls,type:"Scope"},{id:$chats,type:"Scope"}]) | unique_by(.id))}])}')"
+  '{isFallbackPublicClient:true, publicClient:{redirectUris: (($existing.publicClient.redirectUris // []) + [$ios,$apk,$play] | unique)}, requiredResourceAccess: (((($existing.requiredResourceAccess // []) | map(select(.resourceAppId != $core_app and .resourceAppId != $acs_app)))) + [{resourceAppId:$core_app,resourceAccess: (((($existing.requiredResourceAccess // []) | map(select(.resourceAppId == $core_app)) | .[0].resourceAccess // []) + [{id:$session_scope,type:"Scope"}]) | unique_by(.id))},{resourceAppId:$acs_app,resourceAccess: (((($existing.requiredResourceAccess // []) | map(select(.resourceAppId == $acs_app)) | .[0].resourceAccess // []) + [{id:$calls,type:"Scope"},{id:$chats,type:"Scope"}]) | unique_by(.id))}])}')"
 az rest --method PATCH --uri "https://graph.microsoft.com/v1.0/applications/$MOBILE_OBJECT_ID" \
   --headers 'Content-Type=application/json' --body "$mobile_body" --output none
 
-RUNTIME_SP_ID="$(ensure_service_principal "$RUNTIME_CLIENT_ID")"
+CORE_SP_ID="$(ensure_service_principal "$CORE_CLIENT_ID")"
 MOBILE_SP_ID="$(ensure_service_principal "$MOBILE_CLIENT_ID")"
-tag_service_principal "$RUNTIME_SP_ID" false
+tag_service_principal "$CORE_SP_ID" false
 tag_service_principal "$MOBILE_SP_ID" true
 
 if [[ "$GRANT_ADMIN_CONSENT" == "true" ]]; then
@@ -135,11 +142,11 @@ fi
 
 jq -n \
   --arg tenantId "$TENANT_ID" \
-  --arg runtimeApiClientId "$RUNTIME_CLIENT_ID" \
+  --arg coreApiClientId "$CORE_CLIENT_ID" \
   --arg mobileClientId "$MOBILE_CLIENT_ID" \
-  --arg runtimeScope "api://$RUNTIME_CLIENT_ID/mentra.runtime" \
+  --arg sessionScope "api://$CORE_CLIENT_ID/mentra.session" \
   --arg mobileServicePrincipalId "$MOBILE_SP_ID" \
-  '{tenantId:$tenantId,runtimeApiClientId:$runtimeApiClientId,mobileClientId:$mobileClientId,runtimeScope:$runtimeScope,mobileServicePrincipalId:$mobileServicePrincipalId}'
+  '{tenantId:$tenantId,coreApiClientId:$coreApiClientId,mobileClientId:$mobileClientId,sessionScope:$sessionScope,mobileServicePrincipalId:$mobileServicePrincipalId}'
 
 if [[ "$GRANT_ADMIN_CONSENT" != "true" ]]; then
   printf '%s\n' 'Admin consent was not granted. Review the permissions, then rerun with --grant-admin-consent.' >&2

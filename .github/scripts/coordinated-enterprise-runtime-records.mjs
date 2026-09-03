@@ -5,13 +5,14 @@ import {fileURLToPath} from "node:url"
 
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/
-const CANONICAL_IMAGE = "ghcr.io/mentra-community/mentra-runtime"
+const CANONICAL_IMAGE = "ghcr.io/mentra-community/mentra-cloud"
 const TARGET = Object.freeze({
   environment: "enterprise-dev",
   resourceGroup: "rg-mentra-enterprise-reference",
   registry: "mentraenterpriseref",
   containerApp: "ca-mentra-enterprise-reference",
-  imageRepository: "mentra-runtime-enterprise",
+  coreContainerApp: "ca-mentra-enterprise-reference-core",
+  imageRepository: "mentra-cloud-enterprise",
   workspaceOrigin: "https://enterprisedev.mentraglass.com",
   services: Object.freeze(["meetings"]),
   meetingProvider: "acs-teams",
@@ -49,11 +50,16 @@ function validatePlan(plan, sourceCommit) {
   }
 }
 
-function validateChecks(checks, workspaceOrigin) {
-  if (!Array.isArray(checks) || checks.length !== 2) {
-    throw new Error("Enterprise Runtime deployment must record healthz and ready checks")
+function validateChecks(checks, workspaceOrigin, coreOrigin) {
+  if (!Array.isArray(checks) || checks.length !== 4) {
+    throw new Error("Private deployment must record Core and Runtime healthz and ready checks")
   }
-  const expected = new Set([`${workspaceOrigin}/healthz`, `${workspaceOrigin}/ready`])
+  const expected = new Set([
+    `${workspaceOrigin}/healthz`,
+    `${workspaceOrigin}/ready`,
+    `${coreOrigin}/healthz`,
+    `${coreOrigin}/ready`,
+  ])
   for (const check of checks) {
     if (
       !expected.delete(check?.url) ||
@@ -79,7 +85,9 @@ export function createEnterpriseRuntimeDeploymentRecord({
   image,
   imageDigest,
   revision,
+  coreRevision,
   workspaceOrigin,
+  coreOrigin,
   checks,
   completedAt,
   provenanceUrl,
@@ -106,6 +114,7 @@ export function createEnterpriseRuntimeDeploymentRecord({
       resourceGroup: TARGET.resourceGroup,
       registry: TARGET.registry,
       containerApp: TARGET.containerApp,
+      coreContainerApp: TARGET.coreContainerApp,
       imageRepository: TARGET.imageRepository,
       requestedTag,
     },
@@ -121,7 +130,7 @@ export function createEnterpriseRuntimeDeploymentRecord({
       throw new Error("Enterprise Runtime deployment is missing its canonical GHCR source")
     }
     const expectedImage = `${TARGET.registry}.azurecr.io/${TARGET.imageRepository}@${imageDigest}`
-    if (image !== expectedImage || !DIGEST_PATTERN.test(imageDigest || "") || !revision) {
+    if (image !== expectedImage || !DIGEST_PATTERN.test(imageDigest || "") || !revision || !coreRevision) {
       throw new Error("Enterprise Runtime deployment is missing immutable Azure image evidence")
     }
     const origin = requireHttps(workspaceOrigin, "workspaceOrigin")
@@ -136,8 +145,10 @@ export function createEnterpriseRuntimeDeploymentRecord({
     record.azure.image = image
     record.azure.imageDigest = imageDigest
     record.azure.revision = revision
+    record.azure.coreRevision = coreRevision
     record.workspaceOrigin = origin
-    record.checks = validateChecks(checks, origin)
+    record.coreOrigin = requireHttps(coreOrigin, "coreOrigin")
+    record.checks = validateChecks(checks, origin, record.coreOrigin)
   }
   return record
 }
@@ -169,6 +180,7 @@ export function validateEnterpriseRuntimeDeploymentRecord({plan, record, allowVa
     record.azure?.resourceGroup !== TARGET.resourceGroup ||
     record.azure?.registry !== TARGET.registry ||
     record.azure?.containerApp !== TARGET.containerApp ||
+    record.azure?.coreContainerApp !== TARGET.coreContainerApp ||
     record.azure?.imageRepository !== TARGET.imageRepository ||
     record.azure?.requestedTag !== plan.sourceCommit
   ) {
@@ -181,8 +193,10 @@ export function validateEnterpriseRuntimeDeploymentRecord({plan, record, allowVa
       record.azure.image !== undefined ||
       record.azure.imageDigest !== undefined ||
       record.azure.revision !== undefined ||
+      record.azure.coreRevision !== undefined ||
       record.source !== undefined ||
       record.workspaceOrigin !== undefined ||
+      record.coreOrigin !== undefined ||
       record.checks !== undefined
     ) {
       throw new Error("Validation-only Enterprise Runtime evidence must not claim a live deployment")
@@ -206,7 +220,9 @@ export function validateEnterpriseRuntimeDeploymentRecord({plan, record, allowVa
     image: record.azure.image,
     imageDigest: record.azure.imageDigest,
     revision: record.azure.revision,
+    coreRevision: record.azure.coreRevision,
     workspaceOrigin: record.workspaceOrigin,
+    coreOrigin: record.coreOrigin,
     checks: record.checks,
     completedAt: record.completedAt,
     provenanceUrl: record.provenanceUrl,
@@ -244,7 +260,9 @@ function main() {
     image: args.image,
     imageDigest: args["image-digest"],
     revision: args.revision,
+    coreRevision: args["core-revision"],
     workspaceOrigin: args["workspace-origin"],
+    coreOrigin: args["core-origin"],
     checks: args.checks ? readJson(args.checks) : undefined,
     completedAt: args["completed-at"],
     provenanceUrl: args["provenance-url"],

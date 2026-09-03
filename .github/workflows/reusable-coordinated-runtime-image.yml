@@ -30,7 +30,7 @@ permissions:
 
 jobs:
   publish:
-    name: Build and attest canonical Runtime image
+    name: Build and attest canonical Mentra Cloud image
     runs-on: ubuntu-latest
     timeout-minutes: 60
     outputs:
@@ -38,7 +38,7 @@ jobs:
       image: ${{ steps.coordinates.outputs.image }}
       digest: ${{ steps.published.outputs.digest }}
     env:
-      RUNTIME_IMAGE: ghcr.io/mentra-community/mentra-runtime
+      CLOUD_IMAGE: ghcr.io/mentra-community/mentra-cloud
     steps:
       - uses: actions/checkout@v4
         with:
@@ -65,17 +65,17 @@ jobs:
           channel=$(jq -er .channel "$plan")
           [[ "$channel" == "dev" || "$channel" == "beta" ]]
           release_identity=$(jq -er .releaseIdentity "$plan")
-          sbom_name="mentra-runtime-$release_identity.spdx.json"
+          sbom_name="mentra-cloud-$release_identity.spdx.json"
           {
-            echo "image=$RUNTIME_IMAGE"
+            echo "image=$CLOUD_IMAGE"
             echo "release_identity=$release_identity"
-            echo "release_tag=$RUNTIME_IMAGE:$release_identity"
-            echo "source_tag=$RUNTIME_IMAGE:$source_commit"
-            echo "temporary_tag=$RUNTIME_IMAGE:build-${{ github.run_id }}-${{ github.run_attempt }}"
+            echo "release_tag=$CLOUD_IMAGE:$release_identity"
+            echo "source_tag=$CLOUD_IMAGE:$source_commit"
+            echo "temporary_tag=$CLOUD_IMAGE:build-${{ github.run_id }}-${{ github.run_attempt }}"
             echo "sbom_name=$sbom_name"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Validate Runtime build source
+      - name: Validate Mentra Cloud build source
         run: |
           set -euo pipefail
           test -s cloud-v2/docker/Dockerfile
@@ -121,11 +121,11 @@ jobs:
             [[ "$release_digest" == "$source_digest" ]]
           elif [[ -n "$release_digest" ]]; then
             [[ "$release_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
-            docker buildx imagetools create --tag "$SOURCE_TAG" "$RUNTIME_IMAGE@$release_digest"
+            docker buildx imagetools create --tag "$SOURCE_TAG" "$CLOUD_IMAGE@$release_digest"
             source_digest="$release_digest"
           elif [[ -n "$source_digest" ]]; then
             [[ "$source_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
-            docker buildx imagetools create --tag "$RELEASE_TAG" "$RUNTIME_IMAGE@$source_digest"
+            docker buildx imagetools create --tag "$RELEASE_TAG" "$CLOUD_IMAGE@$source_digest"
             release_digest="$source_digest"
           fi
           if [[ -n "$release_digest" ]]; then
@@ -137,7 +137,7 @@ jobs:
             echo "reused=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Build Runtime without publishing
+      - name: Build Mentra Cloud without publishing
         if: inputs.dry_run
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
@@ -145,10 +145,10 @@ jobs:
           file: cloud-v2/docker/Dockerfile
           platforms: linux/amd64
           push: false
-          tags: mentra-runtime:validation
+          tags: mentra-cloud:validation
           provenance: false
 
-      - name: Build and publish Runtime once
+      - name: Build and publish Mentra Cloud once
         id: build
         if: inputs.dry_run != true && steps.existing.outputs.reused != 'true'
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
@@ -183,8 +183,8 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
-          docker buildx imagetools create --tag "$RELEASE_TAG" "$RUNTIME_IMAGE@$DIGEST"
-          docker buildx imagetools create --tag "$SOURCE_TAG" "$RUNTIME_IMAGE@$DIGEST"
+          docker buildx imagetools create --tag "$RELEASE_TAG" "$CLOUD_IMAGE@$DIGEST"
+          docker buildx imagetools create --tag "$SOURCE_TAG" "$CLOUD_IMAGE@$DIGEST"
 
       - name: Verify reused image provenance
         if: inputs.dry_run != true && steps.existing.outputs.reused == 'true'
@@ -193,7 +193,7 @@ jobs:
           DIGEST: ${{ steps.existing.outputs.digest }}
         run: |
           set -euo pipefail
-          gh attestation verify "oci://$RUNTIME_IMAGE@$DIGEST" --repo "$GITHUB_REPOSITORY"
+          gh attestation verify "oci://$CLOUD_IMAGE@$DIGEST" --repo "$GITHUB_REPOSITORY"
 
       - name: Verify published tags resolve to one digest
         id: published
@@ -240,7 +240,7 @@ jobs:
           sbom-path: ${{ steps.coordinates.outputs.sbom_name }}
           push-to-registry: true
 
-      - name: Verify signed Runtime attestations
+      - name: Verify signed Mentra Cloud attestations
         if: inputs.dry_run != true
         env:
           GH_TOKEN: ${{ github.token }}
@@ -293,10 +293,10 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
-      - name: Summarize Runtime image
+      - name: Summarize Mentra Cloud image
         run: |
           {
-            echo "## Canonical Mentra Runtime image"
+            echo "## Canonical Mentra Cloud image"
             echo
             echo "- Image: \`${{ steps.coordinates.outputs.image }}\`"
             echo "- Release tag: \`${{ steps.coordinates.outputs.release_identity }}\`"

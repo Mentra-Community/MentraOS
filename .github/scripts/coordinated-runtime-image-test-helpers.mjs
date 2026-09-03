@@ -10,7 +10,7 @@ export function runtimeImageRecordForPlan(plan, status = "published") {
       status === "published"
         ? {
             format: "spdx-json",
-            name: `mentra-runtime-${plan.releaseIdentity}.spdx.json`,
+            name: `mentra-cloud-${plan.releaseIdentity}.spdx.json`,
             sha256: "9".repeat(64),
             size: 4096,
             attestationUrl: "https://github.com/Mentra-Community/MentraOS/attestations/902",

@@ -11,18 +11,26 @@
  * "Mentra-issued access token" for the claim shape.
  */
 
-import crypto from "node:crypto";
-import * as jose from "jose";
+import crypto from "node:crypto"
+import * as jose from "jose"
 
-const ALG = "EdDSA";
-const CORE_ISSUER = "cloud-core";
-const CORE_AUDIENCE = "cloud-core";
+const ALG = "EdDSA"
+const CORE_AUDIENCE = "cloud-core"
+
+export interface FederatedIdentity {
+  providerId: string
+  providerKind: string
+  issuer: string
+  subject: string
+  directoryTenantId?: string
+}
 
 export interface VerifiedAccessToken {
-  mentraUserId: string;
-  tenantId: string;
-  sessionId: string;
-  jti: string;
+  mentraUserId: string
+  tenantId: string
+  sessionId: string
+  jti: string
+  federatedIdentity?: FederatedIdentity
 }
 
 /**
@@ -32,51 +40,48 @@ export interface VerifiedAccessToken {
  */
 export class AccessTokenError extends Error {
   constructor(message: string) {
-    super(message);
-    this.name = "AccessTokenError";
+    super(message)
+    this.name = "AccessTokenError"
   }
 }
 
-let publicKeyPromise: Promise<jose.KeyLike> | null = null;
-const RUNTIME_DEFAULT_AUDIENCE = "cloud-runtime";
-const RUNTIME_DEFAULT_ALGORITHMS = ["EdDSA", "RS256", "ES256"] as const;
+let publicKeyPromise: Promise<jose.KeyLike> | null = null
+const RUNTIME_DEFAULT_AUDIENCE = "cloud-runtime"
+const RUNTIME_DEFAULT_ALGORITHMS = ["EdDSA", "RS256", "ES256"] as const
 
 interface RuntimeIssuerConfig {
-  issuer: string;
-  jwksUrl?: string;
-  publicKey?: string;
-  publicKeyEnv?: string;
-  userIdClaim?: string;
-  tenantIdClaim?: string;
-  legacyTenantIdClaim?: string;
-  fixedTenantId?: string;
-  algorithms?: string[];
-  requiredScopes?: string[];
-  allowedClientIds?: string[];
+  issuer: string
+  jwksUrl?: string
+  publicKey?: string
+  publicKeyEnv?: string
+  userIdClaim?: string
+  tenantIdClaim?: string
+  legacyTenantIdClaim?: string
+  fixedTenantId?: string
+  algorithms?: string[]
+  requiredScopes?: string[]
+  allowedClientIds?: string[]
 }
 
-const runtimeRemoteJwks = new Map<
-  string,
-  ReturnType<typeof jose.createRemoteJWKSet>
->();
-const runtimeStaticKeys = new Map<string, Promise<jose.KeyLike>>();
+const runtimeRemoteJwks = new Map<string, ReturnType<typeof jose.createRemoteJWKSet>>()
+const runtimeStaticKeys = new Map<string, Promise<jose.KeyLike>>()
 
 /** Reset the cached public key. Test-only — call after mutating env. */
 export function resetMentraKeyCache(): void {
-  publicKeyPromise = null;
-  resetRuntimeAuthCache();
+  publicKeyPromise = null
+  resetRuntimeAuthCache()
 }
 
 async function getPublicKey(): Promise<jose.KeyLike> {
   if (!publicKeyPromise) {
-    const pubBody = process.env.MENTRA_JWT_PUBLIC_KEY;
+    const pubBody = process.env.MENTRA_JWT_PUBLIC_KEY
     if (!pubBody) {
-      throw new AccessTokenError("env var MENTRA_JWT_PUBLIC_KEY is not set");
+      throw new AccessTokenError("env var MENTRA_JWT_PUBLIC_KEY is not set")
     }
-    const pem = `-----BEGIN PUBLIC KEY-----\n${pubBody}\n-----END PUBLIC KEY-----`;
-    publicKeyPromise = jose.importSPKI(pem, ALG, { extractable: false });
+    const pem = `-----BEGIN PUBLIC KEY-----\n${pubBody}\n-----END PUBLIC KEY-----`
+    publicKeyPromise = jose.importSPKI(pem, ALG, {extractable: false})
   }
-  return publicKeyPromise;
+  return publicKeyPromise
 }
 
 /**
@@ -84,42 +89,35 @@ async function getPublicKey(): Promise<jose.KeyLike> {
  * token. Throws `AccessTokenError` on failure. Does NOT check the revocation
  * blacklist — see file header.
  */
-export async function verifyAccessTokenSignature(
-  token: string,
-): Promise<VerifiedAccessToken> {
-  const publicKey = await getPublicKey();
+export async function verifyAccessTokenSignature(token: string): Promise<VerifiedAccessToken> {
+  const publicKey = await getPublicKey()
 
-  let payload: jose.JWTPayload;
+  let payload: jose.JWTPayload
   try {
     const result = await jose.jwtVerify(token, publicKey, {
       audience: CORE_AUDIENCE,
-      issuer: CORE_ISSUER,
+      issuer: process.env.CLOUD_CORE_ISSUER ?? "cloud-core",
       algorithms: [ALG],
-    });
-    payload = result.payload;
+    })
+    payload = result.payload
   } catch (err) {
-    throw new AccessTokenError(
-      `access_token rejected: ${(err as Error).message}`,
-    );
+    throw new AccessTokenError(`access_token rejected: ${(err as Error).message}`)
   }
 
-  const sub = typeof payload.sub === "string" ? payload.sub : null;
-  const tenantId =
-    typeof payload.tenant_id === "string" ? payload.tenant_id : null;
-  const sessionId =
-    typeof payload.session_id === "string" ? payload.session_id : null;
-  const jti = typeof payload.jti === "string" ? payload.jti : null;
+  const sub = typeof payload.sub === "string" ? payload.sub : null
+  const tenantId = typeof payload.tenant_id === "string" ? payload.tenant_id : null
+  const sessionId = typeof payload.session_id === "string" ? payload.session_id : null
+  const jti = typeof payload.jti === "string" ? payload.jti : null
+  const federatedIdentity = parseFederatedIdentity(payload.federated_identity)
 
   const missingClaims = [
     !sub ? "sub" : null,
     !tenantId ? "tenant_id" : null,
     !sessionId ? "session_id" : null,
     !jti ? "jti" : null,
-  ].filter((claim): claim is string => Boolean(claim));
+  ].filter((claim): claim is string => Boolean(claim))
   if (missingClaims.length > 0) {
-    throw new AccessTokenError(
-      `access_token missing required claims: ${missingClaims.join(", ")}`,
-    );
+    throw new AccessTokenError(`access_token missing required claims: ${missingClaims.join(", ")}`)
   }
 
   return {
@@ -127,126 +125,147 @@ export async function verifyAccessTokenSignature(
     tenantId: tenantId!,
     sessionId: sessionId!,
     jti: jti!,
-  };
+    ...(federatedIdentity ? {federatedIdentity} : {}),
+  }
 }
 
-export async function verifyRuntimeToken(
-  token: string,
-): Promise<VerifiedAccessToken> {
-  const issuers = configuredRuntimeIssuers();
+export async function verifyRuntimeToken(token: string): Promise<VerifiedAccessToken> {
+  const issuers = configuredRuntimeIssuers()
   if (issuers.length === 0) {
-    throw new AccessTokenError("runtime auth issuer config is required");
+    throw new AccessTokenError("runtime auth issuer config is required")
   }
 
-  let payload: jose.JWTPayload;
-  let iss: string | undefined;
+  let payload: jose.JWTPayload
+  let iss: string | undefined
   try {
-    payload = jose.decodeJwt(token);
-    iss = typeof payload.iss === "string" ? payload.iss : undefined;
+    payload = jose.decodeJwt(token)
+    iss = typeof payload.iss === "string" ? payload.iss : undefined
   } catch {
-    throw new AccessTokenError("runtime_token is not a parseable JWT");
+    throw new AccessTokenError("runtime_token is not a parseable JWT")
   }
 
-  const issuer = issuers.find((entry) => entry.issuer === iss);
+  const issuer = issuers.find((entry) => entry.issuer === iss)
   if (!issuer) {
-    throw new AccessTokenError(
-      `runtime_token issuer not trusted: ${iss ?? "missing"}`,
-    );
+    throw new AccessTokenError(`runtime_token issuer not trusted: ${iss ?? "missing"}`)
   }
 
-  const key = await runtimeKeyForIssuer(issuer);
+  const key = await runtimeKeyForIssuer(issuer)
   try {
     const result = await jose.jwtVerify(token, key as jose.JWTVerifyGetKey, {
-      audience:
-        process.env.CLOUD_RUNTIME_AUTH_AUDIENCE ?? RUNTIME_DEFAULT_AUDIENCE,
+      audience: process.env.CLOUD_RUNTIME_AUTH_AUDIENCE ?? RUNTIME_DEFAULT_AUDIENCE,
       issuer: issuer.issuer,
       algorithms: issuer.algorithms ?? [...RUNTIME_DEFAULT_ALGORITHMS],
       clockTolerance: "5 minutes",
-    });
-    payload = result.payload;
+    })
+    payload = result.payload
   } catch (err) {
-    throw new AccessTokenError(
-      `runtime_token rejected: ${(err as Error).message}`,
-    );
+    throw new AccessTokenError(`runtime_token rejected: ${(err as Error).message}`)
   }
 
-  const scopes = new Set(
-    typeof payload.scp === "string"
-      ? payload.scp.split(" ").filter(Boolean)
-      : [],
-  );
+  const scopes = new Set(typeof payload.scp === "string" ? payload.scp.split(" ").filter(Boolean) : [])
   for (const requiredScope of issuer.requiredScopes ?? []) {
     if (!scopes.has(requiredScope)) {
-      throw new AccessTokenError(
-        `runtime_token missing required scope: ${requiredScope}`,
-      );
+      throw new AccessTokenError(`runtime_token missing required scope: ${requiredScope}`)
     }
   }
   if (issuer.allowedClientIds?.length) {
-    const clientId = stringClaim(payload.azp) ?? stringClaim(payload.appid);
+    const clientId = stringClaim(payload.azp) ?? stringClaim(payload.appid)
     if (!clientId || !issuer.allowedClientIds.includes(clientId)) {
-      throw new AccessTokenError("runtime_token client is not allowed");
+      throw new AccessTokenError("runtime_token client is not allowed")
     }
   }
 
-  const userIdClaim = issuer.userIdClaim ?? "sub";
-  const userId = stringClaim(payload[userIdClaim]);
+  const userIdClaim = issuer.userIdClaim ?? "sub"
+  const userId = stringClaim(payload[userIdClaim])
   const tenantId =
     issuer.fixedTenantId ??
     stringClaim(payload[issuer.tenantIdClaim ?? "tenant_id"]) ??
-    (issuer.legacyTenantIdClaim
-      ? stringClaim(payload[issuer.legacyTenantIdClaim])
-      : undefined);
-  const jti = stringClaim(payload.jti) ?? cryptoRandomId();
-  const sessionId = stringClaim(payload.session_id) ?? `runtime_${jti}`;
+    (issuer.legacyTenantIdClaim ? stringClaim(payload[issuer.legacyTenantIdClaim]) : undefined)
+  const jti = stringClaim(payload.jti) ?? cryptoRandomId()
+  const sessionId = stringClaim(payload.session_id) ?? `runtime_${jti}`
 
   if (!userId || !tenantId) {
-    throw new AccessTokenError(
-      "runtime_token missing required identity claims",
-    );
+    throw new AccessTokenError("runtime_token missing required identity claims")
   }
 
-  return { mentraUserId: userId, tenantId, sessionId, jti };
+  const federatedIdentity = parseFederatedIdentity(payload.federated_identity)
+  return {
+    mentraUserId: userId,
+    tenantId,
+    sessionId,
+    jti,
+    ...(federatedIdentity ? {federatedIdentity} : {}),
+  }
 }
 
 export async function signRuntimeToken(args: {
-  privateKey: string;
-  issuer: string;
-  audience?: string;
-  subject: string;
-  tenantId: string;
-  sessionId?: string;
-  jti?: string;
-  expiresInSeconds: number;
-  kid?: string;
+  privateKey: string
+  issuer: string
+  audience?: string
+  subject: string
+  tenantId: string
+  sessionId?: string
+  jti?: string
+  expiresInSeconds: number
+  kid?: string
+  federatedIdentity?: FederatedIdentity
 }): Promise<string> {
-  const privateKey = await jose.importPKCS8(
-    toPrivatePem(args.privateKey),
-    "EdDSA",
-    { extractable: false },
-  );
+  const privateKey = await jose.importPKCS8(toPrivatePem(args.privateKey), "EdDSA", {extractable: false})
   const claims: jose.JWTPayload = {
     tenant_id: args.tenantId,
-  };
-  if (args.sessionId) claims.session_id = args.sessionId;
+  }
+  if (args.federatedIdentity) {
+    claims.federated_identity = serializeFederatedIdentity(args.federatedIdentity)
+  }
+  if (args.sessionId) claims.session_id = args.sessionId
   const jwt = new jose.SignJWT(claims)
-    .setProtectedHeader({ alg: "EdDSA", kid: args.kid ?? "cloud-runtime-1" })
+    .setProtectedHeader({alg: "EdDSA", kid: args.kid ?? "cloud-runtime-1"})
     .setIssuer(args.issuer)
     .setAudience(args.audience ?? RUNTIME_DEFAULT_AUDIENCE)
     .setSubject(args.subject)
     .setIssuedAt()
-    .setExpirationTime(`${args.expiresInSeconds}s`);
-  if (args.jti) jwt.setJti(args.jti);
-  return jwt.sign(privateKey);
+    .setExpirationTime(`${args.expiresInSeconds}s`)
+  if (args.jti) jwt.setJti(args.jti)
+  return jwt.sign(privateKey)
+}
+
+function serializeFederatedIdentity(identity: FederatedIdentity): Record<string, string> {
+  return {
+    provider_id: identity.providerId,
+    provider_kind: identity.providerKind,
+    issuer: identity.issuer,
+    subject: identity.subject,
+    ...(identity.directoryTenantId ? {directory_tenant_id: identity.directoryTenantId} : {}),
+  }
+}
+
+function parseFederatedIdentity(value: unknown): FederatedIdentity | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined
+  }
+  const claims = value as Record<string, unknown>
+  const providerId = stringClaim(claims.provider_id)
+  const providerKind = stringClaim(claims.provider_kind)
+  const issuer = stringClaim(claims.issuer)
+  const subject = stringClaim(claims.subject)
+  if (!providerId || !providerKind || !issuer || !subject) return undefined
+  const directoryTenantId = stringClaim(claims.directory_tenant_id)
+  return {
+    providerId,
+    providerKind,
+    issuer,
+    subject,
+    ...(directoryTenantId ? {directoryTenantId} : {}),
+  }
 }
 
 export function resetRuntimeAuthCache(): void {
-  runtimeRemoteJwks.clear();
-  runtimeStaticKeys.clear();
+  runtimeRemoteJwks.clear()
+  runtimeStaticKeys.clear()
 }
 
 export function assertRuntimeAuthConfigured(): void {
-  const issuers = configuredRuntimeIssuers();
+  const issuers = configuredRuntimeIssuers()
   if (issuers.length === 0) {
     throw new AccessTokenError(
       [
@@ -255,55 +274,46 @@ export function assertRuntimeAuthConfigured(): void {
         "That command starts the integrated dev stack and generates matching local Core/Runtime auth keys.",
         "Use `bun run dev:runtime` only when intentionally running Runtime in isolation with CLOUD_RUNTIME_AUTH_ISSUERS set yourself.",
       ].join(" "),
-    );
+    )
   }
 }
 
 function configuredRuntimeIssuers(): RuntimeIssuerConfig[] {
-  const raw = process.env.CLOUD_RUNTIME_AUTH_ISSUERS;
-  if (!raw?.trim()) return [];
+  const raw = process.env.CLOUD_RUNTIME_AUTH_ISSUERS
+  if (!raw?.trim()) return []
   try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) throw new Error("expected array");
-    return parsed.map(parseRuntimeIssuerConfig);
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) throw new Error("expected array")
+    return parsed.map(parseRuntimeIssuerConfig)
   } catch (err) {
-    throw new AccessTokenError(
-      `CLOUD_RUNTIME_AUTH_ISSUERS is invalid: ${(err as Error).message}`,
-    );
+    throw new AccessTokenError(`CLOUD_RUNTIME_AUTH_ISSUERS is invalid: ${(err as Error).message}`)
   }
 }
 
 function parseRuntimeIssuerConfig(value: unknown): RuntimeIssuerConfig {
   if (!value || typeof value !== "object") {
-    throw new Error("issuer config must be an object");
+    throw new Error("issuer config must be an object")
   }
-  const obj = value as Record<string, unknown>;
-  const issuer = stringClaim(obj.issuer);
-  if (!issuer) throw new Error("issuer config missing issuer");
+  const obj = value as Record<string, unknown>
+  const issuer = stringClaim(obj.issuer)
+  if (!issuer) throw new Error("issuer config missing issuer")
 
-  const legacyTenantIdClaim = stringClaim(obj.oemIdClaim);
-  const legacyFixedTenantId = stringClaim(obj.fixedOemId);
-  const tenantIdClaim =
-    stringClaim(obj.tenantIdClaim) ??
-    (legacyTenantIdClaim ? "tenant_id" : undefined);
-  const fixedTenantId = stringClaim(obj.fixedTenantId) ?? legacyFixedTenantId;
+  const legacyTenantIdClaim = stringClaim(obj.oemIdClaim)
+  const legacyFixedTenantId = stringClaim(obj.fixedOemId)
+  const tenantIdClaim = stringClaim(obj.tenantIdClaim) ?? (legacyTenantIdClaim ? "tenant_id" : undefined)
+  const fixedTenantId = stringClaim(obj.fixedTenantId) ?? legacyFixedTenantId
   if (!tenantIdClaim && !fixedTenantId) {
-    throw new Error(`issuer ${issuer} must set tenantIdClaim or fixedTenantId`);
+    throw new Error(`issuer ${issuer} must set tenantIdClaim or fixedTenantId`)
   }
   if (tenantIdClaim && fixedTenantId) {
-    throw new Error(
-      `issuer ${issuer} cannot set both tenantIdClaim and fixedTenantId`,
-    );
+    throw new Error(`issuer ${issuer} cannot set both tenantIdClaim and fixedTenantId`)
   }
 
   const algorithms = Array.isArray(obj.algorithms)
     ? obj.algorithms.filter((v): v is string => typeof v === "string")
-    : undefined;
-  const requiredScopes = stringArrayClaim(obj.requiredScopes, "requiredScopes");
-  const allowedClientIds = stringArrayClaim(
-    obj.allowedClientIds,
-    "allowedClientIds",
-  );
+    : undefined
+  const requiredScopes = stringArrayClaim(obj.requiredScopes, "requiredScopes")
+  const allowedClientIds = stringArrayClaim(obj.allowedClientIds, "allowedClientIds")
 
   return {
     issuer,
@@ -317,68 +327,59 @@ function parseRuntimeIssuerConfig(value: unknown): RuntimeIssuerConfig {
     algorithms,
     requiredScopes,
     allowedClientIds,
-  };
+  }
 }
 
 function stringArrayClaim(value: unknown, name: string): string[] | undefined {
-  if (value === undefined) return undefined;
-  if (
-    !Array.isArray(value) ||
-    value.some((entry) => typeof entry !== "string" || !entry.trim())
-  ) {
-    throw new Error(`${name} must be an array of non-empty strings`);
+  if (value === undefined) return undefined
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string" || !entry.trim())) {
+    throw new Error(`${name} must be an array of non-empty strings`)
   }
-  return value as string[];
+  return value as string[]
 }
 
 async function runtimeKeyForIssuer(
   issuer: RuntimeIssuerConfig,
 ): Promise<jose.KeyLike | ReturnType<typeof jose.createRemoteJWKSet>> {
   if (issuer.jwksUrl) {
-    let jwks = runtimeRemoteJwks.get(issuer.jwksUrl);
+    let jwks = runtimeRemoteJwks.get(issuer.jwksUrl)
     if (!jwks) {
       jwks = jose.createRemoteJWKSet(new URL(issuer.jwksUrl), {
         cooldownDuration: 30_000,
         cacheMaxAge: 5 * 60_000,
-      });
-      runtimeRemoteJwks.set(issuer.jwksUrl, jwks);
+      })
+      runtimeRemoteJwks.set(issuer.jwksUrl, jwks)
     }
-    return jwks;
+    return jwks
   }
 
-  const keyMaterial =
-    issuer.publicKey ??
-    (issuer.publicKeyEnv ? process.env[issuer.publicKeyEnv] : undefined);
+  const keyMaterial = issuer.publicKey ?? (issuer.publicKeyEnv ? process.env[issuer.publicKeyEnv] : undefined)
   if (!keyMaterial) {
-    throw new AccessTokenError(`issuer ${issuer.issuer} has no key source`);
+    throw new AccessTokenError(`issuer ${issuer.issuer} has no key source`)
   }
 
-  let key = runtimeStaticKeys.get(keyMaterial);
+  let key = runtimeStaticKeys.get(keyMaterial)
   if (!key) {
-    key = jose.importSPKI(
-      toPublicPem(keyMaterial),
-      issuer.algorithms?.[0] ?? "EdDSA",
-      { extractable: false },
-    );
-    runtimeStaticKeys.set(keyMaterial, key);
+    key = jose.importSPKI(toPublicPem(keyMaterial), issuer.algorithms?.[0] ?? "EdDSA", {extractable: false})
+    runtimeStaticKeys.set(keyMaterial, key)
   }
-  return key;
+  return key
 }
 
 function toPublicPem(value: string): string {
-  if (value.includes("BEGIN PUBLIC KEY")) return value;
-  return `-----BEGIN PUBLIC KEY-----\n${value}\n-----END PUBLIC KEY-----`;
+  if (value.includes("BEGIN PUBLIC KEY")) return value
+  return `-----BEGIN PUBLIC KEY-----\n${value}\n-----END PUBLIC KEY-----`
 }
 
 function toPrivatePem(value: string): string {
-  if (value.includes("BEGIN PRIVATE KEY")) return value;
-  return `-----BEGIN PRIVATE KEY-----\n${value}\n-----END PRIVATE KEY-----`;
+  if (value.includes("BEGIN PRIVATE KEY")) return value
+  return `-----BEGIN PRIVATE KEY-----\n${value}\n-----END PRIVATE KEY-----`
 }
 
 function stringClaim(value: unknown): string | undefined {
-  return typeof value === "string" && value.length > 0 ? value : undefined;
+  return typeof value === "string" && value.length > 0 ? value : undefined
 }
 
 function cryptoRandomId(): string {
-  return crypto.randomBytes(16).toString("hex");
+  return crypto.randomBytes(16).toString("hex")
 }

@@ -354,20 +354,26 @@ class MantleManager {
     engine.configure({
       auth: workspaceAuth
         ? {
-            getRuntimeToken: (options) =>
-              workspaceAuth.getAccessToken({
+            getSubjectToken: async () => ({
+              token: await workspaceAuth.getAccessToken({
                 scopes:
                   deployment.kind === "workspace" && deployment.manifest.auth.mode === "microsoft-entra"
-                    ? deployment.manifest.auth.runtimeScopes
+                    ? deployment.manifest.auth.sessionScopes
                     : [],
-                forceRefresh: options?.forceRefresh,
               }),
+              type: "oidc",
+            }),
             getUserId: async () => {
               const current = await workspaceAuth.getSession()
               if (!current) throw new Error("engine.configure: no workspace identity available")
               const {identity} = current
               return `workspace:${identity.deploymentId}:${encodeURIComponent(identity.issuer)}:${identity.subject}`
             },
+            onStateChange: (callback) => ({
+              unsubscribe: workspaceAuth.onStateChange((session) =>
+                callback(session ? "SIGNED_IN" : "SIGNED_OUT", session ? {token: session.accessToken ?? null} : null),
+              ),
+            }),
           }
         : {
             getSubjectToken: async () => {

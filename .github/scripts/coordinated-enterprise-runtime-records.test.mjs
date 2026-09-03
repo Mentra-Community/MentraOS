@@ -20,11 +20,12 @@ const plan = createReleasePlan({
 function runtimeImage(status = "published") {
   return {
     status,
-    image: "ghcr.io/mentra-community/mentra-runtime",
+    image: "ghcr.io/mentra-community/mentra-cloud",
     digest: status === "published" ? `sha256:${"b".repeat(64)}` : undefined,
   }
 }
 const workspaceOrigin = "https://enterprisedev.mentraglass.com"
+const coreOrigin = "https://ca-mentra-enterprise-reference-core.example.azurecontainerapps.io"
 
 function create(status = "deployed") {
   return createEnterpriseRuntimeDeploymentRecord({
@@ -32,22 +33,26 @@ function create(status = "deployed") {
     sourceCommit,
     requestedTag: sourceCommit,
     status,
-    sourceImage: status === "deployed" ? "ghcr.io/mentra-community/mentra-runtime" : undefined,
+    sourceImage: status === "deployed" ? "ghcr.io/mentra-community/mentra-cloud" : undefined,
     sourceImageDigest: status === "deployed" ? `sha256:${"b".repeat(64)}` : undefined,
     image:
       status === "deployed"
-        ? `mentraenterpriseref.azurecr.io/mentra-runtime-enterprise@sha256:${"b".repeat(64)}`
+        ? `mentraenterpriseref.azurecr.io/mentra-cloud-enterprise@sha256:${"b".repeat(64)}`
         : undefined,
     imageDigest: status === "deployed" ? `sha256:${"b".repeat(64)}` : undefined,
     revision: status === "deployed" ? "ca-mentra-enterprise-reference--0000091" : undefined,
+    coreRevision: status === "deployed" ? "ca-mentra-enterprise-reference-core--0000091" : undefined,
     workspaceOrigin: status === "deployed" ? workspaceOrigin : undefined,
+    coreOrigin: status === "deployed" ? coreOrigin : undefined,
     checks:
       status === "deployed"
-        ? ["healthz", "ready"].map((probe) => ({
-            url: `${workspaceOrigin}/${probe}`,
-            ready: true,
-            statusCode: 200,
-          }))
+        ? [workspaceOrigin, coreOrigin].flatMap((origin) =>
+            ["healthz", "ready"].map((probe) => ({
+              url: `${origin}/${probe}`,
+              ready: true,
+              statusCode: 200,
+            })),
+          )
         : undefined,
     completedAt: "2026-09-01T12:00:00.000Z",
     provenanceUrl: "https://github.com/Mentra-Community/MentraOS/actions/runs/123",
@@ -59,7 +64,7 @@ test("records an immutable release-matched enterprise Runtime deployment", () =>
   assert.equal(record.sourceCommit, plan.sourceCommit)
   assert.equal(record.azure.requestedTag, plan.sourceCommit)
   assert.equal(record.azure.imageDigest, `sha256:${"b".repeat(64)}`)
-  assert.equal(record.source.image, "ghcr.io/mentra-community/mentra-runtime")
+  assert.equal(record.source.image, "ghcr.io/mentra-community/mentra-cloud")
   assert.equal(record.source.imageDigest, record.azure.imageDigest)
   assert.equal(
     validateEnterpriseRuntimeDeploymentRecord({plan, record, runtimeImage: runtimeImage()}).azure.revision,
@@ -87,7 +92,7 @@ test("rejects mutable or mismatched deployment evidence", () => {
 
   const rebuilt = structuredClone(create())
   rebuilt.azure.imageDigest = `sha256:${"d".repeat(64)}`
-  rebuilt.azure.image = `mentraenterpriseref.azurecr.io/mentra-runtime-enterprise@${rebuilt.azure.imageDigest}`
+  rebuilt.azure.image = `mentraenterpriseref.azurecr.io/mentra-cloud-enterprise@${rebuilt.azure.imageDigest}`
   assert.throws(() => validateEnterpriseRuntimeDeploymentRecord({plan, record: rebuilt}), /canonical GHCR source/)
 
   const substitutedPublication = runtimeImage()

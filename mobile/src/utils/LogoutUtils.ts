@@ -5,6 +5,7 @@ import {settleFrame} from "@/utils/settleFrame"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import mentraAuth from "@/utils/auth/authClient"
 import {storage} from "@/utils/storage"
+import {cloudClient} from "@/services/cloudClient"
 
 export class LogoutUtils {
   private static readonly TAG = "LogoutUtils"
@@ -35,6 +36,7 @@ export class LogoutUtils {
       if (!options.skipAuthSignOut) {
         await this.clearAuthSession()
       }
+      await cloudClient.clearAuthSession()
 
       // Step 2: Let that unmount actually commit before destroying what it was
       // rendering. Without this the teardown below still races the re-render

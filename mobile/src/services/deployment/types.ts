@@ -6,7 +6,7 @@ export interface MicrosoftEntraAuthConfig {
   mode: "microsoft-entra"
   authorityUrl: string
   clientId: string
-  runtimeScopes: string[]
+  sessionScopes: string[]
   teamsScopes: string[]
 }
 
@@ -18,6 +18,8 @@ export interface DeploymentManagedMiniapp {
   bundleUrl: string
   sha256: string
 }
+
+export type DeploymentMiniappConfiguration = Record<string, Record<string, string>>
 
 export interface DeploymentManifest {
   schemaVersion: 1
@@ -64,6 +66,7 @@ export interface DeploymentManifest {
   }
   miniapps: {
     managed: DeploymentManagedMiniapp[]
+    configuration: DeploymentMiniappConfiguration
   }
   glasses: {
     allowedModelsOverride: string[] | null

@@ -16,15 +16,15 @@ RELEASE_TAG="$3"
 az acr import \
   --name "$CUSTOMER_ACR" \
   --source "$SOURCE_IMAGE" \
-  --image "mentra-runtime-enterprise:$RELEASE_TAG"
+  --image "mentra-cloud-enterprise:$RELEASE_TAG"
 
 IMPORTED_DIGEST="$(az acr repository show \
   --name "$CUSTOMER_ACR" \
-  --image "mentra-runtime-enterprise:$RELEASE_TAG" \
+  --image "mentra-cloud-enterprise:$RELEASE_TAG" \
   --query digest -o tsv)"
 EXPECTED_DIGEST="${SOURCE_IMAGE##*@}"
 [[ "$IMPORTED_DIGEST" == "$EXPECTED_DIGEST" ]] || {
   printf 'Imported digest mismatch: expected %s, got %s\n' "$EXPECTED_DIGEST" "$IMPORTED_DIGEST" >&2
   exit 1
 }
-printf '%s.azurecr.io/mentra-runtime-enterprise@%s\n' "$CUSTOMER_ACR" "$IMPORTED_DIGEST"
+printf '%s.azurecr.io/mentra-cloud-enterprise@%s\n' "$CUSTOMER_ACR" "$IMPORTED_DIGEST"

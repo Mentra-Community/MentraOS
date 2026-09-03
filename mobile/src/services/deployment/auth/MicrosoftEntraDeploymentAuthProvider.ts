@@ -36,7 +36,7 @@ export class MicrosoftEntraDeploymentAuthProvider implements DeploymentAuthProvi
     const account = await this.native.getAccount(this.configuration())
     if (!account) return null
     try {
-      const token = await this.native.acquireToken(this.configuration(), this.auth.runtimeScopes, false)
+      const token = await this.native.acquireToken(this.configuration(), this.auth.sessionScopes, false)
       return this.session(token, token.accessToken)
     } catch {
       // The cached account is still useful for showing the correct workspace
@@ -47,14 +47,14 @@ export class MicrosoftEntraDeploymentAuthProvider implements DeploymentAuthProvi
   }
 
   async signIn(): Promise<DeploymentAuthSession> {
-    const result = await this.native.signIn(this.configuration(), this.auth.runtimeScopes)
+    const result = await this.native.signIn(this.configuration(), this.auth.sessionScopes)
     const session = this.session(result, result.accessToken)
     this.emit(session)
     return session
   }
 
   async getAccessToken(request: WorkspaceTokenRequest): Promise<string> {
-    const scopes = request.scopes.length > 0 ? request.scopes : this.auth.runtimeScopes
+    const scopes = request.scopes.length > 0 ? request.scopes : this.auth.sessionScopes
     const result = await this.native.acquireToken(this.configuration(), scopes, request.forceRefresh)
     return result.accessToken
   }

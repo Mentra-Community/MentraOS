@@ -432,6 +432,7 @@ function construct(): void {
     // LC3 at 16 kHz with the frame size the encoder emits.
     audio: {codec: "lc3", sampleRate: 16000, frameSizeBytes: frameSizeBytes()},
     auth,
+    authStorageKey: getConfigValues().cloudAuthStorageKey,
     timers: {
       setTimeout: (callback, delayMs) => BgTimer.setTimeout(callback, delayMs),
       clearTimeout: (handle) => BgTimer.clearTimeout(handle as number),
@@ -528,6 +529,10 @@ function construct(): void {
  * and the runtime-hook wiring.
  */
 export const cloudClientService = {
+  async clearAuthSession(): Promise<void> {
+    await client?.auth.clearSession()
+  },
+
   /**
    * Construct (once) + connect the client. Idempotent. Best-effort connect — a
    * failure is logged and the app keeps running. Requires

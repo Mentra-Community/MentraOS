@@ -6,7 +6,7 @@ import {fileURLToPath} from "node:url"
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/
 const SHA256_PATTERN = /^[0-9a-f]{64}$/
-const IMAGE = "ghcr.io/mentra-community/mentra-runtime"
+const IMAGE = "ghcr.io/mentra-community/mentra-cloud"
 const PROVENANCE_PREDICATE_TYPE = "https://slsa.dev/provenance/v1"
 const ATTESTATION_REPOSITORY = "Mentra-Community/MentraOS"
 
@@ -66,7 +66,7 @@ export function createRuntimeImageRecord({
 
   const record = {
     schemaVersion: 1,
-    component: "mentra-runtime-image",
+    component: "mentra-cloud-image",
     releaseSetId: plan.releaseSetId,
     releaseIdentity: plan.releaseIdentity,
     sourceCommit,
@@ -117,7 +117,7 @@ export function validateRuntimeImageRecord({plan, record, allowValidated = false
   validatePlan(plan, record?.sourceCommit)
   if (
     record.schemaVersion !== 1 ||
-    record.component !== "mentra-runtime-image" ||
+    record.component !== "mentra-cloud-image" ||
     record.releaseSetId !== plan.releaseSetId ||
     record.releaseIdentity !== plan.releaseIdentity ||
     record.channel !== plan.channel ||

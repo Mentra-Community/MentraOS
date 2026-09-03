@@ -16,12 +16,12 @@ function manifest(overrides: Partial<DeploymentManifest> = {}): DeploymentManife
         dark: `${WORKSPACE}/branding/logo-dark.png`,
       },
     },
-    services: {coreUrl: null, runtimeUrl: WORKSPACE},
+    services: {coreUrl: WORKSPACE, runtimeUrl: WORKSPACE},
     auth: {
       mode: "microsoft-entra",
       authorityUrl: "https://login.microsoftonline.com/2e7662c0-e826-4928-95b2-60bdd48d5d95",
       clientId: "c84a504c-6caa-4a00-a6a3-9206cad41218",
-      runtimeScopes: ["api://11111111-2222-4333-8444-555555555555/mentra.runtime"],
+      sessionScopes: ["api://11111111-2222-4333-8444-555555555555/mentra.session"],
       teamsScopes: [
         "https://auth.msft.communication.azure.com/Teams.ManageCalls",
         "https://auth.msft.communication.azure.com/Teams.ManageChats",
@@ -45,7 +45,7 @@ function manifest(overrides: Partial<DeploymentManifest> = {}): DeploymentManife
       supportUrl: `${WORKSPACE}/support`,
     },
     systemMiniapps: {approvedPackageNamesOverride: ["com.mentra.call", "com.mentra.settings"]},
-    miniapps: {managed: []},
+    miniapps: {managed: [], configuration: {}},
     glasses: {allowedModelsOverride: ["mentra-live"]},
     features: {
       runtimeRealtimeSession: false,
@@ -111,15 +111,24 @@ describe("resolveDeploymentCandidate", () => {
     const fetch = jest.fn(async () => response(JSON.stringify(value)))
 
     await expect(resolveDeploymentCandidate(WORKSPACE, {fetch})).resolves.toMatchObject({
-      manifest: {miniapps: {managed: []}},
+      manifest: {miniapps: {managed: [], configuration: {}}},
     })
   })
 
   it("rejects cross-origin Runtime", async () => {
     const fetch = jest.fn(async () =>
-      response(JSON.stringify(manifest({services: {coreUrl: null, runtimeUrl: "https://runtime.attacker.example"}}))),
+      response(
+        JSON.stringify(manifest({services: {coreUrl: WORKSPACE, runtimeUrl: "https://runtime.attacker.example"}})),
+      ),
     )
     await expect(resolveDeploymentCandidate(WORKSPACE, {fetch})).rejects.toMatchObject({code: "origin-mismatch"})
+  })
+
+  it("rejects a workspace without Core", async () => {
+    const fetch = jest.fn(async () =>
+      response(JSON.stringify(manifest({services: {coreUrl: null, runtimeUrl: WORKSPACE}}))),
+    )
+    await expect(resolveDeploymentCandidate(WORKSPACE, {fetch})).rejects.toMatchObject({code: "invalid-manifest"})
   })
 
   it("rejects a cross-origin workspace logo", async () => {
@@ -151,11 +160,67 @@ describe("resolveDeploymentCandidate", () => {
             sha256: "a".repeat(64),
           },
         ],
+        configuration: {},
       },
     })
     const fetch = jest.fn(async () => response(JSON.stringify(value)))
 
     await expect(resolveDeploymentCandidate(WORKSPACE, {fetch})).resolves.toMatchObject({manifest: value})
+  })
+
+  it("accepts package-scoped miniapp configuration for an approved package", async () => {
+    const value = manifest({
+      systemMiniapps: {approvedPackageNamesOverride: ["com.mentra.settings"]},
+      miniapps: {
+        managed: [],
+        configuration: {
+          "com.mentra.settings": {backendUrl: `${WORKSPACE}/settings-api`},
+        },
+      },
+    })
+    const fetch = jest.fn(async () => response(JSON.stringify(value)))
+
+    await expect(resolveDeploymentCandidate(WORKSPACE, {fetch})).resolves.toMatchObject({manifest: value})
+  })
+
+  it("rejects miniapp configuration for a package the deployment does not approve", async () => {
+    const fetch = jest.fn(async () =>
+      response(
+        JSON.stringify(
+          manifest({
+            systemMiniapps: {approvedPackageNamesOverride: ["com.mentra.settings"]},
+            miniapps: {
+              managed: [],
+              configuration: {
+                "com.example.unapproved": {backendUrl: `${WORKSPACE}/unapproved-api`},
+              },
+            },
+          }),
+        ),
+      ),
+    )
+
+    await expect(resolveDeploymentCandidate(WORKSPACE, {fetch})).rejects.toMatchObject({code: "invalid-manifest"})
+  })
+
+  it("rejects oversized miniapp configuration values", async () => {
+    const fetch = jest.fn(async () =>
+      response(
+        JSON.stringify(
+          manifest({
+            systemMiniapps: {approvedPackageNamesOverride: ["com.mentra.settings"]},
+            miniapps: {
+              managed: [],
+              configuration: {
+                "com.mentra.settings": {backendUrl: "x".repeat(2_049)},
+              },
+            },
+          }),
+        ),
+      ),
+    )
+
+    await expect(resolveDeploymentCandidate(WORKSPACE, {fetch})).rejects.toMatchObject({code: "invalid-manifest"})
   })
 
   it("rejects cross-origin, duplicate, and SYSTEM-overlapping managed miniapps", async () => {
@@ -168,7 +233,9 @@ describe("resolveDeploymentCandidate", () => {
     const crossOriginFetch = jest.fn(async () =>
       response(
         JSON.stringify(
-          manifest({miniapps: {managed: [{...entry, bundleUrl: "https://attacker.example/miniapp.zip"}]}}),
+          manifest({
+            miniapps: {managed: [{...entry, bundleUrl: "https://attacker.example/miniapp.zip"}], configuration: {}},
+          }),
         ),
       ),
     )
@@ -177,7 +244,7 @@ describe("resolveDeploymentCandidate", () => {
     })
 
     const duplicateFetch = jest.fn(async () =>
-      response(JSON.stringify(manifest({miniapps: {managed: [entry, {...entry}]}}))),
+      response(JSON.stringify(manifest({miniapps: {managed: [entry, {...entry}], configuration: {}}}))),
     )
     await expect(resolveDeploymentCandidate(WORKSPACE, {fetch: duplicateFetch})).rejects.toMatchObject({
       code: "invalid-manifest",
@@ -188,7 +255,7 @@ describe("resolveDeploymentCandidate", () => {
         JSON.stringify(
           manifest({
             systemMiniapps: {approvedPackageNamesOverride: ["com.example.remoteassist"]},
-            miniapps: {managed: [entry]},
+            miniapps: {managed: [entry], configuration: {}},
           }),
         ),
       ),
@@ -219,7 +286,7 @@ describe("resolveDeploymentCandidate", () => {
               mode: "microsoft-entra",
               authorityUrl: "https://login.microsoftonline.com/organizations",
               clientId: "c84a504c-6caa-4a00-a6a3-9206cad41218",
-              runtimeScopes: ["api://11111111-2222-4333-8444-555555555555/mentra.runtime"],
+              sessionScopes: ["api://11111111-2222-4333-8444-555555555555/mentra.session"],
               teamsScopes: [],
             },
           }),
@@ -308,7 +375,7 @@ describe("MicrosoftEntraDeploymentAuthProvider", () => {
       displayName: "Employee One",
       accessToken: "runtime-token",
       expiresAt: Date.now() + 60_000,
-      scopes: ["mentra.runtime"],
+      scopes: ["mentra.session"],
     }
     const native = {
       getAccount: jest.fn(async () => runtimeToken),
@@ -334,7 +401,7 @@ describe("MicrosoftEntraDeploymentAuthProvider", () => {
     const session = await provider.signIn()
     expect(native.signIn).toHaveBeenCalledWith(
       expect.objectContaining({clientId: deployment.manifest.auth.clientId}),
-      deployment.manifest.auth.runtimeScopes,
+      deployment.manifest.auth.sessionScopes,
     )
     expect(session.identity).toMatchObject({
       deploymentId: deployment.manifest.deploymentId,

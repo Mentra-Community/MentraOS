@@ -8,47 +8,48 @@
  * audience's middleware guarantees.
  */
 
-import type { Context } from "hono";
-import type { Logger } from "@mentra/cloud-shared";
+import type {Context} from "hono"
+import type {FederatedIdentity, Logger} from "@mentra/cloud-shared"
 
 export interface AppVariables {
   /** Request ID for log correlation. Set by request-id middleware on every request. */
-  reqId: string;
+  reqId: string
 
   /** Per-request child logger pre-bound with reqId, route, and audience. */
-  logger: Logger;
+  logger: Logger
 
   /** OEM identity from a verified machine-to-machine OEM token. */
   oem?: {
-    tenantId: string;
-  };
+    tenantId: string
+  }
 
   /** OEM portal user (browser session, WorkOS-issued). */
   oemAdmin?: {
-    workosUserId: string;
-    tenantId: string;
-    role: "owner" | "admin" | "viewer";
-  };
+    workosUserId: string
+    tenantId: string
+    role: "owner" | "admin" | "viewer"
+  }
 
   /** End user (mobile client), identified via Mentra-issued access token. */
   user?: {
-    mentraUserId: string;
-    tenantId: string;
-    sessionId: string;
-  };
+    mentraUserId: string
+    tenantId: string
+    sessionId: string
+    federatedIdentity?: FederatedIdentity
+  }
 
   /** Developer console session. */
   developer?: {
-    developerId: string;
-    email: string;
-  };
+    developerId: string
+    email: string
+  }
 
   /** Admin scope flag, set when the caller's credential carries admin perms. */
-  isAdmin?: boolean;
+  isAdmin?: boolean
 }
 
 export interface AppEnv {
-  Variables: AppVariables;
+  Variables: AppVariables
 }
 
-export type AppContext = Context<AppEnv>;
+export type AppContext = Context<AppEnv>
