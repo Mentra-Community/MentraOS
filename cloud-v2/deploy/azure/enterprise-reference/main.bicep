@@ -44,7 +44,7 @@ param pullIdentityName string = 'id-mentra-enterprise-reference-pull'
 param communicationName string = take('mentra-${uniqueString(subscription().id, resourceGroup().id)}', 63)
 @description('ACS data location approved by the customer, for example United States or Europe.')
 param communicationDataLocation string = 'United States'
-param approvedSystemMiniapps array = ['com.mentra.call', 'com.mentra.settings']
+param approvedSystemMiniapps array = ['com.mentra.settings']
 @description('Customer-managed userland miniapp entries: packageName, version, bundleUrl, and sha256.')
 param managedMiniapps array = []
 @description('Non-secret, package-scoped configuration exposed to opted-in miniapps.')

@@ -44,7 +44,7 @@ function manifest(overrides: Partial<DeploymentManifest> = {}): DeploymentManife
       documentationUrl: `${WORKSPACE}/docs`,
       supportUrl: `${WORKSPACE}/support`,
     },
-    systemMiniapps: {approvedPackageNamesOverride: ["com.mentra.call", "com.mentra.settings"]},
+    systemMiniapps: {approvedPackageNamesOverride: ["com.mentra.settings"]},
     miniapps: {managed: [], configuration: {}},
     glasses: {allowedModelsOverride: ["mentra-live"]},
     features: {

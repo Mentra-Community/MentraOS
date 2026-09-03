@@ -40,7 +40,7 @@
     "supportUrl": null
   },
   "systemMiniapps": {
-    "approvedPackageNamesOverride": ["com.mentra.call", "com.mentra.settings"]
+    "approvedPackageNamesOverride": ["com.mentra.settings"]
   },
   "miniapps": {
     "managed": [],

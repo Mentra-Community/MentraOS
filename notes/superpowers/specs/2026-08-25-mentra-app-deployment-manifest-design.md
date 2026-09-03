@@ -717,7 +717,7 @@ The first call-focused template is illustrative:
     "supportUrl": "https://mentra.example-corp.com/support"
   },
   "systemMiniapps": {
-    "approvedPackageNamesOverride": ["com.mentra.call", "com.mentra.settings"]
+    "approvedPackageNamesOverride": ["com.mentra.settings"]
   },
   "miniapps": {
     "managed": [
@@ -800,8 +800,8 @@ Rules:
   and the ZIP's declared package/version before activating it.
 - `miniapps.configuration` is independent of installation. It maps a package
   name to that package's optional read-only runtime configuration, so it works
-  for both bundled SYSTEM miniapps such as `com.mentra.call` and downloaded
-  userland miniapps in `miniapps.managed`. Configuration is never copied into
+  for both bundled SYSTEM miniapps and downloaded userland miniapps in
+  `miniapps.managed`. Configuration is never copied into
   or covered by the miniapp ZIP; the same immutable ZIP can run against a
   different customer-hosted backend in each deployment.
 - Each package configuration permits at most 32 entries. Keys match
