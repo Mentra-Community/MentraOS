@@ -1288,6 +1288,15 @@ public class MediaCaptureService {
                             isRecordingVideo = true;
                             recordingStartTime = System.currentTimeMillis();
 
+                            // cleanup() can race this background callback after the camera service
+                            // has already started. A recording that cannot enter this service's
+                            // active lifecycle must be stopped, not merely denied LED ownership.
+                            if (isCleaningUp.get()) {
+                                Log.w(TAG, "Stopping video that started during cleanup");
+                                stopVideoRecording(StopReason.ERROR);
+                                return;
+                            }
+
                             // Start battery monitoring on main thread (callback runs on background
                             // thread)
                             new Handler(Looper.getMainLooper())
