@@ -562,8 +562,18 @@ public class CameraNeoService extends LifecycleService {
         synchronized (SERVICE_LOCK) {
             QueuedPhotoRequest queued =
                     QueuedPhotoRequestQueue.getInstance().removeByFilePath(filePath);
+            boolean cancelledActive =
+                    sInstance != null
+                            && sInstance.photoSession.cancelActiveCapture(filePath, errorMessage);
+            if (cancelledActive) {
+                Log.i(TAG, "Cancelling active photo capture: " + filePath);
+                sInstance.cancelKeepAliveTimer();
+                sInstance.closeCamera();
+                sInstance.stopSelf();
+                return true;
+            }
             if (queued != null) {
-                Log.i(TAG, "Cancelling queued photo capture: " + filePath);
+                Log.i(TAG, "Cancelling queued-only photo capture: " + filePath);
                 if (queued.callback != null) {
                     try {
                         queued.callback.onPhotoError(errorMessage);
@@ -573,15 +583,7 @@ public class CameraNeoService extends LifecycleService {
                 }
                 return true;
             }
-            if (sInstance == null
-                    || !sInstance.photoSession.cancelActiveCapture(filePath, errorMessage)) {
-                return false;
-            }
-            Log.i(TAG, "Cancelling active photo capture: " + filePath);
-            sInstance.cancelKeepAliveTimer();
-            sInstance.closeCamera();
-            sInstance.stopSelf();
-            return true;
+            return false;
         }
     }
 
