@@ -24,6 +24,7 @@ public enum AudioSafety: String, Sendable {
 
 public struct AudioPolicyDecision: Equatable, Sendable {
   public var glassesPcmEnabled: Bool
+  public var phonePcmEnabled: Bool
   public var physicalMute: PhysicalMuteAction
 }
 
@@ -39,6 +40,7 @@ public enum AcsAudioPolicy {
     userMuted: Bool
   ) -> AudioPolicyDecision {
     let glassesPcmEnabled = active == .virtual && desired == .glasses && !userMuted
+    let phonePcmEnabled = active == .virtual && desired == .phone && !userMuted
     let physicalMute: PhysicalMuteAction
     switch active {
     case .virtual, .none:
@@ -46,7 +48,11 @@ public enum AcsAudioPolicy {
     case .local:
       physicalMute = (desired == .phone && !userMuted) ? .unmute : .mute
     }
-    return AudioPolicyDecision(glassesPcmEnabled: glassesPcmEnabled, physicalMute: physicalMute)
+    return AudioPolicyDecision(
+      glassesPcmEnabled: glassesPcmEnabled,
+      phonePcmEnabled: phonePcmEnabled,
+      physicalMute: physicalMute
+    )
   }
 
   public static func planJoin(
@@ -54,18 +60,22 @@ public enum AcsAudioPolicy {
     userMuted: Bool,
     glassesRequiresUnmutedTransport: Bool
   ) -> JoinAudioPlan {
-    let armVirtual = desired == .glasses
+    // Phone and glasses both feed RawOutgoingAudioStream. Mute is PCM/capturer
+    // gating, never a LocalOutgoingAudioStream.
+    let armVirtual = true
     let transportMuted: Bool
-    if armVirtual {
-      transportMuted = glassesRequiresUnmutedTransport ? false : userMuted
+    if desired == .glasses && glassesRequiresUnmutedTransport {
+      transportMuted = false
+    } else if desired == .phone {
+      transportMuted = false
     } else {
       transportMuted = userMuted
     }
     return JoinAudioPlan(armVirtual: armVirtual, transportMuted: transportMuted)
   }
 
-  public static func expectedStream(_ desired: AudioSourceKind) -> ActiveStreamKind {
-    desired == .glasses ? .virtual : .local
+  public static func expectedStream(_: AudioSourceKind) -> ActiveStreamKind {
+    .virtual
   }
 
   public static func parseSource(_ raw: String?) -> AudioSourceKind? {

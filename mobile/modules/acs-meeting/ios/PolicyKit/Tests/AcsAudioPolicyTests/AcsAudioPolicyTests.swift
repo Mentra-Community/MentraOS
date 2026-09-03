@@ -3,25 +3,26 @@ import XCTest
 
 final class AcsAudioPolicyTests: XCTestCase {
   func testTwelveStates() {
-    let rows: [(AudioSourceKind, ActiveStreamKind, Bool, Bool, PhysicalMuteAction)] = [
-      (.glasses, .virtual, false, true, .leaveAlone),
-      (.glasses, .virtual, true, false, .leaveAlone),
-      (.glasses, .local, false, false, .mute),
-      (.glasses, .local, true, false, .mute),
-      (.glasses, .none, false, false, .leaveAlone),
-      (.glasses, .none, true, false, .leaveAlone),
-      (.phone, .local, false, false, .unmute),
-      (.phone, .local, true, false, .mute),
-      (.phone, .virtual, false, false, .leaveAlone),
-      (.phone, .virtual, true, false, .leaveAlone),
-      (.phone, .none, false, false, .leaveAlone),
-      (.phone, .none, true, false, .leaveAlone),
+    let rows: [(AudioSourceKind, ActiveStreamKind, Bool, Bool, Bool, PhysicalMuteAction)] = [
+      (.glasses, .virtual, false, true, false, .leaveAlone),
+      (.glasses, .virtual, true, false, false, .leaveAlone),
+      (.glasses, .local, false, false, false, .mute),
+      (.glasses, .local, true, false, false, .mute),
+      (.glasses, .none, false, false, false, .leaveAlone),
+      (.glasses, .none, true, false, false, .leaveAlone),
+      (.phone, .local, false, false, false, .unmute),
+      (.phone, .local, true, false, false, .mute),
+      (.phone, .virtual, false, false, true, .leaveAlone),
+      (.phone, .virtual, true, false, false, .leaveAlone),
+      (.phone, .none, false, false, false, .leaveAlone),
+      (.phone, .none, true, false, false, .leaveAlone),
     ]
     XCTAssertEqual(rows.count, 12)
     for row in rows {
       let decision = AcsAudioPolicy.decide(desired: row.0, active: row.1, userMuted: row.2)
       XCTAssertEqual(decision.glassesPcmEnabled, row.3, "\(row)")
-      XCTAssertEqual(decision.physicalMute, row.4, "\(row)")
+      XCTAssertEqual(decision.phonePcmEnabled, row.4, "\(row)")
+      XCTAssertEqual(decision.physicalMute, row.5, "\(row)")
     }
   }
 
@@ -33,6 +34,11 @@ final class AcsAudioPolicyTests: XCTestCase {
           if decision.glassesPcmEnabled {
             XCTAssertEqual(active, .virtual)
             XCTAssertEqual(desired, .glasses)
+            XCTAssertFalse(userMuted)
+          }
+          if decision.phonePcmEnabled {
+            XCTAssertEqual(active, .virtual)
+            XCTAssertEqual(desired, .phone)
             XCTAssertFalse(userMuted)
           }
           if decision.physicalMute == .unmute {
@@ -54,9 +60,9 @@ final class AcsAudioPolicyTests: XCTestCase {
             userMuted: userMuted,
             glassesRequiresUnmutedTransport: flag
           )
-          XCTAssertEqual(plan.armVirtual, desired == .glasses)
+          XCTAssertTrue(plan.armVirtual)
           if desired == .phone {
-            XCTAssertEqual(plan.transportMuted, userMuted)
+            XCTAssertFalse(plan.transportMuted)
           } else if flag {
             XCTAssertFalse(plan.transportMuted)
           } else {
@@ -116,6 +122,7 @@ final class FakeController: AudioStreamController {
   var active: ActiveStreamKind = .none
   var physicallyMuted: Bool? = true
   var glassesPcmEnabled = false
+  var phonePcmEnabled = false
   var muteResult: Result<Void, Error> = .success(())
   var unmuteResult: Result<Void, Error> = .success(())
   var stopResult: Result<Void, Error> = .success(())
@@ -127,6 +134,7 @@ final class FakeController: AudioStreamController {
   func readActive() -> ActiveStreamKind { active }
   func isPhysicallyMuted() -> Bool? { physicallyMuted }
   func setGlassesPcmEnabled(_ enabled: Bool) { glassesPcmEnabled = enabled }
+  func setPhonePcmEnabled(_ enabled: Bool) { phonePcmEnabled = enabled }
   func mutePhysical() -> Result<Void, Error> {
     muteCalls += 1
     if case .success = muteResult, muteSetsFlag { physicallyMuted = true }
@@ -157,6 +165,24 @@ final class AudioPolicyApplierTests: XCTestCase {
     controller.active = .virtual
     scheduler.advanceTo(100)
     XCTAssertTrue(controller.glassesPcmEnabled)
+    XCTAssertFalse(controller.phonePcmEnabled)
+    XCTAssertEqual(applier.lastSafety(), .safe)
+    XCTAssertEqual(controller.unmuteCalls, 0)
+  }
+
+  func testNoneNoneVirtualOpensPhonePcmOnThirdObservation() {
+    let controller = FakeController()
+    let scheduler = FakeScheduler()
+    let applier = AudioPolicyApplier(controller: controller, scheduler: scheduler)
+    controller.active = .none
+    _ = applier.apply(desired: .phone, userMuted: false, reason: "join")
+    XCTAssertFalse(controller.phonePcmEnabled)
+    scheduler.advanceTo(50)
+    XCTAssertFalse(controller.phonePcmEnabled)
+    controller.active = .virtual
+    scheduler.advanceTo(100)
+    XCTAssertTrue(controller.phonePcmEnabled)
+    XCTAssertFalse(controller.glassesPcmEnabled)
     XCTAssertEqual(applier.lastSafety(), .safe)
     XCTAssertEqual(controller.unmuteCalls, 0)
   }

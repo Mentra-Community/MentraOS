@@ -57,6 +57,10 @@ class CloudflareWhepSource(
   @Volatile private var pcmEnabled = false
   @Volatile override var state: SourceState = SourceState.IDLE
     private set
+  @Volatile private var stateListener: SourceStateListener? = null
+  // Every generation of the peer gets its own id so a callback from a disposed
+  // PeerConnection (ICE FAILED racing a rebuild) cannot mark the new one failed.
+  @Volatile private var generation = 0
   // attachAudio runs on the WebRTC signaling thread, setPcmDeliveryEnabled on the RN
   // bridge thread, stop() on the session thread: a plain list threw CME on mute toggles.
   private val audioTracks = CopyOnWriteArrayList<AudioTrack>()
@@ -67,6 +71,9 @@ class CloudflareWhepSource(
   private val rotationLogged = AtomicBoolean(false)
   private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
   private var pendingOfferPost: Runnable? = null
+  // LIVE means "ACS is being handed frames", not "the WHEP endpoint answered".
+  private val firstFrame = FirstFrameGate()
+  @Volatile private var firstFrameDeadline: Runnable? = null
   private var lastDecodedFrames = -1L
   private var lastDecodedAtMs = 0L
   private var lastReceivedFrames = -1L
@@ -81,13 +88,17 @@ class CloudflareWhepSource(
     stop()
     currentUrl = config.url
     offerPosted = false
-    state = SourceState.CONNECTING
+    val gen = ++generation
+    transition(SourceState.CONNECTING, "start")
     // Timer-driven, not sink-driven: a frame stall must still be sampled, or dec
     // freezes at a stale value during exactly the freezes we are chasing.
     mainHandler.removeCallbacks(statsPoll)
     mainHandler.postDelayed(statsPoll, STATS_POLL_MS)
     ensureFactory()
-    val peer = factory!!.createPeerConnection(iceServers(), observer) ?: error("PeerConnection create failed")
+    val peer = factory!!.createPeerConnection(iceServers(), observerFor(gen)) ?: run {
+      transition(SourceState.FAILED, "peer_create_failed")
+      error("PeerConnection create failed")
+    }
     pc = peer
     peer.addTransceiver(org.webrtc.MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO, recvOnly())
     peer.addTransceiver(org.webrtc.MediaStreamTrack.MediaType.MEDIA_TYPE_AUDIO, recvOnly())
@@ -108,12 +119,34 @@ class CloudflareWhepSource(
   }
 
   override fun restart(config: SourceConfig) {
-    // Reuse the live subscriber only when the URL is unchanged AND the peer is
+    // Reuse the existing subscriber only when the URL is unchanged AND the peer is
     // still healthy. After ICE DISCONNECTED/FAILED (e.g. a Wi-Fi drop that
     // reuses the same Cloudflare WHEP URL) we must rebuild, or glasses video and
-    // mic never recover.
-    if (config.url == currentUrl && config.kind == SourceKind.WHEP && state != SourceState.FAILED) return
+    // mic never recover. See canReuseSource for why CONNECTING is reusable.
+    if (canReuseSource(currentUrl, state, config)) return
     start(config)
+  }
+
+  override fun forceRestart() {
+    val url = currentUrl ?: return
+    Log.i(TAG, "WHEP forced rebuild state=$state")
+    start(SourceConfig(url))
+  }
+
+  override fun setStateListener(listener: SourceStateListener?) {
+    stateListener = listener
+  }
+
+  private fun transition(next: SourceState, reason: String) {
+    val previous = state
+    state = next
+    if (previous == next) return
+    Log.i(TAG, "WHEP source $previous -> $next ($reason)")
+    try {
+      stateListener?.onSourceState(next, reason)
+    } catch (error: Exception) {
+      Log.w(TAG, "source state listener threw", error)
+    }
   }
 
   override fun setPcmDeliveryEnabled(enabled: Boolean) {
@@ -130,6 +163,10 @@ class CloudflareWhepSource(
     offerPosted = false
     pendingOfferPost?.let { mainHandler.removeCallbacks(it) }
     pendingOfferPost = null
+    // Disarmed before removeSink, so a sink callback already in flight cannot
+    // promote the source we are tearing down.
+    cancelFirstFrameDeadline()
+    firstFrame.reset()
     mainHandler.removeCallbacks(statsPoll)
     try {
       attachedVideo?.removeSink(videoSink)
@@ -139,7 +176,10 @@ class CloudflareWhepSource(
     videoIds.reset()
     audioIds.reset()
     audioTracks.clear()
-    state = SourceState.IDLE
+    // Invalidate callbacks from the peer being disposed below before they can
+    // observe the IDLE we are about to set.
+    generation++
+    transition(SourceState.IDLE, "stop")
     lastDecodedFrames = -1L
     lastDecodedAtMs = 0L
     lastReceivedFrames = -1L
@@ -222,10 +262,10 @@ class CloudflareWhepSource(
     val peer = pc ?: return
     val offer = peer.localDescription?.description ?: return
     offerPosted = true
-    postOffer(url, offer, peer)
+    postOffer(url, offer, peer, generation)
   }
 
-  private fun postOffer(url: String, offer: String, peer: PeerConnection) {
+  private fun postOffer(url: String, offer: String, peer: PeerConnection, gen: Int) {
     val request = Request.Builder()
       .url(url)
       .header("Content-Type", "application/sdp")
@@ -233,20 +273,24 @@ class CloudflareWhepSource(
       .build()
     http.newCall(request).enqueue(object : okhttp3.Callback {
       override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
+        if (gen != generation) return
         Log.e(TAG, "WHEP POST failed", e)
-        state = SourceState.FAILED
+        transition(SourceState.FAILED, "whep_post_failed:${e.javaClass.simpleName}")
       }
 
       override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
         response.use {
           val answer = it.body?.string().orEmpty()
+          if (gen != generation) return
           if (!it.isSuccessful) {
             Log.e(TAG, "WHEP ${it.code}: $answer")
-            state = SourceState.FAILED
+            transition(SourceState.FAILED, "whep_http_${it.code}")
             return
           }
           Log.i(TAG, "P3 WHEP ${it.code} answer bytes=${answer.length}")
-          state = SourceState.LIVE
+          // Stay CONNECTING: setRemoteDescription, ICE and the decoder still have
+          // to run, and on device that is 3-6 s before ACS submits a frame.
+          armFirstFrame(gen)
           peer.setRemoteDescription(
             SdpAdapter(),
             SessionDescription(SessionDescription.Type.ANSWER, answer),
@@ -256,19 +300,34 @@ class CloudflareWhepSource(
     })
   }
 
-  private val observer = object : PeerConnection.Observer {
+  private fun observerFor(gen: Int) = object : PeerConnection.Observer {
     override fun onSignalingChange(state: PeerConnection.SignalingState) {}
     override fun onIceConnectionChange(state: PeerConnection.IceConnectionState) {
       Log.i(TAG, "ICE $state")
+      if (gen != generation) return
       if (state == PeerConnection.IceConnectionState.FAILED ||
         state == PeerConnection.IceConnectionState.DISCONNECTED
       ) {
-        this@CloudflareWhepSource.state = SourceState.FAILED
+        transition(SourceState.FAILED, "ice_${state.name.lowercase()}")
+      } else if (state == PeerConnection.IceConnectionState.CONNECTED ||
+        state == PeerConnection.IceConnectionState.COMPLETED
+      ) {
+        // ICE can bounce DISCONNECTED → CONNECTED on its own (consent freshness
+        // hiccup); only act if the answer already arrived. LIVE now means a frame
+        // reached the sink and a recovered candidate pair is only a promise of
+        // one, so go back to CONNECTING and let the next frame promote. Frames
+        // that were already flowing promote immediately; if none arrive the
+        // rearmed deadline fails us again and the session's rebuild backoff runs.
+        if (this@CloudflareWhepSource.state == SourceState.FAILED && offerPosted) {
+          transition(SourceState.CONNECTING, "ice_recovered")
+          armFirstFrame(gen)
+        }
       }
     }
     override fun onIceConnectionReceivingChange(receiving: Boolean) {}
     override fun onIceGatheringChange(state: PeerConnection.IceGatheringState) {
       Log.i(TAG, "ICE gathering $state")
+      if (gen != generation) return
       if (state == PeerConnection.IceGatheringState.COMPLETE) postOfferIfNeeded()
     }
     override fun onIceCandidate(candidate: IceCandidate) {}
@@ -281,6 +340,7 @@ class CloudflareWhepSource(
     override fun onRenegotiationNeeded() {}
     override fun onAddTrack(receiver: org.webrtc.RtpReceiver, streams: Array<out MediaStream>) {}
     override fun onTrack(transceiver: RtpTransceiver) {
+      if (gen != generation) return
       when (val track = transceiver.receiver.track()) {
         is VideoTrack -> attachVideo(track)
         is AudioTrack -> attachAudio(track)
@@ -300,8 +360,42 @@ class CloudflareWhepSource(
     Log.i(TAG, "P3 attach kind=video id=$id attached=${videoIds.size()} skipped=${videoIds.skipped()}")
   }
 
+  /**
+   * Arms the first-frame gate for [gen] and bounds the wait.
+   *
+   * An answered WHEP that never delivers a frame used to read LIVE forever
+   * behind a frozen image, with nothing above this layer able to see it.
+   * Expiring into FAILED hands it to [SourceStateListener], whose rebuild
+   * backoff is the only thing that can repair it.
+   */
+  private fun armFirstFrame(gen: Int) {
+    firstFrame.arm(gen)
+    cancelFirstFrameDeadline()
+    val task = Runnable {
+      firstFrameDeadline = null
+      if (gen != generation || !firstFrame.expired(gen)) return@Runnable
+      Log.w(TAG, "WHEP answered but delivered no frame in ${FIRST_FRAME_TIMEOUT_MS}ms")
+      transition(SourceState.FAILED, "no_first_frame")
+    }
+    firstFrameDeadline = task
+    mainHandler.postDelayed(task, FIRST_FRAME_TIMEOUT_MS)
+  }
+
+  private fun cancelFirstFrameDeadline() {
+    firstFrameDeadline?.let { mainHandler.removeCallbacks(it) }
+    firstFrameDeadline = null
+  }
+
+  /** The one honest LIVE: a decoded frame is on its way to ACS. */
+  private fun notePromotableFrame() {
+    if (!firstFrame.onFrame(generation)) return
+    cancelFirstFrameDeadline()
+    transition(SourceState.LIVE, "first_frame")
+  }
+
   private val videoSink = VideoSink { frame ->
     val sinkStart = System.nanoTime()
+    notePromotableFrame()
     stats.onSink()
     stats.recordGap()
     val buffer = frame.buffer
@@ -447,6 +541,14 @@ class CloudflareWhepSource(
   companion object {
     private const val TAG = "ACS-SPIKE"
     private const val STATS_POLL_MS = 1000L
+
+    /**
+     * How long a WHEP answer has to produce its first frame. Measured on an S22
+     * reconnect the gap is ~3.2 s (answer 15:56:47.16 → first frame 15:56:50.36);
+     * a cold subscribe on a bad network is slower, so this is deliberately loose.
+     * Too tight rebuilds a subscriber that was about to work.
+     */
+    private const val FIRST_FRAME_TIMEOUT_MS = 9_000L
 
     fun i420PackedSize(width: Int, height: Int) = I420Packer.packedSize(width, height)
 

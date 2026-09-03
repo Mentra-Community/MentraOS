@@ -50,6 +50,10 @@ class AcsMeetingModule : Module() {
       session?.updateVideoSource(whepUrl)
     }
 
+    AsyncFunction("restartVideoSource") {
+      session?.restartVideoSource()
+    }
+
     AsyncFunction("getState") {
       session?.getState() ?: mapOf("state" to "idle", "muted" to false)
     }

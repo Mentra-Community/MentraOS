@@ -20,6 +20,9 @@ export default {
   async updateVideoSource(_whepUrl: string): Promise<void> {
     unavailable()
   },
+  async restartVideoSource(): Promise<void> {
+    unavailable()
+  },
   async getState(): Promise<AcsMeetingState> {
     return {state: "idle", muted: false}
   },

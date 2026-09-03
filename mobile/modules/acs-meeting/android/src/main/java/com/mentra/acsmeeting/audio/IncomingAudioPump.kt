@@ -92,7 +92,19 @@ class IncomingAudioPump(
   companion object {
     const val OUT_RATE = 16_000
     const val OUT_CHANNELS = 1
-    const val DEFAULT_PREROLL_MS = 120
+
+    /**
+     * Downlink headroom, and the only knob for the downlink latency A/B.
+     *
+     * The remote path already stacks Teams/ACS network + ACS receive + RN
+     * bridge batching + this preroll + A2DP buffering, so more is not simply
+     * better: every millisecond here is conversational delay. Walk
+     * [PREROLL_LADDER_MS] on real S22 + Mentra Live hardware and ship the
+     * smallest value with no audible underruns. 120 ms underran on the
+     * reported jitter; 160 ms is one step up, not the top of the ladder.
+     */
+    const val DEFAULT_PREROLL_MS = 160
+    val PREROLL_LADDER_MS = listOf(120, 160, 200)
     const val DEFAULT_BATCH_MS = 60
 
     fun bytesFor(ms: Int): Int = OUT_RATE * OUT_CHANNELS * 2 * ms / 1000

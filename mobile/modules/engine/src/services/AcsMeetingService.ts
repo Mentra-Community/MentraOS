@@ -6,14 +6,21 @@
 
 import audioPlaybackService from "./AudioPlaybackService"
 import {SETTINGS, useSettingsStore} from "../stores/settings"
-import {type ResolvedAudioSource, type SourceReason} from "./acsAudioSource"
+import {ACS_CALL_MIC, type ResolvedAudioSource, type SourceReason} from "./acsAudioSource"
 
+export {ACS_CALL_MIC}
 export type {ResolvedAudioSource, SourceReason}
 
 type MeetingPhase = "idle" | "connecting" | "lobby" | "connected" | "disconnected" | "error"
 
 export type AudioSafety = "safe" | "degraded" | "unsafe"
 export type ActiveStream = "none" | "virtual" | "local"
+/**
+ * Health of the glasses WHEP subscription that feeds the call. `failed` means ICE
+ * dropped or the WHEP endpoint went away (glasses stopped publishing, phone changed
+ * networks); the ACS call itself may still be `connected` with a frozen last frame.
+ */
+export type MediaSourceState = "idle" | "connecting" | "live" | "failed"
 
 export type MeetingParticipantState = "idle" | "connecting" | "connected" | "lobby" | "hold" | "disconnected"
 
@@ -35,18 +42,19 @@ export interface MeetingState {
   audioSourceReason?: SourceReason
   activeStream?: ActiveStream
   audioSafety?: AudioSafety
+  mediaSource?: MediaSourceState
   participants?: MeetingParticipant[]
 }
 
 /**
- * The call microphone is the glasses microphone. The wearer's voice only
- * exists in the glasses WHIP/WHEP stream, and the phone path makes the ACS
- * SDK own the phone audio route (MODE_IN_COMMUNICATION + forced phone
- * speaker), which pulls A2DP playback off the glasses and opens an echo loop.
+ * The call microphone is [ACS_CALL_MIC]. Flip that constant to `"glasses"`
+ * to restore glasses WHIP → Cloudflare → WHEP PCM. Do not use ACS
+ * LocalOutgoingAudioStream for phone: that path makes ACS own the route
+ * (MODE_IN_COMMUNICATION + forced speaker) and opens an echo loop.
  * preferred_mic governs MentraOS STT capture, not this call.
  */
 export function resolveAcsAudioSource(): ResolvedAudioSource {
-  return {source: "glasses", reason: "explicit"}
+  return {source: ACS_CALL_MIC, reason: "explicit"}
 }
 
 const PARTICIPANT_STATES = new Set<MeetingParticipantState>([
@@ -120,6 +128,8 @@ type NativeModule = {
   setMuted(muted: boolean): Promise<MeetingState>
   setAudioSource(source: "glasses" | "phone"): Promise<MeetingState>
   updateVideoSource(whepUrl: string): Promise<void>
+  /** Force a WHEP rebuild on the current URL. Absent on natives that predate it. */
+  restartVideoSource?(): Promise<void>
   getState(): Promise<MeetingState>
   addListener(event: string, listener: (event: Record<string, unknown>) => void): {remove: () => void}
 }
@@ -142,6 +152,36 @@ export function setAcsMeetingNativeForTests(mod: NativeModule | null | undefined
   nativeModule = mod
 }
 
+/**
+ * Phone connectivity feed. Only the subset of `@react-native-community/netinfo`
+ * this service needs, so tests can inject a fake and hosts without the package
+ * (or a bare test runtime) degrade to "no phone-network awareness" instead of
+ * failing to load the meeting service.
+ */
+export type PhoneNetworkInfo = {type: string; isConnected: boolean | null}
+type PhoneNetworkSource = {
+  addEventListener(listener: (state: PhoneNetworkInfo) => void): () => void
+}
+
+let phoneNetwork: PhoneNetworkSource | null | undefined
+
+function getPhoneNetwork(): PhoneNetworkSource | null {
+  if (phoneNetwork !== undefined) return phoneNetwork
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const netInfo = require("@react-native-community/netinfo") as {default?: PhoneNetworkSource} & PhoneNetworkSource
+    phoneNetwork = netInfo.default ?? netInfo
+  } catch {
+    phoneNetwork = null
+  }
+  return phoneNetwork
+}
+
+/** Test seam: inject a fake phone-network feed (or `null` to disable it). */
+export function setAcsMeetingPhoneNetworkForTests(source: PhoneNetworkSource | null | undefined): void {
+  phoneNetwork = source
+}
+
 function parseActiveStream(value: unknown): ActiveStream | undefined {
   if (value === "none" || value === "virtual" || value === "local") return value
   return undefined
@@ -151,6 +191,16 @@ function parseAudioSafety(value: unknown): AudioSafety | undefined {
   if (value === "safe" || value === "degraded" || value === "unsafe") return value
   return undefined
 }
+
+function parseMediaSource(value: unknown): MediaSourceState | undefined {
+  if (value === "idle" || value === "connecting" || value === "live" || value === "failed") return value
+  return undefined
+}
+
+/** Meeting phases during which the WHEP feed should be alive and is worth restarting. */
+const MEDIA_ACTIVE_PHASES = new Set<MeetingPhase>(["connecting", "lobby", "connected"])
+/** Floor between WHEP restarts we trigger from the host, so a flapping network cannot thrash native. */
+const MEDIA_RESTART_MIN_INTERVAL_MS = 3000
 
 /** Formats the native PcmStreamPlayer accepts (mono only). */
 const PCM_SAMPLE_RATES = new Set([16000, 24000, 48000])
@@ -166,6 +216,11 @@ class AcsMeetingService {
   private subscriptions: Array<{remove: () => void}> = []
   private lastState: MeetingState = {state: "idle", muted: false}
   private onState: ((packageName: string, state: MeetingState) => void) | null = null
+  /** WHEP URL native is (or should be) subscribed to; what a host-triggered restart re-feeds. */
+  private whepUrl: string | null = null
+  private phoneNetworkUnsub: (() => void) | null = null
+  private lastPhoneNetworkKey: string | null = null
+  private lastMediaRestartAt = 0
 
   setStateHandler(handler: (packageName: string, state: MeetingState) => void): void {
     this.onState = handler
@@ -197,10 +252,12 @@ class AcsMeetingService {
     if (this.owner && this.owner !== packageName) {
       throw new Error("Another miniapp already has an active meeting")
     }
-    this.owner = packageName
-    this.bindNative(native, packageName)
-    const resolved = resolveAcsAudioSource()
+    // Validate before claiming ownership so a bad request cannot leave the slot taken.
     const video = args.video ? parseAcsOutgoingVideo(args.video) : undefined
+    const resolved = resolveAcsAudioSource()
+    this.owner = packageName
+    this.whepUrl = args.whepUrl
+    this.bindNative(native, packageName)
     console.log("[AcsMeeting] phase=join-native", {
       packageName,
       nativeLoaded: true,
@@ -210,22 +267,46 @@ class AcsMeetingService {
       audioSourceReason: resolved.reason,
       preferredMic: useSettingsStore.getState().getSetting(SETTINGS.preferred_mic.key),
     })
-    const state = await native.join({
-      meetingUrl: args.meetingUrl,
-      token: args.token,
-      whepUrl: args.whepUrl,
-      displayName: args.displayName,
-      audioSource: resolved.source,
-      ...(video ? {video} : {}),
-    })
-    this.lastState = {
-      ...state,
-      audioSource: resolved.source,
-      audioSourceReason: resolved.reason,
+    try {
+      const state = await native.join({
+        meetingUrl: args.meetingUrl,
+        token: args.token,
+        whepUrl: args.whepUrl,
+        displayName: args.displayName,
+        audioSource: resolved.source,
+        ...(video ? {video} : {}),
+      })
+      this.lastState = {
+        ...state,
+        audioSource: resolved.source,
+        audioSourceReason: resolved.reason,
+      }
+      console.log("[AcsMeeting] phase=join-native-ok", {state: state.state, muted: state.muted})
+    } catch (error) {
+      // Native never joined (or is unwinding). Release the slot so the same or another
+      // miniapp can retry, and make sure nothing half-joined lingers in Teams.
+      console.warn("[AcsMeeting] phase=join-native-failed", {
+        packageName,
+        error: error instanceof Error ? error.message : String(error),
+      })
+      await native.leave().catch((leaveError) => {
+        console.warn("[AcsMeeting] native leave after failed join also failed", leaveError)
+      })
+      await this.releaseHostState()
+      throw error
     }
-    console.log("[AcsMeeting] phase=join-native-ok", {state: state.state, muted: state.muted})
-    await this.ensurePcmPlayback(packageName)
-    console.log("[AcsMeeting] phase=pcm-playback", {streamId: this.pcmStreamId})
+    this.watchPhoneNetwork(native)
+    // Return audio is additive: the wearer is already in the meeting with camera and
+    // mic. A playback failure must not reject the join — that would leave the miniapp
+    // believing it never joined while native keeps the wearer in Teams.
+    try {
+      await this.ensurePcmPlayback(packageName)
+      console.log("[AcsMeeting] phase=pcm-playback", {streamId: this.pcmStreamId})
+    } catch (error) {
+      console.warn("[AcsMeeting] phase=pcm-playback-failed; continuing without return audio", {
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
     return this.lastState
   }
 
@@ -235,10 +316,23 @@ class AcsMeetingService {
     try {
       await native?.leave()
     } finally {
-      await this.stopPcm()
-      this.owner = null
-      this.lastState = {state: "idle", muted: false}
+      await this.releaseHostState()
     }
+  }
+
+  /**
+   * Drop everything the host set up around a session: the network watcher, return
+   * audio, native listeners, ownership. Runs after native has been told to leave
+   * (or after a join that never produced a native call).
+   */
+  private async releaseHostState(): Promise<void> {
+    this.unwatchPhoneNetwork()
+    await this.stopPcm()
+    this.unbindNative()
+    this.owner = null
+    this.whepUrl = null
+    this.lastMediaRestartAt = 0
+    this.lastState = {state: "idle", muted: false}
   }
 
   async setMuted(packageName: string, muted: boolean): Promise<MeetingState> {
@@ -258,6 +352,7 @@ class AcsMeetingService {
     this.assertOwner(packageName)
     const native = getNative()
     if (!native) throw new Error("ACS meeting module is not available on this host")
+    this.whepUrl = whepUrl
     await native.updateVideoSource(whepUrl)
   }
 
@@ -277,13 +372,20 @@ class AcsMeetingService {
   }
 
   private assertOwner(packageName: string): void {
-    if (this.owner && this.owner !== packageName) {
-      throw new Error("This miniapp does not own the active meeting")
+    if (this.owner !== packageName) {
+      throw new Error(
+        this.owner ? "This miniapp does not own the active meeting" : "No active meeting; call meeting.join first",
+      )
     }
   }
 
-  private bindNative(native: NativeModule, packageName: string): void {
+  private unbindNative(): void {
     this.subscriptions.forEach((sub) => sub.remove())
+    this.subscriptions = []
+  }
+
+  private bindNative(native: NativeModule, packageName: string): void {
+    this.unbindNative()
     this.subscriptions = [
       native.addListener("onState", (event) => {
         const audioSafety = parseAudioSafety(event.audioSafety)
@@ -294,6 +396,7 @@ class AcsMeetingService {
           })
         }
         const participants = parseMeetingParticipants(event.participants)
+        const mediaSource = parseMediaSource(event.mediaSource)
         const state: MeetingState = {
           state: (event.state as MeetingPhase) ?? "idle",
           muted: Boolean(event.muted),
@@ -304,6 +407,7 @@ class AcsMeetingService {
           audioSourceReason: this.lastState.audioSourceReason,
           activeStream: parseActiveStream(event.activeStream),
           audioSafety,
+          ...(mediaSource ? {mediaSource} : {}),
           ...(participants ? {participants} : {}),
         }
         this.lastState = state
@@ -314,6 +418,7 @@ class AcsMeetingService {
           audioSource: state.audioSource,
           activeStream: state.activeStream,
           audioSafety: state.audioSafety,
+          mediaSource: state.mediaSource,
           participants: participants?.length,
         })
         this.onState?.(packageName, state)
@@ -328,6 +433,58 @@ class AcsMeetingService {
           .catch(() => undefined)
       }),
     ]
+  }
+
+  /**
+   * The WHEP PeerConnection does not survive the phone changing networks
+   * (Wi-Fi↔cellular, or a different Wi-Fi): ICE fails and native parks the source
+   * as `failed` while the ACS call itself reconnects on its own. Nudge native to
+   * rebuild the subscription whenever the phone's network identity changes during
+   * a live meeting. Native ignores the request when the source is healthy on the
+   * same URL, so a spurious event costs nothing.
+   */
+  private watchPhoneNetwork(native: NativeModule): void {
+    this.unwatchPhoneNetwork()
+    const source = getPhoneNetwork()
+    if (!source) return
+    this.lastPhoneNetworkKey = null
+    try {
+      this.phoneNetworkUnsub = source.addEventListener((info) => {
+        const key = `${info.type}:${info.isConnected === false ? "offline" : "online"}`
+        const previous = this.lastPhoneNetworkKey
+        this.lastPhoneNetworkKey = key
+        // First callback is NetInfo replaying the current state, not a change.
+        if (previous === null || previous === key) return
+        if (info.isConnected === false) return
+        void this.restartMediaSource(native, `phone network ${previous} → ${key}`)
+      })
+    } catch (error) {
+      console.warn("[AcsMeeting] phone network watch unavailable", error)
+      this.phoneNetworkUnsub = null
+    }
+  }
+
+  private unwatchPhoneNetwork(): void {
+    this.phoneNetworkUnsub?.()
+    this.phoneNetworkUnsub = null
+    this.lastPhoneNetworkKey = null
+  }
+
+  private async restartMediaSource(native: NativeModule, reason: string): Promise<void> {
+    const whepUrl = this.whepUrl
+    if (!this.owner || !whepUrl || !MEDIA_ACTIVE_PHASES.has(this.lastState.state)) return
+    const now = Date.now()
+    if (now - this.lastMediaRestartAt < MEDIA_RESTART_MIN_INTERVAL_MS) return
+    this.lastMediaRestartAt = now
+    console.log("[AcsMeeting] phase=media-restart", {reason, mediaSource: this.lastState.mediaSource})
+    try {
+      // A same-URL updateVideoSource is a no-op while native still believes the
+      // peer is healthy; after a network switch that belief is exactly what is wrong.
+      if (native.restartVideoSource) await native.restartVideoSource()
+      else await native.updateVideoSource(whepUrl)
+    } catch (error) {
+      console.warn("[AcsMeeting] media restart failed", {reason, error})
+    }
   }
 
   /**

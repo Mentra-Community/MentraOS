@@ -4,6 +4,7 @@ interface AudioStreamController {
   fun readActive(): ActiveStreamKind
   fun isPhysicallyMuted(): Boolean?
   fun setGlassesPcmEnabled(enabled: Boolean)
+  fun setPhonePcmEnabled(enabled: Boolean)
   fun mutePhysical(): Result<Unit>
   fun unmutePhysical(): Result<Unit>
   fun stopActive(): Result<Unit>
@@ -60,7 +61,7 @@ class AudioPolicyApplier(
     log(
       "audio policy reason=$reason source=$desired userMuted=$userMuted " +
         "active=$after expected=$expected glassesPcm=${decision.glassesPcmEnabled} " +
-        "mute=${decision.physicalMute} safety=$safety",
+        "phonePcm=${decision.phonePcmEnabled} mute=${decision.physicalMute} safety=$safety",
     )
 
     if (after == expected) {
@@ -92,10 +93,14 @@ class AudioPolicyApplier(
 
   private fun applyDecision(decision: AudioPolicyDecision, force: Boolean): EffectOutcome {
     val previous = lastDecision
-    val skipPcm = !force && previous != null && previous.glassesPcmEnabled == decision.glassesPcmEnabled
+    val skipGlassesPcm = !force && previous != null && previous.glassesPcmEnabled == decision.glassesPcmEnabled
+    val skipPhonePcm = !force && previous != null && previous.phonePcmEnabled == decision.phonePcmEnabled
     val skipMute = !force && previous != null && previous.physicalMute == decision.physicalMute
-    if (!skipPcm) {
+    if (!skipGlassesPcm) {
       controller.setGlassesPcmEnabled(decision.glassesPcmEnabled)
+    }
+    if (!skipPhonePcm) {
+      controller.setPhonePcmEnabled(decision.phonePcmEnabled)
     }
     if (skipMute) return EffectOutcome.NONE
 

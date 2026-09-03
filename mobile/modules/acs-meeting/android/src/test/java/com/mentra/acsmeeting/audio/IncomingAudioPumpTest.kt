@@ -14,6 +14,33 @@ class IncomingAudioPumpTest {
   }
 
   @Test
+  fun defaultPrerollIsOneOfTheLadderSteps() {
+    // The downlink A/B walks this ladder on real hardware; whatever ships must
+    // be a step on it, not an arbitrary number.
+    assertThat(IncomingAudioPump.PREROLL_LADDER_MS).containsExactly(120, 160, 200)
+    assertThat(IncomingAudioPump.PREROLL_LADDER_MS).contains(IncomingAudioPump.DEFAULT_PREROLL_MS)
+  }
+
+  @Test
+  fun holdsDefaultPrerollBeforeFirstEmit() {
+    val emitted = mutableListOf<ByteArray>()
+    val pump = IncomingAudioPump { emitted.add(it) }
+    val callbacks = IncomingAudioPump.DEFAULT_PREROLL_MS / 20
+
+    repeat(callbacks - 1) { pump.push(silence(20, 16_000), 16_000, 1) }
+    assertThat(emitted).isEmpty()
+
+    pump.push(silence(20, 16_000), 16_000, 1)
+    assertThat(emitted).isNotEmpty()
+    assertThat(emitted).allSatisfy { assertThat(it).hasSize(IncomingAudioPump.bytesFor(IncomingAudioPump.DEFAULT_BATCH_MS)) }
+    // Whole batches only; the sub-batch remainder stays as headroom.
+    val total = emitted.sumOf { it.size }
+    assertThat(total)
+      .isGreaterThan(IncomingAudioPump.bytesFor(IncomingAudioPump.DEFAULT_PREROLL_MS - IncomingAudioPump.DEFAULT_BATCH_MS))
+      .isLessThanOrEqualTo(IncomingAudioPump.bytesFor(IncomingAudioPump.DEFAULT_PREROLL_MS))
+  }
+
+  @Test
   fun holdsPrerollThenEmitsBatches() {
     val emitted = mutableListOf<ByteArray>()
     val pump = IncomingAudioPump(prerollMs = 120, batchMs = 60) { emitted.add(it) }

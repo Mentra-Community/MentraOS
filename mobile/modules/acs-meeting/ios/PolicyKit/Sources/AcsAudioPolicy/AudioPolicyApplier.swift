@@ -2,6 +2,7 @@ public protocol AudioStreamController {
   func readActive() -> ActiveStreamKind
   func isPhysicallyMuted() -> Bool?
   func setGlassesPcmEnabled(_ enabled: Bool)
+  func setPhonePcmEnabled(_ enabled: Bool)
   func mutePhysical() -> Result<Void, Error>
   func unmutePhysical() -> Result<Void, Error>
   func stopActive() -> Result<Void, Error>
@@ -65,7 +66,7 @@ public final class AudioPolicyApplier {
     lastDecision = decision
     lastSafetyValue = safety
     log(
-      "audio policy reason=\(reason) source=\(desired) userMuted=\(userMuted) active=\(after) expected=\(expected) glassesPcm=\(decision.glassesPcmEnabled) mute=\(decision.physicalMute) safety=\(safety)"
+      "audio policy reason=\(reason) source=\(desired) userMuted=\(userMuted) active=\(after) expected=\(expected) glassesPcm=\(decision.glassesPcmEnabled) phonePcm=\(decision.phonePcmEnabled) mute=\(decision.physicalMute) safety=\(safety)"
     )
 
     if after == expected {
@@ -99,10 +100,14 @@ public final class AudioPolicyApplier {
 
   private func applyDecision(_ decision: AudioPolicyDecision, force: Bool) -> EffectOutcome {
     let previous = lastDecision
-    let skipPcm = !force && previous?.glassesPcmEnabled == decision.glassesPcmEnabled
+    let skipGlassesPcm = !force && previous?.glassesPcmEnabled == decision.glassesPcmEnabled
+    let skipPhonePcm = !force && previous?.phonePcmEnabled == decision.phonePcmEnabled
     let skipMute = !force && previous?.physicalMute == decision.physicalMute
-    if !skipPcm {
+    if !skipGlassesPcm {
       controller.setGlassesPcmEnabled(decision.glassesPcmEnabled)
+    }
+    if !skipPhonePcm {
+      controller.setPhonePcmEnabled(decision.phonePcmEnabled)
     }
     if skipMute { return .none }
 

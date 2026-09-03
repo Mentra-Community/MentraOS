@@ -10,13 +10,13 @@ import kotlin.math.sin
 /**
  * Stateful PCM16 downmix + sample-rate converter.
  *
- * Both call directions cross a rate boundary (WHEP Opus decodes at 48 kHz,
- * ACS raw audio is 16 kHz). Picking every third sample without a low-pass
- * filter folds everything above 8 kHz back into the speech band, which is
- * audible as the hiss/crackle on the far end. This filters first (windowed
- * sinc at the input rate, cutoff just under the output Nyquist) and keeps
- * filter history plus the fractional phase across calls, so chunked input
- * produces the same samples as one contiguous buffer.
+ * WHEP Opus decodes at 48 kHz; ACS raw outgoing is also 48 kHz now, so the
+ * common path is downmix-only. If a side still crosses a rate boundary,
+ * picking samples without a low-pass filter aliases into the speech band.
+ * This filters first (windowed sinc at the input rate, cutoff just under
+ * the output Nyquist) and keeps filter history plus the fractional phase
+ * across calls, so chunked input produces the same samples as one
+ * contiguous buffer.
  */
 class PcmResampler(
   private val targetRate: Int,

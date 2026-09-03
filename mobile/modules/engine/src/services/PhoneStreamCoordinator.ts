@@ -26,6 +26,18 @@
  * streams. We use a `phone-` prefix so they're trivially distinguishable from
  * cloud-minted IDs in logs and from cloud-SDK app streams that flow through
  * the legacy path.
+ *
+ * BLE link loss is a SUSPENDED state, not a failure:
+ *   The glasses publisher keeps pushing over Wi-Fi when the phone's Bluetooth
+ *   link drops; only our keep-alives stop reaching it. While the store says
+ *   the glasses are disconnected we pause the heartbeat (so we don't count
+ *   misses we caused ourselves), fan out `suspended`, and give the link
+ *   `glassesGraceMs` to come back. On reconnect we resume, heartbeat at once,
+ *   and fan out `resumed` with the SAME streamId — no re-provision. The grace
+ *   ends early when Cloudflare reports the publisher gone for two probes in
+ *   a row (glasses powered off, not a BLE hiccup). If the grace expires the
+ *   stream is torn down with reason `glasses_disconnected`, and the BLE stop
+ *   the glasses never received is sent on the next reconnect.
  */
 
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
@@ -65,10 +77,39 @@ const DEFAULT_TIMINGS = {
   hlsReadinessInitialDelayMs: 5_000,
   hlsReadinessPollMs: 2_000,
   hlsReadinessMaxAttempts: 30,
+  // How long a stream survives a BLE link drop before we give up on it. Must
+  // stay under the glasses publisher's own 60s no-keep-alive watchdog with
+  // margin for the resume heartbeat's round trip.
+  glassesGraceMs: 45_000,
+  // Consecutive Cloudflare "publisher disconnected" probes while suspended
+  // before we conclude the glasses are off (not just out of BLE range).
+  suspendedPublisherGoneProbes: 2,
 } as const
 
 type TimingConfig = {[K in keyof typeof DEFAULT_TIMINGS]: number}
 export type CoordinatorTimings = Partial<TimingConfig>
+
+/**
+ * Where the coordinator learns whether the phone↔glasses BLE link is up.
+ * Injected so tests can drive link transitions without the zustand store.
+ */
+export interface GlassesLinkSource {
+  isConnected(): boolean
+  /** Fires on every connected↔disconnected transition. */
+  subscribe(listener: (connected: boolean) => void): () => void
+}
+
+const storeLinkSource: GlassesLinkSource = {
+  isConnected: () => isGlassesConnected(useGlassesStore.getState().connection),
+  subscribe: (listener) => useGlassesStore.subscribe((s) => isGlassesConnected(s.connection), listener),
+}
+
+/** Reasons carried on coordinator-sourced `stream_status` fanouts for link events. */
+export const LINK_STATUS = {
+  suspended: "suspended",
+  resumed: "resumed",
+  reason: "glasses_disconnected",
+} as const
 
 // Console-backed minimal logger; replaces pino on the phone.
 const consoleLogger: LifecycleLogger = {
@@ -187,20 +228,11 @@ export class StreamConflictError extends Error {
   }
 }
 
-/**
- * Fail fast if glasses aren't connected — BEFORE provisioning. Without this a
- * managed start would create a provider live input, fail the BLE command, and
- * tear the input down again: a slow, billable no-op with a confusing error.
- */
-function assertGlassesConnected(): void {
-  if (!isGlassesConnected(useGlassesStore.getState().connection)) {
-    throw new StreamConflictError(
-      "GLASSES_NOT_CONNECTED",
-      "Glasses are not connected",
-      "command",
-      "ble",
-    )
-  }
+interface SuspendedState {
+  since: number
+  graceTimer: ReturnType<typeof setTimeout>
+  /** Consecutive Cloudflare probes that saw no publisher during this suspension. */
+  publisherGoneProbes: number
 }
 
 export class PhoneStreamCoordinator {
@@ -209,6 +241,16 @@ export class PhoneStreamCoordinator {
   private statusSubscriber: StatusSubscriber | null = null
   private idCounter = 0
   private readonly timings: TimingConfig
+  private readonly linkSource: GlassesLinkSource
+  private unsubscribeLink: (() => void) | null = null
+  private suspended: SuspendedState | null = null
+  /**
+   * A stream was torn down while the BLE link was down, so the glasses never
+   * got `stopStream`. Sent on the next reconnect (if no new stream has claimed
+   * the slot) so a publisher that outlived its input does not keep pushing
+   * until its own watchdog fires.
+   */
+  private pendingBleStop: {streamId: string} | null = null
   /**
    * Serializes state transitions (start, stop, teardown). Without it, a
    * second `start*` racing with the first can pass the `this.current === null`
@@ -223,8 +265,30 @@ export class PhoneStreamCoordinator {
   /** Send full resolvedConfig only once per stream session. */
   private resolvedConfigForwarded = false
 
-  constructor(timings: CoordinatorTimings = {}) {
+  constructor(timings: CoordinatorTimings = {}, deps: {linkSource?: GlassesLinkSource} = {}) {
     this.timings = {...DEFAULT_TIMINGS, ...timings}
+    this.linkSource = deps.linkSource ?? storeLinkSource
+  }
+
+  /**
+   * Fail fast if glasses aren't connected — BEFORE provisioning. Without this a
+   * managed start would create a provider live input, fail the BLE command, and
+   * tear the input down again: a slow, billable no-op with a confusing error.
+   */
+  private assertGlassesConnected(): void {
+    if (!this.linkSource.isConnected()) {
+      throw new StreamConflictError(
+        "GLASSES_NOT_CONNECTED",
+        "Glasses are not connected",
+        "command",
+        "ble",
+      )
+    }
+  }
+
+  /** True while the active stream is parked on a dropped BLE link. */
+  isSuspended(): boolean {
+    return this.suspended !== null
   }
 
   /**
@@ -264,7 +328,11 @@ export class PhoneStreamCoordinator {
 
   /** Report-safe stream ownership snapshot for incident diagnostics. */
   getDiagnosticSnapshot(): Record<string, unknown> {
-    if (!this.current) return {active: false}
+    if (!this.current) return {active: false, pendingBleStop: this.pendingBleStop?.streamId ?? null}
+    const link = {
+      suspended: this.suspended !== null,
+      ...(this.suspended ? {suspendedForMs: Date.now() - this.suspended.since} : {}),
+    }
     return this.current.kind === "managed"
       ? {
           active: true,
@@ -273,12 +341,14 @@ export class PhoneStreamCoordinator {
           subscribers: [...this.current.subscribers].sort(),
           mode: this.current.mode,
           playbackReady: this.current.hlsReady,
+          ...link,
         }
       : {
           active: true,
           kind: this.current.kind,
           streamId: this.current.streamId,
           ownerPackageName: this.current.packageName,
+          ...link,
         }
   }
 
@@ -291,7 +361,7 @@ export class PhoneStreamCoordinator {
     if (!opts.streamUrl || typeof opts.streamUrl !== "string") {
       throw new StreamConflictError("STREAM_URL_REQUIRED", "streamUrl is required")
     }
-    assertGlassesConnected()
+    this.assertGlassesConnected()
     return this.runExclusive(async () => {
       if (this.current) {
         throw new StreamConflictError(
@@ -350,7 +420,7 @@ export class PhoneStreamCoordinator {
     // Two-phase: the entry-claim runs under the transition lock; the wait for
     // HLS readiness happens AFTER the lock releases so a long warm-up doesn't
     // block subsequent start/stop transitions on this coordinator.
-    assertGlassesConnected()
+    this.assertGlassesConnected()
     type JoinDecision =
       | {kind: "join"; entry: ManagedEntry; immediate: ManagedStartResult | null}
       | {kind: "fresh"; entry: ManagedEntry}
@@ -549,6 +619,109 @@ export class PhoneStreamCoordinator {
   }
 
   // ===========================================================================
+  // BLE link suspension
+  // ===========================================================================
+
+  private attachLink(): void {
+    if (this.unsubscribeLink) return
+    this.unsubscribeLink = this.linkSource.subscribe((connected) => this.handleLinkChange(connected))
+  }
+
+  private detachLinkIfIdle(): void {
+    if (this.current || this.pendingBleStop || !this.unsubscribeLink) return
+    this.unsubscribeLink()
+    this.unsubscribeLink = null
+  }
+
+  private handleLinkChange(connected: boolean): void {
+    if (connected) {
+      if (this.current && this.suspended) {
+        this.resumeLocked()
+      } else if (!this.current && this.pendingBleStop) {
+        this.flushPendingBleStop()
+      }
+      return
+    }
+    if (this.current && !this.suspended) this.suspend()
+  }
+
+  private suspend(): void {
+    const entry = this.current
+    if (!entry) return
+    const since = Date.now()
+    // Pause the heartbeat: misses now would be our own fault, not the
+    // publisher's, and counting them would reap a stream that is still live.
+    this.lifecycle?.setActive(false)
+    const graceTimer = setTimeout(() => this.onGraceExpired(entry.streamId), this.timings.glassesGraceMs)
+    this.suspended = {since, graceTimer, publisherGoneProbes: 0}
+    console.warn("[STREAM] BLE link lost; stream suspended", {
+      streamId: entry.streamId,
+      graceMs: this.timings.glassesGraceMs,
+    })
+    this.fanout({
+      streamId: entry.streamId,
+      source: "coordinator",
+      status: LINK_STATUS.suspended,
+      data: {reason: LINK_STATUS.reason, graceMs: this.timings.glassesGraceMs, since},
+    })
+  }
+
+  private resumeLocked(): void {
+    const entry = this.current
+    const suspended = this.suspended
+    if (!entry || !suspended) return
+    clearTimeout(suspended.graceTimer)
+    this.suspended = null
+    const suspendedMs = Date.now() - suspended.since
+    console.info("[STREAM] BLE link back; stream resumed", {streamId: entry.streamId, suspendedMs})
+    // Resume and heartbeat immediately: the glasses watchdog has been running
+    // the whole time, so the first keep-alive must not wait another interval.
+    this.lifecycle?.setActive(true)
+    this.lifecycle?.tickNow()
+    // A resumed session is a fresh status baseline for subscribers.
+    this.lastFanoutSignature = null
+    this.fanout({
+      streamId: entry.streamId,
+      source: "coordinator",
+      status: LINK_STATUS.resumed,
+      data: {reason: LINK_STATUS.reason, suspendedMs},
+    })
+  }
+
+  private onGraceExpired(streamId: string): void {
+    if (this.current?.streamId !== streamId || !this.suspended) return
+    this.failSuspended(streamId, "glasses_disconnected", {publisherGone: false})
+  }
+
+  /**
+   * End a suspended stream. `publisherGone` distinguishes "glasses are off and
+   * Cloudflare confirms nothing is publishing" from "grace ran out with the
+   * publisher possibly still alive" — miniapps word the two differently.
+   */
+  private failSuspended(streamId: string, reason: string, detail: {publisherGone: boolean}): void {
+    this.fanout({
+      streamId,
+      source: "coordinator",
+      status: "error",
+      data: {reason: LINK_STATUS.reason, teardownReason: reason, ...detail},
+    })
+    void this.runExclusive(async () => {
+      if (this.current?.streamId !== streamId) return
+      await this.teardownLocked(reason)
+    })
+  }
+
+  private flushPendingBleStop(): void {
+    const pending = this.pendingBleStop
+    if (!pending) return
+    this.pendingBleStop = null
+    console.info("[STREAM] BLE link back; sending deferred stopStream", pending)
+    void BluetoothSdk.stopStream()
+      .catch((err) => console.warn("[STREAM] deferred stopStream failed:", err))
+      .finally(() => this.detachLinkIfIdle())
+  }
+
+  // ===========================================================================
   // Internal
   // ===========================================================================
 
@@ -559,6 +732,9 @@ export class PhoneStreamCoordinator {
 
   /** BLE keep-alives. StreamLifecycleController uses BgTimer so they survive MentraOS backgrounding. */
   private startLifecycle(streamId: string): void {
+    // A new stream supersedes any deferred stop for the previous one.
+    this.pendingBleStop = null
+    this.attachLink()
     this.lifecycle?.dispose()
     const ctrl = new StreamLifecycleController(
       {
@@ -637,6 +813,20 @@ export class PhoneStreamCoordinator {
           status: status.isConnected ? "connected" : "disconnected",
           data: status as unknown as Record<string, unknown>,
         })
+        // While the BLE link is down, Cloudflare is the only witness to the
+        // publisher. Two consecutive "nobody is publishing" probes mean the
+        // glasses are off, not merely out of Bluetooth range — stop waiting.
+        if (this.suspended) {
+          if (status.isConnected) {
+            this.suspended.publisherGoneProbes = 0
+          } else {
+            this.suspended.publisherGoneProbes += 1
+            if (this.suspended.publisherGoneProbes >= this.timings.suspendedPublisherGoneProbes) {
+              this.failSuspended(entry.streamId, "glasses_disconnected_publisher_gone", {publisherGone: true})
+              keepPolling = false
+            }
+          }
+        }
         // webrtc mode readiness: first "connected" means WHEP playback is
         // available (WebRTC playback follows the ingest directly; there is no
         // manifest to probe).
@@ -805,11 +995,27 @@ export class PhoneStreamCoordinator {
     this.lastFanoutSignature = null
     this.resolvedConfigForwarded = false
 
+    if (this.suspended) {
+      clearTimeout(this.suspended.graceTimer)
+      this.suspended = null
+    }
+
     // Dispose the lifecycle controller immediately so it doesn't fire one
     // more keep-alive against a stream we're tearing down. The transition
     // lock guarantees no new lifecycle is started concurrently.
     this.lifecycle?.dispose()
     this.lifecycle = null
+
+    // With the link down a BLE write can only fail (and hold the transition
+    // lock for the native timeout). Defer it to the next reconnect instead.
+    const linkUp = this.linkSource.isConnected()
+    if (sendBleStop && !linkUp) {
+      this.pendingBleStop = {streamId: entry.streamId}
+      console.warn("[STREAM] BLE link down during teardown; stopStream deferred", {
+        streamId: entry.streamId,
+        reason,
+      })
+    }
 
     if (entry.kind === "managed") {
       if (entry.cloudflareTimer) clearTimeout(entry.cloudflareTimer)
@@ -822,7 +1028,7 @@ export class PhoneStreamCoordinator {
     }
 
     try {
-      if (sendBleStop) {
+      if (sendBleStop && linkUp) {
         await BluetoothSdk.stopStream()
       }
     } catch (err) {
@@ -833,6 +1039,7 @@ export class PhoneStreamCoordinator {
       // Only clear if we're still the active entry (defensive — runExclusive
       // serializes us, so this should always be true).
       if (this.current === entry) this.current = null
+      this.detachLinkIfIdle()
 
       if (entry.kind === "managed") {
         // Start remote cleanup only after the publisher has stopped, but do not

@@ -8,62 +8,62 @@ import org.junit.runners.Parameterized
 class AcsAudioPolicyTest {
   @Test
   fun glassesVirtualUnmuted_sendsPcmAndLeavesPhysicalAlone() {
-    assertRow(AudioSourceKind.GLASSES, ActiveStreamKind.VIRTUAL, false, true, PhysicalMuteAction.LEAVE_ALONE)
+    assertRow(AudioSourceKind.GLASSES, ActiveStreamKind.VIRTUAL, false, true, false, PhysicalMuteAction.LEAVE_ALONE)
   }
 
   @Test
   fun glassesVirtualMuted_gatesPcmAndLeavesPhysicalAlone() {
-    assertRow(AudioSourceKind.GLASSES, ActiveStreamKind.VIRTUAL, true, false, PhysicalMuteAction.LEAVE_ALONE)
+    assertRow(AudioSourceKind.GLASSES, ActiveStreamKind.VIRTUAL, true, false, false, PhysicalMuteAction.LEAVE_ALONE)
   }
 
   @Test
   fun glassesLocalUnmuted_mutesHandsetAndGatesPcm() {
-    assertRow(AudioSourceKind.GLASSES, ActiveStreamKind.LOCAL, false, false, PhysicalMuteAction.MUTE)
+    assertRow(AudioSourceKind.GLASSES, ActiveStreamKind.LOCAL, false, false, false, PhysicalMuteAction.MUTE)
   }
 
   @Test
   fun glassesLocalMuted_mutesHandsetAndGatesPcm() {
-    assertRow(AudioSourceKind.GLASSES, ActiveStreamKind.LOCAL, true, false, PhysicalMuteAction.MUTE)
+    assertRow(AudioSourceKind.GLASSES, ActiveStreamKind.LOCAL, true, false, false, PhysicalMuteAction.MUTE)
   }
 
   @Test
   fun glassesNoneUnmuted_holdsSilence() {
-    assertRow(AudioSourceKind.GLASSES, ActiveStreamKind.NONE, false, false, PhysicalMuteAction.LEAVE_ALONE)
+    assertRow(AudioSourceKind.GLASSES, ActiveStreamKind.NONE, false, false, false, PhysicalMuteAction.LEAVE_ALONE)
   }
 
   @Test
   fun glassesNoneMuted_holdsSilence() {
-    assertRow(AudioSourceKind.GLASSES, ActiveStreamKind.NONE, true, false, PhysicalMuteAction.LEAVE_ALONE)
+    assertRow(AudioSourceKind.GLASSES, ActiveStreamKind.NONE, true, false, false, PhysicalMuteAction.LEAVE_ALONE)
   }
 
   @Test
-  fun phoneLocalUnmuted_unmutesHandset() {
-    assertRow(AudioSourceKind.PHONE, ActiveStreamKind.LOCAL, false, false, PhysicalMuteAction.UNMUTE)
+  fun phoneLocalUnmuted_unmutesHandsetAndGatesPhonePcm() {
+    assertRow(AudioSourceKind.PHONE, ActiveStreamKind.LOCAL, false, false, false, PhysicalMuteAction.UNMUTE)
   }
 
   @Test
-  fun phoneLocalMuted_mutesHandset() {
-    assertRow(AudioSourceKind.PHONE, ActiveStreamKind.LOCAL, true, false, PhysicalMuteAction.MUTE)
+  fun phoneLocalMuted_mutesHandsetAndGatesPhonePcm() {
+    assertRow(AudioSourceKind.PHONE, ActiveStreamKind.LOCAL, true, false, false, PhysicalMuteAction.MUTE)
   }
 
   @Test
-  fun phoneVirtualUnmuted_cannotMuteVirtual_holdsSilence() {
-    assertRow(AudioSourceKind.PHONE, ActiveStreamKind.VIRTUAL, false, false, PhysicalMuteAction.LEAVE_ALONE)
+  fun phoneVirtualUnmuted_sendsPhonePcmAndLeavesPhysicalAlone() {
+    assertRow(AudioSourceKind.PHONE, ActiveStreamKind.VIRTUAL, false, false, true, PhysicalMuteAction.LEAVE_ALONE)
   }
 
   @Test
-  fun phoneVirtualMuted_cannotMuteVirtual_holdsSilence() {
-    assertRow(AudioSourceKind.PHONE, ActiveStreamKind.VIRTUAL, true, false, PhysicalMuteAction.LEAVE_ALONE)
+  fun phoneVirtualMuted_gatesPhonePcmAndLeavesPhysicalAlone() {
+    assertRow(AudioSourceKind.PHONE, ActiveStreamKind.VIRTUAL, true, false, false, PhysicalMuteAction.LEAVE_ALONE)
   }
 
   @Test
   fun phoneNoneUnmuted_holdsSilence() {
-    assertRow(AudioSourceKind.PHONE, ActiveStreamKind.NONE, false, false, PhysicalMuteAction.LEAVE_ALONE)
+    assertRow(AudioSourceKind.PHONE, ActiveStreamKind.NONE, false, false, false, PhysicalMuteAction.LEAVE_ALONE)
   }
 
   @Test
   fun phoneNoneMuted_holdsSilence() {
-    assertRow(AudioSourceKind.PHONE, ActiveStreamKind.NONE, true, false, PhysicalMuteAction.LEAVE_ALONE)
+    assertRow(AudioSourceKind.PHONE, ActiveStreamKind.NONE, true, false, false, PhysicalMuteAction.LEAVE_ALONE)
   }
 
   @Test
@@ -75,6 +75,11 @@ class AcsAudioPolicyTest {
           if (decision.glassesPcmEnabled) {
             assertThat(active).isEqualTo(ActiveStreamKind.VIRTUAL)
             assertThat(desired).isEqualTo(AudioSourceKind.GLASSES)
+            assertThat(userMuted).isFalse()
+          }
+          if (decision.phonePcmEnabled) {
+            assertThat(active).isEqualTo(ActiveStreamKind.VIRTUAL)
+            assertThat(desired).isEqualTo(AudioSourceKind.PHONE)
             assertThat(userMuted).isFalse()
           }
           if (decision.physicalMute == PhysicalMuteAction.UNMUTE) {
@@ -107,15 +112,21 @@ class AcsAudioPolicyTest {
   }
 
   @Test
-  fun planJoin_phoneAlwaysFollowsUserMute() {
+  fun planJoin_phoneAlsoArmsVirtualAndKeepsTransportLive() {
     for (glassesFlag in listOf(true, false)) {
       val muted = AcsAudioPolicy.planJoin(AudioSourceKind.PHONE, userMuted = true, glassesRequiresUnmutedTransport = glassesFlag)
       val unmuted = AcsAudioPolicy.planJoin(AudioSourceKind.PHONE, userMuted = false, glassesRequiresUnmutedTransport = glassesFlag)
-      assertThat(muted.armVirtual).isFalse()
-      assertThat(unmuted.armVirtual).isFalse()
-      assertThat(muted.transportMuted).isTrue()
+      assertThat(muted.armVirtual).isTrue()
+      assertThat(unmuted.armVirtual).isTrue()
+      assertThat(muted.transportMuted).isFalse()
       assertThat(unmuted.transportMuted).isFalse()
     }
+  }
+
+  @Test
+  fun expectedStream_isAlwaysVirtual() {
+    assertThat(AcsAudioPolicy.expectedStream(AudioSourceKind.GLASSES)).isEqualTo(ActiveStreamKind.VIRTUAL)
+    assertThat(AcsAudioPolicy.expectedStream(AudioSourceKind.PHONE)).isEqualTo(ActiveStreamKind.VIRTUAL)
   }
 
   @Test
@@ -146,10 +157,12 @@ class AcsAudioPolicyTest {
     active: ActiveStreamKind,
     userMuted: Boolean,
     glassesPcm: Boolean,
+    phonePcm: Boolean,
     physicalMute: PhysicalMuteAction,
   ) {
     val decision = AcsAudioPolicy.decide(desired, active, userMuted)
     assertThat(decision.glassesPcmEnabled).isEqualTo(glassesPcm)
+    assertThat(decision.phonePcmEnabled).isEqualTo(phonePcm)
     assertThat(decision.physicalMute).isEqualTo(physicalMute)
   }
 }
@@ -163,9 +176,9 @@ class AcsAudioPolicyJoinMatrixTest(
   @Test
   fun armVirtualMatchesDesired() {
     val plan = AcsAudioPolicy.planJoin(desired, userMuted, glassesRequiresUnmutedTransport)
-    assertThat(plan.armVirtual).isEqualTo(desired == AudioSourceKind.GLASSES)
+    assertThat(plan.armVirtual).isTrue()
     if (desired == AudioSourceKind.PHONE) {
-      assertThat(plan.transportMuted).isEqualTo(userMuted)
+      assertThat(plan.transportMuted).isFalse()
     } else if (glassesRequiresUnmutedTransport) {
       assertThat(plan.transportMuted).isFalse()
     } else {

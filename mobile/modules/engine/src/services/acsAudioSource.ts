@@ -7,6 +7,14 @@ export type SourceReason =
 
 export type AcsAudioSource = "glasses" | "phone"
 
+/**
+ * Single switch for Mentra Call ACS uplink.
+ * `"phone"` = AudioRecord / iOS input tap → RawOutgoingAudioStream (no Cloudflare audio).
+ * `"glasses"` = today's glasses WHIP → Cloudflare → WHEP PCM → ACS path.
+ * preferred_mic does not govern this call.
+ */
+export const ACS_CALL_MIC: AcsAudioSource = "glasses"
+
 export type ResolvedAudioSource = {
   source: AcsAudioSource
   reason: SourceReason

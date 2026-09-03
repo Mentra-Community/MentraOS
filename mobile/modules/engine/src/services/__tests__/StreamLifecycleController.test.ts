@@ -145,6 +145,50 @@ describe("StreamLifecycleController (phone copy)", () => {
     expect(sendKeepAlive.mock.calls.length).toBe(callsBeforeDispose)
   })
 
+  test("tickNow sends a keep-alive immediately while active", async () => {
+    const {controller, sendKeepAlive} = makeController({keepAliveIntervalMs: 10_000, ackTimeoutMs: 1000})
+    controller.setActive(true)
+    expect(sendKeepAlive).not.toHaveBeenCalled()
+    controller.tickNow()
+    await Promise.resolve()
+    expect(sendKeepAlive).toHaveBeenCalledTimes(1)
+    controller.dispose()
+  })
+
+  test("tickNow is a no-op while paused or disposed", async () => {
+    const {controller, sendKeepAlive} = makeController({keepAliveIntervalMs: 10_000, ackTimeoutMs: 1000})
+    controller.tickNow()
+    controller.setActive(true)
+    controller.setActive(false)
+    controller.tickNow()
+    controller.dispose()
+    controller.tickNow()
+    await Promise.resolve()
+    expect(sendKeepAlive).not.toHaveBeenCalled()
+  })
+
+  test("pause then resume: pending acks from before the pause never escalate", async () => {
+    const {controller, sendKeepAlive, onTimeout} = makeController({
+      keepAliveIntervalMs: 10_000,
+      ackTimeoutMs: 30,
+      maxMissedAcks: 1,
+    })
+    controller.setActive(true)
+    controller.tickNow()
+    await Promise.resolve()
+    expect(sendKeepAlive).toHaveBeenCalledTimes(1)
+    // Link drops: pause clears the outstanding ack timer.
+    controller.setActive(false)
+    await new Promise((r) => setTimeout(r, 60))
+    expect(onTimeout).not.toHaveBeenCalled()
+    // Link returns: resume + immediate heartbeat.
+    controller.setActive(true)
+    controller.tickNow()
+    await Promise.resolve()
+    expect(sendKeepAlive).toHaveBeenCalledTimes(2)
+    controller.dispose()
+  })
+
   test("shouldSendKeepAlive=false skips the send but keeps the timer", async () => {
     const sendKeepAlive = mock(async (_id: string) => {})
     const onTimeout = mock(() => {})

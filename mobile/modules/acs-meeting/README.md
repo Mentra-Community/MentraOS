@@ -34,7 +34,7 @@ WHIP and ACS without changing `VideoProfile.DEFAULT`.
  glasses ──WHIP──▶ Cloudflare ──WHEP──▶ │ phone (this module)                │ ──▶ ACS ──▶ Teams
                                         │                                    │
    video:  H.264 ─▶ WebRTC decoder ─▶ I420 ─▶ cropAndScale ─▶ I420 copy or NV12 interleave ─▶ sendRawVideoFrame
-   audio:  Opus  ─▶ WebRTC decoder ─▶ PCM16 ─▶ resample 16k ─▶ sendRawAudioBuffer
+   audio:  Opus  ─▶ WebRTC decoder ─▶ PCM16 48k ─▶ sendRawAudioBuffer
 
    return audio: ACS RawIncomingAudioStream ─▶ base64 ─▶ Expo event ─▶ AudioPlaybackService ─▶ A2DP
 ```
@@ -81,7 +81,7 @@ android/src/main/java/com/mentra/acsmeeting/
 ├── audio/                   Two microphones, one call
 │   ├── AcsAudioPolicy.kt        Pure decision functions: which stream, who gets muted
 │   ├── AudioPolicyApplier.kt    Applies a decision to the live call, with retries
-│   └── PcmBridge.kt             Resample/rebuffer to ACS's 16 kHz mono 20 ms frames
+│   └── PcmBridge.kt             Downmix/rebuffer to ACS's 48 kHz mono 20 ms frames
 │
 └── telemetry/               The measurement ladder
     ├── PipelineStats.kt         Every counter, and the 1 Hz "P6 ladder" line
@@ -126,6 +126,42 @@ Three constraints worth knowing before changing this code:
   the work, so ACS may still be reading those planes. They are deliberately leaked rather
   than recycled, and counted as `abandoned` in the ladder.
 
+### Source health and recovery
+
+The ACS call and the WHEP subscription fail independently: ICE can drop (phone switched
+Wi-Fi↔cellular) or the WHEP endpoint can 404 (glasses stopped publishing) while ACS stays
+`connected` and Teams holds the last frame. `CloudflareWhepSource` reports every
+`SourceState` transition to the session, which:
+
+- carries it on every snapshot as `mediaSource: idle | connecting | live | failed`, so the
+  host and miniapp can tell "call up, glasses feed dead" from a healthy call;
+- on `failed`, rebuilds the subscription itself with exponential backoff (1 s → 10 s cap) for
+  as long as the call is alive. A host `updateVideoSource` with a new URL cancels the retry.
+
+**`LIVE` means a frame reached the sink, not that the WHEP endpoint answered.** The answer
+lands before `setRemoteDescription`, before ICE CHECKING and before the first decode — on an
+S22 reconnect, 3.2 s before the first frame (`whep_answer` 15:56:47.16, `sub=1.0` 15:56:50.36)
+and 6.2 s before a real rate to Teams. Two things followed from promoting on the answer: a
+miniapp reading `mediaSource: live` was still ahead of Teams, and a subscription that answered
+but never delivered read `LIVE` forever behind a frozen frame with nothing able to see it.
+
+So the answer arms `FirstFrameGate` and stays `CONNECTING`. The first video frame for that
+peer generation promotes to `LIVE` (`first_frame`); if none arrives within
+`FIRST_FRAME_TIMEOUT_MS` (9 s) the source transitions `FAILED` with reason `no_first_frame`
+and the backoff above rebuilds it. An ICE bounce back to CONNECTED returns the source to
+`CONNECTING` and rearms rather than claiming `LIVE`: a recovered candidate pair is a promise
+of frames, and if media was already flowing the next frame promotes within milliseconds.
+
+`canReuseSource` is why a same-URL `restart` during `CONNECTING` is still a no-op: rebuilding
+a subscriber seconds from its first frame only restarts the wait, and `CONNECTING` is bounded
+by the POST timeout and the first-frame deadline, so nothing can strand there.
+
+`restartVideoSource()` forces a rebuild on the current URL even when the peer still looks
+healthy; the host calls it from a NetInfo listener when the phone's network identity changes.
+
+iOS `WhepVideoSource` mirrors all of this. `sub=` on the P6 ladder is the ground truth for
+"Teams has video"; `first_frame` is the transition that should sit next to it in logcat.
+
 ## Audio path
 
 Two possible microphones — the glasses or the handset — and the wrong answer means either
@@ -134,9 +170,9 @@ therefore a pure function in `AcsAudioPolicy`, unit-tested in isolation, and sep
 the code that applies it.
 
 - **`audioSource: "glasses"`** arms a `RawOutgoingAudioStream` — which ACS reports as
-  `VIRTUAL_OUTGOING` — and feeds it WHEP PCM through `PcmBridge`, which downmixes to mono,
-  resamples to 16 kHz, and re-chunks into the 20 ms frames ACS expects. The handset mic is
-  never opened.
+  `VIRTUAL_OUTGOING` — and feeds it WHEP PCM through `PcmBridge`, which downmixes to mono
+  48 kHz (passthrough when WHEP already decoded at 48 kHz) and re-chunks into the 20 ms
+  frames ACS expects. The handset mic is never opened. Incoming raw audio stays 16 kHz.
 - **`audioSource: "phone"`** uses ACS's own `LocalOutgoingAudioStream` (`LOCAL_OUTGOING`).
 
 `ActiveStreamKind` mirrors that pair, and deliberately reads `NONE` for a stream that is
@@ -370,5 +406,7 @@ counter race that caused the false conservation failures.
   investigation.
 - **iOS is foreground-only.** The Swift side under `ios/` does not have the telemetry
   ladder, and Android's audio-routing answers do not transfer — re-verify separately.
+  iOS also has no `RemoteRoster` yet (`participants` is never emitted) and does not apply
+  `maxBitrateBps` to the outgoing stream.
 
 The original spike runbook is preserved at [spike/README.md](spike/README.md).

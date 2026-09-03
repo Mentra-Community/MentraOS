@@ -11,6 +11,7 @@ enum class AudioSafety { SAFE, DEGRADED, UNSAFE }
 
 data class AudioPolicyDecision(
   val glassesPcmEnabled: Boolean,
+  val phonePcmEnabled: Boolean,
   val physicalMute: PhysicalMuteAction,
 )
 
@@ -30,6 +31,10 @@ object AcsAudioPolicy {
       active == ActiveStreamKind.VIRTUAL &&
         desired == AudioSourceKind.GLASSES &&
         !userMuted
+    val phonePcmEnabled =
+      active == ActiveStreamKind.VIRTUAL &&
+        desired == AudioSourceKind.PHONE &&
+        !userMuted
     val physicalMute = when (active) {
       ActiveStreamKind.VIRTUAL, ActiveStreamKind.NONE -> PhysicalMuteAction.LEAVE_ALONE
       ActiveStreamKind.LOCAL ->
@@ -39,7 +44,7 @@ object AcsAudioPolicy {
           PhysicalMuteAction.MUTE
         }
     }
-    return AudioPolicyDecision(glassesPcmEnabled, physicalMute)
+    return AudioPolicyDecision(glassesPcmEnabled, phonePcmEnabled, physicalMute)
   }
 
   fun planJoin(
@@ -47,18 +52,22 @@ object AcsAudioPolicy {
     userMuted: Boolean,
     glassesRequiresUnmutedTransport: Boolean,
   ): JoinAudioPlan {
-    val armVirtual = desired == AudioSourceKind.GLASSES
+    // Phone and glasses both feed RawOutgoingAudioStream. Mute is PCM/capturer
+    // gating, never a LocalOutgoingAudioStream (that path makes ACS own the route).
+    val armVirtual = true
     val transportMuted =
-      if (armVirtual) {
-        if (glassesRequiresUnmutedTransport) false else userMuted
+      if (desired == AudioSourceKind.GLASSES && glassesRequiresUnmutedTransport) {
+        false
+      } else if (desired == AudioSourceKind.PHONE) {
+        false
       } else {
         userMuted
       }
     return JoinAudioPlan(armVirtual = armVirtual, transportMuted = transportMuted)
   }
 
-  fun expectedStream(desired: AudioSourceKind): ActiveStreamKind =
-    if (desired == AudioSourceKind.GLASSES) ActiveStreamKind.VIRTUAL else ActiveStreamKind.LOCAL
+  @Suppress("UNUSED_PARAMETER")
+  fun expectedStream(desired: AudioSourceKind): ActiveStreamKind = ActiveStreamKind.VIRTUAL
 
   fun parseSource(raw: String?): AudioSourceKind? =
     when (raw) {

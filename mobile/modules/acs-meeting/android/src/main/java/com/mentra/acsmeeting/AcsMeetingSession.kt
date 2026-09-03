@@ -27,7 +27,6 @@ import com.azure.android.communication.calling.LocalOutgoingAudioStream
 import com.azure.android.communication.calling.OutgoingAudioOptions
 import com.azure.android.communication.calling.OutgoingVideoConstraints
 import com.azure.android.communication.calling.OutgoingVideoOptions
-import com.azure.android.communication.calling.RawAudioBuffer
 import com.azure.android.communication.calling.RawIncomingAudioStream
 import com.azure.android.communication.calling.RawIncomingAudioStreamOptions
 import com.azure.android.communication.calling.RawIncomingAudioStreamProperties
@@ -47,8 +46,13 @@ import com.mentra.acsmeeting.audio.AudioSourceKind
 import com.mentra.acsmeeting.audio.AudioStreamController
 import com.mentra.acsmeeting.audio.CallGuard
 import com.mentra.acsmeeting.audio.ExecutorPolicyScheduler
+import com.mentra.acsmeeting.audio.AcsUplinkTransport
 import com.mentra.acsmeeting.audio.IncomingAudioPump
+import com.mentra.acsmeeting.audio.IncomingRateProbe
 import com.mentra.acsmeeting.audio.PcmBridge
+import com.mentra.acsmeeting.audio.PhoneMicCapturer
+import com.mentra.acsmeeting.audio.UplinkPacer
+import com.mentra.acsmeeting.audio.UplinkSender
 import com.mentra.acsmeeting.source.AcsInvestigation
 import com.mentra.acsmeeting.source.CloudflareWhepSource
 import com.mentra.acsmeeting.source.DecoderMode
@@ -57,6 +61,7 @@ import com.mentra.acsmeeting.source.GlassesMediaController
 import com.mentra.acsmeeting.source.GlassesMediaSourceFactory
 import com.mentra.acsmeeting.source.SourceConfig
 import com.mentra.acsmeeting.source.SourceKind
+import com.mentra.acsmeeting.source.SourceState
 import com.mentra.acsmeeting.source.SyntheticI420Source
 import com.mentra.acsmeeting.source.TargetSize
 import com.mentra.acsmeeting.source.VideoSourceArm
@@ -64,12 +69,13 @@ import com.mentra.acsmeeting.telemetry.PipelineStats
 import com.mentra.acsmeeting.telemetry.PipelineTicker
 import com.mentra.acsmeeting.video.AcsFrameSender
 import com.mentra.acsmeeting.video.VideoProfile
-import java.nio.ByteBuffer
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import kotlin.math.roundToInt
 
 class AcsMeetingSession(
   private val context: Context,
@@ -94,9 +100,13 @@ class AcsMeetingSession(
     }
   }
   @Volatile private var lastGatedLogMs = 0L
-  @Volatile private var lastSentLogMs = 0L
-  @Volatile private var lastInLogMs = 0L
   private var pcmBridge: PcmBridge? = null
+  private val incomingProbe = IncomingRateProbe()
+  // Clock-domain adapter: the WebRTC audio thread only ever fills the pacer,
+  // and a dedicated monotonic-deadline thread drains it into ACS.
+  private val pacer = UplinkPacer()
+  @Volatile private var uplinkSender: UplinkSender? = null
+  private val phoneMic = PhoneMicCapturer { pcm, rate, channels -> feedOutgoingPcm(pcm, rate, channels) }
   // Emits already-normalized 16 kHz mono; the host opens its PCM player with
   // exactly that format, so whatever ACS actually delivers cannot change pitch.
   private val incomingPump = IncomingAudioPump { chunk ->
@@ -134,6 +144,11 @@ class AcsMeetingSession(
   @Volatile private var lastError: String? = null
   @Volatile private var audioSource = "glasses"
   @Volatile private var lastSafety = AudioSafety.DEGRADED
+  // Health of the glasses WHEP feed, reported alongside the ACS phase so the host
+  // can tell "call is up, glasses video is dead" from a healthy call.
+  @Volatile private var mediaSource = SourceState.IDLE
+  private var mediaRestartAttempts = 0
+  private var mediaRestartTask: ScheduledFuture<*>? = null
   private val controller = SessionAudioController()
   private val applier = AudioPolicyApplier(controller, scheduler) { Log.i(TAG, it) }
 
@@ -145,6 +160,7 @@ class AcsMeetingSession(
       "audioSource" to audioSource,
       "activeStream" to controller.readActive().name.lowercase(),
       "audioSafety" to lastSafety.name.lowercase(),
+      "mediaSource" to mediaSource.name.lowercase(),
       "participants" to roster.snapshot(),
     )
     meetingUrl?.let { result["meetingUrl"] = it }
@@ -164,13 +180,12 @@ class AcsMeetingSession(
     audioSource: String = "glasses",
     video: VideoProfile = VideoProfile.DEFAULT,
   ): Map<String, Any> {
-    // Glasses is the product path: the wearer's mic only exists in the WHEP
-    // stream, and the RawOutgoingAudioStream keeps ACS out of the phone's
-    // audio routing (no MODE_IN_COMMUNICATION, no forced phone speaker).
-    // Phone is kept only as an explicit fallback for glasses without a mic.
+    // Both glasses and phone feed RawOutgoingAudioStream so ACS never owns
+    // the phone audio route (no MODE_IN_COMMUNICATION, no forced speaker).
+    // Phone PCM comes from AudioRecord; glasses PCM still arrives via WHEP.
     val parsed = AcsAudioPolicy.parseSource(audioSource) ?: AudioSourceKind.GLASSES
     if (parsed == AudioSourceKind.PHONE) {
-      Log.w(TAG, "audioSource=phone: ACS will own the phone audio route for this call")
+      Log.i(TAG, "audioSource=phone: AudioRecord → virtual outgoing; communication mode off")
     }
     this.audioSource = if (parsed == AudioSourceKind.PHONE) "phone" else "glasses"
     // The ACS work below is queued, so callers must not receive the pre-join
@@ -181,7 +196,10 @@ class AcsMeetingSession(
     meetingUrl = teamsUrl
     executor.execute {
       try {
-        leaveLocked()
+        // Tear down any previous call without announcing idle: the caller already
+        // holds a "connecting" snapshot, and an idle event landing after it made
+        // the host and miniapp flash out of "joining" on every join.
+        leaveLocked(emitIdle = false)
         this.profile = video
         this.audioSource = if (parsed == AudioSourceKind.PHONE) "phone" else "glasses"
         meetingUrl = teamsUrl
@@ -202,15 +220,17 @@ class AcsMeetingSession(
 
         val audioProperties = RawOutgoingAudioStreamProperties()
           .setFormat(AudioStreamFormat.PCM16_BIT)
-          .setSampleRate(AudioStreamSampleRate.HZ_16000)
+          .setSampleRate(AudioStreamSampleRate.HZ_48000)
           .setChannelMode(AudioStreamChannelMode.MONO)
           .setBufferDuration(AudioStreamBufferDuration.MS20)
         val outAudioOptions = RawOutgoingAudioStreamOptions().setProperties(audioProperties)
         val outgoing = RawOutgoingAudioStream(outAudioOptions)
         audioOut = outgoing
         outgoing.addOnStateChangedListener {
-          outgoingReady.set(outgoing.state.toString().contains("STARTED", ignoreCase = true))
+          val ready = outgoing.state.toString().contains("STARTED", ignoreCase = true)
+          outgoingReady.set(ready)
           Log.i(TAG, "raw outgoing audio state=${outgoing.state}")
+          if (ready) startUplink(outgoing) else stopUplink()
           applyAudioPolicy("virtual-stream-state")
         }
 
@@ -223,8 +243,8 @@ class AcsMeetingSession(
           AcsAudioPolicy.planJoin(desired, muted.get(), GLASSES_REQUIRES_UNMUTED_TRANSPORT)
         }
 
-        // Only the phone path gets a LocalOutgoingAudioStream. Creating one
-        // for the glasses path would hand ACS a microphone it must never open.
+        // Virtual outgoing stays armed for phone and glasses. A LocalOutgoing
+        // stream would make ACS own the phone route and open an echo loop.
         val local = if (plan.armVirtual) null else LocalOutgoingAudioStream()
         localOut = local
         local?.addOnStateChangedListener {
@@ -240,6 +260,7 @@ class AcsMeetingSession(
         val incoming = RawIncomingAudioStream(inAudioOptions)
         audioIn = incoming
         incomingPump.reset()
+        incomingProbe.reset()
         incoming.addOnStateChangedListener {
           Log.i(TAG, "raw incoming audio state=${incoming.state}")
         }
@@ -269,10 +290,9 @@ class AcsMeetingSession(
           .setOutgoingVideoStreams(listOf(videoStream))
           .setConstraints(constraints)
         joinOptions.setOutgoingVideoOptions(ov)
-        // Glasses path: virtual outgoing stream and MODE_IN_COMMUNICATION off.
-        // With communication mode on, the ACS SDK calls setMode(3) on connect
-        // and requests the phone speaker as the communication device, which
-        // yanks A2DP playback off the glasses and opens the echo loop.
+        // Virtual outgoing and MODE_IN_COMMUNICATION off for glasses and phone.
+        // Communication mode makes the ACS SDK call setMode(3) on connect and
+        // request the phone speaker, which yanks A2DP off the glasses.
         val oa = OutgoingAudioOptions()
           .setStream(if (plan.armVirtual) outgoing else requireNotNull(local))
           .setMuted(plan.transportMuted)
@@ -306,6 +326,12 @@ class AcsMeetingSession(
         }
         stats.pix = AcsInvestigation.pixelFormat.name.lowercase()
         stats.zcOn = if (AcsInvestigation.zeroCopy) 1 else 0
+        mediaRestartAttempts = 0
+        media.setStateListener { state, reason ->
+          // Fired from WebRTC/OkHttp threads; hop to the session executor so it
+          // serializes with join/leave/policy like everything else.
+          executor.execute { onMediaSourceState(state, reason) }
+        }
         media.attach(
           video = { planes ->
             frameSender.sendPlanes(planes)
@@ -353,7 +379,63 @@ class AcsMeetingSession(
   }
 
   fun updateVideoSource(whepUrl: String) {
-    executor.execute { media.restart(SourceConfig(whepUrl)) }
+    executor.execute {
+      // The host has a fresher opinion about where the glasses publish; drop
+      // any automatic retry against the old URL.
+      cancelMediaRestart()
+      media.restart(SourceConfig(whepUrl))
+    }
+  }
+
+  /**
+   * Rebuild the WHEP subscription on the current URL even when it looks healthy.
+   * The host calls this when the phone changed networks: ICE may not have noticed
+   * yet, but the old candidate pair is dead.
+   */
+  fun restartVideoSource() {
+    executor.execute {
+      cancelMediaRestart()
+      media.forceRestart()
+    }
+  }
+
+  private fun onMediaSourceState(state: SourceState, reason: String?) {
+    val previous = mediaSource
+    mediaSource = state
+    if (state == SourceState.LIVE) mediaRestartAttempts = 0
+    if (state == SourceState.FAILED) scheduleMediaRestart(reason)
+    // start() emits IDLE then CONNECTING back to back; one snapshot per real change.
+    if (previous != state && call != null && phase != "idle") onState(snapshot())
+  }
+
+  /**
+   * Native owns first-line recovery: nothing above this layer can see ICE fail, and
+   * a Teams call with a frozen last frame looks healthy from every other angle.
+   * Exponential backoff capped at MEDIA_RESTART_MAX_MS; runs as long as the call is
+   * alive. The host resets it whenever it hands us a new URL.
+   */
+  private fun scheduleMediaRestart(reason: String?) {
+    if (call == null || phase == "idle" || phase == "disconnected" || phase == "error") return
+    if (mediaRestartTask?.isDone == false) return
+    val attempt = mediaRestartAttempts++
+    val delayMs = minOf(MEDIA_RESTART_BASE_MS shl minOf(attempt, 4), MEDIA_RESTART_MAX_MS)
+    Log.w(TAG, "glasses media source failed ($reason); WHEP rebuild #${attempt + 1} in ${delayMs}ms")
+    mediaRestartTask = executor.schedule({
+      mediaRestartTask = null
+      if (call == null || mediaSource != SourceState.FAILED) return@schedule
+      try {
+        media.forceRestart()
+      } catch (error: Exception) {
+        Log.w(TAG, "WHEP rebuild failed", error)
+        scheduleMediaRestart("rebuild_threw")
+      }
+    }, delayMs, TimeUnit.MILLISECONDS)
+  }
+
+  private fun cancelMediaRestart() {
+    mediaRestartTask?.cancel(false)
+    mediaRestartTask = null
+    mediaRestartAttempts = 0
   }
 
   fun setMuted(next: Boolean): Map<String, Any> {
@@ -401,47 +483,49 @@ class AcsMeetingSession(
   }
 
   private fun logIncomingRate(rate: Int, channels: Int, bytes: Int) {
-    val now = System.currentTimeMillis()
-    if (now - lastInLogMs < 1000) return
-    lastInLogMs = now
+    val reading = incomingProbe.record(System.nanoTime(), bytes, rate, channels) ?: return
     Log.i(
       TAG,
-      "P8 audio-in rate=$rate ch=$channels bytes=$bytes events=${incomingPump.eventsIn} " +
-        "in=${incomingPump.bytesIn} out16k=${incomingPump.bytesOut} formatChanges=${incomingPump.formatChanges}",
+      "P8 audio-in declaredRate=${reading.declaredRate} ch=${reading.channels} " +
+        "samplesPerCallback=${reading.samplesPerCallback} " +
+        "callbackHz=${"%.2f".format(reading.callbackHz)} " +
+        "measuredRate=${reading.measuredRate.roundToInt()} " +
+        "prerollMs=${IncomingAudioPump.DEFAULT_PREROLL_MS} events=${incomingPump.eventsIn} " +
+        "in=${incomingPump.bytesIn} out16k=${incomingPump.bytesOut} " +
+        "formatChanges=${incomingPump.formatChanges}",
     )
   }
 
   private fun feedOutgoingPcm(pcm: ByteArray, sampleRate: Int, channels: Int) {
-    if (muted.get() || audioSource != "glasses") {
+    if (muted.get()) {
       val now = System.currentTimeMillis()
       if (now - lastGatedLogMs >= 1000) {
         lastGatedLogMs = now
-        val why = if (muted.get()) "user muted" else "audioSource=$audioSource"
-        Log.i(TAG, "outgoing PCM gated bytes=${pcm.size} ($why)")
+        Log.i(TAG, "outgoing PCM gated bytes=${pcm.size} (user muted)")
       }
       return
     }
-    val stream = audioOut ?: return
     if (!outgoingReady.get()) return
+    // Resample here, but do not touch ACS: sending straight from this thread
+    // hands ACS the glasses' audio clock in bursts. The pacer decides when.
     val frames = pcmBridge?.ingest(pcm, sampleRate, channels) ?: return
-    val now = System.currentTimeMillis()
-    if (now - lastSentLogMs >= 1000) {
-      lastSentLogMs = now
-      Log.i(TAG, "outgoing PCM sent bytes=${pcm.size} rate=$sampleRate (glasses WHEP)")
-    }
-    for (frame in frames) {
-      try {
-        val buffer = RawAudioBuffer()
-        val direct = ByteBuffer.allocateDirect(frame.size)
-        direct.put(frame)
-        direct.flip()
-        buffer.buffer = direct
-        stream.sendRawAudioBuffer(buffer)
-      } catch (error: Exception) {
-        Log.w(TAG, "sendRawAudioBuffer failed", error)
-        break
-      }
-    }
+    for (frame in frames) pacer.push(frame)
+  }
+
+  @Synchronized
+  private fun startUplink(stream: RawOutgoingAudioStream) {
+    if (uplinkSender != null) return
+    pacer.reset()
+    val sender = UplinkSender(pacer, AcsUplinkTransport(stream))
+    uplinkSender = sender
+    sender.start()
+  }
+
+  @Synchronized
+  private fun stopUplink() {
+    uplinkSender?.stop()
+    uplinkSender = null
+    pacer.reset()
   }
 
   private fun pushCallState(state: CallState) {
@@ -616,10 +700,18 @@ class AcsMeetingSession(
       detachDiagnostics()
       detachMediaStats()
       roster.detach()
+      phoneMic.setEnabled(false)
+      stopUplink()
       incomingPump.reset()
+      incomingProbe.reset()
       applier.reset()
       scheduler.cancelPending()
       pcmBridge?.finishDump()
+      // Detach before stop so the teardown's own IDLE transition does not emit a
+      // snapshot (or schedule a rebuild) for a call that is going away.
+      cancelMediaRestart()
+      media.setStateListener(null)
+      mediaSource = SourceState.IDLE
       media.stop()
       frameSender.detach()
     } catch (error: Exception) {
@@ -676,6 +768,10 @@ class AcsMeetingSession(
       media.setPcmDeliveryEnabled(enabled)
     }
 
+    override fun setPhonePcmEnabled(enabled: Boolean) {
+      phoneMic.setEnabled(enabled)
+    }
+
     override fun mutePhysical(): Result<Unit> {
       val c = CallGuard.require(call).getOrElse { return Result.failure(it) }
       return runCatching { c.muteOutgoingAudio(context).get() }
@@ -698,6 +794,8 @@ class AcsMeetingSession(
     private const val TAG = "ACS-SPIKE"
     const val GLASSES_REQUIRES_UNMUTED_TRANSPORT = true
     private const val ROSTER_COALESCE_MS = 150L
+    private const val MEDIA_RESTART_BASE_MS = 1_000L
+    private const val MEDIA_RESTART_MAX_MS = 10_000L
 
     fun sampleRateHz(rate: AudioStreamSampleRate?): Int? = when (rate) {
       AudioStreamSampleRate.HZ_16000 -> 16000

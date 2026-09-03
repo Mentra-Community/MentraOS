@@ -67,11 +67,28 @@ export interface MeetingState {
     | "fallback-no-glasses"
   activeStream?: "none" | "virtual" | "local"
   audioSafety?: "safe" | "degraded" | "unsafe"
+  /**
+   * Health of the glasses video the phone is forwarding into the meeting.
+   * `live` means a frame reached the meeting client, so it is the only honest
+   * "remote participants can see the camera" signal — the WHEP subscription
+   * answers seconds earlier. Omitted by hosts that predate the field, which
+   * must be read as "unknown", never as "not live".
+   */
+  mediaSource?: MeetingMediaSource
   /** Remote roster. Omitted by hosts that predate participant reporting. */
   participants?: MeetingParticipant[]
 }
 
+export type MeetingMediaSource = "idle" | "connecting" | "live" | "failed"
+
 const PARTICIPANT_STATES: ReadonlySet<string> = new Set(["idle", "connecting", "connected", "lobby", "hold", "disconnected"])
+
+const MEDIA_SOURCES: ReadonlySet<string> = new Set(["idle", "connecting", "live", "failed"])
+
+/** Tolerant parse of a host `mediaSource`. Unknown values read as unknown. */
+export function parseMeetingMediaSource(raw: unknown): MeetingMediaSource | undefined {
+  return MEDIA_SOURCES.has(String(raw)) ? (raw as MeetingMediaSource) : undefined
+}
 
 /** Tolerant parse of a host `participants` payload. Unknown shapes are skipped. */
 export function parseMeetingParticipants(raw: unknown): MeetingParticipant[] | undefined {
@@ -213,6 +230,7 @@ export class MeetingModule {
       audioSourceReason: event.audioSourceReason,
       activeStream: event.activeStream,
       audioSafety: event.audioSafety,
+      mediaSource: parseMeetingMediaSource(event.mediaSource),
       participants: parseMeetingParticipants(event.participants),
     }
   }

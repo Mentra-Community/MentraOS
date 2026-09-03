@@ -8,6 +8,9 @@ import WebRTC
 final class WhepVideoSource: NSObject, GlassesMediaSource {
   var onFrame: ((CVPixelBuffer) -> Void)?
   var onPcm: ((Data, Int, Int) -> Void)?
+  /// Fires on every health transition. `.failed` is the one nothing else can see:
+  /// ICE dropped or the WHEP endpoint went away while the ACS call stays connected.
+  var onStateChange: ((SourceState, String) -> Void)?
   private(set) var state: SourceState = .idle
 
   private var factory: RTCPeerConnectionFactory?
@@ -15,10 +18,31 @@ final class WhepVideoSource: NSObject, GlassesMediaSource {
   private var currentUrl: String?
   private var offerPosted = false
   private var pendingOfferPost: DispatchWorkItem?
-  private var pcmEnabled = true
+  // Fail closed like Android: the audio policy turns delivery on once the ACS
+  // virtual stream is live. Survives restart() so a WHEP rebuild cannot silently
+  // re-open the uplink against the current mute decision.
+  private var pcmEnabled = false
   private var audioTracks: [RTCAudioTrack] = []
+  private var attachedVideo: RTCVideoTrack?
+  // Every peer generation gets its own id so a callback from a peer being torn
+  // down (ICE failed racing a rebuild) cannot mark the new one failed.
+  private var generation = 0
+  // `.live` means "a frame reached the renderer", not "the WHEP endpoint
+  // answered" — the answer lands seconds before ACS submits anything, and an
+  // answer that never produces a frame used to read healthy forever behind a
+  // frozen image. Armed per generation so a frame from a peer being torn down
+  // cannot promote its replacement.
+  private var firstFrameGeneration = -1
+  private var firstFramePromoted = false
+  private var firstFrameDeadline: DispatchWorkItem?
   private var frameCount = 0
   private var lastFpsLog = Date()
+  private lazy var http: URLSession = {
+    let config = URLSessionConfiguration.ephemeral
+    config.timeoutIntervalForRequest = 20
+    config.timeoutIntervalForResource = 20
+    return URLSession(configuration: config)
+  }()
 
   func start(config: SourceConfig) {
     start(whepUrl: config.url)
@@ -28,7 +52,9 @@ final class WhepVideoSource: NSObject, GlassesMediaSource {
     stop()
     currentUrl = whepUrl
     offerPosted = false
-    state = .connecting
+    generation += 1
+    let gen = generation
+    transition(.connecting, reason: "start")
     RTCInitializeSSL()
     let encoder = RTCDefaultVideoEncoderFactory()
     let decoder = RTCDefaultVideoDecoderFactory()
@@ -37,13 +63,18 @@ final class WhepVideoSource: NSObject, GlassesMediaSource {
     config.iceServers = [RTCIceServer(urlStrings: ["stun:stun.l.google.com:19302"])]
     let constraints = RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
     guard let factory, let peer = factory.peerConnection(with: config, constraints: constraints, delegate: self) else {
+      transition(.failed, reason: "peer_create_failed")
       return
     }
     pc = peer
     peer.addTransceiver(of: .video, init: RTCRtpTransceiverInit.recvOnly())
     peer.addTransceiver(of: .audio, init: RTCRtpTransceiverInit.recvOnly())
     peer.offer(for: constraints) { [weak self] sdp, error in
-      guard let sdp, error == nil else { return }
+      guard let self, self.generation == gen else { return }
+      guard let sdp, error == nil else {
+        self.transition(.failed, reason: "offer_failed")
+        return
+      }
       peer.setLocalDescription(sdp) { [weak self] _ in
         // Track the delayed post so a same-instance restart can cancel it and
         // avoid publishing a stale peer's SDP before ICE finishes.
@@ -55,11 +86,21 @@ final class WhepVideoSource: NSObject, GlassesMediaSource {
   }
 
   func restart(config: SourceConfig) {
-    // Only reuse the live subscriber when the URL is unchanged AND the peer is
-    // still healthy. After ICE failed/disconnected (e.g. a Wi-Fi drop reusing
+    // Only reuse the existing subscriber when the URL is unchanged AND the peer
+    // is still healthy. After ICE failed/disconnected (e.g. a Wi-Fi drop reusing
     // the same WHEP URL) we must rebuild, or glasses video and mic never recover.
+    // `.connecting` is reusable and now spans answer → first frame; rebuilding
+    // there would only restart a wait that is bounded by the deadline below.
     if config.url == currentUrl, state != .failed { return }
     start(config: config)
+  }
+
+  /// Rebuild on the current URL even when the peer looks healthy (phone changed
+  /// networks; ICE may not have noticed the dead candidate pair yet).
+  func forceRestart() {
+    guard let url = currentUrl else { return }
+    NSLog("ACS-SPIKE WHEP forced rebuild state=\(state.rawValue)")
+    start(whepUrl: url)
   }
 
   func updateUrl(_ whepUrl: String) {
@@ -81,11 +122,39 @@ final class WhepVideoSource: NSObject, GlassesMediaSource {
     offerPosted = false
     pendingOfferPost?.cancel()
     pendingOfferPost = nil
-    pcmEnabled = true
+    // Disarmed before the renderer is removed, so a frame already in flight
+    // cannot promote the source we are tearing down.
+    cancelFirstFrameDeadline()
+    firstFrameGeneration = -1
+    firstFramePromoted = false
     audioTracks.removeAll()
-    state = .idle
-    pc?.close()
+    attachedVideo?.remove(self as RTCVideoRenderer)
+    attachedVideo = nil
+    // Invalidate callbacks from the peer being closed below before they can
+    // observe the idle we are about to set.
+    generation += 1
+    transition(.idle, reason: "stop")
+    // Drop our reference first so delegate callbacks fired by close() fail isCurrent().
+    let peer = pc
     pc = nil
+    peer?.close()
+  }
+
+  private func transition(_ next: SourceState, reason: String) {
+    let previous = state
+    state = next
+    guard previous != next else { return }
+    NSLog("ACS-SPIKE WHEP source \(previous.rawValue) -> \(next.rawValue) (\(reason))")
+    onStateChange?(next, reason)
+  }
+
+  private func attachVideo(_ track: RTCVideoTrack) {
+    // Unified Plan delivers the same remote video via didAdd stream and
+    // didStartReceivingOn; rendering it twice doubles the frames handed to ACS.
+    if let attachedVideo, attachedVideo === track { return }
+    attachedVideo?.remove(self as RTCVideoRenderer)
+    attachedVideo = track
+    track.add(self as RTCVideoRenderer)
   }
 
   private func attachAudio(_ track: RTCAudioTrack) {
@@ -104,54 +173,114 @@ final class WhepVideoSource: NSObject, GlassesMediaSource {
   private func postOfferIfNeeded() {
     guard !offerPosted, let url = currentUrl, let peer = pc, let sdp = peer.localDescription?.sdp else { return }
     offerPosted = true
-    postOffer(url: url, sdp: sdp, peer: peer)
+    postOffer(url: url, sdp: sdp, peer: peer, gen: generation)
   }
 
-  private func postOffer(url: String, sdp: String, peer: RTCPeerConnection) {
-    guard let endpoint = URL(string: url) else { return }
+  private func postOffer(url: String, sdp: String, peer: RTCPeerConnection, gen: Int) {
+    guard let endpoint = URL(string: url) else {
+      transition(.failed, reason: "whep_bad_url")
+      return
+    }
     var request = URLRequest(url: endpoint)
     request.httpMethod = "POST"
     request.setValue("application/sdp", forHTTPHeaderField: "Content-Type")
     request.httpBody = sdp.data(using: .utf8)
-    URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+    http.dataTask(with: request) { [weak self] data, response, error in
+      guard let self, self.generation == gen else { return }
       let code = (response as? HTTPURLResponse)?.statusCode ?? -1
       NSLog("ACS-SPIKE P3 WHEP \(code) answer bytes=\(data?.count ?? 0)")
       guard error == nil, (200 ..< 300).contains(code),
             let data, let answer = String(data: data, encoding: .utf8) else {
-        NSLog("ACS-SPIKE WHEP answer rejected code=\(code)")
-        self?.state = .failed
+        NSLog("ACS-SPIKE WHEP answer rejected code=\(code) error=\(error?.localizedDescription ?? "none")")
+        self.transition(.failed, reason: error != nil ? "whep_post_failed" : "whep_http_\(code)")
         return
       }
-      self?.state = .live
+      // Stay `.connecting`: setRemoteDescription, ICE and the decoder still have
+      // to run before ACS is handed anything.
+      self.armFirstFrame(gen: gen)
       let desc = RTCSessionDescription(type: .answer, sdp: answer)
       peer.setRemoteDescription(desc) { _ in }
     }.resume()
   }
+
+  /// Arms the first-frame gate for `gen` and bounds the wait. An answered WHEP
+  /// that never delivers is invisible to every other layer — ACS keeps the call
+  /// up on a frozen frame — so it has to expire into `.failed` and let the
+  /// module's rebuild backoff repair it.
+  private func armFirstFrame(gen: Int) {
+    firstFrameGeneration = gen
+    firstFramePromoted = false
+    cancelFirstFrameDeadline()
+    let work = DispatchWorkItem { [weak self] in
+      guard let self else { return }
+      self.firstFrameDeadline = nil
+      guard self.generation == gen, self.firstFrameGeneration == gen, !self.firstFramePromoted else { return }
+      NSLog("ACS-SPIKE WHEP answered but delivered no frame in \(Self.firstFrameTimeout)s")
+      self.transition(.failed, reason: "no_first_frame")
+    }
+    firstFrameDeadline = work
+    DispatchQueue.main.asyncAfter(deadline: .now() + Self.firstFrameTimeout, execute: work)
+  }
+
+  private func cancelFirstFrameDeadline() {
+    firstFrameDeadline?.cancel()
+    firstFrameDeadline = nil
+  }
+
+  /// The one honest `.live`: a decoded frame is on its way to ACS.
+  private func notePromotableFrame() {
+    guard !firstFramePromoted, firstFrameGeneration == generation else { return }
+    firstFramePromoted = true
+    cancelFirstFrameDeadline()
+    transition(.live, reason: "first_frame")
+  }
+
+  private func isCurrent(_ peerConnection: RTCPeerConnection) -> Bool {
+    pc === peerConnection
+  }
+
+  /// Matches Android's FIRST_FRAME_TIMEOUT_MS: a measured answer → first frame
+  /// gap is ~3 s, and a cold subscribe on a bad network is slower.
+  private static let firstFrameTimeout: TimeInterval = 9
 }
 
 extension WhepVideoSource: RTCPeerConnectionDelegate {
   func peerConnection(_ peerConnection: RTCPeerConnection, didChange stateChanged: RTCSignalingState) {}
   func peerConnection(_ peerConnection: RTCPeerConnection, didAdd stream: RTCMediaStream) {
-    stream.videoTracks.first?.add(self as RTCVideoRenderer)
+    guard isCurrent(peerConnection) else { return }
+    stream.videoTracks.first.map(attachVideo)
     stream.audioTracks.first.map(attachAudio)
   }
   func peerConnection(_ peerConnection: RTCPeerConnection, didRemove stream: RTCMediaStream) {}
   func peerConnectionShouldNegotiate(_ peerConnection: RTCPeerConnection) {}
   func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceConnectionState) {
     NSLog("ACS-SPIKE ICE \(newState.rawValue)")
+    guard isCurrent(peerConnection) else { return }
     if newState == .failed || newState == .disconnected {
-      state = .failed
+      transition(.failed, reason: newState == .failed ? "ice_failed" : "ice_disconnected")
+    } else if newState == .connected || newState == .completed {
+      // ICE can bounce disconnected → connected on its own; only act once the
+      // answer has been applied. A recovered candidate pair is a promise of
+      // frames, not a frame, so go back to `.connecting` and let the next one
+      // promote — immediately if media was already flowing, and if nothing
+      // arrives the rearmed deadline fails us again for the rebuild backoff.
+      if state == .failed, offerPosted {
+        transition(.connecting, reason: "ice_recovered")
+        armFirstFrame(gen: generation)
+      }
     }
   }
   func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceGatheringState) {
+    guard isCurrent(peerConnection) else { return }
     if newState == .complete { postOfferIfNeeded() }
   }
   func peerConnection(_ peerConnection: RTCPeerConnection, didGenerate candidate: RTCIceCandidate) {}
   func peerConnection(_ peerConnection: RTCPeerConnection, didRemove candidates: [RTCIceCandidate]) {}
   func peerConnection(_ peerConnection: RTCPeerConnection, didOpen dataChannel: RTCDataChannel) {}
   func peerConnection(_ peerConnection: RTCPeerConnection, didStartReceivingOn transceiver: RTCRtpTransceiver) {
+    guard isCurrent(peerConnection) else { return }
     if let video = transceiver.receiver.track as? RTCVideoTrack {
-      video.add(self as RTCVideoRenderer)
+      attachVideo(video)
     }
     if let audio = transceiver.receiver.track as? RTCAudioTrack {
       attachAudio(audio)
@@ -163,6 +292,7 @@ extension WhepVideoSource: RTCVideoRenderer {
   func setSize(_ size: CGSize) {}
   func renderFrame(_ frame: RTCVideoFrame?) {
     guard let frame, let buffer = frame.buffer as? RTCCVPixelBuffer else { return }
+    notePromotableFrame()
     frameCount += 1
     let now = Date()
     if now.timeIntervalSince(lastFpsLog) >= 1 {

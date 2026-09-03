@@ -87,6 +87,23 @@ class GlassesMediaSourceContractTest {
   }
 
   @Test
+  fun sameUrlIsReusedUntilTheSubscriberFails() {
+    val url = "https://example.com/whep"
+    val config = SourceConfig(url)
+    // A resumed glasses uplink re-sends the same URL. ACS never lost its
+    // subscription, so rebuilding would only restart the wait for a first frame.
+    assertThat(canReuseSource(url, SourceState.LIVE, config)).isTrue()
+    // Includes the answer → first frame window, which LIVE no longer covers.
+    assertThat(canReuseSource(url, SourceState.CONNECTING, config)).isTrue()
+    // ICE dropped, or the answer never produced a frame: rebuild.
+    assertThat(canReuseSource(url, SourceState.FAILED, config)).isFalse()
+    // A new stream means a new WHEP URL, and a stopped source has none.
+    assertThat(canReuseSource(url, SourceState.LIVE, SourceConfig("https://example.com/whep-2"))).isFalse()
+    assertThat(canReuseSource(null, SourceState.IDLE, config)).isFalse()
+    assertThat(canReuseSource(url, SourceState.LIVE, SourceConfig(url, SourceKind.DIRECT))).isFalse()
+  }
+
+  @Test
   fun syntheticSourceHonorsStartRestartStopAndState() {
     val source = SyntheticI420Source(
       video = { _ -> },

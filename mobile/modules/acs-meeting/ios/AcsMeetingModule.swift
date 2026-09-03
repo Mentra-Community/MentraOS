@@ -11,13 +11,12 @@ public class AcsMeetingModule: Module {
     Events("onState", "onIncomingPcm")
 
     AsyncFunction("join") { (options: [String: Any]) in
-      let token = options["token"] as? String ?? ""
-      let meetingUrl = options["meetingUrl"] as? String ?? ""
-      let whepUrl = options["whepUrl"] as? String ?? ""
+      let token = try requireString(options, "token")
+      let meetingUrl = try requireString(options, "meetingUrl")
+      let whepUrl = try requireString(options, "whepUrl")
       let displayName = options["displayName"] as? String
       let dumpWav = options["dumpPcmWav"] as? Bool ?? false
-      // TEMP: force phone mic. Host still passes a source; session ignores it.
-      let audioSource = "phone"
+      let audioSource = options["audioSource"] as? String ?? "glasses"
       let video = try parseAcsOutgoingVideo(options["video"])
       let meeting = self.session ?? AcsMeetingSession(
         onState: { [weak self] state in self?.sendEvent("onState", state) },
@@ -44,6 +43,10 @@ public class AcsMeetingModule: Module {
 
     AsyncFunction("updateVideoSource") { (whepUrl: String) in
       self.session?.updateVideoSource(whepUrl)
+    }
+
+    AsyncFunction("restartVideoSource") {
+      self.session?.restartVideoSource()
     }
 
     AsyncFunction("getState") {
@@ -97,9 +100,17 @@ final class AcsMeetingSession {
   private var pcmBridge: PcmBridge?
   private var audioOut: RawOutgoingAudioStream?
   private var localOut: LocalOutgoingAudioStream?
+  private let phoneMic = PhoneMicCapturer()
   private var outgoingReady = false
   private var audioSource = "glasses"
   private var lastSafety: AudioSafety = .degraded
+  // Health of the glasses WHEP feed, reported alongside the ACS phase so the host
+  // can tell "call is up, glasses video is dead" from a healthy call.
+  private var mediaSource: SourceState = .idle
+  private var mediaRestartAttempts = 0
+  private var mediaRestartTask: DispatchWorkItem?
+  private static let mediaRestartBaseMs = 1_000
+  private static let mediaRestartMaxMs = 10_000
 
   init(onState: @escaping ([String: Any]) -> Void, onIncomingPcm: @escaping (String, Int, Int) -> Void) {
     self.onState = onState
@@ -114,6 +125,7 @@ final class AcsMeetingSession {
       "audioSource": audioSource,
       "activeStream": controller.readActive().rawValue,
       "audioSafety": lastSafety.rawValue,
+      "mediaSource": mediaSource.rawValue,
     ]
     if let meetingUrl { result["meetingUrl"] = meetingUrl }
     if let lastError { result["error"] = lastError }
@@ -121,14 +133,22 @@ final class AcsMeetingSession {
   }
 
   func join(token: String, meetingUrl: String, whepUrl: String, displayName: String?, dumpWav: Bool, audioSource: String = "glasses", video: AcsOutgoingVideo = .hd) throws {
-    // TEMP: force phone mic. Ignore host/resolver until the glasses path is back on.
-    NSLog("ACS-SPIKE TEMP force phone mic (host asked \(audioSource))")
-    let parsed = AudioSourceKind.phone
-    self.audioSource = "phone"
+    // Both glasses and phone feed RawOutgoingAudioStream so ACS never owns the
+    // phone audio route. Phone PCM comes from AVAudioEngine; glasses via WHEP.
+    let parsed = AcsAudioPolicy.parseSource(audioSource) ?? .glasses
+    if parsed == .phone {
+      NSLog("ACS-SPIKE audioSource=phone: input tap → virtual outgoing; voice-chat session off")
+    }
+    self.audioSource = parsed == .phone ? "phone" : "glasses"
+    // The ACS work below is queued; reflect the intent synchronously so the
+    // resolved snapshot reads "connecting" rather than a stale idle.
+    phase = "connecting"
+    lastError = nil
+    self.meetingUrl = meetingUrl
     queue.async { [weak self] in
       guard let self else { return }
       do {
-        self.leaveLocked()
+        self.leaveLocked(emitIdle: false)
         self.audioSource = parsed == .phone ? "phone" : "glasses"
         self.meetingUrl = meetingUrl
         self.lastError = nil
@@ -151,24 +171,16 @@ final class AcsMeetingSession {
         let videoStream = VirtualOutgoingVideoStream(videoStreamOptions: videoOptions)
         self.frameSender.attach(videoStream)
 
-        let audioFormat = AudioStreamFormat()
-        audioFormat.sampleRate = .sampleRate16000
-        audioFormat.channelMode = .channelModeMono
-        audioFormat.encodedAudioFormat = .pcm
+        let outAudioFormat = AudioStreamFormat()
+        outAudioFormat.sampleRate = .sampleRate48000
+        outAudioFormat.channelMode = .channelModeMono
+        outAudioFormat.encodedAudioFormat = .pcm
 
         let outAudioOptions = RawOutgoingAudioStreamOptions()
-        outAudioOptions.format = audioFormat
+        outAudioOptions.format = outAudioFormat
         let outgoing = RawOutgoingAudioStream(audioStreamOptions: outAudioOptions)
         outgoing.delegate = self
         self.audioOut = outgoing
-
-        let local = LocalOutgoingAudioStream()
-        self.localOut = local
-
-        let inAudioOptions = RawIncomingAudioStreamOptions()
-        inAudioOptions.format = audioFormat
-        let incoming = RawIncomingAudioStream(audioStreamOptions: inAudioOptions)
-        incoming.delegate = self
 
         let desired: AudioSourceKind = self.audioSource == "phone" ? .phone : .glasses
         let plan = AcsAudioPolicy.planJoin(
@@ -177,17 +189,33 @@ final class AcsMeetingSession {
           glassesRequiresUnmutedTransport: Self.glassesRequiresUnmutedTransport
         )
 
+        // Virtual outgoing stays armed for phone and glasses. A LocalOutgoing
+        // stream would make ACS own the phone route and open an echo loop.
+        let local: LocalOutgoingAudioStream? = plan.armVirtual ? nil : LocalOutgoingAudioStream()
+        self.localOut = local
+
+        let inAudioFormat = AudioStreamFormat()
+        inAudioFormat.sampleRate = .sampleRate16000
+        inAudioFormat.channelMode = .channelModeMono
+        inAudioFormat.encodedAudioFormat = .pcm
+        let inAudioOptions = RawIncomingAudioStreamOptions()
+        inAudioOptions.format = inAudioFormat
+        let incoming = RawIncomingAudioStream(audioStreamOptions: inAudioOptions)
+        incoming.delegate = self
+
         let joinOptions = JoinCallOptions()
         let outgoingVideo = OutgoingVideoOptions()
         outgoingVideo.streams = [videoStream]
         joinOptions.outgoingVideoOptions = outgoingVideo
         let outgoingAudio = OutgoingAudioOptions()
-        outgoingAudio.stream = plan.armVirtual ? outgoing : local
+        outgoingAudio.stream = plan.armVirtual ? outgoing : local!
         outgoingAudio.muted = plan.transportMuted
         joinOptions.outgoingAudioOptions = outgoingAudio
         let incomingAudio = IncomingAudioOptions()
         incomingAudio.stream = incoming
-        incomingAudio.muted = true
+        // Return audio is ours to route (base64 → host → A2DP on the glasses), so
+        // the raw incoming stream must actually deliver buffers.
+        incomingAudio.muted = false
         joinOptions.incomingAudioOptions = incomingAudio
 
         let locator = TeamsMeetingLinkLocator(meetingLink: meetingUrl)
@@ -197,10 +225,22 @@ final class AcsMeetingSession {
 
         let bridge = PcmBridge(dumpWav: dumpWav)
         self.pcmBridge = bridge
+        self.phoneMic.onPcm = { [weak self] pcm, rate, channels in
+          self?.feedOutgoingPcm(pcm, sampleRate: rate, channels: channels)
+        }
         let source = WhepVideoSource()
         source.onFrame = { buffer in self.frameSender.send(buffer) }
         source.onPcm = { pcm, rate, channels in
           self.feedOutgoingPcm(pcm, sampleRate: rate, channels: channels)
+        }
+        self.mediaRestartAttempts = 0
+        source.onStateChange = { [weak self, weak source] state, reason in
+          // Fired from WebRTC/URLSession threads; hop to the session queue so it
+          // serializes with join/leave/policy like everything else.
+          self?.queue.async {
+            guard let self, let source, self.whep === source else { return }
+            self.onMediaSourceState(state, reason: reason)
+          }
         }
         source.start(config: SourceConfig(url: whepUrl))
         self.whep = source
@@ -221,7 +261,56 @@ final class AcsMeetingSession {
   }
 
   func updateVideoSource(_ whepUrl: String) {
-    queue.async { self.whep?.restart(config: SourceConfig(url: whepUrl)) }
+    queue.async {
+      // The host has a fresher opinion about where the glasses publish; drop any
+      // automatic retry against the old URL.
+      self.cancelMediaRestart()
+      self.whep?.restart(config: SourceConfig(url: whepUrl))
+    }
+  }
+
+  /// Rebuild the WHEP subscription on the current URL even when it looks healthy.
+  /// The host calls this when the phone changed networks.
+  func restartVideoSource() {
+    queue.async {
+      self.cancelMediaRestart()
+      self.whep?.forceRestart()
+    }
+  }
+
+  private func onMediaSourceState(_ state: SourceState, reason: String) {
+    let previous = mediaSource
+    mediaSource = state
+    if state == .live { mediaRestartAttempts = 0 }
+    if state == .failed { scheduleMediaRestart(reason: reason) }
+    // start() emits idle then connecting back to back; one snapshot per real change.
+    if previous != state, call != nil, phase != "idle" { onState(snapshot()) }
+  }
+
+  /// Native owns first-line recovery: nothing above this layer can see ICE fail, and a
+  /// Teams call with a frozen last frame looks healthy from every other angle.
+  /// Exponential backoff capped at mediaRestartMaxMs, for as long as the call is alive.
+  private func scheduleMediaRestart(reason: String) {
+    guard call != nil, !["idle", "disconnected", "error"].contains(phase) else { return }
+    guard mediaRestartTask == nil else { return }
+    let attempt = mediaRestartAttempts
+    mediaRestartAttempts += 1
+    let delayMs = min(Self.mediaRestartBaseMs << min(attempt, 4), Self.mediaRestartMaxMs)
+    NSLog("ACS-SPIKE glasses media source failed (\(reason)); WHEP rebuild #\(attempt + 1) in \(delayMs)ms")
+    let task = DispatchWorkItem { [weak self] in
+      guard let self else { return }
+      self.mediaRestartTask = nil
+      guard self.call != nil, self.mediaSource == .failed else { return }
+      self.whep?.forceRestart()
+    }
+    mediaRestartTask = task
+    queue.asyncAfter(deadline: .now() + .milliseconds(delayMs), execute: task)
+  }
+
+  private func cancelMediaRestart() {
+    mediaRestartTask?.cancel()
+    mediaRestartTask = nil
+    mediaRestartAttempts = 0
   }
 
   func setMuted(_ next: Bool) -> [String: Any] {
@@ -259,7 +348,7 @@ final class AcsMeetingSession {
   }
 
   private func feedOutgoingPcm(_ pcm: Data, sampleRate: Int, channels: Int) {
-    guard !muted, audioSource == "glasses", outgoingReady, let stream = audioOut else { return }
+    guard !muted, outgoingReady, let stream = audioOut else { return }
     for frame in pcmBridge?.ingest(pcm16Le: pcm, sampleRate: sampleRate, channels: channels) ?? [] {
       do {
         let buffer = RawAudioBuffer()
@@ -278,9 +367,16 @@ final class AcsMeetingSession {
   }
 
   private func leaveLocked(emitIdle: Bool = true) {
+    phoneMic.setEnabled(false)
+    phoneMic.onPcm = nil
     applier.reset()
     scheduler.cancelPending()
     pcmBridge?.finishDump()
+    // Detach before stop so the teardown's own idle transition does not emit a
+    // snapshot (or schedule a rebuild) for a call that is going away.
+    cancelMediaRestart()
+    whep?.onStateChange = nil
+    mediaSource = .idle
     whep?.stop()
     frameSender.detach()
     do {
@@ -303,11 +399,18 @@ final class AcsMeetingSession {
     audioSource = "glasses"
     lastSafety = .degraded
     meetingUrl = nil
-    if emitIdle { emit("idle") }
+    // Clearing lastError is scoped to the clean idle reset. A failed join tears down
+    // with emitIdle=false and relies on lastError staying set so emit("error") still
+    // carries it and the call delegate keeps ignoring late disconnected callbacks.
+    if emitIdle {
+      lastError = nil
+      emit("idle")
+    }
   }
 
   fileprivate func currentCall() -> Call? { call }
   fileprivate func currentWhep() -> WhepVideoSource? { whep }
+  fileprivate func setPhonePcmEnabled(_ enabled: Bool) { phoneMic.setEnabled(enabled) }
 }
 
 final class SessionAudioController: AudioStreamController {
@@ -333,6 +436,10 @@ final class SessionAudioController: AudioStreamController {
 
   func setGlassesPcmEnabled(_ enabled: Bool) {
     session?.currentWhep()?.setPcmDeliveryEnabled(enabled)
+  }
+
+  func setPhonePcmEnabled(_ enabled: Bool) {
+    session?.setPhonePcmEnabled(enabled)
   }
 
   func mutePhysical() -> Result<Void, Error> {
@@ -422,6 +529,13 @@ struct AcsOutgoingVideo {
 
   static let hd = AcsOutgoingVideo(width: 1280, height: 720, fps: 15, maxBitrateBps: 2_500_000)
   static let allowedSizes: Set<String> = ["1280x720", "960x540"]
+}
+
+private func requireString(_ options: [String: Any], _ key: String) throws -> String {
+  guard let value = options[key] as? String, !value.isEmpty else {
+    throw NSError(domain: "MentraAcsMeeting", code: 1, userInfo: [NSLocalizedDescriptionKey: "\(key) is required"])
+  }
+  return value
 }
 
 private func parseAcsOutgoingVideo(_ raw: Any?) throws -> AcsOutgoingVideo {

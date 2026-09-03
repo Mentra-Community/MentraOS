@@ -8,6 +8,8 @@ declare class AcsMeetingNativeModule extends NativeModule<AcsMeetingModuleEvents
   setMuted(muted: boolean): Promise<AcsMeetingState>
   setAudioSource(source: "glasses" | "phone"): Promise<AcsMeetingState>
   updateVideoSource(whepUrl: string): Promise<void>
+  /** Force a WHEP rebuild on the current URL (phone changed networks). */
+  restartVideoSource(): Promise<void>
   getState(): Promise<AcsMeetingState>
 }
 

@@ -34,11 +34,13 @@ class FakeAudioStreamController : AudioStreamController {
   var active: ActiveStreamKind = ActiveStreamKind.NONE
   var physicallyMuted: Boolean? = true
   var pcmEnabled: Boolean = false
+  var phonePcm: Boolean = false
   var muteResult: Result<Unit> = Result.success(Unit)
   var unmuteResult: Result<Unit> = Result.success(Unit)
   var stopResult: Result<Unit> = Result.success(Unit)
   var muteSetsFlag: Boolean = true
   val pcmCalls = mutableListOf<Boolean>()
+  val phonePcmCalls = mutableListOf<Boolean>()
   var muteCalls = 0
   var unmuteCalls = 0
   var stopCalls = 0
@@ -50,6 +52,11 @@ class FakeAudioStreamController : AudioStreamController {
   override fun setGlassesPcmEnabled(enabled: Boolean) {
     pcmEnabled = enabled
     pcmCalls.add(enabled)
+  }
+
+  override fun setPhonePcmEnabled(enabled: Boolean) {
+    phonePcm = enabled
+    phonePcmCalls.add(enabled)
   }
 
   override fun mutePhysical(): Result<Unit> {
@@ -96,19 +103,22 @@ class AudioPolicyApplierTest {
   }
 
   @Test
-  fun noneNoneLocal_opensPhoneOnThirdObservation() {
+  fun noneNoneVirtual_opensPhonePcmOnThirdObservation() {
     controller.active = ActiveStreamKind.NONE
     applier.apply(AudioSourceKind.PHONE, userMuted = false, reason = "join")
+    assertThat(controller.phonePcm).isFalse()
+    assertThat(controller.phonePcmCalls).containsExactly(false)
     assertThat(controller.unmuteCalls).isEqualTo(0)
 
     scheduler.advanceTo(50)
-    assertThat(controller.unmuteCalls).isEqualTo(0)
+    assertThat(controller.phonePcm).isFalse()
+    assertThat(controller.phonePcmCalls).hasSize(2)
 
-    controller.active = ActiveStreamKind.LOCAL
-    controller.physicallyMuted = true
+    controller.active = ActiveStreamKind.VIRTUAL
     scheduler.advanceTo(100)
-    assertThat(controller.unmuteCalls).isEqualTo(1)
+    assertThat(controller.phonePcm).isTrue()
     assertThat(controller.pcmEnabled).isFalse()
+    assertThat(controller.unmuteCalls).isEqualTo(0)
     assertThat(applier.lastSafety()).isEqualTo(AudioSafety.SAFE)
   }
 
@@ -198,10 +208,8 @@ class AudioPolicyApplierTest {
     controller.active = ActiveStreamKind.VIRTUAL
     scheduler.advanceTo(100)
     assertThat(controller.pcmEnabled).isFalse()
-    controller.active = ActiveStreamKind.LOCAL
-    scheduler.advanceTo(200)
-    assertThat(controller.unmuteCalls).isEqualTo(1)
-    assertThat(controller.pcmEnabled).isFalse()
+    assertThat(controller.phonePcm).isTrue()
+    assertThat(controller.unmuteCalls).isEqualTo(0)
   }
 
   @Test
@@ -210,5 +218,6 @@ class AudioPolicyApplierTest {
     applier.apply(AudioSourceKind.PHONE, userMuted = false, reason = "mismatch")
     assertThat(controller.unmuteCalls).isEqualTo(0)
     assertThat(controller.pcmEnabled).isFalse()
+    assertThat(controller.phonePcm).isTrue()
   }
 }

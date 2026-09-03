@@ -56,9 +56,27 @@ const {
   default: acsMeetingService,
   parseAcsOutgoingVideo,
   parseMeetingParticipants,
+  ACS_CALL_MIC,
   resolveAcsAudioSource,
   setAcsMeetingNativeForTests,
+  setAcsMeetingPhoneNetworkForTests,
 } = require("../AcsMeetingService") as typeof import("../AcsMeetingService")
+
+type PhoneNetworkInfo = import("../AcsMeetingService").PhoneNetworkInfo
+
+function fakePhoneNetwork() {
+  const listeners = new Set<(state: PhoneNetworkInfo) => void>()
+  return {
+    addEventListener: (listener: (state: PhoneNetworkInfo) => void) => {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+    emit: (state: PhoneNetworkInfo) => listeners.forEach((listener) => listener(state)),
+    get size() {
+      return listeners.size
+    },
+  }
+}
 
 const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
 
@@ -89,6 +107,7 @@ function fakeNative() {
     audioSource: source,
   }))
   const updateVideoSource = mock(async () => {})
+  const restartVideoSource = mock(async () => {})
   const getState = mock(async () => ({state: "idle" as const, muted: false}))
   return {
     join,
@@ -96,6 +115,7 @@ function fakeNative() {
     setMuted,
     setAudioSource,
     updateVideoSource,
+    restartVideoSource,
     getState,
     addListener: (event: string, listener: (event: Record<string, unknown>) => void) => {
       listeners.set(event, listener)
@@ -121,28 +141,179 @@ describe("AcsMeetingService", () => {
   afterEach(async () => {
     await acsMeetingService.leave("com.mentra.call")
     setAcsMeetingNativeForTests(undefined)
+    setAcsMeetingPhoneNetworkForTests(null)
   })
 
-  test("the call microphone is always the glasses, regardless of preferred_mic", () => {
+  test("a failed native join releases ownership, unbinds listeners, and hangs up native", async () => {
+    const native = fakeNative()
+    native.join.mockImplementationOnce(async () => {
+      throw new Error("ACS rejected the token")
+    })
+    setAcsMeetingNativeForTests(native)
+    const original = console.warn
+    console.warn = () => {}
+    try {
+      await expect(
+        acsMeetingService.join("com.mentra.call", {
+          meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
+          token: "bad",
+          whepUrl: "https://example.com/whep",
+        }),
+      ).rejects.toThrow("ACS rejected the token")
+    } finally {
+      console.warn = original
+    }
+    expect(acsMeetingService.ownerPackage()).toBeNull()
+    expect(native.leave).toHaveBeenCalledTimes(1)
+    expect(openStream).not.toHaveBeenCalled()
+    // Another miniapp is not locked out by the failed attempt.
+    await acsMeetingService.join("com.other.app", {
+      meetingUrl: "https://teams.microsoft.com/l/meetup-join/y",
+      token: "tok",
+      whepUrl: "https://example.com/whep",
+    })
+    expect(acsMeetingService.ownerPackage()).toBe("com.other.app")
+    await acsMeetingService.leave("com.other.app")
+  })
+
+  test("return-audio playback failure does not reject a join that native accepted", async () => {
+    const native = fakeNative()
+    setAcsMeetingNativeForTests(native)
+    openStream.mockImplementationOnce(async () => {
+      throw new Error("A2DP busy")
+    })
+    const original = console.warn
+    console.warn = () => {}
+    let state: Awaited<ReturnType<typeof acsMeetingService.join>>
+    try {
+      state = await acsMeetingService.join("com.mentra.call", {
+        meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
+        token: "tok",
+        whepUrl: "https://example.com/whep",
+      })
+    } finally {
+      console.warn = original
+    }
+    expect(state.state).toBe("connected")
+    expect(acsMeetingService.ownerPackage()).toBe("com.mentra.call")
+    expect(native.leave).not.toHaveBeenCalled()
+    // The next incoming PCM chunk lazily reopens playback.
+    native.emit("onIncomingPcm", {base64: "AAAA", sampleRate: 16000, channels: 1})
+    await flush()
+    await flush()
+    expect(openStream).toHaveBeenCalledTimes(2)
+    expect(writeStreamChunk).toHaveBeenCalledTimes(1)
+  })
+
+  test("leave unbinds native listeners so stale events do not reach the old owner", async () => {
+    const native = fakeNative()
+    setAcsMeetingNativeForTests(native)
+    const seen: string[] = []
+    acsMeetingService.setStateHandler((_pkg, state) => {
+      seen.push(state.state)
+    })
+    await acsMeetingService.join("com.mentra.call", {
+      meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
+      token: "tok",
+      whepUrl: "https://example.com/whep",
+    })
+    native.emit("onState", {state: "connected", muted: false})
+    await acsMeetingService.leave("com.mentra.call")
+    native.emit("onState", {state: "disconnected", muted: false})
+    expect(seen).toEqual(["connected"])
+    acsMeetingService.setStateHandler(() => {})
+  })
+
+  test("mute and video-source updates require an active owner", async () => {
+    const native = fakeNative()
+    setAcsMeetingNativeForTests(native)
+    await expect(acsMeetingService.setMuted("com.mentra.call", true)).rejects.toThrow(/No active meeting/)
+    await expect(acsMeetingService.updateVideoSource("com.mentra.call", "https://x/whep")).rejects.toThrow(
+      /No active meeting/,
+    )
+    expect(native.setMuted).not.toHaveBeenCalled()
+    expect(native.updateVideoSource).not.toHaveBeenCalled()
+  })
+
+  test("a phone network change during a live meeting rebuilds the WHEP subscription once", async () => {
+    const native = fakeNative()
+    setAcsMeetingNativeForTests(native)
+    const network = fakePhoneNetwork()
+    setAcsMeetingPhoneNetworkForTests(network)
+    await acsMeetingService.join("com.mentra.call", {
+      meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
+      token: "tok",
+      whepUrl: "https://example.com/whep",
+    })
+    expect(network.size).toBe(1)
+    // NetInfo replays the current state on subscribe; that is not a change.
+    network.emit({type: "wifi", isConnected: true})
+    expect(native.restartVideoSource).not.toHaveBeenCalled()
+    // Going offline is not worth a restart; coming back on a new network is.
+    network.emit({type: "none", isConnected: false})
+    expect(native.restartVideoSource).not.toHaveBeenCalled()
+    network.emit({type: "cellular", isConnected: true})
+    await flush()
+    expect(native.restartVideoSource).toHaveBeenCalledTimes(1)
+    expect(native.updateVideoSource).not.toHaveBeenCalled()
+    // Flapping within the cooldown is absorbed.
+    network.emit({type: "wifi", isConnected: true})
+    await flush()
+    expect(native.restartVideoSource).toHaveBeenCalledTimes(1)
+    await acsMeetingService.leave("com.mentra.call")
+    expect(network.size).toBe(0)
+  })
+
+  test("a native without restartVideoSource falls back to a same-URL updateVideoSource", async () => {
+    const {restartVideoSource: _omitted, ...native} = fakeNative()
+    setAcsMeetingNativeForTests(native)
+    const network = fakePhoneNetwork()
+    setAcsMeetingPhoneNetworkForTests(network)
+    await acsMeetingService.join("com.mentra.call", {
+      meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
+      token: "tok",
+      whepUrl: "https://example.com/whep",
+    })
+    network.emit({type: "wifi", isConnected: true})
+    network.emit({type: "cellular", isConnected: true})
+    await flush()
+    expect(native.updateVideoSource).toHaveBeenCalledWith("https://example.com/whep")
+  })
+
+  test("native mediaSource health is carried on the meeting state", async () => {
+    const native = fakeNative()
+    setAcsMeetingNativeForTests(native)
+    await acsMeetingService.join("com.mentra.call", {
+      meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
+      token: "tok",
+      whepUrl: "https://example.com/whep",
+    })
+    native.emit("onState", {state: "connected", muted: false, mediaSource: "failed"})
+    expect(acsMeetingService.getState().mediaSource).toBe("failed")
+    native.emit("onState", {state: "connected", muted: false, mediaSource: "bogus"})
+    expect(acsMeetingService.getState().mediaSource).toBeUndefined()
+  })
+
+  test("the call microphone follows ACS_CALL_MIC and ignores preferred_mic", () => {
     for (const mic of ["glasses", "phone", "bluetooth", "auto", ""]) {
       preferredMic = mic
-      expect(resolveAcsAudioSource()).toEqual({source: "glasses", reason: "explicit"})
+      expect(resolveAcsAudioSource()).toEqual({source: ACS_CALL_MIC, reason: "explicit"})
     }
   })
 
-  test("join passes the glasses audioSource, opens 16 kHz mono playback, and does not watch stores", async () => {
+  test("join passes ACS_CALL_MIC, opens 16 kHz mono playback, and does not watch stores", async () => {
     const native = fakeNative()
     setAcsMeetingNativeForTests(native)
-    preferredMic = "phone"
+    preferredMic = "glasses"
     const state = await acsMeetingService.join("com.mentra.call", {
       meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
       token: "tok",
       whepUrl: "https://example.com/whep",
     })
     expect(native.join).toHaveBeenCalledWith(
-      expect.objectContaining({audioSource: "glasses"}),
+      expect.objectContaining({audioSource: ACS_CALL_MIC}),
     )
-    expect(state.audioSource).toBe("glasses")
+    expect(state.audioSource).toBe(ACS_CALL_MIC)
     expect(state.audioSourceReason).toBe("explicit")
     expect(openStream).toHaveBeenCalledTimes(1)
     expect(openStream.mock.calls[0]?.[0]).toMatchObject({sampleRate: 16000, channels: 1, stopOtherAudio: true})
@@ -284,8 +455,8 @@ describe("AcsMeetingService", () => {
       token: "tok",
       whepUrl: "https://example.com/whep",
     })
-    expect(native.join.mock.calls[1]?.[0]).toMatchObject({audioSource: "glasses"})
-    expect(state.audioSource).toBe("glasses")
+    expect(native.join.mock.calls[1]?.[0]).toMatchObject({audioSource: ACS_CALL_MIC})
+    expect(state.audioSource).toBe(ACS_CALL_MIC)
     expect(state.audioSourceReason).toBe("explicit")
     expect(openStream).toHaveBeenCalledTimes(2)
   })

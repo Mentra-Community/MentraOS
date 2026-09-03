@@ -113,6 +113,17 @@ export class StreamLifecycleController {
     this.missedAcks = 0
   }
 
+  /**
+   * Send one keep-alive immediately instead of waiting for the next interval.
+   * Used when the BLE link comes back after a suspension: the glasses
+   * publisher's 60s watchdog has been running the whole time, so the first
+   * heartbeat after resume must not wait up to another full interval.
+   */
+  tickNow(): void {
+    if (this.disposed || !this.active) return
+    void this.tick()
+  }
+
   handleAck(ackId: string): void {
     if (this.disposed) return
 

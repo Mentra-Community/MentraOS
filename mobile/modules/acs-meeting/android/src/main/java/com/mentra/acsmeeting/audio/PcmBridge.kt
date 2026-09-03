@@ -8,7 +8,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.abs
 
-/** Downmix/resample PCM16 to 16 kHz mono ~20 ms blocks for ACS raw outgoing audio. */
+/** Downmix/resample PCM16 to 48 kHz mono ~20 ms blocks for ACS raw outgoing audio. */
 class PcmBridge(
   private val dumpDir: File?,
   private val dumpWav: Boolean,
@@ -32,9 +32,9 @@ class PcmBridge(
     logLevel(pcm16Le, sampleRate, channels)
     // Stateful: filter history and fractional phase carry across WebRTC's
     // 10 ms callbacks, so there is no seam every 480 samples.
-    val mono16k = resampler.process(pcm16Le, sampleRate, channels)
-    outgoing.write(mono16k)
-    val frameBytes = 16000 * 2 / 50 // 20 ms
+    val mono = resampler.process(pcm16Le, sampleRate, channels)
+    outgoing.write(mono)
+    val frameBytes = TARGET_RATE * 2 / 50 // 20 ms
     val frames = mutableListOf<ByteArray>()
     val buf = outgoing.toByteArray()
     var offset = 0
@@ -79,10 +79,10 @@ class PcmBridge(
 
   companion object {
     private const val TAG = "ACS-SPIKE"
-    const val TARGET_RATE = 16000
+    const val TARGET_RATE = 48_000
 
     /** One-shot convenience (fresh filter state). Streams must use a [PcmResampler] instance. */
-    fun toMono16k(pcm16Le: ByteArray, sampleRate: Int, channels: Int): ByteArray =
+    fun toMono(pcm16Le: ByteArray, sampleRate: Int, channels: Int): ByteArray =
       PcmResampler(TARGET_RATE).process(pcm16Le, sampleRate, channels)
 
     fun wav(pcm: ByteArray, sampleRate: Int, channels: Int): ByteArray {
