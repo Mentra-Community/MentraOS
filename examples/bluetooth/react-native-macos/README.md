@@ -36,7 +36,7 @@ bun run start --port 8091
 ```
 
 ```bash
-bun run macos --port 8091 --no-packager
+RCT_METRO_PORT=8091 bun run macos --no-packager
 ```
 
 After a supporting SDK version is released and synchronized into this example,
