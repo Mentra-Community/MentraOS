@@ -3,6 +3,7 @@
 import "zx/globals"
 import {readFile, writeFile} from "fs/promises"
 import {setBuildEnv} from './set-build-env.mjs';
+import {syncAutolinkingCache} from './clear-autolinking-cache.mjs';
 await setBuildEnv();
 
 // build only for real devices new arch:
@@ -26,6 +27,13 @@ if (nameSuffix) {
 
 // Prebuild Android (reads MENTRAOS_BUILD_NAME via app.config.ts)
 await $({ stdio: 'inherit' })`bun expo prebuild --platform android`;
+
+// Authoritative post-prebuild guard: setBuildEnv()'s syncAutolinkingCache() ran
+// before MENTRAOS_BUILD_NAME was applied, so it saw the base package and kept a
+// cache that prebuild has since rewritten to com.mentra.mentra.<suffix>. Re-run
+// it now (as android.mjs does) so the stale entry point referencing
+// com.mentra.mentra.BuildConfig is wiped instead of surviving into assembleRelease.
+await syncAutolinkingCache();
 
 // Patch the build-time copy of google-services.json to include a client entry
 // for the suffixed package, since Firebase only knows about the base package.
