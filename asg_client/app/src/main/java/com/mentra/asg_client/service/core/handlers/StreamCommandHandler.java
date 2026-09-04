@@ -6,7 +6,6 @@ import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraManager;
 import android.os.SystemClock;
 import android.util.Log;
-
 import com.mentra.asg_client.io.media.core.MediaCaptureService;
 import com.mentra.asg_client.io.network.interfaces.INetworkManager;
 import com.mentra.asg_client.io.network.utils.HotspotNetworkUtils;
@@ -18,6 +17,7 @@ import com.mentra.asg_client.io.streaming.services.SrtStreamingService;
 import com.mentra.asg_client.io.streaming.services.WhipCameraCapturer;
 import com.mentra.asg_client.io.streaming.services.WhipCameraFormatSelector;
 import com.mentra.asg_client.io.streaming.services.WhipStreamingService;
+import com.mentra.asg_client.io.streaming.trace.SoftApTrace;
 import com.mentra.asg_client.service.core.constants.BatteryConstants;
 import com.mentra.asg_client.service.legacy.interfaces.ICommandHandler;
 import com.mentra.asg_client.service.media.interfaces.IMediaManager;
@@ -25,13 +25,10 @@ import com.mentra.asg_client.service.system.core.SystemControllerFactory;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
 import com.mentra.asg_client.service.utils.ServiceConstants;
 import com.mentra.asg_client.service.utils.ServiceUtils;
-
 import io.github.thibaultbee.streampack.internal.sources.camera.CameraController;
-
+import java.util.Set;
 import org.json.JSONException;
 import org.json.JSONObject;
-
-import java.util.Set;
 
 /**
  * Handler for streaming commands (RTMP, SRT, WHIP). Routes to the appropriate streaming service
@@ -112,12 +109,16 @@ public class StreamCommandHandler implements ICommandHandler {
         boolean eisChanged = false;
         boolean streamStarted = false;
         String streamId = data.optString("streamId", "");
+        // SOFTAP_TRACE: adopt the phone-minted id so both devices stamp the same trace.
+        SoftApTrace.begin(data.optString("traceId", ""));
         try {
             // Accept streamUrl first, then legacy rtmpUrl / srtUrl keys
             String streamUrl = data.optString("streamUrl", "");
             if (streamUrl.isEmpty()) streamUrl = data.optString("rtmpUrl", "");
             if (streamUrl.isEmpty()) streamUrl = data.optString("srtUrl", "");
             if (streamUrl.isEmpty()) streamUrl = data.optString("whipUrl", "");
+            SoftApTrace.stage(
+                    "start_stream_received", "streamId", streamId, "streamUrl", streamUrl);
 
             if (streamUrl.isEmpty()) {
                 Log.e(TAG, "Cannot start stream - missing stream URL");
@@ -159,8 +160,15 @@ public class StreamCommandHandler implements ICommandHandler {
             // report it as a connected STA WiFi network.
             boolean hasStaWifi = stateManager == null || stateManager.isConnectedToWifi();
             boolean hasLocalHotspotRoute = HotspotNetworkUtils.isEndpointOnActiveHotspot(streamUrl);
+            SoftApTrace.stage(
+                    "route_checked",
+                    "staWifi",
+                    hasStaWifi,
+                    "localHotspotRoute",
+                    hasLocalHotspotRoute);
             if (!hasStaWifi && !hasLocalHotspotRoute) {
                 Log.e(TAG, "Cannot start stream - no WiFi or local hotspot route");
+                SoftApTrace.stage("start_stream_rejected", "reason", "no_wifi_or_hotspot_route");
                 sendStreamErrorStatus(streamId, ServiceConstants.ERROR_NO_WIFI_CONNECTION);
                 return false;
             }
@@ -272,8 +280,8 @@ public class StreamCommandHandler implements ICommandHandler {
     }
 
     /**
-     * Arm livestream EIS only under the 500k pixel gate. Mentra Call 540p/720p stay
-     * off. WHIP also applies {@code EisController} on its own repeating request.
+     * Arm livestream EIS only under the 500k pixel gate. Mentra Call 540p/720p stay off. WHIP also
+     * applies {@code EisController} on its own repeating request.
      */
     private void applyEisForStreaming(int width, int height) {
         boolean enable = LivestreamEisPolicy.logDecision(TAG, "stream-start", width, height);
@@ -429,8 +437,7 @@ public class StreamCommandHandler implements ICommandHandler {
     /** Send a stopping stream status carrying the id of the stream being stopped. */
     private void sendStreamStoppingStatus(String streamId) {
         if (streamId == null || streamId.isEmpty()) {
-            streamingManager.sendStreamStatusResponse(
-                    true, ServiceConstants.STATUS_STOPPING, null);
+            streamingManager.sendStreamStatusResponse(true, ServiceConstants.STATUS_STOPPING, null);
             return;
         }
         try {
@@ -546,8 +553,11 @@ public class StreamCommandHandler implements ICommandHandler {
                         // watchdog was NOT reset: this keep-alive names a stream that is not
                         // the one running. Make the split visible so a 60 s "stream timed
                         // out" that follows can be traced to the id mismatch.
-                        Log.w(TAG, "Keep-alive streamId mismatch: got " + streamId
-                                + ", active WHIP stream differs - ACKing without resetting watchdog");
+                        Log.w(
+                                TAG,
+                                "Keep-alive streamId mismatch: got "
+                                        + streamId
+                                        + ", active WHIP stream differs - ACKing without resetting watchdog");
                     }
                     streamingManager.sendKeepAliveAck(streamId, ackId);
                     return true;
