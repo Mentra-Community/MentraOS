@@ -169,6 +169,29 @@ export function resolveStaleFindingsFromSource(
   return { open, resolved };
 }
 
+/**
+ * Nit counterpart to `resolveStaleFindingsFromSource`. Nits are informational
+ * and never archived, so one the source stopped reporting is simply dropped.
+ * Without this a fixed nit lingers in the ledger and the handoff comment
+ * forever — #3851 kept advising a file rename that had already happened,
+ * still citing the file's old name.
+ */
+export function pruneStaleNitsFromSource(
+  nitFindings: Finding[],
+  source: string,
+  currentFingerprints: Set<string>,
+): Finding[] {
+  return nitFindings.filter(
+    (f) =>
+      !(
+        f.source === source &&
+        f.severity === 'nit' &&
+        f.status === 'open' &&
+        !currentFingerprints.has(f.fingerprint)
+      ),
+  );
+}
+
 export function openBlocking(findings: Finding[]): Finding[] {
   return findings.filter((f) => f.severity === 'blocking' && f.status === 'open');
 }
