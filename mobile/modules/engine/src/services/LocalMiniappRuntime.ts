@@ -3686,7 +3686,10 @@ class LocalMiniappRuntime {
         subsystems: {
           setHotspotState: async (enabled) => {
             const status = await BluetoothSdk.setHotspotState(enabled)
-            return {state: status.state, ssid: status.ssid, password: status.password}
+            if (status.state === "enabled") {
+              return {state: status.state, ssid: status.ssid, password: status.password}
+            }
+            return {state: status.state}
           },
           joinScopedNetwork: (ssid, passphrase) => acsMeetingService.joinScopedNetwork(ssid, passphrase),
           leaveScopedNetwork: () => acsMeetingService.leaveScopedNetwork(),
