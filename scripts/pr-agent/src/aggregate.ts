@@ -6,6 +6,7 @@ import {
   mergeFindings,
   openBlocking,
   parseVerdictFromText,
+  pruneStaleNitsFromSource,
   resolveStaleFindingsFromSource,
   sourceCounts,
   verdictToFindings,
@@ -120,6 +121,12 @@ export function aggregateCycle(
       );
       openFindings = staleResolved.open;
       resolvedFindings = staleResolved.resolved;
+      // Same reasoning for nits: one this source no longer reports is fixed.
+      nitFindings = pruneStaleNitsFromSource(
+        nitFindings,
+        source,
+        new Set(nits.map((n) => n.fingerprint)),
+      );
     }
   };
 
@@ -171,6 +178,7 @@ export function aggregateCycle(
       );
       openFindings = stale.open;
       resolvedFindings = stale.resolved;
+      nitFindings = pruneStaleNitsFromSource(nitFindings, source, liveFingerprints);
     }
   }
 

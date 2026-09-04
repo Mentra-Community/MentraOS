@@ -734,3 +734,63 @@ describe('self-continuation when no CI gate will re-trigger the loop (#3851)', (
     expect(out.needsContinuation).toBeUndefined();
   });
 });
+
+describe('stale nits are dropped once the reviewer stops reporting them (#3851)', () => {
+  const cleanApprove = 'clean\n{"verdict":"approve","findings":[]}';
+
+  test('a nit the source no longer reports leaves the ledger', () => {
+    const st = PrAgentStateSchema.parse({
+      cycle: 1,
+      nitFindings: [
+        finding({
+          id: 'd2bcad',
+          fingerprint: 'notes/plans/old-slug.md:L0',
+          source: 'standards',
+          severity: 'nit',
+          file: 'notes/plans/old-slug.md',
+        }),
+      ],
+    });
+    const out = aggregateCycle(REPO_ROOT, st, { standards: cleanApprove }, [], [
+      'standards',
+    ]);
+    expect(out.state.nitFindings).toEqual([]);
+  });
+
+  test('a nit the source still reports is kept', () => {
+    const stillReported =
+      'x\n{"verdict":"approve","findings":[{"severity":"nit","file":"notes/plans/old-slug.md","line":0,"message":"rename me"}]}';
+    const st = PrAgentStateSchema.parse({ cycle: 1 });
+    const first = aggregateCycle(REPO_ROOT, st, { standards: stillReported }, [], [
+      'standards',
+    ]);
+    expect(first.state.nitFindings).toHaveLength(1);
+
+    const second = aggregateCycle(
+      REPO_ROOT,
+      first.state,
+      { standards: stillReported },
+      [],
+      ['standards'],
+    );
+    expect(second.state.nitFindings).toHaveLength(1);
+  });
+
+  test('another source cannot prune a nit it did not raise', () => {
+    const st = PrAgentStateSchema.parse({
+      cycle: 1,
+      nitFindings: [
+        finding({
+          fingerprint: 'a.ts:L1',
+          source: 'depth',
+          severity: 'nit',
+          file: 'a.ts',
+        }),
+      ],
+    });
+    const out = aggregateCycle(REPO_ROOT, st, { standards: cleanApprove }, [], [
+      'standards',
+    ]);
+    expect(out.state.nitFindings).toHaveLength(1);
+  });
+});
