@@ -295,7 +295,7 @@ export function aggregateCycle(
     handoffReason = 'human_handoff';
   }
 
-  const shouldHandoff =
+  let shouldHandoff =
     status === 'human_handoff' || status === 'budget_exhausted' || status === 'diverging';
 
   const shouldFix =
@@ -303,6 +303,24 @@ export function aggregateCycle(
     status === 'in_progress' &&
     (openCount > 0 || ciFailed) &&
     state.fixRound < config.limits.maxFixRounds;
+
+  // No CI gate matches this diff, so no `workflow_run` completion will ever
+  // arrive, and with no fix scheduled there is no push either. This cycle was
+  // the last event the PR would get on its own.
+  const wantsContinuation = !shouldHandoff && !shouldFix && ciChecks.length === 0;
+  const continuationBudgetSpent =
+    state.selfDispatches >= config.limits.maxSelfDispatches;
+
+  // Out of self-dispatches with nothing left to drive the loop: hand the PR to
+  // a human instead of leaving it silently in_progress forever, which is the
+  // stranding this whole mechanism exists to prevent (#3851).
+  if (wantsContinuation && continuationBudgetSpent && status === 'in_progress') {
+    status = 'budget_exhausted';
+    handoffReason = 'budget_exhausted';
+    shouldHandoff = true;
+  }
+
+  const needsContinuation = wantsContinuation && !continuationBudgetSpent;
 
   const nextState: PrAgentState = {
     ...state,
@@ -324,12 +342,6 @@ export function aggregateCycle(
   const newBlockingFindings = openFindings.filter(
     (f) => newFingerprintSet.has(f.fingerprint) && f.status === 'open',
   );
-
-  // No CI gate matches this diff, so no `workflow_run` completion will ever
-  // arrive, and with no fix scheduled there is no push either. This cycle was
-  // the last event the PR would get; ask the workflow to self-dispatch so the
-  // clean-cycle counter can still reach the handoff threshold.
-  const needsContinuation = !shouldHandoff && !shouldFix && ciChecks.length === 0;
 
   return {
     state: nextState,

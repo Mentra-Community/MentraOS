@@ -13,7 +13,7 @@ import type { PrAgentState } from './types.js';
 export type RecheckHandoffResult = {
   state: PrAgentState;
   shouldHandoff: boolean;
-  handoffReason?: 'human_handoff';
+  handoffReason?: 'human_handoff' | 'budget_exhausted';
   /**
    * Reviews are clean and CI is green, but the PR has not banked enough
    * consecutive clean cycles to hand off — and with no CI gate matching the
@@ -49,13 +49,23 @@ export async function recheckHandoff(
   if (!cleanHandoff) {
     // Short of the clean-cycle threshold with nothing red to fix and no CI
     // gate to report back: the loop needs a nudge or it dies here.
-    const needsContinuation =
+    const wantsContinuation =
       state.status === 'in_progress' &&
       ciGreen &&
       openCount === 0 &&
       required.length === 0 &&
       state.consecutiveNoNewReviews < config.limits.consecutiveNoNewReviewsForHandoff;
-    return { state, shouldHandoff: false, needsContinuation };
+
+    // Out of nudges: hand off rather than leaving the PR silently in_progress.
+    if (wantsContinuation && state.selfDispatches >= config.limits.maxSelfDispatches) {
+      return {
+        state: { ...state, status: 'budget_exhausted' },
+        shouldHandoff: true,
+        handoffReason: 'budget_exhausted',
+        needsContinuation: false,
+      };
+    }
+    return { state, shouldHandoff: false, needsContinuation: wantsContinuation };
   }
 
   const nextState: PrAgentState = {
