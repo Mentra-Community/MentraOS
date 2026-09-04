@@ -554,6 +554,17 @@ public final class PhotoSession {
         }
     }
 
+    /**
+     * Fired immediately before the still capture request is submitted to the HAL so listeners
+     * can produce capture-synchronized feedback (e.g. shutter sound at the true capture moment).
+     */
+    private void notifyPhotoCapturing() {
+        CameraNeoService.PhotoCaptureCallback callback = activeCapture != null ? activeCapture.callback : null;
+        if (callback != null) {
+            hooks.executor().execute(callback::onPhotoCapturing);
+        }
+    }
+
     // ----- Preview / AE -----
 
     public void startPreviewWithAeMonitoring() {
@@ -854,6 +865,7 @@ public final class PhotoSession {
                         reqFps);
             } catch (Throwable t) { /* never let logging crash capture */ }
 
+            notifyPhotoCapturing();
             activeSession.capture(captureRequest, new StillCaptureCallback(new StillCaptureCallback.Hooks() {
                 @Override
                 public void recordStillSensorTimestampNs(Long timestampNs) {
@@ -928,6 +940,7 @@ public final class PhotoSession {
                     displayOrientation, JpegOrientationResolver.DEFAULT_JPEG_ORIENTATION);
             int jpegQuality = getJpegQualityForSize();
 
+            notifyPhotoCapturing();
             hdrBurstCapture.start(hooks.coordinator().session(), hooks.coordinator().device(), imageReaders.getStillSurface(),
                     hooks.backgroundHandler(), hooks.selectedFpsRange(), hooks.hasAutoFocus(), jpegQuality, jpegOrientation,
                     hooks.cameraSettings(), new HdrBurstCapture.Callback() {

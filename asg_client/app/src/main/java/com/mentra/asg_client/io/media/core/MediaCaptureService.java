@@ -448,17 +448,60 @@ public class MediaCaptureService {
         return CameraRestartCooldown.isActive();
     }
 
-    private void playShutterSound() {
+    /** Shared guard for all photo feedback sounds. */
+    private boolean canPlayPhotoSound() {
         if (hardwareManager == null) {
-            Log.w(TAG, "⚠️ hardwareManager is null, cannot play shutter sound");
-            return;
+            Log.w(TAG, "⚠️ hardwareManager is null, cannot play photo sound");
+            return false;
         }
 
         if (!hardwareManager.supportsAudioPlayback()) {
             Log.w(TAG, "⚠️ hardwareManager does not support audio playback");
-            return;
+            return false;
         }
 
+        return true;
+    }
+
+    /**
+     * Stage 1 of photo audio feedback: immediate click at button press / request accept so the
+     * user knows the photo was registered. Also opens the MCU I2S path early so the later
+     * capture-synchronized shutter sound plays without I2S startup latency in front of it.
+     */
+    private void playButtonPressSound() {
+        if (!canPlayPhotoSound()) {
+            return;
+        }
+        hardwareManager.playAudioAsset(AudioAssets.CLICK_SOUND);
+    }
+
+    /**
+     * Stage 2 of photo audio feedback: warm-up tone played only when the upcoming capture must
+     * pay the 1-2s cold camera/ISP startup, cueing the user to hold still until the shutter
+     * sound confirms the photo was actually taken. Skipped when the camera is already warm and
+     * the shutter sound will follow the click almost immediately.
+     */
+    private void playWarmUpSoundIfCold() {
+        if (!canPlayPhotoSound()) {
+            return;
+        }
+        if (CameraNeoService.isCameraWarm()) {
+            Log.d(TAG, "📸 Camera warm - skipping warm-up sound");
+            return;
+        }
+        Log.d(TAG, "📸 Camera cold - playing warm-up sound");
+        hardwareManager.playAudioAsset(AudioAssets.CAMERA_WARM_UP);
+    }
+
+    /**
+     * Stage 3 of photo audio feedback: the shutter sound, fired from
+     * {@link CameraNeoService.PhotoCaptureCallback#onPhotoCapturing()} at the moment the still
+     * capture request is submitted to the camera HAL — i.e. when the photo is actually taken.
+     */
+    private void playShutterSound() {
+        if (!canPlayPhotoSound()) {
+            return;
+        }
         hardwareManager.playAudioAsset(AudioAssets.CAMERA_SOUND);
     }
     
@@ -1243,11 +1286,13 @@ public class MediaCaptureService {
         PhotoCaptureTestFramework.addFakeDelay("CAMERA_INIT");
 
         // Skip sound and flash during camera HAL restart cooldown (e.g. after FOV change)
+        final boolean playSounds = enableSound && !shouldSuppressPhotoFeedback();
         if (!shouldSuppressPhotoFeedback()) {
             // RGB LED always flashes for photos (user visibility indicator)
             triggerPhotoFlashLed();
-            if (enableSound) {
-                playShutterSound();
+            if (playSounds) {
+                playButtonPressSound();
+                playWarmUpSoundIfCold();
             }
             if (enableFlash) {
                 flashPrivacyLedForPhoto(); // Flash privacy LED
@@ -1275,6 +1320,14 @@ public class MediaCaptureService {
                 false,  // isFromSdk - button photo, use high quality resolution
                 null,  // exposureTimeNs — auto exposure for button photos
                 new CameraNeoService.PhotoCaptureCallback() {
+                    @Override
+                    public void onPhotoCapturing() {
+                        // Shutter sound synchronized with the actual capture moment
+                        if (playSounds) {
+                            playShutterSound();
+                        }
+                    }
+
                     @Override
                     public void onPhotoCaptured(String filePath) {
                         // Calculate end-to-end timing from request to capture
@@ -1412,10 +1465,12 @@ public class MediaCaptureService {
 
         try {
             // Skip sound and flash during camera HAL restart cooldown (e.g. after FOV change)
+            final boolean playSounds = enableSound && !shouldSuppressPhotoFeedback();
             if (!shouldSuppressPhotoFeedback()) {
                 triggerPhotoFlashLed();
-                if (enableSound) {
-                    playShutterSound();
+                if (playSounds) {
+                    playButtonPressSound();
+                    playWarmUpSoundIfCold();
                 }
                 if (enableFlash) {
                     flashPrivacyLedForPhoto();
@@ -1437,6 +1492,14 @@ public class MediaCaptureService {
                     true,  // isFromSdk - use optimized resolution for fast transfer
                     exposureTimeNs,
                     new CameraNeoService.PhotoCaptureCallback() {
+                        @Override
+                        public void onPhotoCapturing() {
+                            // Shutter sound synchronized with the actual capture moment
+                            if (playSounds) {
+                                playShutterSound();
+                            }
+                        }
+
                         @Override
                         public void onPhotoCaptured(String filePath) {
                             // NOTE: do NOT clear isPhotoJobInFlight here — the job continues
@@ -2393,10 +2456,12 @@ public class MediaCaptureService {
         PhotoCaptureTestFramework.addFakeDelay("CAMERA_CAPTURE");
 
         // Skip sound and flash during camera HAL restart cooldown (e.g. after FOV change)
+        final boolean playSounds = enableSound && !shouldSuppressPhotoFeedback();
         if (!shouldSuppressPhotoFeedback()) {
             triggerPhotoFlashLed();
-            if (enableSound) {
-                playShutterSound();
+            if (playSounds) {
+                playButtonPressSound();
+                playWarmUpSoundIfCold();
             }
             if (enableFlash) {
                 flashPrivacyLedForPhoto();
@@ -2414,6 +2479,14 @@ public class MediaCaptureService {
                     true,  // isFromSdk — same sizing as webhook SDK path
                     exposureTimeNs,
                     new CameraNeoService.PhotoCaptureCallback() {
+                        @Override
+                        public void onPhotoCapturing() {
+                            // Shutter sound synchronized with the actual capture moment
+                            if (playSounds) {
+                                playShutterSound();
+                            }
+                        }
+
                         @Override
                         public void onPhotoCaptured(String filePath) {
                             // NOTE: do NOT clear isPhotoJobInFlight here — the job continues

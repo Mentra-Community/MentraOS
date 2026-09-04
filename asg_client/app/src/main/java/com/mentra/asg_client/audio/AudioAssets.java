@@ -30,9 +30,17 @@ public final class AudioAssets {
     public static final String STORAGE_FULL = "storage_full.mp3";
 
     /**
-     * Camera shutter sound for photo capture
+     * Camera shutter sound for photo capture. Played at the moment the still capture request is
+     * submitted to the camera HAL (i.e. when the photo is actually taken), not at button press.
      */
     public static final String CAMERA_SOUND = "camera_sound.wav";
+
+    /**
+     * Soft rising tone played after the button-press click when the camera is cold and must pay
+     * the 1-2s camera/ISP startup before capturing. Cues the user to hold still until the
+     * shutter sound confirms the photo landed. Skipped when the camera is already warm.
+     */
+    public static final String CAMERA_WARM_UP = "camera_warmup.wav";
 
     /**
      * UI click or button press sound
