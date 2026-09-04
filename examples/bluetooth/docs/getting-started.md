@@ -1,5 +1,11 @@
 # Getting Started
 
+For a native Mac app, use the [AppKit/SwiftPM example](../examples/macos/README.md)
+or [react-native-macos example](../examples/react-native-macos/README.md). Their
+macOS setup, sandbox permissions, and compatible native host versions are
+separate from the phone instructions below. An iOS app installed on an Apple
+silicon Mac through TestFlight still follows the iOS path.
+
 This guide shows how to add the Mentra Bluetooth SDK to Android, iOS, and React Native apps, then connect to Mentra Live and read glasses status.
 
 Use the latest SDK version published by Mentra. The example apps in this repo are designed to work from a fresh clone with the Maven, SwiftPM, and JavaScript packages, without any local MentraOS checkout.

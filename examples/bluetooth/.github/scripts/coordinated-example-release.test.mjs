@@ -65,6 +65,11 @@ test("synchronizes all maintained example manifests", () => {
   mkdirSync(path.join(root, "examples/ios/MentraExample.xcodeproj"), {recursive: true})
   mkdirSync(path.join(root, "examples/react-native"), {recursive: true})
   mkdirSync(path.join(root, "examples/react-native-elevenlabs-audio"), {recursive: true})
+  mkdirSync(path.join(root, "examples/react-native-macos"), {recursive: true})
+  mkdirSync(path.join(root, "examples/macos"), {recursive: true})
+  writeFileSync(path.join(root, "examples/macos/Package.swift"), 'let sdkVersion = "1.0.0"\n')
+  writeFileSync(path.join(root, "examples/react-native-macos/package.json"),
+    JSON.stringify({dependencies: {"@mentra/bluetooth-sdk": "1.0.0"}}))
   writeFileSync(path.join(root, "examples/android/gradle.properties"), "mentraSdkVersion=1.0.0\n")
   writeFileSync(
     path.join(root, "examples/ios/MentraExample.xcodeproj/project.pbxproj"),
@@ -88,6 +93,9 @@ test("synchronizes all maintained example manifests", () => {
     /version = 3\.1\.0-dev\.42/,
   )
   assert.match(readFileSync(path.join(root, "examples/ios/project.yml"), "utf8"), /exactVersion: 3\.1\.0-dev\.42/)
+  assert.match(readFileSync(path.join(root, "examples/macos/Package.swift"), "utf8"), /sdkVersion = "3\.1\.0-dev\.42"/)
+  assert.equal(JSON.parse(readFileSync(path.join(root, "examples/react-native-macos/package.json")))
+    .dependencies["@mentra/bluetooth-sdk"], "3.1.0-dev.42")
   assert.equal(
     JSON.parse(readFileSync(path.join(root, "examples/react-native/package.json"))).dependencies["@mentra/engine"],
     "3.1.0-dev.42",

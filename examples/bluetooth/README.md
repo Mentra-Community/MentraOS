@@ -8,9 +8,16 @@ The SDK is available in three first-class forms:
 | --- | --- | --- |
 | Android | `com.mentraglass:bluetooth-sdk` | [`examples/android`](examples/android/README.md) |
 | iOS | `MentraBluetoothSDK` Swift package | [`examples/ios`](examples/ios/README.md) |
+| Native macOS (AppKit / SwiftUI) | `MentraBluetoothSDK` Swift package | [`examples/macos`](examples/macos/README.md) |
 | React Native / Expo | `@mentra/bluetooth-sdk` | [`examples/react-native`](examples/react-native/README.md) |
+| React Native macOS | `@mentra/bluetooth-sdk` | [`examples/react-native-macos`](examples/react-native-macos/README.md) |
 
 Use the latest SDK version published by Mentra for your app. This repo can be cloned and used without any local path to the MentraOS source tree.
+
+Native macOS support is new on `dev`: the two Mac source examples require the
+matching unreleased SDK until its first coordinated publication. Their READMEs
+document the source override. This is separate from running the iOS TestFlight
+app on an Apple silicon Mac.
 
 ## Documentation
 
@@ -22,7 +29,9 @@ Read the first-party [Mentra Live Bluetooth SDK docs](https://docs.mentraglass.c
 2. Run the example that matches your app stack:
    - [Android Kotlin / Jetpack Compose](examples/android/README.md)
    - [iOS SwiftUI](examples/ios/README.md)
+   - [Native macOS AppKit](examples/macos/README.md)
    - [React Native / Expo](examples/react-native/README.md)
+   - [React Native macOS](examples/react-native-macos/README.md)
    - [React Native ElevenLabs audio repro](examples/react-native-elevenlabs-audio/README.md)
 3. Keep [API Reference](docs/api-reference.md), [Display Guide](docs/display-guide.md), [Audio Guide](docs/audio-guide.md), and [Hardware Integration Notes](docs/hardware-integration.md) nearby while building.
 4. Use [Troubleshooting](docs/troubleshooting.md) and the [Production Checklist](docs/production-checklist.md) before shipping.

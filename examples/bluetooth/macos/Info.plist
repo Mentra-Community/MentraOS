@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>CFBundleExecutable</key><string>MentraMacExample</string>
+  <key>CFBundleIdentifier</key><string>com.mentra.bluetoothsdk.example.macos</string>
+  <key>CFBundleName</key><string>Mentra SDK Mac</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleVersion</key><string>1</string>
+  <key>CFBundleShortVersionString</key><string>1.0.0</string>
+  <key>LSMinimumSystemVersion</key><string>13.0</string>
+  <key>NSBluetoothAlwaysUsageDescription</key><string>Connect to your Mentra glasses.</string>
+  <key>NSMicrophoneUsageDescription</key><string>Capture audio when microphone recording is enabled.</string>
+  <key>NSLocalNetworkUsageDescription</key><string>Access photo and OTA servers on your local network.</string>
+  <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
+  <key>NSPrincipalClass</key><string>NSApplication</string>
+</dict></plist>

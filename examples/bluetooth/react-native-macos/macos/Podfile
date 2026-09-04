@@ -1,0 +1,27 @@
+require_relative '../node_modules/react-native-macos/scripts/react_native_pods'
+require File.join(File.dirname(`node --print "require.resolve('expo/package.json')"`), 'scripts/autolinking')
+
+ENV['MENTRA_BLUETOOTH_SDK_INCLUDE_EXPO_ADAPTER'] = '1'
+ENV['REACT_NATIVE_PATH'] = File.expand_path('../node_modules/react-native-macos', __dir__)
+
+prepare_react_native_project!
+
+target 'mentra-bluetooth-sdk-macos-example-macOS' do
+  platform :macos, '14.0'
+  sdk_path = ENV['MENTRA_BLUETOOTH_SDK_PACKAGE_PATH']
+  search_paths = [sdk_path, '../node_modules'].compact
+  use_expo_modules!({:searchPaths => search_paths})
+  config_command = ['node', '../node_modules/expo-modules-autolinking/bin/expo-modules-autolinking', 'react-native-config', '--json', '--platform', 'ios']
+  use_native_modules!(config_command)
+
+  use_react_native!(
+    :path => '../node_modules/react-native-macos',
+    :fabric_enabled => ENV['RCT_NEW_ARCH_ENABLED'] == '1',
+    # An absolute path to your application root.
+    :app_path => "#{Pod::Config.instance.installation_root}/.."
+  )
+
+  post_install do |installer|
+    react_native_post_install(installer)
+  end
+end
