@@ -113,18 +113,18 @@ describe("MeetingModule", () => {
     const {session} = mockSession(async () => ({state: "connecting", muted: false}))
     const meeting = new MeetingModule(session)
 
-    await expect(
-      meeting.join({...joinArgs, videoSource: {type: "quic"} as never}),
-    ).rejects.toMatchObject({code: MiniappErrorCode.INVALID_ARGUMENT})
+    await expect(meeting.join({...joinArgs, videoSource: {type: "quic"} as never})).rejects.toMatchObject({
+      code: MiniappErrorCode.INVALID_ARGUMENT,
+    })
   })
 
   test("join rejects a WHEP source with no URL", async () => {
     const {session} = mockSession(async () => ({state: "connecting", muted: false}))
     const meeting = new MeetingModule(session)
 
-    await expect(
-      meeting.join({...joinArgs, videoSource: {type: "whep", url: "  "}}),
-    ).rejects.toMatchObject({code: MiniappErrorCode.INVALID_ARGUMENT})
+    await expect(meeting.join({...joinArgs, videoSource: {type: "whep", url: "  "}})).rejects.toMatchObject({
+      code: MiniappErrorCode.INVALID_ARGUMENT,
+    })
   })
 
   test("updateVideoSource refuses a SoftAP source rather than doing nothing", async () => {
@@ -137,9 +137,9 @@ describe("MeetingModule", () => {
     })
     const meeting = new MeetingModule(session)
 
-    await expect(
-      meeting.updateVideoSource({type: "softap"} as never),
-    ).rejects.toMatchObject({code: MiniappErrorCode.INVALID_ARGUMENT})
+    await expect(meeting.updateVideoSource({type: "softap"} as never)).rejects.toMatchObject({
+      code: MiniappErrorCode.INVALID_ARGUMENT,
+    })
     expect(calls).toEqual([])
   })
 

@@ -132,6 +132,14 @@ export interface StartUnmanagedOptions {
   /** Optional Bearer token for WHIP Authorization (custom authenticated endpoints). */
   authToken?: string
   captureAudio?: boolean
+  /**
+   * ICE configuration for the glasses' publisher. SoftAP passes `{stun: ""}`, which puts the
+   * glasses in host-only mode: there is no route from the hotspot to a STUN server, so a
+   * configured one would only add doomed gathering to every call.
+   */
+  ice?: StreamStartRequest["ice"]
+  /** Correlation id echoed by the glasses into their own logs. See softapTrace. */
+  traceId?: string
 }
 
 export interface StartManagedOptions {
@@ -393,6 +401,8 @@ export class PhoneStreamCoordinator {
           ...(opts.audio !== undefined ? {audio: opts.audio} : {}),
           ...(opts.authToken ? {authToken: opts.authToken} : {}),
           ...(typeof opts.captureAudio === "boolean" ? {captureAudio: opts.captureAudio} : {}),
+          ...(opts.ice !== undefined ? {ice: opts.ice} : {}),
+          ...(opts.traceId ? {traceId: opts.traceId} : {}),
         })
         const result = publisherStartResult(streamId, event)
         this.startLifecycle(streamId)

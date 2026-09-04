@@ -169,7 +169,7 @@ type NativeModule = {
     dumpPcmWav?: boolean
     audioSource?: "glasses" | "phone"
     video?: AcsOutgoingVideo
-  }): Promise<MeetingState>
+  }): Promise<MeetingState & {ingestUrl?: string}>
   leave(): Promise<void>
   setMuted(muted: boolean): Promise<MeetingState>
   setAudioSource(source: "glasses" | "phone"): Promise<MeetingState>
@@ -266,6 +266,11 @@ class AcsMeetingService {
   private whepUrl: string | null = null
   /** Transport for the active call, so recovery picks the right repair. */
   private videoSource: AcsVideoSource | null = null
+  /**
+   * SoftAP only: the URL the glasses must publish to. An output of the join rather than an input,
+   * because it is not known until native has bound a listener and been given a port.
+   */
+  private ingestUrl: string | null = null
   private phoneNetworkUnsub: (() => void) | null = null
   private lastPhoneNetworkKey: string | null = null
   private lastMediaRestartAt = 0
@@ -280,6 +285,15 @@ class AcsMeetingService {
 
   ownerPackage(): string | null {
     return this.owner
+  }
+
+  /**
+   * The WHIP URL the glasses must POST their offer to, for a SoftAP call. Null for every other
+   * transport and until the join has bound a listener; the orchestrator reads it between the ACS
+   * join and telling the glasses to publish.
+   */
+  softApIngestUrl(): string | null {
+    return this.ingestUrl
   }
 
   async join(
@@ -327,8 +341,10 @@ class AcsMeetingService {
         audioSource: resolved.source,
         ...(video ? {video} : {}),
       })
+      this.ingestUrl = typeof state.ingestUrl === "string" ? state.ingestUrl : null
+      const {ingestUrl: _ingestUrl, ...meetingState} = state
       this.lastState = {
-        ...state,
+        ...meetingState,
         audioSource: resolved.source,
         audioSourceReason: resolved.reason,
       }
@@ -383,6 +399,7 @@ class AcsMeetingService {
     this.owner = null
     this.whepUrl = null
     this.videoSource = null
+    this.ingestUrl = null
     this.lastMediaRestartAt = 0
     this.lastState = {state: "idle", muted: false}
   }
