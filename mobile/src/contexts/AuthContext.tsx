@@ -23,6 +23,21 @@ interface AuthContextProps {
   leaveWorkspace: (destination: "consumer" | "selector") => Promise<void>
 }
 
+// Native provider sign-out (MSAL) removes every cached account for the client
+// id, so a sign-out still running from a previous workspace visit must finish
+// before a new interactive sign-in stores its account.
+let pendingProviderCleanup: Promise<void> = Promise.resolve()
+
+function queueProviderCleanup(provider: DeploymentAuthProvider): Promise<void> {
+  const cleanup = pendingProviderCleanup.then(() =>
+    provider.signOut().catch((error) => {
+      console.warn("AuthContext: failed to clear workspace provider account", error)
+    }),
+  )
+  pendingProviderCleanup = cleanup
+  return cleanup
+}
+
 const AuthContext = createContext<AuthContextProps>({
   user: null,
   session: null,
@@ -68,7 +83,7 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
       setSession(next)
       setUser(next?.user ?? null)
       Sentry.setUser(allowTelemetry && next?.user ? {id: next.user.id, email: next.user.email} : null)
-      if (next?.user?.email) {
+      if (allowTelemetry && next?.user?.email) {
         setAuthEmail(next.user.email)
         if (activeDeployment.kind === "consumer") {
           void ensureDevModeForUser(next.user.email)
@@ -85,7 +100,7 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
       const refresh = storage.load<string>("mentra.account.refreshToken")
       const hasExistingConsumerSession =
         (access.is_ok() && Boolean(access.value)) || (refresh.is_ok() && Boolean(refresh.value))
-      if (hasExistingConsumerSession) {
+      if (hasExistingConsumerSession && !store.isSelectingWorkspace()) {
         store.returnToMentra()
       } else {
         applySession(null, false)
@@ -141,10 +156,11 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
     if (!workspaceAuth) throw new Error("No organization workspace is active")
     setLoading(true)
     try {
+      await pendingProviderCleanup
       const next = toMentraSession(await workspaceAuth.signIn())
       setSession(next)
       setUser(next?.user ?? null)
-      if (next?.user?.email) setAuthEmail(next.user.email)
+      if (activeDeployment.kind === "consumer" && next?.user?.email) setAuthEmail(next.user.email)
     } finally {
       setLoading(false)
     }
@@ -155,12 +171,8 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
     try {
       if (workspaceAuth && activeDeployment.kind === "workspace") {
         try {
-          await workspaceAuth.signOut()
-        } catch (error) {
-          console.warn("AuthContext: failed to clear workspace provider account", error)
-        }
-        try {
           await LogoutUtils.performCompleteLogout({skipAuthSignOut: true})
+          await queueProviderCleanup(workspaceAuth)
         } finally {
           // Log out means leaving the workspace, including its cached manifest.
           // A future same-workspace account switch must be a separate action.
@@ -194,13 +206,7 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
     setUser(null)
     Sentry.setUser(null)
 
-    if (workspaceAuthToClear) {
-      try {
-        await workspaceAuthToClear.signOut()
-      } catch (error) {
-        console.warn("AuthContext: failed to clear workspace provider account", error)
-      }
-    }
+    if (workspaceAuthToClear) await queueProviderCleanup(workspaceAuthToClear)
   }
 
   return (

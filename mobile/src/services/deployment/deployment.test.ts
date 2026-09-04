@@ -64,12 +64,23 @@ function response(body: string, options: {status?: number; url?: string; content
   const status = options.status ?? 200
   const headers = new Headers({"content-type": "application/json"})
   if (options.contentLength !== undefined) headers.set("content-length", String(options.contentLength))
+  const encoded = new TextEncoder().encode(body)
+  let consumed = false
   return {
     ok: status >= 200 && status < 300,
     status,
     url: options.url ?? `${WORKSPACE}/.well-known/mentra-deployment.json`,
     headers,
-    text: async () => body,
+    body: {
+      getReader: () => ({
+        read: async () => {
+          if (consumed) return {done: true, value: undefined}
+          consumed = true
+          return {done: false, value: encoded}
+        },
+        cancel: async () => undefined,
+      }),
+    },
   } as Response
 }
 
@@ -265,6 +276,60 @@ describe("resolveDeploymentCandidate", () => {
     })
   })
 
+  it("rejects managed replacement of a built-in SYSTEM package even with a null system allowlist", async () => {
+    const fetch = jest.fn(async () =>
+      response(
+        JSON.stringify(
+          manifest({
+            systemMiniapps: {approvedPackageNamesOverride: null},
+            miniapps: {
+              managed: [
+                {
+                  packageName: "com.mentra.settings",
+                  version: "1.2.0",
+                  bundleUrl: `${WORKSPACE}/miniapps/settings-1.2.0.zip`,
+                  sha256: "a".repeat(64),
+                },
+              ],
+              configuration: {},
+            },
+          }),
+        ),
+      ),
+    )
+    await expect(resolveDeploymentCandidate(WORKSPACE, {fetch})).rejects.toMatchObject({code: "invalid-manifest"})
+  })
+
+  it.each(["v1.2.3", "1.2", "1.2.3-01"])("rejects non-canonical managed version %s", async (version) => {
+    const value = manifest({
+      miniapps: {
+        managed: [
+          {
+            packageName: "com.example.remoteassist",
+            version,
+            bundleUrl: `${WORKSPACE}/miniapps/remote-assist.zip`,
+            sha256: "a".repeat(64),
+          },
+        ],
+        configuration: {},
+      },
+    })
+    await expect(
+      resolveDeploymentCandidate(WORKSPACE, {fetch: async () => response(JSON.stringify(value))}),
+    ).rejects.toMatchObject({
+      code: "invalid-manifest",
+    })
+  })
+
+  it("rejects query-bearing Core and Runtime base URLs", async () => {
+    const value = manifest({services: {coreUrl: `${WORKSPACE}?core=1`, runtimeUrl: WORKSPACE}})
+    await expect(
+      resolveDeploymentCandidate(WORKSPACE, {fetch: async () => response(JSON.stringify(value))}),
+    ).rejects.toMatchObject({
+      code: "invalid-manifest",
+    })
+  })
+
   it("rejects redirects and oversized responses", async () => {
     const redirectFetch = jest.fn(async () => response("", {status: 302}))
     await expect(resolveDeploymentCandidate(WORKSPACE, {fetch: redirectFetch})).rejects.toMatchObject({
@@ -273,6 +338,11 @@ describe("resolveDeploymentCandidate", () => {
 
     const largeFetch = jest.fn(async () => response("{}", {contentLength: 500_000}))
     await expect(resolveDeploymentCandidate(WORKSPACE, {fetch: largeFetch})).rejects.toMatchObject({
+      code: "response-too-large",
+    })
+
+    const streamedLargeFetch = jest.fn(async () => response("x".repeat(300_000)))
+    await expect(resolveDeploymentCandidate(WORKSPACE, {fetch: streamedLargeFetch})).rejects.toMatchObject({
       code: "response-too-large",
     })
   })
@@ -363,6 +433,21 @@ describe("DeploymentStore", () => {
     expect(new DeploymentStore(persistence).getActive()).toEqual({kind: "consumer", source: "embedded"})
     expect(new DeploymentStore(persistence).isResolved()).toBe(false)
   })
+
+  it("fails closed when a persisted manifest violates cross-field validation", () => {
+    const persistence = new MemoryDeploymentStorage()
+    persistence.value = {
+      kind: "workspace",
+      source: "manual",
+      workspaceOrigin: WORKSPACE,
+      manifestUrl: `${WORKSPACE}/.well-known/mentra-deployment.json`,
+      manifest: manifest({services: {coreUrl: WORKSPACE, runtimeUrl: "https://attacker.example"}}),
+      activatedAt: new Date().toISOString(),
+    }
+    const store = new DeploymentStore(persistence)
+    expect(store.getActive()).toEqual({kind: "consumer", source: "embedded"})
+    expect(store.isResolved()).toBe(false)
+  })
 })
 
 describe("MicrosoftEntraDeploymentAuthProvider", () => {
@@ -415,5 +500,36 @@ describe("MicrosoftEntraDeploymentAuthProvider", () => {
       deployment.manifest.auth.teamsScopes,
       undefined,
     )
+
+    await expect(provider.getAccessToken({scopes: ["api://attacker.example/admin"]})).rejects.toThrow("not declared")
+  })
+
+  it("refuses Teams tokens when the workspace disables native meetings", async () => {
+    const acquireToken = jest.fn(async () => {
+      throw new Error("must not reach MSAL")
+    })
+    const native = {
+      getAccount: jest.fn(async () => null),
+      signIn: jest.fn(),
+      acquireToken,
+      signOut: jest.fn(async () => {}),
+    } as unknown as ConstructorParameters<typeof MicrosoftEntraDeploymentAuthProvider>[1]
+    const value = manifest()
+    value.features = {...value.features, nativeMeetings: false}
+    const deployment: WorkspaceDeployment = {
+      kind: "workspace",
+      source: "manual",
+      workspaceOrigin: WORKSPACE,
+      manifestUrl: `${WORKSPACE}/.well-known/mentra-deployment.json`,
+      manifest: value,
+      activatedAt: new Date().toISOString(),
+    }
+    if (value.auth.mode !== "microsoft-entra") throw new Error("test requires Entra auth")
+
+    const provider = new MicrosoftEntraDeploymentAuthProvider(deployment, native)
+    await expect(provider.getAccessToken({scopes: value.auth.teamsScopes})).rejects.toThrow(
+      "Native meetings are disabled by this deployment",
+    )
+    expect(acquireToken).not.toHaveBeenCalled()
   })
 })

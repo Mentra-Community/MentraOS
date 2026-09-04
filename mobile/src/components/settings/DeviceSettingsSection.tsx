@@ -11,11 +11,9 @@ import {showAlert} from "@/contexts/ModalContext"
 import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {translate} from "@/i18n/translate"
 import {useNavigationStore} from "@/stores/navigation"
-import {SETTINGS, useSetting} from "@mentra/engine"
+import {deploymentStore} from "@/services/deployment"
+import {SETTINGS, useSetting, Capabilities, DeviceTypes, getModelCapabilities, engine} from "@mentra/engine"
 import {getGlassesImage} from "@/utils/getGlassesImage"
-
-import {Capabilities, DeviceTypes, getModelCapabilities} from "@mentra/engine"
-import {engine} from "@mentra/engine"
 
 import OtaProgressSection from "@/components/glasses/OtaProgressSection"
 import {Ar99OtaModal} from "@/components/settings/Ar99OtaModal"
@@ -85,6 +83,7 @@ export function DeviceSettingsSection() {
     isAr99Identifier(glassesInfo.model) ||
     isAr99Identifier(glassesInfo.bluetoothName)
   const showAr99OtaEntry =
+    deploymentStore.getActive().kind === "consumer" &&
     glassesConnected &&
     (isAr99Identifier(defaultWearable) ||
       isAr99Identifier(glassesInfo.model) ||
@@ -114,8 +113,7 @@ export function DeviceSettingsSection() {
       await engine.settings.set(SETTINGS.pending_wearable.key, "", false)
       useNavigationStore.getState().clearHistoryAndGoHome()
     } catch (error) {
-      const code =
-        error && typeof error === "object" && "code" in error ? String((error as {code?: unknown}).code) : ""
+      const code = error && typeof error === "object" && "code" in error ? String((error as {code?: unknown}).code) : ""
       // Native used to refuse forget() during CTKD bonding; Unpair now proceeds anyway.
       if (code === "ctkd_bonding_in_progress") {
         await showAlert({
@@ -251,7 +249,9 @@ export function DeviceSettingsSection() {
       )}
 
       {/* OTA Progress — OTA-capable glasses in super mode */}
-      {superMode && glassesConnected && features?.hasOta && otaProgress?.progress && otaProgress?.progress < 100 && <OtaProgressSection otaProgress={otaProgress} />}
+      {superMode && glassesConnected && features?.hasOta && otaProgress?.progress && otaProgress?.progress < 100 && (
+        <OtaProgressSection otaProgress={otaProgress} />
+      )}
 
       {/* Nex Developer Settings — Mentra Display only */}
       {defaultWearable && defaultWearable.includes(DeviceTypes.NEX) && (
@@ -303,4 +303,3 @@ export function DeviceSettingsSection() {
     </View>
   )
 }
-

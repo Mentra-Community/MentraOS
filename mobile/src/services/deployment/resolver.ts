@@ -1,5 +1,6 @@
 import {deploymentManifestSchema} from "./schema"
 import type {DeploymentCandidate, DeploymentManifest} from "./types"
+import {SYSTEM_APPS} from "@/constants/miniapps"
 
 const MANIFEST_PATH = "/.well-known/mentra-deployment.json"
 const DEFAULT_MAX_BYTES = 256 * 1024
@@ -15,6 +16,7 @@ export class DeploymentResolutionError extends Error {
     readonly code:
       | "invalid-workspace"
       | "network"
+      | "not-found"
       | "redirect"
       | "response-too-large"
       | "invalid-manifest"
@@ -45,7 +47,7 @@ export function normalizeWorkspaceOrigin(input: string, allowInsecureLocalhost =
     throw new DeploymentResolutionError("Enter a valid organization address.", "invalid-workspace")
   }
 
-  const isLocalhost = url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "::1"
+  const isLocalhost = isLoopbackHostname(url.hostname)
   if (url.protocol !== "https:" && !(allowInsecureLocalhost && isLocalhost && url.protocol === "http:")) {
     throw new DeploymentResolutionError("The organization address must use HTTPS.", "invalid-workspace")
   }
@@ -71,38 +73,33 @@ export async function resolveDeploymentCandidate(
   const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? DEFAULT_TIMEOUT_MS)
 
   let response: Response
+  let body: string
   try {
     response = await (options.fetch ?? globalThis.fetch)(manifestUrl, {
       headers: {Accept: "application/json"},
       redirect: "manual",
       signal: controller.signal,
     })
+    if (response.status >= 300 && response.status < 400) {
+      throw new DeploymentResolutionError("Workspace manifest redirects are not allowed.", "redirect")
+    }
+    if (response.status === 404 || response.status === 410) {
+      throw new DeploymentResolutionError("No workspace manifest exists at this address.", "not-found")
+    }
+    if (!response.ok) {
+      throw new DeploymentResolutionError(`Workspace manifest returned HTTP ${response.status}.`, "network")
+    }
+    if (new URL(response.url || manifestUrl).origin !== workspaceOrigin) {
+      throw new DeploymentResolutionError("Workspace manifest changed origin.", "redirect")
+    }
+
+    body = await readResponseBody(response, options.maxBytes ?? DEFAULT_MAX_BYTES)
   } catch (error) {
+    if (error instanceof DeploymentResolutionError) throw error
     const reason = error instanceof Error && error.name === "AbortError" ? "timed out" : "failed"
     throw new DeploymentResolutionError(`Workspace manifest request ${reason}.`, "network")
   } finally {
     clearTimeout(timeout)
-  }
-
-  if (response.status >= 300 && response.status < 400) {
-    throw new DeploymentResolutionError("Workspace manifest redirects are not allowed.", "redirect")
-  }
-  if (!response.ok) {
-    throw new DeploymentResolutionError(`Workspace manifest returned HTTP ${response.status}.`, "network")
-  }
-  if (new URL(response.url || manifestUrl).origin !== workspaceOrigin) {
-    throw new DeploymentResolutionError("Workspace manifest changed origin.", "redirect")
-  }
-
-  const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES
-  const contentLength = Number(response.headers.get("content-length"))
-  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
-    throw new DeploymentResolutionError("Workspace manifest is too large.", "response-too-large")
-  }
-
-  const body = await response.text()
-  if (new TextEncoder().encode(body).byteLength > maxBytes) {
-    throw new DeploymentResolutionError("Workspace manifest is too large.", "response-too-large")
   }
 
   let raw: unknown
@@ -121,7 +118,7 @@ export async function resolveDeploymentCandidate(
   return {workspaceOrigin, manifestUrl, manifest: parsed.data}
 }
 
-function validateDeploymentManifest(
+export function validateDeploymentManifest(
   manifest: DeploymentManifest,
   workspaceOrigin: string,
   allowInsecureLocalhost = false,
@@ -132,7 +129,8 @@ function validateDeploymentManifest(
   if (!manifest.services.runtimeUrl) {
     throw new DeploymentResolutionError("This workspace does not configure Runtime.", "invalid-manifest")
   }
-  const runtimeOrigin = secureUrlOrigin(manifest.services.runtimeUrl, allowInsecureLocalhost)
+  secureServiceBaseUrl(manifest.services.coreUrl, allowInsecureLocalhost)
+  const runtimeOrigin = secureServiceBaseUrl(manifest.services.runtimeUrl, allowInsecureLocalhost)
   if (runtimeOrigin !== workspaceOrigin) {
     throw new DeploymentResolutionError(
       "Runtime must use the workspace origin in deployment schema v1.",
@@ -182,9 +180,13 @@ function validateDeploymentManifest(
     managedBundlePaths.add(bundleUrl.pathname)
   }
   const approvedSystemMiniapps = manifest.systemMiniapps.approvedPackageNamesOverride
-  if (approvedSystemMiniapps?.some((packageName) => managedPackageNames.has(packageName))) {
+  const systemPackageNames = new Set<string>(SYSTEM_APPS)
+  if (
+    [...managedPackageNames].some((packageName) => systemPackageNames.has(packageName)) ||
+    approvedSystemMiniapps?.some((packageName) => managedPackageNames.has(packageName))
+  ) {
     throw new DeploymentResolutionError(
-      "A package cannot be both a system miniapp and a manifest-managed userland miniapp.",
+      "A built-in system miniapp cannot be replaced by a manifest-managed userland miniapp.",
       "invalid-manifest",
     )
   }
@@ -247,7 +249,7 @@ function validateDeploymentManifest(
 
 function secureUrlOrigin(value: string, allowInsecureLocalhost = false): string {
   const url = new URL(value)
-  const isLocalhost = url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "::1"
+  const isLocalhost = isLoopbackHostname(url.hostname)
   if (url.username || url.password || url.hash) {
     throw new DeploymentResolutionError("Configured URLs cannot contain credentials or fragments.", "invalid-manifest")
   }
@@ -255,6 +257,59 @@ function secureUrlOrigin(value: string, allowInsecureLocalhost = false): string 
     throw new DeploymentResolutionError("Configured URLs must use HTTPS.", "invalid-manifest")
   }
   return url.origin
+}
+
+function secureServiceBaseUrl(value: string, allowInsecureLocalhost = false): string {
+  const url = new URL(value)
+  secureUrlOrigin(value, allowInsecureLocalhost)
+  if ((url.pathname !== "" && url.pathname !== "/") || url.search || url.hash) {
+    throw new DeploymentResolutionError(
+      "Core and Runtime URLs must be origins without a path, query, or fragment.",
+      "invalid-manifest",
+    )
+  }
+  return url.origin
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]"
+}
+
+async function readResponseBody(response: Response, maxBytes: number): Promise<string> {
+  const contentLength = Number(response.headers.get("content-length"))
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    throw new DeploymentResolutionError("Workspace manifest is too large.", "response-too-large")
+  }
+
+  const reader = response.body?.getReader()
+  if (!reader) {
+    // Do not fall back to response.text(): it materializes an attacker-sized
+    // body before the limit can be checked. Current Mentra App runtimes expose
+    // Fetch response bodies as ReadableStreams; fail closed if that contract is
+    // unavailable.
+    throw new DeploymentResolutionError("Workspace manifest response cannot be streamed.", "network")
+  }
+
+  const decoder = new TextDecoder("utf-8", {fatal: true})
+  let byteLength = 0
+  let value = ""
+  try {
+    while (true) {
+      const chunk = await reader.read()
+      if (chunk.done) break
+      byteLength += chunk.value.byteLength
+      if (byteLength > maxBytes) {
+        await reader.cancel()
+        throw new DeploymentResolutionError("Workspace manifest is too large.", "response-too-large")
+      }
+      value += decoder.decode(chunk.value, {stream: true})
+    }
+    value += decoder.decode()
+    return value
+  } catch (error) {
+    if (error instanceof DeploymentResolutionError) throw error
+    throw new DeploymentResolutionError("Workspace manifest body is not valid UTF-8.", "invalid-manifest")
+  }
 }
 
 function allConfiguredUrls(manifest: DeploymentManifest): string[] {

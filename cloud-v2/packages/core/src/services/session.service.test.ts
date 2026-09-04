@@ -1,8 +1,10 @@
 import crypto from "node:crypto"
-import {afterEach, describe, expect, test} from "bun:test"
+import {afterEach, describe, expect, spyOn, test} from "bun:test"
 import * as jose from "jose"
 
-import {getPublicJwks, issueRuntimeToken, resetSigningKeyCache} from "./session.service"
+import {RefreshTokenModel} from "../models/refresh-token.model"
+import {RevokedJtiModel} from "../models/revoked-jti.model"
+import {getPublicJwks, issueRuntimeToken, resetSigningKeyCache, revokeSession} from "./session.service"
 
 const savedEnv = {
   MENTRA_JWT_PRIVATE_KEY: process.env.MENTRA_JWT_PRIVATE_KEY,
@@ -73,6 +75,48 @@ describe("Core JWKS", () => {
         directory_tenant_id: "tenant",
       },
     })
+  })
+})
+
+describe("revokeSession", () => {
+  test("blacklists the access token before deleting the refresh token", async () => {
+    const order: string[] = []
+    const blacklist = spyOn(RevokedJtiModel, "updateOne").mockImplementation((() => {
+      order.push("blacklist")
+      return Promise.resolve({acknowledged: true})
+    }) as never)
+    const deleteRefresh = spyOn(RefreshTokenModel, "deleteOne").mockImplementation((() => {
+      order.push("delete-refresh")
+      return Promise.resolve({acknowledged: true, deletedCount: 1})
+    }) as never)
+    try {
+      await revokeSession({sessionId: "sess_1", accessToken: {jti: "jti-1", expiresAt: 1_900_000_000}})
+      expect(order).toEqual(["blacklist", "delete-refresh"])
+      expect(blacklist).toHaveBeenCalledWith(
+        {jti: "jti-1"},
+        {$set: {expiresAt: new Date(1_900_000_000 * 1000)}},
+        {upsert: true},
+      )
+    } finally {
+      blacklist.mockRestore()
+      deleteRefresh.mockRestore()
+    }
+  })
+
+  test("keeps the refresh token when the blacklist write fails so the caller can retry", async () => {
+    const blacklist = spyOn(RevokedJtiModel, "updateOne").mockImplementation((() =>
+      Promise.reject(new Error("mongo unavailable"))) as never)
+    const deleteRefresh = spyOn(RefreshTokenModel, "deleteOne").mockImplementation((() =>
+      Promise.resolve({acknowledged: true, deletedCount: 1})) as never)
+    try {
+      await expect(
+        revokeSession({sessionId: "sess_1", accessToken: {jti: "jti-1", expiresAt: 1_900_000_000}}),
+      ).rejects.toThrow("mongo unavailable")
+      expect(deleteRefresh).not.toHaveBeenCalled()
+    } finally {
+      blacklist.mockRestore()
+      deleteRefresh.mockRestore()
+    }
   })
 })
 

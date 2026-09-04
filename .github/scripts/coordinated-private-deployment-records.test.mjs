@@ -25,7 +25,8 @@ function runtimeImage(status = "published") {
   }
 }
 const workspaceOrigin = "https://enterprisedev.mentraglass.com"
-const coreOrigin = "https://ca-mentra-ent-ref-core.example.azurecontainerapps.io"
+const coreHostname = "ca-mentra-ent-ref-core.gentlehill-4ed63a4c.westus2.azurecontainerapps.io"
+const coreOrigin = `https://${coreHostname}`
 
 function create(status = "deployed") {
   return createPrivateDeploymentRecord({
@@ -43,6 +44,7 @@ function create(status = "deployed") {
     revision: status === "deployed" ? "ca-mentra-enterprise-reference--0000091" : undefined,
     coreRevision: status === "deployed" ? "ca-mentra-ent-ref-core--0000091" : undefined,
     workspaceOrigin: status === "deployed" ? workspaceOrigin : undefined,
+    coreHostname: status === "deployed" ? coreHostname : undefined,
     coreOrigin: status === "deployed" ? coreOrigin : undefined,
     checks:
       status === "deployed"
@@ -108,6 +110,107 @@ test("rejects mutable or mismatched deployment evidence", () => {
   )
 })
 
+test("rejects look-alike or non-default-port Core origins", () => {
+  for (const lookAlike of [
+    `${coreOrigin}.evil.example`,
+    `https://${coreHostname.replace(".gentlehill-", ".gentlehil1-")}`,
+    `https://ca-mentra-ent-ref-core.gentlehill-4ed63a4c.westus2.azurecontainerapps.io.example.com`,
+  ]) {
+    assert.throws(
+      () => createPrivateDeploymentRecord({...deploymentArgs(), coreOrigin: lookAlike}),
+      /expected Azure Core Container App ingress/,
+      lookAlike,
+    )
+  }
+  assert.throws(
+    () => createPrivateDeploymentRecord({...deploymentArgs(), coreOrigin: `${coreOrigin}:8443`}),
+    /expected Azure Core Container App ingress/,
+  )
+  for (const badHostname of [
+    undefined,
+    "",
+    "ca-mentra-ent-ref-core.example.azurecontainerapps.io",
+    "ca-mentra-ent-ref-core.gentlehill-4ed63a4c.westus2.azurecontainerapps.io.example.com",
+  ]) {
+    assert.throws(
+      () => createPrivateDeploymentRecord({...deploymentArgs(), coreHostname: badHostname}),
+      /coreHostname must be/,
+      String(badHostname),
+    )
+  }
+  const recorded = structuredClone(create())
+  recorded.azure.coreHostname = "ca-mentra-ent-ref-core.happyfield-0123abcd.westus2.azurecontainerapps.io"
+  assert.throws(
+    () => validatePrivateDeploymentRecord({plan, record: recorded}),
+    /expected Azure Core Container App ingress/,
+  )
+})
+
+test("rejects deployed evidence with the wrong workspace origin", () => {
+  assert.throws(
+    () => createPrivateDeploymentRecord({...deploymentArgs(), workspaceOrigin: "https://enterprisedev.mentraglass.com.evil.example"}),
+    /wrong workspace origin/,
+  )
+  const recorded = structuredClone(create())
+  recorded.workspaceOrigin = "https://enterprisedev-mentraglass.example"
+  assert.throws(() => validatePrivateDeploymentRecord({plan, record: recorded}), /wrong workspace origin/)
+})
+
+test("rejects deployed evidence without string revisions", () => {
+  for (const revision of [undefined, "", {}, 91]) {
+    assert.throws(
+      () => createPrivateDeploymentRecord({...deploymentArgs(), revision}),
+      /missing immutable Azure image evidence/,
+      `revision ${JSON.stringify(revision)}`,
+    )
+    assert.throws(
+      () => createPrivateDeploymentRecord({...deploymentArgs(), coreRevision: revision}),
+      /missing immutable Azure image evidence/,
+      `coreRevision ${JSON.stringify(revision)}`,
+    )
+  }
+  const missingRevision = structuredClone(create())
+  delete missingRevision.azure.revision
+  assert.throws(
+    () => validatePrivateDeploymentRecord({plan, record: missingRevision}),
+    /missing immutable Azure image evidence/,
+  )
+  const objectRevision = structuredClone(create())
+  objectRevision.azure.coreRevision = {}
+  assert.throws(
+    () => validatePrivateDeploymentRecord({plan, record: objectRevision}),
+    /missing immutable Azure image evidence/,
+  )
+})
+
+test("rejects a recorded requestedTag that differs from the plan", () => {
+  const retagged = structuredClone(create())
+  retagged.azure.requestedTag = "c".repeat(40)
+  assert.throws(
+    () => validatePrivateDeploymentRecord({plan, record: retagged}),
+    /does not match the release plan and target/,
+  )
+  const validatedRetag = structuredClone(create("validated"))
+  validatedRetag.azure.requestedTag = "c".repeat(40)
+  assert.throws(
+    () => validatePrivateDeploymentRecord({plan, record: validatedRetag, allowValidated: true}),
+    /does not match the release plan and target/,
+  )
+  assert.throws(
+    () => createPrivateDeploymentRecord({...deploymentArgs(), requestedTag: "c".repeat(40)}),
+    /requestedTag must equal the full sourceCommit/,
+  )
+})
+
+test("validation-only evidence must not carry a Core hostname", () => {
+  const record = structuredClone(create("validated"))
+  record.azure.coreHostname = coreHostname
+  assert.throws(
+    () => validatePrivateDeploymentRecord({plan, record, allowValidated: true}),
+    /must not claim a live deployment/,
+  )
+})
+
 function deploymentArgs() {
   return {
     plan,
@@ -121,6 +224,7 @@ function deploymentArgs() {
     revision: "ca-mentra-enterprise-reference--0000091",
     coreRevision: "ca-mentra-ent-ref-core--0000091",
     workspaceOrigin,
+    coreHostname,
     coreOrigin,
     checks: [workspaceOrigin, coreOrigin].flatMap((origin) =>
       ["healthz", "ready"].map((probe) => ({url: `${origin}/${probe}`, ready: true, statusCode: 200})),

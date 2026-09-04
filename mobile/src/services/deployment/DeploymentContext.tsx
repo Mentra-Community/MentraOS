@@ -19,14 +19,17 @@ export function DeploymentProvider({children}: PropsWithChildren) {
   const [selectionResolved, setSelectionResolved] = useState(() => deploymentStore.isResolved())
   const [candidate, setCandidateState] = useState<DeploymentCandidate | null>(null)
 
-  useEffect(
-    () =>
-      deploymentStore.subscribe((deployment, resolved) => {
-        setActiveDeployment(deployment)
-        setSelectionResolved(resolved)
-      }),
-    [],
-  )
+  useEffect(() => {
+    const update = (deployment = deploymentStore.getActive(), resolved = deploymentStore.isResolved()) => {
+      setActiveDeployment(deployment)
+      setSelectionResolved(resolved)
+    }
+    const unsubscribe = deploymentStore.subscribe(update)
+    // A child effect can update the store before this parent effect is
+    // installed. Re-snapshot after subscribing so that update cannot be lost.
+    update()
+    return unsubscribe
+  }, [])
 
   const setCandidate = useCallback((next: DeploymentCandidate) => setCandidateState(next), [])
   const clearCandidate = useCallback(() => setCandidateState(null), [])

@@ -136,7 +136,7 @@ public final class MentraEntraAuthModule: Module {
 
     private func accountMap(_ account: MSALAccount) -> [String: Any?] {
         let profile = account.tenantProfiles?.first
-        let claims = profile?.claims
+        let claims = profile?.claims ?? account.accountClaims
         return [
             "accountId": account.identifier ?? "",
             "subject": claims?["oid"] as? String ?? account.identifier ?? "",

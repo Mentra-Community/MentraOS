@@ -18,6 +18,7 @@ import {ThemedStyle} from "@/theme"
 import {preparePairingScan} from "@/utils/pairing/preparePairingScan"
 import {isMentraLiveSecurePairingEnabled} from "@/utils/pairing/securePairingFeature"
 import {deploymentStore} from "@/services/deployment"
+import {isGlassesModelAllowedByDeployment} from "@/services/deployment/glassesPolicy"
 
 export default function PairingPrepScreen() {
   const route = useRoute()
@@ -28,6 +29,10 @@ export default function PairingPrepScreen() {
   const useRemoteMedia = deploymentStore.getActive().kind === "consumer"
 
   const advanceToPairing = async () => {
+    if (!isGlassesModelAllowedByDeployment(deviceModel, ar99ProjectName)) {
+      goBack()
+      return
+    }
     const readyToScan = await preparePairingScan(deviceModel)
     if (!readyToScan) return
 

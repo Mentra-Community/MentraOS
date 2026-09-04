@@ -4,9 +4,13 @@ import {Directory, File, Paths} from "expo-file-system"
 import type {ActiveDeployment, DeploymentManagedMiniapp} from "@/services/deployment"
 
 import {sha256Hex} from "./preinstalledMiniappSync"
+import {preflightMiniappZip} from "./miniappZipPreflight"
 
 const LOG_TAG = "DeploymentManagedMiniappSync"
 const STATE_FILE_NAME = "deployment-managed-miniapps.json"
+// Matches Runtime's managed-bundle ceiling. The archive is hashed in memory,
+// so refuse oversized downloads before reading them.
+const MAX_BUNDLE_BYTES = 64 * 1024 * 1024
 
 interface ManagedInstallRecord {
   packageName: string
@@ -65,8 +69,39 @@ function writeState(state: ManagedInstallState | null): void {
   file.write(JSON.stringify(state))
 }
 
-async function uninstallOwnedEntries(entries: ManagedInstallRecord[]): Promise<boolean> {
-  for (const entry of entries) {
+function recordKey(entry: Pick<ManagedInstallRecord, "packageName" | "version">): string {
+  return `${entry.packageName}\0${entry.version}`
+}
+
+function hasExactOwnership(deploymentId: string, workspaceOrigin: string, entry: ManagedInstallRecord): boolean {
+  const identity = appRegistry.getReleaseIdentity(entry.packageName, entry.version)
+  return (
+    identity?.source === "deployment_manifest" &&
+    identity.deploymentId === deploymentId &&
+    identity.deploymentOrigin === workspaceOrigin &&
+    identity.bundleSha256 === entry.sha256.toLowerCase()
+  )
+}
+
+function discoverOwnedEntries(deploymentId: string, workspaceOrigin: string): ManagedInstallRecord[] {
+  return appRegistry
+    .getDeploymentOwnedReleases()
+    .filter(({identity}) => identity.deploymentId === deploymentId && identity.deploymentOrigin === workspaceOrigin)
+    .flatMap(({packageName, version, identity}) =>
+      identity.bundleSha256 ? [{packageName, version, sha256: identity.bundleSha256.toLowerCase()}] : [],
+    )
+}
+
+async function uninstallOwnedEntries(state: ManagedInstallState): Promise<boolean> {
+  const entries = new Map<string, ManagedInstallRecord>()
+  for (const entry of [...state.entries, ...discoverOwnedEntries(state.deploymentId, state.workspaceOrigin)]) {
+    entries.set(recordKey(entry), entry)
+  }
+  for (const entry of entries.values()) {
+    if (!hasExactOwnership(state.deploymentId, state.workspaceOrigin, entry)) {
+      console.warn(`${LOG_TAG}: refusing to remove unowned ${entry.packageName}@${entry.version}`)
+      continue
+    }
     const result = await appRegistry.uninstall(entry.packageName, entry.version)
     if (result.is_error()) {
       console.warn(`${LOG_TAG}: failed to remove ${entry.packageName}@${entry.version}`, result.error)
@@ -88,7 +123,17 @@ async function downloadVerifiedBundle(entry: DeploymentManagedMiniapp): Promise<
   } catch (error) {
     throw new Error(`bundle download failed: ${(error as Error)?.message ?? error}`)
   }
-  const actualSha256 = await sha256Hex(await output.bytes())
+  const size = output.size
+  if (size == null || size > MAX_BUNDLE_BYTES) {
+    try {
+      output.delete()
+    } catch {
+      // Best-effort cache cleanup.
+    }
+    throw new Error(`bundle exceeds ${MAX_BUNDLE_BYTES} bytes (${size ?? "unknown"})`)
+  }
+  const bytes = await output.bytes()
+  const actualSha256 = await sha256Hex(bytes)
   if (actualSha256 !== entry.sha256.toLowerCase()) {
     try {
       output.delete()
@@ -97,6 +142,7 @@ async function downloadVerifiedBundle(entry: DeploymentManagedMiniapp): Promise<
     }
     throw new Error(`bundle SHA-256 mismatch: expected ${entry.sha256}, got ${actualSha256}`)
   }
+  preflightMiniappZip(bytes)
   return output.uri
 }
 
@@ -119,13 +165,19 @@ async function installEntry(
       console.warn(`${LOG_TAG}: refusing changed digest for immutable ${entry.packageName}@${entry.version}`)
       return false
     }
-    if (installedVersions.includes(entry.version)) return true
+    if (desiredOwnedByDeployment) {
+      appRegistry.setActiveVersion(entry.packageName, entry.version)
+      return true
+    }
+    console.warn(`${LOG_TAG}: refusing unverified existing ${entry.packageName}@${entry.version}`)
+    return false
   } else if (desiredOwnedByDeployment) {
     // The install completed but ownership state was not persisted (for
     // example, the app stopped between those two operations). Recover it.
+    appRegistry.setActiveVersion(entry.packageName, entry.version)
     return true
-  } else if (installedVersions.length > 0 && !previous) {
-    console.warn(`${LOG_TAG}: refusing to adopt existing unowned package ${entry.packageName}`)
+  } else if (installedVersions.includes(entry.version)) {
+    console.warn(`${LOG_TAG}: refusing to replace existing unowned ${entry.packageName}@${entry.version}`)
     return false
   }
 
@@ -161,35 +213,46 @@ async function syncWorkspace(deployment: Extract<ActiveDeployment, {kind: "works
     state &&
     (state.deploymentId !== deployment.manifest.deploymentId || state.workspaceOrigin !== deployment.workspaceOrigin)
   ) {
-    if (!(await uninstallOwnedEntries(state.entries))) return
+    if (!(await uninstallOwnedEntries(state))) return
     state = null
     writeState(null)
   }
 
-  const currentEntries = new Map((state?.entries ?? []).map((entry) => [entry.packageName, entry]))
+  const recoveredEntries = discoverOwnedEntries(deployment.manifest.deploymentId, deployment.workspaceOrigin)
+  const currentEntries = new Map<string, ManagedInstallRecord>()
+  for (const entry of [...(state?.entries ?? []), ...recoveredEntries]) currentEntries.set(recordKey(entry), entry)
   const nextEntries = new Map(currentEntries)
   const desiredNames = new Set(deployment.manifest.miniapps.managed.map((entry) => entry.packageName))
 
   for (const entry of deployment.manifest.miniapps.managed) {
-    const previous = currentEntries.get(entry.packageName)
+    const previous = [...currentEntries.values()].find(
+      (candidate) => candidate.packageName === entry.packageName && candidate.version === entry.version,
+    )
     if (!(await installEntry(deployment.manifest.deploymentId, deployment.workspaceOrigin, entry, previous))) continue
 
     const next = {packageName: entry.packageName, version: entry.version, sha256: entry.sha256.toLowerCase()}
-    if (
-      previous &&
-      previous.version !== entry.version &&
-      appRegistry.getInstalledVersions(previous.packageName).includes(previous.version)
-    ) {
-      const uninstall = await appRegistry.uninstall(previous.packageName, previous.version)
-      if (uninstall.is_error()) {
-        console.warn(`${LOG_TAG}: installed update but could not remove ${previous.packageName}@${previous.version}`)
-        // Retain the old ownership record so the next reconciliation retries
-        // cleanup. The newly installed version is recovered from its release
-        // identity and is never downloaded or adopted as an unrelated app.
+    nextEntries.set(recordKey(next), next)
+    // Persist the new ownership before cleaning older versions. If cleanup
+    // fails or the app stops, both owned releases remain discoverable.
+    writeState({
+      schemaVersion: 1,
+      deploymentId: deployment.manifest.deploymentId,
+      workspaceOrigin: deployment.workspaceOrigin,
+      entries: [...nextEntries.values()],
+    })
+    for (const old of [...nextEntries.values()]) {
+      if (old.packageName !== entry.packageName || old.version === entry.version) continue
+      if (!hasExactOwnership(deployment.manifest.deploymentId, deployment.workspaceOrigin, old)) {
+        nextEntries.delete(recordKey(old))
         continue
       }
+      const uninstall = await appRegistry.uninstall(old.packageName, old.version)
+      if (uninstall.is_error()) {
+        console.warn(`${LOG_TAG}: installed update but could not remove ${old.packageName}@${old.version}`)
+        continue
+      }
+      nextEntries.delete(recordKey(old))
     }
-    nextEntries.set(entry.packageName, next)
     writeState({
       schemaVersion: 1,
       deploymentId: deployment.manifest.deploymentId,
@@ -198,14 +261,18 @@ async function syncWorkspace(deployment: Extract<ActiveDeployment, {kind: "works
     })
   }
 
-  for (const previous of currentEntries.values()) {
+  for (const previous of [...nextEntries.values()]) {
     if (desiredNames.has(previous.packageName)) continue
+    if (!hasExactOwnership(deployment.manifest.deploymentId, deployment.workspaceOrigin, previous)) {
+      nextEntries.delete(recordKey(previous))
+      continue
+    }
     const uninstall = await appRegistry.uninstall(previous.packageName, previous.version)
     if (uninstall.is_error()) {
       console.warn(`${LOG_TAG}: failed to remove ${previous.packageName}@${previous.version}`, uninstall.error)
       continue
     }
-    nextEntries.delete(previous.packageName)
+    nextEntries.delete(recordKey(previous))
     writeState({
       schemaVersion: 1,
       deploymentId: deployment.manifest.deploymentId,
@@ -231,8 +298,17 @@ export const deploymentManagedMiniappSync = {
       }
 
       const state = readState()
-      if (!state) return
-      if (await uninstallOwnedEntries(state.entries)) writeState(null)
+      if (state) {
+        if (await uninstallOwnedEntries(state)) writeState(null)
+        return
+      }
+      // Recover installs created before the ownership state file was flushed.
+      const orphaned = appRegistry.getDeploymentOwnedReleases()
+      for (const {packageName, version} of orphaned) {
+        const result = await appRegistry.uninstall(packageName, version)
+        if (result.is_error())
+          console.warn(`${LOG_TAG}: failed to remove orphan ${packageName}@${version}`, result.error)
+      }
     } catch (error) {
       console.warn(`${LOG_TAG}: reconciliation failed`, error)
     }

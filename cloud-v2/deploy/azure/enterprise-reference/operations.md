@@ -28,9 +28,18 @@ cloud-v2/deploy/azure/enterprise-reference/scripts/import-runtime-image.sh \
 ```
 
 The helper refuses a mutable source tag and prints the customer-owned
-digest-pinned image reference. Use that printed reference as `cloudImage` in
-the Bicep deployment. The public GHCR package requires no customer registry
-credentials.
+digest-pinned image reference on stdout (progress goes to stderr). Use that
+printed reference as `cloudImage` in the Bicep deployment.
+
+`az acr import` runs as the identity signed into the Azure CLI, not as a
+registry-side import identity. That identity needs a role on the target
+registry that includes `Microsoft.ContainerRegistry/registries/importImage/action`
+(Contributor, or a custom role) and must be able to pull the source. The
+public GHCR package requires no source credentials. For a private source
+registry (an offline-transferred mirror, or GHCR before the package is public),
+export `SOURCE_REGISTRY_USERNAME` and `SOURCE_REGISTRY_PASSWORD` in the shell
+before running the helper; it forwards them to `az acr import` and never
+accepts credentials as positional arguments.
 
 If the customer uses its own legal, logo, or managed miniapp files, replace the
 reference files, add the ZIPs, and build the small asset layer on top of the

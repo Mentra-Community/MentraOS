@@ -171,6 +171,23 @@ mechanism and terminate TLS in customer ingress. Mongo is authenticated and is
 not host-exposed. Generate `secrets/mongo-password` as a URL-safe value, for
 example with `openssl rand -hex 32`.
 
+Mongo authentication applies only to a fresh volume: the `mongo` image creates
+the `MONGO_INITDB_ROOT_USERNAME` user only while initializing an empty
+`/data/db`. An existing `mongo-data` volume that was provisioned without these
+settings (an earlier unauthenticated configuration, a beta, or a manual
+bootstrap) never gains the `mentra` user, and Core's `?authSource=admin` URI
+then fails to authenticate at startup. Migrate such a volume once, before
+switching Core to the authenticated URI, by creating the user in the running
+unauthenticated instance:
+
+```bash
+docker compose exec mongo mongosh admin --eval \
+  'db.createUser({user: "mentra", pwd: passwordPrompt(), roles: [{role: "root", db: "admin"}]})'
+```
+
+Alternatively back up, remove, and re-initialize the volume so the image
+creates the user itself. Either path is a one-time operation.
+
 ```yaml
 services:
   mongo:

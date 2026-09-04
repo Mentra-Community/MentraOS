@@ -28,11 +28,11 @@ param workspaceHostname string = ''
 @description('Create the AcrPull assignment. Set false for CI after an administrator has bootstrapped it.')
 param manageAcrPullRoleAssignment bool = true
 
-@description('Oldest Mentra App version allowed to use this deployment.')
+@description('Oldest Mentra App version allowed to use this deployment (SemVer).')
 param clientMinVersion string = '0.0.0'
 
-@description('Mentra App version recommended by this deployment.')
-param clientRecommendedVersion string = '0.0.0'
+@description('Mentra App version recommended by this deployment (SemVer). Must be >= clientMinVersion; empty defaults to clientMinVersion. deploy.sh rejects a lower value because the Mentra App evaluates the recommended floor first.')
+param clientRecommendedVersion string = ''
 
 param deploymentId string = 'mentra-enterprise-reference'
 param displayName string = 'Mentra Enterprise Demo'
@@ -47,7 +47,7 @@ param communicationDataLocation string = 'United States'
 param approvedSystemMiniapps array = ['com.mentra.settings']
 @description('Customer-managed userland miniapp entries: packageName, version, bundleUrl, and sha256.')
 param managedMiniapps array = []
-@description('Non-secret, package-scoped configuration exposed to opted-in miniapps.')
+@description('Non-secret configuration exposed to opted-in miniapps: an object keyed by package name whose values are objects of string entries (keys ^[A-Za-z][A-Za-z0-9._-]{0,63}$, values <= 2048 bytes, <= 32 entries and <= 16 KiB per package). Bicep does not enforce these Mentra App limits; deploy.sh validates them before deployment.')
 param miniappConfiguration object = {}
 @description('Container directory holding managed miniapp ZIPs. Empty delegates these routes to customer ingress.')
 param managedMiniappDirectory string = '/app/cloud-v2/deploy/azure/enterprise-reference/miniapps'
@@ -62,6 +62,7 @@ param documentationUrl string = ''
 param supportUrl string = ''
 
 var loginEndpoint = az.environment().authentication.loginEndpoint
+var effectiveClientRecommendedVersion = empty(clientRecommendedVersion) ? clientMinVersion : clientRecommendedVersion
 var acrPullRoleDefinitionId = subscriptionResourceId(
   'Microsoft.Authorization/roleDefinitions',
   '7f951dda-4ed3-4680-a7ca-43fe172d538d'
@@ -117,6 +118,13 @@ resource mongo 'Microsoft.DocumentDB/databaseAccounts@2024-11-15' = {
       { name: 'EnableServerless' }
     ]
     consistencyPolicy: { defaultConsistencyLevel: 'Session' }
+    // Documented tradeoff: Core reaches Cosmos over the authenticated public
+    // endpoint because this reference environment has no VNet. Disabling public
+    // access requires a VNet-integrated Container Apps environment plus a Cosmos
+    // private endpoint, and Container Apps outbound IPs are neither static nor
+    // known before Core exists, so an IP firewall cannot be templated here.
+    // Customers requiring private data-plane ingress extend this with their
+    // standard VNet/private-endpoint module (see README.md, customer-setup.md).
     publicNetworkAccess: 'Enabled'
   }
 }
@@ -305,7 +313,7 @@ resource runtime 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'RUNTIME_SERVICES', value: 'meetings' }
             { name: 'MEETING_PROVIDERS', value: 'acs-teams' }
             { name: 'CLOUD_CLIENT_MIN_VERSION', value: clientMinVersion }
-            { name: 'CLOUD_CLIENT_RECOMMENDED_VERSION', value: clientRecommendedVersion }
+            { name: 'CLOUD_CLIENT_RECOMMENDED_VERSION', value: effectiveClientRecommendedVersion }
             {
               name: 'DEPLOYMENT_MANIFEST_JSON'
               value: string(deploymentManifest)

@@ -7,7 +7,6 @@ export interface WorkspaceIdentity {
 }
 
 export interface WorkspaceTokenRequest {
-  audience?: string
   scopes: string[]
   forceRefresh?: boolean
 }

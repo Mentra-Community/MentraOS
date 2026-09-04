@@ -36,7 +36,12 @@ export type {
 export type { CloudClientTimers } from "./timers";
 
 // Local error types a host can branch on with `instanceof`.
-export { CloudClientError, HttpError, AuthExpiredError } from "./errors";
+export {
+  CloudClientError,
+  HttpError,
+  AuthExpiredError,
+  SessionRevocationError,
+} from "./errors";
 
 // The logging hook a host can implement to route library logs.
 export { noopLogger } from "./logger";

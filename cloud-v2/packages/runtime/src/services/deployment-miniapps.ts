@@ -3,6 +3,14 @@ import { createHash } from "node:crypto";
 const MAX_BUNDLE_BYTES = 64 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 256 * 1024 * 1024;
 
+/**
+ * Canonical SemVer 2.0.0 (`MAJOR.MINOR.PATCH[-prerelease]`), no `v` prefix, no
+ * build metadata allowed, no leading zeroes in numeric identifiers. Mirrors the client's
+ * `semver.valid(value) === value` check so both sides agree on release identity.
+ */
+const STRICT_SEMVER =
+  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+
 export interface DeploymentMiniappBundle {
   path: string;
   body: Blob;
@@ -16,6 +24,7 @@ export async function loadDeploymentMiniappBundles(
   if (!directory || !deploymentManifest) return [];
 
   const raw = JSON.parse(deploymentManifest) as {
+    services?: { runtimeUrl?: unknown };
     miniapps?: {
       managed?: Array<{
         packageName?: unknown;
@@ -26,6 +35,19 @@ export async function loadDeploymentMiniappBundles(
     };
   };
   const entries = raw.miniapps?.managed ?? [];
+  if (entries.length === 0) return [];
+
+  // Bundles are served by this Runtime, so every bundleUrl must resolve to the
+  // manifest's Runtime origin over HTTPS. Anything else would be advertised to
+  // clients but never served here.
+  const runtimeUrl = raw.services?.runtimeUrl;
+  if (typeof runtimeUrl !== "string") {
+    throw new Error(
+      "deployment managed miniapps require services.runtimeUrl in the manifest",
+    );
+  }
+  const runtimeOrigin = new URL(runtimeUrl).origin;
+
   const bundles: DeploymentMiniappBundle[] = [];
   const paths = new Set<string>();
   let totalBytes = 0;
@@ -39,7 +61,22 @@ export async function loadDeploymentMiniappBundles(
     ) {
       throw new Error("deployment managed miniapp entry is invalid");
     }
+    if (!STRICT_SEMVER.test(entry.version)) {
+      throw new Error(
+        `deployment managed miniapp version must be canonical SemVer: ${entry.packageName}@${entry.version}`,
+      );
+    }
     const url = new URL(entry.bundleUrl);
+    if (url.protocol !== "https:") {
+      throw new Error(
+        `deployment managed miniapp URL must use https: ${entry.bundleUrl}`,
+      );
+    }
+    if (url.origin !== runtimeOrigin) {
+      throw new Error(
+        `deployment managed miniapp URL must share the Runtime origin ${runtimeOrigin}: ${entry.bundleUrl}`,
+      );
+    }
     if (!url.pathname.startsWith("/miniapps/") || url.pathname.endsWith("/")) {
       throw new Error(
         `deployment managed miniapp URL must be under /miniapps/: ${entry.bundleUrl}`,

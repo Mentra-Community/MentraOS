@@ -65,6 +65,12 @@ find_or_create_app() {
       exit 1
     fi
   fi
+  # Newly created apps request AzureADMyOrg above; an existing app must already
+  # be single-tenant so this helper never reconciles a multi-tenant registration.
+  [[ "$(az ad app show --id "$object_id" --query signInAudience -o tsv)" == "AzureADMyOrg" ]] || {
+    printf 'App %s must be single-tenant (AzureADMyOrg).\n' "$display_name" >&2
+    exit 1
+  }
   printf '%s' "$object_id"
 }
 

@@ -9,9 +9,8 @@ export async function authenticateRuntimeRequest(
   c: Context,
 ): Promise<{ identity: VerifiedAccessToken } | { error: Response }> {
   const authHeader = c.req.header("authorization");
-  const token = authHeader?.startsWith("Bearer ")
-    ? authHeader.slice("Bearer ".length).trim()
-    : undefined;
+  const match = authHeader?.match(/^Bearer\s+(.+)$/i);
+  const token = match?.[1]?.trim();
   if (!token) {
     return {
       error: c.json({ error: "missing or malformed Authorization" }, 401),

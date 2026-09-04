@@ -314,16 +314,19 @@ async function assertTenantStillAuthorized(tenantId: string): Promise<void> {
 }
 
 /**
- * Revoke a single session. The refresh token is removed first, then the access
- * token used to authorize the logout request is blacklisted until its natural
- * expiry. If the blacklist write fails, the caller receives an error and may
- * safely retry with the still-cryptographically-valid access token.
+ * Revoke a single session. The access token used to authorize the logout
+ * request is blacklisted first (until its natural expiry), then the refresh
+ * token is removed. The order matters: if the blacklist write fails we throw
+ * before touching the refresh token, so the caller may safely retry with the
+ * still-cryptographically-valid access token instead of being left with a
+ * dead refresh token and a live access token. If the refresh-token delete
+ * fails after the blacklist write, the error also surfaces; the client can
+ * refresh and retry, and the blacklist upsert is idempotent.
  */
 export async function revokeSession(args: {
   sessionId: string
   accessToken?: {jti: string; expiresAt: number}
 }): Promise<void> {
-  await RefreshTokenModel.deleteOne({sessionId: args.sessionId})
   if (args.accessToken) {
     await RevokedJtiModel.updateOne(
       {jti: args.accessToken.jti},
@@ -331,6 +334,7 @@ export async function revokeSession(args: {
       {upsert: true},
     )
   }
+  await RefreshTokenModel.deleteOne({sessionId: args.sessionId})
   logger.info({sessionId: args.sessionId}, "session revoked")
 }
 

@@ -29,7 +29,8 @@ import type {AuthConfig, CoreAuthConfig, RuntimeAuthConfig, SubjectTokenType} fr
 import type {HttpClient} from "../../http"
 import type {Logger} from "../../logger"
 import type {HttpTransport} from "../../transports"
-import {AuthExpiredError} from "../../errors"
+import {AuthExpiredError, HttpError, SessionRevocationError} from "../../errors"
+import {systemTimers, type CloudClientTimers} from "../../timers"
 import {decodeClaims} from "./jwt"
 import {TokenStore} from "./token-store"
 
@@ -57,7 +58,9 @@ export interface AuthModule {
   // Core-owned user/oem identity, read from the Core access token.
   // Runtime-only deployments do not expose this surface.
   readonly identity: {mentraUserId: string; tenantId: string}
-  // clear access, refresh, runtime, and miniapp credentials for logout
+  // clear access, refresh, runtime, and miniapp credentials for logout. Local
+  // credentials are always cleared; rejects with `SessionRevocationError` when
+  // Core did not confirm revocation of the server-side session.
   clearSession(): Promise<void>
   // refresh failed; the host must send the user back through login
   onExpired(handler: () => void): () => void
@@ -85,6 +88,11 @@ const SUBJECT_TOKEN_TYPE_URN: Record<SubjectTokenType, string> = {
 
 /** Seconds of headroom before `exp` at which we proactively refresh/re-mint. */
 const EXPIRY_MARGIN_SECONDS = 60
+
+/** Total attempts at the idempotent `/revoke` during logout on network/5xx failures. */
+const REVOKE_ATTEMPTS = 3
+/** Base backoff between revoke attempts in milliseconds; doubles per attempt. */
+const REVOKE_RETRY_BASE_MS = 250
 
 /** The cloud's token endpoints, relative to the core base URL. */
 const EXCHANGE_PATH = "/api/client/auth/exchange"
@@ -123,6 +131,15 @@ interface RuntimeTokenEntry {
   expiresAt: number
 }
 
+/**
+ * A revoke is worth retrying only when Core gave no definite answer: the
+ * transport failed (`status` 0) or the server errored (5xx). A 4xx means Core
+ * rejected the request and repeating it would not change the outcome.
+ */
+function isRetryableRevokeError(err: unknown): boolean {
+  return err instanceof HttpError && (err.status === 0 || err.status >= 500)
+}
+
 export class Auth implements AuthModule {
   private readonly http?: HttpClient
   private readonly store: TokenStore
@@ -141,6 +158,7 @@ export class Auth implements AuthModule {
    */
   private readonly baseUrl?: string
   private readonly httpTransport: HttpTransport
+  private readonly timers: CloudClientTimers
 
   /** Miniapp tokens cached per packageName until near expiry. */
   private readonly miniappCache = new Map<string, MiniappTokenEntry>()
@@ -167,6 +185,7 @@ export class Auth implements AuthModule {
     logger: Logger
     baseUrl?: string
     fetch?: HttpTransport
+    timers?: CloudClientTimers
   }) {
     this.http = deps.http
     this.store = deps.store
@@ -175,6 +194,7 @@ export class Auth implements AuthModule {
     this.logger = deps.logger
     this.baseUrl = deps.baseUrl
     this.httpTransport = deps.fetch ?? globalThis.fetch
+    this.timers = deps.timers ?? systemTimers
   }
 
   /**
@@ -301,19 +321,7 @@ export class Auth implements AuthModule {
     this.sessionCleared = true
     let revokeError: unknown
     try {
-      if (this.coreConfig && this.http) {
-        const current = this.store.current()
-        const refreshToken = await this.store.refreshToken()
-        let accessToken: string | null = null
-        if (current && current.exp > Math.floor(Date.now() / 1000)) {
-          accessToken = current.accessToken
-        } else if (refreshToken) {
-          const body = new URLSearchParams({grant_type: "refresh_token", refresh_token: refreshToken})
-          const tokens = await this.postForm(REFRESH_PATH, body, "logout refresh")
-          accessToken = tokens.access_token
-        }
-        if (accessToken) await this.http.post(REVOKE_PATH, {}, {bearer: accessToken})
-      }
+      await this.revokeCoreSession()
     } catch (err) {
       revokeError = err
       this.logger.warn("Core session revocation failed during local logout", {
@@ -325,7 +333,47 @@ export class Auth implements AuthModule {
       this.miniappCache.clear()
       this.expiredFired = false
     }
-    if (revokeError) throw revokeError
+    if (revokeError) {
+      throw new SessionRevocationError("Core session revocation failed; local credentials were cleared", {
+        cause: revokeError,
+      })
+    }
+  }
+
+  /**
+   * Revoke the Core session server-side before local credentials are dropped.
+   *
+   * Core verifies the presented access token with no clock tolerance, so a
+   * cached token inside the usual expiry margin is refreshed first rather than
+   * risking a rejected revoke. `/revoke` is idempotent, so a network error or a
+   * 5xx is retried a bounded number of times with backoff; a definite 4xx is
+   * not. Any failure propagates so the caller can tell revocation did not
+   * complete.
+   */
+  private async revokeCoreSession(): Promise<void> {
+    if (!this.coreConfig || !this.http) return
+    const current = this.store.current()
+    const refreshToken = await this.store.refreshToken()
+    let accessToken: string | null = null
+    if (current && !this.isExpiring(current.exp)) {
+      accessToken = current.accessToken
+    } else if (refreshToken) {
+      const body = new URLSearchParams({grant_type: "refresh_token", refresh_token: refreshToken})
+      const tokens = await this.postForm(REFRESH_PATH, body, "logout refresh")
+      accessToken = tokens.access_token
+    }
+    if (!accessToken) return
+
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await this.http.post(REVOKE_PATH, {}, {bearer: accessToken})
+        return
+      } catch (err) {
+        if (attempt + 1 >= REVOKE_ATTEMPTS || !isRetryableRevokeError(err)) throw err
+        this.logger.warn("Core session revocation failed; retrying", {attempt: attempt + 1})
+        await new Promise<void>((resolve) => this.timers.setTimeout(resolve, REVOKE_RETRY_BASE_MS * 2 ** attempt))
+      }
+    }
   }
 
   /**

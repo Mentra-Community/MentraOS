@@ -41,6 +41,24 @@ export class HttpError extends CloudClientError {
 }
 
 /**
+ * Thrown by `cloud.auth.clearSession()` when local credentials were cleared but
+ * Core did not confirm revocation of the session (revoke failed after bounded
+ * retries, or the token needed to authorize it could not be refreshed). The
+ * client is logged out locally; the host must not treat the server-side session
+ * as dead and should surface or defer the failure. `cause` is the underlying error.
+ */
+export class SessionRevocationError extends CloudClientError {
+  readonly cause: unknown;
+
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message);
+    this.name = "SessionRevocationError";
+    this.cause = options?.cause;
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+/**
  * Thrown when a token refresh fails and the host must send the user back through
  * login. Separate from `HttpError` so a host can catch the "credentials are
  * truly dead" case on its own without inspecting status codes.

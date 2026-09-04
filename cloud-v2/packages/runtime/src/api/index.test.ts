@@ -70,7 +70,7 @@ describe("Runtime API composition", () => {
     }
   });
 
-  test("serves deployment-managed userland bundles as immutable assets", async () => {
+  test("serves deployment-managed userland bundles with revalidation", async () => {
     const body = new TextEncoder().encode("miniapp zip bytes").buffer;
     const app = createApiApp({
       readinessChecks: [],
@@ -83,7 +83,7 @@ describe("Runtime API composition", () => {
     const response = await app.request("/miniapps/remoteassist-1.2.0.zip");
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("application/zip");
-    expect(response.headers.get("cache-control")).toContain("immutable");
+    expect(response.headers.get("cache-control")).toBe("public, max-age=0, must-revalidate");
     expect(await response.text()).toBe("miniapp zip bytes");
     expect(
       await (await app.request("/miniapps/remoteassist-1.2.0.zip")).text(),

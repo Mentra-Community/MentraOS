@@ -96,6 +96,20 @@ DNS-only CNAME to the printed `generatedRuntimeHostname`, and create
 helper. The Core reference uses its Azure-generated TLS hostname and is declared
 separately in `services.coreUrl`.
 
+This procedure supports subdomains only (for example `mentra.acme.example`).
+An apex domain cannot carry a CNAME; Azure requires an A record to the
+environment's static inbound IP plus TXT or HTTP domain-control validation,
+which `main.bicep` (hard-wired to CNAME validation) does not configure. Use a
+subdomain, or extend the template before qualifying an apex hostname.
+
+Cosmos DB keeps `publicNetworkAccess: Enabled` in this reference. Core reaches
+it over the authenticated public endpoint because the Container Apps
+environment has no VNet; disabling public access requires a VNet-integrated
+environment and a Cosmos private endpoint, and the Container Apps outbound IPs
+are not known before Core exists, so an IP firewall cannot be templated here.
+Treat this as a documented tradeoff, not a production network posture; see
+[customer-setup.md](./customer-setup.md) for the private-networking guidance.
+
 ## Smoke test
 
 ```bash

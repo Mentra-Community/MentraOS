@@ -229,6 +229,7 @@ async function workforceToken(): Promise<string> {
 }
 
 async function teamsToken(): Promise<string> {
+  // Runtime verifies the same audience override (see acs-teams.service), so honour it here.
   return new jose.SignJWT({
     oid: "employee-object-id",
     tid: "private-test-tenant",
@@ -237,7 +238,7 @@ async function teamsToken(): Promise<string> {
   })
     .setProtectedHeader({alg: "RS256", kid: "private-test-key"})
     .setIssuer(OIDC_ISSUER)
-    .setAudience("https://auth.msft.communication.azure.com")
+    .setAudience(process.env.ENTRA_TEAMS_TOKEN_AUDIENCE ?? "https://auth.msft.communication.azure.com")
     .setIssuedAt()
     .setExpirationTime("5m")
     .sign(oidcPrivateKey)

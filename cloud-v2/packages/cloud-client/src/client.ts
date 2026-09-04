@@ -166,6 +166,7 @@ export class CloudClient {
       // requests, but still use the host's injected HTTP transport.
       baseUrl: coreUrl,
       fetch: config.transports.http,
+      timers,
     })
 
     const getRuntimeToken = (): Promise<string> => auth.getRuntimeToken()

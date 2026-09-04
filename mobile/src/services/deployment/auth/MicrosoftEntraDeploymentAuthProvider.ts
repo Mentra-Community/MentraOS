@@ -53,8 +53,25 @@ export class MicrosoftEntraDeploymentAuthProvider implements DeploymentAuthProvi
     return session
   }
 
+  /**
+   * Mint a workspace access token for one declared scope set.
+   *
+   * The ACS Teams scope set is the only native-meeting capability the app can
+   * exercise today, so it is the enforcement point for
+   * `features.nativeMeetings`: a workspace that turns the feature off cannot
+   * obtain a Teams token even though its manifest still declares the scopes.
+   */
   async getAccessToken(request: WorkspaceTokenRequest): Promise<string> {
     const scopes = request.scopes.length > 0 ? request.scopes : this.auth.sessionScopes
+    const uniqueScopes = new Set(scopes)
+    const matches = (declared: string[]) =>
+      declared.length > 0 && uniqueScopes.size === scopes.length && scopes.every((scope) => declared.includes(scope))
+    if (matches(this.auth.teamsScopes) && !this.deployment.manifest.features.nativeMeetings) {
+      throw new Error("Native meetings are disabled by this deployment")
+    }
+    if (!matches(this.auth.sessionScopes) && !matches(this.auth.teamsScopes)) {
+      throw new Error("Requested Microsoft scopes are not declared by this workspace")
+    }
     const result = await this.native.acquireToken(this.configuration(), scopes, request.forceRefresh)
     return result.accessToken
   }

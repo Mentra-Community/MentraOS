@@ -115,7 +115,7 @@ export function createApiApp(opts: CreateApiAppOptions): Hono {
         new Response(bundle.body, {
           headers: {
             "Content-Type": "application/zip",
-            "Cache-Control": "public, max-age=31536000, immutable",
+            "Cache-Control": "public, max-age=0, must-revalidate",
             "X-Content-Type-Options": "nosniff",
           },
         }),

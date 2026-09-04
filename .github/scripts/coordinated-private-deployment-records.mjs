@@ -31,18 +31,29 @@ function requireHttps(value, label) {
   return parsed.toString().replace(/\/$/, "")
 }
 
-function requireCoreContainerAppOrigin(value) {
+// Container Apps generate `<app>.<environment-label>.<region>.azurecontainerapps.io`,
+// for example ca-mentra-ent-ref-core.gentlehill-4ed63a4c.westus2.azurecontainerapps.io.
+const CORE_HOSTNAME_PATTERN = new RegExp(
+  `^${TARGET.coreContainerApp.replaceAll("-", "\\-")}\\.[a-z0-9]+-[0-9a-f]{8}\\.[a-z0-9]+\\.azurecontainerapps\\.io$`,
+)
+
+function requireCoreContainerAppOrigin(value, coreHostname) {
   const origin = requireHttps(value, "coreOrigin")
   const parsed = new URL(origin)
-  if (
-    parsed.pathname !== "/" ||
-    parsed.search ||
-    !parsed.hostname.startsWith(`${TARGET.coreContainerApp}.`) ||
-    !parsed.hostname.endsWith(".azurecontainerapps.io")
-  ) {
+  if (typeof coreHostname !== "string" || !CORE_HOSTNAME_PATTERN.test(coreHostname)) {
+    throw new Error("coreHostname must be the deployment's generated Azure Core Container App hostname")
+  }
+  if (parsed.pathname !== "/" || parsed.search || parsed.port !== "" || parsed.hostname !== coreHostname) {
     throw new Error("coreOrigin must be the expected Azure Core Container App ingress")
   }
   return origin
+}
+
+function requireNonEmptyString(value, label) {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`${label} must be a non-empty string`)
+  }
+  return value
 }
 
 function requireIsoUtc(value, label) {
@@ -101,6 +112,7 @@ export function createPrivateDeploymentRecord({
   revision,
   coreRevision,
   workspaceOrigin,
+  coreHostname,
   coreOrigin,
   checks,
   completedAt,
@@ -144,7 +156,14 @@ export function createPrivateDeploymentRecord({
       throw new Error("Private Deployment is missing its canonical GHCR source")
     }
     const expectedImage = `${TARGET.registry}.azurecr.io/${TARGET.imageRepository}@${imageDigest}`
-    if (image !== expectedImage || !DIGEST_PATTERN.test(imageDigest || "") || !revision || !coreRevision) {
+    if (
+      image !== expectedImage ||
+      !DIGEST_PATTERN.test(imageDigest || "") ||
+      typeof revision !== "string" ||
+      revision.length === 0 ||
+      typeof coreRevision !== "string" ||
+      coreRevision.length === 0
+    ) {
       throw new Error("Private Deployment is missing immutable Azure image evidence")
     }
     const origin = requireHttps(workspaceOrigin, "workspaceOrigin")
@@ -160,8 +179,9 @@ export function createPrivateDeploymentRecord({
     record.azure.imageDigest = imageDigest
     record.azure.revision = revision
     record.azure.coreRevision = coreRevision
+    record.azure.coreHostname = requireNonEmptyString(coreHostname, "coreHostname")
     record.workspaceOrigin = origin
-    record.coreOrigin = requireCoreContainerAppOrigin(coreOrigin)
+    record.coreOrigin = requireCoreContainerAppOrigin(coreOrigin, coreHostname)
     record.checks = validateChecks(checks, origin, record.coreOrigin)
   }
   return record
@@ -208,6 +228,7 @@ export function validatePrivateDeploymentRecord({plan, record, allowValidated = 
       record.azure.imageDigest !== undefined ||
       record.azure.revision !== undefined ||
       record.azure.coreRevision !== undefined ||
+      record.azure.coreHostname !== undefined ||
       record.source !== undefined ||
       record.workspaceOrigin !== undefined ||
       record.coreOrigin !== undefined ||
@@ -236,6 +257,7 @@ export function validatePrivateDeploymentRecord({plan, record, allowValidated = 
     revision: record.azure.revision,
     coreRevision: record.azure.coreRevision,
     workspaceOrigin: record.workspaceOrigin,
+    coreHostname: record.azure.coreHostname,
     coreOrigin: record.coreOrigin,
     checks: record.checks,
     completedAt: record.completedAt,
@@ -276,6 +298,7 @@ function main() {
     revision: args.revision,
     coreRevision: args["core-revision"],
     workspaceOrigin: args["workspace-origin"],
+    coreHostname: args["core-hostname"],
     coreOrigin: args["core-origin"],
     checks: args.checks ? readJson(args.checks) : undefined,
     completedAt: args["completed-at"],

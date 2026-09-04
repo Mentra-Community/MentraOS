@@ -230,8 +230,10 @@ export interface StartRuntimeOptions {
 
 export interface RuntimeHandle {
   httpPort: number;
-  udpPort: number;
-  wsUrl: string;
+  /** Bound audio UDP ingress port. Only present when `realtime-audio` is enabled. */
+  udpPort?: number;
+  /** WebSocket session endpoint. Only present when `realtime-audio` is enabled. */
+  wsUrl?: string;
   stop(): Promise<void>;
 }
 
@@ -382,10 +384,14 @@ export async function startRuntime(
   logger.info(
     {
       httpPort: boundHttpPort,
-      udpPort,
-      udpAdvertisedHost,
-      udpAdvertisedPort,
-      udpAdvertisedHostSource: resolvedUdpAdvertisedHost.source,
+      ...(realtimeAudio
+        ? {
+            udpPort,
+            udpAdvertisedHost,
+            udpAdvertisedPort,
+            udpAdvertisedHostSource: resolvedUdpAdvertisedHost.source,
+          }
+        : {}),
       services: serviceList(services),
     },
     "cloud-v2 runtime listening",
@@ -393,8 +399,11 @@ export async function startRuntime(
 
   return {
     httpPort: boundHttpPort,
-    udpPort,
-    wsUrl: `ws://localhost:${boundHttpPort}/ws/session`,
+    // Reduced profiles skip the WS upgrade and never bind UDP, so they must not
+    // advertise those endpoints.
+    ...(realtimeAudio
+      ? { udpPort, wsUrl: `ws://localhost:${boundHttpPort}/ws/session` }
+      : {}),
     async stop() {
       if (realtimeAudio) {
         stopOwnershipRefreshLoop();

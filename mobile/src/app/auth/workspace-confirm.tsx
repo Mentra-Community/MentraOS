@@ -1,8 +1,10 @@
-import {useState} from "react"
+import {useFocusEffect, useNavigation} from "expo-router"
+import {useCallback, useEffect, useRef, useState} from "react"
 import {ActivityIndicator, ScrollView, View} from "react-native"
 
 import {WorkspaceBrand} from "@/components/auth/WorkspaceBrand"
 import {Button, Header, Screen, Text} from "@/components/ignite"
+import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {useDeployment} from "@/services/deployment"
@@ -12,13 +14,50 @@ import {LogoutUtils} from "@/utils/LogoutUtils"
 export default function WorkspaceConfirmScreen() {
   const {candidate, clearCandidate, store} = useDeployment()
   const {goBack, replace} = useNavigationStore.getState()
+  const navigation = useNavigation()
   const {theme} = useAppTheme()
   const [activating, setActivating] = useState(false)
+  const activatingRef = useRef(false)
+  const mounted = useRef(true)
+  useEffect(
+    () => () => {
+      mounted.current = false
+    },
+    [],
+  )
+
+  const cancel = useCallback(() => {
+    if (activatingRef.current) return
+    clearCandidate()
+    goBack()
+  }, [clearCandidate, goBack])
+
+  // Android hardware back routes through the navigation store; keep it in
+  // step with the header action so activation cannot be abandoned midway.
+  focusEffectPreventBack(cancel)
+
+  // iOS swipe-back and any other removal bypass the store. Block removal
+  // while the local teardown runs so the captured candidate is never
+  // activated on a screen the user has already left.
+  useFocusEffect(
+    useCallback(
+      () =>
+        navigation.addListener("beforeRemove", (event) => {
+          if (activatingRef.current) event.preventDefault()
+        }),
+      [navigation],
+    ),
+  )
 
   if (!candidate) {
     return (
       <Screen preset="fixed">
-        <Header title={translate("workspace:title")} leftIcon="chevron-left" onLeftPress={goBack} />
+        <Header
+          title={translate("workspace:title")}
+          leftIcon="chevron-left"
+          leftIconAccessibilityLabel={translate("common:back")}
+          onLeftPress={goBack}
+        />
         <View className="flex-1 items-center justify-center p-6">
           <Text className="text-center text-muted-foreground mb-6">{translate("workspace:candidateExpired")}</Text>
           <Button text={translate("workspace:enterAnotherUrl")} onPress={() => replace("/auth/workspace")} />
@@ -34,7 +73,8 @@ export default function WorkspaceConfirmScreen() {
       : translate("workspace:mentraAccount")
 
   const activate = async () => {
-    if (activating) return
+    if (activatingRef.current) return
+    activatingRef.current = true
     setActivating(true)
     try {
       // Workspace activation is a hard local identity boundary. Clear any
@@ -42,11 +82,13 @@ export default function WorkspaceConfirmScreen() {
       // persisting the customer deployment. Do not call Mentra sign-out: a
       // fresh workspace enrollment must not contact Mentra infrastructure.
       await LogoutUtils.performCompleteLogout({skipAuthSignOut: true})
+      if (!mounted.current) return
       store.activate(candidate)
       clearCandidate()
       replace("/auth/workspace-signin")
     } finally {
-      setActivating(false)
+      activatingRef.current = false
+      if (mounted.current) setActivating(false)
     }
   }
 
@@ -55,10 +97,8 @@ export default function WorkspaceConfirmScreen() {
       <Header
         title={translate("workspace:confirmTitle")}
         leftIcon="chevron-left"
-        onLeftPress={() => {
-          clearCandidate()
-          goBack()
-        }}
+        leftIconAccessibilityLabel={translate("common:back")}
+        onLeftPress={cancel}
       />
       <ScrollView contentContainerClassName="flex-grow" showsVerticalScrollIndicator={false}>
         <View className="flex-1 p-4">

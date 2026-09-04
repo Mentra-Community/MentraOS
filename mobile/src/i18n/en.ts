@@ -97,6 +97,9 @@ const en = {
       "Could not connect to the custom server. Please try using the default server or check your connection.",
     upToDateTitle: "Up to Date",
     upToDateDescription: "MentraOS is up to date. Returning to home...",
+    managedUpdateDescription:
+      "This version of the Mentra App is no longer supported by {{name}}. Updates are delivered by your organization's device management. Contact your IT administrator to update.",
+    contactSupport: "Contact support",
   },
   simulatedGlasses: {
     showDashboard: "Show Dashboard",

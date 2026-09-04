@@ -1,3 +1,4 @@
+import {SessionRevocationError} from "@mentra/cloud-client"
 import {engine} from "@mentra/engine"
 
 import mantle from "@/services/MantleManager"
@@ -40,7 +41,18 @@ export class LogoutUtils {
       try {
         await cloudClient.clearAuthSession()
       } catch (error) {
-        console.warn(`${this.TAG}: Core session revocation failed; local credentials were cleared`, error)
+        if (error instanceof SessionRevocationError) {
+          // Local credentials are gone, but Core could not confirm revocation
+          // after bounded retries, so the server session may outlive this
+          // device until its refresh token expires. Record it loudly rather
+          // than reporting a fully confirmed sign-out.
+          console.error(
+            `${this.TAG}: Core could not confirm session revocation; the session expires server-side`,
+            error,
+          )
+        } else {
+          console.warn(`${this.TAG}: Core session revocation failed; local credentials were cleared`, error)
+        }
       }
       if (!options.skipAuthSignOut) {
         await this.clearAuthSession()

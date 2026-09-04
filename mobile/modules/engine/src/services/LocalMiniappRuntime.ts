@@ -75,7 +75,7 @@ import ttsModelManager from "./TTSModelManager"
 import {NavigationHandlers} from "./NavigationHandlers"
 import type {ClientApp} from "../types/applet"
 import {useAppStatusStore} from "../stores/apps"
-import {getDevAppAttestation, getDevAppSourcePackage} from "./AppRegistry"
+import appRegistry, {getDevAppAttestation, getDevAppSourcePackage} from "./AppRegistry"
 import {resolveForegroundLocationPermission} from "./ForegroundLocationPermission"
 import {advanceMiniappPingLiveness} from "./MiniappLiveness"
 import {listPhoneCalendarEvents, PhoneCalendarError} from "./PhoneCalendarService"
@@ -187,14 +187,7 @@ const LOG_TAG = "LOCAL_MINIAPP"
 const DIAGNOSTIC_MAX_LIST_ITEMS = 100
 const DIAGNOSTIC_MAX_STRING_LENGTH = 512
 
-function diagnosticStringList(values: Iterable<string>): string[] {
-  return [...values]
-    .map((value) => value.slice(0, DIAGNOSTIC_MAX_STRING_LENGTH))
-    .sort()
-    .slice(0, DIAGNOSTIC_MAX_LIST_ITEMS)
-}
-
-const SYSTEM_MINIAPP_PACKAGES = new Set([
+const SYSTEM_MINIAPP_PACKAGE_SET = new Set([
   "com.mentra.camera",
   "com.mentra.gallery",
   "com.mentra.settings",
@@ -205,6 +198,14 @@ const SYSTEM_MINIAPP_PACKAGES = new Set([
   "com.mentra.feedback",
   "com.mentra.miniappdev",
 ])
+
+function diagnosticStringList(values: Iterable<string>): string[] {
+  return [...values]
+    .map((value) => value.slice(0, DIAGNOSTIC_MAX_STRING_LENGTH))
+    .sort()
+    .slice(0, DIAGNOSTIC_MAX_LIST_ITEMS)
+}
+
 const PING_INTERVAL_MS = 5_000
 const MINIAPP_AUTH_REFRESH_HEADROOM_MS = 5 * 60 * 1000
 const MINIAPP_AUTH_REFRESH_MIN_DELAY_MS = 5_000
@@ -4150,8 +4151,15 @@ class LocalMiniappRuntime {
   }
 
   private isSystemPackage(packageName: string): boolean {
-    if (SYSTEM_MINIAPP_PACKAGES.has(packageName)) return true
-    return this.interopApps().find((app) => app.packageName === packageName)?.isMiniappDev === true
+    const app = this.interopApps().find((candidate) => candidate.packageName === packageName)
+    if (SYSTEM_MINIAPP_PACKAGE_SET.has(packageName)) {
+      if (app?.offline) return true
+      if (app?.local && app.version) {
+        return appRegistry.getReleaseIdentity(packageName, app.version)?.source === "bundled_asset"
+      }
+      return false
+    }
+    return app?.isMiniappDev === true
   }
 
   private async startInteropApp(packageName: string): Promise<boolean> {

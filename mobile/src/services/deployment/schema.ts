@@ -3,7 +3,7 @@ import {z} from "zod"
 
 const nullableUrl = z.string().url().nullable()
 const packageName = z.string().regex(/^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z0-9_]+)+$/)
-const semanticVersion = z.string().refine((value) => semver.valid(value) !== null)
+const semanticVersion = z.string().refine((value) => semver.valid(value) === value)
 const sha256 = z.string().regex(/^[0-9a-f]{64}$/i)
 const miniappConfigurationKey = z.string().regex(/^[A-Za-z][A-Za-z0-9._-]{0,63}$/)
 const miniappConfigurationValue = z.string().refine((value) => new TextEncoder().encode(value).byteLength <= 2_048)

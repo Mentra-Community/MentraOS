@@ -32,6 +32,21 @@ interface StatusConfig {
 const NAVIGATION_DELAY = 300
 const DEEPLINK_DELAY = 1000
 
+/**
+ * The offline required-version cache is namespaced by the service that issued
+ * the policy. Releases before Runtime owned `/api/client/min-version` cached a
+ * bare Core floor under the same setting, and the two services can carry
+ * different floors, so a value without this prefix is ignored rather than
+ * enforced against the installed client.
+ */
+const CACHED_VERSION_SOURCE = "runtime:"
+
+function readCachedRequiredVersion(value: unknown): string | null {
+  if (typeof value !== "string" || !value.startsWith(CACHED_VERSION_SOURCE)) return null
+  const version = value.slice(CACHED_VERSION_SOURCE.length)
+  return semver.valid(version) === version ? version : null
+}
+
 export default function InitScreen() {
   // Hooks
   const {theme} = useAppTheme()
@@ -195,7 +210,7 @@ export default function InitScreen() {
       activeDeployment.kind === "workspace"
         ? activeDeployment.manifest.services.runtimeUrl!
         : resolvedEndpoints().runtime
-    const cachedVersion = activeDeployment.kind === "consumer" ? cachedRequiredVersion : null
+    const cachedVersion = activeDeployment.kind === "consumer" ? readCachedRequiredVersion(cachedRequiredVersion) : null
 
     // Runtime serves the policy before authentication. Retries cover boot-time
     // DNS blips that would otherwise dump users at the connection screen.
@@ -224,8 +239,12 @@ export default function InitScreen() {
     console.log(`INDEX: Version check: local=${localVer}, required=${required}, recommended=${recommended}`)
 
     // Cache the required version for offline enforcement
-    if (activeDeployment.kind === "consumer" && required && required !== cachedRequiredVersion) {
-      setCachedRequiredVersion(required)
+    if (
+      activeDeployment.kind === "consumer" &&
+      required &&
+      required !== readCachedRequiredVersion(cachedRequiredVersion)
+    ) {
+      setCachedRequiredVersion(`${CACHED_VERSION_SOURCE}${required}`)
     }
 
     if (semver.lt(localVer, recommended)) {
@@ -251,6 +270,17 @@ export default function InitScreen() {
       console.error("Error opening store:", error)
     } finally {
       setIsUpdating(false)
+    }
+  }
+
+  const managedSupportUrl = activeDeployment.kind === "workspace" ? activeDeployment.manifest.links.supportUrl : null
+
+  const handleContactSupport = async (): Promise<void> => {
+    if (!managedSupportUrl) return
+    try {
+      await Linking.openURL(managedSupportUrl)
+    } catch (error) {
+      console.error("Error opening support link:", error)
     }
   }
 
@@ -299,6 +329,16 @@ export default function InitScreen() {
           description: translate(
             canSkipUpdate ? "versionCheck:updateAvailableDescription" : "versionCheck:updateRequiredDescription",
           ),
+          // A managed workspace distributes the app through its own device
+          // management and has no store link. Tell the user where updates
+          // come from instead of leaving them on a screen with no action.
+          ...(activeDeployment.kind === "workspace" && !updateUrl
+            ? {
+                description: translate("versionCheck:managedUpdateDescription", {
+                  name: activeDeployment.manifest.displayName,
+                }),
+              }
+            : {}),
         }
 
       default:
@@ -412,6 +452,10 @@ export default function InitScreen() {
             disabled={isUpdating}
             tx={canSkipUpdate ? "versionCheck:update" : "versionCheck:updateRequiredButton"}
           />
+        )}
+
+        {state === "outdated" && !updateUrl && managedSupportUrl && (
+          <Button flexContainer preset="primary" onPress={handleContactSupport} tx="versionCheck:contactSupport" />
         )}
 
         {(state === "connection" || state === "auth" || state === "outdated") && isUsingCustomUrl && (

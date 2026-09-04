@@ -27,13 +27,24 @@ import {HardwareRequirement, HardwareRequirementLevel, HardwareType} from "../ty
 import {configuredDevHost} from "../utils/configuredDevHost"
 import {storage} from "../utils/storage/storage"
 import {printDirectory} from "../utils/storage/zip"
-import {isLocalMiniappAllowed} from "../runtime/bootstrap"
+import {isInstalledMiniappAllowed, isOfflineSystemMiniappAllowed} from "../runtime/bootstrap"
 import {checkManifestVersions} from "./manifestVersionGate"
 import {normalizeManifestActions} from "./manifestActions"
 import {miniappInstallIdentityError, type MiniappInstallExpectations} from "./miniappInstallIdentity"
 import {miniappRunningRegistry} from "./MiniappRunningRegistry"
 
 export {normalizeManifestActions} from "./manifestActions"
+
+let installQueue: Promise<void> = Promise.resolve()
+
+function serializeInstall<T>(operation: () => Promise<T>): Promise<T> {
+  const result = installQueue.then(operation, operation)
+  installQueue = result.then(
+    () => undefined,
+    () => undefined,
+  )
+  return result
+}
 
 const ALLOWED_PERMISSION_TYPES: ReadonlySet<AppPermissionType> = new Set<AppPermissionType>([
   "MICROPHONE",
@@ -463,19 +474,21 @@ class AppRegistry {
       rejectExistingVersion?: boolean
     },
   ): AsyncResult<void, Error> {
-    return Res.try_async(async () => {
-      const {packageName, version} = await downloadAndInstallMiniApp(url, opts?.versionOverride, {
-        packageName: opts?.expectedPackageName,
-        version: opts?.expectedVersion,
-        rejectExistingVersion: opts?.rejectExistingVersion,
-      })
-      console.log("APP_REGISTRY: Downloaded and installed mini app")
-      this.finalizeInstall(
-        packageName,
-        version,
-        opts?.releaseIdentity ?? {source: version.startsWith("dev-") ? "dev_snapshot" : "direct_download"},
-      )
-    })
+    return Res.try_async(() =>
+      serializeInstall(async () => {
+        const {packageName, version} = await downloadAndInstallMiniApp(url, opts?.versionOverride, {
+          packageName: opts?.expectedPackageName,
+          version: opts?.expectedVersion,
+          rejectExistingVersion: opts?.rejectExistingVersion,
+        })
+        console.log("APP_REGISTRY: Downloaded and installed mini app")
+        this.finalizeInstall(
+          packageName,
+          version,
+          opts?.releaseIdentity ?? {source: version.startsWith("dev-") ? "dev_snapshot" : "direct_download"},
+        )
+      }),
+    )
   }
 
   /**
@@ -495,16 +508,18 @@ class AppRegistry {
       rejectExistingVersion?: boolean
     },
   ): AsyncResult<{packageName: string; version: string}, Error> {
-    return Res.try_async(async () => {
-      const {packageName, version} = await unpackMiniApp(zipPath, opts?.versionOverride, {
-        packageName: opts?.expectedPackageName,
-        version: opts?.expectedVersion,
-        rejectExistingVersion: opts?.rejectExistingVersion,
-      })
-      console.log("APP_REGISTRY: Installed mini app from local zip")
-      this.finalizeInstall(packageName, version, opts?.releaseIdentity ?? {source: "bundled_asset"})
-      return {packageName, version}
-    })
+    return Res.try_async(() =>
+      serializeInstall(async () => {
+        const {packageName, version} = await unpackMiniApp(zipPath, opts?.versionOverride, {
+          packageName: opts?.expectedPackageName,
+          version: opts?.expectedVersion,
+          rejectExistingVersion: opts?.rejectExistingVersion,
+        })
+        console.log("APP_REGISTRY: Installed mini app from local zip")
+        this.finalizeInstall(packageName, version, opts?.releaseIdentity ?? {source: "bundled_asset"})
+        return {packageName, version}
+      }),
+    )
   }
 
   /**
@@ -532,6 +547,22 @@ class AppRegistry {
   public getReleaseIdentity(packageName: string, version: string): MiniappReleaseIdentity | null {
     const result = storage.load<MiniappReleaseIdentity>(releaseIdentityKey(packageName, version))
     return result.is_ok() ? result.value : null
+  }
+
+  /** Enumerate installed releases carrying deployment ownership metadata. */
+  public getDeploymentOwnedReleases(): Array<{
+    packageName: string
+    version: string
+    identity: MiniappReleaseIdentity
+  }> {
+    const releases: Array<{packageName: string; version: string; identity: MiniappReleaseIdentity}> = []
+    for (const packageName of this.getPackageNames()) {
+      for (const version of this.getInstalledVersions(packageName)) {
+        const identity = this.getReleaseIdentity(packageName, version)
+        if (identity?.source === "deployment_manifest") releases.push({packageName, version, identity})
+      }
+    }
+    return releases
   }
 
   public installFromJsonUrl(baseUrl: string): AsyncResult<{packageName: string; version: string; name: string}, Error> {
@@ -740,15 +771,19 @@ class AppRegistry {
    * registration in finalizeInstall. Native offline apps keep top priority.
    */
   private mergeProjectedApps(diskApps: ClientApp[]): ClientApp[] {
-    const offline = this.projectOfflineApps().filter((app) => isLocalMiniappAllowed(app.packageName))
+    const offline = this.projectOfflineApps().filter((app) => isOfflineSystemMiniappAllowed(app.packageName))
     const offlinePackages = new Set(offline.map((app) => app.packageName))
     const dev = this.projectDevApps().filter(
-      (app) => isLocalMiniappAllowed(app.packageName) && !offlinePackages.has(app.packageName),
+      (app) => isInstalledMiniappAllowed(app.packageName, undefined, null) && !offlinePackages.has(app.packageName),
     )
     const devPackages = new Set(dev.map((app) => app.packageName))
     const installed = diskApps.filter(
       (app) =>
-        isLocalMiniappAllowed(app.packageName) &&
+        isInstalledMiniappAllowed(
+          app.packageName,
+          app.version,
+          app.version ? this.getReleaseIdentity(app.packageName, app.version) : null,
+        ) &&
         !offlinePackages.has(app.packageName) &&
         !devPackages.has(app.packageName),
     )

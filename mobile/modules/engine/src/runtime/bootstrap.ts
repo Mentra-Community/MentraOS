@@ -31,7 +31,9 @@ export interface IslandConfigValues {
   /** Open Runtime's live WebSocket/audio session. Defaults to true. */
   runtimeRealtimeSession?: boolean
   /** Complete allowlist for bundled/local miniapps; null or omitted allows all. */
-  localMiniappAllowlist?: string[] | null
+  localMiniappAllowlist?: readonly string[] | null
+  /** Provenance-aware policy for workspace SYSTEM and managed miniapps. */
+  localMiniappPolicy?: LocalMiniappPolicy
   /** Optional per-package configuration supplied by the host deployment. */
   miniappConfiguration?: Readonly<Record<string, Readonly<Record<string, string>>>>
   /** Deployment-scoped key for the persisted Core refresh token. */
@@ -52,6 +54,19 @@ export interface IslandConfigValues {
    * after the laptop changes networks. Omitted in production/OEM builds.
    */
   devServerHost?: () => string | undefined
+}
+
+export interface ManagedMiniappPolicyEntry {
+  packageName: string
+  version: string
+  sha256: string
+  deploymentId: string
+  deploymentOrigin: string
+}
+
+export interface LocalMiniappPolicy {
+  systemPackageNames: readonly string[] | null
+  managed: readonly ManagedMiniappPolicyEntry[]
 }
 
 export type IslandFeatureName = "managedStreams" | "nativeMeetings" | "cloudSpeech" | "onDeviceSpeech" | "navigation"
@@ -92,9 +107,50 @@ export interface IslandConfigureOptions {
   ui?: IslandUiSeams
 }
 
-export function isLocalMiniappAllowed(packageName: string): boolean {
+export function isLocalMiniappPackageAllowed(packageName: string): boolean {
+  const policy = options?.config?.localMiniappPolicy
+  if (policy) {
+    return (
+      policy.systemPackageNames === null ||
+      policy.systemPackageNames.includes(packageName) ||
+      policy.managed.some((entry) => entry.packageName === packageName)
+    )
+  }
   const allowlist = options?.config?.localMiniappAllowlist
   return allowlist == null || allowlist.includes(packageName)
+}
+
+export function isOfflineSystemMiniappAllowed(packageName: string): boolean {
+  const policy = options?.config?.localMiniappPolicy
+  if (!policy) return isLocalMiniappPackageAllowed(packageName)
+  return policy.systemPackageNames === null || policy.systemPackageNames.includes(packageName)
+}
+
+export function isInstalledMiniappAllowed(
+  packageName: string,
+  version: string | undefined,
+  releaseIdentity: {
+    source: string
+    bundleSha256?: string
+    deploymentId?: string
+    deploymentOrigin?: string
+  } | null,
+): boolean {
+  const policy = options?.config?.localMiniappPolicy
+  if (!policy) return isLocalMiniappPackageAllowed(packageName)
+
+  const systemApproved = policy.systemPackageNames === null || policy.systemPackageNames.includes(packageName)
+  if (systemApproved && releaseIdentity?.source === "bundled_asset") return true
+  if (!version || releaseIdentity?.source !== "deployment_manifest") return false
+
+  return policy.managed.some(
+    (entry) =>
+      entry.packageName === packageName &&
+      entry.version === version &&
+      entry.sha256 === releaseIdentity.bundleSha256?.toLowerCase() &&
+      entry.deploymentId === releaseIdentity.deploymentId &&
+      entry.deploymentOrigin === releaseIdentity.deploymentOrigin,
+  )
 }
 
 /** Read a defensive package-scoped configuration snapshot. */
@@ -124,7 +180,31 @@ export function configure(opts: IslandConfigureOptions): void {
     console.warn("engine.configure() called after engine.start(); ignored — stop() the runtime before reconfiguring")
     return
   }
-  options = opts
+  const localMiniappAllowlist = opts.config?.localMiniappAllowlist
+  const localMiniappPolicy = opts.config?.localMiniappPolicy
+  options = {
+    ...opts,
+    config: opts.config
+      ? {
+          ...opts.config,
+          localMiniappAllowlist: Array.isArray(localMiniappAllowlist)
+            ? Object.freeze([...localMiniappAllowlist])
+            : localMiniappAllowlist,
+          localMiniappPolicy: localMiniappPolicy
+            ? Object.freeze({
+                systemPackageNames: Array.isArray(localMiniappPolicy.systemPackageNames)
+                  ? Object.freeze([...localMiniappPolicy.systemPackageNames])
+                  : null,
+                managed: Object.freeze(
+                  localMiniappPolicy.managed.map((entry) =>
+                    Object.freeze({...entry, sha256: entry.sha256.toLowerCase()}),
+                  ),
+                ),
+              })
+            : undefined,
+        }
+      : undefined,
+  }
 }
 
 /**

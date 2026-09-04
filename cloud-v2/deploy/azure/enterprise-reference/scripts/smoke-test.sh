@@ -16,7 +16,7 @@ done
 curl --fail --show-error --silent "$WORKSPACE/healthz" >/dev/null
 curl --fail --show-error --silent "$WORKSPACE/ready" >/dev/null
 curl --fail --show-error --silent "$WORKSPACE/api/client/min-version" | jq -e '
-  def semver: test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$");
+  def semver: test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$");
   (.data.required | type == "string" and semver) and
   (.data.recommended | type == "string" and semver)
 ' >/dev/null
@@ -32,7 +32,7 @@ if ! jq -e --arg origin "$WORKSPACE" '
   (.telemetry | type == "boolean") and
   (.auth.sessionScopes | length > 0 and all(endswith("/mentra.session"))) and
   (.miniapps.managed | type == "array") and
-  ((.miniapps.configuration // {}) | type == "object") and
+  ((.miniapps.configuration == null) or (.miniapps.configuration | type == "object")) and
   (.branding.logoUrls.light | startswith($origin + "/")) and
   (.branding.logoUrls.dark | startswith($origin + "/"))
 ' <<<"$manifest" >/dev/null; then

@@ -143,7 +143,7 @@ export default function LoginScreen() {
               // Stop Mentra telemetry/cloud effects before contacting the
               // customer workspace, even when a prior consumer selection was
               // persisted on this installation.
-              store.clearSelection()
+              store.beginWorkspaceSelection()
               push("/auth/workspace")
             }}
             LeftAccessory={() => <Icon name="building" size={20} color={theme.colors.foreground} />}

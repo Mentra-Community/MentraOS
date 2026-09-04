@@ -1,4 +1,4 @@
-import {useState} from "react"
+import {useEffect, useRef, useState} from "react"
 import {ActivityIndicator, Keyboard, ScrollView, TextInput, View} from "react-native"
 
 import {Button, Header, Screen, Text} from "@/components/ignite"
@@ -14,8 +14,18 @@ export default function WorkspaceScreen() {
   const {goBack, push} = useNavigationStore.getState()
   const {setCandidate, clearCandidate} = useDeployment()
   const {theme} = useAppTheme()
+  const requestGeneration = useRef(0)
+
+  useEffect(
+    () => () => {
+      requestGeneration.current += 1
+    },
+    [],
+  )
 
   const resolveWorkspace = async () => {
+    const generation = requestGeneration.current + 1
+    requestGeneration.current = generation
     Keyboard.dismiss()
     setError(null)
     setLoading(true)
@@ -23,14 +33,16 @@ export default function WorkspaceScreen() {
       const candidate = await resolveDeploymentCandidate(workspaceUrl, {
         allowInsecureLocalhost: __DEV__,
       })
+      if (generation !== requestGeneration.current) return
       setCandidate(candidate)
       push("/auth/workspace-confirm")
     } catch (cause) {
+      if (generation !== requestGeneration.current) return
       console.warn("Workspace resolution failed", cause)
       const message = workspaceResolutionMessage(cause)
       setError(message)
     } finally {
-      setLoading(false)
+      if (generation === requestGeneration.current) setLoading(false)
     }
   }
 
@@ -40,6 +52,7 @@ export default function WorkspaceScreen() {
         title={translate("workspace:title")}
         leftIcon="chevron-left"
         onLeftPress={() => {
+          requestGeneration.current += 1
           clearCandidate()
           goBack()
         }}
@@ -100,6 +113,7 @@ export default function WorkspaceScreen() {
 function workspaceResolutionMessage(cause: unknown): string {
   if (!(cause instanceof DeploymentResolutionError)) return translate("workspace:unknownResolutionError")
   if (cause.code === "invalid-workspace") return cause.message
-  if (cause.code === "network") return translate("workspace:notFoundError")
+  if (cause.code === "not-found") return translate("workspace:notFoundError")
+  if (cause.code === "network") return translate("workspace:unknownResolutionError")
   return translate("workspace:configurationError")
 }

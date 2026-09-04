@@ -416,7 +416,10 @@ function construct(): void {
   if (!configuredAuth) throw new Error("cloudClient: engine.configure({auth}) not called")
   const coreAuth = configuredAuth.getSubjectToken ? {getSubjectToken} : undefined
   const auth = configuredAuth.getRuntimeToken
-    ? {runtime: {getToken: configuredAuth.getRuntimeToken}}
+    ? {
+        ...(coreAuth && endpoints.core ? {core: coreAuth} : {}),
+        runtime: {getToken: configuredAuth.getRuntimeToken},
+      }
     : shouldUseLocalDevRuntimeToken(endpoints)
       ? {
           ...(coreAuth ? {core: coreAuth} : {}),
@@ -733,7 +736,7 @@ export const cloudClientService = {
   },
 
   hasCore(): boolean {
-    return Boolean(client?.core ?? resolveEndpoints().core)
+    return Boolean(client?.core)
   },
 
   syncCoreTokenToBluetooth(): Promise<string> {

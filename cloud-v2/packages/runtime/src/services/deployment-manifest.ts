@@ -63,7 +63,7 @@ export function assertManifestMatchesRuntimeServices(
     runtimeRealtimeSession: services.has("realtime-audio"),
     managedStreams: services.has("camera"),
     nativeMeetings: services.has("meetings"),
-    cloudSpeech: services.has("realtime-audio") || services.has("tts"),
+    cloudSpeech: services.has("realtime-audio"),
     navigation: services.has("maps"),
   };
   const mismatches = (Object.keys(actual) as Array<keyof typeof actual>).filter(

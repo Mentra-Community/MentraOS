@@ -409,8 +409,10 @@ policy tests
       embedded Mentra profile uses `null`; the customer template pins Mentra Call
       and explicitly approved utilities. Secondary shell routes to shared
       built-in screens are not part of the v1 acceptance gate.
-- [ ] Filter the pairing picker with `glasses.allowedModelsOverride`; keep vendor
-      behavior in model adapters and do not add AR99-specific schema.
+- [ ] Filter every pairing entry point with `glasses.allowedModelsOverride`;
+      keep vendor behavior in model adapters and do not add AR99-specific
+      schema. Allowing a model authorizes pairing, not public vendor traffic;
+      vendor integrations without manifest-selected endpoints fail closed.
 - [ ] Disable navigation, cloud speech, cloud reports, public store/registry, and
       any other unavailable integration in the call-focused template.
 - [ ] Add an integration inventory test asserting every known network path is

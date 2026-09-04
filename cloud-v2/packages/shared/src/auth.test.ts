@@ -45,11 +45,12 @@ describe("runtime token verification", () => {
       expiresInSeconds: 60,
     })
 
-    await expect(verifyRuntimeToken(token)).resolves.toMatchObject({
+    await expect(verifyRuntimeToken(token)).resolves.toEqual({
       mentraUserId: "user-1",
       tenantId: "oem-1",
       sessionId: "runtime_runtime-jti",
       jti: "runtime-jti",
+      exp: expect.any(Number),
     })
   })
 
@@ -81,12 +82,16 @@ describe("runtime token verification", () => {
       expiresInSeconds: 60,
     })
 
-    await expect(verifyRuntimeToken(token)).resolves.toMatchObject({
+    await expect(verifyRuntimeToken(token)).resolves.toEqual({
       mentraUserId: "mu_01TEST",
       tenantId: "acme-private",
       sessionId: "sess_01TEST",
+      jti: expect.any(String),
+      exp: expect.any(Number),
       federatedIdentity: {
+        providerId: "workforce",
         providerKind: "microsoft-entra",
+        issuer: "https://login.microsoftonline.com/tenant/v2.0",
         subject: "employee-object-id",
         directoryTenantId: "tenant",
       },
@@ -114,11 +119,12 @@ describe("runtime token verification", () => {
       expiresInSeconds: 60,
     })
 
-    await expect(verifyRuntimeToken(token)).resolves.toMatchObject({
+    await expect(verifyRuntimeToken(token)).resolves.toEqual({
       mentraUserId: "user-1",
       tenantId: "tenant-1",
       sessionId: "runtime_runtime-jti",
       jti: "runtime-jti",
+      exp: expect.any(Number),
     })
   })
 
@@ -143,11 +149,12 @@ describe("runtime token verification", () => {
       expiresInSeconds: 60,
     })
 
-    await expect(verifyRuntimeToken(token)).resolves.toMatchObject({
+    await expect(verifyRuntimeToken(token)).resolves.toEqual({
       mentraUserId: "user-1",
       tenantId: "tenant-legacy",
       sessionId: "runtime_runtime-jti",
       jti: "runtime-jti",
+      exp: expect.any(Number),
     })
   })
 
@@ -196,9 +203,12 @@ describe("runtime token verification", () => {
       scp: "mentra.runtime",
       azp: "native-client",
     })
-    await expect(verifyRuntimeToken(valid)).resolves.toMatchObject({
+    await expect(verifyRuntimeToken(valid)).resolves.toEqual({
       mentraUserId: "employee-1",
       tenantId: "tenant-1",
+      sessionId: expect.stringMatching(/^runtime_/),
+      jti: expect.any(String),
+      exp: expect.any(Number),
     })
 
     const wrongClient = await signClaims(keypair.privateKey, {

@@ -2,6 +2,7 @@ import {storage} from "@/utils/storage/storage"
 
 import type {ActiveDeployment, ConsumerDeployment, DeploymentCandidate, WorkspaceDeployment} from "./types"
 import {deploymentManifestSchema} from "./schema"
+import {validateDeploymentManifest} from "./resolver"
 
 const ACTIVE_DEPLOYMENT_KEY = "mentra.deployment.active.v1"
 const CONSUMER_DEPLOYMENT: ConsumerDeployment = Object.freeze({kind: "consumer", source: "embedded"})
@@ -34,6 +35,7 @@ class MmkvDeploymentStorage implements DeploymentStorage {
 export class DeploymentStore {
   private active: ActiveDeployment
   private resolved: boolean
+  private selectingWorkspace = false
   private readonly listeners = new Set<(deployment: ActiveDeployment, resolved: boolean) => void>()
 
   constructor(private readonly persistence: DeploymentStorage = new MmkvDeploymentStorage()) {
@@ -49,6 +51,11 @@ export class DeploymentStore {
   /** False only while a fresh install is waiting for Mentra vs workspace selection. */
   isResolved(): boolean {
     return this.resolved
+  }
+
+  /** True while the user is deliberately replacing a consumer selection. */
+  isSelectingWorkspace(): boolean {
+    return this.selectingWorkspace
   }
 
   /** Whether Mentra-owned telemetry may initialize for the current selection. */
@@ -67,18 +74,28 @@ export class DeploymentStore {
       activatedAt: new Date().toISOString(),
     }
     this.persistence.save(deployment)
+    this.selectingWorkspace = false
     this.setActive(deployment)
     return deployment
   }
 
   returnToMentra(): void {
     this.persistence.save(CONSUMER_DEPLOYMENT)
+    this.selectingWorkspace = false
     this.setActive(CONSUMER_DEPLOYMENT, true)
+  }
+
+  /** Enter discovery without allowing cached consumer credentials to opt back in. */
+  beginWorkspaceSelection(): void {
+    this.persistence.remove()
+    this.selectingWorkspace = true
+    this.setActive(CONSUMER_DEPLOYMENT, false)
   }
 
   /** Return to the neutral selector without opting into consumer telemetry. */
   clearSelection(): void {
     this.persistence.remove()
+    this.selectingWorkspace = false
     this.setActive(CONSUMER_DEPLOYMENT, false)
   }
 
@@ -123,6 +140,7 @@ function restoreDeploymentSelection(value: unknown): PersistedDeploymentSelectio
     ) {
       return null
     }
+    validateDeploymentManifest(parsedManifest.data, candidate.workspaceOrigin)
   } catch {
     return null
   }

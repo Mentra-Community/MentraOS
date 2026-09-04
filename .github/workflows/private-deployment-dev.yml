@@ -116,7 +116,9 @@ jobs:
 
       - name: Sign in to Azure with GitHub OIDC
         if: inputs.dry_run != true
-        uses: azure/login@v2
+        # Pinned to the reviewed v2.3.1 commit; this step mints an OIDC token for
+        # an Azure Contributor identity, so the mutable tag is not acceptable.
+        uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2
         with:
           client-id: ${{ vars.ENTERPRISE_DEV_AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.ENTERPRISE_DEV_AZURE_TENANT_ID }}
@@ -217,6 +219,13 @@ jobs:
             --query properties.outputs.coreOrigin.value \
             --output tsv)
           [[ "$core_origin" == https://* ]]
+          core_hostname=$(az deployment group show \
+            --name private-deployment-dev \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --query properties.outputs.generatedCoreHostname.value \
+            --output tsv)
+          [[ "$core_hostname" == "$AZURE_CORE_CONTAINER_APP".*.azurecontainerapps.io ]]
+          [[ "$core_origin" == "https://$core_hostname" ]]
 
           curl_status() {
             curl \
@@ -321,10 +330,29 @@ jobs:
             --output tsv)
           test -n "$core_revision"
 
+          # The ready revisions must run exactly the digest-pinned image this
+          # run imported; otherwise the evidence would describe another build.
+          expected_image="${{ steps.source.outputs.image }}"
+          runtime_revision_image=$(az containerapp revision show \
+            --name "$AZURE_CONTAINER_APP" \
+            --revision "$revision" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --query 'properties.template.containers[0].image' \
+            --output tsv)
+          [[ "$runtime_revision_image" == "$expected_image" ]]
+          core_revision_image=$(az containerapp revision show \
+            --name "$AZURE_CORE_CONTAINER_APP" \
+            --revision "$core_revision" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --query 'properties.template.containers[0].image' \
+            --output tsv)
+          [[ "$core_revision_image" == "$expected_image" ]]
+
           {
             echo "workspace_origin=$workspace_origin"
             echo "image_digest=$image_digest"
             echo "revision=$revision"
+            echo "core_hostname=$core_hostname"
             echo "core_origin=$core_origin"
             echo "core_revision=$core_revision"
           } >> "$GITHUB_OUTPUT"
@@ -356,6 +384,7 @@ jobs:
           --revision "${{ steps.verify.outputs.revision }}"
           --core-revision "${{ steps.verify.outputs.core_revision }}"
           --workspace-origin "${{ steps.verify.outputs.workspace_origin }}"
+          --core-hostname "${{ steps.verify.outputs.core_hostname }}"
           --core-origin "${{ steps.verify.outputs.core_origin }}"
           --checks private-deployment-checks.json
           --completed-at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"

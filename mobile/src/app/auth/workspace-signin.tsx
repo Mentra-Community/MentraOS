@@ -30,7 +30,10 @@ export default function WorkspaceSignInScreen() {
     replaceAll("/auth/start")
   }
 
-  focusEffectPreventBack(() => cancelWorkspace())
+  focusEffectPreventBack((event) => {
+    if (event && event.actionType !== "GO_BACK" && event.actionType !== "POP") return
+    cancelWorkspace()
+  })
 
   if (activeDeployment.kind !== "workspace") {
     return (

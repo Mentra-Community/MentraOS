@@ -111,6 +111,11 @@ generated Runtime hostname and a TXT record named `asuid.<workspace-hostname>`
 whose value is `customDomainVerificationId`. Set `workspaceHostname` in the
 configuration file and run the same deployment command again.
 
+Use a subdomain for the workspace hostname. An apex domain cannot be a CNAME
+target; it needs an A record to the environment's static inbound IP and TXT or
+HTTP domain-control validation, which the reference template does not
+configure (its managed certificate uses CNAME validation only).
+
 ## 3. Verify the manifest
 
 Confirm:

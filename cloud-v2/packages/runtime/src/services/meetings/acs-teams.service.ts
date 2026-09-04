@@ -7,6 +7,13 @@ const REQUIRED_TEAMS_SCOPES = new Set([
 ]);
 let microsoftJwks: ReturnType<typeof jose.createRemoteJWKSet> | undefined;
 
+export class TeamsIdentityRejectedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "TeamsIdentityRejectedError";
+  }
+}
+
 export interface VerifiedTeamsSubject {
   token: string;
   tenantId: string;
@@ -31,7 +38,7 @@ export async function verifyTeamsSubjectToken(
   const tenantId = process.env.ENTRA_TENANT_ID!;
   const clientId = process.env.ENTRA_CLIENT_ID!;
   if (expected.tenantId !== tenantId)
-    throw new Error("Teams token tenant does not match Runtime identity");
+    throw new TeamsIdentityRejectedError("Teams token tenant does not match Runtime identity");
 
   microsoftJwks ??= jose.createRemoteJWKSet(
     new URL(
@@ -42,14 +49,27 @@ export async function verifyTeamsSubjectToken(
     `https://login.microsoftonline.com/${tenantId}/v2.0`,
     `https://sts.windows.net/${tenantId}/`,
   ];
-  const { payload } = await jose.jwtVerify(token, microsoftJwks, {
-    issuer: issuers,
-    audience:
-      process.env.ENTRA_TEAMS_TOKEN_AUDIENCE ??
-      "https://auth.msft.communication.azure.com",
-    algorithms: ["RS256"],
-    clockTolerance: "2 minutes",
-  });
+  let payload: jose.JWTPayload;
+  try {
+    ({ payload } = await jose.jwtVerify(token, microsoftJwks, {
+      issuer: issuers,
+      audience:
+        process.env.ENTRA_TEAMS_TOKEN_AUDIENCE ??
+        "https://auth.msft.communication.azure.com",
+      algorithms: ["RS256"],
+      clockTolerance: "2 minutes",
+    }));
+  } catch (error) {
+    // Signature/claim/key mismatches are credential rejection. Network and
+    // JWKS timeouts remain provider outages so the API can return a 5xx.
+    if (
+      error instanceof jose.errors.JOSEError &&
+      error.code !== "ERR_JWKS_TIMEOUT"
+    ) {
+      throw new TeamsIdentityRejectedError("Teams token verification failed");
+    }
+    throw error;
+  }
   validateTeamsSubjectClaims(payload, expected, { tenantId, clientId });
   return { token, tenantId, objectId: expected.objectId };
 }
@@ -74,19 +94,19 @@ export function validateTeamsSubjectClaims(
   );
 
   if (expected.tenantId !== configuration.tenantId) {
-    throw new Error("Teams token tenant does not match Runtime identity");
+    throw new TeamsIdentityRejectedError("Teams token tenant does not match Runtime identity");
   }
   if (
     tokenTenant !== configuration.tenantId ||
     objectId !== expected.objectId
   ) {
-    throw new Error("Teams token subject does not match Runtime identity");
+    throw new TeamsIdentityRejectedError("Teams token subject does not match Runtime identity");
   }
   if (authorizedParty !== configuration.clientId)
-    throw new Error("Teams token was issued to an unexpected client");
+    throw new TeamsIdentityRejectedError("Teams token was issued to an unexpected client");
   for (const scope of REQUIRED_TEAMS_SCOPES) {
     if (!scopes.has(scope))
-      throw new Error("Teams token is missing required delegated permissions");
+      throw new TeamsIdentityRejectedError("Teams token is missing required delegated permissions");
   }
 }
 

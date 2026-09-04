@@ -2,6 +2,7 @@ import * as RNFS from "@dr.pogodin/react-native-fs"
 
 import BluetoothSdk from "@mentra/bluetooth-sdk"
 import {getAr99ApiConfig} from "@/services/ar99ApiConfig"
+import {deploymentStore} from "@/services/deployment"
 
 const AR99_OTA_APP_NAME = "AR99"
 const AR99_OTA_APP_TYPE = "juxinOTA"
@@ -49,7 +50,12 @@ export async function clearAr99OtaFiles(): Promise<void> {
   await RNFS.mkdir(AR99_OTA_DIR)
 }
 
-export async function checkAr99OtaVersion(currentVersion: string, serialNumber: string, appName: string): Promise<Ar99VersionInfo> {
+export async function checkAr99OtaVersion(
+  currentVersion: string,
+  serialNumber: string,
+  appName: string,
+): Promise<Ar99VersionInfo> {
+  assertConsumerVendorNetworkAllowed()
   const version = currentVersion.trim()
   const scope = serialNumber.trim()
   const nonce = Math.floor(Math.random() * 2147483647).toString()
@@ -81,7 +87,8 @@ export async function checkAr99OtaVersion(currentVersion: string, serialNumber: 
 
   const success = payload?.success === true || payload?.code === 0 || payload?.code === 200
   if (!response.ok || !payload || !success) {
-    const message = payload?.error?.detail || payload?.msg || payload?.message || `Version check failed: ${response.status}`
+    const message =
+      payload?.error?.detail || payload?.msg || payload?.message || `Version check failed: ${response.status}`
     throw new Error(message)
   }
 
@@ -104,6 +111,7 @@ export async function downloadAr99Firmware(
   expectedMd5: string,
   onProgress: (progress: number) => void,
 ): Promise<string> {
+  assertConsumerVendorNetworkAllowed()
   await clearAr99OtaFiles()
   const safeVersion = latestVersion.replace(/[^a-zA-Z0-9._-]/g, "_") || "latest"
   const filePath = `${AR99_OTA_DIR}/ar99_juxin_${safeVersion}_${Date.now()}.bin`
@@ -133,6 +141,12 @@ export async function downloadAr99Firmware(
   }
 
   return filePath
+}
+
+function assertConsumerVendorNetworkAllowed(): void {
+  if (deploymentStore.getActive().kind === "workspace") {
+    throw new Error("Vendor firmware services are unavailable in this organization workspace")
+  }
 }
 
 function emptyVersionInfo(currentVersion: string): Ar99VersionInfo {

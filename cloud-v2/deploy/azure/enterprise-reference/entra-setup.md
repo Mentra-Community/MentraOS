@@ -59,6 +59,12 @@ The public mobile client has no client secret. Register:
 These certificate hashes are public application identifiers, not private keys.
 Add another redirect only when qualifying a differently signed binary.
 
+`scripts/configure-entra.sh` (`IOS_REDIRECT`, `APK_REDIRECT`, `PLAY_REDIRECT`)
+is the authoritative source for these values; the list above mirrors it for
+review. When the release signing certificate or Google Play App Signing key
+changes, update the script and this section together, and do not copy the
+hashes into other runbooks.
+
 Do not configure custom signing keys or custom Attributes & Claims. The private
 stack relies on standard Entra OIDC claims.
 

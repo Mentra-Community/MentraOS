@@ -454,8 +454,8 @@ the selected adapter, such as **Continue with Microsoft** for
 `microsoft-entra`; a later OIDC workspace renders its own configured
 organization-account action through the same screen.
 
-Back or Cancel returns to the ordinary Mentra landing screen without changing
-endpoints or saving the candidate. A selected but unauthenticated workspace also
+Back returns to the ordinary Mentra landing screen without changing endpoints
+or saving the candidate. A selected but unauthenticated workspace also
 offers Use a different workspace and Return to Mentra. Returning clears the
 selection and restores the local landing screen.
 
@@ -753,10 +753,12 @@ Rules:
 
 - `deploymentId` namespaces credentials, token caches, local settings, and
   installed/running miniapp state.
-- `branding` is optional. When present, both transparent PNG logo variants are
-  required and must use the workspace origin. `light` is rendered on the app's
-  light background and `dark` on its dark background. A deployment may use the
-  same PNG URL for both. A failed or omitted logo falls back to the organization
+- `branding` is optional. When present, both PNG logo variants are required and
+  must use the workspace origin. `light` is rendered on the app's light
+  background and `dark` on its dark background, so transparent PNGs are
+  recommended; the resolver validates the URL origin and Runtime validates the
+  PNG MIME type, neither checks alpha. A deployment may use the same PNG URL
+  for both. A failed or omitted logo falls back to the organization
   icon and `displayName`; branding never blocks enrollment or sign-in.
 - The resolved Runtime URL equals the entered workspace origin in v1. Runtime or
   its ingress serves the well-known manifest.
@@ -792,12 +794,25 @@ Rules:
   allowlist. `null` uses the release's full built-in catalog, `[]` approves none,
   and a populated array approves only those package names. The embedded Mentra
   profile uses `null`; customer templates use an explicit release-pinned list.
+- Approval by package name is necessary but not sufficient for SYSTEM
+  authority. The Mentra App keeps a private host list of SYSTEM package names
+  (`SYSTEM_MINIAPP_PACKAGE_SET` in `LocalMiniappRuntime`) and grants host-only capabilities
+  such as inter-miniapp control only when the package is on that list, is
+  approved by the active manifest, and the installed release's recorded source
+  is `bundled_asset` (or it is an offline built-in). A downloaded, dev-snapshot,
+  or manifest-managed copy that reuses an approved package name runs without
+  SYSTEM authority. Engine's install policy applies the same rule: a
+  workspace-approved SYSTEM package is allowed only from a `bundled_asset`
+  release, and any other local release must match a `miniapps.managed` entry by
+  package, version, digest, deployment id, and origin.
 - ACS credentials, Core/Runtime URLs, and Entra scopes are host configuration.
   Provider credentials are not delivered to Mentra Call or another miniapp.
 - `miniapps.managed` contains customer-managed userland miniapps. It is not a
-  list of SYSTEM miniapps. Each entry pins a package name, semantic version,
-  same-origin ZIP URL, and SHA-256 digest. The Mentra App verifies the digest
-  and the ZIP's declared package/version before activating it.
+  list of SYSTEM miniapps, and the resolver rejects a manifest whose managed
+  entries name any built-in SYSTEM package. Each entry pins a package name,
+  semantic version, same-origin ZIP URL, and SHA-256 digest. The Mentra App
+  verifies the digest and the ZIP's declared package/version before activating
+  it.
 - `miniapps.configuration` is independent of installation. It maps a package
   name to that package's optional read-only runtime configuration, so it works
   for both bundled SYSTEM miniapps and downloaded userland miniapps in
@@ -836,9 +851,23 @@ Rules:
   that deployment. An empty list therefore means no managed userland miniapps.
   A failed download or install leaves the prior working version active, and the
   reconciler never adopts or removes installs it does not own.
-- V1 reconciles the validated manifest snapshot on activation and boot. A
-  customer manifest change is picked up when the workspace is selected again;
-  background manifest refresh is explicitly later work.
+- Ownership is recorded twice: in a JSON state file and in each installed
+  release's identity (`deployment_manifest` source, deployment id, origin, and
+  digest). Cleanup unions both. The reconciler asks the registry for every
+  deployment-owned release, so an install that landed before the state file
+  was written is still discovered and removed when its entry disappears, the
+  workspace changes, or the app returns to the consumer deployment. New
+  ownership is persisted before the older version is uninstalled, so an
+  interrupted upgrade leaves both releases discoverable rather than orphaned.
+- V1 reconciles the validated manifest snapshot on activation and boot.
+  Concretely, `MantleManager.initMiniapps()` calls
+  `deploymentManagedMiniappSync.sync()` with the active deployment right after
+  bundled miniapps are installed and before local miniapps autostart. That
+  path runs from `mantle.init()` on every app boot, and a deployment change
+  tears Mantle down and re-enters the same boot route, so activation is
+  covered by the same call. A customer manifest change is picked up when the
+  workspace is selected again; background manifest refresh is explicitly later
+  work.
 - A non-approved system miniapp is not installed, registered, shown in the
   system miniapp catalog, autostarted, or launched from a primary system-miniapp
   surface even though its code may exist in the shared binary. Comprehensive
@@ -1024,6 +1053,7 @@ load local settings
   -> start Runtime REST capabilities without the real-time Runtime session
   -> install/launch only approved bundled miniapps
   -> reconcile customer-managed userland miniapps by version and digest
+     (MantleManager.initMiniapps -> deploymentManagedMiniappSync.sync)
   -> pass each launched package only its deployment configuration snapshot
 ```
 
@@ -1209,5 +1239,7 @@ The first Android-and-iOS call-focused pilot is complete when:
 - Signed manifests, customer-managed manifest keys, and dynamic certificate
   pinning.
 - Custom color themes or bundle identifiers beyond the manifest logo pair.
-- Non-Mentra glasses restricted-network qualification, including AR99 vendor
-  services.
+- Restricted-network qualification of vendor services for any allowlisted
+  glasses model, including AR99. `glasses.allowedModelsOverride` controls which
+  models may pair; allowing a model does not implicitly authorize its public
+  vendor APIs.
