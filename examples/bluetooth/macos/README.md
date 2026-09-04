@@ -21,6 +21,8 @@ bash run.sh
 Once a supporting SDK is published and synchronized into this example, omit the
 environment variable to use the exact SwiftPM version in `Package.swift`.
 Use `bash run.sh --build-only` to build without launching.
+Quit this example before rebuilding; the script refuses to overwrite a running
+app instead of silently activating its previous binary.
 
 The script creates `build/Mentra SDK Mac.app` and ad-hoc signs it with the
 sandbox entitlements. Launch the app bundle, not `.build/debug/MentraMacExample`,

@@ -26,6 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MentraBluetoothSDKDele
     private var devices: [Device] = []
     private var scanSession: ScanSession?
     private var busy = false
+    private var actionTask: Task<Void, Never>?
     private var connectedButtons: [NSButton] = []
     private var scanButton: NSButton!
     private var connectButton: NSButton!
@@ -132,6 +133,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MentraBluetoothSDKDele
     }
 
     @objc private func disconnect() {
+        cancelAction()
         sdk.disconnect()
     }
 
@@ -141,20 +143,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MentraBluetoothSDKDele
             return
         }
         runAction("Capturing...") {
+            self.preview.image = nil
             let result = try await self.sdk.requestPhoto(PhotoRequest(size: .medium, webhookUrl: url.absoluteString, sound: true))
-            if let photoUrl = result.values["photoUrl"] as? String, let url = URL(string: photoUrl) {
+            try Task.checkCancellation()
+            self.action.stringValue = "Photo uploaded: \(result.requestId)"
+            guard case let .success(_, _, photoUrl, _, _, _, _) = result.response,
+                  let photoUrl, let url = URL(string: photoUrl) else { return }
+            do {
                 let (data, response) = try await URLSession.shared.data(from: url)
+                try Task.checkCancellation()
                 guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode),
                       let image = NSImage(data: data) else { throw URLError(.cannotDecodeContentData) }
                 self.preview.image = image
+            } catch {
+                try Task.checkCancellation()
+                self.action.stringValue = "Photo uploaded: \(result.requestId). Preview unavailable: \(error.localizedDescription)"
             }
-            self.action.stringValue = "Photo uploaded: \(result.requestId)"
         }
     }
 
     @objc private func checkOta() {
         runAction("Checking for updates...") {
             let available = try await self.sdk.checkForOtaUpdate()
+            try Task.checkCancellation()
             self.action.stringValue = available ? "A glasses update is available" : "Up to date"
         }
     }
@@ -164,14 +175,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MentraBluetoothSDKDele
         busy = true
         action.stringValue = message
         refreshButtons()
-        Task {
-            defer { busy = false; refreshButtons() }
-            do { try await operation() }
-            catch { action.stringValue = error.localizedDescription }
+        actionTask = Task {
+            defer {
+                if !Task.isCancelled {
+                    actionTask = nil
+                    busy = false
+                    refreshButtons()
+                }
+            }
+            do {
+                try Task.checkCancellation()
+                try await operation()
+            }
+            catch {
+                if !Task.isCancelled { action.stringValue = error.localizedDescription }
+            }
         }
     }
 
+    private func cancelAction() {
+        // A sent glasses command may finish; cancellation prevents its late result from changing this UI.
+        actionTask?.cancel()
+        actionTask = nil
+        busy = false
+        action.stringValue = "Disconnected"
+    }
+
     func mentraBluetoothSDK(_: MentraBluetoothSDK, didUpdateGlasses glasses: GlassesRuntimeState) {
+        if !glasses.connected && actionTask != nil { cancelAction() }
         status.stringValue = glasses.connected
             ? "\(glasses.device?.bluetoothName ?? "Connected") | Battery: \(glasses.battery?.level.map(String.init) ?? "unknown")% | ASG: \(glasses.device?.appVersion ?? "unknown")"
             : glasses.connection.rawValue
@@ -180,7 +211,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MentraBluetoothSDKDele
 
     func mentraBluetoothSDK(_: MentraBluetoothSDK, didReceive event: BluetoothEvent) {
         switch event {
-        case let .photoStatus(event): action.stringValue = "Photo: \(event.status)"
+        case let .photoStatus(event):
+            if actionTask != nil { action.stringValue = "Photo: \(event.status)" }
         case let .otaStatus(event):
             action.stringValue = "OTA: \(event.stepType) \(event.overallPercent)% - \(event.status)\n\(event.errorMessage ?? "")"
         default: break
@@ -188,6 +220,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MentraBluetoothSDKDele
     }
 
     func applicationWillTerminate(_: Notification) {
+        cancelAction()
         sdk.invalidate()
     }
 

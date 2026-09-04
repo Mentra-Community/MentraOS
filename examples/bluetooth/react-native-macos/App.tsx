@@ -1,4 +1,4 @@
-import React, {useEffect, useState} from 'react';
+import React, {useEffect, useRef, useState} from 'react';
 import {ActivityIndicator, Button, Image, ScrollView, StyleSheet, Text, TextInput, View} from 'react-native';
 import BluetoothSdk, {type Device, type OtaStatusEvent} from '@mentra/bluetooth-sdk';
 import {useMentraBluetooth} from '@mentra/bluetooth-sdk/react';
@@ -10,39 +10,60 @@ export default function App() {
   const [photoUrl, setPhotoUrl] = useState<string>();
   const [lastAction, setLastAction] = useState('');
   const [busy, setBusy] = useState(false);
+  const action = useRef<AbortController | null>(null);
   const [otaStatus, setOtaStatus] = useState<OtaStatusEvent>();
   const connected = session.glasses.connected;
   const ready = session.glasses.ready;
 
   useEffect(() => {
-    const photo = BluetoothSdk.addListener('photo_status', event => setLastAction(`Photo: ${event.status}`));
+    const photo = BluetoothSdk.addListener('photo_status', event => {
+      if (action.current) setLastAction(`Photo: ${event.status}`);
+    });
     const ota = BluetoothSdk.addListener('ota_status', event => {
       setOtaStatus(event);
       setLastAction(`OTA: ${event.step_type} ${event.overall_percent}% - ${event.status}`);
     });
-    return () => { photo.remove(); ota.remove(); BluetoothSdk.stopScan(); };
+    return () => { action.current?.abort(); photo.remove(); ota.remove(); BluetoothSdk.stopScan(); };
   }, []);
 
-  async function run(label: string, operation: () => Promise<unknown>) {
-    if (busy) return;
+  useEffect(() => {
+    if (!connected && action.current) {
+      action.current.abort();
+      action.current = null;
+      setBusy(false);
+      setLastAction('Disconnected');
+    }
+  }, [connected]);
+
+  async function run(label: string, operation: (signal: AbortSignal) => Promise<unknown>) {
+    if (action.current) return;
+    const controller = new AbortController();
+    action.current = controller;
     setBusy(true);
     setLastAction(label);
-    try { await operation(); }
-    catch (error) { setLastAction(error instanceof Error ? error.message : String(error)); }
-    finally { setBusy(false); }
+    try { await operation(controller.signal); }
+    catch (error) {
+      if (!controller.signal.aborted) setLastAction(error instanceof Error ? error.message : String(error));
+    }
+    finally {
+      if (!controller.signal.aborted) { action.current = null; setBusy(false); }
+    }
   }
 
-  async function scan() {
+  async function scan(signal: AbortSignal) {
     setDevices([]);
     await BluetoothSdk.scan({model: 'Mentra Live', timeoutMs: 10000, onResults: setDevices});
-    setLastAction('Scan complete');
+    if (!signal.aborted) setLastAction('Scan complete');
   }
 
-  async function capture() {
-    const url = new URL(webhookUrl);
+  async function capture(signal: AbortSignal) {
+    let url: URL;
+    try { url = new URL(webhookUrl); }
+    catch { throw new Error('Enter an HTTP or HTTPS webhook URL.'); }
     if (!['http:', 'https:'].includes(url.protocol)) throw new Error('Enter an HTTP or HTTPS webhook URL.');
     setPhotoUrl(undefined);
     const photo = await BluetoothSdk.requestPhoto({webhookUrl: url.href, size: 'medium', authToken: null, compress: 'none', sound: true});
+    if (signal.aborted) return;
     setPhotoUrl(photo.photoUrl);
     setLastAction(`Photo uploaded: ${photo.requestId}`);
   }
@@ -67,8 +88,9 @@ export default function App() {
       <Button title="Capture photo" disabled={!ready || busy || !webhookUrl.trim()} onPress={() => void run('Capturing...', capture)} />
       {photoUrl && <Image source={{uri: photoUrl}} style={styles.photo} resizeMode="contain" onError={() => setLastAction('The photo uploaded, but its preview could not be loaded.')} />}
       <Text style={styles.heading}>Software Update</Text>
-      <Button title="Check OTA" disabled={!ready || busy} onPress={() => void run('Checking for updates...', async () => {
+      <Button title="Check OTA" disabled={!ready || busy} onPress={() => void run('Checking for updates...', async signal => {
         const available = await BluetoothSdk.checkForOtaUpdate();
+        if (signal.aborted) return;
         setLastAction(available ? 'A glasses update is available' : 'Up to date');
       })} />
       {otaStatus && <Text selectable>{otaStatus.step_type}: {otaStatus.overall_percent}% {otaStatus.error_message ?? ''}</Text>}

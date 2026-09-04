@@ -2,7 +2,7 @@
 
 Documentation and example apps for connecting to smart glasses directly from mobile apps over Bluetooth, powered by MentraOS. This is the supported Mentra Bluetooth SDK for mobile apps and works with MentraOS compatible glasses, including Mentra Live, Even Realities, Vuzix Z100, NIMO, and more.
 
-The SDK is available in three first-class forms:
+The SDK is available in these first-class forms:
 
 | Platform | Package | Example |
 | --- | --- | --- |

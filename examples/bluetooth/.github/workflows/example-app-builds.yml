@@ -27,7 +27,7 @@ env:
   GSTREAMER_VERSION: 1.28.2
   # Temporary source pin for MentraOS #3929. Remove with the source checkouts
   # once both Mac examples pin a published SDK containing native macOS support.
-  MACOS_SDK_SOURCE_REF: afc46c07ae53a86e426413e6cce1463f131d9bbd
+  MACOS_SDK_SOURCE_REF: 639ad9323a35164250d6efc621de04f394131d1c
 
 jobs:
   release-contract:
