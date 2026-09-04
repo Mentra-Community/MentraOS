@@ -54,3 +54,11 @@ Keep glasses and Mac on a network that can reach the server.
 These source examples are not signed/notarized Mac release artifacts. The
 coordinated version sync updates their SDK dependencies, but does not publish a
 Mac app to TestFlight or a download channel.
+
+## Pull Request CI
+
+The `Native macOS example` job builds the AppKit app without launching it.
+Until the macOS-capable SDK is published, CI uses the exact MentraOS commit in
+`MACOS_SDK_SOURCE_REF` in `.github/workflows/example-app-builds.yml`, not a moving
+branch. Remove that temporary source checkout and override once this example
+pins a published SDK containing native macOS support.

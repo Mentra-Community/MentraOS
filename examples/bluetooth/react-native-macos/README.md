@@ -71,3 +71,16 @@ integration, see [`../macos`](../macos/README.md).
 Coordinated releases update this example's exact SDK dependency and `bun.lock`.
 They do not currently publish a signed/notarized native Mac application. The
 existing TestFlight example remains the separate iOS build.
+
+## Pull Request CI
+
+The `React Native macOS example` job installs the frozen Bun dependencies,
+checks the sample against its pinned npm SDK types, installs CocoaPods, and
+builds the native app in Release mode. It also verifies that the resulting app
+contains `main.jsbundle`; no running Metro server is needed.
+
+Until the macOS-capable SDK is published, Metro and CocoaPods use the exact
+MentraOS commit in `MACOS_SDK_SOURCE_REF` in
+`.github/workflows/example-app-builds.yml`. Remove that temporary source
+checkout and override once this example pins a published SDK containing native
+macOS support. These checks do not upload a Mac app or use release signing keys.
