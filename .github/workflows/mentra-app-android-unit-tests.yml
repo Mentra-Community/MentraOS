@@ -1,0 +1,102 @@
+name: Mobile App Android Unit Tests
+
+# The acs-meeting and bluetooth-sdk modules carry substantial JVM test suites that
+# ran nowhere in CI: mentra-app-android-build.yml builds with `-x test`, and the
+# mobile quality workflow is Jest/bun only. This job runs them on every PR that
+# touches either module.
+
+on:
+  pull_request:
+    paths:
+      - "mobile/modules/acs-meeting/**"
+      - "mobile/modules/bluetooth-sdk/**"
+      - ".github/workflows/mentra-app-android-unit-tests.yml"
+  push:
+    branches:
+      - main
+      - dev
+    paths:
+      - "mobile/modules/acs-meeting/**"
+      - "mobile/modules/bluetooth-sdk/**"
+      - ".github/workflows/mentra-app-android-unit-tests.yml"
+  workflow_dispatch:
+
+# Cancel a branch's in-flight run when a newer commit is pushed to it.
+concurrency:
+  group: android-unit-tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-tests:
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v3
+        with:
+          java-version: "17"
+          distribution: "temurin"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Cache Gradle dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-unit-${{ runner.os }}-${{ hashFiles('mobile/modules/*/android/build.gradle') }}
+          restore-keys: |
+            gradle-unit-${{ runner.os }}-
+
+      - name: Cache Bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('mobile/bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
+
+      - name: Install dependencies
+        working-directory: ./mobile
+        run: bun install --frozen-lockfile
+
+      # app.config.ts reads mobile/.env, so prebuild needs one. Unit tests never
+      # reach the network, so the dummy values in .env.example are sufficient.
+      - name: Setup environment
+        working-directory: ./mobile
+        run: cp .env.example .env
+
+      - name: Run Expo prebuild
+        working-directory: ./mobile
+        run: bun expo prebuild --platform android
+
+      - name: Run JVM unit tests
+        working-directory: ./mobile/android
+        run: ./gradlew :mentra-acs-meeting:testDebugUnitTest :mentra-bluetooth-sdk:testDebugUnitTest --build-cache --parallel
+
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-unit-test-reports
+          path: |
+            mobile/modules/acs-meeting/android/build/reports/tests/
+            mobile/modules/bluetooth-sdk/android/build/reports/tests/
+            mobile/modules/acs-meeting/android/build/test-results/
+            mobile/modules/bluetooth-sdk/android/build/test-results/
+          retention-days: 7
