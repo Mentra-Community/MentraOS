@@ -176,6 +176,12 @@ type NativeModule = {
   updateVideoSource(whepUrl: string): Promise<void>
   /** Force a WHEP rebuild on the current URL. Absent on natives that predate it. */
   restartVideoSource?(): Promise<void>
+  /**
+   * Join the glasses hotspot as a scoped, internet-less network; resolves with this phone's
+   * address on it. Absent on natives that predate SoftAP, and rejects on iOS.
+   */
+  joinScopedNetwork?(ssid: string, passphrase: string): Promise<string>
+  leaveScopedNetwork?(): Promise<void>
   getState(): Promise<MeetingState>
   addListener(event: string, listener: (event: Record<string, unknown>) => void): {remove: () => void}
 }
@@ -274,6 +280,8 @@ class AcsMeetingService {
   private phoneNetworkUnsub: (() => void) | null = null
   private lastPhoneNetworkKey: string | null = null
   private lastMediaRestartAt = 0
+  /** Callers parked in [waitForFirstFrame], woken by the next `mediaSource` verdict. */
+  private readonly firstFrameWaiters = new Set<(error?: Error) => void>()
 
   setStateHandler(handler: (packageName: string, state: MeetingState) => void): void {
     this.onState = handler
@@ -294,6 +302,63 @@ class AcsMeetingService {
    */
   softApIngestUrl(): string | null {
     return this.ingestUrl
+  }
+
+  /**
+   * Join the glasses hotspot as a scoped, internet-less network, returning this phone's address on
+   * it. Called before the ACS join, because the local WHIP listener has to bind to that address.
+   *
+   * A host without the native function is not a host that silently skips the join — the SoftAP call
+   * has no network to run on, so this reports the reason instead.
+   */
+  async joinScopedNetwork(ssid: string, passphrase: string): Promise<string | undefined> {
+    const native = getNative()
+    if (!native?.joinScopedNetwork) {
+      throw new Error("This host cannot join the glasses hotspot; SoftAP calling is unavailable")
+    }
+    return await native.joinScopedNetwork(ssid, passphrase)
+  }
+
+  /** Safe to call when nothing was joined: teardown runs after failed starts too. */
+  async leaveScopedNetwork(): Promise<void> {
+    await getNative()?.leaveScopedNetwork?.()
+  }
+
+  /**
+   * Resolves once the host reports a frame actually reached ACS, which is the only signal that
+   * remote participants can see the camera.
+   *
+   * Rejects if the feed fails first, and on timeout. A SoftAP call that connects but never paints
+   * is the failure this exists to catch: without it the orchestrator would report `live` on the
+   * strength of an ACS join that says nothing about video.
+   *
+   * @param timeoutMs how long to wait before treating the silence as a failure
+   */
+  waitForFirstFrame(timeoutMs: number): Promise<void> {
+    if (this.lastState.mediaSource === "live") return Promise.resolve()
+    return new Promise<void>((resolve, reject) => {
+      const settle = (error?: Error) => {
+        if (done) return
+        done = true
+        clearTimeout(timer)
+        this.firstFrameWaiters.delete(settle)
+        if (error) reject(error)
+        else resolve()
+      }
+      let done = false
+      const timer = setTimeout(
+        () => settle(new Error(`No glasses video reached the meeting within ${Math.round(timeoutMs / 1000)}s`)),
+        timeoutMs,
+      )
+      this.firstFrameWaiters.add(settle)
+    })
+  }
+
+  /** Wake every `waitForFirstFrame` caller with the outcome the host just reported. */
+  private settleFirstFrameWaiters(mediaSource: MediaSourceState | undefined): void {
+    if (mediaSource !== "live" && mediaSource !== "failed") return
+    const error = mediaSource === "failed" ? new Error("The glasses video feed failed") : undefined
+    for (const settle of [...this.firstFrameWaiters]) settle(error)
   }
 
   async join(
@@ -393,6 +458,10 @@ class AcsMeetingService {
    * (or after a join that never produced a native call).
    */
   private async releaseHostState(): Promise<void> {
+    // Before anything else: a caller parked on a frame that will now never arrive has to be
+    // rejected, or a leave mid-join leaves the orchestrator waiting out its whole timeout.
+    for (const settle of [...this.firstFrameWaiters]) settle(new Error("The meeting ended"))
+    this.firstFrameWaiters.clear()
     this.unwatchPhoneNetwork()
     await this.stopPcm()
     this.unbindNative()
@@ -495,6 +564,7 @@ class AcsMeetingService {
           mediaSource: state.mediaSource,
           participants: participants?.length,
         })
+        this.settleFirstFrameWaiters(mediaSource)
         this.onState?.(packageName, state)
       }),
       native.addListener("onIncomingPcm", (event) => {

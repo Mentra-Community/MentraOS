@@ -30,6 +30,25 @@ public class AcsMeetingModule: Module {
       return meeting.snapshot()
     }
 
+    /// Refuses rather than no-ops. A silent success here would let the orchestrator go on to an ACS
+    /// join and a glasses publish that have no network to meet on, which surfaces as a black tile
+    /// several steps later instead of as the unsupported transport it is.
+    AsyncFunction("joinScopedNetwork") { (_: String, _: String) -> String in
+      throw NSError(
+        domain: "MentraAcsMeeting",
+        code: 2,
+        userInfo: [
+          NSLocalizedDescriptionKey:
+            "NOT_IMPLEMENTED: SoftAP calling is Android-only; iOS cannot join the glasses hotspot as a scoped network",
+        ]
+      )
+    }
+
+    AsyncFunction("leaveScopedNetwork") {
+      // Nothing was ever joined, so releasing is a no-op rather than an error: teardown must stay
+      // safe to run after a failed start.
+    }
+
     AsyncFunction("leave") {
       self.session?.leave()
     }

@@ -1,5 +1,6 @@
 package com.mentra.acsmeeting
 
+import com.mentra.acsmeeting.network.ScopedSoftApNetwork
 import com.mentra.acsmeeting.source.MeetingVideoSourceSpec
 import com.mentra.acsmeeting.video.VideoProfile
 import expo.modules.kotlin.modules.Module
@@ -8,9 +9,32 @@ import expo.modules.kotlin.modules.ModuleDefinition
 class AcsMeetingModule : Module() {
   private var session: AcsMeetingSession? = null
 
+  /**
+   * Held by the module, not the session, because the orchestrator joins the hotspot *before* the
+   * ACS join: the ingest source has to bind to a network that already exists. One instance means
+   * the session's ingest source and this join agree on the same [android.net.Network].
+   */
+  private var scopedNetwork: ScopedSoftApNetwork? = null
+
   override fun definition() = ModuleDefinition {
     Name("MentraAcsMeeting")
     Events("onState", "onIncomingPcm")
+
+    /**
+     * Join the glasses hotspot as a scoped, internet-less network and return this phone's address
+     * on it. The address is what the WHIP listener binds to, so a join that produces no address is
+     * a failure rather than a network worth keeping.
+     */
+    AsyncFunction("joinScopedNetwork") { ssid: String, passphrase: String ->
+      val context = appContext.reactContext ?: throw IllegalStateException("no react context")
+      val scoped = scopedNetwork ?: ScopedSoftApNetwork(context.applicationContext).also { scopedNetwork = it }
+      scoped.join(ssid, passphrase)
+      scoped.localIpv4() ?: throw IllegalStateException("scoped network has no IPv4 address")
+    }
+
+    AsyncFunction("leaveScopedNetwork") {
+      scopedNetwork?.release()
+    }
 
     AsyncFunction("join") { options: Map<String, Any?> ->
       val token = options["token"] as? String ?: throw IllegalArgumentException("token is required")
@@ -35,6 +59,7 @@ class AcsMeetingModule : Module() {
             mapOf("base64" to base64, "sampleRate" to rate, "channels" to channels),
           )
         },
+        scopedNetwork = scopedNetwork,
       ).also { session = it }
       meeting.join(token, meetingUrl, videoSource, displayName, dumpWav, audioSource, video)
       // The SoftAP ingest URL is only known after the listener binds, so it rides back on the join
@@ -71,6 +96,8 @@ class AcsMeetingModule : Module() {
     OnDestroy {
       session?.leave()
       session = null
+      scopedNetwork?.release()
+      scopedNetwork = null
     }
   }
 

@@ -110,6 +110,8 @@ function fakeNative() {
   }))
   const updateVideoSource = mock(async () => {})
   const restartVideoSource = mock(async () => {})
+  const joinScopedNetwork = mock(async (_ssid: string, _passphrase: string) => "192.168.43.20")
+  const leaveScopedNetwork = mock(async () => {})
   const getState = mock(async () => ({state: "idle" as const, muted: false}))
   return {
     join,
@@ -118,6 +120,8 @@ function fakeNative() {
     setAudioSource,
     updateVideoSource,
     restartVideoSource,
+    joinScopedNetwork,
+    leaveScopedNetwork,
     getState,
     addListener: (event: string, listener: (event: Record<string, unknown>) => void) => {
       listeners.set(event, listener)
@@ -601,5 +605,118 @@ describe("parseAcsVideoSource", () => {
   test("rejects half a SoftAP credential pair", () => {
     expect(() => parseAcsVideoSource({type: "softap", ssid: "MentraLive-1"})).toThrow("together")
     expect(() => parseAcsVideoSource({type: "softap", passphrase: "pw"})).toThrow("together")
+  })
+})
+
+describe("scoped network passthrough", () => {
+  afterEach(() => {
+    setAcsMeetingNativeForTests(undefined)
+  })
+
+  test("the hotspot join returns this phone's address on the SoftAP subnet", async () => {
+    const native = fakeNative()
+    setAcsMeetingNativeForTests(native)
+
+    await expect(acsMeetingService.joinScopedNetwork("MentraLive-1234", "hunter2!")).resolves.toBe("192.168.43.20")
+    expect(native.joinScopedNetwork).toHaveBeenCalledWith("MentraLive-1234", "hunter2!")
+  })
+
+  test("a host that cannot join the hotspot says so instead of skipping the join", async () => {
+    // Silently resolving here is the dangerous case: the sequence would go on to an ACS join and a
+    // glasses publish with no network to meet on, and surface as a black tile several steps later.
+    const native = fakeNative()
+    setAcsMeetingNativeForTests({...native, joinScopedNetwork: undefined} as never)
+
+    await expect(acsMeetingService.joinScopedNetwork("MentraLive-1234", "pw")).rejects.toThrow("SoftAP calling")
+  })
+
+  test("releasing is safe on a host with no scoped-network support", async () => {
+    const native = fakeNative()
+    setAcsMeetingNativeForTests({...native, leaveScopedNetwork: undefined} as never)
+
+    await expect(acsMeetingService.leaveScopedNetwork()).resolves.toBeUndefined()
+  })
+})
+
+describe("waitForFirstFrame", () => {
+  afterEach(async () => {
+    await acsMeetingService.leave("com.mentra.call")
+    setAcsMeetingNativeForTests(undefined)
+  })
+
+  async function joinedNative() {
+    const native = fakeNative()
+    setAcsMeetingNativeForTests(native)
+    await acsMeetingService.join("com.mentra.call", {
+      meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
+      token: "tok",
+      videoSource: {type: "softap"},
+    })
+    return native
+  }
+
+  test("resolves when the host reports a frame reached ACS", async () => {
+    const native = await joinedNative()
+    const waiting = acsMeetingService.waitForFirstFrame(1_000)
+
+    native.emit("onState", {state: "connected", muted: false, mediaSource: "live"})
+
+    await expect(waiting).resolves.toBeUndefined()
+  })
+
+  test("rejects when the feed fails rather than waiting out the timeout", async () => {
+    const native = await joinedNative()
+    const waiting = acsMeetingService.waitForFirstFrame(60_000)
+
+    native.emit("onState", {state: "connected", muted: false, mediaSource: "failed"})
+
+    await expect(waiting).rejects.toThrow("failed")
+  })
+
+  test("a connecting feed is not a first frame", async () => {
+    // An ACS join says nothing about video. Treating `connecting` as success is what reports a
+    // black call as live.
+    const native = await joinedNative()
+    let settled = false
+    const waiting = acsMeetingService.waitForFirstFrame(60_000).then(
+      () => {
+        settled = true
+      },
+      () => {
+        settled = true
+      },
+    )
+
+    native.emit("onState", {state: "connected", muted: false, mediaSource: "connecting"})
+    await flush()
+    expect(settled).toBe(false)
+
+    native.emit("onState", {state: "connected", muted: false, mediaSource: "live"})
+    await waiting
+    expect(settled).toBe(true)
+  })
+
+  test("rejects on timeout naming the wait in seconds", async () => {
+    await joinedNative()
+
+    await expect(acsMeetingService.waitForFirstFrame(10)).rejects.toThrow("within")
+  })
+
+  test("a leave mid-wait rejects the waiter instead of stranding it", async () => {
+    // Without this, a user leaving during the join would leave the orchestrator parked for the full
+    // first-frame timeout before it could unwind.
+    await joinedNative()
+    const waiting = acsMeetingService.waitForFirstFrame(60_000)
+
+    await acsMeetingService.leave("com.mentra.call")
+
+    await expect(waiting).rejects.toThrow("ended")
+  })
+
+  test("a feed already live resolves without waiting for another event", async () => {
+    const native = await joinedNative()
+    native.emit("onState", {state: "connected", muted: false, mediaSource: "live"})
+
+    await expect(acsMeetingService.waitForFirstFrame(0)).resolves.toBeUndefined()
   })
 })

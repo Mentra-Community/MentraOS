@@ -85,8 +85,11 @@ import acsMeetingService, {
   parseAcsOutgoingVideo,
   parseAcsVideoSource,
   resolveAcsAudioSource,
+  type AcsOutgoingVideo,
   type AcsVideoSource,
+  type MeetingState,
 } from "./AcsMeetingService"
+import {createSoftapCallDeps, SoftapCallTransport} from "./SoftapCallTransport"
 
 // =============================================================================
 // Types
@@ -223,6 +226,14 @@ const MINIAPP_AUTH_REFRESH_MIN_DELAY_MS = 5_000
 const MINIAPP_AUTH_RETRY_BASE_MS = 1_000
 const MINIAPP_AUTH_RETRY_MAX_MS = 15_000
 const FOREGROUND_LIVENESS_PROBE_TIMEOUT_MS = 2_500
+/**
+ * How long a SoftAP call waits for the first frame to reach ACS before failing the join.
+ *
+ * Generous because it covers the glasses' whole publish path — WHIP POST, host-only ICE, and the
+ * first decode — but bounded, since a call that connects and never paints has to fail as a join
+ * rather than sit in "connecting" while the wearer waits.
+ */
+const SOFTAP_FIRST_FRAME_MS = 20_000
 const REQUEST_WIFI_SETUP_TYPE = "miniapp_request_wifi_setup"
 // Unregister after this many missed pongs. Generous on purpose: a busy
 // context (heavy interim translation traffic) or OS scheduling while idle can
@@ -384,6 +395,12 @@ function resetPermissionWarnings(packageName: string): void {
 
 class LocalMiniappRuntime {
   private static instance: LocalMiniappRuntime | null = null
+
+  /**
+   * The active SoftAP call, if any. Held so `meeting.leave` unwinds the hotspot and the scoped
+   * network as well as the ACS call — the transport owns all three.
+   */
+  private softapTransport: SoftapCallTransport | null = null
 
   /** Connected miniapps keyed by packageName. */
   private connectedApps: Map<string, ConnectedMiniapp> = new Map()
@@ -3623,6 +3640,14 @@ class LocalMiniappRuntime {
         })
         return
       }
+      // SoftAP is a sequence, not a single call: the hotspot and the scoped network have to exist
+      // before the ACS join binds a listener, and the glasses can only be told where to publish
+      // after that. The miniapp asks for the transport and the host owns the ordering.
+      if (videoSource.type === "softap") {
+        const state = await this.joinSoftapMeeting(packageName, {meetingUrl, token, displayName, video})
+        this.sendResult(packageName, requestId, true, state)
+        return
+      }
       const state = await acsMeetingService.join(packageName, {
         meetingUrl,
         token,
@@ -3639,8 +3664,75 @@ class LocalMiniappRuntime {
     }
   }
 
+  /**
+   * Runs the SoftAP call sequence and returns the meeting state it reached.
+   *
+   * The transport is kept so `meeting.leave` unwinds the hotspot and the scoped network too;
+   * leaving only the ACS call would strand the glasses publishing into a listener nobody reads and
+   * the phone joined to a hotspot it no longer needs.
+   */
+  private async joinSoftapMeeting(
+    packageName: string,
+    args: {meetingUrl: string; token: string; displayName?: string; video?: AcsOutgoingVideo},
+  ): Promise<MeetingState> {
+    await this.stopSoftapTransport()
+    const transport = new SoftapCallTransport(
+      createSoftapCallDeps({
+        packageName,
+        meetingUrl: args.meetingUrl,
+        token: args.token,
+        displayName: args.displayName,
+        awaitFirstFrame: () => acsMeetingService.waitForFirstFrame(SOFTAP_FIRST_FRAME_MS),
+        subsystems: {
+          setHotspotState: async (enabled) => {
+            const status = await BluetoothSdk.setHotspotState(enabled)
+            return {state: status.state, ssid: status.ssid, password: status.password}
+          },
+          joinScopedNetwork: (ssid, passphrase) => acsMeetingService.joinScopedNetwork(ssid, passphrase),
+          leaveScopedNetwork: () => acsMeetingService.leaveScopedNetwork(),
+          joinMeeting: (pkg, options) =>
+            acsMeetingService.join(pkg, {
+              meetingUrl: options.meetingUrl,
+              token: options.token,
+              videoSource: options.videoSource,
+              displayName: options.displayName,
+              ...(args.video ? {video: args.video} : {}),
+            }),
+          leaveMeeting: (pkg) => acsMeetingService.leave(pkg),
+          ingestUrl: () => acsMeetingService.softApIngestUrl(),
+          startPublishing: (pkg, options) => phoneStreamCoordinator.startUnmanaged(pkg, options),
+          stopPublishing: (pkg) => phoneStreamCoordinator.stop(pkg),
+        },
+      }),
+    )
+    this.softapTransport = transport
+    try {
+      await transport.start()
+    } catch (error) {
+      // start() already unwound whatever it built, so only the handle needs clearing.
+      if (this.softapTransport === transport) this.softapTransport = null
+      throw error
+    }
+    return acsMeetingService.getState()
+  }
+
+  /** Tears down an active SoftAP call, if there is one. Safe to call when there is not. */
+  private async stopSoftapTransport(): Promise<void> {
+    const transport = this.softapTransport
+    if (!transport) return
+    this.softapTransport = null
+    await transport.stop()
+  }
+
   private async handleMeetingLeave(packageName: string, requestId?: string): Promise<void> {
     try {
+      // A SoftAP call owns the hotspot and the scoped network as well as the ACS call, and its stop
+      // already leaves the meeting. Calling leave() again afterwards is harmless but pointless.
+      if (this.softapTransport) {
+        await this.stopSoftapTransport()
+        this.sendResult(packageName, requestId, true)
+        return
+      }
       await acsMeetingService.leave(packageName)
       this.sendResult(packageName, requestId, true)
     } catch (err) {
