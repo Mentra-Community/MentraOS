@@ -114,6 +114,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MentraBluetoothSDKDele
                 picker.removeAllItems()
                 picker.addItems(withTitles: devices.map(\.name))
                 refreshButtons()
+            } onComplete: { [weak self] _ in
+                guard let self else { return }
+                scanSession = nil
+                if sdk.glasses.connection == .disconnected && !busy {
+                    action.stringValue = "Scan complete"
+                }
             }
             action.stringValue = "Scanning..."
         } catch { action.stringValue = error.localizedDescription }
