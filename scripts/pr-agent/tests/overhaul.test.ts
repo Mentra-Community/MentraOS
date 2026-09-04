@@ -794,3 +794,62 @@ describe('stale nits are dropped once the reviewer stops reporting them (#3851)'
     expect(out.state.nitFindings).toHaveLength(1);
   });
 });
+
+describe('exhausting the self-dispatch budget hands off instead of stranding', () => {
+  const cleanApprove = 'clean\n{"verdict":"approve","findings":[]}';
+
+  test('budget spent turns a would-be continuation into a handoff', () => {
+    const st = PrAgentStateSchema.parse({
+      cycle: 1,
+      consecutiveNoNewReviews: 0,
+      selfDispatches: 3,
+    });
+    const out = aggregateCycle(
+      REPO_ROOT,
+      st,
+      { standards: cleanApprove, depth: cleanApprove },
+      [],
+      ['standards', 'depth'],
+    );
+    expect(out.needsContinuation).toBe(false);
+    expect(out.shouldHandoff).toBe(true);
+    expect(out.handoffReason).toBe('budget_exhausted');
+    expect(out.state.status).toBe('budget_exhausted');
+  });
+
+  test('budget still available keeps continuing', () => {
+    const st = PrAgentStateSchema.parse({
+      cycle: 1,
+      consecutiveNoNewReviews: 0,
+      selfDispatches: 2,
+    });
+    const out = aggregateCycle(
+      REPO_ROOT,
+      st,
+      { standards: cleanApprove, depth: cleanApprove },
+      [],
+      ['standards', 'depth'],
+    );
+    expect(out.needsContinuation).toBe(true);
+    expect(out.shouldHandoff).toBe(false);
+    expect(out.state.status).toBe('in_progress');
+  });
+
+  test('a spent budget does not manufacture a handoff when CI still gates', () => {
+    const st = PrAgentStateSchema.parse({
+      cycle: 1,
+      consecutiveNoNewReviews: 0,
+      selfDispatches: 3,
+    });
+    const out = aggregateCycle(
+      REPO_ROOT,
+      st,
+      { standards: cleanApprove, depth: cleanApprove },
+      ciPendingChecks(),
+      ['standards', 'depth'],
+    );
+    expect(out.needsContinuation).toBe(false);
+    expect(out.shouldHandoff).toBe(false);
+    expect(out.state.status).toBe('in_progress');
+  });
+});

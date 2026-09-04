@@ -252,7 +252,11 @@ jobs:
         env:
           TOOL_REF: ${{ needs.resolve-context.outputs.tool_ref }}
         run: |
-          git fetch origin "$TOOL_REF" --depth=1
+          # Deliberately not --depth=1: a shallow fetch grafts origin/<ref> to
+          # one commit, so as soon as the base branch moves past this PR's
+          # merge base the reviewers' `git diff origin/<base>...HEAD` dies with
+          # "no merge base". The clone is already complete (fetch-depth: 0).
+          git fetch origin "$TOOL_REF"
           git checkout FETCH_HEAD -- scripts/pr-agent .github/pr-agent .github/pr-agent.yml
 
       - uses: oven-sh/setup-bun@v1
@@ -294,7 +298,11 @@ jobs:
         env:
           TOOL_REF: ${{ needs.resolve-context.outputs.tool_ref }}
         run: |
-          git fetch origin "$TOOL_REF" --depth=1
+          # Deliberately not --depth=1: a shallow fetch grafts origin/<ref> to
+          # one commit, so as soon as the base branch moves past this PR's
+          # merge base the reviewers' `git diff origin/<base>...HEAD` dies with
+          # "no merge base". The clone is already complete (fetch-depth: 0).
+          git fetch origin "$TOOL_REF"
           git checkout FETCH_HEAD -- scripts/pr-agent .github/pr-agent .github/pr-agent.yml
 
       - uses: oven-sh/setup-bun@v1
@@ -336,7 +344,11 @@ jobs:
         env:
           TOOL_REF: ${{ needs.resolve-context.outputs.tool_ref }}
         run: |
-          git fetch origin "$TOOL_REF" --depth=1
+          # Deliberately not --depth=1: a shallow fetch grafts origin/<ref> to
+          # one commit, so as soon as the base branch moves past this PR's
+          # merge base the reviewers' `git diff origin/<base>...HEAD` dies with
+          # "no merge base". The clone is already complete (fetch-depth: 0).
+          git fetch origin "$TOOL_REF"
           git checkout FETCH_HEAD -- scripts/pr-agent .github/pr-agent .github/pr-agent.yml
 
       - uses: oven-sh/setup-bun@v1
