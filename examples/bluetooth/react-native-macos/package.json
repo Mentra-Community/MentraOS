@@ -6,7 +6,7 @@
   "scripts": {
     "start": "react-native start",
     "macos": "react-native run-macos",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "node typecheck.cjs"
   },
   "dependencies": {
     "@mentra/bluetooth-sdk": "3.2.0-dev.116",
