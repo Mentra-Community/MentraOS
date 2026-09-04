@@ -1,10 +1,13 @@
 ---
 title: Quickstart
 description: Scaffold a Mentra miniapp and run it on your phone in a few minutes.
+icon: "rocket"
 ---
 
 import LegacyCloudNote from '/snippets/legacy-cloud-note.mdx'
 import BetaNote from '/snippets/beta-note.mdx'
+
+<BetaNote />
 
 This Quickstart goes from zero to a miniapp running on your glasses. You need a
 phone, [Bun](https://bun.sh/docs/installation), and basic TypeScript. You can do
@@ -12,10 +15,8 @@ the whole thing **without glasses**: the display just won't have anywhere to dra
 
 <Info>
 Building a mobile app that connects directly to glasses over Bluetooth? Use the
-[Bluetooth SDK Quickstart](/mentra-live/quickstart) instead.
+[Bluetooth SDK Quickstart](/bluetooth-sdk/quickstart) instead.
 </Info>
-
-<BetaNote />
 
 <LegacyCloudNote />
 
@@ -62,6 +63,11 @@ QR Code** and scan the QR from your terminal.
 <Info>
 Your phone and your laptop must be on the **same Wi-Fi network**. `bun dev`
 watches for Wi-Fi changes and reprints the QR if your LAN IP moves.
+
+On Android you can skip the Wi-Fi requirement entirely: plug the phone in and
+run `bun dev --usb`. The CLI sets up `adb reverse` and points the QR at the
+phone's own loopback address, so guest networks and client isolation stop
+mattering.
 </Info>
 
 The miniapp installs and starts. In the starter project, pressing a glasses

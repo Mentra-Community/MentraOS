@@ -637,6 +637,8 @@ export type StreamStartRequest = {
   sound?: boolean
   video?: StreamVideoConfig
   audio?: StreamAudioConfig
+  /** When false, glasses skip mic capture. Defaults to true. */
+  captureAudio?: boolean
 }
 
 export type StreamKeepAliveRequest = {

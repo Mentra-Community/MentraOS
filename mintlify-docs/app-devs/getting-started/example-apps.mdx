@@ -1,7 +1,12 @@
 ---
 title: Example miniapps
 description: "Working miniapps to start from: the scaffolder starter, the in-repo reference, and first-party apps shipped in this repo."
+icon: "code"
 ---
+
+import BetaNote from '/snippets/beta-note.mdx'
+
+<BetaNote />
 
 There are three ways to get working code in front of you: scaffold a fresh
 project, read the in-repo reference miniapp, or browse the first-party miniapps
@@ -48,9 +53,9 @@ bun dev
 ```
 
 `bun dev` validates the manifest, builds both layers, serves them over your LAN,
-and prints a QR code. Scan it from **Mentra App → Settings → Developer settings →
-Mini App Development → Scan Mini App QR Code** (phone and laptop on the same
-Wi-Fi).
+and prints a QR code. In the Mentra App, scan it from **Settings → Miniapp
+Developer Settings → Scan Miniapp QR Code** (phone and laptop on the same Wi-Fi,
+or `bun dev --usb` on Android to go over the cable instead).
 
 ## First-party miniapps in this repo
 

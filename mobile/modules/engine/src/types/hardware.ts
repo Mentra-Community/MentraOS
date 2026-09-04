@@ -4,6 +4,7 @@ import { evenRealitiesG1 } from "./capabilities/even-realities-g1";
 import { evenRealitiesG2 } from "./capabilities/even-realities-g2";
 import { mentraDisplay } from "./capabilities/mentra-display";
 import { mentraLive } from "./capabilities/mentra-live";
+import { nimo } from "./capabilities/nimo";
 import { simulatedGlasses } from "./capabilities/simulated-glasses";
 import { vuzixZ100 } from "./capabilities/vuzix-z100";
 import { none } from "./capabilities/none";
@@ -158,7 +159,7 @@ export interface Capabilities {
   hasWifi: boolean;
 
   // OTA capability
-  hasOta?: boolean;
+  hasOta: boolean;
 
   // Native dashboard capability
   // True when the device renders its own dashboard in firmware (e.g. Even
@@ -180,6 +181,7 @@ export const HARDWARE_CAPABILITIES: Record<string, Capabilities> = {
   [mentraLive.modelName]: mentraLive,
   [simulatedGlasses.modelName]: simulatedGlasses,
   [vuzixZ100.modelName]: vuzixZ100,
+  [nimo.modelName]: nimo,
   [DeviceTypes.MACH1]: vuzixZ100, // Mach1 uses same Vuzix Ultralite hardware as Z100
   [DeviceTypes.AR99]: {
     ...evenRealitiesG1,
@@ -207,4 +209,4 @@ export const getModelCapabilities = (deviceType: DeviceTypes): Capabilities => {
 };
 
 // export * from "./capabilities"
-export { simulatedGlasses, evenRealitiesG1, evenRealitiesG2, mentraLive, vuzixZ100, mentraDisplay };
+export { simulatedGlasses, evenRealitiesG1, evenRealitiesG2, mentraLive, nimo, vuzixZ100, mentraDisplay };

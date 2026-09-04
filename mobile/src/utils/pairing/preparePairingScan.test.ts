@@ -8,11 +8,8 @@ import {PermissionFeatures, checkConnectivityRequirementsUI, requestFeaturePermi
 import {preparePairingScan} from "./preparePairingScan"
 
 jest.mock("@mentra/engine", () => ({
-  engine: {miniapps: {stopAll: jest.fn()}},
-}))
-
-jest.mock("@/../../cloud/packages/types/src", () => ({
   DeviceTypes: {SIMULATED: "Simulated"},
+  engine: {miniapps: {stopAll: jest.fn()}},
 }))
 
 jest.mock("@/i18n", () => ({translate: (key: string) => key}))

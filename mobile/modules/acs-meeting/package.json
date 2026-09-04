@@ -1,6 +1,6 @@
 {
   "name": "@mentra/acs-meeting",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "description": "MentraOS native ACS Teams meeting module (WHEP decode → ACS raw media)",
   "main": "build/index.js",
   "react-native": "src/index.ts",
@@ -22,6 +22,9 @@
   "author": "Mentra Community",
   "license": "MIT",
   "homepage": "https://github.com/Mentra-Community/MentraOS/tree/dev/mobile/modules/acs-meeting#readme",
+  "publishConfig": {
+    "access": "public"
+  },
   "devDependencies": {
     "expo-module-scripts": "^55.0.2",
     "typescript": "~5.9.2"

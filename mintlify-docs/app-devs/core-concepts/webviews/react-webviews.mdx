@@ -1,8 +1,12 @@
 ---
 title: "The UI layer"
 description: "Build the miniapp's WebView UI with React, talking to the background over the injected mentra global."
-icon: "browser"
+icon: "code"
 ---
+
+import BetaNote from '/snippets/beta-note.mdx'
+
+<BetaNote />
 
 The UI layer is the on-demand half of a [two-layer miniapp](/app-devs/core-concepts/two-layer-architecture). It is a normal React app that mounts when the user opens your tile and is destroyed when they leave. It has zero direct hardware access. To reach the glasses it sends messages to its own [background layer](/app-devs/core-concepts/session), which holds the `session` and translates those messages into `session.*` calls. The bridge is a single injected global named `mentra`.
 

@@ -89,6 +89,7 @@ export {
   GLOBAL_OTA_TIMEOUT_MS,
   PING_INTERVAL_MS,
   QUERY_REPLY_TIMEOUT_MS,
+  BES_RESTART_TIMEOUT_MS,
   OtaProgressMessages,
 } from "./services/otaInstallPolicy"
 export {deriveDisplayState} from "./services/otaDisplayState"
@@ -181,6 +182,10 @@ export {
   type DevLaunchResult,
   type DevManifest,
 } from "./utils/devMiniappLaunch"
+export {
+  decideDevOpenRoute,
+  type DevOpenDecision,
+} from "./utils/devMiniappSnapshot"
 export {HardwareCompatibility, type CompatibilityResult} from "./utils/hardware"
 export {BgTimer, throttle, debounce} from "./utils/timers"
 
@@ -196,6 +201,7 @@ export {
   evenRealitiesG1,
   evenRealitiesG2,
   mentraLive,
+  nimo,
   vuzixZ100,
   mentraDisplay,
 } from "./types"

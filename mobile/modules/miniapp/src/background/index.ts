@@ -96,8 +96,11 @@ export type {
   MeetingPhase,
   MeetingProvider,
   MeetingVideoSource,
+  MeetingParticipant,
+  MeetingParticipantState,
+  MeetingMediaSource,
 } from "../modules/meeting"
-export {MEETING_HOST_UPDATE_MESSAGE} from "../modules/meeting"
+export {MEETING_HOST_UPDATE_MESSAGE, parseMeetingMediaSource, parseMeetingParticipants} from "../modules/meeting"
 export type {StreamModule} from "../modules/stream"
 export type {SystemModule} from "../modules/system"
 export type {TranscriptionModule} from "../modules/transcription"
@@ -142,6 +145,7 @@ export type {
   PermissionRecord,
   GlassesCapabilities,
   ConnectAckPayload,
+  HostFeatures,
   MiniappAuthState,
   MiniappRequestError,
 } from "../session"

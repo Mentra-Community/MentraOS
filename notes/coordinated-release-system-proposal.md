@@ -474,6 +474,23 @@ Bug fixes may land on `staging` first and must be merged back into `dev`.
 Features land on `dev` and move to `staging` only when selected for the release
 candidate. Do not merge all of `dev` into `staging` merely to produce a build.
 
+A release-family cut promotes the selected heads in dependency order: Starter
+Kit `dev` to `staging` first, then MentraOS `dev` to `staging`. The coordinated
+release plan freezes the resulting Starter Kit `staging` SHA before publishing
+anything. Once that beta succeeds, Starter Kit `staging` is merged back into
+`dev` before MentraOS `dev` is prepared for the next family. This reconciliation
+preserves the beta-generated dependency and lockfile commit as shared ancestry;
+it is necessary because the Starter Kit coordinated workflow intentionally
+writes channel-specific release output to its branch.
+
+Before starting production, promote the completed beta's exact recorded Starter
+Kit merge commit from Starter Kit `staging` to `main`, then promote its exact
+MentraOS source commit from MentraOS `staging` to `main`. The branch cut refuses
+either promotion unless the selected source already contains that repository's
+current `main`; production-only history must be back-merged and validated in a
+new beta first. This keeps both source repositories aligned without adding
+Starter Kit artifacts or store publishing to the Mentra-App production flow.
+
 The coordinator has no path filters: every selected branch release gets an
 auditable identity. Every public product and package in that set is published
 under the shared version, even when its source is unchanged. Jobs may reuse
@@ -505,13 +522,16 @@ After the OTA bundle and version map exist:
    release-family dependency order, ending with Engine.
 2. Native Bluetooth SDK publication and MentraOS mobile builds run in parallel
    with that npm lane; they do not depend on registry packages to build.
-3. After npm and native publication, a clean external OEM fixture installs only
-   the exact public Engine package plus host-owned dependencies. It verifies the
-   registry graph, TypeScript, Metro, Expo autolinking, Android, and iOS.
-4. After npm and SwiftPM are readable, the Starter Kit repository synchronizes
-   every maintained example to the exact release identity. Native Android is
-   built when Maven Central already exposes that identity; otherwise that
-   optional artifact is skipped without holding up the release.
+3. A clean external OEM fixture starts as soon as npm publication completes. It
+   installs only the exact public Engine package plus host-owned dependencies.
+   It verifies the registry graph, TypeScript, Metro, Expo autolinking, Android,
+   and iOS.
+4. The Starter Kit workflow is dispatched after the OTA release exists and
+   checks npm and SwiftPM readiness itself while those publication lanes are
+   still running. It synchronizes every maintained example only after the exact
+   dependencies are readable. Native Android is built when Maven Central
+   already exposes that identity; otherwise that optional artifact is skipped
+   without holding up the release.
 5. Finalization writes the completed release manifest only after every product
    lane, the external consumer gate, and the Starter Kit gate succeed.
 6. Dev and beta documentation publishes after finalization from the exact
@@ -666,16 +686,16 @@ object and records the object's hash, version, signature, and provenance.
 Documentation has the same release-channel identity as the products it
 describes:
 
-| Source channel | Published docs | Cloudflare Pages project | Injected version |
-| -------------- | -------------- | ------------------------ | ---------------- |
-| `dev` | `https://docs-dev.mentraglass.com` | `mentraos-docs-dev` | Exact `X.Y.Z-dev.N` identity |
-| `staging` | `https://docs-beta.mentraglass.com` | `mentraos-docs-beta` | Exact `X.Y.Z-beta.N` identity |
-| `main` | `https://docs.mentraglass.com` | Mintlify Git deployment | Stable `X.Y.Z` family base |
+| Source channel | Published docs                      | Cloudflare Pages project | Injected version              |
+| -------------- | ----------------------------------- | ------------------------ | ----------------------------- |
+| `dev`          | `https://docs-dev.mentraglass.com`  | `mentraos-docs-dev`      | Exact `X.Y.Z-dev.N` identity  |
+| `staging`      | `https://docs-beta.mentraglass.com` | `mentraos-docs-beta`     | Exact `X.Y.Z-beta.N` identity |
+| `main`         | `https://docs.mentraglass.com`      | Mintlify Git deployment  | Stable `X.Y.Z` family base    |
 
 `mintlify-docs/docs.json` uses Mintlify's native global variables. The checked-in
 `release-version` and production release-artifact URL use the stable family
 base, so the `main` branch remains directly buildable by Mintlify. Current
-release references throughout `mintlify-docs/mentra-live/` use those variables
+release references throughout `mintlify-docs/bluetooth-sdk/` use those variables
 instead of copied literals.
 
 The coordinated `dev` and `staging` workflow does not edit the checkout. After
@@ -747,11 +767,11 @@ specified in
 Starter Kit examples are downstream release consumers, not sources of package
 truth.
 
-1. Wait until npm and SwiftPM expose the coordinated SDK version and Engine's
-   full dependency closure is readable. Sonatype publication proceeds
-   automatically without blocking the Starter Kit gate.
-2. Dispatch the Starter Kit repository with the exact release identity and its
-   expected channel-branch head.
+1. Dispatch the Starter Kit repository with the exact release identity and its
+   expected channel-branch head as soon as the immutable OTA release exists.
+2. In that workflow, wait until npm and SwiftPM expose the coordinated SDK
+   version and Engine's full dependency closure is readable. Sonatype
+   publication proceeds automatically without blocking the Starter Kit gate.
 3. Update every maintained example and lockfile to the selected public versions
    in an isolated candidate commit.
 4. Build and publish immutable example APK/IPA artifacts and a machine-readable

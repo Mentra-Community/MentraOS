@@ -6,6 +6,7 @@ import android.content.res.AssetFileDescriptor;
 import android.media.AudioManager;
 import android.media.MediaPlayer;
 import android.os.Build;
+import android.os.SystemClock;
 import android.util.Log;
 
 import com.mentra.asg_client.service.core.AsgClientService;
@@ -22,6 +23,13 @@ import java.util.Map;
 public class I2SAudioController {
 
     private static final String TAG = "I2SAudioController";
+
+    /**
+     * BES {@code app_play_I2S_onoff(true)} force-closes I2S, waits 20 ms, then reopens and arms
+     * the PA. UART transit is extra. Starting MediaPlayer before that window dumps PCM into a
+     * dead bridge — silent attack, then a pop that reads as clipping.
+     */
+    static final long I2S_START_SETTLE_MS = 60L;
 
     private final Context context;
 
@@ -68,7 +76,8 @@ public class I2SAudioController {
         Log.i(TAG, "Playing I2S overlay asset: " + assetName);
         isControllingI2S = true;
 
-        if (!notifyI2SState(true)) {
+        long i2sRequestedAtMs = SystemClock.elapsedRealtime();
+        if (!notifyI2SState(true, true)) {
             Log.w(TAG, "Failed to start I2S path; skipping overlay playback");
             refreshControlFlag();
             return 0L;
@@ -116,7 +125,7 @@ public class I2SAudioController {
                     });
 
             trackedPlayer.prepare();
-            trackedPlayer.start();
+            startPlayerAfterI2sSettle(trackedPlayer, i2sRequestedAtMs);
             Log.d(TAG, "I2S overlay playback started");
             return overlayToken;
         } catch (Exception e) {
@@ -184,7 +193,8 @@ public class I2SAudioController {
 
         stopCurrentPlayer();
 
-        boolean i2sStarted = notifyI2SState(true);
+        long i2sRequestedAtMs = SystemClock.elapsedRealtime();
+        boolean i2sStarted = notifyI2SState(true, true);
         Log.i(TAG, "I2S start for " + logName + " notifyI2SState=" + i2sStarted);
         if (!i2sStarted) {
             Log.w(TAG, "Failed to start I2S path; skipping playback of " + logName);
@@ -236,7 +246,7 @@ public class I2SAudioController {
                     });
 
             trackedPlayer.prepare();
-            trackedPlayer.start();
+            startPlayerAfterI2sSettle(trackedPlayer, i2sRequestedAtMs);
             Log.d(TAG, "I2S audio playback started: " + logName);
         } catch (Exception e) {
             Log.e(TAG, "Unable to play " + logName, e);
@@ -314,6 +324,19 @@ public class I2SAudioController {
         player.release();
     }
 
+    private void startPlayerAfterI2sSettle(MediaPlayer player, long i2sRequestedAtMs) {
+        long remaining = I2S_START_SETTLE_MS - (SystemClock.elapsedRealtime() - i2sRequestedAtMs);
+        if (remaining > 0L) {
+            try {
+                Thread.sleep(remaining);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            Log.i(TAG, "[I2S-RATE] settled " + remaining + "ms before MediaPlayer.start");
+        }
+        player.start();
+    }
+
     private void configurePlayer(MediaPlayer player, float playbackVolume) {
         // STREAM_NOTIFICATION routes through system sounds which work with I2S.
         player.setAudioStreamType(AudioManager.STREAM_NOTIFICATION);
@@ -331,15 +354,20 @@ public class I2SAudioController {
     }
 
     private boolean notifyI2SState(boolean playing) {
+        return notifyI2SState(playing, false);
+    }
+
+    private boolean notifyI2SState(boolean playing, boolean forceRestart) {
         AsgClientService service = AsgClientService.getInstance();
         if (service != null) {
-            service.handleI2SAudioState(playing);
+            service.handleI2SAudioState(playing, forceRestart);
             return true;
         }
 
         Intent intent = new Intent(context, AsgClientService.class);
         intent.setAction(AsgClientService.ACTION_I2S_AUDIO_STATE);
         intent.putExtra(AsgClientService.EXTRA_I2S_AUDIO_PLAYING, playing);
+        intent.putExtra(AsgClientService.EXTRA_I2S_FORCE_RESTART, forceRestart);
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent);

@@ -5,9 +5,9 @@
  * These values are the contract between @mentra/miniapp (running in a WebView)
  * and LocalMiniappRuntime (running on the phone).
  *
- * IMPORTANT: This file has NO runtime dependency on @mentra/sdk. The cloud SDK's
- * wire protocol enums live in @mentra/sdk/types/message-types.ts and are used
- * for cloud↔app communication, not phone↔miniapp.
+ * IMPORTANT: This file has no runtime dependency on the retired cloud SDK.
+ * Its published wire-protocol enums are used only for compatibility with
+ * existing cloud-hosted miniapps, not for phone↔miniapp communication.
  */
 
 // ============================================================================

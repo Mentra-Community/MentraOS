@@ -1,7 +1,7 @@
 import {useEffect, useRef, useState} from "react"
 
 import {useNavigationStore} from "@/stores/navigation"
-import {Capabilities, getModelCapabilities} from "@/../../cloud/packages/types/src"
+import {Capabilities, getModelCapabilities} from "@mentra/engine"
 import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {SETTINGS, useSetting} from "@mentra/engine"
 import showAlert from "@/utils/AlertUtils"

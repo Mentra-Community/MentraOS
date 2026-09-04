@@ -3,7 +3,7 @@ import {describe, expect, test} from "bun:test"
 
 import {MiniappErrorCode, MiniappRequestType} from "../protocol"
 import type {MiniappSession} from "../session"
-import {MEETING_HOST_UPDATE_MESSAGE, MeetingModule} from "./meeting"
+import {MEETING_HOST_UPDATE_MESSAGE, MeetingModule, parseMeetingMediaSource} from "./meeting"
 
 function mockSession(sendRequest: MiniappSession["sendRequest"]) {
   const handlers = new Set<(state: unknown) => void>()
@@ -57,6 +57,18 @@ describe("MeetingModule", () => {
     ])
   })
 
+  test("join forwards optional ACS outgoing video", async () => {
+    const calls: unknown[] = []
+    const {session} = mockSession(async (payload) => {
+      calls.push(payload)
+      return {state: "connecting", muted: false, provider: "acs-teams"}
+    })
+    const meeting = new MeetingModule(session)
+    const video = {width: 960, height: 540, fps: 30, maxBitrateBps: 1_500_000}
+    await meeting.join({...joinArgs, video})
+    expect(calls[0]).toMatchObject({video})
+  })
+
   test("updateVideoSource and getState hit the host APIs", async () => {
     const calls: unknown[] = []
     const {session} = mockSession(async (payload) => {
@@ -71,5 +83,47 @@ describe("MeetingModule", () => {
       videoSource: {type: "whep", url: "https://example.test/whep-2"},
     })
     expect(calls[1]).toEqual({type: MiniappRequestType.MEETING_GET_STATE})
+  })
+
+  test("applies audioSource, activeStream, and audioSafety from host state", async () => {
+    const {session} = mockSession(async () => ({
+      state: "connected",
+      muted: false,
+      provider: "acs-teams",
+      audioSource: "phone",
+      audioSourceReason: "explicit",
+      activeStream: "local",
+      audioSafety: "safe",
+    }))
+    const meeting = new MeetingModule(session)
+    await meeting.getState()
+    expect(meeting.state).toMatchObject({
+      audioSource: "phone",
+      audioSourceReason: "explicit",
+      activeStream: "local",
+      audioSafety: "safe",
+    })
+  })
+
+  test("applies mediaSource from host state", async () => {
+    const {session} = mockSession(async () => ({
+      state: "connected",
+      muted: false,
+      provider: "acs-teams",
+      mediaSource: "connecting",
+    }))
+    const meeting = new MeetingModule(session)
+    await meeting.getState()
+    expect(meeting.state.mediaSource).toBe("connecting")
+  })
+
+  test("mediaSource an older host omits, or reports unknown, reads as undefined", () => {
+    expect(parseMeetingMediaSource("live")).toBe("live")
+    expect(parseMeetingMediaSource("failed")).toBe("failed")
+    // A host that never reports it must not be read as "not live".
+    expect(parseMeetingMediaSource(undefined)).toBeUndefined()
+    expect(parseMeetingMediaSource("subscribing")).toBeUndefined()
+    expect(parseMeetingMediaSource(null)).toBeUndefined()
+    expect(parseMeetingMediaSource(3)).toBeUndefined()
   })
 })

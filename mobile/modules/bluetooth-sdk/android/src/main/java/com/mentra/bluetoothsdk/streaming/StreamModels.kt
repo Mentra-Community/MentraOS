@@ -207,6 +207,7 @@ data class StreamRequest @JvmOverloads constructor(
     val video: StreamVideoConfig? = null,
     val audio: StreamAudioConfig? = null,
     val authToken: String? = null,
+    val captureAudio: Boolean = true,
 ) {
     fun toMap(): Map<String, Any> =
         buildMap {
@@ -217,6 +218,7 @@ data class StreamRequest @JvmOverloads constructor(
             video?.toMap()?.takeIf { it.isNotEmpty() }?.let { put("video", it) }
             audio?.toMap()?.takeIf { it.isNotEmpty() }?.let { put("audio", it) }
             authToken?.takeIf { it.isNotEmpty() }?.let { put("authToken", it) }
+            if (!captureAudio) put("captureAudio", false)
         }
 
     companion object {
@@ -231,6 +233,7 @@ data class StreamRequest @JvmOverloads constructor(
                 video = StreamVideoConfig.fromMap(stringMapValue(values["video"])),
                 audio = StreamAudioConfig.fromMap(stringMapValue(values["audio"])),
                 authToken = values["authToken"] as? String ?: values["auth_token"] as? String,
+                captureAudio = boolValue(values, "captureAudio") ?: boolValue(values, "ca") ?: true,
             )
     }
 }

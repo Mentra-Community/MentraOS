@@ -1,4 +1,4 @@
-import {DeviceTypes, ControllerTypes} from "@/../../cloud/packages/types/src"
+import {DeviceTypes, ControllerTypes} from "@mentra/engine"
 import {useFocusEffect} from "expo-router"
 import {useCallback} from "react"
 import {View, TouchableOpacity, Platform, ScrollView, Image} from "react-native"

@@ -23,9 +23,32 @@ export type ReviewOutputs = {
   bugbot?: string;
   bugbotCheckCompleted?: boolean;
   bugbotCheckSuccess?: boolean;
+  /**
+   * Whether Bugbot's check run appeared at all. `false` means Bugbot declined
+   * the PR, which drops the slot from the effective pair rather than counting
+   * as a negative review.
+   */
+  bugbotStarted?: boolean;
   /** Normalized live inline comments from allowlisted external bots. */
   external?: ExternalFindings;
 };
+
+/**
+ * Slots that actually contributed an opinion this cycle. A Bugbot that never
+ * opened a check run reviewed nothing, so scoring it as disapproval pinned
+ * `consecutiveNoNewReviews` at 0 and stranded PRs that no CI event would ever
+ * re-trigger (#3851 sat at cycle 1 with a clean standards approve). Bugbot
+ * that *started* and then timed out keeps the conservative treatment.
+ */
+export function effectiveReviewPair(
+  activePair: ReviewSlot[],
+  reviews: ReviewOutputs,
+): ReviewSlot[] {
+  if (!activePair.includes('bugbot') || reviews.bugbotStarted !== false) {
+    return activePair;
+  }
+  return activePair.filter((slot) => slot !== 'bugbot');
+}
 
 export function slotReviewSucceeded(slot: ReviewSlot, reviews: ReviewOutputs): boolean {
   if (slot === 'standards' || slot === 'depth' || slot === 'codex') {
@@ -100,10 +123,12 @@ export function aggregateCycle(
     }
   };
 
-  if (activePair.includes('standards')) ingest(reviews.standards, 'standards');
-  if (activePair.includes('depth')) ingest(reviews.depth, 'depth');
-  if (activePair.includes('codex')) ingest(reviews.codex, 'codex');
-  if (activePair.includes('bugbot')) {
+  const effectivePair = effectiveReviewPair(activePair, reviews);
+
+  if (effectivePair.includes('standards')) ingest(reviews.standards, 'standards');
+  if (effectivePair.includes('depth')) ingest(reviews.depth, 'depth');
+  if (effectivePair.includes('codex')) ingest(reviews.codex, 'codex');
+  if (effectivePair.includes('bugbot')) {
     if (reviews.bugbotCheckCompleted === true && reviews.bugbot) {
       ingest(reviews.bugbot, 'bugbot', {
         resolveOnApprove: reviews.bugbotCheckSuccess === true,
@@ -149,7 +174,7 @@ export function aggregateCycle(
     }
   }
 
-  const allSlotsSucceeded = activePair.every((slot) => slotReviewSucceeded(slot, reviews));
+  const allSlotsSucceeded = effectivePair.every((slot) => slotReviewSucceeded(slot, reviews));
 
   const newBlockingCount = newBlockingFingerprints.length;
   const ciFailed =
@@ -163,7 +188,7 @@ export function aggregateCycle(
   // ran this cycle" still bumped both). Persist any external-comment ledger
   // updates, but leave every convergence counter untouched and schedule
   // nothing — the next genuine cycle re-runs the same pair.
-  const anyReviewIngested = activePair.some((slot) => slotReviewSucceeded(slot, reviews));
+  const anyReviewIngested = effectivePair.some((slot) => slotReviewSucceeded(slot, reviews));
   if (activePair.length > 0 && !anyReviewIngested) {
     return {
       state: {
@@ -171,7 +196,7 @@ export function aggregateCycle(
         openFindings,
         resolvedFindings,
         nitFindings,
-        lastPair: activePair,
+        lastPair: effectivePair,
       },
       shouldFix: false,
       shouldHandoff: false,
@@ -281,7 +306,7 @@ export function aggregateCycle(
     consecutiveNoNewReviews,
     phase,
     frozenPair,
-    lastPair: activePair,
+    lastPair: effectivePair,
     status,
     stagnationFixRounds,
     lastOpenCount: internalOpenCount,
@@ -292,6 +317,12 @@ export function aggregateCycle(
     (f) => newFingerprintSet.has(f.fingerprint) && f.status === 'open',
   );
 
+  // No CI gate matches this diff, so no `workflow_run` completion will ever
+  // arrive, and with no fix scheduled there is no push either. This cycle was
+  // the last event the PR would get; ask the workflow to self-dispatch so the
+  // clean-cycle counter can still reach the handoff threshold.
+  const needsContinuation = !shouldHandoff && !shouldFix && ciChecks.length === 0;
+
   return {
     state: nextState,
     shouldFix,
@@ -300,6 +331,7 @@ export function aggregateCycle(
     ciFailed,
     newBlockingCount,
     newBlockingFindings,
+    needsContinuation,
   };
 }
 

@@ -1,0 +1,256 @@
+name: Production Release - Prepare
+
+on:
+  workflow_dispatch:
+    inputs:
+      beta_identity:
+        description: Completed coordinated beta to select, for example 3.1.0-beta.57
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  # Preparation allocates the authoritative attempt number. Serialize all
+  # production allocations so two beta selections cannot race before either
+  # attempt has published its initial state record.
+  group: production-release-prepare
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Select and freeze production inputs
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: production-store-status
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+
+      - name: Validate dispatch and selected beta identity
+        id: identity
+        env:
+          BETA_IDENTITY: ${{ inputs.beta_identity }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF_NAME" == "main" ]]
+          [[ "$BETA_IDENTITY" =~ ^[0-9]+\.[0-9]+\.[0-9]+-beta\.[1-9][0-9]*$ ]]
+          release_identity="${BETA_IDENTITY%%-*}"
+          {
+            echo "release_identity=$release_identity"
+            echo "beta_tag=mentra-builds-v$release_identity"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Download and verify the completed selected beta
+        id: beta
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BETA_IDENTITY: ${{ inputs.beta_identity }}
+          BETA_TAG: ${{ steps.identity.outputs.beta_tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p promotion-input/beta
+          state=$(gh release view "$BETA_TAG" --json isDraft,isPrerelease --jq '[.isDraft,.isPrerelease] | @tsv')
+          [[ "$state" == $'false\ttrue' ]]
+          gh release download "$BETA_TAG" \
+            --pattern "mentra-release-plan-$BETA_IDENTITY.json" \
+            --pattern "mentra-release-$BETA_IDENTITY.json" \
+            --dir promotion-input/beta
+          mv "promotion-input/beta/mentra-release-plan-$BETA_IDENTITY.json" promotion-input/beta/release-plan.json
+          mv "promotion-input/beta/mentra-release-$BETA_IDENTITY.json" promotion-input/beta/release-manifest.json
+          [[ "$(jq -er .completedAt promotion-input/beta/release-manifest.json)" != "" ]]
+          node .github/scripts/verify-release-artifacts.mjs --manifest promotion-input/beta/release-manifest.json
+          source_commit=$(jq -er .sourceCommit promotion-input/beta/release-plan.json)
+          git cat-file -e "$source_commit^{commit}"
+          git merge-base --is-ancestor "$source_commit" origin/main
+          echo "source_commit=$source_commit" >> "$GITHUB_OUTPUT"
+
+      - name: Download current production provenance
+        id: previous
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          latest=$(gh release list --exclude-drafts --exclude-pre-releases --limit 100 \
+            --json tagName,publishedAt \
+            --jq '[.[] | select(.tagName | test("^mentra-v[0-9]+\\.[0-9]+\\.[0-9]+$"))] | sort_by(.publishedAt) | last')
+          tag=$(jq -er .tagName <<< "$latest")
+          identity="${tag#mentra-v}"
+          name="mentra-release-$identity.json"
+          plan_name="mentra-release-plan-$identity.json"
+          mkdir -p promotion-input/current
+          gh release download "$tag" --pattern "$name" --pattern "$plan_name" --dir promotion-input/current
+          mv "promotion-input/current/$name" promotion-input/current/release-manifest.json
+          mv "promotion-input/current/$plan_name" promotion-input/current/release-plan.json
+          [[ "$(node --input-type=module -e 'import {readFileSync} from "node:fs"; import {releaseRecordSha256} from "./.github/scripts/release-family.mjs"; process.stdout.write(releaseRecordSha256(JSON.parse(readFileSync("promotion-input/current/release-plan.json", "utf8"))))')" == "$(jq -er .releasePlanSha256 promotion-input/current/release-manifest.json)" ]]
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/$tag/$name"
+          node .github/scripts/verify-public-release-asset.mjs \
+            --file promotion-input/current/release-manifest.json \
+            --url "$url"
+          {
+            echo "tag=$tag"
+            echo "identity=$identity"
+            echo "manifest_url=$url"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Inject read-only store credentials
+        uses: ./.github/actions/inject-signing
+        with:
+          play: "true"
+          ios: "true"
+          google-play-key-json: ${{ secrets.GOOGLE_PLAY_KEY_JSON }}
+          asc-api-key-p8-b64: ${{ secrets.ASC_API_KEY_P8_B64 }}
+          asc-api-key-id: ${{ secrets.ASC_API_KEY_ID }}
+          asc-api-issuer-id: ${{ secrets.ASC_API_ISSUER_ID }}
+
+      - name: Resolve App Store Connect credential path
+        id: asc
+        run: |
+          set -euo pipefail
+          key_path=$(sed -n 's/^ASC_API_KEY_PATH=//p' "$MENTRA_ASC_CONFIG_PATH")
+          test -f "$key_path"
+          echo "key_path=$key_path" >> "$GITHUB_OUTPUT"
+
+      - name: Read App Store inventories
+        run: |
+          set -euo pipefail
+          mkdir -p promotion-input/stores
+          node mobile/scripts/app-store-connect-build.mjs inventory \
+            --issuer-id "${{ secrets.ASC_API_ISSUER_ID }}" \
+            --key-id "${{ secrets.ASC_API_KEY_ID }}" \
+            --key-path "${{ steps.asc.outputs.key_path }}" \
+            --bundle-id com.mentra.mentra \
+            --output promotion-input/stores/mentra-apple.json
+
+      - name: Install pinned Google Play inventory tooling
+        run: |
+          set -euo pipefail
+          mkdir -p promotion-input/play/fastlane
+          cp mobile/ci/fastlane-android/Fastfile mobile/ci/fastlane-android/Appfile promotion-input/play/fastlane/
+          cp mobile/Gemfile mobile/Gemfile.lock promotion-input/play/
+          cd promotion-input/play
+          bundle install
+
+      - name: Read Google Play inventories
+        working-directory: promotion-input/play
+        run: |
+          set -euo pipefail
+          APP_PACKAGE_NAME=com.mentra.mentra \
+            GOOGLE_PLAY_INVENTORY_OUTPUT=../stores/mentra-google.json \
+            bundle exec fastlane google_play_inventory
+          jq -s '{apple: .[0], google: .[1]}' \
+            ../stores/mentra-apple.json ../stores/mentra-google.json \
+            > ../stores/mentra-inventory.json
+
+      - name: Fingerprint every frozen preparation input
+        id: selection
+        env:
+          BETA_IDENTITY: ${{ inputs.beta_identity }}
+          BETA_TAG: ${{ steps.identity.outputs.beta_tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          node .github/scripts/production-promotion-assets.mjs selection-digest
+          --beta-plan promotion-input/beta/release-plan.json
+          --beta-manifest promotion-input/beta/release-manifest.json
+          --beta-manifest-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/$BETA_TAG/mentra-release-$BETA_IDENTITY.json"
+          --previous-plan promotion-input/current/release-plan.json
+          --previous-manifest promotion-input/current/release-manifest.json
+          --previous-manifest-url "${{ steps.previous.outputs.manifest_url }}"
+          --mentra-inventory promotion-input/stores/mentra-inventory.json
+          --github-output "$GITHUB_OUTPUT"
+
+      - name: Allocate append-only promotion container
+        id: container
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          node .github/scripts/production-promotion-assets.mjs create-container
+          --repository "$GITHUB_REPOSITORY"
+          --release "${{ steps.identity.outputs.release_identity }}"
+          --beta "${{ inputs.beta_identity }}"
+          --selection-digest "${{ steps.selection.outputs.selection_digest }}"
+          --target-commit "${{ steps.beta.outputs.source_commit }}"
+          --github-output "$GITHUB_OUTPUT"
+
+      - name: Create frozen production plan and initial state
+        id: record
+        env:
+          BETA_IDENTITY: ${{ inputs.beta_identity }}
+          BETA_TAG: ${{ steps.identity.outputs.beta_tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          beta_manifest_name="mentra-release-$BETA_IDENTITY.json"
+          beta_manifest_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/$BETA_TAG/$beta_manifest_name"
+          mkdir -p promotion-output
+          node .github/scripts/prepare-production-promotion.mjs \
+            --beta-plan promotion-input/beta/release-plan.json \
+            --beta-manifest promotion-input/beta/release-manifest.json \
+            --beta-manifest-url "$beta_manifest_url" \
+            --previous-manifest promotion-input/current/release-manifest.json \
+            --previous-manifest-url "${{ steps.previous.outputs.manifest_url }}" \
+            --mentra-inventory promotion-input/stores/mentra-inventory.json \
+            --attempt "${{ steps.container.outputs.attempt }}" \
+            --actor "$GITHUB_ACTOR" \
+            --created-at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" \
+            --provenance-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --plan-output promotion-output/production-release-plan.json \
+            --record-directory promotion-output
+          record=$(find promotion-output -maxdepth 1 -name 'production-promotion-*.json' -print -quit)
+          test -n "$record"
+          echo "record=$record" >> "$GITHUB_OUTPUT"
+
+      - name: Publish immutable preparation evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          plan_name="production-release-plan-${{ steps.identity.outputs.release_identity }}.json"
+          mv promotion-output/production-release-plan.json "promotion-output/$plan_name"
+          node .github/scripts/publish-immutable-release-asset.mjs \
+            --file "promotion-output/$plan_name" \
+            --name "$plan_name" \
+            --release-id "${{ steps.container.outputs.release_id }}" \
+            --repository "$GITHUB_REPOSITORY"
+          node .github/scripts/publish-immutable-release-asset.mjs \
+            --file promotion-input/current/release-plan.json \
+            --name current-production-release-plan.json \
+            --release-id "${{ steps.container.outputs.release_id }}" \
+            --repository "$GITHUB_REPOSITORY"
+          node .github/scripts/publish-immutable-release-asset.mjs \
+            --file promotion-input/current/release-manifest.json \
+            --name current-production-release-manifest.json \
+            --release-id "${{ steps.container.outputs.release_id }}" \
+            --repository "$GITHUB_REPOSITORY"
+          node .github/scripts/production-promotion-assets.mjs publish-record \
+            --record "${{ steps.record.outputs.record }}" \
+            --release-id "${{ steps.container.outputs.release_id }}" \
+            --repository "$GITHUB_REPOSITORY"
+
+      - name: Summarize preparation
+        run: |
+          record="${{ steps.record.outputs.record }}"
+          {
+            echo "## Production promotion prepared"
+            echo
+            echo "- Release: \`${{ steps.identity.outputs.release_identity }}\`"
+            echo "- Attempt: \`${{ steps.container.outputs.attempt }}\`"
+            echo "- Selected beta: \`${{ inputs.beta_identity }}\`"
+            echo "- MentraOS source: \`$(jq -er .source.mentraosCommit "$record")\`"
+            echo "- State: \`selected\`"
+            echo
+            echo "No Cloud or app-store state was changed. The next action builds non-promotable Mobile N compatibility-lab apps."
+          } >> "$GITHUB_STEP_SUMMARY"

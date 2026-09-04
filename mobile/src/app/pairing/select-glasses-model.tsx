@@ -1,4 +1,4 @@
-import {DeviceTypes} from "@/../../cloud/packages/types/src"
+import {DeviceTypes} from "@mentra/engine"
 import {useRef} from "react"
 import {View, TouchableOpacity, Platform, ScrollView, Image} from "react-native"
 

@@ -1,0 +1,84 @@
+name: Cloud V2 Validation
+
+on:
+  pull_request:
+    branches:
+      - dev
+      - staging
+      - main
+    paths:
+      - "cloud-v2/**"
+      - "sdk/miniapp-cli/**"
+      - ".github/workflows/cloud-v2-validation.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: cloud-v2-validation-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Typecheck, test, and build
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          # Match the Cloud V2 deployment image.
+          bun-version: "1.3.14"
+
+      - name: Cache Bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-cloud-v2-${{ hashFiles('cloud-v2/bun.lock', 'sdk/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-cloud-v2-
+
+      - name: Install dependencies
+        working-directory: cloud-v2
+        run: bun install --frozen-lockfile
+
+      - name: Install Miniapp CLI dependencies
+        working-directory: sdk
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Test Miniapp CLI
+        working-directory: sdk
+        run: bun test miniapp-cli/src
+
+      - name: Typecheck Miniapp CLI
+        working-directory: sdk/miniapp-cli
+        run: bun run tsc --noEmit -p tsconfig.json
+
+      - name: Run package tests
+        working-directory: cloud-v2
+        # Keep CI deterministic and local: integration, soak, and external-service
+        # tests under cloud-v2/tests require a separately designed environment.
+        # Run before typecheck creates dist output, which would duplicate tests.
+        run: bun test packages
+
+      - name: Typecheck backend packages
+        working-directory: cloud-v2
+        run: bun run typecheck
+
+      - name: Typecheck websites
+        working-directory: cloud-v2
+        run: |
+          bun run typecheck:console
+          bun run typecheck:admin
+          bun run typecheck:portal
+
+      - name: Build websites
+        working-directory: cloud-v2
+        run: |
+          bun run build:console
+          bun run build:admin
+          bun run build:portal

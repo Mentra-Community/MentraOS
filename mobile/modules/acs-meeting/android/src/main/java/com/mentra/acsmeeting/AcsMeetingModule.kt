@@ -1,5 +1,6 @@
 package com.mentra.acsmeeting
 
+import com.mentra.acsmeeting.video.VideoProfile
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 
@@ -17,6 +18,7 @@ class AcsMeetingModule : Module() {
       val displayName = options["displayName"] as? String
       val dumpWav = options["dumpPcmWav"] as? Boolean ?: false
       val audioSource = options["audioSource"] as? String ?: "glasses"
+      val video = parseVideo(options["video"])
       val context = appContext.reactContext ?: throw IllegalStateException("no react context")
       val meeting = session ?: AcsMeetingSession(
         context.applicationContext,
@@ -28,7 +30,7 @@ class AcsMeetingModule : Module() {
           )
         },
       ).also { session = it }
-      meeting.join(token, meetingUrl, whepUrl, displayName, dumpWav, audioSource)
+      meeting.join(token, meetingUrl, whepUrl, displayName, dumpWav, audioSource, video)
       meeting.getState()
     }
 
@@ -48,6 +50,10 @@ class AcsMeetingModule : Module() {
       session?.updateVideoSource(whepUrl)
     }
 
+    AsyncFunction("restartVideoSource") {
+      session?.restartVideoSource()
+    }
+
     AsyncFunction("getState") {
       session?.getState() ?: mapOf("state" to "idle", "muted" to false)
     }
@@ -56,5 +62,19 @@ class AcsMeetingModule : Module() {
       session?.leave()
       session = null
     }
+  }
+
+  private fun parseVideo(raw: Any?): VideoProfile {
+    if (raw == null) return VideoProfile.DEFAULT
+    val map = raw as? Map<*, *> ?: throw IllegalArgumentException("video must be an object")
+    val width = (map["width"] as? Number)?.toInt()
+    val height = (map["height"] as? Number)?.toInt()
+    val fps = (map["fps"] as? Number)?.toInt()
+    val bitrate = (map["maxBitrateBps"] as? Number)?.toInt()
+    if (width == null || height == null || fps == null || bitrate == null) {
+      throw IllegalArgumentException("video requires width, height, fps, and maxBitrateBps")
+    }
+    return VideoProfile.parse(width, height, fps, bitrate)
+      ?: throw IllegalArgumentException("unsupported ACS video ${width}x${height}@${fps}")
   }
 }

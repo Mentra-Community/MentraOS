@@ -384,11 +384,6 @@ nicelogs.txt
 issues
 !cloud-v2/docs/issues/
 !cloud-v2/docs/issues/**
-!cloud/issues/
-!cloud/issues/**
-# Re-ignore macOS junk under the cloud/issues un-ignore above
-cloud/issues/.DS_Store
-cloud/issues/**/.DS_Store
 
 # Local pulled text-detection debug dumps (adb / analysis artifacts)
 mobile/textdetect_debug_pulled/

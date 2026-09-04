@@ -123,4 +123,25 @@ public class WhipStreamConfigTest {
         assertFalse(c.isEchoCancellation());
         assertTrue(c.isNoiseSuppression());
     }
+
+    @Test
+    public void captureAudio_defaultsTrue_andParsesCompactAndFull() throws JSONException {
+        WhipStreamConfig defaults = WhipStreamConfig.fromJson(null, null);
+        assertTrue(defaults.isCaptureAudio());
+
+        JSONObject compact = new JSONObject();
+        compact.put("ca", false);
+        WhipStreamConfig skipped = WhipStreamConfig.fromJson(null, compact);
+        assertFalse(skipped.isCaptureAudio());
+
+        JSONObject full = new JSONObject();
+        full.put("captureAudio", false);
+        WhipStreamConfig skippedFull = WhipStreamConfig.fromJson(null, full);
+        assertFalse(skippedFull.isCaptureAudio());
+
+        JSONObject enabled = new JSONObject();
+        enabled.put("captureAudio", true);
+        WhipStreamConfig on = WhipStreamConfig.fromJson(null, enabled);
+        assertTrue(on.isCaptureAudio());
+    }
 }

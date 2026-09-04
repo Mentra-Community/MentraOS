@@ -2,6 +2,8 @@ import {existsSync, readFileSync} from "node:fs"
 import {createHash} from "node:crypto"
 import path from "node:path"
 
+import {validateCloudV2DeploymentRecord} from "./coordinated-cloud-v2-records.mjs"
+
 const STABLE_VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/
 const CHANNELS = new Set(["dev", "beta", "production"])
@@ -36,6 +38,30 @@ function requireUniqueStrings(values, label) {
     seen.add(value)
   }
   return seen
+}
+
+function changelogForVersion(rootDir, version) {
+  const relativePath = `changelogs/${version}.md`
+  const file = path.join(rootDir, relativePath)
+  if (!existsSync(file)) fail(`missing ${relativePath} for the current family base version`)
+  const content = readFileSync(file)
+  if (content.length === 0) fail(`${relativePath} must not be empty`)
+  return {
+    version,
+    path: relativePath,
+    sha256: createHash("sha256").update(content).digest("hex"),
+  }
+}
+
+function validateChangelog(changelog, familyBaseVersion) {
+  if (
+    changelog?.version !== familyBaseVersion ||
+    changelog?.path !== `changelogs/${familyBaseVersion}.md` ||
+    !SHA256_PATTERN.test(changelog?.sha256 || "")
+  ) {
+    throw new Error("Release plan has invalid changelog provenance")
+  }
+  return changelog
 }
 
 export function validateFamilyBaseVersion(version) {
@@ -102,9 +128,7 @@ export function loadReleaseFamily({rootDir = process.cwd(), requireVersionMirror
   requireString(definition.family, "family")
   const versionSource = requireString(definition.versionSource, "versionSource")
   const familyBaseVersion = validateFamilyBaseVersion(readJson(path.join(rootDir, versionSource)).version)
-  if (!existsSync(path.join(rootDir, "changelogs", `${familyBaseVersion}.md`))) {
-    fail(`missing changelogs/${familyBaseVersion}.md for the current family base version`)
-  }
+  const changelog = changelogForVersion(rootDir, familyBaseVersion)
 
   if (!Array.isArray(definition.members) || definition.members.length === 0) fail("members must not be empty")
   const members = []
@@ -212,14 +236,24 @@ export function loadReleaseFamily({rootDir = process.cwd(), requireVersionMirror
     family: definition.family,
     familyBaseVersion,
     versionSource,
+    changelog,
     products,
     members,
     publicationOrder,
   }
 }
 
-export function createReleasePlan({family, channel, sequence, sourceCommit, nativeBuildNumber, otaInputs = {}}) {
+export function createReleasePlan({
+  family,
+  channel,
+  sequence,
+  sourceCommit,
+  nativeBuildNumber,
+  otaInputs = {},
+  starterKitSource,
+}) {
   if (!family?.members || !family?.familyBaseVersion) throw new Error("A validated release family is required")
+  const changelog = validateChangelog(family.changelog, family.familyBaseVersion)
   if (!CHANNELS.has(channel)) throw new Error(`Unknown release channel ${JSON.stringify(channel)}`)
   if (typeof sourceCommit !== "string" || !COMMIT_PATTERN.test(sourceCommit)) {
     throw new Error("sourceCommit must be a full lowercase Git commit SHA")
@@ -229,6 +263,16 @@ export function createReleasePlan({family, channel, sequence, sourceCommit, nati
   }
 
   const releaseIdentity = deriveReleaseIdentity(family.familyBaseVersion, channel, sequence)
+  if (starterKitSource !== undefined) {
+    const expectedBranch = channel === "dev" ? "dev" : channel === "beta" ? "staging" : "main"
+    if (
+      starterKitSource.repository !== "Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit" ||
+      starterKitSource.branch !== expectedBranch ||
+      !COMMIT_PATTERN.test(starterKitSource.sourceCommit || "")
+    ) {
+      throw new Error("starterKitSource must identify the exact channel branch and commit")
+    }
+  }
   const members = Object.fromEntries(
     family.members.map((member) => [
       member.name,
@@ -247,6 +291,7 @@ export function createReleasePlan({family, channel, sequence, sourceCommit, nati
     schemaVersion: 1,
     releaseSetId: releaseSetId(releaseIdentity),
     familyBaseVersion: family.familyBaseVersion,
+    changelog: {...changelog},
     releaseIdentity,
     artifactContainerTag:
       channel === "production" ? `mentra-v${releaseIdentity}` : `mentra-builds-v${family.familyBaseVersion}`,
@@ -262,6 +307,7 @@ export function createReleasePlan({family, channel, sequence, sourceCommit, nati
     products: Object.fromEntries(family.products.map((product) => [product, releaseIdentity])),
     members,
     publicationOrder: family.publicationOrder,
+    ...(starterKitSource ? {starterKitSource: {...starterKitSource}} : {}),
     artifactNames: {
       releasePlan: `mentra-release-plan-${releaseIdentity}.json`,
       releaseManifest: `mentra-release-${releaseIdentity}.json`,
@@ -368,6 +414,7 @@ function validateStarterKitEvidence(plan, starterKit, artifacts) {
     starterKit.familyBaseVersion !== plan.familyBaseVersion ||
     starterKit.channel !== plan.channel ||
     starterKit.mentraos?.sourceCommit !== plan.sourceCommit ||
+    (plan.starterKitSource && starterKit.starterKit?.baseCommit !== plan.starterKitSource.sourceCommit) ||
     !Array.isArray(starterKit.artifacts) ||
     ![3, 4].includes(starterKit.artifacts.length)
   ) {
@@ -381,11 +428,17 @@ function validateStarterKitEvidence(plan, starterKit, artifacts) {
   const artifactByCoordinate = new Map(artifacts.map((artifact) => [artifact.coordinate, artifact]))
   for (const example of starterKit.artifacts) {
     const artifact = artifactByCoordinate.get(example.name)
-    if (!artifact || artifact.url !== example.url || artifact.sha256 !== example.sha256 || artifact.size !== example.size) {
+    if (
+      !artifact ||
+      artifact.url !== example.url ||
+      artifact.sha256 !== example.sha256 ||
+      artifact.size !== example.size
+    ) {
       throw new Error(`Starter Kit artifact ${example.name || "<unknown>"} differs from publication evidence`)
     }
   }
-  const expectedGroup = plan.channel === "dev" ? "Mentra Dev" : "Mentra Staging"
+  const expectedGroup = plan.channel === "dev" ? "Mentra Dev" : "Mentra Staging Public"
+  const expectedAudience = plan.channel === "dev" ? "internal" : "external"
   const testflight = starterKit.testflight
   if (
     testflight?.schemaVersion !== 1 ||
@@ -395,7 +448,7 @@ function validateStarterKitEvidence(plan, starterKit, artifacts) {
     testflight.mentraosSourceCommit !== plan.sourceCommit ||
     testflight.starterKitReleaseCommit !== starterKit.starterKit?.releaseCommit ||
     testflight.app?.id !== "6792839366" ||
-    testflight.app?.bundleId !== "com.mentra.bluetoothsdk.example.reactnative" ||
+    testflight.app?.bundleId !== "com.mentra.bluetoothsdkexample" ||
     testflight.version?.marketingVersion !== plan.native.marketingVersion ||
     testflight.version?.buildNumber !== plan.native.buildNumber ||
     testflight.build?.processingState !== "VALID" ||
@@ -404,9 +457,24 @@ function validateStarterKitEvidence(plan, starterKit, artifacts) {
     testflight.build.id.length === 0 ||
     testflight.group?.name !== expectedGroup ||
     typeof testflight.group?.id !== "string" ||
-    testflight.group.id.length === 0
+    testflight.group.id.length === 0 ||
+    testflight.distribution?.audience !== expectedAudience ||
+    !["available", "submitted", "skipped"].includes(testflight.distribution?.status) ||
+    !/^https:\/\//.test(testflight.distribution?.installUrl || "")
   ) {
     throw new Error("Starter Kit TestFlight evidence does not match the release plan")
+  }
+  if (plan.channel === "dev" && testflight.distribution.status !== "available") {
+    throw new Error("Internal Starter Kit TestFlight distribution must be available")
+  }
+  if (
+    expectedAudience === "external" &&
+    !/^https:\/\/testflight\.apple\.com\/join\//.test(testflight.distribution.installUrl)
+  ) {
+    throw new Error("External Starter Kit TestFlight distribution must use a public invitation link")
+  }
+  if (testflight.distribution.status === "skipped" && !testflight.distribution.skipReason) {
+    throw new Error("Skipped Starter Kit TestFlight distribution must identify its reason")
   }
   if (
     testflight.ipa !== undefined &&
@@ -418,6 +486,40 @@ function validateStarterKitEvidence(plan, starterKit, artifacts) {
   }
   requirePublicHttpsUrl(testflight.provenanceUrl, "starterKit.testflight.provenanceUrl")
   return starterKit
+}
+
+function validateProductionExampleTestflight(plan, testflight) {
+  if (plan.channel !== "production") return undefined
+  if (
+    testflight?.schemaVersion !== 1 ||
+    testflight.releaseSetId !== plan.releaseSetId ||
+    testflight.releaseIdentity !== plan.releaseIdentity ||
+    testflight.channel !== "production" ||
+    testflight.selectedBetaReleaseSetId !== plan.promotion?.selectedBetaReleaseSetId ||
+    testflight.selectedBetaIdentity !== plan.promotion?.selectedBetaIdentity ||
+    testflight.app?.id !== "6792839366" ||
+    testflight.app?.bundleId !== "com.mentra.bluetoothsdkexample" ||
+    testflight.version?.marketingVersion !== plan.native?.marketingVersion ||
+    testflight.version?.buildNumber !== plan.native?.buildNumber ||
+    testflight.build?.processingState !== "VALID" ||
+    testflight.group?.name !== "Mentra Production Public" ||
+    testflight.distribution?.audience !== "external" ||
+    testflight.distribution?.status !== "available" ||
+    testflight.distribution?.reviewState !== "APPROVED"
+  ) {
+    throw new Error("Production example TestFlight evidence does not match the release plan")
+  }
+  requireString(testflight.build.id, "exampleTestflight.build.id")
+  requireString(testflight.group.id, "exampleTestflight.group.id")
+  requirePublicHttpsUrl(
+    testflight.build.sourceTestflightProvenanceUrl,
+    "exampleTestflight.build.sourceTestflightProvenanceUrl",
+  )
+  requirePublicHttpsUrl(testflight.provenanceUrl, "exampleTestflight.provenanceUrl")
+  if (!/^https:\/\/testflight\.apple\.com\/join\//.test(testflight.distribution.installUrl || "")) {
+    throw new Error("Production example TestFlight distribution must use a public invitation link")
+  }
+  return testflight
 }
 
 export function finalizeReleaseManifest({plan, results, completedAt}) {
@@ -434,6 +536,7 @@ export function finalizeReleaseManifest({plan, results, completedAt}) {
   ) {
     throw new Error("Release plan has invalid native build identity")
   }
+  const changelog = validateChangelog(plan.changelog, plan.familyBaseVersion)
 
   const publications = {}
   for (const [memberName, member] of Object.entries(plan.members)) {
@@ -473,6 +576,8 @@ export function finalizeReleaseManifest({plan, results, completedAt}) {
     if (!artifactCoordinates.has(coordinate)) throw new Error(`Missing required artifact ${coordinate}`)
   }
   const starterKit = validateStarterKitEvidence(plan, results.starterKit, artifacts)
+  const exampleTestflight = validateProductionExampleTestflight(plan, results.exampleTestflight)
+  const cloud = validateCloudV2DeploymentRecord({plan, record: results.cloud})
 
   let promotion
   if (plan.channel === "production") {
@@ -496,6 +601,7 @@ export function finalizeReleaseManifest({plan, results, completedAt}) {
     schemaVersion: 1,
     releaseSetId: plan.releaseSetId,
     familyBaseVersion: plan.familyBaseVersion,
+    changelog,
     releaseIdentity: plan.releaseIdentity,
     channel: plan.channel,
     sourceCommit: plan.sourceCommit,
@@ -505,7 +611,9 @@ export function finalizeReleaseManifest({plan, results, completedAt}) {
     publications,
     otaManifest,
     artifacts,
+    cloud,
     ...(starterKit ? {starterKit} : {}),
+    ...(exampleTestflight ? {exampleTestflight} : {}),
     ...(promotion ? {promotion} : {}),
   }
 }

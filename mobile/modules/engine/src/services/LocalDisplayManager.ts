@@ -2,9 +2,8 @@
  * LocalDisplayManager
  *
  * Phone-side arbiter for display requests originating from LOCAL miniapps
- * (the @mentra/miniapp SDK). Mirrors the user-facing behavior of the cloud
- * DisplayManager (cloud/packages/cloud/src/services/layout/DisplayManager6.1.ts)
- * for the features that matter on the phone:
+ * (the @mentra/miniapp SDK). Preserves the retired cloud display manager's
+ * user-facing behavior for the features that matter on the phone:
  *
  *   - boot message ("Starting <AppName>…") with a bounded window
  *   - durationMs auto-clear

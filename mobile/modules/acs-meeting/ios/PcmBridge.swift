@@ -1,6 +1,6 @@
 import Foundation
 
-/// Downmix/resample PCM16 to 16 kHz mono ~20 ms blocks for ACS raw outgoing audio.
+/// Downmix/resample PCM16 to 48 kHz mono ~20 ms blocks for ACS raw outgoing audio.
 final class PcmBridge {
   private var dump = Data()
   private var dumpRate = 0
@@ -24,9 +24,9 @@ final class PcmBridge {
       }
     }
     logLevel(pcm16Le, sampleRate: sampleRate, channels: channels)
-    let mono = Self.toMono16k(pcm16Le, sampleRate: sampleRate, channels: channels)
+    let mono = Self.toMono(pcm16Le, sampleRate: sampleRate, channels: channels)
     pending.append(mono)
-    let frameBytes = 16000 * 2 / 50
+    let frameBytes = Self.targetRate * 2 / 50
     var frames: [Data] = []
     while pending.count >= frameBytes {
       frames.append(pending.prefix(frameBytes))
@@ -61,7 +61,9 @@ final class PcmBridge {
     NSLog("ACS-SPIKE P4 pcm rate=\(sampleRate) ch=\(channels) meanAbs=\(mean) bytes=\(pcm.count)")
   }
 
-  static func toMono16k(_ pcm16Le: Data, sampleRate: Int, channels: Int) -> Data {
+  static let targetRate = 48_000
+
+  static func toMono(_ pcm16Le: Data, sampleRate: Int, channels: Int) -> Data {
     let samples = pcm16Le.withUnsafeBytes { Array($0.bindMemory(to: Int16.self)) }
     let mono: [Int16]
     if channels <= 1 {
@@ -75,13 +77,13 @@ final class PcmBridge {
         return Int16(acc / channels)
       }
     }
-    if sampleRate == 16000 {
+    if sampleRate == targetRate {
       return mono.withUnsafeBufferPointer { Data(buffer: $0) }
     }
-    let outCount = max(1, mono.count * 16000 / sampleRate)
+    let outCount = max(1, mono.count * targetRate / sampleRate)
     var resampled = [Int16](repeating: 0, count: outCount)
     for i in 0 ..< outCount {
-      let src = min(mono.count - 1, i * sampleRate / 16000)
+      let src = min(mono.count - 1, i * sampleRate / targetRate)
       resampled[i] = mono[src]
     }
     return resampled.withUnsafeBufferPointer { Data(buffer: $0) }

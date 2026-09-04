@@ -3,7 +3,7 @@
  * Refactored to use gallerySyncService for background sync capability
  */
 
-import {getModelCapabilities} from "@/../../cloud/packages/types/src"
+import {getModelCapabilities} from "@mentra/engine"
 import {MaterialCommunityIcons} from "@expo/vector-icons"
 import {FlashList} from "@shopify/flash-list"
 import LinearGradient from "expo-linear-gradient"

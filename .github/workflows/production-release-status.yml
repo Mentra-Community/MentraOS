@@ -1,0 +1,111 @@
+name: Production Release - Store Status
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_identity:
+        required: true
+        type: string
+      attempt:
+        required: true
+        type: number
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-release-status-${{ inputs.release_identity }}-attempt-${{ inputs.attempt }}
+  cancel-in-progress: true
+
+jobs:
+  status:
+    name: Read store state without mutation
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: production-store-status
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+
+      - name: Load current immutable promotion record
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          node .github/scripts/production-promotion-assets.mjs download-latest
+          --repository "$GITHUB_REPOSITORY"
+          --release "${{ inputs.release_identity }}"
+          --attempt "${{ inputs.attempt }}"
+          --output promotion-input/current.json
+
+      - name: Inject read-only store credentials
+        uses: ./.github/actions/inject-signing
+        with:
+          play: "true"
+          ios: "true"
+          google-play-key-json: ${{ secrets.GOOGLE_PLAY_KEY_JSON }}
+          asc-api-key-p8-b64: ${{ secrets.ASC_API_KEY_P8_B64 }}
+          asc-api-key-id: ${{ secrets.ASC_API_KEY_ID }}
+          asc-api-issuer-id: ${{ secrets.ASC_API_ISSUER_ID }}
+
+      - name: Require a post-submission promotion state
+        run: |
+          state=$(jq -er .state promotion-input/current.json)
+          [[ "$state" == stores-submitted || "$state" == stores-approved || "$state" == public-release-approved || "$state" == rolling-out || "$state" == finalizing || "$state" == completed ]]
+
+      - name: Resolve App Store Connect credential path
+        id: asc
+        run: |
+          key_path=$(sed -n 's/^ASC_API_KEY_PATH=//p' "$MENTRA_ASC_CONFIG_PATH")
+          test -f "$key_path"
+          echo "key_path=$key_path" >> "$GITHUB_OUTPUT"
+
+      - name: Read exact App Store review states
+        env:
+          ASC_API_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+          ASC_API_ISSUER_ID: ${{ secrets.ASC_API_ISSUER_ID }}
+          ASC_API_KEY_PATH: ${{ steps.asc.outputs.key_path }}
+        run: |
+          set -euo pipefail
+          mkdir -p store-status/apple
+          build=$(jq -er .coordinates.candidates.mentraApp.ios.buildNumber promotion-input/current.json)
+          GITHUB_OUTPUT=store-status/apple/mentraApp.outputs node mobile/scripts/app-store-connect-build.mjs production-status \
+            --issuer-id "$ASC_API_ISSUER_ID" --key-id "$ASC_API_KEY_ID" --key-path "$ASC_API_KEY_PATH" \
+            --bundle-id com.mentra.mentra --build-number "$build" --app-version "${{ inputs.release_identity }}"
+
+      - name: Read Google Play track state
+        run: |
+          set -euo pipefail
+          mkdir -p store-status/play/fastlane
+          cp mobile/ci/fastlane-android/Fastfile mobile/ci/fastlane-android/Appfile store-status/play/fastlane/
+          cp mobile/Gemfile mobile/Gemfile.lock store-status/play/
+          cd store-status/play
+          bundle install
+          APP_PACKAGE_NAME=com.mentra.mentra GOOGLE_PLAY_INVENTORY_OUTPUT=mentraApp.json bundle exec fastlane google_play_inventory
+
+      - name: Summarize observed state and exact next action
+        run: |
+          set -euo pipefail
+          state=$(jq -er .state promotion-input/current.json)
+          {
+            echo "## Production store status"
+            echo
+            echo "- Promotion state: \`$state\`"
+            apple_state=$(sed -n 's/^state=//p' store-status/apple/mentraApp.outputs)
+            apple_build=$(sed -n 's/^build_id=//p' store-status/apple/mentraApp.outputs)
+            production_releases=$(jq -c .releases.production store-status/play/mentraApp.json)
+            echo "- Mentra App Apple: \`$apple_state\` (build id \`$apple_build\`)"
+            echo "- Mentra App Google production releases: \`$production_releases\`"
+            echo
+            echo "This workflow is read-only and does not infer approval from a Play track entry."
+            echo "When Apple and Google show review complete for the exact Mentra App builds, attach the store-review-approved evidence template."
+          } >> "$GITHUB_STEP_SUMMARY"

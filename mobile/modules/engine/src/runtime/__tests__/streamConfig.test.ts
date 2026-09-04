@@ -2,7 +2,12 @@
 
 import {describe, expect, test} from "bun:test"
 
-import {normalizeStreamAudioConfig, normalizeStreamVideoConfig} from "../streamConfig"
+import {
+  normalizeCaptureAudio,
+  normalizeStreamAudioConfig,
+  normalizeStreamVideoConfig,
+  resolveCaptureAudio,
+} from "../streamConfig"
 
 describe("stream config normalizers", () => {
   test("preserves local miniapp video fps", () => {
@@ -41,5 +46,22 @@ describe("stream config normalizers", () => {
       echoCancellation: true,
       noiseSuppression: false,
     })
+  })
+
+  test("captureAudio defaults true and honors explicit false", () => {
+    expect(normalizeCaptureAudio(undefined)).toBe(true)
+    expect(normalizeCaptureAudio("yes")).toBe(true)
+    expect(normalizeCaptureAudio(true)).toBe(true)
+    expect(normalizeCaptureAudio(false)).toBe(false)
+    expect(normalizeCaptureAudio(undefined, false)).toBe(false)
+  })
+
+  test("resolveCaptureAudio follows the resolved mic and never fail-opens to glasses", () => {
+    expect(resolveCaptureAudio(undefined, "glasses")).toBe(true)
+    expect(resolveCaptureAudio(true, "glasses")).toBe(true)
+    expect(resolveCaptureAudio(false, "glasses")).toBe(false)
+    expect(resolveCaptureAudio(undefined, "phone")).toBe(false)
+    expect(resolveCaptureAudio(true, "phone")).toBe(false)
+    expect(resolveCaptureAudio(false, "phone")).toBe(false)
   })
 })

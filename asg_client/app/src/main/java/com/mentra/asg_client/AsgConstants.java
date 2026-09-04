@@ -84,6 +84,9 @@ public class AsgConstants {
     /** Cadence for the short hold-still click while a cold photo spins up the camera. */
     public static final long CAMERA_PREP_CLICK_INTERVAL_MS = 900L;
 
+    /** Minimum AE settling time after first convergence for a cold camera photo. */
+    public static final long COLD_CAMERA_EXPOSURE_SETTLE_DELAY_MS = 475L;
+
     /** Baseline linear gain for Mentra Live audio prompts. */
     public static final float AUDIO_PLAYBACK_VOLUME = 0.1f;
 

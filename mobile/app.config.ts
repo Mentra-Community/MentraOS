@@ -244,6 +244,8 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       // aren't visible to it. This links the Mapbox products into the Crust
       // pod target (via Podfile post_install) so its Swift can import them.
       "./plugins/mapbox-nav-crust-link.ts",
+      // Xcode 26 rejects pod resource-bundle targets still pinned to iOS 11.
+      "./plugins/ios-pod-min-deployment-target.ts",
       [
         "./modules/bluetooth-sdk/app.plugin.js",
         {

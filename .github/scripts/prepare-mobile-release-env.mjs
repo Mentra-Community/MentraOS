@@ -45,8 +45,9 @@ export function prepareMobileReleaseEnvironment({plan, template, backendEnvironm
   if (plan.native.marketingVersion !== plan.familyBaseVersion) {
     throw new Error("Native marketing version must equal the family base")
   }
-  const expectedBackend = plan.channel === "dev" ? "dev" : plan.channel === "beta" ? "prod" : null
-  if (!expectedBackend) throw new Error(`Mobile prerelease builds do not support channel ${JSON.stringify(plan.channel)}`)
+  const expectedBackend =
+    plan.channel === "dev" ? "dev" : plan.channel === "beta" ? "staging" : plan.channel === "production" ? "prod" : null
+  if (!expectedBackend) throw new Error(`Mobile builds do not support channel ${JSON.stringify(plan.channel)}`)
   if (backendEnvironment !== expectedBackend) {
     throw new Error(
       `${plan.channel} mobile releases must target the ${expectedBackend} backend, not ${JSON.stringify(backendEnvironment)}`,

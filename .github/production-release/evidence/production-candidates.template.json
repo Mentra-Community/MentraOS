@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "promotionId": "mentra-X.Y.Z-attempt-N",
+  "releaseIdentity": "X.Y.Z",
+  "check": "production-mobile-candidate-acceptance",
+  "result": "pass",
+  "performedAt": "YYYY-MM-DDTHH:MM:SS.000Z",
+  "tester": {"githubLogin": "employee"},
+  "tests": [
+    {
+      "product": "mentra-app",
+      "platform": "ios",
+      "result": "pass",
+      "appVersion": "X.Y.Z",
+      "appBuild": "BUILD",
+      "deviceModel": "MODEL",
+      "osVersion": "VERSION",
+      "notes": "Installed through TestFlight production-candidate group; full acceptance passed against production Cloud."
+    },
+    {
+      "product": "mentra-app",
+      "platform": "android",
+      "result": "pass",
+      "appVersion": "X.Y.Z",
+      "appBuild": "BUILD",
+      "deviceModel": "MODEL",
+      "osVersion": "VERSION",
+      "notes": "Installed through Play internal testing; full acceptance passed against production Cloud."
+    }
+  ],
+  "evidenceUrls": ["https://credential-free.example/evidence/index"],
+  "notes": "Exact store-delivered candidates and recorded build coordinates were compared before testing."
+}

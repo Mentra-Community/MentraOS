@@ -1,6 +1,6 @@
 /// <reference types="bun-types" />
 
-import {beforeEach, describe, expect, mock, test} from "bun:test"
+import {describe, expect, mock, test} from "bun:test"
 
 import {StreamLifecycleController, type LifecycleLogger} from "../StreamLifecycleController"
 
@@ -9,6 +9,13 @@ const noopLogger: LifecycleLogger = {
   debug: () => undefined,
   warn: () => undefined,
   error: () => undefined,
+}
+
+const jsTimers = {
+  setInterval: (callback: () => void, delay: number) => setInterval(callback, delay) as unknown as number,
+  clearInterval: (intervalId: number) => clearInterval(intervalId),
+  setTimeout: (callback: () => void, delay: number) => setTimeout(callback, delay) as unknown as number,
+  clearTimeout: (timeoutId: number) => clearTimeout(timeoutId),
 }
 
 function makeController(overrides: Partial<{
@@ -26,6 +33,7 @@ function makeController(overrides: Partial<{
       keepAliveIntervalMs: overrides.keepAliveIntervalMs ?? 15_000,
       ackTimeoutMs: overrides.ackTimeoutMs ?? 10_000,
       maxMissedAcks: overrides.maxMissedAcks ?? 3,
+      timers: jsTimers,
     },
     {sendKeepAlive, onTimeout},
   )
@@ -33,8 +41,38 @@ function makeController(overrides: Partial<{
 }
 
 describe("StreamLifecycleController (phone copy)", () => {
-  beforeEach(() => {
-    // bun:test fake timers are opt-in per test where needed.
+  test("keep-alive interval and ack timeout go through the injected timer API", () => {
+    const setInterval = mock((callback: () => void, delay: number) => {
+      void callback
+      void delay
+      return 11
+    })
+    const setTimeout = mock((callback: () => void, delay: number) => {
+      void callback
+      void delay
+      return 22
+    })
+    const clearInterval = mock((_id: number) => {})
+    const clearTimeout = mock((_id: number) => {})
+    const controller = new StreamLifecycleController(
+      {
+        logger: noopLogger,
+        streamId: "injected",
+        keepAliveIntervalMs: 15_000,
+        ackTimeoutMs: 10_000,
+        maxMissedAcks: 3,
+        timers: {setInterval, clearInterval, setTimeout, clearTimeout},
+      },
+      {sendKeepAlive: async () => {}, onTimeout: () => {}},
+    )
+    controller.setActive(true)
+    expect(setInterval).toHaveBeenCalledWith(expect.any(Function), 15_000)
+    const tick = setInterval.mock.calls[0]![0] as () => void
+    tick()
+    expect(setTimeout).toHaveBeenCalledWith(expect.any(Function), 10_000)
+    controller.dispose()
+    expect(clearInterval).toHaveBeenCalledWith(11)
+    expect(clearTimeout).toHaveBeenCalledWith(22)
   })
 
   test("setActive(true) starts emitting keep-alives at the configured interval", async () => {
@@ -107,6 +145,50 @@ describe("StreamLifecycleController (phone copy)", () => {
     expect(sendKeepAlive.mock.calls.length).toBe(callsBeforeDispose)
   })
 
+  test("tickNow sends a keep-alive immediately while active", async () => {
+    const {controller, sendKeepAlive} = makeController({keepAliveIntervalMs: 10_000, ackTimeoutMs: 1000})
+    controller.setActive(true)
+    expect(sendKeepAlive).not.toHaveBeenCalled()
+    controller.tickNow()
+    await Promise.resolve()
+    expect(sendKeepAlive).toHaveBeenCalledTimes(1)
+    controller.dispose()
+  })
+
+  test("tickNow is a no-op while paused or disposed", async () => {
+    const {controller, sendKeepAlive} = makeController({keepAliveIntervalMs: 10_000, ackTimeoutMs: 1000})
+    controller.tickNow()
+    controller.setActive(true)
+    controller.setActive(false)
+    controller.tickNow()
+    controller.dispose()
+    controller.tickNow()
+    await Promise.resolve()
+    expect(sendKeepAlive).not.toHaveBeenCalled()
+  })
+
+  test("pause then resume: pending acks from before the pause never escalate", async () => {
+    const {controller, sendKeepAlive, onTimeout} = makeController({
+      keepAliveIntervalMs: 10_000,
+      ackTimeoutMs: 30,
+      maxMissedAcks: 1,
+    })
+    controller.setActive(true)
+    controller.tickNow()
+    await Promise.resolve()
+    expect(sendKeepAlive).toHaveBeenCalledTimes(1)
+    // Link drops: pause clears the outstanding ack timer.
+    controller.setActive(false)
+    await new Promise((r) => setTimeout(r, 60))
+    expect(onTimeout).not.toHaveBeenCalled()
+    // Link returns: resume + immediate heartbeat.
+    controller.setActive(true)
+    controller.tickNow()
+    await Promise.resolve()
+    expect(sendKeepAlive).toHaveBeenCalledTimes(2)
+    controller.dispose()
+  })
+
   test("shouldSendKeepAlive=false skips the send but keeps the timer", async () => {
     const sendKeepAlive = mock(async (_id: string) => {})
     const onTimeout = mock(() => {})
@@ -118,6 +200,7 @@ describe("StreamLifecycleController (phone copy)", () => {
         ackTimeoutMs: 500,
         maxMissedAcks: 5,
         shouldSendKeepAlive: () => false,
+        timers: jsTimers,
       },
       {sendKeepAlive, onTimeout},
     )
