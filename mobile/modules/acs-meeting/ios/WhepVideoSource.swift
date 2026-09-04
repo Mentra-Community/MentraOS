@@ -305,7 +305,7 @@ extension WhepVideoSource: RTCVideoRenderer {
 }
 
 extension WhepVideoSource: RTCAudioRenderer {
-  func renderPCMBuffer(_ pcmBuffer: AVAudioPCMBuffer) {
+  func render(pcmBuffer: AVAudioPCMBuffer) {
     guard pcmEnabled else { return }
     let channels = Int(pcmBuffer.format.channelCount)
     let rate = Int(pcmBuffer.format.sampleRate)

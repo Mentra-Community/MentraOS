@@ -1,5 +1,6 @@
 import AzureCommunicationCalling
 import AzureCommunicationCommon
+import AVFoundation
 import ExpoModulesCore
 import Foundation
 
@@ -99,6 +100,7 @@ final class AcsMeetingSession {
   private var frameSender = AcsFrameSender()
   private var pcmBridge: PcmBridge?
   private var audioOut: RawOutgoingAudioStream?
+  private var audioIn: RawIncomingAudioStream?
   private var localOut: LocalOutgoingAudioStream?
   private let phoneMic = PhoneMicCapturer()
   private var outgoingReady = false
@@ -111,6 +113,17 @@ final class AcsMeetingSession {
   private var mediaRestartTask: DispatchWorkItem?
   private static let mediaRestartBaseMs = 1_000
   private static let mediaRestartMaxMs = 10_000
+  private var joinGeneration: UInt64 = 0
+  private lazy var callDelegateProxy = AcsCallDelegateProxy(
+    onStateChange: { [weak self] call in self?.handleCallStateChange(call) },
+    onMuteChange: { [weak self] call in self?.handleCallMuteChange(call) }
+  )
+  private lazy var outgoingAudioDelegateProxy = AcsOutgoingAudioDelegateProxy { [weak self] stream in
+    self?.handleOutgoingAudioStateChange(stream)
+  }
+  private lazy var incomingAudioDelegateProxy = AcsIncomingAudioDelegateProxy { [weak self] args in
+    self?.handleIncomingAudio(args)
+  }
 
   init(onState: @escaping ([String: Any]) -> Void, onIncomingPcm: @escaping (String, Int, Int) -> Void) {
     self.onState = onState
@@ -149,6 +162,7 @@ final class AcsMeetingSession {
       guard let self else { return }
       do {
         self.leaveLocked(emitIdle: false)
+        let generation = self.joinGeneration
         self.audioSource = parsed == .phone ? "phone" : "glasses"
         self.meetingUrl = meetingUrl
         self.lastError = nil
@@ -158,106 +172,182 @@ final class AcsMeetingSession {
         self.callClient = client
         let options = CallAgentOptions()
         options.displayName = displayName ?? "Mentra Call"
-        let agent = try client.createCallAgent(userCredential: credential, options: options).get()
-        self.callAgent = agent
-
-        let videoFormat = VideoStreamFormat()
-        videoFormat.pixelFormat = .nv12
-        videoFormat.width = Int32(video.width)
-        videoFormat.height = Int32(video.height)
-        videoFormat.framesPerSecond = Float(video.fps)
-        let videoOptions = RawOutgoingVideoStreamOptions()
-        videoOptions.formats = [videoFormat]
-        let videoStream = VirtualOutgoingVideoStream(videoStreamOptions: videoOptions)
-        self.frameSender.attach(videoStream)
-
-        let outAudioFormat = AudioStreamFormat()
-        outAudioFormat.sampleRate = .sampleRate48000
-        outAudioFormat.channelMode = .channelModeMono
-        outAudioFormat.encodedAudioFormat = .pcm
-
-        let outAudioOptions = RawOutgoingAudioStreamOptions()
-        outAudioOptions.format = outAudioFormat
-        let outgoing = RawOutgoingAudioStream(audioStreamOptions: outAudioOptions)
-        outgoing.delegate = self
-        self.audioOut = outgoing
-
-        let desired: AudioSourceKind = self.audioSource == "phone" ? .phone : .glasses
-        let plan = AcsAudioPolicy.planJoin(
-          desired: desired,
-          userMuted: self.muted,
-          glassesRequiresUnmutedTransport: Self.glassesRequiresUnmutedTransport
-        )
-
-        // Virtual outgoing stays armed for phone and glasses. A LocalOutgoing
-        // stream would make ACS own the phone route and open an echo loop.
-        let local: LocalOutgoingAudioStream? = plan.armVirtual ? nil : LocalOutgoingAudioStream()
-        self.localOut = local
-
-        let inAudioFormat = AudioStreamFormat()
-        inAudioFormat.sampleRate = .sampleRate16000
-        inAudioFormat.channelMode = .channelModeMono
-        inAudioFormat.encodedAudioFormat = .pcm
-        let inAudioOptions = RawIncomingAudioStreamOptions()
-        inAudioOptions.format = inAudioFormat
-        let incoming = RawIncomingAudioStream(audioStreamOptions: inAudioOptions)
-        incoming.delegate = self
-
-        let joinOptions = JoinCallOptions()
-        let outgoingVideo = OutgoingVideoOptions()
-        outgoingVideo.streams = [videoStream]
-        joinOptions.outgoingVideoOptions = outgoingVideo
-        let outgoingAudio = OutgoingAudioOptions()
-        outgoingAudio.stream = plan.armVirtual ? outgoing : local!
-        outgoingAudio.muted = plan.transportMuted
-        joinOptions.outgoingAudioOptions = outgoingAudio
-        let incomingAudio = IncomingAudioOptions()
-        incomingAudio.stream = incoming
-        // Return audio is ours to route (base64 → host → A2DP on the glasses), so
-        // the raw incoming stream must actually deliver buffers.
-        incomingAudio.muted = false
-        joinOptions.incomingAudioOptions = incomingAudio
-
-        let locator = TeamsMeetingLinkLocator(meetingLink: meetingUrl)
-        let call = try agent.join(with: locator, joinCallOptions: joinOptions)
-        self.call = call
-        call.delegate = self
-
-        let bridge = PcmBridge(dumpWav: dumpWav)
-        self.pcmBridge = bridge
-        self.phoneMic.onPcm = { [weak self] pcm, rate, channels in
-          self?.feedOutgoingPcm(pcm, sampleRate: rate, channels: channels)
-        }
-        let source = WhepVideoSource()
-        source.onFrame = { buffer in self.frameSender.send(buffer) }
-        source.onPcm = { pcm, rate, channels in
-          self.feedOutgoingPcm(pcm, sampleRate: rate, channels: channels)
-        }
-        self.mediaRestartAttempts = 0
-        source.onStateChange = { [weak self, weak source] state, reason in
-          // Fired from WebRTC/URLSession threads; hop to the session queue so it
-          // serializes with join/leave/policy like everything else.
+        client.createCallAgent(userCredential: credential, options: options) { [weak self, weak client] agent, error in
           self?.queue.async {
-            guard let self, let source, self.whep === source else { return }
-            self.onMediaSourceState(state, reason: reason)
+            guard let self, let client, self.callClient === client, self.joinGeneration == generation else {
+              agent?.dispose()
+              return
+            }
+            if let error {
+              self.failJoinLocked(error, generation: generation)
+              return
+            }
+            guard let agent else {
+              self.failJoinLocked(AcsMeetingError("ACS returned no call agent"), generation: generation)
+              return
+            }
+            do {
+              try self.joinWithAgentLocked(
+                agent,
+                generation: generation,
+                meetingUrl: meetingUrl,
+                whepUrl: whepUrl,
+                dumpWav: dumpWav,
+                video: video
+              )
+            } catch {
+              self.failJoinLocked(error, generation: generation)
+            }
           }
         }
-        source.start(config: SourceConfig(url: whepUrl))
-        self.whep = source
-        self.applyAudioPolicyOnQueue("join")
-        NSLog("ACS-SPIKE iOS ACS join started source=\(self.audioSource) profile=\(video.width)x\(video.height)@\(video.fps) armVirtual=\(plan.armVirtual) transportMuted=\(plan.transportMuted)")
       } catch {
-        let message = error.localizedDescription
-        // A step after a successful ACS join (e.g. WHEP start) can throw. Record
-        // the failure before teardown: lastError makes the call delegate ignore
-        // the hang-up's async disconnected callback, and emitIdle=false keeps the
-        // terminal state as error instead of resetting to idle. Either would
-        // otherwise let Mentra Call treat the failed join as a clean end.
-        self.lastError = message
-        self.leaveLocked(emitIdle: false)
-        self.emit("error")
+        self.failJoinLocked(error, generation: self.joinGeneration)
       }
     }
+  }
+
+  private func joinWithAgentLocked(
+    _ agent: CallAgent,
+    generation: UInt64,
+    meetingUrl: String,
+    whepUrl: String,
+    dumpWav: Bool,
+    video: AcsOutgoingVideo
+  ) throws {
+    callAgent = agent
+
+    let videoFormat = VideoStreamFormat()
+    videoFormat.pixelFormat = .nv12
+    videoFormat.width = Int32(video.width)
+    videoFormat.height = Int32(video.height)
+    videoFormat.framesPerSecond = Float(video.fps)
+    let videoOptions = RawOutgoingVideoStreamOptions()
+    videoOptions.formats = [videoFormat]
+    let videoStream = VirtualOutgoingVideoStream(videoStreamOptions: videoOptions)
+    frameSender.attach(videoStream)
+
+    let outAudioProperties = RawOutgoingAudioStreamProperties()
+    outAudioProperties.sampleRate = .hz48000
+    outAudioProperties.channelMode = .mono
+    outAudioProperties.format = .pcm16Bit
+    outAudioProperties.bufferDuration = .ms20
+    let outAudioOptions = RawOutgoingAudioStreamOptions()
+    outAudioOptions.properties = outAudioProperties
+    let outgoing = RawOutgoingAudioStream(options: outAudioOptions)
+    outgoing.delegate = outgoingAudioDelegateProxy
+    audioOut = outgoing
+
+    let desired: AudioSourceKind = audioSource == "phone" ? .phone : .glasses
+    let plan = AcsAudioPolicy.planJoin(
+      desired: desired,
+      userMuted: muted,
+      glassesRequiresUnmutedTransport: Self.glassesRequiresUnmutedTransport
+    )
+
+    // Virtual outgoing stays armed for phone and glasses. A LocalOutgoing
+    // stream would make ACS own the phone route and open an echo loop.
+    let local: LocalOutgoingAudioStream? = plan.armVirtual ? nil : LocalOutgoingAudioStream()
+    localOut = local
+
+    let inAudioProperties = RawIncomingAudioStreamProperties()
+    inAudioProperties.sampleRate = .hz16000
+    inAudioProperties.channelMode = .mono
+    inAudioProperties.format = .pcm16Bit
+    let inAudioOptions = RawIncomingAudioStreamOptions()
+    inAudioOptions.properties = inAudioProperties
+    let incoming = RawIncomingAudioStream(options: inAudioOptions)
+    incoming.delegate = incomingAudioDelegateProxy
+    audioIn = incoming
+
+    let joinOptions = JoinCallOptions()
+    let outgoingVideo = OutgoingVideoOptions()
+    outgoingVideo.streams = [videoStream]
+    joinOptions.outgoingVideoOptions = outgoingVideo
+    let outgoingAudio = OutgoingAudioOptions()
+    outgoingAudio.stream = plan.armVirtual ? outgoing : local!
+    outgoingAudio.muted = plan.transportMuted
+    joinOptions.outgoingAudioOptions = outgoingAudio
+    let incomingAudio = IncomingAudioOptions()
+    incomingAudio.stream = incoming
+    // Return audio is ours to route (base64 → host → A2DP on the glasses), so
+    // the raw incoming stream must actually deliver buffers.
+    incomingAudio.muted = false
+    joinOptions.incomingAudioOptions = incomingAudio
+
+    let locator = TeamsMeetingLinkLocator(meetingLink: meetingUrl)
+    agent.join(with: locator, joinCallOptions: joinOptions) { [weak self, weak agent] call, error in
+      self?.queue.async {
+        guard let self, let agent, self.callAgent === agent, self.joinGeneration == generation else {
+          call?.hangUp(options: nil) { _ in }
+          return
+        }
+        if let error {
+          self.failJoinLocked(error, generation: generation)
+          return
+        }
+        guard let call else {
+          self.failJoinLocked(AcsMeetingError("ACS returned no call"), generation: generation)
+          return
+        }
+        self.finishJoinLocked(
+          call,
+          generation: generation,
+          whepUrl: whepUrl,
+          dumpWav: dumpWav,
+          video: video,
+          plan: plan
+        )
+      }
+    }
+  }
+
+  private func finishJoinLocked(
+    _ call: Call,
+    generation: UInt64,
+    whepUrl: String,
+    dumpWav: Bool,
+    video: AcsOutgoingVideo,
+    plan: JoinAudioPlan
+  ) {
+    guard joinGeneration == generation else {
+      call.hangUp(options: nil) { _ in }
+      return
+    }
+    self.call = call
+    call.delegate = callDelegateProxy
+
+    let bridge = PcmBridge(dumpWav: dumpWav)
+    pcmBridge = bridge
+    phoneMic.onPcm = { [weak self] pcm, rate, channels in
+      self?.feedOutgoingPcm(pcm, sampleRate: rate, channels: channels)
+    }
+    let source = WhepVideoSource()
+    source.onFrame = { [weak self] buffer in self?.frameSender.send(buffer) }
+    source.onPcm = { [weak self] pcm, rate, channels in
+      self?.feedOutgoingPcm(pcm, sampleRate: rate, channels: channels)
+    }
+    mediaRestartAttempts = 0
+    source.onStateChange = { [weak self, weak source] state, reason in
+      // Fired from WebRTC/URLSession threads; hop to the session queue so it
+      // serializes with join/leave/policy like everything else.
+      self?.queue.async {
+        guard let self, let source, self.whep === source else { return }
+        self.onMediaSourceState(state, reason: reason)
+      }
+    }
+    source.start(config: SourceConfig(url: whepUrl))
+    whep = source
+    applyAudioPolicyOnQueue("join")
+    NSLog("ACS-SPIKE iOS ACS join started source=\(audioSource) profile=\(video.width)x\(video.height)@\(video.fps) armVirtual=\(plan.armVirtual) transportMuted=\(plan.transportMuted)")
+  }
+
+  private func failJoinLocked(_ error: Error, generation: UInt64) {
+    guard joinGeneration == generation else { return }
+    // Record failure before teardown: lastError makes late call callbacks no-ops,
+    // and emitIdle=false preserves the terminal error rather than resetting idle.
+    lastError = error.localizedDescription
+    leaveLocked(emitIdle: false)
+    emit("error")
   }
 
   func updateVideoSource(_ whepUrl: String) {
@@ -350,13 +440,17 @@ final class AcsMeetingSession {
   private func feedOutgoingPcm(_ pcm: Data, sampleRate: Int, channels: Int) {
     guard !muted, outgoingReady, let stream = audioOut else { return }
     for frame in pcmBridge?.ingest(pcm16Le: pcm, sampleRate: sampleRate, channels: channels) ?? [] {
-      do {
-        let buffer = RawAudioBuffer()
-        buffer.data = frame
-        try stream.send(buffer)
-      } catch {
-        NSLog("ACS-SPIKE sendRawAudioBuffer failed: \(error)")
+      guard let pcmBuffer = PcmBridge.audioBuffer(pcm16Le: frame, sampleRate: PcmBridge.targetRate, channels: 1) else {
+        NSLog("ACS-SPIKE could not create outgoing AVAudioPCMBuffer")
         break
+      }
+      let buffer = RawAudioBuffer()
+      buffer.buffer = pcmBuffer
+      stream.send(buffer: buffer) { error in
+        if let error {
+          NSLog("ACS-SPIKE sendRawAudioBuffer failed: \(error)")
+        }
+        buffer.dispose()
       }
     }
   }
@@ -367,6 +461,7 @@ final class AcsMeetingSession {
   }
 
   private func leaveLocked(emitIdle: Bool = true) {
+    joinGeneration &+= 1
     phoneMic.setEnabled(false)
     phoneMic.onPcm = nil
     applier.reset()
@@ -379,19 +474,25 @@ final class AcsMeetingSession {
     mediaSource = .idle
     whep?.stop()
     frameSender.detach()
-    do {
-      try call?.hangUp().get()
-    } catch {
-      NSLog("ACS-SPIKE leave hangUp failed: \(error)")
+    let leavingCall = call
+    let leavingAgent = callAgent
+    leavingCall?.delegate = nil
+    leavingCall?.hangUp(options: nil) { error in
+      if let error {
+        NSLog("ACS-SPIKE leave hangUp failed: \(error)")
+      }
+      leavingAgent?.dispose()
     }
-    // Dispose independently of hang-up: a failed hang-up must not leak the ACS
-    // agent, and each join/leave cycle must release the previous agent.
-    callAgent?.dispose()
+    // A join that never produced a call still owns an agent that must be released.
+    if leavingCall == nil {
+      leavingAgent?.dispose()
+    }
     callAgent = nil
     callClient = nil
     call = nil
     whep = nil
     audioOut = nil
+    audioIn = nil
     localOut = nil
     pcmBridge = nil
     outgoingReady = false
@@ -411,6 +512,49 @@ final class AcsMeetingSession {
   fileprivate func currentCall() -> Call? { call }
   fileprivate func currentWhep() -> WhepVideoSource? { whep }
   fileprivate func setPhonePcmEnabled(_ enabled: Bool) { phoneMic.setEnabled(enabled) }
+
+  private func handleCallStateChange(_ changedCall: Call) {
+    queue.async {
+      guard self.call === changedCall, self.lastError == nil else { return }
+      switch changedCall.state {
+      case .connecting: self.emit("connecting")
+      case .inLobby: self.emit("lobby")
+      case .connected:
+        self.emit("connected")
+        self.applyAudioPolicyOnQueue("call-connected")
+      case .disconnecting, .disconnected: self.emit("disconnected")
+      default: break
+      }
+    }
+  }
+
+  private func handleOutgoingAudioStateChange(_ stream: RawOutgoingAudioStream) {
+    queue.async {
+      guard self.audioOut === stream else { return }
+      self.outgoingReady = stream.state == .started
+      NSLog("ACS-SPIKE iOS raw outgoing audio state=\(stream.state)")
+      self.applyAudioPolicyOnQueue("virtual-stream-state")
+    }
+  }
+
+  private func handleCallMuteChange(_ changedCall: Call) {
+    queue.async {
+      guard self.call === changedCall, self.lastError == nil else { return }
+      self.applyAudioPolicyOnQueue("outgoing-audio-state")
+    }
+  }
+
+  private func handleIncomingAudio(_ args: IncomingMixedAudioEventArgs) {
+    let rawBuffer = args.audioBuffer
+    defer { rawBuffer.dispose() }
+    guard let pcmBuffer = rawBuffer.buffer as? AVAudioPCMBuffer,
+          let data = PcmBridge.pcm16Data(from: pcmBuffer) else { return }
+    onIncomingPcm(
+      data.base64EncodedString(),
+      Int(args.streamProperties.sampleRate.valueInHz),
+      Int(args.streamProperties.channelMode.channelCount)
+    )
+  }
 }
 
 final class SessionAudioController: AudioStreamController {
@@ -421,7 +565,8 @@ final class SessionAudioController: AudioStreamController {
   }
 
   func readActive() -> ActiveStreamKind {
-    guard let stream = session?.currentCall()?.activeOutgoingAudioStream else { return .none }
+    guard let call = session?.currentCall() else { return .none }
+    let stream = call.activeOutgoingAudioStream
     let started = String(describing: stream.state).localizedCaseInsensitiveContains("started")
     guard started else { return .none }
     let type = String(describing: stream.type).lowercased()
@@ -431,7 +576,7 @@ final class SessionAudioController: AudioStreamController {
   }
 
   func isPhysicallyMuted() -> Bool? {
-    session?.currentCall()?.isMuted
+    session?.currentCall()?.isOutgoingAudioMuted
   }
 
   func setGlassesPcmEnabled(_ enabled: Bool) {
@@ -446,11 +591,8 @@ final class SessionAudioController: AudioStreamController {
     switch CallGuard.require(session?.currentCall()) {
     case .failure(let error): return .failure(error)
     case .success(let call):
-      do {
-        try call.mute().get()
-        return .success(())
-      } catch {
-        return .failure(error)
+      return waitForAcsOperation { completion in
+        call.muteOutgoingAudio(completionHandler: completion)
       }
     }
   }
@@ -459,11 +601,8 @@ final class SessionAudioController: AudioStreamController {
     switch CallGuard.require(session?.currentCall()) {
     case .failure(let error): return .failure(error)
     case .success(let call):
-      do {
-        try call.unmute().get()
-        return .success(())
-      } catch {
-        return .failure(error)
+      return waitForAcsOperation { completion in
+        call.unmuteOutgoingAudio(completionHandler: completion)
       }
     }
   }
@@ -472,53 +611,86 @@ final class SessionAudioController: AudioStreamController {
     switch CallGuard.require(session?.currentCall()) {
     case .failure(let error): return .failure(error)
     case .success(let call):
-      guard let stream = call.activeOutgoingAudioStream else {
-        return .failure(CallMissingError())
-      }
-      do {
-        try call.stopAudio(stream: stream).get()
-        return .success(())
-      } catch {
-        return .failure(error)
+      let stream = call.activeOutgoingAudioStream
+      return waitForAcsOperation { completion in
+        call.stopAudio(stream: stream, completionHandler: completion)
       }
     }
   }
 }
 
-extension AcsMeetingSession: CallDelegate {
+private final class AcsCallDelegateProxy: NSObject, CallDelegate {
+  private let onStateChange: (Call) -> Void
+  private let onMuteChange: (Call) -> Void
+
+  init(onStateChange: @escaping (Call) -> Void, onMuteChange: @escaping (Call) -> Void) {
+    self.onStateChange = onStateChange
+    self.onMuteChange = onMuteChange
+  }
+
   func call(_ call: Call, didChangeState args: PropertyChangedEventArgs) {
-    // A failed join has already reported a terminal error and torn the call
-    // down; ignore any late ACS state callback so it cannot overwrite error.
-    if lastError != nil { return }
-    switch call.state {
-    case .connecting: emit("connecting")
-    case .inLobby: emit("lobby")
-    case .connected:
-      emit("connected")
-      applyAudioPolicy("call-connected")
-    case .disconnecting, .disconnected: emit("disconnected")
-    default: break
-    }
+    onStateChange(call)
   }
 
   func call(_ call: Call, didChangeMuteState args: PropertyChangedEventArgs) {
-    applyAudioPolicy("outgoing-audio-state")
+    onMuteChange(call)
   }
 }
 
-extension AcsMeetingSession: RawOutgoingAudioStreamDelegate {
+private final class AcsOutgoingAudioDelegateProxy: NSObject, RawOutgoingAudioStreamDelegate {
+  private let onStateChange: (RawOutgoingAudioStream) -> Void
+
+  init(onStateChange: @escaping (RawOutgoingAudioStream) -> Void) {
+    self.onStateChange = onStateChange
+  }
+
   func rawOutgoingAudioStream(_ rawOutgoingAudioStream: RawOutgoingAudioStream, didChangeState args: AudioStreamStateChangedEventArgs) {
-    outgoingReady = String(describing: rawOutgoingAudioStream.state).localizedCaseInsensitiveContains("started")
-    NSLog("ACS-SPIKE iOS raw outgoing audio state=\(rawOutgoingAudioStream.state)")
-    applyAudioPolicy("virtual-stream-state")
+    onStateChange(rawOutgoingAudioStream)
   }
 }
 
-extension AcsMeetingSession: RawIncomingAudioStreamDelegate {
-  func rawIncomingAudioStream(_ rawIncomingAudioStream: RawIncomingAudioStream, didReceiveRawAudioBuffer args: IncomingAudioStreamRawBufferReceivedEventArgs) {
-    guard let data = args.audioBuffer?.data else { return }
-    onIncomingPcm(data.base64EncodedString(), 16000, 1)
+private final class AcsIncomingAudioDelegateProxy: NSObject, RawIncomingAudioStreamDelegate {
+  private let onBuffer: (IncomingMixedAudioEventArgs) -> Void
+
+  init(onBuffer: @escaping (IncomingMixedAudioEventArgs) -> Void) {
+    self.onBuffer = onBuffer
   }
+
+  func rawIncomingAudioStream(_ rawIncomingAudioStream: RawIncomingAudioStream, didReceiveMixedAudioBuffer args: IncomingMixedAudioEventArgs) {
+    onBuffer(args)
+  }
+}
+
+private struct AcsMeetingError: LocalizedError {
+  let message: String
+
+  init(_ message: String) {
+    self.message = message
+  }
+
+  var errorDescription: String? { message }
+}
+
+private func waitForAcsOperation(
+  timeout: DispatchTimeInterval = .seconds(10),
+  _ start: (@escaping (Error?) -> Void) -> Void
+) -> Result<Void, Error> {
+  let semaphore = DispatchSemaphore(value: 0)
+  let lock = NSLock()
+  var operationError: Error?
+  start { error in
+    lock.lock()
+    operationError = error
+    lock.unlock()
+    semaphore.signal()
+  }
+  guard semaphore.wait(timeout: .now() + timeout) == .success else {
+    return .failure(AcsMeetingError("ACS operation timed out"))
+  }
+  lock.lock()
+  defer { lock.unlock() }
+  if let operationError { return .failure(operationError) }
+  return .success(())
 }
 
 struct AcsOutgoingVideo {

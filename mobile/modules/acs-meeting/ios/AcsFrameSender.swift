@@ -4,8 +4,8 @@ import Foundation
 
 /// Fresh Swift sender on ACS iOS RawOutgoingVideoStream + CVPixelBuffer.
 /// No RealWear code (they have no iOS equivalent).
-final class AcsFrameSender {
-  private var stream: RawOutgoingVideoStream?
+final class AcsFrameSender: NSObject {
+  private var stream: VirtualOutgoingVideoStream?
   private var running = false
   private var lastSent: CFTimeInterval = 0
 
@@ -17,15 +17,18 @@ final class AcsFrameSender {
 
   func send(_ pixelBuffer: CVPixelBuffer) {
     guard running, let stream else { return }
-    let fps = stream.format?.framesPerSecond ?? 15
+    let fps = Double(stream.format.framesPerSecond)
     let now = CFAbsoluteTimeGetCurrent()
     if lastSent > 0, now - lastSent < 1.0 / max(fps, 1) { return }
     lastSent = now
-    do {
-      let frame = RawVideoFrameBuffer(pixelBuffer, streamFormat: stream.format)
-      try stream.send(frame)
-    } catch {
-      NSLog("ACS-SPIKE send frame failed: \(error)")
+    let frame = RawVideoFrameBuffer()
+    frame.buffer = pixelBuffer
+    frame.streamFormat = stream.format
+    stream.send(frame: frame) { error in
+      if let error {
+        NSLog("ACS-SPIKE send frame failed: \(error)")
+      }
+      frame.dispose()
     }
   }
 
@@ -38,10 +41,10 @@ final class AcsFrameSender {
   }
 }
 
-extension AcsFrameSender: RawOutgoingVideoStreamDelegate {
-  func rawOutgoingVideoStream(_ rawOutgoingVideoStream: RawOutgoingVideoStream, didChangeState args: VideoStreamStateChangedEventArgs) {
-    guard rawOutgoingVideoStream === stream else { return }
-    running = rawOutgoingVideoStream.state == .started
-    NSLog("ACS-SPIKE iOS raw video state=\(rawOutgoingVideoStream.state)")
+extension AcsFrameSender: VirtualOutgoingVideoStreamDelegate {
+  func virtualOutgoingVideoStream(_ virtualOutgoingVideoStream: VirtualOutgoingVideoStream, didChangeState args: VideoStreamStateChangedEventArgs) {
+    guard virtualOutgoingVideoStream === stream else { return }
+    running = virtualOutgoingVideoStream.state == .started
+    NSLog("ACS-SPIKE iOS raw video state=\(virtualOutgoingVideoStream.state)")
   }
 }
