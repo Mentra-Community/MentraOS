@@ -1,5 +1,6 @@
 (() => {
-  const retryDelaysMs = [0, 100, 300, 700, 1200, 2000];
+  const stabilizationDurationMs = 2000;
+  const retryIntervalMs = 200;
   const userEvents = ["wheel", "touchstart", "pointerdown", "keydown"];
 
   let cancelCurrentAttempt = () => {};
@@ -18,12 +19,14 @@
     }
 
     let cancelled = false;
-    const timers = [];
+    let intervalId;
+    let timeoutId;
 
     const cancel = () => {
       if (cancelled) return;
       cancelled = true;
-      timers.forEach(window.clearTimeout);
+      window.clearInterval(intervalId);
+      window.clearTimeout(timeoutId);
       userEvents.forEach((eventName) =>
         window.removeEventListener(eventName, cancel, true),
       );
@@ -38,7 +41,12 @@
     );
 
     const restoreAnchor = () => {
-      if (cancelled || window.location.hash !== expectedHash) return;
+      if (cancelled) return;
+
+      if (window.location.hash !== expectedHash) {
+        cancel();
+        return;
+      }
 
       const target = document.getElementById(anchorId);
       if (!target) return;
@@ -53,21 +61,15 @@
       }
     };
 
-    retryDelaysMs.forEach((delayMs) => {
-      timers.push(
-        window.setTimeout(
-          () => window.requestAnimationFrame(restoreAnchor),
-          delayMs,
-        ),
-      );
-    });
-    timers.push(
-      window.setTimeout(cancel, retryDelaysMs[retryDelaysMs.length - 1] + 100),
+    restoreAnchor();
+    intervalId = window.setInterval(
+      () => window.requestAnimationFrame(restoreAnchor),
+      retryIntervalMs,
     );
+    timeoutId = window.setTimeout(cancel, stabilizationDurationMs);
   }
 
   window.addEventListener("hashchange", preserveCurrentAnchor);
-  window.addEventListener("pageshow", preserveCurrentAnchor);
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", preserveCurrentAnchor, {
