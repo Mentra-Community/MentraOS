@@ -97,6 +97,7 @@
     "registry": "https://registry.npmjs.org/"
   },
   "dependencies": {
+    "@mentra/acs-meeting": "3.2.0",
     "@mentra/bluetooth-sdk": "3.2.0",
     "@mentra/cloud-client": "3.2.0",
     "@mentra/cloud-protocol": "3.2.0",

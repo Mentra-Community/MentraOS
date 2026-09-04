@@ -117,6 +117,7 @@ public class AsgClientService extends Service implements NetworkStateListener, T
     public static final String ACTION_I2S_AUDIO_STATE =
             "com.mentra.asg_client.ACTION_I2S_AUDIO_STATE";
     public static final String EXTRA_I2S_AUDIO_PLAYING = "extra_i2s_audio_playing";
+    public static final String EXTRA_I2S_FORCE_RESTART = "extra_i2s_force_restart";
     public static final String ACTION_UVC_STREAMING_CHANGED =
             "com.mentra.asg_client.ACTION_UVC_STREAMING_CHANGED";
     public static final String EXTRA_UVC_STREAMING = "extra_uvc_streaming";
@@ -308,7 +309,8 @@ public class AsgClientService extends Service implements NetworkStateListener, T
 
             if (ACTION_I2S_AUDIO_STATE.equals(action)) {
                 boolean playing = intent.getBooleanExtra(EXTRA_I2S_AUDIO_PLAYING, false);
-                handleI2SAudioState(playing);
+                boolean forceRestart = intent.getBooleanExtra(EXTRA_I2S_FORCE_RESTART, false);
+                handleI2SAudioState(playing, forceRestart);
                 return START_STICKY;
             }
 
@@ -475,47 +477,71 @@ public class AsgClientService extends Service implements NetworkStateListener, T
     }
 
     public void handleI2SAudioState(boolean playing) {
-        Log.i(TAG, "I2S audio state request: " + (playing ? "start" : "stop"));
+        handleI2SAudioState(playing, false);
+    }
 
-        if (playing == lastI2sPlaying) {
-            Log.d(TAG, "I2S state unchanged, skipping command");
+    /**
+     * Open or close the BES I2S bridge.
+     *
+     * @param forceRestart when starting and I2S is already open, re-announce {@code mh_starti2s}
+     *     with the HAL rate so BES can retune if the clock is stale. Do not send {@code
+     *     mh_stopi2s} first — tearing the PA/I2S down while MediaPlayer is priming clips the ding
+     *     and storms UART ({@code lxy uart break} / {@code rx err3}).
+     */
+    public void handleI2SAudioState(boolean playing, boolean forceRestart) {
+        Log.i(
+                TAG,
+                "I2S audio state request: "
+                        + (playing ? "start" : "stop")
+                        + (forceRestart ? " (re-announce start)" : ""));
+
+        if (forceRestart && playing && lastI2sPlaying) {
+            Log.i(
+                    TAG,
+                    "[I2S-RATE] I2S already open — re-announce mh_starti2s; BES retunes only on mismatch");
+        } else if (!forceRestart && playing == lastI2sPlaying) {
+            Log.i(TAG, "I2S state unchanged, skipping command");
             return;
         }
 
-        final String command = playing ? "mh_starti2s" : "mh_stopi2s";
+        Integer rateHz = playing ? readHalOutputSampleRateHz() : null;
+        if (sendI2sCommand(playing, rateHz)) {
+            lastI2sPlaying = playing;
+        }
+    }
 
+    private Integer readHalOutputSampleRateHz() {
+        android.media.AudioManager audioManager =
+                (android.media.AudioManager) getSystemService(Context.AUDIO_SERVICE);
+        if (audioManager == null) {
+            Log.w(TAG, "[I2S-RATE] AudioManager is null, sending empty body");
+            return null;
+        }
+        String outputRate =
+                audioManager.getProperty(android.media.AudioManager.PROPERTY_OUTPUT_SAMPLE_RATE);
+        Log.i(TAG, "[I2S-RATE] HAL PROPERTY_OUTPUT_SAMPLE_RATE=" + outputRate);
+        if (outputRate == null) {
+            Log.w(TAG, "[I2S-RATE] HAL sample-rate property missing");
+            return null;
+        }
+        try {
+            return Integer.parseInt(outputRate);
+        } catch (NumberFormatException e) {
+            Log.w(TAG, "[I2S-RATE] Unexpected PROPERTY_OUTPUT_SAMPLE_RATE value: " + outputRate);
+            return null;
+        }
+    }
+
+    private boolean sendI2sCommand(boolean playing, Integer rateHz) {
+        final String command = playing ? "mh_starti2s" : "mh_stopi2s";
         try {
             JSONObject payload = new JSONObject();
             payload.put("C", command);
             payload.put("V", 1);
 
             JSONObject body = new JSONObject();
-            Integer rateHz = null;
-            if (playing) {
-                // Tell BES the actual I2S PCM rate Android's audio HAL is about to output,
-                // instead of relying on BES's hardcoded/default guess. A stale default here
-                // previously caused boot/shutter tones to play at the wrong pitch/speed
-                // (48kHz PCM played back at a 44.1kHz assumption).
-                android.media.AudioManager audioManager =
-                        (android.media.AudioManager) getSystemService(Context.AUDIO_SERVICE);
-                if (audioManager == null) {
-                    Log.w(TAG, "[I2S-RATE] AudioManager is null, sending empty body");
-                } else {
-                    String outputRate =
-                            audioManager.getProperty(
-                                    android.media.AudioManager.PROPERTY_OUTPUT_SAMPLE_RATE);
-                    Log.i(TAG, "[I2S-RATE] HAL PROPERTY_OUTPUT_SAMPLE_RATE=" + outputRate);
-                    if (outputRate != null) {
-                        try {
-                            rateHz = Integer.parseInt(outputRate);
-                            body.put("rate", rateHz);
-                        } catch (NumberFormatException e) {
-                            Log.w(TAG, "[I2S-RATE] Unexpected PROPERTY_OUTPUT_SAMPLE_RATE value: " + outputRate);
-                        }
-                    } else {
-                        Log.w(TAG, "[I2S-RATE] HAL sample-rate property missing");
-                    }
-                }
+            if (playing && rateHz != null) {
+                body.put("rate", rateHz);
             }
             // B must be a JSON *string* (not a nested object) - BES parses it via cJSON's
             // valuestring, which is only populated for string-typed values.
@@ -534,9 +560,6 @@ public class AsgClientService extends Service implements NetworkStateListener, T
                             + payload);
 
             boolean sent = sendK900Command(payload.toString());
-            if (sent) {
-                lastI2sPlaying = playing;
-            }
             Log.i(
                     TAG,
                     "[I2S-RATE] uart_send result="
@@ -544,8 +567,10 @@ public class AsgClientService extends Service implements NetworkStateListener, T
                             + " payload="
                             + payload
                             + " (look for B={\"rate\":...} as a string)");
+            return sent;
         } catch (JSONException e) {
             Log.e(TAG, "Failed to construct I2S command payload", e);
+            return false;
         }
     }
 

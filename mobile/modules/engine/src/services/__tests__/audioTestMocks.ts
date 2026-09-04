@@ -33,6 +33,7 @@ export const setLegacyCameraFov = mock(async (request: Record<string, unknown>) 
   roiPosition: request.roiPosition ?? "center",
   timestamp: 1,
 }))
+export const updateBluetoothSettings = mock(async (_patch: Record<string, unknown>) => {})
 
 mock.module("@mentra/bluetooth-sdk/internal", () => ({
   __esModule: true,
@@ -49,6 +50,7 @@ mock.module("@mentra/bluetooth-sdk/internal", () => ({
     setGlassesMediaVolume,
     setLegacyCameraFov,
     setOwnAppAudioPlaying,
+    updateBluetoothSettings,
   },
 }))
 
@@ -80,4 +82,5 @@ export function resetAudioTestMocks(): void {
   releaseCameraFovOverride.mockClear()
   restoreLegacyCameraFov.mockClear()
   setLegacyCameraFov.mockClear()
+  updateBluetoothSettings.mockClear()
 }

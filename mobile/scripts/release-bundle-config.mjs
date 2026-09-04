@@ -13,7 +13,8 @@ export const RELEASE_BUNDLE_ENV_KEYS = [
   "EXPO_PUBLIC_AUTHING_APP_ID",
   "EXPO_PUBLIC_BUILD_BRANCH",
   "EXPO_PUBLIC_BUILD_COMMIT",
-  "EXPO_PUBLIC_BUILD_TIME",
+  // BUILD_TIME is excluded from Metro's cacheVersion (see metro-cache-version.cjs)
+  // so a reused transform may carry a prior timestamp. COMMIT is the identity.
   "EXPO_PUBLIC_BUILD_USER",
   "EXPO_PUBLIC_CLOUD_CORE_URL",
   "EXPO_PUBLIC_CLOUD_RUNTIME_URL",

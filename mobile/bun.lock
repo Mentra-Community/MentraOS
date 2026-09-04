@@ -19,6 +19,7 @@
         "@livekit/react-native": "^2.9.6",
         "@livekit/react-native-expo-plugin": "^1.0.1",
         "@livekit/react-native-webrtc": "^137.0.2",
+        "@mentra/acs-meeting": "workspace:*",
         "@mentra/bluetooth-sdk": "workspace:*",
         "@mentra/cloud-client": "workspace:*",
         "@mentra/crust": "workspace:*",
@@ -174,6 +175,19 @@
         "zod": "^3.24.1",
       },
     },
+    "modules/acs-meeting": {
+      "name": "@mentra/acs-meeting",
+      "version": "3.2.0",
+      "devDependencies": {
+        "expo-module-scripts": "^55.0.2",
+        "typescript": "~5.9.2",
+      },
+      "peerDependencies": {
+        "expo": "*",
+        "react": "*",
+        "react-native": "*",
+      },
+    },
     "modules/bluetooth-sdk": {
       "name": "@mentra/bluetooth-sdk",
       "version": "3.2.0",
@@ -212,6 +226,7 @@
       "name": "@mentra/engine",
       "version": "3.2.0",
       "dependencies": {
+        "@mentra/acs-meeting": "3.2.0",
         "@mentra/bluetooth-sdk": "3.2.0",
         "@mentra/cloud-client": "3.2.0",
         "@mentra/cloud-protocol": "3.2.0",
@@ -902,6 +917,8 @@
     "@livekit/react-native-expo-plugin": ["@livekit/react-native-expo-plugin@1.0.2", "", { "peerDependencies": { "@livekit/react-native": "^2.1.0", "expo": "*", "react": "*", "react-native": "*" } }, "sha512-Crnht6xAlvbSo677oXFBMzS6I5lCMfCNNyLIs6bQZOwlwempz6tWj4CddRknqCCd/dvAyHCa1HwslqXpvGoSJA=="],
 
     "@livekit/react-native-webrtc": ["@livekit/react-native-webrtc@137.0.3", "", { "dependencies": { "base64-js": "1.5.1", "debug": "4.3.4" }, "peerDependencies": { "react-native": ">=0.60.0" } }, "sha512-vfg2w/lMLNIRsIkRO0HWo6aTzkpCiBsgtHuvuIf3QF2pMgCK1w206nmrb4ATlv7v0Xu8e+/q/22gBRdsyIV4Aw=="],
+
+    "@mentra/acs-meeting": ["@mentra/acs-meeting@workspace:modules/acs-meeting"],
 
     "@mentra/bluetooth-sdk": ["@mentra/bluetooth-sdk@workspace:modules/bluetooth-sdk"],
 

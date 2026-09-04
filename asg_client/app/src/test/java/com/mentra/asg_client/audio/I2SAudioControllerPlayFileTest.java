@@ -60,6 +60,27 @@ public class I2SAudioControllerPlayFileTest {
     }
 
     @Test
+    public void playFile_startIntent_requestsForceRestart() throws Exception {
+        File wav = writeToneWav();
+        controller.playFile(wav, 0.1f);
+
+        List<Intent> i2sIntents = new ArrayList<>();
+        for (Intent intent : drainStartedServices()) {
+            if (AsgClientService.ACTION_I2S_AUDIO_STATE.equals(intent.getAction())) {
+                i2sIntents.add(intent);
+            }
+        }
+        assertThat(i2sIntents).isNotEmpty();
+        Intent first = i2sIntents.get(0);
+        assertThat(first.getBooleanExtra(AsgClientService.EXTRA_I2S_AUDIO_PLAYING, false))
+                .isTrue();
+        assertThat(first.getBooleanExtra(AsgClientService.EXTRA_I2S_FORCE_RESTART, false))
+                .isTrue();
+        controller.stopPlayback();
+        drainStartedServices();
+    }
+
+    @Test
     public void playFile_validWav_opensI2s() throws Exception {
         File wav = writeToneWav();
         controller.playFile(wav, 0.1f);
