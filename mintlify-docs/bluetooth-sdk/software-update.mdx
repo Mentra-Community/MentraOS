@@ -34,13 +34,23 @@ When you upgrade your app to a new Bluetooth SDK release, run the OTA check agai
 The [Mentra Bluetooth SDK Starter Kit](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit) includes the complete OTA flow. Build an example app with SDK `{{release-version}}` to install the matching glasses software.
 
 Prebuilt Starter Kit apps are validated against SDK `{{example-app-version}}`.
-Choose the installation for your phone:
+Choose the installation for your device:
 
-### iOS: iPhone Or iPad
+### iOS: iPhone
 
 [Install the React Native example from TestFlight]({{example-app-ios-url}}).
 For external TestFlight channels, a newly uploaded build appears after Beta App
 Review. Until then, the link continues to serve the latest approved build.
+
+### macOS: Apple Silicon Mac
+
+The same TestFlight build runs on Mac computers with Apple silicon. Install
+[TestFlight from the Mac App Store](https://apps.apple.com/app/testflight/id899247664),
+then [open the React Native example in TestFlight]({{example-app-ios-url}}) and
+select **Install**.
+
+The Mac build has been verified with Mentra Live for Bluetooth connection, OTA
+updates, and photo capture. Intel-based Macs cannot run this iPhone build.
 
 ### Android: Phone Or Tablet
 
