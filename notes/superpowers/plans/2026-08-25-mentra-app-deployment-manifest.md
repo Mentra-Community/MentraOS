@@ -6,20 +6,21 @@ owner: Mentra
 # Mentra Private Deployment call implementation plan
 
 > Execution checklist for the first customer deployment: the official Mentra
-> App, bundled Mentra Call, Microsoft Entra, one reduced customer-hosted Runtime
-> Services process, and direct Teams participation through ACS. Do not package
-> Core, Store, or a dedicated Mentra Call backend for this milestone.
+> App, bundled Mentra Call, Microsoft Entra, customer-hosted Core plus a reduced
+> Runtime Services process, and direct Teams participation through ACS. Do not
+> package Store or a dedicated Mentra Call backend for this milestone.
 
 **Goal:** Run Mentra Call on Android and iOS in a restricted customer-controlled
 workspace without Mentra public Core, Runtime, Store, or miniapp services.
 
 **Architecture:** The app resolves a workspace manifest before authentication.
-The first customer template selects native Microsoft Entra sign-in, disables the
-Core path, enables approved bundled miniapps, and authenticates Runtime directly
-with an Entra-issued token. One Runtime process enables only the meeting-provider
-module. Mentra Live sends media directly to the phone over SoftAP; the phone
-publishes raw media through ACS to Teams. The same
-cached Entra account supplies the delegated token exchanged for an authenticated
+The first customer template selects native Microsoft Entra sign-in, points to
+the customer Core and Runtime, and enables approved bundled miniapps. Core
+verifies the Entra identity, creates the deployment-scoped session, and mints
+the short-lived Runtime token. One Runtime process enables only the
+meeting-provider module. Mentra Live sends media directly to the phone over
+SoftAP; the phone publishes raw media through ACS to Teams. The same cached
+Entra account can supply the delegated token exchanged for an authenticated
 Teams-user ACS token, with no second interactive login. Mentra Call invokes
 host capabilities and has no required backend in this profile.
 
@@ -53,8 +54,9 @@ Mentra Call roadmap and does not reuse the older V1/V1.5/V2/V3 numbering.
   Zoom, or public WHIP/WHEP relay is required for the first enterprise release.
 
 Nicolo's branch may use an ACS guest identity named `Mentra Live` to qualify the
-native media path. The enterprise integration instead uses the signed-in
-employee's Entra/Teams identity and does not add a second interactive login.
+native media path. The enterprise integration supports that authenticated guest
+mode and can additionally use the signed-in employee's Entra/Teams identity
+without adding a second interactive login.
 
 ---
 
@@ -63,10 +65,11 @@ employee's Entra/Teams identity and does not add a second interactive login.
 ### Lane A: Alex — unblocked enterprise/platform foundations from `dev`
 
 Phases 1, 2, Phase 3 Task 1, and Phase 4 can proceed without the native ACS
-branch. Lane A owns deployment resolution, Entra, generic Runtime-only Engine
-auth, modular Runtime boot, the server-side ACS exchange, and the Azure
-reference service. The Runtime meetings endpoint is exercised through
-a server-side harness; Lane A does not connect it to native ACS.
+branch. Lane A owns deployment resolution, Entra, customer-Core identity and
+session exchange, Core-issued Runtime authentication, modular Runtime boot, the
+server-side ACS exchange, and the Azure reference service. The Runtime meetings
+endpoint is exercised through a server-side harness; Lane A does not connect it
+to native ACS.
 
 ### Lane B: Nicolo — native ACS/media branch
 
@@ -125,7 +128,7 @@ place a Teams call.
       package-specific values, but keep Runtime URLs and auth scopes at the host
       deployment level.
 - [ ] Add `auth.mode: "microsoft-entra"` with exact authority URL, native client
-      id, Runtime API scope, and ACS Teams delegated scopes. Request no Graph
+      id, customer Core session scope, and ACS Teams delegated scopes. Request no Graph
       scope in the first call-focused template.
 - [ ] Add `features.runtimeRealtimeSession`; false disables Runtime WebSocket,
       audio, and subscriptions while preserving authenticated Runtime REST
@@ -229,7 +232,7 @@ place a Teams call.
 - [ ] Return a canonical workspace identity keyed by deployment, issuer, and
       provider subject. The Entra adapter derives its subject from verified
       `tid` plus `oid`; email remains display metadata only.
-- [ ] Acquire the deployment's Runtime API scope for the selected account and
+- [ ] Acquire the deployment's Core API scope for the selected account and
       refresh it silently.
 - [ ] Silently acquire the ACS Teams delegated token for the same account when
       the native meeting capability needs it.
@@ -237,30 +240,37 @@ place a Teams call.
 - [ ] Let the manifest select exactly one workspace auth adapter. Do not show an
       identity-provider picker or disabled "coming soon" providers after a
       workspace is selected.
-- [ ] Do not create a Cloud V2/Core session for the call-focused workspace.
+- [ ] Exchange the verified Entra identity for a deployment-scoped customer
+      Core session. Core, not Runtime, owns refresh/logout and token-signing
+      state.
 - [ ] Implement logout, disabled-user recovery, authority mismatch, token expiry,
       and deployment switching without credential crossover.
 - [ ] Test assigned/unassigned users, wrong tenant, MFA, Conditional Access,
       cancelled login, revoked session, and broker/browser return on both
       platforms.
 
-### Task 2: Authenticate Runtime directly with Entra
+### Task 2: Authenticate through customer Core
 
-**Files:** Engine Runtime auth seam, Runtime verifier config, and deployment guide
+**Files:** Core OIDC/session exchange, Engine auth seam, Runtime verifier
+config, and deployment guide
 
-- [ ] Wire the existing `auth.runtime.getToken` Cloud Client mode through the
+- [ ] Validate the exact Entra issuer, tenant, audience, signature, expiry, and
+      configured Core API scope during the customer Core exchange.
+- [ ] Have customer Core mint the ordinary short-lived Runtime bearer token and
+      wire the existing `auth.runtime.getToken` Cloud Client mode through the
       Mentra App/Engine production configuration.
-- [ ] Validate exact Entra issuer, tenant, audience, signature, expiry, and
-      configured Runtime API scope on every protected endpoint.
+- [ ] Have Runtime validate only customer Core-issued tokens using the
+      deployment's pinned issuer and JWKS; do not teach Runtime to accept raw
+      workforce tokens as its primary session credential.
 - [ ] Authorize only assigned users/groups defined by customer policy.
 - [ ] Key server audit events by tenant id and object id; do not persist raw
       identity-provider tokens.
 - [ ] Return actionable 401/403 responses without exposing token contents.
 - [ ] Document the single-tenant public-client registration, official Android
-      and iOS redirects, Enterprise Application assignment, Runtime API scope,
+      and iOS redirects, Enterprise Application assignment, Core session scope,
       and consent.
 
-## Phase 3: Runtime-only Engine and bundled Mentra Call
+## Phase 3: Private Deployment Engine and bundled Mentra Call
 
 ### Task 1: Make REST-only Runtime startup supported in Engine
 
@@ -272,16 +282,18 @@ place a Teams call.
 - Modify `mobile/src/services/MantleManager.ts`
 - Add local-only startup tests
 
-- [ ] Construct the Cloud Client with no Core endpoint and the host-provided
-      Runtime token callback.
+- [ ] Construct the Cloud Client with the selected customer Core and Runtime
+      endpoints. Obtain Runtime tokens through the customer Core session using
+      the existing host-provided token callback.
 - [ ] Expose Runtime REST capabilities without opening the Runtime WebSocket or
       starting cloud audio, reconnect alarms, reports, support-profile sync, or
       cloud registry synchronization.
 - [ ] Continue Bluetooth, device hydration, pairing/reconnect, local settings,
       display, local miniapp runtime/launcher, phone stream coordination, ACS,
       and configured OTA.
-- [ ] Replace the global Core-owned local-miniapp identity assumption with the
-      verified deployment-scoped Entra identity.
+- [ ] Keep the normal Core-owned opaque Mentra user identity, scoped to the
+      deployment, and retain Entra subject metadata only in the Core-issued
+      Runtime token for provider integrations that explicitly need it.
 - [ ] Do not expose a miniapp-backend token in the call-focused profile. Mentra Call
       uses host capabilities and has no required backend.
 - [ ] Fail unavailable cloud-only miniapp APIs explicitly rather than retrying
@@ -434,13 +446,14 @@ policy tests
 
 ### Task 2: Publish customer artifacts and guides
 
-**Files:** Coordinated release scripts/workflows, Mintlify docs, Runtime deployment
+**Files:** Coordinated release scripts/workflows, Mintlify docs, cloud deployment
 templates, and runbooks
 
 - [ ] Publish a release-matched call-focused deployment template.
-- [x] Publish the existing Runtime image once through public GHCR with an
+- [x] Publish the common `mentra-cloud` image once through public GHCR with an
       immutable digest, signed SPDX SBOM and build provenance; mirror that exact
-      digest into the Azure reference deployment with only `meetings` enabled.
+      digest into the Azure reference deployment and start it separately as
+      Core and as Runtime with only `meetings` enabled.
 - [ ] Publish customer-hostable Mentra Live OTA artifacts when OTA is enabled.
 - [ ] Reuse the exact normal Android and iOS app artifacts; no customer build
       lane.
@@ -483,7 +496,8 @@ templates, and runbooks
 1. Manifest types/resolver, landing screen, manual workspace flow, nullable
    Core/Runtime, and pre-network telemetry gating.
 2. Provider-neutral auth contract plus native Entra adapter,
-   deployment-scoped identity, secure logout, and Runtime API token provider.
+   deployment-scoped Core session, secure logout, and Core-issued Runtime token
+   provider.
 3. Runtime module composition plus the meetings-only HTTP profile.
 4. Runtime meetings/ACS guest issuance and Teams-user token exchange, exercised
    through a server-side qualification harness with no native/mobile changes.
@@ -493,11 +507,11 @@ templates, and runbooks
 Native ACS integration remains the separate Lane C PR after Nicolo's Lane B
 lands. Do not add delegated Graph meeting creation to either V1 lane.
 
-The narrowed call deployment avoids the largest previous work item: packaging
-Core and every Runtime dependency. It still requires real mobile work—native
-Entra login, Runtime-only Engine auth, modular Runtime boot, and secure ACS
-credential ownership—but those changes form a reusable foundation for later
-workspace profiles.
+The narrowed call deployment packages customer Core and Runtime from the same
+immutable image while omitting Store and unrelated Runtime modules. It still
+requires real mobile work—native Entra login, deployment-scoped Core sessions,
+modular Runtime boot, and secure ACS credential ownership—but those changes
+form a reusable foundation for later workspace profiles.
 
 ## Explicitly deferred Mentra Call follow-ons
 

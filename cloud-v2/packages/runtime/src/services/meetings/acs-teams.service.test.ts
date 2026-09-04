@@ -100,7 +100,9 @@ describe("ACS guest credentials", () => {
     } satisfies AcsIdentityClient)
 
     const requests = Array.from({length: 20}, () => mintAcsGuestToken("tenant:concurrent-user"))
-    await Promise.resolve()
+    for (let attempt = 0; attempt < 10 && creates === 0; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    }
     expect(creates).toBe(1)
     releaseCreate?.()
 
@@ -148,6 +150,34 @@ describe("ACS guest credentials", () => {
     expect(refreshes).toBe(2)
   })
 
+  test("replaces an ACS identity after IdentityNotFound from the provider", async () => {
+    process.env.ACS_CONNECTION_STRING = "endpoint=https://test.communication.azure.com/;accesskey=test"
+    let creates = 0
+    setAcsIdentityClientForTests({
+      async createUserAndToken() {
+        creates += 1
+        return {
+          token: `guest-token-${creates}`,
+          expiresOn: creates === 1 ? new Date(0) : new Date(Date.now() + 60 * 60 * 1000),
+          user: {communicationUserId: `guest-user-${creates}`},
+        }
+      },
+      async getToken() {
+        throw {status: 401, code: "IdentityNotFound"}
+      },
+      async getTokenForTeamsUser() {
+        throw new Error("not used")
+      },
+    } satisfies AcsIdentityClient)
+
+    await mintAcsGuestToken("tenant:missing-user")
+    await expect(mintAcsGuestToken("tenant:missing-user")).rejects.toMatchObject({status: 502})
+    const replacement = await mintAcsGuestToken("tenant:missing-user")
+
+    expect(replacement.acsUserId).toBe("guest-user-2")
+    expect(creates).toBe(2)
+  })
+
   test("limits repeated guest-token mints for one authenticated user", async () => {
     process.env.ACS_CONNECTION_STRING = "endpoint=https://test.communication.azure.com/;accesskey=test"
     let tokenNumber = 0
@@ -176,7 +206,7 @@ describe("ACS guest credentials", () => {
     await expect(mintAcsGuestToken("tenant:rate-limited-user")).rejects.toMatchObject({status: 429})
   })
 
-  test("bounds guest identity state across authenticated users", async () => {
+  test("bounds guest identity state without evicting live ACS identities", async () => {
     process.env.ACS_CONNECTION_STRING = "endpoint=https://test.communication.azure.com/;accesskey=test"
     setAcsIdentityClientForTests({
       async createUserAndToken() {
@@ -192,9 +222,47 @@ describe("ACS guest credentials", () => {
     } satisfies AcsIdentityClient)
 
     for (let userNumber = 0; userNumber < ACS_GUEST_STATE_MAX_ENTRIES + 2; userNumber += 1) {
-      await mintAcsGuestToken(`tenant:user-${userNumber}`)
+      if (userNumber < ACS_GUEST_STATE_MAX_ENTRIES) {
+        await mintAcsGuestToken(`tenant:user-${userNumber}`)
+      } else {
+        await expect(mintAcsGuestToken(`tenant:user-${userNumber}`)).rejects.toMatchObject({status: 503})
+      }
     }
 
     expect(getAcsGuestStateSizeForTests()).toBe(ACS_GUEST_STATE_MAX_ENTRIES)
+  })
+
+  test("deletes an expired idle ACS identity before evicting its state", async () => {
+    process.env.ACS_CONNECTION_STRING = "endpoint=https://test.communication.azure.com/;accesskey=test"
+    const originalNow = Date.now
+    const deletedUsers: string[] = []
+    let now = 1_000_000
+    Date.now = () => now
+    try {
+      setAcsIdentityClientForTests({
+        async createUserAndToken() {
+          return {
+            token: "guest-token",
+            expiresOn: new Date(now + 60 * 60 * 1000),
+            user: {communicationUserId: "guest-user"},
+          }
+        },
+        async deleteUser(user) {
+          deletedUsers.push(user.communicationUserId)
+        },
+        async getTokenForTeamsUser() {
+          throw new Error("not used")
+        },
+      } satisfies AcsIdentityClient)
+
+      await mintAcsGuestToken("tenant:idle-user")
+      now += 4 * 60 * 60 * 1000 + 1
+      await mintAcsGuestToken("tenant:new-user")
+
+      expect(deletedUsers).toEqual(["guest-user"])
+      expect(getAcsGuestStateSizeForTests()).toBe(1)
+    } finally {
+      Date.now = originalNow
+    }
   })
 })

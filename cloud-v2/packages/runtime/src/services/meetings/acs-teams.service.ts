@@ -21,6 +21,7 @@ export interface AcsIdentityClient {
     scopes: string[],
     options: {tokenExpiresInMinutes: number},
   ): Promise<Pick<CommunicationUserToken, "token" | "expiresOn">>
+  deleteUser?(user: {communicationUserId: string}): Promise<void>
   getTokenForTeamsUser(input: {
     teamsUserAadToken: string
     clientId: string
@@ -51,6 +52,7 @@ interface GuestMintState {
 
 const guestMintState = new Map<string, GuestMintState>()
 let lastGuestStateSweepAt = 0
+let guestStateMaintenance = Promise.resolve()
 let testClient: AcsIdentityClient | null = null
 
 export class TeamsIdentityRejectedError extends Error {
@@ -158,7 +160,7 @@ export async function mintAcsGuestToken(
   authenticatedUserId: string,
 ): Promise<Extract<AcsMeetingCredential, {identityMode: "guest"}>> {
   const now = Date.now()
-  const state = guestStateFor(authenticatedUserId, now)
+  const state = await guestStateFor(authenticatedUserId, now)
   if (state.cached && Date.parse(state.cached.expiresOn) - now > ACS_GUEST_TOKEN_REUSE_MIN_REMAINING_MS) {
     return state.cached
   }
@@ -223,6 +225,7 @@ export function resetAcsTeamsAuthCache(): void {
   microsoftJwks = undefined
   guestMintState.clear()
   lastGuestStateSweepAt = 0
+  guestStateMaintenance = Promise.resolve()
   testClient = null
 }
 
@@ -236,6 +239,7 @@ export function setAcsIdentityClientForTests(client: AcsIdentityClient | null): 
   testClient = client
   guestMintState.clear()
   lastGuestStateSweepAt = 0
+  guestStateMaintenance = Promise.resolve()
 }
 
 function identityClient(): AcsIdentityClient {
@@ -255,24 +259,32 @@ function teamsUserConfiguration(): {
   return {tenantId, clientId}
 }
 
-function guestStateFor(authenticatedUserId: string, now: number): GuestMintState {
+async function guestStateFor(authenticatedUserId: string, now: number): Promise<GuestMintState> {
   let state = guestMintState.get(authenticatedUserId)
   if (state) {
     state.lastAccessedAt = now
     return state
   }
 
-  pruneGuestMintState(now)
-  if (guestMintState.size >= ACS_GUEST_STATE_MAX_ENTRIES) {
-    throw new AcsCredentialError("Teams credential service is temporarily at capacity", 503)
-  }
+  return withGuestStateMaintenance(async () => {
+    state = guestMintState.get(authenticatedUserId)
+    if (state) {
+      state.lastAccessedAt = now
+      return state
+    }
 
-  state = {mints: [], lastAccessedAt: now}
-  guestMintState.set(authenticatedUserId, state)
-  return state
+    await pruneGuestMintState(now)
+    if (guestMintState.size >= ACS_GUEST_STATE_MAX_ENTRIES) {
+      throw new AcsCredentialError("Teams credential service is temporarily at capacity", 503)
+    }
+
+    state = {mints: [], lastAccessedAt: now}
+    guestMintState.set(authenticatedUserId, state)
+    return state
+  })
 }
 
-function pruneGuestMintState(now: number): void {
+async function pruneGuestMintState(now: number): Promise<void> {
   if (
     now - lastGuestStateSweepAt >= ACS_GUEST_STATE_SWEEP_INTERVAL_MS ||
     guestMintState.size >= ACS_GUEST_STATE_MAX_ENTRIES
@@ -280,18 +292,40 @@ function pruneGuestMintState(now: number): void {
     lastGuestStateSweepAt = now
     for (const [userId, state] of guestMintState) {
       if (!state.inFlight && now - state.lastAccessedAt >= ACS_GUEST_STATE_IDLE_TTL_MS) {
-        guestMintState.delete(userId)
+        await deleteGuestState(userId, state)
       }
     }
   }
+}
 
-  if (guestMintState.size < ACS_GUEST_STATE_MAX_ENTRIES) return
-  const idleStates = [...guestMintState.entries()]
-    .filter(([, state]) => !state.inFlight)
-    .sort((left, right) => left[1].lastAccessedAt - right[1].lastAccessedAt)
-  const entriesToRemove = guestMintState.size - ACS_GUEST_STATE_MAX_ENTRIES + 1
-  for (const [userId] of idleStates.slice(0, entriesToRemove)) {
+async function deleteGuestState(userId: string, state: GuestMintState): Promise<void> {
+  if (state.acsUserId) {
+    const client = identityClient()
+    if (!client.deleteUser) return
+    try {
+      await client.deleteUser({communicationUserId: state.acsUserId})
+    } catch {
+      // Retain the mapping when ACS cleanup fails so we never lose track of a
+      // persistent identity and create an orphan on the next request.
+      return
+    }
+  }
+  if (guestMintState.get(userId) === state && !state.inFlight) {
     guestMintState.delete(userId)
+  }
+}
+
+async function withGuestStateMaintenance<T>(work: () => Promise<T>): Promise<T> {
+  const previous = guestStateMaintenance
+  let release: () => void = () => undefined
+  guestStateMaintenance = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  await previous
+  try {
+    return await work()
+  } finally {
+    release()
   }
 }
 
@@ -306,7 +340,9 @@ function isMissingAcsUserError(error: unknown): boolean {
     candidate.status === 404 ||
     candidate.statusCode === 404 ||
     candidate.code === "ResourceNotFound" ||
-    candidate.code === "UserNotFound"
+    candidate.code === "UserNotFound" ||
+    candidate.code === "IdentityNotFound" ||
+    ((candidate.status === 401 || candidate.statusCode === 401) && candidate.code === "Denied")
   )
 }
 
