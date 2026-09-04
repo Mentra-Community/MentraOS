@@ -25,7 +25,6 @@
 
 import {File} from "expo-file-system"
 
-import {decideDevLaunchRoute} from "../utils/devMiniappLaunch"
 import {isInstalledMiniappAllowed, isLocalMiniappPackageAllowed} from "../runtime/bootstrap"
 import {resolveDevBundleSource} from "../utils/devMiniappSnapshot"
 import {storage} from "../utils/storage/storage"
@@ -136,7 +135,7 @@ class MiniappLauncher {
     if (!entry?.background) return null
 
     // Use the host that actually answered — may differ from the stored IP
-    // after a laptop Wi-Fi change (mDNS / Metro failover inside decideDevLaunchRoute).
+    // after a laptop Wi-Fi change (mDNS / Metro failover inside resolveDevBundleSource).
     const base = resolvedUrl.replace(/\/$/, "")
     // entry.* are bundle-root paths (dist/ stripped); the dev server serves
     // files relative to cwd, so prepend dist/.
