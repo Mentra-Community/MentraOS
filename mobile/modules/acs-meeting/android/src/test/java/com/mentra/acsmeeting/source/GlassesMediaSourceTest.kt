@@ -104,6 +104,24 @@ class GlassesMediaSourceContractTest {
   }
 
   @Test
+  fun softApIsNeverReusedBecauseTheListenerBelongsToOneAttempt() {
+    // A SoftAP attempt owns a listener, a port and a peer. There is no URL to keep across a
+    // rebuild — the URL is an output of binding, not an input — so reuse must always be refused,
+    // even when the config and state would otherwise look reusable.
+    val config = SourceConfig("", SourceKind.SOFTAP, bindAddress = "192.168.43.20")
+
+    assertThat(canReuseSource("", SourceState.LIVE, config)).isFalse()
+    assertThat(canReuseSource("", SourceState.CONNECTING, config)).isFalse()
+  }
+
+  @Test
+  fun onlySoftApReportsAnIngestUrl() {
+    // Every other kind is told its URL, so exposing one would be a contract error waiting to be
+    // read by the orchestrator that hands the URL to the glasses.
+    assertThat(FakeGlassesMediaSource().ingestUrl).isNull()
+  }
+
+  @Test
   fun syntheticSourceHonorsStartRestartStopAndState() {
     val source = SyntheticI420Source(
       video = { _ -> },

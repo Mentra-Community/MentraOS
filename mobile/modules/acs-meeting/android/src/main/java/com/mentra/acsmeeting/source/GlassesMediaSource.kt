@@ -1,12 +1,29 @@
 package com.mentra.acsmeeting.source
 
-enum class SourceKind { WHEP, DIRECT }
+enum class SourceKind {
+  /** Subscribe to a Cloudflare WHEP endpoint. The phone is the offerer. */
+  WHEP,
+  DIRECT,
+
+  /**
+   * Serve a WHIP endpoint on the glasses hotspot and let the glasses publish into it. The phone is
+   * the answerer, and no traffic leaves the local link. See [LocalWhipIngestSource].
+   */
+  SOFTAP,
+}
 
 enum class SourceState { IDLE, CONNECTING, LIVE, FAILED }
 
 data class SourceConfig(
+  /**
+   * WHEP: the endpoint to subscribe to. SOFTAP: unused, because the URL is not known until the
+   * listener has bound a port — the source reports it back through
+   * [GlassesMediaSource.ingestUrl] instead.
+   */
   val url: String,
   val kind: SourceKind = SourceKind.WHEP,
+  /** SOFTAP only: the phone's own IPv4 address on the hotspot, to bind the listener to. */
+  val bindAddress: String? = null,
 )
 
 /** ACS-negotiated output size. One object so a frame cannot observe a torn width/height. */
@@ -47,6 +64,13 @@ interface GlassesMediaSource {
   fun forceRestart() {}
   fun stop()
   val state: SourceState
+
+  /**
+   * SOFTAP only: the WHIP URL the glasses must POST their offer to, known only after [start] has
+   * bound a listener. Null for every other kind, where the URL is an input rather than an output.
+   */
+  val ingestUrl: String? get() = null
+
   fun setPcmDeliveryEnabled(enabled: Boolean)
   fun setTargetSize(size: TargetSize?) {}
   fun setStateListener(listener: SourceStateListener?) {}

@@ -46,6 +46,10 @@ android {
   testOptions {
     unitTests {
       includeAndroidResources = true
+      // WhipIngestServer is exercised over a real loopback socket in JVM tests, and its stage
+      // logging reaches android.util.Log. Without this the stubbed android.jar throws "Stub!"
+      // and the socket behaviour we actually want to assert is unreachable.
+      returnDefaultValues = true
     }
   }
 }
