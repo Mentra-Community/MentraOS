@@ -352,29 +352,36 @@ Azure template, tests, and operator documentation
 server-side qualification harness, token/redaction tests, and Azure configuration
 
 - [ ] Add an `acs-teams` provider behind the Runtime meetings capability.
-- [ ] Require a valid Entra Runtime API bearer token before accepting the
-      ACS-scoped Entra subject token.
-- [ ] Validate tenant, client/app id, object id, scopes, expiry, and that the
-      subject matches the authenticated Runtime user.
+- [ ] Require a valid Core-issued Runtime API bearer token for every credential
+      request. An absent delegated token requests a guest credential.
+- [ ] When a delegated Entra token is supplied, validate tenant, client/app id,
+      object id, scopes, expiry, and that the subject matches the authenticated
+      Runtime user. Reject an invalid supplied token instead of falling back to
+      a guest.
 - [ ] Exchange it with ACS `GetTokenForTeamsUser` using customer-owned ACS
       managed identity/RBAC where supported, with a rotated connection-string
       secret permitted for the first controlled deployment.
-- [ ] Return only the short-lived ACS Teams-user token in a stable response that
-      Lane C can consume; do not add mobile/native integration in Lane A.
+- [ ] Create or reuse an anonymous ACS communication user and issue a `voip`
+      token when no delegated token is supplied.
+- [ ] Return a short-lived guest or Teams-user ACS token, with the selected
+      identity mode, in a stable response that Lane C can consume; do not add
+      mobile/native integration in Lane A.
 - [ ] Keep Entra and ACS bearer tokens out of miniapp messages, logs, errors, and
       diagnostics.
-- [ ] Validate only Entra and ACS configuration in this module set; require no
-      Cloudflare, MongoDB, Recall, speech, Store, or Mentra cloud variables.
+- [ ] Require ACS configuration at module startup. Require Entra tenant/client
+      configuration only when the Teams-user exchange path is exercised; require
+      no Cloudflare, MongoDB, Recall, speech, Store, or Mentra cloud variables.
 
 ## Phase 5: Reuse Entra for authenticated Teams identity
 
-The current Nicolo branch can prove native raw media first with a guest token,
-but the deployable Private Deployment v1 requires the employee Teams identity.
-It reuses Phase 2; there is no second interactive SSO screen.
+The existing native path proves raw media with a guest token. A Private
+Deployment uses the employee Teams identity when a delegated token is available
+and otherwise remains capable of joining as a guest. It reuses Phase 2; there is
+no second interactive SSO screen.
 
 **Lane:** C — begin only after the native ACS/media branch lands on `dev`.
 
-### Task 1: Add Teams-user token exchange
+### Task 1: Add host-owned ACS credential acquisition
 
 **Files:** MSAL scope acquisition, native host/Engine call capability, Nicolo ACS
 native module integration, tests, and admin guide
@@ -382,9 +389,11 @@ native module integration, tests, and admin guide
 - [ ] Add delegated ACS `Teams.ManageCalls` and `Teams.ManageChats` permissions
       to the Entra registration and document admin consent/assignment.
 - [ ] Silently acquire an ACS-scoped Entra token for the same cached MSAL account
-      and send it only to the configured customer Runtime over TLS.
-- [ ] Have the trusted host obtain and refresh the short-lived ACS Teams-user
-      token from Runtime; do not put it in the Miniapp SDK request.
+      when available and send it only to the configured customer Runtime over
+      TLS. A non-Entra identity, or an unavailable delegated token, requests a
+      guest credential instead.
+- [ ] Have the trusted host obtain and refresh the short-lived employee or guest
+      ACS credential from Runtime; do not put it in the Miniapp SDK request.
 - [ ] Treat `session.meeting.join` as the current spike shape. Finalize a
       provider-neutral Miniapp SDK capability only after the native lifecycle is
       stable.
@@ -470,8 +479,8 @@ templates, and runbooks
 2. Provider-neutral auth contract plus native Entra adapter,
    deployment-scoped identity, secure logout, and Runtime API token provider.
 3. Runtime module composition plus the meetings-only HTTP profile.
-4. Runtime meetings/ACS Teams-user token exchange, exercised through a
-   server-side qualification harness with no native/mobile changes.
+4. Runtime meetings/ACS guest issuance and Teams-user token exchange, exercised
+   through a server-side qualification harness with no native/mobile changes.
 5. OTA/content/hardware policy, Azure template, guides, and restricted-network
    qualification scaffolding.
 

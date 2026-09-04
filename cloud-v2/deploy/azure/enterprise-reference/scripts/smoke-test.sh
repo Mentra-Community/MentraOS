@@ -50,7 +50,7 @@ for url in $(jq -r '[.branding.logoUrls.light,.branding.logoUrls.dark,.links.pri
 done
 
 protected_status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
-  --request POST "$WORKSPACE/api/meetings/acs/teams-user-token")"
+  --request POST "$WORKSPACE/api/meetings/acs/token")"
 [[ "$protected_status" == "401" ]] || {
   printf 'Protected meeting endpoint returned HTTP %s without credentials; expected 401.\n' "$protected_status" >&2
   exit 1

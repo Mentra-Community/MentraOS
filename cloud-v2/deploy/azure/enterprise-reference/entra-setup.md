@@ -96,9 +96,11 @@ allowed Mobile client id. See [the cloud-neutral contract](../../private-deploym
 
 Runtime receives the Core issuer/JWKS as `CLOUD_RUNTIME_AUTH_ISSUERS`, plus
 `ENTRA_TENANT_ID`, the Mobile `ENTRA_CLIENT_ID`, and secret
-`ACS_CONNECTION_STRING`. For ACS exchange, Runtime requires Core's explicit
-`providerKind: microsoft-entra` binding and then verifies that the ACS token's
-`oid` and `tid` match the same employee and directory.
+`ACS_CONNECTION_STRING`. When the app supplies a delegated Teams token, Runtime
+requires Core's explicit `providerKind: microsoft-entra` binding and verifies
+that the token's `oid` and `tid` match the same employee and directory before
+exchanging it. Without a delegated token, the same endpoint issues a guest
+credential from this deployment's ACS resource.
 
 ## Qualification
 

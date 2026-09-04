@@ -87,7 +87,7 @@ profile: `realtime-audio,camera,maps,tts`; it does not implicitly add meetings.
 | `camera` | Photo and managed-stream routes; currently requires `realtime-audio`. |
 | `maps` | Directions, geocoding, and places. |
 | `tts` | Speech synthesis. |
-| `meetings` | Native meeting credential exchange. |
+| `meetings` | Native meeting credential issuance and exchange. |
 
 The first call-focused profile is:
 
@@ -96,14 +96,24 @@ RUNTIME_SERVICES=meetings
 MEETING_PROVIDERS=acs-teams
 ```
 
-It needs public `ENTRA_TENANT_ID` and `ENTRA_CLIENT_ID`, plus secret
-`ACS_CONNECTION_STRING`. It does not need Redis, UDP, Cloudflare, Soniox,
-ElevenLabs, Mapbox, or object storage. Runtime trusts only Core-issued tokens:
+It always needs secret `ACS_CONNECTION_STRING`. Public `ENTRA_TENANT_ID` and
+`ENTRA_CLIENT_ID` are additionally required to exchange a delegated Microsoft
+token and join as an employee; without a delegated token the authenticated user
+receives a guest credential from the same ACS resource. It does not need Redis,
+UDP, Cloudflare, Soniox, ElevenLabs, Mapbox, or object storage. Runtime trusts
+only Core-issued tokens:
 
 ```text
 CLOUD_RUNTIME_AUTH_AUDIENCE=cloud-runtime
 CLOUD_RUNTIME_AUTH_ISSUERS=[{"issuer":"https://core.workspace.example","jwksUrl":"https://core.workspace.example/.well-known/jwks.json","userIdClaim":"sub","tenantIdClaim":"tenant_id","algorithms":["EdDSA"]}]
 ```
+
+The authenticated credential endpoint is `POST /api/meetings/acs/token`. An
+empty request issues or reuses an anonymous ACS guest credential. A request with
+`{"teamsUserAadToken":"..."}` verifies that delegated token against the
+Core-signed federated identity and exchanges it for an employee credential. The
+response reports `identityMode` as `guest` or `teams-user`. A supplied invalid
+token is rejected and never falls back to guest issuance.
 
 Provider enablement is explicit, never inferred from whether an API key exists.
 
@@ -228,8 +238,8 @@ services:
       DEPLOYMENT_MANIFEST_PATH: /etc/mentra/mentra-deployment.json
       CLOUD_RUNTIME_AUTH_AUDIENCE: cloud-runtime
       CLOUD_RUNTIME_AUTH_ISSUERS: ${CLOUD_RUNTIME_AUTH_ISSUERS:?required}
-      ENTRA_TENANT_ID: ${ENTRA_TENANT_ID:?required}
-      ENTRA_CLIENT_ID: ${ENTRA_CLIENT_ID:?required}
+      ENTRA_TENANT_ID: ${ENTRA_TENANT_ID:-}
+      ENTRA_CLIENT_ID: ${ENTRA_CLIENT_ID:-}
       ACS_CONNECTION_STRING: ${ACS_CONNECTION_STRING:?required}
     volumes:
       - ./config/mentra-deployment.json:/etc/mentra/mentra-deployment.json:ro

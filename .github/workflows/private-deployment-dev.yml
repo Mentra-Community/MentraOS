@@ -306,7 +306,7 @@ jobs:
             --output /dev/null \
             --write-out '%{http_code}' \
             --request POST \
-            "$workspace_origin/api/meetings/acs/teams-user-token")
+            "$workspace_origin/api/meetings/acs/token")
           [[ "$unauthenticated_status" == "401" ]]
 
           jq -s . private-deployment-checks.ndjson > private-deployment-checks.json

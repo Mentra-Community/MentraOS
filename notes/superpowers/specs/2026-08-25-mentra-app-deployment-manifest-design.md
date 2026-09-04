@@ -159,9 +159,11 @@ and must not initiate outbound connections merely because their code is present
 in the image. V1 does not add a Core module system or `CORE_SERVICES` switch.
 
 Runtime still owns the trusted server half of the ACS identity capability. For
-the first deployment that means only ACS Teams-user token exchange. It does not
-sit in the media path or run Runtime's speech pipeline or real-time
-audio/WebSocket session.
+the first deployment that means issuing an ACS guest credential when no
+delegated Teams token is available, or exchanging a validated delegated token
+for an ACS Teams-user credential when one is available. It does not sit in the
+media path or run Runtime's speech pipeline or real-time audio/WebSocket
+session.
 
 The Mentra App uses the existing Core-backed Engine shape:
 
@@ -274,7 +276,7 @@ GET    /.well-known/mentra-deployment.json
 GET    /healthz
 GET    /ready
 GET    /api/client/min-version
-POST   /api/meetings/acs/teams-user-token
+POST   /api/meetings/acs/token
 ```
 
 The reduced Runtime:
@@ -318,7 +320,7 @@ branch:
 
 | Lane                            | Owner                   | Starting point                                                           | Exit condition                                                                                                                                                                                              |
 | ------------------------------- | ----------------------- | ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Enterprise/platform foundations | Alex                    | One implementation branch from current `dev`                             | Workspace resolution, Entra sign-in, Core-backed Engine auth, customer-hosted Core, meetings-only Runtime, and server-harness ACS Teams-user exchange work without touching the native ACS branch           |
+| Enterprise/platform foundations | Alex                    | One implementation branch from current `dev`                             | Workspace resolution, Entra sign-in, Core-backed Engine auth, customer-hosted Core, meetings-only Runtime, and server-harness ACS guest issuance/Teams-user exchange without touching the native ACS branch |
 | Native Mentra Call/ACS media    | Nicolo                  | `nicolo/acs-teams-v1`, rebased or merged with current `dev` by its owner | Existing Teams/ACS work is adapted to the direct SoftAP source and qualified on Android/iOS with audio, leave, and recovery                                                                                 |
 | Product integration             | Alex and Nicolo jointly | Fresh `dev` after both prerequisite lanes merge                          | Host-owned enterprise credentials replace miniapp token pass-through, the bundled Mentra Call UX invokes the agreed provider-neutral host capability, and the complete enterprise call passes qualification |
 
@@ -378,10 +380,10 @@ The merge sequence is explicit:
 The first tranche is complete when a customer-style Azure deployment can resolve
 its manifest, sign a user in through Entra, exchange that identity at customer
 Core, obtain a Core-issued Runtime token, mint and verify a package-scoped
-miniapp token, and complete an ACS Teams-user token exchange from a server-side
-harness without Redis, UDP, audio workers, Runtime WebSockets, or changes to the
-native ACS branch. It is a foundation milestone, not yet the end-to-end
-Teams-call MVP.
+miniapp token, and obtain both guest and Teams-user ACS credentials from a
+server-side harness without Redis, UDP, audio workers, Runtime WebSockets, or
+changes to the native ACS branch. It is a foundation milestone, not yet the
+end-to-end Teams-call MVP.
 
 ## One configuration path
 
@@ -630,6 +632,14 @@ using its ACS server credential and returns the short-lived ACS Teams-user token
 to the native host. The ACS Calling SDK joins as that employee, subject to the
 employee's Teams license and policies.
 
+If the host has no delegated Teams token, including when the workspace uses a
+non-Entra OIDC provider, it calls the same Runtime endpoint without one. Runtime
+then creates or reuses an anonymous ACS communication user and returns a
+short-lived `voip` credential from the deployment's own ACS resource. A supplied
+but invalid delegated token is rejected rather than reinterpreted as a guest
+request. Runtime reports `identityMode` as `teams-user` or `guest` so the trusted
+host can accurately expose and diagnose the resulting participant identity.
+
 Microsoft recommends performing the exchange on a trusted backend because the
 exchange request is signed with an ACS secret or Azure credential. The client
 secret, ACS connection string, or managed-identity credential stays in Runtime
@@ -638,13 +648,12 @@ and is never placed in the app or manifest. See Microsoft's guides for
 [required Entra permissions](https://learn.microsoft.com/en-us/azure/communication-services/concepts/interop/teams-user/azure-ad-api-permissions),
 and [Teams interoperability](https://learn.microsoft.com/en-us/azure/communication-services/concepts/teams-interop).
 
-The current `nicolo/acs-teams-v1` branch mints an anonymous ACS communication
-user and passes its token through the miniapp. That is useful for internal native
-media bring-up, but it joins as a guest and is not the deployable enterprise
-identity contract. The Private Deployment v1 moves credential acquisition below
-the miniapp boundary: the native host obtains the employee's ACS Teams-user
-token from Runtime and never exposes Entra or ACS bearer tokens to miniapp
-JavaScript.
+The existing Mentra Call V1 path mints an anonymous ACS communication user in
+its Porter-hosted backend and passes its token through the miniapp. That remains
+a compatibility path while credential ownership moves below the miniapp
+boundary. Runtime is the eventual home for both guest issuance and Teams-user
+exchange; the native host obtains the appropriate credential there and never
+exposes Entra or ACS bearer tokens to miniapp JavaScript.
 
 ### Future: Creating a Teams meeting
 
@@ -1119,11 +1128,11 @@ The eventual Mentra Call/native-host integration requires:
 
 - Bundle the release-pinned Mentra Call package in the official Mentra App.
 - Keep high-rate SoftAP and ACS media entirely native. Runtime is used only for
-  authenticated ACS credential exchange and is not a video relay.
+  authenticated ACS credential issuance/exchange and is not a video relay.
 - Keep the Miniapp SDK call provider-neutral. `session.meeting.join` is the
   current spike API, not a frozen name or payload.
 - Remove provider credentials from the miniapp request. The trusted native host
-  obtains and refreshes the ACS Teams-user token from Runtime.
+  obtains and refreshes an employee or guest ACS credential from Runtime.
 - Keep call state in the native host/phone runtime for ACS calls.
 - Join existing Teams URLs without Graph.
 - Fail closed when a required Runtime capability or provider is absent.

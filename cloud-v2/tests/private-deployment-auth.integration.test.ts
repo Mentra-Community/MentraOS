@@ -29,6 +29,13 @@ describePrivateDeployment("Mentra Private Deployment identity path", () => {
   beforeAll(async () => {
     mock.module("@azure/communication-identity", () => ({
       CommunicationIdentityClient: class {
+        async createUserAndToken() {
+          return {
+            token: "acs-guest-token",
+            expiresOn: new Date("2030-01-01T00:00:00.000Z"),
+            user: {communicationUserId: "acs-guest-user"},
+          }
+        }
         async getTokenForTeamsUser(input: {teamsUserAadToken: string; clientId: string; userObjectId: string}) {
           if (
             input.clientId !== MOBILE_CLIENT_ID ||
@@ -156,7 +163,7 @@ describePrivateDeployment("Mentra Private Deployment identity path", () => {
       },
     })
 
-    const runtimeAuthResponse = await fetch(`http://127.0.0.1:${runtime.httpPort}/api/meetings/acs/teams-user-token`, {
+    const runtimeAuthResponse = await fetch(`http://127.0.0.1:${runtime.httpPort}/api/meetings/acs/token`, {
       method: "POST",
       headers: {
         "authorization": `Bearer ${runtimeToken.access_token}`,
@@ -165,7 +172,21 @@ describePrivateDeployment("Mentra Private Deployment identity path", () => {
       body: JSON.stringify({teamsUserAadToken: await teamsToken()}),
     })
     expect(runtimeAuthResponse.status).toBe(200)
-    await expect(runtimeAuthResponse.json()).resolves.toMatchObject({token: "acs-user-token"})
+    await expect(runtimeAuthResponse.json()).resolves.toMatchObject({
+      token: "acs-user-token",
+      identityMode: "teams-user",
+    })
+
+    const guestResponse = await fetch(`http://127.0.0.1:${runtime.httpPort}/api/meetings/acs/token`, {
+      method: "POST",
+      headers: {authorization: `Bearer ${runtimeToken.access_token}`},
+    })
+    expect(guestResponse.status).toBe(200)
+    await expect(guestResponse.json()).resolves.toMatchObject({
+      token: "acs-guest-token",
+      identityMode: "guest",
+      acsUserId: "acs-guest-user",
+    })
 
     const miniappResponse = await fetch(`${core.url}/api/client/auth/miniapp-token`, {
       method: "POST",

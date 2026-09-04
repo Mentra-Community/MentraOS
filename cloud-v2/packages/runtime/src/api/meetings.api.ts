@@ -1,36 +1,61 @@
 import {Hono} from "hono"
 import {z} from "zod"
 import {
+  AcsCredentialError,
   exchangeAcsTeamsUserToken,
+  mintAcsGuestToken,
   TeamsIdentityRejectedError,
   verifyTeamsSubjectToken,
 } from "../services/meetings/acs-teams.service"
 import {authenticateRuntimeRequest} from "./runtime-auth"
 
-const exchangeRequestSchema = z.object({teamsUserAadToken: z.string().min(100).max(16_384)}).strict()
+const MAX_CREDENTIAL_REQUEST_BYTES = 16 * 1024
+const credentialRequestSchema = z.object({teamsUserAadToken: z.string().min(100).max(16_384).optional()}).strict()
 
 export const meetingsApi = new Hono()
 
-meetingsApi.post("/acs/teams-user-token", async (c) => {
+meetingsApi.post("/acs/token", async (c) => {
   const auth = await authenticateRuntimeRequest(c)
   if ("error" in auth) return auth.error
 
-  let body: unknown
+  const contentLength = Number.parseInt(c.req.header("content-length") ?? "0", 10)
+  if (Number.isFinite(contentLength) && contentLength > MAX_CREDENTIAL_REQUEST_BYTES) {
+    return c.json({error: "ACS credential request is too large"}, 413)
+  }
+  let body: unknown = {}
   try {
-    body = await c.req.json()
+    const text = await c.req.text()
+    if (text.length > MAX_CREDENTIAL_REQUEST_BYTES) {
+      return c.json({error: "ACS credential request is too large"}, 413)
+    }
+    if (text.trim()) body = JSON.parse(text)
   } catch {
     return c.json({error: "invalid JSON body"}, 400)
   }
-  const parsed = exchangeRequestSchema.safeParse(body)
-  if (!parsed.success) return c.json({error: "invalid Teams token exchange request"}, 400)
+  const parsed = credentialRequestSchema.safeParse(body)
+  if (!parsed.success) return c.json({error: "invalid ACS credential request"}, 400)
+
+  if (!parsed.data.teamsUserAadToken) {
+    try {
+      return c.json(await mintAcsGuestToken(`${auth.identity.tenantId}:${auth.identity.mentraUserId}`), 200)
+    } catch (error) {
+      if (error instanceof AcsCredentialError) {
+        return c.json({error: error.message}, error.status)
+      }
+      console.error("ACS guest credential unavailable", error)
+      return c.json({error: "Teams meeting provider unavailable"}, 502)
+    }
+  }
 
   const federated = auth.identity.federatedIdentity
-  if (
-    !federated ||
-    federated.providerKind !== "microsoft-entra" ||
-    federated.issuer !== `https://login.microsoftonline.com/${process.env.ENTRA_TENANT_ID}/v2.0` ||
-    !federated.directoryTenantId
-  ) {
+  if (!federated || federated.providerKind !== "microsoft-entra" || !federated.directoryTenantId) {
+    return c.json({error: "Teams identity exchange rejected"}, 403)
+  }
+  const configuredTenantId = process.env.ENTRA_TENANT_ID?.trim()
+  if (!configuredTenantId) {
+    return c.json({error: "Microsoft Teams employee identity is not configured"}, 503)
+  }
+  if (federated.issuer !== `https://login.microsoftonline.com/${configuredTenantId}/v2.0`) {
     return c.json({error: "Teams identity exchange rejected"}, 403)
   }
 
@@ -41,6 +66,9 @@ meetingsApi.post("/acs/teams-user-token", async (c) => {
       objectId: federated.subject,
     })
   } catch (error) {
+    if (error instanceof AcsCredentialError) {
+      return c.json({error: error.message}, error.status)
+    }
     if (!(error instanceof TeamsIdentityRejectedError)) {
       console.error("Teams identity provider unavailable", error)
       return c.json({error: "Teams identity provider unavailable"}, 503)
@@ -51,6 +79,9 @@ meetingsApi.post("/acs/teams-user-token", async (c) => {
   try {
     return c.json(await exchangeAcsTeamsUserToken(subject), 200)
   } catch (error) {
+    if (error instanceof AcsCredentialError) {
+      return c.json({error: error.message}, error.status)
+    }
     console.error("ACS token exchange unavailable", error)
     return c.json({error: "Teams meeting provider unavailable"}, 502)
   }
