@@ -10,7 +10,7 @@ import AVFoundation
 import Compression
 import CoreBluetooth
 import Foundation
-import UIKit
+import CoreGraphics
 
 // MARK: - Nimo BLE Constants
 
@@ -846,7 +846,7 @@ class Nimo: NSObject, SGCManager {
         let targetHeight = NimoProtocol.NAV_LARGE_MAP_HEIGHT
         Bridge.log("NIMO: displayBitmap → nav large map (navAppEntered=\(navAppEntered))")
         guard let imageData = Data(base64Encoded: base64ImageData),
-              let image = UIImage(data: imageData)
+              let image = SdkImage(data: imageData)
         else {
             Bridge.log("NIMO: displayBitmap — could not decode image")
             return false
@@ -1640,7 +1640,7 @@ class Nimo: NSObject, SGCManager {
     // MARK: - Bitmap Helpers
 
     /// Aspect-fit the image into `width`x`height` on black, then convert to L8 grayscale.
-    private func bitmapToGrayscale(_ image: UIImage, width: Int, height: Int) -> Data? {
+    private func bitmapToGrayscale(_ image: SdkImage, width: Int, height: Int) -> Data? {
         guard let cgImage = image.cgImage else { return nil }
         let colorSpace = CGColorSpaceCreateDeviceGray()
         guard let context = CGContext(

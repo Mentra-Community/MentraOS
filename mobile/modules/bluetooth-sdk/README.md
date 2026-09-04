@@ -8,7 +8,8 @@ The package includes:
 - React hooks under `@mentra/bluetooth-sdk/react` for common scan,
   connection, status, and event lifecycles.
 - Native Android code published as `com.mentraglass:bluetooth-sdk`.
-- Native iOS code available as the `MentraBluetoothSDK` Swift package.
+- Native iOS and macOS code available as the `MentraBluetoothSDK` Swift package.
+- Native macOS Expo Modules adapter for `react-native-macos` hosts.
 - An Expo config plugin that wires the native dependencies into generated Android and iOS projects.
 
 Use a development build or production native build. Expo Go cannot load this package because the SDK contains native code.
@@ -19,6 +20,9 @@ Use a development build or production native build. Expo Go cannot load this pac
 - Expo `49+` when using Expo.
 - Android min SDK `28+`.
 - iOS deployment target `15.1+`.
+- Native macOS deployment target `13+`. The Starter Kit's separate
+  `react-native-macos` host requires macOS `14+` and a matching React Native / Expo
+  Modules toolchain; the iOS/Android config plugin does not generate a Mac host.
 - A physical phone for real Bluetooth testing.
 - Bluetooth permissions, plus Android location permission where BLE scanning requires it.
 
@@ -526,13 +530,15 @@ project, not the local Gradle entrypoint. The check script prepares
 `mobile/android` and uses its Gradle wrapper with `-PmentraPublicSdk=true`,
 matching the CI release workflow's public SDK dependency mode.
 
-For bare native iOS apps, use the public SwiftPM repository:
+For bare native iOS or macOS apps, use the public SwiftPM repository:
 
 ```text
 https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git
 ```
 
-Select version `0.1.20`, then add the `MentraBluetoothSDK` product to your app target.
+Select a coordinated SDK version that includes your target platform, then add
+the `MentraBluetoothSDK` product to your app target. Native macOS support is new
+on `dev`; use the local source override until a supporting release is published.
 
 For local SDK development, add this package folder directly in Xcode:
 
@@ -541,6 +547,14 @@ For local SDK development, add this package folder directly in Xcode:
 ```
 
 The core Swift package intentionally excludes optional local STT, Nex/SwiftProtobuf, Vuzix/Ultralite, and tar.bz2 extraction code paths.
+
+Native Mac hosts need Bluetooth and local-network usage descriptions, and
+sandbox entitlements for Bluetooth and outbound networking. Add microphone
+permission/audio-input capability for host microphone capture and network-server
+capability for local SDK servers. macOS uses CoreAudio instead of
+`AVAudioSession`; it does not provide iOS background modes or ANCS relay. See
+[the macOS integration guide](../../../mintlify-docs/bluetooth-sdk/macos.mdx)
+and the Starter Kit's `examples/macos` and `examples/react-native-macos` hosts.
 
 Maintainers publishing the public SwiftPM mirror should follow
 [RELEASING_IOS_SPM.md](./RELEASING_IOS_SPM.md).

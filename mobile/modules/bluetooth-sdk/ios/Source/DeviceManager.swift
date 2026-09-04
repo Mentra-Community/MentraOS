@@ -9,7 +9,9 @@ import AVFoundation
 import Combine
 import CoreBluetooth
 import Foundation
+#if canImport(UIKit)
 import UIKit
+#endif
 #if SWIFT_PACKAGE
 import MentraBluetoothSDKCoreObjC
 #endif
@@ -74,6 +76,13 @@ struct ViewState {
         // Check if device is paired (don't activate to preserve A2DP music playback)
         let isPaired = AudioSessionMonitor.isDevicePaired(devicePattern: audioDevicePattern)
 
+        #if os(macOS)
+        AudioSessionMonitor.startMonitoring(devicePattern: audioDevicePattern) { [weak self] _, _ in
+            self?.checkCurrentAudioDevice()
+            self?.updateMicState()
+        }
+        #endif
+
         if isPaired {
             // Device is paired! Don't activate it - let PhoneMic.swift activate when recording starts
             Bridge.log("Audio: Mentra Live is paired (preserving A2DP for music)")
@@ -83,6 +92,7 @@ struct ViewState {
             // Not found in availableInputs - not paired yet
 
             // Start monitoring for when user pairs manually
+            #if !os(macOS)
             AudioSessionMonitor.startMonitoring(devicePattern: audioDevicePattern) {
                 [weak self] (connected: Bool, _: String?) in
                 guard let self = self else { return }
@@ -96,6 +106,7 @@ struct ViewState {
                     self.glassesBluetoothClassicConnected = false
                 }
             }
+            #endif
         }
     }
 
@@ -314,7 +325,7 @@ struct ViewState {
     private var micReinitTimer: Timer?
 
     /// STT:
-    #if !SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT
+    #if !os(macOS) && (!SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT)
     private var transcriber: SherpaOnnxTranscriber?
     #endif
 
@@ -351,7 +362,7 @@ struct ViewState {
         // MemoryMonitor.start()
 
         // Initialize SherpaOnnx Transcriber
-        #if !SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT
+        #if !os(macOS) && (!SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT)
         if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
            let window = windowScene.windows.first,
            let rootViewController = window.rootViewController
@@ -500,7 +511,7 @@ struct ViewState {
         handleSendingPcm(pcmData)
 
         // Send PCM to local transcriber.
-#if !SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT
+#if !os(macOS) && (!SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT)
         if shouldSendTranscript || localSttFallbackActive {
             transcriber?.acceptAudio(pcm16le: pcmData)
         }
@@ -517,11 +528,13 @@ struct ViewState {
 
         var phoneMicUnavailable = systemMicUnavailable
 
+        #if !os(macOS)
         let appState = UIApplication.shared.applicationState
         if appState == .background {
             // Bridge.log("App is in background - onboard mic unavailable to start!")
             phoneMicUnavailable = true
         }
+        #endif
 
         if micEnabled {
             for micMode in micRanking {
@@ -710,12 +723,12 @@ struct ViewState {
         } else if wearable.contains(DeviceTypes.FRAME) {
             // sgc = FrameManager()
         }
-#if !SWIFT_PACKAGE || MENTRA_FEATURE_NEX
+#if !os(macOS) && (!SWIFT_PACKAGE || MENTRA_FEATURE_NEX)
         if sgc == nil && wearable.contains(DeviceTypes.NEX) {
             sgc = MentraNexSGC.getInstance()
         }
 #endif
-#if !SWIFT_PACKAGE || MENTRA_FEATURE_VUZIX
+#if !os(macOS) && (!SWIFT_PACKAGE || MENTRA_FEATURE_VUZIX)
         if sgc == nil {
             if wearable.contains(DeviceTypes.MACH1) {
                 sgc = Mach1()
@@ -948,17 +961,14 @@ struct ViewState {
 
         let isPaired = AudioSessionMonitor.isDevicePaired(devicePattern: audioDevicePattern)
         if isPaired {
-            let session = AVAudioSession.sharedInstance()
-            let deviceName = session.availableInputs?.first(where: {
-                $0.portName.localizedCaseInsensitiveContains(audioDevicePattern)
-            })?.portName
-            Bridge.log("MAN: Successfully detected newly paired device '\(deviceName)'")
+            Bridge.log("MAN: Successfully detected newly paired device '\(audioDevicePattern)'")
             glassesBluetoothClassicConnected = true
         } else {
             glassesBluetoothClassicConnected = false
         }
     }
 
+    #if !os(macOS)
     func onRouteChange(
         reason: AVAudioSession.RouteChangeReason, availableInputs: [AVAudioSessionPortDescription]
     ) {
@@ -980,6 +990,7 @@ struct ViewState {
 
         updateMicState()
     }
+    #endif
 
     func onInterruption(began: Bool) {
         Bridge.log("MAN: Interruption: \(began)")
@@ -988,7 +999,7 @@ struct ViewState {
     }
 
     func restartTranscriber() {
-        #if !SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT
+        #if !os(macOS) && (!SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT)
         Bridge.log("MAN: Restarting SherpaOnnxTranscriber via command")
         transcriber?.restart()
         #else
@@ -1933,7 +1944,7 @@ struct ViewState {
 
     func cleanup() {
         // Clean up transcriber resources
-#if !SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT
+#if !os(macOS) && (!SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT)
         transcriber?.shutdown()
         transcriber = nil
 #endif

@@ -1,0 +1,31 @@
+name: Bluetooth SDK Apple Platforms
+
+on:
+  pull_request:
+    paths:
+      - "mobile/modules/bluetooth-sdk/Package.swift"
+      - "mobile/modules/bluetooth-sdk/ios/**"
+      - "scripts/export-bluetooth-sdk-ios-spm.sh"
+      - ".github/workflows/bluetooth-sdk-apple.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bluetooth-sdk-apple-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  swift-package:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Test native macOS SDK
+        run: swift test --package-path mobile/modules/bluetooth-sdk
+      - name: Verify exported Swift package on macOS and iOS
+        run: bash scripts/export-bluetooth-sdk-ios-spm.sh --target "$RUNNER_TEMP/mentra-bluetooth-sdk-apple" --verify

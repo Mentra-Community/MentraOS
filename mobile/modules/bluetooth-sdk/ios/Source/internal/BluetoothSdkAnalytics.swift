@@ -8,7 +8,11 @@ public struct BluetoothSdkAnalyticsConfiguration {
 
     public init(enabled: Bool = true) {
         self.enabled = enabled
+        #if os(macOS)
+        surface = "macos"
+        #else
         surface = "ios"
+        #endif
     }
 
     var isReady: Bool {

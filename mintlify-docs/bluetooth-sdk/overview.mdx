@@ -1,10 +1,10 @@
 ---
 title: "Mentra Bluetooth SDK"
-description: "Connect mobile apps directly to Mentra Live over Bluetooth."
+description: "Connect mobile and native macOS apps directly to Mentra Live over Bluetooth."
 icon: "bluetooth"
 ---
 
-The Mentra Bluetooth SDK is the base SDK for building mobile apps that control Mentra Live directly over Bluetooth. It gives Android, iOS, and React Native apps access to scanning, pairing, device status, microphone audio, camera capture, speaker playback, streaming, Wi-Fi, and hardware events.
+The Mentra Bluetooth SDK connects Android, iOS, macOS, and React Native apps to Mentra Live directly over Bluetooth. It provides scanning, pairing, device status, microphone audio, camera capture, speaker playback, streaming, Wi-Fi, and hardware events. See the [native macOS setup and platform differences](/bluetooth-sdk/macos) for AppKit, SwiftUI, and react-native-macos.
 
 Use this SDK when your app owns the mobile experience and needs a direct phone-to-glasses connection.
 
@@ -13,8 +13,8 @@ Use this SDK when your app owns the mobile experience and needs a direct phone-t
 | Platform | Package | Import |
 | --- | --- | --- |
 | Android | `com.mentraglass:bluetooth-sdk` | `import com.mentra.bluetoothsdk.*` |
-| iOS | `MentraBluetoothSDK` Swift package | `import MentraBluetoothSDK` |
-| React Native / Expo | `@mentra/bluetooth-sdk` | `import BluetoothSdk from '@mentra/bluetooth-sdk'` |
+| iOS / macOS | `MentraBluetoothSDK` Swift package | `import MentraBluetoothSDK` |
+| React Native / Expo / react-native-macos | `@mentra/bluetooth-sdk` | `import BluetoothSdk from '@mentra/bluetooth-sdk'` |
 
 ## Quickstart
 
@@ -38,9 +38,10 @@ You can also [open the starter kit directly on GitHub](https://github.com/Mentra
 ## Requirements
 
 - The Bluetooth SDK and Mentra Live glasses software must use the same release version. The latest matching pair is `{{release-version}}`.
-- A physical Android phone or iPhone for real Bluetooth testing.
+- A physical Android phone, iPhone, or Mac for real Bluetooth testing.
 - Android min SDK `28` or newer.
 - iOS deployment target `15.1` or newer.
+- Native macOS deployment target `13` or newer; the react-native-macos example requires `14` or newer.
 - React Native / Expo apps must use a development build or production native build. Expo Go cannot load the native SDK.
 - Bluetooth permissions, plus Android location permission where BLE scanning requires it.
 
