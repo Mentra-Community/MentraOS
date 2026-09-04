@@ -44,8 +44,8 @@
     }
   ],
   "bes_firmware": {
-    "version": "26.9.3.0",
-    "url": "https://firmwarecdn.mentraglass.com/bes_firmware_26.9.3.0.bin",
-    "sha256": "601fcd187feb338cf73b3829bc7b592e5658d3952a3547736f4c9b2b353ec165"
+    "version": "26.9.4.0",
+    "url": "https://firmwarecdn.mentraglass.com/bes_firmware_26.9.4.0.bin",
+    "sha256": "17c0b8e784cc02ca65f4b2b111f40434ceb774fa86aff71bfc5a648341a49941"
   }
 }
