@@ -10,6 +10,7 @@ on:
     paths:
       - "mobile/modules/acs-meeting/**"
       - "mobile/modules/bluetooth-sdk/**"
+      - "scripts/softap-call-proof*.mjs"
       - ".github/workflows/mentra-app-android-unit-tests.yml"
   push:
     branches:
@@ -18,6 +19,7 @@ on:
     paths:
       - "mobile/modules/acs-meeting/**"
       - "mobile/modules/bluetooth-sdk/**"
+      - "scripts/softap-call-proof*.mjs"
       - ".github/workflows/mentra-app-android-unit-tests.yml"
   workflow_dispatch:
 
@@ -88,6 +90,12 @@ jobs:
       - name: Run JVM unit tests
         working-directory: ./mobile/android
         run: ./gradlew :mentra-acs-meeting:testDebugUnitTest :mentra-bluetooth-sdk:testDebugUnitTest --build-cache --parallel
+
+      # The device-proof analyzer decides whether a SoftAP hardware run passed, so an analyzer that
+      # reports success on a broken capture would turn a real failure into recorded evidence that
+      # everything worked. It lives in root scripts/, which no other PR workflow covers.
+      - name: Test the SoftAP device-proof analyzer
+        run: node --test scripts/softap-call-proof.test.mjs
 
       - name: Upload test reports
         if: failure()
