@@ -34,9 +34,9 @@
     },
     "packages/cloud-client": {
       "name": "@mentra/cloud-client",
-      "version": "3.1.0",
+      "version": "3.2.0",
       "dependencies": {
-        "@mentra/cloud-protocol": "3.1.0",
+        "@mentra/cloud-protocol": "3.2.0",
         "tweetnacl": "^1.0.3",
       },
       "devDependencies": {
@@ -65,7 +65,7 @@
     },
     "packages/protocol": {
       "name": "@mentra/cloud-protocol",
-      "version": "3.1.0",
+      "version": "3.2.0",
       "dependencies": {
         "zod": "^3.24.1",
       },
@@ -81,7 +81,7 @@
       "name": "@mentra/cloud-runtime",
       "version": "0.0.0",
       "dependencies": {
-        "@mentra/cloud-protocol": "^3.1.0",
+        "@mentra/cloud-protocol": "^3.2.0",
         "@mentra/cloud-shared": "workspace:*",
         "@soniox/node": "^2.1.0",
         "hono": "^4.11.1",

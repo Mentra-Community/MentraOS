@@ -46,12 +46,12 @@ export const ATTESTATION_CHECKS = Object.freeze({
   "production-mobile-candidate-acceptance": {
     from: "mobile-candidates-uploaded",
     to: "mobile-candidates-accepted",
-    coverage: ["mentra-app:ios", "mentra-app:android", "starter-kit:ios", "starter-kit:android"],
+    coverage: ["mentra-app:ios", "mentra-app:android"],
   },
   "store-review-approved": {
     from: "stores-submitted",
     to: "stores-approved",
-    coverage: ["mentra-app:ios", "mentra-app:android", "starter-kit:ios", "starter-kit:android"],
+    coverage: ["mentra-app:ios", "mentra-app:android"],
   },
 })
 
@@ -132,8 +132,10 @@ function validateAppCoordinate(value, label) {
 
 function validatePromotionSource(source) {
   if (!source || typeof source !== "object" || Array.isArray(source)) fail("source must be an object")
+  if (!isDeepStrictEqual(Object.keys(source).sort(), ["mentraosCommit"])) {
+    fail("source must contain only mentraosCommit")
+  }
   requireCommit(source.mentraosCommit, "source.mentraosCommit")
-  requireCommit(source.starterKitCommit, "source.starterKitCommit")
   return source
 }
 
@@ -196,10 +198,11 @@ export function validatePromotionRecord(record) {
   validateAppCoordinate(record.coordinates.currentMentraApp.android, "coordinates.currentMentraApp.android")
   validateAppCoordinate(record.coordinates.compatibilityLab.ios, "coordinates.compatibilityLab.ios")
   validateAppCoordinate(record.coordinates.compatibilityLab.android, "coordinates.compatibilityLab.android")
+  if (!isDeepStrictEqual(Object.keys(record.coordinates.candidates).sort(), ["mentraApp"])) {
+    fail("coordinates.candidates must contain only mentraApp")
+  }
   validateAppCoordinate(record.coordinates.candidates.mentraApp.ios, "coordinates.candidates.mentraApp.ios")
   validateAppCoordinate(record.coordinates.candidates.mentraApp.android, "coordinates.candidates.mentraApp.android")
-  validateAppCoordinate(record.coordinates.candidates.starterKit.ios, "coordinates.candidates.starterKit.ios")
-  validateAppCoordinate(record.coordinates.candidates.starterKit.android, "coordinates.candidates.starterKit.android")
   if (!Array.isArray(record.evidence)) fail("evidence must be an array")
   record.evidence.forEach((item, index) => validateEvidenceReference(item, `evidence[${index}]`))
   if (record.abort !== undefined) {
@@ -353,8 +356,7 @@ function attestationCoordinate(record, checkName, product, platform) {
   if (!check.coverage.includes(key)) fail(`attestation check ${checkName} does not cover ${key}`)
   if (checkName === "staging-mobile-n-compatibility") return record.coordinates.compatibilityLab[platform]
   if (checkName === "production-mobile-n-compatibility") return record.coordinates.currentMentraApp[platform]
-  const productKey = product === "mentra-app" ? "mentraApp" : "starterKit"
-  return record.coordinates.candidates[productKey][platform]
+  return record.coordinates.candidates.mentraApp[platform]
 }
 
 export function validateAttestation(attestation, record, expectedCheck) {
@@ -381,7 +383,7 @@ export function validateAttestation(attestation, record, expectedCheck) {
   if (!Array.isArray(attestation.tests)) fail("attestation.tests must be an array")
   const observed = new Set()
   for (const [index, item] of attestation.tests.entries()) {
-    if (!new Set(["mentra-app", "starter-kit"]).has(item?.product)) {
+    if (item?.product !== "mentra-app") {
       fail(`attestation.tests[${index}].product is unsupported`)
     }
     if (!new Set(["ios", "android"]).has(item?.platform)) {

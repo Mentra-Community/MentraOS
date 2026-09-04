@@ -102,7 +102,8 @@ function verifyStarterKitResult(plan, starterKit, resultUrl, exampleTestflight) 
     starterKit.releaseIdentity !== plan.releaseIdentity ||
     starterKit.familyBaseVersion !== plan.familyBaseVersion ||
     starterKit.channel !== plan.channel ||
-    starterKit.mentraos?.sourceCommit !== plan.sourceCommit
+    starterKit.mentraos?.sourceCommit !== plan.sourceCommit ||
+    (plan.starterKitSource && starterKit.starterKit?.baseCommit !== plan.starterKitSource.sourceCommit)
   ) {
     throw new Error("Starter Kit result does not match the release plan")
   }

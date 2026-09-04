@@ -1,4 +1,5 @@
 #!/usr/bin/env zx
+import {runPodInstall} from "./cocoapods-install.mjs"
 import {setBuildEnv} from "./set-build-env.mjs"
 await setBuildEnv()
 
@@ -6,8 +7,9 @@ await setBuildEnv()
 await $({stdio: "inherit"})`bun expo prebuild --platform ios`
 
 // Sync CocoaPods after prebuild so local podspec/native config changes are
-// reflected before xcodebuild compiles the generated workspace.
-await $({stdio: "inherit", cwd: "ios"})`pod install`
+// reflected before xcodebuild compiles the generated workspace. Prefetch
+// Folly/boost/etc. as GitHub tarballs so `git clone` timeouts don't abort.
+await runPodInstall({cwd: "ios"})
 
 // copy .env to ios/.xcode.env.local:
 await $({stdio: "inherit"})`cp .env ios/.xcode.env.local`
@@ -93,6 +95,27 @@ const WORKSPACE = workspaces[0]
 const SCHEME = path.basename(WORKSPACE, ".xcworkspace")
 const BUNDLE_ID = "com.mentra.mentra"
 const derivedData = "ios/build"
+
+// Automatic signing cannot mint a cert when the keychain only has expired
+// Apple Development identities (Xcode then dies with "No Accounts" / missing
+// "iOS Development" cert and a wall of unrelated Pods deployment-target
+// warnings). Fail before the 10-minute compile.
+const signingProbe = await $({nothrow: true})`security find-identity -p codesigning`
+const signingText = `${signingProbe.stdout}${signingProbe.stderr}`
+const validCount = Number(/(\d+) valid identities found/.exec(signingText)?.[1] ?? 0)
+if (validCount === 0) {
+  const expired = [...new Set([...signingText.matchAll(/"([^"]+)" \(CSSMERR_TP_CERT_EXPIRED\)/g)].map((m) => m[1]))]
+  console.error("iOS code signing failed: no valid Apple Development identity in the keychain.")
+  if (expired.length > 0) {
+    console.error("Expired identities:")
+    for (const name of expired) {
+      console.error(`  - ${name}`)
+    }
+  }
+  console.error("The Mentra team cert (T5XXXL6N36) must be renewed before a device Debug build can sign.")
+  console.error("Open Xcode → Settings → Accounts, sign in, select Mentra Labs, then Manage Certificates → + Apple Development.")
+  process.exit(1)
+}
 
 // Build for the connected device.
 await $({stdio: "inherit"})`xcodebuild \

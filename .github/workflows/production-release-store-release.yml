@@ -81,29 +81,23 @@ jobs:
           set -euo pipefail
           key_path=$(sed -n 's/^ASC_API_KEY_PATH=//p' "$MENTRA_ASC_CONFIG_PATH")
           mkdir -p promotion-output/public-status play-status/fastlane
-          for product in mentraApp starterKit; do
-            if [[ "$product" == mentraApp ]]; then bundle_id=com.mentra.mentra; package=com.mentra.mentra; else bundle_id=com.mentra.bluetoothsdkexample; package=com.mentra.bluetoothsdkexample; fi
-            build=$(jq -er ".coordinates.candidates.$product.ios.buildNumber" promotion-input/current.json)
-            GITHUB_OUTPUT="promotion-output/public-status/$product.outputs" node mobile/scripts/app-store-connect-build.mjs production-status \
-              --issuer-id "$ASC_API_ISSUER_ID" --key-id "$ASC_API_KEY_ID" --key-path "$key_path" \
-              --bundle-id "$bundle_id" --build-number "$build" --app-version "${{ inputs.release_identity }}"
-            apple_state=$(sed -n 's/^state=//p' "promotion-output/public-status/$product.outputs")
-            [[ "$apple_state" == READY_FOR_SALE || "$apple_state" == READY_FOR_DISTRIBUTION || "$apple_state" == PROCESSING_FOR_DISTRIBUTION ]]
-          done
+          build=$(jq -er .coordinates.candidates.mentraApp.ios.buildNumber promotion-input/current.json)
+          GITHUB_OUTPUT=promotion-output/public-status/mentraApp.outputs node mobile/scripts/app-store-connect-build.mjs production-status \
+            --issuer-id "$ASC_API_ISSUER_ID" --key-id "$ASC_API_KEY_ID" --key-path "$key_path" \
+            --bundle-id com.mentra.mentra --build-number "$build" --app-version "${{ inputs.release_identity }}"
+          apple_state=$(sed -n 's/^state=//p' promotion-output/public-status/mentraApp.outputs)
+          [[ "$apple_state" == READY_FOR_SALE || "$apple_state" == READY_FOR_DISTRIBUTION || "$apple_state" == PROCESSING_FOR_DISTRIBUTION ]]
           cp mobile/ci/fastlane-android/Fastfile mobile/ci/fastlane-android/Appfile play-status/fastlane/
           cp mobile/Gemfile mobile/Gemfile.lock play-status/
           cd play-status
           bundle install
-          for product in mentraApp starterKit; do
-            if [[ "$product" == mentraApp ]]; then package=com.mentra.mentra; else package=com.mentra.bluetoothsdkexample; fi
-            expected=$(jq -er ".coordinates.candidates.$product.android.buildNumber" ../promotion-input/current.json)
-            APP_PACKAGE_NAME="$package" GOOGLE_PLAY_INVENTORY_OUTPUT="$product.json" bundle exec fastlane google_play_inventory
-            node ../.github/scripts/validate-google-play-release.mjs \
-              --inventory "$product.json" \
-              --version-code "$expected" \
-              --required-state public \
-              --output "../promotion-output/public-status/$product-google.json"
-          done
+          expected=$(jq -er .coordinates.candidates.mentraApp.android.buildNumber ../promotion-input/current.json)
+          APP_PACKAGE_NAME=com.mentra.mentra GOOGLE_PLAY_INVENTORY_OUTPUT=mentraApp.json bundle exec fastlane google_play_inventory
+          node ../.github/scripts/validate-google-play-release.mjs \
+            --inventory mentraApp.json \
+            --version-code "$expected" \
+            --required-state public \
+            --output ../promotion-output/public-status/mentraApp-google.json
 
       - name: Append protected approval or observed rollout state
         id: next

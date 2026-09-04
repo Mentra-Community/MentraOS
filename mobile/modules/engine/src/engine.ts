@@ -12,7 +12,11 @@ import {configure, start as bootstrapStart, stop as bootstrapStop, updateUiSeams
 import {cloudClientService} from "./services/CloudClientService"
 import {hydrateDeviceStore, demoteOrphanedDefaultWearable} from "./services/DeviceStoreHydration"
 import {startGlassesSettingsSync, stopGlassesSettingsSync} from "./services/GlassesSettingsSync"
-import {startGlassesStatusProjection, stopGlassesStatusProjection} from "./services/GlassesStatusProjection"
+import {
+  startGlassesStatusProjection,
+  stopGlassesStatusProjection,
+  toMiniappConnectionData,
+} from "./services/GlassesStatusProjection"
 import {startOtaService, stopOtaService} from "./services/OtaService"
 import {startAudioCloudUplink, stopAudioCloudUplink} from "./services/AudioCloudUplink"
 import {startSupportProfileSync, stopSupportProfileSync} from "./services/SupportProfileSync"
@@ -62,7 +66,11 @@ export const engine = {
     // Project native device status -> the engine stores (the inbound feed the rest
     // of the runtime reads). Established first so the stores are live before the
     // syncs below react to them.
-    startGlassesStatusProjection((changed) => localMiniappRuntime.forwardEvent("glasses_connection_state", changed))
+    startGlassesStatusProjection((changed) => {
+      const connection = toMiniappConnectionData(changed)
+      if (!connection) return
+      localMiniappRuntime.forwardEvent("glasses_connection_state", connection)
+    })
     // Route the rest of the inbound device events (wifi/hotspot/gallery -> stores+bus,
     // photo/stream -> coordinators, button/touch/accel/head -> miniapps, save_setting ->
     // store, miniapp_selected -> launcher) so a bare OEM gets device data, not just the

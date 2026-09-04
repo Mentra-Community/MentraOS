@@ -1,5 +1,5 @@
 import { loadConfig } from './config.js';
-import { resolveActivePair } from './rotate.js';
+import { isBugbotReviewable, resolveActivePair, substituteBugbotSlot } from './rotate.js';
 import { applyResolvedIds, openBlocking, parseResolveIds } from './findings.js';
 import {
   createOctokit,
@@ -16,7 +16,7 @@ import {
   isCiFailed,
   requiredWorkflowsForPaths,
 } from './ci-gates.js';
-import type { PlanOutput } from './types.js';
+import type { PlanOutput, PrAgentState } from './types.js';
 
 export async function runPlan(repoRoot: string): Promise<PlanOutput> {
   const config = loadConfig(repoRoot);
@@ -77,6 +77,16 @@ export async function runPlan(repoRoot: string): Promise<PlanOutput> {
   );
   let state = loadedState;
 
+  // saveState bumps the *remote* revision but cannot update this local copy,
+  // so a second write in the same run gets refused as a lost update — and the
+  // agent-resume path writes twice, silently dropping everything after it
+  // (agent-resolve handling, the selfDispatches reset). Adopt the written
+  // revision so later writes in this run still land.
+  const persist = async (next: PrAgentState): Promise<PrAgentState> => {
+    const { revision } = await saveState(octokit, owner, repo, prNumber, next, commentId);
+    return { ...next, revision };
+  };
+
   if (labelNames.includes('agent-resume')) {
     // Grant a fresh budget window. Without resetting cycle/fixRound, a PR
     // that already crossed maxOrchestratorCycles or maxFixRounds would
@@ -95,7 +105,13 @@ export async function runPlan(repoRoot: string): Promise<PlanOutput> {
     await removeLabel(octokit, owner, repo, prNumber, 'ready-for-human-review');
     await removeLabel(octokit, owner, repo, prNumber, 'agent-needs-human');
     await removeLabel(octokit, owner, repo, prNumber, 'agent-ci-failing');
-    await saveState(octokit, owner, repo, prNumber, state, commentId);
+    state = await persist(state);
+  }
+
+  // A fresh `pull_request` event means the human moved the PR forward, so the
+  // self-dispatch budget for a stalled loop starts over.
+  if (process.env.GITHUB_EVENT_NAME === 'pull_request' && state.selfDispatches > 0) {
+    state = { ...state, selfDispatches: 0 };
   }
 
   const resolveIds = parseResolveIds(
@@ -110,7 +126,7 @@ export async function runPlan(repoRoot: string): Promise<PlanOutput> {
         resolvedFindings: applied.resolvedFindings,
         mutedFingerprints: applied.mutedFingerprints,
       };
-      await saveState(octokit, owner, repo, prNumber, state, commentId);
+      state = await persist(state);
       console.log(`Resolved findings via agent-resolve: ${resolveIds.join(', ')}`);
     }
   }
@@ -182,7 +198,7 @@ export async function runPlan(repoRoot: string): Promise<PlanOutput> {
       console.log(
         `Reviews clean but CI failed with fixRound=${state.fixRound}; skipping model reviews, deferring to fixer`,
       );
-      await saveState(octokit, owner, repo, prNumber, state, commentId);
+      state = await persist(state);
       return {
         runBugbot: false,
         runStandards: false,
@@ -197,7 +213,7 @@ export async function runPlan(repoRoot: string): Promise<PlanOutput> {
     console.log(
       `Reviews clean (consecutiveNoNewReviews=${state.consecutiveNoNewReviews}); skipping model reviews, CI recheck only`,
     );
-    await saveState(octokit, owner, repo, prNumber, state, commentId);
+    state = await persist(state);
     return {
       runBugbot: false,
       runStandards: false,
@@ -231,7 +247,7 @@ export async function runPlan(repoRoot: string): Promise<PlanOutput> {
       console.log(
         `Cycle cap reached (${state.cycle}) but CI failed with fixRound=${state.fixRound}; deferring handoff for fixer`,
       );
-      await saveState(octokit, owner, repo, prNumber, state, commentId);
+      state = await persist(state);
       return {
         runBugbot: false,
         runStandards: false,
@@ -243,8 +259,7 @@ export async function runPlan(repoRoot: string): Promise<PlanOutput> {
       };
     }
 
-    const exhausted = { ...state, status: 'budget_exhausted' as const };
-    await saveState(octokit, owner, repo, prNumber, exhausted, commentId);
+    const exhausted = await persist({ ...state, status: 'budget_exhausted' as const });
     return {
       runBugbot: false,
       runStandards: false,
@@ -258,7 +273,25 @@ export async function runPlan(repoRoot: string): Promise<PlanOutput> {
     };
   }
 
-  const activePair = resolveActivePair(state, forceRotation);
+  let activePair = resolveActivePair(state, forceRotation);
+
+  // Bugbot opens no check run on prose-only diffs, so scheduling it there
+  // wastes a poll window and leaves the cycle one opinion short (#3851). Swap
+  // in a model slot that actually reviews the change.
+  if (activePair.includes('bugbot')) {
+    try {
+      const changedFiles = await getChangedFiles(octokit, owner, repo, prNumber);
+      if (!isBugbotReviewable(changedFiles)) {
+        const substituted = substituteBugbotSlot(activePair);
+        console.log(
+          `Prose-only diff: replacing bugbot slot with ${substituted.join(', ')}`,
+        );
+        activePair = substituted;
+      }
+    } catch (err) {
+      console.warn('plan: failed to classify diff for bugbot slot; keeping bugbot', err);
+    }
+  }
 
   const output: PlanOutput = {
     runBugbot: activePair.includes('bugbot'),
@@ -273,7 +306,7 @@ export async function runPlan(repoRoot: string): Promise<PlanOutput> {
     console.log('Fork PR: reviews only, fixer will be skipped');
   }
 
-  await saveState(octokit, owner, repo, prNumber, state, commentId);
+  state = await persist(state);
   return output;
 }
 

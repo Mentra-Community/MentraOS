@@ -80,10 +80,6 @@ export function finalizeProductionPromotion({plan, record, checkpointUrl}) {
     artifactContainerName: plan.artifactContainerName,
     applications: {
       mentraApp: record.coordinates.candidates.mentraApp,
-      starterKit: {
-        sourceCommit: record.source.starterKitCommit,
-        ...record.coordinates.candidates.starterKit,
-      },
     },
     releaseFamily: {
       members: Object.fromEntries(

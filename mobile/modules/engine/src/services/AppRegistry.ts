@@ -13,6 +13,7 @@
  *   - uninstall(packageName, version?)      remove one or all versions
  *   - getInstalledMiniapps()                ClientApp[] derived from disk
  *   - getActiveVersion(packageName)         active version string for a package
+ *   - getLatestDevSnapshotVersion(pkg)      newest on-disk `dev-*` snapshot
  *   - getBundleDir / getMiniappManifest     filesystem helpers used by hosts
  *   - subscribe(fn)                         register a refresh listener
  */
@@ -673,6 +674,28 @@ class AppRegistry {
 
   public setActiveVersion(packageName: string, version: string): Result<void, Error> {
     return storage.save(`${packageName}_active_version`, version)
+  }
+
+  /**
+   * Newest `dev-*` snapshot that still has a resolvable UI or background
+   * entry. Semver store installs are ignored — a live-dev tile must not
+   * silently fall back to a released store bundle when the laptop drops.
+   */
+  public getLatestDevSnapshotVersion(packageName: string): string | null {
+    const versions = this.getInstalledVersions(packageName)
+      .filter((v) => v.startsWith("dev-"))
+      .sort()
+      .reverse()
+    for (const version of versions) {
+      const paths = this.getMiniappEntryPaths(packageName, version)
+      if (paths?.background || paths?.ui) return version
+    }
+    return null
+  }
+
+  /** True iff {@link getLatestDevSnapshotVersion} finds a usable snapshot. */
+  public hasDevSnapshot(packageName: string): boolean {
+    return this.getLatestDevSnapshotVersion(packageName) != null
   }
 
   public getMetadata(packageName: string, version: string): InstalledInfo {

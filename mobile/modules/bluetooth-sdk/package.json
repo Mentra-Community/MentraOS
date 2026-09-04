@@ -1,6 +1,6 @@
 {
   "name": "@mentra/bluetooth-sdk",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "description": "SDK for communicating with smart glasses",
   "main": "build/index.js",
   "react-native": "src/index.ts",
@@ -107,7 +107,7 @@
     "url": "https://github.com/Mentra-Community/MentraOS/issues"
   },
   "author": "Mentra",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "homepage": "https://github.com/Mentra-Community/MentraOS/tree/main/mobile/modules/bluetooth-sdk#readme",
   "publishConfig": {
     "access": "public",

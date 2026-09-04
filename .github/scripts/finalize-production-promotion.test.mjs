@@ -12,19 +12,22 @@ import {
 import {createReleasePlan, loadReleaseFamily} from "./release-family.mjs"
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
+const family = loadReleaseFamily({rootDir: root})
+const baseVersion = family.familyBaseVersion
+const selectedBetaIdentity = `${baseVersion}-beta.101`
 const plan = createReleasePlan({
-  family: loadReleaseFamily({rootDir: root}),
+  family,
   channel: "production",
   sourceCommit: "a".repeat(40),
   nativeBuildNumber: 310000102,
 })
 plan.promotion = {
-  selectedBetaReleaseSetId: "mentra-3.1.0-beta.101",
-  selectedBetaIdentity: "3.1.0-beta.101",
+  selectedBetaReleaseSetId: `mentra-${selectedBetaIdentity}`,
+  selectedBetaIdentity,
   selectedBetaManifest: {url: "https://example.com/beta.json", sha256: "b".repeat(64)},
   otaManifest: {
     status: "promoted",
-    coordinate: "mentra-live-ota-3.1.0-beta.101.json",
+    coordinate: `mentra-live-ota-${selectedBetaIdentity}.json`,
     url: "https://example.com/ota.json",
     sha256: "c".repeat(64),
   },
@@ -55,15 +58,15 @@ function evidence(kind, sha256 = "d".repeat(64)) {
 
 function finalizingRecord() {
   let record = createInitialPromotionRecord({
-    releaseIdentity: "3.1.0",
+    releaseIdentity: baseVersion,
     attempt: 2,
     selectedBeta: {
-      identity: "3.1.0-beta.101",
-      releaseSetId: "mentra-3.1.0-beta.101",
+      identity: selectedBetaIdentity,
+      releaseSetId: `mentra-${selectedBetaIdentity}`,
       manifestUrl: "https://example.com/beta.json",
       manifestSha256: "b".repeat(64),
     },
-    source: {mentraosCommit: "a".repeat(40), starterKitCommit: "e".repeat(40)},
+    source: {mentraosCommit: "a".repeat(40)},
     coordinates: {
       currentMentraApp: {
         sourceCommit: "f".repeat(40),
@@ -77,12 +80,8 @@ function finalizingRecord() {
       },
       candidates: {
         mentraApp: {
-          ios: {marketingVersion: "3.1.0", buildNumber: 310000102},
-          android: {marketingVersion: "3.1.0", buildNumber: 310000102},
-        },
-        starterKit: {
-          ios: {marketingVersion: "3.1.0", buildNumber: 310000103},
-          android: {marketingVersion: "3.1.0", buildNumber: 310000103},
+          ios: {marketingVersion: baseVersion, buildNumber: 310000102},
+          android: {marketingVersion: baseVersion, buildNumber: 310000102},
         },
       },
     },
@@ -120,9 +119,9 @@ test("creates the canonical production manifest from the finalizing checkpoint",
     checkpointUrl: `https://github.com/Mentra-Community/MentraOS/releases/download/promotion/${record.promotionId}.json`,
   })
   assert.equal(manifest.kind, "mentra-production-release")
-  assert.equal(manifest.releaseIdentity, "3.1.0")
+  assert.equal(manifest.releaseIdentity, baseVersion)
   assert.equal(manifest.native.buildNumber, 310000102)
-  assert.equal(manifest.applications.starterKit.ios.buildNumber, 310000103)
+  assert.deepEqual(Object.keys(manifest.applications), ["mentraApp"])
   assert.equal(manifest.promotion.attempt, 2)
   assert.equal(manifest.promotion.checkpoint.state, "finalizing")
   assert.equal(manifest.completedAt, record.createdAt)

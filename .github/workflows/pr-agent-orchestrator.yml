@@ -47,7 +47,9 @@ permissions:
   pull-requests: write
   issues: write
   checks: read
-  actions: read
+  # `write` so the continue-loop job can workflow_dispatch the next cycle for a
+  # PR whose diff matches no CI gate (nothing else would re-trigger the loop).
+  actions: write
 
 env:
   FORCE_ROTATION: ${{ github.event.inputs.force_rotation || 'false' }}
@@ -250,7 +252,11 @@ jobs:
         env:
           TOOL_REF: ${{ needs.resolve-context.outputs.tool_ref }}
         run: |
-          git fetch origin "$TOOL_REF" --depth=1
+          # Deliberately not --depth=1: a shallow fetch grafts origin/<ref> to
+          # one commit, so as soon as the base branch moves past this PR's
+          # merge base the reviewers' `git diff origin/<base>...HEAD` dies with
+          # "no merge base". The clone is already complete (fetch-depth: 0).
+          git fetch origin "$TOOL_REF"
           git checkout FETCH_HEAD -- scripts/pr-agent .github/pr-agent .github/pr-agent.yml
 
       - uses: oven-sh/setup-bun@v1
@@ -292,7 +298,11 @@ jobs:
         env:
           TOOL_REF: ${{ needs.resolve-context.outputs.tool_ref }}
         run: |
-          git fetch origin "$TOOL_REF" --depth=1
+          # Deliberately not --depth=1: a shallow fetch grafts origin/<ref> to
+          # one commit, so as soon as the base branch moves past this PR's
+          # merge base the reviewers' `git diff origin/<base>...HEAD` dies with
+          # "no merge base". The clone is already complete (fetch-depth: 0).
+          git fetch origin "$TOOL_REF"
           git checkout FETCH_HEAD -- scripts/pr-agent .github/pr-agent .github/pr-agent.yml
 
       - uses: oven-sh/setup-bun@v1
@@ -334,7 +344,11 @@ jobs:
         env:
           TOOL_REF: ${{ needs.resolve-context.outputs.tool_ref }}
         run: |
-          git fetch origin "$TOOL_REF" --depth=1
+          # Deliberately not --depth=1: a shallow fetch grafts origin/<ref> to
+          # one commit, so as soon as the base branch moves past this PR's
+          # merge base the reviewers' `git diff origin/<base>...HEAD` dies with
+          # "no merge base". The clone is already complete (fetch-depth: 0).
+          git fetch origin "$TOOL_REF"
           git checkout FETCH_HEAD -- scripts/pr-agent .github/pr-agent .github/pr-agent.yml
 
       - uses: oven-sh/setup-bun@v1
@@ -370,6 +384,7 @@ jobs:
     outputs:
       bugbot_completed: ${{ steps.poll.outputs.bugbot_completed }}
       bugbot_success: ${{ steps.poll.outputs.bugbot_success }}
+      bugbot_started: ${{ steps.poll.outputs.bugbot_started }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -417,6 +432,7 @@ jobs:
       should_handoff: ${{ steps.agg.outputs.should_handoff }}
       handoff_reason: ${{ steps.agg.outputs.handoff_reason }}
       ci_failed: ${{ steps.agg.outputs.ci_failed }}
+      needs_continuation: ${{ steps.agg.outputs.needs_continuation }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -444,6 +460,10 @@ jobs:
           ACTIVE_PAIR: ${{ needs.plan.outputs.active_pair }}
           BUGBOT_COMPLETED: ${{ needs.review-bugbot.outputs.bugbot_completed || 'false' }}
           BUGBOT_SUCCESS: ${{ needs.review-bugbot.outputs.bugbot_success || 'false' }}
+          # Deliberately no `|| 'false'`: blank means "unknown" (job skipped),
+          # which keeps the conservative treatment. Only an explicit 'false'
+          # drops the slot from the effective pair.
+          BUGBOT_STARTED: ${{ needs.review-bugbot.outputs.bugbot_started }}
           CI_TRIGGER_FAILED: ${{ needs.resolve-context.outputs.ci_trigger_failed }}
           HAS_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY != '' }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -541,6 +561,7 @@ jobs:
     outputs:
       should_handoff: ${{ steps.recheck.outputs.should_handoff }}
       handoff_reason: ${{ steps.recheck.outputs.handoff_reason }}
+      needs_continuation: ${{ steps.recheck.outputs.needs_continuation }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -591,6 +612,47 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bun run cli finalize
 
+  continue-loop:
+    name: Continue loop
+    needs: [resolve-context, plan, aggregate, fix, recheck-handoff, finalize]
+    # A PR whose diff matches no CI gate never receives a `workflow_run`
+    # completion, so without this nudge the loop stops after one cycle and the
+    # PR can never bank enough clean cycles to hand off (#3851 sat at cycle 1).
+    # Guarded so it can never race a handoff, and bounded by
+    # limits.maxSelfDispatches inside `cli continue`.
+    #
+    # The dispatched run shares this run's concurrency group and so cancels it;
+    # the dispatch has already happened by then, and the new run owns the
+    # progress label from that point on.
+    if: |
+      always() &&
+      needs.plan.result == 'success' &&
+      needs.plan.outputs.should_skip != 'true' &&
+      needs.plan.outputs.should_handoff != 'true' &&
+      needs.aggregate.outputs.should_handoff != 'true' &&
+      needs.recheck-handoff.outputs.should_handoff != 'true' &&
+      needs.finalize.result == 'skipped' &&
+      (needs.aggregate.outputs.needs_continuation == 'true' ||
+        needs.recheck-handoff.outputs.needs_continuation == 'true')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-context.outputs.tool_ref }}
+
+      - uses: oven-sh/setup-bun@v1
+
+      - working-directory: scripts/pr-agent
+        run: bun install --frozen-lockfile || bun install
+
+      - name: Dispatch next cycle
+        working-directory: scripts/pr-agent
+        env:
+          PR_NUMBER: ${{ needs.resolve-context.outputs.pr_number }}
+          TOOL_REF: ${{ needs.resolve-context.outputs.tool_ref }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bun run cli continue
+
   cleanup-progress-label:
     name: Clear progress label
     needs:
@@ -605,6 +667,7 @@ jobs:
       - wait-ci
       - recheck-handoff
       - finalize
+      - continue-loop
     if: always() && needs.resolve-context.outputs.pr_number != ''
     runs-on: ubuntu-latest
     steps:

@@ -5,6 +5,7 @@ import path from "path"
 import {
   ConfigPlugin,
   withAppBuildGradle,
+  withProjectBuildGradle,
   withSettingsGradle,
   withGradleProperties,
   withAndroidManifest,
@@ -16,8 +17,15 @@ import {withDebugAbiFilters} from "../scripts/android-abi-filters.mjs"
  * Expo Config Plugin to apply android-working modifications
  * This ensures that after running expo prebuild, all custom Android configurations are preserved
  */
+const ANDROIDX_BROWSER_VERSION = "1.6.0"
+const ANDROIDX_ACTIVITY_VERSION = "1.9.3"
+const ANDROIDX_ANNOTATION_VERSION = "1.3.0"
+const ANDROIDX_BROWSER_PIN_MARKER = "androidXBrowserVersion = "
+const ANDROIDX_RESOLUTION_MARKER = "force 'androidx.browser:browser:"
+
 const withAndroidWorkingConfig: ConfigPlugin = (config) => {
   // Apply all modifications in sequence
+  config = withProjectBuildGradleModifications(config)
   config = withAppBuildGradleModifications(config)
   config = withAndroidManifestModifications(config)
   config = withXmlResourceFiles(config)
@@ -25,6 +33,82 @@ const withAndroidWorkingConfig: ConfigPlugin = (config) => {
   config = withSettingsGradleModifications(config)
 
   return config
+}
+
+/**
+ * react-native-inappbrowser-reborn requests androidx.browser:browser:1.4.+.
+ * That dynamic range requires maven-metadata.xml from Google Maven. When the
+ * listing is missing or unreachable, Gradle fails with "no versions of
+ * androidx.browser:browser are available". Pin a concrete cached version
+ * through the library's rootProject.ext hook and force it for every
+ * configuration. Browser 1.9.0 also pulls androidx.activity:activity:1.9.0,
+ * which is not in the local cache and 404s on Google Maven — keep activity
+ * on 1.9.3 when that exact version is requested.
+ */
+function withProjectBuildGradleModifications(config: any) {
+  return withProjectBuildGradle(config, (config) => {
+    if (config.modResults.language !== "groovy") {
+      return config
+    }
+
+    let gradle = config.modResults.contents
+    const resolutionBlock = `
+allprojects {
+  configurations.all {
+    resolutionStrategy {
+      eachDependency { details ->
+        if (details.requested.group == 'androidx.browser' && details.requested.name == 'browser') {
+          details.useVersion '${ANDROIDX_BROWSER_VERSION}'
+        }
+        if (details.requested.group == 'androidx.activity' && details.requested.name == 'activity' && details.requested.version == '1.9.0') {
+          details.useVersion '${ANDROIDX_ACTIVITY_VERSION}'
+        }
+        if (details.requested.group == 'androidx.annotation' && details.requested.name == 'annotation' && details.requested.version.endsWith('+')) {
+          details.useVersion '${ANDROIDX_ANNOTATION_VERSION}'
+        }
+      }
+      force 'androidx.browser:browser:${ANDROIDX_BROWSER_VERSION}'
+    }
+  }
+}
+`
+
+    if (gradle.includes(ANDROIDX_BROWSER_PIN_MARKER)) {
+      gradle = gradle.replace(/androidXBrowserVersion = "[^"]+"/, `androidXBrowserVersion = "${ANDROIDX_BROWSER_VERSION}"`)
+      if (gradle.includes("androidXAnnotationVersion = ")) {
+        gradle = gradle.replace(/androidXAnnotationVersion = "[^"]+"/, `androidXAnnotationVersion = "${ANDROIDX_ANNOTATION_VERSION}"`)
+      } else {
+        gradle = gradle.replace(
+          /androidXBrowserVersion = "[^"]+"/,
+          `androidXBrowserVersion = "${ANDROIDX_BROWSER_VERSION}"\n  androidXAnnotationVersion = "${ANDROIDX_ANNOTATION_VERSION}"`,
+        )
+      }
+    } else {
+      const extBlock = `
+// Pin AndroidX Browser/Annotation for react-native-inappbrowser-reborn (avoids 1.4.+/1.5.+ metadata lookup).
+ext {
+  androidXBrowserVersion = "${ANDROIDX_BROWSER_VERSION}"
+  androidXAnnotationVersion = "${ANDROIDX_ANNOTATION_VERSION}"
+}
+`
+
+      const applyPluginIndex = gradle.indexOf("apply plugin")
+      if (applyPluginIndex !== -1) {
+        gradle = `${gradle.slice(0, applyPluginIndex)}${extBlock}\n${gradle.slice(applyPluginIndex)}`
+      } else {
+        gradle = `${gradle}\n${extBlock}`
+      }
+    }
+
+    if (gradle.includes(ANDROIDX_RESOLUTION_MARKER)) {
+      gradle = gradle.replace(/\nallprojects \{\n  configurations.all \{\n    resolutionStrategy \{[\s\S]*?force 'androidx.browser:browser:[^']+'[\s\S]*?\n  \}\n\}\n?/, resolutionBlock)
+    } else {
+      gradle += resolutionBlock
+    }
+
+    config.modResults.contents = gradle
+    return config
+  })
 }
 
 // Derive the active Android applicationId. Honors MENTRAOS_BUILD_NAME so that

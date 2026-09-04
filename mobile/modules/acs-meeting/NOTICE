@@ -1,0 +1,20 @@
+Apache License 2.0 third-party notice
+=====================================
+
+This module contains Kotlin adapted from RealWear Collaborate (Apache License 2.0).
+
+Upstream: https://github.com/realwear/collaborate
+Commit: 2a143fd18c952c91e1cbae525d8126a858c18edf (HEAD at import)
+Source file: android/apps/rwt/app/src/main/java/com/realwear/acs/util/thermal/VideoFrameSender.kt
+Adapted into: android/src/main/java/com/mentra/acsmeeting/AcsFrameSender.kt
+
+Patterns used (not copied verbatim):
+- direct ByteBuffer pooling and reuse
+- format negotiation from RawOutgoingVideoStream constraints
+- frame pacing to the negotiated FPS
+- stream-state handling (start/stop/format-changed) and error paths
+
+iOS sources in this module are original Mentra code on the official ACS iOS
+raw-video API (CVPixelBuffer). They do not contain RealWear code.
+
+The Apache 2.0 license text is in THIRD_PARTY.

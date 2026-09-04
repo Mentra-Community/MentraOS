@@ -14,6 +14,34 @@
 import BluetoothSdk, {type PublicGlassesStatus} from "@mentra/bluetooth-sdk"
 import {useCoreStore} from "../stores/core"
 import {useGlassesStore} from "../stores/glasses"
+import {isGlassesConnected} from "./GlassesReadiness"
+
+/** Miniapp `session.glasses.onConnection` payload. */
+export type MiniappConnectionData = {
+  connected: boolean
+  modelName?: string
+}
+
+/**
+ * Native `glasses_status` is a store delta (`connection.state`, battery, wifi…).
+ * Miniapps subscribe to a boolean `connected` field. Forwarding the raw status
+ * makes `Boolean(data.connected)` false on every heartbeat while the Mentra App
+ * still shows the glasses linked.
+ */
+export function toMiniappConnectionData(status: unknown): MiniappConnectionData | null {
+  if (!status || typeof status !== "object") return null
+  const rec = status as Partial<PublicGlassesStatus> & {connected?: boolean; modelName?: string}
+  if (typeof rec.connected === "boolean") {
+    const modelName = rec.modelName || rec.deviceModel
+    return {connected: rec.connected, ...(modelName ? {modelName} : {})}
+  }
+  if (!rec.connection) return null
+  const modelName = rec.deviceModel
+  return {
+    connected: isGlassesConnected(rec.connection),
+    ...(modelName ? {modelName} : {}),
+  }
+}
 
 let unsubs: Array<() => void> = []
 let projectionRunId = 0

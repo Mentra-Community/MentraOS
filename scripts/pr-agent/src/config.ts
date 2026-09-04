@@ -20,10 +20,21 @@ const ConfigSchema = z.object({
       maxFixRounds: z.number().default(5),
       maxOrchestratorCycles: z.number().default(8),
       maxBugbotWaitMin: z.number().default(12),
+      /**
+       * How long to wait for Bugbot's check run to *appear* before concluding
+       * it declined the PR. Bounds the wasted poll on diffs Bugbot ignores.
+       */
+      bugbotStartGraceMin: z.number().default(4),
       maxCiWaitMin: z.number().default(45),
       maxNewBlockingPerCycle: z.number().default(5),
       maxFixAgentTurns: z.number().default(80),
       consecutiveNoNewReviewsForHandoff: z.number().default(2),
+      /**
+       * Cap on orchestrator-initiated `workflow_dispatch` continuations for a
+       * single PR. Only used when nothing external will re-trigger the loop
+       * (no CI gates match the diff); `maxOrchestratorCycles` still applies.
+       */
+      maxSelfDispatches: z.number().default(3),
     })
     .default({}),
   ciGates: z

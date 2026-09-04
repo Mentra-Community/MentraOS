@@ -162,3 +162,69 @@ describe('saveState revision CAS', () => {
     expect(still?.revision).toBe(20);
   });
 });
+
+describe('two writes in one run (agent-resume path, #3851)', () => {
+  /** Mock whose stored body is the single source of truth across writes. */
+  function revisionTrackingOctokit(initial: string) {
+    const store = { body: initial };
+    return {
+      store,
+      octokit: {
+        issues: {
+          getComment: async () => ({ data: { id: 99, body: store.body } }),
+          updateComment: async (args: { body: string }) => {
+            store.body = args.body;
+            return { data: { id: 99, body: args.body } };
+          },
+          createComment: async () => {
+            throw new Error('should not create');
+          },
+        },
+      } as any,
+    };
+  }
+
+  test('reusing the stale local revision loses the second write', async () => {
+    const local = makeState({ cycle: 1, revision: 4, selfDispatches: 3 });
+    const { store, octokit } = revisionTrackingOctokit(formatStateComment(local));
+
+    // First write (e.g. the agent-resume reset) lands.
+    const first = await saveState(octokit, 'o', 'r', 1, { ...local, cycle: 2 }, 99);
+    expect(first.wrote).toBe(true);
+
+    // Second write in the same run still carrying revision 4 is refused, so
+    // the selfDispatches reset it was carrying is silently dropped.
+    const second = await saveState(
+      octokit,
+      'o',
+      'r',
+      1,
+      { ...local, cycle: 2, selfDispatches: 0 },
+      99,
+    );
+    expect(second.wrote).toBe(false);
+    expect(parseStateFromComment(store.body)?.selfDispatches).toBe(3);
+  });
+
+  test('adopting the returned revision lets the second write land', async () => {
+    const local = makeState({ cycle: 1, revision: 4, selfDispatches: 3 });
+    const { store, octokit } = revisionTrackingOctokit(formatStateComment(local));
+
+    const first = await saveState(octokit, 'o', 'r', 1, { ...local, cycle: 2 }, 99);
+    expect(first.wrote).toBe(true);
+
+    // This is what plan.ts's `persist` helper does.
+    const carried = { ...local, cycle: 2, revision: first.revision };
+    const second = await saveState(
+      octokit,
+      'o',
+      'r',
+      1,
+      { ...carried, selfDispatches: 0 },
+      99,
+    );
+    expect(second.wrote).toBe(true);
+    expect(parseStateFromComment(store.body)?.selfDispatches).toBe(0);
+    expect(parseStateFromComment(store.body)?.cycle).toBe(2);
+  });
+});

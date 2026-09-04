@@ -270,8 +270,9 @@ function LocalMiniappView({
 
       setLabel(undefined)
       // Already-registered packages never throw from ensureRunning — a dropped
-      // dev server returns {uiUri: null} instead. Route those reopens to the
-      // offline recovery screen the same way as first-launch resolve failures.
+      // dev server with no on-disk snapshot returns {uiUri: null}. Route those
+      // reopens to the offline recovery screen. A prior live load leaves a
+      // snapshot, so this only hits when the miniapp was never opened live.
       if (devUrl && !result.uiUri) {
         console.warn(`LocalMiniappView: ${packageName} already running but UI unresolved, routing to dev-offline`)
         engine.miniapps.clearForeground()

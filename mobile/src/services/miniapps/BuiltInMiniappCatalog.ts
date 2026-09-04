@@ -2,7 +2,7 @@ import {createElement} from "react"
 import {Platform} from "react-native"
 
 import {
-  decideDevLaunchRoute,
+  decideDevOpenRoute,
   HardwareRequirementLevel,
   HardwareType,
   SETTINGS,
@@ -124,11 +124,11 @@ class BuiltInMiniappCatalog {
 
     if (app.isMiniappDev && app.devUrl) {
       const {packageName, devUrl, name: appName, logoUrl} = app
-      decideDevLaunchRoute(packageName, devUrl).then((result) => {
-        if (result.decision === "live") {
-          engine.miniapps.setForeground(packageName)
-        } else {
+      decideDevOpenRoute(packageName, devUrl).then((result) => {
+        if (result.decision === "offline") {
           nav.push("/applet/dev-offline", {packageName, name: appName, iconUrl: logoUrl})
+        } else {
+          engine.miniapps.setForeground(packageName)
         }
       })
       return

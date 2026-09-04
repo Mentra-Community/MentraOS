@@ -25,7 +25,7 @@
 
 import {File} from "expo-file-system"
 
-import {decideDevLaunchRoute} from "../utils/devMiniappLaunch"
+import {resolveDevBundleSource} from "../utils/devMiniappSnapshot"
 import {storage} from "../utils/storage/storage"
 import appRegistry, {getLocalAppRunningState, saveLocalAppRunningState} from "./AppRegistry"
 import devServerBridge from "./DevServerBridge"
@@ -96,67 +96,89 @@ class MiniappLauncher {
    * package. Handles both dev (HTTP off the running dev server) and released
    * (file:// from the installed snapshot). Reads disk/network/storage; does
    * NOT spawn. Returns null when the bundle can't be resolved (dev server
-   * unreachable, missing entry, no installed version).
+   * unreachable with no on-disk snapshot, missing entry, no installed version).
    */
   async resolveBundle(packageName: string, hints?: LaunchHints): Promise<ResolvedBundle | null> {
     const devUrl = hints?.devUrl ?? this.storedDevUrl(packageName)
 
-    // --- Dev: load directly off the local dev server over HTTP. ---
+    // --- Dev: live HTTP, then the last on-disk snapshot if the laptop is gone. ---
     if (devUrl) {
-      const route = await decideDevLaunchRoute(packageName, devUrl)
-      if (route.decision === "offline" || !route.manifest) return null
-      const manifest = route.manifest
-      const entry = manifest.entry as {background?: string; ui?: string} | undefined
-      if (!entry?.background) return null
-
-      // Use the host that actually answered — may differ from the stored IP
-      // after a laptop Wi-Fi change (mDNS / Metro failover inside decideDevLaunchRoute).
-      const base = route.resolvedUrl.replace(/\/$/, "")
-      // entry.* are bundle-root paths (dist/ stripped); the dev server serves
-      // files relative to cwd, so prepend dist/.
-      const bgUrl = `${base}/dist/${entry.background.replace(/^\.?\/+/, "")}`
-      const uiUri = entry.ui ? `${base}/dist/${entry.ui.replace(/^\.?\/+/, "")}` : null
-
-      const perms = manifest.permissions as Array<{type?: string} | string> | undefined
-      const declaredPermissions = (perms ?? [])
-        .map((p) => (typeof p === "string" ? p : p?.type))
-        .filter((t): t is string => typeof t === "string")
-      const installedManifest: InstalledMiniappManifest = {
-        packageName: typeof manifest.packageName === "string" ? manifest.packageName : packageName,
-        name: manifest.name,
-        version: typeof manifest.version === "string" ? manifest.version : undefined,
-        sdkVersion: typeof manifest.sdkVersion === "string" ? manifest.sdkVersion : undefined,
-        minHostVersion: typeof manifest.minHostVersion === "string" ? manifest.minHostVersion : undefined,
-        type: typeof manifest.type === "string" ? manifest.type : undefined,
-        entry: manifest.entry as InstalledMiniappManifest["entry"],
-        permissions: manifest.permissions as InstalledMiniappManifest["permissions"],
-        hardwareRequirements: manifest.hardwareRequirements as InstalledMiniappManifest["hardwareRequirements"],
-        actions: manifest.actions as InstalledMiniappManifest["actions"],
+      const source = await resolveDevBundleSource(packageName, devUrl)
+      if (source.kind === "live") {
+        const live = await this.resolveLiveHttp(packageName, source.resolvedUrl, source.manifest, hints)
+        if (live) return live
+        // Live probe succeeded but the entry fetch failed — still try disk.
       }
-
-      let bgSource: string
-      try {
-        const res = await fetch(bgUrl)
-        if (!res.ok) return null
-        bgSource = await res.text()
-      } catch {
-        return null
+      const snapshotVersion =
+        source.kind === "snapshot" ? source.version : appRegistry.getLatestDevSnapshotVersion(packageName)
+      if (snapshotVersion) {
+        const snapshot = await this.resolveInstalledBundle(packageName, snapshotVersion)
+        if (snapshot) return snapshot
       }
-
-      return {
-        bgSource,
-        uiUri,
-        uiBaseDir: uiUri ? uiUri.replace(/\/[^/]+$/, "/") : null,
-        declaredPermissions,
-        installedManifest,
-        devUrl: route.resolvedUrl,
-        devPort: this.resolveDevPort(hints?.devPort, packageName),
-      }
+      return null
     }
 
     // --- Released: resolve from the installed file:// snapshot. ---
     const version = hints?.version ?? (await appRegistry.getActiveVersion(packageName))
     if (!version) return null
+    return this.resolveInstalledBundle(packageName, version)
+  }
+
+  private async resolveLiveHttp(
+    packageName: string,
+    resolvedUrl: string,
+    manifest: {entry?: unknown; permissions?: unknown; [key: string]: unknown},
+    hints?: LaunchHints,
+  ): Promise<ResolvedBundle | null> {
+    const entry = manifest.entry as {background?: string; ui?: string} | undefined
+    if (!entry?.background) return null
+
+    // Use the host that actually answered — may differ from the stored IP
+    // after a laptop Wi-Fi change (mDNS / Metro failover inside decideDevLaunchRoute).
+    const base = resolvedUrl.replace(/\/$/, "")
+    // entry.* are bundle-root paths (dist/ stripped); the dev server serves
+    // files relative to cwd, so prepend dist/.
+    const bgUrl = `${base}/dist/${entry.background.replace(/^\.?\/+/, "")}`
+    const uiUri = entry.ui ? `${base}/dist/${entry.ui.replace(/^\.?\/+/, "")}` : null
+
+    const perms = manifest.permissions as Array<{type?: string} | string> | undefined
+    const declaredPermissions = (perms ?? [])
+      .map((p) => (typeof p === "string" ? p : p?.type))
+      .filter((t): t is string => typeof t === "string")
+    const installedManifest: InstalledMiniappManifest = {
+      packageName: typeof manifest.packageName === "string" ? manifest.packageName : packageName,
+      name: typeof manifest.name === "string" ? manifest.name : undefined,
+      version: typeof manifest.version === "string" ? manifest.version : undefined,
+      sdkVersion: typeof manifest.sdkVersion === "string" ? manifest.sdkVersion : undefined,
+      minHostVersion: typeof manifest.minHostVersion === "string" ? manifest.minHostVersion : undefined,
+      type: typeof manifest.type === "string" ? manifest.type : undefined,
+      entry: manifest.entry as InstalledMiniappManifest["entry"],
+      permissions: manifest.permissions as InstalledMiniappManifest["permissions"],
+      hardwareRequirements: manifest.hardwareRequirements as InstalledMiniappManifest["hardwareRequirements"],
+      actions: manifest.actions as InstalledMiniappManifest["actions"],
+    }
+
+    let bgSource: string
+    try {
+      const res = await fetch(bgUrl)
+      if (!res.ok) return null
+      bgSource = await res.text()
+    } catch {
+      return null
+    }
+
+    return {
+      bgSource,
+      uiUri,
+      uiBaseDir: uiUri ? uiUri.replace(/\/[^/]+$/, "/") : null,
+      declaredPermissions,
+      installedManifest,
+      devUrl: resolvedUrl,
+      devPort: this.resolveDevPort(hints?.devPort, packageName),
+    }
+  }
+
+  private async resolveInstalledBundle(packageName: string, version: string): Promise<ResolvedBundle | null> {
     const entryPaths = appRegistry.getMiniappEntryPaths(packageName, version)
     if (!entryPaths?.background) return null
 
@@ -203,6 +225,7 @@ class MiniappLauncher {
       uiBaseDir: entryPaths.ui ? entryPaths.ui.replace(/\/[^/]+$/, "/") : null,
       declaredPermissions,
       installedManifest,
+      // Snapshot fallback is file:// — do not wire the sidecar; the laptop is gone.
       devUrl: null,
       devPort: null,
     }

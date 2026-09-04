@@ -1884,7 +1884,7 @@
     },
     {
       "name": "@mentra/bluetooth-sdk",
-      "version": "3.1.0",
+      "version": "3.2.0",
       "license": "MIT",
       "repository": "https://github.com/Mentra-Community/MentraOS",
       "publisher": "Mentra",
@@ -1899,7 +1899,7 @@
     },
     {
       "name": "@mentra/cloud-client",
-      "version": "3.1.0",
+      "version": "3.2.0",
       "license": "Custom: https://www.npmjs.com/package/",
       "repository": "https://github.com/Mentra-Community/MentraOS",
       "source": "mobile, cloud-v2/packages/cloud-client"
@@ -1912,7 +1912,7 @@
     },
     {
       "name": "@mentra/cloud-protocol",
-      "version": "3.1.0",
+      "version": "3.2.0",
       "license": "Custom: https://github.com/colinhacks/zod",
       "repository": "https://github.com/Mentra-Community/MentraOS",
       "source": "mobile, cloud-v2/packages/cloud-client, cloud-v2/packages/protocol, cloud-v2/packages/runtime"
@@ -1955,7 +1955,7 @@
     },
     {
       "name": "@mentra/crust",
-      "version": "3.1.0",
+      "version": "3.2.0",
       "license": "MIT",
       "repository": "https://github.com/Mentra-Community/MentraOS",
       "publisher": "fossephate",
@@ -1963,7 +1963,7 @@
     },
     {
       "name": "@mentra/engine",
-      "version": "3.1.0",
+      "version": "3.2.0",
       "license": "MIT",
       "repository": "https://github.com/Mentra-Community/MentraOS",
       "publisher": "Mentra Community",
@@ -1977,14 +1977,14 @@
     },
     {
       "name": "@mentra/jspolyfill",
-      "version": "3.1.0",
+      "version": "3.2.0",
       "license": "MIT",
       "repository": "https://github.com/Mentra-Community/MentraOS",
       "source": "mobile"
     },
     {
       "name": "@mentra/miniapp",
-      "version": "3.1.0",
+      "version": "3.2.0",
       "license": "MIT",
       "repository": "https://github.com/Mentra-Community/MentraOS",
       "publisher": "Mentra Labs",
@@ -6579,7 +6579,7 @@
     },
     {
       "name": "mentraos",
-      "version": "3.1.0",
+      "version": "3.2.0",
       "license": "UNLICENSED",
       "source": "mobile"
     },
