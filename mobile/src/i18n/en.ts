@@ -599,6 +599,9 @@ const en = {
     storageInfo: "Storage Info",
     glassesAreReconnecting: "Reconnecting...",
     glassesAreReconnectingMessage: "Make sure your glasses are turned on.",
+    wifiSetupNeedsGlassesTitle: "Reconnect your glasses",
+    wifiSetupNeedsGlassesMessage:
+      "Wi-Fi setup needs your glasses connected over Bluetooth. Turn them on and wait for them to reconnect, then try again.",
     // Gallery sync WiFi explanation
     connectToGlassesTitle: "Connect to Glasses",
     wifiJoinExplanationIos: 'When prompted, tap "Join" to connect to "{{ssid}}".',

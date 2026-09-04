@@ -34,6 +34,7 @@ import {BgTimer} from "../utils/timers"
 import devServerBridge from "./DevServerBridge"
 import {islandNotifications} from "./NotificationsEmitter"
 import {isGlassesConnected} from "./GlassesReadiness"
+import {toMiniappConnectionData} from "./GlassesStatusProjection"
 import audioPlaybackService from "./AudioPlaybackService"
 import {phoneLocationService} from "./PhoneLocationService"
 import {useGlassesStore} from "../stores/glasses"
@@ -759,6 +760,22 @@ class LocalMiniappRuntime {
       this.replaceStreamSubscribers(packageName, existing.subscriptions, [])
       this.recomputeMicRequirements()
       this.updateCloudSubscriptions()
+      // Managed streams and ACS meetings deliberately survive a respawn: the new
+      // incarnation re-adopts them on restore (Mentra Call does exactly this) so a
+      // WebView reload does not drop the wearer out of a live call. An unmanaged
+      // stream cannot be re-adopted — startUnmanaged rejects while any stream is
+      // active, even for the same owner — so release it or the respawned miniapp
+      // is stuck behind STREAM_ALREADY_ACTIVE until the process restarts.
+      const streamSnapshot = phoneStreamCoordinator.getDiagnosticSnapshot()
+      if (
+        streamSnapshot.active === true &&
+        streamSnapshot.kind === "unmanaged" &&
+        streamSnapshot.ownerPackageName === packageName
+      ) {
+        void phoneStreamCoordinator.stop(packageName).catch((error) => {
+          console.warn(`${LOG_TAG}: failed to stop unmanaged stream while replacing ${packageName}`, error)
+        })
+      }
     }
     this.connectedApps.set(packageName, {
       subscriptions: new Set(),
@@ -1817,7 +1834,10 @@ class LocalMiniappRuntime {
         this.sendToMiniapp(packageName, {
           type: MiniappResponseType.EVENT,
           streamType: "glasses_connection",
-          data: glassesState,
+          data: {
+            connected: glassesState.connected,
+            modelName: glassesState.deviceModel || undefined,
+          },
         })
       } else if (stream === "glasses_wifi") {
         // Snapshot the current glasses Wi-Fi state on subscribe (like battery).
@@ -1836,6 +1856,7 @@ class LocalMiniappRuntime {
           streamType: "glasses_wifi",
           data: {
             connected,
+            linkConnected: glassesState.connected === true,
             ssid: connected ? wifi?.ssid : undefined,
             localIp: connected ? wifi?.localIp : undefined,
             timestamp: Date.now(),
@@ -3261,6 +3282,30 @@ class LocalMiniappRuntime {
   // Photo + streaming handlers (cloud-coordinated)
   // ===========================================================================
 
+  /**
+   * Manifest permission gate shared by the camera-and-mic RPCs (streams, meetings).
+   * Sends PERMISSION_NOT_DECLARED and returns false when the miniapp did not declare
+   * `permission`; the caller must return without doing the work.
+   */
+  private requireManifestPermission(
+    packageName: string,
+    requestId: string | undefined,
+    permission: "CAMERA" | "MICROPHONE",
+    purpose: string,
+    operation: MiniappRequestType,
+  ): boolean {
+    const app = this.connectedApps.get(packageName)
+    if (app?.installedManifest?.permissions?.some((p) => p.type === permission)) return true
+    logPermissionNotDeclared(packageName, permission, purpose, `{"type": "${permission}"}`)
+    this.sendResult(packageName, requestId, false, undefined, {
+      code: MiniappErrorCode.PERMISSION_NOT_DECLARED,
+      message: `${permission} permission not declared in miniapp.json. Add {"type": "${permission}"} to the "permissions" array.`,
+      permission,
+      operation,
+    })
+    return false
+  }
+
   private async handlePhoto(packageName: string, payload: Record<string, unknown>, requestId?: string): Promise<void> {
     // Manifest CAMERA permission gate.
     const app = this.connectedApps.get(packageName)
@@ -3419,6 +3464,10 @@ class LocalMiniappRuntime {
       })
       return
     }
+    // A stream is the glasses camera (and mic) leaving the device; gate it like a photo.
+    if (!this.requireManifestPermission(packageName, requestId, "CAMERA", "to stream the camera", MiniappRequestType.STREAM_START)) {
+      return
+    }
     try {
       const result = await streaming.startUnmanaged(packageName, {
         streamUrl: payload.streamUrl as string,
@@ -3476,6 +3525,17 @@ class LocalMiniappRuntime {
       })
       return
     }
+    if (
+      !this.requireManifestPermission(
+        packageName,
+        requestId,
+        "CAMERA",
+        "to stream the camera",
+        MiniappRequestType.MANAGED_STREAM_START,
+      )
+    ) {
+      return
+    }
     try {
       const result = await streaming.startManaged(packageName, {
         restreamDestinations: payload.restreamDestinations as Array<string | {url: string; name?: string}> | undefined,
@@ -3519,6 +3579,14 @@ class LocalMiniappRuntime {
     requestId?: string,
   ): Promise<void> {
     this.ensureMeetingStateBridge()
+    // A meeting puts the glasses camera and mic in front of remote strangers; it
+    // needs both declared, same as photo/stream and mic capture do individually.
+    if (
+      !this.requireManifestPermission(packageName, requestId, "CAMERA", "to join a meeting", MiniappRequestType.MEETING_JOIN) ||
+      !this.requireManifestPermission(packageName, requestId, "MICROPHONE", "to join a meeting", MiniappRequestType.MEETING_JOIN)
+    ) {
+      return
+    }
     const meetingUrl = typeof payload.meetingUrl === "string" ? payload.meetingUrl : ""
     const token = typeof payload.token === "string" ? payload.token : ""
     const videoSource = payload.videoSource as {type?: string; url?: string} | undefined
@@ -4045,6 +4113,9 @@ class LocalMiniappRuntime {
     // The bare `touch_event` stream above still catches `onTouch(handler)`.
     let perGestureStream: string | null = null
     let outboundData = data
+    if (normalizedStream === MiniappStreamType.GLASSES_CONNECTION) {
+      outboundData = toMiniappConnectionData(data) ?? data
+    }
     if (normalizedStream === MiniappStreamType.TOUCH_EVENT) {
       // The Bluetooth SDK delivers the gesture under `gestureName` (single_tap /
       // double_tap / triple_tap / long_press / swipe_up / swipe_down). Surface it

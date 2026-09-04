@@ -513,7 +513,25 @@ describe("MantleManager", () => {
     expect(useGlassesStore.getState().otaInProgress).toBe(false)
   })
 
+  it("refuses Wi-Fi setup while the glasses are off Bluetooth and says why", async () => {
+    ;(engine.glasses.status as jest.Mock).mockReturnValue({state: "disconnected"})
+
+    const request = requestWifiSetup("Streaming needs Wi-Fi", "com.mentra.call")
+    const [title, message, buttons] = mockShowAlert.mock.calls.at(-1)!
+
+    expect(title).toBe("Reconnect your glasses")
+    expect(message).toMatch(/connected over Bluetooth/)
+    expect(buttons).toHaveLength(1)
+    buttons[0].onPress()
+    await request
+
+    // The miniapp stays in the foreground and no Wi-Fi route is pushed.
+    expect(engine.miniapps.clearForeground).not.toHaveBeenCalled()
+    expect(routerPushSpy).not.toHaveBeenCalled()
+  })
+
   it("prompts before opening Wi-Fi setup and backgrounds the requesting miniapp", async () => {
+    ;(engine.glasses.status as jest.Mock).mockReturnValue({state: "connected"})
     const cancelRequest = requestWifiSetup("Streaming needs Wi-Fi")
     const [, message, cancelButtons] = mockShowAlert.mock.calls.at(-1)!
 
