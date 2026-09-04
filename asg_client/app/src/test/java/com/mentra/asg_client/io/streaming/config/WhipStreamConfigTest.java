@@ -144,4 +144,135 @@ public class WhipStreamConfigTest {
         WhipStreamConfig on = WhipStreamConfig.fromJson(null, enabled);
         assertTrue(on.isCaptureAudio());
     }
+
+    // ---------------------------------------------------------------
+    // ice.stun override (SoftAP host-only mode)
+    // ---------------------------------------------------------------
+
+    @Test
+    public void ice_absentBlock_keepsCloudflareStun() {
+        WhipStreamConfig c = WhipStreamConfig.fromJson(null, null, null);
+        assertEquals(WhipStreamConfig.DEFAULT_STUN_SERVER, c.getStunServer());
+        assertFalse(c.isHostOnlyIce());
+    }
+
+    @Test
+    public void ice_blockWithoutStunKey_keepsCloudflareStun() throws JSONException {
+        JSONObject ice = new JSONObject();
+        ice.put("unrelated", "value");
+
+        WhipStreamConfig c = WhipStreamConfig.fromJson(null, null, ice);
+        assertEquals(WhipStreamConfig.DEFAULT_STUN_SERVER, c.getStunServer());
+        assertFalse(c.isHostOnlyIce());
+    }
+
+    @Test
+    public void ice_emptyStun_selectsHostOnlyMode() throws JSONException {
+        JSONObject ice = new JSONObject();
+        ice.put("stun", "");
+
+        WhipStreamConfig c = WhipStreamConfig.fromJson(null, null, ice);
+        assertEquals("", c.getStunServer());
+        assertTrue(c.isHostOnlyIce());
+    }
+
+    @Test
+    public void ice_compactEmptyStun_selectsHostOnlyMode() throws JSONException {
+        JSONObject ice = new JSONObject();
+        ice.put("s", "");
+
+        WhipStreamConfig c = WhipStreamConfig.fromJson(null, null, ice);
+        assertTrue(c.isHostOnlyIce());
+    }
+
+    @Test
+    public void ice_whitespaceOnlyStun_selectsHostOnlyMode() throws JSONException {
+        JSONObject ice = new JSONObject();
+        ice.put("stun", "   ");
+
+        WhipStreamConfig c = WhipStreamConfig.fromJson(null, null, ice);
+        assertTrue(c.isHostOnlyIce());
+    }
+
+    @Test
+    public void ice_explicitStunServer_overridesTheDefault() throws JSONException {
+        JSONObject ice = new JSONObject();
+        ice.put("stun", "stun:stun.example.org:3478");
+
+        WhipStreamConfig c = WhipStreamConfig.fromJson(null, null, ice);
+        assertEquals("stun:stun.example.org:3478", c.getStunServer());
+        assertFalse(c.isHostOnlyIce());
+    }
+
+    @Test
+    public void ice_stunsSchemeIsAccepted() throws JSONException {
+        JSONObject ice = new JSONObject();
+        ice.put("stun", "stuns:stun.example.org:5349");
+
+        WhipStreamConfig c = WhipStreamConfig.fromJson(null, null, ice);
+        assertEquals("stuns:stun.example.org:5349", c.getStunServer());
+    }
+
+    @Test
+    public void ice_fullKeyWinsOverCompactAlias() throws JSONException {
+        JSONObject ice = new JSONObject();
+        ice.put("stun", "stun:full.example.org:3478");
+        ice.put("s", "");
+
+        WhipStreamConfig c = WhipStreamConfig.fromJson(null, null, ice);
+        assertEquals("stun:full.example.org:3478", c.getStunServer());
+    }
+
+    /**
+     * A malformed value must not be mistaken for host-only: that would strand a normal Cloudflare
+     * stream with no reflexive candidate and no obvious cause.
+     */
+    @Test
+    public void ice_malformedStun_preservesTheDefault() throws JSONException {
+        JSONObject ice = new JSONObject();
+        ice.put("stun", "not-a-stun-uri");
+
+        WhipStreamConfig c = WhipStreamConfig.fromJson(null, null, ice);
+        assertEquals(WhipStreamConfig.DEFAULT_STUN_SERVER, c.getStunServer());
+        assertFalse(c.isHostOnlyIce());
+    }
+
+    @Test
+    public void ice_httpUrlIsRejectedAsMalformed() throws JSONException {
+        JSONObject ice = new JSONObject();
+        ice.put("stun", "http://example.org");
+
+        WhipStreamConfig c = WhipStreamConfig.fromJson(null, null, ice);
+        assertEquals(WhipStreamConfig.DEFAULT_STUN_SERVER, c.getStunServer());
+    }
+
+    @Test
+    public void ice_nullStunValue_preservesTheDefault() throws JSONException {
+        JSONObject ice = new JSONObject();
+        ice.put("stun", JSONObject.NULL);
+
+        WhipStreamConfig c = WhipStreamConfig.fromJson(null, null, ice);
+        assertEquals(WhipStreamConfig.DEFAULT_STUN_SERVER, c.getStunServer());
+    }
+
+    @Test
+    public void ice_doesNotDisturbVideoOrAudioParsing() throws JSONException {
+        JSONObject v = new JSONObject();
+        v.put("width", 1920);
+        v.put("height", 1080);
+        JSONObject ice = new JSONObject();
+        ice.put("stun", "");
+
+        WhipStreamConfig c = WhipStreamConfig.fromJson(v, null, ice);
+        assertEquals(1920, c.getVideoWidth());
+        assertEquals(1080, c.getVideoHeight());
+        assertTrue(c.isHostOnlyIce());
+    }
+
+    @Test
+    public void twoArgOverload_stillDefaultsToCloudflareStun() {
+        WhipStreamConfig c = WhipStreamConfig.fromJson(null, null);
+        assertEquals(WhipStreamConfig.DEFAULT_STUN_SERVER, c.getStunServer());
+        assertFalse(c.isHostOnlyIce());
+    }
 }

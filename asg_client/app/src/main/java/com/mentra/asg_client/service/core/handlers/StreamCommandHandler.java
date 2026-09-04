@@ -191,6 +191,9 @@ public class StreamCommandHandler implements ICommandHandler {
             if (videoJson == null) videoJson = data.optJSONObject("v");
             JSONObject audioJson = data.optJSONObject("audio");
             if (audioJson == null) audioJson = data.optJSONObject("a");
+            // SoftAP calling sends ice.stun="" to force host-only gathering (WHIP only).
+            JSONObject iceJson = data.optJSONObject("ice");
+            if (iceJson == null) iceJson = data.optJSONObject("i");
             Boolean captureAudioOverride = null;
             if (data.has("captureAudio")) {
                 captureAudioOverride = data.optBoolean("captureAudio", true);
@@ -235,10 +238,13 @@ public class StreamCommandHandler implements ICommandHandler {
                     }
                 case WHIP:
                     {
-                        WhipStreamConfig config = WhipStreamConfig.fromJson(videoJson, audioJson);
+                        WhipStreamConfig config =
+                                WhipStreamConfig.fromJson(videoJson, audioJson, iceJson);
                         if (captureAudioOverride != null) {
                             config.setCaptureAudio(captureAudioOverride);
                         }
+                        SoftApTrace.stage(
+                                "whip_config_resolved", "hostOnlyIce", config.isHostOnlyIce());
                         Log.i(TAG, "[VideoQuality] parsed WHIP config " + config);
                         if (!preflightCameraCaptureForWhip(config, streamId)) {
                             return false;
