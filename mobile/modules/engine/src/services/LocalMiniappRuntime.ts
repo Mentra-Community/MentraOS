@@ -81,7 +81,12 @@ import {resolveForegroundLocationPermission} from "./ForegroundLocationPermissio
 import {advanceMiniappPingLiveness} from "./MiniappLiveness"
 import {listPhoneCalendarEvents, PhoneCalendarError} from "./PhoneCalendarService"
 import {LocalMiniappStorage} from "./LocalMiniappStorage"
-import acsMeetingService, {parseAcsOutgoingVideo, resolveAcsAudioSource} from "./AcsMeetingService"
+import acsMeetingService, {
+  parseAcsOutgoingVideo,
+  parseAcsVideoSource,
+  resolveAcsAudioSource,
+  type AcsVideoSource,
+} from "./AcsMeetingService"
 
 // =============================================================================
 // Types
@@ -3589,13 +3594,21 @@ class LocalMiniappRuntime {
     }
     const meetingUrl = typeof payload.meetingUrl === "string" ? payload.meetingUrl : ""
     const token = typeof payload.token === "string" ? payload.token : ""
-    const videoSource = payload.videoSource as {type?: string; url?: string} | undefined
-    const whepUrl = videoSource?.type === "whep" ? videoSource.url ?? "" : ""
     const displayName = typeof payload.displayName === "string" ? payload.displayName : undefined
-    if (!meetingUrl || !token || !whepUrl) {
+    if (!meetingUrl || !token) {
       this.sendResult(packageName, requestId, false, undefined, {
         code: MiniappErrorCode.INVALID_ARGUMENT,
-        message: "meetingUrl, token, and a WHEP videoSource are required",
+        message: "meetingUrl and token are required",
+      })
+      return
+    }
+    let videoSource: AcsVideoSource
+    try {
+      videoSource = parseAcsVideoSource(payload.videoSource)
+    } catch (error) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INVALID_ARGUMENT,
+        message: error instanceof Error ? error.message : "Invalid meeting video source",
       })
       return
     }
@@ -3613,7 +3626,7 @@ class LocalMiniappRuntime {
       const state = await acsMeetingService.join(packageName, {
         meetingUrl,
         token,
-        whepUrl,
+        videoSource,
         displayName,
         ...(video ? {video} : {}),
       })

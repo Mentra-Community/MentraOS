@@ -55,6 +55,7 @@ mock.module("@mentra/bluetooth-sdk/internal", () => ({
 const {
   default: acsMeetingService,
   parseAcsOutgoingVideo,
+  parseAcsVideoSource,
   parseMeetingParticipants,
   ACS_CALL_MIC,
   resolveAcsAudioSource,
@@ -84,6 +85,7 @@ type NativeJoin = {
   meetingUrl: string
   token: string
   whepUrl: string
+  videoSource: {type: string; url?: string; ssid?: string; passphrase?: string}
   displayName?: string
   audioSource?: "glasses" | "phone"
   video?: {width: number; height: number; fps: number; maxBitrateBps: number}
@@ -157,7 +159,7 @@ describe("AcsMeetingService", () => {
         acsMeetingService.join("com.mentra.call", {
           meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
           token: "bad",
-          whepUrl: "https://example.com/whep",
+          videoSource: {type: "whep", url: "https://example.com/whep"},
         }),
       ).rejects.toThrow("ACS rejected the token")
     } finally {
@@ -170,7 +172,7 @@ describe("AcsMeetingService", () => {
     await acsMeetingService.join("com.other.app", {
       meetingUrl: "https://teams.microsoft.com/l/meetup-join/y",
       token: "tok",
-      whepUrl: "https://example.com/whep",
+      videoSource: {type: "whep", url: "https://example.com/whep"},
     })
     expect(acsMeetingService.ownerPackage()).toBe("com.other.app")
     await acsMeetingService.leave("com.other.app")
@@ -189,7 +191,7 @@ describe("AcsMeetingService", () => {
       state = await acsMeetingService.join("com.mentra.call", {
         meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
         token: "tok",
-        whepUrl: "https://example.com/whep",
+        videoSource: {type: "whep", url: "https://example.com/whep"},
       })
     } finally {
       console.warn = original
@@ -215,7 +217,7 @@ describe("AcsMeetingService", () => {
     await acsMeetingService.join("com.mentra.call", {
       meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
       token: "tok",
-      whepUrl: "https://example.com/whep",
+      videoSource: {type: "whep", url: "https://example.com/whep"},
     })
     native.emit("onState", {state: "connected", muted: false})
     await acsMeetingService.leave("com.mentra.call")
@@ -243,7 +245,7 @@ describe("AcsMeetingService", () => {
     await acsMeetingService.join("com.mentra.call", {
       meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
       token: "tok",
-      whepUrl: "https://example.com/whep",
+      videoSource: {type: "whep", url: "https://example.com/whep"},
     })
     expect(network.size).toBe(1)
     // NetInfo replays the current state on subscribe; that is not a change.
@@ -272,7 +274,7 @@ describe("AcsMeetingService", () => {
     await acsMeetingService.join("com.mentra.call", {
       meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
       token: "tok",
-      whepUrl: "https://example.com/whep",
+      videoSource: {type: "whep", url: "https://example.com/whep"},
     })
     network.emit({type: "wifi", isConnected: true})
     network.emit({type: "cellular", isConnected: true})
@@ -286,7 +288,7 @@ describe("AcsMeetingService", () => {
     await acsMeetingService.join("com.mentra.call", {
       meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
       token: "tok",
-      whepUrl: "https://example.com/whep",
+      videoSource: {type: "whep", url: "https://example.com/whep"},
     })
     native.emit("onState", {state: "connected", muted: false, mediaSource: "failed"})
     expect(acsMeetingService.getState().mediaSource).toBe("failed")
@@ -308,7 +310,7 @@ describe("AcsMeetingService", () => {
     const state = await acsMeetingService.join("com.mentra.call", {
       meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
       token: "tok",
-      whepUrl: "https://example.com/whep",
+      videoSource: {type: "whep", url: "https://example.com/whep"},
     })
     expect(native.join).toHaveBeenCalledWith(
       expect.objectContaining({audioSource: ACS_CALL_MIC}),
@@ -328,7 +330,7 @@ describe("AcsMeetingService", () => {
     await acsMeetingService.join("com.mentra.call", {
       meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
       token: "tok",
-      whepUrl: "https://example.com/whep",
+      videoSource: {type: "whep", url: "https://example.com/whep"},
     })
     native.emit("onIncomingPcm", {base64: "AAAA", sampleRate: 16000, channels: 1})
     native.emit("onIncomingPcm", {base64: "BBBB", sampleRate: 16000, channels: 1})
@@ -344,7 +346,7 @@ describe("AcsMeetingService", () => {
     await acsMeetingService.join("com.mentra.call", {
       meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
       token: "tok",
-      whepUrl: "https://example.com/whep",
+      videoSource: {type: "whep", url: "https://example.com/whep"},
     })
     native.emit("onIncomingPcm", {base64: "AAAA", sampleRate: 48000, channels: 1})
     await flush()
@@ -361,7 +363,7 @@ describe("AcsMeetingService", () => {
     await acsMeetingService.join("com.mentra.call", {
       meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
       token: "tok",
-      whepUrl: "https://example.com/whep",
+      videoSource: {type: "whep", url: "https://example.com/whep"},
     })
     const original = console.warn
     console.warn = () => {}
@@ -382,7 +384,7 @@ describe("AcsMeetingService", () => {
     await acsMeetingService.join("com.mentra.call", {
       meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
       token: "tok",
-      whepUrl: "https://example.com/whep",
+      videoSource: {type: "whep", url: "https://example.com/whep"},
     })
     native.emit("onState", {
       state: "connected",
@@ -412,7 +414,7 @@ describe("AcsMeetingService", () => {
     await acsMeetingService.join("com.mentra.call", {
       meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
       token: "tok",
-      whepUrl: "https://example.com/whep",
+      videoSource: {type: "whep", url: "https://example.com/whep"},
       video,
     })
     expect(native.join).toHaveBeenCalledWith(expect.objectContaining({video}))
@@ -445,7 +447,7 @@ describe("AcsMeetingService", () => {
     await acsMeetingService.join("com.mentra.call", {
       meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
       token: "tok",
-      whepUrl: "https://example.com/whep",
+      videoSource: {type: "whep", url: "https://example.com/whep"},
     })
     await acsMeetingService.leave("com.mentra.call")
     expect(abortStream).toHaveBeenCalledTimes(1)
@@ -453,7 +455,7 @@ describe("AcsMeetingService", () => {
     const state = await acsMeetingService.join("com.mentra.call", {
       meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
       token: "tok",
-      whepUrl: "https://example.com/whep",
+      videoSource: {type: "whep", url: "https://example.com/whep"},
     })
     expect(native.join.mock.calls[1]?.[0]).toMatchObject({audioSource: ACS_CALL_MIC})
     expect(state.audioSource).toBe(ACS_CALL_MIC)
@@ -473,7 +475,7 @@ describe("AcsMeetingService", () => {
       await acsMeetingService.join("com.mentra.call", {
         meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
         token: "tok",
-        whepUrl: "https://example.com/whep",
+        videoSource: {type: "whep", url: "https://example.com/whep"},
       })
       native.emit("onState", {
         state: "connected",
@@ -492,5 +494,112 @@ describe("AcsMeetingService", () => {
     expect(acsMeetingService.ownerPackage()).toBe("com.mentra.call")
     expect(native.leave).not.toHaveBeenCalled()
     expect(errors.some((args) => String(args[0]).includes("audio-unsafe"))).toBe(true)
+  })
+
+  test("a SoftAP join sends the union and no WHEP URL", async () => {
+    const native = fakeNative()
+    setAcsMeetingNativeForTests(native)
+
+    await acsMeetingService.join("com.mentra.call", {
+      meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
+      token: "tok",
+      videoSource: {type: "softap"},
+    })
+
+    const options = native.join.mock.calls[0][0]
+    expect(options.videoSource).toEqual({type: "softap"})
+    // An empty legacy whepUrl is deliberate: a native that predates the union must fail its own
+    // required-field check rather than subscribe to nothing and time out much later.
+    expect(options.whepUrl).toBe("")
+    await acsMeetingService.leave("com.mentra.call")
+  })
+
+  test("updateVideoSource is refused during a SoftAP call instead of silently doing nothing", async () => {
+    const native = fakeNative()
+    setAcsMeetingNativeForTests(native)
+    await acsMeetingService.join("com.mentra.call", {
+      meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
+      token: "tok",
+      videoSource: {type: "softap"},
+    })
+
+    await expect(
+      acsMeetingService.updateVideoSource("com.mentra.call", "https://example.com/whep"),
+    ).rejects.toThrow("SoftAP")
+    expect(native.updateVideoSource).not.toHaveBeenCalled()
+    await acsMeetingService.leave("com.mentra.call")
+  })
+
+  test("a network change rebuilds a SoftAP feed even though there is no URL to re-feed", async () => {
+    // The phone changing networks is exactly when it may have dropped off the hotspot, so having
+    // no URL must not mean skipping the repair.
+    const native = fakeNative()
+    setAcsMeetingNativeForTests(native)
+    let emit: ((state: {type: string; isConnected: boolean | null}) => void) | null = null
+    setAcsMeetingPhoneNetworkForTests({
+      addEventListener: (listener) => {
+        emit = listener
+        return () => {}
+      },
+    })
+    await acsMeetingService.join("com.mentra.call", {
+      meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
+      token: "tok",
+      videoSource: {type: "softap"},
+    })
+
+    emit!({type: "wifi", isConnected: true})
+    emit!({type: "cellular", isConnected: true})
+    await flush()
+
+    expect(native.restartVideoSource).toHaveBeenCalled()
+    await acsMeetingService.leave("com.mentra.call")
+  })
+
+  test("a WHEP join still sends the legacy whepUrl alongside the union", async () => {
+    const native = fakeNative()
+    setAcsMeetingNativeForTests(native)
+
+    await acsMeetingService.join("com.mentra.call", {
+      meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
+      token: "tok",
+      videoSource: {type: "whep", url: "https://example.com/whep"},
+    })
+
+    const options = native.join.mock.calls[0][0]
+    expect(options.whepUrl).toBe("https://example.com/whep")
+    expect(options.videoSource).toEqual({type: "whep", url: "https://example.com/whep"})
+    await acsMeetingService.leave("com.mentra.call")
+  })
+})
+
+describe("parseAcsVideoSource", () => {
+  test("accepts both transports and trims the WHEP URL", () => {
+    expect(parseAcsVideoSource({type: "whep", url: " https://example.com/whep "})).toEqual({
+      type: "whep",
+      url: "https://example.com/whep",
+    })
+    expect(parseAcsVideoSource({type: "softap"})).toEqual({type: "softap"})
+    expect(parseAcsVideoSource({type: "softap", ssid: "MentraLive-1", passphrase: "pw"})).toEqual({
+      type: "softap",
+      ssid: "MentraLive-1",
+      passphrase: "pw",
+    })
+  })
+
+  test("rejects an unknown transport rather than defaulting to WHEP", () => {
+    // Defaulting here is how a miniapp asking for SoftAP quietly gets a Cloudflare call.
+    expect(() => parseAcsVideoSource({type: "direct"})).toThrow("unsupported videoSource.type")
+  })
+
+  test("rejects a missing or malformed source", () => {
+    for (const input of [undefined, null, "whep", 7, {}, {type: "whep"}, {type: "whep", url: " "}]) {
+      expect(() => parseAcsVideoSource(input)).toThrow()
+    }
+  })
+
+  test("rejects half a SoftAP credential pair", () => {
+    expect(() => parseAcsVideoSource({type: "softap", ssid: "MentraLive-1"})).toThrow("together")
+    expect(() => parseAcsVideoSource({type: "softap", passphrase: "pw"})).toThrow("together")
   })
 })

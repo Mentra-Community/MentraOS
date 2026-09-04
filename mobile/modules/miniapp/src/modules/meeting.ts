@@ -17,9 +17,69 @@ export type MeetingProvider = "acs-teams"
 
 export type MeetingPhase = "idle" | "connecting" | "lobby" | "connected" | "disconnected" | "error"
 
-export interface MeetingVideoSource {
+/** Glasses video reaches the phone through a Cloudflare WHEP endpoint. */
+export interface MeetingWhepVideoSource {
   type: "whep"
   url: string
+}
+
+/**
+ * Glasses video reaches the phone directly over the glasses' own hotspot, with no Cloudflare hop.
+ *
+ * There is no URL here because the host produces one rather than consuming one: it joins the
+ * hotspot, binds a local WHIP endpoint, and tells the glasses where to publish. The miniapp only
+ * chooses the transport.
+ *
+ * Android only for now. iOS hosts reject this with `NOT_IMPLEMENTED`.
+ */
+export interface MeetingSoftApVideoSource {
+  type: "softap"
+  /**
+   * Reuse a hotspot the miniapp has already started, instead of letting the host start one. Both
+   * are required together; omit both for the normal path.
+   */
+  ssid?: string
+  passphrase?: string
+}
+
+export type MeetingVideoSource = MeetingWhepVideoSource | MeetingSoftApVideoSource
+
+/**
+ * Validates a video source, returning the narrowed value.
+ *
+ * Exported because both `join` and `updateVideoSource` need it and because the invalid cases are
+ * worth pinning: an unknown `type` and a WHEP source with no URL must fail here, at the call the
+ * miniapp author can see, rather than as a meeting that connects and shows nothing.
+ */
+export function validateMeetingVideoSource(source: unknown): MeetingVideoSource {
+  const value = (source ?? {}) as Record<string, unknown>
+
+  if (value.type === "whep") {
+    const url = typeof value.url === "string" ? value.url.trim() : ""
+    if (!url) {
+      throw {code: MiniappErrorCode.INVALID_ARGUMENT, message: "videoSource.url is required for a WHEP source"}
+    }
+    return {type: "whep", url}
+  }
+
+  if (value.type === "softap") {
+    const ssid = typeof value.ssid === "string" ? value.ssid.trim() : ""
+    const passphrase = typeof value.passphrase === "string" ? value.passphrase : ""
+    // Half a credential pair is a misconfiguration that would otherwise present as a failed
+    // hotspot join several seconds later.
+    if (Boolean(ssid) !== Boolean(passphrase)) {
+      throw {
+        code: MiniappErrorCode.INVALID_ARGUMENT,
+        message: "videoSource.ssid and videoSource.passphrase must be provided together",
+      }
+    }
+    return ssid ? {type: "softap", ssid, passphrase} : {type: "softap"}
+  }
+
+  throw {
+    code: MiniappErrorCode.INVALID_ARGUMENT,
+    message: `videoSource must be {type: "whep", url} or {type: "softap"}`,
+  }
 }
 
 /** Advertised ACS outgoing format. Omitted hosts keep 1280×720@15. */
@@ -142,9 +202,7 @@ export class MeetingModule {
     if (!options.meetingUrl?.trim()) {
       throw {code: MiniappErrorCode.INVALID_ARGUMENT, message: "meetingUrl is required"}
     }
-    if (options.videoSource?.type !== "whep" || !options.videoSource.url?.trim()) {
-      throw {code: MiniappErrorCode.INVALID_ARGUMENT, message: "videoSource must be a WHEP URL"}
-    }
+    const videoSource = validateMeetingVideoSource(options.videoSource)
     if (!options.token?.trim()) {
       throw {code: MiniappErrorCode.INVALID_ARGUMENT, message: "token is required"}
     }
@@ -154,7 +212,7 @@ export class MeetingModule {
           type: MiniappRequestType.MEETING_JOIN,
           provider: options.provider,
           meetingUrl: options.meetingUrl,
-          videoSource: options.videoSource,
+          videoSource,
           token: options.token,
           displayName: options.displayName,
           ...(options.video ? {video: options.video} : {}),
@@ -188,14 +246,24 @@ export class MeetingModule {
     }
   }
 
-  async updateVideoSource(source: MeetingVideoSource): Promise<void> {
-    if (source?.type !== "whep" || !source.url?.trim()) {
-      throw {code: MiniappErrorCode.INVALID_ARGUMENT, message: "videoSource must be a WHEP URL"}
+  /**
+   * Repoint the host at a new WHEP URL mid-call, the recovery path for a re-published stream.
+   *
+   * WHEP only. A SoftAP source has no URL to update — the host owns the endpoint — and its
+   * recovery is a full rebuild, so accepting one here would be a silent no-op.
+   */
+  async updateVideoSource(source: MeetingWhepVideoSource): Promise<void> {
+    const validated = validateMeetingVideoSource(source)
+    if (validated.type !== "whep") {
+      throw {
+        code: MiniappErrorCode.INVALID_ARGUMENT,
+        message: "updateVideoSource accepts a WHEP source; a SoftAP call recovers by rejoining",
+      }
     }
     try {
       await this.session.sendRequest<void>({
         type: MiniappRequestType.MEETING_UPDATE_VIDEO_SOURCE,
-        videoSource: source,
+        videoSource: validated,
       })
     } catch (error) {
       mapHostError(error)

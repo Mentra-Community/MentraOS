@@ -76,8 +76,13 @@ interface GlassesMediaSource {
   fun setStateListener(listener: SourceStateListener?) {}
 }
 
+/**
+ * Builds the transport for one attempt. Takes [SourceConfig] because the kind decides the class:
+ * a Cloudflare subscription and a SoftAP listener are different objects, not one object with a
+ * mode flag, and the session must not have to know which.
+ */
 fun interface GlassesMediaSourceFactory {
-  fun create(video: VideoFrameListener, pcm: PcmListener): GlassesMediaSource
+  fun create(video: VideoFrameListener, pcm: PcmListener, config: SourceConfig): GlassesMediaSource
 }
 
 class GlassesMediaController(
@@ -89,9 +94,13 @@ class GlassesMediaController(
   val state: SourceState
     get() = source?.state ?: SourceState.IDLE
 
+  /** SOFTAP only: the URL the glasses must publish to, once a listener has bound. */
+  val ingestUrl: String?
+    get() = source?.ingestUrl
+
   fun attach(video: VideoFrameListener, pcm: PcmListener, config: SourceConfig) {
     source?.stop()
-    source = factory.create(video, pcm).also {
+    source = factory.create(video, pcm, config).also {
       it.setStateListener(stateListener)
       it.start(config)
     }

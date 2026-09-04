@@ -1,5 +1,6 @@
 package com.mentra.acsmeeting
 
+import com.mentra.acsmeeting.source.MeetingVideoSourceSpec
 import com.mentra.acsmeeting.video.VideoProfile
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
@@ -14,7 +15,12 @@ class AcsMeetingModule : Module() {
     AsyncFunction("join") { options: Map<String, Any?> ->
       val token = options["token"] as? String ?: throw IllegalArgumentException("token is required")
       val meetingUrl = options["meetingUrl"] as? String ?: throw IllegalArgumentException("meetingUrl is required")
-      val whepUrl = options["whepUrl"] as? String ?: throw IllegalArgumentException("whepUrl is required")
+      // Accepts the videoSource union and still honours a bare whepUrl, so a host that predates
+      // the union keeps joining unchanged.
+      val videoSource = MeetingVideoSourceSpec.parse(
+        options["videoSource"] as? Map<*, *>,
+        options["whepUrl"] as? String,
+      )
       val displayName = options["displayName"] as? String
       val dumpWav = options["dumpPcmWav"] as? Boolean ?: false
       val audioSource = options["audioSource"] as? String ?: "glasses"
@@ -30,8 +36,12 @@ class AcsMeetingModule : Module() {
           )
         },
       ).also { session = it }
-      meeting.join(token, meetingUrl, whepUrl, displayName, dumpWav, audioSource, video)
-      meeting.getState()
+      meeting.join(token, meetingUrl, videoSource, displayName, dumpWav, audioSource, video)
+      // The SoftAP ingest URL is only known after the listener binds, so it rides back on the join
+      // result rather than being an input. The orchestrator forwards it to the glasses.
+      meeting.getState() + buildMap {
+        meeting.softApIngestUrl()?.let { put("ingestUrl", it) }
+      }
     }
 
     AsyncFunction("leave") {

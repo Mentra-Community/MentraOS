@@ -48,7 +48,7 @@ class GlassesMediaSourceContractTest {
   private fun contract(source: FakeGlassesMediaSource) {
     val pcm = mutableListOf<ByteArray>()
     source.pcmListener = PcmListener { bytes, _, _ -> pcm.add(bytes) }
-    val controller = GlassesMediaController { _, listener ->
+    val controller = GlassesMediaController { _, listener, _ ->
       source.pcmListener = listener
       source
     }
@@ -128,7 +128,7 @@ class GlassesMediaSourceContractTest {
       stats = com.mentra.acsmeeting.telemetry.PipelineStats(),
       isReady = { false },
     )
-    val controller = GlassesMediaController { _, _ -> source }
+    val controller = GlassesMediaController { _, _, _ -> source }
 
     assertThat(controller.state).isEqualTo(SourceState.IDLE)
     controller.attach(
