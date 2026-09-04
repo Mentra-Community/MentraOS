@@ -22,6 +22,9 @@
   "author": "Mentra Community",
   "license": "MIT",
   "homepage": "https://github.com/Mentra-Community/MentraOS/tree/dev/mobile/modules/acs-meeting#readme",
+  "publishConfig": {
+    "access": "public"
+  },
   "devDependencies": {
     "expo-module-scripts": "^55.0.2",
     "typescript": "~5.9.2"
