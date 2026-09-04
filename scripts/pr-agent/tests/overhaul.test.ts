@@ -17,8 +17,11 @@ import { postInlineFindings } from '../src/inline-comments.js';
 import { buildReviewComment } from '../src/review-comment.js';
 import { frozenPairFromFindings, pairForCycle, resolveActivePair } from '../src/rotate.js';
 import { PrAgentStateSchema, type Finding } from '../src/types.js';
+import { ciPendingChecks, repoRoot } from './helpers.js';
 
-const REPO_ROOT = process.env.GITHUB_WORKSPACE ?? '/workspace';
+// Fall back to the real monorepo root rather than a hardcoded path so the
+// suite is runnable locally, not just under Actions.
+const REPO_ROOT = process.env.GITHUB_WORKSPACE ?? repoRoot;
 
 function finding(partial: Partial<Finding>): Finding {
   return {
@@ -607,5 +610,127 @@ describe('buildReviewComment', () => {
     );
     expect(body).toContain('### Bugbot — ✅ approve');
     expect(body).toContain('no open findings');
+  });
+});
+
+describe('Bugbot no-show is a missing opinion, not a negative one (#3851)', () => {
+  const cleanApprove = 'clean\n{"verdict":"approve","findings":[]}';
+
+  test('unstarted bugbot drops out of the pair so a clean cycle still counts', () => {
+    const st = PrAgentStateSchema.parse({ cycle: 1, consecutiveNoNewReviews: 0 });
+    const out = aggregateCycle(
+      REPO_ROOT,
+      st,
+      { standards: cleanApprove, bugbotCheckCompleted: false, bugbotStarted: false },
+      [],
+      ['bugbot', 'standards'],
+    );
+    expect(out.emptyCycle).toBeUndefined();
+    expect(out.state.consecutiveNoNewReviews).toBe(1);
+    expect(out.state.lastPair).toEqual(['standards']);
+  });
+
+  test('bugbot that started but never completed still blocks the clean count', () => {
+    const st = PrAgentStateSchema.parse({ cycle: 1, consecutiveNoNewReviews: 0 });
+    const out = aggregateCycle(
+      REPO_ROOT,
+      st,
+      { standards: cleanApprove, bugbotCheckCompleted: false, bugbotStarted: true },
+      [],
+      ['bugbot', 'standards'],
+    );
+    expect(out.state.consecutiveNoNewReviews).toBe(0);
+    expect(out.state.lastPair).toEqual(['bugbot', 'standards']);
+  });
+
+  test('unknown bugbot state (job skipped) keeps the conservative treatment', () => {
+    const st = PrAgentStateSchema.parse({ cycle: 1, consecutiveNoNewReviews: 0 });
+    const out = aggregateCycle(
+      REPO_ROOT,
+      st,
+      { standards: cleanApprove, bugbotCheckCompleted: false },
+      [],
+      ['bugbot', 'standards'],
+    );
+    expect(out.state.consecutiveNoNewReviews).toBe(0);
+  });
+
+  test('review comment reports the skipped slot without claiming a verdict', () => {
+    const st = PrAgentStateSchema.parse({ cycle: 2 });
+    const body = buildReviewComment(
+      st,
+      { standards: cleanApprove },
+      ['bugbot', 'standards'],
+      { bugbotStarted: false },
+    );
+    expect(body).toContain('Bugbot opened no review for this PR');
+    expect(body).toContain('_Reviewers this cycle: standards_');
+    expect(body).not.toContain('no verdict');
+  });
+});
+
+describe('self-continuation when no CI gate will re-trigger the loop (#3851)', () => {
+  const cleanApprove = 'clean\n{"verdict":"approve","findings":[]}';
+
+  test('clean cycle with zero required CI checks asks for a continuation', () => {
+    const st = PrAgentStateSchema.parse({ cycle: 1, consecutiveNoNewReviews: 0 });
+    const out = aggregateCycle(
+      REPO_ROOT,
+      st,
+      { standards: cleanApprove, depth: cleanApprove },
+      [],
+      ['standards', 'depth'],
+    );
+    expect(out.shouldFix).toBe(false);
+    expect(out.shouldHandoff).toBe(false);
+    expect(out.needsContinuation).toBe(true);
+  });
+
+  test('no continuation when the fixer is scheduled', () => {
+    const oneBlocking =
+      'found\n{"verdict":"changes_requested","findings":[{"severity":"blocking","file":"Bar.java","line":42,"message":"bad"}]}';
+    const st = PrAgentStateSchema.parse({ cycle: 1 });
+    const out = aggregateCycle(
+      REPO_ROOT,
+      st,
+      { standards: oneBlocking, depth: cleanApprove },
+      [],
+      ['standards', 'depth'],
+    );
+    expect(out.shouldFix).toBe(true);
+    expect(out.needsContinuation).toBe(false);
+  });
+
+  test('no continuation when the cycle already hands off', () => {
+    const st = PrAgentStateSchema.parse({ cycle: 1, consecutiveNoNewReviews: 1 });
+    const out = aggregateCycle(
+      REPO_ROOT,
+      st,
+      { standards: cleanApprove, depth: cleanApprove },
+      [],
+      ['standards', 'depth'],
+    );
+    expect(out.shouldHandoff).toBe(true);
+    expect(out.state.status).toBe('human_handoff');
+    expect(out.needsContinuation).toBe(false);
+  });
+
+  test('no continuation while a required CI check is still reporting', () => {
+    const st = PrAgentStateSchema.parse({ cycle: 1, consecutiveNoNewReviews: 0 });
+    const out = aggregateCycle(
+      REPO_ROOT,
+      st,
+      { standards: cleanApprove, depth: cleanApprove },
+      ciPendingChecks(),
+      ['standards', 'depth'],
+    );
+    expect(out.needsContinuation).toBe(false);
+  });
+
+  test('an empty cycle never asks for a continuation', () => {
+    const st = PrAgentStateSchema.parse({ cycle: 1 });
+    const out = aggregateCycle(REPO_ROOT, st, {}, [], ['standards', 'depth']);
+    expect(out.emptyCycle).toBe(true);
+    expect(out.needsContinuation).toBeUndefined();
   });
 });

@@ -38,6 +38,13 @@ export const PrAgentStateSchema = z.object({
   /** Fingerprints a human marked as false positive via `agent-resolve <id>`. */
   mutedFingerprints: z.array(z.string()).default([]),
   /**
+   * Orchestrator-initiated `workflow_dispatch` continuations spent on this PR.
+   * Only consumed when no CI gate matches the diff, so no `workflow_run` event
+   * will ever arrive to drive the next cycle. Reset on each `pull_request`
+   * event (new push means the human moved the PR forward).
+   */
+  selfDispatches: z.number().default(0),
+  /**
    * Monotonic counter bumped on every successful state comment write.
    * Used by saveState to refuse lost-update overwrites from stale concurrent runs.
    */
@@ -104,4 +111,11 @@ export type AggregateOutput = {
    * The cycle carried no review signal, so no convergence counters moved.
    */
   emptyCycle?: boolean;
+  /**
+   * The cycle ended cleanly but short of handoff, and nothing external will
+   * start the next one: no CI gate matches the diff (so no `workflow_run`
+   * completion is coming) and no fixer push is queued. The workflow
+   * self-dispatches to keep converging instead of stranding the PR.
+   */
+  needsContinuation?: boolean;
 };

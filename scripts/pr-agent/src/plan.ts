@@ -1,5 +1,5 @@
 import { loadConfig } from './config.js';
-import { resolveActivePair } from './rotate.js';
+import { isBugbotReviewable, resolveActivePair, substituteBugbotSlot } from './rotate.js';
 import { applyResolvedIds, openBlocking, parseResolveIds } from './findings.js';
 import {
   createOctokit,
@@ -96,6 +96,12 @@ export async function runPlan(repoRoot: string): Promise<PlanOutput> {
     await removeLabel(octokit, owner, repo, prNumber, 'agent-needs-human');
     await removeLabel(octokit, owner, repo, prNumber, 'agent-ci-failing');
     await saveState(octokit, owner, repo, prNumber, state, commentId);
+  }
+
+  // A fresh `pull_request` event means the human moved the PR forward, so the
+  // self-dispatch budget for a stalled loop starts over.
+  if (process.env.GITHUB_EVENT_NAME === 'pull_request' && state.selfDispatches > 0) {
+    state = { ...state, selfDispatches: 0 };
   }
 
   const resolveIds = parseResolveIds(
@@ -258,7 +264,25 @@ export async function runPlan(repoRoot: string): Promise<PlanOutput> {
     };
   }
 
-  const activePair = resolveActivePair(state, forceRotation);
+  let activePair = resolveActivePair(state, forceRotation);
+
+  // Bugbot opens no check run on prose-only diffs, so scheduling it there
+  // wastes a poll window and leaves the cycle one opinion short (#3851). Swap
+  // in a model slot that actually reviews the change.
+  if (activePair.includes('bugbot')) {
+    try {
+      const changedFiles = await getChangedFiles(octokit, owner, repo, prNumber);
+      if (!isBugbotReviewable(changedFiles)) {
+        const substituted = substituteBugbotSlot(activePair);
+        console.log(
+          `Prose-only diff: replacing bugbot slot with ${substituted.join(', ')}`,
+        );
+        activePair = substituted;
+      }
+    } catch (err) {
+      console.warn('plan: failed to classify diff for bugbot slot; keeping bugbot', err);
+    }
+  }
 
   const output: PlanOutput = {
     runBugbot: activePair.includes('bugbot'),
