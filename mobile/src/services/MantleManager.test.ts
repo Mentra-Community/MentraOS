@@ -519,8 +519,8 @@ describe("MantleManager", () => {
     const request = requestWifiSetup("Streaming needs Wi-Fi", "com.mentra.call")
     const [title, message, buttons] = mockShowAlert.mock.calls.at(-1)!
 
-    expect(title).toBe("Reconnect your glasses")
-    expect(message).toMatch(/connected over Bluetooth/)
+    expect(title).toBe("glasses:wifiSetupNeedsGlassesTitle")
+    expect(message).toBe("glasses:wifiSetupNeedsGlassesMessage")
     expect(buttons).toHaveLength(1)
     buttons[0].onPress()
     await request
