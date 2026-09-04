@@ -9,6 +9,9 @@ import AVFoundation
 import Combine
 import CoreBluetooth
 import Foundation
+#if os(macOS)
+import CoreAudio
+#endif
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -45,6 +48,9 @@ struct ViewState {
     // MARK: - Unique (iOS)
 
     private var cancellables = Set<AnyCancellable>()
+    #if os(macOS)
+    private var audioRouteObserver: MacAudioRouteObserver?
+    #endif
     var sendStateWorkItem: DispatchWorkItem?
     let sendStateQueue = DispatchQueue(label: "sendStateQueue", qos: .userInitiated)
 
@@ -53,6 +59,7 @@ struct ViewState {
      * Attempts to automatically activate Mentra Live as the system audio device
      * If not paired yet, prompts user to pair in Settings
      */
+    #if !os(macOS)
     func setupAudioPairing(deviceName _: String) {
         // Don't configure audio session - PhoneMic.swift handles that
         // Just check if audio session supports Bluetooth (informational only)
@@ -75,13 +82,6 @@ struct ViewState {
 
         // Check if device is paired (don't activate to preserve A2DP music playback)
         let isPaired = AudioSessionMonitor.isDevicePaired(devicePattern: audioDevicePattern)
-
-        #if os(macOS)
-        AudioSessionMonitor.startMonitoring(devicePattern: audioDevicePattern) { [weak self] _, _ in
-            self?.checkCurrentAudioDevice()
-            self?.updateMicState()
-        }
-        #endif
 
         if isPaired {
             // Device is paired! Don't activate it - let PhoneMic.swift activate when recording starts
@@ -109,6 +109,8 @@ struct ViewState {
             #endif
         }
     }
+
+    #endif
 
     // MARK: - End Unique
 
@@ -940,6 +942,10 @@ struct ViewState {
             return
         }
 
+        #if os(macOS)
+        glassesBluetoothClassicConnected = AudioSessionMonitor.isAudioDeviceConnected(devicePattern: audioDevicePattern)
+        otherBtConnected = AudioSessionMonitor.isOtherAudioDeviceConnected(devicePattern: audioDevicePattern)
+        #else
         // check if the device disconnected:
         let isConnected = AudioSessionMonitor.isAudioDeviceConnected(
             devicePattern: audioDevicePattern
@@ -966,6 +972,7 @@ struct ViewState {
         } else {
             glassesBluetoothClassicConnected = false
         }
+        #endif
     }
 
     #if !os(macOS)
@@ -1065,6 +1072,16 @@ struct ViewState {
         }
 
         // check current audio device:
+        #if os(macOS)
+        audioRouteObserver = MacAudioRouteObserver(selectors: [kAudioHardwarePropertyDevices,
+            kAudioHardwarePropertyDefaultInputDevice, kAudioHardwarePropertyDefaultOutputDevice]) { [weak self] in
+            Task { @MainActor in
+                guard let self, self.audioRouteObserver != nil else { return }
+                self.checkCurrentAudioDevice()
+                self.updateMicState()
+            }
+        }
+        #endif
         checkCurrentAudioDevice()
 
         // save the default_wearable now that we're connected:
@@ -1836,6 +1853,11 @@ struct ViewState {
     }
 
     func disconnect(clearPendingConnection: Bool = true) {
+        #if os(macOS)
+        audioRouteObserver = nil
+        glassesBluetoothClassicConnected = false
+        otherBtConnected = false
+        #endif
         sgc?.clearDisplay() // clear the screen
         sgc?.disconnect()
         sgc = nil // Clear the SGC reference after disconnect
@@ -1943,6 +1965,10 @@ struct ViewState {
     }
 
     func cleanup() {
+        #if os(macOS)
+        audioRouteObserver = nil
+        PhoneMic.shared.cleanup()
+        #endif
         // Clean up transcriber resources
 #if !os(macOS) && (!SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT)
         transcriber?.shutdown()

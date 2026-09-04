@@ -9,8 +9,8 @@
         static let shared = PhoneMic()
         private var engine: AVAudioEngine?
         private var configurationObserver: NSObjectProtocol?
+        private var routeObserver: MacAudioRouteObserver?
         private var currentMode = ""
-        private var preferredDevice: AudioDeviceID?
         private var activeDevice: AudioDeviceID?
         var isRecording: Bool {
             engine?.isRunning == true
@@ -28,18 +28,6 @@
             Dictionary(uniqueKeysWithValues: MacAudioDevice.available.filter(\.hasInput).map { (String($0.id), $0.name) })
         }
 
-        func setPreferredInputDevice(named name: String) -> Bool {
-            guard let device = MacAudioDevice.available.first(where: { $0.hasInput && $0.name.localizedCaseInsensitiveContains(name) })
-            else { return false }
-            preferredDevice = device.id
-            if isRecording {
-                let mode = currentMode
-                stopRecording()
-                return startMode(mode)
-            }
-            return true
-        }
-
         func isRecordingWithMode(_ mode: String) -> Bool {
             isRecording && currentMode == mode
         }
@@ -47,20 +35,8 @@
         func startMode(_ mode: String) -> Bool {
             if isRecordingWithMode(mode) { return true }
             guard !isRecording, checkPermissions() else { return false }
-            let inputs = MacAudioDevice.available.filter(\.hasInput)
-            let device: AudioDeviceID?
-            switch mode {
-            case MicTypes.PHONE_INTERNAL:
-                device = inputs.first(where: { $0.id == preferredDevice })?.id
-                    ?? inputs.first(where: { $0.transport == kAudioDeviceTransportTypeBuiltIn })?.id
-                    ?? MacAudioDevice.defaultInput
-            case MicTypes.BLUETOOTH, MicTypes.BLUETOOTH_CLASSIC:
-                device = inputs.first(where: { $0.isBluetooth && $0.id == preferredDevice })?.id
-                    ?? inputs.first(where: \.isBluetooth)?.id
-            default:
-                return false
-            }
-            guard let device else { return false }
+            guard let device = MacAudioDevice.input(for: mode, devices: MacAudioDevice.available,
+                                                    defaultInput: MacAudioDevice.defaultInput) else { return false }
             return start(device: device, mode: mode)
         }
 
@@ -110,6 +86,16 @@
             self.engine = engine
             activeDevice = device
             currentMode = mode
+            routeObserver = MacAudioRouteObserver(selectors: [kAudioHardwarePropertyDevices, kAudioHardwarePropertyDefaultInputDevice]) { [weak self, weak engine] in
+                Task { @MainActor in
+                    guard let self, let engine, self.engine === engine else { return }
+                    let desired = MacAudioDevice.input(for: self.currentMode, devices: MacAudioDevice.available,
+                                                       defaultInput: MacAudioDevice.defaultInput)
+                    guard desired != self.activeDevice else { return }
+                    self.stopRecording()
+                    DeviceManager.shared.updateMicState()
+                }
+            }
             configurationObserver = NotificationCenter.default.addObserver(
                 forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
             ) { [weak self, weak engine] _ in
@@ -133,6 +119,7 @@
         }
 
         func stopRecording() {
+            routeObserver = nil
             if let configurationObserver {
                 NotificationCenter.default.removeObserver(configurationObserver)
             }

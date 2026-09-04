@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "mobile/modules/bluetooth-sdk/Package.swift"
+      - "mobile/modules/bluetooth-sdk/package.json"
       - "mobile/modules/bluetooth-sdk/ios/**"
       - "scripts/export-bluetooth-sdk-ios-spm.sh"
       - ".github/workflows/bluetooth-sdk-apple.yml"

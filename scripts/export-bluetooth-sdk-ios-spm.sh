@@ -221,6 +221,13 @@ If your app uses microphone features, also add:
 <string>This app uses the microphone when you enable audio features.</string>
 ```
 
+For local photo receivers, LAN webhooks, or local OTA servers, also add:
+
+```xml
+<key>NSLocalNetworkUsageDescription</key>
+<string>This app accesses photo and OTA servers on your local network.</string>
+```
+
 On iOS, to keep the BLE link alive while the app is backgrounded, enable Core Bluetooth background mode:
 
 ```xml

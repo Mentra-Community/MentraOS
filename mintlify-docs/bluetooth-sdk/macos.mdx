@@ -145,7 +145,11 @@ dependencies or arbitrary Expo packages support native macOS.
   connection; reconnect through the normal SDK lifecycle after wake.
 - Select the Mac's Bluetooth audio output in System Settings. The SDK does not
   change the system-wide audio route. Host microphone selection uses CoreAudio
-  for the SDK's own recording engine.
+  for the SDK's own recording engine. Bluetooth microphone modes use the
+  Bluetooth input selected in System Settings > Sound > Input, not the first
+  connected headset. Internal microphone mode uses a built-in input only.
+  Input changes are observed while recording; glasses audio availability is
+  tracked independently of the selected output.
 - macOS has no iOS `AVAudioSession` audio-focus contract. The SDK tracks explicit
   own-app playback, but does not detect every other app's playback to suspend
   the glasses microphone. A host app must coordinate simultaneous audio use.

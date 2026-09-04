@@ -12,6 +12,20 @@
             transport == kAudioDeviceTransportTypeBluetooth || transport == kAudioDeviceTransportTypeBluetoothLE
         }
 
+        static func input(for mode: String, devices: [MacAudioDevice], defaultInput: AudioDeviceID?) -> AudioDeviceID? {
+            let inputs = devices.filter(\.hasInput)
+            switch mode {
+            case MicTypes.PHONE_INTERNAL:
+                let builtIn = inputs.filter { $0.transport == kAudioDeviceTransportTypeBuiltIn }
+                return builtIn.first { $0.id == defaultInput }?.id ?? builtIn.map(\.id).min()
+            case MicTypes.BLUETOOTH, MicTypes.BLUETOOTH_CLASSIC:
+                // Respect the user's Sound settings; never pick an arbitrary nearby headset.
+                return inputs.first { $0.id == defaultInput && $0.isBluetooth }?.id
+            default:
+                return nil
+            }
+        }
+
         static var available: [MacAudioDevice] {
             var address = address(kAudioHardwarePropertyDevices)
             var size: UInt32 = 0
@@ -62,14 +76,12 @@
         private let listener: AudioObjectPropertyListenerBlock
         private var selectors: [AudioObjectPropertySelector] = []
 
-        init(onChange: @escaping () -> Void) {
+        init(selectors: [AudioObjectPropertySelector], onChange: @escaping () -> Void) {
             listener = { _, _ in onChange() }
-            for selector in [kAudioHardwarePropertyDevices, kAudioHardwarePropertyDefaultInputDevice,
-                             kAudioHardwarePropertyDefaultOutputDevice]
-            {
+            for selector in selectors {
                 var address = MacAudioDevice.address(selector)
                 if AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, .main, listener) == noErr {
-                    selectors.append(selector)
+                    self.selectors.append(selector)
                 }
             }
         }
