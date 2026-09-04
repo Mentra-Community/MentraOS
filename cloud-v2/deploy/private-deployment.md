@@ -115,6 +115,12 @@ Core-signed federated identity and exchanges it for an employee credential. The
 response reports `identityMode` as `guest` or `teams-user`. A supplied invalid
 token is rejected and never falls back to guest issuance.
 
+Guest identity reuse and abuse throttling are bounded in-process state. The v1
+reference therefore runs one Runtime replica. Before scaling the meetings
+profile horizontally, provide a shared atomic identity/rate-limit store or an
+equivalent ingress control; otherwise separate replicas can issue separate ACS
+guest identities for the same authenticated user.
+
 Provider enablement is explicit, never inferred from whether an API key exists.
 
 ## Deployment manifest

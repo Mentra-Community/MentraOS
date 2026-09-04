@@ -84,9 +84,11 @@ already-qualified Runtime meetings endpoint and finalizes the Miniapp SDK call
 contract with the native implementation's owner.
 
 Lane A exits when the official app can resolve a customer manifest, sign in with
-Entra, and authenticate directly to a reduced Runtime; that Runtime starts only
-the meetings HTTP module and completes an ACS Teams-user exchange through a
-server-side harness. Lane A is not expected to place a Teams call.
+Entra, and authenticate through customer Core to a reduced Runtime; that
+Runtime starts only the meetings HTTP module and issues a guest ACS credential
+through a server-side harness. The harness also completes an ACS Teams-user
+exchange when delegated credentials are configured. Lane A is not expected to
+place a Teams call.
 
 ### Merge gates
 
@@ -363,6 +365,9 @@ server-side qualification harness, token/redaction tests, and Azure configuratio
       secret permitted for the first controlled deployment.
 - [ ] Create or reuse an anonymous ACS communication user and issue a `voip`
       token when no delegated token is supplied.
+- [ ] Serialize guest issuance per authenticated user, bound idle in-process
+      identity state, and preserve reusable ACS user IDs across transient
+      provider failures.
 - [ ] Return a short-lived guest or Teams-user ACS token, with the selected
       identity mode, in a stable response that Lane C can consume; do not add
       mobile/native integration in Lane A.
@@ -453,10 +458,11 @@ templates, and runbooks
 
 **Files:** Mentra Azure environment and end-to-end test records
 
-- [ ] Deploy one reduced Runtime process in Mentra's Azure account using Mentra's
-      non-production Entra tenant and customer-style isolation.
+- [ ] Deploy customer Core plus one reduced Runtime process in Mentra's Azure
+      account using Mentra's non-production Entra tenant and customer-style
+      isolation.
 - [ ] Use a customer-style ACS resource and secret store/managed identity.
-- [ ] Do not deploy customer Core or use Mentra public Core/Runtime.
+- [ ] Deploy customer Core and Runtime without using Mentra public Core/Runtime.
 - [ ] Select the workspace using official Android and iOS Mentra App artifacts.
 - [ ] Run Entra assignment, MFA, wrong-tenant, disabled-user, expiry, logout, and
       deployment-switch tests.

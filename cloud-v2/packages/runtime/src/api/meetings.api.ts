@@ -12,6 +12,38 @@ import {authenticateRuntimeRequest} from "./runtime-auth"
 const MAX_CREDENTIAL_REQUEST_BYTES = 16 * 1024
 const credentialRequestSchema = z.object({teamsUserAadToken: z.string().min(100).max(16_384).optional()}).strict()
 
+class CredentialRequestTooLargeError extends Error {}
+
+async function readCredentialRequestBody(request: Request): Promise<string> {
+  if (!request.body) return ""
+
+  const reader = request.body.getReader()
+  const chunks: Uint8Array[] = []
+  let byteLength = 0
+  try {
+    while (true) {
+      const {done, value} = await reader.read()
+      if (done) break
+      byteLength += value.byteLength
+      if (byteLength > MAX_CREDENTIAL_REQUEST_BYTES) {
+        await reader.cancel("credential request exceeds byte limit")
+        throw new CredentialRequestTooLargeError()
+      }
+      chunks.push(value)
+    }
+  } finally {
+    reader.releaseLock()
+  }
+
+  const body = new Uint8Array(byteLength)
+  let offset = 0
+  for (const chunk of chunks) {
+    body.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return new TextDecoder("utf-8", {fatal: true}).decode(body)
+}
+
 export const meetingsApi = new Hono()
 
 meetingsApi.post("/acs/token", async (c) => {
@@ -24,12 +56,12 @@ meetingsApi.post("/acs/token", async (c) => {
   }
   let body: unknown = {}
   try {
-    const text = await c.req.text()
-    if (text.length > MAX_CREDENTIAL_REQUEST_BYTES) {
+    const text = await readCredentialRequestBody(c.req.raw)
+    if (text.trim()) body = JSON.parse(text)
+  } catch (error) {
+    if (error instanceof CredentialRequestTooLargeError) {
       return c.json({error: "ACS credential request is too large"}, 413)
     }
-    if (text.trim()) body = JSON.parse(text)
-  } catch {
     return c.json({error: "invalid JSON body"}, 400)
   }
   const parsed = credentialRequestSchema.safeParse(body)
