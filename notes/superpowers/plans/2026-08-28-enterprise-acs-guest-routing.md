@@ -39,7 +39,7 @@ todos:
 # Enterprise policy + ACS guest routing — implementation plan
 
 > Execution checklist. Update checkboxes as work lands. Open in Plan mode with
-> `@notes/superpowers/plans/2026-08-28-acs-account-type-recognition.md`.
+> `@notes/superpowers/plans/2026-08-28-enterprise-acs-guest-routing.md`.
 
 **Goal:** Mentra Call asks the host `resolve({ meetingUrl })` before minting an
 ACS guest token. Commercial Teams URLs use native ACS only when a Mentra admin
