@@ -184,6 +184,10 @@ export {
   type DevLaunchResult,
   type DevManifest,
 } from "./utils/devMiniappLaunch"
+export {
+  decideDevOpenRoute,
+  type DevOpenDecision,
+} from "./utils/devMiniappSnapshot"
 export {HardwareCompatibility, type CompatibilityResult} from "./utils/hardware"
 export {BgTimer, throttle, debounce} from "./utils/timers"
 

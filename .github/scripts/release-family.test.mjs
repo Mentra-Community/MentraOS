@@ -51,7 +51,7 @@ test("loads the repository release family and derives dependency-first publicati
   assert.equal(family.changelog.path, `changelogs/${repositoryVersion}.md`)
   assert.match(family.changelog.sha256, /^[0-9a-f]{64}$/)
   assert.deepEqual(family.products, ["mentraos", "@mentra/engine", "@mentra/bluetooth-sdk"])
-  assert.equal(family.members.length, 8)
+  assert.equal(family.members.length, 9)
   assert.ok(family.publicationOrder.indexOf("@mentra/jspolyfill") < family.publicationOrder.indexOf("@mentra/crust"))
   assert.ok(
     family.publicationOrder.indexOf("@mentra/bluetooth-sdk") < family.publicationOrder.indexOf("@mentra/engine"),

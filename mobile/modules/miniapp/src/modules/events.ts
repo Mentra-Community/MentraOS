@@ -108,7 +108,15 @@ export interface ConnectionData {
 
 /** Glasses Wi-Fi state. `connected` is false on glasses without Wi-Fi or when offline. */
 export interface WifiData {
+  /** Glasses are on Bluetooth AND on Wi-Fi — what streaming actually needs. */
   connected: boolean
+  /**
+   * The phone↔glasses Bluetooth link on its own. When this is false the
+   * glasses may well still be on Wi-Fi; `connected` is false only because the
+   * phone cannot see them. Wait for the link — do not send the user to
+   * Wi-Fi setup. Absent on hosts older than the field.
+   */
+  linkConnected?: boolean
   ssid?: string
   localIp?: string
 }

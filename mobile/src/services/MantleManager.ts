@@ -36,6 +36,7 @@ import {attemptReconnectToDefaultWearable} from "@/effects/Reconnect"
 import {ensureDevModeForUser} from "@/utils/dev/devModeAllowlist"
 import mentraAuth from "@/utils/auth/authClient"
 import {showAlert} from "@/utils/AlertUtils"
+import {translate} from "@/i18n"
 import {Buffer} from "@craftzdog/react-native-buffer"
 import {createDeploymentAuthProvider, deploymentStore} from "@/services/deployment"
 
@@ -432,6 +433,18 @@ class MantleManager {
       ui: {
         requestWifiSetup: (reason?: string, packageName?: string) =>
           new Promise<void>((resolve) => {
+            // Wi-Fi setup drives the glasses over Bluetooth (scan, credentials,
+            // status), so with the link down the wizard cannot succeed and the
+            // reconnecting overlay would cover it anyway. Tell the user the real
+            // blocker instead of sending them into a flow that ends at Home.
+            if (engine.glasses.status().state !== "connected") {
+              showAlert(
+                translate("glasses:wifiSetupNeedsGlassesTitle"),
+                translate("glasses:wifiSetupNeedsGlassesMessage"),
+                [{text: translate("common:ok"), onPress: resolve}],
+              )
+              return
+            }
             showAlert("Connect to Wi-Fi", reason || "This miniapp needs your glasses to be connected to Wi-Fi.", [
               {text: "Cancel", style: "cancel", onPress: resolve},
               {

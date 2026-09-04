@@ -10,6 +10,7 @@
     "../mobile/modules/crust",
     "../mobile/modules/engine",
     "../mobile/modules/bluetooth-sdk",
+    "../mobile/modules/acs-meeting",
     "../miniapps/*"
   ],
   "scripts": {

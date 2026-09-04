@@ -32,3 +32,16 @@ export const normalizeStreamAudioConfig = (value: unknown): StreamAudioConfig | 
   if (typeof value.noiseSuppression === "boolean") config.noiseSuppression = value.noiseSuppression
   return Object.keys(config).length > 0 ? config : undefined
 }
+
+/** Absent or non-boolean values keep the caller-supplied fallback (default true). */
+export const normalizeCaptureAudio = (value: unknown, fallback = true): boolean =>
+  typeof value === "boolean" ? value : fallback
+
+/**
+ * Glasses capture is locked to the ACS source for the WHIP session.
+ * Phone/bluetooth never encode the glasses mic, even if a miniapp asks for it.
+ */
+export const resolveCaptureAudio = (
+  payload: unknown,
+  source: "glasses" | "phone",
+): boolean => source === "glasses" && normalizeCaptureAudio(payload, true)

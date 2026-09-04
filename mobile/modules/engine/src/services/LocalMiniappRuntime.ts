@@ -34,6 +34,7 @@ import {BgTimer} from "../utils/timers"
 import devServerBridge from "./DevServerBridge"
 import {islandNotifications} from "./NotificationsEmitter"
 import {isGlassesConnected} from "./GlassesReadiness"
+import {toMiniappConnectionData} from "./GlassesStatusProjection"
 import audioPlaybackService from "./AudioPlaybackService"
 import {phoneLocationService} from "./PhoneLocationService"
 import {useGlassesStore} from "../stores/glasses"
@@ -67,7 +68,7 @@ import {
 } from "../runtime/config"
 import {getAnalytics, getMiniappConfiguration, getUiSeams, isFeatureEnabled} from "../runtime/bootstrap"
 import {invokeScanQrSeam} from "../runtime/scanQrSeam"
-import {normalizeStreamAudioConfig, normalizeStreamVideoConfig} from "../runtime/streamConfig"
+import {normalizeStreamAudioConfig, normalizeStreamVideoConfig, resolveCaptureAudio} from "../runtime/streamConfig"
 import {toLanguageHint} from "@mentra/cloud-protocol/languages"
 import type {AudioSubscription, LanguageSource, TranscriptionData, TranslationData} from "@mentra/cloud-protocol"
 import {buildMiniappManifestSnapshot, type MiniappRuntimeDiagnosticSnapshot} from "../utils/miniappDiagnostics"
@@ -80,6 +81,7 @@ import {resolveForegroundLocationPermission} from "./ForegroundLocationPermissio
 import {advanceMiniappPingLiveness} from "./MiniappLiveness"
 import {listPhoneCalendarEvents, PhoneCalendarError} from "./PhoneCalendarService"
 import {LocalMiniappStorage} from "./LocalMiniappStorage"
+import acsMeetingService, {parseAcsOutgoingVideo, resolveAcsAudioSource} from "./AcsMeetingService"
 
 // =============================================================================
 // Types
@@ -759,6 +761,22 @@ class LocalMiniappRuntime {
       this.replaceStreamSubscribers(packageName, existing.subscriptions, [])
       this.recomputeMicRequirements()
       this.updateCloudSubscriptions()
+      // Managed streams and ACS meetings deliberately survive a respawn: the new
+      // incarnation re-adopts them on restore (Mentra Call does exactly this) so a
+      // WebView reload does not drop the wearer out of a live call. An unmanaged
+      // stream cannot be re-adopted — startUnmanaged rejects while any stream is
+      // active, even for the same owner — so release it or the respawned miniapp
+      // is stuck behind STREAM_ALREADY_ACTIVE until the process restarts.
+      const streamSnapshot = phoneStreamCoordinator.getDiagnosticSnapshot()
+      if (
+        streamSnapshot.active === true &&
+        streamSnapshot.kind === "unmanaged" &&
+        streamSnapshot.ownerPackageName === packageName
+      ) {
+        void phoneStreamCoordinator.stop(packageName).catch((error) => {
+          console.warn(`${LOG_TAG}: failed to stop unmanaged stream while replacing ${packageName}`, error)
+        })
+      }
     }
     this.connectedApps.set(packageName, {
       subscriptions: new Set(),
@@ -953,6 +971,9 @@ class LocalMiniappRuntime {
     // glasses keep recording until the max-recording timeout or thermal shutdown.
     void phoneVideoCoordinator.stopForApp(packageName).catch((error) => {
       console.warn(`${LOG_TAG}: failed to stop video recording for ${packageName} on unregister`, error)
+    })
+    void acsMeetingService.leaveIfOwner(packageName).catch((error) => {
+      console.warn(`${LOG_TAG}: failed to leave ACS meeting for ${packageName} on unregister`, error)
     })
 
     // Detach the per-app nav event forwarder but leave the native nav session
@@ -1308,6 +1329,21 @@ class LocalMiniappRuntime {
       case MiniappRequestType.MANAGED_STREAM_STOP:
         void this.handleManagedStreamStop(packageName, payload, requestId)
         break
+      case MiniappRequestType.MEETING_JOIN:
+        void this.handleMeetingJoin(packageName, payload, requestId)
+        break
+      case MiniappRequestType.MEETING_LEAVE:
+        void this.handleMeetingLeave(packageName, requestId)
+        break
+      case MiniappRequestType.MEETING_SET_MUTED:
+        void this.handleMeetingSetMuted(packageName, payload, requestId)
+        break
+      case MiniappRequestType.MEETING_UPDATE_VIDEO_SOURCE:
+        void this.handleMeetingUpdateVideoSource(packageName, payload, requestId)
+        break
+      case MiniappRequestType.MEETING_GET_STATE:
+        void this.handleMeetingGetState(packageName, requestId)
+        break
       case REQUEST_WIFI_SETUP_TYPE:
         void this.handleRequestWifiSetup(packageName, payload, requestId)
         break
@@ -1411,6 +1447,7 @@ class LocalMiniappRuntime {
         capabilities,
         permissions: declaredPermissions,
         configuration: getMiniappConfiguration(packageName),
+        hostFeatures: {captureAudio: true},
         ...(initialAuth ? {auth: initialAuth} : {}),
       },
       requestId,
@@ -1830,7 +1867,10 @@ class LocalMiniappRuntime {
         this.sendToMiniapp(packageName, {
           type: MiniappResponseType.EVENT,
           streamType: "glasses_connection",
-          data: glassesState,
+          data: {
+            connected: glassesState.connected,
+            modelName: glassesState.deviceModel || undefined,
+          },
         })
       } else if (stream === "glasses_wifi") {
         // Snapshot the current glasses Wi-Fi state on subscribe (like battery).
@@ -1849,6 +1889,7 @@ class LocalMiniappRuntime {
           streamType: "glasses_wifi",
           data: {
             connected,
+            linkConnected: glassesState.connected === true,
             ssid: connected ? wifi?.ssid : undefined,
             localIp: connected ? wifi?.localIp : undefined,
             timestamp: Date.now(),
@@ -2236,11 +2277,11 @@ class LocalMiniappRuntime {
       typeof rawText === "string"
         ? [rawText.trim()].filter(Boolean)
         : Array.isArray(rawText)
-          ? rawText
-              .filter((sentence): sentence is string => typeof sentence === "string")
-              .map((sentence) => sentence.trim())
-              .filter(Boolean)
-          : []
+        ? rawText
+            .filter((sentence): sentence is string => typeof sentence === "string")
+            .map((sentence) => sentence.trim())
+            .filter(Boolean)
+        : []
     const enableSanitization = payload.enableSanitization !== false
     const sentences = prepareTtsSentences(rawSentences, enableSanitization)
     if (sentences.length === 0) {
@@ -2570,7 +2611,9 @@ class LocalMiniappRuntime {
       const permission = await resolveForegroundLocationPermission(Location, () => AppState.currentState)
       const {status} = permission
       console.log(
-        `${LOG_TAG}: location poll permission status=${status} appState=${AppState.currentState} elapsed=${Date.now() - permissionStartedAt}ms`,
+        `${LOG_TAG}: location poll permission status=${status} appState=${AppState.currentState} elapsed=${
+          Date.now() - permissionStartedAt
+        }ms`,
       )
       if (status !== "granted") {
         this.sendResult(packageName, requestId, false, undefined, {
@@ -3271,6 +3314,30 @@ class LocalMiniappRuntime {
   // Photo + streaming handlers (cloud-coordinated)
   // ===========================================================================
 
+  /**
+   * Manifest permission gate shared by the camera-and-mic RPCs (streams, meetings).
+   * Sends PERMISSION_NOT_DECLARED and returns false when the miniapp did not declare
+   * `permission`; the caller must return without doing the work.
+   */
+  private requireManifestPermission(
+    packageName: string,
+    requestId: string | undefined,
+    permission: "CAMERA" | "MICROPHONE",
+    purpose: string,
+    operation: MiniappRequestType,
+  ): boolean {
+    const app = this.connectedApps.get(packageName)
+    if (app?.installedManifest?.permissions?.some((p) => p.type === permission)) return true
+    logPermissionNotDeclared(packageName, permission, purpose, `{"type": "${permission}"}`)
+    this.sendResult(packageName, requestId, false, undefined, {
+      code: MiniappErrorCode.PERMISSION_NOT_DECLARED,
+      message: `${permission} permission not declared in miniapp.json. Add {"type": "${permission}"} to the "permissions" array.`,
+      permission,
+      operation,
+    })
+    return false
+  }
+
   private async handlePhoto(packageName: string, payload: Record<string, unknown>, requestId?: string): Promise<void> {
     // Manifest CAMERA permission gate.
     const app = this.connectedApps.get(packageName)
@@ -3429,6 +3496,18 @@ class LocalMiniappRuntime {
       })
       return
     }
+    // A stream is the glasses camera (and mic) leaving the device; gate it like a photo.
+    if (
+      !this.requireManifestPermission(
+        packageName,
+        requestId,
+        "CAMERA",
+        "to stream the camera",
+        MiniappRequestType.STREAM_START,
+      )
+    ) {
+      return
+    }
     try {
       const result = await streaming.startUnmanaged(packageName, {
         streamUrl: payload.streamUrl as string,
@@ -3436,6 +3515,7 @@ class LocalMiniappRuntime {
         audio: normalizeStreamAudioConfig(payload.audio),
         sound: payload.sound as boolean | undefined,
         authToken: typeof payload.authToken === "string" ? payload.authToken : undefined,
+        captureAudio: resolveCaptureAudio(payload.captureAudio, resolveAcsAudioSource().source),
       })
       this.sendResult(packageName, requestId, true, result)
     } catch (err) {
@@ -3485,6 +3565,17 @@ class LocalMiniappRuntime {
       })
       return
     }
+    if (
+      !this.requireManifestPermission(
+        packageName,
+        requestId,
+        "CAMERA",
+        "to stream the camera",
+        MiniappRequestType.MANAGED_STREAM_START,
+      )
+    ) {
+      return
+    }
     try {
       const result = await streaming.startManaged(packageName, {
         restreamDestinations: payload.restreamDestinations as Array<string | {url: string; name?: string}> | undefined,
@@ -3492,6 +3583,7 @@ class LocalMiniappRuntime {
         audio: normalizeStreamAudioConfig(payload.audio),
         sound: payload.sound as boolean | undefined,
         ingest: payload.ingest as "srt" | "whip" | undefined,
+        captureAudio: resolveCaptureAudio(payload.captureAudio, resolveAcsAudioSource().source),
       })
       this.sendResult(packageName, requestId, true, result)
     } catch (err) {
@@ -3510,6 +3602,145 @@ class LocalMiniappRuntime {
     requestId?: string,
   ): Promise<void> {
     return this.handleStreamStop(packageName, payload, requestId)
+  }
+
+  private ensureMeetingStateBridge(): void {
+    acsMeetingService.setStateHandler((owner, state) => {
+      this.sendToMiniapp(owner, {
+        type: MiniappResponseType.MEETING_STATE,
+        ...state,
+      })
+    })
+  }
+
+  private async handleMeetingJoin(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    this.ensureMeetingStateBridge()
+    // A meeting puts the glasses camera and mic in front of remote strangers; it
+    // needs both declared, same as photo/stream and mic capture do individually.
+    if (
+      !this.requireManifestPermission(
+        packageName,
+        requestId,
+        "CAMERA",
+        "to join a meeting",
+        MiniappRequestType.MEETING_JOIN,
+      ) ||
+      !this.requireManifestPermission(
+        packageName,
+        requestId,
+        "MICROPHONE",
+        "to join a meeting",
+        MiniappRequestType.MEETING_JOIN,
+      )
+    ) {
+      return
+    }
+    const meetingUrl = typeof payload.meetingUrl === "string" ? payload.meetingUrl : ""
+    const token = typeof payload.token === "string" ? payload.token : ""
+    const videoSource = payload.videoSource as {type?: string; url?: string} | undefined
+    const whepUrl = videoSource?.type === "whep" ? videoSource.url ?? "" : ""
+    const displayName = typeof payload.displayName === "string" ? payload.displayName : undefined
+    if (!meetingUrl || !token || !whepUrl) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INVALID_ARGUMENT,
+        message: "meetingUrl, token, and a WHEP videoSource are required",
+      })
+      return
+    }
+    try {
+      let video: ReturnType<typeof parseAcsOutgoingVideo>
+      try {
+        video = parseAcsOutgoingVideo(payload.video)
+      } catch (error) {
+        this.sendResult(packageName, requestId, false, undefined, {
+          code: MiniappErrorCode.INVALID_ARGUMENT,
+          message: error instanceof Error ? error.message : "Invalid meeting video",
+        })
+        return
+      }
+      const state = await acsMeetingService.join(packageName, {
+        meetingUrl,
+        token,
+        whepUrl,
+        displayName,
+        ...(video ? {video} : {}),
+      })
+      this.sendResult(packageName, requestId, true, state)
+    } catch (err) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "ACS meeting join failed",
+      })
+    }
+  }
+
+  private async handleMeetingLeave(packageName: string, requestId?: string): Promise<void> {
+    try {
+      await acsMeetingService.leave(packageName)
+      this.sendResult(packageName, requestId, true)
+    } catch (err) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "ACS meeting leave failed",
+      })
+    }
+  }
+
+  private async handleMeetingSetMuted(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    try {
+      const state = await acsMeetingService.setMuted(packageName, Boolean(payload.muted))
+      this.sendResult(packageName, requestId, true, state)
+    } catch (err) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "ACS mute failed",
+      })
+    }
+  }
+
+  private async handleMeetingUpdateVideoSource(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    const videoSource = payload.videoSource as {type?: string; url?: string} | undefined
+    const whepUrl = videoSource?.type === "whep" ? videoSource.url ?? "" : ""
+    if (!whepUrl) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INVALID_ARGUMENT,
+        message: "videoSource must be a WHEP URL",
+      })
+      return
+    }
+    try {
+      await acsMeetingService.updateVideoSource(packageName, whepUrl)
+      this.sendResult(packageName, requestId, true)
+    } catch (err) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "ACS video source update failed",
+      })
+    }
+  }
+
+  private async handleMeetingGetState(packageName: string, requestId?: string): Promise<void> {
+    try {
+      const state = await acsMeetingService.readState(packageName)
+      this.sendResult(packageName, requestId, true, state)
+    } catch (err) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "ACS getState failed",
+      })
+    }
   }
 
   /**
@@ -3934,6 +4165,9 @@ class LocalMiniappRuntime {
     // The bare `touch_event` stream above still catches `onTouch(handler)`.
     let perGestureStream: string | null = null
     let outboundData = data
+    if (normalizedStream === MiniappStreamType.GLASSES_CONNECTION) {
+      outboundData = toMiniappConnectionData(data) ?? data
+    }
     if (normalizedStream === MiniappStreamType.TOUCH_EVENT) {
       // The Bluetooth SDK delivers the gesture under `gestureName` (single_tap /
       // double_tap / triple_tap / long_press / swipe_up / swipe_down). Surface it

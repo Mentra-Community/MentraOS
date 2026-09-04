@@ -13,6 +13,9 @@ const MAPBOX_REPO = [
   "        username = 'mapbox'",
   "        password = System.getenv('MAPBOX_DOWNLOADS_TOKEN') ?: (findProperty('MAPBOX_DOWNLOADS_TOKEN') ?: '')",
   "      }",
+  "      content {",
+  "        includeGroupByRegex 'com\\\\.mapbox.*'",
+  "      }",
   "    }",
 ].join("\n")
 
