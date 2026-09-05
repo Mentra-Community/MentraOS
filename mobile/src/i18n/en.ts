@@ -465,6 +465,7 @@ const en = {
     updateComplete: "Update Complete",
     updateCompleteMessage: "Your glasses have been updated successfully.",
     whatsNew: "What's new",
+    scrollForMore: "Scroll for more",
     updateFailed: "Update Failed",
     updateFailedMessage: "The update could not be completed. You can try again later from Settings.",
     glassesDisconnected: "Glasses Disconnected",

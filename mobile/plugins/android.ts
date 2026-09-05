@@ -413,6 +413,26 @@ function withAndroidManifestModifications(config: any) {
         app.$["android:enableOnBackInvokedCallback"] = "true"
       }
 
+      // API 36 ignores portrait and resizability restrictions on large screens.
+      // Preserve the Mentra App's existing phone layout until its tablet and
+      // foldable layouts have been validated. Android documents this as a
+      // temporary API 36 compatibility escape hatch; it stops applying at 37.
+      if (!app.property) {
+        app.property = []
+      }
+      const restrictedResizabilityProperty = "android.window.PROPERTY_COMPAT_ALLOW_RESTRICTED_RESIZABILITY"
+      const hasRestrictedResizabilityProperty = app.property.some(
+        (property: any) => property.$["android:name"] === restrictedResizabilityProperty,
+      )
+      if (!hasRestrictedResizabilityProperty) {
+        app.property.push({
+          $: {
+            "android:name": restrictedResizabilityProperty,
+            "android:value": "true",
+          },
+        })
+      }
+
       // Android navigation runs on the Mapbox Navigation SDK (migrated off
       // the Google Navigation SDK), so the Google geo API_KEY meta-data is
       // no longer injected here. iOS still uses the Google Nav SDK
