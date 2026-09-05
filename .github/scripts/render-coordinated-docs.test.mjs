@@ -18,8 +18,8 @@ function fixture() {
       variables: {
         "release-version": "3.1.0",
         "release-artifacts-url": "https://example.com/stable",
-        "example-app-version": "0.1.21-beta.5",
-        "example-app-url": "https://example.com/example.apk",
+        "example-app-download-label": "Browse React Native example APK releases",
+        "example-app-url": "https://github.com/Mentra/Starter/releases",
         "example-app-ios-url": "https://testflight.apple.com/join/source",
       },
     }),
@@ -28,7 +28,7 @@ function fixture() {
     path.join(source, "page.mdx"),
     [
       "Release {{release-version}}",
-      "[Android]({{example-app-url}})",
+      "[{{example-app-download-label}}]({{example-app-url}})",
       "[iPhone]({{example-app-ios-url}})",
       "[Artifacts]({{release-artifacts-url}})",
     ].join("\n"),
@@ -92,20 +92,63 @@ test("renders exact coordinated release variables without changing source", (con
     rendered.variables["release-artifacts-url"],
     "https://github.com/Mentra/MentraOS/releases/tag/mentra-builds-v3.1.0",
   )
-  assert.equal(rendered.variables["example-app-version"], "3.1.0-beta.57")
+  assert.equal(
+    rendered.variables["example-app-download-label"],
+    "Download the React Native example APK for SDK 3.1.0-beta.57",
+  )
   assert.equal(rendered.variables["example-app-url"], starterKitResult.artifacts[0].url)
   assert.equal(rendered.variables["example-app-ios-url"], exampleTestflightResult.distribution.installUrl)
   assert.equal(original.variables["release-version"], "3.1.0")
+  assert.equal(original.variables["example-app-download-label"], "Browse React Native example APK releases")
+  assert.equal(original.variables["example-app-url"], "https://github.com/Mentra/Starter/releases")
   assert.equal(
     readFileSync(path.join(output, "page.mdx"), "utf8"),
     [
       "Release {{release-version}}",
-      `[Android](${starterKitResult.artifacts[0].url})`,
+      `[{{example-app-download-label}}](${starterKitResult.artifacts[0].url})`,
       `[iPhone](${exampleTestflightResult.distribution.installUrl})`,
       "[Artifacts](https://github.com/Mentra/MentraOS/releases/tag/mentra-builds-v3.1.0)",
     ].join("\n"),
   )
   assert.match(readFileSync(path.join(source, "page.mdx"), "utf8"), /\{\{example-app-url\}\}/)
+})
+
+test("source-only and stable docs use honest version-neutral example links", (context) => {
+  const {root, source, output} = fixture()
+  context.after(() => rmSync(root, {recursive: true, force: true}))
+  const docsRoot = fileURLToPath(new URL("../../mintlify-docs/", import.meta.url))
+  const sourceConfig = readFileSync(path.join(docsRoot, "docs.json"), "utf8")
+  const {variables} = JSON.parse(sourceConfig)
+  writeFileSync(path.join(source, "docs.json"), sourceConfig)
+
+  assert.equal(variables["example-app-download-label"], "Browse React Native example APK releases")
+  assert.equal(variables["example-app-url"], "https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/releases")
+  assert.equal(variables["example-app-version"], undefined)
+
+  for (const file of ["software-update.mdx", "quickstart.mdx"]) {
+    const content = readFileSync(path.join(docsRoot, "bluetooth-sdk", file), "utf8")
+    assert.doesNotMatch(content, /\{\{example-app-version\}\}|This is the exact Android build/)
+    writeFileSync(path.join(source, file), content)
+  }
+
+  renderCoordinatedDocs({
+    sourceDir: source,
+    outputDir: output,
+    releasePlan: {
+      releaseIdentity: variables["release-version"],
+      releaseSetId: `mentra-${variables["release-version"]}`,
+      artifactContainerTag: `mentra-v${variables["release-version"]}`,
+    },
+    repository: "Mentra-Community/MentraOS",
+  })
+
+  const rendered = JSON.parse(readFileSync(path.join(output, "docs.json"), "utf8"))
+  assert.deepEqual(rendered.variables, variables)
+  assert.match(
+    readFileSync(path.join(output, "software-update.mdx"), "utf8"),
+    /\[\{\{example-app-download-label\}\}\]\(https:\/\/github\.com\/Mentra-Community\/Mentra-Bluetooth-SDK-Starter-Kit\/releases\)/,
+  )
+  assert.equal(readFileSync(path.join(source, "docs.json"), "utf8"), sourceConfig)
 })
 
 test("rejects unresolved URL variables", (context) => {
