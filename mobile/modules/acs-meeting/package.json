@@ -35,6 +35,7 @@
     "react-native": "*"
   },
   "files": [
+    "app.plugin.js",
     "android",
     "!android/.gradle",
     "!android/build",
