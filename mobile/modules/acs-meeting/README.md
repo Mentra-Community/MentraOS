@@ -4,6 +4,14 @@ Phone-native Azure Communication Services client that puts a MentraOS wearer int
 Microsoft Teams meeting as a guest. The glasses provide the camera and the microphone;
 the phone does all the WebRTC and ACS work.
 
+## Host setup
+
+Add `"@mentra/acs-meeting"` to the host's Expo `plugins` list, including when
+this module is installed through `@mentra/engine`, then run Expo prebuild for
+the target platform. The plugin enables Android core library desugaring and
+builds `AzureCommunicationCommon` as the framework required by ACS on iOS.
+These requirements apply even when the host does not use Crust or Mapbox.
+
 The phone is a **relay, not a capture device**. It subscribes to whatever the glasses
 already published to Cloudflare, decodes it, and re-publishes it into ACS. No frame
 crosses the JavaScript bridge. Production never generates pixels on the phone.
