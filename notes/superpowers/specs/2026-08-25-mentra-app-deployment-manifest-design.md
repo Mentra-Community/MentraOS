@@ -883,8 +883,11 @@ Rules:
   blocking of every secondary shell route to a shared built-in screen is not a
   v1 requirement.
 - `glasses.allowedModelsOverride` filters the pairing catalog by stable model
-  id. It is not a pairing security boundary. Vendor-specific behavior remains
-  behind glasses adapters; there is no `ar99VendorServices` field.
+  id. The on-phone preview uses the stable id `simulated-glasses`; when a
+  populated allowlist omits it, the Mentra App also hides both first-run and
+  Home-screen "Set up without glasses" actions. It is not a pairing security
+  boundary. Vendor-specific behavior remains behind glasses adapters; there is
+  no `ar99VendorServices` field.
 - The embedded Mentra profile is complete. A customer manifest recursively
   overrides it, arrays replace, and explicit null disables nullable values.
   Validation runs on the resolved profile. Service nulls are never re-filled by
