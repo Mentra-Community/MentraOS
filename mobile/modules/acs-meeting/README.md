@@ -381,6 +381,18 @@ rollback; it takes effect on the next join.
 `scripts/acs-ladder.ts` in the Mentra-Call repo parses these lines and prints pass/fail
 over a trailing 10-second window, including the `recv`-vs-`dec` attribution.
 
+## iOS host setup
+
+Add `"@mentra/acs-meeting"` to the host's Expo `plugins` list, then run
+`expo prebuild --platform ios` and `pod install`. The Mentra App and example
+OEM host already include it.
+
+The plugin builds only `AzureCommunicationCommon` as a dynamic framework with
+`BUILD_LIBRARY_FOR_DISTRIBUTION=YES`. Calling's binary requires that framework at
+runtime and imports its generated Swift header and stable module interface at
+build time. CocoaPods' default static-library layout cannot satisfy this contract.
+The host's other pods retain their configured linkage.
+
 ## Tests
 
 ```bash

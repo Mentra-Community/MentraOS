@@ -1,6 +1,7 @@
 import {waitFor} from "@testing-library/react-native"
 import {router} from "expo-router"
 
+import {initI18n} from "@/i18n"
 import mantle from "@/services/MantleManager"
 import {
   audioPlaybackService,
@@ -108,6 +109,7 @@ let syncGlassesPresentationState: (status: {state: string}) => void
 
 describe("MantleManager", () => {
   beforeAll(async () => {
+    await initI18n()
     routerPushSpy = jest.spyOn(router, "push").mockImplementation(() => {})
     jest.useFakeTimers()
     resetBluetoothSdkMock()
@@ -522,6 +524,7 @@ describe("MantleManager", () => {
     expect(title).toBe("glasses:wifiSetupNeedsGlassesTitle")
     expect(message).toBe("glasses:wifiSetupNeedsGlassesMessage")
     expect(buttons).toHaveLength(1)
+    expect(buttons[0].text).toBe("OK")
     buttons[0].onPress()
     await request
 

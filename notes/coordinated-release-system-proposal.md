@@ -718,10 +718,12 @@ published site online, fails the docs job, and makes Slack report the otherwise
 finalized release as incomplete. It does not rewrite or roll back an immutable
 release manifest.
 
-Starter Kit example applications keep separate `example-app-version` and
-`example-app-url` variables until the Starter Kit joins the coordinated release
-pipeline. Coordinated docs must not construct a nonexistent example download
-from the MentraOS release identity. Production remains a Mintlify deployment
+Starter Kit example applications use `example-app-download-label` and
+`example-app-url` variables. Source-only docs link to the releases index with
+version-neutral copy. The dev/beta renderer supplies a label naming the exact
+SDK version and the APK URL from the validated Starter Kit result; it must not
+construct an example download from the MentraOS release identity.
+Production remains a Mintlify deployment
 from `main`; changing that external branch setting from `staging` to `main` is
 an operator action, not part of the dev/beta Pages workflow.
 

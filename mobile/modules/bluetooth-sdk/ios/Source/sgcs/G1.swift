@@ -8,7 +8,7 @@
 import Combine
 import CoreBluetooth
 import Foundation
-import UIKit
+import CoreGraphics
 
 extension Data {
     func chunked(into size: Int) -> [Data] {
@@ -1822,7 +1822,7 @@ extension G1 {
     /// Mirrors G2.convertToG2Bmp() for local miniapp bitmap display support.
     /// G1 uses 1-bit monochrome BMP at 640x400 (576x135 active area).
     func convertToG1Bmp(_ imageData: Data, width: Int = 576, height: Int = 135) -> Data? {
-        guard let image = UIImage(data: imageData), let cgImage = image.cgImage else {
+        guard let image = SdkImage(data: imageData), let cgImage = image.cgImage else {
             Bridge.log("G1: convertToG1Bmp - could not decode image")
             return nil
         }

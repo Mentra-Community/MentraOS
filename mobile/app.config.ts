@@ -109,6 +109,10 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
     android: {
       // icon: "./assets/app-icons/ic_launcher.png",
       package: androidPackage,
+      // Keep the current BackHandler behavior while API 36 predictive-back
+      // flows are validated on device. React Native supports the new dispatcher,
+      // so this temporary opt-out can be removed after regression testing.
+      predictiveBackGestureEnabled: false,
       ...(variant.googleServicesFile ? {googleServicesFile: variant.googleServicesFile} : {}),
       versionCode: buildNumber,
       adaptiveIcon: {
@@ -249,6 +253,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       // crust's own config plugin carries its Android build contract (Mapbox
       // downloads repo, protobuf-javalite exclusion, core-library desugaring).
       "@mentra/crust",
+      "@mentra/acs-meeting",
       "./plugins/android.ts",
       // Mapbox Navigation SDK v3 for iOS — added as a Swift Package (SPM is the
       // ONLY supported v3 install path; CocoaPods can't resolve it). The
@@ -337,7 +342,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
         {
           android: {
             minSdkVersion: 28,
-            targetSdkVersion: 35,
+            targetSdkVersion: 36,
             compileSdkVersion: 36,
             enableCoreLibraryDesugaring: true,
           },
