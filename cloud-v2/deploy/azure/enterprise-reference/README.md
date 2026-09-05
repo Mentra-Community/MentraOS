@@ -27,6 +27,7 @@ The current assigned pilot users are managed in Entra, not in Mentra.
 
 Use:
 
+- [deployment-manifest-reference.md](../../deployment-manifest-reference.md) for every manifest field and a complete customer example;
 - [entra-setup.md](./entra-setup.md) for identity setup;
 - [customer-setup.md](./customer-setup.md) for delivery and qualification; and
 - [operations.md](./operations.md) for image import, upgrades, and rollback.

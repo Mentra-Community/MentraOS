@@ -125,6 +125,10 @@ Provider enablement is explicit, never inferred from whether an API key exists.
 
 ## Deployment manifest
 
+Use the [complete manifest reference](./deployment-manifest-reference.md) for
+every field, required values and defaults, URL restrictions, working examples,
+and the current enrollment and refresh behavior.
+
 Runtime accepts exactly one of `DEPLOYMENT_MANIFEST_JSON` or an absolute
 `DEPLOYMENT_MANIFEST_PATH`. Setting both fails startup. Runtime limits the JSON
 to 256 KiB, validates feature/module consistency, and serves it with `no-store`:
@@ -171,10 +175,11 @@ backend shared by Mentra Cloud and multiple Private Deployments needs an
 explicit issuer-to-JWKS trust list; that multi-Core helper is a later SDK
 addition, not a reason to produce customer-specific miniapp bundles.
 
-The Runtime rejects feature/module mismatches: `runtimeRealtimeSession` needs
-`realtime-audio`, `managedStreams` needs `camera`, `nativeMeetings` needs
-`meetings`, `cloudSpeech` needs `realtime-audio` or `tts`, and `navigation`
-needs `maps`. `onDeviceSpeech` needs no Runtime module.
+Runtime requires exact feature/module agreement in both directions:
+`runtimeRealtimeSession` and `cloudSpeech` equal whether `realtime-audio` is
+enabled, `managedStreams` equals `camera`, `nativeMeetings` equals `meetings`,
+and `navigation` equals `maps`. `tts` alone does not satisfy `cloudSpeech` in
+the current validator. `onDeviceSpeech` needs no Runtime module.
 
 Optional same-origin assets use `DEPLOYMENT_PRIVACY_PATH`,
 `DEPLOYMENT_TERMS_PATH`, `DEPLOYMENT_LOGO_LIGHT_PATH`,

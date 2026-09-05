@@ -5,6 +5,9 @@ SBOM/provenance verification are defined once in
 [private-deployment.md](../../private-deployment.md). This runbook covers the
 Azure-specific mirror and lifecycle steps.
 
+The [manifest reference](../../deployment-manifest-reference.md) documents all
+fields, defaults, validation rules, and how phones adopt manifest changes.
+
 Use the release identity and Mentra Cloud digest from one coordinated Mentra
 release bill of materials. Do not combine a Runtime from one release with a
 Mentra App selected from another without explicit compatibility qualification.

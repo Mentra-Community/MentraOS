@@ -118,6 +118,9 @@ configure (its managed certificate uses CNAME validation only).
 
 ## 3. Verify the manifest
 
+Use the [manifest reference](../../deployment-manifest-reference.md) for the
+complete field contract, examples, defaults, and validation rules.
+
 Confirm:
 
 - `services.coreUrl` is the customer's Core and `services.runtimeUrl` is the
