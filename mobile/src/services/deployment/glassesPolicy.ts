@@ -21,6 +21,11 @@ export function deploymentGlassesModelId(deviceModel: string, ar99ProjectName?: 
 }
 
 export function isGlassesModelAllowedByDeployment(deviceModel: string, ar99ProjectName?: string): boolean {
+  // The manifest restricts pairable hardware. Simulated Glasses is an
+  // on-phone preview and must remain available when no physical model is
+  // selected or permitted.
+  if (deviceModel === DeviceTypes.SIMULATED) return true
+
   const deployment = deploymentStore.getActive()
   if (deployment.kind === "consumer") return true
   const allowed = deployment.manifest.glasses.allowedModelsOverride
