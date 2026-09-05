@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -122,21 +122,17 @@ export function CustomMentraLiveOtaFlow({
     <SafeAreaView style={styles.safeArea}>
       <Header title="Software Update" />
       <View style={styles.page} testID="custom-mentra-live-ota-flow">
-        {hasChangelogs ? (
-          <View
-            style={[styles.contentScroll, styles.centerContent, styles.topContent]}
-          >
-            {content}
-          </View>
-        ) : (
-          <ScrollView
-            contentContainerStyle={styles.centerContent}
-            showsVerticalScrollIndicator={false}
-            style={styles.contentScroll}
-          >
-            {content}
-          </ScrollView>
-        )}
+        <ScrollView
+          contentContainerStyle={[
+            styles.centerContent,
+            hasChangelogs && styles.topContent,
+          ]}
+          nestedScrollEnabled
+          style={styles.contentScroll}
+          testID="custom-ota-page-scroll"
+        >
+          {content}
+        </ScrollView>
 
         {presentation.primary || presentation.secondary ? (
           <View style={styles.actions}>
@@ -287,14 +283,7 @@ function ChangelogMarkdown({ markdown }: { markdown: string }) {
 }
 
 function ChangelogList({ changelogs }: { changelogs?: CustomOtaChangelog[] }) {
-  const [contentHeight, setContentHeight] = useState(0);
-  const [viewportHeight, setViewportHeight] = useState(0);
-  const [isAtEnd, setIsAtEnd] = useState(false);
-
   if (!changelogs?.length) return null;
-
-  const showScrollHint =
-    viewportHeight > 0 && contentHeight > viewportHeight + 1 && !isAtEnd;
 
   return (
     <View style={styles.changelogCard} testID="custom-ota-changelog-card">
@@ -302,21 +291,7 @@ function ChangelogList({ changelogs }: { changelogs?: CustomOtaChangelog[] }) {
       <ScrollView
         contentContainerStyle={styles.changelogContent}
         nestedScrollEnabled
-        onContentSizeChange={(_width, height) => {
-          setContentHeight(height);
-          setIsAtEnd(false);
-        }}
-        onLayout={({ nativeEvent }) =>
-          setViewportHeight(nativeEvent.layout.height)
-        }
-        onScroll={({ nativeEvent }) => {
-          const distanceFromEnd =
-            nativeEvent.contentSize.height -
-            (nativeEvent.contentOffset.y +
-              nativeEvent.layoutMeasurement.height);
-          setIsAtEnd(distanceFromEnd <= 8);
-        }}
-        scrollEventThrottle={16}
+        persistentScrollbar
         showsVerticalScrollIndicator
         style={styles.changelogList}
         testID="custom-ota-changelog-scroll"
@@ -336,16 +311,6 @@ function ChangelogList({ changelogs }: { changelogs?: CustomOtaChangelog[] }) {
           </View>
         ))}
       </ScrollView>
-      <View style={styles.changelogScrollHintSlot}>
-        {showScrollHint ? (
-          <Text
-            style={styles.changelogScrollHint}
-            testID="custom-ota-changelog-scroll-hint"
-          >
-            Scroll for more ↓
-          </Text>
-        ) : null}
-      </View>
     </View>
   );
 }
@@ -508,14 +473,16 @@ const styles = StyleSheet.create({
     borderColor: colors.hairline,
     borderRadius: 16,
     borderWidth: 1,
-    flex: 1,
+    flexGrow: 1,
     gap: 12,
     maxWidth: 420,
+    minHeight: 200,
     padding: 16,
     width: "100%",
   },
   changelogTitle: { color: colors.ink, fontSize: 16, fontWeight: "700" },
-  changelogList: { flex: 1, width: "100%" },
+  // Bound the notes themselves so the card can grow for its title, but not for all of the Markdown.
+  changelogList: { flexGrow: 1, height: 120, width: "100%" },
   changelogContent: { gap: 20, paddingBottom: 4 },
   changelogEntry: { gap: 8 },
   changelogEntryDivider: {
@@ -529,17 +496,6 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   changelogMarkdownContent: { gap: 10 },
-  changelogScrollHintSlot: {
-    alignItems: "center",
-    height: 18,
-    justifyContent: "center",
-  },
-  changelogScrollHint: {
-    color: colors.muted,
-    fontSize: 12,
-    fontWeight: "500",
-    lineHeight: 16,
-  },
   actions: { gap: 10 },
   actionSpacer: { height: 48 },
   button: {
