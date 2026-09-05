@@ -19,7 +19,7 @@ import {fetchMinimumClientVersion} from "@/utils/cloudVersion"
 import {useDeployment} from "@/services/deployment"
 
 // Types
-type ScreenState = "loading" | "connection" | "auth" | "outdated" | "success"
+type ScreenState = "loading" | "connection" | "outdated" | "success"
 
 interface StatusConfig {
   icon: string
@@ -301,14 +301,6 @@ export default function InitScreen() {
 
   const getStatusConfig = (): StatusConfig => {
     switch (state) {
-      case "auth":
-        return {
-          icon: "account-alert",
-          iconColor: theme.colors.destructive,
-          title: translate("versionCheck:authErrorTitle"),
-          description: translate("versionCheck:authErrorDescription"),
-        }
-
       case "connection":
         return {
           icon: "wifi-off",
@@ -430,7 +422,7 @@ export default function InitScreen() {
 
       {/* Buttons */}
       <View className="gap-3">
-        {(state === "connection" || state === "auth") && (
+        {state === "connection" && (
           <Button
             flexContainer
             onPress={() => checkCloudVersion(true)}
@@ -456,7 +448,7 @@ export default function InitScreen() {
           <Button flexContainer preset="primary" onPress={handleContactSupport} tx="versionCheck:contactSupport" />
         )}
 
-        {(state === "connection" || state === "auth" || state === "outdated") && isUsingCustomUrl && (
+        {(state === "connection" || state === "outdated") && isUsingCustomUrl && (
           <Button
             flexContainer
             onPress={handleResetUrl}
@@ -469,8 +461,7 @@ export default function InitScreen() {
           />
         )}
 
-        {(((state === "connection" || state === "auth") && !isBlockedByVersion) ||
-          (state === "outdated" && canSkipUpdate)) && (
+        {((state === "connection" && !isBlockedByVersion) || (state === "outdated" && canSkipUpdate)) && (
           <Button flexContainer preset="secondary" onPress={checkLoggedIn} tx="versionCheck:continueAnyway" />
         )}
       </View>
