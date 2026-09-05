@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import {mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync} from "node:fs"
+import {existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync} from "node:fs"
 import {tmpdir} from "node:os"
 import path from "node:path"
 import test from "node:test"
@@ -222,7 +222,23 @@ test("Bluetooth SDK current-release copy uses configured variables", () => {
   const configPath = fileURLToPath(new URL("../../mintlify-docs/docs.json", import.meta.url))
   const {variables} = JSON.parse(readFileSync(configPath, "utf8"))
   assert.doesNotMatch(JSON.stringify(variables), /\d+\.\d+\.\d+-(?:beta|dev)\.\d+/)
-  const airGapped = readFileSync(path.join(docsRoot, "air-gapped-deployment.mdx"), "utf8")
-  assert.match(airGapped, /RELEASE_PAGE="\{\{release-artifacts-url\}\}"/)
-  assert.doesNotMatch(airGapped, /mentra-v/)
+})
+
+test("air-gapped deployment is not published or linked", () => {
+  const docsRoot = fileURLToPath(new URL("../../mintlify-docs/", import.meta.url))
+  const config = JSON.parse(readFileSync(path.join(docsRoot, "docs.json"), "utf8"))
+  const files = readdirSync(docsRoot, {recursive: true}).filter((file) => file.endsWith(".mdx"))
+  const content = files.map((file) => readFileSync(path.join(docsRoot, file), "utf8")).join("\n")
+  const sdkReadme = readFileSync(
+    fileURLToPath(new URL("../../mobile/modules/bluetooth-sdk/README.md", import.meta.url)),
+    "utf8",
+  )
+
+  assert.doesNotMatch(JSON.stringify(config), /air-gapped-deployment/)
+  assert.doesNotMatch(content, /\/bluetooth-sdk\/air-gapped-deployment/)
+  assert.doesNotMatch(sdkReadme, /\/bluetooth-sdk\/air-gapped-deployment/)
+  assert.equal(
+    existsSync(path.join(docsRoot, "bluetooth-sdk/air-gapped-deployment.mdx")),
+    false,
+  )
 })
