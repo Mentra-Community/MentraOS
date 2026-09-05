@@ -154,7 +154,6 @@
             "group": "Release",
             "icon": "clipboard-check",
             "pages": [
-              "bluetooth-sdk/air-gapped-deployment",
               "bluetooth-sdk/troubleshooting",
               "bluetooth-sdk/production-checklist"
             ]
