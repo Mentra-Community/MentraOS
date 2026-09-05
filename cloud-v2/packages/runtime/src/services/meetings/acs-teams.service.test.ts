@@ -127,7 +127,7 @@ describe("ACS guest credentials", () => {
       async getToken(user) {
         expect(user.communicationUserId).toBe("stable-user")
         refreshes += 1
-        if (refreshes === 1) throw new Error("temporary network failure")
+        if (refreshes === 1) throw {status: 401, code: "Denied"}
         return {
           token: "refreshed-token",
           expiresOn: new Date(Date.now() + 60 * 60 * 1000),
@@ -261,6 +261,58 @@ describe("ACS guest credentials", () => {
 
       expect(deletedUsers).toEqual(["guest-user"])
       expect(getAcsGuestStateSizeForTests()).toBe(1)
+    } finally {
+      Date.now = originalNow
+    }
+  })
+
+  test("does not block unrelated issuance or delete a returning user's active identity", async () => {
+    process.env.ACS_CONNECTION_STRING = "endpoint=https://test.communication.azure.com/;accesskey=test"
+    const originalNow = Date.now
+    let now = 1_000_000
+    let creates = 0
+    let releaseDeletion: (() => void) | undefined
+    const deletionMayFinish = new Promise<void>((resolve) => {
+      releaseDeletion = resolve
+    })
+    Date.now = () => now
+    try {
+      setAcsIdentityClientForTests({
+        async createUserAndToken() {
+          creates += 1
+          return {
+            token: `guest-token-${creates}`,
+            expiresOn: new Date(now + 60 * 60 * 1000),
+            user: {communicationUserId: `guest-user-${creates}`},
+          }
+        },
+        async deleteUser() {
+          await deletionMayFinish
+        },
+        async getToken() {
+          throw new Error("cleanup must finish before a returning user mints")
+        },
+        async getTokenForTeamsUser() {
+          throw new Error("not used")
+        },
+      } satisfies AcsIdentityClient)
+
+      await mintAcsGuestToken("tenant:idle-user")
+      now += 4 * 60 * 60 * 1000 + 1
+
+      const unrelated = await mintAcsGuestToken("tenant:new-user")
+      expect(unrelated.acsUserId).toBe("guest-user-2")
+
+      let returningFinished = false
+      const returning = mintAcsGuestToken("tenant:idle-user").then((credential) => {
+        returningFinished = true
+        return credential
+      })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(returningFinished).toBe(false)
+
+      releaseDeletion?.()
+      expect((await returning).acsUserId).toBe("guest-user-3")
     } finally {
       Date.now = originalNow
     }
