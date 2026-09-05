@@ -455,8 +455,8 @@ The checked-in Mintlify config retains these structured variables:
 
 - `release-version`;
 - `release-artifacts-url`;
-- `example-app-version`; and
-- `example-app-url`; and
+- `example-app-download-label`;
+- `example-app-url`;
 - `example-app-ios-url`.
 
 For dev and beta, the renderer receives both the immutable Mentra release plan
@@ -464,7 +464,7 @@ and the validated Starter Kit result. It sets:
 
 - `release-version` to the exact coordinated identity;
 - `release-artifacts-url` to the coordinated Mentra release container;
-- `example-app-version` to that same exact identity; and
+- `example-app-download-label` to download copy naming that exact SDK identity;
 - `example-app-url` to the published React Native APK URL from the Starter Kit
   result, never to a constructed or guessed URL; and
 - `example-app-ios-url` to the verified App Store Connect group URL for dev or
@@ -516,7 +516,12 @@ release set.
 ### Production docs
 
 Production remains a Mintlify Git deployment from `main`. The checked-in
-variables use the stable family base and stable URLs. Before production starts,
+variables use the stable family base and stable URLs. Example-app copy is
+version-neutral and the Android link is labelled as browsing the releases
+index. Only the dev/beta renderer promises a direct APK for an exact SDK
+identity, using the validated Starter Kit result. Source-only and stable docs
+must not expose placeholder versions or claim that the releases index is a
+direct APK download. Before production starts,
 an operator promotes the exact Starter Kit merge commit recorded by the selected
 completed beta from Starter Kit `staging` to `main`, then promotes the exact
 MentraOS beta source from MentraOS `staging` to `main`. Both selected sources
