@@ -5,7 +5,7 @@
   "variables": {
     "release-version": "3.1.0",
     "release-artifacts-url": "https://github.com/Mentra-Community/MentraOS/releases/tag/mentra-v3.1.0",
-    "example-app-version": "VERSION",
+    "example-app-download-label": "Browse React Native example APK releases",
     "example-app-url": "https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/releases",
     "example-app-ios-url": "https://appstoreconnect.apple.com/teams/52733bd2-726b-4742-b1e2-1cfc0174c696/apps/6792839366/testflight/groups/1b1daeae-9175-4020-9c1b-52fd6b14cc49"
   },

@@ -115,7 +115,7 @@ export function renderCoordinatedDocs({
   for (const name of [
     "release-version",
     "release-artifacts-url",
-    "example-app-version",
+    "example-app-download-label",
     "example-app-url",
     "example-app-ios-url",
   ]) {
@@ -129,7 +129,8 @@ export function renderCoordinatedDocs({
     `https://github.com/${repository}/releases/tag/${releasePlan.artifactContainerTag}`
   if (releasePlan.releaseIdentity.includes("-")) {
     const reactNative = validateStarterKitResult(releasePlan, starterKitResult)
-    config.variables["example-app-version"] = releasePlan.releaseIdentity
+    config.variables["example-app-download-label"] =
+      `Download the React Native example APK for SDK ${releasePlan.releaseIdentity}`
     config.variables["example-app-url"] = reactNative.url
     config.variables["example-app-ios-url"] = validateExampleTestflightResult(
       releasePlan,
