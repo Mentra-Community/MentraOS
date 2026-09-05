@@ -21,12 +21,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MentraBluetoothSDKDele
     private let picker = NSPopUpButton()
     private let status = NSTextField(wrappingLabelWithString: "Disconnected")
     private let action = NSTextField(wrappingLabelWithString: "")
+    private let otaStatus = NSTextField(wrappingLabelWithString: "")
     private let webhook = NSTextField(string: "")
     private let preview = NSImageView()
     private var devices: [Device] = []
     private var scanSession: ScanSession?
     private var busy = false
     private var actionTask: Task<Void, Never>?
+    private var photoRequestId: String?
     private var connectedButtons: [NSButton] = []
     private var scanButton: NSButton!
     private var connectButton: NSButton!
@@ -67,14 +69,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MentraBluetoothSDKDele
         stack.addArrangedSubview(NSStackView(views: [capture, check]))
         status.isSelectable = true
         action.isSelectable = true
+        otaStatus.isSelectable = true
         stack.addArrangedSubview(action)
+        stack.addArrangedSubview(otaStatus)
         preview.imageScaling = .scaleProportionallyUpOrDown
         preview.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         preview.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
         preview.setContentHuggingPriority(.defaultLow, for: .horizontal)
         preview.setContentHuggingPriority(.defaultLow, for: .vertical)
         stack.addArrangedSubview(preview)
-        for view in [connection, status, webhook, action, preview] {
+        for view in [connection, status, webhook, action, otaStatus, preview] {
             view.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -48).isActive = true
         }
         preview.heightAnchor.constraint(greaterThanOrEqualToConstant: 250).isActive = true
@@ -148,8 +152,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MentraBluetoothSDKDele
         }
         runAction("Capturing...") {
             self.preview.image = nil
-            let result = try await self.sdk.requestPhoto(PhotoRequest(size: .medium, webhookUrl: url.absoluteString, sound: true))
+            let request = PhotoRequest(size: .medium, webhookUrl: url.absoluteString, sound: true)
+            self.photoRequestId = request.requestId
+            defer {
+                if self.photoRequestId == request.requestId { self.photoRequestId = nil }
+            }
+            let result = try await self.sdk.requestPhoto(request)
             try Task.checkCancellation()
+            self.photoRequestId = nil
             self.action.stringValue = "Photo uploaded: \(result.requestId)"
             guard case let .success(_, _, photoUrl, _, _, _, _) = result.response,
                   let photoUrl, let url = URL(string: photoUrl) else { return }
@@ -201,12 +211,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MentraBluetoothSDKDele
         // A sent glasses command may finish; cancellation prevents its late result from changing this UI.
         actionTask?.cancel()
         actionTask = nil
+        photoRequestId = nil
         busy = false
         action.stringValue = "Disconnected"
     }
 
     func mentraBluetoothSDK(_: MentraBluetoothSDK, didUpdateGlasses glasses: GlassesRuntimeState) {
-        if !glasses.connected && actionTask != nil { cancelAction() }
+        if !glasses.connected {
+            otaStatus.stringValue = ""
+            if actionTask != nil { cancelAction() }
+        }
         status.stringValue = glasses.connected
             ? "\(glasses.device?.bluetoothName ?? "Connected") | Battery: \(glasses.battery?.level.map(String.init) ?? "unknown")% | ASG: \(glasses.device?.appVersion ?? "unknown")"
             : glasses.connection.rawValue
@@ -216,9 +230,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MentraBluetoothSDKDele
     func mentraBluetoothSDK(_: MentraBluetoothSDK, didReceive event: BluetoothEvent) {
         switch event {
         case let .photoStatus(event):
-            if actionTask != nil { action.stringValue = "Photo: \(event.status)" }
+            if sdk.glasses.connected && event.requestId == photoRequestId {
+                action.stringValue = "Photo: \(event.status)"
+            }
         case let .otaStatus(event):
-            action.stringValue = "OTA: \(event.stepType) \(event.overallPercent)% - \(event.status)\n\(event.errorMessage ?? "")"
+            if sdk.glasses.connected {
+                otaStatus.stringValue = "OTA: \(event.stepType) \(event.overallPercent)% - \(event.status)\n\(event.errorMessage ?? "")"
+            }
         default: break
         }
     }

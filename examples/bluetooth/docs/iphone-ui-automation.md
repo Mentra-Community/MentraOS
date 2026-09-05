@@ -38,13 +38,26 @@ Keep that process running. In another terminal, with `iproxy` installed:
 iproxy 8100 8100 -u "$IPHONE_UDID"
 ```
 
-Once `GET http://127.0.0.1:8100/status` reports ready, create a session:
+Once `GET http://127.0.0.1:8100/status` reports ready, create a session for the
+installed app. This example targets the React Native app distributed through
+TestFlight:
 
 ```sh
 curl -sS http://127.0.0.1:8100/session \
   -H 'Content-Type: application/json' \
   -d '{"capabilities":{"alwaysMatch":{"bundleId":"com.mentra.bluetoothsdkexample"}}}'
 ```
+
+Use the identifier matching your installation:
+
+| App | Bundle identifier |
+| --- | --- |
+| React Native from TestFlight | `com.mentra.bluetoothsdkexample` |
+| React Native built from this repository | `com.mentra.bluetoothsdk.example.reactnative` |
+| Native SwiftUI iOS example | `com.mentra.bluetoothsdk.example.ios` |
+
+The coordinated TestFlight workflow overrides the React Native source bundle
+identifier when building its release; these are intentionally different apps.
 
 Use the returned `sessionId` with `GET /session/<id>/source` to retrieve XML
 accessibility data. `POST /session/<id>/wda/tap` accepts `{"x":125,"y":800}`

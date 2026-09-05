@@ -10,6 +10,15 @@ const config = ts.getParsedCommandLineOfConfigFile(path.join(__dirname, 'tsconfi
   },
 });
 
+// Match Metro's Mac host and resolve source-override dependencies from this app.
+config.options.paths = {
+  'react': [path.join(__dirname, 'node_modules/@types/react')],
+  'react/*': [path.join(__dirname, 'node_modules/@types/react/*')],
+  'react-native': [path.join(__dirname, 'node_modules/react-native-macos')],
+  'react-native/*': [path.join(__dirname, 'node_modules/react-native-macos/*')],
+  '*': [path.join(__dirname, 'node_modules/*')],
+};
+
 const sdkRoot = process.env.MENTRA_BLUETOOTH_SDK_PACKAGE_PATH;
 if (sdkRoot) {
   for (const entry of ['src/index.ts', 'src/react/index.ts']) {
@@ -17,16 +26,10 @@ if (sdkRoot) {
       throw new Error(`Missing SDK source entry: ${path.resolve(sdkRoot, entry)}`);
     }
   }
-  // Match Metro's source override and resolve that checkout's dependencies from this app.
-  config.options.paths = {
+  Object.assign(config.options.paths, {
     '@mentra/bluetooth-sdk': [path.resolve(sdkRoot, 'src/index.ts')],
     '@mentra/bluetooth-sdk/react': [path.resolve(sdkRoot, 'src/react/index.ts')],
-    'react': [path.join(__dirname, 'node_modules/@types/react')],
-    'react/*': [path.join(__dirname, 'node_modules/@types/react/*')],
-    'react-native': [path.join(__dirname, 'node_modules/react-native-macos')],
-    'react-native/*': [path.join(__dirname, 'node_modules/react-native-macos/*')],
-    '*': [path.join(__dirname, 'node_modules/*')],
-  };
+  });
 }
 
 const program = ts.createProgram(config.fileNames, config.options);
