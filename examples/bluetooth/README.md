@@ -66,6 +66,30 @@ Android APKs install directly from the phone browser (enable installs from unkno
 - Controlling model-supported features such as brightness, dashboard position, head-up angle, gallery mode, button photo/video settings, speaker playback, RGB LED patterns, Wi-Fi, hotspot, microphone, camera capture settings, and streaming.
 - Running local media upload and RTMP/SRT/WebRTC streaming demos from a fresh clone.
 
+## Photo Capture Screenshots
+
+Real photos taken with Mentra Live and previewed in each app, captured on physical
+hardware. Click a screenshot for the full-size image.
+
+| Native macOS (AppKit) | React Native macOS |
+| --- | --- |
+| [![Native macOS app after photo capture](docs/images/examples/native-macos.jpg)](docs/images/examples/native-macos.jpg) | [![React Native macOS app after photo capture](docs/images/examples/react-native-macos.jpg)](docs/images/examples/react-native-macos.jpg) |
+
+| Native iOS (SwiftUI) | React Native on iOS |
+| --- | --- |
+| [<img src="docs/images/examples/native-ios.png" alt="Native iOS camera with a captured photo preview" width="320">](docs/images/examples/native-ios.png) | [<img src="docs/images/examples/react-native-ios.png" alt="React Native iOS camera with a captured photo preview" width="320">](docs/images/examples/react-native-ios.png) |
+
+| Native Android (Kotlin / Compose) | React Native on Android |
+| --- | --- |
+| [<img src="docs/images/examples/native-android.png" alt="Native Android camera with a captured photo preview" width="320">](docs/images/examples/native-android.png) | [<img src="docs/images/examples/react-native-android.png" alt="React Native Android camera with a captured photo preview" width="320">](docs/images/examples/react-native-android.png) |
+
+The React Native Android capture also demonstrates successful Bluetooth fallback
+when Wi-Fi photo delivery fails.
+
+The [ElevenLabs audio repro](examples/react-native-elevenlabs-audio/README.md) is
+audio-only and has no camera preview. See the [capture notes](docs/images/examples/README.md)
+for screenshot provenance.
+
 ## Repository Map
 
 - `docs/getting-started.md`: package install and first connection for Android, iOS, and React Native.

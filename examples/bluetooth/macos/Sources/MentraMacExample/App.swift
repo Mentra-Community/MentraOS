@@ -69,6 +69,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MentraBluetoothSDKDele
         action.isSelectable = true
         stack.addArrangedSubview(action)
         preview.imageScaling = .scaleProportionallyUpOrDown
+        preview.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        preview.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+        preview.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        preview.setContentHuggingPriority(.defaultLow, for: .vertical)
         stack.addArrangedSubview(preview)
         for view in [connection, status, webhook, action, preview] {
             view.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -48).isActive = true
