@@ -35,7 +35,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Test coordinated release scripts
-        run: node --test .github/scripts/coordinated-example-release.test.mjs
+        run: node --test .github/scripts/coordinated-example-release.test.mjs .github/scripts/react-native-acs-config.test.mjs
 
   android:
     name: Native Android example

@@ -9,7 +9,7 @@ Expo Go cannot load the SDK because the package contains native Android and iOS 
 ## Requirements
 
 - Node.js 20+.
-- Xcode 15+ for iOS builds.
+- Xcode 26.2+ for Expo SDK 55 iOS builds.
 - Android Studio / Android SDK and Java 17 for Android builds.
 - A physical phone for Bluetooth, camera, microphone, direct phone photo, and direct phone WebRTC testing.
 - Mentra smart glasses with Bluetooth enabled.
@@ -23,6 +23,10 @@ bun install
 
 The example depends on the exact SDK and Engine versions pinned in
 [`package.json`](./package.json). Those two package versions must match.
+
+`app.config.js` enables the ACS native build plugin when the installed Engine
+includes ACS. It uses Engine's exact dependency for Android desugaring and iOS
+framework setup; older Engine versions without ACS keep the existing config.
 
 Use compatible SDK and Engine versions published by Mentra. When validating
 unreleased SDK changes, use the local source override below so JavaScript,
