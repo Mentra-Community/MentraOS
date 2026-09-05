@@ -416,6 +416,7 @@
       "dependencies": {
         "@craftzdog/react-native-buffer": "^6.1.2",
         "@dr.pogodin/react-native-fs": "^2.37.0",
+        "@mentra/acs-meeting": "workspace:*",
         "@mentra/bluetooth-sdk": "workspace:*",
         "@mentra/cloud-client": "workspace:*",
         "@mentra/cloud-protocol": "workspace:*",
