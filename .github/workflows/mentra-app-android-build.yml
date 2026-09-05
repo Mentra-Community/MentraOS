@@ -95,8 +95,8 @@ jobs:
         uses: android-actions/setup-android@v3
         with:
           # The retired `tools` package download is no longer a valid ZIP.
-          # Gradle installs the project's platform/build-tools/NDK versions.
-          packages: platform-tools
+          # Install apksigner explicitly for the release signature check.
+          packages: platform-tools build-tools;36.0.0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
