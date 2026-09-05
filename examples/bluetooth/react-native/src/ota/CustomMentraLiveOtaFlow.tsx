@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -67,65 +67,76 @@ export function CustomMentraLiveOtaFlow({
     controller[action]();
   };
 
+  const content = (
+    <>
+      <StatusIcon
+        accent={palette.accent}
+        tone={presentation.tone}
+        wash={palette.wash}
+      />
+      <Text style={styles.title}>{presentation.title}</Text>
+      {presentation.message ? (
+        <Text style={styles.message}>{presentation.message}</Text>
+      ) : null}
+
+      {presentation.versionLabel ? (
+        <View style={styles.versionBadge}>
+          <Text selectable style={styles.versionLabel}>
+            {presentation.versionLabel}
+          </Text>
+        </View>
+      ) : null}
+
+      {presentation.progress !== undefined ? (
+        <View style={styles.progressBlock}>
+          <Text style={[styles.progressValue, { color: palette.accent }]}>
+            {Math.round(presentation.progress)}%
+          </Text>
+          <View style={styles.progressTrack}>
+            <View
+              style={[
+                styles.progressFill,
+                {
+                  backgroundColor: palette.accent,
+                  width: `${Math.min(Math.max(presentation.progress, 0), 100)}%`,
+                },
+              ]}
+            />
+          </View>
+        </View>
+      ) : null}
+
+      {presentation.indeterminate ? (
+        <ActivityIndicator color={palette.accent} size="large" />
+      ) : null}
+
+      {presentation.detail ? (
+        <Text style={styles.detail}>{presentation.detail}</Text>
+      ) : null}
+
+      <ChangelogList changelogs={presentation.changelogs} />
+    </>
+  );
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <Header title="Software Update" />
       <View style={styles.page} testID="custom-mentra-live-ota-flow">
-        <ScrollView
-          contentContainerStyle={[
-            styles.centerContent,
-            hasChangelogs && styles.topContent,
-          ]}
-          showsVerticalScrollIndicator={false}
-          style={styles.contentScroll}
-        >
-          <StatusIcon
-            accent={palette.accent}
-            tone={presentation.tone}
-            wash={palette.wash}
-          />
-          <Text style={styles.title}>{presentation.title}</Text>
-          {presentation.message ? (
-            <Text style={styles.message}>{presentation.message}</Text>
-          ) : null}
-
-          {presentation.versionLabel ? (
-            <View style={styles.versionBadge}>
-              <Text selectable style={styles.versionLabel}>
-                {presentation.versionLabel}
-              </Text>
-            </View>
-          ) : null}
-
-          {presentation.progress !== undefined ? (
-            <View style={styles.progressBlock}>
-              <Text style={[styles.progressValue, { color: palette.accent }]}>
-                {Math.round(presentation.progress)}%
-              </Text>
-              <View style={styles.progressTrack}>
-                <View
-                  style={[
-                    styles.progressFill,
-                    {
-                      backgroundColor: palette.accent,
-                      width: `${Math.min(Math.max(presentation.progress, 0), 100)}%`,
-                    },
-                  ]}
-                />
-              </View>
-            </View>
-          ) : null}
-
-          {presentation.indeterminate ? (
-            <ActivityIndicator color={palette.accent} size="large" />
-          ) : null}
-
-          {presentation.detail ? (
-            <Text style={styles.detail}>{presentation.detail}</Text>
-          ) : null}
-
-          <ChangelogList changelogs={presentation.changelogs} />
-        </ScrollView>
+        {hasChangelogs ? (
+          <View
+            style={[styles.contentScroll, styles.centerContent, styles.topContent]}
+          >
+            {content}
+          </View>
+        ) : (
+          <ScrollView
+            contentContainerStyle={styles.centerContent}
+            showsVerticalScrollIndicator={false}
+            style={styles.contentScroll}
+          >
+            {content}
+          </ScrollView>
+        )}
 
         {presentation.primary || presentation.secondary ? (
           <View style={styles.actions}>
@@ -276,7 +287,14 @@ function ChangelogMarkdown({ markdown }: { markdown: string }) {
 }
 
 function ChangelogList({ changelogs }: { changelogs?: CustomOtaChangelog[] }) {
+  const [contentHeight, setContentHeight] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(0);
+  const [isAtEnd, setIsAtEnd] = useState(false);
+
   if (!changelogs?.length) return null;
+
+  const showScrollHint =
+    viewportHeight > 0 && contentHeight > viewportHeight + 1 && !isAtEnd;
 
   return (
     <View style={styles.changelogCard} testID="custom-ota-changelog-card">
@@ -284,6 +302,21 @@ function ChangelogList({ changelogs }: { changelogs?: CustomOtaChangelog[] }) {
       <ScrollView
         contentContainerStyle={styles.changelogContent}
         nestedScrollEnabled
+        onContentSizeChange={(_width, height) => {
+          setContentHeight(height);
+          setIsAtEnd(false);
+        }}
+        onLayout={({ nativeEvent }) =>
+          setViewportHeight(nativeEvent.layout.height)
+        }
+        onScroll={({ nativeEvent }) => {
+          const distanceFromEnd =
+            nativeEvent.contentSize.height -
+            (nativeEvent.contentOffset.y +
+              nativeEvent.layoutMeasurement.height);
+          setIsAtEnd(distanceFromEnd <= 8);
+        }}
+        scrollEventThrottle={16}
         showsVerticalScrollIndicator
         style={styles.changelogList}
         testID="custom-ota-changelog-scroll"
@@ -303,6 +336,16 @@ function ChangelogList({ changelogs }: { changelogs?: CustomOtaChangelog[] }) {
           </View>
         ))}
       </ScrollView>
+      <View style={styles.changelogScrollHintSlot}>
+        {showScrollHint ? (
+          <Text
+            style={styles.changelogScrollHint}
+            testID="custom-ota-changelog-scroll-hint"
+          >
+            Scroll for more ↓
+          </Text>
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -393,7 +436,11 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingVertical: 24,
   },
-  topContent: { justifyContent: "flex-start", paddingTop: 12 },
+  topContent: {
+    justifyContent: "flex-start",
+    paddingBottom: 16,
+    paddingTop: 12,
+  },
   iconTile: {
     alignItems: "center",
     borderRadius: 18,
@@ -461,16 +508,15 @@ const styles = StyleSheet.create({
     borderColor: colors.hairline,
     borderRadius: 16,
     borderWidth: 1,
-    flexShrink: 1,
+    flex: 1,
     gap: 12,
-    maxHeight: 300,
     maxWidth: 420,
     padding: 16,
     width: "100%",
   },
   changelogTitle: { color: colors.ink, fontSize: 16, fontWeight: "700" },
-  changelogList: { flexShrink: 1, maxHeight: 232, width: "100%" },
-  changelogContent: { gap: 20, paddingBottom: 2 },
+  changelogList: { flex: 1, width: "100%" },
+  changelogContent: { gap: 20, paddingBottom: 4 },
   changelogEntry: { gap: 8 },
   changelogEntryDivider: {
     borderTopColor: colors.hairline,
@@ -483,6 +529,17 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   changelogMarkdownContent: { gap: 10 },
+  changelogScrollHintSlot: {
+    alignItems: "center",
+    height: 18,
+    justifyContent: "center",
+  },
+  changelogScrollHint: {
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "500",
+    lineHeight: 16,
+  },
   actions: { gap: 10 },
   actionSpacer: { height: 48 },
   button: {
