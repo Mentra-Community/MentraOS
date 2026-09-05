@@ -102,7 +102,7 @@ private func jlog(_ message: String) {
             ctx.name = "MentraJS: \(id)"
             // Inspectable in dev builds only. iOS 16.4+ guarded.
             #if DEBUG
-                if #available(iOS 16.4, *) {
+                if #available(iOS 16.4, macOS 13.3, *) {
                     ctx.isInspectable = true
                 }
             #endif

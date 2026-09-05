@@ -1,0 +1,166 @@
+---
+title: "macOS"
+description: "Use the Bluetooth SDK in native AppKit, SwiftUI, or react-native-macos apps."
+icon: "desktop"
+---
+
+The Apple SDK supports native macOS apps through the same `MentraBluetoothSDK`
+Swift package used on iOS. The npm package exposes that implementation to
+`react-native-macos` through Expo Modules.
+
+<Note>
+Native macOS support is new on the `dev` branch. Until a coordinated SDK release
+containing this change is published, use the local source overrides below.
+Older published packages are iOS-only.
+</Note>
+
+## Native macOS Versus iOS On Mac
+
+The iOS example distributed through TestFlight can run on compatible Apple
+silicon Macs. That is an iOS app running on Mac, not an AppKit or
+`react-native-macos` build. It continues to use the iOS SDK implementation.
+
+Use the native examples below when building a macOS application. CoreBluetooth,
+camera requests, OTA commands, status, and events share the existing Apple SDK
+implementation. The Mac adapters use CoreAudio for host microphone input and
+ImageIO for image decoding instead of iOS-only APIs.
+
+## Swift: AppKit Or SwiftUI
+
+Requirements: macOS 13 or newer, Xcode with Swift 5.9 or newer, and a Mac with
+Bluetooth for device testing. Add the `MentraBluetoothSDK` product to your macOS
+app target from:
+
+```text
+https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git
+```
+
+The repository keeps its existing name for compatibility; it supplies both
+Apple platforms. For unpublished changes, add this folder as a local package
+in Xcode instead:
+
+```text
+/path/to/MentraOS/mobile/modules/bluetooth-sdk
+```
+
+The [Swift connection API](/bluetooth-sdk/ios#basic-flow) is unchanged. Own the SDK
+on the main actor in your AppKit controller or SwiftUI model, observe its
+delegate, and call `invalidate()` when the owning session ends. Do not configure
+`AVAudioSession` or `UIBackgroundModes` in a native Mac app.
+
+### Permissions And Sandbox
+
+Add usage descriptions to your app's `Info.plist`:
+
+```xml
+<key>NSBluetoothAlwaysUsageDescription</key>
+<string>Connect to your smart glasses.</string>
+<key>NSMicrophoneUsageDescription</key>
+<string>Capture audio when microphone recording is enabled.</string>
+<key>NSLocalNetworkUsageDescription</key>
+<string>Access glasses and media servers on your local network.</string>
+```
+
+For a sandboxed app, enable these capabilities in the app target, not the SDK:
+
+```xml
+<key>com.apple.security.app-sandbox</key>
+<true/>
+<key>com.apple.security.device.bluetooth</key>
+<true/>
+<key>com.apple.security.device.audio-input</key>
+<true/>
+<key>com.apple.security.network.client</key>
+<true/>
+<key>com.apple.security.network.server</key>
+<true/>
+```
+
+Audio input is only needed for the Mac microphone. Network server access is
+only needed when hosting a local photo receiver or OTA server. Request host
+microphone permission from your app, for example with
+`await AVCaptureDevice.requestAccess(for: .audio)`, before enabling that input.
+The SDK checks permission but does not show a microphone permission dialog.
+
+For local HTTP photo webhooks, allow local networking with
+`NSAppTransportSecurity.NSAllowsLocalNetworking`. Prefer HTTPS for remote servers.
+
+### Run The AppKit Example From Source
+
+From the Starter Kit `dev` branch:
+
+```bash
+cd examples/macos
+export MENTRA_BLUETOOTH_SDK_PACKAGE_PATH=/absolute/path/to/MentraOS/mobile/modules/bluetooth-sdk
+bash run.sh
+```
+
+The script builds and ad-hoc signs a sandboxed `.app` with usage descriptions.
+Running the raw SwiftPM executable is not equivalent to running this app bundle.
+The focused sample demonstrates scan/connect, photo upload and preview, and OTA
+availability checking. It does not duplicate the complete phone example OTA UI.
+
+## React Native macOS
+
+Use `examples/react-native-macos` in the Starter Kit, not `expo run:ios` and not
+the phone example's generated project. This native Mac host currently pairs
+React Native macOS 0.81 with React Native 0.81 and Expo Modules from Expo SDK 54;
+it requires macOS 14 or newer. Keep the native host, React Native, and Expo
+versions compatible when upgrading them.
+
+```bash
+cd examples/react-native-macos
+bun install --frozen-lockfile
+export MENTRA_BLUETOOTH_SDK_PACKAGE_PATH=/absolute/path/to/MentraOS/mobile/modules/bluetooth-sdk
+cd macos
+pod install
+cd ..
+bun run macos
+```
+
+Use the same source override in both the `pod install` shell and the Metro
+shell. After the native-macOS SDK is published, remove the override to use the
+package pinned in `package.json`.
+
+The example's Podfile enables Expo Modules autolinking for the macOS target,
+sets `MENTRA_BLUETOOTH_SDK_INCLUDE_EXPO_ADAPTER=1`, and uses the
+`react-native-macos` native dependency scripts. Its Metro configuration resolves
+`react-native` to `react-native-macos`. The existing JavaScript imports and SDK
+React hooks are unchanged:
+
+```tsx
+import BluetoothSdk from '@mentra/bluetooth-sdk';
+import {useMentraBluetooth} from '@mentra/bluetooth-sdk/react';
+```
+
+Expo Go and Expo's iOS/Android prebuild plugin do not generate this Mac host.
+Microsoft documents Expo Modules support on `react-native-macos` as
+[experimental](https://microsoft.github.io/react-native-macos/docs/guides/installing-expo-modules).
+This is support for the Bluetooth SDK, not a claim that all Mentra Engine
+dependencies or arbitrary Expo packages support native macOS.
+
+## Platform Differences
+
+- Bluetooth testing requires a real Mac. Sleeping the Mac can interrupt the
+  connection; reconnect through the normal SDK lifecycle after wake.
+- Select the Mac's Bluetooth audio output in System Settings. The SDK does not
+  change the system-wide audio route. Host microphone selection uses CoreAudio
+  for the SDK's own recording engine. Bluetooth microphone modes use the
+  Bluetooth input selected in System Settings > Sound > Input, not the first
+  connected headset. Internal microphone mode uses a built-in input only.
+  Input changes are observed while recording; glasses audio availability is
+  tracked independently of the selected output.
+- macOS has no iOS `AVAudioSession` audio-focus contract. The SDK tracks explicit
+  own-app playback, but does not detect every other app's playback to suspend
+  the glasses microphone. A host app must coordinate simultaneous audio use.
+- A playback device reconfiguration rejects pending PCM stream operations;
+  reopen the stream after selecting the new route.
+- iOS ANCS notification relay is not available on native macOS.
+- Optional MentraOS local STT/TTS, Vuzix, and Mentra Nex dependencies are not
+  part of this native macOS package.
+- Glasses Wi-Fi/hotspot commands work through the shared SDK. Joining that
+  hotspot from the Mac remains a host/system Wi-Fi action. The Android-only
+  `otaLocalNetwork` scoped networking adapter remains unavailable on macOS.
+- Source-built SDKs do not gain a production OTA pin. Use the existing
+  `debug.setOtaVersionUrl(...)` override when deliberately testing OTA from
+  source, and use a published coordinated SDK for its matching release pin.

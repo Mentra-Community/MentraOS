@@ -138,7 +138,7 @@
           {
             "group": "Platform Setup",
             "icon": "gears",
-            "pages": ["bluetooth-sdk/react-native-expo", "bluetooth-sdk/android", "bluetooth-sdk/ios"]
+            "pages": ["bluetooth-sdk/react-native-expo", "bluetooth-sdk/android", "bluetooth-sdk/ios", "bluetooth-sdk/macos"]
           },
           {
             "group": "Core APIs",
