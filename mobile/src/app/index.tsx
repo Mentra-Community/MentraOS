@@ -162,7 +162,7 @@ export default function InitScreen() {
       replaceAll(activeDeployment.kind === "workspace" ? "/auth/workspace-signin" : "/auth/start")
       return
     }
-    handleTokenExchange()
+    await handleTokenExchange()
   }
 
   const handleTokenExchange = async (): Promise<void> => {
@@ -172,11 +172,9 @@ export default function InitScreen() {
     // itself via the auth provider. Boot just needs a valid session, then init.
     const token = session?.token
     if (!token) {
-      if (activeDeployment.kind === "workspace") {
-        replaceAll("/auth/workspace-signin")
-        return
-      }
-      setState("auth")
+      // A cached user alone cannot start Engine. Return to login instead of
+      // leaving Continue Anyway and Retry looping on the auth-error screen.
+      replaceAll(activeDeployment.kind === "workspace" ? "/auth/workspace-signin" : "/auth/start")
       return
     }
 
