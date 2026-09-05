@@ -114,22 +114,74 @@ export function parseAcsOutgoingVideo(raw: unknown): AcsOutgoingVideo | undefine
   return {width, height, fps, maxBitrateBps}
 }
 
+/**
+ * Where the glasses video comes from.
+ *
+ * A union rather than a nullable URL because the two transports need different inputs: WHEP is
+ * given a URL, while SoftAP produces one only after the host binds a local listener. Collapsing
+ * them into `whepUrl?: string` is what lets an empty string reach the subscriber and fail seconds
+ * later as an opaque HTTP error.
+ */
+export type AcsVideoSource =
+  | {type: "whep"; url: string}
+  | {type: "softap"; ssid?: string; passphrase?: string; bindAddress?: string}
+
+/**
+ * Validates a `videoSource` from a miniapp.
+ *
+ * Throws rather than defaulting to WHEP. A miniapp that asks for SoftAP and silently gets a
+ * Cloudflare call — or vice versa — is a bug that shows up as unexplained latency or a black tile,
+ * not as an error anyone can act on.
+ */
+export function parseAcsVideoSource(raw: unknown): AcsVideoSource {
+  if (raw == null || typeof raw !== "object") {
+    throw new Error(`videoSource must be {type: "whep", url} or {type: "softap"}`)
+  }
+  const value = raw as Record<string, unknown>
+
+  if (value.type === "whep") {
+    const url = typeof value.url === "string" ? value.url.trim() : ""
+    if (!url) throw new Error("videoSource.url is required for a WHEP source")
+    return {type: "whep", url}
+  }
+
+  if (value.type === "softap") {
+    const ssid = typeof value.ssid === "string" ? value.ssid.trim() : ""
+    const passphrase = typeof value.passphrase === "string" ? value.passphrase : ""
+    // Half a credential pair would otherwise present as a failed hotspot join much later.
+    if (Boolean(ssid) !== Boolean(passphrase)) {
+      throw new Error("videoSource.ssid and videoSource.passphrase must be provided together")
+    }
+    return ssid ? {type: "softap", ssid, passphrase} : {type: "softap"}
+  }
+
+  throw new Error(`unsupported videoSource.type: ${String(value.type)}`)
+}
+
 type NativeModule = {
   join(options: {
     meetingUrl: string
     token: string
+    /** Legacy field, still sent for whep so an older native keeps working. */
     whepUrl: string
+    videoSource: AcsVideoSource
     displayName?: string
     dumpPcmWav?: boolean
     audioSource?: "glasses" | "phone"
     video?: AcsOutgoingVideo
-  }): Promise<MeetingState>
+  }): Promise<MeetingState & {ingestUrl?: string}>
   leave(): Promise<void>
   setMuted(muted: boolean): Promise<MeetingState>
   setAudioSource(source: "glasses" | "phone"): Promise<MeetingState>
   updateVideoSource(whepUrl: string): Promise<void>
   /** Force a WHEP rebuild on the current URL. Absent on natives that predate it. */
   restartVideoSource?(): Promise<void>
+  /**
+   * Join the glasses hotspot as a scoped, internet-less network; resolves with this phone's
+   * address on it. Absent on natives that predate SoftAP, and rejects on iOS.
+   */
+  joinScopedNetwork?(ssid: string, passphrase: string): Promise<string>
+  leaveScopedNetwork?(): Promise<void>
   getState(): Promise<MeetingState>
   addListener(event: string, listener: (event: Record<string, unknown>) => void): {remove: () => void}
 }
@@ -218,9 +270,18 @@ class AcsMeetingService {
   private onState: ((packageName: string, state: MeetingState) => void) | null = null
   /** WHEP URL native is (or should be) subscribed to; what a host-triggered restart re-feeds. */
   private whepUrl: string | null = null
+  /** Transport for the active call, so recovery picks the right repair. */
+  private videoSource: AcsVideoSource | null = null
+  /**
+   * SoftAP only: the URL the glasses must publish to. An output of the join rather than an input,
+   * because it is not known until native has bound a listener and been given a port.
+   */
+  private ingestUrl: string | null = null
   private phoneNetworkUnsub: (() => void) | null = null
   private lastPhoneNetworkKey: string | null = null
   private lastMediaRestartAt = 0
+  /** Callers parked in [waitForFirstFrame], woken by the next `mediaSource` verdict. */
+  private readonly firstFrameWaiters = new Set<(error?: Error) => void>()
 
   setStateHandler(handler: (packageName: string, state: MeetingState) => void): void {
     this.onState = handler
@@ -234,12 +295,78 @@ class AcsMeetingService {
     return this.owner
   }
 
+  /**
+   * The WHIP URL the glasses must POST their offer to, for a SoftAP call. Null for every other
+   * transport and until the join has bound a listener; the orchestrator reads it between the ACS
+   * join and telling the glasses to publish.
+   */
+  softApIngestUrl(): string | null {
+    return this.ingestUrl
+  }
+
+  /**
+   * Join the glasses hotspot as a scoped, internet-less network, returning this phone's address on
+   * it. Called before the ACS join, because the local WHIP listener has to bind to that address.
+   *
+   * A host without the native function is not a host that silently skips the join — the SoftAP call
+   * has no network to run on, so this reports the reason instead.
+   */
+  async joinScopedNetwork(ssid: string, passphrase: string): Promise<string | undefined> {
+    const native = getNative()
+    if (!native?.joinScopedNetwork) {
+      throw new Error("This host cannot join the glasses hotspot; SoftAP calling is unavailable")
+    }
+    return await native.joinScopedNetwork(ssid, passphrase)
+  }
+
+  /** Safe to call when nothing was joined: teardown runs after failed starts too. */
+  async leaveScopedNetwork(): Promise<void> {
+    await getNative()?.leaveScopedNetwork?.()
+  }
+
+  /**
+   * Resolves once the host reports a frame actually reached ACS, which is the only signal that
+   * remote participants can see the camera.
+   *
+   * Rejects if the feed fails first, and on timeout. A SoftAP call that connects but never paints
+   * is the failure this exists to catch: without it the orchestrator would report `live` on the
+   * strength of an ACS join that says nothing about video.
+   *
+   * @param timeoutMs how long to wait before treating the silence as a failure
+   */
+  waitForFirstFrame(timeoutMs: number): Promise<void> {
+    if (this.lastState.mediaSource === "live") return Promise.resolve()
+    return new Promise<void>((resolve, reject) => {
+      const settle = (error?: Error) => {
+        if (done) return
+        done = true
+        clearTimeout(timer)
+        this.firstFrameWaiters.delete(settle)
+        if (error) reject(error)
+        else resolve()
+      }
+      let done = false
+      const timer = setTimeout(
+        () => settle(new Error(`No glasses video reached the meeting within ${Math.round(timeoutMs / 1000)}s`)),
+        timeoutMs,
+      )
+      this.firstFrameWaiters.add(settle)
+    })
+  }
+
+  /** Wake every `waitForFirstFrame` caller with the outcome the host just reported. */
+  private settleFirstFrameWaiters(mediaSource: MediaSourceState | undefined): void {
+    if (mediaSource !== "live" && mediaSource !== "failed") return
+    const error = mediaSource === "failed" ? new Error("The glasses video feed failed") : undefined
+    for (const settle of [...this.firstFrameWaiters]) settle(error)
+  }
+
   async join(
     packageName: string,
     args: {
       meetingUrl: string
       token: string
-      whepUrl: string
+      videoSource: AcsVideoSource
       displayName?: string
       video?: AcsOutgoingVideo
     },
@@ -256,13 +383,15 @@ class AcsMeetingService {
     const video = args.video ? parseAcsOutgoingVideo(args.video) : undefined
     const resolved = resolveAcsAudioSource()
     this.owner = packageName
-    this.whepUrl = args.whepUrl
+    // Only a whep source has a URL to re-feed on recovery; softap rebuilds instead.
+    this.whepUrl = args.videoSource.type === "whep" ? args.videoSource.url : null
+    this.videoSource = args.videoSource
     this.bindNative(native, packageName)
     console.log("[AcsMeeting] phase=join-native", {
       packageName,
       nativeLoaded: true,
       hasToken: Boolean(args.token),
-      hasWhep: Boolean(args.whepUrl),
+      transport: args.videoSource.type,
       audioSource: resolved.source,
       audioSourceReason: resolved.reason,
       preferredMic: useSettingsStore.getState().getSetting(SETTINGS.preferred_mic.key),
@@ -271,13 +400,16 @@ class AcsMeetingService {
       const state = await native.join({
         meetingUrl: args.meetingUrl,
         token: args.token,
-        whepUrl: args.whepUrl,
+        whepUrl: this.whepUrl ?? "",
+        videoSource: args.videoSource,
         displayName: args.displayName,
         audioSource: resolved.source,
         ...(video ? {video} : {}),
       })
+      this.ingestUrl = typeof state.ingestUrl === "string" ? state.ingestUrl : null
+      const {ingestUrl: _ingestUrl, ...meetingState} = state
       this.lastState = {
-        ...state,
+        ...meetingState,
         audioSource: resolved.source,
         audioSourceReason: resolved.reason,
       }
@@ -326,11 +458,17 @@ class AcsMeetingService {
    * (or after a join that never produced a native call).
    */
   private async releaseHostState(): Promise<void> {
+    // Before anything else: a caller parked on a frame that will now never arrive has to be
+    // rejected, or a leave mid-join leaves the orchestrator waiting out its whole timeout.
+    for (const settle of [...this.firstFrameWaiters]) settle(new Error("The meeting ended"))
+    this.firstFrameWaiters.clear()
     this.unwatchPhoneNetwork()
     await this.stopPcm()
     this.unbindNative()
     this.owner = null
     this.whepUrl = null
+    this.videoSource = null
+    this.ingestUrl = null
     this.lastMediaRestartAt = 0
     this.lastState = {state: "idle", muted: false}
   }
@@ -352,6 +490,11 @@ class AcsMeetingService {
     this.assertOwner(packageName)
     const native = getNative()
     if (!native) throw new Error("ACS meeting module is not available on this host")
+    if (this.videoSource?.type === "softap") {
+      // The host owns the softap endpoint, so there is no URL for a caller to change. Failing is
+      // better than accepting it and doing nothing.
+      throw new Error("updateVideoSource is not applicable to a SoftAP call")
+    }
     this.whepUrl = whepUrl
     await native.updateVideoSource(whepUrl)
   }
@@ -421,6 +564,7 @@ class AcsMeetingService {
           mediaSource: state.mediaSource,
           participants: participants?.length,
         })
+        this.settleFirstFrameWaiters(mediaSource)
         this.onState?.(packageName, state)
       }),
       native.addListener("onIncomingPcm", (event) => {
@@ -472,7 +616,11 @@ class AcsMeetingService {
 
   private async restartMediaSource(native: NativeModule, reason: string): Promise<void> {
     const whepUrl = this.whepUrl
-    if (!this.owner || !whepUrl || !MEDIA_ACTIVE_PHASES.has(this.lastState.state)) return
+    const softap = this.videoSource?.type === "softap"
+    // A softap call has no URL to re-feed, but it is still worth rebuilding: the phone changing
+    // networks is exactly when it may have dropped off the hotspot.
+    if (!this.owner || !MEDIA_ACTIVE_PHASES.has(this.lastState.state)) return
+    if (!whepUrl && !softap) return
     const now = Date.now()
     if (now - this.lastMediaRestartAt < MEDIA_RESTART_MIN_INTERVAL_MS) return
     this.lastMediaRestartAt = now
@@ -481,7 +629,8 @@ class AcsMeetingService {
       // A same-URL updateVideoSource is a no-op while native still believes the
       // peer is healthy; after a network switch that belief is exactly what is wrong.
       if (native.restartVideoSource) await native.restartVideoSource()
-      else await native.updateVideoSource(whepUrl)
+      else if (whepUrl) await native.updateVideoSource(whepUrl)
+      else console.warn("[AcsMeeting] softap restart needs a native restartVideoSource", {reason})
     } catch (error) {
       console.warn("[AcsMeeting] media restart failed", {reason, error})
     }

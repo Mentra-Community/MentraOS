@@ -32,6 +32,7 @@ android {
   defaultConfig {
     versionCode 1
     versionName "0.1.0"
+    testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
   }
   compileOptions {
     coreLibraryDesugaringEnabled true
@@ -45,6 +46,10 @@ android {
   testOptions {
     unitTests {
       includeAndroidResources = true
+      // WhipIngestServer is exercised over a real loopback socket in JVM tests, and its stage
+      // logging reaches android.util.Log. Without this the stubbed android.jar throws "Stub!"
+      // and the socket behaviour we actually want to assert is unreachable.
+      returnDefaultValues = true
     }
   }
 }
@@ -61,4 +66,10 @@ dependencies {
   implementation 'io.github.webrtc-sdk:android:137.7151.05'
   testImplementation 'junit:junit:4.13.2'
   testImplementation 'org.assertj:assertj-core:3.24.2'
+  // Phase 0.5 SoftAP feasibility gate. These run on a device, not in CI: the gate needs a real
+  // phone with cellular active and the glasses hotspot up. See SoftApFeasibilityGateTest.
+  androidTestImplementation 'androidx.test:runner:1.5.2'
+  androidTestImplementation 'androidx.test:rules:1.5.0'
+  androidTestImplementation 'androidx.test.ext:junit:1.1.5'
+  androidTestImplementation 'org.assertj:assertj-core:3.24.2'
 }

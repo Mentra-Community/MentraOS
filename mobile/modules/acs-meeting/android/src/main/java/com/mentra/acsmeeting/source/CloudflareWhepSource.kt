@@ -4,14 +4,12 @@ import android.content.Context
 import android.media.AudioAttributes
 import android.util.Log
 import com.mentra.acsmeeting.telemetry.PipelineStats
-import com.mentra.acsmeeting.video.FrameGeometry
 import com.mentra.acsmeeting.video.I420Packer
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.webrtc.AudioTrack
-import org.webrtc.AudioTrackSink
 import org.webrtc.DefaultVideoDecoderFactory
 import org.webrtc.DefaultVideoEncoderFactory
 import org.webrtc.EglBase
@@ -23,15 +21,11 @@ import org.webrtc.PeerConnectionFactory
 import org.webrtc.RtpTransceiver
 import org.webrtc.SdpObserver
 import org.webrtc.SessionDescription
-import org.webrtc.VideoFrame
-import org.webrtc.VideoSink
 import org.webrtc.VideoTrack
 import org.webrtc.audio.JavaAudioDeviceModule
 import java.nio.ByteBuffer
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.atomic.AtomicLong
 
 /**
@@ -51,10 +45,6 @@ class CloudflareWhepSource(
   private var pc: PeerConnection? = null
   private var currentUrl: String? = null
   @Volatile private var offerPosted = false
-  // Fail closed: the audio policy turns delivery on once the ACS virtual
-  // stream is live. Survives restart() so a WHEP rebuild cannot silently
-  // re-open the uplink (or the local playout) against the current decision.
-  @Volatile private var pcmEnabled = false
   @Volatile override var state: SourceState = SourceState.IDLE
     private set
   @Volatile private var stateListener: SourceStateListener? = null
@@ -67,8 +57,9 @@ class CloudflareWhepSource(
   private val videoIds = TrackRegistry()
   private val audioIds = TrackRegistry()
   @Volatile private var attachedVideo: VideoTrack? = null
-  private val targetSize = AtomicReference<TargetSize?>(null)
-  private val rotationLogged = AtomicBoolean(false)
+  // Shared with the SoftAP path: past the decoder, a Cloudflare hop and a hotspot hop are the
+  // same I420 planes going to the same ACS sender.
+  private val relay = DecodedTrackRelay(videoListener, pcmListener, stats) { notePromotableFrame() }
   private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
   private var pendingOfferPost: Runnable? = null
   // LIVE means "ACS is being handed frames", not "the WHEP endpoint answered".
@@ -150,12 +141,12 @@ class CloudflareWhepSource(
   }
 
   override fun setPcmDeliveryEnabled(enabled: Boolean) {
-    pcmEnabled = enabled
+    relay.setPcmDeliveryEnabled(enabled)
     Log.i(TAG, "WHEP audio PCM delivery enabled=$enabled")
   }
 
   override fun setTargetSize(size: TargetSize?) {
-    targetSize.set(size)
+    relay.setTargetSize(size)
   }
 
   override fun stop() {
@@ -183,7 +174,7 @@ class CloudflareWhepSource(
     lastDecodedFrames = -1L
     lastDecodedAtMs = 0L
     lastReceivedFrames = -1L
-    rotationLogged.set(false)
+    relay.resetRotationLog()
     // close() stops media; dispose() is what frees the native peer. Without it every
     // WHEP restart leaks a PeerConnection. dispose() also blocks until observer and
     // sink callbacks quiesce, so it must run after removeSink and before dest is reused.
@@ -393,75 +384,7 @@ class CloudflareWhepSource(
     transition(SourceState.LIVE, "first_frame")
   }
 
-  private val videoSink = VideoSink { frame ->
-    val sinkStart = System.nanoTime()
-    notePromotableFrame()
-    stats.onSink()
-    stats.recordGap()
-    val buffer = frame.buffer
-    stats.onFrameBuffer(classifyBuffer(buffer))
-    val geometry = FrameGeometry.packSize(buffer.width, buffer.height, frame.rotation)
-    if (geometry.rotationNonZero) {
-      stats.onRotation()
-      if (rotationLogged.compareAndSet(false, true)) {
-        Log.w(
-          TAG,
-          "P3 rotation=${frame.rotation} using buffer ${geometry.width}x${geometry.height} " +
-            "(rotatedWidth=${frame.rotatedWidth}x${frame.rotatedHeight} would overrun I420 planes)",
-        )
-      }
-    }
-    val target = targetSize.get()
-    var scaled: VideoFrame.Buffer? = null
-    val source = if (target != null && (target.width != geometry.width || target.height != geometry.height)) {
-      val scaleStart = System.nanoTime()
-      scaled = buffer.cropAndScale(0, 0, geometry.width, geometry.height, target.width, target.height)
-      stats.scale.record(System.nanoTime() - scaleStart)
-      scaled
-    } else {
-      buffer
-    }
-    val i420Start = System.nanoTime()
-    val i420 = source.toI420()
-    stats.toI420.record(System.nanoTime() - i420Start)
-    if (i420 == null) {
-      stats.onDropNullI420()
-      scaled?.release()
-      stats.sinkCb.record(System.nanoTime() - sinkStart)
-      return@VideoSink
-    }
-    try {
-      val w = i420.width
-      val h = i420.height
-      stats.onStrides(i420.strideY, i420.strideU, i420.strideV, w)
-      stats.setSize(w, h)
-      videoListener.onVideoFrame(
-        I420Planes(
-          y = i420.dataY,
-          strideY = i420.strideY,
-          u = i420.dataU,
-          strideU = i420.strideU,
-          v = i420.dataV,
-          strideV = i420.strideV,
-          width = w,
-          height = h,
-          timestampNs = frame.timestampNs,
-          retain = { i420.retain() },
-          release = { i420.release() },
-        ),
-      )
-    } finally {
-      i420.release()
-      scaled?.release()
-      stats.sinkCb.record(System.nanoTime() - sinkStart)
-    }
-  }
-
-  private fun classifyBuffer(buffer: VideoFrame.Buffer): String = when (buffer) {
-    is VideoFrame.TextureBuffer -> "tex"
-    is VideoFrame.I420Buffer -> "i420"
-    else -> "other"
-  }
+  private val videoSink get() = relay.videoSink
 
   private fun attachAudio(track: AudioTrack) {
     val id = track.id()
@@ -475,15 +398,8 @@ class CloudflareWhepSource(
     // volume 0 silences local playout while the sink still gets full-scale PCM.
     track.setVolume(0.0)
     track.setEnabled(true)
-    track.addSink(audioSink)
+    track.addSink(relay.audioSink)
     Log.i(TAG, "P3 attach kind=audio id=$id attached=${audioIds.size()} skipped=${audioIds.skipped()} playoutVolume=0")
-  }
-
-  private val audioSink = AudioTrackSink { audioData, bitsPerSample, sampleRate, numberOfChannels, numberOfFrames, _ ->
-    if (!pcmEnabled || bitsPerSample != 16) return@AudioTrackSink
-    val bytes = ByteArray(audioData.remaining())
-    audioData.get(bytes)
-    pcmListener.onPcm(bytes, sampleRate, numberOfChannels)
   }
 
   private fun pollDecodedStats() {
@@ -569,10 +485,3 @@ class CloudflareWhepSource(
 }
 
 typealias WhepVideoSource = CloudflareWhepSource
-
-private open class SdpAdapter : SdpObserver {
-  override fun onCreateSuccess(sdp: SessionDescription) {}
-  override fun onSetSuccess() {}
-  override fun onCreateFailure(error: String) {}
-  override fun onSetFailure(error: String) {}
-}

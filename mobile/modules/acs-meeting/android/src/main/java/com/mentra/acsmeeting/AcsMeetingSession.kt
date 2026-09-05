@@ -58,7 +58,10 @@ import com.mentra.acsmeeting.source.CloudflareWhepSource
 import com.mentra.acsmeeting.source.DecoderMode
 import com.mentra.acsmeeting.source.PixelFormatArm
 import com.mentra.acsmeeting.source.GlassesMediaController
+import com.mentra.acsmeeting.network.ScopedSoftApNetwork
 import com.mentra.acsmeeting.source.GlassesMediaSourceFactory
+import com.mentra.acsmeeting.source.LocalWhipIngestSource
+import com.mentra.acsmeeting.source.MeetingVideoSourceSpec
 import com.mentra.acsmeeting.source.SourceConfig
 import com.mentra.acsmeeting.source.SourceKind
 import com.mentra.acsmeeting.source.SourceState
@@ -82,6 +85,11 @@ class AcsMeetingSession(
   private val onState: (Map<String, Any>) -> Unit,
   private val onIncomingPcm: (String, Int, Int) -> Unit,
   mediaSourceFactory: GlassesMediaSourceFactory? = null,
+  /**
+   * The joined glasses hotspot, when the call is a SoftAP call. Held so libwebrtc can be shown a
+   * network Android hides from it; null for every Cloudflare call.
+   */
+  private val scopedNetwork: ScopedSoftApNetwork? = null,
 ) {
   internal val stats = PipelineStats()
   private val ticker = PipelineTicker(stats) {
@@ -93,10 +101,16 @@ class AcsMeetingSession(
   private val muted = AtomicBoolean(false)
   private val frameSender = AcsFrameSender(stats)
   private var profile = VideoProfile.DEFAULT
-  private val resolvedFactory = mediaSourceFactory ?: GlassesMediaSourceFactory { video, pcm ->
-    when (AcsInvestigation.videoArm) {
-      VideoSourceArm.SYNTHETIC -> SyntheticI420Source(video, stats, frameSender::isReady)
-      VideoSourceArm.WHEP -> CloudflareWhepSource(context, video, pcm, stats)
+  private val resolvedFactory = mediaSourceFactory ?: GlassesMediaSourceFactory { video, pcm, config ->
+    // The synthetic diagnostic arm overrides everything; otherwise the requested kind decides.
+    when {
+      AcsInvestigation.videoArm == VideoSourceArm.SYNTHETIC ->
+        SyntheticI420Source(video, stats, frameSender::isReady)
+
+      config.kind == SourceKind.SOFTAP ->
+        LocalWhipIngestSource(context, video, pcm, stats, scopedNetwork)
+
+      else -> CloudflareWhepSource(context, video, pcm, stats)
     }
   }
   @Volatile private var lastGatedLogMs = 0L
@@ -174,7 +188,7 @@ class AcsMeetingSession(
   fun join(
     token: String,
     teamsUrl: String,
-    whepUrl: String,
+    videoSource: MeetingVideoSourceSpec,
     displayName: String?,
     dumpWav: Boolean,
     audioSource: String = "glasses",
@@ -317,7 +331,11 @@ class AcsMeetingSession(
         }
         pushCallState(joined.state)
 
-        stats.arm = if (synthetic) "synthetic" else "whep"
+        stats.arm = when {
+          synthetic -> "synthetic"
+          videoSource is MeetingVideoSourceSpec.SoftAp -> "softap"
+          else -> "whep"
+        }
         stats.pathMode = if (AcsInvestigation.decoderMode == DecoderMode.BYTE_BUFFER) "bytebuf" else "texture"
         stats.pathCopy = when {
           AcsInvestigation.pixelFormat == PixelFormatArm.NV12 -> "nv12"
@@ -337,10 +355,7 @@ class AcsMeetingSession(
             frameSender.sendPlanes(planes)
           },
           pcm = { pcm, rate, channels -> feedOutgoingPcm(pcm, rate, channels) },
-          config = SourceConfig(
-            url = whepUrl,
-            kind = if (synthetic) SourceKind.DIRECT else SourceKind.WHEP,
-          ),
+          config = if (synthetic) SourceConfig("", SourceKind.DIRECT) else videoSource.toConfig(),
         )
         media.setTargetSize(TargetSize(profile.width, profile.height))
         ticker.start()
@@ -378,6 +393,11 @@ class AcsMeetingSession(
     return snapshot()
   }
 
+  /**
+   * Point the subscriber at a different WHEP URL. WHEP only: a SoftAP listener has no URL to
+   * update, since the URL is an output of binding, and its recovery is a full rebuild through
+   * [restartVideoSource].
+   */
   fun updateVideoSource(whepUrl: String) {
     executor.execute {
       // The host has a fresher opinion about where the glasses publish; drop
@@ -386,6 +406,13 @@ class AcsMeetingSession(
       media.restart(SourceConfig(whepUrl))
     }
   }
+
+  /**
+   * The URL the glasses must POST their offer to, for a SoftAP call. Null until the listener has
+   * bound, and null for every other transport. The orchestrator reads this after join and sends it
+   * to the glasses in `start_stream`.
+   */
+  fun softApIngestUrl(): String? = media.ingestUrl
 
   /**
    * Rebuild the WHEP subscription on the current URL even when it looks healthy.

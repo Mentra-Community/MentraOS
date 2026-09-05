@@ -47,6 +47,20 @@ public class WhipStreamConfig {
    * When both a full key and its compact alias are present, the full key wins.
    */
   public static WhipStreamConfig fromJson(JSONObject videoJson, JSONObject audioJson) {
+    return fromJson(videoJson, audioJson, null);
+  }
+
+  /**
+   * As {@link #fromJson(JSONObject, JSONObject)}, plus the optional {@code ice} block.
+   *
+   * <p>{@code ice} carries {@code stun} (compact alias {@code s}). SoftAP calling sends an empty
+   * string to mean "no STUN server, gather host candidates only", because the phone WHIP server
+   * sits on the hotspot subnet and a reflexive candidate is meaningless there. An absent key keeps
+   * the Cloudflare default, and a value that is not a stun URI is ignored rather than silently
+   * disabling ICE.
+   */
+  public static WhipStreamConfig fromJson(
+      JSONObject videoJson, JSONObject audioJson, JSONObject iceJson) {
     WhipStreamConfig config = new WhipStreamConfig();
 
     if (videoJson != null) {
@@ -69,7 +83,39 @@ public class WhipStreamConfig {
       config.captureAudio = optBoolWithFallback(audioJson, "captureAudio", "ca", true);
     }
 
+    if (iceJson != null) {
+      config.stunServer = resolveStunServer(iceJson, config.stunServer);
+    }
+
     return config;
+  }
+
+  /**
+   * Empty string wins (host-only), a stun/stuns URI overrides, anything else keeps the default.
+   * Returning the default for a malformed value matters: silently treating "garbage" as host-only
+   * would strand a normal Cloudflare stream with no reflexive candidate.
+   */
+  private static String resolveStunServer(JSONObject iceJson, String defaultValue) {
+    String key = iceJson.has("stun") ? "stun" : (iceJson.has("s") ? "s" : null);
+    if (key == null) return defaultValue;
+    if (iceJson.isNull(key)) return defaultValue;
+
+    String value = iceJson.optString(key, defaultValue);
+    if (value == null) return defaultValue;
+
+    String trimmed = value.trim();
+    if (trimmed.isEmpty()) return ""; // explicit host-only
+    if (trimmed.startsWith("stun:") || trimmed.startsWith("stuns:")) return trimmed;
+    return defaultValue;
+  }
+
+  /**
+   * True when no STUN server is configured, so only local host candidates will be gathered.
+   * This is the SoftAP path: the WHIP server is on the hotspot subnet and reflexive
+   * candidates are useless.
+   */
+  public boolean isHostOnlyIce() {
+    return stunServer == null || stunServer.trim().isEmpty();
   }
 
   /**

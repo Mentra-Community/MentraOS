@@ -24,8 +24,10 @@ import com.mentra.asg_client.camera.CameraNeoService;
 import com.mentra.asg_client.io.hardware.core.HardwareManagerFactory;
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
 import com.mentra.asg_client.io.network.utils.HotspotAwareNetworkChangeDetector;
+import com.mentra.asg_client.io.streaming.config.IcePostPolicy;
 import com.mentra.asg_client.io.streaming.config.WhipStreamConfig;
 import com.mentra.asg_client.io.streaming.interfaces.StreamingStatusCallback;
+import com.mentra.asg_client.io.streaming.trace.SoftApTrace;
 import com.mentra.asg_client.service.core.constants.BatteryConstants;
 import com.mentra.asg_client.service.system.core.SystemControllerFactory;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
@@ -147,6 +149,10 @@ public class WhipStreamingService extends Service {
   private static final long ICE_GATHER_POST_TIMEOUT_MS = 1500L;
   private static final long ICE_CONNECT_TIMEOUT_MS = 8000L;
   private volatile boolean mWhipOfferPosted = false;
+  /** ICE mode for the current negotiation; HOST_ONLY on the SoftAP path. */
+  private volatile IcePostPolicy.Mode mIceMode = IcePostPolicy.Mode.STUN;
+  /** Set once a private-subnet {@code typ host} candidate is gathered. */
+  private volatile boolean mHasHotspotHostCandidate = false;
   private volatile boolean mWhipStreamingNotified = false;
   /** Bumped on each new PeerConnection so queued ICE/HTTP callbacks cannot act on a later negotiation. */
   private volatile int mNegotiationGeneration = 0;
@@ -587,6 +593,9 @@ public class WhipStreamingService extends Service {
     }
 
     mIceCandidateCount = 0;
+    mIceMode = IcePostPolicy.modeForStunServer(stunServer);
+    mHasHotspotHostCandidate = false;
+    SoftApTrace.stage("ice_configured", "mode", mIceMode, "stunServers", iceServers.size());
 
     PeerConnection.RTCConfiguration rtcConfig =
         new PeerConnection.RTCConfiguration(iceServers);
@@ -625,6 +634,13 @@ public class WhipStreamingService extends Service {
           @Override
           public void onSetSuccess() {
             if (generation != mNegotiationGeneration) return;
+            if (!IcePostPolicy.schedulesGatherTimeout(mIceMode)) {
+              // Host-only: the cap would post before GATHERING_COMPLETE and could ship an
+              // offer missing the hotspot candidate. Local gathering is fast, so wait.
+              Log.d(TAG, "Local description set, host-only ICE: posting on gathering complete");
+              SoftApTrace.stage("local_description_set", "postTrigger", "gathering_complete");
+              return;
+            }
             Log.d(TAG, "Local description set, posting WHIP offer after first srflx or "
                 + ICE_GATHER_POST_TIMEOUT_MS + "ms");
             mPostOfferTimeoutRunnable = () -> {
@@ -776,12 +792,36 @@ public class WhipStreamingService extends Service {
     Log.i(TAG, label + " video section:\n" + section);
   }
 
+  /** Map the human-readable trigger string onto the policy enum. */
+  private static IcePostPolicy.Trigger triggerFor(String reason) {
+    if ("srflx".equals(reason)) return IcePostPolicy.Trigger.SRFLX;
+    if ("timeout".equals(reason)) return IcePostPolicy.Trigger.TIMEOUT;
+    return IcePostPolicy.Trigger.GATHERING_COMPLETE;
+  }
+
   /**
-   * POST the local SDP once. Triggered by first srflx, the gather timeout, or
-   * GATHERING COMPLETE — whichever wins. Later triggers are no-ops.
+   * POST the local SDP once. In the default STUN path this is triggered by first srflx, the
+   * gather timeout, or GATHERING COMPLETE — whichever wins. In host-only (SoftAP) mode only
+   * GATHERING COMPLETE posts, and only once a hotspot host candidate exists. Later triggers
+   * are no-ops.
    */
   private void postOfferIfReady(String reason, int generation) {
     PeerConnection peerConnection;
+    IcePostPolicy.Decision decision =
+        IcePostPolicy.decide(mIceMode, triggerFor(reason), mHasHotspotHostCandidate);
+    if (decision == IcePostPolicy.Decision.WAIT) {
+      SoftApTrace.stage("whip_post_deferred", "trigger", reason, "mode", mIceMode);
+      return;
+    }
+    if (decision == IcePostPolicy.Decision.FAIL_NO_HOTSPOT_CANDIDATE) {
+      SoftApTrace.stage("whip_post_blocked",
+          "reason", IcePostPolicy.REASON_NO_HOTSPOT_CANDIDATE,
+          "candidates", mIceCandidateCount);
+      handleStartupFailure(IcePostPolicy.REASON_NO_HOTSPOT_CANDIDATE,
+          "ICE gathering completed without a hotspot host candidate");
+      return;
+    }
+
     synchronized (mStateLock) {
       if (generation != mNegotiationGeneration) {
         return;
@@ -1134,6 +1174,10 @@ public class WhipStreamingService extends Service {
     public void onIceCandidate(IceCandidate candidate) {
       if (isStale()) return;
       mIceCandidateCount++;
+      if (IcePostPolicy.isHotspotHostCandidate(candidate.sdp)) {
+        mHasHotspotHostCandidate = true;
+        SoftApTrace.stage("ice_hotspot_candidate", "candidate", candidate.sdp);
+      }
       if (candidate.sdp != null && candidate.sdp.contains("typ srflx")) {
         mMainHandler.post(() -> {
           if (isStale()) return;

@@ -188,11 +188,18 @@ export type {
   MeetingPhase,
   MeetingProvider,
   MeetingVideoSource,
+  MeetingWhepVideoSource,
+  MeetingSoftApVideoSource,
   MeetingParticipant,
   MeetingParticipantState,
   MeetingMediaSource,
 } from "./modules/meeting"
-export {MEETING_HOST_UPDATE_MESSAGE, parseMeetingMediaSource, parseMeetingParticipants} from "./modules/meeting"
+export {
+  MEETING_HOST_UPDATE_MESSAGE,
+  parseMeetingMediaSource,
+  parseMeetingParticipants,
+  validateMeetingVideoSource,
+} from "./modules/meeting"
 
 // Permission types
 export type {PermissionType, PermissionRecord} from "./session"
