@@ -92,7 +92,11 @@ jobs:
           distribution: "temurin"
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v2
+        uses: android-actions/setup-android@v3
+        with:
+          # The retired `tools` package download is no longer a valid ZIP.
+          # Gradle installs the project's platform/build-tools/NDK versions.
+          packages: platform-tools
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
