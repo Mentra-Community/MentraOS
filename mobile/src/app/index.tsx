@@ -473,7 +473,7 @@ export default function InitScreen() {
 
         {(((state === "connection" || state === "auth") && !isBlockedByVersion) ||
           (state === "outdated" && canSkipUpdate)) && (
-          <Button flexContainer preset="secondary" onPress={navigateToDestination} tx="versionCheck:continueAnyway" />
+          <Button flexContainer preset="secondary" onPress={checkLoggedIn} tx="versionCheck:continueAnyway" />
         )}
       </View>
     </Screen>

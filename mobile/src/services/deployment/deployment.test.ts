@@ -354,19 +354,30 @@ describe("resolveDeploymentCandidate", () => {
     })
   })
 
-  it("reads manifests when React Native fetch does not expose a streaming body", async () => {
-    const fetch = jest.fn(async () => response(JSON.stringify(manifest()), {streamed: false}))
-
-    await expect(resolveDeploymentCandidate(WORKSPACE, {fetch})).resolves.toMatchObject({
-      workspaceOrigin: WORKSPACE,
-    })
-  })
-
-  it("enforces the manifest size limit without a streaming response body", async () => {
-    const fetch = jest.fn(async () => response("x".repeat(300_000), {streamed: false}))
+  it("fails closed when a custom fetch does not expose a streaming body", async () => {
+    const unstreamed = response(JSON.stringify(manifest()), {streamed: false})
+    unstreamed.text = jest.fn()
+    const fetch = jest.fn(async () => unstreamed)
 
     await expect(resolveDeploymentCandidate(WORKSPACE, {fetch})).rejects.toMatchObject({
-      code: "response-too-large",
+      code: "invalid-manifest",
+    })
+    expect(unstreamed.text).not.toHaveBeenCalled()
+  })
+
+  it("rejects malformed UTF-8 before parsing the manifest", async () => {
+    const malformed = response("")
+    Object.defineProperty(malformed, "body", {
+      value: new ReadableStream({
+        start(controller) {
+          controller.enqueue(new Uint8Array([0xc3, 0x28]))
+          controller.close()
+        },
+      }),
+    })
+    await expect(resolveDeploymentCandidate(WORKSPACE, {fetch: async () => malformed})).rejects.toMatchObject({
+      code: "invalid-manifest",
+      message: "Workspace manifest body is not valid UTF-8.",
     })
   })
 

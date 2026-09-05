@@ -121,12 +121,29 @@ ACS_CHATS_SCOPE_ID="$(jq -r '.oauth2PermissionScopes[] | select(.value == "Teams
 [[ -n "$ACS_CALLS_SCOPE_ID" && -n "$ACS_CHATS_SCOPE_ID" ]] || { printf 'Required ACS delegated scopes were not found.\n' >&2; exit 1; }
 
 mobile_app="$(az ad app show --id "$MOBILE_OBJECT_ID" -o json)"
+# This helper owns the required baseline, not every future delegated permission
+# an administrator may add. Preserve valid extra scopes on these two resources,
+# while dropping disabled/deleted scope ids that make admin consent fail.
+CORE_VALID_SCOPE_IDS="$(jq -c '[.api.oauth2PermissionScopes[]? | select(.isEnabled == true and .value != "mentra.runtime") | .id]' <<<"$core_app")"
+ACS_VALID_SCOPE_IDS="$(jq -c '[.oauth2PermissionScopes[]? | select(.isEnabled != false) | .id]' <<<"$ACS_SP")"
 mobile_body="$(jq -cn \
   --arg ios "$IOS_REDIRECT" --arg apk "$APK_REDIRECT" --arg play "$PLAY_REDIRECT" \
   --arg core_app "$CORE_CLIENT_ID" --arg session_scope "$CORE_SCOPE_ID" \
   --arg acs_app "$ACS_APP_ID" --arg calls "$ACS_CALLS_SCOPE_ID" --arg chats "$ACS_CHATS_SCOPE_ID" \
+  --argjson core_valid_scopes "$CORE_VALID_SCOPE_IDS" --argjson acs_valid_scopes "$ACS_VALID_SCOPE_IDS" \
   --argjson existing "$mobile_app" \
-  '{isFallbackPublicClient:true, publicClient:{redirectUris: (($existing.publicClient.redirectUris // []) + [$ios,$apk,$play] | unique)}, requiredResourceAccess: (((($existing.requiredResourceAccess // []) | map(select(.resourceAppId != $core_app and .resourceAppId != $acs_app)))) + [{resourceAppId:$core_app,resourceAccess:[{id:$session_scope,type:"Scope"}]},{resourceAppId:$acs_app,resourceAccess:[{id:$calls,type:"Scope"},{id:$chats,type:"Scope"}]}])}')"
+  'def preserved_scopes($resource; $valid):
+     [($existing.requiredResourceAccess // [])[]
+      | select(.resourceAppId == $resource)
+      | (.resourceAccess // [])[]
+      | select(.type == "Scope")
+      | select(.id as $id | $valid | index($id))];
+   {isFallbackPublicClient:true,
+    publicClient:{redirectUris: (($existing.publicClient.redirectUris // []) + [$ios,$apk,$play] | unique)},
+    requiredResourceAccess:
+      (((($existing.requiredResourceAccess // []) | map(select(.resourceAppId != $core_app and .resourceAppId != $acs_app))))
+       + [{resourceAppId:$core_app,resourceAccess:((preserved_scopes($core_app; $core_valid_scopes) + [{id:$session_scope,type:"Scope"}]) | unique_by(.id))},
+          {resourceAppId:$acs_app,resourceAccess:((preserved_scopes($acs_app; $acs_valid_scopes) + [{id:$calls,type:"Scope"},{id:$chats,type:"Scope"}]) | unique_by(.id))}])}')"
 az rest --method PATCH --uri "https://graph.microsoft.com/v1.0/applications/$MOBILE_OBJECT_ID" \
   --headers 'Content-Type=application/json' --body "$mobile_body" --output none
 

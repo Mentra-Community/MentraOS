@@ -75,7 +75,10 @@ export async function resolveDeploymentCandidate(
   let response: Response
   let body: string
   try {
-    response = await (options.fetch ?? globalThis.fetch)(manifestUrl, {
+    // React Native's global fetch does not expose a streaming response body.
+    // Expo's native fetch does on both Android and iOS, which lets discovery
+    // enforce the byte limit before materializing an untrusted manifest.
+    response = await (options.fetch ?? expoStreamingFetch)(manifestUrl, {
       headers: {Accept: "application/json"},
       redirect: "manual",
       signal: controller.signal,
@@ -283,15 +286,11 @@ async function readResponseBody(response: Response, maxBytes: number): Promise<s
 
   const reader = response.body?.getReader()
   if (!reader) {
-    // React Native's fetch implementation does not expose Response.body as a
-    // ReadableStream. Reject an advertised oversized response before reading,
-    // then enforce the same limit after materializing the body. Browser-like
-    // runtimes continue to use the bounded streaming path below.
-    const value = await response.text()
-    if (utf8ByteLength(value) > maxBytes) {
-      throw new DeploymentResolutionError("Workspace manifest is too large.", "response-too-large")
-    }
-    return value
+    // Do not fall back to response.text(): React Native buffers the complete
+    // response before the caller can enforce maxBytes and replacement-decodes
+    // malformed UTF-8. The production Expo fetch path always streams; custom
+    // fetch implementations must provide the same bounded contract.
+    throw new DeploymentResolutionError("Workspace manifest response cannot be read safely.", "invalid-manifest")
   }
 
   const decoder = new TextDecoder("utf-8", {fatal: true})
@@ -316,27 +315,11 @@ async function readResponseBody(response: Response, maxBytes: number): Promise<s
   }
 }
 
-function utf8ByteLength(value: string): number {
-  let bytes = 0
-  for (let index = 0; index < value.length; index += 1) {
-    const codeUnit = value.charCodeAt(index)
-    if (codeUnit < 0x80) {
-      bytes += 1
-    } else if (codeUnit < 0x800) {
-      bytes += 2
-    } else if (codeUnit >= 0xd800 && codeUnit <= 0xdbff && index + 1 < value.length) {
-      const nextCodeUnit = value.charCodeAt(index + 1)
-      if (nextCodeUnit >= 0xdc00 && nextCodeUnit <= 0xdfff) {
-        bytes += 4
-        index += 1
-      } else {
-        bytes += 3
-      }
-    } else {
-      bytes += 3
-    }
-  }
-  return bytes
+async function expoStreamingFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  // Keep the native module lazy so unit tests that inject a fetch double do not
+  // need to initialize Expo's native Response base class.
+  const {fetch} = await import("expo/fetch")
+  return fetch(input as string | URL, init)
 }
 
 function allConfiguredUrls(manifest: DeploymentManifest): string[] {
