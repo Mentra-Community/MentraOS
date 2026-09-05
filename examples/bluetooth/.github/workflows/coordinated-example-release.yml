@@ -192,6 +192,7 @@ jobs:
             }
             update_lockfile examples/react-native
             update_lockfile examples/react-native-elevenlabs-audio
+            update_lockfile examples/react-native-macos
             cp "$canonical_payload" .github/coordinated-example-release.json
             git config user.name "mentra-release-bot"
             git config user.email "actions@users.noreply.github.com"
@@ -203,7 +204,10 @@ jobs:
               examples/react-native/package.json \
               examples/react-native/bun.lock \
               examples/react-native-elevenlabs-audio/package.json \
-              examples/react-native-elevenlabs-audio/bun.lock
+              examples/react-native-elevenlabs-audio/bun.lock \
+              examples/macos/Package.swift \
+              examples/react-native-macos/package.json \
+              examples/react-native-macos/bun.lock
             git commit -m "chore(release): synchronize examples to $RELEASE_IDENTITY [skip coordinated request]"
             release_commit=$(git rev-parse HEAD)
             git push origin "HEAD:refs/heads/$CANDIDATE_BRANCH"

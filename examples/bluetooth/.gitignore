@@ -7,6 +7,16 @@ build
 .DS_Store
 __pycache__/
 *.pyc
+.build/
+.swiftpm/
+examples/react-native-macos/macos/Podfile.lock
+examples/macos/Package.resolved
+examples/react-native-macos/macos/Pods/
+examples/react-native-macos/macos/build/
+examples/react-native-macos/macos/*.xcworkspace/
+examples/react-native-macos/macos/**/*.xcuserstate
+examples/react-native-macos/macos/**/xcuserdata/
+examples/react-native-macos/macos/.xcode.env.local
 
 # Keep customer-facing native example source projects even though generic
 # React Native generated `android` / `ios` directories are ignored above.

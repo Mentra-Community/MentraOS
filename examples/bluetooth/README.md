@@ -2,15 +2,21 @@
 
 Documentation and example apps for connecting to smart glasses directly from mobile apps over Bluetooth, powered by MentraOS. This is the supported Mentra Bluetooth SDK for mobile apps and works with MentraOS compatible glasses, including Mentra Live, Even Realities, Vuzix Z100, NIMO, and more.
 
-The SDK is available in three first-class forms:
+The SDK is available in these first-class forms:
 
 | Platform | Package | Example |
 | --- | --- | --- |
 | Android | `com.mentraglass:bluetooth-sdk` | [`examples/android`](examples/android/README.md) |
 | iOS | `MentraBluetoothSDK` Swift package | [`examples/ios`](examples/ios/README.md) |
+| Native macOS (AppKit / SwiftUI) | `MentraBluetoothSDK` Swift package | [`examples/macos`](examples/macos/README.md) |
 | React Native / Expo | `@mentra/bluetooth-sdk` | [`examples/react-native`](examples/react-native/README.md) |
+| React Native macOS | `@mentra/bluetooth-sdk` | [`examples/react-native-macos`](examples/react-native-macos/README.md) |
 
 Use the latest SDK version published by Mentra for your app. This repo can be cloned and used without any local path to the MentraOS source tree.
+
+The two native Mac examples use the published SDK packages. Their READMEs also
+document optional source overrides for SDK development. Native macOS support is
+separate from running the iOS TestFlight app on an Apple silicon Mac.
 
 ## Documentation
 
@@ -22,7 +28,9 @@ Read the first-party [Mentra Live Bluetooth SDK docs](https://docs.mentraglass.c
 2. Run the example that matches your app stack:
    - [Android Kotlin / Jetpack Compose](examples/android/README.md)
    - [iOS SwiftUI](examples/ios/README.md)
+   - [Native macOS AppKit](examples/macos/README.md)
    - [React Native / Expo](examples/react-native/README.md)
+   - [React Native macOS](examples/react-native-macos/README.md)
    - [React Native ElevenLabs audio repro](examples/react-native-elevenlabs-audio/README.md)
 3. Keep [API Reference](docs/api-reference.md), [Display Guide](docs/display-guide.md), [Audio Guide](docs/audio-guide.md), and [Hardware Integration Notes](docs/hardware-integration.md) nearby while building.
 4. Use [Troubleshooting](docs/troubleshooting.md) and the [Production Checklist](docs/production-checklist.md) before shipping.
@@ -56,6 +64,30 @@ Android APKs install directly from the phone browser (enable installs from unkno
 - Handling button, touch, swipe, head-up, battery, Wi-Fi, hotspot, stream, photo, video upload, OTA, audio, and SDK diagnostic events.
 - Controlling model-supported features such as brightness, dashboard position, head-up angle, gallery mode, button photo/video settings, speaker playback, RGB LED patterns, Wi-Fi, hotspot, microphone, camera capture settings, and streaming.
 - Running local media upload and RTMP/SRT/WebRTC streaming demos from a fresh clone.
+
+## Photo Capture Screenshots
+
+Real photos taken with Mentra Live and previewed in each app, captured on physical
+hardware. Click a screenshot for the full-size image.
+
+| Native macOS (AppKit) | React Native macOS |
+| --- | --- |
+| [![Native macOS app after photo capture](docs/images/examples/native-macos.jpg)](docs/images/examples/native-macos.jpg) | [![React Native macOS app after photo capture](docs/images/examples/react-native-macos.jpg)](docs/images/examples/react-native-macos.jpg) |
+
+| Native iOS (SwiftUI) | React Native on iOS |
+| --- | --- |
+| [<img src="docs/images/examples/native-ios.png" alt="Native iOS camera with a captured photo preview" width="320">](docs/images/examples/native-ios.png) | [<img src="docs/images/examples/react-native-ios.png" alt="React Native iOS camera with a captured photo preview" width="320">](docs/images/examples/react-native-ios.png) |
+
+| Native Android (Kotlin / Compose) | React Native on Android |
+| --- | --- |
+| [<img src="docs/images/examples/native-android.png" alt="Native Android camera with a captured photo preview" width="320">](docs/images/examples/native-android.png) | [<img src="docs/images/examples/react-native-android.png" alt="React Native Android camera with a captured photo preview" width="320">](docs/images/examples/react-native-android.png) |
+
+The React Native Android capture also demonstrates successful Bluetooth fallback
+when Wi-Fi photo delivery fails.
+
+The [ElevenLabs audio repro](examples/react-native-elevenlabs-audio/README.md) is
+audio-only and has no camera preview. See the [capture notes](docs/images/examples/README.md)
+for screenshot provenance.
 
 ## Repository Map
 

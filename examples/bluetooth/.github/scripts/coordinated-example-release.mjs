@@ -140,11 +140,22 @@ export function synchronizeExampleVersions(rootDir, releaseIdentity) {
   )
   writeFileSync(projectDefinitionPath, projectDefinition)
 
+  const macPackagePath = path.join(rootDir, "examples/macos/Package.swift")
+  writeFileSync(macPackagePath, replaceExactlyOnce(
+    readFileSync(macPackagePath, "utf8"),
+    /^let sdkVersion = ".*"$/gm,
+    `let sdkVersion = "${releaseIdentity}"`,
+    "native macOS SDK version",
+  ))
+
   updateJsonDependency(path.join(rootDir, "examples/react-native/package.json"), {
     "@mentra/bluetooth-sdk": releaseIdentity,
     "@mentra/engine": releaseIdentity,
   })
   updateJsonDependency(path.join(rootDir, "examples/react-native-elevenlabs-audio/package.json"), {
+    "@mentra/bluetooth-sdk": releaseIdentity,
+  })
+  updateJsonDependency(path.join(rootDir, "examples/react-native-macos/package.json"), {
     "@mentra/bluetooth-sdk": releaseIdentity,
   })
 }
