@@ -4,7 +4,7 @@ import {ActivityIndicator, ScrollView, View} from "react-native"
 
 import {WorkspaceBrand} from "@/components/auth/WorkspaceBrand"
 import {Button, Header, Screen, Text} from "@/components/ignite"
-import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
+import {focusEffectPreventBack, type PreventBackEvent} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {useDeployment} from "@/services/deployment"
@@ -36,7 +36,7 @@ export default function WorkspaceConfirmScreen() {
   // step with the header action so activation cannot be abandoned midway.
   focusEffectPreventBack(
     useCallback(
-      (event) => {
+      (event?: PreventBackEvent) => {
         // iOS emits beforeRemove for forward replacements too. Only an
         // actual back action should cancel enrollment.
         if (event && event.actionType !== "GO_BACK" && event.actionType !== "POP") return
