@@ -1174,6 +1174,9 @@ struct ViewState {
 
     func handleDeviceDisconnected() {
         Bridge.log("MAN: Device disconnected")
+        #if os(macOS)
+        audioRouteObserver = nil
+        #endif
         resetSystemTimeSync()
         resetMicHealth()
         DeviceStore.shared.apply("glasses", "headUp", false)
