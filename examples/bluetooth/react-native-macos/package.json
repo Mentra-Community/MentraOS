@@ -1,0 +1,27 @@
+{
+  "name": "mentra-bluetooth-sdk-macos-example",
+  "version": "0.1.0",
+  "private": true,
+  "main": "index.js",
+  "scripts": {
+    "start": "react-native start",
+    "macos": "react-native run-macos",
+    "typecheck": "node typecheck.cjs"
+  },
+  "dependencies": {
+    "@mentra/bluetooth-sdk": "3.2.0-dev.127",
+    "expo": "54.0.37",
+    "react": "19.1.4",
+    "react-native": "0.81.6",
+    "react-native-macos": "0.81.9"
+  },
+  "devDependencies": {
+    "babel-preset-expo": "54.0.12",
+    "@babel/core": "^7.25.2",
+    "@react-native-community/cli": "^20.0.0",
+    "@react-native/babel-preset": "0.81.6",
+    "@react-native/metro-config": "0.81.6",
+    "@types/react": "^19.1.4",
+    "typescript": "~5.9.2"
+  }
+}

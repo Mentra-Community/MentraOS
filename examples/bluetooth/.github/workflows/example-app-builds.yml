@@ -249,6 +249,66 @@ jobs:
           path: ${{ steps.collect.outputs.path }}
           if-no-files-found: error
 
+  macos:
+    name: Native macOS example
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build AppKit app
+        working-directory: examples/macos
+        run: bash run.sh --build-only
+
+  react-native-macos:
+    name: React Native macOS example
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      RCT_NO_LAUNCH_PACKAGER: 1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+
+      - name: Install dependencies
+        working-directory: examples/react-native-macos
+        run: bun install --frozen-lockfile
+
+      - name: Type check TypeScript
+        working-directory: examples/react-native-macos
+        run: bun run typecheck
+
+      - name: Install CocoaPods dependencies
+        working-directory: examples/react-native-macos/macos
+        run: pod install
+
+      - name: Build native app and bundle JavaScript
+        working-directory: examples/react-native-macos/macos
+        run: |
+          xcodebuild \
+            -workspace mentra-bluetooth-sdk-macos-example.xcworkspace \
+            -scheme mentra-bluetooth-sdk-macos-example-macOS \
+            -configuration Release \
+            -destination 'platform=macOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Verify embedded JavaScript bundle
+        working-directory: examples/react-native-macos/macos
+        run: test -s build/Build/Products/Release/mentra-bluetooth-sdk-macos-example.app/Contents/Resources/main.jsbundle
+
   react-native:
     name: React Native example
     runs-on: ubuntu-latest
