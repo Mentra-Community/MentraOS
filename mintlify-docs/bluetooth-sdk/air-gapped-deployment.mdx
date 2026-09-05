@@ -27,21 +27,16 @@ Mentra publishes coordinated releases. One release identity, such as `X.Y.Z` or
 | Self-hosted OTA bundle   | Recorded in the completed release record           |
 | Completed release record | `mentra-release-<release-identity>.json`           |
 
-Each release has its own GitHub page:
-
-```text
-https://github.com/Mentra-Community/MentraOS/releases/tag/mentra-v<release-identity>
-```
-
-For example, release `3.1.0-beta.12` is at
-`https://github.com/Mentra-Community/MentraOS/releases/tag/mentra-v3.1.0-beta.12`.
+Open the [release artifacts for `{{release-version}}`]({{release-artifacts-url}}).
+Prerelease artifacts are grouped by base production version; each exact release
+has its own completed release record within that group.
 
 <Warning>
-Use a release only after its page contains
+Use a release only after its artifact page contains
 `mentra-release-<release-identity>.json`. That completed release record is written
 only after the required SDK publications, OTA assets, and release verification
-succeed. A page that says the release is still in progress is not ready for a
-customer deployment.
+succeed. Other completed releases in the same group do not make a release with
+a missing completed record ready for customer deployment.
 </Warning>
 
 ## 1. Pin The Exact SDK Release
@@ -53,7 +48,7 @@ such as `dev`, `beta`, or `latest` in a controlled deployment.
   <Tab title="React Native / Expo">
 
 ```bash
-bun add @mentra/bluetooth-sdk@X.Y.Z
+bun add @mentra/bluetooth-sdk@{{release-version}}
 ```
 
   </Tab>
@@ -61,7 +56,7 @@ bun add @mentra/bluetooth-sdk@X.Y.Z
 
 ```kotlin
 dependencies {
-    implementation("com.mentraglass:bluetooth-sdk:X.Y.Z")
+    implementation("com.mentraglass:bluetooth-sdk:{{release-version}}")
 }
 ```
 
@@ -71,7 +66,7 @@ Central.
   </Tab>
   <Tab title="iOS">
 
-Add the following Swift package and select the exact `X.Y.Z` tag:
+Add the following Swift package and select the exact `{{release-version}}` tag:
 
 ```text
 https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git
@@ -155,20 +150,22 @@ First download the completed release record from the selected release page:
 mentra-release-<release-identity>.json
 ```
 
-You can download it in a browser or with the GitHub CLI after replacing the
-example identity:
+You can download it in a browser or with the GitHub CLI. For another release,
+change both the identity and its artifact-page URL:
 
 ```bash
-RELEASE_IDENTITY=X.Y.Z
-gh release download "mentra-v${RELEASE_IDENTITY}" \
+RELEASE_IDENTITY={{release-version}}
+RELEASE_PAGE="{{release-artifacts-url}}"
+gh release download "${RELEASE_PAGE##*/}" \
   --repo Mentra-Community/MentraOS \
   --pattern "mentra-release-${RELEASE_IDENTITY}.json"
 ```
 
 Treat that record as the authority for the selected bundle's filename and URL.
-A prerelease normally points at a same-version bundle on its own release page. A
-stable release intentionally promotes the exact tested beta OTA bytes, so its
-record can point at a beta-named bundle on the beta release page instead.
+A prerelease normally points at a same-version bundle in its base-version
+artifact group. A stable release intentionally promotes the exact tested beta
+OTA bytes, so its record can point at a beta-named bundle in that prerelease
+artifact group instead.
 
 Resolve and download exactly the bundle selected by the record:
 
