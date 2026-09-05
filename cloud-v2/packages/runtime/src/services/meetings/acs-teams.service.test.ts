@@ -258,9 +258,46 @@ describe("ACS guest credentials", () => {
       await mintAcsGuestToken("tenant:idle-user")
       now += 4 * 60 * 60 * 1000 + 1
       await mintAcsGuestToken("tenant:new-user")
+      await new Promise((resolve) => setTimeout(resolve, 0))
 
       expect(deletedUsers).toEqual(["guest-user"])
       expect(getAcsGuestStateSizeForTests()).toBe(1)
+    } finally {
+      Date.now = originalNow
+    }
+  })
+
+  test("evicts idle state when ACS reports the identity is already gone", async () => {
+    process.env.ACS_CONNECTION_STRING = "endpoint=https://test.communication.azure.com/;accesskey=test"
+    const originalNow = Date.now
+    let now = 1_000_000
+    let creates = 0
+    Date.now = () => now
+    try {
+      setAcsIdentityClientForTests({
+        async createUserAndToken() {
+          creates += 1
+          return {
+            token: `guest-token-${creates}`,
+            expiresOn: new Date(now + 60 * 60 * 1000),
+            user: {communicationUserId: `guest-user-${creates}`},
+          }
+        },
+        async deleteUser() {
+          throw {status: 404, code: "IdentityNotFound"}
+        },
+        async getTokenForTeamsUser() {
+          throw new Error("not used")
+        },
+      } satisfies AcsIdentityClient)
+
+      await mintAcsGuestToken("tenant:gone-user")
+      now += 4 * 60 * 60 * 1000 + 1
+      await mintAcsGuestToken("tenant:new-user")
+
+      const replacement = await mintAcsGuestToken("tenant:gone-user")
+      expect(replacement.acsUserId).toBe("guest-user-3")
+      expect(getAcsGuestStateSizeForTests()).toBe(2)
     } finally {
       Date.now = originalNow
     }

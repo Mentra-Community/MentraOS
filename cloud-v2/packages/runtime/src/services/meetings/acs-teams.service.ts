@@ -315,16 +315,23 @@ function startGuestStateCleanup(userId: string, state: GuestMintState): void {
     ? Promise.resolve().then(() => client.deleteUser!({communicationUserId: state.acsUserId!}))
     : Promise.resolve()
   const cleanup = deletion
-    .then(() => {
-      if (guestMintState.get(userId) === state && state.cleanupInFlight === cleanup && !state.inFlight) {
+    .then(
+      () => true,
+      (error) => isMissingAcsUserError(error),
+    )
+    .then((identityIsGone) => {
+      if (
+        identityIsGone &&
+        guestMintState.get(userId) === state &&
+        state.cleanupInFlight === cleanup &&
+        !state.inFlight
+      ) {
         guestMintState.delete(userId)
       }
     })
-    .catch(() => {
-      // Retain the mapping when ACS cleanup fails so we never lose track of a
-      // persistent identity and create an orphan on the next request.
-    })
     .finally(() => {
+      // Retain the mapping when ACS cleanup fails transiently so we never lose
+      // track of a persistent identity and create an orphan on the next request.
       if (guestMintState.get(userId) === state && state.cleanupInFlight === cleanup) {
         state.cleanupInFlight = undefined
       }
