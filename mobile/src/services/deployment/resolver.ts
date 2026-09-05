@@ -283,11 +283,15 @@ async function readResponseBody(response: Response, maxBytes: number): Promise<s
 
   const reader = response.body?.getReader()
   if (!reader) {
-    // Do not fall back to response.text(): it materializes an attacker-sized
-    // body before the limit can be checked. Current Mentra App runtimes expose
-    // Fetch response bodies as ReadableStreams; fail closed if that contract is
-    // unavailable.
-    throw new DeploymentResolutionError("Workspace manifest response cannot be streamed.", "network")
+    // React Native's fetch implementation does not expose Response.body as a
+    // ReadableStream. Reject an advertised oversized response before reading,
+    // then enforce the same limit after materializing the body. Browser-like
+    // runtimes continue to use the bounded streaming path below.
+    const value = await response.text()
+    if (utf8ByteLength(value) > maxBytes) {
+      throw new DeploymentResolutionError("Workspace manifest is too large.", "response-too-large")
+    }
+    return value
   }
 
   const decoder = new TextDecoder("utf-8", {fatal: true})
@@ -310,6 +314,29 @@ async function readResponseBody(response: Response, maxBytes: number): Promise<s
     if (error instanceof DeploymentResolutionError) throw error
     throw new DeploymentResolutionError("Workspace manifest body is not valid UTF-8.", "invalid-manifest")
   }
+}
+
+function utf8ByteLength(value: string): number {
+  let bytes = 0
+  for (let index = 0; index < value.length; index += 1) {
+    const codeUnit = value.charCodeAt(index)
+    if (codeUnit < 0x80) {
+      bytes += 1
+    } else if (codeUnit < 0x800) {
+      bytes += 2
+    } else if (codeUnit >= 0xd800 && codeUnit <= 0xdbff && index + 1 < value.length) {
+      const nextCodeUnit = value.charCodeAt(index + 1)
+      if (nextCodeUnit >= 0xdc00 && nextCodeUnit <= 0xdfff) {
+        bytes += 4
+        index += 1
+      } else {
+        bytes += 3
+      }
+    } else {
+      bytes += 3
+    }
+  }
+  return bytes
 }
 
 function allConfiguredUrls(manifest: DeploymentManifest): string[] {

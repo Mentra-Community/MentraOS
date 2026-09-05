@@ -103,7 +103,6 @@ if [[ -z "$CORE_SCOPE_ID" ]]; then
 fi
 
 core_app="$(az ad app show --id "$CORE_OBJECT_ID" -o json)"
-LEGACY_SCOPE_IDS="$(jq -c '[.api.oauth2PermissionScopes // [] | .[] | select(.value == "mentra.runtime") | .id]' <<<"$core_app")"
 core_body="$(jq -cn \
   --arg uri "api://$CORE_CLIENT_ID" \
   --arg scope_id "$CORE_SCOPE_ID" \
@@ -125,10 +124,9 @@ mobile_app="$(az ad app show --id "$MOBILE_OBJECT_ID" -o json)"
 mobile_body="$(jq -cn \
   --arg ios "$IOS_REDIRECT" --arg apk "$APK_REDIRECT" --arg play "$PLAY_REDIRECT" \
   --arg core_app "$CORE_CLIENT_ID" --arg session_scope "$CORE_SCOPE_ID" \
-  --argjson legacy_scopes "$LEGACY_SCOPE_IDS" \
   --arg acs_app "$ACS_APP_ID" --arg calls "$ACS_CALLS_SCOPE_ID" --arg chats "$ACS_CHATS_SCOPE_ID" \
   --argjson existing "$mobile_app" \
-  '{isFallbackPublicClient:true, publicClient:{redirectUris: (($existing.publicClient.redirectUris // []) + [$ios,$apk,$play] | unique)}, requiredResourceAccess: (((($existing.requiredResourceAccess // []) | map(select(.resourceAppId != $core_app and .resourceAppId != $acs_app)))) + [{resourceAppId:$core_app,resourceAccess: (((($existing.requiredResourceAccess // []) | map(select(.resourceAppId == $core_app)) | .[0].resourceAccess // [] | map(select(.id as $id | $legacy_scopes | index($id) | not))) + [{id:$session_scope,type:"Scope"}]) | unique_by(.id))},{resourceAppId:$acs_app,resourceAccess: (((($existing.requiredResourceAccess // []) | map(select(.resourceAppId == $acs_app)) | .[0].resourceAccess // []) + [{id:$calls,type:"Scope"},{id:$chats,type:"Scope"}]) | unique_by(.id))}])}')"
+  '{isFallbackPublicClient:true, publicClient:{redirectUris: (($existing.publicClient.redirectUris // []) + [$ios,$apk,$play] | unique)}, requiredResourceAccess: (((($existing.requiredResourceAccess // []) | map(select(.resourceAppId != $core_app and .resourceAppId != $acs_app)))) + [{resourceAppId:$core_app,resourceAccess:[{id:$session_scope,type:"Scope"}]},{resourceAppId:$acs_app,resourceAccess:[{id:$calls,type:"Scope"},{id:$chats,type:"Scope"}]}])}')"
 az rest --method PATCH --uri "https://graph.microsoft.com/v1.0/applications/$MOBILE_OBJECT_ID" \
   --headers 'Content-Type=application/json' --body "$mobile_body" --output none
 

@@ -60,7 +60,10 @@ function manifest(overrides: Partial<DeploymentManifest> = {}): DeploymentManife
   }
 }
 
-function response(body: string, options: {status?: number; url?: string; contentLength?: number} = {}): Response {
+function response(
+  body: string,
+  options: {status?: number; url?: string; contentLength?: number; streamed?: boolean} = {},
+): Response {
   const status = options.status ?? 200
   const headers = new Headers({"content-type": "application/json"})
   if (options.contentLength !== undefined) headers.set("content-length", String(options.contentLength))
@@ -71,16 +74,20 @@ function response(body: string, options: {status?: number; url?: string; content
     status,
     url: options.url ?? `${WORKSPACE}/.well-known/mentra-deployment.json`,
     headers,
-    body: {
-      getReader: () => ({
-        read: async () => {
-          if (consumed) return {done: true, value: undefined}
-          consumed = true
-          return {done: false, value: encoded}
-        },
-        cancel: async () => undefined,
-      }),
-    },
+    body:
+      options.streamed === false
+        ? null
+        : {
+            getReader: () => ({
+              read: async () => {
+                if (consumed) return {done: true, value: undefined}
+                consumed = true
+                return {done: false, value: encoded}
+              },
+              cancel: async () => undefined,
+            }),
+          },
+    text: async () => body,
   } as Response
 }
 
@@ -343,6 +350,22 @@ describe("resolveDeploymentCandidate", () => {
 
     const streamedLargeFetch = jest.fn(async () => response("x".repeat(300_000)))
     await expect(resolveDeploymentCandidate(WORKSPACE, {fetch: streamedLargeFetch})).rejects.toMatchObject({
+      code: "response-too-large",
+    })
+  })
+
+  it("reads manifests when React Native fetch does not expose a streaming body", async () => {
+    const fetch = jest.fn(async () => response(JSON.stringify(manifest()), {streamed: false}))
+
+    await expect(resolveDeploymentCandidate(WORKSPACE, {fetch})).resolves.toMatchObject({
+      workspaceOrigin: WORKSPACE,
+    })
+  })
+
+  it("enforces the manifest size limit without a streaming response body", async () => {
+    const fetch = jest.fn(async () => response("x".repeat(300_000), {streamed: false}))
+
+    await expect(resolveDeploymentCandidate(WORKSPACE, {fetch})).rejects.toMatchObject({
       code: "response-too-large",
     })
   })
