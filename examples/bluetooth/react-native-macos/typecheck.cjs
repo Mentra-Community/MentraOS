@@ -16,7 +16,6 @@ config.options.paths = {
   'react/*': [path.join(__dirname, 'node_modules/@types/react/*')],
   'react-native': [path.join(__dirname, 'node_modules/react-native-macos')],
   'react-native/*': [path.join(__dirname, 'node_modules/react-native-macos/*')],
-  '*': [path.join(__dirname, 'node_modules/*')],
 };
 
 const sdkRoot = process.env.MENTRA_BLUETOOTH_SDK_PACKAGE_PATH;
@@ -27,6 +26,7 @@ if (sdkRoot) {
     }
   }
   Object.assign(config.options.paths, {
+    '*': [path.join(__dirname, 'node_modules/*')],
     '@mentra/bluetooth-sdk': [path.resolve(sdkRoot, 'src/index.ts')],
     '@mentra/bluetooth-sdk/react': [path.resolve(sdkRoot, 'src/react/index.ts')],
   });

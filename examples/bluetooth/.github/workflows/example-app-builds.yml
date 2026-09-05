@@ -25,9 +25,6 @@ concurrency:
 env:
   CI: true
   GSTREAMER_VERSION: 1.28.2
-  # Temporary source pin for MentraOS #3929. Remove with the source checkouts
-  # once both Mac examples pin a published SDK containing native macOS support.
-  MACOS_SDK_SOURCE_REF: 773543389aec74fba94572b1be265647af93080b
 
 jobs:
   release-contract:
@@ -256,20 +253,9 @@ jobs:
     name: Native macOS example
     runs-on: macos-15
     timeout-minutes: 20
-    env:
-      MENTRA_BLUETOOTH_SDK_PACKAGE_PATH: ${{ github.workspace }}/.ci-sdk/mobile/modules/bluetooth-sdk
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Checkout pinned macOS SDK source
-        uses: actions/checkout@v4
-        with:
-          repository: Mentra-Community/MentraOS
-          ref: ${{ env.MACOS_SDK_SOURCE_REF }}
-          path: .ci-sdk
-          sparse-checkout: mobile/modules/bluetooth-sdk
-          persist-credentials: false
 
       - name: Build AppKit app
         working-directory: examples/macos
@@ -280,20 +266,10 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 45
     env:
-      MENTRA_BLUETOOTH_SDK_PACKAGE_PATH: ${{ github.workspace }}/.ci-sdk/mobile/modules/bluetooth-sdk
       RCT_NO_LAUNCH_PACKAGER: 1
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Checkout pinned macOS SDK source
-        uses: actions/checkout@v4
-        with:
-          repository: Mentra-Community/MentraOS
-          ref: ${{ env.MACOS_SDK_SOURCE_REF }}
-          path: .ci-sdk
-          sparse-checkout: mobile/modules/bluetooth-sdk
-          persist-credentials: false
 
       - name: Set up Node
         uses: actions/setup-node@v4

@@ -9,17 +9,16 @@ OTA availability checking. The complete update UI remains in the phone example.
 
 ## Run
 
-Native macOS support is new on MentraOS `dev`. Until the SDK with that support
-is released, build against the matching SDK source:
+Build with the exact published SwiftPM version in `Package.swift`:
 
 ```bash
 cd examples/macos
-export MENTRA_BLUETOOTH_SDK_PACKAGE_PATH=/absolute/path/to/MentraOS/mobile/modules/bluetooth-sdk
 bash run.sh
 ```
 
-Once a supporting SDK is published and synchronized into this example, omit the
-environment variable to use the exact SwiftPM version in `Package.swift`.
+For SDK development, optionally set
+`MENTRA_BLUETOOTH_SDK_PACKAGE_PATH=/absolute/path/to/MentraOS/mobile/modules/bluetooth-sdk`
+before building. Unset it to return to the published package.
 Use `bash run.sh --build-only` to build without launching.
 Quit this example before rebuilding; the script refuses to overwrite a running
 app instead of silently activating its previous binary.
@@ -59,8 +58,6 @@ Mac app to TestFlight or a download channel.
 
 ## Pull Request CI
 
-The `Native macOS example` job builds the AppKit app without launching it.
-Until the macOS-capable SDK is published, CI uses the exact MentraOS commit in
-`MACOS_SDK_SOURCE_REF` in `.github/workflows/example-app-builds.yml`, not a moving
-branch. Remove that temporary source checkout and override once this example
-pins a published SDK containing native macOS support.
+The `Native macOS example` job builds the AppKit app without launching it,
+using the exact published SwiftPM dependency. No MentraOS source checkout or
+local SDK override is used in CI.

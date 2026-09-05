@@ -14,10 +14,9 @@ The SDK is available in these first-class forms:
 
 Use the latest SDK version published by Mentra for your app. This repo can be cloned and used without any local path to the MentraOS source tree.
 
-Native macOS support is new on `dev`: the two Mac source examples require the
-matching unreleased SDK until its first coordinated publication. Their READMEs
-document the source override. This is separate from running the iOS TestFlight
-app on an Apple silicon Mac.
+The two native Mac examples use the published SDK packages. Their READMEs also
+document optional source overrides for SDK development. Native macOS support is
+separate from running the iOS TestFlight app on an Apple silicon Mac.
 
 ## Documentation
 
