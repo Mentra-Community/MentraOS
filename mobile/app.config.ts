@@ -109,6 +109,10 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
     android: {
       // icon: "./assets/app-icons/ic_launcher.png",
       package: androidPackage,
+      // Keep the current BackHandler behavior while API 36 predictive-back
+      // flows are validated on device. React Native supports the new dispatcher,
+      // so this temporary opt-out can be removed after regression testing.
+      predictiveBackGestureEnabled: false,
       ...(variant.googleServicesFile ? {googleServicesFile: variant.googleServicesFile} : {}),
       versionCode: buildNumber,
       adaptiveIcon: {
@@ -317,7 +321,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
         {
           android: {
             minSdkVersion: 28,
-            targetSdkVersion: 35,
+            targetSdkVersion: 36,
             compileSdkVersion: 36,
             enableCoreLibraryDesugaring: true,
           },

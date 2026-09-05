@@ -229,12 +229,11 @@ to TestFlight.
 `coordinated-example-release.yml` is invoked by an authenticated dispatch from
 MentraOS. The coordinator uses GitHub's cross-repository `workflow_dispatch`
 endpoint and selects the Starter Kit branch that owns the release channel:
-`dev` for dev, `staging` for beta, and `main` for production. This makes the
-workflow implementation and checked-out source come from the same channel
-instead of running default-branch orchestration against another branch. The
-coordinator GitHub App therefore requires Actions write in addition to its
-existing grants. Operators can invoke the same workflow manually. Required
-inputs are:
+`dev` for dev and `staging` for beta. This makes the workflow implementation
+and checked-out source come from the same channel instead of running
+default-branch orchestration against another branch. The coordinator GitHub
+App therefore requires Actions write in addition to its existing grants.
+Operators can invoke the same workflow manually. Required inputs are:
 
 - `releaseSetId`;
 - `releaseIdentity`;
@@ -323,7 +322,7 @@ uses one token for the bounded request phase, waits for the immutable public
 result without credentials, and mints a fresh read-only token for final
 provenance verification. The App is
 installed only on `MentraOS` and `Mentra-Bluetooth-SDK-Starter-Kit` with
-Actions read, Checks read, Contents read/write, and Pull requests read/write
+Actions read/write, Checks read, Contents read/write, and Pull requests read/write
 permissions. Each job requests only the subset it uses when minting its token.
 
 During bootstrap, the implementation may fall back to the existing scoped SDK
