@@ -77,7 +77,7 @@ export default function WorkspaceScreen() {
                 autoCapitalize="none"
                 autoCorrect={false}
                 autoFocus
-                className="flex-1 text-base text-foreground"
+                className="flex-1 h-full py-0 text-[16px] text-foreground"
                 editable={!loading}
                 hitSlop={{top: 16, bottom: 16}}
                 keyboardType="url"

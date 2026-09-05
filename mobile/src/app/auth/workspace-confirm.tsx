@@ -34,7 +34,17 @@ export default function WorkspaceConfirmScreen() {
 
   // Android hardware back routes through the navigation store; keep it in
   // step with the header action so activation cannot be abandoned midway.
-  focusEffectPreventBack(cancel)
+  focusEffectPreventBack(
+    useCallback(
+      (event) => {
+        // iOS emits beforeRemove for forward replacements too. Only an
+        // actual back action should cancel enrollment.
+        if (event && event.actionType !== "GO_BACK" && event.actionType !== "POP") return
+        cancel()
+      },
+      [cancel],
+    ),
+  )
 
   // iOS swipe-back and any other removal bypass the store. Block removal
   // while the local teardown runs so the captured candidate is never
@@ -85,6 +95,9 @@ export default function WorkspaceConfirmScreen() {
       if (!mounted.current) return
       store.activate(candidate)
       clearCandidate()
+      // Teardown is complete: allow our own replacement through the iOS
+      // removal guard, whether navigation dispatches immediately or later.
+      activatingRef.current = false
       replace("/auth/workspace-signin")
     } finally {
       activatingRef.current = false
