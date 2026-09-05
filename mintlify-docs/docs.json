@@ -320,7 +320,6 @@
     {"source": "/mentra-live/quickstart", "destination": "/bluetooth-sdk/quickstart"},
     {"source": "/mentra-live/examples", "destination": "/bluetooth-sdk/quickstart"},
     {"source": "/bluetooth-sdk/examples", "destination": "/bluetooth-sdk/quickstart"},
-    {"source": "/mentra-live/air-gapped-deployment", "destination": "/bluetooth-sdk/air-gapped-deployment"},
     {"source": "/mentra-live/software-update", "destination": "/bluetooth-sdk/software-update"},
     {"source": "/mentra-live/ai-ide-integration", "destination": "/bluetooth-sdk/ai-ide-integration"},
     {"source": "/mentra-live/react-native-expo", "destination": "/bluetooth-sdk/react-native-expo"},
