@@ -40,6 +40,7 @@ test("the public ACS package and both shipped host configs include the plugin", 
   const acs = JSON.parse(read("../modules/acs-meeting/package.json"))
   const oem = JSON.parse(read("../../sdk/example-oem-app/app.json"))
   assert.ok(acs.files.includes("app.plugin.js"))
+  assert.ok(acs.dependencies["@expo/config-plugins"])
   assert.ok(oem.expo.plugins.includes("@mentra/acs-meeting"))
   assert.match(read("../app.config.ts"), /"@mentra\/acs-meeting"/)
 })
