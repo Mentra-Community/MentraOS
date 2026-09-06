@@ -5,6 +5,8 @@ import path from "node:path"
 import {fileURLToPath} from "node:url"
 
 import {validateCloudV2DeploymentRecord} from "./coordinated-cloud-v2-records.mjs"
+import {validatePrivateDeploymentRecord} from "./coordinated-private-deployment-records.mjs"
+import {validateRuntimeImageRecord} from "./coordinated-runtime-image-records.mjs"
 import {serializeReleaseRecord} from "./release-family.mjs"
 import {createEnginePackageArtifact, mergeReleaseResultRecords} from "./release-result-records.mjs"
 
@@ -159,6 +161,8 @@ export function assembleCoordinatedReleaseResults({
   native,
   mobile,
   cloud,
+  runtimeImage,
+  privateDeployment,
   starterKit,
   starterKitResultUrl,
   exampleTestflight,
@@ -173,6 +177,20 @@ export function assembleCoordinatedReleaseResults({
   const selection = verifyAsgSelection(plan, ota, asgSelectionFile)
   const verifiedStarterKit = verifyStarterKitResult(plan, starterKit, starterKitResultUrl, exampleTestflight)
   const verifiedCloud = validateCloudV2DeploymentRecord({plan, record: cloud, allowValidated: true})
+  const verifiedRuntimeImage = validateRuntimeImageRecord({
+    plan,
+    record: runtimeImage,
+    allowValidated: true,
+  })
+  const verifiedPrivateDeployment =
+    plan.channel === "dev"
+      ? validatePrivateDeploymentRecord({
+          plan,
+          record: privateDeployment,
+          allowValidated: true,
+          runtimeImage: verifiedRuntimeImage,
+        })
+      : undefined
   const otaProvenanceUrl = provenanceUrl(ota)
   const artifacts = [
     ...merged.artifacts,
@@ -229,6 +247,8 @@ export function assembleCoordinatedReleaseResults({
     },
     artifacts,
     cloud: verifiedCloud,
+    runtimeImage: verifiedRuntimeImage,
+    ...(verifiedPrivateDeployment ? {privateDeployment: verifiedPrivateDeployment} : {}),
     ...(verifiedStarterKit ? {starterKit: verifiedStarterKit.record} : {}),
   }
 }
@@ -253,6 +273,8 @@ function main() {
     native: readJson(path.resolve(args.native)),
     mobile: readJson(path.resolve(args.mobile)),
     cloud: readJson(path.resolve(args.cloud)),
+    runtimeImage: readJson(path.resolve(args["runtime-image"])),
+    privateDeployment: args["private-deployment"] ? readJson(path.resolve(args["private-deployment"])) : undefined,
     starterKit: args["starter-kit"] ? readJson(path.resolve(args["starter-kit"])) : undefined,
     starterKitResultUrl: args["starter-kit-result-url"],
     exampleTestflight: args["example-testflight"] ? readJson(path.resolve(args["example-testflight"])) : undefined,

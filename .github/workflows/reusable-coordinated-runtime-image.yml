@@ -1,0 +1,307 @@
+name: Publish Coordinated Mentra Cloud Image
+
+on:
+  workflow_call:
+    inputs:
+      source_commit:
+        required: true
+        type: string
+      release_plan_artifact:
+        required: true
+        type: string
+      dry_run:
+        required: false
+        default: false
+        type: boolean
+    outputs:
+      result_artifact:
+        value: ${{ jobs.publish.outputs.result_artifact }}
+      image:
+        value: ${{ jobs.publish.outputs.image }}
+      digest:
+        value: ${{ jobs.publish.outputs.digest }}
+
+permissions:
+  actions: read
+  attestations: write
+  contents: read
+  id-token: write
+  packages: write
+
+jobs:
+  publish:
+    name: Build and attest canonical Mentra Cloud image
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      result_artifact: ${{ steps.artifact.outputs.name }}
+      image: ${{ steps.coordinates.outputs.image }}
+      digest: ${{ steps.published.outputs.digest }}
+    env:
+      CLOUD_IMAGE: ghcr.io/mentra-community/mentra-cloud
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_commit }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.release_plan_artifact }}
+          path: release-input/plan
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Resolve immutable image coordinates
+        id: coordinates
+        run: |
+          set -euo pipefail
+          plan=release-input/plan/release-plan.json
+          source_commit=$(git rev-parse HEAD)
+          [[ "$source_commit" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$source_commit" == "${{ inputs.source_commit }}" ]]
+          [[ "$(jq -er .sourceCommit "$plan")" == "$source_commit" ]]
+          channel=$(jq -er .channel "$plan")
+          [[ "$channel" == "dev" || "$channel" == "beta" ]]
+          release_identity=$(jq -er .releaseIdentity "$plan")
+          sbom_name="mentra-cloud-$release_identity.spdx.json"
+          {
+            echo "image=$CLOUD_IMAGE"
+            echo "release_identity=$release_identity"
+            echo "release_tag=$CLOUD_IMAGE:$release_identity"
+            echo "source_tag=$CLOUD_IMAGE:$source_commit"
+            echo "temporary_tag=$CLOUD_IMAGE:build-${{ github.run_id }}-${{ github.run_attempt }}"
+            echo "sbom_name=$sbom_name"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Validate Mentra Cloud build source
+        run: |
+          set -euo pipefail
+          test -s cloud-v2/docker/Dockerfile
+          node .github/scripts/coordinated-runtime-image-records.mjs create \
+            --plan release-input/plan/release-plan.json \
+            --source-commit "${{ inputs.source_commit }}" \
+            --status validated \
+            --completed-at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" \
+            --workflow-url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --output "$RUNNER_TEMP/runtime-image-validation.json"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Log in to GHCR
+        if: inputs.dry_run != true
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Resolve an existing immutable publication
+        id: existing
+        if: inputs.dry_run != true
+        env:
+          RELEASE_TAG: ${{ steps.coordinates.outputs.release_tag }}
+          SOURCE_TAG: ${{ steps.coordinates.outputs.source_tag }}
+        run: |
+          set -euo pipefail
+          inspect_digest() {
+            local reference="$1"
+            local manifest
+            if ! manifest=$(docker buildx imagetools inspect "$reference" --format '{{json .Manifest}}' 2>/dev/null); then
+              return 1
+            fi
+            jq -er .digest <<< "$manifest"
+          }
+
+          release_digest=$(inspect_digest "$RELEASE_TAG" || true)
+          source_digest=$(inspect_digest "$SOURCE_TAG" || true)
+          if [[ -n "$release_digest" && -n "$source_digest" ]]; then
+            [[ "$release_digest" == "$source_digest" ]]
+          elif [[ -n "$release_digest" ]]; then
+            [[ "$release_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+            docker buildx imagetools create --tag "$SOURCE_TAG" "$CLOUD_IMAGE@$release_digest"
+            source_digest="$release_digest"
+          elif [[ -n "$source_digest" ]]; then
+            [[ "$source_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+            docker buildx imagetools create --tag "$RELEASE_TAG" "$CLOUD_IMAGE@$source_digest"
+            release_digest="$source_digest"
+          fi
+          if [[ -n "$release_digest" ]]; then
+            [[ "$release_digest" == "$source_digest" ]]
+            [[ "$release_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+            echo "reused=true" >> "$GITHUB_OUTPUT"
+            echo "digest=$release_digest" >> "$GITHUB_OUTPUT"
+          else
+            echo "reused=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build Mentra Cloud without publishing
+        if: inputs.dry_run
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: cloud-v2/docker/Dockerfile
+          platforms: linux/amd64
+          push: false
+          tags: mentra-cloud:validation
+          provenance: false
+
+      - name: Build and publish Mentra Cloud once
+        id: build
+        if: inputs.dry_run != true && steps.existing.outputs.reused != 'true'
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: cloud-v2/docker/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.coordinates.outputs.temporary_tag }}
+          provenance: false
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ inputs.source_commit }}
+            org.opencontainers.image.licenses=Apache-2.0
+
+      - name: Attest new build provenance
+        id: provenance
+        if: inputs.dry_run != true && steps.existing.outputs.reused != 'true'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-name: ${{ steps.coordinates.outputs.image }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          subject-version: ${{ steps.coordinates.outputs.release_identity }}
+          push-to-registry: true
+
+      - name: Publish immutable release and source tags
+        if: inputs.dry_run != true && steps.existing.outputs.reused != 'true'
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          RELEASE_TAG: ${{ steps.coordinates.outputs.release_tag }}
+          SOURCE_TAG: ${{ steps.coordinates.outputs.source_tag }}
+        run: |
+          set -euo pipefail
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          docker buildx imagetools create --tag "$RELEASE_TAG" "$CLOUD_IMAGE@$DIGEST"
+          docker buildx imagetools create --tag "$SOURCE_TAG" "$CLOUD_IMAGE@$DIGEST"
+
+      - name: Verify reused image provenance
+        if: inputs.dry_run != true && steps.existing.outputs.reused == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DIGEST: ${{ steps.existing.outputs.digest }}
+        run: |
+          set -euo pipefail
+          gh attestation verify "oci://$CLOUD_IMAGE@$DIGEST" --repo "$GITHUB_REPOSITORY"
+
+      - name: Verify published tags resolve to one digest
+        id: published
+        if: inputs.dry_run != true
+        env:
+          RELEASE_TAG: ${{ steps.coordinates.outputs.release_tag }}
+          SOURCE_TAG: ${{ steps.coordinates.outputs.source_tag }}
+        run: |
+          set -euo pipefail
+          inspect_digest() {
+            docker buildx imagetools inspect "$1" --format '{{json .Manifest}}' | jq -er .digest
+          }
+          release_digest=$(inspect_digest "$RELEASE_TAG")
+          source_digest=$(inspect_digest "$SOURCE_TAG")
+          [[ "$release_digest" == "$source_digest" ]]
+          [[ "$release_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          if [[ "${{ steps.existing.outputs.reused }}" == "true" ]]; then
+            [[ "$release_digest" == "${{ steps.existing.outputs.digest }}" ]]
+          else
+            [[ "$release_digest" == "${{ steps.build.outputs.digest }}" ]]
+          fi
+          echo "digest=$release_digest" >> "$GITHUB_OUTPUT"
+
+      - name: Generate SPDX SBOM
+        if: inputs.dry_run != true
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          image: ${{ steps.coordinates.outputs.image }}@${{ steps.published.outputs.digest }}
+          registry-username: ${{ github.actor }}
+          registry-password: ${{ github.token }}
+          format: spdx-json
+          output-file: ${{ steps.coordinates.outputs.sbom_name }}
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Attest SPDX SBOM
+        id: sbom-attestation
+        if: inputs.dry_run != true
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-name: ${{ steps.coordinates.outputs.image }}
+          subject-digest: ${{ steps.published.outputs.digest }}
+          subject-version: ${{ steps.coordinates.outputs.release_identity }}
+          sbom-path: ${{ steps.coordinates.outputs.sbom_name }}
+          push-to-registry: true
+
+      - name: Verify signed Mentra Cloud attestations
+        if: inputs.dry_run != true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE: ${{ steps.coordinates.outputs.image }}
+          DIGEST: ${{ steps.published.outputs.digest }}
+        run: |
+          set -euo pipefail
+          gh attestation verify "oci://$IMAGE@$DIGEST" --repo "$GITHUB_REPOSITORY"
+          gh attestation verify "oci://$IMAGE@$DIGEST" \
+            --repo "$GITHUB_REPOSITORY" \
+            --predicate-type https://spdx.dev/Document/v2.3
+
+      - name: Record validation-only image evidence
+        if: inputs.dry_run
+        run: cp "$RUNNER_TEMP/runtime-image-validation.json" runtime-image-publication.json
+
+      - name: Record published image evidence
+        if: inputs.dry_run != true
+        run: |
+          set -euo pipefail
+          sbom_sha256=$(sha256sum "${{ steps.coordinates.outputs.sbom_name }}" | cut -d' ' -f1)
+          sbom_size=$(stat --format=%s "${{ steps.coordinates.outputs.sbom_name }}")
+          node .github/scripts/coordinated-runtime-image-records.mjs create \
+            --plan release-input/plan/release-plan.json \
+            --source-commit "${{ inputs.source_commit }}" \
+            --status published \
+            --digest "${{ steps.published.outputs.digest }}" \
+            --sbom-name "${{ steps.coordinates.outputs.sbom_name }}" \
+            --sbom-sha256 "$sbom_sha256" \
+            --sbom-size "$sbom_size" \
+            --sbom-attestation-url "${{ steps.sbom-attestation.outputs.attestation-url }}" \
+            --provenance-attestation-url "${{ steps.provenance.outputs.attestation-url }}" \
+            --completed-at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" \
+            --workflow-url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --output runtime-image-publication.json
+
+      - name: Name coordinated result artifact
+        id: artifact
+        run: |
+          set -euo pipefail
+          release_set_id=$(jq -er .releaseSetId release-input/plan/release-plan.json)
+          echo "name=coordinated-runtime-image-$release_set_id" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.artifact.outputs.name }}
+          path: |
+            runtime-image-publication.json
+            ${{ steps.coordinates.outputs.sbom_name }}
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Summarize Mentra Cloud image
+        run: |
+          {
+            echo "## Canonical Mentra Cloud image"
+            echo
+            echo "- Image: \`${{ steps.coordinates.outputs.image }}\`"
+            echo "- Release tag: \`${{ steps.coordinates.outputs.release_identity }}\`"
+            echo "- Source: \`${{ inputs.source_commit }}\`"
+            echo "- Digest: \`${{ steps.published.outputs.digest || 'validation only' }}\`"
+            echo "- SBOM: \`${{ steps.coordinates.outputs.sbom_name }}\`"
+            echo "- Dry run: \`${{ inputs.dry_run }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

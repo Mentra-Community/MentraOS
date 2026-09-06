@@ -25,6 +25,7 @@
 
 import {File} from "expo-file-system"
 
+import {isInstalledMiniappAllowed, isLocalMiniappPackageAllowed} from "../runtime/bootstrap"
 import {resolveDevBundleSource} from "../utils/devMiniappSnapshot"
 import {storage} from "../utils/storage/storage"
 import appRegistry, {getLocalAppRunningState, saveLocalAppRunningState} from "./AppRegistry"
@@ -134,7 +135,7 @@ class MiniappLauncher {
     if (!entry?.background) return null
 
     // Use the host that actually answered — may differ from the stored IP
-    // after a laptop Wi-Fi change (mDNS / Metro failover inside decideDevLaunchRoute).
+    // after a laptop Wi-Fi change (mDNS / Metro failover inside resolveDevBundleSource).
     const base = resolvedUrl.replace(/\/$/, "")
     // entry.* are bundle-root paths (dist/ stripped); the dev server serves
     // files relative to cwd, so prepend dist/.
@@ -243,6 +244,9 @@ class MiniappLauncher {
    * {@link LocalMiniappRuntime.waitForConnect}.
    */
   async ensureRunning(packageName: string, hints?: LaunchHints): Promise<LaunchResult> {
+    if (!isLocalMiniappPackageAllowed(packageName)) {
+      throw new Error(`MiniappLauncher: ${packageName} is disabled by deployment policy`)
+    }
     const router = this.requireRouter()
 
     // Already spawned: best-effort resolve for the UI entry, never throw —
@@ -272,6 +276,16 @@ class MiniappLauncher {
     const resolved = await this.resolveBundle(packageName, hints)
     if (!resolved) {
       throw new Error(`MiniappLauncher: cannot resolve bundle for ${packageName}`)
+    }
+    const version = resolved.installedManifest?.version
+    if (
+      !isInstalledMiniappAllowed(
+        packageName,
+        version,
+        version ? appRegistry.getReleaseIdentity(packageName, version) : null,
+      )
+    ) {
+      throw new Error(`MiniappLauncher: ${packageName} bundle is not authorized by deployment policy`)
     }
 
     // Re-check after the async resolve: a different path may have spawned it

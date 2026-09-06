@@ -36,6 +36,12 @@ const withAndroidWorkingConfig: ConfigPlugin = (config) => {
 }
 
 /**
+ * MSAL's `common` dependency still references the Surface Duo display-mask
+ * artifact, which Microsoft publishes outside Maven Central. Restrict this
+ * repository to that one group so other dependencies continue resolving from
+ * the normal repositories. The same hook also pins AndroidX dependencies used
+ * by react-native-inappbrowser-reborn.
+ *
  * react-native-inappbrowser-reborn requests androidx.browser:browser:1.4.+.
  * That dynamic range requires maven-metadata.xml from Google Maven. When the
  * listing is missing or unreachable, Gradle fails with "no versions of
@@ -52,6 +58,25 @@ function withProjectBuildGradleModifications(config: any) {
     }
 
     let gradle = config.modResults.contents
+    const msalRepositoryMarker = "entra-auth: Microsoft display-mask Maven repository"
+    if (!gradle.includes(msalRepositoryMarker)) {
+      const repository = `    maven {
+      // ${msalRepositoryMarker}
+      url 'https://pkgs.dev.azure.com/MicrosoftDeviceSDK/DuoSDK-Public/_packaging/Duo-SDK-Feed/maven/v1'
+      content {
+        includeGroup("com.microsoft.device.display")
+      }
+    }`
+      const repositories = gradle.match(/allprojects\s*\{[\s\S]*?repositories\s*\{/)
+
+      if (repositories) {
+        const insertionPoint = (repositories.index ?? 0) + repositories[0].length
+        gradle = gradle.slice(0, insertionPoint) + "\n" + repository + gradle.slice(insertionPoint)
+      } else {
+        gradle += `\nallprojects {\n  repositories {\n${repository}\n  }\n}\n`
+      }
+    }
+
     const resolutionBlock = `
 allprojects {
   configurations.all {
@@ -74,9 +99,15 @@ allprojects {
 `
 
     if (gradle.includes(ANDROIDX_BROWSER_PIN_MARKER)) {
-      gradle = gradle.replace(/androidXBrowserVersion = "[^"]+"/, `androidXBrowserVersion = "${ANDROIDX_BROWSER_VERSION}"`)
+      gradle = gradle.replace(
+        /androidXBrowserVersion = "[^"]+"/,
+        `androidXBrowserVersion = "${ANDROIDX_BROWSER_VERSION}"`,
+      )
       if (gradle.includes("androidXAnnotationVersion = ")) {
-        gradle = gradle.replace(/androidXAnnotationVersion = "[^"]+"/, `androidXAnnotationVersion = "${ANDROIDX_ANNOTATION_VERSION}"`)
+        gradle = gradle.replace(
+          /androidXAnnotationVersion = "[^"]+"/,
+          `androidXAnnotationVersion = "${ANDROIDX_ANNOTATION_VERSION}"`,
+        )
       } else {
         gradle = gradle.replace(
           /androidXBrowserVersion = "[^"]+"/,
@@ -101,7 +132,10 @@ ext {
     }
 
     if (gradle.includes(ANDROIDX_RESOLUTION_MARKER)) {
-      gradle = gradle.replace(/\nallprojects \{\n  configurations.all \{\n    resolutionStrategy \{[\s\S]*?force 'androidx.browser:browser:[^']+'[\s\S]*?\n  \}\n\}\n?/, resolutionBlock)
+      gradle = gradle.replace(
+        /\nallprojects \{\n  configurations.all \{\n    resolutionStrategy \{[\s\S]*?force 'androidx.browser:browser:[^']+'[\s\S]*?\n  \}\n\}\n?/,
+        resolutionBlock,
+      )
     } else {
       gradle += resolutionBlock
     }
@@ -442,6 +476,26 @@ function withAndroidManifestModifications(config: any) {
       const isChinaBuild = process.env.EXPO_PUBLIC_DEPLOYMENT_REGION === "china"
       if (!app["meta-data"]) {
         app["meta-data"] = []
+      }
+
+      // The official binary can be enrolled into a workspace that disables
+      // telemetry. Keep Firebase Analytics off during native startup; the
+      // JavaScript deployment gate enables collection only after the embedded
+      // consumer profile or an opted-in workspace has been resolved.
+      const analyticsCollection = app["meta-data"].find(
+        (m: any) => m.$["android:name"] === "firebase_analytics_collection_enabled",
+      )
+      if (analyticsCollection) {
+        analyticsCollection.$["android:value"] = "false"
+        analyticsCollection.$["tools:replace"] = "android:value"
+      } else {
+        app["meta-data"].push({
+          $: {
+            "android:name": "firebase_analytics_collection_enabled",
+            "android:value": "false",
+            "tools:replace": "android:value",
+          },
+        })
       }
 
       // Inject the Mapbox runtime token (pk....) as manifest meta-data

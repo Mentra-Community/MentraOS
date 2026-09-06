@@ -19,11 +19,11 @@ import {AllProviders} from "@/contexts/AllProviders"
 import "@/global.css"
 import {logBuffer} from "@mentra/engine-host-internal"
 
-SentrySetup()
 logBuffer.startConsoleInterception()
 
 // initialize the settings store
 engine.settings.loadAll()
+SentrySetup()
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync()

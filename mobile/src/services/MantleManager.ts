@@ -6,12 +6,13 @@ import {router} from "expo-router"
 
 import {bootstrapMentraJS} from "@/services/mentraJsBootstrap"
 import {preinstalledMiniappSync} from "@/services/miniapps/preinstalledMiniappSync"
+import {deploymentManagedMiniappSync} from "@/services/miniapps/deploymentManagedMiniappSync"
 import builtInMiniappCatalog from "@/services/miniapps/BuiltInMiniappCatalog"
 import {BUNDLED_MINIAPPS} from "@/generated/bundledMiniapps"
 import {CHINA_HIDDEN_APPS, isChinaBuild, notifyPackageName} from "@/constants/miniapps"
 import {migrate} from "@/services/Migrations"
 import {buildSpokenNotification} from "@/services/notifications/spokenNotification"
-import {cloudConfigValues} from "@/services/cloudClient"
+import {deploymentCloudConfigValues} from "@/services/cloudClient"
 import {requestPhoneQrScan} from "@/services/qrScanRequest"
 import {engine, BgTimer, SETTINGS} from "@mentra/engine"
 import {
@@ -37,6 +38,7 @@ import mentraAuth from "@/utils/auth/authClient"
 import {showAlert} from "@/utils/AlertUtils"
 import {translate} from "@/i18n"
 import {Buffer} from "@craftzdog/react-native-buffer"
+import {createDeploymentAuthProvider, deploymentStore} from "@/services/deployment"
 
 /**
  * Miniapp bundles shipped inside the app binary, installed on first launch by
@@ -348,59 +350,84 @@ class MantleManager {
     // Island front door: hand island the host's auth provider and config, then
     // start the runtime. The remaining work below is Mentra-app UI/v1-cloud
     // startup, not an island configuration seam.
+    const deployment = deploymentStore.getActive()
+    const workspaceAuth = deployment.kind === "workspace" ? createDeploymentAuthProvider(deployment) : null
     engine.configure({
-      auth: {
-        getSubjectToken: async () => {
-          // Cloud V2 (issue 019): the provider mints a fresh `mentra` OEM subject
-          // token which cloud-client exchanges at /api/client/auth/exchange.
-          const res = await mentraAuth.getSubjectToken()
-          if (res.is_error() || !res.value.token) {
-            throw new Error("engine.configure: no subject token available")
-          }
-          return {token: res.value.token, type: res.value.type}
-        },
-        // Hand back a synchronous handle with a real unsubscribe.
-        //
-        // mentraAuth is a lazy Proxy whose every method returns a Promise, so
-        // this call resolves to the Result rather than being one. The engine
-        // (CloudClientService.ensureAuthWatch) inspects the return value
-        // synchronously, finds no `unsubscribe` on a Promise, and keeps its
-        // no-op placeholder — so stopAuthWatch() never removed the listener.
-        //
-        // That used to be invisible: the provider held one callback slot, so
-        // the orphan was overwritten by whoever registered next. Now that every
-        // listener is retained, each engine.start() would stack another one, and
-        // a later SIGNED_IN would have several callbacks calling reconnect() on
-        // the same client. Resolve the real unsubscribe out of the promise, and
-        // honour an unsubscribe that arrives before it settles.
-        onStateChange: (callback) => {
-          const pending = Promise.resolve(
-            mentraAuth.onAuthStateChange((event: string, session: any) => callback(event, session)),
-          )
-          let resolved: (() => void) | null = null
-          let cancelled = false
-
-          void pending
-            .then((res: any) => {
-              const handle = res?.value ?? res
-              resolved = typeof handle?.unsubscribe === "function" ? handle.unsubscribe : null
-              if (cancelled) resolved?.()
-            })
-            .catch(() => {
-              resolved = null
-            })
-
-          return {
-            unsubscribe: () => {
-              cancelled = true
-              resolved?.()
+      auth: workspaceAuth
+        ? {
+            getSubjectToken: async () => ({
+              token: await workspaceAuth.getAccessToken({
+                scopes:
+                  deployment.kind === "workspace" && deployment.manifest.auth.mode === "microsoft-entra"
+                    ? deployment.manifest.auth.sessionScopes
+                    : [],
+              }),
+              type: "oidc",
+            }),
+            getUserId: async () => {
+              const current = await workspaceAuth.getSession()
+              if (!current) throw new Error("engine.configure: no workspace identity available")
+              const {identity} = current
+              return `workspace:${identity.deploymentId}:${encodeURIComponent(identity.issuer)}:${identity.subject}`
             },
+            onStateChange: (callback) => ({
+              unsubscribe: workspaceAuth.onStateChange((session) =>
+                callback(session ? "SIGNED_IN" : "SIGNED_OUT", session ? {token: session.accessToken ?? null} : null),
+              ),
+            }),
           }
-        },
-      },
+        : {
+            getSubjectToken: async () => {
+              // Cloud V2 (issue 019): the provider mints a fresh `mentra` OEM subject
+              // token which cloud-client exchanges at /api/client/auth/exchange.
+              const res = await mentraAuth.getSubjectToken()
+              if (res.is_error() || !res.value.token) {
+                throw new Error("engine.configure: no subject token available")
+              }
+              return {token: res.value.token, type: res.value.type}
+            },
+            // Hand back a synchronous handle with a real unsubscribe.
+            //
+            // mentraAuth is a lazy Proxy whose every method returns a Promise, so
+            // this call resolves to the Result rather than being one. The engine
+            // (CloudClientService.ensureAuthWatch) inspects the return value
+            // synchronously, finds no `unsubscribe` on a Promise, and keeps its
+            // no-op placeholder — so stopAuthWatch() never removed the listener.
+            //
+            // That used to be invisible: the provider held one callback slot, so
+            // the orphan was overwritten by whoever registered next. Now that every
+            // listener is retained, each engine.start() would stack another one, and
+            // a later SIGNED_IN would have several callbacks calling reconnect() on
+            // the same client. Resolve the real unsubscribe out of the promise, and
+            // honour an unsubscribe that arrives before it settles.
+            onStateChange: (callback) => {
+              const pending = Promise.resolve(
+                mentraAuth.onAuthStateChange((event: string, session: any) => callback(event, session)),
+              )
+              let resolved: (() => void) | null = null
+              let cancelled = false
+
+              void pending
+                .then((res: any) => {
+                  const handle = res?.value ?? res
+                  resolved = typeof handle?.unsubscribe === "function" ? handle.unsubscribe : null
+                  if (cancelled) resolved?.()
+                })
+                .catch(() => {
+                  resolved = null
+                })
+
+              return {
+                unsubscribe: () => {
+                  cancelled = true
+                  resolved?.()
+                },
+              }
+            },
+          },
       // Resolved cloud endpoints + LC3 frame size. island builds its cloud
       // client from these; the host keeps the dev/settings URL resolution.
-      config: cloudConfigValues(),
+      config: deploymentCloudConfigValues(deployment),
       // Named host-UI seams: island dispatches the miniapp request, the host
       // owns the screen (branding/navigation).
       ui: {
@@ -473,12 +500,16 @@ class MantleManager {
     // Settings are local-first until a V2 sync lands (tracked in the ripout
     // issue; island's per-change server write is the island-side cleanup).
 
-    const userRes = await mentraAuth.getUser()
-    if (userRes.is_ok()) {
-      await ensureDevModeForUser(userRes.value.email)
+    if (deployment.kind === "consumer") {
+      const userRes = await mentraAuth.getUser()
+      if (userRes.is_ok()) {
+        await ensureDevModeForUser(userRes.value.email)
+      }
     }
 
-    offlineSpeechModelService.startBackgroundDownloads()
+    if (deployment.kind === "consumer" || deployment.manifest.features.onDeviceSpeech) {
+      offlineSpeechModelService.startBackgroundDownloads()
+    }
 
     // Spacing only, not a correctness barrier: engine.start() already awaited
     // the device-store hydration (the persisted-settings seed to native), so the
@@ -569,10 +600,16 @@ class MantleManager {
     // already-installed check below sees the real on-disk state.
     await this.installBundledMiniapps()
 
+    // Reconcile customer-owned userland bundles independently from SYSTEM
+    // miniapps embedded in the Mentra App binary.
+    await deploymentManagedMiniappSync.sync(deploymentStore.getActive())
+
     // Then reconcile the admin-managed preinstall registry from Cloud V2. This
     // lets Core move users to newer bundled miniapp releases without shipping a
     // new mobile binary.
-    await preinstalledMiniappSync.sync()
+    if (deploymentStore.getActive().kind === "consumer") {
+      await preinstalledMiniappSync.sync()
+    }
 
     // Re-spawn local miniapps that were running when the app was last killed.
     // Cloud apps get resurrected by the cloud on reconnect; local (phone-hosted)
@@ -597,10 +634,17 @@ class MantleManager {
    * installs it.
    */
   private async installBundledMiniapps() {
+    const deployment = deploymentStore.getActive()
+    const approved =
+      deployment.kind === "workspace" ? deployment.manifest.systemMiniapps.approvedPackageNamesOverride : null
     for (const module of BUNDLED_MINIAPPS) {
       try {
         const asset = Asset.fromModule(module)
         const parsed = parseBundledMiniappName(asset.name)
+        if (parsed && approved !== null && !approved.includes(parsed.packageName)) {
+          console.log(`MANTLE: skipping bundled miniapp outside workspace allowlist: ${parsed.packageName}`)
+          continue
+        }
         if (!parsed) {
           console.warn(`MANTLE: bundled miniapp asset name "${asset.name}" is not <packageName>-<version>`)
           continue

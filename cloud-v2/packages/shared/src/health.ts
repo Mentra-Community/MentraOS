@@ -29,6 +29,8 @@ export type HealthAppOptions = {
   packageName: string;
   /** Optional readiness checks evaluated on every /ready hit. */
   readinessChecks?: ReadinessCheck[];
+  /** Non-secret static service composition surfaced for operators. */
+  details?: Record<string, unknown>;
 };
 
 type CheckResult = {
@@ -41,7 +43,7 @@ export function createHealthApp(opts: HealthAppOptions): Hono {
   const app = new Hono();
 
   app.get("/healthz", (c) =>
-    c.json({ status: "ok", package: opts.packageName }),
+    c.json({ status: "ok", package: opts.packageName, ...opts.details }),
   );
 
   app.get("/ready", async (c) => {
@@ -72,6 +74,7 @@ export function createHealthApp(opts: HealthAppOptions): Hono {
         status: allOk ? "ok" : "not_ready",
         package: opts.packageName,
         checks: results,
+        ...opts.details,
       },
       allOk ? 200 : 503,
     );

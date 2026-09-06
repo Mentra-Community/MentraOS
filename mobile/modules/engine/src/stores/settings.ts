@@ -1,4 +1,5 @@
 import {getTimeZone} from "react-native-localize"
+import {useCallback} from "react"
 import {AsyncResult, result as Res, Result} from "typesafe-ts"
 import {create} from "zustand"
 import {subscribeWithSelector} from "zustand/middleware"
@@ -1150,5 +1151,6 @@ export const useSettingsStore = create<SettingsState>()(
 export const useSetting = <T = any>(key: string): [T, (value: T) => AsyncResult<void, Error>] => {
   const value = useSettingsStore((state) => state.getSetting(key))
   const setSetting = useSettingsStore((state) => state.setSetting)
-  return [value, (newValue: T) => setSetting(key, newValue)]
+  const setValue = useCallback((newValue: T) => setSetting(key, newValue), [key, setSetting])
+  return [value, setValue]
 }

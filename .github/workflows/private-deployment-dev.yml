@@ -1,0 +1,421 @@
+name: Coordinated Mentra Private Deployment Dev
+
+on:
+  workflow_call:
+    inputs:
+      source_commit:
+        required: true
+        type: string
+      release_plan_artifact:
+        required: true
+        type: string
+      runtime_image_artifact:
+        required: true
+        type: string
+      dry_run:
+        required: false
+        default: false
+        type: boolean
+    secrets:
+      ENTERPRISE_DEV_REFRESH_TOKEN_PEPPER:
+        required: true
+      ENTERPRISE_DEV_MENTRA_JWT_PRIVATE_KEY:
+        required: true
+      ENTERPRISE_DEV_MENTRA_JWT_PUBLIC_KEY:
+        required: true
+      ENTERPRISE_DEV_MINIAPP_JWT_PRIVATE_KEY:
+        required: true
+      ENTERPRISE_DEV_MINIAPP_JWT_PUBLIC_KEY:
+        required: true
+    outputs:
+      result_artifact:
+        value: ${{ jobs.deploy.outputs.result_artifact }}
+      workspace_origin:
+        value: ${{ jobs.deploy.outputs.workspace_origin }}
+permissions:
+  actions: read
+  contents: read
+  id-token: write
+  packages: read
+
+jobs:
+  deploy:
+    name: Import and deploy Azure Private Deployment
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    concurrency:
+      # Preserve deployment order if coordinated runs overlap.
+      group: coordinated-private-deployment-dev
+      cancel-in-progress: false
+    outputs:
+      result_artifact: ${{ steps.artifact.outputs.name }}
+      workspace_origin: ${{ steps.verify.outputs.workspace_origin }}
+    env:
+      AZURE_RESOURCE_GROUP: rg-mentra-enterprise-reference
+      AZURE_REGISTRY: mentraenterpriseref
+      AZURE_COMMUNICATION_SERVICE: mentra-enterprise-reference
+      AZURE_CONTAINER_APP: ca-mentra-enterprise-reference
+      AZURE_CORE_CONTAINER_APP: ca-mentra-ent-ref-core
+      ENTRA_TENANT_ID: 2e7662c0-e826-4928-95b2-60bdd48d5d95
+      ENTRA_CORE_CLIENT_ID: 20424d9e-4b99-44e8-82c9-0ad06f08a8db
+      ENTRA_MOBILE_CLIENT_ID: 95ad08c2-7837-4ddf-933c-1fce3d6d2799
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_commit }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.release_plan_artifact }}
+          path: release-input/plan
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.runtime_image_artifact }}
+          path: release-input/runtime-image
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Resolve and verify exact source
+        id: source
+        run: |
+          set -euo pipefail
+          source_commit=$(git rev-parse HEAD)
+          [[ "$source_commit" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$source_commit" == "${{ inputs.source_commit }}" ]]
+          [[ "$(jq -er .sourceCommit release-input/plan/release-plan.json)" == "$source_commit" ]]
+          [[ "$(jq -er .channel release-input/plan/release-plan.json)" == "dev" ]]
+          node .github/scripts/coordinated-runtime-image-records.mjs validate \
+            --plan release-input/plan/release-plan.json \
+            --record release-input/runtime-image/runtime-image-publication.json \
+            --allow-validated true
+          echo "commit=$source_commit" >> "$GITHUB_OUTPUT"
+          if [[ "${{ inputs.dry_run }}" != "true" ]]; then
+            source_image=$(jq -er .image release-input/runtime-image/runtime-image-publication.json)
+            source_digest=$(jq -er .digest release-input/runtime-image/runtime-image-publication.json)
+            [[ "$source_image" == "ghcr.io/mentra-community/mentra-cloud" ]]
+            [[ "$source_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+            {
+              echo "source_image=$source_image"
+              echo "source_digest=$source_digest"
+              echo "source_reference=$source_image@$source_digest"
+              echo "acr_tag=mentra-cloud-enterprise:$source_commit"
+              echo "image=$AZURE_REGISTRY.azurecr.io/mentra-cloud-enterprise@$source_digest"
+            } >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Validate the enterprise deployment source
+        run: |
+          set -euo pipefail
+          test -s cloud-v2/docker/Dockerfile
+          az bicep build \
+            --file cloud-v2/deploy/azure/enterprise-reference/main.bicep \
+            --outfile "$RUNNER_TEMP/enterprise-reference.json"
+
+      - name: Sign in to Azure with GitHub OIDC
+        if: inputs.dry_run != true
+        # Pinned to the reviewed v2.3.1 commit; this step mints an OIDC token for
+        # an Azure Contributor identity, so the mutable tag is not acceptable.
+        uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2
+        with:
+          client-id: ${{ vars.ENTERPRISE_DEV_AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.ENTERPRISE_DEV_AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.ENTERPRISE_DEV_AZURE_SUBSCRIPTION_ID }}
+
+      - name: Import the canonical Mentra Cloud digest into Azure
+        if: inputs.dry_run != true
+        env:
+          GHCR_USERNAME: ${{ github.actor }}
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          existing_digest=$(az acr manifest show-metadata \
+            --registry "$AZURE_REGISTRY" \
+            --name "${{ steps.source.outputs.acr_tag }}" \
+            --query digest \
+            --output tsv 2>/dev/null || true)
+          if [[ -n "$existing_digest" ]]; then
+            [[ "$existing_digest" == "${{ steps.source.outputs.source_digest }}" ]]
+          else
+            az acr import \
+              --name "$AZURE_REGISTRY" \
+              --source "${{ steps.source.outputs.source_reference }}" \
+              --image "${{ steps.source.outputs.acr_tag }}" \
+              --username "$GHCR_USERNAME" \
+              --password "$GHCR_TOKEN"
+          fi
+          imported_digest=$(az acr manifest show-metadata \
+            --registry "$AZURE_REGISTRY" \
+            --name "${{ steps.source.outputs.acr_tag }}" \
+            --query digest \
+            --output tsv)
+          [[ "$imported_digest" == "${{ steps.source.outputs.source_digest }}" ]]
+
+      - name: Deploy Core and meetings-only Runtime
+        if: inputs.dry_run != true
+        env:
+          REFRESH_TOKEN_PEPPER: ${{ secrets.ENTERPRISE_DEV_REFRESH_TOKEN_PEPPER }}
+          MENTRA_JWT_PRIVATE_KEY: ${{ secrets.ENTERPRISE_DEV_MENTRA_JWT_PRIVATE_KEY }}
+          MENTRA_JWT_PUBLIC_KEY: ${{ secrets.ENTERPRISE_DEV_MENTRA_JWT_PUBLIC_KEY }}
+          MINIAPP_JWT_PRIVATE_KEY: ${{ secrets.ENTERPRISE_DEV_MINIAPP_JWT_PRIVATE_KEY }}
+          MINIAPP_JWT_PUBLIC_KEY: ${{ secrets.ENTERPRISE_DEV_MINIAPP_JWT_PUBLIC_KEY }}
+        run: |
+          set -euo pipefail
+          parameters="$RUNNER_TEMP/private-deployment-dev.parameters.json"
+          trap 'rm -f "$parameters"' EXIT
+          umask 077
+          jq -n \
+            --arg cloudImage "${{ steps.source.outputs.image }}" \
+            --arg registryName "$AZURE_REGISTRY" \
+            --arg communicationName "$AZURE_COMMUNICATION_SERVICE" \
+            --arg tenantId "$ENTRA_TENANT_ID" \
+            --arg coreApiClientId "$ENTRA_CORE_CLIENT_ID" \
+            --arg mobileClientId "$ENTRA_MOBILE_CLIENT_ID" \
+            --arg workspaceHostname "enterprisedev.mentraglass.com" \
+            '{
+              "$schema":"https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+              contentVersion:"1.0.0.0",
+              parameters:{
+                cloudImage:{value:$cloudImage},
+                registryName:{value:$registryName},
+                communicationName:{value:$communicationName},
+                tenantId:{value:$tenantId},
+                coreApiClientId:{value:$coreApiClientId},
+                mobileClientId:{value:$mobileClientId},
+                refreshTokenPepper:{value:env.REFRESH_TOKEN_PEPPER},
+                mentraJwtPrivateKey:{value:env.MENTRA_JWT_PRIVATE_KEY},
+                mentraJwtPublicKey:{value:env.MENTRA_JWT_PUBLIC_KEY},
+                miniappJwtPrivateKey:{value:env.MINIAPP_JWT_PRIVATE_KEY},
+                miniappJwtPublicKey:{value:env.MINIAPP_JWT_PUBLIC_KEY},
+                workspaceHostname:{value:$workspaceHostname},
+                manageAcrPullRoleAssignment:{value:false}
+              }
+            }' > "$parameters"
+          az deployment group create \
+            --name private-deployment-dev \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --template-file cloud-v2/deploy/azure/enterprise-reference/main.bicep \
+            --parameters "@$parameters" \
+            --query properties.provisioningState \
+            --output tsv \
+            | grep --fixed-strings --line-regexp Succeeded
+
+      - name: Verify the live enterprise contract
+        id: verify
+        if: inputs.dry_run != true
+        run: |
+          set -euo pipefail
+          workspace_origin=$(az deployment group show \
+            --name private-deployment-dev \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --query properties.outputs.workspaceOrigin.value \
+            --output tsv)
+          [[ "$workspace_origin" == https://* ]]
+          core_origin=$(az deployment group show \
+            --name private-deployment-dev \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --query properties.outputs.coreOrigin.value \
+            --output tsv)
+          [[ "$core_origin" == https://* ]]
+          core_hostname=$(az deployment group show \
+            --name private-deployment-dev \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --query properties.outputs.generatedCoreHostname.value \
+            --output tsv)
+          [[ "$core_hostname" == "$AZURE_CORE_CONTAINER_APP".*.azurecontainerapps.io ]]
+          [[ "$core_origin" == "https://$core_hostname" ]]
+
+          curl_status() {
+            curl \
+              --fail \
+              --silent \
+              --show-error \
+              --location \
+              --retry 12 \
+              --retry-delay 10 \
+              --retry-all-errors \
+              --output "$2" \
+              --write-out '%{http_code}' \
+              "$1"
+          }
+
+          : > private-deployment-checks.ndjson
+          for probe in healthz ready; do
+            url="$workspace_origin/$probe"
+            body="$RUNNER_TEMP/$probe.json"
+            status=$(curl_status "$url" "$body")
+            jq -nc --arg url "$url" --argjson statusCode "$status" \
+              '{url: $url, ready: true, statusCode: $statusCode}' >> private-deployment-checks.ndjson
+          done
+          for probe in healthz ready; do
+            url="$core_origin/$probe"
+            body="$RUNNER_TEMP/core-$probe.json"
+            status=$(curl_status "$url" "$body")
+            jq -nc --arg url "$url" --argjson statusCode "$status" \
+              '{url: $url, ready: true, statusCode: $statusCode}' >> private-deployment-checks.ndjson
+          done
+          jq -e '.status == "ok" and .package == "runtime" and .services == ["meetings"]' \
+            "$RUNNER_TEMP/healthz.json"
+          jq -e '.status == "ok" and .package == "core"' "$RUNNER_TEMP/core-healthz.json"
+          jq -e '.keys | length >= 2' < <(curl --fail --silent --show-error "$core_origin/.well-known/jwks.json")
+
+          version_policy=$(curl --fail --silent --show-error --location \
+            "$workspace_origin/api/client/min-version")
+          jq -e \
+            '.success == true and (.data.required | type == "string") and (.data.recommended | type == "string")' \
+            <<< "$version_policy"
+
+          manifest=$(curl --fail --silent --show-error --location \
+            "$workspace_origin/.well-known/mentra-deployment.json")
+          jq -e \
+            --arg origin "$workspace_origin" \
+            --arg core "$core_origin" \
+            --arg tenant "$ENTRA_TENANT_ID" \
+            --arg mobile "$ENTRA_MOBILE_CLIENT_ID" \
+            --arg coreClient "$ENTRA_CORE_CLIENT_ID" \
+            '.schemaVersion == 1
+             and (has("releaseIdentity") | not)
+             and .services.coreUrl == $core
+             and .services.runtimeUrl == $origin
+             and .branding.logoUrls.light == ($origin + "/branding/logo-light.png")
+             and .branding.logoUrls.dark == ($origin + "/branding/logo-dark.png")
+             and .auth.mode == "microsoft-entra"
+             and .auth.authorityUrl == ("https://login.microsoftonline.com/" + $tenant)
+             and .auth.clientId == $mobile
+             and .auth.sessionScopes == [("api://" + $coreClient + "/mentra.session")]
+             and .features.runtimeRealtimeSession == false
+             and .features.managedStreams == false
+             and .features.nativeMeetings == true
+             and .miniapps.managed == []
+             and .telemetry == false' \
+            <<< "$manifest"
+
+          curl --fail --silent --show-error --location "$workspace_origin/legal/privacy" >/dev/null
+          curl --fail --silent --show-error --location "$workspace_origin/legal/terms" >/dev/null
+          for logo in logo-light.png logo-dark.png; do
+            curl --fail --silent --show-error --location \
+              "$workspace_origin/branding/$logo" \
+              --output "$RUNNER_TEMP/$logo"
+            [[ "$(file --brief --mime-type "$RUNNER_TEMP/$logo")" == "image/png" ]]
+          done
+          unauthenticated_status=$(curl \
+            --silent \
+            --show-error \
+            --output /dev/null \
+            --write-out '%{http_code}' \
+            --request POST \
+            "$workspace_origin/api/meetings/acs/token")
+          [[ "$unauthenticated_status" == "401" ]]
+
+          jq -s . private-deployment-checks.ndjson > private-deployment-checks.json
+          image_digest=$(az acr manifest show-metadata \
+            --registry "$AZURE_REGISTRY" \
+            --name "${{ steps.source.outputs.acr_tag }}" \
+            --query digest \
+            --output tsv)
+          [[ "$image_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$image_digest" == "${{ steps.source.outputs.source_digest }}" ]]
+          revision=$(az containerapp show \
+            --name "$AZURE_CONTAINER_APP" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --query properties.latestReadyRevisionName \
+            --output tsv)
+          test -n "$revision"
+          core_revision=$(az containerapp show \
+            --name "$AZURE_CORE_CONTAINER_APP" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --query properties.latestReadyRevisionName \
+            --output tsv)
+          test -n "$core_revision"
+
+          # The ready revisions must run exactly the digest-pinned image this
+          # run imported; otherwise the evidence would describe another build.
+          expected_image="${{ steps.source.outputs.image }}"
+          runtime_revision_image=$(az containerapp revision show \
+            --name "$AZURE_CONTAINER_APP" \
+            --revision "$revision" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --query 'properties.template.containers[0].image' \
+            --output tsv)
+          [[ "$runtime_revision_image" == "$expected_image" ]]
+          core_revision_image=$(az containerapp revision show \
+            --name "$AZURE_CORE_CONTAINER_APP" \
+            --revision "$core_revision" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --query 'properties.template.containers[0].image' \
+            --output tsv)
+          [[ "$core_revision_image" == "$expected_image" ]]
+
+          {
+            echo "workspace_origin=$workspace_origin"
+            echo "image_digest=$image_digest"
+            echo "revision=$revision"
+            echo "core_hostname=$core_hostname"
+            echo "core_origin=$core_origin"
+            echo "core_revision=$core_revision"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Record validation-only evidence
+        if: inputs.dry_run
+        run: >-
+          node .github/scripts/coordinated-private-deployment-records.mjs create
+          --plan release-input/plan/release-plan.json
+          --source-commit "${{ steps.source.outputs.commit }}"
+          --requested-tag "${{ steps.source.outputs.commit }}"
+          --status validated
+          --completed-at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
+          --provenance-url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          --output private-deployment.json
+
+      - name: Record observed deployment evidence
+        if: inputs.dry_run != true
+        run: >-
+          node .github/scripts/coordinated-private-deployment-records.mjs create
+          --plan release-input/plan/release-plan.json
+          --source-commit "${{ steps.source.outputs.commit }}"
+          --requested-tag "${{ steps.source.outputs.commit }}"
+          --status deployed
+          --source-image "${{ steps.source.outputs.source_image }}"
+          --source-image-digest "${{ steps.source.outputs.source_digest }}"
+          --image "${{ steps.source.outputs.image }}"
+          --image-digest "${{ steps.verify.outputs.image_digest }}"
+          --revision "${{ steps.verify.outputs.revision }}"
+          --core-revision "${{ steps.verify.outputs.core_revision }}"
+          --workspace-origin "${{ steps.verify.outputs.workspace_origin }}"
+          --core-hostname "${{ steps.verify.outputs.core_hostname }}"
+          --core-origin "${{ steps.verify.outputs.core_origin }}"
+          --checks private-deployment-checks.json
+          --completed-at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
+          --provenance-url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          --output private-deployment.json
+
+      - name: Name coordinated result artifact
+        id: artifact
+        run: |
+          set -euo pipefail
+          release_set_id=$(jq -er .releaseSetId release-input/plan/release-plan.json)
+          echo "name=coordinated-private-deployment-$release_set_id" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.artifact.outputs.name }}
+          path: private-deployment.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Summarize deployment
+        run: |
+          {
+            echo "## Mentra Private Deployment dev"
+            echo
+            echo "- Source: \`${{ steps.source.outputs.commit }}\`"
+            echo "- Canonical image: \`${{ steps.source.outputs.source_reference || 'validation only' }}\`"
+            echo "- Azure mirror: \`${{ steps.source.outputs.image || 'validation only' }}\`"
+            echo "- Workspace: ${{ steps.verify.outputs.workspace_origin || 'validation only' }}"
+            echo "- Core: ${{ steps.verify.outputs.core_origin || 'validation only' }}"
+            echo "- Services: \`meetings\`"
+            echo "- Provider: \`acs-teams\`"
+            echo "- Coordinated release: \`true\`"
+          } >> "$GITHUB_STEP_SUMMARY"

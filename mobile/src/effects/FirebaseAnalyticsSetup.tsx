@@ -1,10 +1,17 @@
 import {useEffect} from "react"
-import {initAnalytics} from "@/utils/analytics"
+
+import {useDeployment} from "@/services/deployment"
+import {disableAnalytics, initAnalytics} from "@/utils/analytics"
 
 export const FirebaseAnalyticsSetup = () => {
+  const {activeDeployment, selectionResolved} = useDeployment()
+  const telemetryEnabled =
+    selectionResolved && (activeDeployment.kind === "consumer" || activeDeployment.manifest.telemetry)
+
   useEffect(() => {
-    initAnalytics().catch((err) => console.warn("Firebase Analytics init failed:", err))
-  }, [])
+    const updateCollection = telemetryEnabled ? initAnalytics : disableAnalytics
+    updateCollection().catch((err) => console.warn("Firebase Analytics configuration failed:", err))
+  }, [telemetryEnabled])
 
   return null
 }

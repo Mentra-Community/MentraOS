@@ -25,6 +25,7 @@
         "@mentra/crust": "workspace:*",
         "@mentra/engine": "workspace:*",
         "@mentra/engine-host-internal": "workspace:*",
+        "@mentra/entra-auth": "workspace:*",
         "@mentra/jspolyfill": "workspace:*",
         "@mentra/miniapp": "workspace:*",
         "@react-native-community/netinfo": "11.5.2",
@@ -289,6 +290,19 @@
     "modules/engine-host-internal": {
       "name": "@mentra/engine-host-internal",
       "version": "0.0.0",
+    },
+    "modules/entra-auth": {
+      "name": "@mentra/entra-auth",
+      "version": "3.2.0",
+      "devDependencies": {
+        "expo-module-scripts": "^55.0.2",
+        "typescript": "~5.9.2",
+      },
+      "peerDependencies": {
+        "expo": "*",
+        "react": "*",
+        "react-native": "*",
+      },
     },
     "modules/jspolyfill": {
       "name": "@mentra/jspolyfill",
@@ -935,6 +949,8 @@
     "@mentra/engine": ["@mentra/engine@workspace:modules/engine"],
 
     "@mentra/engine-host-internal": ["@mentra/engine-host-internal@workspace:modules/engine-host-internal"],
+
+    "@mentra/entra-auth": ["@mentra/entra-auth@workspace:modules/entra-auth"],
 
     "@mentra/jspolyfill": ["@mentra/jspolyfill@workspace:modules/jspolyfill"],
 

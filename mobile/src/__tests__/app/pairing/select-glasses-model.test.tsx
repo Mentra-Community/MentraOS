@@ -4,6 +4,7 @@ import type {ReactNode} from "react"
 import SelectGlassesModelScreen from "@/app/pairing/select-glasses-model"
 import {useNavigationStore} from "@/stores/navigation"
 import {preparePairingScan} from "@/utils/pairing/preparePairingScan"
+import {deploymentStore} from "@/services/deployment"
 
 jest.mock("@mentra/engine", () => ({
   DeviceTypes: {
@@ -22,6 +23,10 @@ jest.mock("@mentra/engine", () => ({
 
 jest.mock("@/stores/navigation", () => ({
   useNavigationStore: {getState: jest.fn()},
+}))
+
+jest.mock("@/services/deployment", () => ({
+  deploymentStore: {getActive: jest.fn()},
 }))
 
 jest.mock("@/utils/pairing/preparePairingScan", () => ({
@@ -77,6 +82,7 @@ describe("glasses model selection", () => {
     jest.clearAllMocks()
     ;(useNavigationStore.getState as jest.Mock).mockReturnValue({push, goBack})
     ;(preparePairingScan as jest.Mock).mockResolvedValue(true)
+    ;(deploymentStore.getActive as jest.Mock).mockReturnValue({kind: "consumer", source: "embedded"})
   })
 
   it("prepares permissions and opens the scan directly for Mentra Live", async () => {
@@ -111,5 +117,16 @@ describe("glasses model selection", () => {
     })
 
     expect(push).not.toHaveBeenCalled()
+  })
+
+  it("shows only model ids approved by the workspace manifest", () => {
+    ;(deploymentStore.getActive as jest.Mock).mockReturnValue({
+      kind: "workspace",
+      manifest: {glasses: {allowedModelsOverride: ["mentra-live"]}},
+    })
+    const {getByTestId, queryByTestId} = render(<SelectGlassesModelScreen />)
+
+    expect(getByTestId("pairing-model-mentra_live")).toBeTruthy()
+    expect(queryByTestId("pairing-model-evenrealities_g1")).toBeNull()
   })
 })

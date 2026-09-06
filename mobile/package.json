@@ -76,6 +76,7 @@
     "@mentra/cloud-client": "workspace:*",
     "@mentra/engine": "workspace:*",
     "@mentra/engine-host-internal": "workspace:*",
+    "@mentra/entra-auth": "workspace:*",
     "@mentra/jspolyfill": "workspace:*",
     "@mentra/miniapp": "workspace:*",
     "@react-native-community/netinfo": "11.5.2",

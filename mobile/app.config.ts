@@ -164,6 +164,19 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       ...(variant.googleServicesPlist ? {googleServicesFile: variant.googleServicesPlist} : {}),
       associatedDomains: ["applinks:apps.mentra.glass", "applinks:apps.mentraglass.com"],
       infoPlist: {
+        // Native collection must remain off until the deployment profile has
+        // been restored. FirebaseAnalyticsSetup enables it for consumer or
+        // explicitly opted-in workspace deployments.
+        FIREBASE_ANALYTICS_COLLECTION_ENABLED: false,
+        CFBundleURLTypes: [
+          {
+            CFBundleURLSchemes: ["com.mentra"],
+          },
+          {
+            CFBundleURLSchemes: [`msauth.${iosBundleId}`],
+          },
+        ],
+        LSApplicationQueriesSchemes: ["msauthv2", "msauthv3"],
         NSCameraUsageDescription: "This app needs access to your camera to capture images.",
         NSMicrophoneUsageDescription:
           "Mentra uses your microphone to enable the 'Hey Mira' AI assistant and provide live captions for deaf and hard-of-hearing users on smart glasses. For example, you can say 'Hey Mira, what's on my calendar today?' or the app can caption conversations in real-time on your glasses display.",
@@ -223,6 +236,13 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
         usesNonExemptEncryption: false,
       },
       entitlements: {
+        // Preserve the app's default keychain namespace while adding MSAL's
+        // shared cache group. Replacing the default group makes existing app
+        // credentials unreadable after an upgrade.
+        "keychain-access-groups": [
+          `$(AppIdentifierPrefix)${iosBundleId}`,
+          "$(AppIdentifierPrefix)com.microsoft.adalcache",
+        ],
         "com.apple.developer.networking.wifi-info": true,
         "com.apple.developer.networking.HotspotConfiguration": true,
       },
@@ -314,6 +334,17 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
           ios: {
             deploymentTarget: "15.5", // for react-native-zip-archive
             extraPods: [
+              {
+                // AzureCommunicationCalling is a dynamic binary framework and
+                // links AzureCommunicationCommon as another dynamic framework.
+                // The public Common CocoaPod builds a static library unless the
+                // entire React Native project enables use_frameworks!, which is
+                // incompatible with other binary dependencies in this app. Use
+                // Microsoft's official Common XCFramework (the same artifact its
+                // SwiftPM package consumes) through our small local podspec.
+                name: "AzureCommunicationCommon",
+                podspec: "../podspecs/AzureCommunicationCommon.podspec",
+              },
               {
                 name: "FirebaseCore",
                 modular_headers: true,

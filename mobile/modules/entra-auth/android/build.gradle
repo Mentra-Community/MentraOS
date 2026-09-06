@@ -1,0 +1,19 @@
+apply plugin: 'com.android.library'
+
+group = 'com.mentra.entraauth'
+version = '3.2.0'
+
+def expoModulesCorePlugin = new File(project(":expo-modules-core").projectDir.absolutePath, "ExpoModulesCorePlugin.gradle")
+apply from: expoModulesCorePlugin
+applyKotlinExpoModulesCorePlugin()
+useCoreDependencies()
+useExpoPublishing()
+useDefaultAndroidSdkVersions()
+
+android {
+  namespace "com.mentra.entraauth"
+}
+
+dependencies {
+  implementation 'com.microsoft.identity.client:msal:8.4.1'
+}

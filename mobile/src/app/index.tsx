@@ -11,14 +11,15 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import mantle from "@/services/MantleManager"
-import {SETTINGS, engine, useSetting} from "@mentra/engine"
+import {SETTINGS, engine, useSetting, BgTimer} from "@mentra/engine"
 import {SplashVideo} from "@/components/splash/SplashVideo"
 import {APP_STORE_URL, PLAY_STORE_URL} from "@/constants/appConfig"
+import {resolvedEndpoints} from "@/services/cloudClient"
 import {fetchMinimumClientVersion} from "@/utils/cloudVersion"
-import {BgTimer} from "@mentra/engine"
+import {useDeployment} from "@/services/deployment"
 
 // Types
-type ScreenState = "loading" | "connection" | "auth" | "outdated" | "success"
+type ScreenState = "loading" | "connection" | "outdated" | "success"
 
 interface StatusConfig {
   icon: string
@@ -31,6 +32,21 @@ interface StatusConfig {
 const NAVIGATION_DELAY = 300
 const DEEPLINK_DELAY = 1000
 
+/**
+ * The offline required-version cache is namespaced by the service that issued
+ * the policy. Releases before Runtime owned `/api/client/min-version` cached a
+ * bare Core floor under the same setting, and the two services can carry
+ * different floors, so a value without this prefix is ignored rather than
+ * enforced against the installed client.
+ */
+const CACHED_VERSION_SOURCE = "runtime:"
+
+function readCachedRequiredVersion(value: unknown): string | null {
+  if (typeof value !== "string" || !value.startsWith(CACHED_VERSION_SOURCE)) return null
+  const version = value.slice(CACHED_VERSION_SOURCE.length)
+  return semver.valid(version) === version ? version : null
+}
+
 export default function InitScreen() {
   // Hooks
   const {theme} = useAppTheme()
@@ -38,6 +54,7 @@ export default function InitScreen() {
   const {replace, replaceAll, getPendingRoute, setPendingRoute, clearHistoryAndGoHome, setAnimation} =
     useNavigationStore.getState()
   const {processUrl} = useDeeplink()
+  const {activeDeployment, selectionResolved, store: deploymentStore} = useDeployment()
   const rootNavigationState = useRootNavigationState()
   const isNavigationReady = rootNavigationState?.key != null
 
@@ -52,16 +69,22 @@ export default function InitScreen() {
   const [isRetrying, setIsRetrying] = useState(false)
   const [isBlockedByVersion, setIsBlockedByVersion] = useState(false)
   // Zustand store hooks
-  // The boot version gate hits cloud_core_url (resolvedEndpoints().core), so the
-  // custom-URL detection + reset recovery operate on that setting, not the
-  // retired V1 backend_url.
-  const [coreUrl, setCoreUrl] = useSetting(SETTINGS.cloud_core_url.key)
-  const [onboardingCompleted, _setOnboardingCompleted] = useSetting(SETTINGS.onboarding_completed.key)
-  const [defaultWearable, _setDefaultWearable] = useSetting(SETTINGS.default_wearable.key)
+  // Runtime is the canonical boot version-policy service. Core keeps its
+  // legacy endpoint only for already-released clients.
+  const [, setCoreUrl] = useSetting(SETTINGS.cloud_core_url.key)
+  const [runtimeUrl, setRuntimeUrl] = useSetting(SETTINGS.cloud_runtime_url.key)
   const [superMode] = useSetting(SETTINGS.super_mode.key)
   const [appBootExtraInfo] = useSetting(SETTINGS.app_boot_extra_info.key)
   const [bootPhase, setBootPhase] = useState<string>("Starting up…")
   const [cachedRequiredVersion, setCachedRequiredVersion] = useSetting(SETTINGS.cached_required_version.key)
+  const updateUrl =
+    activeDeployment.kind === "workspace"
+      ? Platform.OS === "ios"
+        ? activeDeployment.manifest.appUpdates.storeUrls.ios
+        : activeDeployment.manifest.appUpdates.storeUrls.android
+      : Platform.OS === "ios"
+        ? APP_STORE_URL
+        : PLAY_STORE_URL
 
   // Helper Functions
   const getLocalVersion = (): string | null => {
@@ -74,10 +97,16 @@ export default function InitScreen() {
   }
 
   const checkCustomUrl = async (): Promise<boolean> => {
-    const defaultUrl = SETTINGS[SETTINGS.cloud_core_url.key].defaultValue()
+    if (activeDeployment.kind === "workspace") {
+      setIsUsingCustomUrl(true)
+      return true
+    }
+    const defaultCoreUrl = SETTINGS[SETTINGS.cloud_core_url.key].defaultValue()
+    const defaultRuntimeUrl = SETTINGS[SETTINGS.cloud_runtime_url.key].defaultValue()
     // Read directly from the store to avoid stale React closure values
-    const currentUrl = engine.settings.get(SETTINGS.cloud_core_url.key)
-    const isCustom = currentUrl !== defaultUrl
+    const currentCoreUrl = engine.settings.get(SETTINGS.cloud_core_url.key)
+    const currentRuntimeUrl = engine.settings.get(SETTINGS.cloud_runtime_url.key)
+    const isCustom = currentCoreUrl !== defaultCoreUrl || currentRuntimeUrl !== defaultRuntimeUrl
     setIsUsingCustomUrl(isCustom)
     return isCustom
   }
@@ -95,9 +124,11 @@ export default function InitScreen() {
 
   const navigateToDestination = useCallback(async () => {
     console.log("INDEX: navigateToDestination()")
-    if (!user?.email) {
+    if (!user?.id) {
       await new Promise((resolve) => setTimeout(resolve, NAVIGATION_DELAY))
-      replace("/auth/start", {transition: "fade"})
+      replace(activeDeployment.kind === "workspace" ? "/auth/workspace-signin" : "/auth/start", {
+        transition: "fade",
+      })
       return
     }
 
@@ -128,10 +159,10 @@ export default function InitScreen() {
 
   const checkLoggedIn = async (): Promise<void> => {
     if (!user) {
-      replaceAll("/auth/start")
+      replaceAll(activeDeployment.kind === "workspace" ? "/auth/workspace-signin" : "/auth/start")
       return
     }
-    handleTokenExchange()
+    await handleTokenExchange()
   }
 
   const handleTokenExchange = async (): Promise<void> => {
@@ -141,7 +172,9 @@ export default function InitScreen() {
     // itself via the auth provider. Boot just needs a valid session, then init.
     const token = session?.token
     if (!token) {
-      setState("auth")
+      // A cached user alone cannot start Engine. Return to login instead of
+      // leaving Continue Anyway and Retry looping on the auth-error screen.
+      replaceAll(activeDeployment.kind === "workspace" ? "/auth/workspace-signin" : "/auth/start")
       return
     }
 
@@ -171,18 +204,23 @@ export default function InitScreen() {
       return
     }
 
-    // Cloud V2 core serves the version gate (V1's copy is retired with
-    // RestComms). Retries cover the boot-time DNS blips that historically
-    // dumped users at the connection-error screen (which blocks login).
-    const res = await fetchMinimumClientVersion(3, 1000)
+    const versionRuntimeUrl =
+      activeDeployment.kind === "workspace"
+        ? activeDeployment.manifest.services.runtimeUrl!
+        : resolvedEndpoints().runtime
+    const cachedVersion = activeDeployment.kind === "consumer" ? readCachedRequiredVersion(cachedRequiredVersion) : null
+
+    // Runtime serves the policy before authentication. Retries cover boot-time
+    // DNS blips that would otherwise dump users at the connection screen.
+    const res = await fetchMinimumClientVersion(versionRuntimeUrl, 3, 1000)
     if (res.is_error()) {
-      console.error("Failed to fetch cloud version:", res.error)
+      console.error("Failed to fetch minimum client version:", res.error)
 
       // Even offline, check cached required version to block outdated apps
-      if (cachedRequiredVersion && semver.lt(localVer, cachedRequiredVersion)) {
-        console.log(`INDEX: Offline but app is below cached required version (${localVer} < ${cachedRequiredVersion})`)
+      if (cachedVersion && semver.lt(localVer, cachedVersion)) {
+        console.log(`INDEX: Offline but app is below cached required version (${localVer} < ${cachedVersion})`)
         setLocalVersion(localVer)
-        setCloudVersion(cachedRequiredVersion)
+        setCloudVersion(cachedVersion)
         setCanSkipUpdate(false)
         setIsBlockedByVersion(true)
         setState("outdated")
@@ -199,8 +237,12 @@ export default function InitScreen() {
     console.log(`INDEX: Version check: local=${localVer}, required=${required}, recommended=${recommended}`)
 
     // Cache the required version for offline enforcement
-    if (required && required !== cachedRequiredVersion) {
-      setCachedRequiredVersion(required)
+    if (
+      activeDeployment.kind === "consumer" &&
+      required &&
+      required !== readCachedRequiredVersion(cachedRequiredVersion)
+    ) {
+      setCachedRequiredVersion(`${CACHED_VERSION_SOURCE}${required}`)
     }
 
     if (semver.lt(localVer, recommended)) {
@@ -218,10 +260,10 @@ export default function InitScreen() {
   }
 
   const handleUpdate = async (): Promise<void> => {
+    if (!updateUrl) return
     setIsUpdating(true)
     try {
-      const url = Platform.OS === "ios" ? APP_STORE_URL : PLAY_STORE_URL
-      await Linking.openURL(url)
+      await Linking.openURL(updateUrl)
     } catch (error) {
       console.error("Error opening store:", error)
     } finally {
@@ -229,10 +271,27 @@ export default function InitScreen() {
     }
   }
 
+  const managedSupportUrl = activeDeployment.kind === "workspace" ? activeDeployment.manifest.links.supportUrl : null
+
+  const handleContactSupport = async (): Promise<void> => {
+    if (!managedSupportUrl) return
+    try {
+      await Linking.openURL(managedSupportUrl)
+    } catch (error) {
+      console.error("Error opening support link:", error)
+    }
+  }
+
   const handleResetUrl = async (): Promise<void> => {
     try {
-      const defaultUrl = SETTINGS[SETTINGS.cloud_core_url.key].defaultValue()
-      await setCoreUrl(defaultUrl)
+      if (activeDeployment.kind === "workspace") {
+        deploymentStore.returnToMentra()
+        replaceAll("/auth/start")
+        return
+      }
+      const defaultCoreUrl = SETTINGS[SETTINGS.cloud_core_url.key].defaultValue()
+      const defaultRuntimeUrl = SETTINGS[SETTINGS.cloud_runtime_url.key].defaultValue()
+      await Promise.all([setCoreUrl(defaultCoreUrl), setRuntimeUrl(defaultRuntimeUrl)])
       setIsUsingCustomUrl(false)
       await checkCloudVersion(true) // Pass true for retry to avoid flash
     } catch (error) {
@@ -242,14 +301,6 @@ export default function InitScreen() {
 
   const getStatusConfig = (): StatusConfig => {
     switch (state) {
-      case "auth":
-        return {
-          icon: "account-alert",
-          iconColor: theme.colors.destructive,
-          title: translate("versionCheck:authErrorTitle"),
-          description: translate("versionCheck:authErrorDescription"),
-        }
-
       case "connection":
         return {
           icon: "wifi-off",
@@ -268,6 +319,16 @@ export default function InitScreen() {
           description: translate(
             canSkipUpdate ? "versionCheck:updateAvailableDescription" : "versionCheck:updateRequiredDescription",
           ),
+          // A managed workspace distributes the app through its own device
+          // management and has no store link. Tell the user where updates
+          // come from instead of leaving them on a screen with no action.
+          ...(activeDeployment.kind === "workspace" && !updateUrl
+            ? {
+                description: translate("versionCheck:managedUpdateDescription", {
+                  name: activeDeployment.manifest.displayName,
+                }),
+              }
+            : {}),
         }
 
       default:
@@ -287,26 +348,33 @@ export default function InitScreen() {
     if (initStartedRef.current) return
     initStartedRef.current = true
 
+    // A fresh install has not selected Mentra or a customer workspace yet.
+    // Render the local selector without performing Mentra's cloud version call.
+    if (!selectionResolved) {
+      replaceAll("/auth/start")
+      return
+    }
+
     const init = async () => {
       console.log("INDEX: init()")
       await checkCustomUrl()
       await checkCloudVersion()
     }
     init()
-  }, [authLoading, isNavigationReady])
+  }, [authLoading, isNavigationReady, selectionResolved])
 
-  // Clear cached required version when backend URL changes so a stricter
+  // Clear the legacy consumer cache when its Runtime changes so a stricter
   // server's requirement doesn't block access to a different backend.
   // Skip the initial mount so the cached value is preserved for offline enforcement.
-  const coreUrlRef = useRef(coreUrl)
+  const runtimeUrlRef = useRef(runtimeUrl)
   useEffect(() => {
-    if (coreUrlRef.current !== coreUrl) {
-      coreUrlRef.current = coreUrl
+    if (runtimeUrlRef.current !== runtimeUrl) {
+      runtimeUrlRef.current = runtimeUrl
       if (cachedRequiredVersion) {
         setCachedRequiredVersion("")
       }
     }
-  }, [coreUrl])
+  }, [runtimeUrl])
 
   useEffect(() => {
     setAnimation("fade")
@@ -354,7 +422,7 @@ export default function InitScreen() {
 
       {/* Buttons */}
       <View className="gap-3">
-        {(state === "connection" || state === "auth") && (
+        {state === "connection" && (
           <Button
             flexContainer
             onPress={() => checkCloudVersion(true)}
@@ -366,7 +434,7 @@ export default function InitScreen() {
           />
         )}
 
-        {state === "outdated" && (
+        {state === "outdated" && updateUrl && (
           <Button
             flexContainer
             preset="primary"
@@ -376,7 +444,11 @@ export default function InitScreen() {
           />
         )}
 
-        {(state === "connection" || state === "auth") && isUsingCustomUrl && (
+        {state === "outdated" && !updateUrl && managedSupportUrl && (
+          <Button flexContainer preset="primary" onPress={handleContactSupport} tx="versionCheck:contactSupport" />
+        )}
+
+        {(state === "connection" || state === "outdated") && isUsingCustomUrl && (
           <Button
             flexContainer
             onPress={handleResetUrl}
@@ -389,9 +461,8 @@ export default function InitScreen() {
           />
         )}
 
-        {(((state === "connection" || state === "auth") && !isBlockedByVersion) ||
-          (state === "outdated" && canSkipUpdate)) && (
-          <Button flexContainer preset="secondary" onPress={navigateToDestination} tx="versionCheck:continueAnyway" />
+        {((state === "connection" && !isBlockedByVersion) || (state === "outdated" && canSkipUpdate)) && (
+          <Button flexContainer preset="secondary" onPress={checkLoggedIn} tx="versionCheck:continueAnyway" />
         )}
       </View>
     </Screen>

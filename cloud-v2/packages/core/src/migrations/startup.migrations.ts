@@ -32,6 +32,7 @@ type DuplicateUserGroup = {
   users: Array<{
     _id: mongoose.Types.ObjectId;
     mentraUserId: string;
+    createdAt?: Date;
   }>;
   count: number;
 };
@@ -360,11 +361,10 @@ async function dedupeUserIdentityRows(): Promise<void> {
           tenantUserId: { $type: "string" },
         },
       },
-      { $sort: { createdAt: 1, _id: 1 } },
       {
         $group: {
           _id: { tenantId: "$tenantId", tenantUserId: "$tenantUserId" },
-          users: { $push: { _id: "$_id", mentraUserId: "$mentraUserId" } },
+          users: { $push: { _id: "$_id", mentraUserId: "$mentraUserId", createdAt: "$createdAt" } },
           count: { $sum: 1 },
         },
       },
@@ -376,7 +376,13 @@ async function dedupeUserIdentityRows(): Promise<void> {
   let updatedRefreshTokenCount = 0;
 
   for (const group of duplicateGroups) {
-    const [keeper, ...duplicates] = group.users;
+    // Sort each duplicate group in-process. Cosmos DB's Mongo API rejects the
+    // former collection-wide {createdAt,_id} aggregation sort unless customers
+    // manually provision a composite index, even for a fresh empty database.
+    const [keeper, ...duplicates] = [...group.users].sort((left, right) => {
+      const createdAtDelta = (left.createdAt?.getTime() ?? 0) - (right.createdAt?.getTime() ?? 0);
+      return createdAtDelta || left._id.toString().localeCompare(right._id.toString());
+    });
     if (!keeper || duplicates.length === 0) continue;
 
     const duplicateUserIds = duplicates.map((user) => user.mentraUserId);

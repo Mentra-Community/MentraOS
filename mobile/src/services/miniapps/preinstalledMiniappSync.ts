@@ -99,7 +99,7 @@ async function downloadVerifiedBundle(entry: PreinstalledMiniappRegistryEntry): 
   return output.uri
 }
 
-async function sha256Hex(bytes: Uint8Array): Promise<string> {
+export async function sha256Hex(bytes: Uint8Array): Promise<string> {
   if (globalThis.crypto?.subtle) {
     const data = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
     const digest = await globalThis.crypto.subtle.digest("SHA-256", data)

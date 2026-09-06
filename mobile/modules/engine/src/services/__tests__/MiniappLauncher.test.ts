@@ -14,6 +14,7 @@ mock.module("../AppRegistry", () => ({
     getActiveVersion: async () => activeVersion,
     getMiniappEntryPaths: () => ({background: "file:///bundle/bg.js", ui: "file:///bundle/ui.html"}),
     getMiniappManifest: () => ({permissions: [{type: "MICROPHONE"}], hardwareRequirements: []}),
+    getReleaseIdentity: () => null,
     getLatestDevSnapshotVersion: () => null,
     hasDevSnapshot: () => false,
     installFromUrl: async () => ({is_ok: () => true, is_error: () => false}),

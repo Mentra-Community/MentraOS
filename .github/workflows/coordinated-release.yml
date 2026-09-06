@@ -276,6 +276,39 @@ jobs:
       dry_run: ${{ needs.plan.outputs.dry_run == 'true' }}
     secrets: inherit
 
+  runtime-image:
+    name: Publish canonical Mentra Cloud image
+    needs: plan
+    permissions:
+      actions: read
+      attestations: write
+      contents: read
+      id-token: write
+      packages: write
+    uses: ./.github/workflows/reusable-coordinated-runtime-image.yml
+    with:
+      source_commit: ${{ needs.plan.outputs.source_commit }}
+      release_plan_artifact: ${{ needs.plan.outputs.plan_artifact }}
+      dry_run: ${{ needs.plan.outputs.dry_run == 'true' }}
+    secrets: inherit
+
+  private-deployment:
+    name: Deploy release-matched private stack
+    needs: [plan, runtime-image]
+    if: needs.plan.outputs.cloud_environment == 'dev'
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: read
+    uses: ./.github/workflows/private-deployment-dev.yml
+    with:
+      source_commit: ${{ needs.plan.outputs.source_commit }}
+      release_plan_artifact: ${{ needs.plan.outputs.plan_artifact }}
+      runtime_image_artifact: ${{ needs.runtime-image.outputs.result_artifact }}
+      dry_run: ${{ needs.plan.outputs.dry_run == 'true' }}
+    secrets: inherit
+
   ota:
     name: Publish immutable Mentra Live OTA set
     needs: plan
@@ -667,11 +700,27 @@ jobs:
 
   finalize:
     name: Finalize immutable release bill of materials
-    needs: [plan, cloud-v2, ota, npm, sdk-native, mobile, engine-consumer, starter-kit, example-testflight]
+    needs:
+      [
+        plan,
+        cloud-v2,
+        runtime-image,
+        private-deployment,
+        ota,
+        npm,
+        sdk-native,
+        mobile,
+        engine-consumer,
+        starter-kit,
+        example-testflight,
+      ]
     if: >-
       always() &&
       needs.plan.result == 'success' &&
       needs.cloud-v2.result == 'success' &&
+      needs.runtime-image.result == 'success' &&
+      (needs.private-deployment.result == 'success' ||
+        (needs.plan.outputs.cloud_environment != 'dev' && needs.private-deployment.result == 'skipped')) &&
       needs.ota.result == 'success' &&
       needs.npm.result == 'success' &&
       needs.sdk-native.result == 'success' &&
@@ -700,6 +749,17 @@ jobs:
         with:
           name: ${{ needs.cloud-v2.outputs.result_artifact }}
           path: release-input/cloud-v2
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.runtime-image.outputs.result_artifact }}
+          path: release-input/runtime-image
+
+      - uses: actions/download-artifact@v4
+        if: needs.plan.outputs.cloud_environment == 'dev'
+        with:
+          name: ${{ needs.private-deployment.outputs.result_artifact }}
+          path: release-input/private-deployment
 
       - uses: actions/download-artifact@v4
         with:
@@ -746,6 +806,12 @@ jobs:
           engine_package=$(find release-input/npm -type f -name 'mentra-engine-*.tgz' -print -quit)
           test -n "$engine_package"
           starter_kit_args=()
+          private_deployment_args=()
+          if [[ "${{ needs.plan.outputs.cloud_environment }}" == "dev" ]]; then
+            private_deployment_args=(
+              --private-deployment release-input/private-deployment/private-deployment.json
+            )
+          fi
           if [[ "${{ needs.plan.outputs.dry_run }}" != "true" ]]; then
             starter_kit_result=$(find release-input/starter-kit -type f -name 'starter-kit-release-*.json' -print -quit)
             example_testflight=$(find release-input/example-testflight -type f -name 'example-testflight-publication.json' -print -quit)
@@ -764,6 +830,8 @@ jobs:
             --native release-input/sdk-native/sdk-native-publications.json \
             --mobile release-input/mobile/mobile-publications.json \
             --cloud release-input/cloud-v2/cloud-v2-deployment.json \
+            --runtime-image release-input/runtime-image/runtime-image-publication.json \
+            "${private_deployment_args[@]}" \
             "${starter_kit_args[@]}" \
             --asg-selection "$asg_selection" \
             --engine-package "$engine_package" \
@@ -853,6 +921,10 @@ jobs:
             echo "- Release: \`${{ steps.results.outputs.identity }}\`"
             echo "- Source: \`${{ needs.plan.outputs.source_commit }}\`"
             echo "- Cloud deployment: \`$(jq -er .cloud.deploymentId finalized-release/publication-results.json 2>/dev/null || echo validated-only)\`"
+            echo "- Runtime image: \`$(jq -er '.runtimeImage.reference // "validated-only"' finalized-release/publication-results.json)\`"
+            if [[ "${{ needs.plan.outputs.cloud_environment }}" == "dev" ]]; then
+              echo "- Private deployment Runtime: \`$(jq -er '.privateDeployment.azure.revision // "validated-only"' finalized-release/publication-results.json)\`"
+            fi
             echo "- OTA manifest: ${{ needs.ota.outputs.manifest_url }}"
             echo "- Dry run: \`${{ needs.plan.outputs.dry_run }}\`"
             if [[ "${{ needs.plan.outputs.dry_run }}" != "true" ]]; then
@@ -1040,7 +1112,21 @@ jobs:
   notify-slack:
     name: Notify release Slack channel
     needs:
-      [plan, cloud-v2, ota, npm, sdk-native, mobile, engine-consumer, starter-kit, example-testflight, finalize, docs]
+      [
+        plan,
+        cloud-v2,
+        runtime-image,
+        private-deployment,
+        ota,
+        npm,
+        sdk-native,
+        mobile,
+        engine-consumer,
+        starter-kit,
+        example-testflight,
+        finalize,
+        docs,
+      ]
     if: always() && github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
@@ -1062,6 +1148,8 @@ jobs:
           TESTFLIGHT_GROUP: ${{ needs.plan.outputs.testflight_group }}
           PLAN_RESULT: ${{ needs.plan.result }}
           CLOUD_V2_RESULT: ${{ needs.cloud-v2.result }}
+          RUNTIME_IMAGE_RESULT: ${{ needs.runtime-image.result }}
+          PRIVATE_DEPLOYMENT_RESULT: ${{ needs.private-deployment.result }}
           OTA_RESULT: ${{ needs.ota.result }}
           NPM_RESULT: ${{ needs.npm.result }}
           SDK_NATIVE_RESULT: ${{ needs.sdk-native.result }}

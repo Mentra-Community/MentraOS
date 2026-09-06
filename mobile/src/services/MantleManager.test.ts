@@ -522,7 +522,9 @@ describe("MantleManager", () => {
     const [title, message, buttons] = mockShowAlert.mock.calls.at(-1)!
 
     expect(title).toBe("Reconnect your glasses")
-    expect(message).toMatch(/connected over Bluetooth/)
+    expect(message).toBe(
+      "Wi-Fi setup needs your glasses connected over Bluetooth. Turn them on and wait for them to reconnect, then try again.",
+    )
     expect(buttons).toHaveLength(1)
     expect(buttons[0].text).toBe("OK")
     buttons[0].onPress()
