@@ -84,6 +84,12 @@ public class AsgConstants {
     /** Cadence for the short hold-still click while a cold photo spins up the camera. */
     public static final long CAMERA_PREP_CLICK_INTERVAL_MS = 900L;
 
+    /** The 186ms prep beep plus a tail margin; only stop the sequence in its silence. */
+    public static final long CAMERA_PREP_STOP_AFTER_MS = 240L;
+
+    /** Avoid stopping near the next beep when playback-position reporting is slightly behind. */
+    public static final long CAMERA_PREP_STOP_BEFORE_MS = 800L;
+
     /** Minimum AE settling time after first convergence for a cold camera photo. */
     public static final long COLD_CAMERA_EXPOSURE_SETTLE_DELAY_MS = 475L;
 

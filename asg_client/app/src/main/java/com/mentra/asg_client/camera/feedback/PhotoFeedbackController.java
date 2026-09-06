@@ -43,7 +43,6 @@ public final class PhotoFeedbackController {
         private boolean mTerminal;
         private long mPrepClickPlaybackToken;
         private long mSnapPlaybackToken;
-        @Nullable private Runnable mPrepClickRunnable;
         @Nullable private Runnable mPrepResumeRunnable;
         @Nullable private Runnable mSnapRunnable;
         @Nullable private Runnable mSnapTrackingRunnable;
@@ -112,7 +111,9 @@ public final class PhotoFeedbackController {
                     feedbackToken.mSafetyTimeoutRunnable, FEEDBACK_SAFETY_TIMEOUT_MS);
 
             if (cameraWarm) {
-                Log.d(TAG, "Warm capture — snap is waiting for sensor exposure start");
+                // Device testing measured warm capture at <20ms. Immediate shutter feedback
+                // feels more responsive than waiting for the exposure callback.
+                playSnap(feedbackToken, "warm camera — immediate button feedback");
                 return feedbackToken;
             }
 
@@ -312,39 +313,18 @@ public final class PhotoFeedbackController {
             mHardwareManager.stopAudioOverlayPlayback(
                     feedbackToken.mPrepClickPlaybackToken);
         }
+        // One continuous asset keeps the 900ms cadence independent of timers and player restarts.
         feedbackToken.mPrepClickPlaybackToken =
                 mHardwareManager.playAudioAssetOverlayTracked(
                         AudioAssets.CAMERA_PREP_CLICK,
                         AsgConstants.CAMERA_PREP_CLICK_PLAYBACK_VOLUME);
 
-        if (feedbackToken.mPrepClickRunnable == null) {
-            feedbackToken.mPrepClickRunnable =
-                    new Runnable() {
-                        @Override
-                        public void run() {
-                            synchronized (mLock) {
-                                if (!feedbackToken.mPrepClicksActive
-                                        || feedbackToken.mPrepClicksPaused
-                                        || feedbackToken.mTerminal
-                                        || mCurrentPrepFeedback != feedbackToken) {
-                                    return;
-                                }
-                                playPrepClickLocked(feedbackToken);
-                            }
-                        }
-                    };
-        }
-        mHandler.postDelayed(
-                feedbackToken.mPrepClickRunnable,
-                AsgConstants.CAMERA_PREP_CLICK_INTERVAL_MS);
+
     }
 
     private void stopPrepClicksLocked(Token feedbackToken) {
         feedbackToken.mPrepClicksActive = false;
         feedbackToken.mPrepClicksPaused = false;
-        if (feedbackToken.mPrepClickRunnable != null) {
-            mHandler.removeCallbacks(feedbackToken.mPrepClickRunnable);
-        }
         if (feedbackToken.mPrepResumeRunnable != null) {
             mHandler.removeCallbacks(feedbackToken.mPrepResumeRunnable);
             feedbackToken.mPrepResumeRunnable = null;
@@ -366,9 +346,6 @@ public final class PhotoFeedbackController {
             return;
         }
         feedbackToken.mPrepClicksPaused = true;
-        if (feedbackToken.mPrepClickRunnable != null) {
-            mHandler.removeCallbacks(feedbackToken.mPrepClickRunnable);
-        }
         if (feedbackToken.mPrepClickPlaybackToken > 0L && mHardwareManager != null) {
             mHardwareManager.stopAudioOverlayPlayback(
                     feedbackToken.mPrepClickPlaybackToken);

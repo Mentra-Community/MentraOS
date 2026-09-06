@@ -2,6 +2,7 @@ package com.mentra.asg_client.camera.feedback;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -48,9 +49,8 @@ public class PhotoFeedbackControllerTest {
     }
 
     @Test
-    public void startColdCapture_playsPrepAndSchedulesCadenceAndTimeout() {
+    public void startColdCapture_playsSequenceWithoutCadenceTimer() {
         PhotoFeedbackController.Token token = controller.start("cold", false);
-        ArgumentCaptor<Runnable> cadenceRunnable = ArgumentCaptor.forClass(Runnable.class);
         ArgumentCaptor<Runnable> timeoutRunnable = ArgumentCaptor.forClass(Runnable.class);
 
         assertThat(token).isNotNull();
@@ -58,21 +58,12 @@ public class PhotoFeedbackControllerTest {
                 .playAudioAssetOverlayTracked(
                         AudioAssets.CAMERA_PREP_CLICK,
                         AsgConstants.CAMERA_PREP_CLICK_PLAYBACK_VOLUME);
-        verify(handler)
-                .postDelayed(
-                        cadenceRunnable.capture(),
-                        eq(AsgConstants.CAMERA_PREP_CLICK_INTERVAL_MS));
+        verify(handler, never())
+                .postDelayed(any(Runnable.class), eq(AsgConstants.CAMERA_PREP_CLICK_INTERVAL_MS));
         verify(handler)
                 .postDelayed(
                         timeoutRunnable.capture(),
                         eq(PhotoFeedbackController.FEEDBACK_SAFETY_TIMEOUT_MS));
-
-        clearInvocations(hardwareManager);
-        cadenceRunnable.getValue().run();
-        verify(hardwareManager)
-                .playAudioAssetOverlayTracked(
-                        AudioAssets.CAMERA_PREP_CLICK,
-                        AsgConstants.CAMERA_PREP_CLICK_PLAYBACK_VOLUME);
 
         timeoutRunnable.getValue().run();
         clearInvocations(hardwareManager);
@@ -85,7 +76,7 @@ public class PhotoFeedbackControllerTest {
 
     @Test
     public void exposureStarted_schedulesSnapAtConfiguredLeadTime() {
-        PhotoFeedbackController.Token token = controller.start("warm", true);
+        PhotoFeedbackController.Token token = controller.start("warm", false);
         clearInvocations(handler, hardwareManager);
         long exposureMs = 250L;
         long expectedDelayMs = exposureMs - AsgConstants.CAMERA_SNAP_TARGET_LEAD_MS;
@@ -103,7 +94,7 @@ public class PhotoFeedbackControllerTest {
 
     @Test
     public void exposureStarted_subtractsCallbackLatencyFromSnapDelay() {
-        PhotoFeedbackController.Token token = controller.start("warm", true);
+        PhotoFeedbackController.Token token = controller.start("warm", false);
         clearInvocations(handler, hardwareManager);
         long sensorTimestampNs = 1_000_000_000L;
         clock.elapsedRealtimeNs = sensorTimestampNs + 50_000_000L;
@@ -119,8 +110,21 @@ public class PhotoFeedbackControllerTest {
     }
 
     @Test
+    public void warmCapture_playsImmediatelyAndDoesNotRepeatAtExposure() {
+        PhotoFeedbackController.Token token = controller.start("warm", true);
+        verify(hardwareManager).playAudioAssetOverlayTracked(
+                AudioAssets.CAMERA_SNAP, AsgConstants.CAMERA_SNAP_PLAYBACK_VOLUME);
+        controller.onExposureStarted(token, 0L, 250_000_000L);
+        controller.playSnap(token, "JPEG ready");
+        verify(hardwareManager).playAudioAssetOverlayTracked(
+                AudioAssets.CAMERA_SNAP, AsgConstants.CAMERA_SNAP_PLAYBACK_VOLUME);
+        verify(hardwareManager, never()).playAudioAssetOverlayTracked(
+                AudioAssets.CAMERA_PREP_CLICK, AsgConstants.CAMERA_PREP_CLICK_PLAYBACK_VOLUME);
+    }
+
+    @Test
     public void shortExposure_playsSnapImmediately() {
-        PhotoFeedbackController.Token token = controller.start("short", true);
+        PhotoFeedbackController.Token token = controller.start("short", false);
         clearInvocations(handler, hardwareManager);
 
         controller.onExposureStarted(
@@ -134,7 +138,7 @@ public class PhotoFeedbackControllerTest {
 
     @Test
     public void failureBeforeDelayedSnap_preventsSnapPlayback() {
-        PhotoFeedbackController.Token token = controller.start("failed", true);
+        PhotoFeedbackController.Token token = controller.start("failed", false);
         clearInvocations(handler, hardwareManager);
         ArgumentCaptor<Runnable> snapRunnable = ArgumentCaptor.forClass(Runnable.class);
         long exposureMs = 250L;
@@ -155,7 +159,7 @@ public class PhotoFeedbackControllerTest {
 
     @Test
     public void laterColdCapture_waitsWhileEarlierRequestIsExposing() {
-        PhotoFeedbackController.Token first = controller.start("first", true);
+        PhotoFeedbackController.Token first = controller.start("first", false);
         controller.onExposureStarted(first, 0L, 0L);
         clearInvocations(hardwareManager);
 
@@ -187,7 +191,7 @@ public class PhotoFeedbackControllerTest {
 
     @Test
     public void timeoutByRequestId_terminalizesMatchingFeedback() {
-        PhotoFeedbackController.Token token = controller.start("timed-out", true);
+        PhotoFeedbackController.Token token = controller.start("timed-out", false);
         clearInvocations(hardwareManager);
 
         controller.stopForTimeout("timed-out");
@@ -267,17 +271,11 @@ public class PhotoFeedbackControllerTest {
     }
 
     @Test
-    public void cleanup_stopsPrepAndMakesCadenceCallbackInert() {
-        ArgumentCaptor<Runnable> cadence = ArgumentCaptor.forClass(Runnable.class);
+    public void cleanup_stopsPrepSequence() {
         controller.start("cleanup", false);
-        verify(handler)
-                .postDelayed(
-                        cadence.capture(),
-                        eq(AsgConstants.CAMERA_PREP_CLICK_INTERVAL_MS));
         clearInvocations(hardwareManager);
 
         controller.cleanup();
-        cadence.getValue().run();
 
         verify(hardwareManager).stopAudioOverlayPlayback(41L);
         verify(hardwareManager, times(0))

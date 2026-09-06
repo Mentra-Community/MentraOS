@@ -191,6 +191,11 @@ android {
     namespace 'com.mentra.asg_client'
     compileSdk 34
 
+    androidResources {
+        // MediaPlayer opens this asset through AssetManager.openFd.
+        noCompress += 'flac'
+    }
+
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17 // Or VERSION_1_8, VERSION_11, etc.
