@@ -276,6 +276,13 @@ Prefer connecting to a `Device` returned by SDK scan callbacks. If your app want
 
 Use `scan()` for user-facing device pickers. The progressive result callback is for UI: render the nearby-device list every time it changes during scanning. The returned final result is for control flow: after the timeout/completion, choose a device from the last list and connect. In multi-device environments, do not auto-connect to the first nearby glasses; present an explicit picker.
 
+Mentra Live connections on iOS require Apple Notification Center Service
+(ANCS) authorization by default. Apps that do not use notification relay can
+set `requiresAncs: false` in the `connect` or `connectDefault` options to skip
+that system authorization requirement. The option defaults to `true` and is an
+intentional no-op on Android. Native iOS callers pass
+`ConnectOptions(requiresAncs: false)`.
+
 ## Device Identity
 
 `Device.id` is the stable app-facing key for a scan result, within the limits of the platform identifier available to the SDK. Use it as a list key, selected-device key, and persisted default-device key.
@@ -378,7 +385,7 @@ For React Native status UI, use `useMentraBluetooth()` from `@mentra/bluetooth-s
 Important defaults:
 
 - `scan(model, options)` reports progressive results through `options.onResults`, resolves with the final matching `Device[]`, and times out after 15 seconds unless `options.timeoutMs` is set.
-- `connect` and `connectDefault` default `saveAsDefault` and `cancelExistingConnectionAttempt` to `true`.
+- `connect` and `connectDefault` default `saveAsDefault`, `cancelExistingConnectionAttempt`, and `requiresAncs` to `true`. `requiresAncs` only changes Mentra Live connections on iOS; Android accepts it as a no-op.
 - `setMicState(enabled)` defaults to glasses microphone on, transcript events off, and LC3 events off. Microphone audio events are continuous while capture is enabled. Use `setVoiceActivityDetectionEnabled(...)` for glasses-side Voice Activity Detection and `setLoudnessGateEnabled(...)` for Mentra Live's center-microphone loudness gate ("Barrier"). With VAD disabled and Barrier enabled, quiet input is represented as silence while audio frames continue. The standalone public Bluetooth SDK defaults are VAD disabled and Barrier enabled, and both settings are reapplied after reconnect. The Mentra App manages separate persisted OS-level microphone preferences. `voice_activity_detection_status` reports whether VAD is enabled, and `speaking_status` reports speaking/not-speaking when supported. Microphone audio events include the latest `voiceActivityDetectionEnabled` value.
 - `requestPhoto({authToken, ...})` omits the `Authorization` header when `authToken` is `null` or empty.
 - `requestPhoto(...)` and `warmUpCamera(...)` generate unique request IDs when `requestId` is omitted or blank. Pass an explicit `requestId` only when your app needs to know it before the response, for example to poll a predictable upload-status URL.

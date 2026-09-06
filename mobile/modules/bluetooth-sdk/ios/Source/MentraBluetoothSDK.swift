@@ -188,6 +188,7 @@ public final class MentraBluetoothSDK {
     private var bluetoothAvailabilityListenerId: UUID?
     private var shouldRestoreGlassesOnBluetoothRestore = false
     private var shouldRestoreControllerOnBluetoothRestore = false
+    private var requiresAncsForBluetoothRestore = true
     private var bridgeEventSinkId: String?
     private var storeListenerId: String?
     private let defaultDeviceKeys: Set<String> = ["default_wearable", "device_name", "device_address", "project_name"]
@@ -391,6 +392,9 @@ public final class MentraBluetoothSDK {
             try BluetoothAvailability.shared.requirePoweredOn(operation: "connect to glasses")
         }
         let isController = ControllerTypes.ALL.contains(device.model.deviceType)
+        if !isController {
+            requiresAncsForBluetoothRestore = options.requiresAncs
+        }
         if options.cancelExistingConnectionAttempt {
             if isController {
                 DeviceManager.shared.disconnectController()
@@ -410,11 +414,12 @@ public final class MentraBluetoothSDK {
             )
         }
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_wearable", device.model.deviceType)
-        DeviceManager.shared.connectByName(device.name)
+        DeviceManager.shared.connectByName(device.name, requiresAncs: options.requiresAncs)
     }
 
     public func connectDefault(options: ConnectOptions = ConnectOptions()) throws {
         clearBluetoothRestoreIntent()
+        requiresAncsForBluetoothRestore = options.requiresAncs
         guard let device = currentDefaultDevice() else {
             throw BluetoothSdkError(
                 code: "default_device_missing",
@@ -427,7 +432,7 @@ public final class MentraBluetoothSDK {
         if options.cancelExistingConnectionAttempt {
             cancelConnectionAttempt()
         }
-        DeviceManager.shared.connectDefault()
+        DeviceManager.shared.connectDefault(requiresAncs: options.requiresAncs)
     }
 
     public func cancelConnectionAttempt() {
@@ -1509,7 +1514,9 @@ public final class MentraBluetoothSDK {
         clearBluetoothRestoreIntent()
 
         if restoreGlasses, !glassesStatus.connected, glassesStatus.connectionState == .disconnected {
-            DeviceManager.shared.connectDefault() // also restores the controller
+            DeviceManager.shared.connectDefault(
+                requiresAncs: requiresAncsForBluetoothRestore
+            ) // also restores the controller
         } else if restoreController, !glassesStatus.controllerConnected {
             DeviceManager.shared.connectDefaultController()
         }
