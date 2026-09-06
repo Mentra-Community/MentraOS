@@ -3,6 +3,7 @@ package com.mentra.bluetoothsdk
 import android.app.Activity
 import android.app.Application
 import android.bluetooth.BluetoothManager
+import android.bluetooth.BluetoothProfile
 import android.content.Context
 import android.os.Bundle
 import android.os.Handler
@@ -347,6 +348,18 @@ class MentraBluetoothSdk private constructor(
             timeoutMs = timeoutMs,
         )
 
+    /**
+     * Scans for glasses of [model], reporting through [callback].
+     *
+     * Callback ordering: a scan that fails to START reports through
+     * [ScanCallback.onError] and never calls [ScanCallback.onComplete]. A scan
+     * that runs to completion always calls [ScanCallback.onComplete]; when it
+     * completes EMPTY while a compatible device is already GATT-connected by
+     * another app on this phone, a non-terminal diagnostic [BluetoothError]
+     * with code `device_held_by_other_app` is delivered through
+     * [ScanCallback.onError] immediately before that [ScanCallback.onComplete].
+     * Discriminate on [BluetoothError.code], not on onError having fired.
+     */
     @JvmOverloads
     fun scan(
         model: DeviceModel,
@@ -378,6 +391,20 @@ class MentraBluetoothSdk private constructor(
             mainHandler.removeCallbacks(timeoutRunnable)
             session.markStopped()
             stopScan(reason)
+            if (reason == ScanStopReason.COMPLETED && latestResults.isEmpty()) {
+                deviceHeldByOtherAppName(model)?.let { heldName ->
+                    // Same-phone detection only: another app on this phone holds the GATT
+                    // link, so the glasses never advertise and the scan comes back empty.
+                    callback.onError(
+                        BluetoothError(
+                            code = "device_held_by_other_app",
+                            message =
+                                "Scan found no glasses, but \"$heldName\" is already GATT-connected " +
+                                    "by another app on this phone. Disconnect it there and scan again.",
+                        ),
+                    )
+                }
+            }
             callback.onComplete(latestResults.toList())
         }
 
@@ -1475,6 +1502,60 @@ class MentraBluetoothSdk private constructor(
             address = address,
             projectName = projectName,
         )
+    }
+
+    /**
+     * Best-effort name of a glasses device compatible with the scanned [model] whose
+     * GATT connection is already held by another app on this phone (for example the
+     * MentraOS app), or null when no such device can be identified.
+     *
+     * Detection is limited to connections held on the SAME phone: it queries
+     * [BluetoothManager.getConnectedDevices] for [BluetoothProfile.GATT], which only sees
+     * this phone's own GATT connections. A connection held by a different phone is
+     * invisible here and cannot be detected.
+     *
+     * Results are intersected with Mentra device identity via [HeldDeviceMatcher]
+     * (the saved default device when its model matches [model], plus that model's
+     * known advertised-name prefixes) so an unrelated GATT peripheral is never
+     * reported. Returns null for [DeviceModel.SIMULATED], while this SDK itself is
+     * connected or connecting (its own GATT link also appears in the adapter-wide
+     * query and is not "another app"), and when Bluetooth is unsupported or off or
+     * the BLUETOOTH_CONNECT runtime permission (API 31+) is missing, so callers
+     * degrade to existing behavior instead of crashing.
+     */
+    private fun deviceHeldByOtherAppName(model: DeviceModel): String? {
+        if (model == DeviceModel.SIMULATED) return null
+        // getConnectedDevices(GATT) is adapter-wide, not per-app: it also lists the
+        // GATT link held (or being brought up) by THIS process. Blaming "another
+        // app" for our own connection would misdirect the user, so skip the check
+        // while this SDK is connected or a connect attempt is in flight.
+        val glassesStatus = getRawGlassesStatus()
+        if (glassesStatus.connected ||
+            glassesStatus.connectionState == GlassesConnectionState.CONNECTING ||
+            glassesStatus.connectionState == GlassesConnectionState.BONDING
+        ) {
+            return null
+        }
+        val bluetoothManager =
+            appContext.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager ?: return null
+        val adapter = bluetoothManager.adapter ?: return null
+        return try {
+            if (!adapter.isEnabled) return null
+            val defaultDevice = currentDefaultDevice()
+            bluetoothManager.getConnectedDevices(BluetoothProfile.GATT)
+                .firstOrNull { device ->
+                    HeldDeviceMatcher.matches(
+                        model = model,
+                        defaultDevice = defaultDevice,
+                        candidateName = device.name,
+                        candidateAddress = device.address,
+                    )
+                }
+                ?.let { it.name ?: it.address }
+        } catch (error: SecurityException) {
+            // BLUETOOTH_CONNECT not granted; skip the check rather than break scanning.
+            null
+        }
     }
 
     private fun requireBluetoothReady(operation: String) {
