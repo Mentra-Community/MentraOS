@@ -485,6 +485,8 @@ const en = {
     getSupportMessage: "You will be taken to our support page in your browser.",
     connectingGlasses: "Connecting glasses...",
     connectingController: "Connecting ring...",
+    appsLoadFailed: "Couldn't load your apps",
+    appsLoadRetry: "Retry",
     emptyActiveAppListInfo: "Your active apps will appear here.",
     emptyInactiveAppListInfo: "Your inactive apps will appear here.",
     noActiveApps: "No Active Apps",
