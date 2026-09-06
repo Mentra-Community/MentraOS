@@ -956,6 +956,11 @@ jobs:
           fi
           node .github/scripts/verify-coordinated-docs.mjs \
             "$export_dir/bluetooth-sdk/software-update/index.html"
+          # Mintlify's static export does not emit docs.json redirects.
+          cat >> "$export_dir/_redirects" <<'REDIRECTS'
+          /mentra-live/software-update /bluetooth-sdk/software-update/ 301
+          /mentra-live/software-update/ /bluetooth-sdk/software-update/ 301
+          REDIRECTS
 
       - name: Deploy to Cloudflare Pages
         env:
