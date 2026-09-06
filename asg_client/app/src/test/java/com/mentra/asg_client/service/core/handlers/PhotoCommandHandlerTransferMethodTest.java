@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -149,5 +150,83 @@ public class PhotoCommandHandlerTransferMethodTest {
         assertThat(handler.handleCommand("take_photo", data)).isFalse();
         verify(captureService)
                 .sendPhotoErrorResponse(eq("req-1"), eq("INVALID_TRANSFER_METHOD"), anyString());
+    }
+
+    @Test
+    public void takePhoto_saveWithBleImgIdAndNoWebhook_ridesBleTransfer() throws Exception {
+        when(captureService.takePhotoForBleTransfer(
+                        anyString(),
+                        anyString(),
+                        anyString(),
+                        anyBoolean(),
+                        anyString(),
+                        anyString(),
+                        anyBoolean(),
+                        anyBoolean(),
+                        nullable(Long.class),
+                        nullable(Integer.class),
+                        any(PhotoCaptureSettings.class)))
+                .thenReturn(true);
+        JSONObject data =
+                takePhotoData()
+                        .put("webhookUrl", "")
+                        .put("save", true)
+                        .put("transferMethod", "ble");
+
+        assertThat(handler.handleCommand("take_photo", data)).isTrue();
+        verify(captureService)
+                .takePhotoForBleTransfer(
+                        anyString(),
+                        eq("req-1"),
+                        eq("ble-1"),
+                        eq(true),
+                        eq("medium"),
+                        eq("photo"),
+                        eq(true),
+                        eq(true),
+                        nullable(Long.class),
+                        nullable(Integer.class),
+                        any(PhotoCaptureSettings.class));
+        verify(captureService, never())
+                .takePhotoForLocalSave(
+                        anyString(),
+                        anyString(),
+                        anyString(),
+                        anyString(),
+                        anyBoolean(),
+                        anyBoolean(),
+                        nullable(Long.class),
+                        nullable(Integer.class),
+                        any(PhotoCaptureSettings.class));
+    }
+
+    @Test
+    public void takePhoto_saveWithoutBleImgIdOrWebhook_staysLocalSaveCapture() throws Exception {
+        when(captureService.takePhotoForLocalSave(
+                        anyString(),
+                        anyString(),
+                        anyString(),
+                        anyString(),
+                        anyBoolean(),
+                        anyBoolean(),
+                        nullable(Long.class),
+                        nullable(Integer.class),
+                        any(PhotoCaptureSettings.class)))
+                .thenReturn(true);
+        JSONObject data =
+                takePhotoData().put("webhookUrl", "").put("bleImgId", "").put("save", true);
+
+        assertThat(handler.handleCommand("take_photo", data)).isTrue();
+        verify(captureService)
+                .takePhotoForLocalSave(
+                        anyString(),
+                        eq("req-1"),
+                        eq("medium"),
+                        eq("photo"),
+                        eq(true),
+                        eq(true),
+                        nullable(Long.class),
+                        nullable(Integer.class),
+                        any(PhotoCaptureSettings.class));
     }
 }
