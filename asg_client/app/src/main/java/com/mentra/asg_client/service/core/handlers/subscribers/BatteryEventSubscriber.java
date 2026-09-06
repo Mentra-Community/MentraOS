@@ -50,7 +50,9 @@ public final class BatteryEventSubscriber implements IPeripheralBus.McuEventList
         }
 
         if (hardwareManager != null) {
-            hardwareManager.notifyBatteryReading(newBatteryPercentage, newBatteryVoltage);
+            hardwareManager.notifyBatteryReading(
+                    newBatteryPercentage, newBatteryVoltage, batteryEvent.isActiveCharging(),
+                    batteryEvent.getReceivedAtElapsedMs());
         }
 
         // Send battery status over BLE if we have valid data
@@ -61,10 +63,11 @@ public final class BatteryEventSubscriber implements IPeripheralBus.McuEventList
 
     /** Send battery status over BLE */
     private void sendBatteryStatusOverBle(int batteryPercentage, int batteryVoltage) {
-        // hm_batv carries no charge bit, so charging cannot be known here. The voltage
+        // Legacy hm_batv carries no charge bit. The voltage
         // heuristic (>3900mV) is wrong for most of a Li-ion cell's range — a discharging
-        // full pack reads "charging". Internal state keeps the heuristic (log-only
-        // consumers), but the BLE message omits the flag: the phone sources charging
+        // full pack reads "charging". Internal state keeps the heuristic for legacy
+        // consumers; it must never authorize camera use. The separate active_charging
+        // field above supplies that exception. The BLE message omits the flag: the phone sources charging
         // exclusively from the PMU charg bit in the sr_hrt heartbeat.
         boolean isCharging = batteryVoltage > 3900;
 

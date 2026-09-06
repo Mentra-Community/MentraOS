@@ -2,6 +2,7 @@ package com.mentra.asg_client.service.core.handlers;
 
 import android.content.Context;
 import android.util.Log;
+import com.mentra.asg_client.io.hardware.core.HardwareManagerFactory;
 import com.mentra.asg_client.io.file.core.FileManager;
 import com.mentra.asg_client.io.media.core.MediaCaptureService;
 import com.mentra.asg_client.service.core.constants.BatteryConstants;
@@ -96,7 +97,7 @@ public class VideoCommandHandler extends BaseMediaCommandHandler {
             // BATTERY CHECK: Reject if battery too low
             if (stateManager != null) {
                 int batteryLevel = stateManager.getBatteryLevel();
-                if (batteryLevel >= 0 && batteryLevel < BatteryConstants.MIN_BATTERY_LEVEL) {
+                if (BatteryConstants.isCameraBatteryLow(batteryLevel, HardwareManagerFactory.getInitializedInstance())) {
                     Log.w(
                             TAG,
                             "🚫 Video recording rejected - battery too low ("

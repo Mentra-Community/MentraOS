@@ -6,6 +6,7 @@ import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraManager;
 import android.os.SystemClock;
 import android.util.Log;
+import com.mentra.asg_client.io.hardware.core.HardwareManagerFactory;
 
 import com.mentra.asg_client.io.media.core.MediaCaptureService;
 import com.mentra.asg_client.io.network.interfaces.INetworkManager;
@@ -139,7 +140,7 @@ public class StreamCommandHandler implements ICommandHandler {
             // BATTERY CHECK
             if (stateManager != null) {
                 int batteryLevel = stateManager.getBatteryLevel();
-                if (batteryLevel >= 0 && batteryLevel < BatteryConstants.MIN_BATTERY_LEVEL) {
+                if (BatteryConstants.isCameraBatteryLow(batteryLevel, HardwareManagerFactory.getInitializedInstance())) {
                     Log.w(TAG, "🚫 Stream rejected - battery too low (" + batteryLevel + "%)");
                     MediaCaptureService.playBatteryLowSound(context);
                     sendStreamErrorStatus(

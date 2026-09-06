@@ -45,7 +45,7 @@ public class BatteryEventSubscriberTest {
     public void batteryEvent_updatesHardwareStateAndSendsBle() {
         subscriber.onMcuEvent(new BatteryEvent(85, 3900));
 
-        verify(hardwareManager).notifyBatteryReading(85, 3900);
+        verify(hardwareManager).notifyBatteryReading(eq(85), eq(3900), eq(false), anyLong());
         // 3900 is not strictly greater than 3900, so charging is false.
         verify(stateManager).updateBatteryStatus(eq(85), eq(false), anyLong());
         verify(transport).sendMessage(any(byte[].class));
@@ -62,7 +62,7 @@ public class BatteryEventSubscriberTest {
     public void batteryEvent_noValidData_doesNotUpdateStateOrSendBle() {
         subscriber.onMcuEvent(new BatteryEvent(-1, -1));
 
-        verify(hardwareManager).notifyBatteryReading(-1, -1);
+        verify(hardwareManager).notifyBatteryReading(eq(-1), eq(-1), eq(false), anyLong());
         verify(stateManager, never()).updateBatteryStatus(org.mockito.ArgumentMatchers.anyInt(),
                 org.mockito.ArgumentMatchers.anyBoolean(), anyLong());
         verify(transport, never()).sendMessage(any(byte[].class));
@@ -76,5 +76,13 @@ public class BatteryEventSubscriberTest {
 
         verify(stateManager).updateBatteryStatus(eq(50), eq(false), anyLong());
         verify(transport, never()).sendMessage(any(byte[].class));
+    }
+
+    @Test
+    public void activeCharge_preservesReceiptTimeWhenConsumptionIsDelayed() {
+        BatteryEvent event = new BatteryEvent(4, 3700, true);
+        org.robolectric.shadows.ShadowSystemClock.advanceBy(java.time.Duration.ofSeconds(40));
+        subscriber.onMcuEvent(event);
+        verify(hardwareManager).notifyBatteryReading(4, 3700, true, event.getReceivedAtElapsedMs());
     }
 }
