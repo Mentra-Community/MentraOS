@@ -24,6 +24,7 @@ class NotificationListener private constructor(private val context: Context) {
     private const val PREF_NOTIFICATIONS_BLOCKLIST = "notifications_blocklist"
 
     @Volatile private var instance: NotificationListener? = null
+    @Volatile private var reboundThisProcess = false
 
     fun getInstance(context: Context): NotificationListener {
       return instance
@@ -54,15 +55,26 @@ class NotificationListener private constructor(private val context: Context) {
       val componentChanged = updateComponentState(applicationContext, enabled = listenerEnabled)
 
       // Keep the isolated process's own SharedPreferences cache and live
-      // singleton in sync. A rebind is only needed when enabling the component;
-      // ordinary blocklist updates must not restart a healthy listener.
+      // singleton in sync. Rebind once per process so OEM/Android 15 holes
+      // cannot leave an approved listener detached. Later blocklist updates
+      // must not restart a healthy listener.
+      val shouldRebind = shouldRun && (componentChanged || !reboundThisProcess)
+      if (shouldRun) {
+        reboundThisProcess = true
+      }
       if (permissionGranted) {
         NotificationProcessBridge.sendConfig(
           applicationContext,
           listenerEnabled,
           blocklistSet,
-          requestRebind = shouldRun && componentChanged,
+          requestRebind = shouldRebind,
         )
+      }
+
+      // requestRebind is a static NMS call. Do it from this process too so a
+      // dead or slow :notif receiver cannot leave an approved listener unbound.
+      if (shouldRebind) {
+        requestListenerRebind(applicationContext)
       }
 
       if (!shouldRun) {
@@ -97,6 +109,9 @@ class NotificationListener private constructor(private val context: Context) {
           // The :notif receiver persists the config before requesting rebind.
           requestRebind = shouldRun,
         )
+      }
+      if (shouldRun) {
+        requestListenerRebind(applicationContext)
       }
       return permissionGranted
     }
