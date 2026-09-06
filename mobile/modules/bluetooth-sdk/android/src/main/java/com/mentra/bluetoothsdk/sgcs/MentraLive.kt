@@ -4733,7 +4733,7 @@ class MentraLive : SGCManager() {
                     handleGlassesSessionId(json)
 
                     Bridge.log("LIVE: Processed version_info fields and sent to RN")
-                    Bridge.sendVersionInfo(fields)
+                    Bridge.sendVersionInfo(fields, type)
                 } else {
                     Log.d(TAG, "📦 Unknown message type: " + type)
                 }
@@ -5654,9 +5654,14 @@ class MentraLive : SGCManager() {
      * build number, firmware version, etc.
      */
     override fun requestVersionInfo() {
+        requestVersionInfo(null)
+    }
+
+    fun requestVersionInfo(requestId: String?) {
         try {
             val json = JSONObject()
             json.put("type", "request_version")
+            requestId?.let { json.put("request_id", it) }
             sendJson(json, false)
             Bridge.log("LIVE: 📱 Requesting version info from glasses")
         } catch (e: JSONException) {

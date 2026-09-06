@@ -1193,6 +1193,11 @@ public class AsgClientService extends Service implements NetworkStateListener, T
      * a manifest).
      */
     public void sendVersionInfo() {
+        sendVersionInfo(null);
+    }
+
+    /** Send version information and echo the optional phone request id on every response chunk. */
+    public void sendVersionInfo(String requestId) {
         Log.i(TAG, "📊 Sending version information (chunked for MTU)");
 
         try {
@@ -1263,6 +1268,9 @@ public class AsgClientService extends Service implements NetworkStateListener, T
                 // Chunk 1: Basic device info (smaller payload)
                 JSONObject chunk1 = new JSONObject();
                 chunk1.put("type", "version_info_1");
+                if (requestId != null && !requestId.isEmpty()) {
+                    chunk1.put("request_id", requestId);
+                }
                 chunk1.put("app_version", appVersion);
                 chunk1.put("build_number", buildNumber);
                 chunk1.put("device_model", deviceModel);
@@ -1293,6 +1301,9 @@ public class AsgClientService extends Service implements NetworkStateListener, T
                 // Chunk 3: Firmware info (BES version, MTK version, BT MAC)
                 JSONObject chunk3 = new JSONObject();
                 chunk3.put("type", "version_info_3");
+                if (requestId != null && !requestId.isEmpty()) {
+                    chunk3.put("request_id", requestId);
+                }
                 chunk3.put("bes_fw_version", besFirmwareVersion);
                 chunk3.put("mtk_fw_version", mtkFirmwareVersion);
                 chunk3.put("bt_mac_address", besBtMac);

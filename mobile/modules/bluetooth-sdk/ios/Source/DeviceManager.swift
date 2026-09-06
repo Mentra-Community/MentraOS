@@ -1036,7 +1036,7 @@ struct ViewState {
 
         let connectionKey = "\(sgc.type):\(deviceName)"
         syncSystemTimeOnceForConnection(sgc, connectionKey: connectionKey)
-        
+
         // re-apply display height/depth after reconnection
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
             // Re-read the current sgc rather than capturing the connect-time instance: the user may
@@ -1614,9 +1614,13 @@ struct ViewState {
 
     /// Request version info from glasses.
     /// Glasses will respond with version_info message containing build number, firmware version, etc.
-    func requestVersionInfo() {
+    func requestVersionInfo(requestId: String? = nil) {
         Bridge.log("MAN: 📱 Requesting version info from glasses")
-        sgc?.requestVersionInfo()
+        if let live = sgc as? MentraLive {
+            live.requestVersionInfo(requestId: requestId)
+        } else {
+            sgc?.requestVersionInfo()
+        }
     }
 
     /// Send shutdown command to glasses.

@@ -363,9 +363,10 @@ class Bridge {
         Bridge.sendTypedMessage(type, body: body)
     }
 
-    static func sendVersionInfo(_ values: [String: Any]) {
+    static func sendVersionInfo(_ values: [String: Any], responseChunk: String = "version_info") {
         var body: [String: Any] = [
             "type": "version_info",
+            VersionInfoResponseAccumulator.responseChunkKey: responseChunk,
             "androidVersion": stringValue(values, "androidVersion", "android_version") ?? "",
             "firmwareVersion": stringValue(values, "firmwareVersion", "firmware_version") ?? "",
             "besFirmwareVersion": stringValue(values, "besFirmwareVersion", "bes_fw_version") ?? "",
@@ -374,6 +375,11 @@ class Bridge {
             "otaVersionUrl": stringValue(values, "otaVersionUrl", "ota_version_url") ?? "",
             "appVersion": stringValue(values, "appVersion", "app_version") ?? "",
         ]
+        if let responseRequestId = stringValue(values, "requestId", "request_id"),
+           !responseRequestId.isEmpty
+        {
+            body[VersionInfoResponseAccumulator.responseRequestIdKey] = responseRequestId
+        }
         if let systemTimeMs = intValue(values["systemTimeMs"]) ?? intValue(values["system_time_ms"]) {
             body["systemTimeMs"] = systemTimeMs
         }
@@ -655,6 +661,5 @@ class Bridge {
         return payload
     }
 }
-
 
 
