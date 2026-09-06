@@ -701,7 +701,10 @@ public class WhipStreamingService extends Service {
    */
   private void applyBitrateConstraints() {
     int maximumBitrateBps = mStreamConfig.getVideoBitrate();
-    int initialBitrateBps = WhipBitratePolicy.initialBitrateBps(maximumBitrateBps);
+    int initialBitrateBps = WhipBitratePolicy.initialBitrateBps(
+        mStreamConfig.getVideoInitialBitrateBps(), mStreamConfig.getVideoMinBitrateBps(), maximumBitrateBps);
+    Integer minimumBitrateBps = WhipBitratePolicy.minimumBitrateBps(
+        mStreamConfig.getVideoMinBitrateBps(), maximumBitrateBps);
 
     for (RtpSender sender : mPeerConnection.getSenders()) {
       if (sender.track() == null) continue;
@@ -713,6 +716,7 @@ public class WhipStreamingService extends Service {
       params.degradationPreference = RtpParameters.DegradationPreference.MAINTAIN_FRAMERATE;
 
       for (RtpParameters.Encoding encoding : params.encodings) {
+        encoding.minBitrateBps = minimumBitrateBps;
         encoding.maxBitrateBps = maximumBitrateBps;
       }
 
@@ -720,11 +724,14 @@ public class WhipStreamingService extends Service {
     }
 
     boolean bitratePreferencesApplied =
-        WhipBitratePolicy.applyTo(mPeerConnection, maximumBitrateBps);
+        WhipBitratePolicy.applyTo(mPeerConnection, mStreamConfig.getVideoMinBitrateBps(),
+            mStreamConfig.getVideoInitialBitrateBps(), maximumBitrateBps);
     if (!bitratePreferencesApplied) {
-      Log.w(TAG, "Failed to apply WHIP initial/max bitrate preferences");
+      Log.w(TAG, "Failed to apply WHIP min/initial/max bitrate preferences");
     }
-    Log.i(TAG, "Applied video bitrate constraints: start=" + (initialBitrateBps / 1000)
+    Log.i(TAG, "Applied video bitrate constraints: min="
+        + (minimumBitrateBps == null ? "unset" : minimumBitrateBps / 1000)
+        + " kbps, start=" + (initialBitrateBps / 1000)
         + " kbps, max=" + (maximumBitrateBps / 1000)
         + " kbps, degradation=MAINTAIN_FRAMERATE");
   }

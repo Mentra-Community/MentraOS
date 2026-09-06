@@ -27,6 +27,8 @@ public class WhipStreamConfig {
   private int videoHeight = DEFAULT_VIDEO_HEIGHT;
   private int videoFps = DEFAULT_VIDEO_FPS;
   private int videoBitrate = DEFAULT_VIDEO_BITRATE;
+  private Integer videoMinBitrateBps;
+  private Integer videoInitialBitrateBps;
   private volatile double statusVideoFps = Double.NaN;
 
   private boolean echoCancellation = DEFAULT_ECHO_CANCELLATION;
@@ -61,6 +63,12 @@ public class WhipStreamConfig {
       config.videoHeight = normalizeDimension(height, 240, 1080);
       config.videoBitrate = clamp(config.videoBitrate, 100000, 10000000);
       config.videoFps = clamp(config.videoFps, MIN_VIDEO_FPS, MAX_VIDEO_FPS);
+      int requestedInitial = videoJson.optInt("initialBitrateBps", 0);
+      if (requestedInitial > 0) config.videoInitialBitrateBps = requestedInitial;
+      int requestedMinimum = videoJson.optInt("minBitrateBps", 0);
+      if (requestedMinimum > 0) {
+        config.videoMinBitrateBps = Math.min(requestedMinimum, config.videoBitrate);
+      }
     }
 
     if (audioJson != null) {
@@ -157,6 +165,14 @@ public class WhipStreamConfig {
   public int getVideoHeight() { return videoHeight; }
   public int getVideoFps() { return videoFps; }
   public int getVideoBitrate() { return videoBitrate; }
+
+  /** Optional caller-supplied WHIP startup bitrate, bounded when applied. */
+  public Integer getVideoInitialBitrateBps() { return videoInitialBitrateBps; }
+
+  /** Optional WHIP video bitrate floor, bounded by the current maximum. */
+  public Integer getVideoMinBitrateBps() {
+    return videoMinBitrateBps == null ? null : Math.min(videoMinBitrateBps, videoBitrate);
+  }
   public boolean isEchoCancellation() { return echoCancellation; }
   public boolean isNoiseSuppression() { return noiseSuppression; }
   public boolean isCaptureAudio() { return captureAudio; }
