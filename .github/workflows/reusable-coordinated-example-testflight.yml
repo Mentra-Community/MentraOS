@@ -398,6 +398,10 @@ jobs:
           archive="$RUNNER_TEMP/mentra-example-react-native.xcarchive"
           output="$RUNNER_TEMP/mentra-example-react-native-export"
           rm -rf "$archive" "$output"
+          export PATH="$HOME/.rbenv/shims:$HOME/.rbenv/bin:$PATH"
+          BUNDLE_GEMFILE="$GITHUB_WORKSPACE/mobile/Gemfile" bundle exec ruby \
+            "$GITHUB_WORKSPACE/.github/scripts/configure-example-ios-signing.rb" \
+            ios/MentraSDKRN.xcodeproj
           xcodebuild \
             -workspace "$workspace" \
             -scheme "$scheme" \
@@ -409,9 +413,6 @@ jobs:
             -authenticationKeyID "$ASC_KEY_ID" \
             -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
             DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
-            CODE_SIGN_STYLE=Manual \
-            CODE_SIGN_IDENTITY="$MENTRA_CI_CODE_SIGN_IDENTITY" \
-            PROVISIONING_PROFILE_SPECIFIER="$MENTRA_CI_PROVISIONING_PROFILE_NAME" \
             OTHER_CODE_SIGN_FLAGS="--keychain $MENTRA_CI_KEYCHAIN" \
             MARKETING_VERSION="$MARKETING_VERSION" \
             CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
