@@ -5,6 +5,18 @@ import org.junit.Test
 
 class StreamRequestCaptureAudioTest {
   @Test
+  fun videoBitrateOptionsSurviveBridgeAndWireSerialization() {
+    val video = StreamVideoConfig.fromMap(mapOf(
+      "minBitrateBps" to 300_000,
+      "initialBitrateBps" to 400_000,
+      "bitrate" to 500_000,
+    ))!!
+    assertThat(video.toMap()).containsEntry("minBitrateBps", 300_000)
+      .containsEntry("initialBitrateBps", 400_000).containsEntry("bitrate", 500_000)
+    assertThat(StreamVideoConfig().toMap()).doesNotContainKeys("minBitrateBps", "initialBitrateBps")
+  }
+
+  @Test
   fun toMapOmitsCaptureAudioWhenTrue() {
     val map = StreamRequest(streamUrl = "https://example.com/whip", captureAudio = true).toMap()
     assertThat(map).doesNotContainKey("captureAudio")

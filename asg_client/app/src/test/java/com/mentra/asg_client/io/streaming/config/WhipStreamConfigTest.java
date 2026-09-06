@@ -2,6 +2,7 @@ package com.mentra.asg_client.io.streaming.config;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import org.json.JSONException;
@@ -144,4 +145,24 @@ public class WhipStreamConfigTest {
         WhipStreamConfig on = WhipStreamConfig.fromJson(null, enabled);
         assertTrue(on.isCaptureAudio());
     }
+    @Test
+    public void optionalBitrates_preserveDefaultsAndParseOverrides() throws JSONException {
+        WhipStreamConfig defaults = WhipStreamConfig.fromJson(null, null);
+        assertNull(defaults.getVideoMinBitrateBps());
+        assertNull(defaults.getVideoInitialBitrateBps());
+        JSONObject video = new JSONObject()
+                .put("bitrate", 500_000)
+                .put("minBitrateBps", 300_000)
+                .put("initialBitrateBps", 400_000);
+        WhipStreamConfig config = WhipStreamConfig.fromJson(video, null);
+        assertEquals(Integer.valueOf(300_000), config.getVideoMinBitrateBps());
+        assertEquals(Integer.valueOf(400_000), config.getVideoInitialBitrateBps());
+        config.setVideoBitrate(200_000);
+        assertEquals(Integer.valueOf(200_000), config.getVideoMinBitrateBps());
+        video.put("minBitrateBps", -1).put("initialBitrateBps", 0);
+        config = WhipStreamConfig.fromJson(video, null);
+        assertNull(config.getVideoMinBitrateBps());
+        assertNull(config.getVideoInitialBitrateBps());
+    }
+
 }
