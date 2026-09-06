@@ -108,6 +108,9 @@ public class AsgConstants {
     /** Duration of the user-visible RGB photo indicator, triggered at the capture boundary. */
     public static final int PHOTO_LIGHT_DURATION_MS = 2200;
 
+    /** Failsafe that releases the photo privacy light if camera callbacks stop unexpectedly. */
+    public static final long PHOTO_PRIVACY_LIGHT_SAFETY_TIMEOUT_MS = 45_000L;
+
     /** Safety lease for a miniapp-owned transient FOV override. */
     public static final long CAMERA_FOV_OVERRIDE_DEFAULT_TTL_MS = 300_000L;
 

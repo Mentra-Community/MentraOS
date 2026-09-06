@@ -157,6 +157,7 @@ public class AsgClientService extends Service implements NetworkStateListener, T
     private static final AtomicBoolean serviceRunning = new AtomicBoolean(false);
     private boolean lastI2sPlaying = false;
     private boolean lastUvcStreaming = false;
+    private final Object mUvcPrivacyLightOwner = new Object();
 
     /**
      * Used before {@link ServiceInitializer} exists so FGS promotion is not delayed by heavy init.
@@ -335,6 +336,12 @@ public class AsgClientService extends Service implements NetworkStateListener, T
         BleTraceLogger.logLifecycle(this, "AsgClientService", "service_destroy_start");
 
         try {
+            if (lastUvcStreaming) {
+                applyUvcStreamingLed(false);
+                lastUvcStreaming = false;
+                UvcStreamingState.setStreaming(false);
+            }
+
             // Unregister from EventBus
             if (EventBus.getDefault().isRegistered(this)) {
                 Log.d(TAG, "📡 Unregistering from EventBus");
@@ -434,7 +441,7 @@ public class AsgClientService extends Service implements NetworkStateListener, T
 
         if (streaming) {
             if (hardwareManager.supportsRecordingLed()) {
-                hardwareManager.setRecordingLedOn();
+                hardwareManager.acquireRecordingLed(mUvcPrivacyLightOwner);
                 Log.i(TAG, "UVC streaming front-facing recording flash LED on");
             } else {
                 Log.w(TAG, "Recording flash LED not supported on this device");
@@ -450,7 +457,7 @@ public class AsgClientService extends Service implements NetworkStateListener, T
             }
         } else {
             if (hardwareManager.supportsRecordingLed()) {
-                hardwareManager.setRecordingLedOff();
+                hardwareManager.releaseRecordingLed(mUvcPrivacyLightOwner);
                 Log.i(TAG, "UVC streaming front-facing recording flash LED off");
             }
             if (hardwareManager.supportsRgbLed()) {

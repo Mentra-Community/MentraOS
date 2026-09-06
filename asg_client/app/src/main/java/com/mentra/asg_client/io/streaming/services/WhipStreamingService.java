@@ -150,6 +150,7 @@ public class WhipStreamingService extends Service {
   private Runnable mIceConnectTimeoutRunnable = this::failIceConnectTimeout;
 
   private IHardwareManager mHardwareManager;
+  private final Object mPrivacyLightOwner = new Object();
 
   // ---- State management ----
   private enum StreamState { IDLE, STARTING, STREAMING, STOPPING, RECONNECTING }
@@ -426,8 +427,8 @@ public class WhipStreamingService extends Service {
         mStreamState = StreamState.RECONNECTING;
       }
     } else {
-      if (mLedEnabled && mHardwareManager != null && mHardwareManager.supportsRecordingLed()) {
-        mHardwareManager.setRecordingLedOff();
+      if (mHardwareManager != null && mHardwareManager.supportsRecordingLed()) {
+        mHardwareManager.releaseRecordingLed(mPrivacyLightOwner);
       }
       if (mSoundEnabled && mHardwareManager != null && mHardwareManager.supportsAudioPlayback()) {
         mHardwareManager.playAudioAsset(AudioAssets.VIDEO_RECORDING_STOP);
@@ -820,7 +821,7 @@ public class WhipStreamingService extends Service {
     Log.i(TAG, "Streaming started via WHIP, negotiated video codec: "
         + firstVideoCodecFromSdp(answerSdp));
     if (mLedEnabled && mHardwareManager != null && mHardwareManager.supportsRecordingLed()) {
-      mHardwareManager.setRecordingLedOn();
+      mHardwareManager.acquireRecordingLed(mPrivacyLightOwner);
     }
     if (mSoundEnabled && mHardwareManager != null && mHardwareManager.supportsAudioPlayback()) {
       mHardwareManager.playAudioAsset(AudioAssets.VIDEO_RECORDING_START);
@@ -1174,8 +1175,8 @@ public class WhipStreamingService extends Service {
       mWhipResourceUrl = null;
     }
     releaseWebRtc();
-    if (mLedEnabled && mHardwareManager != null && mHardwareManager.supportsRecordingLed()) {
-      mHardwareManager.setRecordingLedOff();
+    if (mHardwareManager != null && mHardwareManager.supportsRecordingLed()) {
+      mHardwareManager.releaseRecordingLed(mPrivacyLightOwner);
     }
     mIsReconnecting = false;
     mReconnectAttempts = 0;

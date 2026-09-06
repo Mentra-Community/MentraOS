@@ -5,6 +5,7 @@ import android.util.Log;
 import com.mentra.asg_client.camera.CameraNeoService;
 
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.Map;
 import java.util.Queue;
@@ -66,6 +67,21 @@ public final class QueuedPhotoRequestQueue {
             callbackRegistry.remove(request.requestId);
         }
         return true;
+    }
+
+    /** Removes one queued request by its unique output path and restores its callback. */
+    public synchronized QueuedPhotoRequest removeByFilePath(String filePath) {
+        Iterator<QueuedPhotoRequest> iterator = queue.iterator();
+        while (iterator.hasNext()) {
+            QueuedPhotoRequest queued = iterator.next();
+            if (!queued.filePath.equals(filePath)) {
+                continue;
+            }
+            iterator.remove();
+            bindCallbackIfNeeded(queued);
+            return queued;
+        }
+        return null;
     }
 
     /**

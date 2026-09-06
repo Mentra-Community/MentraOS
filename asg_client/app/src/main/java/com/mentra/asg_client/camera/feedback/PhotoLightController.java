@@ -9,16 +9,22 @@ import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
 import com.mentra.asg_client.io.hardware.interfaces.RgbLedConstants;
 
+import java.util.HashSet;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/** Synchronizes the user-visible photo LED with the first reliable capture boundary. */
+/** Synchronizes the privacy and user-visible photo LEDs with the camera capture lifecycle. */
 public final class PhotoLightController {
     private static final String TAG = "PhotoLight";
 
-    /** Request-scoped state that guarantees fallback callbacks cannot flash the LED twice. */
+    /** Request-scoped state for the privacy and RGB photo-light lifecycles. */
     public static final class Token {
         private final boolean mEnabled;
         private final AtomicBoolean mTriggered = new AtomicBoolean();
+        private boolean mPrivacyLightActive;
+        private boolean mPrivacyLightTerminal;
+        @Nullable private Runnable mCancelCaptureAction;
+        @Nullable private Runnable mPrivacyLightSafetyTimeout;
 
         private Token(boolean enabled) {
             mEnabled = enabled;
@@ -27,6 +33,8 @@ public final class PhotoLightController {
 
     @Nullable private final IHardwareManager mHardwareManager;
     private final Handler mHandler;
+    private final Object mPrivacyLightLock = new Object();
+    private final Set<Token> mActivePrivacyLights = new HashSet<>();
 
     public PhotoLightController(@Nullable IHardwareManager hardwareManager, Handler handler) {
         mHardwareManager = hardwareManager;
@@ -36,6 +44,90 @@ public final class PhotoLightController {
     /** Prepares one capture. Disabled tokens preserve the camera-restart cooldown behavior. */
     public Token prepare(boolean enabled) {
         return new Token(enabled);
+    }
+
+    /** Turns on the front-facing privacy light until the camera produces this photo. */
+    public void startPrivacyLight(Token token, String timingSource) {
+        startPrivacyLight(token, timingSource, null);
+    }
+
+    /** Turns on the privacy light and optionally cancels a request before any fallback release. */
+    public void startPrivacyLight(
+            Token token, String timingSource, @Nullable Runnable cancelCaptureAction) {
+        synchronized (mPrivacyLightLock) {
+            if (!token.mEnabled
+                    || token.mPrivacyLightActive
+                    || token.mPrivacyLightTerminal
+                    || mHardwareManager == null
+                    || !mHardwareManager.supportsRecordingLed()) {
+                return;
+            }
+
+            token.mPrivacyLightActive = true;
+            token.mCancelCaptureAction = cancelCaptureAction;
+            mActivePrivacyLights.add(token);
+            Log.i(TAG, "Acquiring privacy light from " + timingSource);
+            mHardwareManager.acquireRecordingLed(token);
+            if (cancelCaptureAction != null) {
+                token.mPrivacyLightSafetyTimeout =
+                        () -> cancelCaptureAndFinish(token, "pre-exposure safety timeout");
+                mHandler.postDelayed(
+                        token.mPrivacyLightSafetyTimeout,
+                        AsgConstants.PHOTO_PRIVACY_LIGHT_SAFETY_TIMEOUT_MS);
+            }
+        }
+    }
+
+    /**
+     * Turns off the privacy light once every capture that turned it on has reached a terminal
+     * boundary.
+     */
+    public void finishPrivacyLight(Token token, String timingSource) {
+        synchronized (mPrivacyLightLock) {
+            if (token.mPrivacyLightTerminal) {
+                return;
+            }
+            token.mPrivacyLightTerminal = true;
+            token.mCancelCaptureAction = null;
+            if (token.mPrivacyLightSafetyTimeout != null) {
+                mHandler.removeCallbacks(token.mPrivacyLightSafetyTimeout);
+                token.mPrivacyLightSafetyTimeout = null;
+            }
+            releasePrivacyLightOwner(token, timingSource);
+        }
+    }
+
+    private void releasePrivacyLightOwner(Token token, String timingSource) {
+        if (!token.mPrivacyLightActive || !mActivePrivacyLights.remove(token)) {
+            return;
+        }
+        token.mPrivacyLightActive = false;
+        if (mHardwareManager == null) {
+            return;
+        }
+
+        Log.i(TAG, "Releasing privacy light from " + timingSource);
+        mHardwareManager.releaseRecordingLed(token);
+    }
+
+    /** Releases any privacy-light ownership left behind during service teardown. */
+    public void cleanup() {
+        final Token[] activeTokens;
+        synchronized (mPrivacyLightLock) {
+            if (mActivePrivacyLights.isEmpty()) {
+                return;
+            }
+            activeTokens = mActivePrivacyLights.toArray(new Token[0]);
+            for (Token token : activeTokens) {
+                if (token.mPrivacyLightSafetyTimeout != null) {
+                    mHandler.removeCallbacks(token.mPrivacyLightSafetyTimeout);
+                    token.mPrivacyLightSafetyTimeout = null;
+                }
+            }
+        }
+        for (Token token : activeTokens) {
+            cancelCaptureAndFinish(token, "service teardown");
+        }
     }
 
     /** Flashes once at exposure start, or at the first later boundary when exposure is unavailable. */
@@ -49,6 +141,7 @@ public final class PhotoLightController {
      */
     public void onCaptureBoundary(
             Token token, String timingSource, long estimatedExposureDurationNs) {
+        armPrivacyLightSafetyTimeout(token);
         if (!token.mEnabled || !token.mTriggered.compareAndSet(false, true)) {
             return;
         }
@@ -69,6 +162,49 @@ public final class PhotoLightController {
                     mHardwareManager.flashRgbLedWhite(
                             durationMs, RgbLedConstants.DEFAULT_BRIGHTNESS);
                 });
+    }
+
+    private void armPrivacyLightSafetyTimeout(Token token) {
+        synchronized (mPrivacyLightLock) {
+            if (!token.mPrivacyLightActive || token.mPrivacyLightTerminal) {
+                return;
+            }
+            if (token.mPrivacyLightSafetyTimeout != null) {
+                mHandler.removeCallbacks(token.mPrivacyLightSafetyTimeout);
+            }
+            token.mPrivacyLightSafetyTimeout =
+                    () -> cancelCaptureAndFinish(token, "lost-callback safety timeout");
+            mHandler.postDelayed(
+                    token.mPrivacyLightSafetyTimeout,
+                    AsgConstants.PHOTO_PRIVACY_LIGHT_SAFETY_TIMEOUT_MS);
+        }
+    }
+
+    private void cancelCaptureAndFinish(Token token, String timingSource) {
+        final Runnable cancelCaptureAction;
+        synchronized (mPrivacyLightLock) {
+            if (token.mPrivacyLightTerminal) {
+                return;
+            }
+            // Claim the terminal transition before leaving the lock. A JPEG callback that races
+            // this fallback must not complete the token and then be cancelled as a stale request.
+            token.mPrivacyLightTerminal = true;
+            cancelCaptureAction = token.mCancelCaptureAction;
+            token.mCancelCaptureAction = null;
+            if (token.mPrivacyLightSafetyTimeout != null) {
+                mHandler.removeCallbacks(token.mPrivacyLightSafetyTimeout);
+                token.mPrivacyLightSafetyTimeout = null;
+            }
+        }
+        try {
+            if (cancelCaptureAction != null) {
+                cancelCaptureAction.run();
+            }
+        } finally {
+            synchronized (mPrivacyLightLock) {
+                releasePrivacyLightOwner(token, timingSource);
+            }
+        }
     }
 
     static int lightDurationMs(long estimatedExposureDurationNs) {

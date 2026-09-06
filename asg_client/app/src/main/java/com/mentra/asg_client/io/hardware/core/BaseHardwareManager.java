@@ -6,6 +6,8 @@ import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
 import com.mentra.asg_client.io.hardware.interfaces.Capability;
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
 import java.util.Collections;
+import java.util.IdentityHashMap;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -18,6 +20,9 @@ public class BaseHardwareManager implements IHardwareManager {
 
     protected final Context context;
     protected boolean isInitialized = false;
+    private final Object mRecordingLedOwnerLock = new Object();
+    private final Set<Object> mRecordingLedOwners =
+            Collections.newSetFromMap(new IdentityHashMap<>());
 
     /**
      * Create a new BaseHardwareManager
@@ -43,6 +48,32 @@ public class BaseHardwareManager implements IHardwareManager {
     public boolean supportsRecordingLed() {
         // Base implementation doesn't support LED
         return false;
+    }
+
+    @Override
+    public void acquireRecordingLed(Object owner) {
+        Objects.requireNonNull(owner, "owner");
+        if (!supportsRecordingLed()) {
+            return;
+        }
+
+        synchronized (mRecordingLedOwnerLock) {
+            if (mRecordingLedOwners.add(owner) && mRecordingLedOwners.size() == 1) {
+                setRecordingLedOn();
+            }
+        }
+    }
+
+    @Override
+    public void releaseRecordingLed(Object owner) {
+        Objects.requireNonNull(owner, "owner");
+        synchronized (mRecordingLedOwnerLock) {
+            if (mRecordingLedOwners.remove(owner)
+                    && mRecordingLedOwners.isEmpty()
+                    && supportsRecordingLed()) {
+                setRecordingLedOff();
+            }
+        }
     }
 
     @Override

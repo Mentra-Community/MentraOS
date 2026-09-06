@@ -557,6 +557,36 @@ public class CameraNeoService extends LifecycleService {
         }
     }
 
+    /** Cancels one queued or active photo by its unique output path. */
+    public static boolean cancelPhotoCapture(String filePath, String errorMessage) {
+        synchronized (SERVICE_LOCK) {
+            QueuedPhotoRequest queued =
+                    QueuedPhotoRequestQueue.getInstance().removeByFilePath(filePath);
+            boolean cancelledActive =
+                    sInstance != null
+                            && sInstance.photoSession.cancelActiveCapture(filePath, errorMessage);
+            if (cancelledActive) {
+                Log.i(TAG, "Cancelling active photo capture: " + filePath);
+                sInstance.cancelKeepAliveTimer();
+                sInstance.closeCamera();
+                sInstance.stopSelf();
+                return true;
+            }
+            if (queued != null) {
+                Log.i(TAG, "Cancelling queued-only photo capture: " + filePath);
+                if (queued.callback != null) {
+                    try {
+                        queued.callback.onPhotoError(errorMessage);
+                    } catch (Exception e) {
+                        Log.e(TAG, "Queued photo cancellation callback threw", e);
+                    }
+                }
+                return true;
+            }
+            return false;
+        }
+    }
+
     @Override
     public void onCreate() {
         super.onCreate();
