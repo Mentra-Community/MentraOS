@@ -938,6 +938,8 @@ jobs:
       - name: Prepare and verify the Cloudflare Pages artifact
         env:
           RELEASE_IDENTITY: ${{ needs.plan.outputs.release_identity }}
+          EXAMPLE_APK_URL: ${{ needs.starter-kit.outputs.react_native_apk_url }}
+          EXAMPLE_IOS_URL: ${{ needs.example-testflight.outputs.install_url }}
         run: |
           set -euo pipefail
           export_dir="$RUNNER_TEMP/mentraos-docs"
@@ -948,13 +950,12 @@ jobs:
           /*
             X-Robots-Tag: noindex
           HEADERS
-          grep -R --fixed-strings --quiet "$RELEASE_IDENTITY" "$export_dir/bluetooth-sdk"
           if grep -R --extended-regexp --ignore-case --quiet '\{\{[a-z0-9_-]+\}\}|%7b%7b[a-z0-9_-]+%7d%7d' "$export_dir/bluetooth-sdk"; then
             echo "Mintlify export contains an unresolved documentation variable." >&2
             exit 1
           fi
-          grep -R --fixed-strings --quiet "${{ needs.starter-kit.outputs.react_native_apk_url }}" "$export_dir/bluetooth-sdk"
-          grep -R --fixed-strings --quiet "${{ needs.example-testflight.outputs.install_url }}" "$export_dir/bluetooth-sdk"
+          node .github/scripts/verify-coordinated-docs.mjs \
+            "$export_dir/bluetooth-sdk/software-update/index.html"
 
       - name: Deploy to Cloudflare Pages
         env:
