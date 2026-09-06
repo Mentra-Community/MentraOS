@@ -10,7 +10,9 @@ import {shouldUseMentraLiveNativeCapture} from "@/effects/buttonCapturePolicy"
  * Gallery mode (capture enabled) is TRUE when:
  * - No miniapp subscribes to button_press
  *
- * A miniapp being open or running is not enough to block native capture.
+ * Gallery is only a media viewer: opening or closing it does not control capture.
+ * Button events are delivered by the engine; the glasses attempt native capture
+ * when enabled and reject it if the camera is busy. No app is launched here.
  */
 export function GalleryModeSync() {
   const [galleryMode, setGalleryMode] = useSetting(SETTINGS.gallery_mode.key)
