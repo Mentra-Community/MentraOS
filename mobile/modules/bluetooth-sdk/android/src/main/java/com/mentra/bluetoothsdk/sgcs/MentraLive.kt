@@ -591,9 +591,14 @@ class MentraLive : SGCManager() {
 
     // CTKD (Cross-Transport Key Derivation) support for BES devices
     private var isBondingReceiverRegistered = false
-    private var isBtClassicConnected = false
     private var bondingReceiver: BroadcastReceiver? = null
     private var bondingRetryCount = 0
+    private var classicAudioReceiver: BroadcastReceiver? = null
+    private var isClassicAudioReceiverRegistered = false
+    private val classicAudioConnectionTracker =
+            ClassicAudioConnectionTracker { connected ->
+                DeviceStore.apply("glasses", "bluetoothClassicConnected", connected)
+            }
 
     // Pairing timing diagnostics (filter logcat: PAIRING_TIMING)
     private var pairingTimingActive = false
@@ -992,6 +997,8 @@ class MentraLive : SGCManager() {
 
         // Initialize CTKD bonding receiver
         initializeBondingReceiver()
+        initializeClassicAudioReceiver()
+        registerClassicAudioReceiver()
 
         // Initialize the send queue processor
         processSendQueueRunnable = Runnable {
@@ -2113,6 +2120,8 @@ class MentraLive : SGCManager() {
                             isConnecting = false
                             isConnected = true
                             connectedDevice = gatt.device
+                            classicAudioConnectionTracker.setTarget(gatt.device.address)
+                            refreshHeadsetConnectionState(gatt.device)
                             emitConnectedPendingDeviceForPairingScan()
 
                             DeviceStore.apply("glasses", "bluetoothName", connectedDevice!!.name)
@@ -6731,7 +6740,16 @@ class MentraLive : SGCManager() {
                                                 "ctkd_bond_none",
                                                 "prev=$previousBondState queueSize=${sendQueue.size}"
                                         )
-                                        isBtClassicConnected = false
+                                        if (previousBondState == BluetoothDevice.BOND_BONDED) {
+                                            // A real unpair ends this Classic session. Invalidate
+                                            // the target so delayed profile broadcasts cannot
+                                            // make pairing look connected again.
+                                            classicAudioConnectionTracker.invalidate(device.address)
+                                        } else {
+                                            // A failed/cancelled bond may be retried below, so keep
+                                            // the target while clearing any partial profile state.
+                                            classicAudioConnectionTracker.clear(device.address)
+                                        }
                                         audioConnected = false
                                         if (previousBondState == BluetoothDevice.BOND_BONDING) {
                                             // User cancelled or bonding failed - retry up to
@@ -6831,6 +6849,164 @@ class MentraLive : SGCManager() {
         }
     }
 
+    /** Observe the two Android Classic audio profiles that Mentra Live exposes. */
+    private fun initializeClassicAudioReceiver() {
+        classicAudioReceiver =
+                object : BroadcastReceiver() {
+                    override fun onReceive(context: Context?, intent: Intent?) {
+                        val profile =
+                                when (intent?.action) {
+                                    BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED ->
+                                            ClassicAudioProfile.A2DP
+                                    BluetoothHeadset.ACTION_CONNECTION_STATE_CHANGED ->
+                                            ClassicAudioProfile.HEADSET
+                                    else -> return
+                                }
+                        val device = intent.bluetoothDeviceExtra() ?: return
+                        val state =
+                                intent.getIntExtra(
+                                        BluetoothProfile.EXTRA_STATE,
+                                        BluetoothProfile.STATE_DISCONNECTED
+                                )
+                        handleClassicAudioProfileState(profile, device, state, "broadcast")
+                    }
+                }
+    }
+
+    private fun registerClassicAudioReceiver() {
+        val ctx = context ?: return
+        val receiver = classicAudioReceiver ?: return
+        if (isClassicAudioReceiverRegistered) return
+
+        try {
+            val filter =
+                    IntentFilter().apply {
+                        addAction(BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED)
+                        addAction(BluetoothHeadset.ACTION_CONNECTION_STATE_CHANGED)
+                    }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                ctx.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
+            } else {
+                ctx.registerReceiver(receiver, filter)
+            }
+            isClassicAudioReceiverRegistered = true
+            Bridge.log("LIVE: Classic: A2DP/HFP status receiver registered")
+        } catch (e: Exception) {
+            Bridge.log("LIVE: Classic: failed to register status receiver: " + e.message)
+        }
+    }
+
+    private fun unregisterClassicAudioReceiver() {
+        if (!isClassicAudioReceiverRegistered || classicAudioReceiver == null) return
+
+        try {
+            context?.unregisterReceiver(classicAudioReceiver)
+        } catch (e: Exception) {
+            Bridge.log("LIVE: Classic: failed to unregister status receiver: " + e.message)
+        } finally {
+            isClassicAudioReceiverRegistered = false
+        }
+    }
+
+    private fun handleClassicAudioProfileState(
+            profile: ClassicAudioProfile,
+            device: BluetoothDevice,
+            state: Int,
+            source: String
+    ) {
+        if (isKilled) return
+
+        val connected = classicProfileConnectedState(state)
+        if (connected == null) {
+            Bridge.log(
+                    "LIVE: Classic: ignoring transitional " +
+                            profile.name +
+                            " state=" +
+                            state +
+                            " (" +
+                            source +
+                            ")"
+            )
+            return
+        }
+        if (!classicAudioConnectionTracker.update(profile, device.address, connected)) {
+            Bridge.log(
+                    "LIVE: Classic: ignoring stale " +
+                            profile.name +
+                            " state=" +
+                            state +
+                            " for " +
+                            device.address +
+                            " (" +
+                            source +
+                            ")"
+            )
+            return
+        }
+
+        Bridge.log(
+                "LIVE: Classic: " +
+                        profile.name +
+                        " state=" +
+                        state +
+                        " connected=" +
+                        classicAudioConnectionTracker.connected +
+                        " (" +
+                        source +
+                        ")"
+        )
+        if (profile != ClassicAudioProfile.A2DP) return
+
+        if (connected) {
+            markAudioConnected(device)
+        } else if (audioConnected) {
+            audioConnected = false
+            Bridge.sendAudioDisconnected()
+        }
+    }
+
+    /** Snapshot HFP because it may already be connected before this SGC registers its receiver. */
+    private fun refreshHeadsetConnectionState(device: BluetoothDevice) {
+        val adapter = bluetoothAdapter ?: return
+        val ctx = context ?: return
+        try {
+            adapter.getProfileProxy(
+                    ctx,
+                    object : BluetoothProfile.ServiceListener {
+                        override fun onServiceConnected(profile: Int, proxy: BluetoothProfile) {
+                            if (profile != BluetoothProfile.HEADSET) return
+                            try {
+                                handleClassicAudioProfileState(
+                                        ClassicAudioProfile.HEADSET,
+                                        device,
+                                        proxy.getConnectionState(device),
+                                        "snapshot"
+                                )
+                            } finally {
+                                try {
+                                    adapter.closeProfileProxy(BluetoothProfile.HEADSET, proxy)
+                                } catch (_: Exception) {
+                                }
+                            }
+                        }
+
+                        override fun onServiceDisconnected(profile: Int) {}
+                    },
+                    BluetoothProfile.HEADSET
+            )
+        } catch (e: Exception) {
+            Bridge.log("LIVE: Classic: failed to snapshot HFP state: " + e.message)
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun Intent.bluetoothDeviceExtra(): BluetoothDevice? =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
+            } else {
+                getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
+            }
+
     /**
      * Start CTKD Classic bonding / A2DP only after BLE notifications are ready. Calling this from
      * onConnectionStateChange(CONNECTED) races dual-mode stacks and frequently yields GATT 19
@@ -6907,7 +7083,7 @@ class MentraLive : SGCManager() {
             val method = device.javaClass.getMethod("removeBond")
             val result = method.invoke(device) as Boolean
             Bridge.log("LIVE: CTKD: Bond removal initiated, result: " + result)
-            isBtClassicConnected = false
+            classicAudioConnectionTracker.invalidate(device.address)
             return result
         } catch (e: Exception) {
             Bridge.log("LIVE: CTKD: Error removing bond: " + e.message)
@@ -6917,7 +7093,7 @@ class MentraLive : SGCManager() {
 
     /** Check if BT Classic is connected via CTKD */
     fun isBtClassicConnected(): Boolean {
-        return isBtClassicConnected
+        return classicAudioConnectionTracker.connected
     }
 
     /** A2DP profile service listener for connecting to already-bonded devices */
@@ -6976,11 +7152,16 @@ class MentraLive : SGCManager() {
         try {
             val state = a2dpProfile!!.getConnectionState(device)
             Bridge.log("LIVE: A2DP: Current connection state: " + state)
+            handleClassicAudioProfileState(
+                    ClassicAudioProfile.A2DP,
+                    device,
+                    state,
+                    "snapshot"
+            )
 
             if (state == BluetoothProfile.STATE_CONNECTED) {
                 Bridge.log("LIVE: A2DP: Already connected to " + device.name)
                 a2dpConnectAttempts = 0
-                markAudioConnected(device.name)
             } else if (state == BluetoothProfile.STATE_DISCONNECTED) {
                 Bridge.log("LIVE: A2DP: Connecting to " + device.name)
                 // Use reflection to call connect() as it's a hidden API
@@ -7033,16 +7214,24 @@ class MentraLive : SGCManager() {
     }
 
     /** Helper to mark audio as connected and notify */
-    private fun markAudioConnected(deviceName: String?) {
+    private fun markAudioConnected(device: BluetoothDevice) {
         if (isKilled) {
             Bridge.log(
                     "LIVE: A2DP: Ignoring markAudioConnected — SGC destroyed (would confuse DeviceManager)"
             )
             return
         }
-        isBtClassicConnected = true
+        classicAudioConnectionTracker.setTarget(device.address)
+        classicAudioConnectionTracker.update(
+                ClassicAudioProfile.A2DP,
+                device.address,
+                connected = true
+        )
+        val wasAudioConnected = audioConnected
         audioConnected = true
-        Bridge.sendAudioConnected(deviceName!!)
+        if (!wasAudioConnected) {
+            Bridge.sendAudioConnected(safeDeviceName(device))
+        }
         if (glassesReadyReceived) {
             Bridge.log(
                     "LIVE: A2DP: Both audio and glasses_ready confirmed - marking as fully connected"
@@ -7125,10 +7314,10 @@ class MentraLive : SGCManager() {
                         device.address +
                         ")"
         )
-        val isActiveDevice =
-                connectedDevice?.address?.equals(device.address, ignoreCase = true) == true
-        if (isActiveDevice) {
-            isBtClassicConnected = false
+        // The BLE device reference may already be cleared after a GATT drop. The tracker owns the
+        // authoritative target address, so let it decide whether this teardown belongs to the
+        // active Classic session instead of consulting connectedDevice.
+        if (classicAudioConnectionTracker.invalidate(device.address)) {
             audioConnected = false
         }
 
@@ -7258,12 +7447,15 @@ class MentraLive : SGCManager() {
 
         // CTKD Implementation: Unregister bonding receiver
         unregisterBondingReceiver()
+        unregisterClassicAudioReceiver()
 
         // Tear down Classic (A2DP/HFP) before GATT close. Closing only the proxy left the
         // phone's system Bluetooth UI showing Mentra Live still connected.
         val classicDevice = connectedDevice
         disconnectClassicProfiles(classicDevice)
         closeA2dpProxy()
+        classicAudioConnectionTracker.reset()
+        DeviceStore.apply("glasses", "bluetoothClassicConnected", false)
 
         // Stop readiness check loop
         stopReadinessCheckLoop()
