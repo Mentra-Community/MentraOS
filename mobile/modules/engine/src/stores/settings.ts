@@ -410,10 +410,10 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
-  // Mentra Live center-mic loudness / "Barrier" gate (cs_swit type 10). Default on.
+  // Mentra Live center-mic loudness / "Barrier" gate (cs_swit type 10). Opt-in.
   loudness_gate_enabled: {
     key: "loudness_gate_enabled",
-    defaultValue: () => true,
+    defaultValue: () => false,
     writable: true,
     saveOnServer: true,
     persist: true,
@@ -1045,6 +1045,18 @@ export const useSettingsStore = create<SettingsState>()(
           // repeated attempt per launch until a write succeeds.
           if (allCleared) {
             storage.save(BUILD_ENV_KEY, buildEnv)
+          }
+        }
+
+        // Reset existing installs once; later user/app opt-ins remain available.
+        const LOUDNESS_GATE_MIGRATION_KEY = "migration:loudness_gate_default_off_v1"
+        const loudnessGateMigrationDone = storage.load<boolean>(LOUDNESS_GATE_MIGRATION_KEY)
+        if (loudnessGateMigrationDone.is_error() || !loudnessGateMigrationDone.value) {
+          const result = await get().setSetting(SETTINGS.loudness_gate_enabled.key, false)
+          if (result.is_error()) {
+            console.log("SETTINGS: loudness gate migration failed:", result.error)
+          } else {
+            storage.save(LOUDNESS_GATE_MIGRATION_KEY, true)
           }
         }
 
