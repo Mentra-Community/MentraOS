@@ -2,7 +2,7 @@ import {execSync} from "child_process"
 import fs from "fs"
 import path from "path"
 
-import {ConfigPlugin, withDangerousMod} from "@expo/config-plugins"
+import {ConfigPlugin, withDangerousMod} from "expo/config-plugins"
 
 /**
  * Expo Config Plugin — add the Mapbox Navigation SDK for iOS (v3) as a Swift
@@ -12,9 +12,8 @@ import {ConfigPlugin, withDangerousMod} from "@expo/config-plugins"
  * Why a Swift Package and not CocoaPods: Mapbox Navigation v3 dropped reliable
  * CocoaPods support — `pod install` cannot resolve `MapboxNavigationCore`
  * (that's the "Unable to find a specification" error). v3 is SPM-first, so we
- * add it via SPM here. The MapboxMaps dependency (which Nav depends on) and the
- * Downloads-token auth are provided by the `@rnmapbox/maps` plugin; this plugin
- * only adds the Navigation package on top and links it to the app target.
+ * add it via SPM here, including its MapboxMaps dependency, and link the
+ * products to the app target. The host supplies Downloads-token authentication.
  *
  * Implementation: a dangerous mod that drives the `xcodeproj` Ruby gem (always
  * present on a Mac with CocoaPods) to add the remote SPM package + product.
@@ -24,12 +23,11 @@ import {ConfigPlugin, withDangerousMod} from "@expo/config-plugins"
  * Requirements at build time:
  *   • ~/.netrc with `machine api.mapbox.com / login mapbox / password sk.…`
  *     (the secret Downloads:Read token) so SPM can fetch the binaries.
- *   • The MapboxMaps version resolved by @rnmapbox/maps must be compatible
- *     with the Nav SDK version pinned below (11.x ↔ Nav 3.x).
+ *   • Use SPM as the single Mapbox provider; do not also install MapboxMaps
+ *     through CocoaPods.
  */
 
-// Mapbox Navigation iOS SPM package. Pin a v3 minor that matches the
-// MapboxMaps 11.x line @rnmapbox/maps resolves.
+// Mapbox Navigation v3 resolves the matching MapboxMaps dependency through SPM.
 const NAV_REPO = "https://github.com/mapbox/mapbox-navigation-ios.git"
 const NAV_MIN_VERSION = "3.0.0"
 // Products to link into the app target:
