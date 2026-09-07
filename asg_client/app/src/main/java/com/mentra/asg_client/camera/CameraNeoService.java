@@ -96,7 +96,7 @@ public class CameraNeoService extends LifecycleService {
 
     // Camera keep-alive settings
     private static final long CAMERA_KEEP_ALIVE_MS =
-            3000; // Keep camera open for 3 seconds after photo
+            8000; // Keep camera open for 8 seconds after photo
 
     private IHardwareManager hardwareManager;
 
